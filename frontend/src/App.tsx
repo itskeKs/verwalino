@@ -18,6 +18,10 @@ import { PropertyDetailPage } from "./pages/PropertyDetailPage";
 import { UnitDetailPage } from "./pages/UnitDetailPage";
 import { PersonsPage } from "./pages/PersonsPage";
 import { PersonDetailPage } from "./pages/PersonDetailPage";
+import { CostEntriesPage } from "./pages/CostEntriesPage";
+import { CostEntryDetailPage } from "./pages/CostEntryDetailPage";
+import { InvoiceDocumentsPage } from "./pages/InvoiceDocumentsPage";
+import { InvoiceDocumentDetailPage } from "./pages/InvoiceDocumentDetailPage";
 
 function AppRoutes() {
   const { loading, session } = useAuth();
@@ -42,6 +46,10 @@ function AppRoutes() {
         <Route path="/objekte/:propertyId/einheiten/:unitId" element={<UnitDetailPage />} />
         <Route path="/personen" element={<PersonsPage />} />
         <Route path="/personen/:personId" element={<PersonDetailPage />} />
+        <Route path="/kosten" element={<CostEntriesPage />} />
+        <Route path="/kosten/:entryId" element={<CostEntryDetailPage />} />
+        <Route path="/belege" element={<InvoiceDocumentsPage />} />
+        <Route path="/belege/:docId" element={<InvoiceDocumentDetailPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

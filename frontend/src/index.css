@@ -151,6 +151,33 @@ code {
   color: #6a1b9a;
 }
 
+/* M2 cost entry status badges */
+
+.badge--draft {
+  background: #e0e0e0;
+  color: #424242;
+}
+
+.badge--review {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.badge--confirmed {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.badge--rejected {
+  background: #ffebee;
+  color: #b71c1c;
+}
+
+.badge--superseded {
+  background: #f3e5f5;
+  color: #6a1b9a;
+}
+
 /* --- Links --- */
 
 .link {

@@ -49,6 +49,20 @@ export function Sidebar({ open, onClose }: Props) {
           </NavLink>
         </li>
 
+        {/* M2 Kosten & Belege */}
+        <li className="sidebar__divider" />
+        <li className="sidebar__section-label">Kosten &amp; Belege</li>
+        <li>
+          <NavLink to="/kosten" className={navLinkClass} onClick={onClose}>
+            Kostenpositionen
+          </NavLink>
+        </li>
+        <li>
+          <NavLink to="/belege" className={navLinkClass} onClick={onClose}>
+            Belege
+          </NavLink>
+        </li>
+
         {/* Admin-only section */}
         {isAdmin && (
           <>

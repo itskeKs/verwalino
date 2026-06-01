@@ -60,7 +60,41 @@ export const api = {
       body: body ? JSON.stringify(body) : undefined,
     });
   },
+  patch<T>(url: string, body?: unknown): Promise<T> {
+    return request<T>(url, {
+      method: "PATCH",
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  },
   delete<T>(url: string): Promise<T> {
     return request<T>(url, { method: "DELETE" });
   },
 };
+
+/**
+ * Upload a file via multipart/form-data.
+ * Does NOT set Content-Type header -- the browser sets it with the boundary.
+ */
+export async function uploadFormData<T>(
+  url: string,
+  formData: FormData,
+): Promise<T> {
+  const res = await fetch(url, {
+    method: "POST",
+    credentials: "include",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      if (body.detail) detail = body.detail;
+    } catch {
+      // ignore
+    }
+    throw new ApiError(res.status, detail);
+  }
+
+  return res.json() as Promise<T>;
+}

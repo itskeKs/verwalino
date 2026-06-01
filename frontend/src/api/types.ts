@@ -199,3 +199,150 @@ export interface LeaseCreate {
   deposit?: string | null;
   notes?: string;
 }
+
+// --- M2 Kosten & Belege ---
+
+export type CostEntryStatus =
+  | "draft_extracted"
+  | "needs_review"
+  | "confirmed"
+  | "rejected"
+  | "superseded";
+
+export interface CostCategory {
+  id: string;
+  plan_version: number;
+  code: string;
+  label: string;
+  cost_group: string;
+  tenant_apportionability_default: string;
+  owner_billing_relevant_default: boolean;
+  owner_distribution_key_default: string | null;
+  tenant_distribution_key_default: string | null;
+  reserve_relevant: boolean;
+  legal_hint: string | null;
+  sort_order: number;
+  is_active: boolean;
+}
+
+export interface CostEntry {
+  id: string;
+  organization_id: string;
+  property_id: string;
+  management_mandate_id: string | null;
+  cost_category_id: string;
+  cost_category_plan_version: number;
+  vendor_id: string | null;
+  invoice_date: string;
+  service_period_from: string;
+  service_period_to: string;
+  gross_amount: string;
+  vat_amount: string | null;
+  vat_rate: string | null;
+  document_number: string | null;
+  owner_distribution_key: string | null;
+  tenant_distribution_key: string | null;
+  tenant_apportionable: string;
+  apportionable_tenant_amount: string | null;
+  status: CostEntryStatus;
+  source: string;
+  confirmed_at: string | null;
+  confirmed_by: string | null;
+  superseded_by_id: string | null;
+}
+
+export interface CostEntryCreate {
+  property_id: string;
+  management_mandate_id?: string | null;
+  cost_category_id: string;
+  cost_category_plan_version?: number;
+  vendor_id?: string | null;
+  invoice_date: string;
+  service_period_from: string;
+  service_period_to: string;
+  gross_amount: string;
+  vat_amount?: string | null;
+  vat_rate?: string | null;
+  document_number?: string | null;
+  owner_distribution_key?: string | null;
+  tenant_distribution_key?: string | null;
+  tenant_apportionable: string;
+  apportionable_tenant_amount?: string | null;
+  source?: string;
+  status?: string;
+}
+
+export interface CostEntryUpdate {
+  gross_amount?: string | null;
+  vat_amount?: string | null;
+  vat_rate?: string | null;
+  invoice_date?: string | null;
+  service_period_from?: string | null;
+  service_period_to?: string | null;
+  cost_category_id?: string | null;
+  cost_category_plan_version?: number | null;
+  vendor_id?: string | null;
+  document_number?: string | null;
+  owner_distribution_key?: string | null;
+  tenant_distribution_key?: string | null;
+  tenant_apportionable?: string | null;
+  apportionable_tenant_amount?: string | null;
+}
+
+export interface CostEntryCorrectionCreate {
+  gross_amount?: string | null;
+  vat_amount?: string | null;
+  vat_rate?: string | null;
+  invoice_date?: string | null;
+  service_period_from?: string | null;
+  service_period_to?: string | null;
+  cost_category_id?: string | null;
+  cost_category_plan_version?: number | null;
+  vendor_id?: string | null;
+  document_number?: string | null;
+  owner_distribution_key?: string | null;
+  tenant_distribution_key?: string | null;
+  tenant_apportionable?: string | null;
+  apportionable_tenant_amount?: string | null;
+}
+
+export interface ExtractionPayload {
+  vendor_name: string | null;
+  invoice_date: string | null;
+  document_number: string | null;
+  gross_amount: string | null;
+  vat_amount: string | null;
+  vat_rate: string | null;
+  service_period_from: string | null;
+  service_period_to: string | null;
+  suggested_category_code: string | null;
+  confidence: number;
+  field_confidences: Record<string, number>;
+  raw_text: string | null;
+}
+
+export interface InvoiceDocument {
+  id: string;
+  organization_id: string;
+  cost_entry_id: string | null;
+  storage_backend: string;
+  original_filename: string | null;
+  mime_type: string;
+  content_byte_size: number;
+  content_sha256: string;
+  version: number;
+  supersedes_id: string | null;
+  chain_root_id: string;
+  status: string;
+  released_at: string | null;
+  released_by: string | null;
+  retention_until: string | null;
+  superseded_at: string | null;
+  extraction_payload: ExtractionPayload | null;
+}
+
+export interface VerifyResult {
+  document_id: string;
+  integrity_ok: boolean;
+  content_sha256: string;
+}

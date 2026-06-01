@@ -2,7 +2,7 @@
  * Typed API calls against the backend.
  */
 
-import { api } from "./client";
+import { api, uploadFormData } from "./client";
 import type {
   LoginRequest,
   LoginResponse,
@@ -24,6 +24,13 @@ import type {
   OwnershipCreate,
   LeaseRecord,
   LeaseCreate,
+  CostCategory,
+  CostEntry,
+  CostEntryCreate,
+  CostEntryUpdate,
+  CostEntryCorrectionCreate,
+  InvoiceDocument,
+  VerifyResult,
 } from "./types";
 
 export function login(body: LoginRequest): Promise<LoginResponse> {
@@ -150,4 +157,94 @@ export function listLeases(unitId?: string): Promise<LeaseRecord[]> {
 
 export function createLease(body: LeaseCreate): Promise<LeaseRecord> {
   return api.post<LeaseRecord>("/api/leases", body);
+}
+
+// --- M2: Cost Categories ---
+
+export function listCostCategories(): Promise<CostCategory[]> {
+  return api.get<CostCategory[]>("/api/cost-categories");
+}
+
+// --- M2: Cost Entries ---
+
+export function listCostEntries(params?: {
+  status?: string;
+  property_id?: string;
+}): Promise<CostEntry[]> {
+  const parts: string[] = [];
+  if (params?.status) parts.push(`status=${encodeURIComponent(params.status)}`);
+  if (params?.property_id) parts.push(`property_id=${encodeURIComponent(params.property_id)}`);
+  const qs = parts.length > 0 ? `?${parts.join("&")}` : "";
+  return api.get<CostEntry[]>(`/api/cost-entries${qs}`);
+}
+
+export function getCostEntry(id: string): Promise<CostEntry> {
+  return api.get<CostEntry>(`/api/cost-entries/${id}`);
+}
+
+export function createCostEntry(body: CostEntryCreate): Promise<CostEntry> {
+  return api.post<CostEntry>("/api/cost-entries", body);
+}
+
+export function updateCostEntry(id: string, body: CostEntryUpdate): Promise<CostEntry> {
+  return api.patch<CostEntry>(`/api/cost-entries/${id}`, body);
+}
+
+export function confirmCostEntry(id: string): Promise<CostEntry> {
+  return api.post<CostEntry>(`/api/cost-entries/${id}/confirm`);
+}
+
+export function rejectCostEntry(id: string): Promise<CostEntry> {
+  return api.post<CostEntry>(`/api/cost-entries/${id}/reject`);
+}
+
+export function createCostEntryCorrection(
+  id: string,
+  body: CostEntryCorrectionCreate,
+): Promise<CostEntry> {
+  return api.post<CostEntry>(`/api/cost-entries/${id}/correction`, body);
+}
+
+// --- M2: Invoice Documents ---
+
+export function listInvoiceDocuments(costEntryId?: string): Promise<InvoiceDocument[]> {
+  const qs = costEntryId ? `?cost_entry_id=${encodeURIComponent(costEntryId)}` : "";
+  return api.get<InvoiceDocument[]>(`/api/invoice-documents${qs}`);
+}
+
+export function getInvoiceDocument(id: string): Promise<InvoiceDocument> {
+  return api.get<InvoiceDocument>(`/api/invoice-documents/${id}`);
+}
+
+export function uploadInvoiceDocument(
+  file: File,
+  costEntryId?: string,
+): Promise<InvoiceDocument> {
+  const fd = new FormData();
+  fd.append("file", file);
+  if (costEntryId) fd.append("cost_entry_id", costEntryId);
+  return uploadFormData<InvoiceDocument>("/api/invoice-documents/upload", fd);
+}
+
+export function verifyInvoiceDocument(id: string): Promise<VerifyResult> {
+  return api.get<VerifyResult>(`/api/invoice-documents/${id}/verify`);
+}
+
+export function createInvoiceDocumentVersion(
+  id: string,
+  file: File,
+  costEntryId?: string,
+): Promise<InvoiceDocument> {
+  const fd = new FormData();
+  fd.append("file", file);
+  if (costEntryId) fd.append("cost_entry_id", costEntryId);
+  return uploadFormData<InvoiceDocument>(`/api/invoice-documents/${id}/version`, fd);
+}
+
+/**
+ * Returns an authenticated URL for streaming document content.
+ * Usage: open in new window or set as iframe src (cookie-based auth).
+ */
+export function invoiceDocumentContentUrl(id: string): string {
+  return `/api/invoice-documents/${id}/content`;
 }
