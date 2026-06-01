@@ -40,6 +40,7 @@ class InvoiceDocumentOut(BaseModel):
     released_by: str | None
     retention_until: str | None
     superseded_at: str | None
+    extraction_payload: dict | None = None
 
     model_config = {"from_attributes": True}
 
@@ -195,4 +196,5 @@ def _to_out(d: InvoiceDocument) -> InvoiceDocumentOut:
         released_by=str(d.released_by) if d.released_by else None,
         retention_until=str(d.retention_until) if d.retention_until else None,
         superseded_at=str(d.superseded_at) if d.superseded_at else None,
+        extraction_payload=d.extraction_payload,
     )

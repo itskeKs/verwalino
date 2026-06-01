@@ -5,6 +5,8 @@ from fastapi import FastAPI
 from app.api import auth, organizations, users, mandates
 from app.api import properties, units, persons, ownership, leases
 from app.api import cost_categories, cost_entries, invoice_documents
+from app.core.extraction import set_extractor
+from app.core.pdf_extraction import PdfTextExtractor
 
 app = FastAPI(
     title="Hausverwaltung MVP",
@@ -12,6 +14,9 @@ app = FastAPI(
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
 )
+
+# --- Register real PDF extractor as default (replaces StubExtractor) ---
+set_extractor(PdfTextExtractor())
 
 # --- Routers ---
 app.include_router(auth.router)
