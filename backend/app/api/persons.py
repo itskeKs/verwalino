@@ -30,6 +30,9 @@ class PersonOut(BaseModel):
     street: str
     zip_code: str
     city: str
+    iban: str | None
+    bic: str | None
+    bank_name: str | None
 
     model_config = {"from_attributes": True}
 
@@ -43,6 +46,23 @@ class PersonCreate(BaseModel):
     street: str = ""
     zip_code: str = ""
     city: str = ""
+    iban: str | None = None
+    bic: str | None = None
+    bank_name: str | None = None
+
+
+class PersonUpdate(BaseModel):
+    first_name: str | None = None
+    last_name: str | None = None
+    company_name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    street: str | None = None
+    zip_code: str | None = None
+    city: str | None = None
+    iban: str | None = None
+    bic: str | None = None
+    bank_name: str | None = None
 
 
 @router.get("", response_model=list[PersonOut])
@@ -85,7 +105,38 @@ async def create_person(
         zip_code=body.zip_code,
         city=body.city,
     )
+    if body.iban is not None:
+        person.iban = body.iban
+    if body.bic is not None:
+        person.bic = body.bic
+    if body.bank_name is not None:
+        person.bank_name = body.bank_name
+
     person = await repo.create(person)
+    return _to_out(person)
+
+
+@router.put("/{person_id}", response_model=PersonOut)
+async def update_person(
+    person_id: uuid.UUID,
+    body: PersonUpdate,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_db),
+):
+    repo = PersonRepository(db, auth.organization_id)
+    person = await repo.get_by_id(person_id)
+    if person is None:
+        raise HTTPException(status_code=404, detail="Person not found")
+
+    for field in (
+        "first_name", "last_name", "company_name", "email", "phone",
+        "street", "zip_code", "city", "iban", "bic", "bank_name",
+    ):
+        val = getattr(body, field)
+        if val is not None:
+            setattr(person, field, val)
+
+    await db.flush()
     return _to_out(person)
 
 
@@ -100,4 +151,7 @@ def _to_out(p: Person) -> PersonOut:
         street=p.street,
         zip_code=p.zip_code,
         city=p.city,
+        iban=p.iban,
+        bic=p.bic,
+        bank_name=p.bank_name,
     )

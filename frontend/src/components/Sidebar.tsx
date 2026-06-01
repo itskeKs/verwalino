@@ -35,6 +35,20 @@ export function Sidebar({ open, onClose }: Props) {
           </NavLink>
         </li>
 
+        {/* M1 Stammdaten */}
+        <li className="sidebar__divider" />
+        <li className="sidebar__section-label">Stammdaten</li>
+        <li>
+          <NavLink to="/objekte" className={navLinkClass} onClick={onClose}>
+            Objekte
+          </NavLink>
+        </li>
+        <li>
+          <NavLink to="/personen" className={navLinkClass} onClick={onClose}>
+            Personen
+          </NavLink>
+        </li>
+
         {/* Admin-only section */}
         {isAdmin && (
           <>

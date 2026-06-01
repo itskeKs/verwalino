@@ -44,6 +44,15 @@ class UnitCreate(BaseModel):
     mea: str | None = None
 
 
+class UnitUpdate(BaseModel):
+    number: str | None = None
+    location: str | None = None
+    area: str | None = None
+    heated_area: str | None = None
+    usage_type: str | None = None
+    mea: str | None = None
+
+
 @router.get("", response_model=list[UnitOut])
 async def list_units(
     property_id: uuid.UUID | None = None,
@@ -89,6 +98,38 @@ async def create_unit(
         mea=Decimal(body.mea) if body.mea else None,
     )
     unit = await repo.create(unit)
+    return _to_out(unit)
+
+
+@router.put("/{unit_id}", response_model=UnitOut)
+async def update_unit(
+    unit_id: uuid.UUID,
+    body: UnitUpdate,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_db),
+):
+    repo = UnitRepository(db, auth.organization_id)
+    unit = await repo.get_by_id(unit_id)
+    if unit is None:
+        raise HTTPException(status_code=404, detail="Unit not found")
+
+    if body.usage_type is not None:
+        _validate_usage_type(body.usage_type)
+
+    if body.number is not None:
+        unit.number = body.number
+    if body.location is not None:
+        unit.location = body.location
+    if body.usage_type is not None:
+        unit.usage_type = body.usage_type
+    if body.area is not None:
+        unit.area = Decimal(body.area)
+    if body.heated_area is not None:
+        unit.heated_area = Decimal(body.heated_area)
+    if body.mea is not None:
+        unit.mea = Decimal(body.mea)
+
+    await db.flush()
     return _to_out(unit)
 
 

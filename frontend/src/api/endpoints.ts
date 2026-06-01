@@ -8,6 +8,22 @@ import type {
   LoginResponse,
   Organization,
   Mandate,
+  Property,
+  PropertyCreate,
+  PropertyUpdate,
+  Unit,
+  UnitCreate,
+  UnitUpdate,
+  Person,
+  PersonCreate,
+  PersonUpdate,
+  OwnerProfile,
+  TenantProfile,
+  Vendor,
+  OwnershipRecord,
+  OwnershipCreate,
+  LeaseRecord,
+  LeaseCreate,
 } from "./types";
 
 export function login(body: LoginRequest): Promise<LoginResponse> {
@@ -24,4 +40,114 @@ export function getMyOrganization(): Promise<Organization> {
 
 export function listMandates(): Promise<Mandate[]> {
   return api.get<Mandate[]>("/api/mandates");
+}
+
+// --- Properties ---
+
+export function listProperties(): Promise<Property[]> {
+  return api.get<Property[]>("/api/properties");
+}
+
+export function getProperty(id: string): Promise<Property> {
+  return api.get<Property>(`/api/properties/${id}`);
+}
+
+export function createProperty(body: PropertyCreate): Promise<Property> {
+  return api.post<Property>("/api/properties", body);
+}
+
+export function updateProperty(id: string, body: PropertyUpdate): Promise<Property> {
+  return api.put<Property>(`/api/properties/${id}`, body);
+}
+
+// --- Units ---
+
+export function listUnits(propertyId?: string): Promise<Unit[]> {
+  const qs = propertyId ? `?property_id=${propertyId}` : "";
+  return api.get<Unit[]>(`/api/units${qs}`);
+}
+
+export function getUnit(id: string): Promise<Unit> {
+  return api.get<Unit>(`/api/units/${id}`);
+}
+
+export function createUnit(body: UnitCreate): Promise<Unit> {
+  return api.post<Unit>("/api/units", body);
+}
+
+export function updateUnit(id: string, body: UnitUpdate): Promise<Unit> {
+  return api.put<Unit>(`/api/units/${id}`, body);
+}
+
+// --- Persons ---
+
+export function listPersons(): Promise<Person[]> {
+  return api.get<Person[]>("/api/persons");
+}
+
+export function getPerson(id: string): Promise<Person> {
+  return api.get<Person>(`/api/persons/${id}`);
+}
+
+export function createPerson(body: PersonCreate): Promise<Person> {
+  return api.post<Person>("/api/persons", body);
+}
+
+export function updatePerson(id: string, body: PersonUpdate): Promise<Person> {
+  return api.put<Person>(`/api/persons/${id}`, body);
+}
+
+// --- Owner Profiles ---
+
+export function listOwnerProfiles(personId?: string): Promise<OwnerProfile[]> {
+  const qs = personId ? `?person_id=${personId}` : "";
+  return api.get<OwnerProfile[]>(`/api/owner-profiles${qs}`);
+}
+
+export function createOwnerProfile(personId: string, notes?: string): Promise<OwnerProfile> {
+  return api.post<OwnerProfile>("/api/owner-profiles", { person_id: personId, notes: notes ?? "" });
+}
+
+// --- Tenant Profiles ---
+
+export function listTenantProfiles(personId?: string): Promise<TenantProfile[]> {
+  const qs = personId ? `?person_id=${personId}` : "";
+  return api.get<TenantProfile[]>(`/api/tenant-profiles${qs}`);
+}
+
+export function createTenantProfile(personId: string, notes?: string): Promise<TenantProfile> {
+  return api.post<TenantProfile>("/api/tenant-profiles", { person_id: personId, notes: notes ?? "" });
+}
+
+// --- Vendors ---
+
+export function listVendors(personId?: string): Promise<Vendor[]> {
+  const qs = personId ? `?person_id=${personId}` : "";
+  return api.get<Vendor[]>(`/api/vendors${qs}`);
+}
+
+export function createVendor(body: { person_id: string; tax_id?: string; vat_id?: string; notes?: string }): Promise<Vendor> {
+  return api.post<Vendor>("/api/vendors", body);
+}
+
+// --- Ownership History ---
+
+export function listOwnership(unitId?: string): Promise<OwnershipRecord[]> {
+  const qs = unitId ? `?unit_id=${unitId}` : "";
+  return api.get<OwnershipRecord[]>(`/api/ownership${qs}`);
+}
+
+export function createOwnership(body: OwnershipCreate): Promise<OwnershipRecord> {
+  return api.post<OwnershipRecord>("/api/ownership", body);
+}
+
+// --- Leases ---
+
+export function listLeases(unitId?: string): Promise<LeaseRecord[]> {
+  const qs = unitId ? `?unit_id=${unitId}` : "";
+  return api.get<LeaseRecord[]>(`/api/leases${qs}`);
+}
+
+export function createLease(body: LeaseCreate): Promise<LeaseRecord> {
+  return api.post<LeaseRecord>("/api/leases", body);
 }

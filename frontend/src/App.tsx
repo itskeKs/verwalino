@@ -13,6 +13,11 @@ import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { MandatePage } from "./pages/MandatePage";
 import { UsersPage } from "./pages/UsersPage";
+import { PropertiesPage } from "./pages/PropertiesPage";
+import { PropertyDetailPage } from "./pages/PropertyDetailPage";
+import { UnitDetailPage } from "./pages/UnitDetailPage";
+import { PersonsPage } from "./pages/PersonsPage";
+import { PersonDetailPage } from "./pages/PersonDetailPage";
 
 function AppRoutes() {
   const { loading, session } = useAuth();
@@ -32,6 +37,11 @@ function AppRoutes() {
       <Routes>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/mandate" element={<MandatePage />} />
+        <Route path="/objekte" element={<PropertiesPage />} />
+        <Route path="/objekte/:propertyId" element={<PropertyDetailPage />} />
+        <Route path="/objekte/:propertyId/einheiten/:unitId" element={<UnitDetailPage />} />
+        <Route path="/personen" element={<PersonsPage />} />
+        <Route path="/personen/:personId" element={<PersonDetailPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

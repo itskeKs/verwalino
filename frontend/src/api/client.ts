@@ -54,4 +54,13 @@ export const api = {
       body: body ? JSON.stringify(body) : undefined,
     });
   },
+  put<T>(url: string, body?: unknown): Promise<T> {
+    return request<T>(url, {
+      method: "PUT",
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  },
+  delete<T>(url: string): Promise<T> {
+    return request<T>(url, { method: "DELETE" });
+  },
 };
