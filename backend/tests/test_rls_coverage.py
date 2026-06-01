@@ -13,7 +13,14 @@ from sqlalchemy import text
 
 # Central table registry -- kept in sync with migrations.
 # Every tenant-behaftet table must be listed here.
-TENANT_TABLES = frozenset({"user", "membership", "management_mandate", "audit_event"})
+TENANT_TABLES = frozenset({
+    # M0
+    "user", "membership", "management_mandate", "audit_event",
+    # M1 Stammdaten
+    "property", "unit", "person", "owner_profile", "tenant_profile",
+    "vendor", "ownership_history", "lease_agreement", "bank_account",
+    "meter", "meter_reading",
+})
 
 # Global tables that intentionally have no RLS.
 GLOBAL_TABLES = frozenset({"organization"})

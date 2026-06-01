@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 
 from app.api import auth, organizations, users, mandates
+from app.api import properties, units, persons, ownership, leases
 
 app = FastAPI(
     title="Hausverwaltung MVP",
@@ -16,6 +17,13 @@ app.include_router(auth.router)
 app.include_router(organizations.router)
 app.include_router(users.router)
 app.include_router(mandates.router)
+
+# M1 Stammdaten
+app.include_router(properties.router)
+app.include_router(units.router)
+app.include_router(persons.router)
+app.include_router(ownership.router)
+app.include_router(leases.router)
 
 
 @app.get("/api/health")

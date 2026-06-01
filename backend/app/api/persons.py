@@ -1,0 +1,103 @@
+"""Person endpoints -- CRUD within the current organization."""
+
+from __future__ import annotations
+
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.tenant import (
+    AuthContext,
+    get_current_user,
+    get_db,
+    require_write_dep,
+)
+from app.repositories.person_repo import PersonRepository
+from app.models.person import Person
+
+router = APIRouter(prefix="/api/persons", tags=["persons"])
+
+
+class PersonOut(BaseModel):
+    id: str
+    first_name: str
+    last_name: str
+    company_name: str | None
+    email: str | None
+    phone: str | None
+    street: str
+    zip_code: str
+    city: str
+
+    model_config = {"from_attributes": True}
+
+
+class PersonCreate(BaseModel):
+    first_name: str = ""
+    last_name: str
+    company_name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    street: str = ""
+    zip_code: str = ""
+    city: str = ""
+
+
+@router.get("", response_model=list[PersonOut])
+async def list_persons(
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    repo = PersonRepository(db, auth.organization_id)
+    items = await repo.list_all()
+    return [_to_out(p) for p in items]
+
+
+@router.get("/{person_id}", response_model=PersonOut)
+async def get_person(
+    person_id: uuid.UUID,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    repo = PersonRepository(db, auth.organization_id)
+    p = await repo.get_by_id(person_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="Person not found")
+    return _to_out(p)
+
+
+@router.post("", response_model=PersonOut, status_code=201)
+async def create_person(
+    body: PersonCreate,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_db),
+):
+    repo = PersonRepository(db, auth.organization_id)
+    person = Person(
+        first_name=body.first_name,
+        last_name=body.last_name,
+        company_name=body.company_name,
+        email=body.email,
+        phone=body.phone,
+        street=body.street,
+        zip_code=body.zip_code,
+        city=body.city,
+    )
+    person = await repo.create(person)
+    return _to_out(person)
+
+
+def _to_out(p: Person) -> PersonOut:
+    return PersonOut(
+        id=str(p.id),
+        first_name=p.first_name,
+        last_name=p.last_name,
+        company_name=p.company_name,
+        email=p.email,
+        phone=p.phone,
+        street=p.street,
+        zip_code=p.zip_code,
+        city=p.city,
+    )
