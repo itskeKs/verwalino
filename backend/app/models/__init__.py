@@ -17,6 +17,11 @@ from app.models.lease_agreement import LeaseAgreement
 from app.models.bank_account import BankAccount
 from app.models.meter import Meter, MeterReading
 
+# M2 Kosten & GoBD-Belegfluss
+from app.models.cost_category import CostCategory
+from app.models.cost_entry import CostEntry
+from app.models.invoice_document import InvoiceDocument
+
 __all__ = [
     "Base",
     "Organization",
@@ -36,4 +41,8 @@ __all__ = [
     "BankAccount",
     "Meter",
     "MeterReading",
+    # M2
+    "CostCategory",
+    "CostEntry",
+    "InvoiceDocument",
 ]

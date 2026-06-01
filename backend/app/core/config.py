@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     session_cookie_name: str = "hv_session"
     session_max_age_seconds: int = 8 * 3600  # 8 hours
 
+    # --- Document Storage ---
+    document_storage_root: str = "/tmp/hv-documents"
+
     # --- Region / Compliance ---
     data_region: str = "EU"
 

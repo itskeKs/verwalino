@@ -20,10 +20,12 @@ TENANT_TABLES = frozenset({
     "property", "unit", "person", "owner_profile", "tenant_profile",
     "vendor", "ownership_history", "lease_agreement", "bank_account",
     "meter", "meter_reading",
+    # M2 Kosten & GoBD-Belegfluss
+    "cost_entry", "invoice_document",
 })
 
 # Global tables that intentionally have no RLS.
-GLOBAL_TABLES = frozenset({"organization"})
+GLOBAL_TABLES = frozenset({"organization", "cost_category"})
 
 # Alembic's internal table (not a domain table).
 INFRASTRUCTURE_TABLES = frozenset({"alembic_version"})
