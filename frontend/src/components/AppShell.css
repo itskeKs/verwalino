@@ -1,0 +1,39 @@
+/* --- App Shell Layout --- */
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.app-shell__body {
+  display: flex;
+  flex: 1;
+  position: relative;
+}
+
+.app-shell__content {
+  flex: 1;
+  padding: 1.5rem 2rem;
+  overflow-y: auto;
+  background: var(--bg-content);
+}
+
+/* ---- Sidebar overlay (mobile) ---- */
+.sidebar-overlay {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .sidebar-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    background: rgba(0, 0, 0, 0.35);
+  }
+
+  .app-shell__content {
+    padding: 1rem;
+  }
+}

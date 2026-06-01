@@ -1,0 +1,155 @@
+/* --- Global Design Tokens & Reset --- */
+
+:root {
+  --color-primary: #1e5799;
+  --color-primary-dark: #153e6b;
+  --bg-content: #f5f6f8;
+  --bg-sidebar: #ffffff;
+  --bg-hover: #f0f1f4;
+  --bg-active: #e8edf4;
+  --text: #333;
+  --text-muted: #888;
+  --border: #dde0e5;
+
+  --sans: system-ui, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, Consolas, monospace;
+
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg-content);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+h1 {
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin: 0 0 1rem;
+}
+
+h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0 0 0.75rem;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  background: #eee;
+  padding: 0.15em 0.35em;
+  border-radius: 3px;
+}
+
+/* --- Shared utility classes --- */
+
+.card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1.25rem;
+}
+
+.error-text {
+  color: #b71c1c;
+}
+
+.empty-hint {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* --- Info table (key-value) --- */
+
+.info-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.info-table td {
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.info-table td:first-child {
+  font-weight: 600;
+  width: 140px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+/* --- Data table --- */
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.data-table th {
+  text-align: left;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  padding: 0.5rem 0.6rem;
+  border-bottom: 2px solid var(--border);
+}
+
+.data-table td {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table tbody tr:hover {
+  background: var(--bg-hover);
+}
+
+/* --- Badges --- */
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.badge--weg {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.badge--miet {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.badge--sev {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+/* --- Responsive helpers --- */
+
+@media (max-width: 768px) {
+  .data-table {
+    font-size: 0.8rem;
+  }
+}

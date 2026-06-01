@@ -14,6 +14,7 @@ dependencies = [
     "pydantic-settings>=2.0,<3",
     "itsdangerous>=2.2,<3",
     "python-multipart>=0.0.18",
+    "weasyprint>=63,<65",
 ]
 
 [project.optional-dependencies]
