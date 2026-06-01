@@ -22,6 +22,8 @@ TENANT_TABLES = frozenset({
     "meter", "meter_reading",
     # M2 Kosten & GoBD-Belegfluss
     "cost_entry", "invoice_document",
+    # M3 Verteilungs-/Abrechnungs-Engine
+    "settlement_run", "settlement_line",
 })
 
 # Global tables that intentionally have no RLS.

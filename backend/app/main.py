@@ -6,6 +6,7 @@ from app.api import auth, organizations, users, mandates
 from app.api import properties, units, persons, ownership, leases
 from app.api import owner_profiles, tenant_profiles, vendors
 from app.api import cost_categories, cost_entries, invoice_documents
+from app.api import settlements
 from app.core.extraction import set_extractor
 from app.core.pdf_extraction import PdfTextExtractor
 
@@ -39,6 +40,9 @@ app.include_router(vendors.router)
 app.include_router(cost_categories.router)
 app.include_router(cost_entries.router)
 app.include_router(invoice_documents.router)
+
+# M3 Verteilungs-/Abrechnungs-Engine (Betriebskostenabrechnung Mieter)
+app.include_router(settlements.router)
 
 
 @app.get("/api/health")

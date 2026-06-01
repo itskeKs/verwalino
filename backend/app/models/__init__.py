@@ -22,6 +22,10 @@ from app.models.cost_category import CostCategory
 from app.models.cost_entry import CostEntry
 from app.models.invoice_document import InvoiceDocument
 
+# M3 Verteilungs-/Abrechnungs-Engine (Betriebskostenabrechnung Mieter)
+from app.models.settlement_run import SettlementRun
+from app.models.settlement_line import SettlementLine
+
 __all__ = [
     "Base",
     "Organization",
@@ -45,4 +49,7 @@ __all__ = [
     "CostCategory",
     "CostEntry",
     "InvoiceDocument",
+    # M3
+    "SettlementRun",
+    "SettlementLine",
 ]

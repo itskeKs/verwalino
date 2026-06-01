@@ -33,3 +33,8 @@ build/
 
 # Logs
 *.log
+
+# Lokale Dev-Tools (maschinenspezifisch)
+.claude/launch.json
+document_storage/
+

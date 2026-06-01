@@ -1,0 +1,75 @@
+/* Betriebskostenabrechnung (M3) -- PDF stylesheet for WeasyPrint.
+   Document-style layout: clear tables, German money formatting handled in the
+   service. Deterministic rendering (WeasyPrint) -> matches the frozen snapshot. */
+
+@page {
+    size: A4;
+    margin: 2cm 1.8cm 2.2cm 1.8cm;
+    @bottom-center {
+        content: "Seite " counter(page) " von " counter(pages);
+        font-size: 8pt;
+        color: #666;
+    }
+}
+
+* { box-sizing: border-box; }
+
+body {
+    font-family: "Helvetica", "Arial", sans-serif;
+    font-size: 10pt;
+    color: #1a1a1a;
+    line-height: 1.4;
+}
+
+h1 {
+    font-size: 16pt;
+    margin: 0 0 0.2cm 0;
+}
+
+.subtitle { font-size: 11pt; color: #444; margin-bottom: 0.6cm; }
+
+.meta { width: 100%; margin-bottom: 0.6cm; font-size: 9.5pt; }
+.meta td { vertical-align: top; padding: 1px 0; }
+.meta .label { color: #555; width: 38%; }
+
+table.lines {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.3cm;
+    font-size: 9pt;
+}
+table.lines th, table.lines td {
+    border-bottom: 0.5pt solid #ccc;
+    padding: 4px 5px;
+    text-align: left;
+    vertical-align: top;
+}
+table.lines th {
+    background: #f0f0f0;
+    border-bottom: 1pt solid #999;
+    font-weight: bold;
+}
+td.num, th.num { text-align: right; white-space: nowrap; }
+
+tr.summary td {
+    border-top: 1pt solid #999;
+    border-bottom: none;
+    font-weight: bold;
+    padding-top: 6px;
+}
+tr.balance td {
+    border-top: 1.5pt solid #333;
+    font-weight: bold;
+    font-size: 10.5pt;
+    padding-top: 6px;
+}
+.note { color: #666; font-size: 8pt; font-style: italic; }
+
+.hint {
+    margin-top: 0.8cm;
+    font-size: 8pt;
+    color: #555;
+    border-top: 0.5pt solid #ccc;
+    padding-top: 0.3cm;
+}
+.integrity { font-size: 7.5pt; color: #888; margin-top: 0.4cm; word-break: break-all; }
