@@ -31,6 +31,10 @@ import type {
   CostEntryCorrectionCreate,
   InvoiceDocument,
   VerifyResult,
+  SettlementRun,
+  SettlementRunCreate,
+  AdvancePaymentsUpdate,
+  ComputeRequest,
 } from "./types";
 
 export function login(body: LoginRequest): Promise<LoginResponse> {
@@ -247,4 +251,59 @@ export function createInvoiceDocumentVersion(
  */
 export function invoiceDocumentContentUrl(id: string): string {
   return `/api/invoice-documents/${id}/content`;
+}
+
+// --- M3: Settlements ---
+
+export function listSettlements(propertyId?: string): Promise<SettlementRun[]> {
+  const qs = propertyId ? `?property_id=${encodeURIComponent(propertyId)}` : "";
+  return api.get<SettlementRun[]>(`/api/settlements${qs}`);
+}
+
+export function getSettlement(id: string): Promise<SettlementRun> {
+  return api.get<SettlementRun>(`/api/settlements/${id}`);
+}
+
+export function createSettlement(body: SettlementRunCreate): Promise<SettlementRun> {
+  return api.post<SettlementRun>("/api/settlements", body);
+}
+
+export function setAdvancePayments(
+  id: string,
+  body: AdvancePaymentsUpdate,
+): Promise<SettlementRun> {
+  return api.patch<SettlementRun>(`/api/settlements/${id}/advance-payments`, body);
+}
+
+export function computeSettlement(
+  id: string,
+  body?: ComputeRequest,
+): Promise<SettlementRun> {
+  return api.post<SettlementRun>(`/api/settlements/${id}/compute`, body ?? null);
+}
+
+export function previewSettlement(
+  id: string,
+  body?: ComputeRequest,
+): Promise<SettlementRun> {
+  return api.post<SettlementRun>(`/api/settlements/${id}/preview`, body ?? null);
+}
+
+export function finalizeSettlement(
+  id: string,
+  body?: ComputeRequest,
+): Promise<SettlementRun> {
+  return api.post<SettlementRun>(`/api/settlements/${id}/finalize`, body ?? null);
+}
+
+export function createSettlementCorrection(id: string): Promise<SettlementRun> {
+  return api.post<SettlementRun>(`/api/settlements/${id}/correction`);
+}
+
+/**
+ * Returns an authenticated URL for the settlement PDF (finalized runs only).
+ * Usage: open in new window (cookie-based auth).
+ */
+export function settlementPdfUrl(id: string): string {
+  return `/api/settlements/${id}/pdf`;
 }

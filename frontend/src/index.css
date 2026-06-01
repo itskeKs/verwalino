@@ -151,6 +151,13 @@ code {
   color: #6a1b9a;
 }
 
+/* M3 settlement status badges */
+
+.badge--finalized {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
 /* M2 cost entry status badges */
 
 .badge--draft {

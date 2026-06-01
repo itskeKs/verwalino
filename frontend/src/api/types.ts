@@ -346,3 +346,86 @@ export interface VerifyResult {
   integrity_ok: boolean;
   content_sha256: string;
 }
+
+// --- M3 Settlements ---
+
+export type SettlementStatus = "draft" | "finalized";
+
+export interface SettlementLine {
+  id: string;
+  line_type: string;
+  cost_category_code: string | null;
+  label: string;
+  distribution_key: string | null;
+  total_amount: string | null;
+  distribution_base_total: string | null;
+  distribution_base_share: string | null;
+  time_share_days: number | null;
+  time_share_total_days: number | null;
+  amount: string;
+  sort_order: number;
+  note: string | null;
+}
+
+export interface SettlementRun {
+  id: string;
+  organization_id: string;
+  property_id: string;
+  management_mandate_id: string | null;
+  run_type: string;
+  period_start: string;
+  period_end: string;
+  unit_id: string | null;
+  lease_agreement_id: string | null;
+  tenant_profile_id: string | null;
+  advance_payments_total: string | null;
+  advance_payments_source: string;
+  total_cost: string | null;
+  balance: string | null;
+  status: SettlementStatus;
+  snapshot_sha256: string | null;
+  engine_version: string;
+  finalized_at: string | null;
+  finalized_by: string | null;
+  superseded_by_id: string | null;
+  lines: SettlementLine[];
+}
+
+export interface SettlementRunCreate {
+  property_id: string;
+  lease_agreement_id: string;
+  period_start: string;
+  period_end: string;
+  advance_payments_total?: string | null;
+  management_mandate_id?: string | null;
+}
+
+export interface AdvancePaymentsUpdate {
+  advance_payments_total: string;
+}
+
+export interface ExternalAmountIn {
+  cost_entry_id: string;
+  unit_id: string;
+  tenant_amount: string;
+  period_from?: string | null;
+  period_to?: string | null;
+}
+
+export interface ManualAmountIn {
+  cost_entry_id: string;
+  unit_id: string;
+  amount: string;
+}
+
+export interface UnitMetricIn {
+  unit_id: string;
+  consumption?: string | null;
+  person_count?: number | null;
+}
+
+export interface ComputeRequest {
+  external_amounts: ExternalAmountIn[];
+  manual_amounts: ManualAmountIn[];
+  unit_metrics: UnitMetricIn[];
+}

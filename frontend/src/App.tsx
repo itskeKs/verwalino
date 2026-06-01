@@ -22,6 +22,8 @@ import { CostEntriesPage } from "./pages/CostEntriesPage";
 import { CostEntryDetailPage } from "./pages/CostEntryDetailPage";
 import { InvoiceDocumentsPage } from "./pages/InvoiceDocumentsPage";
 import { InvoiceDocumentDetailPage } from "./pages/InvoiceDocumentDetailPage";
+import { SettlementsPage } from "./pages/SettlementsPage";
+import { SettlementDetailPage } from "./pages/SettlementDetailPage";
 
 function AppRoutes() {
   const { loading, session } = useAuth();
@@ -50,6 +52,8 @@ function AppRoutes() {
         <Route path="/kosten/:entryId" element={<CostEntryDetailPage />} />
         <Route path="/belege" element={<InvoiceDocumentsPage />} />
         <Route path="/belege/:docId" element={<InvoiceDocumentDetailPage />} />
+        <Route path="/abrechnungen" element={<SettlementsPage />} />
+        <Route path="/abrechnungen/:runId" element={<SettlementDetailPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

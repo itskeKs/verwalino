@@ -63,6 +63,15 @@ export function Sidebar({ open, onClose }: Props) {
           </NavLink>
         </li>
 
+        {/* M3 Abrechnungen */}
+        <li className="sidebar__divider" />
+        <li className="sidebar__section-label">Abrechnungen</li>
+        <li>
+          <NavLink to="/abrechnungen" className={navLinkClass} onClick={onClose}>
+            Abrechnungen
+          </NavLink>
+        </li>
+
         {/* Admin-only section */}
         {isAdmin && (
           <>
