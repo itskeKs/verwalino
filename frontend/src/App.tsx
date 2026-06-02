@@ -35,6 +35,8 @@ import { PaymentsPage } from "./pages/PaymentsPage";
 import { PaymentDetailPage } from "./pages/PaymentDetailPage";
 import { MietkontoPage } from "./pages/MietkontoPage";
 import { OpenItemsPage } from "./pages/OpenItemsPage";
+import { DunningNoticesPage } from "./pages/DunningNoticesPage";
+import { DunningNoticeDetailPage } from "./pages/DunningNoticeDetailPage";
 
 function AppRoutes() {
   const { loading, session } = useAuth();
@@ -76,6 +78,8 @@ function AppRoutes() {
         <Route path="/zahlungen/:paymentId" element={<PaymentDetailPage />} />
         <Route path="/mietkonto" element={<MietkontoPage />} />
         <Route path="/offene-posten" element={<OpenItemsPage />} />
+        <Route path="/mahnungen" element={<DunningNoticesPage />} />
+        <Route path="/mahnungen/:dunningId" element={<DunningNoticeDetailPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

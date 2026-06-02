@@ -297,10 +297,19 @@ export function OpenItemsPage() {
             </table>
           </div>
 
-          <div style={{ marginTop: "0.5rem" }}>
+          <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
             <Link to={`/mietkonto`} className="btn btn--small">
               Zum Mietkonto
             </Link>
+            {r.totalOpen > 0 && (
+              <Link
+                to={`/mahnungen?create=tenant&tenant_profile_id=${encodeURIComponent(r.lease.tenant_profile_id)}&lease_agreement_id=${encodeURIComponent(r.lease.id)}&period_start=${encodeURIComponent(periodStart)}&period_end=${encodeURIComponent(periodEnd)}`}
+                className="btn btn--small"
+                style={{ color: "#b71c1c" }}
+              >
+                Mahnung erstellen
+              </Link>
+            )}
           </div>
         </div>
       ))}

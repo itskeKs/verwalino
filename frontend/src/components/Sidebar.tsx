@@ -114,6 +114,11 @@ export function Sidebar({ open, onClose }: Props) {
             Offene Posten
           </NavLink>
         </li>
+        <li>
+          <NavLink to="/mahnungen" className={navLinkClass} onClick={onClose}>
+            Mahnungen
+          </NavLink>
+        </li>
 
         {/* Admin-only section */}
         {isAdmin && (

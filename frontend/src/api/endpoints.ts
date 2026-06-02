@@ -49,6 +49,9 @@ import type {
   PaymentCreate,
   OpenItem,
   MietkontoResult,
+  DunningNotice,
+  DunningCreateTenant,
+  DunningCreateOwner,
 } from "./types";
 
 export function login(body: LoginRequest): Promise<LoginResponse> {
@@ -503,4 +506,45 @@ export function setAdvancePaymentsDerived(
   return api.patch<SettlementRun>(
     `/api/settlements/${settlementRunId}/advance-payments-derived?period_year=${periodYear}`,
   );
+}
+
+// --- M7: Dunning (Mahnwesen) ---
+
+export function listDunningNotices(params?: {
+  tenant_profile_id?: string;
+  owner_profile_id?: string;
+  level?: number;
+  status?: string;
+}): Promise<DunningNotice[]> {
+  const parts: string[] = [];
+  if (params?.tenant_profile_id) parts.push(`tenant_profile_id=${encodeURIComponent(params.tenant_profile_id)}`);
+  if (params?.owner_profile_id) parts.push(`owner_profile_id=${encodeURIComponent(params.owner_profile_id)}`);
+  if (params?.level) parts.push(`level=${params.level}`);
+  if (params?.status) parts.push(`status=${encodeURIComponent(params.status)}`);
+  const qs = parts.length > 0 ? `?${parts.join("&")}` : "";
+  return api.get<DunningNotice[]>(`/api/dunning${qs}`);
+}
+
+export function getDunningNotice(id: string): Promise<DunningNotice> {
+  return api.get<DunningNotice>(`/api/dunning/${id}`);
+}
+
+export function createDunningForTenant(body: DunningCreateTenant): Promise<DunningNotice> {
+  return api.post<DunningNotice>("/api/dunning/tenant", body);
+}
+
+export function createDunningForOwner(body: DunningCreateOwner): Promise<DunningNotice> {
+  return api.post<DunningNotice>("/api/dunning/owner", body);
+}
+
+export function issueDunningNotice(id: string): Promise<DunningNotice> {
+  return api.post<DunningNotice>(`/api/dunning/${id}/issue`);
+}
+
+export function deleteDunningNotice(id: string): Promise<void> {
+  return api.delete<void>(`/api/dunning/${id}`);
+}
+
+export function dunningPdfUrl(id: string): string {
+  return `/api/dunning/${id}/pdf`;
 }

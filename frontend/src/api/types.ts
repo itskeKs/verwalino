@@ -601,6 +601,57 @@ export interface MietkontoResult {
   balance: string;
 }
 
+// --- M7 Dunning (Mahnwesen) ---
+
+export type DunningStatus = "draft" | "issued";
+
+export interface DunningNotice {
+  id: string;
+  organization_id: string;
+  tenant_profile_id: string | null;
+  owner_profile_id: string | null;
+  level: number;
+  issue_date: string;
+  due_date: string;
+  principal_amount: string;
+  fee_amount: string;
+  total_amount: string;
+  included_items: DunningIncludedItem[] | null;
+  status: DunningStatus;
+  issued_at: string | null;
+  issued_by: string | null;
+  note: string | null;
+}
+
+export interface DunningIncludedItem {
+  period_year: number | null;
+  period_month: number | null;
+  payment_type: string;
+  soll: string;
+  ist: string;
+  open_amount: string;
+}
+
+export interface DunningCreateTenant {
+  tenant_profile_id: string;
+  lease_agreement_id: string;
+  period_start: string;
+  period_end: string;
+  reference_date?: string | null;
+  grace_days?: number;
+  override_fee?: string | null;
+}
+
+export interface DunningCreateOwner {
+  owner_profile_id: string;
+  period_start: string;
+  period_end: string;
+  economic_plan_id?: string | null;
+  reference_date?: string | null;
+  grace_days?: number;
+  override_fee?: string | null;
+}
+
 // --- M4 WEG: Jahresabrechnung + Vermoegensbericht (settlement_run run_types) ---
 
 export interface WegLine {
