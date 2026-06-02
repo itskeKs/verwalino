@@ -1,8 +1,16 @@
 # Roadmap: Hausverwaltungssoftware MVP
 
-Stand: 2026-06-01 · Bezug: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2
+Stand: 2026-06-02 · Bezug: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2
 
 Diese Roadmap sequenziert den in der SDD beschriebenen Funktionsumfang. Sie ist ein Planungsdokument und ändert nicht den fachlichen Anspruch der SDD — sie legt fest, **in welcher Reihenfolge** gebaut wird und **wann es einen vorzeigbaren Stand** gibt.
+
+## Umsetzungsstand (2026-06-02)
+
+**Alle Milestones M0–M9 sind implementiert (Backend + Frontend) und committet** — Releases A, B und C feature-komplett. Stand der Backend-Testsuite: **462 Tests grün** (reine Engine-Golden-/Invarianten-Tests + DB-Integration: RLS-Mandantentrennung, GoBD-Unveränderbarkeit, RBAC). Architekturentscheidungen in ADR-0001…0012.
+
+**Offen (kein Code mehr, sondern Abnahme):**
+- **Fachliche/rechtliche Abnahme** aller mit **[§18/fachlich]** markierten Annahmen durch Steuerberater:in / Fachanwalt:anwältin / DSB (u. a. Aufbewahrungs-Startdatum/-dauer, WEG-Fristen, Anonymisierungstiefe, Verteilungs-Detailfragen, Mahngebühren).
+- **Zurückgestellter Feinschliff** (dokumentiert, nicht kritisch): Snapshot-Namens-Einfrieren, E-Rechnung-Quelle/Badge im UI, Bankkontostände im Vermögensbericht, DSGVO-Create-Pfad-Sperre (ADR-0012 §8).
 
 ## Leitprinzipien der Reihenfolge
 
