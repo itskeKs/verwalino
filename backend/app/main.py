@@ -10,6 +10,7 @@ from app.api import settlements
 from app.api import economic_plans, weg_settlements
 from app.core.extraction import set_extractor
 from app.core.pdf_extraction import PdfTextExtractor
+from app.core.einvoice import RoutingExtractor
 
 app = FastAPI(
     title="Hausverwaltung MVP",
@@ -18,8 +19,9 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
-# --- Register real PDF extractor as default (replaces StubExtractor) ---
-set_extractor(PdfTextExtractor())
+# --- Register the routing extractor as default (M5): E-Rechnung (XRechnung/
+# ZUGFeRD) is parsed structurally; everything else falls back to PDF text/OCR. ---
+set_extractor(RoutingExtractor(PdfTextExtractor()))
 
 # --- Routers ---
 app.include_router(auth.router)

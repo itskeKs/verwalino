@@ -38,6 +38,12 @@ class ExtractionResult:
     confidence: float = 0.0
     field_confidences: dict[str, float] = field(default_factory=dict)
     raw_text: str | None = None
+    # M5: structured e-invoice marker. is_einvoice=True means the fields were
+    # parsed from a structured EN-16931 document (XRechnung/ZUGFeRD), not OCR;
+    # source_format records the concrete format ("XRECHNUNG_UBL", "XRECHNUNG_CII",
+    # "ZUGFERD"). The frontend can set cost_entry.source='E_INVOICE' from this.
+    is_einvoice: bool = False
+    source_format: str | None = None
 
     def to_dict(self) -> dict:
         """Serialize to a dict suitable for JSONB storage."""
@@ -54,6 +60,8 @@ class ExtractionResult:
             "confidence": self.confidence,
             "field_confidences": self.field_confidences,
             "raw_text": self.raw_text,
+            "is_einvoice": self.is_einvoice,
+            "source_format": self.source_format,
         }
 
 
