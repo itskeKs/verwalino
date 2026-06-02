@@ -34,6 +34,15 @@ from app.models.economic_plan_line import EconomicPlanLine
 # M6 Zahlungen, Mietkonto & offene Posten
 from app.models.payment import Payment
 
+# M7 Mahnwesen
+from app.models.dunning_notice import DunningNotice
+
+# M8 Eigentümerversammlung & Beschluss-Sammlung
+from app.models.owners_meeting import OwnersMeeting
+from app.models.agenda_item import AgendaItem
+from app.models.resolution import Resolution
+from app.models.resolution_register_entry import ResolutionRegisterEntry
+
 __all__ = [
     "Base",
     "Organization",
@@ -65,4 +74,11 @@ __all__ = [
     "EconomicPlanLine",
     # M6
     "Payment",
+    # M7
+    "DunningNotice",
+    # M8
+    "OwnersMeeting",
+    "AgendaItem",
+    "Resolution",
+    "ResolutionRegisterEntry",
 ]

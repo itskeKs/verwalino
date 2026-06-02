@@ -1,0 +1,105 @@
+/* Beschluss-Sammlung (Resolution Register) PDF styles -- M8 */
+/* Mirrors bk_abrechnung.css / mahnung.css structure */
+
+@page {
+  size: A4;
+  margin: 20mm 15mm 20mm 15mm;
+}
+
+body {
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 10pt;
+  line-height: 1.5;
+  color: #222;
+}
+
+h1 {
+  font-size: 16pt;
+  margin-bottom: 4pt;
+  color: #333;
+}
+
+.subtitle {
+  font-size: 10pt;
+  color: #666;
+  margin-bottom: 16pt;
+}
+
+/* Metadata table */
+table.meta {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 16pt;
+}
+
+table.meta td {
+  padding: 2pt 6pt;
+  vertical-align: top;
+}
+
+table.meta td.label {
+  width: 140pt;
+  font-weight: bold;
+  color: #555;
+}
+
+.meta-sub {
+  font-size: 9pt;
+  color: #777;
+}
+
+/* Register entries table */
+table.register {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 16pt;
+}
+
+table.register thead {
+  background: #f0f0f0;
+}
+
+table.register th {
+  text-align: left;
+  padding: 4pt 6pt;
+  font-size: 9pt;
+  color: #555;
+  border-bottom: 1pt solid #ccc;
+}
+
+table.register td {
+  padding: 4pt 6pt;
+  border-bottom: 0.5pt solid #eee;
+  font-size: 9.5pt;
+  vertical-align: top;
+}
+
+table.register td.num {
+  text-align: center;
+  width: 40pt;
+}
+
+table.register td.date {
+  width: 80pt;
+}
+
+table.register td.wording {
+  font-style: italic;
+}
+
+/* Challenge annotation */
+.challenge {
+  color: #b22222;
+  font-weight: bold;
+  font-size: 9pt;
+  margin-top: 2pt;
+}
+
+/* Hints / legal */
+.hint {
+  margin-top: 16pt;
+  font-size: 8.5pt;
+  color: #777;
+  border-top: 0.5pt solid #ddd;
+  padding-top: 8pt;
+}

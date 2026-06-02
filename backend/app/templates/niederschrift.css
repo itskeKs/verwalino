@@ -1,0 +1,121 @@
+/* Niederschrift (Versammlungsprotokoll) PDF styles -- M8 */
+/* Mirrors bk_abrechnung.css / mahnung.css structure */
+
+@page {
+  size: A4;
+  margin: 20mm 15mm 20mm 15mm;
+}
+
+body {
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 10pt;
+  line-height: 1.5;
+  color: #222;
+}
+
+h1 {
+  font-size: 16pt;
+  margin-bottom: 4pt;
+  color: #333;
+}
+
+h2 {
+  font-size: 12pt;
+  margin-top: 16pt;
+  margin-bottom: 4pt;
+  color: #444;
+  border-bottom: 0.5pt solid #ccc;
+  padding-bottom: 2pt;
+}
+
+.subtitle {
+  font-size: 10pt;
+  color: #666;
+  margin-bottom: 16pt;
+}
+
+/* Metadata table (Objekt, Datum, etc.) */
+table.meta {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 16pt;
+}
+
+table.meta td {
+  padding: 2pt 6pt;
+  vertical-align: top;
+}
+
+table.meta td.label {
+  width: 140pt;
+  font-weight: bold;
+  color: #555;
+}
+
+.meta-sub {
+  font-size: 9pt;
+  color: #777;
+}
+
+/* Agenda item (TOP) */
+.top {
+  margin-bottom: 12pt;
+  padding: 6pt 0;
+}
+
+.top-header {
+  font-weight: bold;
+  font-size: 10.5pt;
+  margin-bottom: 2pt;
+}
+
+.top-description {
+  font-size: 9.5pt;
+  color: #555;
+  margin-bottom: 4pt;
+}
+
+/* Resolution block within a TOP */
+.resolution {
+  margin: 6pt 0 6pt 12pt;
+  padding: 6pt 8pt;
+  border-left: 2pt solid #4a7fb5;
+  background: #f8fafc;
+}
+
+.resolution .wording {
+  font-style: italic;
+  margin-bottom: 4pt;
+}
+
+.resolution .votes {
+  font-size: 9pt;
+  color: #555;
+}
+
+.resolution .result {
+  font-weight: bold;
+  margin-top: 2pt;
+}
+
+.result-angenommen {
+  color: #2a7e3b;
+}
+
+.result-abgelehnt {
+  color: #b22222;
+}
+
+/* Standalone resolutions (not linked to a TOP) */
+.standalone-resolutions {
+  margin-top: 12pt;
+}
+
+/* Hints / legal */
+.hint {
+  margin-top: 16pt;
+  font-size: 8.5pt;
+  color: #777;
+  border-top: 0.5pt solid #ddd;
+  padding-top: 8pt;
+}

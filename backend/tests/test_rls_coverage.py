@@ -30,6 +30,11 @@ TENANT_TABLES = frozenset({
     "payment",
     # M7 Mahnwesen
     "dunning_notice",
+    # M8 Eigentümerversammlung & Beschluss-Sammlung
+    "owners_meeting",
+    "agenda_item",
+    "resolution",
+    "resolution_register_entry",
 })
 
 # Global tables that intentionally have no RLS.

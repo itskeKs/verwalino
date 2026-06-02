@@ -11,6 +11,7 @@ from app.api import economic_plans, weg_settlements
 from app.api import payments
 from app.api import bank_accounts
 from app.api import dunning
+from app.api import meetings
 from app.core.extraction import set_extractor
 from app.core.pdf_extraction import PdfTextExtractor
 from app.core.einvoice import RoutingExtractor
@@ -60,6 +61,9 @@ app.include_router(payments.router)
 
 # M7 Mahnwesen
 app.include_router(dunning.router)
+
+# M8 Eigentümerversammlung & Beschluss-Sammlung
+app.include_router(meetings.router)
 
 
 @app.get("/api/health")
