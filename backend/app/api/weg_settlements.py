@@ -216,6 +216,31 @@ def _run_out(run: SettlementRun, lines: list[SettlementLine]) -> WegRunOut:
 # ---------------------------------------------------------------------------
 # Shared read endpoints (both run types)
 # ---------------------------------------------------------------------------
+@router.get("", response_model=list[WegRunOut])
+async def list_weg_runs(
+    property_id: uuid.UUID | None = None,
+    run_type: str = "WEG_JAHRESABRECHNUNG",
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List active WEG runs of one run_type (WEG_JAHRESABRECHNUNG | VERMOEGENSBERICHT).
+
+    Lines are omitted in the list (load the detail for lines), mirroring the BK
+    settlements list. Superseded (corrected) runs are excluded.
+    """
+    if run_type not in ("WEG_JAHRESABRECHNUNG", "VERMOEGENSBERICHT"):
+        raise HTTPException(status_code=422, detail="invalid run_type")
+    runs_repo = SettlementRunRepository(db, auth.organization_id)
+    runs = await (
+        runs_repo.list_by_property(property_id) if property_id else runs_repo.list_active()
+    )
+    return [
+        _run_out(r, [])
+        for r in runs
+        if r.run_type == run_type and r.superseded_by_id is None
+    ]
+
+
 @router.get("/{run_id}", response_model=WegRunOut)
 async def get_weg_run(
     run_id: uuid.UUID,

@@ -429,3 +429,142 @@ export interface ComputeRequest {
   manual_amounts: ManualAmountIn[];
   unit_metrics: UnitMetricIn[];
 }
+
+// --- M4 WEG: Wirtschaftsplan (Economic Plan) ---
+
+export interface EconomicPlanLine {
+  id: string;
+  line_type: string;
+  cost_category_code: string | null;
+  owner_profile_id: string | null;
+  unit_id: string | null;
+  label: string;
+  distribution_key: string | null;
+  distribution_base_total: string | null;
+  distribution_base_share: string | null;
+  planned_amount: string;
+  monthly_amount: string | null;
+  cost_group: string | null;
+  sort_order: number;
+  note: string | null;
+}
+
+export interface EconomicPlan {
+  id: string;
+  organization_id: string;
+  property_id: string;
+  management_mandate_id: string | null;
+  plan_year: number;
+  period_start: string;
+  period_end: string;
+  monthly_due_day: number | null;
+  reserve_contribution_total: string;
+  status: SettlementStatus;
+  snapshot_sha256: string | null;
+  engine_version: string;
+  finalized_at: string | null;
+  finalized_by: string | null;
+  superseded_by_id: string | null;
+  lines: EconomicPlanLine[];
+}
+
+export interface EconomicPlanCreate {
+  property_id: string;
+  plan_year: number;
+  period_start: string;
+  period_end: string;
+  reserve_contribution_total?: string | null;
+  monthly_due_day?: number | null;
+  management_mandate_id?: string | null;
+}
+
+export interface PlannedCostIn {
+  category_code: string;
+  label: string;
+  planned_amount: string;
+  distribution_key?: string;
+  category_id?: string | null;
+  cost_group?: string;
+}
+
+export interface PlanComputeRequest {
+  planned_costs: PlannedCostIn[];
+  reserve_contribution_total: string;
+}
+
+// --- M4 WEG: Jahresabrechnung + Vermoegensbericht (settlement_run run_types) ---
+
+export interface WegLine {
+  id: string;
+  line_type: string;
+  addressee_owner_profile_id: string | null;
+  cost_category_code: string | null;
+  label: string;
+  distribution_key: string | null;
+  total_amount: string | null;
+  distribution_base_total: string | null;
+  distribution_base_share: string | null;
+  time_share_days: number | null;
+  time_share_total_days: number | null;
+  amount: string;
+  sort_order: number;
+  note: string | null;
+}
+
+export interface WegRun {
+  id: string;
+  organization_id: string;
+  property_id: string;
+  run_type: string;
+  period_start: string;
+  period_end: string;
+  economic_plan_id: string | null;
+  total_cost: string | null;
+  balance: string | null;
+  status: SettlementStatus;
+  snapshot_sha256: string | null;
+  engine_version: string;
+  finalized_at: string | null;
+  superseded_by_id: string | null;
+  lines: WegLine[];
+}
+
+export interface WegRunCreate {
+  property_id: string;
+  economic_plan_id: string;
+  period_start: string;
+  period_end: string;
+  management_mandate_id?: string | null;
+}
+
+export interface PaidAdvanceIn {
+  owner_profile_id: string;
+  paid_total: string;
+}
+
+export interface WegComputeRequest {
+  reserve_opening_balance: string;
+  reserve_withdrawals_total: string;
+  paid_advances: PaidAdvanceIn[];
+}
+
+export interface AssetReportCreate {
+  property_id: string;
+  period_start: string;
+  period_end: string;
+  management_mandate_id?: string | null;
+}
+
+export interface AssetItemIn {
+  label: string;
+  amount: string;
+}
+
+export interface AssetReportComputeRequest {
+  reserve_opening_balance: string;
+  reserve_withdrawals_total: string;
+  reserve_contributions_total: string;
+  bank_balances: never[];
+  receivables: AssetItemIn[];
+  payables: AssetItemIn[];
+}

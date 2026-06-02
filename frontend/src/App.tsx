@@ -24,6 +24,12 @@ import { InvoiceDocumentsPage } from "./pages/InvoiceDocumentsPage";
 import { InvoiceDocumentDetailPage } from "./pages/InvoiceDocumentDetailPage";
 import { SettlementsPage } from "./pages/SettlementsPage";
 import { SettlementDetailPage } from "./pages/SettlementDetailPage";
+import { EconomicPlansPage } from "./pages/EconomicPlansPage";
+import { EconomicPlanDetailPage } from "./pages/EconomicPlanDetailPage";
+import { WegSettlementsPage } from "./pages/WegSettlementsPage";
+import { WegSettlementDetailPage } from "./pages/WegSettlementDetailPage";
+import { AssetReportsPage } from "./pages/AssetReportsPage";
+import { AssetReportDetailPage } from "./pages/AssetReportDetailPage";
 
 function AppRoutes() {
   const { loading, session } = useAuth();
@@ -54,6 +60,12 @@ function AppRoutes() {
         <Route path="/belege/:docId" element={<InvoiceDocumentDetailPage />} />
         <Route path="/abrechnungen" element={<SettlementsPage />} />
         <Route path="/abrechnungen/:runId" element={<SettlementDetailPage />} />
+        <Route path="/wirtschaftsplaene" element={<EconomicPlansPage />} />
+        <Route path="/wirtschaftsplaene/:planId" element={<EconomicPlanDetailPage />} />
+        <Route path="/weg-abrechnungen" element={<WegSettlementsPage />} />
+        <Route path="/weg-abrechnungen/:runId" element={<WegSettlementDetailPage />} />
+        <Route path="/vermoegensberichte" element={<AssetReportsPage />} />
+        <Route path="/vermoegensberichte/:runId" element={<AssetReportDetailPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -35,6 +35,14 @@ import type {
   SettlementRunCreate,
   AdvancePaymentsUpdate,
   ComputeRequest,
+  EconomicPlan,
+  EconomicPlanCreate,
+  PlanComputeRequest,
+  WegRun,
+  WegRunCreate,
+  WegComputeRequest,
+  AssetReportCreate,
+  AssetReportComputeRequest,
 } from "./types";
 
 export function login(body: LoginRequest): Promise<LoginResponse> {
@@ -306,4 +314,81 @@ export function createSettlementCorrection(id: string): Promise<SettlementRun> {
  */
 export function settlementPdfUrl(id: string): string {
   return `/api/settlements/${id}/pdf`;
+}
+
+// --- M4: Economic Plans (Wirtschaftsplan) ---
+
+export function listEconomicPlans(propertyId?: string): Promise<EconomicPlan[]> {
+  const qs = propertyId ? `?property_id=${encodeURIComponent(propertyId)}` : "";
+  return api.get<EconomicPlan[]>(`/api/economic-plans${qs}`);
+}
+
+export function getEconomicPlan(id: string): Promise<EconomicPlan> {
+  return api.get<EconomicPlan>(`/api/economic-plans/${id}`);
+}
+
+export function createEconomicPlan(body: EconomicPlanCreate): Promise<EconomicPlan> {
+  return api.post<EconomicPlan>("/api/economic-plans", body);
+}
+
+export function computeEconomicPlan(id: string, body: PlanComputeRequest): Promise<EconomicPlan> {
+  return api.post<EconomicPlan>(`/api/economic-plans/${id}/compute`, body);
+}
+
+export function finalizeEconomicPlan(id: string, body: PlanComputeRequest): Promise<EconomicPlan> {
+  return api.post<EconomicPlan>(`/api/economic-plans/${id}/finalize`, body);
+}
+
+export function createEconomicPlanCorrection(id: string): Promise<EconomicPlan> {
+  return api.post<EconomicPlan>(`/api/economic-plans/${id}/correction`);
+}
+
+export function economicPlanPdfUrl(id: string): string {
+  return `/api/economic-plans/${id}/pdf`;
+}
+
+// --- M4: WEG-Jahresabrechnung ---
+
+export function listWegRuns(runType: string, propertyId?: string): Promise<WegRun[]> {
+  const parts: string[] = [`run_type=${encodeURIComponent(runType)}`];
+  if (propertyId) parts.push(`property_id=${encodeURIComponent(propertyId)}`);
+  return api.get<WegRun[]>(`/api/weg-settlements?${parts.join("&")}`);
+}
+
+export function getWegRun(id: string): Promise<WegRun> {
+  return api.get<WegRun>(`/api/weg-settlements/${id}`);
+}
+
+export function createWegRun(body: WegRunCreate): Promise<WegRun> {
+  return api.post<WegRun>("/api/weg-settlements", body);
+}
+
+export function computeWegRun(id: string, body: WegComputeRequest): Promise<WegRun> {
+  return api.post<WegRun>(`/api/weg-settlements/${id}/compute`, body);
+}
+
+export function finalizeWegRun(id: string, body: WegComputeRequest): Promise<WegRun> {
+  return api.post<WegRun>(`/api/weg-settlements/${id}/finalize`, body);
+}
+
+export function wegRunPdfUrl(id: string): string {
+  return `/api/weg-settlements/${id}/pdf`;
+}
+
+// --- M4: Vermoegensbericht (asset report) ---
+
+export function createAssetReport(body: AssetReportCreate): Promise<WegRun> {
+  return api.post<WegRun>("/api/weg-settlements/asset-reports", body);
+}
+
+export function computeAssetReport(id: string, body: AssetReportComputeRequest): Promise<WegRun> {
+  return api.post<WegRun>(`/api/weg-settlements/asset-reports/${id}/compute`, body);
+}
+
+export function finalizeAssetReport(id: string, body: AssetReportComputeRequest): Promise<WegRun> {
+  return api.post<WegRun>(`/api/weg-settlements/asset-reports/${id}/finalize`, body);
+}
+
+export function assetReportPdfUrl(id: string): string {
+  return `/api/weg-settlements/asset-reports/${id}/pdf`;
 }

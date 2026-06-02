@@ -68,7 +68,26 @@ export function Sidebar({ open, onClose }: Props) {
         <li className="sidebar__section-label">Abrechnungen</li>
         <li>
           <NavLink to="/abrechnungen" className={navLinkClass} onClick={onClose}>
-            Abrechnungen
+            Betriebskosten (Miete)
+          </NavLink>
+        </li>
+
+        {/* M4 WEG */}
+        <li className="sidebar__divider" />
+        <li className="sidebar__section-label">WEG</li>
+        <li>
+          <NavLink to="/wirtschaftsplaene" className={navLinkClass} onClick={onClose}>
+            Wirtschaftspläne
+          </NavLink>
+        </li>
+        <li>
+          <NavLink to="/weg-abrechnungen" className={navLinkClass} onClick={onClose}>
+            WEG-Abrechnungen
+          </NavLink>
+        </li>
+        <li>
+          <NavLink to="/vermoegensberichte" className={navLinkClass} onClick={onClose}>
+            Vermögensberichte
           </NavLink>
         </li>
 
