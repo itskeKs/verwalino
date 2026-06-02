@@ -91,6 +91,20 @@ export function Sidebar({ open, onClose }: Props) {
           </NavLink>
         </li>
 
+        {/* M8 Versammlungen & Beschluesse */}
+        <li className="sidebar__divider" />
+        <li className="sidebar__section-label">Versammlungen</li>
+        <li>
+          <NavLink to="/versammlungen" className={navLinkClass} onClick={onClose}>
+            Versammlungen
+          </NavLink>
+        </li>
+        <li>
+          <NavLink to="/beschluss-sammlung" className={navLinkClass} onClick={onClose}>
+            Beschluss-Sammlung
+          </NavLink>
+        </li>
+
         {/* M6 Zahlungen */}
         <li className="sidebar__divider" />
         <li className="sidebar__section-label">Zahlungen</li>

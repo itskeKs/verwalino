@@ -52,6 +52,16 @@ import type {
   DunningNotice,
   DunningCreateTenant,
   DunningCreateOwner,
+  Meeting,
+  MeetingCreate,
+  MeetingUpdate,
+  AgendaItem,
+  AgendaItemCreate,
+  AgendaItemUpdate,
+  Resolution,
+  ResolutionCreate,
+  RegisterEntry,
+  ChallengeAnnotation,
 } from "./types";
 
 export function login(body: LoginRequest): Promise<LoginResponse> {
@@ -547,4 +557,101 @@ export function deleteDunningNotice(id: string): Promise<void> {
 
 export function dunningPdfUrl(id: string): string {
   return `/api/dunning/${id}/pdf`;
+}
+
+// --- M8: Meetings (Eigentuemerversammlungen) ---
+
+export function listMeetings(propertyId?: string): Promise<Meeting[]> {
+  const qs = propertyId ? `?property_id=${encodeURIComponent(propertyId)}` : "";
+  return api.get<Meeting[]>(`/api/meetings${qs}`);
+}
+
+export function getMeeting(id: string): Promise<Meeting> {
+  return api.get<Meeting>(`/api/meetings/${id}`);
+}
+
+export function createMeeting(body: MeetingCreate): Promise<Meeting> {
+  return api.post<Meeting>("/api/meetings", body);
+}
+
+export function updateMeeting(id: string, body: MeetingUpdate): Promise<Meeting> {
+  return api.put<Meeting>(`/api/meetings/${id}`, body);
+}
+
+export function markMeetingHeld(id: string): Promise<Meeting> {
+  return api.post<Meeting>(`/api/meetings/${id}/hold`);
+}
+
+export function deleteMeeting(id: string): Promise<void> {
+  return api.delete<void>(`/api/meetings/${id}`);
+}
+
+// --- M8: Agenda Items (TOPs) ---
+
+export function listAgendaItems(meetingId: string): Promise<AgendaItem[]> {
+  return api.get<AgendaItem[]>(`/api/meetings/${meetingId}/agenda`);
+}
+
+export function createAgendaItem(
+  meetingId: string,
+  body: AgendaItemCreate,
+): Promise<AgendaItem> {
+  return api.post<AgendaItem>(`/api/meetings/${meetingId}/agenda`, body);
+}
+
+export function updateAgendaItem(
+  itemId: string,
+  body: AgendaItemUpdate,
+): Promise<AgendaItem> {
+  return api.put<AgendaItem>(`/api/meetings/agenda/${itemId}`, body);
+}
+
+export function deleteAgendaItem(itemId: string): Promise<void> {
+  return api.delete<void>(`/api/meetings/agenda/${itemId}`);
+}
+
+// --- M8: Resolutions (Beschluesse) ---
+
+export function listResolutions(meetingId: string): Promise<Resolution[]> {
+  return api.get<Resolution[]>(`/api/meetings/${meetingId}/resolutions`);
+}
+
+export function createResolution(body: ResolutionCreate): Promise<Resolution> {
+  return api.post<Resolution>("/api/meetings/resolutions", body);
+}
+
+export function deleteResolution(resolutionId: string): Promise<void> {
+  return api.delete<void>(`/api/meetings/resolutions/${resolutionId}`);
+}
+
+// --- M8: Register (Beschluss-Sammlung) ---
+
+export function enterIntoRegister(resolutionId: string): Promise<RegisterEntry> {
+  return api.post<RegisterEntry>(
+    `/api/meetings/resolutions/${resolutionId}/register`,
+  );
+}
+
+export function listRegisterEntries(propertyId: string): Promise<RegisterEntry[]> {
+  return api.get<RegisterEntry[]>(`/api/meetings/register/${propertyId}`);
+}
+
+export function annotateChallenge(
+  entryId: string,
+  body: ChallengeAnnotation,
+): Promise<RegisterEntry> {
+  return api.put<RegisterEntry>(
+    `/api/meetings/register/entry/${entryId}/challenge`,
+    body,
+  );
+}
+
+// --- M8: PDFs ---
+
+export function meetingProtocolPdfUrl(meetingId: string): string {
+  return `/api/meetings/${meetingId}/pdf`;
+}
+
+export function registerPdfUrl(propertyId: string): string {
+  return `/api/meetings/register/${propertyId}/pdf`;
 }

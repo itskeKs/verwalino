@@ -728,3 +728,103 @@ export interface AssetReportComputeRequest {
   receivables: AssetItemIn[];
   payables: AssetItemIn[];
 }
+
+// --- M8 Meetings & Beschluss-Sammlung ---
+
+export type MeetingStatus = "planned" | "held";
+export type MeetingType = "ordentlich" | "ausserordentlich";
+export type ResolutionResult = "angenommen" | "abgelehnt";
+
+export interface Meeting {
+  id: string;
+  organization_id: string;
+  property_id: string;
+  meeting_date: string;
+  location: string;
+  meeting_type: string;
+  status: MeetingStatus;
+  invitation_text: string | null;
+  protocol_text: string | null;
+}
+
+export interface MeetingCreate {
+  property_id: string;
+  meeting_date: string;
+  meeting_type: string;
+  location?: string;
+  invitation_text?: string | null;
+}
+
+export interface MeetingUpdate {
+  meeting_date?: string | null;
+  location?: string | null;
+  meeting_type?: string | null;
+  invitation_text?: string | null;
+  protocol_text?: string | null;
+}
+
+export interface AgendaItem {
+  id: string;
+  organization_id: string;
+  meeting_id: string;
+  item_number: number;
+  title: string;
+  description: string | null;
+}
+
+export interface AgendaItemCreate {
+  meeting_id: string;
+  title: string;
+  description?: string | null;
+}
+
+export interface AgendaItemUpdate {
+  title?: string | null;
+  description?: string | null;
+}
+
+export interface Resolution {
+  id: string;
+  organization_id: string;
+  meeting_id: string;
+  agenda_item_id: string | null;
+  wording: string;
+  votes_yes: number;
+  votes_no: number;
+  votes_abstain: number;
+  votes_yes_mea: string | null;
+  votes_no_mea: string | null;
+  votes_abstain_mea: string | null;
+  result: string;
+  majority_type: string | null;
+}
+
+export interface ResolutionCreate {
+  meeting_id: string;
+  wording: string;
+  votes_yes: number;
+  votes_no: number;
+  votes_abstain: number;
+  result: string;
+  agenda_item_id?: string | null;
+  votes_yes_mea?: string | null;
+  votes_no_mea?: string | null;
+  votes_abstain_mea?: string | null;
+  majority_type?: string | null;
+}
+
+export interface RegisterEntry {
+  id: string;
+  organization_id: string;
+  property_id: string;
+  sequence_number: number;
+  entry_date: string;
+  location: string;
+  wording: string;
+  resolution_id: string;
+  challenge_annotation: string | null;
+}
+
+export interface ChallengeAnnotation {
+  annotation: string | null;
+}
