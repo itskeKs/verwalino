@@ -113,12 +113,26 @@ def m3_seed(seed_data):
             )
 
         # Leases: U1 A(Jan-Jun)/B(Jul-Dec); U3 C(Jan-Mar)/vacancy/D(Aug-Dec); U4 E(all year).
+        #
+        # valid_to is stored in the TRUE M1 half-open [) convention: it is the first
+        # NON-occupied day (the EXCLUDE constraint and the point-in-time query treat
+        # it as an exclusive upper bound). The repository read-edge converts it back
+        # to the engine's tag-inclusive last-occupied-day (valid_to - 1 day; ADR-0004
+        # #6 / m3 section 3.4). So:
+        #   A last day 30.06. -> stored 2025-07-01 ; B is back-to-back from 01.07.
+        #     (these two are ADJACENT and non-overlapping in the DB -- exactly the
+        #      Auszug-30.06./Einzug-01.07. case that triggered the live 500 before
+        #      the read-edge conversion was applied).
+        #   C last day 31.03. -> stored 2025-04-01 ; D starts 01.08. -> Apr-Jul vacancy.
+        #   open-ended leases (last day = settlement period end) -> NULL.
+        # The resulting engine day-counts are 181 (A) / 184 (B) / 90 (C) / 153 (D),
+        # matching engine Golden 5.
         leases = [
-            (ids["lease_a"], ids["u1"], ids["tp_a"], date(2025, 1, 1), date(2025, 6, 30)),
-            (ids["lease_b"], ids["u1"], ids["tp_b"], date(2025, 7, 1), date(2025, 12, 31)),
-            (ids["lease_c"], ids["u3"], ids["tp_c"], date(2025, 1, 1), date(2025, 3, 31)),
-            (ids["lease_d"], ids["u3"], ids["tp_d"], date(2025, 8, 1), date(2025, 12, 31)),
-            (ids["lease_e"], ids["u4"], ids["tp_e"], date(2025, 1, 1), date(2025, 12, 31)),
+            (ids["lease_a"], ids["u1"], ids["tp_a"], date(2025, 1, 1), date(2025, 7, 1)),
+            (ids["lease_b"], ids["u1"], ids["tp_b"], date(2025, 7, 1), None),
+            (ids["lease_c"], ids["u3"], ids["tp_c"], date(2025, 1, 1), date(2025, 4, 1)),
+            (ids["lease_d"], ids["u3"], ids["tp_d"], date(2025, 8, 1), None),
+            (ids["lease_e"], ids["u4"], ids["tp_e"], date(2025, 1, 1), None),
         ]
         for lid, uid, tp, vf, vt in leases:
             cur.execute(
@@ -565,3 +579,234 @@ class TestM3ExitEndToEnd:
             Decimal(l["amount"]) for l in payload["result"]["lines"] if l["line_type"] == "COST"
         )
         assert cost_sum == total_cost
+
+
+# ===========================================================================
+# Regression: M1[)<->M3[] read-edge conversion (the live 500 reproduction)
+# ===========================================================================
+@pytest.fixture(scope="function")
+def adjacent_lease_seed(seed_data):
+    """One unit, two ADJACENT leases seeded in the TRUE M1 half-open [) convention.
+
+    Weber valid_from=2025-01-01, valid_to=2025-07-01 (exclusive upper bound)
+    Klein valid_from=2025-07-01, valid_to=NULL (open-ended)
+
+    These do NOT overlap in the DB: the EXCLUDE uses daterange(.., '[)') and the
+    point-in-time query uses valid_to > target, so 01.07. belongs only to Klein.
+    Before the read-edge conversion the engine read both valid_to/valid_from as
+    tag-inclusive, double-counted 01.07., and raised PeriodOverlapError -> 500.
+
+    Function-scoped (not session) so it is independent of the big m3_seed and the
+    DB is clean per test (the autouse run_migrations fixture rebuilds the schema).
+    """
+    import psycopg2
+
+    org = str(seed_data["org_a_id"])
+    ids = {
+        "property": uuid.uuid4(),
+        "u1": uuid.uuid4(),
+        "person_owner": uuid.uuid4(),
+        "owner_profile": uuid.uuid4(),
+        "tp_weber": uuid.uuid4(),
+        "tp_klein": uuid.uuid4(),
+        "lease_weber": uuid.uuid4(),
+        "lease_klein": uuid.uuid4(),
+        "p_weber": uuid.uuid4(),
+        "p_klein": uuid.uuid4(),
+    }
+    conn = psycopg2.connect(SYNC_URL)
+    conn.autocommit = False
+    try:
+        cur = conn.cursor()
+
+        def cat(code):
+            cur.execute(
+                "SELECT id FROM cost_category WHERE code=%s AND plan_version=1", (code,)
+            )
+            return cur.fetchone()[0]
+
+        cur.execute(
+            "INSERT INTO property (id, organization_id, name, management_type) VALUES (%s,%s,%s,%s)",
+            (str(ids["property"]), org, "Adjacent-Lease Mischhaus", "MISCH"),
+        )
+        # Single unit, area 80 (the only unit -> it bears 100% of any Flaeche cost).
+        cur.execute(
+            "INSERT INTO unit (id, organization_id, property_id, number, usage_type, area, heated_area, mea) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            (str(ids["u1"]), org, str(ids["property"]), "1", "WOHNUNG", 80, 80, 300),
+        )
+        cur.execute(
+            "INSERT INTO person (id, organization_id, first_name, last_name) VALUES (%s,%s,%s,%s)",
+            (str(ids["person_owner"]), org, "Olga", "Owner"),
+        )
+        cur.execute(
+            "INSERT INTO owner_profile (id, organization_id, person_id) VALUES (%s,%s,%s)",
+            (str(ids["owner_profile"]), org, str(ids["person_owner"])),
+        )
+        cur.execute(
+            "INSERT INTO ownership_history (id, organization_id, unit_id, owner_profile_id, valid_from, mea_share) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            (str(uuid.uuid4()), org, str(ids["u1"]), str(ids["owner_profile"]), date(2000, 1, 1), None),
+        )
+        for pkey, tpkey, first in [("p_weber", "tp_weber", "Walter"), ("p_klein", "tp_klein", "Karla")]:
+            cur.execute(
+                "INSERT INTO person (id, organization_id, first_name, last_name) VALUES (%s,%s,%s,%s)",
+                (str(ids[pkey]), org, first, "Mieter"),
+            )
+            cur.execute(
+                "INSERT INTO tenant_profile (id, organization_id, person_id) VALUES (%s,%s,%s)",
+                (str(ids[tpkey]), org, str(ids[pkey])),
+            )
+
+        # The crux: adjacent valid_to = valid_from = 2025-07-01 in DB [) convention.
+        leases = [
+            (ids["lease_weber"], ids["tp_weber"], date(2025, 1, 1), date(2025, 7, 1)),
+            (ids["lease_klein"], ids["tp_klein"], date(2025, 7, 1), None),
+        ]
+        for lid, tp, vf, vt in leases:
+            cur.execute(
+                "INSERT INTO lease_agreement (id, organization_id, unit_id, tenant_profile_id, valid_from, valid_to, base_rent, advance_payment) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                (str(lid), org, str(ids["u1"]), str(tp), vf, vt, Decimal("800.00"), Decimal("100.00")),
+            )
+
+        # A confirmed, full-year GRUNDSTEUER (WOHNFLAECHE). With a single unit the
+        # unit bears the whole 1200.00, split purely by time between the two tenants.
+        ce = uuid.uuid4()
+        cur.execute(
+            "INSERT INTO cost_entry (id, organization_id, property_id, cost_category_id, cost_category_plan_version, "
+            "invoice_date, service_period_from, service_period_to, gross_amount, tenant_distribution_key, "
+            "tenant_apportionable, status, source, confirmed_at, confirmed_by) "
+            "VALUES (%s,%s,%s,%s,1,%s,%s,%s,%s,%s,%s,'confirmed','MANUAL',now(),%s)",
+            (
+                str(ce), org, str(ids["property"]), str(cat("GRUNDSTEUER")),
+                date(2025, 6, 1), date(2025, 1, 1), date(2025, 12, 31),
+                Decimal("1200.00"), "WOHNFLAECHE", "UMLAGEFAEHIG",
+                str(seed_data["user_a_admin_id"]),
+            ),
+        )
+        ids["ce_grundsteuer"] = ce
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return {**seed_data, **{k: (str(v) if isinstance(v, uuid.UUID) else v) for k, v in ids.items()}}
+
+
+class TestM3AdjacentLeaseReadEdge:
+    """The live bug: adjacent leases (M1 [)-convention) must compute, not 500.
+
+    This is the regression test that was missing. It seeds via the DB in the real
+    M1 convention and drives the public /compute endpoint, so it exercises the
+    repository read-edge conversion (settlement_service.db_exclusive_to_engine_
+    inclusive) end-to-end -- exactly where the conversion was missing.
+    """
+
+    async def _create_run(self, client, seed, lease_key):
+        resp = await client.post("/api/settlements", json={
+            "property_id": seed["property"],
+            "lease_agreement_id": seed[lease_key],
+            "period_start": "2025-01-01",
+            "period_end": "2025-12-31",
+            "advance_payments_total": "0.00",
+        })
+        assert resp.status_code == 201, resp.text
+        return resp.json()["id"]
+
+    @pytest.mark.asyncio
+    async def test_adjacent_leases_compute_succeeds_no_500(self, client_a_admin, adjacent_lease_seed):
+        """Compute for the predecessor tenant succeeds (no false overlap, no 500)."""
+        run_id = await self._create_run(client_a_admin, adjacent_lease_seed, "lease_weber")
+        resp = await client_a_admin.post(f"/api/settlements/{run_id}/compute", json={})
+        assert resp.status_code == 200, resp.text  # before the fix this was 500
+
+    @pytest.mark.asyncio
+    async def test_weber_181_days(self, client_a_admin, adjacent_lease_seed):
+        """Predecessor Weber occupies 01.01.-30.06. = 181 days (DB 2025-07-01 -> 30.06.)."""
+        run_id = await self._create_run(client_a_admin, adjacent_lease_seed, "lease_weber")
+        body = (await client_a_admin.post(f"/api/settlements/{run_id}/compute", json={})).json()
+        gs = next(ln for ln in body["lines"] if ln["cost_category_code"] == "GRUNDSTEUER")
+        assert gs["time_share_days"] == 181
+        assert gs["time_share_total_days"] == 365
+        # 1200 * 181/365 = 595.0684... -> 595.07
+        assert gs["amount"] == "595.07"
+
+    @pytest.mark.asyncio
+    async def test_klein_184_days(self, client_a_admin, adjacent_lease_seed):
+        """Successor Klein occupies 01.07.-31.12. = 184 days (open-ended, clamped)."""
+        run_id = await self._create_run(client_a_admin, adjacent_lease_seed, "lease_klein")
+        body = (await client_a_admin.post(f"/api/settlements/{run_id}/compute", json={})).json()
+        gs = next(ln for ln in body["lines"] if ln["cost_category_code"] == "GRUNDSTEUER")
+        assert gs["time_share_days"] == 184
+        assert gs["time_share_total_days"] == 365
+        # 1200 * 184/365 = 604.9315... -> 604.93
+        assert gs["amount"] == "604.93"
+
+    @pytest.mark.asyncio
+    async def test_time_shares_sum_to_one_no_vacancy(self, client_a_admin, adjacent_lease_seed):
+        """Weber 181 + Klein 184 = 365 (Sigma time shares == 1); no vacancy day.
+
+        The back-to-back boundary (30.06. -> 01.07.) leaves NO gap: the two tenant
+        shares of the unit's GRUNDSTEUER add up to the full unit amount (1200.00),
+        so no cent is attributed to vacancy/owner. This is the structural invariant
+        the read-edge conversion preserves (ADR-0004 #4).
+        """
+        run_weber = await self._create_run(client_a_admin, adjacent_lease_seed, "lease_weber")
+        run_klein = await self._create_run(client_a_admin, adjacent_lease_seed, "lease_klein")
+        bw = (await client_a_admin.post(f"/api/settlements/{run_weber}/compute", json={})).json()
+        bk = (await client_a_admin.post(f"/api/settlements/{run_klein}/compute", json={})).json()
+        gw = next(ln for ln in bw["lines"] if ln["cost_category_code"] == "GRUNDSTEUER")
+        gk = next(ln for ln in bk["lines"] if ln["cost_category_code"] == "GRUNDSTEUER")
+        assert gw["time_share_days"] + gk["time_share_days"] == 365
+        # No cent lost to a phantom 1-day vacancy: the two tenant shares == full cost.
+        assert Decimal(gw["amount"]) + Decimal(gk["amount"]) == Decimal("1200.00")
+
+    @pytest.mark.asyncio
+    async def test_db_exclude_rejects_genuine_same_unit_overlap(
+        self, client_a_admin, adjacent_lease_seed, app_rw_session
+    ):
+        """Primary guard: the DB EXCLUDE rejects a genuinely overlapping lease.
+
+        A lease 2025-03-01..2025-09-01 on U1 overlaps Weber [2025-01-01,2025-07-01)
+        even in the half-open DB convention, so excl_lease_no_overlap must reject the
+        INSERT (fail-closed) -- a real overlap can never silently reach the engine.
+        """
+        await app_rw_session.execute(
+            text("SELECT set_config('app.current_org_id', :o, true)"),
+            {"o": str(adjacent_lease_seed["org_a_id"])},
+        )
+        with pytest.raises(Exception):  # ExclusionViolation from excl_lease_no_overlap
+            await app_rw_session.execute(
+                text(
+                    "INSERT INTO lease_agreement (id, organization_id, unit_id, tenant_profile_id, "
+                    "valid_from, valid_to, base_rent, advance_payment) "
+                    "VALUES (:id,:org,:unit,:tp,'2025-03-01','2025-09-01','800.00','100.00')"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "org": str(adjacent_lease_seed["org_a_id"]),
+                    "unit": adjacent_lease_seed["u1"],
+                    "tp": adjacent_lease_seed["tp_weber"],
+                },
+            )
+
+
+# ===========================================================================
+# Unit test: the read-edge conversion helper itself
+# ===========================================================================
+class TestReadEdgeConversionHelper:
+    def test_exclusive_to_inclusive_subtracts_one_day(self):
+        from app.services.settlement_service import db_exclusive_to_engine_inclusive
+
+        # DB stores the first NON-occupied day; engine wants the last occupied day.
+        assert db_exclusive_to_engine_inclusive(date(2025, 7, 1)) == date(2025, 6, 30)
+        assert db_exclusive_to_engine_inclusive(date(2025, 4, 1)) == date(2025, 3, 31)
+        # Month/year boundary correctness.
+        assert db_exclusive_to_engine_inclusive(date(2026, 1, 1)) == date(2025, 12, 31)
+
+    def test_none_stays_open_ended(self):
+        from app.services.settlement_service import db_exclusive_to_engine_inclusive
+
+        assert db_exclusive_to_engine_inclusive(None) is None

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from app.engine.types import LeasePeriodInput, OwnerPeriodInput
+from app.engine.types import LeasePeriodInput, OwnerPeriodInput, PeriodOverlapError
 
 
 # Period kinds in the unit-internal time cover.
@@ -169,9 +169,11 @@ def build_unit_cover(
 
     # Defensive overlap check (M1 EXCLUDE should prevent this; the engine is
     # deliberately strict and escalates rather than mis-attribute -- section 2.6).
+    # Raised as PeriodOverlapError (a ValueError subclass) so the service surfaces
+    # it as a clean 4xx, not a 500.
     for prev, nxt in zip(clipped, clipped[1:]):
         if nxt.start <= prev.end:
-            raise ValueError(
+            raise PeriodOverlapError(
                 f"Overlapping lease periods for unit {unit_id}: "
                 f"[{prev.start}..{prev.end}] and [{nxt.start}..{nxt.end}]"
             )

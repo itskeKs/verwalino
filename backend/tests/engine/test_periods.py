@@ -16,7 +16,7 @@ from app.engine.periods import (
     overlap_days,
     time_factor,
 )
-from app.engine.types import LeasePeriodInput, OwnerPeriodInput
+from app.engine.types import LeasePeriodInput, OwnerPeriodInput, PeriodOverlapError
 
 
 class TestDayCount:
@@ -209,3 +209,46 @@ class TestOverlapDetection:
         ]
         with pytest.raises(ValueError, match="Overlapping lease periods"):
             build_unit_cover(unit, date(2025, 1, 1), date(2025, 12, 31), leases, owners)
+
+    def test_overlap_raises_period_overlap_error_subclass(self):
+        """Secondary hardening: a genuine overlap raises PeriodOverlapError.
+
+        PeriodOverlapError is a ValueError subclass and is in the service's
+        _compute_engine catch tuple, so a real (EXCLUDE-bypassing) overlap surfaces
+        as a clean 422, not a 500. Adjacent back-to-back periods (Auszug 30.06. /
+        Einzug 01.07. in engine convention) do NOT raise.
+        """
+        unit = uuid.uuid4()
+        owner = uuid.uuid4()
+        owners = [
+            OwnerPeriodInput(
+                unit_id=unit, owner_profile_id=owner, valid_from=date(2000, 1, 1), valid_to=None
+            )
+        ]
+        overlapping = [
+            LeasePeriodInput(
+                lease_agreement_id=uuid.uuid4(), unit_id=unit, tenant_profile_id=uuid.uuid4(),
+                valid_from=date(2025, 1, 1), valid_to=date(2025, 7, 31),
+            ),
+            LeasePeriodInput(
+                lease_agreement_id=uuid.uuid4(), unit_id=unit, tenant_profile_id=uuid.uuid4(),
+                valid_from=date(2025, 7, 1), valid_to=date(2025, 12, 31),
+            ),
+        ]
+        with pytest.raises(PeriodOverlapError):
+            build_unit_cover(unit, date(2025, 1, 1), date(2025, 12, 31), overlapping, owners)
+        assert issubclass(PeriodOverlapError, ValueError)
+
+        # Engine-convention back-to-back (last day 30.06., next from 01.07.) is fine.
+        adjacent = [
+            LeasePeriodInput(
+                lease_agreement_id=uuid.uuid4(), unit_id=unit, tenant_profile_id=uuid.uuid4(),
+                valid_from=date(2025, 1, 1), valid_to=date(2025, 6, 30),
+            ),
+            LeasePeriodInput(
+                lease_agreement_id=uuid.uuid4(), unit_id=unit, tenant_profile_id=uuid.uuid4(),
+                valid_from=date(2025, 7, 1), valid_to=date(2025, 12, 31),
+            ),
+        ]
+        cover = build_unit_cover(unit, date(2025, 1, 1), date(2025, 12, 31), adjacent, owners)
+        assert [c.kind for c in cover] == [KIND_TENANT, KIND_TENANT]

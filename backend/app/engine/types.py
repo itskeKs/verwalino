@@ -19,6 +19,21 @@ from decimal import Decimal
 
 
 # ---------------------------------------------------------------------------
+# Engine-level errors (subclass ValueError; live here so the low-level period/
+# distribution modules can raise them without importing settlement.py).
+# ---------------------------------------------------------------------------
+class PeriodOverlapError(ValueError):
+    """Two lease periods for the same unit overlap inside the cover (section 2.6).
+
+    This is a fail-loud data error: the M1 EXCLUDE constraint should prevent it,
+    so it normally signals either a bypassed constraint or a read-edge convention
+    mismatch (half-open [) DB bound not converted to the engine's tag-inclusive
+    []). The engine escalates rather than mis-attribute days; the service maps it
+    to a clean 4xx instead of a 500.
+    """
+
+
+# ---------------------------------------------------------------------------
 # Controlled vocabularies (mirror the M2 cost_entry CHECK constraints).
 # Kept here as plain constants so the engine has no DB dependency.
 # ---------------------------------------------------------------------------

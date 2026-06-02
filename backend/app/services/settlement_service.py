@@ -41,6 +41,7 @@ from app.engine.types import (
     LeasePeriodInput,
     ManualAmountInput,
     OwnerPeriodInput,
+    PeriodOverlapError,
     PropertyInput,
     SettlementInput,
     UnitInput,
@@ -92,6 +93,35 @@ class ComputeExtras:
     external_amounts: list[ExternalAmountEntry] = field(default_factory=list)
     manual_amounts: list[ManualAmountEntry] = field(default_factory=list)
     unit_metrics: list[UnitMetric] = field(default_factory=list)
+
+
+def db_exclusive_to_engine_inclusive(db_valid_to: date | None) -> date | None:
+    """Convert a temporal-table upper bound from the DB convention to the engine's.
+
+    The M1 temporal tables (lease_agreement, ownership_history) store `valid_to`
+    with HALF-OPEN `[valid_from, valid_to)` semantics: the EXCLUDE constraint uses
+    `daterange(valid_from, valid_to, '[)')` and the point-in-time query uses
+    `valid_to > target_date` (see migration 0003 + lease_agreement_repo /
+    ownership_history_repo). So the stored `valid_to` is the first NON-occupied day
+    (exclusive upper bound); two adjacent records `... valid_to = D` and
+    `valid_from = D` do NOT overlap in the DB -- day D belongs only to the second.
+
+    The engine (ADR-0004 / periods.py) is TAG-INCLUSIVE `[from, to]`: `valid_to` is
+    the LAST occupied day. The documented conversion happens HERE at the repository
+    read-edge (ADR-0004 consequence #6, m3-abrechnungs-engine.md section 3.4): the
+    engine's inclusive last day is the DB's exclusive bound minus one day.
+
+    Without this step the engine would re-count day D for the earlier record and the
+    later one and raise "Overlapping lease periods" (the live 500 on a DB-legal
+    Auszug-D / Einzug-D adjacency). NULL (open-ended) stays open-ended.
+
+    Only the [)-EXCLUDE temporal columns pass through here. `service_period_to`
+    (no EXCLUDE, fachlich inclusive) and the UI-supplied settlement-period bounds
+    are already inclusive and are NOT converted.
+    """
+    if db_valid_to is None:
+        return None
+    return date.fromordinal(db_valid_to.toordinal() - 1)
 
 
 class SettlementService:
@@ -365,8 +395,10 @@ class SettlementService:
         inp = await self._load_engine_input(run, extras or ComputeExtras())
         try:
             result = compute_bk_settlement(inp)
-        except (EngineValidationError, DistributionError) as exc:
+        except (EngineValidationError, DistributionError, PeriodOverlapError) as exc:
             # Escalate fail-loud as a 422 (do not persist a wrong/partial run).
+            # PeriodOverlapError: a genuine (EXCLUDE-bypassing) lease overlap is a
+            # 4xx data problem, not a 500 server fault.
             raise HTTPException(status_code=422, detail=f"Berechnung nicht moeglich: {exc}")
         return inp, result
 
@@ -410,13 +442,18 @@ class SettlementService:
 
         unit_inputs = tuple(unit_input(u) for u in units)
 
+        # Read-edge conversion of the half-open [) DB upper bound to the engine's
+        # tag-inclusive last-occupied-day (ADR-0004 #6 / m3 section 3.4). Only the
+        # EXCLUDE temporal tables (lease_agreement, ownership_history) carry [)
+        # semantics; service_period_* and the settlement-period bounds are already
+        # inclusive and are passed through unchanged below.
         lease_inputs = tuple(
             LeasePeriodInput(
                 lease_agreement_id=l.id,
                 unit_id=l.unit_id,
                 tenant_profile_id=l.tenant_profile_id,
                 valid_from=l.valid_from,
-                valid_to=l.valid_to,
+                valid_to=db_exclusive_to_engine_inclusive(l.valid_to),
                 advance_payment=l.advance_payment,
             )
             for l in leases
@@ -426,7 +463,7 @@ class SettlementService:
                 unit_id=o.unit_id,
                 owner_profile_id=o.owner_profile_id,
                 valid_from=o.valid_from,
-                valid_to=o.valid_to,
+                valid_to=db_exclusive_to_engine_inclusive(o.valid_to),
                 mea_share=o.mea_share,
             )
             for o in ownership
