@@ -374,6 +374,34 @@ class WegSettlementService:
             for oid, amt in per_owner.items()
         ]
 
+    async def derive_paid_advances(
+        self, economic_plan_id: uuid.UUID, period_year: int
+    ) -> list["ManualOwnerAdvance"]:
+        """Derive the (nachrichtliche) paid_advances per owner from payments (§6.3).
+
+        Minimal-additive bridge (MANUAL -> DERIVED): builds the SAME
+        ManualOwnerAdvance list the clerk would enter by hand, summing the
+        booked, non-reversed HAUSGELD_VORSCHUSS payments per owner (the pure
+        derivation in payment_service). It is passed as
+        WegComputeExtras.paid_advances into the UNCHANGED compute path.
+
+        CRITICAL (I6-D): paid_advances is ONLY the nachrichtliche Zahlungsstand;
+        the WEG engine's Abrechnungsspitze is Ist-Kosten - Soll(Plan) and NEVER
+        reads paid_advances -- so this bridge cannot move the Spitze. The set of
+        owners is taken from the plan's OWNER_ADVANCE lines (the WEG members).
+        """
+        from app.services.payment_service import PaymentService
+
+        pay_svc = PaymentService(self._session, self._org_id, self._user_id)
+        plan_advances = await self._plan_advances_per_owner(economic_plan_id)
+        result: list[ManualOwnerAdvance] = []
+        for adv in plan_advances:
+            total = await pay_svc.derive_hausgeld_total(adv.owner_profile_id, period_year)
+            result.append(
+                ManualOwnerAdvance(owner_profile_id=adv.owner_profile_id, paid_total=total)
+            )
+        return result
+
     async def _load_weg_input(
         self, run: SettlementRun, extras: WegComputeExtras
     ) -> WegSettlementInput:

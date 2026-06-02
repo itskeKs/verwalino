@@ -290,6 +290,23 @@ async def set_advance_payments(
     return _run_out(run, [])
 
 
+@router.patch("/{run_id}/advance-payments-derived", response_model=SettlementRunOut)
+async def set_advance_payments_derived(
+    run_id: uuid.UUID,
+    period_year: int,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fill advance_payments_total from booked NK payments (M6 §6.2, DERIVED).
+
+    Opt-in bridge; MANUAL stays the default. The M3 engine is unchanged -- this
+    only sets the value (bit-identical to MANUAL, I6-E) + source='DERIVED'.
+    """
+    svc = SettlementService(db, auth.organization_id, auth.user_id)
+    run = await svc.set_advance_payments_derived(run_id, period_year)
+    return _run_out(run, [])
+
+
 @router.post("/{run_id}/compute", response_model=SettlementRunOut)
 async def compute_settlement(
     run_id: uuid.UUID,

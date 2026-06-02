@@ -26,6 +26,8 @@ TENANT_TABLES = frozenset({
     "settlement_run", "settlement_line",
     # M4 WEG-Abrechnung (Wirtschaftsplan eigene Entitaet)
     "economic_plan", "economic_plan_line",
+    # M6 Zahlungen, Mietkonto & offene Posten
+    "payment",
 })
 
 # Global tables that intentionally have no RLS.

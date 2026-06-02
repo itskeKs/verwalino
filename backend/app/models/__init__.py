@@ -31,6 +31,9 @@ from app.models.settlement_line import SettlementLine
 from app.models.economic_plan import EconomicPlan
 from app.models.economic_plan_line import EconomicPlanLine
 
+# M6 Zahlungen, Mietkonto & offene Posten
+from app.models.payment import Payment
+
 __all__ = [
     "Base",
     "Organization",
@@ -60,4 +63,6 @@ __all__ = [
     # M4
     "EconomicPlan",
     "EconomicPlanLine",
+    # M6
+    "Payment",
 ]

@@ -8,6 +8,7 @@ from app.api import owner_profiles, tenant_profiles, vendors
 from app.api import cost_categories, cost_entries, invoice_documents
 from app.api import settlements
 from app.api import economic_plans, weg_settlements
+from app.api import payments
 from app.core.extraction import set_extractor
 from app.core.pdf_extraction import PdfTextExtractor
 from app.core.einvoice import RoutingExtractor
@@ -50,6 +51,9 @@ app.include_router(settlements.router)
 # M4 WEG-Abrechnung (Wirtschaftsplan, Jahresabrechnung, Vermoegensbericht)
 app.include_router(economic_plans.router)
 app.include_router(weg_settlements.router)
+
+# M6 Zahlungen, Mietkonto & offene Posten
+app.include_router(payments.router)
 
 
 @app.get("/api/health")

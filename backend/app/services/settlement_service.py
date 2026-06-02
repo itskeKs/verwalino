@@ -198,6 +198,47 @@ class SettlementService:
         )
         return run
 
+    async def set_advance_payments_derived(
+        self, run_id: uuid.UUID, period_year: int
+    ) -> SettlementRun:
+        """Derive the BK advance-payment total from booked NK payments (M6 §6.2).
+
+        Minimal-additive bridge (advance_payments_source MANUAL -> DERIVED): the
+        M3 engine is UNCHANGED -- it still reads run.advance_payments_total; this
+        only fills that value from the booked, non-reversed NK_VORAUSZAHLUNG
+        payments of THIS lease + year (the pure derivation in payment_service,
+        which is bit-identical to the MANUAL value, I6-E). MANUAL stays the
+        default/fallback; this path is opt-in. E6-8: derived fresh on demand;
+        finalize then freezes whatever value is current into the snapshot.
+        """
+        from app.services.payment_service import PaymentService
+
+        run = await self._get_draft_or_404(run_id)
+        if run.lease_agreement_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail="DERIVED advance payments require a lease addressee on the run",
+            )
+        pay_svc = PaymentService(self._session, self._org_id, self._user_id)
+        total = await pay_svc.derive_nk_advance_total(run.lease_agreement_id, period_year)
+        run.advance_payments_total = total
+        run.advance_payments_source = "DERIVED"
+        await self._runs.update(run)
+        await self._audit.create(
+            AuditEvent(
+                actor_user_id=self._user_id,
+                entity_type="settlement_run",
+                entity_id=run.id,
+                action="settlement.advance_payments_derived",
+                payload_diff={
+                    "advance_payments_total": str(total),
+                    "advance_payments_source": "DERIVED",
+                    "period_year": str(period_year),
+                },
+            )
+        )
+        return run
+
     # ------------------------------------------------------------------
     # compute (draft, repeatable) and preview
     # ------------------------------------------------------------------
