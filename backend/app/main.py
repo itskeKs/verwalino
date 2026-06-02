@@ -12,6 +12,7 @@ from app.api import payments
 from app.api import bank_accounts
 from app.api import dunning
 from app.api import meetings
+from app.api import fristen, dsgvo
 from app.core.extraction import set_extractor
 from app.core.pdf_extraction import PdfTextExtractor
 from app.core.einvoice import RoutingExtractor
@@ -64,6 +65,10 @@ app.include_router(dunning.router)
 
 # M8 Eigentümerversammlung & Beschluss-Sammlung
 app.include_router(meetings.router)
+
+# M9 Fristenüberwachung & DSGVO-Härtung
+app.include_router(fristen.router)
+app.include_router(dsgvo.router)
 
 
 @app.get("/api/health")

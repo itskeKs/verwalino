@@ -1,0 +1,221 @@
+"""Fristen service -- assembles the M9 Fristenmonitor from DB state.
+
+Boundary discipline (SDD section 16): this service loads ORM rows, maps them to
+the pure ``app.engine.fristen`` inputs, and returns the engine's DeadlineItems.
+It never re-implements the date rules (those live in the engine) and the engine
+never sees the DB.
+
+Fiscal-year bucketing [section 18/fachlich]: candidate settlement years are
+derived from the service periods of a property's confirmed cost entries, bucketed
+by the property's ``fiscal_year_start_month`` (1 = calendar year). A cost is
+assigned to the fiscal year of its ``service_period_to``. The precise legal year
+mapping (stray costs across a year boundary etc.) is a fachlich question; the
+monitor's value is the deadline arithmetic, which is exact (§556 III) or clearly
+marked provisional (WEG).
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import date
+
+from app.core.temporal import db_exclusive_to_engine_inclusive
+from app.engine.dunning import find_overdue_items
+from app.engine.fristen import (
+    DeadlineItem,
+    FiscalYearObligationInput,
+    OverdueItemsInput,
+    RetentionAnchorInput,
+    WirtschaftsplanObligationInput,
+    build_fristenmonitor,
+)
+from app.engine.mietkonto import (
+    LeaseChargeInput,
+    account_statement,
+    tenant_expected_charges,
+)
+from app.repositories.fristen_repo import FristenRepository
+from app.repositories.payment_repo import PaymentRepository
+from app.services.dunning_service import _to_payment_input
+
+
+def _fiscal_year_bounds(d: date, start_month: int) -> tuple[str, date, date]:
+    """Map a date to its fiscal-year (label, period_start, period_end-inclusive).
+
+    start_month == 1 -> calendar year [Y-01-01, Y-12-31], label "Y".
+    start_month == m -> [SY-m-01, (SY+1)-m-01 minus one day], label "SY/SY+1",
+    where SY (start year) = d.year if d.month >= m else d.year-1.
+    """
+    if start_month == 1:
+        y = d.year
+        return (str(y), date(y, 1, 1), date(y, 12, 31))
+    start_year = d.year if d.month >= start_month else d.year - 1
+    period_start = date(start_year, start_month, 1)
+    next_start = date(start_year + 1, start_month, 1)
+    period_end = date.fromordinal(next_start.toordinal() - 1)
+    return (f"{start_year}/{start_year + 1}", period_start, period_end)
+
+
+def _lease_overlaps(lease, period_start: date, period_end: date) -> bool:
+    """True iff a lease [valid_from, inclusive_to] intersects [start, end]."""
+    if lease.valid_from > period_end:
+        return False
+    inc_to = db_exclusive_to_engine_inclusive(lease.valid_to)
+    if inc_to is not None and inc_to < period_start:
+        return False
+    return True
+
+
+def _run_overlaps(run, period_start: date, period_end: date) -> bool:
+    return run.period_start <= period_end and run.period_end >= period_start
+
+
+class FristenService:
+    def __init__(self, session, org_id: uuid.UUID):
+        self._session = session
+        self._org_id = org_id
+        self._repo = FristenRepository(session, org_id)
+        self._payments = PaymentRepository(session, org_id)
+
+    async def build_monitor(self, reference_date: date) -> list[DeadlineItem]:
+        properties = await self._repo.list_properties()
+        fiscal_obligations: list[FiscalYearObligationInput] = []
+        wp_obligations: list[WirtschaftsplanObligationInput] = []
+
+        for prop in properties:
+            await self._collect_property(prop, fiscal_obligations, wp_obligations, reference_date)
+
+        overdue_count = await self._overdue_count(reference_date)
+        earliest, doc_count = await self._repo.retention_anchor()
+        retention_anchors = [
+            RetentionAnchorInput(
+                label="Belege (Rechnungsdokumente)",
+                earliest_retention_until=earliest,
+                document_count=doc_count,
+            )
+        ]
+
+        return build_fristenmonitor(
+            fiscal_obligations=fiscal_obligations,
+            wirtschaftsplan_obligations=wp_obligations,
+            overdue=OverdueItemsInput(overdue_item_count=overdue_count),
+            retention_anchors=retention_anchors,
+            reference_date=reference_date,
+        )
+
+    # ------------------------------------------------------------------
+    async def _collect_property(
+        self,
+        prop,
+        fiscal_obligations: list,
+        wp_obligations: list,
+        reference_date: date,
+    ) -> None:
+        periods = await self._repo.confirmed_cost_periods(prop.id)
+        fy_map: dict[str, tuple[date, date]] = {}
+        for _from, _to in periods:
+            label, ps, pe = _fiscal_year_bounds(_to, prop.fiscal_year_start_month)
+            fy_map[label] = (ps, pe)
+
+        if fy_map:
+            leases = await self._repo.leases_for_property(prop.id)
+            bk_runs = await self._repo.finalized_runs(prop.id, "BK_MIETER")
+            weg_runs = await self._repo.finalized_runs(prop.id, "WEG_JAHRESABRECHNUNG")
+            vb_runs = await self._repo.finalized_runs(prop.id, "VERMOEGENSBERICHT")
+
+            for label, (ps, pe) in fy_map.items():
+                overlapping = [l for l in leases if _lease_overlaps(l, ps, pe)]
+                has_tenant_lease = len(overlapping) > 0
+                # BK done only if EVERY overlapping lease has a finalized BK run
+                # overlapping the year (conservative -> reminds rather than misses).
+                covered = {
+                    r.lease_agreement_id
+                    for r in bk_runs
+                    if r.lease_agreement_id and _run_overlaps(r, ps, pe)
+                }
+                has_finalized_bk = has_tenant_lease and all(
+                    l.id in covered for l in overlapping
+                )
+                fiscal_obligations.append(
+                    FiscalYearObligationInput(
+                        property_id=prop.id,
+                        property_name=prop.name,
+                        management_type=prop.management_type,
+                        fiscal_year_label=label,
+                        period_start=ps,
+                        period_end=pe,
+                        has_confirmed_costs=True,
+                        has_tenant_lease=has_tenant_lease,
+                        has_finalized_bk=has_finalized_bk,
+                        has_finalized_weg_abrechnung=any(
+                            _run_overlaps(r, ps, pe) for r in weg_runs
+                        ),
+                        has_finalized_vermoegensbericht=any(
+                            _run_overlaps(r, ps, pe) for r in vb_runs
+                        ),
+                    )
+                )
+
+        if prop.management_type in ("WEG", "MISCH"):
+            plan_year = reference_date.year + 1
+            finalized_years = await self._repo.finalized_plan_years(prop.id)
+            wp_obligations.append(
+                WirtschaftsplanObligationInput(
+                    property_id=prop.id,
+                    property_name=prop.name,
+                    plan_year=plan_year,
+                    has_finalized_plan=(plan_year in finalized_years),
+                )
+            )
+
+    # ------------------------------------------------------------------
+    # Org-wide overdue open-item count (nachrichtlich; reuses the M6 engine).
+    # Tenant leases only [section 18/fachlich]; owner Hausgeld arrears are
+    # surfaced via the owner dunning workflow, not this aggregate.
+    # ------------------------------------------------------------------
+    async def _overdue_count(self, reference_date: date) -> int:
+        leases = await self._repo.all_leases()
+        total = 0
+        for lease in leases:
+            try:
+                inc_to = db_exclusive_to_engine_inclusive(lease.valid_to)
+                period_start = lease.valid_from
+                period_end = reference_date
+                if inc_to is not None and inc_to < period_end:
+                    period_end = inc_to
+                if period_start > period_end:
+                    continue
+                lc = LeaseChargeInput(
+                    lease_agreement_id=lease.id,
+                    valid_from=lease.valid_from,
+                    valid_to=inc_to,
+                    base_rent=lease.base_rent,
+                    advance_payment=lease.advance_payment,
+                )
+                charges = tenant_expected_charges(lc, period_start, period_end)
+                payments = await self._payments.list_for_lease(lease.id)
+                scoped = _scope_payments(payments, period_start, period_end)
+                result = account_statement(
+                    charges, [_to_payment_input(p) for p in scoped]
+                )
+                overdue = find_overdue_items(
+                    list(result.open_items), reference_date, grace_days=0
+                )
+                total += len(overdue)
+            except Exception:
+                # A single malformed lease must never break the read-only monitor.
+                continue
+        return total
+
+
+def _scope_payments(payments, period_start: date, period_end: date):
+    """Same period scoping as PaymentService / DunningService."""
+    y_lo, y_hi = period_start.year, period_end.year
+    scoped = []
+    for p in payments:
+        if p.period_year is not None:
+            if y_lo <= p.period_year <= y_hi:
+                scoped.append(p)
+        elif period_start <= p.value_date <= period_end:
+            scoped.append(p)
+    return scoped
