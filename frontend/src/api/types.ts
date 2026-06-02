@@ -828,3 +828,61 @@ export interface RegisterEntry {
 export interface ChallengeAnnotation {
   annotation: string | null;
 }
+
+// --- M9 Fristen ---
+export type DeadlineStatus =
+  | "OVERDUE"
+  | "DUE"
+  | "UPCOMING"
+  | "INFO"
+  | "OK";
+
+export interface DeadlineItem {
+  kind: string;
+  reference: string;
+  due_date: string | null;
+  status: DeadlineStatus;
+  is_statutory: boolean;
+  is_provisional: boolean;
+  property_id: string | null;
+  detail: string;
+}
+
+// --- M9 DSGVO ---
+export interface DsgvoBinding {
+  kind: string;
+  entity_type: string;
+  entity_id: string;
+  retention_until: string | null;
+}
+
+export interface DsgvoStatus {
+  person_id: string;
+  applied: string;
+  already_anonymized: boolean;
+  anonymized_at: string | null;
+  processing_restricted: boolean;
+  deletion_requested_at: string | null;
+  has_active_relationship: boolean;
+  erasable: boolean;
+  decision: "RESTRICT" | "ANONYMIZE_NOW";
+  is_bound: boolean;
+  purgeable_now: boolean;
+  governing_retention_until: string | null;
+  bindings: DsgvoBinding[];
+}
+
+export interface DsgvoExport {
+  person: Record<string, string | null>;
+  roles: {
+    vendor_ids: string[];
+    tenant_profile_ids: string[];
+    owner_profile_ids: string[];
+  };
+  processing: {
+    anonymized_at: string | null;
+    processing_restricted: boolean;
+    deletion_requested_at: string | null;
+  };
+  retention_bindings: DsgvoBinding[];
+}

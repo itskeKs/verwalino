@@ -34,6 +34,11 @@ export function Sidebar({ open, onClose }: Props) {
             Mandate
           </NavLink>
         </li>
+        <li>
+          <NavLink to="/fristen" className={navLinkClass} onClick={onClose}>
+            Fristenmonitor
+          </NavLink>
+        </li>
 
         {/* M1 Stammdaten */}
         <li className="sidebar__divider" />

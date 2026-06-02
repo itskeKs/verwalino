@@ -4,6 +4,11 @@
 
 import { api, uploadFormData } from "./client";
 import type {
+  DeadlineItem,
+  DsgvoStatus,
+  DsgvoExport,
+} from "./types";
+import type {
   LoginRequest,
   LoginResponse,
   Organization,
@@ -654,4 +659,27 @@ export function meetingProtocolPdfUrl(meetingId: string): string {
 
 export function registerPdfUrl(propertyId: string): string {
   return `/api/meetings/register/${propertyId}/pdf`;
+}
+
+// --- M9 Fristen ---
+export function listFristen(referenceDate?: string): Promise<DeadlineItem[]> {
+  const q = referenceDate ? `?reference_date=${encodeURIComponent(referenceDate)}` : "";
+  return api.get<DeadlineItem[]>(`/api/fristen${q}`);
+}
+
+// --- M9 DSGVO (OWNER_ADMIN only) ---
+export function getDsgvoStatus(personId: string): Promise<DsgvoStatus> {
+  return api.get<DsgvoStatus>(`/api/dsgvo/persons/${personId}/status`);
+}
+
+export function getDsgvoExport(personId: string): Promise<DsgvoExport> {
+  return api.get<DsgvoExport>(`/api/dsgvo/persons/${personId}/export`);
+}
+
+export function requestPersonDeletion(personId: string): Promise<DsgvoStatus> {
+  return api.post<DsgvoStatus>(`/api/dsgvo/persons/${personId}/request-deletion`);
+}
+
+export function anonymizePerson(personId: string): Promise<DsgvoStatus> {
+  return api.post<DsgvoStatus>(`/api/dsgvo/persons/${personId}/anonymize`);
 }

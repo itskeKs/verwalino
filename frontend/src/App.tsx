@@ -40,6 +40,7 @@ import { DunningNoticeDetailPage } from "./pages/DunningNoticeDetailPage";
 import { MeetingsPage } from "./pages/MeetingsPage";
 import { MeetingDetailPage } from "./pages/MeetingDetailPage";
 import { ResolutionRegisterPage } from "./pages/ResolutionRegisterPage";
+import { FristenmonitorPage } from "./pages/FristenmonitorPage";
 
 function AppRoutes() {
   const { loading, session } = useAuth();
@@ -86,6 +87,7 @@ function AppRoutes() {
         <Route path="/versammlungen" element={<MeetingsPage />} />
         <Route path="/versammlungen/:meetingId" element={<MeetingDetailPage />} />
         <Route path="/beschluss-sammlung" element={<ResolutionRegisterPage />} />
+        <Route path="/fristen" element={<FristenmonitorPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

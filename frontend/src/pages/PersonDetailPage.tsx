@@ -16,9 +16,12 @@ import {
 } from "../api/endpoints";
 import type { Person, OwnerProfile, TenantProfile, Vendor } from "../api/types";
 import { ApiError } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
+import { DsgvoPanel } from "../components/DsgvoPanel";
 
 export function PersonDetailPage() {
   const { personId } = useParams<{ personId: string }>();
+  const { session } = useAuth();
   const [person, setPerson] = useState<Person | null>(null);
   const [ownerProfiles, setOwnerProfiles] = useState<OwnerProfile[]>([]);
   const [tenantProfiles, setTenantProfiles] = useState<TenantProfile[]>([]);
@@ -118,6 +121,7 @@ export function PersonDetailPage() {
   const hasOwner = ownerProfiles.length > 0;
   const hasTenant = tenantProfiles.length > 0;
   const hasVendor = vendors.length > 0;
+  const isAdmin = session?.role === "OWNER_ADMIN";
 
   return (
     <div>
@@ -215,6 +219,10 @@ export function PersonDetailPage() {
           </form>
         )}
       </div>
+
+      {isAdmin && personId && (
+        <DsgvoPanel personId={personId} onChanged={reload} />
+      )}
 
       {hasVendor && (
         <div className="card">
