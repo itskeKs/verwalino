@@ -30,6 +30,11 @@ import { WegSettlementsPage } from "./pages/WegSettlementsPage";
 import { WegSettlementDetailPage } from "./pages/WegSettlementDetailPage";
 import { AssetReportsPage } from "./pages/AssetReportsPage";
 import { AssetReportDetailPage } from "./pages/AssetReportDetailPage";
+import { BankAccountsPage } from "./pages/BankAccountsPage";
+import { PaymentsPage } from "./pages/PaymentsPage";
+import { PaymentDetailPage } from "./pages/PaymentDetailPage";
+import { MietkontoPage } from "./pages/MietkontoPage";
+import { OpenItemsPage } from "./pages/OpenItemsPage";
 
 function AppRoutes() {
   const { loading, session } = useAuth();
@@ -66,6 +71,11 @@ function AppRoutes() {
         <Route path="/weg-abrechnungen/:runId" element={<WegSettlementDetailPage />} />
         <Route path="/vermoegensberichte" element={<AssetReportsPage />} />
         <Route path="/vermoegensberichte/:runId" element={<AssetReportDetailPage />} />
+        <Route path="/bankkonten" element={<BankAccountsPage />} />
+        <Route path="/zahlungen" element={<PaymentsPage />} />
+        <Route path="/zahlungen/:paymentId" element={<PaymentDetailPage />} />
+        <Route path="/mietkonto" element={<MietkontoPage />} />
+        <Route path="/offene-posten" element={<OpenItemsPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

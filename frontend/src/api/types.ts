@@ -492,6 +492,115 @@ export interface PlanComputeRequest {
   reserve_contribution_total: string;
 }
 
+// --- M6 Bank Accounts ---
+
+export type BankAccountType = "LAUFEND" | "RUECKLAGE" | "KAUTION";
+
+export interface BankAccount {
+  id: string;
+  organization_id: string;
+  property_id: string;
+  account_type: BankAccountType;
+  label: string;
+  iban: string | null;
+  bic: string | null;
+  bank_name: string | null;
+}
+
+export interface BankAccountCreate {
+  property_id: string;
+  account_type: BankAccountType;
+  label: string;
+  iban?: string | null;
+  bic?: string | null;
+  bank_name?: string | null;
+}
+
+// --- M6 Payments ---
+
+export type PaymentDirection = "IN" | "OUT";
+
+export type PaymentType =
+  | "KALTMIETE"
+  | "NK_VORAUSZAHLUNG"
+  | "KAUTION"
+  | "HAUSGELD_VORSCHUSS"
+  | "RUECKLAGENANTEIL"
+  | "SONDERZAHLUNG";
+
+export type PaymentStatus = "draft" | "booked";
+
+export interface Payment {
+  id: string;
+  organization_id: string;
+  bank_account_id: string;
+  property_id: string;
+  management_mandate_id: string | null;
+  direction: PaymentDirection;
+  amount: string;
+  value_date: string;
+  payment_type: string;
+  tenant_profile_id: string | null;
+  owner_profile_id: string | null;
+  lease_agreement_id: string | null;
+  period_year: number | null;
+  period_month: number | null;
+  settlement_run_id: string | null;
+  status: PaymentStatus;
+  booked_at: string | null;
+  booked_by: string | null;
+  reverses_id: string | null;
+  reversed_by_id: string | null;
+  retention_until: string | null;
+  note: string | null;
+}
+
+export interface PaymentCreate {
+  bank_account_id: string;
+  direction: PaymentDirection;
+  amount: string;
+  value_date: string;
+  payment_type: string;
+  tenant_profile_id?: string | null;
+  owner_profile_id?: string | null;
+  lease_agreement_id?: string | null;
+  period_year?: number | null;
+  period_month?: number | null;
+  settlement_run_id?: string | null;
+  note?: string | null;
+}
+
+export interface PaymentUpdate {
+  bank_account_id?: string | null;
+  direction?: PaymentDirection | null;
+  amount?: string | null;
+  value_date?: string | null;
+  payment_type?: string | null;
+  tenant_profile_id?: string | null;
+  owner_profile_id?: string | null;
+  lease_agreement_id?: string | null;
+  period_year?: number | null;
+  period_month?: number | null;
+  settlement_run_id?: string | null;
+  note?: string | null;
+}
+
+export interface OpenItem {
+  period_year: number | null;
+  period_month: number | null;
+  payment_type: string;
+  soll: string;
+  ist: string;
+  open_amount: string;
+}
+
+export interface MietkontoResult {
+  open_items: OpenItem[];
+  soll_total: string;
+  ist_total: string;
+  balance: string;
+}
+
 // --- M4 WEG: Jahresabrechnung + Vermoegensbericht (settlement_run run_types) ---
 
 export interface WegLine {

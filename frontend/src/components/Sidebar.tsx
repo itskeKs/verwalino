@@ -91,6 +91,30 @@ export function Sidebar({ open, onClose }: Props) {
           </NavLink>
         </li>
 
+        {/* M6 Zahlungen */}
+        <li className="sidebar__divider" />
+        <li className="sidebar__section-label">Zahlungen</li>
+        <li>
+          <NavLink to="/bankkonten" className={navLinkClass} onClick={onClose}>
+            Bankkonten
+          </NavLink>
+        </li>
+        <li>
+          <NavLink to="/zahlungen" className={navLinkClass} onClick={onClose}>
+            Zahlungen
+          </NavLink>
+        </li>
+        <li>
+          <NavLink to="/mietkonto" className={navLinkClass} onClick={onClose}>
+            Mietkonto
+          </NavLink>
+        </li>
+        <li>
+          <NavLink to="/offene-posten" className={navLinkClass} onClick={onClose}>
+            Offene Posten
+          </NavLink>
+        </li>
+
         {/* Admin-only section */}
         {isAdmin && (
           <>

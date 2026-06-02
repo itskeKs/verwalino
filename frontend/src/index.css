@@ -185,6 +185,18 @@ code {
   color: #6a1b9a;
 }
 
+/* M6 payment status badges */
+
+.badge--booked {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.badge--storno {
+  background: #ffebee;
+  color: #b71c1c;
+}
+
 /* --- Links --- */
 
 .link {

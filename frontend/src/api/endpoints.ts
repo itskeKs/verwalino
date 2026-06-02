@@ -43,6 +43,12 @@ import type {
   WegComputeRequest,
   AssetReportCreate,
   AssetReportComputeRequest,
+  BankAccount,
+  BankAccountCreate,
+  Payment,
+  PaymentCreate,
+  OpenItem,
+  MietkontoResult,
 } from "./types";
 
 export function login(body: LoginRequest): Promise<LoginResponse> {
@@ -391,4 +397,110 @@ export function finalizeAssetReport(id: string, body: AssetReportComputeRequest)
 
 export function assetReportPdfUrl(id: string): string {
   return `/api/weg-settlements/asset-reports/${id}/pdf`;
+}
+
+// --- M6: Bank Accounts ---
+
+export function listBankAccounts(propertyId?: string): Promise<BankAccount[]> {
+  const qs = propertyId ? `?property_id=${encodeURIComponent(propertyId)}` : "";
+  return api.get<BankAccount[]>(`/api/bank-accounts${qs}`);
+}
+
+export function getBankAccount(id: string): Promise<BankAccount> {
+  return api.get<BankAccount>(`/api/bank-accounts/${id}`);
+}
+
+export function createBankAccount(body: BankAccountCreate): Promise<BankAccount> {
+  return api.post<BankAccount>("/api/bank-accounts", body);
+}
+
+// --- M6: Payments ---
+
+export function listPayments(params?: {
+  bank_account_id?: string;
+  lease_agreement_id?: string;
+  tenant_profile_id?: string;
+  owner_profile_id?: string;
+  payment_type?: string;
+  period_year?: number;
+  status?: string;
+}): Promise<Payment[]> {
+  const parts: string[] = [];
+  if (params?.bank_account_id) parts.push(`bank_account_id=${encodeURIComponent(params.bank_account_id)}`);
+  if (params?.lease_agreement_id) parts.push(`lease_agreement_id=${encodeURIComponent(params.lease_agreement_id)}`);
+  if (params?.tenant_profile_id) parts.push(`tenant_profile_id=${encodeURIComponent(params.tenant_profile_id)}`);
+  if (params?.owner_profile_id) parts.push(`owner_profile_id=${encodeURIComponent(params.owner_profile_id)}`);
+  if (params?.payment_type) parts.push(`payment_type=${encodeURIComponent(params.payment_type)}`);
+  if (params?.period_year) parts.push(`period_year=${params.period_year}`);
+  if (params?.status) parts.push(`status=${encodeURIComponent(params.status)}`);
+  const qs = parts.length > 0 ? `?${parts.join("&")}` : "";
+  return api.get<Payment[]>(`/api/payments${qs}`);
+}
+
+export function getPayment(id: string): Promise<Payment> {
+  return api.get<Payment>(`/api/payments/${id}`);
+}
+
+export function createPayment(body: PaymentCreate): Promise<Payment> {
+  return api.post<Payment>("/api/payments", body);
+}
+
+export function updatePayment(id: string, body: Partial<PaymentCreate>): Promise<Payment> {
+  return api.patch<Payment>(`/api/payments/${id}`, body);
+}
+
+export function bookPayment(id: string): Promise<Payment> {
+  return api.post<Payment>(`/api/payments/${id}/book`);
+}
+
+export function reversePayment(id: string, note?: string): Promise<Payment> {
+  return api.post<Payment>(`/api/payments/${id}/reverse`, note ? { note } : {});
+}
+
+export function deletePayment(id: string): Promise<void> {
+  return api.delete<void>(`/api/payments/${id}`);
+}
+
+// --- M6: Mietkonto ---
+
+export function leaseStatement(
+  leaseId: string,
+  periodStart: string,
+  periodEnd: string,
+): Promise<MietkontoResult> {
+  return api.get<MietkontoResult>(
+    `/api/payments/mietkonto/lease/${leaseId}?period_start=${periodStart}&period_end=${periodEnd}`,
+  );
+}
+
+export function ownerStatement(
+  ownerProfileId: string,
+  periodStart: string,
+  periodEnd: string,
+  economicPlanId?: string,
+): Promise<MietkontoResult> {
+  let qs = `?period_start=${periodStart}&period_end=${periodEnd}`;
+  if (economicPlanId) qs += `&economic_plan_id=${encodeURIComponent(economicPlanId)}`;
+  return api.get<MietkontoResult>(`/api/payments/mietkonto/owner/${ownerProfileId}${qs}`);
+}
+
+export function leaseOpenItems(
+  leaseId: string,
+  periodStart: string,
+  periodEnd: string,
+): Promise<OpenItem[]> {
+  return api.get<OpenItem[]>(
+    `/api/payments/open-items/lease/${leaseId}?period_start=${periodStart}&period_end=${periodEnd}`,
+  );
+}
+
+// --- M6/M3 bridge: DERIVED advance payments ---
+
+export function setAdvancePaymentsDerived(
+  settlementRunId: string,
+  periodYear: number,
+): Promise<SettlementRun> {
+  return api.patch<SettlementRun>(
+    `/api/settlements/${settlementRunId}/advance-payments-derived?period_year=${periodYear}`,
+  );
 }

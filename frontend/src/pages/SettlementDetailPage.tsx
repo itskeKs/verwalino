@@ -19,6 +19,7 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   getSettlement,
   setAdvancePayments,
+  setAdvancePaymentsDerived,
   computeSettlement,
   previewSettlement,
   finalizeSettlement,
@@ -281,6 +282,27 @@ export function SettlementDetailPage() {
       });
       setRun(updated);
       setEditingAdvance(false);
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleDeriveAdvance() {
+    if (!runId || !run) return;
+    const year = run.period_start ? parseInt(run.period_start.slice(0, 4), 10) : null;
+    if (!year) return;
+    const confirmed = window.confirm(
+      `Vorauszahlungssumme aus erfassten NK-Zahlungen fuer ${year} ableiten?`,
+    );
+    if (!confirmed) return;
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      const updated = await setAdvancePaymentsDerived(runId, year);
+      setRun(updated);
+      setAdvanceValue(updated.advance_payments_total ?? "");
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -802,13 +824,24 @@ export function SettlementDetailPage() {
                   ({run.advance_payments_source})
                 </span>
                 {isDraft && !editingAdvance && (
-                  <button
-                    className="btn btn--small"
-                    style={{ marginLeft: "0.5rem" }}
-                    onClick={() => setEditingAdvance(true)}
-                  >
-                    Aendern
-                  </button>
+                  <>
+                    <button
+                      className="btn btn--small"
+                      style={{ marginLeft: "0.5rem" }}
+                      onClick={() => setEditingAdvance(true)}
+                    >
+                      Aendern
+                    </button>
+                    <button
+                      className="btn btn--small"
+                      style={{ marginLeft: "0.25rem" }}
+                      onClick={handleDeriveAdvance}
+                      disabled={actionLoading}
+                      title="Vorauszahlungssumme aus erfassten NK-Zahlungen ableiten"
+                    >
+                      Aus Zahlungen ableiten
+                    </button>
+                  </>
                 )}
               </td>
             </tr>
