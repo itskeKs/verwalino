@@ -28,6 +28,8 @@ TENANT_TABLES = frozenset({
     "economic_plan", "economic_plan_line",
     # M6 Zahlungen, Mietkonto & offene Posten
     "payment",
+    # M7 Mahnwesen
+    "dunning_notice",
 })
 
 # Global tables that intentionally have no RLS.

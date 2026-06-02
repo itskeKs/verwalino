@@ -10,6 +10,7 @@ from app.api import settlements
 from app.api import economic_plans, weg_settlements
 from app.api import payments
 from app.api import bank_accounts
+from app.api import dunning
 from app.core.extraction import set_extractor
 from app.core.pdf_extraction import PdfTextExtractor
 from app.core.einvoice import RoutingExtractor
@@ -56,6 +57,9 @@ app.include_router(weg_settlements.router)
 # M6 Zahlungen, Mietkonto & offene Posten
 app.include_router(bank_accounts.router)
 app.include_router(payments.router)
+
+# M7 Mahnwesen
+app.include_router(dunning.router)
 
 
 @app.get("/api/health")
