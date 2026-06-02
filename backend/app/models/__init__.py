@@ -26,6 +26,11 @@ from app.models.invoice_document import InvoiceDocument
 from app.models.settlement_run import SettlementRun
 from app.models.settlement_line import SettlementLine
 
+# M4 WEG-Abrechnung (Wirtschaftsplan eigene Entitaet; Jahresabrechnung +
+# Vermoegensbericht als settlement_run run_types)
+from app.models.economic_plan import EconomicPlan
+from app.models.economic_plan_line import EconomicPlanLine
+
 __all__ = [
     "Base",
     "Organization",
@@ -52,4 +57,7 @@ __all__ = [
     # M3
     "SettlementRun",
     "SettlementLine",
+    # M4
+    "EconomicPlan",
+    "EconomicPlanLine",
 ]

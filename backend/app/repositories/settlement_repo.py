@@ -19,7 +19,9 @@ from sqlalchemy import and_, select
 from app.models.cost_category import CostCategory
 from app.models.cost_entry import CostEntry
 from app.models.lease_agreement import LeaseAgreement
+from app.models.owner_profile import OwnerProfile
 from app.models.ownership_history import OwnershipHistory
+from app.models.person import Person
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
 from app.models.unit import Unit
@@ -124,6 +126,27 @@ class SettlementRunRepository(TenantRepository[SettlementRun]):
         )
         result = await self._session.execute(stmt)
         return result.scalars().all()
+
+    async def owner_profiles_for_property(
+        self, property_id: uuid.UUID
+    ) -> Sequence[tuple[OwnerProfile, Person | None]]:
+        """Distinct owner_profiles owning a unit of a property + their person.
+
+        M4 (m4 section 10.2): for resolving per-owner display names in the WEG
+        PDF (names, not UUIDs). Joins ownership_history (any record) -> the owner
+        profile -> the person. DISTINCT on owner profile id.
+        """
+        stmt = (
+            select(OwnerProfile, Person)
+            .join(OwnershipHistory, OwnershipHistory.owner_profile_id == OwnerProfile.id)
+            .join(Unit, Unit.id == OwnershipHistory.unit_id)
+            .outerjoin(Person, Person.id == OwnerProfile.person_id)
+            .where(OwnerProfile.organization_id == self._org_id)
+            .where(Unit.property_id == property_id)
+            .distinct(OwnerProfile.id)
+        )
+        result = await self._session.execute(stmt)
+        return [(row[0], row[1]) for row in result.all()]
 
     def _base_query_for(self, model):
         return select(model).where(model.organization_id == self._org_id)

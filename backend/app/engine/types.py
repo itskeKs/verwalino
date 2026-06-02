@@ -245,3 +245,337 @@ class VacancyShare:
     owner_profile_id: uuid.UUID | None
     days: int
     amount: Decimal
+
+
+# ===========================================================================
+# M4 (WEG) -- owner-side input/output dataclasses (m4-weg-abrechnung.md).
+#
+# DESIGN NOTE (m4 section 4.4): M4 is the *mirrored addressee focus* of M3, NOT
+# a new distribution algorithm. It REUSES the central rounding (distribute_amount,
+# ADR-0005), the day-exact time_factor (ADR-0004), the UnitInput/OwnerPeriodInput
+# dataclasses and the canonical snapshot machinery. The only genuinely new pieces
+# are (a) a second cover function over OWNER periods (build_owner_cover, no
+# tenant/vacancy split, co-ownership via mea_share) and (b) a second orchestrator
+# that sums per OWNER instead of picking one tenant cell, computes the
+# Abrechnungsspitze (Ist - Soll, WEMoG, ADR-0007) and the reserve development.
+# ===========================================================================
+
+# A cost_group value (denormalised from cost_category) flagging the three
+# WEG owner-side cost spheres (m4 section 2.3 / 3).
+COST_GROUP_UMLAGEFAEHIG = "UMLAGEFAEHIG"
+COST_GROUP_GEMISCHT = "GEMISCHT_PRUEFEN"
+COST_GROUP_NICHT_UMLAGEFAEHIG = "NICHT_UMLAGEFAEHIG"
+COST_GROUPS = frozenset(
+    {COST_GROUP_UMLAGEFAEHIG, COST_GROUP_GEMISCHT, COST_GROUP_NICHT_UMLAGEFAEHIG}
+)
+
+
+@dataclass(frozen=True)
+class WegCostPositionInput:
+    """A WEG cost position to distribute over owners (m4 section 4).
+
+    The owner sphere reads `owner_distribution_key` (NOT tenant_distribution_key)
+    and distributes the `gross_amount` (the owner bears the full cost share by
+    MEA; what a letting owner may pass on to a tenant is the separate M3 sphere
+    -- m4 section 4.5, [F4-3]). A position whose category is `reserve_relevant`
+    is treated as a RESERVE CONTRIBUTION (Vermoegensbildung), NOT as cost, and
+    is kept out of OWNER_COST_TOTAL / the Abrechnungsspitze (m4 section 3).
+    """
+
+    cost_entry_id: uuid.UUID
+    category_id: uuid.UUID | None
+    category_code: str
+    label: str
+    gross_amount: Decimal
+    service_period_from: date
+    service_period_to: date
+    owner_distribution_key: str | None
+    # cost_group ∈ COST_GROUPS -- which owner cost sphere the position belongs to.
+    cost_group: str
+    # True only for ERHALTUNGSRUECKLAGE (reserve_relevant on cost_category):
+    # then this position is a reserve contribution, not a consumed cost.
+    reserve_relevant: bool = False
+    # Per-unit direct amounts for EXTERNE_ABRECHNUNG / MANUELLER_BETRAG (owner
+    # side mirrors the M3 mechanism; e.g. an externally metered position the WEG
+    # still distributes to owners by the delivered per-unit amounts).
+    external_amounts: tuple[ExternalAmountInput, ...] = ()
+    manual_amounts: tuple[ManualAmountInput, ...] = ()
+
+
+@dataclass(frozen=True)
+class OwnerAdvanceInput:
+    """A SOLL advance (Wirtschaftsplan-Vorschuss) of one owner for the period.
+
+    The beschlussrelevante Soll side of the Abrechnungsspitze (m4 section 2.1,
+    ADR-0007). Copied from the verknuepfter economic_plan into the immutable
+    settlement snapshot (m4 section 1.5). Money exact to cent.
+    """
+
+    owner_profile_id: uuid.UUID
+    plan_advance_total: Decimal
+
+
+@dataclass(frozen=True)
+class ReserveInput:
+    """Inputs for the Erhaltungsruecklage development (m4 section 3.3).
+
+    `opening_balance` and `withdrawals` are MANUALLY captured in M4 (no booking
+    logic yet; [F4-4/F4-5]). The contributions come from the reserve_relevant
+    cost positions (computed, not supplied here). The closing balance is derived
+    and the development invariant (opening + contributions - withdrawals ==
+    closing) is checked fail-loud by the engine.
+    """
+
+    opening_balance: Decimal = Decimal("0.00")
+    # Total withdrawals from the reserve in the period (manual, m4 section 3.3).
+    withdrawals_total: Decimal = Decimal("0.00")
+
+
+@dataclass(frozen=True)
+class WegSettlementInput:
+    """The complete, frozen input for ONE objektweite WEG-Jahresabrechnung.
+
+    One run per WEG (E4-4): the property-wide document from which the per-owner
+    Einzelabrechnung is a view. Per-owner lines carry addressee_owner_profile_id.
+    """
+
+    period_start: date
+    period_end: date
+    property: PropertyInput
+    units: tuple[UnitInput, ...]
+    # Owner periods over the whole property (ownership_history). Tag-inclusive
+    # (the read-edge already converted the [) DB bound, ADR-0006).
+    owner_periods: tuple[OwnerPeriodInput, ...]
+    cost_positions: tuple[WegCostPositionInput, ...]
+    # SOLL advances per owner (from the economic_plan; m4 section 1.5).
+    plan_advances: tuple[OwnerAdvanceInput, ...]
+    reserve: ReserveInput = ReserveInput()
+    # (nachrichtlich) actually-paid advances per owner -- MANUAL in M4, kept
+    # SEPARATE from the beschlussrelevante Spitze (m4 section 2.1 / 2.4). Not
+    # required; absent -> no payment-status line.
+    paid_advances: tuple[OwnerAdvanceInput, ...] = ()
+    economic_plan_id: uuid.UUID | None = None
+    engine_version: str = "m4.1.0"
+
+
+@dataclass(frozen=True)
+class PlannedCostInput:
+    """A planned cost position of a Wirtschaftsplan (m4 section 5.1)."""
+
+    category_id: uuid.UUID | None
+    category_code: str
+    label: str
+    planned_amount: Decimal
+    distribution_key: str
+    cost_group: str
+
+
+@dataclass(frozen=True)
+class WirtschaftsplanInput:
+    """The complete, frozen input for ONE Wirtschaftsplan computation (m4 §5).
+
+    Forward-looking; no Ist costs, no Soll-Ist. Planned costs per category +
+    the planned reserve contribution -> per-owner annual advance (MEA) -> 12
+    equal monthly Hausgeld rates (E4-3b, monatsbasiert; Largest-Remainder so
+    sum of 12 rates == annual advance exactly).
+    """
+
+    plan_year: int
+    period_start: date
+    period_end: date
+    property: PropertyInput
+    units: tuple[UnitInput, ...]
+    owner_periods: tuple[OwnerPeriodInput, ...]
+    planned_costs: tuple[PlannedCostInput, ...]
+    # Planned total reserve contribution of the year (Vermoegensbildung, NOT a
+    # cost umlage; m4 section 3). Distributed by MEA like a planned cost but kept
+    # in its own RESERVE_CONTRIBUTION subtotal.
+    reserve_contribution_total: Decimal = Decimal("0.00")
+    engine_version: str = "m4.1.0"
+
+
+@dataclass(frozen=True)
+class BankBalanceInput:
+    """A manual Stichtagssaldo of one bank account (Vermoegensbericht, ADR-0008).
+
+    A Verwalter-Angabe (manual), NOT an automatic booking saldo. Marked as such
+    in the PDF (m4 section 6.3 / 8.3).
+    """
+
+    bank_account_id: uuid.UUID
+    label: str
+    account_type: str
+    balance: Decimal
+
+
+@dataclass(frozen=True)
+class AssetItemInput:
+    """A manual receivable/payable line of the Vermoegensbericht (ADR-0008).
+
+    Forderung (RECEIVABLE) / Verbindlichkeit (PAYABLE). Manual Verwalter-Angabe.
+    """
+
+    label: str
+    amount: Decimal
+
+
+@dataclass(frozen=True)
+class VermoegensberichtInput:
+    """The complete, frozen input for ONE Vermoegensbericht (§ 28 IV WEG, m4 §6).
+
+    Reserve development is automatic (opening + contributions - withdrawals ==
+    closing, fail-loud); bank balances and receivables/payables are MANUAL
+    Verwalter-Angaben (ADR-0008). Stichtag = period_end.
+    """
+
+    period_start: date
+    period_end: date
+    property: PropertyInput
+    reserve: ReserveInput
+    # Reserve contributions of the year (computed elsewhere or supplied as the
+    # sum of reserve_relevant cost positions); kept explicit so the report is
+    # reproducible without re-running the Jahresabrechnung.
+    reserve_contributions_total: Decimal = Decimal("0.00")
+    bank_balances: tuple[BankBalanceInput, ...] = ()
+    receivables: tuple[AssetItemInput, ...] = ()
+    payables: tuple[AssetItemInput, ...] = ()
+    engine_version: str = "m4.1.0"
+
+
+# ---------------------------------------------------------------------------
+# M4 output dataclasses (mirror settlement_line / economic_plan_line).
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class OwnerCostStep:
+    """The auditable rechenweg of one cost position for ONE owner (m4 §2.2).
+
+    Mirrors M3's ComputationStep but is owner-addressed and tracks the cost
+    sphere (cost_group) and whether the position is a reserve contribution.
+    """
+
+    cost_entry_id: uuid.UUID
+    owner_profile_id: uuid.UUID
+    category_code: str
+    distribution_key: str
+    cost_group: str
+    is_reserve: bool
+    total_amount: Decimal  # gross / effective total of the position
+    key_base_total: Decimal | None  # denominator (sum of weights)
+    key_base_share: Decimal | None  # numerator (owner's effective unit weight)
+    time_share_days: int | None
+    time_share_total_days: int | None
+    exact_share: Decimal
+    rounded_amount: Decimal
+    note: str = ""
+
+
+@dataclass(frozen=True)
+class OwnerResult:
+    """The full per-owner result block of a WEG-Jahresabrechnung (m4 §2.2).
+
+    All money is Decimal, cent-exact. The three subtotals are the WEG-required
+    getrennte Ausweisung umlagefaehig / nicht umlagefaehig / Ruecklage (§2.3).
+    """
+
+    owner_profile_id: uuid.UUID
+    # Per (cost position) rounded share for this owner, in deterministic order.
+    cost_lines: tuple[ResultLine, ...]
+    subtotal_umlagefaehig: Decimal
+    subtotal_nicht_umlagefaehig: Decimal
+    subtotal_reserve: Decimal
+    # OWNER_COST_TOTAL = umlagefaehig + nicht umlagefaehig (NOT reserve).
+    owner_cost_total: Decimal
+    # PLAN_ADVANCE (Soll) of this owner from the Wirtschaftsplan.
+    plan_advance: Decimal
+    # ABRECHNUNGSSPITZE = owner_cost_total - plan_advance (WEMoG, ADR-0007).
+    abrechnungsspitze: Decimal
+    # (nachrichtlich) actually-paid advances of this owner -- separate from the
+    # Spitze (m4 section 2.1). None if not supplied.
+    paid_advances: Decimal | None = None
+
+
+@dataclass(frozen=True)
+class ReserveDevelopment:
+    """The Erhaltungsruecklage development block (m4 section 3.3).
+
+    Invariant (checked fail-loud): closing == opening + contributions - withdrawals.
+    """
+
+    opening_balance: Decimal
+    contributions_total: Decimal
+    withdrawals_total: Decimal
+    closing_balance: Decimal
+
+
+@dataclass(frozen=True)
+class WegResult:
+    """The pure computation result for one objektweite WEG-Jahresabrechnung."""
+
+    owners: tuple[OwnerResult, ...]
+    computation: tuple[OwnerCostStep, ...]
+    reserve: ReserveDevelopment
+    # Property-wide total of the per-cost-type sums (umlagefaehig + nicht
+    # umlagefaehig, WITHOUT reserve) -- the Σ-Ist that Σ owner_cost_total equals.
+    cost_total: Decimal
+    reserve_contributions_total: Decimal
+    plan_advances_total: Decimal
+    # Σ abrechnungsspitze over all owners (== cost_total - plan_advances_total).
+    abrechnungsspitze_total: Decimal
+
+
+@dataclass(frozen=True)
+class PlanOwnerResult:
+    """A per-owner result block of a Wirtschaftsplan (m4 section 5.2)."""
+
+    owner_profile_id: uuid.UUID
+    unit_id: uuid.UUID
+    # annual advance share of this owner/unit (cost + reserve, by MEA).
+    annual_advance: Decimal
+    # 12 monthly rates (Largest-Remainder; sum == annual_advance exactly).
+    monthly_rates: tuple[Decimal, ...]
+    # the representative monthly amount shown (== monthly_rates[0]); the exact
+    # 12 rates are in monthly_rates (some cents differ by +/-0.01 over the year).
+    monthly_amount: Decimal
+    distribution_base_share: Decimal | None
+    distribution_base_total: Decimal | None
+
+
+@dataclass(frozen=True)
+class PlanResult:
+    """The pure computation result for one Wirtschaftsplan (m4 section 5)."""
+
+    # Planned cost lines per category (+ the reserve contribution line) with
+    # their MEA distribution; deterministic order.
+    planned_lines: tuple[ResultLine, ...]
+    subtotal_umlagefaehig: Decimal
+    subtotal_nicht_umlagefaehig: Decimal
+    reserve_contribution_total: Decimal
+    # total planned advance volume (Σ planned costs + reserve).
+    total_advance_volume: Decimal
+    owners: tuple[PlanOwnerResult, ...]
+
+
+@dataclass(frozen=True)
+class AssetReportLine:
+    """One Bestandszeile of the Vermoegensbericht (m4 section 6.5)."""
+
+    line_type: str  # RESERVE_OPENING | RESERVE_CONTRIBUTION | RESERVE_WITHDRAWAL
+    #                 | RESERVE_CLOSING | BANK_BALANCE | RECEIVABLE | PAYABLE
+    label: str
+    amount: Decimal
+    sort_order: int
+    # True for manual Verwalter-Angaben (bank balances, receivables, payables) --
+    # the PDF marks these as such (ADR-0008, m4 section 6.4 / 8.3).
+    is_manual: bool = False
+    note: str | None = None
+
+
+@dataclass(frozen=True)
+class AssetReportResult:
+    """The pure computation result for one Vermoegensbericht (m4 section 6)."""
+
+    reserve: ReserveDevelopment
+    lines: tuple[AssetReportLine, ...]
+    bank_balance_total: Decimal
+    receivables_total: Decimal
+    payables_total: Decimal

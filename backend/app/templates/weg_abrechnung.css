@@ -1,0 +1,94 @@
+/* WEG-Dokumente (M4) -- PDF stylesheet for WeasyPrint.
+   Shared by Hausgeld-/Jahresabrechnung, Wirtschaftsplan, Vermoegensbericht.
+   Document-style layout; German money formatting in the service. Deterministic
+   rendering -> matches the frozen snapshot. */
+
+@page {
+    size: A4;
+    margin: 2cm 1.8cm 2.2cm 1.8cm;
+    @bottom-center {
+        content: "Seite " counter(page) " von " counter(pages);
+        font-size: 8pt;
+        color: #666;
+    }
+}
+
+* { box-sizing: border-box; }
+
+body {
+    font-family: "Helvetica", "Arial", sans-serif;
+    font-size: 10pt;
+    color: #1a1a1a;
+    line-height: 1.4;
+}
+
+h1 { font-size: 16pt; margin: 0 0 0.2cm 0; }
+h2 { font-size: 12pt; margin: 0.7cm 0 0.2cm 0; border-bottom: 0.5pt solid #aaa; padding-bottom: 2px; }
+
+.subtitle { font-size: 11pt; color: #444; margin-bottom: 0.6cm; }
+
+.meta { width: 100%; margin-bottom: 0.5cm; font-size: 9.5pt; }
+.meta td { vertical-align: top; padding: 1px 0; }
+.meta .label { color: #555; width: 38%; }
+.meta-sub { color: #777; font-size: 8.5pt; }
+
+table.lines {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.2cm;
+    font-size: 9pt;
+}
+table.lines th, table.lines td {
+    border-bottom: 0.5pt solid #ccc;
+    padding: 4px 5px;
+    text-align: left;
+    vertical-align: top;
+}
+table.lines th {
+    background: #f0f0f0;
+    border-bottom: 1pt solid #999;
+    font-weight: bold;
+}
+td.num, th.num { text-align: right; white-space: nowrap; }
+
+tr.subtotal td {
+    border-top: 0.5pt solid #aaa;
+    font-weight: bold;
+}
+tr.cost-total td {
+    border-top: 1pt solid #999;
+    font-weight: bold;
+}
+tr.plan td { color: #444; }
+tr.spitze td {
+    border-top: 1.5pt solid #333;
+    font-weight: bold;
+    font-size: 11pt;
+    padding-top: 6px;
+    background: #f6f6f0;
+}
+tr.reserve td { color: #2a4d2a; }
+tr.closing td { border-top: 1pt solid #333; font-weight: bold; }
+
+.owner-block { margin-top: 0.5cm; page-break-inside: avoid; }
+.owner-name { font-weight: bold; font-size: 10.5pt; margin: 0.4cm 0 0.1cm 0; }
+
+.note { color: #666; font-size: 8pt; font-style: italic; }
+.manual-tag { color: #a05a00; font-size: 7.5pt; font-style: italic; }
+
+.hint {
+    margin-top: 0.8cm;
+    font-size: 8pt;
+    color: #555;
+    border-top: 0.5pt solid #ccc;
+    padding-top: 0.3cm;
+}
+.disclaimer {
+    margin-top: 0.5cm;
+    font-size: 8pt;
+    color: #7a5;
+    border: 0.5pt solid #cc9;
+    background: #fbfbf0;
+    padding: 0.3cm;
+}
+.integrity { font-size: 7.5pt; color: #888; margin-top: 0.4cm; word-break: break-all; }

@@ -24,6 +24,8 @@ TENANT_TABLES = frozenset({
     "cost_entry", "invoice_document",
     # M3 Verteilungs-/Abrechnungs-Engine
     "settlement_run", "settlement_line",
+    # M4 WEG-Abrechnung (Wirtschaftsplan eigene Entitaet)
+    "economic_plan", "economic_plan_line",
 })
 
 # Global tables that intentionally have no RLS.

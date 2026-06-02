@@ -244,6 +244,128 @@ def _next_day(d: date) -> date:
     return date.fromordinal(d.toordinal() + 1)
 
 
+# ===========================================================================
+# M4 (WEG): owner cover -- the mirrored cover of build_unit_cover (m4 §4.4).
+#
+# Differences vs the M3 tenant/vacancy cover:
+#   - The slices are OWNER periods (no tenant, no vacancy concept): in a WEG a
+#     unit ALWAYS has an owner. A genuine ownership GAP is a data error and is
+#     escalated fail-loud (an Eigentums-"Leerstand" would mean a unit owned by
+#     nobody -- never correct, m4 section 4.4), unlike a tenant vacancy which is
+#     a normal state attributed to the owner.
+#   - CO-OWNERSHIP: multiple owners may own a unit at the SAME time (different
+#     owner_profiles with mea_share). The cover therefore can carry SEVERAL
+#     overlapping slices per day, one per co-owner; the time arithmetic is per
+#     (owner, slice) and the co-owners' mea_share weights split the unit's share
+#     among them (the second, exact stage over M3 -- m4 section 4.3).
+# ===========================================================================
+
+
+@dataclass(frozen=True)
+class OwnerCoverPeriod:
+    """A slice of one unit's ownership timeline within the settlement period.
+
+    Tag-inclusive [start, end]. Carries the owner and the owner's mea_share of
+    the unit (for co-ownership). For a sole owner mea_share is None/the full
+    unit and the second-stage split is a no-op.
+    """
+
+    unit_id: uuid.UUID
+    owner_profile_id: uuid.UUID
+    start: date
+    end: date
+    mea_share: Decimal | None = None
+
+    @property
+    def days(self) -> int:
+        return day_count(self.start, self.end)
+
+
+def build_owner_cover(
+    unit_id: uuid.UUID,
+    period_start: date,
+    period_end: date,
+    owner_periods: list[OwnerPeriodInput],
+) -> list[OwnerCoverPeriod]:
+    """Build the gap-free owner cover of one unit (m4 section 4.4).
+
+    Unlike build_unit_cover this does NOT fill gaps with vacancy: every day of
+    [period_start, period_end] MUST be covered by at least one ownership record,
+    else the data is wrong and we escalate (a WEG unit is never owner-less).
+    Co-ownership: several owners may cover the same day; each becomes its own
+    slice carrying its mea_share.
+
+    Invariant (checked): the UNION of the returned slices (ignoring co-owner
+    multiplicity) exactly covers [period_start, period_end] with no gap. With a
+    single owner per instant the slices are also non-overlapping; with co-owners
+    overlaps are EXPECTED (one slice per co-owner over the same span).
+    """
+    clipped: list[OwnerCoverPeriod] = []
+    for op in owner_periods:
+        if op.unit_id != unit_id:
+            continue
+        c = _clamp(op.valid_from, op.valid_to, period_start, period_end)
+        if c is None:
+            continue
+        clipped.append(
+            OwnerCoverPeriod(
+                unit_id=unit_id,
+                owner_profile_id=op.owner_profile_id,
+                start=c[0],
+                end=c[1],
+                mea_share=op.mea_share,
+            )
+        )
+
+    if not clipped:
+        raise PeriodOverlapError(
+            f"No ownership record covers unit {unit_id} in "
+            f"[{period_start}..{period_end}] -- a WEG unit must always have an "
+            f"owner; escalate rather than invent one (m4 section 4.4)."
+        )
+
+    _assert_owner_cover_no_gap(clipped, unit_id, period_start, period_end)
+    # Deterministic order: by start, then owner id (stable tie-break).
+    clipped.sort(key=lambda s: (s.start, str(s.owner_profile_id)))
+    return clipped
+
+
+def _assert_owner_cover_no_gap(
+    cover: list[OwnerCoverPeriod],
+    unit_id: uuid.UUID,
+    period_start: date,
+    period_end: date,
+) -> None:
+    """Assert the owner cover leaves NO day uncovered (co-owner overlaps OK).
+
+    We project the slices onto the timeline and verify the union covers
+    [period_start, period_end] contiguously. Overlap is allowed (co-ownership);
+    a gap is a fail-loud data error.
+    """
+    if period_start > period_end:
+        return
+    intervals = sorted(((s.start, s.end) for s in cover), key=lambda x: x[0])
+    cursor = period_start
+    for lo, hi in intervals:
+        if lo > cursor:
+            # There is a day with no owner between cursor and lo.
+            raise PeriodOverlapError(
+                f"Ownership gap for unit {unit_id}: no owner on "
+                f"[{cursor}..{_prev_day(lo)}] within [{period_start}..{period_end}] "
+                f"-- escalate (m4 section 4.4)."
+            )
+        if hi >= cursor:
+            cursor = _next_day(hi)
+        if cursor > period_end:
+            break
+    if cursor <= period_end:
+        raise PeriodOverlapError(
+            f"Ownership gap for unit {unit_id}: no owner on "
+            f"[{cursor}..{period_end}] within [{period_start}..{period_end}] "
+            f"-- escalate (m4 section 4.4)."
+        )
+
+
 def _assert_full_cover(
     cover: list[CoverPeriod],
     unit_id: uuid.UUID,

@@ -42,7 +42,15 @@ class SettlementLine(Base, UUIDPrimaryKeyMixin):
         index=True,
     )
 
-    line_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    line_type: Mapped[str] = mapped_column(String(24), nullable=False)
+
+    # M4: per-owner addressee of a WEG line (m4 section 4.4). NULL for object-wide
+    # lines (RESERVE_*, totals) and for BK_MIETER. Added in migration 0012.
+    addressee_owner_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("owner_profile.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
 
     cost_category_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),

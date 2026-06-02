@@ -103,4 +103,14 @@ class SettlementRun(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         nullable=True,
     )
 
-    # CHECK constraints + indices live in migration 0009.
+    # M4: link a WEG_JAHRESABRECHNUNG to the economic_plan whose Soll-Vorschuesse
+    # are its Abrechnungsspitze subtrahend (m4 section 1.5). NULL for BK_MIETER.
+    # RESTRICT: a plan a finalized settlement references must not be deleted.
+    # Added in migration 0012.
+    economic_plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("economic_plan.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+
+    # CHECK constraints + indices live in migration 0009 (economic_plan_id in 0012).

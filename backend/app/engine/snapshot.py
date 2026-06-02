@@ -14,7 +14,16 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from app.engine.types import EngineResult, SettlementInput
+from app.engine.types import (
+    AssetReportResult,
+    EngineResult,
+    PlanResult,
+    SettlementInput,
+    VermoegensberichtInput,
+    WegResult,
+    WegSettlementInput,
+    WirtschaftsplanInput,
+)
 
 MONEY = Decimal("0.01")
 QUOTA = Decimal("0.000001")
@@ -195,3 +204,331 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
         },
     }
     return payload
+
+
+# ===========================================================================
+# M4 (WEG) snapshot payloads (m4 section 5.4 / 1.5 / 6.5). Same canonical rules:
+# money/quotas as fixed-scale STRINGS, dates ISO, ids strings, lists sorted by
+# id -> stable bytes -> stable hash. The eingefrorene inputs are COPIED so the
+# snapshot is independent of later Stammdatenaenderungen (m4 section 1.5).
+# ===========================================================================
+
+
+def _units_payload(units) -> list[dict]:
+    return [
+        {
+            "id": str(u.id),
+            "number": u.number,
+            "usage_type": u.usage_type,
+            "area": _q(u.area),
+            "heated_area": _q(u.heated_area),
+            "mea": _q(u.mea),
+            "person_count": u.person_count,
+            "consumption": _q(u.consumption),
+        }
+        for u in sorted(units, key=lambda u: str(u.id))
+    ]
+
+
+def _owner_periods_payload(owner_periods) -> list[dict]:
+    return [
+        {
+            "unit_id": str(o.unit_id),
+            "owner_profile_id": str(o.owner_profile_id),
+            "from": o.valid_from.isoformat(),
+            "to": o.valid_to.isoformat() if o.valid_to else None,
+            "mea_share": _q(o.mea_share),
+        }
+        for o in sorted(
+            owner_periods, key=lambda o: (str(o.unit_id), o.valid_from.isoformat())
+        )
+    ]
+
+
+def build_weg_snapshot_payload(
+    inp: WegSettlementInput, result: WegResult
+) -> dict:
+    """Canonical snapshot for a WEG-Jahresabrechnung (m4 section 2/1.5)."""
+    period_days = (inp.period_end - inp.period_start).days + 1
+    positions = sorted(
+        inp.cost_positions, key=lambda p: (p.category_code, str(p.cost_entry_id))
+    )
+    plan_advances = sorted(inp.plan_advances, key=lambda a: str(a.owner_profile_id))
+    paid_advances = sorted(inp.paid_advances, key=lambda a: str(a.owner_profile_id))
+
+    return {
+        "engine_version": inp.engine_version,
+        "run_type": "WEG_JAHRESABRECHNUNG",
+        "period": {
+            "start": inp.period_start.isoformat(),
+            "end": inp.period_end.isoformat(),
+            "days": period_days,
+        },
+        "property": {
+            "id": str(inp.property.id),
+            "name": inp.property.name,
+            "management_type": inp.property.management_type,
+        },
+        "economic_plan_id": str(inp.economic_plan_id) if inp.economic_plan_id else None,
+        "inputs": {
+            "units": _units_payload(inp.units),
+            "owner_periods": _owner_periods_payload(inp.owner_periods),
+            "cost_positions": [
+                {
+                    "cost_entry_id": str(p.cost_entry_id),
+                    "category_code": p.category_code,
+                    "gross_amount": _m(p.gross_amount),
+                    "service_period": {
+                        "from": p.service_period_from.isoformat(),
+                        "to": p.service_period_to.isoformat(),
+                    },
+                    "owner_distribution_key": p.owner_distribution_key,
+                    "cost_group": p.cost_group,
+                    "reserve_relevant": p.reserve_relevant,
+                    "external_amounts": [
+                        {
+                            "unit_id": str(e.unit_id),
+                            "tenant_amount": _m(e.tenant_amount),
+                            "from": e.period_from.isoformat() if e.period_from else None,
+                            "to": e.period_to.isoformat() if e.period_to else None,
+                        }
+                        for e in sorted(
+                            p.external_amounts,
+                            key=lambda e: (
+                                str(e.unit_id),
+                                e.period_from.isoformat() if e.period_from else "",
+                            ),
+                        )
+                    ],
+                    "manual_amounts": [
+                        {"unit_id": str(m.unit_id), "amount": _m(m.amount)}
+                        for m in sorted(p.manual_amounts, key=lambda m: str(m.unit_id))
+                    ],
+                }
+                for p in positions
+            ],
+            "plan_advances": [
+                {
+                    "owner_profile_id": str(a.owner_profile_id),
+                    "plan_advance_total": _m(a.plan_advance_total),
+                }
+                for a in plan_advances
+            ],
+            "paid_advances": [
+                {
+                    "owner_profile_id": str(a.owner_profile_id),
+                    "paid_total": _m(a.plan_advance_total),
+                }
+                for a in paid_advances
+            ],
+            "reserve": {
+                "opening_balance": _m(inp.reserve.opening_balance),
+                "withdrawals_total": _m(inp.reserve.withdrawals_total),
+            },
+        },
+        "computation": [
+            {
+                "cost_entry_id": str(c.cost_entry_id),
+                "owner_profile_id": str(c.owner_profile_id),
+                "category_code": c.category_code,
+                "distribution_key": c.distribution_key,
+                "cost_group": c.cost_group,
+                "is_reserve": c.is_reserve,
+                "total_amount": _m(c.total_amount),
+                "key_base_total": _q(c.key_base_total),
+                "key_base_share": _q(c.key_base_share),
+                "time_share_days": c.time_share_days,
+                "time_share_total_days": c.time_share_total_days,
+                "rounded_amount": _m(c.rounded_amount),
+                "note": c.note,
+            }
+            for c in sorted(
+                result.computation,
+                key=lambda c: (
+                    str(c.owner_profile_id),
+                    c.category_code,
+                    str(c.cost_entry_id),
+                ),
+            )
+        ],
+        "result": {
+            "owners": [
+                {
+                    "owner_profile_id": str(o.owner_profile_id),
+                    "subtotal_umlagefaehig": _m(o.subtotal_umlagefaehig),
+                    "subtotal_nicht_umlagefaehig": _m(o.subtotal_nicht_umlagefaehig),
+                    "subtotal_reserve": _m(o.subtotal_reserve),
+                    "owner_cost_total": _m(o.owner_cost_total),
+                    "plan_advance": _m(o.plan_advance),
+                    "abrechnungsspitze": _m(o.abrechnungsspitze),
+                    "paid_advances": _m(o.paid_advances),
+                    "cost_lines": [
+                        {
+                            "line_type": ln.line_type,
+                            "label": ln.label,
+                            "amount": _m(ln.amount),
+                            "sort_order": ln.sort_order,
+                            "cost_entry_id": str(ln.cost_entry_id)
+                            if ln.cost_entry_id
+                            else None,
+                            "category_code": ln.category_code,
+                            "distribution_key": ln.distribution_key,
+                            "total_amount": _m(ln.total_amount),
+                            "distribution_base_total": _q(ln.distribution_base_total),
+                            "distribution_base_share": _q(ln.distribution_base_share),
+                            "time_share_days": ln.time_share_days,
+                            "time_share_total_days": ln.time_share_total_days,
+                            "note": ln.note,
+                        }
+                        for ln in o.cost_lines
+                    ],
+                }
+                for o in sorted(result.owners, key=lambda o: str(o.owner_profile_id))
+            ],
+            "reserve_development": {
+                "opening_balance": _m(result.reserve.opening_balance),
+                "contributions_total": _m(result.reserve.contributions_total),
+                "withdrawals_total": _m(result.reserve.withdrawals_total),
+                "closing_balance": _m(result.reserve.closing_balance),
+            },
+            "cost_total": _m(result.cost_total),
+            "reserve_contributions_total": _m(result.reserve_contributions_total),
+            "plan_advances_total": _m(result.plan_advances_total),
+            "abrechnungsspitze_total": _m(result.abrechnungsspitze_total),
+        },
+    }
+
+
+def build_plan_snapshot_payload(
+    inp: WirtschaftsplanInput, result: PlanResult
+) -> dict:
+    """Canonical snapshot for a Wirtschaftsplan (m4 section 5.4)."""
+    planned = sorted(inp.planned_costs, key=lambda p: (p.category_code, p.label))
+    return {
+        "engine_version": inp.engine_version,
+        "document_type": "WIRTSCHAFTSPLAN",
+        "plan_year": inp.plan_year,
+        "period": {
+            "start": inp.period_start.isoformat(),
+            "end": inp.period_end.isoformat(),
+        },
+        "property": {
+            "id": str(inp.property.id),
+            "name": inp.property.name,
+            "management_type": inp.property.management_type,
+        },
+        "inputs": {
+            "units": _units_payload(inp.units),
+            "owner_periods": _owner_periods_payload(inp.owner_periods),
+            "planned_costs": [
+                {
+                    "category_code": p.category_code,
+                    "label": p.label,
+                    "planned_amount": _m(p.planned_amount),
+                    "distribution_key": p.distribution_key,
+                    "cost_group": p.cost_group,
+                }
+                for p in planned
+            ],
+            "reserve_contribution_total": _m(inp.reserve_contribution_total),
+        },
+        "result": {
+            "planned_lines": [
+                {
+                    "line_type": ln.line_type,
+                    "label": ln.label,
+                    "amount": _m(ln.amount),
+                    "sort_order": ln.sort_order,
+                    "category_code": ln.category_code,
+                    "distribution_key": ln.distribution_key,
+                    "total_amount": _m(ln.total_amount),
+                    "distribution_base_total": _q(ln.distribution_base_total),
+                    "note": ln.note,
+                }
+                for ln in result.planned_lines
+            ],
+            "subtotal_umlagefaehig": _m(result.subtotal_umlagefaehig),
+            "subtotal_nicht_umlagefaehig": _m(result.subtotal_nicht_umlagefaehig),
+            "reserve_contribution_total": _m(result.reserve_contribution_total),
+            "total_advance_volume": _m(result.total_advance_volume),
+            "owners": [
+                {
+                    "owner_profile_id": str(o.owner_profile_id),
+                    "unit_id": str(o.unit_id),
+                    "annual_advance": _m(o.annual_advance),
+                    "monthly_amount": _m(o.monthly_amount),
+                    "monthly_rates": [_m(r) for r in o.monthly_rates],
+                    "distribution_base_share": _q(o.distribution_base_share),
+                    "distribution_base_total": _q(o.distribution_base_total),
+                }
+                for o in sorted(
+                    result.owners, key=lambda o: (str(o.owner_profile_id), str(o.unit_id))
+                )
+            ],
+        },
+    }
+
+
+def build_asset_report_payload(
+    inp: VermoegensberichtInput, result: AssetReportResult
+) -> dict:
+    """Canonical snapshot for a Vermoegensbericht (m4 section 6.5)."""
+    return {
+        "engine_version": inp.engine_version,
+        "run_type": "VERMOEGENSBERICHT",
+        "period": {
+            "start": inp.period_start.isoformat(),
+            "end": inp.period_end.isoformat(),
+        },
+        "property": {
+            "id": str(inp.property.id),
+            "name": inp.property.name,
+            "management_type": inp.property.management_type,
+        },
+        "inputs": {
+            "reserve": {
+                "opening_balance": _m(inp.reserve.opening_balance),
+                "withdrawals_total": _m(inp.reserve.withdrawals_total),
+            },
+            "reserve_contributions_total": _m(inp.reserve_contributions_total),
+            "bank_balances": [
+                {
+                    "bank_account_id": str(b.bank_account_id),
+                    "label": b.label,
+                    "account_type": b.account_type,
+                    "balance": _m(b.balance),
+                }
+                for b in sorted(
+                    inp.bank_balances, key=lambda b: (b.account_type, b.label)
+                )
+            ],
+            "receivables": [
+                {"label": r.label, "amount": _m(r.amount)} for r in inp.receivables
+            ],
+            "payables": [
+                {"label": p.label, "amount": _m(p.amount)} for p in inp.payables
+            ],
+        },
+        "result": {
+            "reserve_development": {
+                "opening_balance": _m(result.reserve.opening_balance),
+                "contributions_total": _m(result.reserve.contributions_total),
+                "withdrawals_total": _m(result.reserve.withdrawals_total),
+                "closing_balance": _m(result.reserve.closing_balance),
+            },
+            "lines": [
+                {
+                    "line_type": ln.line_type,
+                    "label": ln.label,
+                    "amount": _m(ln.amount),
+                    "sort_order": ln.sort_order,
+                    "is_manual": ln.is_manual,
+                    "note": ln.note,
+                }
+                for ln in result.lines
+            ],
+            "bank_balance_total": _m(result.bank_balance_total),
+            "receivables_total": _m(result.receivables_total),
+            "payables_total": _m(result.payables_total),
+        },
+    }
