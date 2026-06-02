@@ -30,6 +30,7 @@ from decimal import Decimal
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.engine.canonical import canonical_json, sha256_hex
 from app.engine.rounding import DistributionError
 from app.engine.settlement import EngineValidationError, compute_bk_settlement
@@ -95,33 +96,19 @@ class ComputeExtras:
     unit_metrics: list[UnitMetric] = field(default_factory=list)
 
 
-def db_exclusive_to_engine_inclusive(db_valid_to: date | None) -> date | None:
-    """Convert a temporal-table upper bound from the DB convention to the engine's.
-
-    The M1 temporal tables (lease_agreement, ownership_history) store `valid_to`
-    with HALF-OPEN `[valid_from, valid_to)` semantics: the EXCLUDE constraint uses
-    `daterange(valid_from, valid_to, '[)')` and the point-in-time query uses
-    `valid_to > target_date` (see migration 0003 + lease_agreement_repo /
-    ownership_history_repo). So the stored `valid_to` is the first NON-occupied day
-    (exclusive upper bound); two adjacent records `... valid_to = D` and
-    `valid_from = D` do NOT overlap in the DB -- day D belongs only to the second.
-
-    The engine (ADR-0004 / periods.py) is TAG-INCLUSIVE `[from, to]`: `valid_to` is
-    the LAST occupied day. The documented conversion happens HERE at the repository
-    read-edge (ADR-0004 consequence #6, m3-abrechnungs-engine.md section 3.4): the
-    engine's inclusive last day is the DB's exclusive bound minus one day.
-
-    Without this step the engine would re-count day D for the earlier record and the
-    later one and raise "Overlapping lease periods" (the live 500 on a DB-legal
-    Auszug-D / Einzug-D adjacency). NULL (open-ended) stays open-ended.
-
-    Only the [)-EXCLUDE temporal columns pass through here. `service_period_to`
-    (no EXCLUDE, fachlich inclusive) and the UI-supplied settlement-period bounds
-    are already inclusive and are NOT converted.
-    """
-    if db_valid_to is None:
-        return None
-    return date.fromordinal(db_valid_to.toordinal() - 1)
+# `db_exclusive_to_engine_inclusive` is imported at the top from the canonical
+# single-source-of-truth module (app.core.temporal, ADR-0006): the [)<->inclusive
+# rule has exactly ONE definition, shared by the engine settlement read-edge (the
+# two call sites in _load_engine_input below) AND the M1 API write/display edges
+# (leases.py / ownership.py). Storage stays HALF-OPEN `[valid_from, valid_to)`
+# (valid_to = first NON-occupied day); the engine (ADR-0004 / periods.py) is
+# TAG-INCLUSIVE [from, to] (valid_to = last occupied day). The conversion = stored
+# exclusive bound - 1 day; NULL stays open-ended. Only the [)-EXCLUDE temporal
+# columns (lease_agreement, ownership_history) pass through; service_period_* (no
+# EXCLUDE, fachlich inclusive) and the UI-supplied settlement-period bounds are NOT
+# converted. Without it the engine would re-count the shared boundary day of two
+# adjacent records and raise "Overlapping lease periods" (the live 500 on a
+# DB-legal Auszug-D / Einzug-D adjacency).
 
 
 class SettlementService:
