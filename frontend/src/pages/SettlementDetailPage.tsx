@@ -27,6 +27,8 @@ import {
   listProperties,
   listLeases,
   listUnits,
+  listTenantProfiles,
+  listPersons,
   listCostEntries,
   listCostCategories,
 } from "../api/endpoints";
@@ -40,6 +42,8 @@ import type {
   Property,
   LeaseRecord,
   Unit,
+  TenantProfile,
+  Person,
   CostEntry,
   CostCategory,
 } from "../api/types";
@@ -94,6 +98,8 @@ export function SettlementDetailPage() {
   const [properties, setProperties] = useState<Property[]>([]);
   const [leases, setLeases] = useState<LeaseRecord[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
+  const [tenantProfiles, setTenantProfiles] = useState<TenantProfile[]>([]);
+  const [persons, setPersons] = useState<Person[]>([]);
   const [costEntries, setCostEntries] = useState<CostEntry[]>([]);
   const [categories, setCategories] = useState<CostCategory[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -127,13 +133,17 @@ export function SettlementDetailPage() {
       listProperties(),
       listLeases(),
       listUnits(),
+      listTenantProfiles(),
+      listPersons(),
       listCostCategories(),
     ])
-      .then(([r, p, l, u, c]) => {
+      .then(([r, p, l, u, tp, per, c]) => {
         setRun(r);
         setProperties(p);
         setLeases(l);
         setUnits(u);
+        setTenantProfiles(tp);
+        setPersons(per);
         setCategories(c);
         setAdvanceValue(r.advance_payments_total ?? "");
         // Load cost entries for the property
@@ -213,6 +223,16 @@ export function SettlementDetailPage() {
   function getUnitLabel(id: string): string {
     const unit = units.find((u) => u.id === id);
     return unit ? `${unit.number} (${unit.location})` : id.slice(0, 8);
+  }
+
+  function getTenantName(tenantProfileId: string | null): string {
+    if (!tenantProfileId) return "—";
+    const tp = tenantProfiles.find((t) => t.id === tenantProfileId);
+    if (!tp) return "—";
+    const person = persons.find((p) => p.id === tp.person_id);
+    if (!person) return "—";
+    const parts = [person.first_name, person.last_name].filter(Boolean);
+    return parts.length > 0 ? parts.join(" ") : "—";
   }
 
   function getLeaseInfo(): string {
@@ -361,8 +381,10 @@ export function SettlementDetailPage() {
   // --- Render helpers ---
 
   function renderLines(lines: SettlementLine[]) {
-    const costLines = lines.filter((l) => l.line_type === "cost_position");
-    const summaryLines = lines.filter((l) => l.line_type !== "cost_position");
+    const costLines = lines.filter((l) => l.line_type === "COST");
+    const summaryLines = lines.filter(
+      (l) => l.line_type === "ADVANCE_PAYMENT" || l.line_type === "BALANCE",
+    );
 
     return (
       <div>
@@ -457,9 +479,9 @@ export function SettlementDetailPage() {
                   <tr
                     key={ln.id || `summary-${idx}`}
                     style={{
-                      fontWeight: ln.line_type === "balance" ? 700 : 600,
+                      fontWeight: ln.line_type === "BALANCE" ? 700 : 600,
                       fontSize:
-                        ln.line_type === "balance" ? "1.05rem" : undefined,
+                        ln.line_type === "BALANCE" ? "1.05rem" : undefined,
                     }}
                   >
                     <td>{ln.label}</td>
@@ -745,6 +767,10 @@ export function SettlementDetailPage() {
               <td>
                 {run.unit_id ? getUnitLabel(run.unit_id) : "-"}
               </td>
+            </tr>
+            <tr>
+              <td>Mieter</td>
+              <td>{getTenantName(run.tenant_profile_id)}</td>
             </tr>
             <tr>
               <td>Mietvertrag</td>

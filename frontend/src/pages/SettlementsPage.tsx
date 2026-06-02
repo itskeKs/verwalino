@@ -11,6 +11,9 @@ import {
   listSettlements,
   listProperties,
   listLeases,
+  listUnits,
+  listTenantProfiles,
+  listPersons,
   createSettlement,
 } from "../api/endpoints";
 import type {
@@ -18,6 +21,9 @@ import type {
   SettlementRunCreate,
   Property,
   LeaseRecord,
+  Unit,
+  TenantProfile,
+  Person,
 } from "../api/types";
 import { ApiError } from "../api/client";
 
@@ -54,6 +60,9 @@ export function SettlementsPage() {
   const [runs, setRuns] = useState<SettlementRun[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
   const [leases, setLeases] = useState<LeaseRecord[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [tenantProfiles, setTenantProfiles] = useState<TenantProfile[]>([]);
+  const [persons, setPersons] = useState<Person[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -70,8 +79,11 @@ export function SettlementsPage() {
       listSettlements(propertyFilter || undefined),
       listProperties(),
       listLeases(),
+      listUnits(),
+      listTenantProfiles(),
+      listPersons(),
     ])
-      .then(([s, p, l]) => {
+      .then(([s, p, l, u, tp, per]) => {
         let filtered = s;
         if (statusFilter) {
           filtered = s.filter((r) => r.status === statusFilter);
@@ -79,6 +91,9 @@ export function SettlementsPage() {
         setRuns(filtered);
         setProperties(p);
         setLeases(l);
+        setUnits(u);
+        setTenantProfiles(tp);
+        setPersons(per);
       })
       .catch((err) => {
         if (err instanceof ApiError && err.status === 401) {
@@ -109,10 +124,28 @@ export function SettlementsPage() {
     return prop ? prop.name : id.slice(0, 8);
   }
 
+  function getTenantName(tenantProfileId: string): string {
+    const tp = tenantProfiles.find((t) => t.id === tenantProfileId);
+    if (!tp) return "—";
+    const person = persons.find((p) => p.id === tp.person_id);
+    if (!person) return "—";
+    const parts = [person.first_name, person.last_name].filter(Boolean);
+    return parts.length > 0 ? parts.join(" ") : "—";
+  }
+
+  function getUnitLabel(unitId: string): string {
+    const unit = units.find((u) => u.id === unitId);
+    if (!unit) return unitId.slice(0, 8);
+    return unit.location ? `${unit.number} ${unit.location}` : unit.number;
+  }
+
   function getLeaseLabel(id: string): string {
     const lease = leases.find((l) => l.id === id);
     if (!lease) return id.slice(0, 8);
-    return `${lease.id.slice(0, 8)} (${lease.valid_from})`;
+    const unitLabel = getUnitLabel(lease.unit_id);
+    const tenantName = getTenantName(lease.tenant_profile_id);
+    const period = `ab ${lease.valid_from}${lease.valid_to ? ` bis ${lease.valid_to}` : " (laufend)"}`;
+    return `${unitLabel} — ${tenantName} (${period})`;
   }
 
   // All leases are shown when a property is selected; the backend validates
@@ -229,8 +262,7 @@ export function SettlementsPage() {
                 <option value="">-- Mietvertrag waehlen --</option>
                 {(form.property_id ? leases : []).map((l) => (
                   <option key={l.id} value={l.id}>
-                    Einheit {l.unit_id.slice(0, 8)} / ab {l.valid_from}
-                    {l.valid_to ? ` bis ${l.valid_to}` : " (laufend)"}
+                    {getLeaseLabel(l.id)}
                   </option>
                 ))}
               </select>

@@ -19,12 +19,29 @@ used here with a clearly-marked provisional Einwendungsfrist hint.
 from __future__ import annotations
 
 import html
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
 from app.core.pdf import render_pdf
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
+
+
+@dataclass
+class SettlementDisplayNames:
+    """Human-readable names resolved at render time from Stammdaten.
+
+    These are NOT stored in the snapshot; they are resolved on-the-fly from the
+    IDs on the settlement_run.  If a name cannot be resolved (e.g. deleted
+    person), the fallback is a dash.
+    """
+
+    property_name: str = "—"
+    property_address: str = ""
+    unit_label: str = "—"
+    tenant_name: str = "—"
+    lease_info: str = "—"
 
 _CSS = (Path(__file__).resolve().parent.parent / "templates" / "bk_abrechnung.css").read_text(
     encoding="utf-8"
@@ -66,8 +83,18 @@ def _esc(text: str | None) -> str:
     return html.escape(text or "")
 
 
-def build_settlement_html(run: SettlementRun, lines: list[SettlementLine]) -> str:
-    """Build the BK-Abrechnung HTML from the finalized run + lines (no compute)."""
+def build_settlement_html(
+    run: SettlementRun,
+    lines: list[SettlementLine],
+    names: SettlementDisplayNames | None = None,
+) -> str:
+    """Build the BK-Abrechnung HTML from the finalized run + lines (no compute).
+
+    ``names`` provides human-readable display names resolved from Stammdaten at
+    render time.  If omitted, falls back to a dash placeholder (never raw UUIDs
+    in the rendered document).
+    """
+    dn = names or SettlementDisplayNames()
     ordered = sorted(lines, key=lambda l: l.sort_order)
 
     cost_rows = []
@@ -123,6 +150,11 @@ def build_settlement_html(run: SettlementRun, lines: list[SettlementLine]) -> st
             f"{_esc(run.snapshot_sha256)}<br>Engine-Version: {_esc(run.engine_version)}</div>"
         )
 
+    # Build the property display: "Name, Strasse, PLZ Ort"
+    property_display = _esc(dn.property_name)
+    if dn.property_address:
+        property_display += f"<br/><span class='meta-sub'>{_esc(dn.property_address)}</span>"
+
     return f"""<!DOCTYPE html>
 <html lang="de">
 <head>
@@ -135,10 +167,10 @@ def build_settlement_html(run: SettlementRun, lines: list[SettlementLine]) -> st
      bis {run.period_end.strftime('%d.%m.%Y')}</div>
 
   <table class="meta">
-    <tr><td class="label">Objekt (ID)</td><td>{_esc(str(run.property_id))}</td></tr>
-    <tr><td class="label">Einheit (ID)</td><td>{_esc(str(run.unit_id) if run.unit_id else '-')}</td></tr>
-    <tr><td class="label">Mietvertrag (ID)</td><td>{_esc(str(run.lease_agreement_id) if run.lease_agreement_id else '-')}</td></tr>
-    <tr><td class="label">Mieter (ID)</td><td>{_esc(str(run.tenant_profile_id) if run.tenant_profile_id else '-')}</td></tr>
+    <tr><td class="label">Objekt</td><td>{property_display}</td></tr>
+    <tr><td class="label">Einheit</td><td>{_esc(dn.unit_label)}</td></tr>
+    <tr><td class="label">Mieter</td><td>{_esc(dn.tenant_name)}</td></tr>
+    <tr><td class="label">Mietvertrag</td><td>{_esc(dn.lease_info)}</td></tr>
   </table>
 
   <table class="lines">
@@ -176,7 +208,11 @@ def build_settlement_html(run: SettlementRun, lines: list[SettlementLine]) -> st
 </html>"""
 
 
-def render_settlement_pdf(run: SettlementRun, lines: list[SettlementLine]) -> bytes:
+def render_settlement_pdf(
+    run: SettlementRun,
+    lines: list[SettlementLine],
+    names: SettlementDisplayNames | None = None,
+) -> bytes:
     """Render the finalized run + lines to PDF bytes (WeasyPrint, no compute)."""
-    html_str = build_settlement_html(run, lines)
+    html_str = build_settlement_html(run, lines, names)
     return render_pdf(html_str)
