@@ -13,6 +13,7 @@ import type {
   LoginResponse,
   Organization,
   Mandate,
+  MandateCreate,
   Property,
   PropertyCreate,
   PropertyUpdate,
@@ -79,6 +80,10 @@ export function logout(): Promise<void> {
 
 export function getMyOrganization(): Promise<Organization> {
   return api.get<Organization>("/api/organizations/me");
+}
+
+export function createMandate(body: MandateCreate): Promise<Mandate> {
+  return api.post<Mandate>("/api/mandates", body);
 }
 
 export function listMandates(): Promise<Mandate[]> {

@@ -26,6 +26,13 @@ export interface Mandate {
   end_date: string | null;
 }
 
+export interface MandateCreate {
+  mandate_type: "WEG" | "MIET" | "SEV";
+  label: string;
+  start_date: string;
+  end_date: string | null;
+}
+
 export interface User {
   id: string;
   email: string;
