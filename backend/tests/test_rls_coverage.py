@@ -35,6 +35,8 @@ TENANT_TABLES = frozenset({
     "agenda_item",
     "resolution",
     "resolution_register_entry",
+    # Mandate documents (Verträge & Unterlagen am Mandat)
+    "mandate_document",
 })
 
 # Global tables that intentionally have no RLS.

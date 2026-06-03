@@ -7,6 +7,7 @@ import type {
   DeadlineItem,
   DsgvoStatus,
   DsgvoExport,
+  MandateDocument,
 } from "./types";
 import type {
   LoginRequest,
@@ -84,6 +85,32 @@ export function getMyOrganization(): Promise<Organization> {
 
 export function createMandate(body: MandateCreate): Promise<Mandate> {
   return api.post<Mandate>("/api/mandates", body);
+}
+
+export function getMandate(id: string): Promise<Mandate> {
+  return api.get<Mandate>(`/api/mandates/${id}`);
+}
+
+export function listMandateDocuments(mandateId: string): Promise<MandateDocument[]> {
+  return api.get<MandateDocument[]>(`/api/mandates/${mandateId}/documents`);
+}
+
+export function uploadMandateDocument(
+  mandateId: string,
+  formData: FormData,
+): Promise<MandateDocument> {
+  return uploadFormData<MandateDocument>(
+    `/api/mandates/${mandateId}/documents`,
+    formData,
+  );
+}
+
+export function mandateDocumentDownloadUrl(mandateId: string, docId: string): string {
+  return `/api/mandates/${mandateId}/documents/${docId}/download`;
+}
+
+export function deleteMandateDocument(mandateId: string, docId: string): Promise<void> {
+  return api.delete<void>(`/api/mandates/${mandateId}/documents/${docId}`);
 }
 
 export function listMandates(): Promise<Mandate[]> {

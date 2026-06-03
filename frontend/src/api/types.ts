@@ -33,6 +33,25 @@ export interface MandateCreate {
   end_date: string | null;
 }
 
+export type MandateDocType =
+  | "VERWALTERVERTRAG"
+  | "BANKKONTO"
+  | "VOLLMACHT"
+  | "VERSICHERUNG"
+  | "SONSTIGES";
+
+export interface MandateDocument {
+  id: string;
+  management_mandate_id: string;
+  doc_type: MandateDocType;
+  title: string;
+  original_filename: string | null;
+  mime_type: string;
+  content_byte_size: number;
+  uploaded_at: string | null;
+  uploaded_by: string | null;
+}
+
 export interface User {
   id: string;
   email: string;

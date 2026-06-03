@@ -41,6 +41,7 @@ import { MeetingsPage } from "./pages/MeetingsPage";
 import { MeetingDetailPage } from "./pages/MeetingDetailPage";
 import { ResolutionRegisterPage } from "./pages/ResolutionRegisterPage";
 import { FristenmonitorPage } from "./pages/FristenmonitorPage";
+import { MandateDetailPage } from "./pages/MandateDetailPage";
 
 function AppRoutes() {
   const { loading, session } = useAuth();
@@ -60,6 +61,7 @@ function AppRoutes() {
       <Routes>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/mandate" element={<MandatePage />} />
+        <Route path="/mandate/:mandateId" element={<MandateDetailPage />} />
         <Route path="/objekte" element={<PropertiesPage />} />
         <Route path="/objekte/:propertyId" element={<PropertyDetailPage />} />
         <Route path="/objekte/:propertyId/einheiten/:unitId" element={<UnitDetailPage />} />

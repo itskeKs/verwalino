@@ -43,6 +43,9 @@ from app.models.agenda_item import AgendaItem
 from app.models.resolution import Resolution
 from app.models.resolution_register_entry import ResolutionRegisterEntry
 
+# Mandate documents (Verträge & Unterlagen am Mandat)
+from app.models.mandate_document import MandateDocument
+
 __all__ = [
     "Base",
     "Organization",
@@ -81,4 +84,5 @@ __all__ = [
     "AgendaItem",
     "Resolution",
     "ResolutionRegisterEntry",
+    "MandateDocument",
 ]

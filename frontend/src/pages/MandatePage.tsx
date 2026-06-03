@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { listMandates, createMandate } from "../api/endpoints";
 import type { Mandate, MandateCreate } from "../api/types";
@@ -200,7 +201,8 @@ export function MandatePage() {
                     <th className="pl-5">Art</th>
                     <th>Bezeichnung</th>
                     <th>Beginn</th>
-                    <th className="pr-5">Ende</th>
+                    <th>Ende</th>
+                    <th className="pr-5"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -213,8 +215,13 @@ export function MandatePage() {
                       </td>
                       <td className="font-medium">{m.label || "—"}</td>
                       <td className="tabular-nums">{formatDate(m.start_date)}</td>
-                      <td className="pr-5 tabular-nums">
+                      <td className="tabular-nums">
                         {m.end_date ? formatDate(m.end_date) : "laufend"}
+                      </td>
+                      <td className="pr-5 text-right">
+                        <Link to={`/mandate/${m.id}`} className="btn btn--small">
+                          Öffnen
+                        </Link>
                       </td>
                     </tr>
                   ))}
