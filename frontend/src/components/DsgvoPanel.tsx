@@ -20,6 +20,7 @@ import {
 } from "../api/endpoints";
 import type { DsgvoStatus, DsgvoExport, DsgvoBinding } from "../api/types";
 import { ApiError } from "../api/client";
+import { Badge } from "./ui/badge";
 
 const BINDING_LABELS: Record<string, string> = {
   COST_ENTRY_VENDOR: "Kostenbeleg (als Dienstleister)",
@@ -191,23 +192,54 @@ export function DsgvoPanel({ personId, onChanged }: Props) {
           </p>
 
           {exportData && (
-            <details open style={{ marginTop: "0.75rem" }}>
-              <summary style={{ cursor: "pointer", fontSize: "0.85rem" }}>
-                Auskunft (Art. 15/20)
-              </summary>
-              <pre
-                style={{
-                  fontSize: "0.72rem",
-                  background: "#f7f8fa",
-                  padding: "0.75rem",
-                  overflowX: "auto",
-                  borderRadius: "4px",
-                  marginTop: "0.4rem",
-                }}
-              >
-                {JSON.stringify(exportData, null, 2)}
-              </pre>
-            </details>
+            <div className="mt-4 rounded-md border border-border bg-secondary/40 p-4">
+              <p className="mb-3 text-sm font-semibold">Auskunft (Art. 15/20 DSGVO)</p>
+
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Stammdaten
+              </p>
+              <table className="info-table mb-3">
+                <tbody>
+                  {personRows(exportData.person).map(([k, v]) => (
+                    <tr key={k}>
+                      <td>{k}</td>
+                      <td>{v}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Rollen
+              </p>
+              <div className="mb-3 flex flex-wrap gap-2">
+                {roleChips(exportData.roles).length === 0 ? (
+                  <span className="text-sm text-muted-foreground">keine Rollen</span>
+                ) : (
+                  roleChips(exportData.roles).map((c) => (
+                    <Badge key={c} tone="default">
+                      {c}
+                    </Badge>
+                  ))
+                )}
+              </div>
+
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Aufbewahrungsbindungen
+              </p>
+              {exportData.retention_bindings.length === 0 ? (
+                <p className="text-sm text-muted-foreground">keine</p>
+              ) : (
+                <ul className="space-y-1 text-sm">
+                  {exportData.retention_bindings.map((b, i) => (
+                    <li key={i} className="text-foreground">
+                      {BINDING_LABELS[b.kind] ?? b.kind}
+                      {b.retention_until ? ` — bis ${b.retention_until}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
         </>
       )}
@@ -232,4 +264,34 @@ function describeApplied(applied: string): string {
     default:
       return "Aktion ausgeführt.";
   }
+}
+
+function personRows(p: Record<string, string | null>): [string, string][] {
+  const rows: [string, string][] = [];
+  const add = (label: string, value?: string | null) => {
+    if (value) rows.push([label, value]);
+  };
+  add("Vorname", p.first_name);
+  add("Nachname", p.last_name);
+  add("Firma", p.company_name);
+  add("E-Mail", p.email);
+  add("Telefon", p.phone);
+  add("Straße", p.street);
+  const ort = [p.zip_code, p.city].filter(Boolean).join(" ");
+  add("Ort", ort || null);
+  add("IBAN", p.iban);
+  add("BIC", p.bic);
+  add("Bank", p.bank_name);
+  if (p.created_at) add("Angelegt", p.created_at.slice(0, 10));
+  return rows;
+}
+
+function roleChips(roles: DsgvoExport["roles"]): string[] {
+  const chips: string[] = [];
+  if (roles.vendor_ids.length) chips.push(`Dienstleister (${roles.vendor_ids.length})`);
+  if (roles.tenant_profile_ids.length)
+    chips.push(`Mieter (${roles.tenant_profile_ids.length})`);
+  if (roles.owner_profile_ids.length)
+    chips.push(`Eigentümer (${roles.owner_profile_ids.length})`);
+  return chips;
 }

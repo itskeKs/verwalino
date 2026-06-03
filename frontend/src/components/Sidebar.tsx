@@ -1,169 +1,164 @@
 /**
- * Collapsible sidebar navigation.
+ * Modern sidebar navigation (UI-Kit) -- dark rail with grouped, icon-led links.
  *
- * On desktop (>768px): always visible in a fixed-width column.
- * On mobile: slides in as an overlay when `open` is true.
- *
- * Admin-only links are shown only when the session role is OWNER_ADMIN,
- * demonstrating role-awareness in the UI (architecture.md section 4.2).
+ * Desktop (md+): static, always visible. Mobile: off-canvas, slides in when
+ * `open`. Admin-only links appear only for OWNER_ADMIN.
  */
 
 import { NavLink } from "react-router-dom";
+import {
+  LayoutDashboard,
+  CalendarClock,
+  Briefcase,
+  Building2,
+  Users,
+  ReceiptText,
+  FileText,
+  Calculator,
+  ClipboardList,
+  FileSpreadsheet,
+  Landmark,
+  Vote,
+  Gavel,
+  Wallet,
+  ArrowLeftRight,
+  BookOpenText,
+  CircleAlert,
+  BellRing,
+  UserCog,
+  KeyRound,
+  type LucideIcon,
+} from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
-import "./Sidebar.css";
+import { cn } from "../lib/utils";
 
 interface Props {
   open: boolean;
   onClose: () => void;
 }
 
+interface NavItem {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  end?: boolean;
+}
+
+interface NavGroup {
+  label: string;
+  items: NavItem[];
+  adminOnly?: boolean;
+}
+
+const GROUPS: NavGroup[] = [
+  {
+    label: "Übersicht",
+    items: [
+      { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+      { to: "/fristen", label: "Fristenmonitor", icon: CalendarClock },
+      { to: "/mandate", label: "Mandate", icon: Briefcase },
+    ],
+  },
+  {
+    label: "Stammdaten",
+    items: [
+      { to: "/objekte", label: "Objekte", icon: Building2 },
+      { to: "/personen", label: "Personen", icon: Users },
+    ],
+  },
+  {
+    label: "Kosten & Belege",
+    items: [
+      { to: "/kosten", label: "Kostenpositionen", icon: ReceiptText },
+      { to: "/belege", label: "Belege", icon: FileText },
+    ],
+  },
+  {
+    label: "Abrechnungen",
+    items: [{ to: "/abrechnungen", label: "Betriebskosten", icon: Calculator }],
+  },
+  {
+    label: "WEG",
+    items: [
+      { to: "/wirtschaftsplaene", label: "Wirtschaftspläne", icon: ClipboardList },
+      { to: "/weg-abrechnungen", label: "WEG-Abrechnungen", icon: FileSpreadsheet },
+      { to: "/vermoegensberichte", label: "Vermögensberichte", icon: Landmark },
+    ],
+  },
+  {
+    label: "Versammlungen",
+    items: [
+      { to: "/versammlungen", label: "Versammlungen", icon: Vote },
+      { to: "/beschluss-sammlung", label: "Beschluss-Sammlung", icon: Gavel },
+    ],
+  },
+  {
+    label: "Zahlungen",
+    items: [
+      { to: "/bankkonten", label: "Bankkonten", icon: Wallet },
+      { to: "/zahlungen", label: "Zahlungen", icon: ArrowLeftRight },
+      { to: "/mietkonto", label: "Mietkonto", icon: BookOpenText },
+      { to: "/offene-posten", label: "Offene Posten", icon: CircleAlert },
+      { to: "/mahnungen", label: "Mahnungen", icon: BellRing },
+    ],
+  },
+  {
+    label: "Verwaltung",
+    adminOnly: true,
+    items: [{ to: "/users", label: "Benutzer", icon: UserCog }],
+  },
+];
+
 export function Sidebar({ open, onClose }: Props) {
   const { session } = useAuth();
   const isAdmin = session?.role === "OWNER_ADMIN";
 
   return (
-    <nav className={`sidebar ${open ? "sidebar--open" : ""}`}>
-      <ul className="sidebar__nav">
-        <li>
-          <NavLink to="/" className={navLinkClass} onClick={onClose}>
-            Dashboard
-          </NavLink>
-        </li>
-        <li>
-          <NavLink to="/mandate" className={navLinkClass} onClick={onClose}>
-            Mandate
-          </NavLink>
-        </li>
-        <li>
-          <NavLink to="/fristen" className={navLinkClass} onClick={onClose}>
-            Fristenmonitor
-          </NavLink>
-        </li>
+    <aside
+      className={cn(
+        "fixed inset-y-0 left-0 z-40 flex w-64 flex-col bg-sidebar text-sidebar-foreground transition-transform duration-200 md:static md:translate-x-0",
+        open ? "translate-x-0" : "-translate-x-full",
+      )}
+    >
+      {/* Brand */}
+      <div className="flex h-16 shrink-0 items-center gap-2.5 px-5">
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-sidebar-accent text-sidebar-accent-foreground">
+          <KeyRound className="h-4 w-4" />
+        </span>
+        <span className="text-[0.95rem] font-semibold tracking-tight text-white">
+          Hausverwaltung
+        </span>
+      </div>
 
-        {/* M1 Stammdaten */}
-        <li className="sidebar__divider" />
-        <li className="sidebar__section-label">Stammdaten</li>
-        <li>
-          <NavLink to="/objekte" className={navLinkClass} onClick={onClose}>
-            Objekte
-          </NavLink>
-        </li>
-        <li>
-          <NavLink to="/personen" className={navLinkClass} onClick={onClose}>
-            Personen
-          </NavLink>
-        </li>
-
-        {/* M2 Kosten & Belege */}
-        <li className="sidebar__divider" />
-        <li className="sidebar__section-label">Kosten &amp; Belege</li>
-        <li>
-          <NavLink to="/kosten" className={navLinkClass} onClick={onClose}>
-            Kostenpositionen
-          </NavLink>
-        </li>
-        <li>
-          <NavLink to="/belege" className={navLinkClass} onClick={onClose}>
-            Belege
-          </NavLink>
-        </li>
-
-        {/* M3 Abrechnungen */}
-        <li className="sidebar__divider" />
-        <li className="sidebar__section-label">Abrechnungen</li>
-        <li>
-          <NavLink to="/abrechnungen" className={navLinkClass} onClick={onClose}>
-            Betriebskosten (Miete)
-          </NavLink>
-        </li>
-
-        {/* M4 WEG */}
-        <li className="sidebar__divider" />
-        <li className="sidebar__section-label">WEG</li>
-        <li>
-          <NavLink to="/wirtschaftsplaene" className={navLinkClass} onClick={onClose}>
-            Wirtschaftspläne
-          </NavLink>
-        </li>
-        <li>
-          <NavLink to="/weg-abrechnungen" className={navLinkClass} onClick={onClose}>
-            WEG-Abrechnungen
-          </NavLink>
-        </li>
-        <li>
-          <NavLink to="/vermoegensberichte" className={navLinkClass} onClick={onClose}>
-            Vermögensberichte
-          </NavLink>
-        </li>
-
-        {/* M8 Versammlungen & Beschluesse */}
-        <li className="sidebar__divider" />
-        <li className="sidebar__section-label">Versammlungen</li>
-        <li>
-          <NavLink to="/versammlungen" className={navLinkClass} onClick={onClose}>
-            Versammlungen
-          </NavLink>
-        </li>
-        <li>
-          <NavLink to="/beschluss-sammlung" className={navLinkClass} onClick={onClose}>
-            Beschluss-Sammlung
-          </NavLink>
-        </li>
-
-        {/* M6 Zahlungen */}
-        <li className="sidebar__divider" />
-        <li className="sidebar__section-label">Zahlungen</li>
-        <li>
-          <NavLink to="/bankkonten" className={navLinkClass} onClick={onClose}>
-            Bankkonten
-          </NavLink>
-        </li>
-        <li>
-          <NavLink to="/zahlungen" className={navLinkClass} onClick={onClose}>
-            Zahlungen
-          </NavLink>
-        </li>
-        <li>
-          <NavLink to="/mietkonto" className={navLinkClass} onClick={onClose}>
-            Mietkonto
-          </NavLink>
-        </li>
-        <li>
-          <NavLink to="/offene-posten" className={navLinkClass} onClick={onClose}>
-            Offene Posten
-          </NavLink>
-        </li>
-        <li>
-          <NavLink to="/mahnungen" className={navLinkClass} onClick={onClose}>
-            Mahnungen
-          </NavLink>
-        </li>
-
-        {/* Admin-only section */}
-        {isAdmin && (
-          <>
-            <li className="sidebar__divider" />
-            <li className="sidebar__section-label">Verwaltung</li>
-            <li>
+      {/* Nav */}
+      <nav className="flex-1 overflow-y-auto px-3 pb-6">
+        {GROUPS.filter((g) => !g.adminOnly || isAdmin).map((group) => (
+          <div key={group.label} className="mb-1">
+            <p className="px-3 pb-1 pt-4 text-[0.68rem] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
+              {group.label}
+            </p>
+            {group.items.map((item) => (
               <NavLink
-                to="/users"
-                className={navLinkClass}
+                key={item.to}
+                to={item.to}
+                end={item.end}
                 onClick={onClose}
+                className={({ isActive }) =>
+                  cn(
+                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                    isActive
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm"
+                      : "text-sidebar-foreground/75 hover:bg-white/5 hover:text-white",
+                  )
+                }
               >
-                Benutzer
+                <item.icon className="h-[1.05rem] w-[1.05rem] shrink-0" />
+                <span className="truncate">{item.label}</span>
               </NavLink>
-            </li>
-          </>
-        )}
-      </ul>
-    </nav>
+            ))}
+          </div>
+        ))}
+      </nav>
+    </aside>
   );
-}
-
-function navLinkClass({
-  isActive,
-}: {
-  isActive: boolean;
-}): string {
-  return `sidebar__link ${isActive ? "sidebar__link--active" : ""}`;
 }
