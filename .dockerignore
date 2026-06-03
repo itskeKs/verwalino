@@ -1,0 +1,31 @@
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+backend/.pytest_cache/
+backend/.hypothesis/
+.hypothesis/
+
+# Node
+**/node_modules/
+frontend/dist/
+
+# VCS / editor / OS
+.git/
+.gitignore
+**/.DS_Store
+.claude/
+
+# Docs & infra not needed inside the image
+docs/
+infra/
+*.md
+
+# Local env / secrets -- never bake into the image
+.env
+**/.env
+.env.*
+
+# CI / compose -- not needed inside the image
+.gitlab-ci.yml
+docker-compose*.yml

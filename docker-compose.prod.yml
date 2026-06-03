@@ -1,0 +1,55 @@
+# Single-host production deployment: the app image + PostgreSQL.
+# Secrets come from a local .env (see .env.example) -- compose auto-loads it.
+#
+#   cp .env.example .env   # then edit
+#   docker compose -f docker-compose.prod.yml up -d --build   # build locally
+#
+# On a CI-driven host, set APP_IMAGE to the pushed registry image and:
+#   docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
+#
+# Put a TLS-terminating reverse proxy (Caddy/Traefik/nginx) in front; the app
+# serves plain HTTP on :8000 and sets a Secure session cookie (HTTPS required).
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hausverwaltung
+      POSTGRES_USER: app_migrator
+      POSTGRES_PASSWORD: ${MIGRATOR_PASSWORD:?set MIGRATOR_PASSWORD in .env}
+      APP_RW_PASSWORD: ${APP_RW_PASSWORD:?set APP_RW_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/db/prod-init.sh:/docker-entrypoint-initdb.d/10-app-rw.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app_migrator -d hausverwaltung"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    image: ${APP_IMAGE:-hausverwaltung:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      HV_DATABASE_URL: postgresql+asyncpg://app_rw:${APP_RW_PASSWORD}@db:5432/hausverwaltung
+      HV_DATABASE_URL_MIGRATOR: postgresql+asyncpg://app_migrator:${MIGRATOR_PASSWORD}@db:5432/hausverwaltung
+      HV_DATABASE_URL_SYNC: postgresql://app_migrator:${MIGRATOR_PASSWORD}@db:5432/hausverwaltung
+      HV_SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      HV_SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+      HV_DATA_REGION: EU
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+    volumes:
+      - documents:/data/documents
+    ports:
+      - "${APP_PORT:-8000}:8000"
+
+volumes:
+  pgdata:
+  documents:

@@ -1,0 +1,95 @@
+# GitLab CI/CD: test -> build & push image -> deploy.
+#
+#  test    runs the backend suite against a throwaway PostgreSQL service.
+#  build   builds the single deployable image with Kaniko (no Docker daemon
+#          needed) and pushes it to the project's GitLab Container Registry.
+#  deploy  TEMPLATE -- pulls the image onto a host over SSH (adjust to your
+#          target: VM + docker compose, Kubernetes, a PaaS, …).
+
+stages:
+  - test
+  - build
+  - deploy
+
+# ---------------------------------------------------------------------------
+# Test
+# ---------------------------------------------------------------------------
+test:
+  stage: test
+  image: python:3.12-slim-bookworm
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+  variables:
+    POSTGRES_DB: hausverwaltung
+    POSTGRES_USER: app_migrator
+    POSTGRES_PASSWORD: migrator_secret
+    # Throwaway CI DB on the postgres service. Mirrors the local two-role setup.
+    HV_DATABASE_URL: "postgresql+asyncpg://app_rw:app_secret@postgres:5432/hausverwaltung"
+    HV_DATABASE_URL_MIGRATOR: "postgresql+asyncpg://app_migrator:migrator_secret@postgres:5432/hausverwaltung"
+    HV_DATABASE_URL_SYNC: "postgresql://app_migrator:migrator_secret@postgres:5432/hausverwaltung"
+  before_script:
+    # postgresql-client (psql) + WeasyPrint native libs (imported by the app).
+    - apt-get update && apt-get install -y --no-install-recommends
+        postgresql-client
+        libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0
+        libcairo2 libgdk-pixbuf-2.0-0 libffi8 fonts-dejavu-core shared-mime-info
+    - export PGPASSWORD=migrator_secret
+    - until pg_isready -h postgres -U app_migrator -d hausverwaltung; do sleep 1; done
+    # Create the app_rw role the application connects as (mirrors infra/db/init.sql).
+    - psql -h postgres -U app_migrator -d hausverwaltung -f infra/db/init.sql
+    - cd backend && pip install ".[dev]"
+  script:
+    - pytest -q
+
+# ---------------------------------------------------------------------------
+# Build & push (Kaniko -> GitLab Container Registry)
+# ---------------------------------------------------------------------------
+build:
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+  script:
+    - mkdir -p /kaniko/.docker
+    - |
+      echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf '%s:%s' "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+    - /kaniko/executor
+        --context "${CI_PROJECT_DIR}"
+        --dockerfile "${CI_PROJECT_DIR}/Dockerfile"
+        --destination "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}"
+        --destination "${CI_REGISTRY_IMAGE}:latest"
+
+# ---------------------------------------------------------------------------
+# Deploy (TEMPLATE -- adjust to your environment; manual + default branch only)
+# Requires CI/CD variables: SSH_PRIVATE_KEY, DEPLOY_HOST, DEPLOY_USER.
+# The target host needs Docker, this repo's docker-compose.prod.yml + .env in
+# /opt/hausverwaltung, and must be logged in to the GitLab registry.
+# ---------------------------------------------------------------------------
+deploy:
+  stage: deploy
+  image: alpine:3.20
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+  environment:
+    name: production
+  before_script:
+    - apk add --no-cache openssh-client
+    - eval "$(ssh-agent -s)"
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+  script:
+    - |
+      ssh "$DEPLOY_USER@$DEPLOY_HOST" "
+        set -e
+        cd /opt/hausverwaltung
+        export APP_IMAGE='${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}'
+        docker compose -f docker-compose.prod.yml pull app
+        docker compose -f docker-compose.prod.yml up -d
+        docker image prune -f
+      "

@@ -1,6 +1,10 @@
 """FastAPI application bootstrap."""
 
-from fastapi import FastAPI
+import os
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api import auth, organizations, users, mandates
 from app.api import properties, units, persons, ownership, leases
@@ -74,3 +78,31 @@ app.include_router(dsgvo.router)
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Serve the built frontend (production single-container deploy).
+#
+# In development the frontend runs on the Vite dev server (proxying /api here),
+# so HV_FRONTEND_DIST is unset and none of this is mounted. In the Docker image
+# the built SPA is copied in and HV_FRONTEND_DIST points at it: FastAPI then
+# serves the static assets and falls back to index.html for client-side routes
+# (so a hard refresh on /fristen, /mandate/... works). API routes are matched
+# first (registered above); the catch-all explicitly 404s unknown /api paths.
+# ---------------------------------------------------------------------------
+_frontend_dist = os.environ.get("HV_FRONTEND_DIST")
+if _frontend_dist and os.path.isdir(_frontend_dist):
+    _assets_dir = os.path.join(_frontend_dist, "assets")
+    if os.path.isdir(_assets_dir):
+        app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
+
+    _index_html = os.path.join(_frontend_dist, "index.html")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found")
+        candidate = os.path.join(_frontend_dist, full_path)
+        if full_path and os.path.isfile(candidate):
+            return FileResponse(candidate)
+        return FileResponse(_index_html)

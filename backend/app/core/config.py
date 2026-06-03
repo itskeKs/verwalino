@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     session_secret: str = "CHANGE-ME-IN-PRODUCTION"
     session_cookie_name: str = "hv_session"
     session_max_age_seconds: int = 8 * 3600  # 8 hours
+    # Set true in production (HTTPS): the browser then only sends the cookie
+    # over TLS. Must be false for plain-HTTP setups, else the login cookie is
+    # dropped by the browser and authentication silently fails.
+    session_cookie_secure: bool = False
 
     # --- Document Storage ---
     document_storage_root: str = "/tmp/hv-documents"

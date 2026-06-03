@@ -82,7 +82,7 @@ async def login(body: LoginRequest, response: Response):
         key=settings.session_cookie_name,
         value=token,
         httponly=True,
-        secure=False,  # Set to True in production (HTTPS)
+        secure=settings.session_cookie_secure,  # True in production (HTTPS)
         samesite="lax",
         max_age=settings.session_max_age_seconds,
         path="/",
