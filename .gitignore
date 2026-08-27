@@ -37,4 +37,4 @@ build/
 # Lokale Dev-Tools (maschinenspezifisch)
 .claude/launch.json
 document_storage/
-
+.worktrees/
