@@ -26,6 +26,14 @@ import type {
   CostEntryCreate,
 } from "../api/types";
 import { ApiError } from "../api/client";
+import { Badge } from "../components/ui/badge";
+
+/** Human-readable short label for source_format values from the e-invoice parser. */
+const FORMAT_LABELS: Record<string, string> = {
+  XRECHNUNG_UBL: "XRechnung",
+  XRECHNUNG_CII: "XRechnung",
+  ZUGFERD: "ZUGFeRD",
+};
 
 function confidenceColor(c: number): string {
   if (c >= 0.8) return "#2e7d32";
@@ -168,7 +176,7 @@ export function InvoiceDocumentDetailPage() {
       tenant_distribution_key: cat?.tenant_distribution_key_default ?? null,
       tenant_apportionable: cat?.tenant_apportionability_default ?? "full",
       apportionable_tenant_amount: null,
-      source: "PDF_IMPORT",
+      source: ext?.is_einvoice ? "E_INVOICE" : "PDF_IMPORT",
       status: "draft_extracted",
     });
     setShowCostForm(true);
@@ -378,7 +386,19 @@ export function InvoiceDocumentDetailPage() {
       {/* Extraction payload review */}
       {ext && (
         <div className="card" style={{ marginBottom: "1.5rem" }}>
-          <h2>Extrahierte Felder</h2>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
+            <h2 style={{ margin: 0 }}>Extrahierte Felder</h2>
+            {ext.is_einvoice && (
+              <Badge tone="primary">
+                Als E-Rechnung erkannt
+                {ext.source_format && (
+                  <span style={{ opacity: 0.7, marginLeft: "0.25em" }}>
+                    ({FORMAT_LABELS[ext.source_format] ?? ext.source_format})
+                  </span>
+                )}
+              </Badge>
+            )}
+          </div>
           <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
             Gesamtkonfidenz:{" "}
             <span style={{ color: confidenceColor(ext.confidence), fontWeight: 600 }}>

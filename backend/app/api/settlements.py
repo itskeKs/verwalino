@@ -23,16 +23,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
-from app.repositories.lease_agreement_repo import LeaseAgreementRepository
-from app.repositories.person_repo import PersonRepository
-from app.repositories.property_repo import PropertyRepository
 from app.repositories.settlement_repo import (
     SettlementLineRepository,
     SettlementRunRepository,
 )
-from app.repositories.tenant_profile_repo import TenantProfileRepository
-from app.repositories.unit_repo import UnitRepository
-from app.services.settlement_pdf import SettlementDisplayNames, render_settlement_pdf
+from app.services.render_names import settlement_render_names
+from app.services.settlement_pdf import render_settlement_pdf
 from app.services.settlement_service import (
     ComputeExtras,
     ExternalAmountEntry,
@@ -389,61 +385,6 @@ async def create_correction(
     return _run_out(run, [])
 
 
-async def _resolve_display_names(
-    db: AsyncSession,
-    org_id: uuid.UUID,
-    run: SettlementRun,
-) -> SettlementDisplayNames:
-    """Resolve human-readable names from Stammdaten for PDF rendering.
-
-    Runs at render time only; never persisted into the snapshot.
-    Graceful fallback to dash if a referenced entity is missing.
-    """
-    dn = SettlementDisplayNames()
-
-    # Property: name + address
-    prop_repo = PropertyRepository(db, org_id)
-    prop = await prop_repo.get_by_id(run.property_id)
-    if prop:
-        dn.property_name = prop.name
-        parts = [p for p in [prop.street, f"{prop.zip_code} {prop.city}".strip()] if p]
-        dn.property_address = ", ".join(parts)
-
-    # Unit: number (location)
-    if run.unit_id:
-        unit_repo = UnitRepository(db, org_id)
-        unit = await unit_repo.get_by_id(run.unit_id)
-        if unit:
-            dn.unit_label = unit.number
-            if unit.location:
-                dn.unit_label += f" ({unit.location})"
-
-    # Tenant: first_name last_name via tenant_profile -> person
-    if run.tenant_profile_id:
-        tp_repo = TenantProfileRepository(db, org_id)
-        tp = await tp_repo.get_by_id(run.tenant_profile_id)
-        if tp:
-            person_repo = PersonRepository(db, org_id)
-            person = await person_repo.get_by_id(tp.person_id)
-            if person:
-                name_parts = [p for p in [person.first_name, person.last_name] if p]
-                dn.tenant_name = " ".join(name_parts) if name_parts else "—"
-
-    # Lease: "ab VALID_FROM [bis VALID_TO]"
-    if run.lease_agreement_id:
-        lease_repo = LeaseAgreementRepository(db, org_id)
-        lease = await lease_repo.get_by_id(run.lease_agreement_id)
-        if lease:
-            info = f"ab {lease.valid_from.strftime('%d.%m.%Y')}"
-            if lease.valid_to:
-                info += f" bis {lease.valid_to.strftime('%d.%m.%Y')}"
-            else:
-                info += " (laufend)"
-            dn.lease_info = info
-
-    return dn
-
-
 @router.get("/{run_id}/pdf")
 async def get_settlement_pdf(
     run_id: uuid.UUID,
@@ -463,8 +404,9 @@ async def get_settlement_pdf(
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
 
-    # Resolve human-readable names from Stammdaten (display-time only).
-    names = await _resolve_display_names(db, auth.organization_id, run)
+    # Anzeige-Namen: eingefroren aus dem Snapshot (finalisiert), sonst live
+    # (Entwurf/Altbestand) -- s. render_names / ADR-0012.
+    names = await settlement_render_names(db, auth.organization_id, run)
 
     pdf_bytes = render_settlement_pdf(run, list(lines), names)
     return StreamingResponse(

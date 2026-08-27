@@ -35,6 +35,11 @@ from app.engine.canonical import canonical_json, sha256_hex
 from app.engine.rounding import DistributionError
 from app.engine.settlement import EngineValidationError, compute_bk_settlement
 from app.engine.snapshot import build_snapshot_payload
+from app.services.render_names import (
+    DISPLAY_NAMES_KEY,
+    freeze_block,
+    resolve_settlement_values,
+)
 from app.engine.types import (
     CostPositionInput,
     EngineResult,
@@ -310,6 +315,15 @@ class SettlementService:
         inp, result = await self._compute_engine(run, extras)
 
         payload = build_snapshot_payload(inp, result)
+        # Anzeige-Namen einfrieren (ADR-0012): noch als Entwurf (OLD.status =
+        # 'draft', der ADR-0003-Trigger lässt das Schreiben zu) werden die für
+        # das PDF nötigen Klartext-Namen in den Snapshot geschrieben -- VOR dem
+        # Hash, damit sie Teil der eingefrorenen, gehashten Wahrheit sind. Ein
+        # späteres DSGVO-Anonymisieren der Person verändert das finalisierte
+        # Dokument dann nicht mehr (der Renderer nutzt die eingefrorenen Namen).
+        payload[DISPLAY_NAMES_KEY] = freeze_block(
+            await resolve_settlement_values(self._session, self._org_id, run)
+        )
         payload_bytes = canonical_json(payload)
         sha = sha256_hex(payload_bytes)
 

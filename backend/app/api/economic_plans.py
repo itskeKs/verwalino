@@ -27,17 +27,13 @@ from app.repositories.economic_plan_repo import (
     EconomicPlanLineRepository,
     EconomicPlanRepository,
 )
-from app.repositories.property_repo import PropertyRepository
-from app.repositories.settlement_repo import SettlementRunRepository
 from app.services.economic_plan_service import (
     EconomicPlanService,
     PlanInputs,
     PlannedCostEntry,
 )
-from app.services.wirtschaftsplan_pdf import (
-    WirtschaftsplanDisplayNames,
-    render_wirtschaftsplan_pdf,
-)
+from app.services.render_names import wirtschaftsplan_render_names
+from app.services.wirtschaftsplan_pdf import render_wirtschaftsplan_pdf
 
 router = APIRouter(prefix="/api/economic-plans", tags=["economic-plans"])
 
@@ -259,23 +255,6 @@ async def create_plan_correction(
     return _plan_out(plan, [])
 
 
-async def _resolve_plan_names(db, org_id, plan) -> WirtschaftsplanDisplayNames:
-    dn = WirtschaftsplanDisplayNames()
-    prop_repo = PropertyRepository(db, org_id)
-    prop = await prop_repo.get_by_id(plan.property_id)
-    if prop:
-        dn.property_name = prop.name
-        parts = [p for p in [prop.street, f"{prop.zip_code} {prop.city}".strip()] if p]
-        dn.property_address = ", ".join(parts)
-    # Owner names for the per-owner advance lines.
-    runs_repo = SettlementRunRepository(db, org_id)
-    for op, person in await runs_repo.owner_profiles_for_property(plan.property_id):
-        if person:
-            name = " ".join(p for p in [person.first_name, person.last_name] if p) or "—"
-            dn.owner_names[str(op.id)] = name
-    return dn
-
-
 @router.get("/{plan_id}/pdf")
 async def get_plan_pdf(
     plan_id: uuid.UUID,
@@ -290,7 +269,8 @@ async def get_plan_pdf(
         raise HTTPException(status_code=409, detail="PDF is only available for a finalized plan")
     line_repo = EconomicPlanLineRepository(db, auth.organization_id)
     lines = await line_repo.list_for_plan(plan_id)
-    names = await _resolve_plan_names(db, auth.organization_id, plan)
+    # Anzeige-Namen: eingefroren aus dem Snapshot (finalisiert), sonst live.
+    names = await wirtschaftsplan_render_names(db, auth.organization_id, plan)
     pdf_bytes = render_wirtschaftsplan_pdf(plan, list(lines), names)
     return StreamingResponse(
         iter([pdf_bytes]),

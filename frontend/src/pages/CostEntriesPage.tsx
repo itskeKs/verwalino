@@ -24,6 +24,7 @@ import type {
   Vendor,
 } from "../api/types";
 import { ApiError } from "../api/client";
+import { SourceBadge } from "../components/SourceBadge";
 
 const STATUS_OPTIONS: { value: CostEntryStatus | ""; label: string }[] = [
   { value: "", label: "Alle Status" },
@@ -517,7 +518,7 @@ export function CostEntriesPage() {
                       {STATUS_LABELS[entry.status] ?? entry.status}
                     </span>
                   </td>
-                  <td>{entry.source}</td>
+                  <td><SourceBadge source={entry.source} /></td>
                   <td>
                     <Link
                       to={`/kosten/${entry.id}`}

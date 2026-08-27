@@ -84,6 +84,14 @@ class DunningNotice(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     # Immutable once issued -- the legally binding arrears breakdown.
     included_items: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    # Eingefrorene Anzeige-Namen des Adressaten (ADR-0012). Beim Ausstellen
+    # (issue) gefüllt: {"schema_version": 1, "values": {person_name,
+    # person_address, organization_name}}. Danach vom Trigger (0019/0022)
+    # unveränderbar. NULL bei Altbestand -> Renderer fällt auf Live-Auflösung
+    # zurück. Verhindert, dass ein späteres DSGVO-Anonymisieren der Person das
+    # bereits ausgestellte, aufbewahrungspflichtige Mahn-PDF verändert.
+    frozen_display_names: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
     # Lifecycle: draft -> issued (frozen via ADR-0003 trigger).
     status: Mapped[str] = mapped_column(
         String(12), nullable=False, default="draft"

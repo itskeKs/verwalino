@@ -345,6 +345,10 @@ export interface ExtractionPayload {
   confidence: number;
   field_confidences: Record<string, number>;
   raw_text: string | null;
+  /** M5: true when parsed from structured EN-16931 (XRechnung/ZUGFeRD). */
+  is_einvoice?: boolean;
+  /** M5: concrete format, e.g. "XRECHNUNG_UBL", "XRECHNUNG_CII", "ZUGFERD". */
+  source_format?: string | null;
 }
 
 export interface InvoiceDocument {

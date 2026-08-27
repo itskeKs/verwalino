@@ -30,6 +30,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.engine.canonical import canonical_json, sha256_hex
 from app.engine.rounding import DistributionError
 from app.engine.snapshot import build_plan_snapshot_payload
+from app.services.render_names import (
+    DISPLAY_NAMES_KEY,
+    freeze_block,
+    resolve_wirtschaftsplan_values,
+)
 from app.engine.types import (
     OwnerPeriodInput,
     PlannedCostInput,
@@ -158,6 +163,11 @@ class EconomicPlanService:
         inp, result = await self._compute_engine(plan, inputs)
 
         payload = build_plan_snapshot_payload(inp, result)
+        # Eigentümer-/Objekt-Anzeige-Namen einfrieren (ADR-0012), vor dem Hash --
+        # s. settlement_service.finalize. Noch OLD.status='draft', Schreiben erlaubt.
+        payload[DISPLAY_NAMES_KEY] = freeze_block(
+            await resolve_wirtschaftsplan_values(self._session, self._org_id, plan)
+        )
         sha = sha256_hex(canonical_json(payload))
 
         await self._lines.delete_for_plan(plan.id)

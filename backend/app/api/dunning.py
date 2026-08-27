@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
 from app.models.dunning_notice import DunningNotice
 from app.repositories.dunning_notice_repo import DunningNoticeRepository
-from app.services.dunning_pdf import DunningDisplayNames, render_dunning_pdf
+from app.services.dunning_pdf import render_dunning_pdf
 from app.services.dunning_service import DunningService
 
 router = APIRouter(prefix="/api/dunning", tags=["dunning"])
@@ -226,13 +226,9 @@ async def dunning_pdf(
             detail="PDF is only available for issued dunning notices",
         )
 
-    person_name = await svc.resolve_person_name(notice)
-    person_address = await svc.resolve_person_address(notice)
-
-    names = DunningDisplayNames(
-        person_name=person_name,
-        person_address=person_address,
-    )
+    # Anzeige-Namen: eingefroren aus der ausgestellten Mahnung, sonst live
+    # (Altbestand ohne eingefrorene Namen) -- s. DunningService / ADR-0012.
+    names = await svc.render_display_names(notice)
     pdf_bytes = render_dunning_pdf(notice, names)
     return Response(
         content=pdf_bytes,

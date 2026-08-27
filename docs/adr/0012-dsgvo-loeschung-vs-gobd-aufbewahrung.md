@@ -18,7 +18,11 @@ Die Felder im Modell existieren seit M0/M1 (`person.deletion_requested_at`, `per
 
 ### Wichtige Eigenheit der Render-Zeit-Namensauflösung
 
-Finalisierte Abrechnungs-/Mahn-PDFs lösen den Adressatennamen **zur Render-Zeit** aus `person`/Profil auf (siehe `settlement_pdf`/`dunning_pdf`: Name wird aus dem verknüpften `person`-Datensatz gezogen, nicht im PDF-Bytes eingefroren — die einzige eingefrorene Wahrheit ist der `snapshot_payload`/`included_items`). Würde man eine Person anonymisieren, die Adressat einer finalisierten Abrechnung ist, **renderte das aufbewahrungspflichtige Dokument einen neutralen Platzhalter statt des korrekten Namens** — ein Verstoß gegen die Unverändertheit/Vollständigkeit der Aufbewahrung. Daraus folgt zwingend: **gebundene Personen werden nicht anonymisiert, sondern nur eingeschränkt** (bis zum Ablauf der Aufbewahrung).
+Finalisierte Abrechnungs-/Mahn-PDFs lösten den Adressatennamen ursprünglich **ausschließlich zur Render-Zeit** aus `person`/Profil auf (Name aus dem verknüpften `person`-Datensatz, nicht in den PDF-Bytes eingefroren). Würde man eine Person anonymisieren, die Adressat einer finalisierten Abrechnung ist, **renderte das aufbewahrungspflichtige Dokument einen neutralen Platzhalter statt des korrekten Namens** — ein Verstoß gegen die Unverändertheit/Vollständigkeit der Aufbewahrung.
+
+**Behoben durch Einfrieren der Anzeige-Namen (s. §9, umgesetzt 2026-08-10):** Beim Finalisieren/Ausstellen werden die für das Dokument nötigen Klartext-Namen in den eingefrorenen Snapshot geschrieben; die Render-Zeit-Auflösung bleibt nur noch **Fallback** für Entwürfe und Altbestand. Der Snapshot ist damit selbsttragend, und ein erneutes Rendern eines finalisierten Dokuments ist gegen spätere Stammdatenänderungen/Anonymisierung immun.
+
+**Das ändert die Reconciliation-Entscheidung (§3) NICHT:** gebundene Personen werden weiterhin **nur eingeschränkt, nicht anonymisiert** (bis zum Ablauf der Aufbewahrung). Ob das Einfrieren rechtlich genügte, um eine gebundene Person *früher* zu anonymisieren (weil die Belegdarstellung auch ohne die Live-Person korrekt bliebe), ist eine **[§18/fachlich]**-Frage und wird hier **nicht** eigenmächtig entschieden — das Einfrieren ist Selbsttragfähigkeit/Defense-in-Depth, kein Freibrief zur Anonymisierung.
 
 ## Optionen
 
@@ -96,10 +100,29 @@ In M9 implementiert ist die **Gegenrichtung**, die hier am wichtigsten ist: Eine
 
 > **[§18/fachlich] — bewusst zurückgestellt:** Das **fail-loud-409-Blockieren beim Anlegen** neuer Leases/Zahlungen/Kostenpositionen, die eine bereits eingeschränkte/anonymisierte Person referenzieren, ist in M9 **noch nicht in die Create-Pfade (M1/M2/M6) verdrahtet**. Wo genau „neue Verwendung" zu sperren ist (nur freigegebene Verträge? auch Entwürfe? welche Entitäten?), ist eine offene Produkt-/Rechtsfrage; die Verdrahtung erfolgt nach fachlicher Festlegung des Umfangs. Der Status-Flag und die reine Entscheidung stehen dafür bereit.
 
+### 9. Selbsttragende Snapshots: Einfrieren der Anzeige-Namen (2026-08-10)
+
+Umsetzung des in `roadmap.md` als „Snapshot-Namens-Einfrieren" zurückgestellten Feinschliffs. Schließt die in „Wichtige Eigenheit der Render-Zeit-Namensauflösung" beschriebene Lücke.
+
+**Prinzip:** Die Anzeige-Namen, die ein PDF zeigt (Objekt, Einheit, Mieter, Eigentümer, Mahn-Adressat, Mietvertrags-Info), werden **beim Finalisieren/Ausstellen** — noch als Entwurf, bevor die Unveränderbarkeits-Trigger (ADR-0003) greifen (`OLD.status='draft'`) — in den eingefrorenen Snapshot geschrieben. Die sechs Renderer bleiben **unverändert** (sie bekommen weiter ein `*DisplayNames`-Objekt); nur die **Quelle** der Namen ändert sich: eingefroren (finalisiert/ausgestellt und vorhanden), sonst live. Auflösung und Rekonstruktion liegen zentral in `app/services/render_names.py` (eine Wahrheit für Einfrier- und Render-Pfad), für die Mahnung ergänzt in `dunning_service.py`.
+
+**Ablage (versioniert: `{"schema_version": 1, "values": {...}}`, damit spätere Formatänderungen rückwärtskompatibel bleiben):**
+- `settlement_run` (BK, WEG-Jahresabrechnung, Vermögensbericht) und `economic_plan` (Wirtschaftsplan): unter dem Schlüssel `display_names` **im vorhandenen `snapshot_payload`**. Dieser ist bereits vom ADR-0003-Trigger geschützt (Denylist enthält `snapshot_payload`) und geht in den `snapshot_sha256` ein — die Namen sind damit **hash- UND trigger-gesichert**, ohne Migration und ohne Änderung der reinen Engine-Snapshot-Builder (die Golden-/Hash-Determinismus-Tests bleiben unverändert grün).
+- `dunning_notice` (Mahnung): eigene, nullable Spalte `frozen_display_names` (Migration 0022), da die Mahnung keinen `snapshot_payload` hat (nur die Liste `included_items`, kein `snapshot_sha256`). Der Trigger aus 0019 wurde per **Denylist** um diese Spalte erweitert (0022) — andernfalls wäre die neue Spalte auf einer ausgestellten Mahnung veränderbar (die Trigger prüfen benannte Spalten, nicht pauschal die ganze Zeile). Einfrieren erfolgt in derselben `issue`-UPDATE (`OLD.status='draft'` → erlaubt).
+
+**Altbestand:** Bereits finalisierte/ausgestellte Läufe ohne eingefrorene Namen sind nicht mehr beschreibbar (Trigger, ADR-0003) — für sie bleibt der **Live-Auflösungs-Pfad dauerhaft als Fallback** bestehen. Ein unbekannter (zukünftiger) `schema_version`-Wert führt bewusst ebenfalls zum Live-Fallback statt zu falscher Rekonstruktion. Die neue Spalte ist nullable; die Migration bricht keine Bestandsdaten.
+
+**Entwürfe** lösen weiterhin live auf (kein eingefrorener Block bzw. `status != finalized/issued`).
+
+**Vermögensbericht & Versammlungs-PDFs** tragen **keine Personennamen** (nur Objektdaten) — der DSGVO-Anonymisierungs-Konflikt entsteht dort nicht. Der Vermögensbericht (`settlement_run`) friert der Selbsttragfähigkeit halber dennoch Objekt-Name/-Anschrift mit ein (selbe Mechanik). Die Versammlungs-PDFs (`owners_meeting`: kein Snapshot/Hash, Lebenszyklus `PLANNED`/`HELD`, Protokoll bleibt bis zur Beschluss-Sammlung editierbar) lösen die Objektdaten weiter live auf. **[§18/fachlich]** Ob ein späteres Umbenennen des Objekts eine historische Niederschrift verändern darf, ist eine offene, **nicht** DSGVO-getriebene Frage.
+
+**Getestet** (`tests/test_m9_snapshot_names.py`, 13 Tests): (1) Einfrieren beim Finalisieren/Ausstellen; (2) Immunität des finalisierten/ausgestellten Renders gegen nachträgliche Anonymisierung; (3) Altbestand-Live-Fallback; (4) Live-Auflösung für Entwürfe; plus DB-freie Tests der Versions-/Fallback-/Rekonstruktionslogik. WEG-Jahresabrechnung und Wirtschaftsplan nutzen denselben `snapshot_payload`-Mechanismus (identischer Freeze-Code im Service).
+
 ## Konsequenzen
 
 **Positiv:**
 - Beide Pflichten (Aufbewahrung *und* DSGVO) werden erfüllt, ohne die jeweils andere zu verletzen.
+- Finalisierte Dokumente sind **selbsttragend**: ihr Render ist gegen spätere Stammdatenänderungen/Anonymisierung immun (§9) — die Render-Korrektheit hängt nicht mehr allein an der Verarbeitungseinschränkung der gebundenen Person, sondern zusätzlich am eingefrorenen Namen (Defense-in-Depth).
 - Die Entscheidung „einschränken vs. anonymisieren" ist eine **reine, getestete Funktion** — nachvollziehbar und prüfbar (Golden-/Reconciliation-Tests).
 - Finalisierte Dokumente gebundener Personen bleiben render-korrekt bis Aufbewahrungsablauf.
 - Kein neuer DB-Mutationspfad auf aufbewahrungspflichtige Tabellen → I2 bleibt unangetastet.

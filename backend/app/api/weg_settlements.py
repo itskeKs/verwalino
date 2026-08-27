@@ -22,19 +22,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
-from app.repositories.property_repo import PropertyRepository
 from app.repositories.settlement_repo import (
     SettlementLineRepository,
     SettlementRunRepository,
 )
-from app.services.vermoegensbericht_pdf import (
-    VermoegensberichtDisplayNames,
-    render_vermoegensbericht_pdf,
+from app.services.render_names import (
+    vermoegensbericht_render_names,
+    weg_render_names,
 )
-from app.services.weg_jahresabrechnung_pdf import (
-    WegDisplayNames,
-    render_weg_jahresabrechnung_pdf,
-)
+from app.services.vermoegensbericht_pdf import render_vermoegensbericht_pdf
+from app.services.weg_jahresabrechnung_pdf import render_weg_jahresabrechnung_pdf
 from app.services.weg_settlement_service import (
     AssetItemEntry,
     AssetReportInputs,
@@ -354,17 +351,6 @@ async def finalize_asset_report(
 # ---------------------------------------------------------------------------
 # PDFs
 # ---------------------------------------------------------------------------
-async def _resolve_property(db, org_id, run):
-    prop_repo = PropertyRepository(db, org_id)
-    prop = await prop_repo.get_by_id(run.property_id)
-    name = prop.name if prop else "—"
-    address = ""
-    if prop:
-        parts = [p for p in [prop.street, f"{prop.zip_code} {prop.city}".strip()] if p]
-        address = ", ".join(parts)
-    return name, address
-
-
 @router.get("/{run_id}/pdf")
 async def get_weg_pdf(
     run_id: uuid.UUID,
@@ -380,12 +366,8 @@ async def get_weg_pdf(
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
 
-    name, address = await _resolve_property(db, auth.organization_id, run)
-    dn = WegDisplayNames(property_name=name, property_address=address)
-    for op, person in await runs_repo.owner_profiles_for_property(run.property_id):
-        if person:
-            owner_name = " ".join(p for p in [person.first_name, person.last_name] if p) or "—"
-            dn.owner_names[str(op.id)] = owner_name
+    # Anzeige-Namen: eingefroren aus dem Snapshot (finalisiert), sonst live.
+    dn = await weg_render_names(db, auth.organization_id, run)
 
     pdf_bytes = render_weg_jahresabrechnung_pdf(run, list(lines), dn)
     return StreamingResponse(
@@ -413,8 +395,8 @@ async def get_asset_report_pdf(
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
 
-    name, address = await _resolve_property(db, auth.organization_id, run)
-    dn = VermoegensberichtDisplayNames(property_name=name, property_address=address)
+    # Anzeige-Namen: eingefroren aus dem Snapshot (finalisiert), sonst live.
+    dn = await vermoegensbericht_render_names(db, auth.organization_id, run)
 
     pdf_bytes = render_vermoegensbericht_pdf(run, list(lines), dn)
     return StreamingResponse(

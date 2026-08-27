@@ -52,6 +52,7 @@ from app.repositories.person_repo import PersonRepository
 from app.repositories.tenant_profile_repo import TenantProfileRepository
 from app.repositories.owner_profile_repo import OwnerProfileRepository
 from app.repositories.property_repo import PropertyRepository
+from app.services.render_names import freeze_block, read_frozen_values
 
 
 def _to_payment_input(p) -> PaymentInput:
@@ -303,6 +304,11 @@ class DunningService:
             )
 
         now = datetime.now(timezone.utc)
+        # Adressat-Anzeige-Namen einfrieren (ADR-0012): noch als Entwurf
+        # (OLD.status='draft', Trigger lässt das Schreiben zu) in derselben
+        # Ausstell-UPDATE. Danach unveränderbar; ein späteres DSGVO-Anonymisieren
+        # der Person verändert das ausgestellte Mahn-PDF nicht mehr.
+        notice.frozen_display_names = freeze_block(await self._display_values(notice))
         notice.status = "issued"
         notice.issued_at = now
         notice.issued_by = self._user_id
@@ -390,6 +396,37 @@ class DunningService:
         if person.zip_code or person.city:
             parts.append(f"{person.zip_code} {person.city}".strip())
         return ", ".join(parts)
+
+    async def _display_values(self, notice: DunningNotice) -> dict:
+        """Aufgelöste Adressat-Anzeige-Werte -- EINE Quelle für Einfrieren + Live.
+
+        Die eingefrorene und die live aufgelöste Form haben exakt dieselbe
+        Struktur (person_name, person_address, organization_name); Einfrieren
+        heißt nur, dieses dict beim Ausstellen zu persistieren.
+        """
+        return {
+            "person_name": await self.resolve_person_name(notice),
+            "person_address": await self.resolve_person_address(notice),
+            "organization_name": "",
+        }
+
+    async def render_display_names(self, notice: DunningNotice):
+        """DunningDisplayNames für den Renderer: eingefroren (issued), sonst live.
+
+        Ausgestellte Mahnung mit eingefrorenen Namen -> eingefrorene Werte
+        (selbsttragend, immun gegen spätere Anonymisierung). Entwurf oder
+        Altbestand ohne eingefrorene Namen -> Live-Auflösung wie bisher.
+        """
+        from app.services.dunning_pdf import DunningDisplayNames
+
+        frozen = (
+            read_frozen_values(notice.frozen_display_names)
+            if notice.status == "issued"
+            else None
+        )
+        values = frozen if frozen is not None else await self._display_values(notice)
+        allowed = {"person_name", "person_address", "organization_name"}
+        return DunningDisplayNames(**{k: v for k, v in values.items() if k in allowed})
 
     # ------------------------------------------------------------------
     # Helpers

@@ -10,7 +10,7 @@ Diese Roadmap sequenziert den in der SDD beschriebenen Funktionsumfang. Sie ist 
 
 **Offen (kein Code mehr, sondern Abnahme):**
 - **Fachliche/rechtliche Abnahme** aller mit **[§18/fachlich]** markierten Annahmen durch Steuerberater:in / Fachanwalt:anwältin / DSB (u. a. Aufbewahrungs-Startdatum/-dauer, WEG-Fristen, Anonymisierungstiefe, Verteilungs-Detailfragen, Mahngebühren).
-- **Zurückgestellter Feinschliff** (dokumentiert, nicht kritisch): Snapshot-Namens-Einfrieren, E-Rechnung-Quelle/Badge im UI, Bankkontostände im Vermögensbericht, DSGVO-Create-Pfad-Sperre (ADR-0012 §8).
+- **Zurückgestellter Feinschliff** (dokumentiert, nicht kritisch): E-Rechnung-Quelle/Badge im UI, Bankkontostände im Vermögensbericht, DSGVO-Create-Pfad-Sperre (ADR-0012 §8). — *Snapshot-Namens-Einfrieren ist umgesetzt (2026-08-10): Anzeige-Namen werden beim Finalisieren/Ausstellen in den Snapshot eingefroren, sodass finalisierte PDFs gegen spätere Anonymisierung immun sind; Altbestand/Entwürfe lösen weiter live auf (ADR-0012 §9).*
 
 ## Leitprinzipien der Reihenfolge
 

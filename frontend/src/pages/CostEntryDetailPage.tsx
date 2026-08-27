@@ -26,6 +26,7 @@ import type {
   InvoiceDocument,
 } from "../api/types";
 import { ApiError } from "../api/client";
+import { SourceBadge } from "../components/SourceBadge";
 
 const STATUS_LABELS: Record<string, string> = {
   draft_extracted: "Entwurf (extrahiert)",
@@ -390,7 +391,7 @@ export function CostEntryDetailPage() {
                 )}
                 <tr>
                   <td>Quelle</td>
-                  <td>{entry.source}</td>
+                  <td><SourceBadge source={entry.source} /></td>
                 </tr>
                 {entry.confirmed_at && (
                   <tr>

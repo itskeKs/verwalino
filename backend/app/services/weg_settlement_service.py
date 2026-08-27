@@ -34,6 +34,12 @@ from app.engine.snapshot import (
     build_asset_report_payload,
     build_weg_snapshot_payload,
 )
+from app.services.render_names import (
+    DISPLAY_NAMES_KEY,
+    freeze_block,
+    resolve_vermoegensbericht_values,
+    resolve_weg_values,
+)
 from app.engine.types import (
     AssetItemInput,
     BankBalanceInput,
@@ -204,6 +210,11 @@ class WegSettlementService:
         inp, result = await self._compute_weg_engine(run, extras or WegComputeExtras())
 
         payload = build_weg_snapshot_payload(inp, result)
+        # Eigentümer-Anzeige-Namen einfrieren (ADR-0012), vor dem Hash -- s.
+        # settlement_service.finalize. Noch OLD.status='draft', Schreiben erlaubt.
+        payload[DISPLAY_NAMES_KEY] = freeze_block(
+            await resolve_weg_values(self._session, self._org_id, run)
+        )
         sha = sha256_hex(canonical_json(payload))
 
         await self._lines.delete_for_run(run.id)
@@ -288,6 +299,12 @@ class WegSettlementService:
         inp, result = self._compute_report_engine(run, inputs)
 
         payload = build_asset_report_payload(inp, result)
+        # Objekt-Anzeige-Namen einfrieren (ADR-0012), vor dem Hash. Der
+        # Vermögensbericht trägt keine Personennamen (nur Objektdaten), wird aber
+        # der Konsistenz halber ebenfalls selbsttragend eingefroren.
+        payload[DISPLAY_NAMES_KEY] = freeze_block(
+            await resolve_vermoegensbericht_values(self._session, self._org_id, run)
+        )
         sha = sha256_hex(canonical_json(payload))
 
         await self._lines.delete_for_run(run.id)
