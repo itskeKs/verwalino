@@ -1,7 +1,7 @@
 #!/bin/sh
-# Focused regression probe for deploy-production.sh cleanup safety.  It uses a
-# self-hosted fake Docker CLI to reproduce a compose `up app` failure after a
-# new app container was partially created.
+# Focused regression probe for deploy-production.sh cleanup safety. It uses a
+# self-hosted fake Docker CLI to reproduce failed and successful app/worker
+# starts without ever touching a real Docker daemon.
 set -eu
 
 if [ "$(basename "$0")" = stat ]; then
@@ -14,8 +14,21 @@ if [ "$(basename "$0")" = stat ]; then
 fi
 
 if [ "$(basename "$0")" = mv ]; then
-  [ "${1:-}" = -Tf ] && shift
+  case "${1:-}" in -Tf|-f) shift ;; esac
   /bin/mv -f "$1" "$2"
+  exit 0
+fi
+
+if [ "$(basename "$0")" = flock ]; then
+  exit 0
+fi
+
+if [ "$(basename "$0")" = readlink ]; then
+  if [ "${1:-}" = -f ]; then
+    printf '%s\n' "$FAKE_READLINK_F"
+  else
+    /usr/bin/readlink "$1"
+  fi
   exit 0
 fi
 
@@ -111,6 +124,13 @@ if [ "$(basename "$0")" = docker ]; then
     build)
       exit 0
       ;;
+    image)
+      case "$*" in
+        *'inspect'*'{{.Id}}'*) printf '%s\n' new-image-id ;;
+        *) printf '%s\n' unexpected-image-command >&2; exit 97 ;;
+      esac
+      exit 0
+      ;;
     run)
       printf '%s\n' '{}' > "$FAKE_SHARED/test.sbom.cdx.json"
       exit 0
@@ -119,10 +139,27 @@ if [ "$(basename "$0")" = docker ]; then
       case "$*" in
         *'{{.State.Health.Status}}'*'db-id'*) printf '%s\n' healthy ;;
         *'{{.State.Health.Status}}'*'new-app'*) printf '%s\n' healthy ;;
+        *'{{.State.Health.Status}}'*'new-worker'*) printf '%s\n' healthy ;;
+        *'{{.State.Health.Status}}'*'restored-app'*) printf '%s\n' healthy ;;
+        *'{{.State.Health.Status}}'*'restored-worker'*) printf '%s\n' healthy ;;
         *'{{.Config.Image}}'*'new-app'*) printf '%s\n' 'hausverwaltung-alpha:test' ;;
+        *'{{.Config.Image}}'*'new-worker'*) printf '%s\n' 'hausverwaltung-alpha:test' ;;
         *'{{.Id}}'*'new-app'*) printf '%s\n' new-app ;;
+        *'{{.Id}}'*'new-worker'*) printf '%s\n' new-worker ;;
         *'{{.Config.Image}}'*'old-app'*) printf '%s\n' 'hausverwaltung-alpha:previous' ;;
+        *'{{.Config.Image}}'*'old-worker'*) printf '%s\n' 'hausverwaltung-alpha:previous' ;;
         *'{{.Id}}'*'old-app'*) printf '%s\n' old-app ;;
+        *'{{.Id}}'*'old-worker'*) printf '%s\n' old-worker ;;
+        *'{{.Id}}'*'restored-app'*) printf '%s\n' restored-app ;;
+        *'{{.Id}}'*'restored-worker'*) printf '%s\n' restored-worker ;;
+        *'{{.Image}}'*'new-app'*) printf '%s\n' new-image-id ;;
+        *'{{.Image}}'*'new-worker'*) printf '%s\n' new-image-id ;;
+        *'{{.Image}}'*'old-app'*) printf '%s\n' old-image-id ;;
+        *'{{.Image}}'*'old-worker'*) printf '%s\n' old-image-id ;;
+        *'{{.Image}}'*'restored-app'*) printf '%s\n' old-image-id ;;
+        *'{{.Image}}'*'restored-worker'*) printf '%s\n' old-image-id ;;
+        *'com.karat.hausverwaltung.release'*'new-app'*) printf '%s\n' test ;;
+        *'com.karat.hausverwaltung.release'*'new-worker'*) printf '%s\n' test ;;
         *'{{json .HostConfig.PortBindings}}'*) printf '%s\n' '{}' ;;
         *'{{range .Config.Env}}'*) exit 0 ;;
         *) printf '%s\n' healthy ;;
@@ -135,13 +172,23 @@ if [ "$(basename "$0")" = docker ]; then
       ;;
     compose)
       case " $* " in
-        *' up -d db '*) exit 0 ;;
+        *' up -d --no-recreate db '*) exit 0 ;;
         *' ps -q db '*) printf '%s\n' db-id; exit 0 ;;
         *' ps -q app '*)
-          if [ -f "$FAKE_APP_CREATED" ]; then printf '%s\n' new-app; else printf '%s\n' old-app; fi
+          if [ -f "${FAKE_APP_RESTORED:-}" ]; then printf '%s\n' restored-app
+          elif [ -f "$FAKE_APP_CREATED" ]; then printf '%s\n' new-app
+          else printf '%s\n' old-app
+          fi
           exit 0
           ;;
-        *' run '*' alembic current '*) printf '%s\n' '0027 (head)'; exit 0 ;;
+        *' ps -q worker '*)
+          if [ -f "${FAKE_WORKER_RESTORED:-}" ]; then printf '%s\n' restored-worker
+          elif [ -f "$FAKE_WORKER_CREATED" ]; then printf '%s\n' new-worker
+          else printf '%s\n' old-worker
+          fi
+          exit 0
+          ;;
+        *' run '*' alembic current '*) printf '%s\n' '0028 (head)'; exit 0 ;;
         *' run '*) exit 0 ;;
         *' exec -T app python -c '*'import json'*)
           python3 -c '
@@ -154,10 +201,22 @@ print(json.dumps({
 '
           exit 0
           ;;
+        *' exec -T db sh -ec '*) printf '%s\n' app_rw; exit 0 ;;
         *' exec '*) exit 0 ;;
-        *' up -d app '*)
+        *' up -d --no-deps app '*)
+          case "$*" in
+            *'releases/old/docker-compose.prod.yml'*) : > "$FAKE_APP_RESTORED"; exit 0 ;;
+          esac
           : > "$FAKE_APP_CREATED"
           [ "${FAKE_APP_UP_FAIL:-0}" = 1 ] && exit 99
+          exit 0
+          ;;
+        *' up -d --no-deps worker '*)
+          case "$*" in
+            *'releases/old/docker-compose.prod.yml'*) : > "$FAKE_WORKER_RESTORED"; exit 0 ;;
+          esac
+          : > "$FAKE_WORKER_CREATED"
+          [ "${FAKE_WORKER_UP_FAIL:-0}" = 1 ] && exit 99
           exit 0
           ;;
         *' stop app '*) printf '%s\n' compose-stop-app >> "$FAKE_DOCKER_LOG"; exit 0 ;;
@@ -215,24 +274,122 @@ assert_verifier_label_assertions() {
   done
 }
 
+assert_declaration_worker_runtime() {
+  for file in scripts/deploy-production.sh scripts/verify-production.sh; do
+    grep -Fq '0028 (head)' "$file" || fail "$file does not gate on Alembic head 0028"
+    grep -Fq 'wait_for_health worker' "$file" || fail "$file does not wait for the declaration worker healthcheck"
+    grep -Fq 'runtime_service in app worker' "$file" || fail "$file does not validate both runtime services"
+  done
+  grep -Fq 'stop_new_release_container worker' scripts/deploy-production.sh || \
+    fail 'deploy cleanup does not stop an exact-release worker after an unpromoted failure'
+  grep -Fq 'declaration import is enabled but no OpenAI provider key is configured' scripts/deploy-production.sh || \
+    fail 'deploy does not fail closed when an enabled declaration import has no provider key'
+  grep -Fq 'declaration import is enabled but no OpenAI provider key is configured' scripts/verify-production.sh || \
+    fail 'runtime verifier does not fail closed when an enabled declaration import has no provider key'
+}
+
+assert_release_replacement_hardening() {
+  grep -Fq 'flock -n 9' scripts/deploy-production.sh || \
+    fail 'deployment does not acquire an exclusive host lock before Compose work'
+  grep -Fq 'compose up -d --no-recreate db' scripts/deploy-production.sh || \
+    fail 'deployment does not prevent PostgreSQL recreation during a release update'
+  grep -Fq 'compose up -d --no-deps app' scripts/deploy-production.sh || \
+    fail 'app startup may re-evaluate or recreate its already-verified database dependency'
+  grep -Fq 'compose up -d --no-deps worker' scripts/deploy-production.sh || \
+    fail 'worker startup may re-evaluate or recreate its already-verified dependencies'
+  grep -Fq "'{{.Image}}'" scripts/deploy-production.sh || \
+    fail 'deployment does not prove runtime ownership with immutable image IDs'
+  grep -Fq 'com.karat.hausverwaltung.release' docker-compose.prod.yml || \
+    fail 'runtime services do not carry a per-release ownership label'
+  grep -Fq 'runtime_release_label' scripts/verify-production.sh || \
+    fail 'isolated verifier does not verify per-release runtime ownership labels'
+  grep -Fq 'restore_previous_runtime' scripts/deploy-production.sh || \
+    fail 'failed replacement does not restore the previous runtime'
+  grep -Fq 'migration_state' scripts/deploy-production.sh || \
+    fail 'migration gate does not require exactly one expected head value'
+  grep -Fq 'is_provider_key_value' scripts/deploy-production.sh || \
+    fail 'deployment provider-key gate accepts malformed or comment-only values'
+  for file in scripts/deploy-production.sh scripts/verify-production.sh; do
+    grep -Fq 'wait_for_database_role' "$file" || \
+      fail "$file does not wait for app_rw after PostgreSQL reports healthy"
+  done
+}
+
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 deploy_script="$script_dir/deploy-production.sh"
 assert_gateway_basic_auth_removed
 assert_admin_password_handling
 assert_verifier_label_assertions
+assert_declaration_worker_runtime
+assert_release_replacement_hardening
 admin_password='Alpha"$\;{}[]Pass12'
 tmpdir=$(mktemp -d)
 cleanup() { rm -rf "$tmpdir"; }
 trap cleanup EXIT HUP INT TERM
 
-mkdir -p "$tmpdir/bin" "$tmpdir/root/releases/test" "$tmpdir/root/shared"
+mkdir -p "$tmpdir/bin"
 ln -s "$script_dir/$(basename "$0")" "$tmpdir/bin/docker"
 ln -s "$script_dir/$(basename "$0")" "$tmpdir/bin/stat"
 ln -s "$script_dir/$(basename "$0")" "$tmpdir/bin/curl"
 ln -s "$script_dir/$(basename "$0")" "$tmpdir/bin/mv"
-: > "$tmpdir/root/shared/.env"
+ln -s "$script_dir/$(basename "$0")" "$tmpdir/bin/flock"
+ln -s "$script_dir/$(basename "$0")" "$tmpdir/bin/readlink"
+
+missing_key_root="$tmpdir/missing-key-root"
+mkdir -p "$missing_key_root/releases/test" "$missing_key_root/shared"
+: > "$missing_key_root/shared/.env"
+chmod 600 "$missing_key_root/shared/.env"
+: > "$missing_key_root/releases/test/docker-compose.prod.yml"
+: > "$tmpdir/missing-key-docker.log"
+if printf '%s\n' "$admin_password" | \
+  PATH="$tmpdir/bin:$PATH" \
+  FAKE_DOCKER_LOG="$tmpdir/missing-key-docker.log" \
+  FAKE_SHARED="$missing_key_root/shared" \
+  FAKE_APP_CREATED="$tmpdir/missing-key-app-created" \
+  FAKE_WORKER_CREATED="$tmpdir/missing-key-worker-created" \
+  FAKE_ADMIN_PASSWORD="$admin_password" \
+  HV_OPENAI_API_KEY='   ' \
+  DEPLOY_ROOT="$missing_key_root" RELEASE_ID=test sh "$deploy_script" >"$tmpdir/missing-key-output" 2>&1; then
+  fail 'deployment unexpectedly accepted an enabled declaration import without a provider key'
+fi
+grep -Fq 'declaration import is enabled but no OpenAI provider key is configured' "$tmpdir/missing-key-output" || \
+  fail 'missing provider key did not return the fail-closed deployment error'
+[ ! -s "$tmpdir/missing-key-docker.log" ] || \
+  fail 'missing provider key reached Docker before the deployment gate failed'
+
+for blank_key_case in unquoted-comment quoted-comment; do
+  blank_key_root="$tmpdir/$blank_key_case-root"
+  mkdir -p "$blank_key_root/releases/test" "$blank_key_root/shared"
+  case "$blank_key_case" in
+    unquoted-comment) printf '%s\n' 'HV_OPENAI_API_KEY= # not configured' > "$blank_key_root/shared/.env" ;;
+    quoted-comment) printf '%s\n' 'HV_OPENAI_API_KEY="" # not configured' > "$blank_key_root/shared/.env" ;;
+  esac
+  chmod 600 "$blank_key_root/shared/.env"
+  : > "$blank_key_root/releases/test/docker-compose.prod.yml"
+  : > "$tmpdir/$blank_key_case-docker.log"
+  if printf '%s\n' "$admin_password" | \
+    PATH="$tmpdir/bin:$PATH" \
+    FAKE_DOCKER_LOG="$tmpdir/$blank_key_case-docker.log" \
+    FAKE_SHARED="$blank_key_root/shared" \
+    FAKE_APP_CREATED="$tmpdir/$blank_key_case-app-created" \
+    FAKE_WORKER_CREATED="$tmpdir/$blank_key_case-worker-created" \
+    FAKE_ADMIN_PASSWORD="$admin_password" \
+    DEPLOY_ROOT="$blank_key_root" RELEASE_ID=test sh "$deploy_script" \
+      >"$tmpdir/$blank_key_case-output" 2>&1; then
+    fail "deployment unexpectedly accepted $blank_key_case as a provider key"
+  fi
+  grep -Fq 'declaration import is enabled but no OpenAI provider key is configured' \
+    "$tmpdir/$blank_key_case-output" || \
+    fail "$blank_key_case did not return the fail-closed deployment error"
+  [ ! -s "$tmpdir/$blank_key_case-docker.log" ] || \
+    fail "$blank_key_case reached Docker before the deployment gate failed"
+done
+
+mkdir -p "$tmpdir/root/releases/test/infra/db" "$tmpdir/root/shared"
+printf '%s\n' 'HV_DECLARATION_IMPORT_ENABLED=false' > "$tmpdir/root/shared/.env"
 chmod 600 "$tmpdir/root/shared/.env"
 : > "$tmpdir/root/releases/test/docker-compose.prod.yml"
+: > "$tmpdir/root/releases/test/infra/db/prod-init.sh"
 : > "$tmpdir/docker.log"
 
 if printf '%s\n' "$admin_password" | \
@@ -240,6 +397,7 @@ if printf '%s\n' "$admin_password" | \
   FAKE_DOCKER_LOG="$tmpdir/docker.log" \
   FAKE_SHARED="$tmpdir/root/shared" \
   FAKE_APP_CREATED="$tmpdir/app-created" \
+  FAKE_WORKER_CREATED="$tmpdir/worker-created" \
   FAKE_ADMIN_PASSWORD="$admin_password" \
   FAKE_APP_UP_FAIL=1 \
   DEPLOY_ROOT="$tmpdir/root" RELEASE_ID=test sh "$deploy_script"; then
@@ -254,20 +412,84 @@ fi
 if grep -Fqx 'compose-stop-app' "$tmpdir/docker.log"; then
   fail 'cleanup used compose stop app instead of an exact container ID'
 fi
+if grep -Fqx 'stopped:new-worker' "$tmpdir/docker.log"; then
+  fail 'cleanup stopped a worker which was never created'
+fi
 
-second_root="$tmpdir/second-root"
-mkdir -p "$second_root/releases/test" "$second_root/shared"
-: > "$second_root/shared/.env"
-chmod 600 "$second_root/shared/.env"
-: > "$second_root/releases/test/docker-compose.prod.yml"
-: > "$tmpdir/second-docker.log"
+worker_failure_root="$tmpdir/worker-failure-root"
+mkdir -p "$worker_failure_root/releases/test/infra/db" "$worker_failure_root/shared"
+printf '%s\n' 'HV_DECLARATION_IMPORT_ENABLED=false' > "$worker_failure_root/shared/.env"
+chmod 600 "$worker_failure_root/shared/.env"
+: > "$worker_failure_root/releases/test/docker-compose.prod.yml"
+: > "$worker_failure_root/releases/test/infra/db/prod-init.sh"
+: > "$tmpdir/worker-failure-docker.log"
+if printf '%s\n' "$admin_password" | \
+  PATH="$tmpdir/bin:$PATH" \
+  FAKE_DOCKER_LOG="$tmpdir/worker-failure-docker.log" \
+  FAKE_SHARED="$worker_failure_root/shared" \
+  FAKE_APP_CREATED="$tmpdir/worker-failure-app-created" \
+  FAKE_WORKER_CREATED="$tmpdir/worker-failure-worker-created" \
+  FAKE_ADMIN_PASSWORD="$admin_password" \
+  FAKE_WORKER_UP_FAIL=1 \
+  DEPLOY_ROOT="$worker_failure_root" RELEASE_ID=test sh "$deploy_script"; then
+  fail 'deployment unexpectedly succeeded despite the injected worker compose failure'
+fi
+grep -Fqx 'stopped:new-worker' "$tmpdir/worker-failure-docker.log" || \
+  fail 'the partially-created exact release worker was not stopped'
+grep -Fqx 'stopped:new-app' "$tmpdir/worker-failure-docker.log" || \
+  fail 'the exact release app was not stopped after worker startup failed'
+if grep -Eqx 'stopped:old-(app|worker)' "$tmpdir/worker-failure-docker.log"; then
+  fail 'worker failure cleanup stopped a healthy pre-existing runtime container'
+fi
+
+restore_root="$tmpdir/restore-root"
+mkdir -p "$restore_root/releases/test/infra/db" "$restore_root/releases/old/infra/db" "$restore_root/shared"
+printf '%s\n' 'HV_DECLARATION_IMPORT_ENABLED=false' > "$restore_root/shared/.env"
+chmod 600 "$restore_root/shared/.env"
+: > "$restore_root/releases/test/docker-compose.prod.yml"
+: > "$restore_root/releases/test/infra/db/prod-init.sh"
+: > "$restore_root/releases/old/docker-compose.prod.yml"
+: > "$restore_root/releases/old/infra/db/prod-init.sh"
+ln -s releases/old "$restore_root/current"
+: > "$tmpdir/restore-docker.log"
+if printf '%s\n' "$admin_password" | \
+  PATH="$tmpdir/bin:$PATH" \
+  FAKE_DOCKER_LOG="$tmpdir/restore-docker.log" \
+  FAKE_SHARED="$restore_root/shared" \
+  FAKE_APP_CREATED="$tmpdir/restore-app-created" \
+  FAKE_WORKER_CREATED="$tmpdir/restore-worker-created" \
+  FAKE_APP_RESTORED="$tmpdir/restore-app-restored" \
+  FAKE_WORKER_RESTORED="$tmpdir/restore-worker-restored" \
+  FAKE_READLINK_F="$restore_root/releases/old" \
+  FAKE_ADMIN_PASSWORD="$admin_password" \
+  FAKE_WORKER_UP_FAIL=1 \
+  DEPLOY_ROOT="$restore_root" RELEASE_ID=test sh "$deploy_script"; then
+  fail 'deployment unexpectedly succeeded despite the injected replacement failure'
+fi
+grep -Fq 'releases/old/docker-compose.prod.yml up -d --no-deps app' "$tmpdir/restore-docker.log" || \
+  fail 'failed replacement did not restore the previous app runtime'
+grep -Fq 'releases/old/docker-compose.prod.yml up -d --no-deps worker' "$tmpdir/restore-docker.log" || \
+  fail 'failed replacement did not restore the previous worker runtime'
+[ -f "$tmpdir/restore-app-restored" ] || fail 'previous app was not restored after replacement failure'
+[ -f "$tmpdir/restore-worker-restored" ] || fail 'previous worker was not restored after replacement failure'
+
+success_root="$tmpdir/success-root"
+mkdir -p "$success_root/releases/test/infra/db" "$success_root/shared"
+printf '%s\n' 'HV_DECLARATION_IMPORT_ENABLED=false' > "$success_root/shared/.env"
+chmod 600 "$success_root/shared/.env"
+: > "$success_root/releases/test/docker-compose.prod.yml"
+: > "$success_root/releases/test/infra/db/prod-init.sh"
+: > "$tmpdir/success-docker.log"
 printf '%s\n' "$admin_password" | \
   PATH="$tmpdir/bin:$PATH" \
-  FAKE_DOCKER_LOG="$tmpdir/second-docker.log" \
-  FAKE_SHARED="$second_root/shared" \
-  FAKE_APP_CREATED="$tmpdir/second-app-created" \
+  FAKE_DOCKER_LOG="$tmpdir/success-docker.log" \
+  FAKE_SHARED="$success_root/shared" \
+  FAKE_APP_CREATED="$tmpdir/success-app-created" \
+  FAKE_WORKER_CREATED="$tmpdir/success-worker-created" \
   FAKE_ADMIN_PASSWORD="$admin_password" \
-  DEPLOY_ROOT="$second_root" RELEASE_ID=test sh "$deploy_script"
-[ "$(readlink "$second_root/current")" = releases/test ] || fail 'successful public-gate probe did not promote the release'
+  DEPLOY_ROOT="$success_root" RELEASE_ID=test sh "$deploy_script"
+[ "$(readlink "$success_root/current")" = releases/test ] || fail 'successful public-gate probe did not promote the release'
+grep -Fq 'up -d --no-deps worker' "$tmpdir/success-docker.log" || \
+  fail 'successful deployment did not start the declaration worker'
 
-printf '%s\n' 'deploy-production cleanup regression probe passed'
+printf '%s\n' 'deploy-production app and worker cleanup regression probe passed'

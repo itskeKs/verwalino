@@ -15,7 +15,10 @@ services:
       APP_RW_PASSWORD: ${APP_RW_PASSWORD:?set APP_RW_PASSWORD in the protected env file or invoking environment}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./infra/db/prod-init.sh:/docker-entrypoint-initdb.d/10-app-rw.sh:ro
+      # Deployments install this reviewed script at a stable shared-host path.
+      # Its source must not change between release Compose files, or Compose
+      # can replace the fixed-project PostgreSQL container during an update.
+      - ${HV_DB_INIT_SCRIPT:-./infra/db/prod-init.sh}:/docker-entrypoint-initdb.d/10-app-rw.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app_migrator -d hausverwaltung"]
       interval: 5s
@@ -158,6 +161,7 @@ services:
       - backend
       - traefik
     labels:
+      com.karat.hausverwaltung.release: ${HV_RELEASE_ID:?set HV_RELEASE_ID to the reviewed release identifier}
       traefik.enable: "true"
       traefik.docker.network: "traefik"
       traefik.http.routers.hausverwaltung-alpha.rule: "Host(`verwaltung.karat.immo`)"
@@ -263,6 +267,8 @@ services:
         max-file: "3"
     networks:
       - backend
+    labels:
+      com.karat.hausverwaltung.release: ${HV_RELEASE_ID:?set HV_RELEASE_ID to the reviewed release identifier}
 
 volumes:
   pgdata:

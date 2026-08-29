@@ -10,7 +10,7 @@ import psycopg2
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, InternalError
 
 
 def test_0027_accepts_a_single_legacy_email_created_under_0022():
@@ -69,6 +69,210 @@ def test_0027_accepts_a_single_legacy_email_created_under_0022():
                 connection.close()
         if downgraded:
             command.upgrade(alembic_cfg, "0027")
+
+
+def test_0023_upgrade_accepts_preexisting_0027_auth_runtime_objects() -> None:
+    """A production DB stamped at 0023 can contain the exact leaked 0027 objects.
+
+    The original production deployment installed these functions and index before
+    Alembic recorded revision 0027.  The next upgrade must reconcile that state
+    rather than fail on duplicate object names, and it must finish at 0028 with
+    the required runtime permissions intact.
+    """
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    alembic_cfg = Config(str(backend_dir / "alembic.ini"))
+    alembic_cfg.set_main_option("sqlalchemy.url", MIGRATOR_SYNC_URL)
+    alembic_cfg.set_main_option("script_location", str(backend_dir / "migrations"))
+    migrated_to_head = False
+    try:
+        command.downgrade(alembic_cfg, "0023")
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    CREATE FUNCTION public.app_auth_lookup(login_email text)
+                    RETURNS TABLE (
+                        user_id uuid,
+                        organization_id uuid,
+                        password_hash text,
+                        is_active boolean,
+                        role text
+                    )
+                    LANGUAGE sql STABLE SECURITY DEFINER
+                    SET search_path = pg_catalog, pg_temp
+                    AS $$
+                        WITH candidates AS (
+                            SELECT u.id AS user_id,
+                                   u.organization_id,
+                                   u.password_hash,
+                                   u.is_active,
+                                   m.role
+                            FROM public."user" AS u
+                            JOIN public.membership AS m
+                              ON m.user_id = u.id
+                             AND m.organization_id = u.organization_id
+                            WHERE pg_catalog.lower(pg_catalog.btrim(u.email)) =
+                                  pg_catalog.lower(pg_catalog.btrim(login_email))
+                        )
+                        SELECT user_id, organization_id, password_hash, is_active, role
+                        FROM candidates
+                        WHERE (SELECT pg_catalog.count(*) FROM candidates) = 1
+                    $$;
+                    """
+                )
+                cursor.execute(
+                    """
+                    CREATE FUNCTION public.app_validate_session(
+                        session_user_id uuid, session_organization_id uuid
+                    )
+                    RETURNS TABLE (role text)
+                    LANGUAGE sql STABLE SECURITY DEFINER
+                    SET search_path = pg_catalog, pg_temp
+                    AS $$
+                        SELECT m.role
+                        FROM public."user" AS u
+                        JOIN public.membership AS m
+                          ON m.user_id = u.id
+                         AND m.organization_id = u.organization_id
+                        WHERE u.id = session_user_id
+                          AND u.organization_id = session_organization_id
+                          AND u.is_active
+                    $$;
+                    """
+                )
+                cursor.execute(
+                    """
+                    CREATE UNIQUE INDEX uq_user_org_canonical_email
+                    ON public."user"
+                    (organization_id, pg_catalog.lower(pg_catalog.btrim(email)))
+                    """
+                )
+
+        command.upgrade(alembic_cfg, "head")
+        migrated_to_head = True
+
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT version_num FROM alembic_version")
+                assert cursor.fetchone() == ("0028",)
+                for signature in (
+                    "public.app_auth_lookup(text)",
+                    "public.app_validate_session(uuid,uuid)",
+                ):
+                    cursor.execute(
+                        """
+                        SELECT pg_get_functiondef(CAST(%s AS regprocedure)),
+                               has_function_privilege('app_rw', CAST(%s AS regprocedure), 'EXECUTE'),
+                               has_function_privilege('public', CAST(%s AS regprocedure), 'EXECUTE')
+                        """,
+                        (signature, signature, signature),
+                    )
+                    definition, app_rw_execute, public_execute = cursor.fetchone()
+                    assert "SECURITY DEFINER" in definition
+                    assert "SET search_path TO 'pg_catalog', 'pg_temp'" in definition
+                    assert app_rw_execute is True
+                    assert public_execute is False
+                cursor.execute(
+                    """
+                    SELECT i.indisunique,
+                           i.indpred IS NULL,
+                           i.indnkeyatts,
+                           i.indnatts,
+                           pg_get_indexdef(i.indexrelid, 1, true),
+                           pg_get_indexdef(i.indexrelid, 2, true)
+                    FROM pg_index AS i
+                    WHERE i.indexrelid = 'public.uq_user_org_canonical_email'::regclass
+                    """
+                )
+                assert cursor.fetchone() == (
+                    True,
+                    True,
+                    2,
+                    2,
+                    "organization_id",
+                    "lower(btrim(email::text))",
+                )
+    finally:
+        if not migrated_to_head:
+            with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("DROP INDEX IF EXISTS public.uq_user_org_canonical_email")
+                    cursor.execute("DROP FUNCTION IF EXISTS public.app_validate_session(uuid, uuid)")
+                    cursor.execute("DROP FUNCTION IF EXISTS public.app_auth_lookup(text)")
+            command.upgrade(alembic_cfg, "head")
+
+
+def test_0027_refuses_a_conflicting_canonical_email_index() -> None:
+    """A same-named index with different key semantics must stop the upgrade."""
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    alembic_cfg = Config(str(backend_dir / "alembic.ini"))
+    alembic_cfg.set_main_option("sqlalchemy.url", MIGRATOR_SYNC_URL)
+    alembic_cfg.set_main_option("script_location", str(backend_dir / "migrations"))
+    try:
+        command.downgrade(alembic_cfg, "0026")
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    CREATE UNIQUE INDEX uq_user_org_canonical_email
+                    ON public."user" (organization_id, email)
+                    """
+                )
+
+        with pytest.raises(InternalError, match="conflicting canonical-email index"):
+            command.upgrade(alembic_cfg, "0027")
+    finally:
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DROP INDEX IF EXISTS public.uq_user_org_canonical_email")
+                cursor.execute("DROP FUNCTION IF EXISTS public.app_validate_session(uuid, uuid)")
+                cursor.execute("DROP FUNCTION IF EXISTS public.app_auth_lookup(text)")
+        command.upgrade(alembic_cfg, "head")
+
+
+def test_0027_refuses_a_canonical_email_index_on_another_table() -> None:
+    """A matching index name and expression are insufficient on a decoy table."""
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    alembic_cfg = Config(str(backend_dir / "alembic.ini"))
+    alembic_cfg.set_main_option("sqlalchemy.url", MIGRATOR_SYNC_URL)
+    alembic_cfg.set_main_option("script_location", str(backend_dir / "migrations"))
+    try:
+        command.downgrade(alembic_cfg, "0026")
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    CREATE TABLE public.canonical_email_index_decoy (
+                        organization_id uuid NOT NULL,
+                        email varchar(320) NOT NULL
+                    )
+                    """
+                )
+                cursor.execute(
+                    """
+                    CREATE UNIQUE INDEX uq_user_org_canonical_email
+                    ON public.canonical_email_index_decoy
+                    (organization_id, pg_catalog.lower(pg_catalog.btrim(email)))
+                    """
+                )
+
+        with pytest.raises(InternalError, match="conflicting canonical-email index"):
+            command.upgrade(alembic_cfg, "0027")
+    finally:
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("DROP INDEX IF EXISTS public.uq_user_org_canonical_email")
+                cursor.execute("DROP TABLE IF EXISTS public.canonical_email_index_decoy")
+                cursor.execute("DROP FUNCTION IF EXISTS public.app_validate_session(uuid, uuid)")
+                cursor.execute("DROP FUNCTION IF EXISTS public.app_auth_lookup(text)")
+                cursor.execute("UPDATE alembic_version SET version_num = '0026'")
+        command.upgrade(alembic_cfg, "head")
 
 
 @pytest.mark.asyncio

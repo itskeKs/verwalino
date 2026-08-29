@@ -17,14 +17,31 @@ esac
 
 root=$DEPLOY_ROOT
 release="$root/releases/$RELEASE_ID"
-image="${APP_IMAGE:-hausverwaltung-alpha:$RELEASE_ID}"
+if [ "${APP_IMAGE+x}" = x ]; then
+  echo "manual deployment builds the reviewed release locally; APP_IMAGE overrides are not supported" >&2
+  exit 2
+fi
+image="hausverwaltung-alpha:$RELEASE_ID"
+image_id=
 env_file="$root/shared/.env"
 sbom_file="$root/shared/$RELEASE_ID.sbom.cdx.json"
+db_init_source="$release/infra/db/prod-init.sh"
+db_init_file="$root/shared/prod-init.sh"
+db_init_tmp=
 base_url="https://verwaltung.karat.immo"
 app_start_attempted=0
-app_cleanup_active=0
+worker_start_attempted=0
 previous_app_id=
+previous_worker_id=
+previous_app_image_id=
+previous_worker_image_id=
+previous_release=
+previous_release_id=
+previous_release_path=
 new_app_id=
+new_worker_id=
+db_before_id=
+db_after_id=
 promoted=0
 cookie_jar=
 public_headers=
@@ -55,6 +72,76 @@ read_secret() {
   printf '%s' "$secret"
 }
 
+dotenv_setting_is_explicit_false() {
+  setting_name=$1
+  awk -v name="$setting_name" '
+    /^[[:space:]]*#/ { next }
+    {
+      line = $0
+      sub(/^[[:space:]]*export[[:space:]]+/, "", line)
+      if (index(line, name "=") != 1) next
+      value = substr(line, length(name) + 2)
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      sub(/[[:space:]]+#.*/, "", value)
+      quote = sprintf("%c", 34)
+      single_quote = sprintf("%c", 39)
+      if (length(value) >= 2 && ((substr(value, 1, 1) == quote && substr(value, length(value), 1) == quote) || (substr(value, 1, 1) == single_quote && substr(value, length(value), 1) == single_quote))) {
+        value = substr(value, 2, length(value) - 2)
+      }
+      explicit_false = (value == "false" || value == "False" || value == "FALSE" || value == "0" || value == "off" || value == "OFF" || value == "no" || value == "NO")
+    }
+    END { exit explicit_false ? 0 : 1 }
+  ' "$env_file"
+}
+
+dotenv_setting_is_provider_key() {
+  setting_name=$1
+  awk -v name="$setting_name" '
+    /^[[:space:]]*#/ { next }
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/^export[[:space:]]+/, "", line)
+      if (index(line, name "=") != 1) next
+      value = substr(line, length(name) + 2)
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      valid = (value ~ /^[A-Za-z0-9._-]+$/)
+    }
+    END { exit valid ? 0 : 1 }
+  ' "$env_file"
+}
+
+declaration_import_is_enabled() {
+  if [ "${HV_DECLARATION_IMPORT_ENABLED+x}" = x ]; then
+    case "$HV_DECLARATION_IMPORT_ENABLED" in
+      false|False|FALSE|0|off|OFF|no|NO) return 1 ;;
+      *) return 0 ;;
+    esac
+  fi
+  dotenv_setting_is_explicit_false HV_DECLARATION_IMPORT_ENABLED && return 1
+  return 0
+}
+
+is_provider_key_value() {
+  case "$1" in
+    ''|*[!A-Za-z0-9._-]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+require_declaration_provider_key() {
+  declaration_import_is_enabled || return 0
+  if [ "${HV_OPENAI_API_KEY+x}" = x ]; then
+    is_provider_key_value "$HV_OPENAI_API_KEY" && return 0
+  elif dotenv_setting_is_provider_key HV_OPENAI_API_KEY; then
+    return 0
+  fi
+  echo "declaration import is enabled but no OpenAI provider key is configured" >&2
+  return 1
+}
+
 cleanup() {
   status=$?
   if [ "$promoted" -ne 1 ] && [ "$app_start_attempted" -eq 1 ]; then
@@ -62,7 +149,15 @@ cleanup() {
     # durable pointer wins: never leave that new current pointing at a stopped
     # app. Otherwise this is still the unpromoted new app and is safe to stop.
     if ! { [ -L "$root/current" ] && [ "$(readlink "$root/current")" = "releases/$RELEASE_ID" ]; }; then
-      stop_new_release_app || true
+      # Stop each exact-release runtime container independently. A failed
+      # `compose up` may have created one service but not the other, and the
+      # previous release containers must remain untouched.
+      [ "$worker_start_attempted" -eq 0 ] || stop_new_release_container worker "$new_worker_id" "$previous_worker_id" || true
+      stop_new_release_container app "$new_app_id" "$previous_app_id" || true
+      if ! restore_previous_runtime; then
+        echo "failed to restore the previous runtime after an unpromoted release failure" >&2
+        status=1
+      fi
     fi
   fi
   [ -z "$cookie_jar" ] || rm -f "$cookie_jar"
@@ -79,9 +174,22 @@ trap cleanup EXIT
 trap 'stty echo 2>/dev/null || true; exit 1' HUP INT TERM
 
 install -d -m 700 "$root" "$root/releases" "$root/shared"
+command -v flock >/dev/null 2>&1 || {
+  echo "deployment requires flock for exclusive host locking" >&2
+  exit 2
+}
+umask 077
+: > "$root/shared/deploy.lock"
+chmod 600 "$root/shared/deploy.lock"
+exec 9>"$root/shared/deploy.lock"
+flock -n 9 || {
+  echo "another deployment is already running for this host" >&2
+  exit 1
+}
 test -d "$release"
 test -f "$env_file"
 test "$(stat -c '%a' "$env_file")" = 600
+require_declaration_provider_key
 test "$(docker network inspect traefik --format '{{(index .IPAM.Config 0).Subnet}}')" = 172.21.0.0/16
 
 admin_password=$(read_secret "Admin password") || {
@@ -110,48 +218,123 @@ docker run --rm --user "$(id -u):$(stat -c '%g' /var/run/docker.sock)" \
   aquasec/trivy:0.69.0@sha256:33f816d414b9d582d25bb737ffa4a632ae34e222f7ec1b50252cef0ce2266006 \
   image --cache-dir /tmp/trivy-cache --scanners vuln --ignore-unfixed \
   --severity HIGH,CRITICAL --exit-code 1 "$image"
+image_id=$(docker image inspect --format '{{.Id}}' "$image")
+[ -n "$image_id" ] || {
+  echo "could not capture the locally built image ID" >&2
+  exit 1
+}
+test -f "$db_init_source"
+umask 077
+db_init_tmp="$root/shared/.prod-init.$RELEASE_ID.$$"
+install -m 600 "$db_init_source" "$db_init_tmp"
+mv -f "$db_init_tmp" "$db_init_file"
+db_init_tmp=
+
+compose_release() {
+  compose_release_path=$1
+  compose_image=$2
+  compose_release_id=$3
+  shift 3
+  APP_IMAGE="$compose_image" HV_DB_INIT_SCRIPT="$db_init_file" HV_RELEASE_ID="$compose_release_id" \
+    docker compose --project-name hausverwaltung-alpha \
+      --env-file "$env_file" -f "$compose_release_path/docker-compose.prod.yml" "$@"
+}
 
 compose() {
-  APP_IMAGE="$image" docker compose --project-name hausverwaltung-alpha \
-    --env-file "$env_file" -f "$release/docker-compose.prod.yml" "$@"
+  compose_release "$release" "$image" "$RELEASE_ID" "$@"
 }
 
-is_new_release_app() {
-  candidate_app_id=$1
-  [ -n "$candidate_app_id" ] || return 1
-  [ "$candidate_app_id" != "$previous_app_id" ] || return 1
-  inspected_app_id=$(docker inspect --format '{{.Id}}' "$candidate_app_id" 2>/dev/null) || return 1
-  [ "$inspected_app_id" = "$candidate_app_id" ] || return 1
-  inspected_app_image=$(docker inspect --format '{{.Config.Image}}' "$candidate_app_id" 2>/dev/null) || return 1
-  [ "$inspected_app_image" = "$image" ]
-}
-
-stop_new_release_app() {
-  candidate_app_id=$new_app_id
-  # `compose up` may have created the new app and then failed before the
-  # command returned. In that case discover it, but only after comparing it
-  # with the pre-existing ID and exact configured image.
-  if [ -z "$candidate_app_id" ] && [ "$app_cleanup_active" -eq 0 ]; then
-    candidate_app_id=$(compose ps -q app 2>/dev/null || true)
-  fi
-  is_new_release_app "$candidate_app_id" || return 0
-  docker stop "$candidate_app_id" >/dev/null 2>&1
-}
-
-wait_for_health() {
+is_new_release_container() {
   service=$1
+  candidate_container_id=$2
+  previous_container_id=$3
+  case "$service" in app|worker) ;; *) return 1 ;; esac
+  [ -n "$candidate_container_id" ] || return 1
+  [ "$candidate_container_id" != "$previous_container_id" ] || return 1
+  inspected_container_id=$(docker inspect --format '{{.Id}}' "$candidate_container_id" 2>/dev/null) || return 1
+  [ "$inspected_container_id" = "$candidate_container_id" ] || return 1
+  inspected_container_image_id=$(docker inspect --format '{{.Image}}' "$candidate_container_id" 2>/dev/null) || return 1
+  [ "$inspected_container_image_id" = "$image_id" ] || return 1
+  inspected_release_label=$(docker inspect --format '{{index .Config.Labels "com.karat.hausverwaltung.release"}}' "$candidate_container_id" 2>/dev/null) || return 1
+  [ "$inspected_release_label" = "$RELEASE_ID" ]
+}
+
+stop_new_release_container() {
+  service=$1
+  candidate_container_id=$2
+  previous_container_id=$3
+  # `compose up` may have created a runtime container and then failed before
+  # returning. Discover only that service, then require a new ID and the exact
+  # release image before stopping it.
+  if [ -z "$candidate_container_id" ]; then
+    candidate_container_id=$(compose ps -q "$service" 2>/dev/null || true)
+  fi
+  is_new_release_container "$service" "$candidate_container_id" "$previous_container_id" || return 0
+  docker stop "$candidate_container_id" >/dev/null 2>&1
+}
+
+wait_for_release_health() {
+  health_release_path=$1
+  health_image_id=$2
+  health_release_id=$3
+  service=$4
   attempt=1
   while [ "$attempt" -le 30 ]; do
-    container_id=$(compose ps -q "$service")
-    if [ -n "$container_id" ] && [ "$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" = healthy ]; then
+    container_id=$(compose_release "$health_release_path" "$health_image_id" "$health_release_id" ps -q "$service")
+    if [ -n "$container_id" ] && \
+      [ "$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" = healthy ]; then
       return 0
     fi
     sleep 2
     attempt=$((attempt + 1))
   done
   echo "timed out waiting for $service to become healthy" >&2
+  compose_release "$health_release_path" "$health_image_id" "$health_release_id" ps >&2 || true
+  return 1
+}
+
+wait_for_health() {
+  wait_for_release_health "$release" "$image" "$RELEASE_ID" "$1"
+}
+
+wait_for_database_role() {
+  attempt=1
+  while [ "$attempt" -le 30 ]; do
+    if compose exec -T db sh -ec \
+      'PGPASSWORD="$APP_RW_PASSWORD" psql -U app_rw -d hausverwaltung -Atqc "SELECT current_user"' | \
+      grep -Fxq app_rw; then
+      return 0
+    fi
+    sleep 2
+    attempt=$((attempt + 1))
+  done
+  echo "database became healthy but app_rw did not become ready within 60 seconds" >&2
   compose ps >&2 || true
   return 1
+}
+
+restore_previous_runtime() {
+  [ -n "$previous" ] || return 0
+  if [ -z "$previous_release_path" ] || [ -z "$previous_app_id" ] || [ -z "$previous_app_image_id" ]; then
+    echo "cannot restore previous runtime: captured app identity is incomplete" >&2
+    return 1
+  fi
+  compose_release "$previous_release_path" "$previous_app_image_id" "$previous_release_id" up -d --no-deps app || return 1
+  wait_for_release_health "$previous_release_path" "$previous_app_image_id" "$previous_release_id" app || return 1
+  restored_app_id=$(compose_release "$previous_release_path" "$previous_app_image_id" "$previous_release_id" ps -q app)
+  [ -n "$restored_app_id" ] || return 1
+  [ "$(docker inspect --format '{{.Image}}' "$restored_app_id")" = "$previous_app_image_id" ] || return 1
+  if [ -n "$previous_worker_id" ]; then
+    [ -n "$previous_worker_image_id" ] || {
+      echo "cannot restore previous runtime: captured worker identity is incomplete" >&2
+      return 1
+    }
+    compose_release "$previous_release_path" "$previous_worker_image_id" "$previous_release_id" up -d --no-deps worker || return 1
+    wait_for_release_health "$previous_release_path" "$previous_worker_image_id" "$previous_release_id" worker || return 1
+    restored_worker_id=$(compose_release "$previous_release_path" "$previous_worker_image_id" "$previous_release_id" ps -q worker)
+    [ -n "$restored_worker_id" ] || return 1
+    [ "$(docker inspect --format '{{.Image}}' "$restored_worker_id")" = "$previous_worker_image_id" ] || return 1
+  fi
 }
 
 validate_release_target() {
@@ -178,11 +361,51 @@ if [ -e "$root/current" ] || [ -L "$root/current" ]; then
     echo "refusing current pointer outside releases" >&2
     exit 1
   }
+  previous_release_id=${previous#releases/}
+  previous_release_path=$(readlink -f "$root/$previous")
+  previous_app_id=$(compose ps -q app)
+  [ -n "$previous_app_id" ] || {
+    echo "current release exists but its app container could not be captured for restoration" >&2
+    exit 1
+  }
+  [ "$(docker inspect --format '{{.Id}}' "$previous_app_id")" = "$previous_app_id" ] || {
+    echo "current release app identity could not be validated for restoration" >&2
+    exit 1
+  }
+  previous_app_image_id=$(docker inspect --format '{{.Image}}' "$previous_app_id")
+  [ -n "$previous_app_image_id" ] || {
+    echo "current release app has no immutable image ID" >&2
+    exit 1
+  }
+  previous_worker_id=$(compose ps -q worker)
+  if [ -n "$previous_worker_id" ]; then
+    [ "$(docker inspect --format '{{.Id}}' "$previous_worker_id")" = "$previous_worker_id" ] || {
+      echo "current release worker identity could not be validated for restoration" >&2
+      exit 1
+    }
+    previous_worker_image_id=$(docker inspect --format '{{.Image}}' "$previous_worker_id")
+    [ -n "$previous_worker_image_id" ] || {
+      echo "current release worker has no immutable image ID" >&2
+      exit 1
+    }
+  fi
 fi
-compose up -d db
+db_before_id=$(compose ps -q db)
+compose up -d --no-recreate db
 wait_for_health db
+wait_for_database_role
+db_after_id=$(compose ps -q db)
+[ -n "$db_after_id" ] || { echo "database container is missing after startup" >&2; exit 1; }
+if [ -n "$db_before_id" ] && [ "$db_before_id" != "$db_after_id" ]; then
+  echo "refusing deployment: Compose replaced the existing database container" >&2
+  exit 1
+fi
 compose --profile ops run --rm migrate
-compose --profile ops run --rm migrate alembic current | grep -Eq '0027 \(head\)'
+migration_state=$(compose --profile ops run --rm migrate alembic current)
+[ "$migration_state" = '0028 (head)' ] || {
+  echo "migration state is not exactly 0028 (head)" >&2
+  exit 1
+}
 printf '%s\n' "$admin_password" | compose --profile ops run --rm -T bootstrap \
   python -m app.admin_cli \
   --org 'Karat Hausverwaltung Alpha' \
@@ -190,19 +413,25 @@ printf '%s\n' "$admin_password" | compose --profile ops run --rm -T bootstrap \
   --name 'Alpha Admin' \
   --password-stdin
 
-# Capture the old ID before Compose can replace it. A failed `up` can still
-# create a new container, so the trap only stops a discovered container whose
-# immutable ID and configured image prove it belongs to this release.
-previous_app_id=$(compose ps -q app)
+# The previous runtime was captured before Compose can replace fixed-project
+# services. A failed `up` can still create a new container, so the trap only
+# stops a discovered container proven to belong to this exact release.
 app_start_attempted=1
-compose up -d app
+compose up -d --no-deps app
 wait_for_health app
 new_app_id=$(compose ps -q app)
-is_new_release_app "$new_app_id" || {
+is_new_release_container app "$new_app_id" "$previous_app_id" || {
   echo "new app container was not created from the expected release image" >&2
   exit 1
 }
-app_cleanup_active=1
+worker_start_attempted=1
+compose up -d --no-deps worker
+wait_for_health worker
+new_worker_id=$(compose ps -q worker)
+is_new_release_container worker "$new_worker_id" "$previous_worker_id" || {
+  echo "new worker container was not created from the expected release image" >&2
+  exit 1
+}
 compose exec -T app python -c "
 import urllib.request
 request = urllib.request.Request(
@@ -214,18 +443,32 @@ with urllib.request.urlopen(request, timeout=10) as response:
 "
 
 app_id=$(compose ps -q app)
+worker_id=$(compose ps -q worker)
 db_id=$(compose ps -q db)
-for container_id in "$app_id" "$db_id"; do
+for container_id in "$app_id" "$worker_id" "$db_id"; do
   [ -n "$container_id" ] || { echo "missing expected runtime container" >&2; exit 1; }
   port_bindings=$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$container_id")
   case "$port_bindings" in null|'{}') ;; *) echo "runtime container has published ports" >&2; exit 1 ;; esac
 done
-if docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$app_id" \
-  | grep -Eq '^HV_DATABASE_URL_(MIGRATOR|SYNC)='; then
-  echo "runtime app unexpectedly contains a privileged database URL" >&2
-  exit 1
-fi
-compose exec -T app python -c "
+for runtime_service in app worker; do
+  case "$runtime_service" in
+    app) runtime_id=$app_id ;;
+    worker) runtime_id=$worker_id ;;
+  esac
+  runtime_image_id=$(docker inspect --format '{{.Image}}' "$runtime_id")
+  [ "$runtime_image_id" = "$image_id" ] || {
+    echo "runtime $runtime_service was not started from the expected release image" >&2
+    exit 1
+  }
+  if docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$runtime_id" \
+    | grep -Eq '^HV_DATABASE_URL_(MIGRATOR|SYNC)='; then
+    echo "runtime $runtime_service unexpectedly contains a privileged database URL" >&2
+    exit 1
+  fi
+done
+assert_runtime_db_role() {
+  runtime_service=$1
+  compose exec -T "$runtime_service" python -c "
 import asyncio
 import os
 from sqlalchemy import text
@@ -241,6 +484,9 @@ async def main():
 
 asyncio.run(main())
 "
+}
+assert_runtime_db_role app
+assert_runtime_db_role worker
 
 cookie_jar=$(mktemp)
 public_headers=$(mktemp)

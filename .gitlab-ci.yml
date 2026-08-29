@@ -117,8 +117,10 @@ container-smoke:
     - printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" --username "$CI_REGISTRY_USER" --password-stdin
     - docker pull "$APP_IMAGE"
     - docker network create traefik
-    - export MIGRATOR_PASSWORD=0123456789abcdef APP_RW_PASSWORD=fedcba9876543210 SESSION_SECRET=0123456789abcdef0123456789abcdef HV_VERIFY_COMPOSE_FILE=docker-compose.prod.yml
-    - chmod 0555 scripts/verify-production.sh && scripts/verify-production.sh
+    - export MIGRATOR_PASSWORD=0123456789abcdef APP_RW_PASSWORD=fedcba9876543210 SESSION_SECRET=0123456789abcdef0123456789abcdef HV_DECLARATION_IMPORT_ENABLED=false HV_VERIFY_COMPOSE_FILE=docker-compose.prod.yml
+    - chmod 0555 scripts/verify-production.sh scripts/test-compose-release-restore.sh
+    - scripts/test-compose-release-restore.sh
+    - scripts/verify-production.sh
 
 # This is optional future automation, not the initial Moon deployment. It uses
 # protected/masked admin smoke credential only through SSH stdin, and invokes the

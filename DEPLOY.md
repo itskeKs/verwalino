@@ -20,7 +20,7 @@ retention-sensitive data.
 ## One-time preparation on Moon
 
 Run as `chris` without sudo. The host must have Docker, Compose, `curl`,
-`openssl`, and the existing external `traefik` network. This check must print
+`openssl`, `flock`, and the existing external `traefik` network. This check must print
 exactly `172.21.0.0/16`; otherwise stop rather than changing proxy trust
 settings blindly:
 
@@ -61,8 +61,18 @@ unset migrator_password app_rw_password session_secret
 ```
 
 Leave `APP_IMAGE=` blank in that file for the host-build flow. The helper
-supplies the immutable local `hausverwaltung-alpha:<release-id>` tag inline.
-An optional registry flow may set only an immutable digest, never a tag.
+builds exactly `hausverwaltung-alpha:<release-id>` from the reviewed source
+archive, scans it, then captures its Docker image ID. `APP_IMAGE` overrides are
+rejected by the manual helper; there is no registry-pull deployment path.
+
+Declaration imports are enabled by default and the worker therefore requires a
+non-empty `HV_OPENAI_API_KEY` in this same mode-0600 host environment file.
+Store it as an unquoted `A-Z`/`a-z`/`0-9`/`.`/`_`/`-` token without an inline
+comment. Provision that server-side key before deploying; never add it to an
+archive or command line. If this alpha must run without declaration imports, set
+`HV_DECLARATION_IMPORT_ENABLED=false` explicitly. The API's deterministic
+browse/search features remain available in that mode, but the deployment and
+isolated verifier otherwise fail closed before starting runtime containers.
 
 ## Manual release transfer and promotion
 
@@ -114,20 +124,35 @@ email:        admin@verwaltung.karat.immo
 name:         Alpha Admin
 ```
 
-Before starting PostgreSQL it builds the exact local image, creates a
-mode-0600 CycloneDX SBOM in `shared/`, and runs the pinned Trivy vulnerability
-HIGH/CRITICAL (`--scanners vuln --ignore-unfixed`) gate. It then uses the fixed
-order `db → migrate → bootstrap → app`, each health wait is bounded, verifies
-Alembic head `0027`, closed host ports, app-only database credentials and the
-runtime `app_rw` role. It polls the public Traefik/Let's Encrypt route for at
-most 180 seconds and, before atomically moving `current`, checks HTTPS/TLS,
+Before starting PostgreSQL it acquires an exclusive host deployment lock,
+verifies the enabled import has its provider key, builds the exact local image,
+creates a mode-0600 CycloneDX SBOM in `shared/`, and runs the pinned Trivy
+vulnerability HIGH/CRITICAL (`--scanners vuln --ignore-unfixed`) gate. It
+installs the reviewed PostgreSQL init script at a stable shared-host path and
+starts PostgreSQL with `--no-recreate`; an existing database container ID must
+remain unchanged. After Docker health reports ready, it also waits until the
+unprivileged `app_rw` role can connect as an additional database completion
+gate.
+It then uses the fixed order `db → migrate → bootstrap → app → worker`, waits
+for both runtime health checks, requires exactly Alembic head `0028 (head)`,
+and verifies per-release ownership labels, Docker image IDs, closed host ports,
+app-only database credentials and the runtime `app_rw` role for both. It polls
+the public Traefik/Let's Encrypt route for at most 180 seconds and, before
+atomically moving `current`, checks HTTPS/TLS,
 the public unauthenticated session boundary, security headers, secure session
 cookie, login/session/organization, traversal rejection, upload 413 and
 readiness.
 
-Any failure after the new app starts stops **only that new app**. It leaves the
-database, named volumes and logs untouched and never automatically rolls back
-either schema or application. `current` is changed only after the full smoke;
+Compose replaces fixed-project app/worker containers when a new release has a
+different runtime configuration. On any unpromoted failure after replacement,
+the helper stops **only** newly created containers proven by the release label
+and Docker image ID, then restores the previously captured app and optional
+worker with the prior release Compose file and immutable image IDs. The
+PostgreSQL container and named volumes are not replaced or deleted, and
+`current` is not moved. Already applied schema migrations remain in place and
+are never rolled back. This restoration is therefore safe only for additive,
+backward-compatible schema migrations; assess that compatibility before every
+deployment. `current` is changed only after the full smoke;
 the previous pointer is atomically persisted first and a stale `current.new`
 is removed only when it is a validated release symlink. Assess migration
 compatibility before an explicit app-only rollback.
@@ -142,19 +167,23 @@ database RLS controls. The app independently rejects individual files over 25
 MiB. `/tmp` is a noexec/nosuid 128 MiB tmpfs: enough for three concurrent 25
 MiB prevalidation spools and still below the 768 MiB app memory limit.
 
-The running app receives only `app_rw`; verify no migrator URL leaked into it:
+The running app and declaration worker receive only `app_rw`; verify the
+runtime set and confirm no migrator URL leaked into either service:
 
 ```sh
 root=/home/chris/apps/hausverwaltung-alpha
 release=$(readlink -f "$root/current")
 image="hausverwaltung-alpha:$(basename "$release")"
-APP_IMAGE="$image" docker compose --project-name hausverwaltung-alpha \
+APP_IMAGE="$image" HV_RELEASE_ID="$(basename "$release")" docker compose --project-name hausverwaltung-alpha \
   --env-file "$root/shared/.env" -f "$release/docker-compose.prod.yml" ps
 ```
 
-There is no automatic rollback. Only if an earlier image is compatible with the
-already-migrated schema, explicitly start that app with its own release Compose
-file and then move `current`; do not run downgrade or stop PostgreSQL/volumes.
+There is no automatic rollback after promotion. Before promotion, the helper
+automatically restores the prior runtime after a failed replacement while
+leaving the migrated schema in place. After promotion, only if an earlier image
+is compatible with that schema, explicitly start that app with its own release
+Compose file and then move `current`; do not run downgrade or stop
+PostgreSQL/volumes.
 
 ## Optional GitLab deploy
 
