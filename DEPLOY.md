@@ -135,7 +135,9 @@ unprivileged `app_rw` role can connect as an additional database completion
 gate.
 It then uses the fixed order `db → migrate → bootstrap → app → worker`, waits
 for both runtime health checks, requires exactly Alembic head `0028 (head)`,
-and verifies per-release ownership labels, Docker image IDs, closed host ports,
+and runs each one-shot `migrate`/`bootstrap` Compose command with `--no-deps`,
+so that command cannot re-evaluate, create, or replace the already verified
+PostgreSQL service. It then verifies per-release ownership labels, Docker image IDs, closed host ports,
 app-only database credentials and the runtime `app_rw` role for both. It polls
 the public Traefik/Let's Encrypt route for at most 180 seconds and, before
 atomically moving `current`, checks HTTPS/TLS,

@@ -30,6 +30,167 @@ _KNOWN_FACT_FIELDS = {
 }
 
 
+def _reconcile_property_mea_scale_schema_drift() -> None:
+    """Reconcile the one known old-schema state incorrectly stamped as 0023.
+
+    Production fully applied a separate auth migration that reused revision
+    ``0023``; Alembic therefore skipped this repository's Property/MEA 0023
+    migration. This migration accepts either the exact completed Property/MEA
+    contract or that exact preceding 0022 contract. Only the latter is repaired,
+    atomically and without deleting or rewriting rows. Any partial or
+    incompatible schema is ambiguous and therefore fails closed.
+    """
+    op.execute(
+        """
+        DO $repair$
+        DECLARE
+            full_contract boolean;
+            old_contract boolean;
+        BEGIN
+            SELECT
+                (
+                    SELECT attribute.atttypid = 'pg_catalog.int8'::regtype
+                           AND NOT attribute.attnotnull
+                           AND NOT attribute.atthasdef
+                    FROM pg_catalog.pg_attribute AS attribute
+                    WHERE attribute.attrelid = 'public.property'::regclass
+                      AND attribute.attname = 'mea_denominator'
+                      AND attribute.attnum > 0
+                      AND NOT attribute.attisdropped
+                )
+                AND (
+                    SELECT pg_catalog.format_type(attribute.atttypid, attribute.atttypmod) = 'character varying(24)'
+                           AND attribute.attnotnull
+                           AND pg_catalog.pg_get_expr(default_value.adbin, default_value.adrelid) =
+                               pg_catalog.quote_literal('LEGACY_UNCONFIRMED') || '::character varying'
+                    FROM pg_catalog.pg_attribute AS attribute
+                    LEFT JOIN pg_catalog.pg_attrdef AS default_value
+                      ON default_value.adrelid = attribute.attrelid
+                     AND default_value.adnum = attribute.attnum
+                    WHERE attribute.attrelid = 'public.property'::regclass
+                      AND attribute.attname = 'mea_scale_status'
+                      AND attribute.attnum > 0
+                      AND NOT attribute.attisdropped
+                )
+                AND (
+                    SELECT pg_catalog.format_type(attribute.atttypid, attribute.atttypmod) = 'numeric(19,6)'
+                           AND NOT attribute.attnotnull
+                           AND NOT attribute.atthasdef
+                    FROM pg_catalog.pg_attribute AS attribute
+                    WHERE attribute.attrelid = 'public.unit'::regclass
+                      AND attribute.attname = 'mea'
+                      AND attribute.attnum > 0
+                      AND NOT attribute.attisdropped
+                )
+                AND (
+                    SELECT pg_catalog.format_type(attribute.atttypid, attribute.atttypmod) = 'character varying(255)'
+                           AND attribute.attnotnull
+                           AND pg_catalog.pg_get_expr(default_value.adbin, default_value.adrelid) =
+                               pg_catalog.quote_literal('') || '::character varying'
+                    FROM pg_catalog.pg_attribute AS attribute
+                    LEFT JOIN pg_catalog.pg_attrdef AS default_value
+                      ON default_value.adrelid = attribute.attrelid
+                     AND default_value.adnum = attribute.attnum
+                    WHERE attribute.attrelid = 'public.unit'::regclass
+                      AND attribute.attname = 'building_part'
+                      AND attribute.attnum > 0
+                      AND NOT attribute.attisdropped
+                )
+                AND EXISTS (
+                    SELECT 1 FROM pg_catalog.pg_constraint AS check_constraint
+                    WHERE check_constraint.conrelid = 'public.property'::regclass
+                      AND check_constraint.conname = 'ck_property_mea_scale_status'
+                      AND check_constraint.contype = 'c'
+                      AND check_constraint.convalidated
+                      AND pg_catalog.pg_get_constraintdef(check_constraint.oid) =
+                          $constraint$CHECK (((mea_scale_status)::text = ANY ((ARRAY['CONFIRMED'::character varying, 'LEGACY_UNCONFIRMED'::character varying])::text[])))$constraint$
+                )
+                AND EXISTS (
+                    SELECT 1 FROM pg_catalog.pg_constraint AS check_constraint
+                    WHERE check_constraint.conrelid = 'public.property'::regclass
+                      AND check_constraint.conname = 'ck_property_mea_scale_consistency'
+                      AND check_constraint.contype = 'c'
+                      AND check_constraint.convalidated
+                      AND pg_catalog.pg_get_constraintdef(check_constraint.oid) =
+                          $constraint$CHECK (((((mea_scale_status)::text = 'LEGACY_UNCONFIRMED'::text) AND (mea_denominator IS NULL)) OR (((mea_scale_status)::text = 'CONFIRMED'::text) AND ((mea_denominator >= 1) AND (mea_denominator <= '1000000000000'::bigint)))))$constraint$
+                )
+                AND EXISTS (
+                    SELECT 1 FROM pg_catalog.pg_constraint AS check_constraint
+                    WHERE check_constraint.conrelid = 'public.unit'::regclass
+                      AND check_constraint.conname = 'ck_unit_mea_nonnegative'
+                      AND check_constraint.contype = 'c'
+                      AND NOT check_constraint.convalidated
+                      AND pg_catalog.pg_get_constraintdef(check_constraint.oid) =
+                          $constraint$CHECK (((mea IS NULL) OR (mea >= (0)::numeric))) NOT VALID$constraint$
+                )
+            INTO full_contract;
+
+            SELECT
+                NOT EXISTS (
+                    SELECT 1 FROM pg_catalog.pg_attribute AS attribute
+                    WHERE attribute.attrelid = 'public.property'::regclass
+                      AND attribute.attname IN ('mea_denominator', 'mea_scale_status')
+                      AND attribute.attnum > 0
+                      AND NOT attribute.attisdropped
+                )
+                AND (
+                    SELECT pg_catalog.format_type(attribute.atttypid, attribute.atttypmod) = 'numeric(12,6)'
+                           AND NOT attribute.attnotnull
+                           AND NOT attribute.atthasdef
+                    FROM pg_catalog.pg_attribute AS attribute
+                    WHERE attribute.attrelid = 'public.unit'::regclass
+                      AND attribute.attname = 'mea'
+                      AND attribute.attnum > 0
+                      AND NOT attribute.attisdropped
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM pg_catalog.pg_attribute AS attribute
+                    WHERE attribute.attrelid = 'public.unit'::regclass
+                      AND attribute.attname = 'building_part'
+                      AND attribute.attnum > 0
+                      AND NOT attribute.attisdropped
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM pg_catalog.pg_constraint AS check_constraint
+                    WHERE check_constraint.conrelid IN ('public.property'::regclass, 'public.unit'::regclass)
+                      AND check_constraint.conname IN (
+                          'ck_property_mea_scale_status',
+                          'ck_property_mea_scale_consistency',
+                          'ck_unit_mea_nonnegative'
+                      )
+                )
+            INTO old_contract;
+
+            IF full_contract THEN
+                RETURN;
+            END IF;
+
+            IF NOT old_contract THEN
+                RAISE EXCEPTION 'incompatible property/MEA schema; refusing automatic 0023 repair';
+            END IF;
+
+            ALTER TABLE public.property
+                ADD COLUMN mea_denominator bigint,
+                ADD COLUMN mea_scale_status varchar(24) NOT NULL DEFAULT 'LEGACY_UNCONFIRMED';
+            ALTER TABLE public.property
+                ADD CONSTRAINT ck_property_mea_scale_status
+                    CHECK (mea_scale_status IN ('CONFIRMED','LEGACY_UNCONFIRMED')),
+                ADD CONSTRAINT ck_property_mea_scale_consistency
+                    CHECK (
+                        (mea_scale_status = 'LEGACY_UNCONFIRMED' AND mea_denominator IS NULL)
+                        OR (mea_scale_status = 'CONFIRMED' AND mea_denominator BETWEEN 1 AND 1000000000000)
+                    );
+            ALTER TABLE public.unit
+                ALTER COLUMN mea TYPE numeric(19,6),
+                ADD COLUMN building_part varchar(255) NOT NULL DEFAULT '',
+                ADD CONSTRAINT ck_unit_mea_nonnegative
+                    CHECK (mea IS NULL OR mea >= 0) NOT VALID;
+        END;
+        $repair$;
+        """
+    )
+
+
 def _value_display_sql(value: str = "afs.approved_value_json") -> str:
     return f"""
         CASE {value}->>'kind'
@@ -279,6 +440,7 @@ def _add_query_run_lifecycle_trigger() -> None:
 
 
 def upgrade() -> None:
+    _reconcile_property_mea_scale_schema_drift()
     op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
     op.add_column("approved_fact_source", sa.Column("search_text", sa.Text(), nullable=False, server_default=""))
     _assert_supported_existing_fact_sources()

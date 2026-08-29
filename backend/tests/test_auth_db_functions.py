@@ -71,13 +71,14 @@ def test_0027_accepts_a_single_legacy_email_created_under_0022():
             command.upgrade(alembic_cfg, "0027")
 
 
-def test_0023_upgrade_accepts_preexisting_0027_auth_runtime_objects() -> None:
-    """A production DB stamped at 0023 can contain the exact leaked 0027 objects.
+def test_0023_upgrade_reconciles_old_property_schema_and_preexisting_0027_auth_objects() -> None:
+    """A DB stamped at 0023 can carry the old property schema and leaked auth objects.
 
-    The original production deployment installed these functions and index before
-    Alembic recorded revision 0027.  The next upgrade must reconcile that state
-    rather than fail on duplicate object names, and it must finish at 0028 with
-    the required runtime permissions intact.
+    Production fully applied a separate auth migration that reused revision
+    0023, so this repository's Property/MEA migration never ran; the auth
+    functions and index were already present. The next upgrade must repair the
+    complete known Property/MEA 0023 contract without losing legacy unit data,
+    reconcile the auth state, and finish at 0028.
     """
     from tests.conftest import MIGRATOR_SYNC_URL
 
@@ -86,8 +87,31 @@ def test_0023_upgrade_accepts_preexisting_0027_auth_runtime_objects() -> None:
     alembic_cfg.set_main_option("sqlalchemy.url", MIGRATOR_SYNC_URL)
     alembic_cfg.set_main_option("script_location", str(backend_dir / "migrations"))
     migrated_to_head = False
+    organization_id = uuid.uuid4()
+    property_id = uuid.uuid4()
+    unit_id = uuid.uuid4()
+    legacy_seeded = False
     try:
-        command.downgrade(alembic_cfg, "0023")
+        command.downgrade(alembic_cfg, "0022")
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO public.organization (id, name) VALUES (%s, %s)",
+                    (str(organization_id), f"Legacy 0023 repair {organization_id}"),
+                )
+                cursor.execute(
+                    "INSERT INTO public.property "
+                    "(id, organization_id, name, management_type) VALUES (%s, %s, %s, 'WEG')",
+                    (str(property_id), str(organization_id), "Legacy Objekt"),
+                )
+                cursor.execute(
+                    "INSERT INTO public.unit "
+                    "(id, organization_id, property_id, number, usage_type, mea) "
+                    "VALUES (%s, %s, %s, 'Alt-1', 'WOHNUNG', -1.000000)",
+                    (str(unit_id), str(organization_id), str(property_id)),
+                )
+        legacy_seeded = True
+        command.stamp(alembic_cfg, "0023")
         with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
@@ -157,6 +181,39 @@ def test_0023_upgrade_accepts_preexisting_0027_auth_runtime_objects() -> None:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT version_num FROM alembic_version")
                 assert cursor.fetchone() == ("0028",)
+                cursor.execute(
+                    "SELECT mea_denominator, mea_scale_status FROM public.property WHERE id = %s",
+                    (str(property_id),),
+                )
+                assert cursor.fetchone() == (None, "LEGACY_UNCONFIRMED")
+                cursor.execute(
+                    "SELECT mea::text, building_part FROM public.unit WHERE id = %s",
+                    (str(unit_id),),
+                )
+                assert cursor.fetchone() == ("-1.000000", "")
+                cursor.execute(
+                    "SELECT column_name, data_type, numeric_precision, numeric_scale, "
+                    "character_maximum_length, is_nullable "
+                    "FROM information_schema.columns WHERE table_schema = 'public' "
+                    "AND table_name = 'unit' AND column_name IN ('mea', 'building_part') "
+                    "ORDER BY column_name"
+                )
+                assert cursor.fetchall() == [
+                    ("building_part", "character varying", None, None, 255, "NO"),
+                    ("mea", "numeric", 19, 6, None, "YES"),
+                ]
+                cursor.execute(
+                    "SELECT conname, convalidated FROM pg_constraint "
+                    "WHERE conrelid IN ('public.property'::regclass, 'public.unit'::regclass) "
+                    "AND conname IN ('ck_property_mea_scale_status', "
+                    "'ck_property_mea_scale_consistency', 'ck_unit_mea_nonnegative') "
+                    "ORDER BY conname"
+                )
+                assert cursor.fetchall() == [
+                    ("ck_property_mea_scale_consistency", True),
+                    ("ck_property_mea_scale_status", True),
+                    ("ck_unit_mea_nonnegative", False),
+                ]
                 for signature in (
                     "public.app_auth_lookup(text)",
                     "public.app_validate_session(uuid,uuid)",
@@ -195,6 +252,12 @@ def test_0023_upgrade_accepts_preexisting_0027_auth_runtime_objects() -> None:
                     "lower(btrim(email::text))",
                 )
     finally:
+        if legacy_seeded:
+            with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("DELETE FROM public.unit WHERE id = %s", (str(unit_id),))
+                    cursor.execute("DELETE FROM public.property WHERE id = %s", (str(property_id),))
+                    cursor.execute("DELETE FROM public.organization WHERE id = %s", (str(organization_id),))
         if not migrated_to_head:
             with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
                 with connection.cursor() as cursor:
@@ -202,6 +265,30 @@ def test_0023_upgrade_accepts_preexisting_0027_auth_runtime_objects() -> None:
                     cursor.execute("DROP FUNCTION IF EXISTS public.app_validate_session(uuid, uuid)")
                     cursor.execute("DROP FUNCTION IF EXISTS public.app_auth_lookup(text)")
             command.upgrade(alembic_cfg, "head")
+
+
+def test_0026_refuses_an_incompatible_preexisting_building_part_column() -> None:
+    """Only the complete known 0022-as-0023 state is repaired automatically."""
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    alembic_cfg = Config(str(backend_dir / "alembic.ini"))
+    alembic_cfg.set_main_option("sqlalchemy.url", MIGRATOR_SYNC_URL)
+    alembic_cfg.set_main_option("script_location", str(backend_dir / "migrations"))
+    try:
+        command.downgrade(alembic_cfg, "0022")
+        command.stamp(alembic_cfg, "0023")
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("ALTER TABLE public.unit ADD COLUMN building_part text")
+
+        with pytest.raises(InternalError, match="incompatible property/MEA schema"):
+            command.upgrade(alembic_cfg, "0026")
+    finally:
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("ALTER TABLE public.unit DROP COLUMN IF EXISTS building_part")
+        command.upgrade(alembic_cfg, "head")
 
 
 def test_0027_refuses_a_conflicting_canonical_email_index() -> None:

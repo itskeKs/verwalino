@@ -309,6 +309,19 @@ assert_release_replacement_hardening() {
     fail 'migration gate does not require exactly one expected head value'
   grep -Fq 'is_provider_key_value' scripts/deploy-production.sh || \
     fail 'deployment provider-key gate accepts malformed or comment-only values'
+  for expected in \
+    'compose --profile ops run --rm --no-deps migrate' \
+    'compose --profile ops run --rm --no-deps migrate alembic current' \
+    'compose --profile ops run --rm --no-deps -T bootstrap'; do
+    grep -Fq "$expected" scripts/deploy-production.sh || \
+      fail "deployment ops command may start or reconcile database dependencies: $expected"
+  done
+  for expected in \
+    'compose --profile ops run --rm --no-deps migrate' \
+    'compose --profile ops run --rm --no-deps migrate alembic current'; do
+    grep -Fq "$expected" scripts/verify-production.sh || \
+      fail "verification ops command may start or reconcile database dependencies: $expected"
+  done
   for file in scripts/deploy-production.sh scripts/verify-production.sh; do
     grep -Fq 'wait_for_database_role' "$file" || \
       fail "$file does not wait for app_rw after PostgreSQL reports healthy"

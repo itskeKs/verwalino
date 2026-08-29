@@ -400,13 +400,13 @@ if [ -n "$db_before_id" ] && [ "$db_before_id" != "$db_after_id" ]; then
   echo "refusing deployment: Compose replaced the existing database container" >&2
   exit 1
 fi
-compose --profile ops run --rm migrate
-migration_state=$(compose --profile ops run --rm migrate alembic current)
+compose --profile ops run --rm --no-deps migrate
+migration_state=$(compose --profile ops run --rm --no-deps migrate alembic current)
 [ "$migration_state" = '0028 (head)' ] || {
   echo "migration state is not exactly 0028 (head)" >&2
   exit 1
 }
-printf '%s\n' "$admin_password" | compose --profile ops run --rm -T bootstrap \
+printf '%s\n' "$admin_password" | compose --profile ops run --rm --no-deps -T bootstrap \
   python -m app.admin_cli \
   --org 'Karat Hausverwaltung Alpha' \
   --email 'admin@verwaltung.karat.immo' \
