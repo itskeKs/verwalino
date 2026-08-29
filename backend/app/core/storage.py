@@ -17,9 +17,10 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Iterator, Protocol, runtime_checkable
 
 from app.core.config import settings
 
@@ -50,6 +51,10 @@ class DocumentStore(Protocol):
 
     def get(self, key: str) -> bytes:
         """Retrieve document bytes by key. Raises FileNotFoundError if missing."""
+        ...
+
+    def iter_bytes(self, key: str) -> Iterator[bytes]:
+        """Yield stored content in bounded chunks."""
         ...
 
     def exists(self, key: str) -> bool:
@@ -84,9 +89,13 @@ class LocalFsDocumentStore:
     def put(self, key: str, data: bytes, *, content_type: str) -> StoredObjectRef:
         path = self._root / key
         sha = compute_sha256(data)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._harden_parent_directories(path)
 
-        if path.exists():
+        if self._matches_expected_content(path, sha, len(data)):
             # Content-addressed: same hash = same content. Idempotent.
+            path.chmod(stat.S_IRUSR)
+            self._fsync_parent_directory(path.parent)
             return StoredObjectRef(
                 backend="LOCAL_FS",
                 uri=key,
@@ -95,11 +104,7 @@ class LocalFsDocumentStore:
                 byte_size=len(data),
             )
 
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-
-        # Make read-only (weak WORM substitute on local FS)
-        path.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+        self._atomic_replace(path, data)
 
         return StoredObjectRef(
             backend="LOCAL_FS",
@@ -109,11 +114,75 @@ class LocalFsDocumentStore:
             byte_size=len(data),
         )
 
+    def _harden_parent_directories(self, path: Path) -> None:
+        directory = self._root
+        directory.chmod(stat.S_IRWXU)
+        for component in path.parent.relative_to(self._root).parts:
+            directory = directory / component
+            directory.chmod(stat.S_IRWXU)
+
+    @staticmethod
+    def _matches_expected_content(path: Path, expected_sha256: str, expected_size: int) -> bool:
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            with path.open("rb") as file_handle:
+                while chunk := file_handle.read(64 * 1024):
+                    digest.update(chunk)
+                    size += len(chunk)
+        except FileNotFoundError:
+            return False
+        return size == expected_size and digest.hexdigest() == expected_sha256
+
+    @staticmethod
+    def _atomic_replace(path: Path, data: bytes) -> None:
+        raw_file_descriptor, temporary_path = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+        )
+        try:
+            with os.fdopen(raw_file_descriptor, "wb") as file_handle:
+                raw_file_descriptor = None
+                file_handle.write(data)
+                file_handle.flush()
+                os.fchmod(file_handle.fileno(), stat.S_IRUSR)
+                os.fsync(file_handle.fileno())
+            os.replace(temporary_path, path)
+            temporary_path = None
+            LocalFsDocumentStore._fsync_parent_directory(path.parent)
+        finally:
+            if raw_file_descriptor is not None:
+                os.close(raw_file_descriptor)
+            if temporary_path is not None:
+                try:
+                    os.unlink(temporary_path)
+                except FileNotFoundError:
+                    pass
+
+    @staticmethod
+    def _fsync_parent_directory(directory: Path) -> None:
+        if os.name == "nt":
+            # Windows does not provide the POSIX directory-fsync durability contract.
+            return
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_file_descriptor = os.open(directory, directory_flags)
+        try:
+            os.fsync(directory_file_descriptor)
+        finally:
+            os.close(directory_file_descriptor)
+
     def get(self, key: str) -> bytes:
         path = self._root / key
         if not path.exists():
             raise FileNotFoundError(f"Document not found: {key}")
         return path.read_bytes()
+
+    def iter_bytes(self, key: str) -> Iterator[bytes]:
+        path = self._root / key
+        if not path.exists():
+            raise FileNotFoundError(f"Document not found: {key}")
+        with path.open("rb") as file_handle:
+            while chunk := file_handle.read(64 * 1024):
+                yield chunk
 
     def exists(self, key: str) -> bool:
         return (self._root / key).exists()
@@ -165,3 +234,22 @@ def verify_document_integrity(
         return False
     actual_sha = compute_sha256(data)
     return actual_sha == content_sha256
+
+
+def verify_document_integrity_and_size(
+    expected_sha256: str,
+    expected_size: int,
+    storage_uri: str,
+    store: DocumentStore | None = None,
+) -> bool:
+    """Verify a stored document without materializing its entire content."""
+    active_store = store or get_store()
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        for chunk in active_store.iter_bytes(storage_uri):
+            digest.update(chunk)
+            size += len(chunk)
+    except FileNotFoundError:
+        return False
+    return size == expected_size and digest.hexdigest() == expected_sha256

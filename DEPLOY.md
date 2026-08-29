@@ -18,19 +18,20 @@ Browser ──HTTPS──> [reverse proxy / TLS] ──HTTP :8000──> app con
 | `docker-compose.prod.yml` | App + PostgreSQL for a single host |
 | `infra/db/prod-init.sh` | Creates the `app_rw` role from `APP_RW_PASSWORD` |
 | `.gitlab-ci.yml` | `test` → `build` (Kaniko → registry) → `deploy` (template) |
-| `.env.example` | Required environment variables |
+| `.env.example` | Template for a protected environment file outside the checkout |
 | `app/admin_cli.py` | Bootstrap the first organization + admin user |
 
 ## Run locally (prod-like)
 
 ```bash
-cp .env.example .env        # then edit the secrets
-docker compose -f docker-compose.prod.yml up -d --build
+export HV_DEPLOY_ENV_FILE='/absolute/path/outside/checkout/hausverwaltung.env'
+install -m 600 .env.example "$HV_DEPLOY_ENV_FILE"  # then edit this external file
+docker compose --env-file "$HV_DEPLOY_ENV_FILE" -f docker-compose.prod.yml up -d --build
 # first admin (fresh DB has no login):
-docker compose -f docker-compose.prod.yml exec app \
+docker compose --env-file "$HV_DEPLOY_ENV_FILE" -f docker-compose.prod.yml exec app \
   python -m app.admin_cli --org "Meine Hausverwaltung" \
   --email admin@example.de --password 'a-strong-password' --name "Admin"
-# open http://localhost:8000   (set SESSION_COOKIE_SECURE=false in .env for plain HTTP)
+# open http://localhost:8000 (set SESSION_COOKIE_SECURE=false in the external file for plain HTTP)
 ```
 
 ## Database roles (RLS)
@@ -67,12 +68,14 @@ to configure. For the `deploy` template, add these **CI/CD variables**
 | `DEPLOY_HOST` | Host name / IP |
 | `DEPLOY_USER` | SSH user (in the `docker` group) |
 
-The deploy host needs Docker, a checkout of `docker-compose.prod.yml` + a real
-`.env` in `/opt/hausverwaltung`, and `docker login` to the registry.
+The deploy host needs Docker, a checkout containing `docker-compose.prod.yml`,
+an explicit protected environment file outside that checkout, and `docker login`
+to the registry. Pass the file to every Compose call with `--env-file`.
 
 ## Required environment variables (the app)
 
-`HV_`-prefixed (see `app/core/config.py`); compose builds them from `.env`:
+`HV_`-prefixed (see `app/core/config.py`); Compose builds them from the invoking
+environment or the explicitly supplied external environment file:
 
 | Variable | Notes |
 | --- | --- |

@@ -1,0 +1,149 @@
+{
+  "schema_version": "1",
+  "cases": [
+    {
+      "id": "reference-a-commercial",
+      "gold": {
+        "allowed_source_ids": ["src-a-01", "src-a-02", "src-a-03"],
+        "expected_supported_source_ids": ["src-a-01", "src-a-02", "src-a-03"],
+        "expected_status": "ANSWER",
+        "tenant_id": "tenant-a",
+        "unit_breakdown": {"commercial": 6, "parking-special-use": 13},
+        "core_facts": [
+          {"subject_id": "property-a", "field_key": "property_identity", "value": "building-a"},
+          {"subject_id": "property-a", "field_key": "unit_count", "value": "6"},
+          {"subject_id": "commercial-01", "field_key": "mea", "numerator": 166, "denominator": 1000},
+          {"subject_id": "commercial-02", "field_key": "mea", "numerator": 166, "denominator": 1000},
+          {"subject_id": "commercial-03", "field_key": "mea", "numerator": 167, "denominator": 1000},
+          {"subject_id": "commercial-04", "field_key": "mea", "numerator": 167, "denominator": 1000},
+          {"subject_id": "commercial-05", "field_key": "mea", "numerator": 167, "denominator": 1000},
+          {"subject_id": "commercial-06", "field_key": "mea", "numerator": 167, "denominator": 1000}
+        ],
+        "rules": [
+          {"id": "rule-a-repairs", "topic": "repairs", "effect": {"responsibility": "allocated-by-component"}, "evidence": [{"source_id": "src-a-01", "page": 8}]},
+          {"id": "rule-a-heating-50-50", "topic": "heating_costs", "effect": {"area_share": "50/100", "usage_share": "50/100"}, "evidence": [{"source_id": "src-a-02", "page": 9}]},
+          {"id": "rule-a-hot-water-50-50", "topic": "hot_water_costs", "effect": {"area_share": "50/100", "usage_share": "50/100"}, "evidence": [{"source_id": "src-a-03", "page": 9}]}
+        ],
+        "document_rule_relations": [["document-a-01", "rule-a-repairs"], ["document-a-01", "rule-a-heating-50-50"], ["document-a-01", "rule-a-hot-water-50-50"]],
+        "blockers": [],
+        "retrieval_relevant_ids": ["rule-a-heating-50-50"],
+        "assignments": {"parking-special-use": ["parking-01", "parking-02", "parking-03", "parking-04", "parking-05", "parking-06", "parking-07", "parking-08", "parking-09", "parking-10", "parking-11", "parking-12", "parking-13"]}
+      },
+      "fake_observed": {
+        "candidate_schema_valid": true,
+        "unit_breakdown": {"commercial": 6, "parking-special-use": 13},
+        "assignments": {"parking-special-use": ["parking-01", "parking-02", "parking-03", "parking-04", "parking-05", "parking-06", "parking-07", "parking-08", "parking-09", "parking-10", "parking-11", "parking-12", "parking-13"]},
+        "core_facts": [
+          {"subject_id": "property-a", "field_key": "property_identity", "value": "building-a"},
+          {"subject_id": "property-a", "field_key": "unit_count", "value": "6"},
+          {"subject_id": "commercial-01", "field_key": "mea", "numerator": 166, "denominator": 1000},
+          {"subject_id": "commercial-02", "field_key": "mea", "numerator": 166, "denominator": 1000},
+          {"subject_id": "commercial-03", "field_key": "mea", "numerator": 167, "denominator": 1000},
+          {"subject_id": "commercial-04", "field_key": "mea", "numerator": 167, "denominator": 1000},
+          {"subject_id": "commercial-05", "field_key": "mea", "numerator": 167, "denominator": 1000},
+          {"subject_id": "commercial-06", "field_key": "mea", "numerator": 167, "denominator": 1000}
+        ],
+        "rules": [
+          {"id": "rule-a-repairs", "topic": "repairs", "effect": {"responsibility": "allocated-by-component"}, "evidence": [{"source_id": "src-a-01", "page": 8}]},
+          {"id": "rule-a-heating-50-50", "topic": "heating_costs", "effect": {"area_share": "50/100", "usage_share": "50/100"}, "evidence": [{"source_id": "src-a-02", "page": 9}]},
+          {"id": "rule-a-hot-water-50-50", "topic": "hot_water_costs", "effect": {"area_share": "50/100", "usage_share": "50/100"}, "evidence": [{"source_id": "src-a-03", "page": 9}]}
+        ],
+        "document_rule_relations": [["document-a-01", "rule-a-repairs"], ["document-a-01", "rule-a-heating-50-50"], ["document-a-01", "rule-a-hot-water-50-50"]],
+        "blockers": [],
+        "retrieved_ids": ["rule-a-heating-50-50"],
+        "qa": {"status": "ANSWER", "source_ids": ["src-a-02"]},
+        "tenant_ids": ["tenant-a"],
+        "passes": [{"pass_id": "inventory", "input_tokens": 210, "output_tokens": 80, "estimated_cost_usd": "0.000138", "latency_ms": 15, "retry_count": 0, "failure_class": null}]
+      }
+    },
+    {
+      "id": "reference-b-base",
+      "gold": {
+        "allowed_source_ids": ["src-b-01", "src-b-02", "src-b-03", "src-b-04"],
+        "expected_supported_source_ids": ["src-b-01", "src-b-02", "src-b-03", "src-b-04"],
+        "expected_status": "ANSWER",
+        "tenant_id": "tenant-b",
+        "unit_breakdown": {"apartments": 12, "parking": 21},
+        "assignments": {"parking": ["parking-01", "parking-02", "parking-03", "parking-04", "parking-05", "parking-06", "parking-07", "parking-08", "parking-09", "parking-10", "parking-11", "parking-12", "parking-13", "parking-14", "parking-15", "parking-16", "parking-17", "parking-18", "parking-19", "parking-20", "parking-21"]},
+        "core_facts": [
+          {"subject_id": "property-b", "field_key": "property_identity", "value": "building-b"},
+          {"subject_id": "property-b", "field_key": "unit_count", "value": "33"}
+        ],
+        "rules": [
+          {"id": "rule-b-heating-30-70", "topic": "heating_costs", "effect": {"area_share": "30/100", "usage_share": "70/100"}, "evidence": [{"source_id": "src-b-01", "page": 4}]},
+          {"id": "rule-b-hot-water-30-70", "topic": "hot_water_costs", "effect": {"area_share": "30/100", "usage_share": "70/100"}, "evidence": [{"source_id": "src-b-02", "page": 4}]},
+          {"id": "rule-b-elevator-1-6", "topic": "elevator_costs", "effect": {"allocation": "1/6"}, "evidence": [{"source_id": "src-b-03", "page": 5}]},
+          {"id": "rule-b-parking-1-21", "topic": "parking_costs", "effect": {"allocation": "1/21"}, "evidence": [{"source_id": "src-b-04", "page": 5}]}
+        ],
+        "document_rule_relations": [["document-b-base", "rule-b-heating-30-70"], ["document-b-base", "rule-b-hot-water-30-70"], ["document-b-base", "rule-b-elevator-1-6"], ["document-b-base", "rule-b-parking-1-21"]],
+        "blockers": [],
+        "retrieval_relevant_ids": ["rule-b-heating-30-70"]
+      },
+      "fake_observed": {
+        "candidate_schema_valid": true,
+        "unit_breakdown": {"apartments": 12, "parking": 21},
+        "assignments": {"parking": ["parking-01", "parking-02", "parking-03", "parking-04", "parking-05", "parking-06", "parking-07", "parking-08", "parking-09", "parking-10", "parking-11", "parking-12", "parking-13", "parking-14", "parking-15", "parking-16", "parking-17", "parking-18", "parking-19", "parking-20", "parking-21"]},
+        "core_facts": [{"subject_id": "property-b", "field_key": "property_identity", "value": "building-b"}, {"subject_id": "property-b", "field_key": "unit_count", "value": "33"}],
+        "rules": [
+          {"id": "rule-b-heating-30-70", "topic": "heating_costs", "effect": {"area_share": "30/100", "usage_share": "70/100"}, "evidence": [{"source_id": "src-b-01", "page": 4}]},
+          {"id": "rule-b-hot-water-30-70", "topic": "hot_water_costs", "effect": {"area_share": "30/100", "usage_share": "70/100"}, "evidence": [{"source_id": "src-b-02", "page": 4}]},
+          {"id": "rule-b-elevator-1-6", "topic": "elevator_costs", "effect": {"allocation": "1/6"}, "evidence": [{"source_id": "src-b-03", "page": 5}]},
+          {"id": "rule-b-parking-1-21", "topic": "parking_costs", "effect": {"allocation": "1/21"}, "evidence": [{"source_id": "src-b-04", "page": 5}]}
+        ],
+        "document_rule_relations": [["document-b-base", "rule-b-heating-30-70"], ["document-b-base", "rule-b-hot-water-30-70"], ["document-b-base", "rule-b-elevator-1-6"], ["document-b-base", "rule-b-parking-1-21"]],
+        "blockers": [], "retrieved_ids": ["rule-b-heating-30-70"], "qa": {"status": "ANSWER", "source_ids": ["src-b-01"]}, "tenant_ids": ["tenant-b"],
+        "passes": [{"pass_id": "rules", "input_tokens": 180, "output_tokens": 70, "estimated_cost_usd": "0.000120", "latency_ms": 12, "retry_count": 0, "failure_class": null}]
+      }
+    },
+    {
+      "id": "reference-b-amendment",
+      "gold": {
+        "allowed_source_ids": ["src-c-01"], "expected_supported_source_ids": ["src-c-01"], "expected_status": "ANSWER", "tenant_id": "tenant-b",
+        "unit_breakdown": {"apartments": 14, "parking": 21},
+        "assignments": {"parking": ["parking-01", "parking-02", "parking-03", "parking-04", "parking-05", "parking-06", "parking-07", "parking-08", "parking-09", "parking-10", "parking-11", "parking-12", "parking-13", "parking-14", "parking-15", "parking-16", "parking-17", "parking-18", "parking-19", "parking-20", "parking-21"]},
+        "amendment_lineage": {"split_from": ["apartment-13", "apartment-14"], "split_to": ["apartment-13a", "apartment-13b", "apartment-14a", "apartment-14b"]},
+        "core_facts": [
+          {"subject_id": "property-b", "field_key": "property_identity", "value": "building-b"}, {"subject_id": "property-b", "field_key": "unit_count", "value": "35"},
+          {"subject_id": "apartment-13a", "field_key": "mea", "numerator": 47732, "denominator": 1000000}, {"subject_id": "apartment-13b", "field_key": "mea", "numerator": 47732, "denominator": 1000000},
+          {"subject_id": "apartment-14a", "field_key": "mea", "numerator": 47732, "denominator": 1000000}, {"subject_id": "apartment-14b", "field_key": "mea", "numerator": 47732, "denominator": 1000000}
+        ],
+        "rules": [{"id": "rule-c-elevator-1-7", "topic": "elevator_costs", "effect": {"allocation": "1/7", "supersedes": "rule-b-elevator-1-6"}, "evidence": [{"source_id": "src-c-01", "page": 2}]}],
+        "document_rule_relations": [["document-b-amendment", "rule-c-elevator-1-7"]], "blockers": [], "retrieval_relevant_ids": ["rule-c-elevator-1-7"]
+      },
+      "fake_observed": {
+        "candidate_schema_valid": true,
+        "unit_breakdown": {"apartments": 14, "parking": 21},
+        "assignments": {"parking": ["parking-01", "parking-02", "parking-03", "parking-04", "parking-05", "parking-06", "parking-07", "parking-08", "parking-09", "parking-10", "parking-11", "parking-12", "parking-13", "parking-14", "parking-15", "parking-16", "parking-17", "parking-18", "parking-19", "parking-20", "parking-21"]},
+        "amendment_lineage": {"split_from": ["apartment-13", "apartment-14"], "split_to": ["apartment-13a", "apartment-13b", "apartment-14a", "apartment-14b"]},
+        "core_facts": [
+          {"subject_id": "property-b", "field_key": "property_identity", "value": "building-b"}, {"subject_id": "property-b", "field_key": "unit_count", "value": "35"},
+          {"subject_id": "apartment-13a", "field_key": "mea", "numerator": 47732, "denominator": 1000000}, {"subject_id": "apartment-13b", "field_key": "mea", "numerator": 47732, "denominator": 1000000},
+          {"subject_id": "apartment-14a", "field_key": "mea", "numerator": 47732, "denominator": 1000000}, {"subject_id": "apartment-14b", "field_key": "mea", "numerator": 47732, "denominator": 1000000}
+        ],
+        "rules": [{"id": "rule-c-elevator-1-7", "topic": "elevator_costs", "effect": {"allocation": "1/7", "supersedes": "rule-b-elevator-1-6"}, "evidence": [{"source_id": "src-c-01", "page": 2}]}],
+        "document_rule_relations": [["document-b-amendment", "rule-c-elevator-1-7"]], "blockers": [], "retrieved_ids": ["rule-c-elevator-1-7"], "qa": {"status": "ANSWER", "source_ids": ["src-c-01"]}, "tenant_ids": ["tenant-b"],
+        "passes": [{"pass_id": "amendment", "input_tokens": 90, "output_tokens": 44, "estimated_cost_usd": "0.000071", "latency_ms": 8, "retry_count": 0, "failure_class": null}]
+      }
+    },
+    {
+      "id": "missing-evidence",
+      "gold": {"allowed_source_ids": [], "expected_supported_source_ids": [], "expected_status": "NOT_DOCUMENTED", "tenant_id": "tenant-c", "core_facts": [], "rules": [], "document_rule_relations": [], "blockers": ["missing-evidence"], "retrieval_relevant_ids": []},
+      "fake_observed": {"candidate_schema_valid": true, "core_facts": [], "rules": [], "document_rule_relations": [], "blockers": ["missing-evidence"], "retrieved_ids": [], "qa": {"status": "NOT_DOCUMENTED", "source_ids": []}, "tenant_ids": ["tenant-c"], "passes": [{"pass_id": "check", "input_tokens": 0, "output_tokens": 0, "estimated_cost_usd": "0", "latency_ms": 1, "retry_count": 0, "failure_class": null}]}
+    },
+    {
+      "id": "conflicting-rule",
+      "gold": {"allowed_source_ids": ["src-d-01", "src-d-02"], "expected_supported_source_ids": ["src-d-01", "src-d-02"], "expected_status": "NEEDS_CLARIFICATION", "tenant_id": "tenant-d", "core_facts": [], "rules": [{"id": "rule-d-conflict", "topic": "repairs", "effect": {"state": "conflict"}, "evidence": [{"source_id": "src-d-01", "page": 3}, {"source_id": "src-d-02", "page": 6}]}], "document_rule_relations": [["document-d-01", "rule-d-conflict"]], "blockers": ["repair-conflict"], "retrieval_relevant_ids": ["rule-d-conflict"]},
+      "fake_observed": {"candidate_schema_valid": true, "core_facts": [], "rules": [{"id": "rule-d-conflict", "topic": "repairs", "effect": {"state": "conflict"}, "evidence": [{"source_id": "src-d-01", "page": 3}, {"source_id": "src-d-02", "page": 6}]}], "document_rule_relations": [["document-d-01", "rule-d-conflict"]], "blockers": ["repair-conflict"], "retrieved_ids": ["rule-d-conflict"], "qa": {"status": "NEEDS_CLARIFICATION", "source_ids": ["src-d-01", "src-d-02"]}, "tenant_ids": ["tenant-d"], "passes": [{"pass_id": "conflict", "input_tokens": 30, "output_tokens": 10, "estimated_cost_usd": "0.000020", "latency_ms": 2, "retry_count": 0, "failure_class": null}]}
+    },
+    {
+      "id": "mixed-scale",
+      "gold": {"allowed_source_ids": ["src-e-01"], "expected_supported_source_ids": ["src-e-01"], "expected_status": "ANSWER", "tenant_id": "tenant-e", "core_facts": [{"subject_id": "unit-e-01", "field_key": "mea", "numerator": 47732, "denominator": 1000000}], "rules": [], "document_rule_relations": [], "blockers": [], "retrieval_relevant_ids": []},
+      "fake_observed": {"candidate_schema_valid": true, "core_facts": [{"subject_id": "unit-e-01", "field_key": "mea", "numerator": 23866, "denominator": 500000}], "rules": [], "document_rule_relations": [], "blockers": [], "retrieved_ids": [], "qa": {"status": "ANSWER", "source_ids": ["src-e-01"]}, "tenant_ids": ["tenant-e"], "passes": [{"pass_id": "normalize", "input_tokens": 20, "output_tokens": 8, "estimated_cost_usd": "0.000010", "latency_ms": 2, "retry_count": 0, "failure_class": null}]}
+    },
+    {
+      "id": "adversarial-instruction-marker",
+      "gold": {"allowed_source_ids": ["src-f-01"], "expected_supported_source_ids": ["src-f-01"], "expected_status": "NOT_DOCUMENTED", "tenant_id": "tenant-f", "core_facts": [], "rules": [], "document_rule_relations": [], "blockers": ["instruction-like-input"], "retrieval_relevant_ids": [], "adversarial_marker": "attempt-to-override-scope"},
+      "fake_observed": {"candidate_schema_valid": true, "core_facts": [], "rules": [], "document_rule_relations": [], "blockers": ["instruction-like-input"], "retrieved_ids": [], "qa": {"status": "NOT_DOCUMENTED", "source_ids": []}, "tenant_ids": ["tenant-f"], "passes": [{"pass_id": "adversarial", "input_tokens": 19, "output_tokens": 0, "estimated_cost_usd": "0.000004", "latency_ms": 1, "retry_count": 0, "failure_class": null}]}
+    }
+  ]
+}

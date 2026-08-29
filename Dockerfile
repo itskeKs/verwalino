@@ -28,20 +28,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
       libcairo2 libgdk-pixbuf-2.0-0 libffi8 \
       fonts-dejavu-core shared-mime-info \
+      poppler-utils qpdf tesseract-ocr tesseract-ocr-deu \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Install the backend (runtime deps from pyproject) + psycopg2 for Alembic.
 COPY backend/ ./
-RUN pip install . psycopg2-binary
+RUN pip install ".[ocr]" psycopg2-binary
 
 # Built SPA from stage 1.
 COPY --from=frontend /fe/dist ./frontend_dist
 
 # Entrypoint: migrate, then serve.
-COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh \
+COPY docker/entrypoint.sh docker/worker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/worker-entrypoint.sh \
     && useradd --create-home --uid 10001 appuser \
     && mkdir -p /data/documents \
     && chown -R appuser:appuser /data

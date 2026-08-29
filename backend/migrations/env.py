@@ -1,5 +1,6 @@
 """Alembic environment configuration."""
 
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -7,16 +8,28 @@ from sqlalchemy import engine_from_config, pool
 
 from app.models.base import Base
 from app.core.config import settings
+from app.core.declaration_test_database import (
+    is_disposable_database_candidate,
+    require_disposable_database_settings,
+)
 
 # Import all models so their metadata is registered
 import app.models  # noqa: F401
 
 config = context.config
 
-# Drive the migration DB URL from app settings / environment (HV_DATABASE_URL_SYNC),
-# so the same code migrates the dev DB, the CI DB, and the production DB. In tests
-# this resolves to the same value conftest sets explicitly (identical env var).
-config.set_main_option("sqlalchemy.url", settings.database_url_sync)
+# Drive ordinary migrations from app settings. The disposable declaration-test
+# database is an explicit exception: it validates both raw environment values and
+# their effective Settings counterparts before supplying the sync URL.
+if (
+    config.attributes.get("hv_declaration_test_database")
+    or is_disposable_database_candidate(os.environ.get("HV_DATABASE_URL_SYNC"))
+    or is_disposable_database_candidate(settings.database_url_sync)
+):
+    _, _, _validated_sync_url = require_disposable_database_settings(settings)
+    config.set_main_option("sqlalchemy.url", _validated_sync_url)
+else:
+    config.set_main_option("sqlalchemy.url", settings.database_url_sync)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

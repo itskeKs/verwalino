@@ -17,6 +17,9 @@ from app.api import bank_accounts
 from app.api import dunning
 from app.api import meetings
 from app.api import fristen, dsgvo
+from app.api import declaration_imports
+from app.api import property_documents
+from app.api import property_knowledge
 from app.core.extraction import set_extractor
 from app.core.pdf_extraction import PdfTextExtractor
 from app.core.einvoice import RoutingExtractor
@@ -73,6 +76,11 @@ app.include_router(meetings.router)
 # M9 Fristenüberwachung & DSGVO-Härtung
 app.include_router(fristen.router)
 app.include_router(dsgvo.router)
+
+# Declaration imports must be registered before the production SPA fallback.
+app.include_router(declaration_imports.router)
+app.include_router(property_documents.router)
+app.include_router(property_knowledge.router)
 
 
 @app.get("/api/health")

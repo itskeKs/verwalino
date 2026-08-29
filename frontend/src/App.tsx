@@ -42,8 +42,11 @@ import { MeetingDetailPage } from "./pages/MeetingDetailPage";
 import { ResolutionRegisterPage } from "./pages/ResolutionRegisterPage";
 import { FristenmonitorPage } from "./pages/FristenmonitorPage";
 import { MandateDetailPage } from "./pages/MandateDetailPage";
+import { DeclarationImportPage } from "./pages/DeclarationImportPage";
+import { DeclarationReviewPage } from "./pages/DeclarationReviewPage";
+import { PropertyKnowledgePage } from "./pages/PropertyKnowledgePage";
 
-function AppRoutes() {
+export function AppRoutes() {
   const { loading, session } = useAuth();
 
   if (loading) {
@@ -56,6 +59,8 @@ function AppRoutes() {
     return <LoginPage />;
   }
 
+  const canWriteDeclarations = session.role === "OWNER_ADMIN" || session.role === "CLERK";
+
   return (
     <AppShell>
       <Routes>
@@ -63,7 +68,12 @@ function AppRoutes() {
         <Route path="/mandate" element={<MandatePage />} />
         <Route path="/mandate/:mandateId" element={<MandateDetailPage />} />
         <Route path="/objekte" element={<PropertiesPage />} />
+        <Route path="/teilungserklaerung/import" element={canWriteDeclarations ? <DeclarationImportPage /> : <Navigate to="/objekte" replace />} />
+        <Route path="/teilungserklaerung/import/:importId" element={canWriteDeclarations ? <DeclarationImportPage /> : <Navigate to="/objekte" replace />} />
+        <Route path="/teilungserklaerung/import/:importId/review" element={canWriteDeclarations ? <DeclarationReviewPage /> : <Navigate to="/objekte" replace />} />
         <Route path="/objekte/:propertyId" element={<PropertyDetailPage />} />
+        <Route path="/objekte/:propertyId/wissen" element={<PropertyKnowledgePage />} />
+        <Route path="/objekte/:propertyId/teilungserklaerung/import" element={canWriteDeclarations ? <DeclarationImportPage /> : <Navigate to="/objekte" replace />} />
         <Route path="/objekte/:propertyId/einheiten/:unitId" element={<UnitDetailPage />} />
         <Route path="/personen" element={<PersonsPage />} />
         <Route path="/personen/:personId" element={<PersonDetailPage />} />

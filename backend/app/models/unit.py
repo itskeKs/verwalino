@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, ForeignKey, Numeric, String
+from sqlalchemy import CheckConstraint, ForeignKey, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -44,10 +44,19 @@ class Unit(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     # Usage type
     usage_type: Mapped[str] = mapped_column(String(12), nullable=False)
 
-    # Miteigentumsanteil (MEA) -- exact, NUMERIC(12,6) (I4)
-    mea: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    # Miteigentumsanteil (MEA) -- exact, NUMERIC(19,6) (I4)
+    mea: Mapped[Decimal | None] = mapped_column(Numeric(19, 6), nullable=True)
+    building_part: Mapped[str] = mapped_column(
+        String(255), nullable=False, server_default=""
+    )
 
     __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "property_id",
+            "id",
+            name="uq_unit_organization_property_id",
+        ),
         CheckConstraint(
             "usage_type IN ('WOHNUNG', 'GEWERBE', 'STELLPLATZ', 'SONSTIGE')",
             name="ck_unit_usage_type",

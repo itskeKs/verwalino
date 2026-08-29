@@ -7,6 +7,7 @@ import { Link } from "react-router-dom";
 import { listProperties, createProperty, updateProperty } from "../api/endpoints";
 import type { Property, PropertyCreate, ManagementType } from "../api/types";
 import { ApiError } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
 
 const MANAGEMENT_TYPES: { value: ManagementType; label: string }[] = [
   { value: "MIET", label: "Mietobjekt" },
@@ -25,6 +26,8 @@ const EMPTY_FORM: PropertyCreate = {
 };
 
 export function PropertiesPage() {
+  const { session } = useAuth();
+  const isWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
   const [properties, setProperties] = useState<Property[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,7 +51,7 @@ export function PropertiesPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => { reload(); }, [reload]);
+  useEffect(() => { void Promise.resolve().then(reload); }, [reload]);
 
   function openCreate() {
     setEditId(null);
@@ -97,14 +100,19 @@ export function PropertiesPage() {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <h1 style={{ margin: 0 }}>Objekte</h1>
-        <button className="btn btn--primary" onClick={openCreate}>
-          + Neues Objekt
-        </button>
+        {isWrite && <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+          <Link className="btn" to="/teilungserklaerung/import">
+            Teilungserklärung importieren
+          </Link>
+          <button className="btn btn--primary" onClick={openCreate}>
+            + Neues Objekt
+          </button>
+        </div>}
       </div>
 
       {error && <p className="error-text">{error}</p>}
 
-      {showForm && (
+      {isWrite && showForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>{editId ? "Objekt bearbeiten" : "Neues Objekt anlegen"}</h2>
           <form onSubmit={handleSubmit} className="form-grid">
@@ -206,11 +214,7 @@ export function PropertiesPage() {
                   </td>
                   <td>{[p.street, p.zip_code, p.city].filter(Boolean).join(", ") || "-"}</td>
                   <td>{p.fiscal_year_start_month}</td>
-                  <td>
-                    <button className="btn btn--small" onClick={() => openEdit(p)}>
-                      Bearbeiten
-                    </button>
-                  </td>
+                  <td>{isWrite && <button className="btn btn--small" onClick={() => openEdit(p)}>Bearbeiten</button>}</td>
                 </tr>
               ))}
             </tbody>

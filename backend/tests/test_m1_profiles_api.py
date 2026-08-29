@@ -47,6 +47,7 @@ async def test_unit_update(client_a_admin):
     resp = await client_a_admin.post("/api/properties", json={
         "name": "Test Haus Update",
         "management_type": "MIET",
+        "mea_denominator": 1_000,
     })
     assert resp.status_code == 201
     prop_id = resp.json()["id"]

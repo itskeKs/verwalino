@@ -368,6 +368,445 @@ code {
   flex-wrap: wrap;
 }
 
+/* --- Teilungserklärung import --- */
+
+.declaration-import-page {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.declaration-import-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.declaration-import-heading h1 {
+  margin-bottom: 0.35rem;
+}
+
+.declaration-import-live {
+  min-height: 1.5rem;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.875rem;
+}
+
+.declaration-import-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  list-style: none;
+  margin: 1rem 0 1.25rem;
+  padding: 0;
+  counter-reset: declaration-step;
+}
+
+.declaration-import-steps li {
+  counter-increment: declaration-step;
+  border-bottom: 2px solid hsl(var(--ui-border));
+  color: hsl(var(--muted-foreground));
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0 0 0.5rem;
+}
+
+.declaration-import-steps li::before {
+  content: counter(declaration-step) ". ";
+}
+
+.declaration-import-section {
+  margin-bottom: 1rem;
+}
+
+.declaration-import-section fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.declaration-import-section legend,
+.declaration-import-section label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin-bottom: 0.4rem;
+}
+
+.declaration-import-section input,
+.declaration-import-section select {
+  border: 1px solid hsl(var(--ui-input));
+  border-radius: calc(var(--radius) - 2px);
+  color: hsl(var(--foreground));
+  font: inherit;
+  padding: 0.48rem 0.6rem;
+}
+
+.declaration-import-section input:focus-visible,
+.declaration-import-section select:focus-visible {
+  outline: none;
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.22);
+}
+
+.declaration-import-section input[type="file"] {
+  display: block;
+  max-width: 100%;
+}
+
+.declaration-import-section progress {
+  display: block;
+  height: 0.8rem;
+  margin-top: 0.8rem;
+  width: min(100%, 540px);
+}
+
+.declaration-document-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.declaration-document-item {
+  border: 1px solid hsl(var(--ui-border));
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.9rem;
+}
+
+.declaration-document-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(11rem, 0.45fr);
+  gap: 0.8rem;
+}
+
+.declaration-document-main input,
+.declaration-document-main select {
+  width: 100%;
+}
+
+.declaration-document-actions {
+  margin-top: 0.25rem;
+}
+
+/* --- Teilungserklärung review --- */
+
+.declaration-review-page {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.declaration-review-heading,
+.declaration-review-group-heading,
+.declaration-candidate > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.declaration-review-heading h1,
+.declaration-review-group h2,
+.declaration-candidate h3,
+.declaration-candidate h4,
+.declaration-evidence h4 {
+  margin-bottom: 0.35rem;
+}
+
+.declaration-review-group,
+.declaration-approval-panel {
+  margin-bottom: 1rem;
+}
+
+.declaration-candidate-list {
+  display: grid;
+  gap: 1rem;
+}
+
+.declaration-candidate {
+  border-top: 1px solid hsl(var(--ui-border));
+  padding-top: 1rem;
+}
+
+.declaration-candidate:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.declaration-candidate header p,
+.declaration-evidence p {
+  color: hsl(var(--muted-foreground));
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.declaration-bulk-select,
+.declaration-decision-actions,
+.form-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.declaration-bulk-select {
+  font-size: 0.875rem;
+}
+
+.declaration-value-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+}
+
+.declaration-value-grid section,
+.declaration-evidence,
+.candidate-decision {
+  border: 1px solid hsl(var(--ui-border));
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.8rem;
+}
+
+.declaration-value-grid pre,
+.declaration-rule-details pre {
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  font: 0.8rem/1.45 var(--mono);
+}
+
+.declaration-issues {
+  margin: 0.75rem 0;
+  padding-left: 1.25rem;
+}
+
+.declaration-rule-details {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.75rem 0;
+}
+
+.declaration-rule-details div {
+  display: grid;
+  grid-template-columns: minmax(10rem, 0.35fr) 1fr;
+  gap: 0.75rem;
+}
+
+.declaration-rule-details dt {
+  font-weight: 600;
+}
+
+.declaration-rule-details dd {
+  margin: 0;
+}
+
+.declaration-evidence {
+  margin: 0.75rem 0;
+}
+
+.declaration-evidence-list {
+  display: grid;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.declaration-evidence-frame {
+  border: 1px solid hsl(var(--ui-border));
+  border-radius: calc(var(--radius) - 2px);
+  height: 420px;
+  margin-top: 0.75rem;
+  width: 100%;
+}
+
+.candidate-decision {
+  margin: 0.75rem 0 0;
+}
+
+.candidate-decision legend {
+  font-weight: 600;
+  padding: 0 0.25rem;
+}
+
+.candidate-decision label,
+.candidate-decision textarea {
+  display: block;
+  width: 100%;
+}
+
+.candidate-decision label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin: 0.65rem 0 0.35rem;
+}
+
+.candidate-decision textarea {
+  border: 1px solid hsl(var(--ui-input));
+  border-radius: calc(var(--radius) - 2px);
+  font: 0.84rem/1.4 var(--mono);
+  padding: 0.5rem 0.6rem;
+}
+
+.candidate-decision textarea:focus-visible {
+  outline: none;
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.22);
+}
+
+.declaration-approval-dialog {
+  border: 1px solid hsl(var(--ui-border));
+  border-radius: var(--radius);
+  box-shadow: 0 12px 36px rgba(16, 24, 40, 0.2);
+  color: hsl(var(--foreground));
+  max-width: min(620px, calc(100vw - 2rem));
+  padding: 1.25rem;
+}
+
+.declaration-approval-dialog::backdrop {
+  background: rgb(15 23 42 / 0.35);
+}
+
+.declaration-approval-summary {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.declaration-approval-summary div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid hsl(var(--ui-border));
+  padding-bottom: 0.35rem;
+}
+
+.declaration-approval-summary dt {
+  color: hsl(var(--muted-foreground));
+}
+
+.declaration-approval-summary dd {
+  font-weight: 600;
+  margin: 0;
+}
+
+/* --- Dokumente & Wissen --- */
+
+.knowledge-page,
+.knowledge-section {
+  display: grid;
+  gap: 1rem;
+}
+
+.knowledge-page-heading,
+.knowledge-section-heading,
+.knowledge-rule header,
+.knowledge-viewer header {
+  align-items: flex-start;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.knowledge-page-heading > div > p,
+.knowledge-rule header p,
+.knowledge-disclosure,
+.knowledge-viewer header p {
+  color: hsl(var(--muted-foreground));
+  margin: 0;
+}
+
+.knowledge-counts,
+.knowledge-status,
+.knowledge-relation {
+  background: hsl(var(--muted));
+  border-radius: 999px;
+  font-size: 0.78rem;
+  padding: 0.2rem 0.5rem;
+}
+
+.knowledge-status--needs_clarification {
+  background: hsl(var(--warning) / 0.18);
+  color: hsl(var(--warning-foreground));
+}
+
+.knowledge-status--superseded,
+.knowledge-status--retracted {
+  color: hsl(var(--muted-foreground));
+}
+
+.knowledge-document-list,
+.knowledge-hit-list {
+  display: grid;
+  gap: 0.65rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.knowledge-document,
+.knowledge-hit-list li,
+.knowledge-rule,
+.knowledge-answer {
+  border: 1px solid hsl(var(--ui-border));
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.9rem;
+}
+
+.knowledge-document {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.knowledge-topic {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.knowledge-topic > h3 { margin: 0.4rem 0 0; }
+
+.knowledge-rule {
+  display: grid;
+  gap: 0.8rem 1.25rem;
+  grid-template-columns: minmax(0, 2fr) minmax(12rem, 1fr);
+}
+
+.knowledge-rule header,
+.knowledge-rule-expanded { grid-column: 1; }
+.knowledge-rule-expanded { display: contents; }
+.knowledge-rule .knowledge-sources { align-self: start; grid-column: 2; grid-row: 1 / span 2; }
+.knowledge-rule-toggle { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; font-weight: inherit; padding: 0; text-align: left; }
+.knowledge-rule-toggle:focus-visible { outline: 3px solid hsl(var(--ring) / 0.35); outline-offset: 2px; }
+
+.knowledge-rule-details {
+  display: grid;
+  gap: 0.45rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0.8rem 0;
+}
+
+.knowledge-rule-details div { display: grid; gap: 0.15rem; }
+.knowledge-rule-details dt { color: hsl(var(--muted-foreground)); font-size: 0.82rem; }
+.knowledge-rule-details dd { margin: 0; }
+
+.knowledge-sources { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.link-button { background: none; border: 0; color: var(--color-primary); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; text-underline-offset: 2px; }
+.link-button:focus-visible { outline: 3px solid hsl(var(--ring) / 0.35); outline-offset: 2px; }
+
+.knowledge-search-label,
+.knowledge-question-form label { display: grid; gap: 0.35rem; font-weight: 600; }
+.knowledge-search-label input,
+.knowledge-question-form textarea { width: 100%; }
+.knowledge-question-form { display: grid; gap: 0.75rem; }
+.knowledge-question-form textarea { min-height: 5.5rem; resize: vertical; }
+.knowledge-answer-meta { color: hsl(var(--muted-foreground)); font-size: 0.875rem; }
+
+.knowledge-viewer { background: hsl(var(--card)); border: 1px solid hsl(var(--ui-border)); border-radius: var(--radius); box-shadow: 0 12px 36px rgb(16 24 40 / 0.25); display: grid; gap: 0.8rem; max-height: calc(100vh - 2rem); max-width: 70rem; overflow: auto; padding: 1rem; width: min(70rem, calc(100vw - 2rem)); }
+.knowledge-viewer::backdrop { background: rgb(15 23 42 / 0.45); }
+.knowledge-viewer iframe { border: 1px solid hsl(var(--ui-border)); height: min(65vh, 52rem); width: 100%; }
+.knowledge-viewer-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
 /* --- Responsive helpers --- */
 
 @media (max-width: 768px) {
@@ -378,4 +817,38 @@ code {
   .form-grid {
     grid-template-columns: 1fr;
   }
+}
+
+@media (max-width: 900px) {
+  .declaration-import-heading,
+  .declaration-document-main,
+  .declaration-review-heading,
+  .declaration-review-group-heading,
+  .declaration-candidate > header {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .declaration-import-steps {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .declaration-value-grid,
+  .declaration-rule-details div,
+  .knowledge-rule-details {
+    grid-template-columns: 1fr;
+  }
+
+  .knowledge-page-heading,
+  .knowledge-section-heading,
+  .knowledge-rule header,
+  .knowledge-viewer header {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .knowledge-rule { grid-template-columns: 1fr; }
+  .knowledge-rule header,
+  .knowledge-rule-expanded,
+  .knowledge-rule .knowledge-sources { grid-column: 1; grid-row: auto; }
 }

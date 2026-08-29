@@ -29,6 +29,14 @@ import type {
 } from "../api/types";
 import { ApiError } from "../api/client";
 
+function formatLegalMea(mea: string | null, property: Property): string {
+  if (!mea) return "-";
+  if (property.mea_scale_status !== "CONFIRMED" || !Number.isSafeInteger(property.mea_denominator) || !property.mea_denominator) {
+    return `${mea} (Zähler/Skala unbestätigt)`;
+  }
+  return `${mea} / ${new Intl.NumberFormat("de-DE").format(property.mea_denominator)}`;
+}
+
 interface OwnershipFormData {
   owner_profile_id: string;
   valid_from: string;
@@ -213,9 +221,10 @@ export function UnitDetailPage() {
             <tr><td>Nummer</td><td>{unit.number}</td></tr>
             <tr><td>Lage</td><td>{unit.location || "-"}</td></tr>
             <tr><td>Nutzungsart</td><td>{unit.usage_type}</td></tr>
+            <tr><td>Gebäudeteil</td><td>{unit.building_part || "-"}</td></tr>
             <tr><td>Flaeche</td><td>{unit.area ? `${unit.area} m2` : "-"}</td></tr>
             <tr><td>Beh. Flaeche</td><td>{unit.heated_area ? `${unit.heated_area} m2` : "-"}</td></tr>
-            <tr><td>MEA</td><td>{unit.mea ?? "-"}</td></tr>
+            <tr><td>MEA</td><td>{formatLegalMea(unit.mea, property)}</td></tr>
           </tbody>
         </table>
       </div>

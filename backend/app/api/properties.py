@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
+from decimal import Decimal
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import (
@@ -16,7 +18,10 @@ from app.core.tenant import (
     require_write_dep,
 )
 from app.repositories.property_repo import PropertyRepository
+from app.repositories.unit_repo import UnitRepository
+from app.repositories.audit_repo import AuditRepository
 from app.models.property import Property
+from app.models.audit_event import AuditEvent
 
 router = APIRouter(prefix="/api/properties", tags=["properties"])
 
@@ -29,6 +34,8 @@ class PropertyOut(BaseModel):
     city: str
     management_type: str
     fiscal_year_start_month: int
+    mea_denominator: int | None
+    mea_scale_status: str
 
     model_config = {"from_attributes": True}
 
@@ -40,6 +47,7 @@ class PropertyCreate(BaseModel):
     city: str = ""
     management_type: str
     fiscal_year_start_month: int = 1
+    mea_denominator: int | None = Field(default=None, ge=1, le=1_000_000_000_000)
 
 
 class PropertyUpdate(BaseModel):
@@ -49,6 +57,12 @@ class PropertyUpdate(BaseModel):
     city: str | None = None
     management_type: str | None = None
     fiscal_year_start_month: int | None = None
+
+
+class MeaScaleConfirmation(BaseModel):
+    denominator: int = Field(ge=1, le=1_000_000_000_000)
+    expected_scale_status: str
+    confirm_existing_values_as_numerators: Literal[True]
 
 
 @router.get("", response_model=list[PropertyOut])
@@ -89,6 +103,8 @@ async def create_property(
         city=body.city,
         management_type=body.management_type,
         fiscal_year_start_month=body.fiscal_year_start_month,
+        mea_denominator=body.mea_denominator,
+        mea_scale_status=("CONFIRMED" if body.mea_denominator is not None else "LEGACY_UNCONFIRMED"),
     )
     prop = await repo.create(prop)
     return _to_out(prop)
@@ -118,6 +134,68 @@ async def update_property(
     return _to_out(prop)
 
 
+@router.post("/{property_id}/mea-scale/confirm", response_model=PropertyOut)
+async def confirm_mea_scale(
+    property_id: uuid.UUID,
+    body: MeaScaleConfirmation,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_db),
+):
+    property_repo = PropertyRepository(db, auth.organization_id)
+    prop = await property_repo.get_by_id_for_update(property_id)
+    if prop is None:
+        raise HTTPException(status_code=404, detail="Property not found")
+    if (
+        prop.mea_scale_status != "LEGACY_UNCONFIRMED"
+        or body.expected_scale_status != prop.mea_scale_status
+    ):
+        raise HTTPException(status_code=409, detail="MEA_SCALE_STATUS_CHANGED")
+
+    units = await UnitRepository(db, auth.organization_id).list_by_property_for_update(
+        property_id
+    )
+    numerator_sum = Decimal(0)
+    denominator = Decimal(body.denominator)
+    for unit in units:
+        if unit.mea is None:
+            continue
+        mea = unit.mea
+        if not mea.is_finite() or mea < 0 or mea != mea.to_integral_value():
+            raise HTTPException(status_code=409, detail="LEGACY_MEA_NOT_INTEGER")
+        if mea > denominator:
+            raise HTTPException(
+                status_code=409, detail="LEGACY_MEA_EXCEEDS_DENOMINATOR"
+            )
+        numerator_sum += mea
+
+    if numerator_sum > denominator:
+        raise HTTPException(status_code=409, detail="LEGACY_MEA_EXCEEDS_DENOMINATOR")
+
+    old_scale = {
+        "mea_scale_status": prop.mea_scale_status,
+        "mea_denominator": prop.mea_denominator,
+    }
+    prop.mea_scale_status = "CONFIRMED"
+    prop.mea_denominator = body.denominator
+    await AuditRepository(db, auth.organization_id).create(
+        AuditEvent(
+            actor_user_id=auth.user_id,
+            entity_type="property",
+            entity_id=prop.id,
+            action="property.mea_scale_confirmed",
+            payload_diff={
+                "old_scale": old_scale,
+                "new_scale": {
+                    "mea_scale_status": prop.mea_scale_status,
+                    "mea_denominator": prop.mea_denominator,
+                },
+                "existing_values_confirmed_as_numerators": True,
+            },
+        )
+    )
+    return _to_out(prop)
+
+
 def _to_out(p: Property) -> PropertyOut:
     return PropertyOut(
         id=str(p.id),
@@ -127,6 +205,8 @@ def _to_out(p: Property) -> PropertyOut:
         city=p.city,
         management_type=p.management_type,
         fiscal_year_start_month=p.fiscal_year_start_month,
+        mea_denominator=p.mea_denominator,
+        mea_scale_status=p.mea_scale_status,
     )
 
 

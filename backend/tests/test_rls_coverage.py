@@ -37,6 +37,23 @@ TENANT_TABLES = frozenset({
     "resolution_register_entry",
     # Mandate documents (Verträge & Unterlagen am Mandat)
     "mandate_document",
+    # Declaration import legal source and review graph
+    "property_document",
+    "declaration_import",
+    "declaration_import_document",
+    "declaration_extraction_run",
+    "declaration_candidate",
+    "declaration_candidate_evidence",
+    "declaration_candidate_issue",
+    # Canonical approved declaration facts and provenance
+    "property_legal_reference",
+    "property_assignment",
+    "property_document_relation",
+    "property_rule",
+    "property_rule_relation",
+    "property_rule_source",
+    "approved_fact_source",
+    "property_knowledge_query_run",
 })
 
 # Global tables that intentionally have no RLS.
@@ -45,8 +62,37 @@ GLOBAL_TABLES = frozenset({"organization", "cost_category"})
 # Alembic's internal table (not a domain table).
 INFRASTRUCTURE_TABLES = frozenset({"alembic_version"})
 
+APPROVAL_TABLES = frozenset({
+    "property_legal_reference", "property_assignment", "property_document_relation",
+    "property_rule", "property_rule_relation", "property_rule_source",
+    "approved_fact_source",
+})
+
 
 class TestRLSCoverage:
+    @pytest.mark.asyncio
+    async def test_knowledge_query_run_has_no_delete_policy_or_privilege(self, migrator_session):
+        policies = await migrator_session.execute(
+            text("SELECT cmd FROM pg_policies WHERE tablename = 'property_knowledge_query_run'")
+        )
+        assert {row.cmd for row in policies} == {"SELECT", "INSERT", "UPDATE"}
+        privileges = await migrator_session.execute(
+            text(
+                "SELECT privilege_type FROM information_schema.table_privileges "
+                "WHERE table_name = 'property_knowledge_query_run' AND grantee = 'app_rw'"
+            )
+        )
+        assert {row.privilege_type for row in privileges} == {"SELECT", "INSERT", "UPDATE"}
+
+    @pytest.mark.asyncio
+    async def test_approval_tables_have_exact_tenant_policy_commands(self, migrator_session):
+        for table in APPROVAL_TABLES:
+            result = await migrator_session.execute(
+                text("SELECT cmd FROM pg_policies WHERE tablename = :name"),
+                {"name": table},
+            )
+            assert {row.cmd for row in result} == {"SELECT", "INSERT", "UPDATE", "DELETE"}
+
     @pytest.mark.asyncio
     async def test_every_tenant_table_has_rls_enabled(self, migrator_session):
         """Check pg_class.relrowsecurity for each tenant table."""
