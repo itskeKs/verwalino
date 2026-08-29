@@ -274,3 +274,78 @@ async def test_request_body_limit_upload_trailing_slash_is_prevalidated():
 
     assert called is False
     assert sent[0]["status"] == 413
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/declaration-imports/import-id/documents",
+        "/api/declaration-imports/import-id/documents/",
+    ],
+)
+async def test_request_body_limit_rejects_declaration_upload_content_length_before_downstream(
+    path,
+):
+    called = False
+
+    async def downstream(scope, receive, send):
+        nonlocal called
+        called = True
+
+    sent = await _run_asgi_app(
+        RequestBodyLimitMiddleware(downstream, max_body_bytes=4),
+        headers=[(b"content-length", b"5")],
+        messages=[],
+        path=path,
+    )
+
+    assert called is False
+    assert sent[0]["status"] == 413
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path,headers",
+    [
+        ("/api/declaration-imports/import-id/documents", []),
+        (
+            "/api/declaration-imports/import-id/documents/",
+            [(b"content-length", b"1")],
+        ),
+    ],
+)
+async def test_request_body_limit_rejects_chunked_declaration_upload_and_closes_spool(
+    monkeypatch,
+    path,
+    headers,
+):
+    created = []
+    original_spool = uploads.tempfile.SpooledTemporaryFile
+
+    def tracked_spool(*args, **kwargs):
+        spool = original_spool(*args, **kwargs)
+        created.append(spool)
+        return spool
+
+    monkeypatch.setattr(uploads.tempfile, "SpooledTemporaryFile", tracked_spool)
+    called = False
+
+    async def downstream(scope, receive, send):
+        nonlocal called
+        called = True
+
+    sent = await _run_asgi_app(
+        RequestBodyLimitMiddleware(downstream, max_body_bytes=4),
+        headers=headers,
+        messages=[
+            {"type": "http.request", "body": b"abc", "more_body": True},
+            {"type": "http.request", "body": b"de", "more_body": False},
+        ],
+        path=path,
+    )
+
+    assert called is False
+    assert sent[0]["status"] == 413
+    assert len(created) == 1
+    assert created[0].closed is True

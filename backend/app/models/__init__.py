@@ -46,6 +46,25 @@ from app.models.resolution_register_entry import ResolutionRegisterEntry
 # Mandate documents (Verträge & Unterlagen am Mandat)
 from app.models.mandate_document import MandateDocument
 
+# Declaration import legal source and review graph
+from app.models.property_document import PropertyDocument
+from app.models.declaration_import import (
+    DeclarationImport,
+    DeclarationImportDocument,
+    DeclarationExtractionRun,
+)
+from app.models.declaration_candidate import (
+    DeclarationCandidate,
+    DeclarationCandidateEvidence,
+    DeclarationCandidateIssue,
+)
+from app.models.property_legal_reference import PropertyLegalReference
+from app.models.property_assignment import PropertyAssignment
+from app.models.property_document_relation import PropertyDocumentRelation
+from app.models.property_rule import PropertyRule, PropertyRuleRelation, PropertyRuleSource
+from app.models.approved_fact_source import ApprovedFactSource
+from app.models.property_knowledge_query_run import PropertyKnowledgeQueryRun
+
 __all__ = [
     "Base",
     "Organization",
@@ -85,4 +104,19 @@ __all__ = [
     "Resolution",
     "ResolutionRegisterEntry",
     "MandateDocument",
+    "PropertyDocument",
+    "DeclarationImport",
+    "DeclarationImportDocument",
+    "DeclarationExtractionRun",
+    "DeclarationCandidate",
+    "DeclarationCandidateEvidence",
+    "DeclarationCandidateIssue",
+    "PropertyLegalReference",
+    "PropertyAssignment",
+    "PropertyDocumentRelation",
+    "PropertyRule",
+    "PropertyRuleRelation",
+    "PropertyRuleSource",
+    "ApprovedFactSource",
+    "PropertyKnowledgeQueryRun",
 ]

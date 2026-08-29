@@ -9,7 +9,14 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import CheckConstraint, ForeignKey, String, SmallInteger
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    ForeignKey,
+    SmallInteger,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -42,7 +49,15 @@ class Property(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         SmallInteger, nullable=False, server_default="1"
     )
 
+    mea_denominator: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    mea_scale_status: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default="LEGACY_UNCONFIRMED"
+    )
+
     __table_args__ = (
+        UniqueConstraint(
+            "organization_id", "id", name="uq_property_organization_id_id"
+        ),
         CheckConstraint(
             "management_type IN ('MIET', 'WEG', 'SEV', 'MISCH')",
             name="ck_property_management_type",

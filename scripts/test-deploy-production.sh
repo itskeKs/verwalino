@@ -141,7 +141,7 @@ if [ "$(basename "$0")" = docker ]; then
           if [ -f "$FAKE_APP_CREATED" ]; then printf '%s\n' new-app; else printf '%s\n' old-app; fi
           exit 0
           ;;
-        *' run '*' alembic current '*) printf '%s\n' '0023 (head)'; exit 0 ;;
+        *' run '*' alembic current '*) printf '%s\n' '0027 (head)'; exit 0 ;;
         *' run '*) exit 0 ;;
         *' exec -T app python -c '*'import json'*)
           python3 -c '

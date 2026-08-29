@@ -90,7 +90,7 @@ started=1
 compose up -d db
 wait_for_health db
 compose --profile ops run --rm migrate
-compose --profile ops run --rm migrate alembic current | grep -Eq '0023 \(head\)'
+compose --profile ops run --rm migrate alembic current | grep -Eq '0027 \(head\)'
 compose up -d app
 wait_for_health app
 

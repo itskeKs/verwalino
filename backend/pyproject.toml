@@ -16,6 +16,8 @@ dependencies = [
     "python-multipart>=0.0.18",
     "weasyprint>=69,<70",
     "pdfplumber>=0.11,<1",
+    "openai>=3,<4",
+    "tiktoken>=0.9,<1",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +36,7 @@ dev = [
 ocr = [
     "pytesseract>=0.3,<1",
     "pdf2image>=1.17,<2",
+    "pikepdf>=9,<12",
 ]
 
 [build-system]

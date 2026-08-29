@@ -76,6 +76,7 @@ async def test_production_spa_catchall_rejects_traversal_and_keeps_api_404(
     (dist / "index.html").write_text("safe spa")
     (tmp_path / "secret.txt").write_text("private")
     monkeypatch.setenv("HV_FRONTEND_DIST", str(dist))
+    original_app = main_module.app
     production_main = importlib.reload(main_module)
     try:
         async with httpx.AsyncClient(
@@ -91,7 +92,10 @@ async def test_production_spa_catchall_rejects_traversal_and_keeps_api_404(
         assert api_path.status_code == 404
     finally:
         monkeypatch.delenv("HV_FRONTEND_DIST", raising=False)
-        importlib.reload(main_module)
+        # Other modules and the shared test clients retain the original app
+        # object. Restore that exact object instead of reloading a third app,
+        # otherwise later tests override dependencies on a different instance.
+        main_module.app = original_app
 
 
 @pytest.mark.asyncio

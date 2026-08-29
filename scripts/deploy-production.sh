@@ -182,7 +182,7 @@ fi
 compose up -d db
 wait_for_health db
 compose --profile ops run --rm migrate
-compose --profile ops run --rm migrate alembic current | grep -Eq '0023 \(head\)'
+compose --profile ops run --rm migrate alembic current | grep -Eq '0027 \(head\)'
 printf '%s\n' "$admin_password" | compose --profile ops run --rm -T bootstrap \
   python -m app.admin_cli \
   --org 'Karat Hausverwaltung Alpha' \

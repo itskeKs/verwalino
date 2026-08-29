@@ -69,6 +69,22 @@ import type {
   ResolutionCreate,
   RegisterEntry,
   ChallengeAnnotation,
+  DeclarationImport,
+  DeclarationImportCreate,
+  DeclarationDocument,
+  DeclarationDocumentUpdate,
+  DeclarationCandidate,
+  CandidateReviewRequest,
+  CandidateReviewResult,
+  BulkCandidateReviewRequest,
+  ApprovalPreview,
+  ApprovalResult,
+  DeclarationApprovalRequest,
+  PropertyDocument,
+  PropertyKnowledgeOverview,
+  PropertyRule,
+  KnowledgeSearchResponse,
+  KnowledgeAnswerOut,
 } from "./types";
 
 export function login(body: LoginRequest): Promise<LoginResponse> {
@@ -137,6 +153,200 @@ export function createProperty(body: PropertyCreate): Promise<Property> {
 
 export function updateProperty(id: string, body: PropertyUpdate): Promise<Property> {
   return api.put<Property>(`/api/properties/${id}`, body);
+}
+
+// --- Teilungserklärungen ---
+
+export function createDeclarationImport(
+  body: DeclarationImportCreate,
+): Promise<DeclarationImport> {
+  return api.post<DeclarationImport>("/api/declaration-imports", body);
+}
+
+export function uploadDeclarationDocument(
+  importId: string,
+  formData: FormData,
+): Promise<DeclarationDocument> {
+  return uploadFormData<DeclarationDocument>(
+    `/api/declaration-imports/${importId}/documents`,
+    formData,
+  );
+}
+
+export function listDeclarationDocuments(importId: string): Promise<DeclarationDocument[]> {
+  return api.get<DeclarationDocument[]>(`/api/declaration-imports/${importId}/documents`);
+}
+
+export function updateDeclarationDocument(
+  importId: string,
+  documentId: string,
+  body: DeclarationDocumentUpdate,
+): Promise<DeclarationDocument> {
+  return api.patch<DeclarationDocument>(
+    `/api/declaration-imports/${importId}/documents/${documentId}`,
+    body,
+  );
+}
+
+export function startDeclarationImport(importId: string): Promise<DeclarationImport> {
+  return api.post<DeclarationImport>(`/api/declaration-imports/${importId}/start`);
+}
+
+export function getDeclarationImport(importId: string): Promise<DeclarationImport> {
+  return api.get<DeclarationImport>(`/api/declaration-imports/${importId}`);
+}
+
+export function listDeclarationCandidates(importId: string): Promise<DeclarationCandidate[]> {
+  return api.get<DeclarationCandidate[]>(`/api/declaration-imports/${importId}/candidates`);
+}
+
+export function reviewDeclarationCandidate(
+  importId: string,
+  candidateId: string,
+  body: CandidateReviewRequest,
+): Promise<CandidateReviewResult> {
+  return api.patch<CandidateReviewResult>(
+    `/api/declaration-imports/${importId}/candidates/${candidateId}`,
+    body,
+  );
+}
+
+export function bulkReviewDeclarationCandidates(
+  importId: string,
+  body: BulkCandidateReviewRequest,
+): Promise<CandidateReviewResult> {
+  return api.post<CandidateReviewResult>(
+    `/api/declaration-imports/${importId}/candidates/bulk-review`,
+    body,
+  );
+}
+
+export function getDeclarationApprovalPreview(importId: string): Promise<ApprovalPreview> {
+  return api.get<ApprovalPreview>(`/api/declaration-imports/${importId}/approval-preview`);
+}
+
+export function approveDeclarationImport(
+  importId: string,
+  body: DeclarationApprovalRequest,
+): Promise<ApprovalResult> {
+  return api.post<ApprovalResult>(`/api/declaration-imports/${importId}/approve`, body);
+}
+
+export function retryDeclarationImport(importId: string): Promise<DeclarationImport> {
+  return api.post<DeclarationImport>(`/api/declaration-imports/${importId}/retry`);
+}
+
+export function cancelDeclarationImport(importId: string): Promise<DeclarationImport> {
+  return api.post<DeclarationImport>(`/api/declaration-imports/${importId}/cancel`);
+}
+
+export function listPropertyDocuments(propertyId: string): Promise<PropertyDocument[]> {
+  return api.get<PropertyDocument[]>(`/api/properties/${propertyId}/documents`);
+}
+
+export function propertyDocumentContentUrl(
+  propertyId: string,
+  documentId: string,
+  page?: number,
+): string {
+  const path = "/api/properties/" + propertyId + "/documents/" + documentId + "/content";
+  return page ? path + "#page=" + page : path;
+}
+
+export function getPropertyKnowledge(
+  propertyId: string,
+  options: { includeHistory?: boolean; signal?: AbortSignal } = {},
+): Promise<PropertyKnowledgeOverview> {
+  const params = new URLSearchParams();
+  if (options.includeHistory) params.set("include_history", "true");
+  const query = params.size ? `?${params.toString()}` : "";
+  return api.get<PropertyKnowledgeOverview>(`/api/properties/${propertyId}/knowledge${query}`, { signal: options.signal });
+}
+
+export function listPropertyRules(
+  propertyId: string,
+  options: { includeHistory?: boolean; signal?: AbortSignal } = {},
+): Promise<PropertyRule[]> {
+  const params = new URLSearchParams();
+  if (options.includeHistory) params.set("include_history", "true");
+  const query = params.size ? `?${params.toString()}` : "";
+  return api.get<PropertyRule[]>(`/api/properties/${propertyId}/rules${query}`, { signal: options.signal });
+}
+
+export function searchPropertyKnowledge(
+  propertyId: string,
+  query: string,
+  options: { includeHistory?: boolean; limit?: number; signal?: AbortSignal } = {},
+): Promise<KnowledgeSearchResponse> {
+  const params = new URLSearchParams({ q: query });
+  if (options.includeHistory) params.set("include_history", "true");
+  if (options.limit) params.set("limit", String(options.limit));
+  return api.get<KnowledgeSearchResponse>(
+    `/api/properties/${propertyId}/knowledge/search?${params.toString()}`,
+    { signal: options.signal },
+  );
+}
+
+export function queryPropertyKnowledge(
+  propertyId: string,
+  question: string,
+): Promise<KnowledgeAnswerOut> {
+  return api.post<KnowledgeAnswerOut>(`/api/properties/${propertyId}/knowledge/query`, { question });
+}
+
+export function declarationImportDocumentContentUrl(
+  importId: string,
+  documentId: string,
+  page?: number,
+): string {
+  const path = "/api/declaration-imports/" + importId + "/documents/" + documentId + "/content";
+  return page ? path + "#page=" + page : path;
+}
+
+export const terminalDeclarationImportStatuses: ReadonlySet<DeclarationImport["status"]> = new Set([
+  "NEEDS_REVIEW",
+  "FAILED",
+  "CANCELLED",
+  "APPLIED",
+]);
+
+export interface DeclarationImportPollingOptions {
+  onUpdate: (item: DeclarationImport) => void;
+  onError: (error: unknown) => void;
+  intervalMs?: number;
+}
+
+export function pollDeclarationImport(
+  importId: string,
+  { onUpdate, onError, intervalMs = 1_000 }: DeclarationImportPollingOptions,
+): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stopped = false;
+
+  const poll = async (): Promise<void> => {
+    let item: DeclarationImport;
+    try {
+      item = await getDeclarationImport(importId);
+    } catch (error) {
+      if (!stopped) onError(error);
+      return;
+    }
+    if (stopped) return;
+    try {
+      onUpdate(item);
+    } catch (error) {
+      if (!stopped) onError(error);
+      return;
+    }
+    if (stopped || terminalDeclarationImportStatuses.has(item.status)) return;
+    timer = setTimeout(() => void poll(), intervalMs);
+  };
+
+  void poll();
+  return () => {
+    stopped = true;
+    if (timer !== undefined) clearTimeout(timer);
+  };
 }
 
 // --- Units ---

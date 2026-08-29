@@ -18,7 +18,7 @@ WORKDIR /app
 COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --frozen --no-dev --extra ops --no-install-project
 COPY backend/ ./
-RUN uv sync --frozen --no-dev --extra ops --no-editable
+RUN uv sync --frozen --no-dev --extra ops --extra ocr --no-editable
 
 FROM python:3.12-slim-bookworm@sha256:0f5b26b9518d002b6173fd61daad821fa340635ebfec5bba471013f9ca114579 AS runtime
 ENV PYTHONUNBUFFERED=1 \
@@ -33,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
       libcairo2 libgdk-pixbuf-2.0-0 libffi8 \
       fonts-dejavu-core shared-mime-info \
+      poppler-utils qpdf tesseract-ocr tesseract-ocr-deu \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.12 \
     && rm -rf /usr/local/lib/python3.12/site-packages/pip \
@@ -47,15 +48,16 @@ COPY --chown=10001:10001 backend/app ./app
 COPY --chown=10001:10001 backend/alembic.ini ./alembic.ini
 COPY --chown=10001:10001 backend/migrations ./migrations
 COPY --from=frontend --chown=10001:10001 /fe/dist ./frontend_dist
-COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod 0555 /usr/local/bin/entrypoint.sh \
+COPY docker/entrypoint.sh docker/worker-entrypoint.sh /usr/local/bin/
+RUN chmod 0555 /usr/local/bin/entrypoint.sh /usr/local/bin/worker-entrypoint.sh \
     && chown -R 10001:10001 /data /app \
     && test ! -e /usr/local/lib/python3.12/site-packages/pip \
     && ! python -m pip --version >/dev/null 2>&1 \
     && ! /usr/local/bin/python -m pip --version >/dev/null 2>&1 \
     && python -c 'import weasyprint; import app.main' \
     && alembic --version \
-    && python -m app.admin_cli --help >/dev/null
+    && python -m app.admin_cli --help >/dev/null \
+    && python -m app.workers.declaration_import --help >/dev/null
 
 USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

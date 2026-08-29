@@ -31,5 +31,6 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
 
     __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_user_organization_id_id"),
         UniqueConstraint("organization_id", "email", name="uq_user_org_email"),
     )

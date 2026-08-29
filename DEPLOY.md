@@ -118,7 +118,7 @@ Before starting PostgreSQL it builds the exact local image, creates a
 mode-0600 CycloneDX SBOM in `shared/`, and runs the pinned Trivy vulnerability
 HIGH/CRITICAL (`--scanners vuln --ignore-unfixed`) gate. It then uses the fixed
 order `db → migrate → bootstrap → app`, each health wait is bounded, verifies
-Alembic head `0023`, closed host ports, app-only database credentials and the
+Alembic head `0027`, closed host ports, app-only database credentials and the
 runtime `app_rw` role. It polls the public Traefik/Let's Encrypt route for at
 most 180 seconds and, before atomically moving `current`, checks HTTPS/TLS,
 the public unauthenticated session boundary, security headers, secure session

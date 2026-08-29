@@ -13,8 +13,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 
-def test_0023_accepts_a_single_legacy_email_created_under_0022():
-    """A 0022-valid legacy address stays usable after the 0023 upgrade."""
+def test_0027_accepts_a_single_legacy_email_created_under_0022():
+    """A 0022-valid legacy address stays usable after the full 0027 upgrade."""
     from tests.conftest import MIGRATOR_SYNC_URL
 
     backend_dir = Path(__file__).resolve().parents[1]
@@ -48,7 +48,7 @@ def test_0023_accepts_a_single_legacy_email_created_under_0022():
             )
         connection.commit()
 
-        command.upgrade(alembic_cfg, "0023")
+        command.upgrade(alembic_cfg, "0027")
         with connection.cursor() as cursor:
             cursor.execute("SELECT user_id FROM public.app_auth_lookup(%s)", (canonical_email,))
             row = cursor.fetchone()
@@ -68,7 +68,7 @@ def test_0023_accepts_a_single_legacy_email_created_under_0022():
             finally:
                 connection.close()
         if downgraded:
-            command.upgrade(alembic_cfg, "0023")
+            command.upgrade(alembic_cfg, "0027")
 
 
 @pytest.mark.asyncio

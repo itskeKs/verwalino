@@ -5,9 +5,10 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
-import { getProperty, listUnits, createUnit, updateUnit } from "../api/endpoints";
-import type { Property, Unit, UnitCreate, UnitUpdate, UsageType } from "../api/types";
+import { getProperty, getPropertyKnowledge, listUnits, createUnit, updateUnit } from "../api/endpoints";
+import type { Property, PropertyKnowledgeOverview, Unit, UnitCreate, UnitUpdate, UsageType } from "../api/types";
 import { ApiError } from "../api/client";
+import { useAuth } from "../auth/useAuth";
 
 const USAGE_TYPES: { value: UsageType; label: string }[] = [
   { value: "WOHNUNG", label: "Wohnung" },
@@ -23,6 +24,7 @@ interface UnitFormData {
   heated_area: string;
   usage_type: UsageType;
   mea: string;
+  building_part: string;
 }
 
 const EMPTY_UNIT_FORM: UnitFormData = {
@@ -32,10 +34,21 @@ const EMPTY_UNIT_FORM: UnitFormData = {
   heated_area: "",
   usage_type: "WOHNUNG",
   mea: "",
+  building_part: "",
 };
+
+function formatLegalMea(mea: string | null, property: Property): string {
+  if (!mea) return "-";
+  if (property.mea_scale_status !== "CONFIRMED" || !Number.isSafeInteger(property.mea_denominator) || !property.mea_denominator) {
+    return `${mea} (Zähler/Skala unbestätigt)`;
+  }
+  return `${mea} / ${new Intl.NumberFormat("de-DE").format(property.mea_denominator)}`;
+}
 
 export function PropertyDetailPage() {
   const { propertyId } = useParams<{ propertyId: string }>();
+  const { session } = useAuth();
+  const isWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
   const [property, setProperty] = useState<Property | null>(null);
   const [units, setUnits] = useState<Unit[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +57,7 @@ export function PropertyDetailPage() {
   const [editUnitId, setEditUnitId] = useState<string | null>(null);
   const [unitForm, setUnitForm] = useState<UnitFormData>(EMPTY_UNIT_FORM);
   const [saving, setSaving] = useState(false);
+  const [knowledge, setKnowledge] = useState<PropertyKnowledgeOverview | null>(null);
 
   const reload = useCallback(() => {
     if (!propertyId) return;
@@ -52,10 +66,12 @@ export function PropertyDetailPage() {
     Promise.all([
       getProperty(propertyId),
       listUnits(propertyId),
+      getPropertyKnowledge(propertyId).catch(() => null),
     ])
-      .then(([p, u]) => {
+      .then(([p, u, overview]) => {
         setProperty(p);
         setUnits(u);
+        setKnowledge(overview);
       })
       .catch((err) => {
         if (err instanceof ApiError && err.status === 401) {
@@ -67,7 +83,7 @@ export function PropertyDetailPage() {
       .finally(() => setLoading(false));
   }, [propertyId]);
 
-  useEffect(() => { reload(); }, [reload]);
+  useEffect(() => { void Promise.resolve().then(reload); }, [reload]);
 
   function openCreateUnit() {
     setEditUnitId(null);
@@ -84,6 +100,7 @@ export function PropertyDetailPage() {
       heated_area: u.heated_area ?? "",
       usage_type: u.usage_type,
       mea: u.mea ?? "",
+      building_part: u.building_part ?? "",
     });
     setShowUnitForm(true);
   }
@@ -103,6 +120,7 @@ export function PropertyDetailPage() {
         if (unitForm.area) body.area = unitForm.area;
         if (unitForm.heated_area) body.heated_area = unitForm.heated_area;
         if (unitForm.mea) body.mea = unitForm.mea;
+        body.building_part = unitForm.building_part;
         await updateUnit(editUnitId, body);
       } else {
         const body: UnitCreate = {
@@ -114,6 +132,7 @@ export function PropertyDetailPage() {
         if (unitForm.area) body.area = unitForm.area;
         if (unitForm.heated_area) body.heated_area = unitForm.heated_area;
         if (unitForm.mea) body.mea = unitForm.mea;
+        if (unitForm.building_part) body.building_part = unitForm.building_part;
         await createUnit(body);
       }
       setShowUnitForm(false);
@@ -155,14 +174,25 @@ export function PropertyDetailPage() {
         </table>
       </div>
 
+      <section className="card property-knowledge-link" aria-labelledby="property-knowledge-heading" style={{ marginBottom: "1.5rem" }}>
+        <h2 id="property-knowledge-heading">Dokumente &amp; Wissen</h2>
+        <p>{knowledge?.documents.length ?? 0} Dokumente · {Object.values(knowledge?.rules_by_topic ?? {}).flat().length} Regeln</p>
+        <Link className="btn" to={`/objekte/${propertyId}/wissen`}>Dokumente &amp; Wissen öffnen</Link>
+      </section>
+
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <h2 style={{ margin: 0 }}>Einheiten</h2>
-        <button className="btn btn--primary" onClick={openCreateUnit}>
-          + Neue Einheit
-        </button>
+        {isWrite && <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+          <Link className="btn" to={`/objekte/${propertyId}/teilungserklaerung/import`}>
+            Nachtrag oder Teilungserklärung einlesen
+          </Link>
+          <button className="btn btn--primary" onClick={openCreateUnit}>
+            + Neue Einheit
+          </button>
+        </div>}
       </div>
 
-      {showUnitForm && (
+      {isWrite && showUnitForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>{editUnitId ? "Einheit bearbeiten" : "Neue Einheit anlegen"}</h2>
           <form onSubmit={handleUnitSubmit} className="form-grid">
@@ -221,6 +251,14 @@ export function PropertyDetailPage() {
                 onChange={(e) => setUnitForm({ ...unitForm, mea: e.target.value })}
               />
             </label>
+            <label>
+              Gebäudeteil
+              <input
+                type="text"
+                value={unitForm.building_part}
+                onChange={(e) => setUnitForm({ ...unitForm, building_part: e.target.value })}
+              />
+            </label>
             <div className="form-actions">
               <button type="submit" className="btn btn--primary" disabled={saving}>
                 {saving ? "Speichern..." : "Speichern"}
@@ -245,6 +283,7 @@ export function PropertyDetailPage() {
                 <th>Typ</th>
                 <th>Flaeche</th>
                 <th>Beh. Fl.</th>
+                <th>Gebäudeteil</th>
                 <th>MEA</th>
                 <th></th>
               </tr>
@@ -261,12 +300,9 @@ export function PropertyDetailPage() {
                   <td>{u.usage_type}</td>
                   <td>{u.area ?? "-"}</td>
                   <td>{u.heated_area ?? "-"}</td>
-                  <td>{u.mea ?? "-"}</td>
-                  <td>
-                    <button className="btn btn--small" onClick={() => openEditUnit(u)}>
-                      Bearbeiten
-                    </button>
-                  </td>
+                  <td>{u.building_part || "-"}</td>
+                  <td>{formatLegalMea(u.mea, property)}</td>
+                  <td>{isWrite && <button className="btn btn--small" onClick={() => openEditUnit(u)}>Bearbeiten</button>}</td>
                 </tr>
               ))}
             </tbody>

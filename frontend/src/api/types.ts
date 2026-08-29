@@ -71,7 +71,11 @@ export interface Property {
   city: string;
   management_type: ManagementType;
   fiscal_year_start_month: number;
+  mea_denominator: number | null;
+  mea_scale_status: MeaScaleStatus;
 }
+
+export type MeaScaleStatus = "LEGACY_UNCONFIRMED" | "CONFIRMED";
 
 export interface PropertyCreate {
   name: string;
@@ -102,6 +106,7 @@ export interface Unit {
   heated_area: string | null;
   usage_type: UsageType;
   mea: string | null;
+  building_part: string;
 }
 
 export interface UnitCreate {
@@ -112,6 +117,7 @@ export interface UnitCreate {
   heated_area?: string | null;
   usage_type: UsageType;
   mea?: string | null;
+  building_part?: string;
 }
 
 export interface UnitUpdate {
@@ -121,6 +127,302 @@ export interface UnitUpdate {
   heated_area?: string | null;
   usage_type?: UsageType;
   mea?: string | null;
+  building_part?: string | null;
+}
+
+// --- Teilungserklärungs-Import ---
+
+export type DeclarationImportMode = "NEW_PROPERTY" | "EXISTING_PROPERTY";
+
+export type DeclarationImportStatus =
+  | "DRAFT"
+  | "QUEUED"
+  | "PREFLIGHT"
+  | "EXTRACTING"
+  | "RECONCILING"
+  | "RETRY_WAIT"
+  | "NEEDS_REVIEW"
+  | "APPLYING"
+  | "APPLIED"
+  | "FAILED"
+  | "CANCELLED";
+
+export interface DeclarationImport {
+  id: string;
+  mode: DeclarationImportMode;
+  target_property_id: string | null;
+  applied_property_id: string | null;
+  status: DeclarationImportStatus;
+  draft_revision: number;
+  progress_percent: number;
+  current_stage: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost_usd: string;
+  attempt_count: number;
+  max_cost_usd: string;
+}
+
+export type DeclarationImportCreate =
+  | { mode: "NEW_PROPERTY"; target_property_id?: never }
+  | { mode: "EXISTING_PROPERTY"; target_property_id: string };
+
+export type DeclarationDocumentRole = "DECLARATION" | "AMENDMENT" | "ANNEX" | "OTHER";
+
+export interface DeclarationDocument {
+  id: string;
+  property_id: string | null;
+  doc_type: DeclarationDocumentRole;
+  title: string;
+  original_filename: string;
+  mime_type: string;
+  content_byte_size: number;
+  content_sha256: string;
+  sequence_no: number | null;
+  document_role: DeclarationDocumentRole | null;
+}
+
+export interface DeclarationDocumentUpdate {
+  title?: string;
+  document_role?: DeclarationDocumentRole;
+  sequence_no?: number;
+}
+
+export interface PropertyDocument {
+  id: string;
+  property_id: string;
+  doc_type: DeclarationDocumentRole;
+  title: string;
+  original_filename: string;
+  mime_type: string;
+  content_byte_size: number;
+  content_sha256: string;
+  page_count: number;
+}
+
+// --- Gebäudewissen (freigegebene Teilungserklärungsdaten) ---
+
+export interface KnowledgeSource {
+  id: string;
+  document_id: string;
+  document_title: string;
+  pdf_page: number;
+  printed_page: string | null;
+  section: string | null;
+  quote: string;
+}
+
+export type KnowledgeStatus = "EFFECTIVE" | "SUPERSEDED" | "NEEDS_CLARIFICATION" | "RETRACTED";
+
+export interface KnowledgeHit {
+  id: string;
+  kind: "FACT" | "RULE";
+  topic: string;
+  title: string;
+  summary: string;
+  status: KnowledgeStatus;
+  scope: Record<string, unknown>;
+  effect: Record<string, unknown>;
+  sources: KnowledgeSource[];
+  score: number;
+}
+
+export interface PropertyKnowledgeDocument {
+  id: string;
+  doc_type: string;
+  title: string;
+  document_date: string | null;
+  deed_reference: string | null;
+  page_count: number;
+  archived_at: string | null;
+}
+
+export interface DocumentRelation {
+  id: string;
+  source_document_id: string;
+  target_document_id: string;
+  relation_type: string;
+  status: string;
+}
+
+export interface RuleRelation {
+  id: string;
+  source_rule_id: string;
+  target_rule_id: string;
+  relation_type: string;
+}
+
+export interface PropertyRule extends KnowledgeHit {
+  relations: RuleRelation[];
+}
+
+export interface PropertyKnowledgeOverview {
+  property_id: string;
+  documents: PropertyKnowledgeDocument[];
+  document_relations: DocumentRelation[];
+  rules_by_topic: Record<string, PropertyRule[]>;
+  open_rule_topics: string[];
+}
+
+export interface KnowledgeSearchResponse {
+  property_id: string;
+  normalized_query: string;
+  limit: number;
+  include_history: boolean;
+  hits: KnowledgeHit[];
+}
+
+export interface KnowledgeQuestionRequest {
+  question: string;
+}
+
+export interface KnowledgeAnswerOut {
+  status: "ANSWER" | "NOT_DOCUMENTED" | "NEEDS_CLARIFICATION";
+  answer: string;
+  fact_ids: string[];
+  rule_ids: string[];
+  source_ids: string[];
+  sources: KnowledgeSource[];
+}
+
+export type DeclarationCandidateType =
+  | "PROPERTY_FIELD"
+  | "LEGAL_REFERENCE"
+  | "UNIT_CREATE"
+  | "UNIT_FIELD"
+  | "MEA_RESCALE"
+  | "ASSIGNMENT"
+  | "RULE"
+  | "DOCUMENT_RELATION";
+
+export type DeclarationCandidateOperation = "CREATE" | "UPDATE" | "KEEP";
+export type CandidateRiskClass = "LOW" | "MEDIUM" | "CRITICAL";
+export type CandidateDecision =
+  | "ACCEPTED"
+  | "CORRECTED"
+  | "REJECTED"
+  | "NEEDS_CLARIFICATION";
+
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+export type NonNullJsonValue = Exclude<JsonValue, null>;
+
+export interface CandidateEvidence {
+  id: string;
+  document_id: string;
+  field_path: string | null;
+  pdf_page: number;
+  printed_page: string | null;
+  section_ref: string | null;
+  quote: string;
+}
+
+export interface CandidateIssue {
+  id: string;
+  code: string;
+  severity: string;
+  message: string;
+  resolution_status: string;
+  candidate_id: string | null;
+}
+
+export interface DeclarationCandidate {
+  id: string;
+  stable_key: string;
+  candidate_type: DeclarationCandidateType;
+  subject_key: string;
+  field_key: string | null;
+  operation: DeclarationCandidateOperation;
+  previous_value_json: Record<string, unknown> | null;
+  proposed_value_json: Record<string, unknown> | null;
+  corrected_value_json: Record<string, unknown> | null;
+  confidence: string;
+  risk_class: CandidateRiskClass;
+  requires_individual_review: boolean;
+  review_status: CandidateDecision | "PENDING";
+  review_comment: string | null;
+  evidence: CandidateEvidence[];
+  issues: CandidateIssue[];
+}
+
+export type CandidateReviewRequest =
+  | {
+      draft_revision: number;
+      decision: "CORRECTED";
+      corrected_value: NonNullJsonValue;
+      comment?: string;
+    }
+  | {
+      draft_revision: number;
+      decision: "ACCEPTED" | "REJECTED";
+      corrected_value?: never;
+      comment?: string;
+    }
+  | {
+      draft_revision: number;
+      decision: "NEEDS_CLARIFICATION";
+      corrected_value?: never;
+      comment: string;
+    };
+
+export interface CandidateReviewResult {
+  draft_revision: number;
+  candidate: DeclarationCandidate | null;
+  candidates: DeclarationCandidate[];
+}
+
+export interface BulkCandidateReviewRequest {
+  draft_revision: number;
+  candidate_ids: string[];
+  decision: "ACCEPTED" | "REJECTED";
+  comment?: string;
+}
+
+export interface ApprovalPreview {
+  import_id: string;
+  draft_revision: number;
+  can_approve: boolean;
+  issues: CandidateIssue[];
+  pending_candidate_ids: string[];
+}
+
+export type ApprovalSummary =
+  | {
+      properties_created: 1;
+      properties_updated?: never;
+      units_created: number;
+      units_updated: 0;
+      rules_created: number;
+      documents_bound: number;
+    }
+  | {
+      properties_created: 0;
+      properties_updated: 0 | 1;
+      units_created: number;
+      units_updated: number;
+      rules_created: number;
+      documents_bound: number;
+    };
+
+export interface ApprovalResult {
+  import_id: string;
+  status: "APPLIED";
+  property_id: string;
+  draft_revision: number;
+  summary: ApprovalSummary;
+}
+
+export interface DeclarationApprovalRequest {
+  draft_revision: number;
+  idempotency_key: string;
 }
 
 export interface Person {

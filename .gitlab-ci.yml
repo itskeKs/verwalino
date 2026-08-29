@@ -24,6 +24,7 @@ backend-test:
     POSTGRES_DB: hausverwaltung
     POSTGRES_USER: app_migrator
     POSTGRES_PASSWORD: migrator_secret
+    HV_DECLARATION_TEST_DATABASE_PROFILE: "gitlab-ci"
     HV_DATABASE_URL: "postgresql+asyncpg://app_rw:app_secret@postgres:5432/hausverwaltung"
     HV_DATABASE_URL_MIGRATOR: "postgresql+asyncpg://app_migrator:migrator_secret@postgres:5432/hausverwaltung"
     HV_DATABASE_URL_SYNC: "postgresql://app_migrator:migrator_secret@postgres:5432/hausverwaltung"
@@ -34,7 +35,7 @@ backend-test:
     - until pg_isready -h postgres -U app_migrator -d hausverwaltung; do sleep 1; done
     - psql -h postgres -U app_migrator -d hausverwaltung -c "CREATE ROLE app_rw LOGIN PASSWORD 'app_secret' NOBYPASSRLS NOCREATEDB NOCREATEROLE; GRANT CONNECT ON DATABASE hausverwaltung TO app_rw;"
   script:
-    - cd backend && uv sync --locked --extra dev --extra ops && uv run pytest -q
+    - cd backend && uv sync --locked --extra dev --extra ops --extra ocr && uv run pytest -q
 
 frontend-test:
   stage: test
@@ -48,7 +49,7 @@ backend-audit:
   before_script:
     - python -m pip install --no-cache-dir uv==0.11.7
   script:
-    - cd backend && uv lock --check && uv export --locked --no-dev --extra ops --format requirements-txt --output-file /tmp/runtime-requirements.txt && uvx --from pip-audit pip-audit --requirement /tmp/runtime-requirements.txt
+    - cd backend && uv lock --check && uv export --locked --no-dev --extra ops --extra ocr --no-emit-project --format requirements-txt --output-file /tmp/runtime-requirements.txt && uvx --from pip-audit pip-audit --no-deps --disable-pip --requirement /tmp/runtime-requirements.txt
 
 build-image:
   stage: build

@@ -123,6 +123,8 @@ class RequestBodyLimitMiddleware:
                 and parts[3] == "version"
                 or parts[1] == "mandates"
                 and parts[3] == "documents"
+                or parts[1] == "declaration-imports"
+                and parts[3] == "documents"
             )
         )
 
@@ -139,18 +141,22 @@ class RequestBodyLimitMiddleware:
 
 
 async def read_upload_limited(
-    upload: UploadReader, *, max_bytes: int = MAX_UPLOAD_BYTES
+    upload: UploadReader, max_bytes: int = MAX_UPLOAD_BYTES
 ) -> bytes:
     """Read an upload in fixed chunks and reject empty or oversized content."""
     chunks: list[bytes] = []
     total = 0
     while True:
+        # Request one byte beyond the remaining allowance so exact-limit
+        # uploads succeed while an oversized final chunk is still rejected.
         chunk = await upload.read(min(UPLOAD_CHUNK_BYTES, max_bytes - total + 1))
         if not chunk:
             break
         total += len(chunk)
         if total > max_bytes:
-            raise HTTPException(status_code=413, detail="File too large (max 25 MB)")
+            raise HTTPException(
+                status_code=413, detail=f"File too large (max {max_bytes} bytes)"
+            )
         chunks.append(chunk)
 
     if total == 0:
