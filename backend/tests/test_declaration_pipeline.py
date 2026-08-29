@@ -1,10 +1,13 @@
 import asyncio
+import base64
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import io
 from types import SimpleNamespace
 import uuid
 
 import pytest
+from PIL import Image
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
@@ -21,9 +24,13 @@ from app.declarations.pipeline import (
     _serialize_provider_request,
     _unit_value,
     _unwrap,
+    _with_recheck_route_metadata,
+    _apply_recheck_route_metadata,
     _values_semantically_equal,
 )
 from app.declarations.openai_provider import OpenAiDeclarationProvider
+from app.declarations.preflight import DocumentIntegrityError, PdfPreflight
+from app.declarations.observability import ProviderPassMetadata
 from app.declarations.provider import DocumentInput, PageInput, ProviderCallResult, ProviderFailure, ProviderReservationEstimate, ProviderUsage
 from app.declarations.schemas import (
     AdditionalFactPayload,
@@ -65,6 +72,11 @@ from app.declarations.validation import ValidationIssue
 from tests.declaration_fixtures import make_text_pdf
 
 
+_vision_png = io.BytesIO()
+Image.new("RGB", (1, 1), "white").save(_vision_png, format="PNG")
+_VISION_DATA_URL = "data:image/png;base64," + base64.b64encode(_vision_png.getvalue()).decode("ascii")
+
+
 def test_pipeline_module_is_available() -> None:
     assert DeclarationPipeline is not None
 
@@ -89,13 +101,306 @@ def test_malformed_success_usage_charges_reservation_and_fails_closed() -> None:
 def test_usage_over_reservation_records_actual_before_stopping() -> None:
     ledger = _Ledger(0, 0, Decimal("0"), 0, 500_000, 60_000, Decimal("1"), settings)
     reservation = ledger.reserve("input")
+    metadata = _safe_attempt_metadata()
     result = ProviderCallResult(
         output=DocumentInventoryOutput(documents=[{"document_key": "d", "document_type": "DECLARATION", "title": "D"}]),
         usage=ProviderUsage(reservation.input_tokens + 1, 1, Decimal("0"), 1),
+        metadata=metadata,
+        attempt_metadata=(metadata,),
     )
     with pytest.raises(PipelineFailure, match="PROVIDER_USAGE_EXCEEDED_RESERVATION"):
         _unwrap(result, DocumentInventoryOutput, ledger, reservation)
     assert ledger.input_tokens == reservation.input_tokens + 1
+    assert len(ledger.pass_entries) == 1
+
+
+def _safe_attempt_metadata(
+    *,
+    failure_class: str | None = None,
+    attempt_no: int = 1,
+    stage: str = "provider",
+    pass_id: str = "inventory",
+    usage: ProviderUsage | None = None,
+) -> ProviderPassMetadata:
+    observed = usage or ProviderUsage(1, 1, Decimal("0"), 1)
+    route_reasons = (
+        (failure_class,)
+        if failure_class
+        in {
+            "PROVIDER_REFUSAL",
+            "PROVIDER_INCOMPLETE",
+            "PROVIDER_TIMEOUT",
+            "PROVIDER_SCHEMA_FAILURE",
+        }
+        else ()
+    )
+    return ProviderPassMetadata.from_values(
+        pass_id=pass_id,
+        attempt_no=attempt_no,
+        stage=stage,
+        configured_model="gpt-5.6-luna",
+        returned_model_id="gpt-5.6-luna",
+        reasoning_effort="medium",
+        request_id=None,
+        prompt_version="test-v1",
+        prompt_sha256="0" * 64,
+        schema_version="1",
+        schema_sha256="1" * 64,
+        harness_version="1",
+        harness_sha256="2" * 64,
+        input_tokens=observed.input_tokens,
+        cached_input_tokens=observed.cached_input_tokens,
+        cache_write_input_tokens=observed.cache_write_input_tokens,
+        output_tokens=observed.output_tokens,
+        estimated_cost_usd=observed.cost_usd,
+        latency_ms=1,
+        retry_count=attempt_no - 1,
+        route_action="HUMAN_REVIEW" if failure_class else "NONE",
+        route_reason_codes=route_reasons,
+        failure_class=failure_class,
+    )
+
+
+def test_unwrap_collects_safe_success_attempt_metadata_in_memory() -> None:
+    ledger = _Ledger(0, 0, Decimal("0"), 0, 500_000, 60_000, Decimal("1"), settings)
+    reservation = ledger.reserve("input")
+    metadata = _safe_attempt_metadata()
+    result = ProviderCallResult(
+        output=DocumentInventoryOutput(
+            documents=[{"document_key": "d", "document_type": "DECLARATION", "title": "D"}]
+        ),
+        usage=ProviderUsage(1, 1, Decimal("0"), 1),
+        metadata=metadata,
+        attempt_metadata=(metadata,),
+    )
+
+    _unwrap(result, DocumentInventoryOutput, ledger, reservation)
+
+    assert len(ledger.pass_entries) == 1
+    assert ledger.pass_entries[0].as_safe_dict()["pass_id"] == "inventory"
+
+
+@pytest.mark.parametrize("usage_complete", ["false", 0, 1, None])
+def test_unwrap_rejects_non_boolean_usage_completeness_before_settlement(
+    usage_complete: object,
+) -> None:
+    ledger = _Ledger(0, 0, Decimal("0"), 0, 500_000, 60_000, Decimal("1"), settings)
+    reservation = ledger.reserve("input")
+    metadata = _safe_attempt_metadata()
+    result = ProviderCallResult(
+        output=DocumentInventoryOutput(
+            documents=[{"document_key": "d", "document_type": "DECLARATION", "title": "D"}]
+        ),
+        usage=ProviderUsage(1, 1, Decimal("0"), 1),
+        metadata=metadata,
+        attempt_metadata=(metadata,),
+        usage_complete=usage_complete,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(PipelineFailure, match="PROVIDER_RESULT_INVALID"):
+        _unwrap(result, DocumentInventoryOutput, ledger, reservation)
+
+    assert ledger.input_tokens == reservation.input_tokens
+    assert ledger.output_tokens == reservation.output_tokens
+    assert ledger.pass_entries == []
+
+
+@pytest.mark.parametrize("case", ["missing", "cardinality", "sequence", "final"])
+def test_unwrap_rejects_inconsistent_attempt_metadata_atomically(case: str) -> None:
+    ledger = _Ledger(0, 0, Decimal("0"), 0, 500_000, 60_000, Decimal("1"), settings)
+    reservation = ledger.reserve("input")
+    first = _safe_attempt_metadata()
+    second = _safe_attempt_metadata(attempt_no=2, stage="schema_repair")
+    metadata = second
+    attempts = (first, second)
+    attempt_count = 2
+    if case == "missing":
+        attempts = ()
+        metadata = None
+        attempt_count = 1
+    elif case == "cardinality":
+        attempts = (first,)
+    elif case == "sequence":
+        attempts = (first, first)
+    elif case == "final":
+        metadata = first
+    result = ProviderCallResult(
+        output=DocumentInventoryOutput(
+            documents=[{"document_key": "d", "document_type": "DECLARATION", "title": "D"}]
+        ),
+        usage=ProviderUsage(2, 1, Decimal("0"), attempt_count),
+        metadata=metadata,
+        attempt_metadata=attempts,
+    )
+
+    with pytest.raises(PipelineFailure, match="PROVIDER_RESULT_INVALID"):
+        _unwrap(result, DocumentInventoryOutput, ledger, reservation)
+
+    assert ledger.pass_entries == []
+
+
+def test_unwrap_retains_conservative_reservation_when_usage_observation_is_incomplete() -> None:
+    ledger = _Ledger(0, 0, Decimal("0"), 0, 500_000, 60_000, Decimal("1"), settings)
+    reservation = ledger.reserve("input", reserved_input_tokens=20)
+    ledger.charge_reservation(reservation)
+    metadata = _safe_attempt_metadata()
+    repair_metadata = _safe_attempt_metadata(attempt_no=2, stage="schema_repair")
+    result = ProviderCallResult(
+        output=DocumentInventoryOutput(
+            documents=[{"document_key": "d", "document_type": "DECLARATION", "title": "D"}]
+        ),
+        usage=ProviderUsage(7, 1, Decimal("0"), 2),
+        metadata=repair_metadata,
+        attempt_metadata=(metadata, repair_metadata),
+        usage_complete=False,
+    )
+
+    _unwrap(
+        result,
+        DocumentInventoryOutput,
+        ledger,
+        reservation,
+        reservation_already_charged=True,
+    )
+
+    assert ledger.input_tokens == reservation.input_tokens
+    assert ledger.output_tokens == reservation.output_tokens
+    assert ledger.cost_usd == reservation.cost_usd
+    assert ledger.attempts == 2
+    assert ledger.pass_entries
+
+
+def test_recheck_attempt_metadata_keeps_vision_route_on_success() -> None:
+    metadata = _safe_attempt_metadata()
+    raw = ProviderCallResult(
+        output=DocumentInventoryOutput(
+            documents=[{"document_key": "d", "document_type": "DECLARATION", "title": "D"}]
+        ),
+        usage=ProviderUsage(1, 1, Decimal("0"), 1),
+        metadata=metadata,
+        attempt_metadata=(metadata,),
+    )
+
+    routed = _with_recheck_route_metadata(raw, ("LOW_PAGE_QUALITY", "untrusted"))
+
+    assert isinstance(routed, ProviderCallResult)
+    assert routed.metadata is not None
+    assert routed.metadata.route_action == "VISION_RECHECK"
+    assert routed.metadata.route_reason_codes == ("LOW_PAGE_QUALITY",)
+
+
+def test_recheck_success_route_rejects_missing_final_metadata_before_decoration() -> None:
+    metadata = _safe_attempt_metadata(pass_id="recheck")
+    raw = ProviderCallResult(
+        output=TargetedRecheckOutput(),
+        usage=ProviderUsage(1, 1, Decimal("0"), 1),
+        metadata=None,
+        attempt_metadata=(metadata,),
+    )
+
+    with pytest.raises(PipelineFailure, match="PROVIDER_RESULT_INVALID"):
+        _with_recheck_route_metadata(raw, ("LOW_PAGE_QUALITY",))
+
+
+def test_recheck_failure_metadata_keeps_vision_route_and_failure_class() -> None:
+    metadata = _safe_attempt_metadata(failure_class="PROVIDER_TIMEOUT")
+    error = ProviderFailure(
+        "PROVIDER_TIMEOUT", True, "safe", attempt_metadata=(metadata,)
+    )
+
+    _apply_recheck_route_metadata(error, ("EVIDENCE_QUOTE_NOT_FOUND",))
+
+    assert error.metadata is not None
+    assert error.metadata.route_action == "VISION_RECHECK"
+    assert error.metadata.route_reason_codes == ("EVIDENCE_QUOTE_NOT_FOUND",)
+    assert error.metadata.failure_class == "PROVIDER_TIMEOUT"
+
+
+def test_recheck_failure_route_rejects_inconsistent_final_metadata_before_decoration() -> None:
+    first = _safe_attempt_metadata(
+        failure_class="PROVIDER_TIMEOUT", pass_id="recheck"
+    )
+    inconsistent = _safe_attempt_metadata(
+        failure_class="PROVIDER_TIMEOUT",
+        pass_id="recheck",
+        attempt_no=2,
+        stage="schema_repair",
+    )
+    error = ProviderFailure(
+        "PROVIDER_TIMEOUT",
+        True,
+        "safe",
+        attempt_metadata=(first,),
+        metadata=inconsistent,
+        attempt_count=1,
+    )
+
+    with pytest.raises(PipelineFailure, match="PROVIDER_RESULT_INVALID"):
+        _apply_recheck_route_metadata(error, ("EVIDENCE_QUOTE_NOT_FOUND",))
+
+
+@pytest.mark.asyncio
+async def test_call_collects_safe_failure_attempt_metadata_in_memory() -> None:
+    pipeline = object.__new__(DeclarationPipeline)
+    pipeline._settings = settings
+
+    async def checkpoint(_ledger) -> None:
+        return None
+
+    async def fail(*_args, **_kwargs):
+        metadata = _safe_attempt_metadata(failure_class="PROVIDER_TIMEOUT")
+        raise ProviderFailure(
+            "PROVIDER_TIMEOUT", True, "safe", attempt_metadata=(metadata,)
+        )
+
+    pipeline._checkpoint = checkpoint
+    pipeline._provider = SimpleNamespace(
+        inventory=fail,
+        estimate_reservation=lambda *_args, **_kwargs: ProviderReservationEstimate(1, 1, (1,)),
+    )
+    ledger = _Ledger(0, 0, Decimal("0"), 0, 500_000, 60_000, Decimal("1"), settings)
+
+    with pytest.raises(ProviderFailure):
+        await pipeline._call("inventory", (), ledger, DocumentInventoryOutput)
+
+    assert len(ledger.pass_entries) == 1
+    assert ledger.pass_entries[0].failure_class == "PROVIDER_TIMEOUT"
+
+
+@pytest.mark.asyncio
+async def test_call_rejects_invalid_failure_contract_before_usage_branch() -> None:
+    pipeline = object.__new__(DeclarationPipeline)
+    pipeline._settings = settings
+
+    async def checkpoint(_ledger) -> None:
+        return None
+
+    async def fail(*_args, **_kwargs):
+        first = _safe_attempt_metadata(failure_class="PROVIDER_TIMEOUT")
+        second = _safe_attempt_metadata(
+            failure_class="PROVIDER_TIMEOUT", attempt_no=2, stage="schema_repair"
+        )
+        error = ProviderFailure(
+            "PROVIDER_TIMEOUT",
+            True,
+            "safe",
+            attempt_metadata=(first, second),
+            attempt_count=2,
+        )
+        error.usage_complete = "false"  # type: ignore[assignment]
+        raise error
+
+    pipeline._checkpoint = checkpoint
+    pipeline._provider = SimpleNamespace(
+        inventory=fail,
+        estimate_reservation=lambda *_args, **_kwargs: ProviderReservationEstimate(1, 1, (1,)),
+    )
+    ledger = _Ledger(0, 0, Decimal("0"), 0, 500_000, 60_000, Decimal("1"), settings)
+
+    with pytest.raises(PipelineFailure, match="PROVIDER_RESULT_INVALID"):
+        await pipeline._call("inventory", (), ledger, DocumentInventoryOutput)
+
+    assert ledger.pass_entries == []
 
 
 def test_output_allowances_descend_exactly_across_logical_calls() -> None:
@@ -139,6 +444,39 @@ async def test_pre_call_checkpoint_loss_prevents_provider_request() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pipeline_reserves_luna_cache_write_worst_case_before_provider_request() -> None:
+    configured = settings.model_copy(
+        update={"declaration_provider_max_output_tokens_per_call": 10}
+    )
+    pipeline = object.__new__(DeclarationPipeline)
+    pipeline._settings = configured
+    called = False
+
+    async def checkpoint(_ledger) -> None:
+        return None
+
+    async def should_not_run(*_args, **_kwargs) -> None:
+        nonlocal called
+        called = True
+
+    pipeline._checkpoint = checkpoint
+    pipeline._provider = SimpleNamespace(
+        inventory=should_not_run,
+        estimate_reservation=lambda *_args, **_kwargs: ProviderReservationEstimate(100, 1, (100,)),
+    )
+    # 100 input tokens at the ordinary 0.20 rate plus ten output tokens at
+    # 1.20 would fit exactly.  A Luna cache write costs 1.25x the ordinary
+    # input rate and must be reserved before the provider is reachable.
+    ledger = _Ledger(0, 0, Decimal("0"), 0, 500_000, 60_000, Decimal("0.000032"), configured)
+
+    with pytest.raises(PipelineFailure, match="IMPORT_COST_BUDGET_EXCEEDED"):
+        await pipeline._call("inventory", (), ledger, DocumentInventoryOutput)
+
+    assert called is False
+    assert ledger.cost_usd == Decimal("0")
+
+
+@pytest.mark.asyncio
 async def test_full_serialized_request_cap_fails_before_provider_call() -> None:
     pipeline = object.__new__(DeclarationPipeline)
     pipeline._settings = settings.model_copy(update={"declaration_provider_batch_chars": 10})
@@ -159,6 +497,19 @@ async def test_full_serialized_request_cap_fails_before_provider_call() -> None:
     with pytest.raises(PipelineFailure, match="PROVIDER_REQUEST_CHAR_LIMIT_EXCEEDED"):
         await pipeline._call("inventory", documents, ledger, DocumentInventoryOutput)
     assert called is False
+
+
+def test_serialized_recheck_envelope_redacts_image_data_url() -> None:
+    image = "data:image/png;base64,super-secret-image-bytes"
+    serialized = _serialize_provider_request(
+        "recheck",
+        documents=(DocumentInput("d", (PageInput("d", 1, "text", 1.0, image),)),),
+        issue_codes=("LOW_PAGE_QUALITY",),
+        subject_keys=(),
+    )
+
+    assert image not in serialized
+    assert "<image-data-url-omitted>" in serialized
 
 
 def test_fixed_pass_page_batching_maps_unrepresentable_page_to_stable_cap_code() -> None:
@@ -214,7 +565,13 @@ async def test_real_adapter_estimate_settles_tiny_inventory_without_overage() ->
     client.responses._outcomes.append(
         SimpleNamespace(
             output_parsed=output,
-            usage=SimpleNamespace(input_tokens=estimate.attempt_input_tokens[0], output_tokens=1),
+            usage=SimpleNamespace(
+                input_tokens=estimate.attempt_input_tokens[0],
+                output_tokens=1,
+                input_tokens_details=SimpleNamespace(
+                    cached_tokens=0, cache_write_tokens=0
+                ),
+            ),
             status="completed",
             refusal=None,
         )
@@ -256,13 +613,25 @@ async def test_real_adapter_repair_usage_is_settled_once_within_aggregate_reserv
         [
             SimpleNamespace(
                 output_parsed=None,
-                usage=SimpleNamespace(input_tokens=estimate.attempt_input_tokens[0], output_tokens=1),
-                status="incomplete",
+                usage=SimpleNamespace(
+                    input_tokens=estimate.attempt_input_tokens[0],
+                    output_tokens=1,
+                    input_tokens_details=SimpleNamespace(
+                        cached_tokens=0, cache_write_tokens=0
+                    ),
+                ),
+                status="completed",
                 refusal=None,
             ),
             SimpleNamespace(
                 output_parsed=output,
-                usage=SimpleNamespace(input_tokens=estimate.attempt_input_tokens[1], output_tokens=1),
+                usage=SimpleNamespace(
+                    input_tokens=estimate.attempt_input_tokens[1],
+                    output_tokens=1,
+                    input_tokens_details=SimpleNamespace(
+                        cached_tokens=0, cache_write_tokens=0
+                    ),
+                ),
                 status="completed",
                 refusal=None,
             ),
@@ -635,10 +1004,16 @@ class _MemoryStore:
 
 
 class _RecordingProvider:
-    def __init__(self, document_key: str, *, usage: ProviderUsage | None = None) -> None:
+    def __init__(
+        self,
+        document_key: str,
+        *,
+        usage: ProviderUsage | None = None,
+        evidence_quote: str = "Teilungserklärung",
+    ) -> None:
         self.calls: list[str] = []
         self._usage = usage or ProviderUsage(13, 7, Decimal("0.000001"), 1)
-        evidence = [{"document_key": document_key, "pdf_page": 1, "quote": "Beleg"}]
+        evidence = [{"document_key": document_key, "pdf_page": 1, "quote": evidence_quote}]
         street = FactPayload(
             subject_key="property:main",
             field="street",
@@ -680,8 +1055,17 @@ class _RecordingProvider:
             facts=[street, denominator, number, mea], rules=[], mea_set_status="COMPLETE"
         )
 
-    def _result(self, output):
-        return ProviderCallResult(output.model_copy(deep=True), self._usage)
+    def _result(self, pass_id: str, output):
+        metadata = _safe_attempt_metadata(
+            pass_id=pass_id,
+            usage=self._usage,
+        )
+        return ProviderCallResult(
+            output.model_copy(deep=True),
+            self._usage,
+            metadata=metadata,
+            attempt_metadata=(metadata,),
+        )
 
     def estimate_reservation(self, method, *, max_output_tokens, **request):
         return ProviderReservationEstimate(
@@ -692,23 +1076,23 @@ class _RecordingProvider:
 
     async def inventory(self, documents, *, max_output_tokens):
         self.calls.append("inventory")
-        return self._result(self.inventory_output)
+        return self._result("inventory", self.inventory_output)
 
     async def extract_core(self, documents, *, max_output_tokens):
         self.calls.append("extract_core")
-        return self._result(self.core_output)
+        return self._result("extract_core", self.core_output)
 
     async def extract_rules(self, documents, *, max_output_tokens):
         self.calls.append("extract_rules")
-        return self._result(self.rules_output)
+        return self._result("extract_rules", self.rules_output)
 
     async def reconcile(self, inventory, core, rules, *, max_output_tokens):
         self.calls.append("reconcile")
-        return self._result(self.reconciliation_output)
+        return self._result("reconcile", self.reconciliation_output)
 
     async def recheck(self, documents, issue_codes, subject_keys, *, max_output_tokens):
         self.calls.append("recheck")
-        return self._result(TargetedRecheckOutput())
+        return self._result("recheck", TargetedRecheckOutput())
 
 
 class _ReservationProbeProvider(_RecordingProvider):
@@ -751,17 +1135,31 @@ class _WrongTypedResultProvider(_RecordingProvider):
 class _OverReservationProvider(_RecordingProvider):
     async def inventory(self, documents, *, max_output_tokens):
         self.calls.append("inventory")
+        usage = ProviderUsage(
+            self._usage.input_tokens + 1, 1, Decimal("0.000001"), 1
+        )
+        metadata = _safe_attempt_metadata(usage=usage)
         return ProviderCallResult(
             self.inventory_output.model_copy(deep=True),
-            ProviderUsage(self._usage.input_tokens + 1, 1, Decimal("0.000001"), 1),
+            usage,
+            metadata=metadata,
+            attempt_metadata=(metadata,),
         )
 
 
 class _AttachedUsageFailureProvider(_RecordingProvider):
     async def inventory(self, documents, *, max_output_tokens):
         self.calls.append("inventory")
+        usage = ProviderUsage(5, 2, Decimal("0.000001"), 1)
+        metadata = _safe_attempt_metadata(
+            failure_class="PROVIDER_PERMANENT", usage=usage
+        )
         raise ProviderFailure(
-            "PROVIDER_PERMANENT", False, "safe", ProviderUsage(5, 2, Decimal("0.000001"), 1)
+            "PROVIDER_PERMANENT",
+            False,
+            "safe",
+            usage,
+            attempt_metadata=(metadata,),
         )
 
 
@@ -796,7 +1194,7 @@ class _BudgetSkippedRecheckProvider(_RecordingProvider):
     def __init__(self, document_key: str) -> None:
         super().__init__(document_key)
         self.recheck_estimates = 0
-        self.reconciliation_output.facts[0].confidence = 0.5
+        self.reconciliation_output.facts[0].evidence[0].quote = "nicht vorhandene Formulierung"
 
     def estimate_reservation(self, method, *, max_output_tokens, **request):
         if method == "recheck":
@@ -811,10 +1209,13 @@ class _CapturingRecheckProvider(_RecordingProvider):
     def __init__(self, document_key: str) -> None:
         super().__init__(document_key)
         self.recheck_pages: list[int] = []
-        self.reconciliation_output.facts[0].confidence = 0.5
+        self.recheck_images: list[str | None] = []
 
     async def recheck(self, documents, issue_codes, subject_keys, *, max_output_tokens):
         self.recheck_pages = [page.pdf_page for document in documents for page in document.pages]
+        self.recheck_images = [
+            page.image_data_url for document in documents for page in document.pages
+        ]
         return await super().recheck(
             documents, issue_codes, subject_keys, max_output_tokens=max_output_tokens
         )
@@ -836,6 +1237,8 @@ class _ReconcileRecordingProvider:
             [item.value for item in core.additional_facts],
             [rule.title for rule in rules.rules],
         ))
+        usage = ProviderUsage(1, 1, Decimal("0"), 1)
+        metadata = _safe_attempt_metadata(pass_id="reconcile", usage=usage)
         return ProviderCallResult(
             ReconciliationOutput(
                 facts=[item.model_copy(deep=True) for item in core.facts],
@@ -845,13 +1248,15 @@ class _ReconcileRecordingProvider:
                     for item in [*core.additional_facts, *rules.additional_facts]
                 ],
             ),
-            ProviderUsage(1, 1, Decimal("0"), 1),
+            usage,
+            metadata=metadata,
+            attempt_metadata=(metadata,),
         )
 
 
 class _DetailedBatchProvider(_RecordingProvider):
-    def __init__(self, document_key: str) -> None:
-        super().__init__(document_key)
+    def __init__(self, document_key: str, **kwargs) -> None:
+        super().__init__(document_key, **kwargs)
         self.call_pages: list[tuple[str, tuple[int, ...]]] = []
         self.serialized_request_sizes: list[tuple[str, int]] = []
 
@@ -1270,15 +1675,62 @@ async def test_depleted_recheck_output_budget_skips_estimator_and_persists_warni
 
 
 @pytest.mark.asyncio
-async def test_low_confidence_recheck_uses_only_cited_page_and_adjacent_page(seed_data) -> None:
+async def test_high_confidence_quote_missing_recheck_uses_only_cited_page(seed_data) -> None:
     lease, document_key, store = await _seed_pipeline_import(
         seed_data,
         make_text_pdf("Teilungserklärung\nHauptstraße 1", "Nachbarseite", "Nicht erforderlich"),
     )
     provider = _CapturingRecheckProvider(document_key)
+    provider.reconciliation_output.facts[0].evidence[0].quote = "nicht vorhandene Formulierung"
     await DeclarationPipeline(provider, store=store).run(lease)
     assert provider.calls == ["inventory", "extract_core", "extract_rules", "reconcile", "recheck"]
-    assert provider.recheck_pages == [1, 2]
+    assert provider.recheck_pages == [1]
+    assert len(provider.recheck_images) == 1
+    assert provider.recheck_images[0] is not None
+    assert provider.recheck_images[0].startswith("data:image/png;base64,")
+
+
+@pytest.mark.asyncio
+async def test_vision_render_failure_never_calls_recheck_and_persists_page_blocker(seed_data) -> None:
+    class _FailingVisionPreflight(PdfPreflight):
+        def render_page_data_url(self, *_args, **_kwargs):
+            raise DocumentIntegrityError("VISION_RENDER_TIMEOUT")
+
+    lease, document_key, store = await _seed_pipeline_import(
+        seed_data, make_text_pdf("Teilungserklärung\nHauptstraße 1")
+    )
+    provider = _CapturingRecheckProvider(document_key)
+    provider.reconciliation_output.facts[0].evidence[0].quote = "nicht vorhandene Formulierung"
+
+    await DeclarationPipeline(
+        provider, store=store, preflight=_FailingVisionPreflight()
+    ).run(lease)
+
+    assert provider.calls == ["inventory", "extract_core", "extract_rules", "reconcile"]
+    async with get_tenant_session(lease.organization_id) as session:
+        issue = await session.scalar(
+            select(DeclarationCandidateIssue)
+            .where(DeclarationCandidateIssue.import_id == lease.import_id)
+            .where(DeclarationCandidateIssue.code == "VISION_RENDER_UNAVAILABLE")
+        )
+    assert issue is not None
+    assert issue.severity == "BLOCKER"
+    assert issue.details_json == {"document_key": document_key, "pdf_page": 1}
+
+
+@pytest.mark.asyncio
+async def test_low_confidence_alone_does_not_trigger_recheck(seed_data) -> None:
+    lease, document_key, store = await _seed_pipeline_import(
+        seed_data,
+        make_text_pdf("Teilungserklärung\nHauptstraße 1", "Nachbarseite"),
+    )
+    provider = _CapturingRecheckProvider(document_key)
+    provider.reconciliation_output.facts[0].confidence = 0.1
+
+    await DeclarationPipeline(provider, store=store).run(lease)
+
+    assert provider.calls == ["inventory", "extract_core", "extract_rules", "reconcile"]
+    assert provider.recheck_pages == []
 
 
 @pytest.mark.asyncio
@@ -1293,11 +1745,18 @@ async def test_escape_heavy_recheck_batches_against_its_exact_metadata_envelope(
 
         async def recheck(self, documents, issue_codes, subject_keys, *, max_output_tokens):
             self.requests.append((tuple(documents), tuple(issue_codes), tuple(subject_keys)))
+            usage = ProviderUsage(1, 1, Decimal("0"), 1)
+            metadata = _safe_attempt_metadata(pass_id="recheck", usage=usage)
             return ProviderCallResult(
-                TargetedRecheckOutput(), ProviderUsage(1, 1, Decimal("0"), 1)
+                TargetedRecheckOutput(),
+                usage,
+                metadata=metadata,
+                attempt_metadata=(metadata,),
             )
 
-    configured = settings.model_copy(update={"declaration_provider_batch_chars": 700})
+    configured = settings.model_copy(
+        update={"declaration_provider_batch_chars": 4_000, "declaration_max_recheck_calls": 10}
+    )
     provider = _EnvelopeRecordingProvider()
     pipeline = object.__new__(DeclarationPipeline)
     pipeline._settings = configured
@@ -1311,7 +1770,7 @@ async def test_escape_heavy_recheck_batches_against_its_exact_metadata_envelope(
         ValidationIssue("LOW_CONFIDENCE", "BLOCKER", "safe", "property:new"),
         ValidationIssue("EVIDENCE_GAP", "WARNING", "safe", "unit:1"),
     )
-    pages = (PageInput("doc", 1, ('"\\') * 800, 1.0),)
+    pages = (PageInput("doc", 1, ('"\\') * 800, 1.0, _VISION_DATA_URL),)
     ledger = _Ledger(0, 0, Decimal("0"), 0, 500_000, 60_000, Decimal("100"), configured)
 
     await pipeline._call_rechecks(pages, issues, ledger)
@@ -1329,6 +1788,179 @@ async def test_escape_heavy_recheck_batches_against_its_exact_metadata_envelope(
         <= configured.declaration_provider_batch_chars
         for documents, issue_codes, subject_keys in provider.requests
     )
+
+
+@pytest.mark.asyncio
+async def test_segmented_vision_page_is_rejected_before_any_provider_call() -> None:
+    class _NoCallProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def estimate_reservation(self, *_args, **_kwargs):
+            raise AssertionError("split vision page must fail before estimating")
+
+        async def recheck(self, *_args, **_kwargs):
+            self.calls += 1
+            raise AssertionError("split vision page must not reach provider")
+
+    configured = settings.model_copy(
+        update={"declaration_provider_batch_chars": 700, "declaration_max_recheck_calls": 10}
+    )
+    pipeline = object.__new__(DeclarationPipeline)
+    pipeline._settings = configured
+    pipeline._provider = _NoCallProvider()
+    pipeline._checkpoint = lambda _ledger: asyncio.sleep(0)
+    ledger = _Ledger(0, 0, Decimal("0"), 0, 500_000, 60_000, Decimal("100"), configured)
+
+    _output, remaining = await pipeline._call_rechecks(
+        (PageInput("doc", 1, ('"\\') * 800, 1.0, _VISION_DATA_URL),), (), ledger
+    )
+
+    assert remaining is True
+    assert pipeline._provider.calls == 0
+    assert ledger.input_tokens == 0 and ledger.output_tokens == 0
+
+
+@pytest.mark.asyncio
+async def test_recheck_aggregate_budget_fence_prevents_all_provider_calls() -> None:
+    class _Provider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def estimate_reservation(self, *_args, **_kwargs):
+            return ProviderReservationEstimate(5, 1, (5,))
+
+        async def recheck(self, *_args, **_kwargs):
+            self.calls += 1
+            usage = ProviderUsage(5, 1, Decimal("0"), 1)
+            metadata = _safe_attempt_metadata(pass_id="recheck", usage=usage)
+            return ProviderCallResult(
+                TargetedRecheckOutput(), usage, metadata=metadata, attempt_metadata=(metadata,)
+            )
+
+    configured = settings.model_copy(
+        update={"declaration_provider_batch_pages": 1, "declaration_max_recheck_calls": 2}
+    )
+    provider = _Provider()
+    pipeline = object.__new__(DeclarationPipeline)
+    pipeline._settings = configured
+    pipeline._provider = provider
+    pipeline._checkpoint = lambda _ledger: asyncio.sleep(0)
+    ledger = _Ledger(0, 0, Decimal("0"), 0, 7, 60_000, Decimal("100"), configured)
+    pages = (
+        PageInput("doc", 1, "first", 1.0, _VISION_DATA_URL),
+        PageInput("doc", 2, "second", 1.0, _VISION_DATA_URL),
+    )
+
+    with pytest.raises(PipelineFailure, match="IMPORT_TOKEN_BUDGET_EXCEEDED"):
+        await pipeline._call_rechecks(pages, (), ledger)
+
+    assert provider.calls == 0
+    assert ledger.input_tokens == 0 and ledger.output_tokens == 0 and ledger.attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_recheck_aggregate_budget_fence_charges_then_settles_all_planned_calls() -> None:
+    class _Provider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def estimate_reservation(self, *_args, **_kwargs):
+            return ProviderReservationEstimate(5, 1, (5,))
+
+        async def recheck(self, *_args, **_kwargs):
+            self.calls += 1
+            usage = ProviderUsage(5, 1, Decimal("0"), 1)
+            metadata = _safe_attempt_metadata(pass_id="recheck", usage=usage)
+            return ProviderCallResult(
+                TargetedRecheckOutput(), usage, metadata=metadata, attempt_metadata=(metadata,)
+            )
+
+    configured = settings.model_copy(
+        update={"declaration_provider_batch_pages": 1, "declaration_max_recheck_calls": 2}
+    )
+    provider = _Provider()
+    pipeline = object.__new__(DeclarationPipeline)
+    pipeline._settings = configured
+    pipeline._provider = provider
+    pipeline._checkpoint = lambda _ledger: asyncio.sleep(0)
+    ledger = _Ledger(0, 0, Decimal("0"), 0, 20, 60_000, Decimal("100"), configured)
+    pages = (
+        PageInput("doc", 1, "first", 1.0, _VISION_DATA_URL),
+        PageInput("doc", 2, "second", 1.0, _VISION_DATA_URL),
+    )
+
+    _output, remaining = await pipeline._call_rechecks(pages, (), ledger)
+
+    assert remaining is False and provider.calls == 2
+    assert ledger.input_tokens == 10 and ledger.output_tokens == 2 and ledger.attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_recheck_failure_charges_and_checkpoints_only_the_executed_batch() -> None:
+    class _FirstBatchFailureProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def estimate_reservation(self, *_args, **_kwargs):
+            return ProviderReservationEstimate(5, 1, (5,))
+
+        async def recheck(self, *_args, **_kwargs):
+            self.calls += 1
+            usage = ProviderUsage(5, 1, Decimal("0"), 1)
+            metadata = _safe_attempt_metadata(
+                pass_id="recheck", failure_class="PROVIDER_TIMEOUT", usage=usage
+            )
+            raise ProviderFailure(
+                "PROVIDER_TIMEOUT",
+                True,
+                "safe",
+                usage=usage,
+                attempt_metadata=(metadata,),
+            )
+
+    configured = settings.model_copy(
+        update={"declaration_provider_batch_pages": 1, "declaration_max_recheck_calls": 2}
+    )
+    provider = _FirstBatchFailureProvider()
+    pipeline = object.__new__(DeclarationPipeline)
+    pipeline._settings = configured
+    pipeline._provider = provider
+    checkpoints: list[tuple[int, int, int, int]] = []
+
+    async def checkpoint(current_ledger):
+        checkpoints.append(
+            (
+                current_ledger.input_tokens,
+                current_ledger.output_tokens,
+                current_ledger.attempts,
+                len(current_ledger.pass_entries),
+            )
+        )
+
+    pipeline._checkpoint = checkpoint
+    ledger = _Ledger(0, 0, Decimal("0"), 0, 20, 60_000, Decimal("100"), configured)
+    pages = (
+        PageInput("doc", 1, "first", 1.0, _VISION_DATA_URL),
+        PageInput("doc", 2, "second", 1.0, _VISION_DATA_URL),
+    )
+
+    with pytest.raises(ProviderFailure, match="safe"):
+        await pipeline._call_rechecks(pages, (), ledger)
+
+    assert provider.calls == 1
+    assert ledger.input_tokens == 5
+    assert ledger.output_tokens == 1
+    assert ledger.attempts == 1
+    assert [
+        (
+            entry.as_safe_dict()["pass_id"],
+            entry.as_safe_dict()["attempt_no"],
+            entry.as_safe_dict()["failure_class"],
+        )
+        for entry in ledger.pass_entries
+    ] == [("recheck", 1, "PROVIDER_TIMEOUT")]
+    assert checkpoints == [(5, configured.declaration_provider_max_output_tokens_per_call, 1, 0), (5, 1, 1, 1)]
 
 
 @pytest.mark.asyncio
@@ -1442,7 +2074,7 @@ async def test_multi_batch_fixed_pass_order_covers_every_page_without_canonical_
             "declaration_provider_batch_chars": 80_000,
         }
     )
-    provider = _DetailedBatchProvider(document_key)
+    provider = _DetailedBatchProvider(document_key, evidence_quote="Seite")
     async with get_tenant_session(lease.organization_id) as session:
         before_properties = await session.scalar(select(func.count()).select_from(Property))
         before_units = await session.scalar(select(func.count()).select_from(Unit))
@@ -1510,7 +2142,7 @@ async def test_escape_heavy_oversized_page_is_envelope_batched_before_all_fixed_
     )
 
     lease, document_key, store = await _seed_pipeline_import(seed_data, make_text_pdf(source))
-    provider = _DetailedBatchProvider(document_key)
+    provider = _DetailedBatchProvider(document_key, evidence_quote='"')
     await DeclarationPipeline(provider, store=store, configured=configured).run(lease)
 
     assert provider.calls[-1] == "reconcile"
@@ -1578,6 +2210,97 @@ async def test_known_out_of_range_evidence_is_bound_blocker_but_unknown_evidence
         candidates = await session.scalar(select(func.count()).select_from(DeclarationCandidate).where(DeclarationCandidate.import_id == unknown_lease.import_id))
     assert failed is not None and failed.status == "FAILED" and failed.error_code == "UNKNOWN_EVIDENCE_DOCUMENT"
     assert candidates == 0
+
+
+@pytest.mark.asyncio
+async def test_invented_quote_is_bound_as_a_candidate_blocker_before_review(seed_data) -> None:
+    class _InventedQuoteProvider(_RecordingProvider):
+        def __init__(self, document_key: str) -> None:
+            super().__init__(document_key)
+            self.reconciliation_output.facts[0].evidence[0].quote = (
+                "nicht vorhandene erfundene Formulierung"
+            )
+
+    lease, document_key, store = await _seed_pipeline_import(
+        seed_data, make_text_pdf("Teilungserklärung\nHauptstraße 1")
+    )
+
+    await DeclarationPipeline(_InventedQuoteProvider(document_key), store=store).run(lease)
+
+    async with get_tenant_session(lease.organization_id) as session:
+        item = await session.scalar(
+            select(DeclarationImport).where(DeclarationImport.id == lease.import_id)
+        )
+        blockers = (
+            await session.execute(
+                select(DeclarationCandidateIssue)
+                .where(DeclarationCandidateIssue.import_id == lease.import_id)
+                .where(DeclarationCandidateIssue.code == "EVIDENCE_QUOTE_NOT_FOUND")
+            )
+        ).scalars().all()
+
+    assert item is not None and item.status == "NEEDS_REVIEW"
+    assert blockers
+    assert all(issue.candidate_id is not None for issue in blockers)
+
+
+@pytest.mark.asyncio
+async def test_invented_inventory_relation_quote_remains_bound_after_recheck(seed_data) -> None:
+    class _InventedInventoryRelationProvider(_RecordingProvider):
+        def __init__(self, document_key: str) -> None:
+            super().__init__(document_key)
+            self.inventory_output = DocumentInventoryOutput(
+                documents=[
+                    {
+                        "document_key": document_key,
+                        "document_type": "DECLARATION",
+                        "title": "Teilung",
+                        "relations": [
+                            {
+                                "relation_type": "SUPPLEMENTS",
+                                "target_document_key": document_key,
+                                "evidence": [
+                                    {
+                                        "document_key": document_key,
+                                        "pdf_page": 1,
+                                        "quote": "nicht vorhandene Inventarformulierung",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            )
+
+    lease, document_key, store = await _seed_pipeline_import(
+        seed_data, make_text_pdf("Teilungserklärung\nHauptstraße 1")
+    )
+    provider = _InventedInventoryRelationProvider(document_key)
+
+    await DeclarationPipeline(provider, store=store).run(lease)
+
+    async with get_tenant_session(lease.organization_id) as session:
+        item = await session.scalar(
+            select(DeclarationImport).where(DeclarationImport.id == lease.import_id)
+        )
+        blockers = (
+            await session.execute(
+                select(DeclarationCandidateIssue)
+                .where(DeclarationCandidateIssue.import_id == lease.import_id)
+                .where(DeclarationCandidateIssue.code == "EVIDENCE_QUOTE_NOT_FOUND")
+            )
+        ).scalars().all()
+
+    assert provider.calls == [
+        "inventory",
+        "extract_core",
+        "extract_rules",
+        "reconcile",
+        "recheck",
+    ]
+    assert item is not None and item.status == "NEEDS_REVIEW"
+    assert len(blockers) == 1
+    assert blockers[0].candidate_id is not None
 
 
 @pytest.mark.asyncio

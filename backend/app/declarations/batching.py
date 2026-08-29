@@ -62,12 +62,16 @@ class PageBatcher:
         max_chars: int,
         *,
         fits_batch: Callable[[tuple[BatchedPage, ...]], bool] | None = None,
+        overlap: bool = True,
     ) -> None:
         if max_pages < 1 or max_chars < 1:
             raise ValueError("batch limits must be positive")
+        if not isinstance(overlap, bool):
+            raise ValueError("overlap must be boolean")
         self._max_pages = max_pages
         self._max_chars = max_chars
         self._fits_batch = fits_batch
+        self._overlap = overlap
 
     def batch(self, pages: Sequence[PageInput]) -> tuple[PageBatch, ...]:
         expanded = tuple(page for item in pages for page in self._segments(item))
@@ -79,11 +83,14 @@ class PageBatcher:
         while pending:
             current: list[BatchedPage] = []
             chars = 0
-            if (
-                previous is not None
+            has_overlap = (
+                self._overlap
+                and previous is not None
                 and len(previous.text) <= self._max_chars
                 and self._fits((previous,))
-            ):
+            )
+            if has_overlap:
+                assert previous is not None
                 current.append(previous)
                 chars = len(previous.text)
             while pending:
@@ -99,8 +106,8 @@ class PageBatcher:
                 chars += len(page.text)
             # A boundary page that consumes the cap cannot be repeated.  This
             # still makes forward progress because oversized pages are segmented.
-            if len(current) == (1 if previous is not None else 0) and pending:
-                if previous is not None:
+            if len(current) == (1 if has_overlap else 0) and pending:
+                if has_overlap:
                     current = []
                     chars = 0
                 page = pending.popleft()
@@ -167,7 +174,10 @@ class PageBatcher:
                 pdf_page=page.pdf_page,
                 text=marker + page.text[start:end],
                 quality=page.quality,
-                image_data_url=None,
+                # A vision image is attached to exactly one segment of its
+                # logical page. Recheck batching disables boundary overlap,
+                # so this cannot duplicate image input across SDK requests.
+                image_data_url=page.image_data_url if index == 1 else None,
                 segment_no=index,
                 segment_count=count,
             )

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from io import BytesIO
 import os
@@ -925,7 +925,10 @@ async def test_public_new_property_import_reaches_review_with_two_documents_and_
         files={
             "file": (
                 "aenderung.pdf",
-                make_text_pdf("Änderung", "Zutritt für Wartung"),
+                make_text_pdf(
+                    "Änderung",
+                    "Zutritt für erforderliche Instandhaltung ermöglichen.",
+                ),
                 "application/pdf",
             )
         },
@@ -951,7 +954,9 @@ async def test_public_new_property_import_reaches_review_with_two_documents_and_
     assert payload["input_tokens"] > 0
     assert payload["output_tokens"] > 0
     assert Decimal(payload["estimated_cost_usd"]) > 0
-    assert payload["attempt_count"] == 4
+    # Four fixed text passes plus one deterministic targeted recheck for the
+    # intentionally partial MEA set.
+    assert payload["attempt_count"] == 5
     candidate_payloads = candidates.json()
     assert any(
         candidate["field_key"] == "street"
@@ -1440,6 +1445,77 @@ async def test_declaration_import_disabled_does_not_requeue_retryable_import(
             assert status == "FAILED"
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error_code", ["PROVIDER_INCOMPLETE", "PROVIDER_CONNECTION_ERROR"]
+)
+async def test_manual_retry_accepts_retryable_provider_outcome(monkeypatch, error_code: str) -> None:
+    """Manual retry follows the same explicit bounded-worker outcome policy."""
+    from app.services.declaration_import_service import DeclarationImportService
+
+    item = SimpleNamespace(
+        status="FAILED",
+        error_code=error_code,
+        estimated_cost_usd=Decimal("0"),
+        max_cost_usd=Decimal("1"),
+        current_stage=None,
+        next_attempt_at=None,
+        lease_owner="worker",
+        lease_token="token",
+        lease_expires_at=datetime.now(timezone.utc),
+    )
+
+    async def get_for_update(_import_id):
+        return item
+
+    async def async_value(value):
+        return value
+
+    service = object.__new__(DeclarationImportService)
+    service._get_for_update = get_for_update
+    service._imports = SimpleNamespace(count_extraction_runs=lambda _import_id: async_value(0))
+    service._session = SimpleNamespace(flush=lambda: async_value(None))
+    monkeypatch.setattr(settings, "declaration_import_enabled", True)
+
+    result = await service.retry(uuid.uuid4())
+
+    assert result is item
+    assert item.status == "QUEUED"
+    assert item.current_stage == "queued"
+    assert item.lease_owner is None
+
+
+@pytest.mark.asyncio
+async def test_manual_retry_rejects_permanent_openai_request_failure(monkeypatch) -> None:
+    """A stable generic 4xx/auth failure must never enter the retry queue."""
+    from app.services.declaration_import_service import DeclarationImportService
+
+    item = SimpleNamespace(
+        status="FAILED",
+        error_code="OPENAI_REQUEST_FAILED",
+        estimated_cost_usd=Decimal("0"),
+        max_cost_usd=Decimal("1"),
+        current_stage=None,
+        next_attempt_at=None,
+        lease_owner="worker",
+        lease_token="token",
+        lease_expires_at=datetime.now(timezone.utc),
+    )
+
+    async def get_for_update(_import_id):
+        return item
+
+    service = object.__new__(DeclarationImportService)
+    service._get_for_update = get_for_update
+    monkeypatch.setattr(settings, "declaration_import_enabled", True)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.retry(uuid.uuid4())
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "IMPORT_NOT_RETRYABLE"
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import base64
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
@@ -94,6 +95,89 @@ def test_extracts_text_per_page_without_ocr() -> None:
     assert result.pages[1].page_number == 2
     with pytest.raises(FrozenInstanceError):
         result.pages[0].text = "verändert"  # type: ignore[misc]
+
+
+def test_render_page_data_url_renders_exact_safe_page_as_png() -> None:
+    data = make_text_pdf(
+        "Seite eins mit ausreichend langem Text fuer eine sichere Rasterisierung.",
+        "Seite zwei mit ausreichend langem Text fuer eine sichere Rasterisierung.",
+    )
+    preflight = PdfPreflight()
+    budget = preflight.new_import_budget()
+
+    value = preflight.render_page_data_url(data, 2, budget=budget)
+
+    assert value.startswith("data:image/png;base64,")
+    encoded = value.removeprefix("data:image/png;base64,")
+    decoded = base64.b64decode(encoded, validate=True)
+    assert decoded.startswith(b"\x89PNG\r\n\x1a\n")
+    assert budget.ocr_pages == 0
+    assert budget.rendered_pixels > 0
+    assert budget.temporary_bytes >= len(decoded) + len(encoded)
+
+
+def test_render_page_data_url_rejects_out_of_range_page_before_poppler() -> None:
+    data = make_text_pdf("Sichere Textseite für den Seitenbereichstest.")
+    preflight = PdfPreflight()
+
+    with pytest.raises(DocumentIntegrityError) as error:
+        preflight.render_page_data_url(data, 2, budget=preflight.new_import_budget())
+
+    assert error.value.code == "PDF_PAGE_OUT_OF_RANGE"
+
+
+def test_render_page_data_url_counts_encoded_bytes_and_cleans_its_temp_directory(tmp_path: Path) -> None:
+    data = make_text_pdf("Sichere Textseite für den temporären Renderpfad.")
+    engine = TesseractOcrEngine(temporary_root=tmp_path)
+    preflight = PdfPreflight(ocr_engine=engine)
+    budget = preflight.new_import_budget()
+
+    preflight.render_page_data_url(data, 1, budget=budget)
+
+    assert budget.temporary_bytes > 0
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_render_page_data_url_fails_closed_when_shared_deadline_has_elapsed() -> None:
+    clock = FakeClock()
+    data = make_text_pdf("Sichere Textseite für den Deadline-Test.")
+    preflight = PdfPreflight(monotonic=clock, deadline_seconds=1)
+    budget = preflight.new_import_budget()
+    clock.value = 2
+
+    with pytest.raises(DocumentIntegrityError) as error:
+        preflight.render_page_data_url(data, 1, budget=budget)
+
+    assert error.value.code == "PREFLIGHT_DEADLINE_EXCEEDED"
+
+
+def test_vision_render_timeout_is_capped_by_configured_ocr_timeout() -> None:
+    clock = FakeClock()
+    preflight = PdfPreflight(monotonic=clock, deadline_seconds=600, ocr_timeout_seconds=30)
+    budget = preflight.new_import_budget()
+
+    assert preflight._vision_operation_timeout(budget) == 30
+    clock.value = 601
+    with pytest.raises(DocumentIntegrityError) as error:
+        preflight._vision_operation_timeout(budget)
+    assert error.value.code == "PREFLIGHT_DEADLINE_EXCEEDED"
+
+
+def test_render_page_data_url_maps_temporary_directory_failure_without_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = make_text_pdf("Sichere Textseite für den Tempdir-Fehlertest.")
+    preflight = PdfPreflight()
+
+    def unavailable(*_args, **_kwargs):
+        raise OSError("private path must not leak")
+
+    monkeypatch.setattr("app.declarations.preflight.tempfile.TemporaryDirectory", unavailable)
+    with pytest.raises(DocumentIntegrityError) as error:
+        preflight.render_page_data_url(data, 1, budget=preflight.new_import_budget())
+
+    assert error.value.code == "VISION_RENDER_UNAVAILABLE"
+    assert "private path" not in str(error.value)
 
 
 def test_hash_mismatch_stops_before_pdf_safety_parser(monkeypatch: pytest.MonkeyPatch) -> None:

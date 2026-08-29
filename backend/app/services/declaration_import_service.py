@@ -202,7 +202,11 @@ class DeclarationImportService:
         if item.status in {"QUEUED", "PREFLIGHT", "EXTRACTING", "RECONCILING"}:
             return item
         allowed_errors = {
-            "PROVIDER_TIMEOUT", "PROVIDER_RATE_LIMIT", "PROVIDER_SERVER_ERROR",
+            "PROVIDER_TIMEOUT",
+            "PROVIDER_INCOMPLETE",
+            "PROVIDER_RATE_LIMIT",
+            "PROVIDER_SERVER_ERROR",
+            "PROVIDER_CONNECTION_ERROR",
             "OCR_TIMEOUT", "WORKER_INTERRUPTED",
         }
         if item.status not in {"FAILED", "RETRY_WAIT"} or item.error_code not in allowed_errors:

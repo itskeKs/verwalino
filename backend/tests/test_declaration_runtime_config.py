@@ -7,6 +7,7 @@ import secrets
 import subprocess
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,6 +23,12 @@ COMPOSE_PATH = ROOT / "docker-compose.prod.yml"
 ENV_EXAMPLE_PATH = ROOT / ".env.example"
 WORKER_ENTRYPOINT_PATH = ROOT / "docker/worker-entrypoint.sh"
 GITLAB_CI_PATH = ROOT / ".gitlab-ci.yml"
+README_PATH = ROOT / "README.md"
+DECLARATION_RUNBOOK_PATH = ROOT / "docs" / "operations" / "declaration-imports.md"
+ARCHITECTURE_PATH = ROOT / "docs" / "architecture.md"
+DECLARATION_DESIGN_PATH = (
+    ROOT / "docs" / "superpowers" / "specs" / "2026-08-29-declaration-agentic-modernization-design.md"
+)
 
 _DECLARATION_EXTRACTION_ENVIRONMENT = {
     "HV_DECLARATION_IMPORT_ENABLED",
@@ -38,6 +45,8 @@ _DECLARATION_EXTRACTION_ENVIRONMENT = {
     "HV_DECLARATION_PREFLIGHT_DEADLINE_SECONDS",
     "HV_DECLARATION_PRIMARY_MODEL",
     "HV_DECLARATION_ESCALATION_MODEL",
+    "HV_DECLARATION_PRIMARY_REASONING_EFFORT",
+    "HV_DECLARATION_ESCALATION_REASONING_EFFORT",
     "HV_DECLARATION_PROMPT_VERSION",
     "HV_DECLARATION_SCHEMA_VERSION",
     "HV_DECLARATION_HARNESS_VERSION",
@@ -53,12 +62,22 @@ _DECLARATION_EXTRACTION_ENVIRONMENT = {
     "HV_DECLARATION_MAX_CANDIDATES",
     "HV_DECLARATION_PRIMARY_INPUT_USD_PER_MILLION",
     "HV_DECLARATION_PRIMARY_OUTPUT_USD_PER_MILLION",
+    "HV_DECLARATION_PRIMARY_CACHED_INPUT_USD_PER_MILLION",
+    "HV_DECLARATION_PRIMARY_CACHE_WRITE_MULTIPLIER",
     "HV_DECLARATION_ESCALATION_INPUT_USD_PER_MILLION",
     "HV_DECLARATION_ESCALATION_OUTPUT_USD_PER_MILLION",
+    "HV_DECLARATION_ESCALATION_CACHED_INPUT_USD_PER_MILLION",
     "HV_DECLARATION_WORKER_ID",
     "HV_DECLARATION_WORKER_POLL_SECONDS",
     "HV_DECLARATION_LEASE_SECONDS",
     "HV_DECLARATION_MAX_ATTEMPTS",
+}
+_DECLARATION_AGENTIC_DEFAULTS = {
+    "HV_DECLARATION_PRIMARY_REASONING_EFFORT": "medium",
+    "HV_DECLARATION_ESCALATION_REASONING_EFFORT": "none",
+    "HV_DECLARATION_PRIMARY_CACHED_INPUT_USD_PER_MILLION": "0.02",
+    "HV_DECLARATION_PRIMARY_CACHE_WRITE_MULTIPLIER": "1.25",
+    "HV_DECLARATION_ESCALATION_CACHED_INPUT_USD_PER_MILLION": "0.075",
 }
 _DECLARATION_QA_ENVIRONMENT = {
     "HV_DECLARATION_QA_ENABLED",
@@ -90,6 +109,163 @@ _DECLARATION_QA_DEFAULTS = {
 }
 _IMAGE_SMOKE_TIMEOUT_SECONDS = 60
 _IMAGE_SMOKE_CLEANUP_TIMEOUT_SECONDS = 10
+
+
+def test_readme_declaration_setup_includes_all_required_extras() -> None:
+    readme = README_PATH.read_text(encoding="utf-8")
+
+    assert "uv sync --extra dev --extra ocr --extra ops" in readme
+    assert "docs/operations/declaration-imports.md" in readme
+
+
+def test_runbook_states_no_live_call_without_all_gates() -> None:
+    runbook = DECLARATION_RUNBOOK_PATH.read_text(encoding="utf-8")
+
+    for required in (
+        "PROVIDER_REFUSAL",
+        "PROVIDER_INCOMPLETE",
+        "PROVIDER_TIMEOUT",
+        "PROVIDER_CONNECTION_ERROR",
+        "PROVIDER_RATE_LIMIT",
+        "PROVIDER_SERVER_ERROR",
+        "OPENAI_REQUEST_FAILED",
+        "PROVIDER_SCHEMA_FAILURE",
+        "PROVIDER_USAGE_INVALID",
+        "Evidence-Quote",
+        "RouterDecision",
+        "Human Approval",
+        "--provider live --live --compare-models",
+        "HV_DECLARATION_LIVE_EVAL=1",
+        "HV_DECLARATION_REAL_PDF_MANIFEST",
+        "HV_DECLARATION_COMPARE_TERRA_INPUT_USD_PER_MILLION",
+        "HV_DECLARATION_COMPARE_TERRA_OUTPUT_USD_PER_MILLION",
+        "HV_DECLARATION_COMPARE_TERRA_CACHED_INPUT_USD_PER_MILLION",
+        "luna_medium",
+        "luna_low",
+        "terra_primary",
+        "luna_with_mini_router",
+        "descriptive_only",
+        "nicht promotionfähig",
+        "SDK-Attempt",
+        "23",
+    ):
+        assert required in runbook
+
+
+def test_live_eval_documentation_describes_two_phase_gate_ordering() -> None:
+    runbook = DECLARATION_RUNBOOK_PATH.read_text(encoding="utf-8")
+    design = DECLARATION_DESIGN_PATH.read_text(encoding="utf-8")
+
+    for document in (runbook, design):
+        for required in (
+            "Phase A",
+            "Phase B",
+            "Path-Methode",
+            "SHA-256",
+            "Capability",
+            "Path-/Manifest-/PDF-/Providerzugriff",
+            "Übertragung",
+        ):
+            assert required in document
+        phase_a = document.split("**Phase A", maxsplit=1)[1].split(
+            "**Phase B", maxsplit=1
+        )[0]
+        phase_b = document.split("**Phase B", maxsplit=1)[1]
+        assert "HV_DECLARATION_REAL_PDF_MANIFEST" in phase_a
+        assert "SHA-256" in phase_b
+        assert "lokal" in phase_b
+
+    assert 'model: Literal["gpt-5.4-mini"] | None' in design
+
+
+def test_documentation_states_fixed_manager_and_retention_boundary() -> None:
+    architecture = ARCHITECTURE_PATH.read_text(encoding="utf-8")
+    runbook = DECLARATION_RUNBOOK_PATH.read_text(encoding="utf-8")
+
+    assert "deterministischen Manager" in architecture
+    assert "frei autonomen Agenten" in architecture
+    assert "untrusted data" in architecture
+    assert "store=false" in runbook
+    assert "nicht ZDR" in runbook
+
+
+def test_declaration_runtime_defaults_use_explicit_medium_and_none_effort() -> None:
+    from app.core.config import Settings
+
+    configured = Settings()
+
+    assert configured.declaration_primary_reasoning_effort == "medium"
+    assert configured.declaration_escalation_reasoning_effort == "none"
+
+
+def test_declaration_runtime_defaults_use_verified_luna_and_mini_cached_rates() -> None:
+    from decimal import Decimal
+
+    from app.core.config import Settings
+
+    configured = Settings()
+
+    assert configured.declaration_primary_cached_input_usd_per_million == Decimal("0.02")
+    assert configured.declaration_primary_cache_write_multiplier == Decimal("1.25")
+    assert configured.declaration_escalation_cached_input_usd_per_million == Decimal("0.075")
+
+
+def test_invalid_effort_or_cache_rate_is_rejected() -> None:
+    from decimal import Decimal
+
+    from pydantic import ValidationError
+
+    from app.core.config import Settings
+
+    with pytest.raises(ValidationError):
+        Settings(declaration_primary_reasoning_effort="unsupported")
+    with pytest.raises(ValidationError):
+        Settings(declaration_primary_cache_write_multiplier=Decimal("1.20"))
+    with pytest.raises(ValidationError):
+        Settings(declaration_escalation_cached_input_usd_per_million=Decimal("0"))
+
+
+@pytest.mark.parametrize("effort", ["none", "low", "medium", "high", "xhigh", "max"])
+def test_primary_reasoning_effort_accepts_exact_luna_allowlist(effort: str) -> None:
+    from app.core.config import Settings
+
+    assert Settings(declaration_primary_reasoning_effort=effort).declaration_primary_reasoning_effort == effort
+
+
+@pytest.mark.parametrize("effort", ["none", "low", "medium", "high", "xhigh"])
+def test_escalation_reasoning_effort_accepts_exact_mini_allowlist(effort: str) -> None:
+    from app.core.config import Settings
+
+    assert Settings(declaration_escalation_reasoning_effort=effort).declaration_escalation_reasoning_effort == effort
+
+
+@pytest.mark.parametrize("field", ["declaration_primary_reasoning_effort", "declaration_escalation_reasoning_effort"])
+def test_declaration_reasoning_effort_rejects_minimal(field: str) -> None:
+    from pydantic import ValidationError
+
+    from app.core.config import Settings
+
+    with pytest.raises(ValidationError):
+        Settings(**{field: "minimal"})
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("declaration_primary_input_usd_per_million", Decimal("0")),
+        ("declaration_primary_output_usd_per_million", Decimal("-1")),
+        ("declaration_escalation_input_usd_per_million", Decimal("0")),
+        ("declaration_escalation_output_usd_per_million", Decimal("-1")),
+        ("declaration_primary_input_usd_per_million", Decimal("NaN")),
+    ],
+)
+def test_legacy_declaration_rates_must_be_positive_and_finite(field: str, value: Decimal) -> None:
+    from pydantic import ValidationError
+
+    from app.core.config import Settings
+
+    with pytest.raises(ValidationError):
+        Settings(**{field: value})
 
 
 def _compose() -> dict[str, object]:
@@ -163,6 +339,14 @@ def test_compose_declares_least_privilege_worker_topology() -> None:
     assert _DECLARATION_QA_ENVIRONMENT <= app_environment.keys()
     assert all(
         app_environment[name] == "${" + name + ":-" + default + "}"
+        for name, default in _DECLARATION_AGENTIC_DEFAULTS.items()
+    )
+    assert all(
+        environment[name] == "${" + name + ":-" + default + "}"
+        for name, default in _DECLARATION_AGENTIC_DEFAULTS.items()
+    )
+    assert all(
+        app_environment[name] == "${" + name + ":-" + default + "}"
         for name, default in _DECLARATION_QA_DEFAULTS.items()
     )
 
@@ -175,6 +359,10 @@ def test_runtime_example_and_entrypoint_keep_secrets_at_boundaries() -> None:
     }
     assert example_values["HV_OPENAI_API_KEY"] == ""
     assert _DECLARATION_EXTRACTION_ENVIRONMENT <= example_values.keys()
+    assert all(
+        example_values[name] == default
+        for name, default in _DECLARATION_AGENTIC_DEFAULTS.items()
+    )
     assert _DECLARATION_QA_ENVIRONMENT <= example_values.keys()
     assert all(
         example_values[name] == default

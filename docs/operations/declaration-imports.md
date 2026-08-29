@@ -1,12 +1,67 @@
 # Teilungserklärungs-Import und Gebäudewissen betreiben
 
-Der Teilungserklärungs-Import ist asynchron und prüfpflichtig: Die API nimmt Dokumente und Review-Aktionen entgegen, der getrennte `worker` führt Vorprüfung, OCR und Extraktion aus. Erst eine berechtigte Person prüft den Entwurf und übernimmt ihn. Kanonische Gebäude- und Einheitsdaten ändern sich nie durch einen Modellaufruf allein.
+Der Teilungserklärungs-Import ist ein asynchroner, prüfpflichtiger Workflow.
+`DeclarationPipeline` ist der feste, deterministische Manager: Sie führt eine
+begrenzte lokale Vorprüfung, feste Extraktionspässe, lokale Validierungen und
+höchstens einen begrenzten Vision-Recheck aus. Sie ist kein frei autonomer
+Agent. Dokumentseiten, OCR-Text und Modellantworten sind **untrusted data**;
+sie erhalten keine Tools, keine Aktionssenke und keine Berechtigung, Daten zu
+ändern. Erst **Human Approval** übernimmt einen geprüften Entwurf in
+kanonische Gebäude-, Einheits- oder Regel-Daten.
 
-Das Gebäudewissen zeigt nur freigegebene Fakten, Regeln, Dokumentbeziehungen und Seitenbelege. Die lexikalische PostgreSQL-Suche funktioniert ohne OpenAI. Die optionale Q&A-Funktion liefert nur eine zitierte Antwort aus begrenzt abgerufenen, freigegebenen Belegen und kann separat abgeschaltet werden.
+Das Gebäudewissen zeigt nur freigegebene Fakten, Regeln, Dokumentbeziehungen
+und Seitenbelege. Die lexikalische PostgreSQL-Suche funktioniert ohne einen
+Modellaufruf. Die optionale Q&A-Funktion liefert ausschließlich eine zitierte
+Antwort aus begrenzt abgerufenen, freigegebenen Belegen und kann separat
+abgeschaltet werden.
 
-## Grenzen und lokale Vorprüfung
+## Betriebsfluss und Modellmatrix
 
-Pro PDF gelten höchstens **25 MiB** (`HV_DECLARATION_MAX_PDF_BYTES`), pro Import standardmäßig zehn Dokumente und 500 Seiten. Die Vorprüfung weist unlesbare, verschlüsselte oder aktive PDFs sowie eingebettete Dateien ab. Sie nutzt zuerst die Textschicht und nur bei Bedarf OCR.
+```text
+PDF -> lokale Vorprüfung/OCR -> textuelle Luna-Pässe -> lokale Evidenz-/Domain-Validierung
+       -> RouterDecision(NONE | HUMAN_REVIEW | VISION_RECHECK)
+       -> nur ausgewählte, lokal gerenderte PNG-Seiten an Mini
+       -> erneute Validierung -> NEEDS_REVIEW -> Human Approval
+```
+
+| Zweck | Modell / Reasoning | Zulässige Eingabe | Grenze |
+| --- | --- | --- | --- |
+| reguläre Extraktion (`inventory`, `extract_core`, `extract_rules`, `reconcile`) | `gpt-5.6-luna`, `medium` | begrenzte Text-/OCR-Batches bzw. strukturierte Zwischenergebnisse | keine Bilder, keine Tools, kein `previous_response_id` |
+| Vision-Recheck | `gpt-5.4-mini`, `none` | nur von `RouterDecision` ausgewählte, lokal gerenderte PNG-Seiten plus begrenzter Kontext | keine regulären Luna-Pässe mit Bildern; Renderfehler ist fail closed |
+| Eval-Kandidaten | Luna `low`, Terra und Luna mit Mini-Router | ausschließlich gleiches Goldset | keine automatische Promotion und kein Produktionsrouting |
+
+Der lokale `route_escalation`-Router nutzt nur reproduzierbare Signale. Er ist
+kein learned oder online lernender Router und verwendet keine Modell-Confidence:
+
+| Vorrang | Lokales Signal | `RouterDecision` |
+| ---: | --- | --- |
+| 1 | isolierter Router-Contract: `PROVIDER_REFUSAL`, `PROVIDER_INCOMPLETE`, `PROVIDER_TIMEOUT` oder `PROVIDER_SCHEMA_FAILURE` | `HUMAN_REVIEW` |
+| 2 | unbekanntes Dokument oder Seite außerhalb der Vorprüfung | `HUMAN_REVIEW` |
+| 3 | fehlende Evidence-Quote auf bekannter, renderbarer Seite | `VISION_RECHECK` |
+| 4 | geringe lokale Seitenqualität auf zitierter/Blocker-Seite | `VISION_RECHECK` |
+| 5 | fachlicher Blocker ohne visuelles Signal | `HUMAN_REVIEW` |
+| 6 | kein Signal | `NONE` |
+
+Der Router sortiert und dedupliziert Seiten und begrenzt sie mit
+`HV_DECLARATION_MAX_RECHECK_PAGES`; zusätzliche Aufrufe bleiben durch
+`HV_DECLARATION_MAX_RECHECK_CALLS`, Token-, Kosten- und Deadline-Limits
+begrenzt. Eine nicht renderbare gewählte Seite wird nicht alternativ hochgeladen
+und führt zu Human Review.
+
+Der produktive Pipelinepfad ruft den Router aktuell mit
+`provider_failure=None` auf. Providerfehler werden daher nicht in Vision
+umgeleitet, sondern folgen direkt der bestehenden Workerpolitik nach
+`RETRY_WAIT` oder `FAILED`. Die erste Tabellenzeile dokumentiert nur den
+isolierten, totalen Router-Contract: Falls einer seiner vier zulässigen
+Providerfehler dort übergeben wird, ist ausschließlich `HUMAN_REVIEW`
+zulässig.
+
+## Lokale Vorprüfung und Evidence-Gate
+
+Pro PDF gelten höchstens **25 MiB** (`HV_DECLARATION_MAX_PDF_BYTES`), pro
+Import standardmäßig zehn Dokumente und 500 Seiten. Die Vorprüfung weist
+unlesbare, verschlüsselte oder aktive PDFs sowie eingebettete Dateien ab. Sie
+verwendet erst die Textschicht und nur bei Bedarf OCR.
 
 | Bereich | Standardgrenze |
 | --- | ---: |
@@ -21,49 +76,128 @@ Pro PDF gelten höchstens **25 MiB** (`HV_DECLARATION_MAX_PDF_BYTES`), pro Impor
 | Recheck-Seiten / Recheck-Aufrufe | 12 / 2 |
 | Kandidaten / geschätzte Importkosten | 5.000 / 1,00 USD |
 
-Der Runtime-Container enthält `qpdf`, Poppler (`pdftoppm`), Tesseract mit Sprachpaket `deu` sowie `pikepdf`, `pdf2image` und `pytesseract`. Häufige stabile Fehlercodes sind `PDF_SIZE_LIMIT_EXCEEDED`, `PDF_PAGE_LIMIT_EXCEEDED`, `PDF_UNREADABLE`, `PDF_ENCRYPTED_FORBIDDEN`, `PDF_ACTIVE_CONTENT_FORBIDDEN`, `PDF_EMBEDDED_FILES_FORBIDDEN`, `OCR_UNAVAILABLE`, `OCR_TIMEOUT`, `OCR_FAILED`, `OCR_RENDERED_PIXELS_LIMIT_EXCEEDED`, `OCR_IMPORT_PAGE_LIMIT_EXCEEDED` und `OCR_IMPORT_PIXEL_LIMIT_EXCEEDED`. Dokumentinhalt oder Provider-Antworten nicht in Tickets oder Logs kopieren.
+Jede **Evidence-Quote** muss lokal auf der exakt angegebenen
+`(document_key, pdf_page)` vorkommen. Der Validator normalisiert Unicode,
+Zeilenumbrüche, Whitespace und Bindestriche und verlangt einen nichtleeren,
+zusammenhängenden Treffer. Eine Seitenzahl, Abschnittsnummer oder Modelltext
+ist kein Ersatzbeleg. Fehlercodes wie `EVIDENCE_QUOTE_NOT_FOUND`,
+`UNKNOWN_EVIDENCE_DOCUMENT` und `EVIDENCE_PAGE_OUT_OF_RANGE` enthalten keinen
+Dokumenttext und dürfen diesen auch nicht in Ledger, Logs oder Tickets bringen.
 
-## Provider, Datenübertragung und Geheimnisse
+Häufige Vorprüfungsfehler sind `PDF_SIZE_LIMIT_EXCEEDED`,
+`PDF_PAGE_LIMIT_EXCEEDED`, `PDF_UNREADABLE`, `PDF_ENCRYPTED_FORBIDDEN`,
+`PDF_ACTIVE_CONTENT_FORBIDDEN`, `PDF_EMBEDDED_FILES_FORBIDDEN`,
+`OCR_UNAVAILABLE`, `OCR_TIMEOUT`, `OCR_FAILED`,
+`OCR_RENDERED_PIXELS_LIMIT_EXCEEDED`, `OCR_IMPORT_PAGE_LIMIT_EXCEEDED` und
+`OCR_IMPORT_PIXEL_LIMIT_EXCEEDED`.
 
-`HV_OPENAI_API_KEY` ist ein ausschließlich serverseitiges Deployment-Secret. Er bleibt in der Secret-Verwaltung beziehungsweise in der Umgebung von `app` und `worker`, nie im Frontend, Build-Argument, Browser, Projekt-`.env`, Git oder Chat. Die mitgelieferte `.env.example` enthält bewusst einen leeren Wert und dient nur als Vorlage für eine geschützte Datei außerhalb des Checkouts, die mit `docker compose --env-file /absoluter/pfad/...` übergeben wird. Ein Codex-Neustart ist nicht erforderlich: Der Schlüssel wird beim nächsten gezielten Start beziehungsweise Neuerstellen des betroffenen API- oder Worker-Prozesses eingelesen; laufende Codex-Agents bleiben davon unberührt.
+## Provider-Failures, Wiederherstellung und sichere Telemetrie
 
-Die Extraktion verwendet standardmäßig `gpt-5.6-luna`; eine gezielte, begrenzte Nachprüfung verwendet `gpt-5.4-mini`. Q&A verwendet standardmäßig `gpt-5.6-luna` und ist über `HV_DECLARATION_QA_ENABLED=false` vollständig abschaltbar. Dann bleiben Dokumentliste, Regeln und deterministische Suche verfügbar, während Fragen klar als nicht verfügbar beantwortet werden.
+Inhaltliche Outcomes, Transportfehler und Usage-Metering sind getrennte
+Klassen; sie dürfen nicht als ein „vier Outcomes“-Schema zusammengezogen
+werden:
 
-Beim Import werden nur nach der lokalen Vorprüfung zugelassene Text- oder OCR-Abschnitte der hochgeladenen PDF-Seiten in begrenzten Batches an den Provider gesendet. Bei Q&A werden nur die normalisierte Frage sowie maximal `HV_DECLARATION_QA_MAX_HITS` freigegebene, zum Gebäude gehörende Fakten und Regeln samt erlaubten Fakt-, Regel- und Quellen-IDs sowie exakten Seitenbelegen gesendet. Es gibt keine Tools und keinen Zugriff auf andere Gebäude, Entwürfe oder Systeme. Der Upload-Dialog weist vor dem Start sichtbar auf diese Übertragung hin.
+| Klasse | Behandlung |
+| --- | --- |
+| `PROVIDER_REFUSAL` | keine Schema-Reparatur und kein Datenretransmit; bestehende Workerpolitik |
+| `PROVIDER_INCOMPLETE` | eigener, begrenzter Worker-Retry; keine Schema-Reparatur |
+| `PROVIDER_SCHEMA_FAILURE` | genau ein schema-only repair mit demselben begrenzten Input; danach endgültiger Fehler |
+| `PROVIDER_TIMEOUT`, `PROVIDER_CONNECTION_ERROR`, `PROVIDER_RATE_LIMIT`, `PROVIDER_SERVER_ERROR`, `OPENAI_REQUEST_FAILED` | Transportgruppe; Retrybarkeit folgt dem einzelnen stabilen Code und der Workerpolitik |
+| `PROVIDER_USAGE_INVALID` (im OpenAI-Adapter konkret `OPENAI_USAGE_INVALID`) | separates Usage-Metering; Kosten-/Usage-Contract fail closed, keine Veröffentlichung |
 
-Beide Adapter setzen `store=false`. Persistiert werden nur technische, sanitisierte Metadaten wie Status, Modell, Token, Kosten, Latenz, Fehlerklasse und Retry-Zähler. Fragen, Zitate, Quelltexte, Antworten, Provider-Payloads, API-Schlüssel und personenbezogene Inhalte gehören nicht in Logs, Budgetabrechnungen oder Support-Tickets.
+Der Worker beansprucht Aufträge tenantweise mit Lease, Token und Generation.
+Heartbeats verlängern nur die aktuelle Generation. Bei Unterbruch oder
+retryfähigem Fehler geht der Auftrag in `RETRY_WAIT`; verspätete Ergebnisse
+können nicht publizieren. `POST /api/declaration-imports/{id}/retry` ist nur
+für retryfähige Fehler vorgesehen; `cancel` sperrt den aktuellen Lease. Vor
+einem Retry Kosten-/Tokenzähler, Fehlerklasse und Limits prüfen, nicht blind
+wiederholen.
 
-## Worker, Wiederherstellung und Review
+## Dienste, Wiederherstellung und Status
 
-Der Worker beansprucht Aufträge tenantweise mit einem Lease. Jeder Claim hat einen Token und eine Generation; Heartbeats verlängern das Lease nur im gültigen Generation-Kontext. Nach Ablauf kann ein anderer Worker sicher neu beanspruchen, weil verspätete Ergebnisse durch diese Einzäunung nicht mehr publizieren können. `HV_DECLARATION_LEASE_SECONDS`, Polling-Intervall und `HV_DECLARATION_MAX_ATTEMPTS` begrenzen die Wiederherstellung. Bei Unterbruch oder transientem OCR-/Provider-Fehler wartet der Auftrag in `RETRY_WAIT` und ist erst zum hinterlegten Zeitpunkt erneut beanspruchbar.
-
-`POST /api/declaration-imports/{id}/retry` ist nur für retryfähige Fehler (`OCR_TIMEOUT`, `WORKER_INTERRUPTED`, `PROVIDER_TIMEOUT`, `PROVIDER_RATE_LIMIT`, `PROVIDER_SERVER_ERROR`) vorgesehen. `POST /api/declaration-imports/{id}/cancel` sperrt den gerade arbeitenden Lease und verhindert damit eine spätere Veröffentlichung dieses Laufs. Nicht blind wiederholen: Fehlercode, Kosten- und Tokenzähler, Seiten- und Größenlimits zuerst prüfen.
-
-Ein erfolgreicher Lauf endet in `NEEDS_REVIEW`, nicht in einer Anwendung. Prüfende Personen vergleichen jeden vorgeschlagenen Fakt und jede Regel mit den angegebenen PDF-Seiten, bearbeiten oder verwerfen bei Bedarf und tragen die fachliche Verantwortung für die Freigabe. Regeln mit Konflikten bleiben als `NEEDS_CLARIFICATION` sichtbar und sind keine automatische Rechtsauskunft.
-
-MEA-Werte sind exakt als Zähler/Nenner zu behandeln. `CONFIRMED` bedeutet, dass die kanonische Skala für das Gebäude fachlich bestätigt wurde; `LEGACY_UNCONFIRMED` bedeutet, dass ältere Werte vorhanden sind, aber keine Skala stillschweigend ergänzt oder umgerechnet werden darf. Änderungen von MEA oder ihrer Skala erfordern die vorgesehene Bestätigung im Review.
-
-## Lokale API und Worker
-
-Für eine lokale API verwenden Sie die drei Testdatenbank-URLs aus dem nächsten Abschnitt und starten in einer zweiten Shell:
+Für lokale Entwicklung laufen API und Import-Worker getrennt:
 
 ```bash
 cd backend
 HV_SESSION_COOKIE_SECURE=false ./.venv/bin/uvicorn app.main:app --reload
 ```
 
-Der produktive Extraktionsprozess läuft getrennt davon:
-
 ```bash
 cd backend
 ./.venv/bin/python -m app.workers.declaration_import
 ```
 
-`FakeDeclarationProvider` und der Fake-Q&A-Provider sind ausschließlich Test-Injektionen, keine Produktionsschalter. Status- und Kandidaten-Endpunkte benötigen eine berechtigte, angemeldete Sitzung; bei der Diagnose nur die Metadaten aus dem Abschnitt „Status sicher prüfen“ verwenden.
+Im Betrieb werden beide Dienste mit einem geschützten externen Env-File
+gestartet:
 
-## Lokale Tests und Evaluationen
+```bash
+docker compose --env-file /absoluter/pfad/hausverwaltung.env \
+  -f docker-compose.prod.yml up -d app worker
+```
 
-Alle normalen Tests verwenden synthetische, redigierte Daten und machen keine Netzwerk-Anfrage. Die flüchtige Testdatenbank läuft ausschließlich auf Port 55432:
+Vor einem Restore Datenbank und `documents`-Volume als konsistentes Paar
+sichern und auch nur aus derselben Sicherungsgeneration wiederherstellen. Nach
+dem Restore PostgreSQL-Integrität und gespeicherte SHA-256-Werte prüfen, dann
+API und Worker starten. Ein einseitiger Restore kann Dokumentreferenzen und
+Speicherinhalt auseinanderziehen und ist kein gültiger Wiederherstellungspfad.
+Statusdiagnosen verwenden ausschließlich Metadaten wie `status`,
+`error_code`, `current_stage`, Tokens, geschätzte Kosten und Attempts —
+nie Dokumenttext oder Provider-Payloads.
+
+Das dauerhafte Pass-Ledger hat **eine Zeile pro SDK-Attempt**. Es referenziert
+`declaration_extraction_run_id`; der Repository-Aufruf heißt
+`append_pass_entries`. Die Pipeline leert ihre Queue erst nach einem
+committeten Checkpoint, Fail- oder Publish-Übergang. Die Tabelle ist
+tenant-isoliert per RLS, append-only und die Datenbank validiert exakt 23
+sichere JSON-Felder, Typen, Allowlists und die Bindung der Attempt-Nummer.
+Python- und DB-Contract müssen deshalb gemeinsam geändert werden.
+
+Zulässig sind nur technische Metadaten wie Pass-ID, Attempt-Nummer, Modell,
+Reasoning-Effort, Prompt-/Schema-/Harness-Version und -Hash, Tokenpartition,
+geschätzte Kosten, Latenz, Retry-Zähler, `route_action`, Reason-Codes und
+Failure-Class. Unzulässig sind Prompttext, OCR-/PDF-Text, Quote, Bild,
+Antwortkörper, lokaler Pfad, Tenant-/Property-/User-ID, Header, API-Key und
+Exception-Text. Status-Endpunkte bleiben bei ihren aggregierten Metadaten.
+
+## Caching, Kosten und Provider-Daten
+
+Luna setzt den statischen Developer-Block vor dynamische Dokumentdaten und
+verwendet einen expliziten Cache-Breakpoint sowie einen 30-Minuten-Cache. Der
+stabile Schlüssel enthält nur Modell, Pass sowie Prompt-, Schema- und
+Harness-Version/-Hash. Mini erhält **kein** explizites Caching. Die
+Konfiguration für Luna-Cache-Writes ist
+`declaration_primary_cache_write_multiplier` beziehungsweise
+`HV_DECLARATION_PRIMARY_CACHE_WRITE_MULTIPLIER` und ist auf `1.25` validiert.
+
+Kosten werden konservativ aus gewöhnlichen Input-, Cached-Input-,
+Cache-Write- und Output-Tokens berechnet. Ungültige Partitionen, negative
+Zähler, fehlende Raten oder Cache-Writes für Mini führen fail closed zu
+`PROVIDER_USAGE_INVALID`; eine günstigere Schätzung rechtfertigt keinen
+Qualitätsverlust.
+
+`HV_OPENAI_API_KEY` ist ein ausschließlich serverseitiges Deployment-Secret:
+nie Frontend, Git, Projekt-`.env`, Browser oder Ticket. Nur nach lokaler
+Vorprüfung werden begrenzte zulässige Seiteninhalte an den Provider gesendet.
+`store=false` wird gesetzt, **ist nicht ZDR** und löst keine Retention-Zusage
+aus. API-Daten werden standardmäßig nicht zum Training verwendet; ohne
+genehmigte weitergehende Kontrollen kann Abuse Monitoring Inhalte bis zu 30
+Tage halten. Vor Produktion müssen AVV/DPA, Region/Data Residency,
+Retention-/ZDR-Eignung, Berechtigungen und DSGVO-Bewertung geprüft und
+dokumentiert sein.
+
+## Review und fachliche Grenzen
+
+Ein erfolgreicher Lauf endet in `NEEDS_REVIEW`, niemals in einer Anwendung.
+Prüfende vergleichen jeden Fakt und jede Regel mit den Seitenbelegen, bearbeiten
+oder verwerfen den Entwurf und übernehmen erst danach die Verantwortung.
+Konflikte bleiben `NEEDS_CLARIFICATION`; das System erteilt keine
+Rechtsauskunft. MEA sind als Zähler/Nenner zu behandeln; eine Skala wird nie
+stillschweigend ergänzt oder umgerechnet.
+
+## Lokale Tests und Gold-Evals
+
+Normale Tests nutzen nur synthetische/redigierte Daten und keine Netzwerkaufrufe.
+Die flüchtige Testdatenbank läuft nur auf Port 55432:
 
 ```bash
 docker compose -p hv-declaration-tests -f infra/docker-compose.declaration-test.yml up -d --wait
@@ -76,34 +210,83 @@ cd backend
 ./.venv/bin/python -m app.evals.declaration_knowledge --fixtures tests/fixtures/declaration_eval_cases.json --provider fake
 ```
 
-Der Fake-Report enthält nur Kennzahlen und schlägt bei festgelegten Qualitäts- oder Sicherheitsgrenzen fehl. Für einen realen, lokalen Smoke-Test wird eine **externe**, nicht versionierte Manifestdatei mit neutralen Case-IDs auf absolute lokale Pfade und deren SHA-256-Hash angelegt. Manifestdatei, PDFs und erzeugte Reports dürfen nie ins Repository gelangen. Der Lauf benötigt gleichzeitig (1) `--provider live --live`, (2) `HV_DECLARATION_LIVE_EVAL=1` sowie einen nichtleeren serverseitigen Schlüssel und (3) `HV_DECLARATION_REAL_PDF_MANIFEST`, das exakt zum übergebenen externen Manifest passt. Der Zielordner für den bereinigten Bericht wird explizit außerhalb des Repositories gewählt. Fehlt eine dieser Sperren, wird kein Dokument geöffnet oder an einen Provider übertragen.
+Promotion ist fail closed. Das Goldset benötigt mindestens die neutralen IDs
+`gold-units-mea`, `gold-heating-amendment` und
+`gold-adversarial-evidence` sowie die festen Vergleichslabels `luna_medium`,
+`luna_low`, `terra_primary` und `luna_with_mini_router`. Qualität darf in
+keiner repräsentativen Dimension regressieren; niedrigere Kosten kompensieren
+das nicht. Ungelabelte reale PDFs liefern höchstens einen beschreibenden
+Smoke-Report, **keine Accuracy-Aussage und keine Promotion**.
+
+Ein echter PDF-Smoke ist nie automatisch auszuführen und erzeugt nur einen
+`descriptive_only`-Report: Er ist nicht promotionfähig. Er erfordert eine
+separate explizite Autorisierung und vergleicht exakt `luna_medium`,
+`luna_low`, `terra_primary` und `luna_with_mini_router`.
+
+**Phase A — Aktivierung und Werte:** Vor **jeder Path-Methode** werden exakt
+`HV_DECLARATION_LIVE_EVAL=1`, ein serverseitiger API-Key,
+`--provider live --live --compare-models`, ein nichtleerer Wert für
+`HV_DECLARATION_REAL_PDF_MANIFEST` und die drei positiven, vom Aufrufer
+verifizierten Terra-Raten geprüft. Fehlt oder ist einer dieser Werte ungültig,
+findet kein Path-/Manifest-/PDF-/Providerzugriff und keine Übertragung statt.
+
+**Phase B — lokale externe Eingabeprüfung:** Erst danach werden Report- und
+Manifestpfad lokal geprüft: beide müssen extern liegen, das übergebene Manifest
+muss exakt `HV_DECLARATION_REAL_PDF_MANIFEST` entsprechen, Case-Limits
+einhalten und pro Case die SHA-256-Prüfung bestehen. In dieser Phase werden
+Manifest und deklarierte PDFs lokal gelesen und gehasht. Ein abweichender Hash
+verhindert Capability, Adapter, Provider und Übertragung — er behauptet nicht,
+dass die Datei nie geöffnet wurde. Erst nach erfolgreicher Phase B wird die
+Capability erzeugt und ein Adapter konstruiert. Manifest, PDFs und Bericht
+gehören nie ins Repository.
 
 ```bash
 cd backend
 ./.venv/bin/python -m app.evals.declaration_knowledge \
-  --provider live --live --manifest /absoluter/pfad/manifest.json \
-  --report-dir /absoluter/pfad/berichte
+  --fixtures tests/fixtures/declaration_eval_cases.json \
+  --provider live --live --compare-models \
+  --manifest /absoluter/externer/pfad/manifest.json \
+  --report-dir /absoluter/externer/pfad/berichte
 ```
 
-## Betrieb und Wiederherstellung
+Die drei Phase-A-Raten heißen
+`HV_DECLARATION_COMPARE_TERRA_INPUT_USD_PER_MILLION`,
+`HV_DECLARATION_COMPARE_TERRA_OUTPUT_USD_PER_MILLION` und
+`HV_DECLARATION_COMPARE_TERRA_CACHED_INPUT_USD_PER_MILLION`. Das externe
+Die Präsenz von `HV_DECLARATION_REAL_PDF_MANIFEST` ist ein Phase-A-Gate; erst
+in Phase B wird sein Wert als absoluter externer Pfad auf Gleichheit mit dem
+übergebenen Manifest geprüft und anschließend lokal validiert.
 
-Die Compose-Installation führt API und Worker getrennt aus:
+## Forschungseinordnung
 
-```bash
-docker compose --env-file /absoluter/pfad/hausverwaltung.env \
-  -f docker-compose.prod.yml up -d app worker
-```
+Die Struktur folgt [Harness Engineering](https://openai.com/index/harness-engineering/):
+Repo-Legibilität, erzwingbare Grenzen, Tests und Evals — nicht Autonomie.
+Die Modell-, Vision-, Structured-Output-, Cache- und Datenhinweise sind an den
+[Latest model guide](https://developers.openai.com/api/docs/guides/latest-model),
+[GPT-5.4 Mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini),
+[Vision](https://developers.openai.com/api/docs/guides/images-vision),
+[Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs),
+[Prompt Caching](https://developers.openai.com/api/docs/guides/prompt-caching)
+und [Your data](https://developers.openai.com/api/docs/guides/your-data)
+ausgerichtet. Datenschutz- und Betriebsannahmen müssen zusätzlich gegen die
+[Business-data-Hinweise](https://openai.com/business-data/) des gewählten
+Vertrags geprüft werden. [Evals](https://openai.com/index/evals-drive-next-chapter-of-ai/)
+begründen die fail-closed Promotion statt einer Kostenentscheidung nach Gefühl.
+Die Routing-Literatur ([RouteLLM](https://proceedings.iclr.cc/paper_files/paper/2025/file/5503a7c69d48a2f86fc00b3dc09de686-Paper-Conference.pdf),
+[RouterEval](https://aclanthology.org/2025.findings-emnlp.208.pdf)) motiviert
+Vergleich und Messung; ohne repräsentative gelabelte Daten bleibt das
+Produktionsrouting bewusst deterministisch. Die Dokumentgrenze folgt außerdem
+den Empfehlungen zu [Prompt-Injection-Resistenz](https://openai.com/index/designing-agents-to-resist-prompt-injection/).
 
-Der Worker besitzt weder einen Port noch Migrations- oder Session-Secrets; beide Dienste können auf die gemeinsame Dokumentablage zugreifen. Vor einem Update werden die Datenbank **und** das `documents`-Volume als konsistentes Paar gesichert. Ein Wiederherstellungsplan sichert zuerst Schreibzugriffe, restauriert Datenbank und Dokumentvolume aus derselben Sicherungsgeneration, prüft die PostgreSQL-Integrität und die dokumentierten SHA-256-Werte und startet erst danach API/Worker. Ein Restore nur einer Seite kann Datenbank-Referenzen und gespeicherte PDFs auseinanderziehen und ist daher kein gültiger Restore.
+## Betrieb sauber beenden
 
-## Status sicher prüfen und sauber beenden
-
-Die Statusantwort enthält nur Metadaten. Relevante Felder sind `status`, `error_code`, `current_stage`, `input_tokens`, `output_tokens`, `estimated_cost_usd`, `attempt_count` und `max_cost_usd`. Bei `FAILED` oder `RETRY_WAIT` wird mit diesen Metadaten gearbeitet, nicht mit Dokumenttexten.
-
-Lokal gestartete Uvicorn- und Worker-Prozesse werden im jeweiligen Vordergrundterminal mit `Ctrl-C` beendet. Die isolierte Testdatenbank nur über ihren exakten Projektnamen stoppen:
+Lokal gestartete API- und Worker-Prozesse werden im jeweiligen Vordergrund mit
+`Ctrl-C` beendet. Die isolierte Testdatenbank nur mit ihrem exakten
+Projektnamen stoppen:
 
 ```bash
 docker compose -p hv-declaration-tests -f infra/docker-compose.declaration-test.yml down
 ```
 
-Die bereitgestellten Referenz-PDFs bleiben lokal; sie werden weder nach Git noch in Test-Fixtures kopiert und nicht ohne den expliziten Live-Eval-Lauf an einen Provider übertragen.
+Echte Nutzer-PDFs, Manifestdaten, API-Schlüssel und Provider-Payloads bleiben
+außerhalb von Git, Test-Fixtures, Reports, Logs und Tickets.

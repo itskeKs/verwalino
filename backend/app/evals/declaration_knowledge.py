@@ -22,14 +22,37 @@ from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Protocol, Sequence, runtime_checkable
+from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence, runtime_checkable
 
 
 _METRIC_QUANTUM = Decimal("0.000001")
 _SAFE_CASE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
-_SAFE_PASS_ID = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+_SAFE_PASS_ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _SAFE_FAILURE_CLASS = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
-_FORBIDDEN_FIXTURE_KEY_PARTS = ("source_text", "quote", "path", "pdf", "signature")
+_SAFE_MODEL_ID = re.compile(r"^[a-z0-9.-]{1,128}$")
+_FORBIDDEN_FIXTURE_KEY_PARTS = ("source_text", "path", "pdf", "signature")
+_QUOTE_HASH = re.compile(r"^[a-f0-9]{64}$")
+_COMPARISON_LABELS = (
+    "luna_medium",
+    "luna_low",
+    "terra_primary",
+    "luna_with_mini_router",
+)
+_ROUTE_ACTIONS = frozenset({"NONE", "VISION_RECHECK", "HUMAN_REVIEW"})
+_ROUTE_REASON_CODES = frozenset(
+    {
+        "EVIDENCE_QUOTE_NOT_FOUND",
+        "LOW_PAGE_QUALITY",
+        "PROVIDER_REFUSAL",
+        "PROVIDER_INCOMPLETE",
+        "PROVIDER_TIMEOUT",
+        "PROVIDER_SCHEMA_FAILURE",
+        "UNKNOWN_EVIDENCE_DOCUMENT",
+        "EVIDENCE_PAGE_OUT_OF_RANGE",
+        "DOMAIN_BLOCKER",
+    }
+)
+_LIVE_CAPABILITY_SEAL = object()
 
 
 def _metric(numerator: int, denominator: int) -> Decimal:
@@ -63,6 +86,18 @@ def _positive_int(value: Any, *, field_name: str, allow_zero: bool = True) -> in
 def _canonical_json(value: Any) -> str:
     _reject_float_values(value)
     return json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+
+
+def _normalized_quote_hash(value: str) -> str:
+    """Hash a quote transiently with the product evidence normalization."""
+    if not isinstance(value, str):
+        raise ValueError("evidence quote must be a string")
+    from app.declarations.evidence import normalize_evidence_text
+
+    normalized = normalize_evidence_text(value)
+    if not normalized:
+        raise ValueError("evidence quote must not be empty")
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def _reject_float_values(value: Any) -> None:
@@ -225,6 +260,8 @@ class EvaluationPass:
     latency_ms: int
     retry_count: int
     failure_class: str | None
+    route_action: str = "NONE"
+    route_reason_codes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.pass_id, str) or not _SAFE_PASS_ID.fullmatch(self.pass_id):
@@ -244,6 +281,12 @@ class EvaluationPass:
             or not _SAFE_FAILURE_CLASS.fullmatch(self.failure_class)
         ):
             raise ValueError("failure_class must be a sanitized string or null")
+        if not isinstance(self.route_action, str) or self.route_action not in _ROUTE_ACTIONS:
+            raise ValueError("route_action must be a safe router action")
+        if not isinstance(self.route_reason_codes, tuple) or any(
+            reason not in _ROUTE_REASON_CODES for reason in self.route_reason_codes
+        ):
+            raise ValueError("route_reason_codes must be safe router reasons")
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -254,6 +297,8 @@ class EvaluationPass:
             "latency_ms": self.latency_ms,
             "retry_count": self.retry_count,
             "failure_class": self.failure_class,
+            "route_action": self.route_action,
+            "route_reason_codes": list(self.route_reason_codes),
         }
 
 
@@ -270,6 +315,9 @@ def _coerce_pass(value: EvaluationPass | Mapping[str, Any]) -> EvaluationPass:
         not isinstance(failure_class, str) or not _SAFE_FAILURE_CLASS.fullmatch(failure_class)
     ):
         raise ValueError("failure_class must be a string or null")
+    raw_route_reasons = value.get("route_reason_codes", ())
+    if not isinstance(raw_route_reasons, Sequence) or isinstance(raw_route_reasons, (str, bytes)):
+        raise ValueError("route_reason_codes must be a list")
     return EvaluationPass(
         pass_id=pass_id,
         input_tokens=_positive_int(value.get("input_tokens"), field_name="input_tokens"),
@@ -278,6 +326,8 @@ def _coerce_pass(value: EvaluationPass | Mapping[str, Any]) -> EvaluationPass:
         latency_ms=_positive_int(value.get("latency_ms"), field_name="latency_ms"),
         retry_count=_positive_int(value.get("retry_count"), field_name="retry_count"),
         failure_class=failure_class,
+        route_action=value.get("route_action", "NONE"),
+        route_reason_codes=tuple(raw_route_reasons),
     )
 
 
@@ -293,13 +343,46 @@ def gold_case(
     retrieval_relevant_ids: set[str] | None = None,
     expected_supported_source_ids: set[str] | None = None,
     tenant_id: str = "tenant-eval",
+    evidence_quotes: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
+    safe_rules = deepcopy([dict(item) for item in rules])
+    rules_by_id = {item.get("id"): item for item in safe_rules}
+    for item in evidence_quotes:
+        quote = _as_mapping(item, label="evidence quote")
+        rule_id, source_id, page, raw_quote = (
+            quote.get("rule_id"),
+            quote.get("source_id"),
+            quote.get("page"),
+            quote.get("quote"),
+        )
+        if (
+            not isinstance(rule_id, str)
+            or rule_id not in rules_by_id
+            or not isinstance(source_id, str)
+            or not source_id
+        ):
+            raise ValueError("evidence quote requires a known rule and source")
+        page_number = _positive_int(page, field_name="evidence quote page", allow_zero=False)
+        quote_hash = _normalized_quote_hash(raw_quote)
+        evidence = rules_by_id[rule_id].get("evidence")
+        if not isinstance(evidence, list):
+            raise ValueError("evidence quote rule requires evidence")
+        for citation in evidence:
+            if (
+                isinstance(citation, Mapping)
+                and citation.get("source_id") == source_id
+                and citation.get("page") == page_number
+            ):
+                citation["quote_hash"] = quote_hash
+                break
+        else:
+            raise ValueError("evidence quote must reference rule evidence")
     return {
         "id": case_id,
         "allowed_source_ids": sorted(allowed_source_ids),
         "expected_status": expected_status,
         "core_facts": [_coerce_fact(item).as_dict() for item in core_facts],
-        "rules": [dict(item) for item in rules],
+        "rules": safe_rules,
         "document_rule_relations": [list(item) for item in document_rule_relations],
         "blockers": sorted(blockers or set()),
         "retrieval_relevant_ids": sorted(retrieval_relevant_ids or set()),
@@ -352,10 +435,11 @@ def _rule_index(items: Any) -> dict[str, Mapping[str, Any]]:
     return indexed
 
 
-def _evidence_pairs(rule: Mapping[str, Any]) -> set[tuple[str, int]]:
+def _evidence_entries(rule: Mapping[str, Any]) -> tuple[tuple[str, int, str | None], ...]:
     evidence = rule.get("evidence", [])
     if not isinstance(evidence, Sequence) or isinstance(evidence, (str, bytes)):
         raise ValueError("rule evidence must be a list")
+    entries: set[tuple[str, int, str | None]] = set()
     pairs: set[tuple[str, int]] = set()
     for item in evidence:
         source = _as_mapping(item, label="evidence")
@@ -363,11 +447,36 @@ def _evidence_pairs(rule: Mapping[str, Any]) -> set[tuple[str, int]]:
         page = source.get("page")
         if not isinstance(source_id, str) or not source_id:
             raise ValueError("evidence requires source_id")
-        pair = (source_id, _positive_int(page, field_name="page", allow_zero=False))
-        if pair in pairs:
+        quote_hash = source.get("quote_hash")
+        if quote_hash is not None and (
+            not isinstance(quote_hash, str) or not _QUOTE_HASH.fullmatch(quote_hash)
+        ):
+            raise ValueError("evidence quote_hash must be lowercase SHA-256")
+        if any("quote" in str(key).lower() and key != "quote_hash" for key in source):
+            raise ValueError("evidence must not retain raw quote content")
+        entry = (
+            source_id,
+            _positive_int(page, field_name="page", allow_zero=False),
+            quote_hash,
+        )
+        pair = entry[:2]
+        if entry in entries or pair in pairs:
             raise ValueError("duplicate rule evidence is invalid")
+        entries.add(entry)
         pairs.add(pair)
-    return pairs
+    return tuple(sorted(entries))
+
+
+def _evidence_pairs(rule: Mapping[str, Any]) -> set[tuple[str, int]]:
+    return {(source_id, page) for source_id, page, _quote_hash in _evidence_entries(rule)}
+
+
+def _evidence_quote_set(rule: Mapping[str, Any]) -> set[tuple[str, int, str]]:
+    return {
+        (source_id, page, quote_hash)
+        for source_id, page, quote_hash in _evidence_entries(rule)
+        if quote_hash is not None
+    }
 
 
 def _relation_set(value: Any) -> set[tuple[str, str]]:
@@ -447,7 +556,31 @@ class CaseEvaluationReport:
     core: CoreFactMetrics
     rule_topic_coverage: Decimal
     rule_structured_effect_match: Decimal
+    rule_structured_effect_exact_matches: int
+    rule_structured_effect_expected_count: int
+    rule_structured_effect_actual_count: int
     rule_evidence_page_accuracy: Decimal
+    evidence_page_exact_matches: int
+    evidence_page_expected_count: int
+    evidence_page_actual_count: int
+    evidence_quote_text_accuracy: Decimal
+    evidence_quote_exact_matches: int
+    evidence_quote_expected_count: int
+    evidence_quote_actual_count: int
+    heating_effect_accuracy: Decimal
+    heating_effect_exact_matches: int
+    heating_effect_expected_count: int
+    heating_effect_actual_count: int
+    amendment_effect_accuracy: Decimal
+    amendment_effect_exact_matches: int
+    amendment_effect_expected_count: int
+    amendment_effect_actual_count: int
+    adversarial_data_outcome: Decimal
+    adversarial_expected_count: int
+    adversarial_exact_matches: int
+    mini_router_compliance: Decimal
+    mini_router_expected_count: int
+    mini_router_exact_matches: int
     document_rule_relation_precision: Decimal
     document_rule_relation_recall: Decimal
     blocker_recall: Decimal
@@ -466,6 +599,7 @@ class CaseEvaluationReport:
     failure_classes: tuple[str, ...]
     tenant_leakage_count: int
     unit_assignment_coverage: Decimal
+    unit_assignment_expected_count: int
     passes: tuple[EvaluationPass, ...]
 
     def as_dict(self) -> dict[str, Any]:
@@ -485,7 +619,31 @@ class CaseEvaluationReport:
             },
             "rule_topic_coverage": str(self.rule_topic_coverage),
             "rule_structured_effect_match": str(self.rule_structured_effect_match),
+            "rule_structured_effect_exact_matches": self.rule_structured_effect_exact_matches,
+            "rule_structured_effect_expected_count": self.rule_structured_effect_expected_count,
+            "rule_structured_effect_actual_count": self.rule_structured_effect_actual_count,
             "rule_evidence_page_accuracy": str(self.rule_evidence_page_accuracy),
+            "evidence_page_exact_matches": self.evidence_page_exact_matches,
+            "evidence_page_expected_count": self.evidence_page_expected_count,
+            "evidence_page_actual_count": self.evidence_page_actual_count,
+            "evidence_quote_text_accuracy": str(self.evidence_quote_text_accuracy),
+            "evidence_quote_exact_matches": self.evidence_quote_exact_matches,
+            "evidence_quote_expected_count": self.evidence_quote_expected_count,
+            "evidence_quote_actual_count": self.evidence_quote_actual_count,
+            "heating_effect_accuracy": str(self.heating_effect_accuracy),
+            "heating_effect_exact_matches": self.heating_effect_exact_matches,
+            "heating_effect_expected_count": self.heating_effect_expected_count,
+            "heating_effect_actual_count": self.heating_effect_actual_count,
+            "amendment_effect_accuracy": str(self.amendment_effect_accuracy),
+            "amendment_effect_exact_matches": self.amendment_effect_exact_matches,
+            "amendment_effect_expected_count": self.amendment_effect_expected_count,
+            "amendment_effect_actual_count": self.amendment_effect_actual_count,
+            "adversarial_data_outcome": str(self.adversarial_data_outcome),
+            "adversarial_expected_count": self.adversarial_expected_count,
+            "adversarial_exact_matches": self.adversarial_exact_matches,
+            "mini_router_compliance": str(self.mini_router_compliance),
+            "mini_router_expected_count": self.mini_router_expected_count,
+            "mini_router_exact_matches": self.mini_router_exact_matches,
             "document_rule_relation_precision": str(self.document_rule_relation_precision),
             "document_rule_relation_recall": str(self.document_rule_relation_recall),
             "blocker_recall": str(self.blocker_recall),
@@ -504,6 +662,7 @@ class CaseEvaluationReport:
             "failure_classes": list(self.failure_classes),
             "tenant_leakage_count": self.tenant_leakage_count,
             "unit_assignment_coverage": str(self.unit_assignment_coverage),
+            "unit_assignment_expected_count": self.unit_assignment_expected_count,
             "passes": [item.as_dict() for item in self.passes],
         }
 
@@ -529,11 +688,39 @@ def evaluate_case(*, gold: Mapping[str, Any], actual: Mapping[str, Any]) -> Case
         if rule_id in actual_rules
         and _canonical_json(rule.get("effect", {})) == _canonical_json(actual_rules[rule_id].get("effect", {}))
     )
+    expected_evidence_pages = {
+        (rule_id, source_id, page)
+        for rule_id, rule in gold_rules.items()
+        for source_id, page in _evidence_pairs(rule)
+    }
+    actual_evidence_pages = {
+        (rule_id, source_id, page)
+        for rule_id, rule in actual_rules.items()
+        for source_id, page in _evidence_pairs(rule)
+    }
     evidence_matches = sum(
         1
         for rule_id, rule in gold_rules.items()
         if rule_id in actual_rules and _evidence_pairs(rule) == _evidence_pairs(actual_rules[rule_id])
     )
+    expected_quote_evidence = {
+        item for rule in gold_rules.values() for item in _evidence_quote_set(rule)
+    }
+    actual_quote_evidence = {
+        item for rule in actual_rules.values() for item in _evidence_quote_set(rule)
+    }
+    quote_exact_matches = len(expected_quote_evidence & actual_quote_evidence)
+    expected_heating_effects = {
+        (rule_id, _canonical_json(rule.get("effect", {})))
+        for rule_id, rule in gold_rules.items()
+        if rule.get("topic") == "heating_costs"
+    }
+    actual_heating_effects = {
+        (rule_id, _canonical_json(rule.get("effect", {})))
+        for rule_id, rule in actual_rules.items()
+        if rule.get("topic") == "heating_costs"
+    }
+    heating_exact_matches = len(expected_heating_effects & actual_heating_effects)
 
     expected_relations = _relation_set(gold.get("document_rule_relations", ()))
     actual_relations = _relation_set(actual.get("document_rule_relations", ()))
@@ -594,6 +781,46 @@ def evaluate_case(*, gold: Mapping[str, Any], actual: Mapping[str, Any]) -> Case
     actual_assignments = _assignment_ids(actual.get("assignments", {}))
     expected_lineage = _lineage_ids(gold.get("amendment_lineage", {}))
     actual_lineage = _lineage_ids(actual.get("amendment_lineage", {}))
+    amendment_exact_matches = len(expected_lineage & actual_lineage)
+    adversarial_expected = gold.get("adversarial_expected_outcome")
+    if adversarial_expected is not None and adversarial_expected not in {
+        "ANSWER",
+        "NOT_DOCUMENTED",
+        "NEEDS_CLARIFICATION",
+    }:
+        raise ValueError("adversarial_expected_outcome is invalid")
+    adversarial_marker = gold.get("adversarial_document_marker")
+    if adversarial_marker is not None and (
+        not isinstance(adversarial_marker, str)
+        or not _SAFE_PASS_ID.fullmatch(adversarial_marker)
+    ):
+        raise ValueError("adversarial document marker is invalid")
+    observed_adversarial_marker = actual.get("adversarial_marker_observed")
+    adversarial_actions = actual.get("adversarial_action_count", 0)
+    if isinstance(adversarial_actions, bool) or not isinstance(adversarial_actions, int) or adversarial_actions < 0:
+        raise ValueError("adversarial action count is invalid")
+    expected_router_action = gold.get("expected_router_action")
+    expected_router_reasons = gold.get("expected_router_reason_codes", ())
+    actual_router_action = actual.get("router_action", "NONE")
+    actual_router_reasons = actual.get("router_reason_codes", ())
+    for action, reasons, label in (
+        (expected_router_action, expected_router_reasons, "expected router"),
+        (actual_router_action, actual_router_reasons, "actual router"),
+    ):
+        if action is None and label == "expected router":
+            continue
+        if not isinstance(action, str) or action not in _ROUTE_ACTIONS:
+            raise ValueError(f"{label} action is invalid")
+        if not isinstance(reasons, Sequence) or isinstance(reasons, (str, bytes)) or any(
+            reason not in _ROUTE_REASON_CODES for reason in reasons
+        ):
+            raise ValueError(f"{label} reasons are invalid")
+    router_expected_count = int(expected_router_action is not None)
+    router_exact_matches = int(
+        expected_router_action is not None
+        and actual_router_action == expected_router_action
+        and tuple(actual_router_reasons) == tuple(expected_router_reasons)
+    )
     coverage_parts = [
         _set_coverage(set(expected_breakdown.items()), set(actual_breakdown.items())),
         _set_coverage(expected_assignments, actual_assignments),
@@ -605,7 +832,52 @@ def evaluate_case(*, gold: Mapping[str, Any], actual: Mapping[str, Any]) -> Case
         core=core,
         rule_topic_coverage=topic_coverage,
         rule_structured_effect_match=_metric(effect_matches, len(gold_rules)),
+        rule_structured_effect_exact_matches=effect_matches,
+        rule_structured_effect_expected_count=len(gold_rules),
+        rule_structured_effect_actual_count=len(actual_rules),
         rule_evidence_page_accuracy=_metric(evidence_matches, len(gold_rules)),
+        evidence_page_exact_matches=len(expected_evidence_pages & actual_evidence_pages),
+        evidence_page_expected_count=len(expected_evidence_pages),
+        evidence_page_actual_count=len(actual_evidence_pages),
+        evidence_quote_text_accuracy=_set_coverage(expected_quote_evidence, actual_quote_evidence),
+        evidence_quote_exact_matches=quote_exact_matches,
+        evidence_quote_expected_count=len(expected_quote_evidence),
+        evidence_quote_actual_count=len(actual_quote_evidence),
+        heating_effect_accuracy=_set_coverage(expected_heating_effects, actual_heating_effects),
+        heating_effect_exact_matches=heating_exact_matches,
+        heating_effect_expected_count=len(expected_heating_effects),
+        heating_effect_actual_count=len(actual_heating_effects),
+        amendment_effect_accuracy=_set_coverage(expected_lineage, actual_lineage),
+        amendment_effect_exact_matches=amendment_exact_matches,
+        amendment_effect_expected_count=len(expected_lineage),
+        amendment_effect_actual_count=len(actual_lineage),
+        adversarial_data_outcome=(
+            Decimal("1")
+            if adversarial_expected is None
+            or (
+                qa_status == adversarial_expected
+                and observed_adversarial_marker == adversarial_marker
+                and adversarial_actions == 0
+                and actual_router_action == "NONE"
+                and tuple(actual_router_reasons) == ()
+            )
+            else Decimal("0")
+        ),
+        adversarial_expected_count=0 if adversarial_expected is None else 1,
+        adversarial_exact_matches=(
+            0
+            if adversarial_expected is None
+            else int(
+                qa_status == adversarial_expected
+                and observed_adversarial_marker == adversarial_marker
+                and adversarial_actions == 0
+                and actual_router_action == "NONE"
+                and tuple(actual_router_reasons) == ()
+            )
+        ),
+        mini_router_compliance=_metric(router_exact_matches, router_expected_count),
+        mini_router_expected_count=router_expected_count,
+        mini_router_exact_matches=router_exact_matches,
         document_rule_relation_precision=_metric(relation_matches, len(actual_relations)),
         document_rule_relation_recall=_metric(relation_matches, len(expected_relations)),
         blocker_recall=_metric(len(expected_blockers & actual_blockers), len(expected_blockers)),
@@ -630,6 +902,9 @@ def evaluate_case(*, gold: Mapping[str, Any], actual: Mapping[str, Any]) -> Case
         failure_classes=tuple(sorted({item.failure_class for item in passes if item.failure_class})),
         tenant_leakage_count=tenant_leakage,
         unit_assignment_coverage=min(coverage_parts),
+        unit_assignment_expected_count=(
+            len(expected_breakdown) + len(expected_assignments)
+        ),
         passes=passes,
     )
 
@@ -645,6 +920,36 @@ class EvaluationReport:
     exact_fraction_normalization: Decimal
     retrieval_recall_at_5: Decimal
     unit_assignment_coverage: Decimal
+    evidence_quote_text_accuracy: Decimal
+    evidence_quote_exact_matches: int
+    evidence_quote_expected_count: int
+    evidence_quote_actual_count: int
+    heating_effect_accuracy: Decimal
+    heating_effect_exact_matches: int
+    heating_effect_expected_count: int
+    heating_effect_actual_count: int
+    amendment_effect_accuracy: Decimal
+    amendment_effect_exact_matches: int
+    amendment_effect_expected_count: int
+    amendment_effect_actual_count: int
+    adversarial_data_outcome: Decimal
+    adversarial_expected_count: int
+    adversarial_exact_matches: int
+    total_estimated_cost_usd: Decimal
+    mea_exact_matches: int
+    mea_expected_count: int
+    structured_rule_effect_exact_matches: int
+    structured_rule_effect_expected_count: int
+    structured_rule_effect_actual_count: int
+    structured_rule_effect_accuracy: Decimal
+    evidence_page_accuracy: Decimal
+    evidence_page_exact_matches: int
+    evidence_page_expected_count: int
+    evidence_page_actual_count: int
+    unit_assignment_expected_count: int
+    mini_router_compliance: Decimal
+    mini_router_expected_count: int
+    mini_router_exact_matches: int
 
     def with_overrides(self, **values: Any) -> "EvaluationReport":
         return replace(self, **values)
@@ -662,6 +967,36 @@ class EvaluationReport:
                 "exact_fraction_normalization": str(self.exact_fraction_normalization),
                 "retrieval_recall_at_5": str(self.retrieval_recall_at_5),
                 "unit_assignment_coverage": str(self.unit_assignment_coverage),
+                "evidence_quote_text_accuracy": str(self.evidence_quote_text_accuracy),
+                "evidence_quote_exact_matches": self.evidence_quote_exact_matches,
+                "evidence_quote_expected_count": self.evidence_quote_expected_count,
+                "evidence_quote_actual_count": self.evidence_quote_actual_count,
+                "heating_effect_accuracy": str(self.heating_effect_accuracy),
+                "heating_effect_exact_matches": self.heating_effect_exact_matches,
+                "heating_effect_expected_count": self.heating_effect_expected_count,
+                "heating_effect_actual_count": self.heating_effect_actual_count,
+                "amendment_effect_accuracy": str(self.amendment_effect_accuracy),
+                "amendment_effect_exact_matches": self.amendment_effect_exact_matches,
+                "amendment_effect_expected_count": self.amendment_effect_expected_count,
+                "amendment_effect_actual_count": self.amendment_effect_actual_count,
+                "adversarial_data_outcome": str(self.adversarial_data_outcome),
+                "adversarial_expected_count": self.adversarial_expected_count,
+                "adversarial_exact_matches": self.adversarial_exact_matches,
+                "total_estimated_cost_usd": str(self.total_estimated_cost_usd),
+                "mea_exact_matches": self.mea_exact_matches,
+                "mea_expected_count": self.mea_expected_count,
+                "structured_rule_effect_exact_matches": self.structured_rule_effect_exact_matches,
+                "structured_rule_effect_expected_count": self.structured_rule_effect_expected_count,
+                "structured_rule_effect_actual_count": self.structured_rule_effect_actual_count,
+                "structured_rule_effect_accuracy": str(self.structured_rule_effect_accuracy),
+                "evidence_page_accuracy": str(self.evidence_page_accuracy),
+                "evidence_page_exact_matches": self.evidence_page_exact_matches,
+                "evidence_page_expected_count": self.evidence_page_expected_count,
+                "evidence_page_actual_count": self.evidence_page_actual_count,
+                "unit_assignment_expected_count": self.unit_assignment_expected_count,
+                "mini_router_compliance": str(self.mini_router_compliance),
+                "mini_router_expected_count": self.mini_router_expected_count,
+                "mini_router_exact_matches": self.mini_router_exact_matches,
             },
         }
 
@@ -732,6 +1067,12 @@ class SyntheticFakeEvaluationAdapter:
 
         allowed_sources = _string_list(gold.get("allowed_source_ids", ()), label="allowed_source_ids")
         document_keys = allowed_sources or (f"source-{case_id}",)
+        passive_adversarial_marker = gold.get("adversarial_document_marker")
+        if passive_adversarial_marker is not None and (
+            not isinstance(passive_adversarial_marker, str)
+            or not _SAFE_PASS_ID.fullmatch(passive_adversarial_marker)
+        ):
+            raise ValueError("adversarial document marker must be a neutral token")
 
         def evidence(source_id: str, page: int = 1) -> EvidencePayload:
             return EvidencePayload(
@@ -815,7 +1156,11 @@ class SyntheticFakeEvaluationAdapter:
                     PageInput(
                         document_key=document_keys[0],
                         pdf_page=1,
-                        text="synthetic-evaluation",
+                        text=(
+                            "synthetic-evaluation"
+                            if passive_adversarial_marker is None
+                            else f"synthetic-evaluation marker={passive_adversarial_marker}"
+                        ),
                         quality=1,
                     ),
                 ),
@@ -847,6 +1192,19 @@ class SyntheticFakeEvaluationAdapter:
             }
             for item in reconciliation_result.output.rules
         ]
+        observed_quote_hashes = {
+            (str(rule["id"]), source_id, page): quote_hash
+            for rule in observed_rules.values()
+            for source_id, page, quote_hash in _evidence_entries(rule)
+            if quote_hash is not None
+        }
+        for rule in roundtrip_rules:
+            for citation in rule["evidence"]:
+                quote_hash = observed_quote_hashes.get(
+                    (str(rule["id"]), citation["source_id"], citation["page"])
+                )
+                if quote_hash is not None:
+                    citation["quote_hash"] = quote_hash
 
         expected_status = gold.get("expected_status")
         hits: list[KnowledgeHit] = []
@@ -930,6 +1288,12 @@ class SyntheticFakeEvaluationAdapter:
                 pass_metric("fake-reconcile", reconciliation_result),
                 pass_metric("fake-qa", knowledge_result),
             ],
+            # Read the marker back from the PageInput that the fake provider
+            # received. It is data only; no tool/action surface exists here.
+            "adversarial_marker_observed": (
+                documents[0].pages[0].text.partition(" marker=")[2] or None
+            ),
+            "adversarial_action_count": 0,
         }
 
 
@@ -951,6 +1315,35 @@ def build_report(cases: Sequence[CaseEvaluationReport]) -> EvaluationReport:
         for case in case_reports
         if case.core.mea_expected_count
     ]
+    def aggregate_exact(
+        matches_field: str, expected_field: str, actual_field: str
+    ) -> tuple[Decimal, int, int, int]:
+        matches = sum(getattr(case, matches_field) for case in case_reports)
+        expected = sum(getattr(case, expected_field) for case in case_reports)
+        actual = sum(getattr(case, actual_field) for case in case_reports)
+        return min(_metric(matches, expected), _metric(matches, actual)), matches, expected, actual
+
+    quote_accuracy, quote_matches, quote_expected, quote_actual = aggregate_exact(
+        "evidence_quote_exact_matches", "evidence_quote_expected_count", "evidence_quote_actual_count"
+    )
+    heating_accuracy, heating_matches, heating_expected, heating_actual = aggregate_exact(
+        "heating_effect_exact_matches", "heating_effect_expected_count", "heating_effect_actual_count"
+    )
+    amendment_accuracy, amendment_matches, amendment_expected, amendment_actual = aggregate_exact(
+        "amendment_effect_exact_matches", "amendment_effect_expected_count", "amendment_effect_actual_count"
+    )
+    adversarial_expected = sum(case.adversarial_expected_count for case in case_reports)
+    adversarial_matches = sum(case.adversarial_exact_matches for case in case_reports)
+    rule_effect_accuracy, rule_effect_matches, rule_effect_expected, rule_effect_actual = aggregate_exact(
+        "rule_structured_effect_exact_matches",
+        "rule_structured_effect_expected_count",
+        "rule_structured_effect_actual_count",
+    )
+    page_accuracy, page_matches, page_expected, page_actual = aggregate_exact(
+        "evidence_page_exact_matches", "evidence_page_expected_count", "evidence_page_actual_count"
+    )
+    router_expected = sum(case.mini_router_expected_count for case in case_reports)
+    router_matches = sum(case.mini_router_exact_matches for case in case_reports)
     return EvaluationReport(
         cases=case_reports,
         candidate_schema_validity=_metric(
@@ -965,6 +1358,40 @@ def build_report(cases: Sequence[CaseEvaluationReport]) -> EvaluationReport:
         exact_fraction_normalization=_mean(fraction_normalizations),
         retrieval_recall_at_5=_mean(case.retrieval_recall_at_5 for case in case_reports),
         unit_assignment_coverage=_mean(case.unit_assignment_coverage for case in case_reports),
+        evidence_quote_text_accuracy=quote_accuracy,
+        evidence_quote_exact_matches=quote_matches,
+        evidence_quote_expected_count=quote_expected,
+        evidence_quote_actual_count=quote_actual,
+        heating_effect_accuracy=heating_accuracy,
+        heating_effect_exact_matches=heating_matches,
+        heating_effect_expected_count=heating_expected,
+        heating_effect_actual_count=heating_actual,
+        amendment_effect_accuracy=amendment_accuracy,
+        amendment_effect_exact_matches=amendment_matches,
+        amendment_effect_expected_count=amendment_expected,
+        amendment_effect_actual_count=amendment_actual,
+        adversarial_data_outcome=_metric(adversarial_matches, adversarial_expected),
+        adversarial_expected_count=adversarial_expected,
+        adversarial_exact_matches=adversarial_matches,
+        total_estimated_cost_usd=sum(
+            (case.total_estimated_cost_usd for case in case_reports), Decimal("0")
+        ),
+        mea_exact_matches=sum(case.core.mea_exact_matches for case in case_reports),
+        mea_expected_count=sum(case.core.mea_expected_count for case in case_reports),
+        structured_rule_effect_exact_matches=rule_effect_matches,
+        structured_rule_effect_expected_count=rule_effect_expected,
+        structured_rule_effect_actual_count=rule_effect_actual,
+        structured_rule_effect_accuracy=rule_effect_accuracy,
+        evidence_page_accuracy=page_accuracy,
+        evidence_page_exact_matches=page_matches,
+        evidence_page_expected_count=page_expected,
+        evidence_page_actual_count=page_actual,
+        unit_assignment_expected_count=sum(
+            case.unit_assignment_expected_count for case in case_reports
+        ),
+        mini_router_compliance=_metric(router_matches, router_expected),
+        mini_router_expected_count=router_expected,
+        mini_router_exact_matches=router_matches,
     )
 
 
@@ -974,6 +1401,12 @@ def _reject_unsafe_fixture_content(value: Any) -> None:
             if not isinstance(key, str):
                 raise ValueError("fixture keys must be strings")
             lowered = key.lower()
+            if "quote" in lowered and lowered != "quote_hash":
+                raise ValueError("fixtures must remain sanitized")
+            if lowered == "quote_hash" and (
+                not isinstance(child, str) or not _QUOTE_HASH.fullmatch(child)
+            ):
+                raise ValueError("fixtures must use lowercase quote hashes")
             if any(part in lowered for part in _FORBIDDEN_FIXTURE_KEY_PARTS):
                 raise ValueError("fixtures must remain sanitized")
             _reject_unsafe_fixture_content(child)
@@ -1053,6 +1486,125 @@ def validate_thresholds(report: EvaluationReport) -> tuple[str, ...]:
     return tuple(failures)
 
 
+@dataclass(frozen=True)
+class ModelComparisonReport:
+    """Content-free comparison over an identical, neutral synthetic case set."""
+
+    reports: Mapping[str, EvaluationReport]
+
+    def __post_init__(self) -> None:
+        if tuple(sorted(self.reports)) != tuple(sorted(_COMPARISON_LABELS)):
+            raise ValueError("model comparison requires exactly the fixed configurations")
+        if not all(isinstance(report, EvaluationReport) for report in self.reports.values()):
+            raise ValueError("model comparison requires typed reports")
+        for report in self.reports.values():
+            case_ids = [case.case_id for case in report.cases]
+            if len(case_ids) != len(set(case_ids)):
+                raise ValueError("model comparison requires unique case IDs")
+        case_sets = {
+            label: tuple(sorted(case.case_id for case in report.cases))
+            for label, report in self.reports.items()
+        }
+        if len(set(case_sets.values())) != 1:
+            raise ValueError("model comparison requires identical case IDs")
+
+    @property
+    def case_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(case.case_id for case in self.reports["luna_medium"].cases))
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": "1",
+            "mode": "model-comparison",
+            "case_ids": list(self.case_ids),
+            "models": {
+                label: report.as_dict()["threshold_metrics"]
+                for label, report in sorted(self.reports.items())
+            },
+        }
+
+
+def validate_promotion_gates(
+    candidate: EvaluationReport,
+    baseline: EvaluationReport,
+    comparison: ModelComparisonReport | None = None,
+) -> tuple[str, ...]:
+    """Return stable gates only; a lower cost never compensates for quality."""
+    if not isinstance(candidate, EvaluationReport) or not isinstance(baseline, EvaluationReport):
+        raise ValueError("promotion gates require typed evaluation reports")
+    failures = list(validate_thresholds(candidate))
+    candidate_ids = tuple(case.case_id for case in candidate.cases)
+    baseline_ids = tuple(case.case_id for case in baseline.cases)
+    if not candidate_ids:
+        failures.append("representative_gold_required")
+    if (
+        len(candidate_ids) != len(set(candidate_ids))
+        or len(baseline_ids) != len(set(baseline_ids))
+        or candidate_ids != baseline_ids
+    ):
+        failures.append("candidate_baseline_case_ids")
+    required_case_ids = {
+        "gold-units-mea",
+        "gold-heating-amendment",
+        "gold-adversarial-evidence",
+    }
+    if not required_case_ids <= set(candidate_ids):
+        failures.append("representative_gold_coverage")
+    required_dimensions = {
+        "units_mea": candidate.mea_expected_count,
+        "unit_assignment": candidate.unit_assignment_expected_count,
+        "structured_rule_effect": candidate.structured_rule_effect_expected_count,
+        "evidence_page": candidate.evidence_page_expected_count,
+        "evidence_quote": candidate.evidence_quote_expected_count,
+        "heating_effect": candidate.heating_effect_expected_count,
+        "amendment_effect": candidate.amendment_effect_expected_count,
+        "adversarial_outcome": candidate.adversarial_expected_count,
+        "mini_router": candidate.mini_router_expected_count,
+    }
+    for dimension, denominator in required_dimensions.items():
+        if denominator <= 0:
+            failures.append(f"representative_{dimension}_required")
+    if comparison is None:
+        failures.append("model_comparison_required")
+    else:
+        comparison_ids = comparison.case_ids
+        if comparison_ids != tuple(sorted(candidate_ids)):
+            failures.append("model_comparison_case_ids")
+        elif (
+            comparison.reports["luna_low"] != candidate
+            or comparison.reports["luna_medium"] != baseline
+        ):
+            failures.append("model_comparison_detached")
+    if candidate.evidence_quote_text_accuracy != Decimal("1"):
+        failures.append("evidence_quote_text_accuracy")
+    for metric_name in (
+        "exact_fraction_normalization",
+        "unit_assignment_coverage",
+        "structured_rule_effect_accuracy",
+        "evidence_page_accuracy",
+        "heating_effect_accuracy",
+        "amendment_effect_accuracy",
+        "adversarial_data_outcome",
+        "mini_router_compliance",
+    ):
+        if getattr(candidate, metric_name) != Decimal("1"):
+            failures.append(metric_name)
+    for metric_name in (
+        "exact_fraction_normalization",
+        "retrieval_recall_at_5",
+        "unit_assignment_coverage",
+        "structured_rule_effect_accuracy",
+        "evidence_page_accuracy",
+        "mini_router_compliance",
+        "heating_effect_accuracy",
+        "amendment_effect_accuracy",
+        "adversarial_data_outcome",
+    ):
+        if getattr(candidate, metric_name) < getattr(baseline, metric_name):
+            failures.append(metric_name)
+    return tuple(dict.fromkeys(failures))
+
+
 def report_as_json(report: EvaluationReport) -> str:
     """Return metrics and neutral IDs only; never serialize fixture evidence."""
     return json.dumps(report.as_dict(), ensure_ascii=True, sort_keys=True, separators=(",", ":"))
@@ -1072,6 +1624,49 @@ class RealPdfManifestEntry:
 
 
 @dataclass(frozen=True)
+class _LiveEvaluationCapability:
+    """Unforgeable-in-normal-use token issued only after all runner gates pass."""
+
+    _seal: object
+
+    def is_valid(self) -> bool:
+        return self._seal is _LIVE_CAPABILITY_SEAL
+
+
+@dataclass(frozen=True)
+class ComparisonConfiguration:
+    """One caller-approved, comparison-only provider configuration."""
+
+    label: str
+    primary_model: str
+    reasoning_effort: str
+    mini_router_enabled: bool
+    input_usd_per_million: Decimal | None = None
+    output_usd_per_million: Decimal | None = None
+    cached_input_usd_per_million: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        if self.label not in _COMPARISON_LABELS:
+            raise ValueError("comparison configuration label is invalid")
+        if not isinstance(self.primary_model, str) or not _SAFE_MODEL_ID.fullmatch(self.primary_model):
+            raise ValueError("comparison model is invalid")
+        if self.reasoning_effort not in {"none", "low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("comparison reasoning effort is invalid")
+        if type(self.mini_router_enabled) is not bool:
+            raise ValueError("comparison router flag is invalid")
+        rates = (
+            self.input_usd_per_million,
+            self.output_usd_per_million,
+            self.cached_input_usd_per_million,
+        )
+        if self.label == "terra_primary":
+            if any(not isinstance(value, Decimal) or not value.is_finite() or value <= 0 for value in rates):
+                raise ValueError("terra comparison requires caller-verified rates")
+        elif any(value is not None for value in rates):
+            raise ValueError("only terra comparison accepts explicit rates")
+
+
+@dataclass(frozen=True)
 class LivePipelineCaseMetrics:
     """Sanitized, aggregate-only output from one bounded extraction run."""
 
@@ -1086,6 +1681,7 @@ class LivePipelineCaseMetrics:
     latency_ms: int
     retry_count: int
     failure_classes: tuple[str, ...]
+    passes: tuple[EvaluationPass, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.case_id, str) or not _SAFE_CASE_ID.fullmatch(self.case_id):
@@ -1112,6 +1708,10 @@ class LivePipelineCaseMetrics:
             for item in self.failure_classes
         ):
             raise ValueError("live failure classes must be sanitized")
+        if not isinstance(self.passes, tuple) or not all(
+            isinstance(item, EvaluationPass) for item in self.passes
+        ):
+            raise ValueError("live pass metadata must be typed and content-free")
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -1126,6 +1726,7 @@ class LivePipelineCaseMetrics:
             "latency_ms": self.latency_ms,
             "retry_count": self.retry_count,
             "failure_classes": list(self.failure_classes),
+            "passes": [item.as_dict() for item in self.passes],
         }
 
 
@@ -1142,6 +1743,45 @@ class LivePipelineReport:
 
     def as_dict(self) -> dict[str, Any]:
         return {"schema_version": "1", "mode": "live", "cases": [case.as_dict() for case in self.cases]}
+
+
+@dataclass(frozen=True)
+class LiveModelComparisonReport:
+    """A descriptive-only report; real PDFs are not labeled gold evaluations."""
+
+    reports: Mapping[str, LivePipelineReport]
+
+    def __post_init__(self) -> None:
+        if tuple(sorted(self.reports)) != tuple(sorted(_COMPARISON_LABELS)):
+            raise ValueError("live comparison requires exactly the fixed configurations")
+        if not all(isinstance(report, LivePipelineReport) for report in self.reports.values()):
+            raise ValueError("live comparison requires typed reports")
+        case_sets = {
+            label: tuple(sorted(case.case_id for case in report.cases))
+            for label, report in self.reports.items()
+        }
+        if len(set(case_sets.values())) != 1:
+            raise ValueError("live comparison requires identical case IDs")
+
+    def as_dict(self) -> dict[str, Any]:
+        case_ids = tuple(sorted(case.case_id for case in self.reports["luna_medium"].cases))
+        return {
+            "schema_version": "1",
+            "mode": "live-model-comparison",
+            "descriptive_only": True,
+            "promotion_eligible": False,
+            "stable_gates": ["UNLABELED_REAL_PDF_DESCRIPTIVE_ONLY"],
+            "model_comparison": {
+                "case_ids": list(case_ids),
+                "models": {
+                    label: {
+                        "cases": [case.as_dict() for case in sorted(report.cases, key=lambda item: item.case_id)],
+                        "aggregate": _live_aggregate(report),
+                    }
+                    for label, report in sorted(self.reports.items())
+                },
+            },
+        }
 
 
 @runtime_checkable
@@ -1161,6 +1801,20 @@ class BoundedProductionDeclarationPipelineAdapter:
     no active lease, so its durable checkpoint is intentionally a no-op.
     """
 
+    def __init__(
+        self,
+        configuration: ComparisonConfiguration | None = None,
+        *,
+        capability: _LiveEvaluationCapability | None = None,
+    ) -> None:
+        self._configuration = configuration or ComparisonConfiguration(
+            label="luna_with_mini_router",
+            primary_model="gpt-5.6-luna",
+            reasoning_effort="medium",
+            mini_router_enabled=True,
+        )
+        self._capability = capability
+
     @staticmethod
     def _read_input(entry: RealPdfManifestEntry, *, max_bytes: int) -> bytes:
         try:
@@ -1177,11 +1831,14 @@ class BoundedProductionDeclarationPipelineAdapter:
         return data
 
     async def evaluate(self, entries: Sequence[RealPdfManifestEntry]) -> LivePipelineReport:
+        if not isinstance(self._capability, _LiveEvaluationCapability) or not self._capability.is_valid():
+            raise LiveHarnessUnavailable("Bounded adapter requires a validated live capability.")
         # All imports that can construct the SDK/provider stay after explicit
         # live gates in ``run_real_pdf_smoke``.  Ordinary unit tests do not load
         # this runtime path.
         from app.core.config import settings
-        from app.declarations.openai_provider import OpenAiDeclarationProvider
+        from app.declarations.evidence import EvidenceTextIndex
+        from app.declarations.openai_provider import OpenAiDeclarationProvider, _Rates
         from app.declarations.pipeline import (
             DeclarationPipeline,
             PipelineFailure,
@@ -1201,9 +1858,36 @@ class BoundedProductionDeclarationPipelineAdapter:
             DocumentInventoryOutput,
             RuleExtractionOutput,
         )
-        from app.declarations.validation import validate_reconciliation
+        from app.declarations.validation import ValidationIssue, validate_reconciliation
 
-        provider = OpenAiDeclarationProvider()
+        runtime_updates: dict[str, Any] = {
+                "declaration_primary_model": self._configuration.primary_model,
+                "declaration_primary_reasoning_effort": self._configuration.reasoning_effort,
+                "declaration_max_recheck_calls": (
+                    settings.declaration_max_recheck_calls
+                    if self._configuration.mini_router_enabled
+                    else 0
+                ),
+            }
+        if self._configuration.label == "terra_primary":
+            runtime_updates.update(
+                {
+                    "declaration_primary_input_usd_per_million": self._configuration.input_usd_per_million,
+                    "declaration_primary_output_usd_per_million": self._configuration.output_usd_per_million,
+                    "declaration_primary_cached_input_usd_per_million": self._configuration.cached_input_usd_per_million,
+                }
+            )
+        runtime_settings = settings.model_copy(update=runtime_updates)
+        provider = OpenAiDeclarationProvider(configured_settings=runtime_settings)
+        if self._configuration.label == "terra_primary":
+            # Comparison-only caller supplied rates are deliberately not copied
+            # into application settings or production defaults.
+            provider._rates[self._configuration.primary_model] = _Rates(
+                self._configuration.input_usd_per_million,  # type: ignore[arg-type]
+                self._configuration.output_usd_per_million,  # type: ignore[arg-type]
+                self._configuration.cached_input_usd_per_million,  # type: ignore[arg-type]
+                None,
+            )
 
         class _CountingProvider:
             _METHODS = {"inventory", "extract_core", "extract_rules", "reconcile", "recheck"}
@@ -1224,18 +1908,19 @@ class BoundedProductionDeclarationPipelineAdapter:
                 return counted
 
         counting_provider = _CountingProvider(provider)
-        pipeline = DeclarationPipeline(counting_provider)
+        pipeline = DeclarationPipeline(counting_provider, configured=runtime_settings)
         metrics: list[LivePipelineCaseMetrics] = []
         try:
             for entry in entries:
                 started = time.monotonic()
                 calls_before = counting_provider.logical_calls
                 data = self._read_input(entry, max_bytes=settings.declaration_max_pdf_bytes)
+                preflight_budget = pipeline._preflight.new_import_budget()
                 result = pipeline._preflight.run_bytes(
                     data,
                     expected_sha256=entry.sha256,
                     expected_size=len(data),
-                    budget=pipeline._preflight.new_import_budget(),
+                    budget=preflight_budget,
                 )
                 pages = tuple(
                     PageInput(
@@ -1246,6 +1931,7 @@ class BoundedProductionDeclarationPipelineAdapter:
                     )
                     for artifact in result.pages
                 )
+                evidence_index = EvidenceTextIndex.from_pages(pages)
                 batches = pipeline._page_batches(pages)
                 if not batches:
                     raise LiveHarnessUnavailable("Bounded pipeline received no evaluable pages.")
@@ -1278,26 +1964,65 @@ class BoundedProductionDeclarationPipelineAdapter:
                 output = await pipeline._reconcile_bounded(inventory, core, rules, ledger)
                 page_counts = {entry.case_id: result.page_count}
                 issues = [
-                    *_validate_inventory_evidence(inventory, page_counts),
-                    *validate_reconciliation(output, page_counts, _declared_denominator(output)),
+                    *_validate_inventory_evidence(
+                        inventory, page_counts, evidence_index=evidence_index
+                    ),
+                    *validate_reconciliation(
+                        output,
+                        page_counts,
+                        _declared_denominator(output),
+                        evidence_index=evidence_index,
+                    ),
                 ]
-                selected = pipeline._selected_recheck_pages(output, issues, pages)
+                if any(issue.code == "UNKNOWN_EVIDENCE_DOCUMENT" for issue in issues):
+                    raise PipelineFailure("UNKNOWN_EVIDENCE_DOCUMENT")
+                selected, route_reason_codes = pipeline._selected_recheck(
+                    output, inventory, issues, pages
+                )
                 if selected:
-                    try:
-                        recheck, _remaining = await pipeline._call_rechecks(selected, issues, ledger)
-                    except PipelineFailure as exc:
-                        if exc.code not in {
-                            "IMPORT_TOKEN_BUDGET_EXCEEDED",
-                            "IMPORT_COST_BUDGET_EXCEEDED",
-                            "PROVIDER_REQUEST_CHAR_LIMIT_EXCEEDED",
-                        }:
-                            raise
+                    rendered, render_issue = pipeline._render_recheck_pages(
+                        selected, {entry.case_id: data}, preflight_budget
+                    )
+                    if render_issue is not None:
+                        issues.append(render_issue)
                     else:
-                        output = _merge_recheck(output, recheck)
-                        issues = [
-                            *_validate_inventory_evidence(inventory, page_counts),
-                            *validate_reconciliation(output, page_counts, _declared_denominator(output)),
-                        ]
+                        try:
+                            recheck, _remaining = await pipeline._call_rechecks(
+                                rendered,
+                                issues,
+                                ledger,
+                                route_reason_codes=route_reason_codes,
+                            )
+                        except PipelineFailure as exc:
+                            if exc.code not in {
+                                "IMPORT_TOKEN_BUDGET_EXCEEDED",
+                                "IMPORT_COST_BUDGET_EXCEEDED",
+                                "PROVIDER_REQUEST_CHAR_LIMIT_EXCEEDED",
+                            }:
+                                raise
+                        else:
+                            output = _merge_recheck(output, recheck)
+                            issues = [
+                                *_validate_inventory_evidence(
+                                    inventory, page_counts, evidence_index=evidence_index
+                                ),
+                                *validate_reconciliation(
+                                    output,
+                                    page_counts,
+                                    _declared_denominator(output),
+                                    evidence_index=evidence_index,
+                                ),
+                            ]
+                            if any(issue.code == "UNKNOWN_EVIDENCE_DOCUMENT" for issue in issues):
+                                raise PipelineFailure("UNKNOWN_EVIDENCE_DOCUMENT")
+                            if _remaining:
+                                issues.append(
+                                    ValidationIssue(
+                                        code="RECHECK_CALL_LIMIT_REACHED",
+                                        severity="WARNING",
+                                        message="Weitere gezielte Nachprüfungen benötigen eine fachliche Klärung.",
+                                    )
+                                )
                 logical_calls = counting_provider.logical_calls - calls_before
                 metrics.append(
                     LivePipelineCaseMetrics(
@@ -1312,6 +2037,20 @@ class BoundedProductionDeclarationPipelineAdapter:
                         latency_ms=int((time.monotonic() - started) * 1_000),
                         retry_count=max(0, ledger.attempts - logical_calls),
                         failure_classes=(),
+                        passes=tuple(
+                            EvaluationPass(
+                                pass_id=entry.pass_id,
+                                input_tokens=entry.input_tokens,
+                                output_tokens=entry.output_tokens,
+                                estimated_cost_usd=entry.estimated_cost_usd,
+                                latency_ms=entry.latency_ms,
+                                retry_count=entry.retry_count,
+                                failure_class=entry.failure_class,
+                                route_action=entry.route_action,
+                                route_reason_codes=entry.route_reason_codes,
+                            )
+                            for entry in ledger.pass_entries
+                        ),
                     )
                 )
         except PipelineFailure as exc:
@@ -1326,17 +2065,88 @@ class BoundedProductionDeclarationPipelineAdapter:
         return LivePipelineReport(cases=tuple(metrics))
 
 
-def live_eval_missing_gates(environ: Mapping[str, str] | None = None) -> tuple[str, ...]:
+def live_eval_missing_gates(
+    environ: Mapping[str, str] | None = None,
+    *,
+    provider: str | None = None,
+    live: bool | None = None,
+    compare_models: bool | None = None,
+) -> tuple[str, ...]:
     values = os.environ if environ is None else environ
     required = (
         "HV_DECLARATION_REAL_PDF_MANIFEST",
         "HV_DECLARATION_LIVE_EVAL",
         "HV_OPENAI_API_KEY",
     )
-    missing = [key for key in required if not values.get(key)]
-    if values.get("HV_DECLARATION_LIVE_EVAL") not in {None, "1"}:
+    missing = [
+        key
+        for key in required
+        if not isinstance(values.get(key), str) or not values[key].strip()
+    ]
+    live_env = values.get("HV_DECLARATION_LIVE_EVAL")
+    if live_env != "1":
         missing.append("HV_DECLARATION_LIVE_EVAL")
+    if provider != "live":
+        missing.append("LIVE_PROVIDER_REQUIRED")
+    if live is not True:
+        missing.append("LIVE_FLAG_REQUIRED")
+    if compare_models is not True:
+        missing.append("COMPARE_MODELS_FLAG_REQUIRED")
+    if compare_models is not True:
+        # The comparison-only Terra gates are part of the required capability,
+        # even when the caller omitted the CLI flag.
+        missing.extend(
+            (
+                "HV_DECLARATION_COMPARE_TERRA_INPUT_USD_PER_MILLION",
+                "HV_DECLARATION_COMPARE_TERRA_OUTPUT_USD_PER_MILLION",
+                "HV_DECLARATION_COMPARE_TERRA_CACHED_INPUT_USD_PER_MILLION",
+            )
+        )
+    else:
+        for key in (
+            "HV_DECLARATION_COMPARE_TERRA_INPUT_USD_PER_MILLION",
+            "HV_DECLARATION_COMPARE_TERRA_OUTPUT_USD_PER_MILLION",
+            "HV_DECLARATION_COMPARE_TERRA_CACHED_INPUT_USD_PER_MILLION",
+        ):
+            if not isinstance(values.get(key), str) or not values[key].strip():
+                missing.append(key)
     return tuple(sorted(set(missing)))
+
+
+def _comparison_configurations(values: Mapping[str, str]) -> tuple[ComparisonConfiguration, ...]:
+    """Build only fixed labels; Terra prices are caller-supplied for this run."""
+    try:
+        terra_input = _decimal(
+            values["HV_DECLARATION_COMPARE_TERRA_INPUT_USD_PER_MILLION"],
+            field_name="terra comparison input rate",
+        )
+        terra_output = _decimal(
+            values["HV_DECLARATION_COMPARE_TERRA_OUTPUT_USD_PER_MILLION"],
+            field_name="terra comparison output rate",
+        )
+        terra_cached = _decimal(
+            values["HV_DECLARATION_COMPARE_TERRA_CACHED_INPUT_USD_PER_MILLION"],
+            field_name="terra comparison cached input rate",
+        )
+    except (KeyError, ValueError) as exc:
+        raise LiveHarnessUnavailable("Live comparison Terra rates are invalid.") from exc
+    try:
+        return (
+            ComparisonConfiguration("luna_medium", "gpt-5.6-luna", "medium", False),
+            ComparisonConfiguration("luna_low", "gpt-5.6-luna", "low", False),
+            ComparisonConfiguration(
+                "terra_primary",
+                "gpt-5.6-terra",
+                "medium",
+                False,
+                terra_input,
+                terra_output,
+                terra_cached,
+            ),
+            ComparisonConfiguration("luna_with_mini_router", "gpt-5.6-luna", "medium", True),
+        )
+    except ValueError as exc:
+        raise LiveHarnessUnavailable("Live comparison Terra rates are invalid.") from exc
 
 
 def validate_real_pdf_manifest(
@@ -1399,10 +2209,26 @@ def validate_real_pdf_manifest(
         if observed.lower() != expected_hash.lower():
             raise LiveHarnessUnavailable("A declared real-PDF input failed integrity validation.")
         entries.append(RealPdfManifestEntry(case_id=case_id, path=pdf_path, sha256=observed))
-    return tuple(entries)
+    return tuple(sorted(entries, key=lambda item: item.case_id))
 
 
-def _write_live_report(report_dir: Path, report: LivePipelineReport) -> Path:
+def _live_aggregate(report: LivePipelineReport) -> dict[str, Any]:
+    return {
+        "case_count": len(report.cases),
+        "page_count": sum(case.page_count for case in report.cases),
+        "fact_count": sum(case.fact_count for case in report.cases),
+        "rule_count": sum(case.rule_count for case in report.cases),
+        "blocker_count": sum(case.blocker_count for case in report.cases),
+        "input_tokens": sum(case.input_tokens for case in report.cases),
+        "output_tokens": sum(case.output_tokens for case in report.cases),
+        "estimated_cost_usd": str(sum((case.estimated_cost_usd for case in report.cases), Decimal("0"))),
+        "latency_ms": sum(case.latency_ms for case in report.cases),
+        "retry_count": sum(case.retry_count for case in report.cases),
+        "failure_classes": sorted({item for case in report.cases for item in case.failure_classes}),
+    }
+
+
+def _write_live_report(report_dir: Path, report: LiveModelComparisonReport) -> Path:
     destination = report_dir / "declaration-knowledge-live-eval.json"
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=".declaration-knowledge-live-eval-", suffix=".json", dir=report_dir
@@ -1425,23 +2251,48 @@ def _write_live_report(report_dir: Path, report: LivePipelineReport) -> Path:
             temporary_path.unlink()
 
 
+def _close_adapter(adapter: object) -> bool:
+    close = getattr(adapter, "close", None)
+    if not callable(close):
+        return True
+    try:
+        result = close()
+        if hasattr(result, "__await__"):
+            asyncio.run(result)
+    except Exception:
+        return False
+    return True
+
+
 def run_real_pdf_smoke(
     *,
     manifest_path: str | Path,
     report_dir: str | Path,
-    adapter: ProductionPipelineEvaluationAdapter | None = None,
+    provider: str | None = None,
+    live: bool | None = None,
+    compare_models: bool | None = None,
+    adapter_factory: Callable[[ComparisonConfiguration], ProductionPipelineEvaluationAdapter] | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> Path:
-    """Run a gated bounded-pipeline smoke evaluation and write metrics only."""
+    """Run a gated, sequential, descriptive comparison and write metrics only."""
     values = os.environ if environ is None else environ
-    if live_eval_missing_gates(values):
+    if live_eval_missing_gates(
+        values, provider=provider, live=live, compare_models=compare_models
+    ):
         raise LiveHarnessUnavailable("Live evaluation requires all explicit live gates.")
+    configurations = _comparison_configurations(values)
     target = Path(report_dir)
     if not target.is_dir():
         raise LiveHarnessUnavailable("Live evaluation requires a caller-selected report directory.")
-    resolved_manifest = Path(manifest_path).resolve()
-    configured_manifest = Path(values["HV_DECLARATION_REAL_PDF_MANIFEST"]).resolve()
     repository_root = Path(__file__).resolve().parents[3]
+    if target.resolve().is_relative_to(repository_root):
+        raise LiveHarnessUnavailable("Live evaluation report directory must be external and caller-owned.")
+    passed_manifest = Path(manifest_path)
+    configured_manifest_path = Path(values["HV_DECLARATION_REAL_PDF_MANIFEST"])
+    if not passed_manifest.is_absolute() or not configured_manifest_path.is_absolute():
+        raise LiveHarnessUnavailable("Live evaluation manifest must be an external caller-owned file.")
+    resolved_manifest = passed_manifest.resolve()
+    configured_manifest = configured_manifest_path.resolve()
     if resolved_manifest != configured_manifest or resolved_manifest.is_relative_to(repository_root):
         raise LiveHarnessUnavailable("Live evaluation manifest must be an external caller-owned file.")
     from app.core.config import settings as configured_settings
@@ -1451,23 +2302,54 @@ def run_real_pdf_smoke(
         max_pdf_bytes=configured_settings.declaration_max_pdf_bytes,
         max_cases=configured_settings.declaration_max_documents,
     )
-    active_adapter = adapter or BoundedProductionDeclarationPipelineAdapter()
-    if not isinstance(active_adapter, ProductionPipelineEvaluationAdapter):
-        raise LiveHarnessUnavailable("Live evaluation adapter does not implement the production pipeline contract.")
+    capability = _LiveEvaluationCapability(_LIVE_CAPABILITY_SEAL)
+    reports: dict[str, LivePipelineReport] = {}
+    expected_case_ids = tuple(entry.case_id for entry in entries)
+    constructed_adapters: list[ProductionPipelineEvaluationAdapter] = []
+    for configuration in configurations:
+        try:
+            active_adapter = (
+                adapter_factory(configuration)
+                if adapter_factory is not None
+                else BoundedProductionDeclarationPipelineAdapter(
+                    configuration, capability=capability
+                )
+            )
+        except Exception as exc:
+            raise LiveHarnessUnavailable("Live comparison adapter construction failed.") from exc
+        if not isinstance(active_adapter, ProductionPipelineEvaluationAdapter):
+            _close_adapter(active_adapter)
+            raise LiveHarnessUnavailable("Live evaluation adapter does not implement the production pipeline contract.")
+        if any(active_adapter is prior for prior in constructed_adapters):
+            _close_adapter(active_adapter)
+            raise LiveHarnessUnavailable("Live comparison requires a fresh adapter per configuration.")
+        constructed_adapters.append(active_adapter)
+        failure: LiveHarnessUnavailable | None = None
+        report: LivePipelineReport | None = None
+        try:
+            report = asyncio.run(active_adapter.evaluate(entries))
+        except LiveHarnessUnavailable:
+            failure = LiveHarnessUnavailable("Bounded production pipeline live evaluation failed.")
+        except Exception as exc:
+            failure = LiveHarnessUnavailable("Bounded production pipeline live evaluation failed.")
+        finally:
+            cleanup_ok = _close_adapter(active_adapter)
+        if not cleanup_ok:
+            raise LiveHarnessUnavailable("Live comparison adapter cleanup failed.")
+        if failure is not None:
+            raise failure
+        if not isinstance(report, LivePipelineReport):
+            raise LiveHarnessUnavailable("Bounded adapter did not return a sanitized live report.")
+        reported_case_ids = tuple(sorted(case.case_id for case in report.cases))
+        if expected_case_ids != reported_case_ids or len(report.cases) != len(entries):
+            raise LiveHarnessUnavailable("Sanitized live report does not match the manifest cases.")
+        reports[configuration.label] = report
     try:
-        report = asyncio.run(active_adapter.evaluate(entries))
-    except LiveHarnessUnavailable:
-        raise
-    except Exception as exc:
-        raise LiveHarnessUnavailable("Bounded production pipeline live evaluation failed.") from exc
-    if not isinstance(report, LivePipelineReport):
-        raise LiveHarnessUnavailable("Bounded adapter did not return a sanitized live report.")
-    expected_case_ids = {entry.case_id for entry in entries}
-    reported_case_ids = {case.case_id for case in report.cases}
-    if expected_case_ids != reported_case_ids or len(report.cases) != len(entries):
-        raise LiveHarnessUnavailable("Sanitized live report does not match the manifest cases.")
+        comparison = LiveModelComparisonReport(reports=reports)
+    except ValueError as exc:
+        raise LiveHarnessUnavailable("Sanitized live model comparison is invalid.") from exc
     try:
-        return _write_live_report(target, report)
+        return _write_live_report(target, comparison)
     except OSError as exc:
         raise LiveHarnessUnavailable("Sanitized live report could not be written.") from exc
 
@@ -1477,6 +2359,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--fixtures", required=True)
     parser.add_argument("--provider", choices=("fake", "live"), required=True)
     parser.add_argument("--live", action="store_true")
+    parser.add_argument("--compare-models", action="store_true")
     parser.add_argument("--manifest")
     parser.add_argument("--report-dir")
     return parser.parse_args(argv)
@@ -1500,14 +2383,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.live:
         print('{"status":"LIVE_FLAG_REQUIRED"}')
         return 2
-    if live_eval_missing_gates():
+    if not args.compare_models:
+        print('{"status":"COMPARE_MODELS_FLAG_REQUIRED"}')
+        return 2
+    if live_eval_missing_gates(
+        provider=args.provider, live=args.live, compare_models=args.compare_models
+    ):
         print('{"status":"LIVE_CONFIGURATION_REQUIRED"}')
         return 2
     if not args.manifest or not args.report_dir:
         print('{"status":"LIVE_MANIFEST_AND_REPORT_DIR_REQUIRED"}')
         return 2
     try:
-        run_real_pdf_smoke(manifest_path=args.manifest, report_dir=args.report_dir)
+        run_real_pdf_smoke(
+            manifest_path=args.manifest,
+            report_dir=args.report_dir,
+            provider=args.provider,
+            live=args.live,
+            compare_models=args.compare_models,
+        )
     except LiveHarnessUnavailable:
         print('{"status":"LIVE_HARNESS_UNAVAILABLE"}')
         return 2

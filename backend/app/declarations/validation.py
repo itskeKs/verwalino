@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from fractions import Fraction
 from typing import Literal
@@ -15,6 +15,7 @@ from app.declarations.schemas import (
     RulePayload,
     TextValue,
 )
+from app.declarations.evidence import EvidenceTextIndex, validate_quote_on_known_page
 
 
 @dataclass(frozen=True)
@@ -23,19 +24,30 @@ class ValidationIssue:
     severity: Literal["INFO", "WARNING", "BLOCKER"]
     message: str
     subject_key: str | None = None
+    document_key: str | None = field(default=None, kw_only=True)
+    pdf_page: int | None = field(default=None, kw_only=True)
 
 
 def validate_reconciliation(
     output: ReconciliationOutput,
     page_counts: dict[str, int],
     declared_mea_denominator: int | None,
+    *,
+    evidence_index: EvidenceTextIndex | None = None,
 ) -> list[ValidationIssue]:
     """Validate untrusted reconciliation data without resolving it automatically."""
     issues: list[ValidationIssue] = []
     subject_keys = _subject_keys(output)
 
     for payload in [*output.facts, *output.rules, *output.additional_facts]:
-        issues.extend(_validate_evidence(payload.subject_key, payload.evidence, page_counts))
+        issues.extend(
+            validate_evidence_items(
+                payload.subject_key,
+                payload.evidence,
+                page_counts,
+                evidence_index=evidence_index,
+            )
+        )
 
     issues.extend(_validate_conflicting_fact_alternatives(output))
     issues.extend(_validate_unit_numbers(output))
@@ -155,10 +167,12 @@ def _subject_keys(output: ReconciliationOutput) -> set[str]:
     }
 
 
-def _validate_evidence(
+def validate_evidence_items(
     subject_key: str,
     evidence_items: list[object],
     page_counts: dict[str, int],
+    *,
+    evidence_index: EvidenceTextIndex | None = None,
 ) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     for evidence in evidence_items:
@@ -171,8 +185,11 @@ def _validate_evidence(
                     severity="BLOCKER",
                     message="Die Belegdatei gehört nicht zum Import.",
                     subject_key=subject_key,
+                    document_key=document_key,
+                    pdf_page=evidence.pdf_page,
                 )
             )
+            continue
         elif evidence.pdf_page < 1 or evidence.pdf_page > page_count:
             issues.append(
                 ValidationIssue(
@@ -180,8 +197,24 @@ def _validate_evidence(
                     severity="BLOCKER",
                     message="Die Belegseite liegt außerhalb des PDF.",
                     subject_key=subject_key,
+                    document_key=document_key,
+                    pdf_page=evidence.pdf_page,
                 )
             )
+            continue
+        if evidence_index is not None:
+            issue = validate_quote_on_known_page(evidence, evidence_index)
+            if issue is not None:
+                issues.append(
+                    ValidationIssue(
+                        code=issue.code,
+                        severity=issue.severity,
+                        message=issue.message,
+                        subject_key=subject_key,
+                        document_key=issue.document_key,
+                        pdf_page=issue.pdf_page,
+                    )
+                )
     return issues
 
 

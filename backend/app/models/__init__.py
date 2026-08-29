@@ -52,6 +52,7 @@ from app.models.declaration_import import (
     DeclarationImport,
     DeclarationImportDocument,
     DeclarationExtractionRun,
+    DeclarationImportPass,
 )
 from app.models.declaration_candidate import (
     DeclarationCandidate,
@@ -108,6 +109,7 @@ __all__ = [
     "DeclarationImport",
     "DeclarationImportDocument",
     "DeclarationExtractionRun",
+    "DeclarationImportPass",
     "DeclarationCandidate",
     "DeclarationCandidateEvidence",
     "DeclarationCandidateIssue",

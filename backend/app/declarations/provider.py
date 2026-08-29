@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Generic, Protocol, TypeVar
 
+from app.declarations.observability import ProviderPassMetadata
 from app.declarations.schemas import (
     CoreExtractionOutput,
     DocumentInventoryOutput,
@@ -33,6 +34,12 @@ class DocumentInput:
 
 T = TypeVar("T")
 
+PROVIDER_REFUSAL = "PROVIDER_REFUSAL"
+PROVIDER_INCOMPLETE = "PROVIDER_INCOMPLETE"
+PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
+PROVIDER_SCHEMA_FAILURE = "PROVIDER_SCHEMA_FAILURE"
+PROVIDER_CONNECTION_ERROR = "PROVIDER_CONNECTION_ERROR"
+
 
 @dataclass(frozen=True)
 class ProviderUsage:
@@ -42,6 +49,8 @@ class ProviderUsage:
     output_tokens: int
     cost_usd: Decimal
     attempt_count: int
+    cached_input_tokens: int = 0
+    cache_write_input_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -85,6 +94,13 @@ class ProviderReservationEstimate:
 class ProviderCallResult(Generic[T]):
     output: T
     usage: ProviderUsage
+    metadata: ProviderPassMetadata | None = None
+    # ``metadata`` remains the current/final attempt for existing callers.
+    # The tuple makes bounded schema repair auditable without retaining data.
+    attempt_metadata: tuple[ProviderPassMetadata, ...] = ()
+    # False means at least one SDK leg ran without trustworthy usage; callers
+    # must retain their conservative reservation rather than settle it down.
+    usage_complete: bool = True
 
 
 class ProviderFailure(RuntimeError):
@@ -101,11 +117,36 @@ class ProviderFailure(RuntimeError):
         retryable: bool,
         message: str,
         usage: ProviderUsage | None = None,
+        attempt_metadata: tuple[ProviderPassMetadata, ...] = (),
+        metadata: ProviderPassMetadata | None = None,
+        usage_complete: bool | None = None,
+        attempt_count: int | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.retryable = retryable
         self.usage = usage
+        self.attempt_metadata = attempt_metadata
+        self.metadata = metadata or (attempt_metadata[-1] if attempt_metadata else None)
+        inferred_attempt_count = (
+            usage.attempt_count
+            if isinstance(usage, ProviderUsage)
+            else len(attempt_metadata)
+        )
+        self.attempt_count = (
+            inferred_attempt_count if attempt_count is None else attempt_count
+        )
+        self.usage_complete = (
+            usage is not None or inferred_attempt_count == 0
+            if usage_complete is None
+            else usage_complete
+        )
+
+    def set_attempt_metadata(
+        self, attempt_metadata: tuple[ProviderPassMetadata, ...]
+    ) -> None:
+        self.attempt_metadata = attempt_metadata
+        self.metadata = attempt_metadata[-1] if attempt_metadata else None
 
 
 class DeclarationExtractionProvider(Protocol):

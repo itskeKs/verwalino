@@ -1,16 +1,35 @@
 # Roadmap: Hausverwaltungssoftware MVP
 
-Stand: 2026-06-02 · Bezug: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2
+Stand: 2026-08-29 · Bezug: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2
 
 Diese Roadmap sequenziert den in der SDD beschriebenen Funktionsumfang. Sie ist ein Planungsdokument und ändert nicht den fachlichen Anspruch der SDD — sie legt fest, **in welcher Reihenfolge** gebaut wird und **wann es einen vorzeigbaren Stand** gibt.
 
-## Umsetzungsstand (2026-06-02)
+## Umsetzungsstand (2026-08-29)
 
-**Alle Milestones M0–M9 sind implementiert (Backend + Frontend) und committet** — Releases A, B und C feature-komplett. Stand der Backend-Testsuite: **462 Tests grün** (reine Engine-Golden-/Invarianten-Tests + DB-Integration: RLS-Mandantentrennung, GoBD-Unveränderbarkeit, RBAC). Architekturentscheidungen in ADR-0001…0012.
+Die Roadmap beschreibt Produktziele und nicht den Git- oder Teststatus. Der
+aktuelle Arbeitsstand ist durch die Suite und den jeweiligen Review zu prüfen;
+eine feste Testzahl oder eine Commit-Aussage wäre dafür nicht belastbar.
+M0–M9 und die ADRs bleiben die historische Produktstruktur.
 
-**Offen (kein Code mehr, sondern Abnahme):**
+**Aktueller begrenzter Modernisierungsmeilenstein — Teilungserklärungen:**
+
+- Der Extraktionspfad ist ein fester deterministischer Manager mit lokaler
+  Evidenzprüfung, deterministischem Router, begrenzter Vision-Eskalation,
+  Human Approval und tenant-isoliertem Pass-Ledger.
+- Die fokussierten Contracts und Evals sind Teil der Implementierung; die
+  abschließende Gesamtsuite und finale Freigabe sind getrennte
+  Verifikationsschritte, keine implizite Produktivfreigabe.
+- Modell-/Router-/Prompt-Änderungen bleiben gesperrt, bis ein repräsentatives
+  Goldset ohne Qualitätsregression und mit fachlichem Review die Promotion
+  erlaubt. Ein beschreibender Smoke auf ungelabelten realen PDFs ist kein
+  Genauigkeitsnachweis.
+
+**Noch fachlich/organisatorisch abzunehmen:**
+
 - **Fachliche/rechtliche Abnahme** aller mit **[§18/fachlich]** markierten Annahmen durch Steuerberater:in / Fachanwalt:anwältin / DSB (u. a. Aufbewahrungs-Startdatum/-dauer, WEG-Fristen, Anonymisierungstiefe, Verteilungs-Detailfragen, Mahngebühren).
 - **Zurückgestellter Feinschliff** (dokumentiert, nicht kritisch): E-Rechnung-Quelle/Badge im UI, Bankkontostände im Vermögensbericht, DSGVO-Create-Pfad-Sperre (ADR-0012 §8). — *Snapshot-Namens-Einfrieren ist umgesetzt (2026-08-10): Anzeige-Namen werden beim Finalisieren/Ausstellen in den Snapshot eingefroren, sodass finalisierte PDFs gegen spätere Anonymisierung immun sind; Altbestand/Entwürfe lösen weiter live auf (ADR-0012 §9).*
+- Für Providerdaten: AVV/DPA, Region/Data Residency, Retention-/ZDR-Eignung,
+  Berechtigungen und DSGVO-Bewertung vor einer Produktionsübertragung.
 
 ## Leitprinzipien der Reihenfolge
 
@@ -48,28 +67,19 @@ graph LR
 
 Textuell: M0 → M1 → M2 → M3 → M4. M5 hängt an M2. M6 an M1+M3, M7 an M6. M8 nur an M1. M9 schließt ab. **Kritischer Pfad: M0 → M1 → M2 → M3 → M4.**
 
-## Modell-Zuordnung (Opus 4.6 / 4.8)
+## Aktuelle Engineering-Leitplanken
 
-Umgesetzt über zwei gepinnte Subagenten: `.claude/agents/bulk-impl.md` (Opus 4.6, Bulk-Engineering) und `.claude/agents/engine-correctness.md` (Opus 4.8, Korrektheit & Architektur). Bei der Arbeit die jeweilige Aufgabe an den passenden Agenten delegieren.
+Implementierungen werden nach Risiko und nachweisbarer Abnahme aufgeteilt,
+nicht nach fest verdrahteten Modell- oder Agentennamen. Für die
+Teilungserklärungs-Modernisierung gilt insbesondere:
 
-| Milestone / Arbeit | Modell | Subagent |
-| --- | --- | --- |
-| M0 Architektur-/Datenmodell-Design (Mandanten-Invariante, GoBD-Konzept) | Opus 4.8 | `engine-correctness` |
-| M0 Implementierung (Shell, Auth, Scaffolding) | Opus 4.6 | `bulk-impl` |
-| M1 Stammdaten | Opus 4.6 | `bulk-impl` |
-| M2 GoBD-Belegspeicher-Design | Opus 4.8 | `engine-correctness` |
-| M2 Kostenerfassung, Beleg-CRUD, PDF-Import | Opus 4.6 | `bulk-impl` |
-| M3 Verteilungs-Engine | Opus 4.8 | `engine-correctness` |
-| M4 WEG-Abrechnung, Abrechnungsspitze, Vermögensbericht | Opus 4.8 | `engine-correctness` |
-| M5 E-Rechnung-Parser | Opus 4.6 | `bulk-impl` |
-| M6 Zahlungen & Mietkonto | Opus 4.6 | `bulk-impl` |
-| M7 Mahnwesen | Opus 4.6 | `bulk-impl` |
-| M8 Versammlung & Beschluss-Sammlung | Opus 4.6 | `bulk-impl` |
-| M9 Fristen-Implementierung | Opus 4.6 | `bulk-impl` |
-| M9 GoBD-/DSGVO-Review | Opus 4.8 | `engine-correctness` |
-| Festgefahrenes Korrektheits-Debugging (überall) | Opus 4.8 | `engine-correctness` |
-
-Modell-IDs ggf. an die im `/model`-Picker verfügbaren Versionen anpassen.
+- Kein autonomes Agentensystem, keine Modell-Tools und keine automatische
+  Freigabe oder Rechtsauskunft.
+- Dokumentdaten sind untrusted data; veröffentlichbar sind nur lokal
+  validierte Kandidaten nach Human Approval.
+- Kein learned/online Router ohne repräsentative gelabelte Evals.
+- Keine Live-PDF-Übertragung ohne separate ausdrückliche Autorisierung und
+  die im [Runbook](operations/declaration-imports.md) dokumentierten Gates.
 
 ---
 

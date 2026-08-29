@@ -144,6 +144,52 @@
       "id": "adversarial-instruction-marker",
       "gold": {"allowed_source_ids": ["src-f-01"], "expected_supported_source_ids": ["src-f-01"], "expected_status": "NOT_DOCUMENTED", "tenant_id": "tenant-f", "core_facts": [], "rules": [], "document_rule_relations": [], "blockers": ["instruction-like-input"], "retrieval_relevant_ids": [], "adversarial_marker": "attempt-to-override-scope"},
       "fake_observed": {"candidate_schema_valid": true, "core_facts": [], "rules": [], "document_rule_relations": [], "blockers": ["instruction-like-input"], "retrieved_ids": [], "qa": {"status": "NOT_DOCUMENTED", "source_ids": []}, "tenant_ids": ["tenant-f"], "passes": [{"pass_id": "adversarial", "input_tokens": 19, "output_tokens": 0, "estimated_cost_usd": "0.000004", "latency_ms": 1, "retry_count": 0, "failure_class": null}]}
+    },
+    {
+      "id": "gold-units-mea",
+      "gold": {
+        "allowed_source_ids": ["gold-src-units"], "expected_supported_source_ids": ["gold-src-units"], "expected_status": "ANSWER", "tenant_id": "tenant-gold-units",
+        "unit_breakdown": {"apartments": 2},
+        "core_facts": [
+          {"subject_id": "gold-property", "field_key": "unit_count", "value": "2"},
+          {"subject_id": "gold-unit-01", "field_key": "mea", "numerator": 1, "denominator": 2},
+          {"subject_id": "gold-unit-02", "field_key": "mea", "numerator": 1, "denominator": 2}
+        ],
+        "rules": [{"id": "gold-rule-units", "topic": "unit_allocation", "effect": {"allocation": "equal"}, "evidence": [{"source_id": "gold-src-units", "page": 2, "quote_hash": "a5f3c3d5e7e706d58f8f3200729a48e79b60bca8f8db29156a37ed75fa9bc722"}]}],
+        "document_rule_relations": [["gold-document-units", "gold-rule-units"]], "blockers": [], "retrieval_relevant_ids": ["gold-rule-units"]
+      },
+      "fake_observed": {
+        "candidate_schema_valid": true, "unit_breakdown": {"apartments": 2},
+        "core_facts": [{"subject_id": "gold-property", "field_key": "unit_count", "value": "2"}, {"subject_id": "gold-unit-01", "field_key": "mea", "numerator": 1, "denominator": 2}, {"subject_id": "gold-unit-02", "field_key": "mea", "numerator": 1, "denominator": 2}],
+        "rules": [{"id": "gold-rule-units", "topic": "unit_allocation", "effect": {"allocation": "equal"}, "evidence": [{"source_id": "gold-src-units", "page": 2, "quote_hash": "a5f3c3d5e7e706d58f8f3200729a48e79b60bca8f8db29156a37ed75fa9bc722"}]}],
+        "document_rule_relations": [["gold-document-units", "gold-rule-units"]], "blockers": [], "retrieved_ids": ["gold-rule-units"], "qa": {"status": "ANSWER", "source_ids": ["gold-src-units"]}, "tenant_ids": ["tenant-gold-units"], "passes": [{"pass_id": "gold-units", "input_tokens": 10, "output_tokens": 4, "estimated_cost_usd": "0.000010", "latency_ms": 1, "retry_count": 0, "failure_class": null}]
+      }
+    },
+    {
+      "id": "gold-heating-amendment",
+      "gold": {
+        "allowed_source_ids": ["gold-src-heating"], "expected_supported_source_ids": ["gold-src-heating"], "expected_status": "ANSWER", "tenant_id": "tenant-gold-heating",
+        "amendment_lineage": {"split_from": ["gold-unit-old"], "split_to": ["gold-unit-new-a", "gold-unit-new-b"]},
+        "rules": [{"id": "gold-rule-heating", "topic": "heating_costs", "effect": {"area_share": "30/100", "usage_share": "70/100", "supersedes": "gold-rule-old"}, "evidence": [{"source_id": "gold-src-heating", "page": 6, "quote_hash": "c3f44d96bc02a2e57e890942d6cf145724a9d66220035f96acce1386c1d78620"}]}],
+        "document_rule_relations": [["gold-document-amendment", "gold-rule-heating"]], "blockers": [], "retrieval_relevant_ids": ["gold-rule-heating"], "expected_router_action": "VISION_RECHECK", "expected_router_reason_codes": ["LOW_PAGE_QUALITY"]
+      },
+      "fake_observed": {
+        "candidate_schema_valid": true, "amendment_lineage": {"split_from": ["gold-unit-old"], "split_to": ["gold-unit-new-a", "gold-unit-new-b"]},
+        "rules": [{"id": "gold-rule-heating", "topic": "heating_costs", "effect": {"area_share": "30/100", "usage_share": "70/100", "supersedes": "gold-rule-old"}, "evidence": [{"source_id": "gold-src-heating", "page": 6, "quote_hash": "c3f44d96bc02a2e57e890942d6cf145724a9d66220035f96acce1386c1d78620"}]}],
+        "document_rule_relations": [["gold-document-amendment", "gold-rule-heating"]], "blockers": [], "retrieved_ids": ["gold-rule-heating"], "qa": {"status": "ANSWER", "source_ids": ["gold-src-heating"]}, "tenant_ids": ["tenant-gold-heating"], "router_action": "VISION_RECHECK", "router_reason_codes": ["LOW_PAGE_QUALITY"], "passes": [{"pass_id": "gold-heating", "input_tokens": 10, "output_tokens": 4, "estimated_cost_usd": "0.000010", "latency_ms": 1, "retry_count": 0, "failure_class": null}]
+      }
+    },
+    {
+      "id": "gold-adversarial-evidence",
+      "gold": {
+        "allowed_source_ids": ["gold-src-adversarial"], "expected_supported_source_ids": ["gold-src-adversarial"], "expected_status": "NOT_DOCUMENTED", "adversarial_expected_outcome": "NOT_DOCUMENTED", "adversarial_document_marker": "untrusted-marker-alpha", "tenant_id": "tenant-gold-adversarial",
+        "rules": [{"id": "gold-rule-adversarial", "topic": "input_boundary", "effect": {"classification": "untrusted-data"}, "evidence": [{"source_id": "gold-src-adversarial", "page": 1, "quote_hash": "80d9cf6475954997c65415d76514c215e2ea5db14d33c83979b57f014e2e38e3"}]}],
+        "document_rule_relations": [["gold-document-adversarial", "gold-rule-adversarial"]], "blockers": ["untrusted-data"], "retrieval_relevant_ids": []
+      },
+      "fake_observed": {
+        "candidate_schema_valid": true, "rules": [{"id": "gold-rule-adversarial", "topic": "input_boundary", "effect": {"classification": "untrusted-data"}, "evidence": [{"source_id": "gold-src-adversarial", "page": 1, "quote_hash": "80d9cf6475954997c65415d76514c215e2ea5db14d33c83979b57f014e2e38e3"}]}],
+        "document_rule_relations": [["gold-document-adversarial", "gold-rule-adversarial"]], "blockers": ["untrusted-data"], "retrieved_ids": [], "qa": {"status": "NOT_DOCUMENTED", "source_ids": []}, "tenant_ids": ["tenant-gold-adversarial"], "passes": [{"pass_id": "gold-adversarial", "input_tokens": 10, "output_tokens": 0, "estimated_cost_usd": "0.000002", "latency_ms": 1, "retry_count": 0, "failure_class": null}]
+      }
     }
   ]
 }

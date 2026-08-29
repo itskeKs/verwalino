@@ -1,7 +1,7 @@
 """Tenant-scoped persistence for declaration import drafts and links."""
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Sequence
 
@@ -12,7 +12,9 @@ from app.models.declaration_import import (
     DeclarationExtractionRun,
     DeclarationImport,
     DeclarationImportDocument,
+    DeclarationImportPass,
 )
+from app.declarations.observability import PassLedgerEntry
 from app.models.property_document import PropertyDocument
 from app.repositories.base import TenantRepository
 
@@ -144,6 +146,52 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
             .where(DeclarationExtractionRun.import_id == import_id)
         )
         return int(result.scalar_one())
+
+    async def append_pass_entries(
+        self,
+        run_id: uuid.UUID,
+        entries: Sequence[PassLedgerEntry],
+    ) -> tuple[DeclarationImportPass, ...]:
+        """Append typed, content-free SDK-attempt metadata for one tenant run.
+
+        The run row is locked before calculating the next number.  This gives
+        all checkpoint transactions a deterministic, globally sequential
+        ``attempt_no`` without relying on a caller-local provider retry count.
+        """
+        if not isinstance(run_id, uuid.UUID):
+            raise ValueError("invalid extraction run id")
+        if not all(isinstance(entry, PassLedgerEntry) for entry in entries):
+            raise ValueError("entries must be PassLedgerEntry instances")
+        if not entries:
+            return ()
+
+        run = await self._session.scalar(
+            select(DeclarationExtractionRun)
+            .where(DeclarationExtractionRun.organization_id == self._org_id)
+            .where(DeclarationExtractionRun.id == run_id)
+            .with_for_update()
+        )
+        if run is None:
+            raise ValueError("extraction run not found")
+        last_attempt = await self._session.scalar(
+            select(func.max(DeclarationImportPass.attempt_no))
+            .where(DeclarationImportPass.organization_id == self._org_id)
+            .where(DeclarationImportPass.declaration_extraction_run_id == run_id)
+        )
+        start = int(last_attempt or 0)
+        rows: list[DeclarationImportPass] = []
+        for offset, entry in enumerate(entries, start=1):
+            global_entry = replace(entry, attempt_no=start + offset)
+            row = DeclarationImportPass(
+                organization_id=self._org_id,
+                declaration_extraction_run_id=run.id,
+                attempt_no=global_entry.attempt_no,
+                safe_metadata=global_entry.as_safe_dict(),
+            )
+            self._session.add(row)
+            rows.append(row)
+        await self._session.flush()
+        return tuple(rows)
 
     async def count_documents(self, import_id: uuid.UUID) -> int:
         result = await self._session.execute(

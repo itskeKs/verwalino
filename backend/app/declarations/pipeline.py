@@ -16,7 +16,7 @@ import unicodedata
 import uuid
 from collections import defaultdict
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable, Generic, Sequence, TypeVar
@@ -27,8 +27,14 @@ from app.core.config import Settings, settings
 from app.core.db import get_tenant_session
 from app.core.storage import DocumentStore, get_store
 from app.declarations.batching import PageBatch, PageBatcher
+from app.declarations.evidence import EvidenceTextIndex
 from app.declarations.policy import CandidateContext, classify_candidate
-from app.declarations.preflight import DocumentIntegrityError, PdfPreflight
+from app.declarations.preflight import (
+    DocumentIntegrityError,
+    ImportPreflightBudget,
+    PdfPreflight,
+)
+from app.declarations.routing import PageRoutingSignal, route_escalation
 from app.declarations.provider import (
     DeclarationExtractionProvider,
     DocumentInput,
@@ -38,6 +44,7 @@ from app.declarations.provider import (
     ProviderReservationEstimate,
     ProviderUsage,
 )
+from app.declarations.observability import PassLedgerEntry, ProviderPassMetadata
 from app.declarations.schemas import (
     AdditionalFactPayload,
     CoreExtractionOutput,
@@ -48,7 +55,11 @@ from app.declarations.schemas import (
     RulePayload,
     TargetedRecheckOutput,
 )
-from app.declarations.validation import ValidationIssue, validate_reconciliation
+from app.declarations.validation import (
+    ValidationIssue,
+    validate_evidence_items,
+    validate_reconciliation,
+)
 from app.models.declaration_import import DeclarationExtractionRun, DeclarationImport
 from app.models.property import Property
 from app.models.property_document import PropertyDocument
@@ -91,6 +102,8 @@ class _Ledger:
     initial_output_tokens: int = 0
     initial_cost_usd: Decimal = Decimal("0")
     initial_attempts: int = 0
+    # Run-local queue, drained only by a successful tenant-bound transaction.
+    pass_entries: list[PassLedgerEntry] = field(default_factory=list)
 
     def output_allowance(self) -> int:
         remaining_output = self.max_output_tokens - self.output_tokens
@@ -117,11 +130,18 @@ class _Ledger:
             raise PipelineFailure("IMPORT_TOKEN_BUDGET_EXCEEDED")
         if self.input_tokens + reserved_input > self.max_input_tokens:
             raise PipelineFailure("IMPORT_TOKEN_BUDGET_EXCEEDED")
-        in_rate = (
-            self.configured.declaration_escalation_input_usd_per_million
-            if escalation
-            else self.configured.declaration_primary_input_usd_per_million
-        )
+        if escalation:
+            in_rate = max(
+                self.configured.declaration_escalation_input_usd_per_million,
+                self.configured.declaration_escalation_cached_input_usd_per_million,
+            )
+        else:
+            primary_input_rate = self.configured.declaration_primary_input_usd_per_million
+            in_rate = max(
+                primary_input_rate,
+                self.configured.declaration_primary_cached_input_usd_per_million,
+                primary_input_rate * self.configured.declaration_primary_cache_write_multiplier,
+            )
         out_rate = (
             self.configured.declaration_escalation_output_usd_per_million
             if escalation
@@ -172,6 +192,25 @@ class _Ledger:
             or self.cost_usd > self.max_cost_usd
         ):
             raise PipelineFailure("IMPORT_TOKEN_BUDGET_EXCEEDED")
+
+    def retain_reservation_for_incomplete_usage(
+        self,
+        usage: ProviderUsage | None,
+        attempt_count: int,
+        reservation: _Reservation,
+    ) -> None:
+        """Keep the prepaid envelope if any SDK leg omitted trustworthy usage."""
+        if isinstance(attempt_count, bool) or not isinstance(attempt_count, int) or attempt_count < 1:
+            raise PipelineFailure("PROVIDER_USAGE_INVALID")
+        if usage is not None:
+            _validate_usage(usage)
+            if (
+                usage.input_tokens > reservation.input_tokens
+                or usage.output_tokens > reservation.output_tokens
+                or usage.cost_usd > reservation.cost_usd
+            ):
+                raise PipelineFailure("PROVIDER_USAGE_EXCEEDED_RESERVATION")
+        self.attempts += attempt_count - 1
 
     def charge_reservation(self, reservation: _Reservation) -> None:
         self.input_tokens += reservation.input_tokens
@@ -264,7 +303,15 @@ class DeclarationPipeline:
             self._active_run_id = run_id
             if len(documents) > self._settings.declaration_max_documents:
                 raise PipelineFailure("DOCUMENT_LIMIT_REACHED")
-            page_inputs, page_counts, document_ids, preflight_issues = self._preflight_documents(documents)
+            (
+                page_inputs,
+                page_counts,
+                document_ids,
+                preflight_issues,
+                source_pdf_bytes,
+                preflight_budget,
+            ) = self._preflight_documents(documents)
+            evidence_index = EvidenceTextIndex.from_pages(page_inputs)
             await self._transition(lease, {"PREFLIGHT"}, "EXTRACTING", {"current_stage": "extracting"})
             batches = self._page_batches(page_inputs)
             if not batches:
@@ -291,47 +338,72 @@ class DeclarationPipeline:
             declared_denominator = _declared_denominator(reconciliation)
             issues = [
                 *preflight_issues,
-                *_validate_inventory_evidence(inventory, page_counts),
-                *validate_reconciliation(reconciliation, page_counts, declared_denominator),
+                *_validate_inventory_evidence(
+                    inventory, page_counts, evidence_index=evidence_index
+                ),
+                *validate_reconciliation(
+                    reconciliation,
+                    page_counts,
+                    declared_denominator,
+                    evidence_index=evidence_index,
+                ),
             ]
             if any(issue.code == "UNKNOWN_EVIDENCE_DOCUMENT" for issue in issues):
                 raise PipelineFailure("UNKNOWN_EVIDENCE_DOCUMENT")
-            recheck = self._selected_recheck_pages(reconciliation, issues, page_inputs)
+            recheck, recheck_route_reasons = self._selected_recheck(
+                reconciliation, inventory, issues, page_inputs
+            )
             if recheck:
-                try:
-                    rechecked, remaining_recheck_pages = await self._call_rechecks(recheck, issues, ledger)
-                except PipelineFailure as exc:
-                    if exc.code not in {
-                        "IMPORT_TOKEN_BUDGET_EXCEEDED",
-                        "IMPORT_COST_BUDGET_EXCEEDED",
-                        "PROVIDER_REQUEST_CHAR_LIMIT_EXCEEDED",
-                    }:
-                        raise
-                    issues.append(
-                        ValidationIssue(
-                            code="RECHECK_BUDGET_UNAVAILABLE",
-                            severity="WARNING",
-                            message="Eine gezielte Nachprüfung konnte innerhalb des Importbudgets nicht ausgeführt werden.",
-                        )
-                    )
+                rendered_recheck, render_issue = self._render_recheck_pages(
+                    recheck, source_pdf_bytes, preflight_budget
+                )
+                if render_issue is not None:
+                    # Never send a partial selected-page set to the provider.
+                    issues.append(render_issue)
                 else:
-                    reconciliation = _merge_recheck(reconciliation, rechecked)
-                    declared_denominator = _declared_denominator(reconciliation)
-                    issues = [
-                        *preflight_issues,
-                        *_validate_inventory_evidence(inventory, page_counts),
-                        *validate_reconciliation(reconciliation, page_counts, declared_denominator),
-                    ]
-                    if any(issue.code == "UNKNOWN_EVIDENCE_DOCUMENT" for issue in issues):
-                        raise PipelineFailure("UNKNOWN_EVIDENCE_DOCUMENT")
-                    if remaining_recheck_pages:
+                    try:
+                        rechecked, remaining_recheck_pages = await self._call_rechecks(
+                            rendered_recheck, issues, ledger, route_reason_codes=recheck_route_reasons
+                        )
+                    except PipelineFailure as exc:
+                        if exc.code not in {
+                            "IMPORT_TOKEN_BUDGET_EXCEEDED",
+                            "IMPORT_COST_BUDGET_EXCEEDED",
+                            "PROVIDER_REQUEST_CHAR_LIMIT_EXCEEDED",
+                        }:
+                            raise
                         issues.append(
                             ValidationIssue(
-                                code="RECHECK_CALL_LIMIT_REACHED",
+                                code="RECHECK_BUDGET_UNAVAILABLE",
                                 severity="WARNING",
-                                message="Weitere gezielte Nachprüfungen benötigen eine fachliche Klärung.",
+                                message="Eine gezielte Nachprüfung konnte innerhalb des Importbudgets nicht ausgeführt werden.",
                             )
                         )
+                    else:
+                        reconciliation = _merge_recheck(reconciliation, rechecked)
+                        declared_denominator = _declared_denominator(reconciliation)
+                        issues = [
+                            *preflight_issues,
+                            *_validate_inventory_evidence(
+                                inventory, page_counts, evidence_index=evidence_index
+                            ),
+                            *validate_reconciliation(
+                                reconciliation,
+                                page_counts,
+                                declared_denominator,
+                                evidence_index=evidence_index,
+                            ),
+                        ]
+                        if any(issue.code == "UNKNOWN_EVIDENCE_DOCUMENT" for issue in issues):
+                            raise PipelineFailure("UNKNOWN_EVIDENCE_DOCUMENT")
+                        if remaining_recheck_pages:
+                            issues.append(
+                                ValidationIssue(
+                                    code="RECHECK_CALL_LIMIT_REACHED",
+                                    severity="WARNING",
+                                    message="Weitere gezielte Nachprüfungen benötigen eine fachliche Klärung.",
+                                )
+                            )
 
             drafts, draft_issues = await self._convert(
                 imported, inventory, reconciliation, issues, document_ids, lease.organization_id
@@ -369,6 +441,10 @@ class DeclarationPipeline:
         counts: dict[str, int] = {}
         ids: dict[str, uuid.UUID] = {}
         issues: list[ValidationIssue] = []
+        # Kept only in this run's stack-local handoff to the selected-page
+        # renderer. Never attach source bytes to a page, evidence, ledger or
+        # durable model.
+        source_pdf_bytes: dict[str, bytes] = {}
         for _link, document in documents:
             key = _document_key(document)
             try:
@@ -381,6 +457,7 @@ class DeclarationPipeline:
                 expected_size=document.content_byte_size,
                 budget=budget,
             )
+            source_pdf_bytes[key] = data
             counts[key] = result.page_count
             ids[key] = document.id
             pages.extend(
@@ -395,7 +472,46 @@ class DeclarationPipeline:
             for artifact in result.pages:
                 for code in artifact.issues:
                     issues.append(ValidationIssue(code=code, severity="WARNING", message="Eine PDF-Seite konnte nicht vollständig maschinell gelesen werden."))
-        return tuple(pages), counts, ids, tuple(issues)
+        return tuple(pages), counts, ids, tuple(issues), source_pdf_bytes, budget
+
+    def _render_recheck_pages(
+        self,
+        pages: Sequence[PageInput],
+        source_pdf_bytes: dict[str, bytes],
+        budget: ImportPreflightBudget,
+    ) -> tuple[tuple[PageInput, ...], ValidationIssue | None]:
+        """Attach every selected PNG or fail the full recheck closed."""
+        rendered: list[PageInput] = []
+        for page in pages:
+            source = source_pdf_bytes.get(page.document_key)
+            if source is None:
+                return (), self._vision_render_issue(page)
+            try:
+                image_data_url = self._preflight.render_page_data_url(
+                    source, page.pdf_page, budget=budget
+                )
+            except DocumentIntegrityError:
+                return (), self._vision_render_issue(page)
+            rendered.append(
+                PageInput(
+                    document_key=page.document_key,
+                    pdf_page=page.pdf_page,
+                    text=page.text,
+                    quality=page.quality,
+                    image_data_url=image_data_url,
+                )
+            )
+        return tuple(rendered), None
+
+    @staticmethod
+    def _vision_render_issue(page: PageInput) -> ValidationIssue:
+        return ValidationIssue(
+            code="VISION_RENDER_UNAVAILABLE",
+            severity="BLOCKER",
+            message="Die ausgewählte PDF-Seite konnte nicht sicher für die Sichtprüfung gerendert werden.",
+            document_key=page.document_key,
+            pdf_page=page.pdf_page,
+        )
 
     def _page_batches(self, pages: Sequence[PageInput]):
         """Batch pages against the exact logical envelopes of all fixed passes."""
@@ -425,7 +541,22 @@ class DeclarationPipeline:
         try:
             raw = await getattr(self._provider, method)(documents, max_output_tokens=reservation.output_tokens)
         except ProviderFailure as exc:
-            if isinstance(exc.usage, ProviderUsage):
+            try:
+                _append_failure_attempt_metadata(ledger, exc)
+            except PipelineFailure:
+                await self._checkpoint(ledger)
+                raise
+            if not exc.usage_complete:
+                try:
+                    ledger.retain_reservation_for_incomplete_usage(
+                        exc.usage if isinstance(exc.usage, ProviderUsage) else None,
+                        exc.attempt_count,
+                        reservation,
+                    )
+                except PipelineFailure:
+                    await self._checkpoint(ledger)
+                    raise
+            elif isinstance(exc.usage, ProviderUsage):
                 try:
                     ledger.settle_reservation(exc.usage, reservation)
                 except PipelineFailure as error:
@@ -462,7 +593,22 @@ class DeclarationPipeline:
         try:
             raw = await self._provider.reconcile(inventory, core, rules, max_output_tokens=reservation.output_tokens)
         except ProviderFailure as exc:
-            if isinstance(exc.usage, ProviderUsage):
+            try:
+                _append_failure_attempt_metadata(ledger, exc)
+            except PipelineFailure:
+                await self._checkpoint(ledger)
+                raise
+            if not exc.usage_complete:
+                try:
+                    ledger.retain_reservation_for_incomplete_usage(
+                        exc.usage if isinstance(exc.usage, ProviderUsage) else None,
+                        exc.attempt_count,
+                        reservation,
+                    )
+                except PipelineFailure:
+                    await self._checkpoint(ledger)
+                    raise
+            elif isinstance(exc.usage, ProviderUsage):
                 try:
                     ledger.settle_reservation(exc.usage, reservation)
                 except PipelineFailure as error:
@@ -574,7 +720,14 @@ class DeclarationPipeline:
             ))
         return _merge_reconciliations(results)
 
-    async def _call_rechecks(self, pages: Sequence[PageInput], issues: Sequence[ValidationIssue], ledger: _Ledger) -> tuple[TargetedRecheckOutput, bool]:
+    async def _call_rechecks(
+        self,
+        pages: Sequence[PageInput],
+        issues: Sequence[ValidationIssue],
+        ledger: _Ledger,
+        *,
+        route_reason_codes: Sequence[str] = (),
+    ) -> tuple[TargetedRecheckOutput, bool]:
         issue_codes = tuple(sorted({issue.code for issue in issues}))
         subject_keys = tuple(sorted({issue.subject_key for issue in issues if issue.subject_key}))
         cap = self._settings.declaration_provider_batch_chars
@@ -597,20 +750,88 @@ class DeclarationPipeline:
                 self._settings.declaration_provider_batch_pages,
                 cap,
                 fits_batch=fits,
+                overlap=False,
             ).batch(tuple(pages))
         except ValueError as exc:
+            if pages and all(page.image_data_url is not None for page in pages):
+                return TargetedRecheckOutput(), True
             raise PipelineFailure("PROVIDER_REQUEST_CHAR_LIMIT_EXCEEDED") from exc
         limit = self._settings.declaration_max_recheck_calls
         if limit <= 0:
             return TargetedRecheckOutput(), bool(batches)
+        if len(batches) > limit:
+            # One routed vision decision is atomic: do not disclose only a
+            # prefix because the configured call cap is lower than its batch
+            # count.
+            return TargetedRecheckOutput(), True
+        if not self._vision_batches_are_atomic(batches):
+            return TargetedRecheckOutput(), True
+
+        planned: list[tuple[tuple[DocumentInput, ...], _Reservation]] = []
+        planning = _Ledger(
+            ledger.input_tokens,
+            ledger.output_tokens,
+            ledger.cost_usd,
+            ledger.attempts,
+            ledger.max_input_tokens,
+            ledger.max_output_tokens,
+            ledger.max_cost_usd,
+            ledger.configured,
+        )
+        for batch in batches:
+            documents = batch.as_documents()
+            source = _serialize_provider_request(
+                "recheck", documents=documents, issue_codes=issue_codes, subject_keys=subject_keys
+            )
+            reservation = self._reservation_for_request(
+                source,
+                planning,
+                escalation=True,
+                method="recheck",
+                documents=documents,
+                issue_codes=issue_codes,
+                subject_keys=subject_keys,
+            )
+            planning.charge_reservation(reservation)
+            planned.append((documents, reservation))
+
+        # All provider calls have now passed the aggregate budget fence.  Keep
+        # that planning ledger separate from the durable ledger: each actual
+        # reservation is charged and checkpointed only immediately before its
+        # own SDK call.  A failure in batch one must not fabricate charged,
+        # durable attempts for later batches that were never sent.
         results: list[TargetedRecheckOutput] = []
-        for batch in batches[:limit]:
+        for documents, reservation in planned:
+            ledger.charge_reservation(reservation)
+            await self._checkpoint(ledger)
             results.append(
                 await self._call_recheck_batch(
-                    batch.as_documents(), issue_codes, subject_keys, ledger
+                    documents,
+                    issue_codes,
+                    subject_keys,
+                    ledger,
+                    reservation=reservation,
+                    route_reason_codes=route_reason_codes,
                 )
             )
-        return _merge_rechecks(results), len(batches) > limit
+        return _merge_rechecks(results), False
+
+    @staticmethod
+    def _vision_batches_are_atomic(batches: Sequence[PageBatch]) -> bool:
+        """Reject split logical pages before any image can leave the process."""
+        page_batches: dict[tuple[str, int], set[int]] = defaultdict(set)
+        image_counts: dict[tuple[int, str, int], int] = defaultdict(int)
+        for batch_number, batch in enumerate(batches):
+            for page in batch.pages:
+                key = (page.document_key, page.pdf_page)
+                page_batches[key].add(batch_number)
+                if page.image_data_url is not None:
+                    image_counts[(batch_number, *key)] += 1
+        return all(
+            len(batch_numbers) == 1
+            and image_counts[(next(iter(batch_numbers)), *key)] == 1
+            for key, batch_numbers in page_batches.items()
+        )
 
     async def _reserve_before_request(
         self,
@@ -627,6 +848,22 @@ class DeclarationPipeline:
         must see the reservation.  Conversely a lost lease stops here, before
         the provider method is ever invoked.
         """
+        reservation = self._reservation_for_request(
+            serialized_request, ledger, escalation=escalation, method=method, **request
+        )
+        ledger.charge_reservation(reservation)
+        await self._checkpoint(ledger)
+        return reservation
+
+    def _reservation_for_request(
+        self,
+        serialized_request: str,
+        ledger: _Ledger,
+        *,
+        escalation: bool = False,
+        method: str,
+        **request: object,
+    ) -> _Reservation:
         if len(serialized_request) > self._settings.declaration_provider_batch_chars:
             raise PipelineFailure("PROVIDER_REQUEST_CHAR_LIMIT_EXCEEDED")
         if ledger.output_allowance() <= 0:
@@ -658,14 +895,11 @@ class DeclarationPipeline:
             or sum(estimate.attempt_input_tokens) != estimate.input_tokens
         ):
             raise PipelineFailure("PROVIDER_RESERVATION_ESTIMATE_INVALID")
-        reservation = ledger.reserve(
+        return ledger.reserve(
             serialized_request,
             escalation=escalation,
             reserved_input_tokens=estimate.input_tokens,
         )
-        ledger.charge_reservation(reservation)
-        await self._checkpoint(ledger)
-        return reservation
 
     async def _call_recheck_batch(
         self,
@@ -673,19 +907,23 @@ class DeclarationPipeline:
         issue_codes: Sequence[str],
         subject_keys: Sequence[str],
         ledger: _Ledger,
+        *,
+        reservation: _Reservation | None = None,
+        route_reason_codes: Sequence[str] = (),
     ) -> TargetedRecheckOutput:
         source = _serialize_provider_request(
             "recheck", documents=documents, issue_codes=issue_codes, subject_keys=subject_keys
         )
-        reservation = await self._reserve_before_request(
-            source,
-            ledger,
-            escalation=True,
-            method="recheck",
-            documents=documents,
-            issue_codes=issue_codes,
-            subject_keys=subject_keys,
-        )
+        if reservation is None:
+            reservation = await self._reserve_before_request(
+                source,
+                ledger,
+                escalation=True,
+                method="recheck",
+                documents=documents,
+                issue_codes=issue_codes,
+                subject_keys=subject_keys,
+            )
         try:
             raw = await self._provider.recheck(
                 documents,
@@ -694,7 +932,24 @@ class DeclarationPipeline:
                 max_output_tokens=reservation.output_tokens,
             )
         except ProviderFailure as exc:
-            if isinstance(exc.usage, ProviderUsage):
+            try:
+                _validate_provider_failure_contract(exc)
+                _apply_recheck_route_metadata(exc, route_reason_codes)
+                _append_failure_attempt_metadata(ledger, exc)
+            except PipelineFailure:
+                await self._checkpoint(ledger)
+                raise
+            if not exc.usage_complete:
+                try:
+                    ledger.retain_reservation_for_incomplete_usage(
+                        exc.usage if isinstance(exc.usage, ProviderUsage) else None,
+                        exc.attempt_count,
+                        reservation,
+                    )
+                except PipelineFailure:
+                    await self._checkpoint(ledger)
+                    raise
+            elif isinstance(exc.usage, ProviderUsage):
                 try:
                     ledger.settle_reservation(exc.usage, reservation)
                 except PipelineFailure as error:
@@ -709,6 +964,7 @@ class DeclarationPipeline:
             await self._checkpoint(ledger)
             raise PipelineFailure("PROVIDER_UNEXPECTED_FAILURE") from exc
         try:
+            raw = _with_recheck_route_metadata(raw, route_reason_codes)
             output = _unwrap(raw, TargetedRecheckOutput, ledger, reservation, reservation_already_charged=True)
         except PipelineFailure:
             await self._checkpoint(ledger)
@@ -716,32 +972,47 @@ class DeclarationPipeline:
         await self._checkpoint(ledger)
         return output
 
-    def _selected_recheck_pages(self, output, issues, pages: Sequence[PageInput]) -> tuple[PageInput, ...]:
-        needs_recheck = any(issue.severity == "BLOCKER" for issue in issues) or any(page.quality < 0.85 for page in pages) or any(
-            item.confidence < 0.85 for item in [*output.facts, *output.rules, *output.additional_facts]
+    def _selected_recheck_pages(
+        self,
+        output: ReconciliationOutput,
+        inventory: DocumentInventoryOutput,
+        issues: Sequence[ValidationIssue],
+        pages: Sequence[PageInput],
+    ) -> tuple[PageInput, ...]:
+        return self._selected_recheck(output, inventory, issues, pages)[0]
+
+    def _selected_recheck(
+        self,
+        output: ReconciliationOutput,
+        inventory: DocumentInventoryOutput,
+        issues: Sequence[ValidationIssue],
+        pages: Sequence[PageInput],
+    ) -> tuple[tuple[PageInput, ...], tuple[str, ...]]:
+        """Adapt local validation results into the pure escalation router."""
+        cited, blockers = _routing_evidence_page_keys(output, inventory, issues)
+        decision = route_escalation(
+            issues=issues,
+            page_inventory=tuple(
+                PageRoutingSignal(
+                    document_key=page.document_key,
+                    pdf_page=page.pdf_page,
+                    quality=page.quality,
+                    # Structural preflight accepted the page. Only the bounded
+                    # renderer decides whether it can become a vision input;
+                    # failure there is converted into a human-review blocker.
+                    renderable=True,
+                    cited=(page.document_key, page.pdf_page) in cited,
+                    has_blocker=(page.document_key, page.pdf_page) in blockers,
+                )
+                for page in pages
+            ),
+            provider_failure=None,
+            max_pages=self._settings.declaration_max_recheck_pages,
         )
-        if not needs_recheck:
-            return ()
-        blocked_subjects = {
-            issue.subject_key for issue in issues
-            if issue.severity == "BLOCKER" and issue.subject_key
-        }
-        relevant = [
-            item for item in [*output.facts, *output.rules, *output.additional_facts]
-            if item.confidence < 0.85 or item.subject_key in blocked_subjects
-        ]
-        cited = {
-            (ev.document_key, ev.pdf_page)
-            for item in relevant
-            for ev in item.evidence
-        }
-        targets = set(cited)
-        targets.update((page.document_key, page.pdf_page) for page in pages if page.quality < 0.85)
-        for document_key, page in tuple(targets):
-            targets.add((document_key, page - 1))
-            targets.add((document_key, page + 1))
-        selected = [page for page in pages if (page.document_key, page.pdf_page) in targets]
-        return tuple(selected[: self._settings.declaration_max_recheck_pages])
+        if decision.action != "VISION_RECHECK":
+            return (), ()
+        by_key = {(page.document_key, page.pdf_page): page for page in pages}
+        return tuple(by_key[key] for key in decision.page_keys), decision.reason_codes
 
     async def _convert(self, imported, inventory, output, issues, document_ids, org_id):
         existing_property: Property | None = None
@@ -757,6 +1028,7 @@ class DeclarationPipeline:
         return _candidate_drafts(imported, inventory, output, issues, document_ids, existing_property, existing_units)
 
     async def _publish(self, lease, page_counts, drafts, issues, ledger) -> None:
+        persisted_entries: tuple[PassLedgerEntry, ...] = ()
         async with self._tenant_session_factory(lease.organization_id) as session:
             imports = DeclarationImportRepository(session, lease.organization_id)
             if await imports.lock_current_lease(lease, {"RECONCILING"}) is None:
@@ -775,6 +1047,9 @@ class DeclarationPipeline:
             )
             if run is None:
                 raise PipelineFailure("EXTRACTION_RUN_NOT_FOUND")
+            persisted_entries = await self._append_pending_pass_entries(
+                imports, run, ledger
+            )
             run.status = "SUCCEEDED"
             run.input_tokens = ledger.run_input_tokens
             run.output_tokens = ledger.run_output_tokens
@@ -801,10 +1076,12 @@ class DeclarationPipeline:
                 },
             ):
                 raise PipelineFailure("LEASE_LOST")
+        self._clear_persisted_pass_entries(ledger, persisted_entries)
 
     async def _fail(self, lease, code: str, *, retryable: bool, ledger: _Ledger | None) -> None:
         if code == "LEASE_LOST":
             return
+        persisted_entries: tuple[PassLedgerEntry, ...] = ()
         async with self._tenant_session_factory(lease.organization_id) as session:
             repo = DeclarationImportRepository(session, lease.organization_id)
             if ledger is None:
@@ -822,7 +1099,12 @@ class DeclarationPipeline:
             run = await repo.get_run_for_import_for_update(
                 lease.import_id, getattr(self, "_active_run_id", None)
             )
+            if getattr(self, "_active_run_id", None) is not None and run is None:
+                raise PipelineFailure("EXTRACTION_RUN_NOT_FOUND")
             if run is not None:
+                persisted_entries = await self._append_pending_pass_entries(
+                    repo, run, ledger
+                )
                 run.status = "FAILED"
                 run.error_code = code
                 run.input_tokens = ledger.run_input_tokens
@@ -848,6 +1130,7 @@ class DeclarationPipeline:
                 },
             ):
                 raise PipelineFailure("LEASE_LOST")
+        self._clear_persisted_pass_entries(ledger, persisted_entries)
 
     async def _transition(self, lease: WorkerLease, expected: set[str], status: str, values: dict[str, object]) -> None:
         async with self._tenant_session_factory(lease.organization_id) as session:
@@ -880,6 +1163,7 @@ class DeclarationPipeline:
         lease = getattr(self, "_active_lease", None)
         if lease is None:
             return
+        persisted_entries: tuple[PassLedgerEntry, ...] = ()
         async with self._tenant_session_factory(lease.organization_id) as session:
             repo = DeclarationImportRepository(session, lease.organization_id)
             item = await repo.lock_current_lease(
@@ -893,6 +1177,9 @@ class DeclarationPipeline:
             if getattr(self, "_active_run_id", None) is not None and run is None:
                 raise PipelineFailure("EXTRACTION_RUN_NOT_FOUND")
             if run is not None:
+                persisted_entries = await self._append_pending_pass_entries(
+                    repo, run, ledger
+                )
                 run.input_tokens = ledger.run_input_tokens
                 run.output_tokens = ledger.run_output_tokens
                 run.estimated_cost_usd = ledger.run_cost_usd
@@ -908,6 +1195,35 @@ class DeclarationPipeline:
                 },
             ):
                 raise PipelineFailure("LEASE_LOST")
+        self._clear_persisted_pass_entries(ledger, persisted_entries)
+
+    @staticmethod
+    async def _append_pending_pass_entries(
+        repo: DeclarationImportRepository,
+        run: DeclarationExtractionRun,
+        ledger: _Ledger,
+    ) -> tuple[PassLedgerEntry, ...]:
+        """Stage the queue in the caller's lease-fenced transaction only."""
+        pending = tuple(ledger.pass_entries)
+        if pending:
+            await repo.append_pass_entries(run.id, pending)
+        return pending
+
+    @staticmethod
+    def _clear_persisted_pass_entries(
+        ledger: _Ledger,
+        persisted: tuple[PassLedgerEntry, ...],
+    ) -> None:
+        """Drop only entries whose enclosing DB transaction has committed."""
+        if not persisted:
+            return
+        count = len(persisted)
+        if ledger.pass_entries[:count] != list(persisted):
+            # A pipeline is single-run guarded.  Treat any unexpected queue
+            # mutation as a fail-closed invariant breach instead of dropping
+            # potentially unpersisted metadata.
+            raise PipelineFailure("PASS_LEDGER_QUEUE_INVALID")
+        del ledger.pass_entries[:count]
 
 
 def _unwrap(
@@ -927,7 +1243,25 @@ def _unwrap(
             ledger.charge_reservation(reservation)
         raise PipelineFailure("PROVIDER_RESULT_INVALID")
     try:
-        if reservation_already_charged:
+        _validate_provider_call_contract(raw)
+        _append_attempt_metadata(
+            ledger,
+            raw.attempt_metadata,
+            final_metadata=raw.metadata,
+            attempt_count=raw.usage.attempt_count,
+        )
+    except PipelineFailure:
+        if not reservation_already_charged:
+            ledger.charge_reservation(reservation)
+        raise
+    try:
+        if not raw.usage_complete:
+            ledger.retain_reservation_for_incomplete_usage(
+                raw.usage,
+                raw.usage.attempt_count,
+                reservation,
+            )
+        elif reservation_already_charged:
             ledger.settle_reservation(raw.usage, reservation)
         else:
             ledger.add_usage(raw.usage, reservation)
@@ -938,12 +1272,147 @@ def _unwrap(
     return raw.output
 
 
+_VISION_ROUTE_REASONS = frozenset({"EVIDENCE_QUOTE_NOT_FOUND", "LOW_PAGE_QUALITY"})
+
+
+def _recheck_route_reason_codes(values: Sequence[str]) -> tuple[str, ...]:
+    return tuple(sorted({value for value in values if value in _VISION_ROUTE_REASONS}))
+
+
+def _route_metadata_for_recheck(
+    metadata: ProviderPassMetadata, reasons: Sequence[str]
+) -> ProviderPassMetadata:
+    return replace(
+        metadata,
+        route_action="VISION_RECHECK",
+        route_reason_codes=_recheck_route_reason_codes(reasons),
+    )
+
+
+def _with_recheck_route_metadata(
+    raw: object, reasons: Sequence[str]
+) -> object:
+    if not isinstance(raw, ProviderCallResult):
+        return raw
+    _validate_provider_call_contract(raw)
+    entries = tuple(_route_metadata_for_recheck(item, reasons) for item in raw.attempt_metadata)
+    metadata = _route_metadata_for_recheck(raw.metadata, reasons) if isinstance(raw.metadata, ProviderPassMetadata) else None
+    return replace(raw, metadata=metadata, attempt_metadata=entries)
+
+
+def _apply_recheck_route_metadata(error: ProviderFailure, reasons: Sequence[str]) -> None:
+    _validate_provider_failure_contract(error)
+    entries = tuple(
+        _route_metadata_for_recheck(item, reasons) for item in error.attempt_metadata
+    )
+    if entries:
+        error.set_attempt_metadata(entries)
+    elif isinstance(error.metadata, ProviderPassMetadata):
+        error.metadata = _route_metadata_for_recheck(error.metadata, reasons)
+
+
 def _validate_usage(usage: ProviderUsage) -> None:
-    for value in (usage.input_tokens, usage.output_tokens, usage.attempt_count):
+    for value in (
+        usage.input_tokens,
+        usage.cached_input_tokens,
+        usage.cache_write_input_tokens,
+        usage.output_tokens,
+        usage.attempt_count,
+    ):
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise PipelineFailure("PROVIDER_USAGE_INVALID")
     if usage.attempt_count < 1 or not isinstance(usage.cost_usd, Decimal) or not usage.cost_usd.is_finite() or usage.cost_usd < 0:
         raise PipelineFailure("PROVIDER_USAGE_INVALID")
+    if usage.cached_input_tokens + usage.cache_write_input_tokens > usage.input_tokens:
+        raise PipelineFailure("PROVIDER_USAGE_INVALID")
+
+
+def _append_attempt_metadata(
+    ledger: _Ledger,
+    metadata: tuple[ProviderPassMetadata, ...],
+    *,
+    final_metadata: ProviderPassMetadata | None,
+    attempt_count: int,
+) -> None:
+    _validate_attempt_metadata_contract(
+        metadata,
+        final_metadata=final_metadata,
+        attempt_count=attempt_count,
+    )
+    ledger.pass_entries.extend(
+        PassLedgerEntry.from_metadata(item) for item in metadata
+    )
+
+
+def _validate_attempt_metadata_contract(
+    metadata: tuple[ProviderPassMetadata, ...],
+    *,
+    final_metadata: ProviderPassMetadata | None,
+    attempt_count: int,
+) -> None:
+    if (
+        not isinstance(metadata, tuple)
+        or isinstance(attempt_count, bool)
+        or not isinstance(attempt_count, int)
+        or attempt_count < 0
+        or len(metadata) != attempt_count
+        or (attempt_count == 0 and final_metadata is not None)
+        or (attempt_count > 0 and final_metadata != metadata[-1])
+    ):
+        raise PipelineFailure("PROVIDER_RESULT_INVALID")
+    for expected_attempt_no, item in enumerate(metadata, start=1):
+        if (
+            not isinstance(item, ProviderPassMetadata)
+            or item.attempt_no != expected_attempt_no
+        ):
+            raise PipelineFailure("PROVIDER_RESULT_INVALID")
+
+
+def _validate_provider_call_contract(result: ProviderCallResult[object]) -> None:
+    if type(result.usage_complete) is not bool or not isinstance(
+        result.usage, ProviderUsage
+    ):
+        raise PipelineFailure("PROVIDER_RESULT_INVALID")
+    _validate_usage(result.usage)
+    _validate_attempt_metadata_contract(
+        result.attempt_metadata,
+        final_metadata=result.metadata,
+        attempt_count=result.usage.attempt_count,
+    )
+
+
+def _append_failure_attempt_metadata(
+    ledger: _Ledger, error: ProviderFailure
+) -> None:
+    _validate_provider_failure_contract(error)
+    _append_attempt_metadata(
+        ledger,
+        error.attempt_metadata,
+        final_metadata=error.metadata,
+        attempt_count=error.attempt_count,
+    )
+
+
+def _validate_provider_failure_contract(error: ProviderFailure) -> None:
+    if (
+        type(error.usage_complete) is not bool
+        or isinstance(error.attempt_count, bool)
+        or not isinstance(error.attempt_count, int)
+        or error.attempt_count < 0
+        or (not error.usage_complete and error.attempt_count < 1)
+    ):
+        raise PipelineFailure("PROVIDER_RESULT_INVALID")
+    if error.usage is not None:
+        if not isinstance(error.usage, ProviderUsage):
+            raise PipelineFailure("PROVIDER_USAGE_INVALID")
+        _validate_usage(error.usage)
+        if error.usage.attempt_count != error.attempt_count:
+            raise PipelineFailure("PROVIDER_RESULT_INVALID")
+    _validate_attempt_metadata_contract(
+        error.attempt_metadata,
+        final_metadata=error.metadata,
+        attempt_count=error.attempt_count,
+    )
 
 
 def _estimate_tokens(value: str) -> int:
@@ -1001,6 +1470,51 @@ def _page_quality(source: str) -> float:
     return {"TEXT_LAYER": 1.0, "OCR": 0.85}.get(source, 0.0)
 
 
+def _routing_evidence_page_keys(
+    output: ReconciliationOutput,
+    inventory: DocumentInventoryOutput,
+    issues: Sequence[ValidationIssue],
+) -> tuple[set[tuple[str, int]], set[tuple[str, int]]]:
+    """Build the router's page-only signals without carrying quote or page text."""
+    cited: set[tuple[str, int]] = set()
+    blockers: set[tuple[str, int]] = {
+        (issue.document_key, issue.pdf_page)
+        for issue in issues
+        if issue.severity == "BLOCKER"
+        and isinstance(issue.document_key, str)
+        and issue.document_key
+        and isinstance(issue.pdf_page, int)
+        and not isinstance(issue.pdf_page, bool)
+        and issue.pdf_page >= 1
+    }
+    blocked_subjects = {
+        issue.subject_key
+        for issue in issues
+        if issue.severity == "BLOCKER" and issue.subject_key
+    }
+
+    def add_evidence(items, *, blocker_subjects: set[str] | None = None) -> None:
+        for item in items:
+            is_blocked = blocker_subjects is not None and item.subject_key in blocker_subjects
+            for evidence in item.evidence:
+                key = (evidence.document_key, evidence.pdf_page)
+                cited.add(key)
+                if is_blocked:
+                    blockers.add(key)
+
+    reconciliation_items = [
+        *output.facts,
+        *output.rules,
+        *output.additional_facts,
+    ]
+    add_evidence(reconciliation_items, blocker_subjects=blocked_subjects)
+    for document in inventory.documents:
+        for relation in document.relations:
+            for evidence in relation.evidence:
+                cited.add((evidence.document_key, evidence.pdf_page))
+    return cited, blockers
+
+
 def _merge_inventory(values: Sequence[DocumentInventoryOutput]) -> DocumentInventoryOutput:
     items = {}
     for output in values:
@@ -1027,29 +1541,20 @@ def _validate_inventory_documents(inventory: DocumentInventoryOutput, document_i
 def _validate_inventory_evidence(
     inventory: DocumentInventoryOutput,
     page_counts: dict[str, int],
+    *,
+    evidence_index: EvidenceTextIndex | None = None,
 ) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     for item in inventory.documents:
         for relation in item.relations:
-            for evidence in relation.evidence:
-                if evidence.document_key not in page_counts:
-                    issues.append(
-                        ValidationIssue(
-                            "UNKNOWN_EVIDENCE_DOCUMENT",
-                            "BLOCKER",
-                            "Die Belegdatei gehört nicht zum Import.",
-                            item.document_key,
-                        )
-                    )
-                elif evidence.pdf_page > page_counts[evidence.document_key]:
-                    issues.append(
-                        ValidationIssue(
-                            "EVIDENCE_PAGE_OUT_OF_RANGE",
-                            "BLOCKER",
-                            "Die Belegseite liegt außerhalb des PDF.",
-                            item.document_key,
-                        )
-                    )
+            issues.extend(
+                validate_evidence_items(
+                    item.document_key,
+                    relation.evidence,
+                    page_counts,
+                    evidence_index=evidence_index,
+                )
+            )
     return issues
 
 
@@ -1354,16 +1859,18 @@ def _candidate_drafts(imported, inventory, output, validation_issues, document_i
         stable_key = first_by_subject.get(issue.subject_key) if issue.subject_key else None
         if (issue.code, stable_key) in known_issue_bindings:
             continue
-        details_json = (
-            {"mea_set_status": output.mea_set_status}
-            if issue.subject_key is None
-            and issue.code in {
-                "MEA_DECLARED_DENOMINATOR_INVALID",
-                "MIXED_MEA_DENOMINATOR",
-                "MEA_TOTAL_INVALID",
+        details_json: dict[str, object] | None = None
+        if issue.document_key is not None and issue.pdf_page is not None:
+            details_json = {
+                "document_key": issue.document_key,
+                "pdf_page": issue.pdf_page,
             }
-            else None
-        )
+        elif issue.subject_key is None and issue.code in {
+            "MEA_DECLARED_DENOMINATOR_INVALID",
+            "MIXED_MEA_DENOMINATOR",
+            "MEA_TOTAL_INVALID",
+        }:
+            details_json = {"mea_set_status": output.mea_set_status}
         draft_issues.append(
             DraftIssue(
                 issue.code,

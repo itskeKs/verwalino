@@ -203,10 +203,59 @@ class DeclarationExtractionRun(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "id",
+            name="uq_declaration_extraction_run_organization_id_id",
+        ),
         ForeignKeyConstraint(
             ["organization_id", "import_id"],
             ["declaration_import.organization_id", "declaration_import.id"],
             name="fk_declaration_extraction_run_import_tenant",
             ondelete="RESTRICT",
+        ),
+    )
+
+
+class DeclarationImportPass(Base, UUIDPrimaryKeyMixin):
+    """Append-only, content-free provider attempt evidence for one extraction run."""
+
+    __tablename__ = "declaration_import_pass"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organization.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    declaration_extraction_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    attempt_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    safe_metadata: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "declaration_extraction_run_id"],
+            [
+                "declaration_extraction_run.organization_id",
+                "declaration_extraction_run.id",
+            ],
+            name="fk_declaration_import_pass_run_tenant",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "declaration_extraction_run_id",
+            "attempt_no",
+            name="uq_declaration_import_pass_run_attempt",
+        ),
+        CheckConstraint("attempt_no > 0", name="ck_declaration_import_pass_positive_attempt"),
+        CheckConstraint(
+            "declaration_import_pass_safe_metadata_is_valid(safe_metadata, attempt_no)",
+            name="ck_declaration_import_pass_safe_metadata",
         ),
     )

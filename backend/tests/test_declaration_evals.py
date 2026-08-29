@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
 
@@ -11,6 +12,7 @@ import pytest
 from app.evals.declaration_knowledge import (
     CoreFact,
     EvaluationPass,
+    ModelComparisonReport,
     SyntheticFakeEvaluationAdapter,
     actual_answer,
     build_report,
@@ -19,9 +21,11 @@ from app.evals.declaration_knowledge import (
     evaluate_fixture_file,
     gold_case,
     live_eval_missing_gates,
+    load_fixture_file,
     main,
     mea_fact,
     report_as_json,
+    validate_promotion_gates,
     validate_thresholds,
 )
 
@@ -172,6 +176,8 @@ def test_pass_ledger_is_sanitized_and_preserves_decimal_costs() -> None:
                     "latency_ms": 12,
                     "retry_count": 1,
                     "failure_class": "PROVIDER_TIMEOUT",
+                    "route_action": "NONE",
+                    "route_reason_codes": [],
                 }
             ],
         },
@@ -187,6 +193,8 @@ def test_pass_ledger_is_sanitized_and_preserves_decimal_costs() -> None:
             "latency_ms": 12,
             "retry_count": 1,
             "failure_class": "PROVIDER_TIMEOUT",
+            "route_action": "NONE",
+            "route_reason_codes": [],
         }
     ]
 
@@ -364,7 +372,8 @@ def test_fixture_report_meets_fake_ci_thresholds_and_is_sanitized() -> None:
     assert failures == ()
     assert '"case_id"' in rendered
     assert "source_text" not in rendered
-    assert "quote" not in rendered
+    assert "quote_hash" not in rendered
+    assert "a5f3c3d5e7e706d58f8f3200729a48e79b60bca8f8db29156a37ed75fa9bc722" not in rendered
     assert "path" not in rendered.lower()
     assert "ignore all rules" not in rendered.lower()
 
@@ -393,7 +402,8 @@ def test_fake_cli_writes_only_sanitized_metric_report(capsys: pytest.CaptureFixt
     assert '"threshold_metrics"' in output
     assert "src-a-01" not in output
     assert "document-a-01" not in output
-    assert "quote" not in output
+    assert "quote_hash" not in output
+    assert "a5f3c3d5e7e706d58f8f3200729a48e79b60bca8f8db29156a37ed75fa9bc722" not in output
 
 
 def test_live_cli_requires_explicit_flag_and_configuration(capsys: pytest.CaptureFixture[str]) -> None:
@@ -445,7 +455,7 @@ def test_synthetic_adapter_executes_product_fake_provider_contracts(monkeypatch)
     report = evaluate_fixture_file(FIXTURE_PATH, adapter=SyntheticFakeEvaluationAdapter())
 
     assert validate_thresholds(report) == ()
-    assert calls == {"declaration": 7, "knowledge": 7}
+    assert calls == {"declaration": 10, "knowledge": 10}
 
 
 def test_assignment_coverage_penalizes_a_missing_or_misclassified_assignment() -> None:
@@ -507,6 +517,28 @@ def test_direct_pass_instances_still_enforce_sanitized_decimal_fields() -> None:
             retry_count=0,
             failure_class=None,
         )
+
+
+def test_evaluation_pass_serializes_only_allowlisted_router_evidence() -> None:
+    safe_pass = EvaluationPass(
+        pass_id="recheck",
+        input_tokens=1,
+        output_tokens=1,
+        estimated_cost_usd=Decimal("0.1"),
+        latency_ms=1,
+        retry_count=0,
+        failure_class=None,
+        route_action="VISION_RECHECK",
+        route_reason_codes=("EVIDENCE_QUOTE_NOT_FOUND",),
+    )
+
+    assert safe_pass.as_dict()["route_action"] == "VISION_RECHECK"
+    assert safe_pass.as_dict()["route_reason_codes"] == ["EVIDENCE_QUOTE_NOT_FOUND"]
+    with pytest.raises(ValueError, match="route_action"):
+        EvaluationPass(
+            pass_id="recheck", input_tokens=1, output_tokens=1, estimated_cost_usd=Decimal("0.1"),
+            latency_ms=1, retry_count=0, failure_class=None, route_action="UNSAFE", route_reason_codes=(),
+        )
     with pytest.raises(ValueError, match="Decimal"):
         EvaluationPass(
             pass_id="safe-pass",
@@ -519,19 +551,48 @@ def test_direct_pass_instances_still_enforce_sanitized_decimal_fields() -> None:
         )
 
 
-def test_live_gate_helper_requires_all_three_environment_values() -> None:
+def test_live_gate_helper_requires_all_capability_values() -> None:
     assert live_eval_missing_gates({}) == (
+        "COMPARE_MODELS_FLAG_REQUIRED",
+        "HV_DECLARATION_COMPARE_TERRA_CACHED_INPUT_USD_PER_MILLION",
+        "HV_DECLARATION_COMPARE_TERRA_INPUT_USD_PER_MILLION",
+        "HV_DECLARATION_COMPARE_TERRA_OUTPUT_USD_PER_MILLION",
         "HV_DECLARATION_LIVE_EVAL",
         "HV_DECLARATION_REAL_PDF_MANIFEST",
         "HV_OPENAI_API_KEY",
+        "LIVE_FLAG_REQUIRED",
+        "LIVE_PROVIDER_REQUIRED",
     )
     assert live_eval_missing_gates(
         {
             "HV_DECLARATION_LIVE_EVAL": "1",
             "HV_DECLARATION_REAL_PDF_MANIFEST": "manifest.json",
             "HV_OPENAI_API_KEY": "configured-by-caller",
-        }
+            "HV_DECLARATION_COMPARE_TERRA_INPUT_USD_PER_MILLION": "1",
+            "HV_DECLARATION_COMPARE_TERRA_OUTPUT_USD_PER_MILLION": "1",
+            "HV_DECLARATION_COMPARE_TERRA_CACHED_INPUT_USD_PER_MILLION": "1",
+        },
+        provider="live",
+        live=True,
+        compare_models=True,
     ) == ()
+
+
+def test_live_gate_helper_rejects_omitted_flags_and_whitespace_values() -> None:
+    assert "LIVE_PROVIDER_REQUIRED" in live_eval_missing_gates({}, provider=None, live=None, compare_models=None)
+    assert "HV_OPENAI_API_KEY" in live_eval_missing_gates(
+        {
+            "HV_DECLARATION_LIVE_EVAL": " ",
+            "HV_DECLARATION_REAL_PDF_MANIFEST": "\t",
+            "HV_OPENAI_API_KEY": "\n",
+            "HV_DECLARATION_COMPARE_TERRA_INPUT_USD_PER_MILLION": " ",
+            "HV_DECLARATION_COMPARE_TERRA_OUTPUT_USD_PER_MILLION": " ",
+            "HV_DECLARATION_COMPARE_TERRA_CACHED_INPUT_USD_PER_MILLION": " ",
+        },
+        provider="live",
+        live=True,
+        compare_models=True,
+    )
 
 
 @pytest.mark.parametrize(
@@ -552,3 +613,172 @@ def test_fixture_loader_rejects_raw_sources_and_paths(tmp_path: Path, unsafe_key
 
     with pytest.raises(ValueError, match="sanitized"):
         evaluate_fixture_file(fixture_path)
+
+
+def test_gold_fixture_covers_units_mea_rules_heating_amendment_and_evidence_pages() -> None:
+    cases = {gold["id"]: (gold, actual) for gold, actual in load_fixture_file(FIXTURE_PATH)}
+
+    assert {"gold-units-mea", "gold-heating-amendment", "gold-adversarial-evidence"} <= set(cases)
+    units_gold, _units_actual = cases["gold-units-mea"]
+    assert any(fact["field_key"] == "mea" for fact in units_gold["core_facts"])
+    heating_gold, _heating_actual = cases["gold-heating-amendment"]
+    assert any(rule["topic"] == "heating_costs" for rule in heating_gold["rules"])
+    assert heating_gold["amendment_lineage"]
+    assert all("quote_hash" in evidence for rule in heating_gold["rules"] for evidence in rule["evidence"])
+
+
+def test_gold_fixture_contains_adversarial_document_data_without_executable_instruction() -> None:
+    data = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    adversarial = next(item for item in data["cases"] if item["id"] == "gold-adversarial-evidence")
+
+    assert adversarial["gold"]["adversarial_expected_outcome"] == "NOT_DOCUMENTED"
+    assert adversarial["gold"]["adversarial_document_marker"] == "untrusted-marker-alpha"
+    report = evaluate_fixture_file(FIXTURE_PATH, adapter=SyntheticFakeEvaluationAdapter())
+    adversarial_case = next(case for case in report.cases if case.case_id == "gold-adversarial-evidence")
+    assert adversarial_case.blocker_recall == Decimal("1")
+    assert adversarial_case.adversarial_data_outcome == Decimal("1")
+    assert "ignore previous" not in json.dumps(adversarial, ensure_ascii=False).lower()
+
+
+def test_quote_text_accuracy_rejects_wrong_page_or_quote() -> None:
+    gold = gold_case(
+        case_id="case-quote-hash",
+        allowed_source_ids={"source-1"},
+        expected_status="ANSWER",
+        rules=[
+            {
+                "id": "rule-quote",
+                "topic": "repairs",
+                "effect": {"allocation": "owner"},
+                "evidence": [{"source_id": "source-1", "page": 4}],
+            }
+        ],
+        evidence_quotes=[
+            {"rule_id": "rule-quote", "source_id": "source-1", "page": 4, "quote": "Synthetic repair rule"}
+        ],
+    )
+    actual = {
+        "qa": actual_answer(status="ANSWER", source_ids=["source-1"]),
+        "rules": [
+            {
+                "id": "rule-quote",
+                "topic": "repairs",
+                "effect": {"allocation": "owner"},
+                "evidence": [
+                    {
+                        "source_id": "source-1",
+                        "page": 5,
+                        "quote_hash": "0" * 64,
+                    }
+                ],
+            }
+        ],
+    }
+
+    report = evaluate_case(gold=gold, actual=actual)
+
+    assert report.rule_evidence_page_accuracy == Decimal("0")
+    assert report.evidence_quote_text_accuracy == Decimal("0")
+    assert report.evidence_quote_exact_matches == 0
+    assert "Synthetic repair rule" not in report_as_json(build_report([report]))
+
+
+def test_quote_text_accuracy_distinguishes_wrong_page_from_wrong_hash() -> None:
+    gold = gold_case(
+        case_id="case-quote-independence",
+        allowed_source_ids={"source-1"},
+        expected_status="ANSWER",
+        rules=[{"id": "rule-quote", "topic": "repairs", "effect": {}, "evidence": [{"source_id": "source-1", "page": 4}]}],
+        evidence_quotes=[{"rule_id": "rule-quote", "source_id": "source-1", "page": 4, "quote": "Synthetic repair rule"}],
+    )
+    correct_hash = gold["rules"][0]["evidence"][0]["quote_hash"]
+    base = {"qa": actual_answer(status="ANSWER", source_ids=["source-1"]), "rules": [{"id": "rule-quote", "topic": "repairs", "effect": {}}]}
+    wrong_page = deepcopy(base)
+    wrong_page["rules"][0]["evidence"] = [{"source_id": "source-1", "page": 5, "quote_hash": correct_hash}]
+    wrong_hash = deepcopy(base)
+    wrong_hash["rules"][0]["evidence"] = [{"source_id": "source-1", "page": 4, "quote_hash": "0" * 64}]
+
+    page_report = evaluate_case(gold=gold, actual=wrong_page)
+    hash_report = evaluate_case(gold=gold, actual=wrong_hash)
+
+    assert page_report.rule_evidence_page_accuracy == Decimal("0")
+    assert hash_report.rule_evidence_page_accuracy == Decimal("1")
+    assert page_report.evidence_quote_text_accuracy == Decimal("0")
+    assert hash_report.evidence_quote_text_accuracy == Decimal("0")
+
+
+def test_model_comparison_requires_identical_case_set() -> None:
+    report = evaluate_case(
+        gold=gold_case(case_id="gold-units-mea", allowed_source_ids=set(), expected_status="NOT_DOCUMENTED"),
+        actual={"qa": actual_answer(status="NOT_DOCUMENTED", source_ids=[])},
+    )
+    full = build_report([report])
+    mismatch = build_report(
+        [
+            evaluate_case(
+                gold=gold_case(case_id="gold-heating-amendment", allowed_source_ids=set(), expected_status="NOT_DOCUMENTED"),
+                actual={"qa": actual_answer(status="NOT_DOCUMENTED", source_ids=[])},
+            )
+        ]
+    )
+
+    with pytest.raises(ValueError, match="identical case IDs"):
+        ModelComparisonReport(
+            reports={
+                "luna_medium": full,
+                "luna_low": mismatch,
+                "terra_primary": full,
+                "luna_with_mini_router": full,
+            }
+        )
+
+
+def test_model_comparison_rejects_duplicate_case_ids_even_when_all_models_match() -> None:
+    case = evaluate_case(
+        gold=gold_case(case_id="gold-units-mea", allowed_source_ids=set(), expected_status="NOT_DOCUMENTED"),
+        actual={"qa": actual_answer(status="NOT_DOCUMENTED", source_ids=[])},
+    )
+    duplicated = build_report([case]).with_overrides(cases=(case, case))
+
+    with pytest.raises(ValueError, match="unique case IDs"):
+        ModelComparisonReport(reports={label: duplicated for label in (
+            "luna_medium", "luna_low", "terra_primary", "luna_with_mini_router"
+        )})
+
+
+def test_promotion_gate_rejects_quality_regression_despite_lower_cost() -> None:
+    baseline = evaluate_fixture_file(FIXTURE_PATH, adapter=SyntheticFakeEvaluationAdapter())
+    candidate = baseline.with_overrides(
+        evidence_quote_text_accuracy=Decimal("0"),
+        heating_effect_accuracy=Decimal("0.99"),
+        total_estimated_cost_usd=Decimal("0.01"),
+    )
+
+    comparison = ModelComparisonReport(
+        reports={
+            "luna_medium": baseline,
+            "luna_low": candidate,
+            "terra_primary": baseline,
+            "luna_with_mini_router": baseline,
+        }
+    )
+    gates = validate_promotion_gates(candidate, baseline, comparison)
+
+    assert gates == ("evidence_quote_text_accuracy", "heating_effect_accuracy")
+
+
+def test_promotion_gate_rejects_detached_or_vacuous_representative_sets() -> None:
+    report = evaluate_fixture_file(FIXTURE_PATH)
+    detached = report.with_overrides(cases=report.cases[:-1])
+
+    gates = validate_promotion_gates(report, detached)
+
+    assert "candidate_baseline_case_ids" in gates
+    assert "model_comparison_required" in gates
+    empty_case = evaluate_case(
+        gold=gold_case(case_id="case-empty-promotion", allowed_source_ids=set(), expected_status="NOT_DOCUMENTED"),
+        actual={"candidate_schema_valid": True, "qa": actual_answer(status="NOT_DOCUMENTED", source_ids=[])},
+    )
+    empty = build_report([empty_case])
+    assert "representative_gold_coverage" in validate_promotion_gates(empty, empty)
+    assert "representative_units_mea_required" in validate_promotion_gates(empty, empty)

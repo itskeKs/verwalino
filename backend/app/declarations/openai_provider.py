@@ -6,12 +6,17 @@ pipeline receives only typed output and sanitized aggregate usage.
 
 from __future__ import annotations
 
+import base64
+from hashlib import sha256
+import io
 import json
-from collections.abc import Sequence
+import re
+import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from json import JSONDecodeError
-from typing import Any, TypeVar
+from typing import Any, Callable, TypeVar
 
 import tiktoken
 from openai import (
@@ -36,10 +41,21 @@ from app.declarations.prompts import (
 )
 from app.declarations.provider import (
     DocumentInput,
+    PageInput,
+    PROVIDER_CONNECTION_ERROR,
+    PROVIDER_INCOMPLETE,
+    PROVIDER_REFUSAL,
+    PROVIDER_SCHEMA_FAILURE,
+    PROVIDER_TIMEOUT,
     ProviderCallResult,
     ProviderFailure,
     ProviderReservationEstimate,
     ProviderUsage,
+)
+from app.declarations.observability import (
+    ProviderPassMetadata,
+    StaticContractFingerprints,
+    fingerprint_static_contract,
 )
 from app.declarations.schemas import (
     CoreExtractionOutput,
@@ -58,17 +74,67 @@ _LUNA_SHORT_CONTEXT_MAX_INPUT_TOKENS = 272_000
 # OpenAI notes that final billing may differ by one token due to rounding, so
 # reserve the upper boundary instead of the nominal estimate.
 _GPT_54_MINI_HIGH_IMAGE_INPUT_TOKENS = 3_001
+_PNG_DATA_URL = re.compile(r"^data:image/png;base64,([A-Za-z0-9+/]*={0,2})$")
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_STATIC_HARNESS = (
+    "declaration-responses-v1|structured-output|store=false|"
+    "no-previous-response-id|fixed-pass-manager"
+)
+_SAFE_RESPONSE_IDENTIFIER = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def _safe_response_identifier(value: object) -> str | None:
+    if isinstance(value, str) and _SAFE_RESPONSE_IDENTIFIER.fullmatch(value):
+        return value
+    return None
+
+
+def _metadata_tuple(
+    *values: ProviderPassMetadata | None,
+) -> tuple[ProviderPassMetadata, ...]:
+    return tuple(value for value in values if isinstance(value, ProviderPassMetadata))
+
+
+def _response_has_refusal(response: object) -> bool:
+    """Inspect only typed item discriminators, never refusal text or payloads."""
+    output = response.get("output") if isinstance(response, Mapping) else getattr(response, "output", None)
+    if not isinstance(output, Sequence) or isinstance(output, (str, bytes, bytearray)):
+        return False
+    for item in output:
+        content = item.get("content") if isinstance(item, Mapping) else getattr(item, "content", None)
+        if not isinstance(content, Sequence) or isinstance(content, (str, bytes, bytearray)):
+            continue
+        for block in content:
+            block_type = block.get("type") if isinstance(block, Mapping) else getattr(block, "type", None)
+            if block_type == "refusal":
+                return True
+    return False
 
 
 @dataclass(frozen=True)
 class _Rates:
     input_usd_per_million: Decimal
     output_usd_per_million: Decimal
+    cached_input_usd_per_million: Decimal
+    cache_write_multiplier: Decimal | None
 
 
 class _SchemaFailure(Exception):
-    def __init__(self, usage: ProviderUsage | None = None) -> None:
+    def __init__(
+        self,
+        usage: ProviderUsage | None = None,
+        metadata: ProviderPassMetadata | None = None,
+    ) -> None:
         self.usage = usage
+        self.metadata = metadata
+        self.usage_complete = usage is not None
+
+
+@dataclass(frozen=True)
+class _AttemptSuccess:
+    output: StrictModel
+    usage: ProviderUsage
+    metadata: ProviderPassMetadata
 
 
 class OpenAiDeclarationProvider:
@@ -87,6 +153,7 @@ class OpenAiDeclarationProvider:
         max_recheck_pages: int | None = None,
         token_encoder: Any | None = None,
         configured_settings: Settings | None = None,
+        monotonic_clock: Callable[[], float] = time.monotonic,
     ) -> None:
         configured = configured_settings or settings
         self._primary_model = primary_model or configured.declaration_primary_model
@@ -116,9 +183,18 @@ class OpenAiDeclarationProvider:
             if max_recheck_pages is not None
             else configured.declaration_max_recheck_pages
         )
+        self._max_image_encoded_bytes = configured.declaration_ocr_max_temp_bytes * 2
+        self._max_image_decoded_bytes = configured.declaration_ocr_max_temp_bytes
+        self._max_image_pixels = configured.declaration_ocr_max_pixels_per_page
         # Tests inject a local encoder so mocked SDK verification never needs a
         # tokenizer download. Production uses the official tokenizer package.
         self._token_encoder = token_encoder
+        self._monotonic_clock = monotonic_clock
+        self._primary_reasoning_effort = configured.declaration_primary_reasoning_effort
+        self._escalation_reasoning_effort = configured.declaration_escalation_reasoning_effort
+        self._prompt_version = configured.declaration_prompt_version
+        self._schema_version = configured.declaration_schema_version
+        self._harness_version = configured.declaration_harness_version
         self._rates = self._configured_rates(configured)
         self._validate_configured_rates()
         if client is not None:
@@ -139,11 +215,15 @@ class OpenAiDeclarationProvider:
             rates[self._primary_model] = _Rates(
                 configured.declaration_primary_input_usd_per_million,
                 configured.declaration_primary_output_usd_per_million,
+                configured.declaration_primary_cached_input_usd_per_million,
+                configured.declaration_primary_cache_write_multiplier,
             )
         if self._escalation_model == "gpt-5.4-mini":
             rates[self._escalation_model] = _Rates(
                 configured.declaration_escalation_input_usd_per_million,
                 configured.declaration_escalation_output_usd_per_million,
+                configured.declaration_escalation_cached_input_usd_per_million,
+                None,
             )
         return rates
 
@@ -154,6 +234,12 @@ class OpenAiDeclarationProvider:
                 or rates.input_usd_per_million <= 0
                 or not rates.output_usd_per_million.is_finite()
                 or rates.output_usd_per_million <= 0
+                or not rates.cached_input_usd_per_million.is_finite()
+                or rates.cached_input_usd_per_million <= 0
+                or (
+                    rates.cache_write_multiplier is not None
+                    and rates.cache_write_multiplier != Decimal("1.25")
+                )
             ):
                 raise ProviderFailure(
                     "MODEL_RATE_INVALID",
@@ -165,6 +251,7 @@ class OpenAiDeclarationProvider:
         self, documents: Sequence[DocumentInput], *, max_output_tokens: int
     ) -> ProviderCallResult[DocumentInventoryOutput]:
         return await self._run_documents(
+            pass_id="inventory",
             model=self._primary_model,
             prompt=INVENTORY_PROMPT,
             documents=documents,
@@ -177,6 +264,7 @@ class OpenAiDeclarationProvider:
         self, documents: Sequence[DocumentInput], *, max_output_tokens: int
     ) -> ProviderCallResult[CoreExtractionOutput]:
         return await self._run_documents(
+            pass_id="extract_core",
             model=self._primary_model,
             prompt=CORE_EXTRACTION_PROMPT,
             documents=documents,
@@ -189,6 +277,7 @@ class OpenAiDeclarationProvider:
         self, documents: Sequence[DocumentInput], *, max_output_tokens: int
     ) -> ProviderCallResult[RuleExtractionOutput]:
         return await self._run_documents(
+            pass_id="extract_rules",
             model=self._primary_model,
             prompt=RULE_EXTRACTION_PROMPT,
             documents=documents,
@@ -216,6 +305,7 @@ class OpenAiDeclarationProvider:
             separators=(",", ":"),
         )
         return await self._run(
+            pass_id="reconcile",
             model=self._primary_model,
             prompt=RECONCILIATION_PROMPT,
             content_blocks=[{"type": "input_text", "text": payload}],
@@ -237,7 +327,7 @@ class OpenAiDeclarationProvider:
                 False,
                 "Recheck page limit must be positive.",
             )
-        pages = self._sorted_pages(documents)[: self._max_recheck_pages]
+        pages = self._validated_recheck_pages(documents)
         content_blocks: list[dict[str, str]] = [
             {
                 "type": "input_text",
@@ -254,6 +344,7 @@ class OpenAiDeclarationProvider:
         ]
         content_blocks.extend(self._page_content_blocks(pages, include_images=True))
         return await self._run(
+            pass_id="recheck",
             model=self._escalation_model,
             prompt=RECHECK_PROMPT,
             content_blocks=content_blocks,
@@ -281,24 +372,27 @@ class OpenAiDeclarationProvider:
         """
         self._validate_output_allowance(max_output_tokens)
         if method == "inventory":
+            self._reject_unexpected_images(documents)
             return self._request_reservation(
-                self._primary_model,
+                "inventory", self._primary_model,
                 INVENTORY_PROMPT,
                 self._page_content_blocks(self._sorted_pages(documents), include_images=False),
                 DocumentInventoryOutput,
                 max_output_tokens,
             )
         if method == "extract_core":
+            self._reject_unexpected_images(documents)
             return self._request_reservation(
-                self._primary_model,
+                "extract_core", self._primary_model,
                 CORE_EXTRACTION_PROMPT,
                 self._page_content_blocks(self._sorted_pages(documents), include_images=False),
                 CoreExtractionOutput,
                 max_output_tokens,
             )
         if method == "extract_rules":
+            self._reject_unexpected_images(documents)
             return self._request_reservation(
-                self._primary_model,
+                "extract_rules", self._primary_model,
                 RULE_EXTRACTION_PROMPT,
                 self._page_content_blocks(self._sorted_pages(documents), include_images=False),
                 RuleExtractionOutput,
@@ -316,14 +410,14 @@ class OpenAiDeclarationProvider:
                 separators=(",", ":"),
             )
             return self._request_reservation(
-                self._primary_model,
+                "reconcile", self._primary_model,
                 RECONCILIATION_PROMPT,
                 [{"type": "input_text", "text": payload}],
                 ReconciliationOutput,
                 max_output_tokens,
             )
         if method == "recheck":
-            pages = self._sorted_pages(documents)[: self._max_recheck_pages]
+            pages = self._validated_recheck_pages(documents)
             blocks: list[dict[str, str]] = [
                 {
                     "type": "input_text",
@@ -340,7 +434,7 @@ class OpenAiDeclarationProvider:
             ]
             blocks.extend(self._page_content_blocks(pages, include_images=True))
             return self._request_reservation(
-                self._escalation_model,
+                "recheck", self._escalation_model,
                 RECHECK_PROMPT,
                 blocks,
                 TargetedRecheckOutput,
@@ -355,6 +449,7 @@ class OpenAiDeclarationProvider:
     async def _run_documents(
         self,
         *,
+        pass_id: str,
         model: str,
         prompt: str,
         documents: Sequence[DocumentInput],
@@ -362,7 +457,10 @@ class OpenAiDeclarationProvider:
         max_output_tokens: int,
         include_images: bool,
     ) -> ProviderCallResult[T]:
+        if not include_images:
+            self._reject_unexpected_images(documents)
         return await self._run(
+            pass_id=pass_id,
             model=model,
             prompt=prompt,
             content_blocks=self._page_content_blocks(
@@ -378,6 +476,85 @@ class OpenAiDeclarationProvider:
             (page for document in documents for page in document.pages),
             key=lambda page: (page.document_key, page.pdf_page),
         )
+
+    @staticmethod
+    def _reject_unexpected_images(documents: Sequence[DocumentInput]) -> None:
+        if any(page.image_data_url is not None for page in OpenAiDeclarationProvider._sorted_pages(documents)):
+            raise ProviderFailure(
+                "OPENAI_UNEXPECTED_IMAGE_INPUT",
+                False,
+                "Regular declaration passes must not include image input.",
+            )
+
+    def _validated_recheck_pages(
+        self, documents: Sequence[DocumentInput]
+    ) -> list[PageInput]:
+        if self._max_recheck_pages <= 0:
+            raise ProviderFailure(
+                "OPENAI_RECHECK_PAGE_LIMIT_INVALID",
+                False,
+                "Recheck page limit must be positive.",
+            )
+        pages = self._sorted_pages(documents)
+        grouped: dict[tuple[str, int], list[PageInput]] = {}
+        for page in pages:
+            grouped.setdefault((page.document_key, page.pdf_page), []).append(page)
+        if not pages or len(grouped) > self._max_recheck_pages:
+            raise ProviderFailure(
+                "OPENAI_RECHECK_PAGE_LIMIT_EXCEEDED",
+                False,
+                "Recheck pages exceed the configured limit.",
+            )
+        if any(
+            len([page for page in segments if page.image_data_url is not None]) != 1
+            or not self._is_valid_png_data_url(
+                next(page.image_data_url for page in segments if page.image_data_url is not None)
+            )
+            for segments in grouped.values()
+        ):
+            raise ProviderFailure(
+                "OPENAI_RECHECK_IMAGE_REQUIRED",
+                False,
+                "Every selected recheck page requires a valid PNG image.",
+            )
+        return pages
+
+    def _is_valid_png_data_url(self, value: object) -> bool:
+        if not isinstance(value, str):
+            return False
+        match = _PNG_DATA_URL.fullmatch(value)
+        if match is None:
+            return False
+        encoded = match.group(1)
+        if not encoded or len(encoded) > self._max_image_encoded_bytes:
+            return False
+        # Base64 expands by at most 4/3. Reject before decoding rather than
+        # letting an attacker force an unbounded temporary allocation.
+        decoded_upper_bound = (len(encoded) // 4) * 3 + 3
+        if decoded_upper_bound > self._max_image_decoded_bytes:
+            return False
+        try:
+            decoded = base64.b64decode(encoded, validate=True)
+            if len(decoded) > self._max_image_decoded_bytes:
+                return False
+            from PIL import Image
+
+            with Image.open(io.BytesIO(decoded)) as image:
+                if (
+                    image.format != "PNG"
+                    or image.width < 1
+                    or image.height < 1
+                    or image.width * image.height > self._max_image_pixels
+                ):
+                    return False
+                image.verify()
+        except Exception:
+            # This predicate is the final image-input boundary. Pillow can
+            # raise dedicated validation exceptions (including
+            # DecompressionBombError) that do not inherit from OSError; every
+            # such failure must become a stable invalid-image result.
+            return False
+        return decoded.startswith(_PNG_SIGNATURE) and decoded.endswith(b"IEND\xaeB`\x82")
 
     @staticmethod
     def _page_content_blocks(pages, *, include_images: bool) -> list[dict[str, str]]:
@@ -405,6 +582,7 @@ class OpenAiDeclarationProvider:
     async def _run(
         self,
         *,
+        pass_id: str,
         model: str,
         prompt: str,
         content_blocks: list[dict[str, str]],
@@ -414,72 +592,153 @@ class OpenAiDeclarationProvider:
         self._validate_output_allowance(max_output_tokens)
         self._require_model_rate(model)
         self._require_client()
-        primary_input = self._request_input(prompt, content_blocks)
+        self._validate_input_image_blocks(content_blocks)
+        primary_input = self._request_input(prompt, content_blocks, model=model)
         repair_prompt = (
             f"{prompt}\n\nSchema-only repair: return a fresh response "
             "matching the supplied schema."
         )
-        repair_input = self._request_input(repair_prompt, content_blocks)
+        repair_input = self._request_input(repair_prompt, content_blocks, model=model)
         reservation = self._request_reservation(
-            model, prompt, content_blocks, output_type, max_output_tokens
+            pass_id, model, prompt, content_blocks, output_type, max_output_tokens
         )
         self._validate_reservation_budget(model, reservation, max_output_tokens)
         try:
-            output, first_usage = await self._attempt(
+            first = await self._attempt(
+                pass_id=pass_id,
                 model=model,
                 input_payload=primary_input,
+                developer_prompt=prompt,
                 output_type=output_type,
                 max_output_tokens=max_output_tokens,
+                attempt_no=1,
+                stage="provider",
             )
-            self._ensure_actual_usage_within_budget(first_usage)
-            return ProviderCallResult(output=output, usage=first_usage)
+            try:
+                self._ensure_actual_usage_within_budget(first.usage)
+            except ProviderFailure as error:
+                error.set_attempt_metadata((first.metadata,))
+                error.usage_complete = True
+                error.attempt_count = 1
+                raise
+            return ProviderCallResult(
+                output=first.output,
+                usage=first.usage,
+                metadata=first.metadata,
+                attempt_metadata=(first.metadata,),
+            )
         except _SchemaFailure as first_failure:
             first_usage = first_failure.usage
+            first_metadata = first_failure.metadata
+            first_usage_complete = first_failure.usage_complete
+            if first_usage is None:
+                # The logical call has one aggregate output ceiling.  Without
+                # trustworthy first-leg usage, a repair could silently spend a
+                # second full output envelope, so fail closed and retain the
+                # pipeline's conservative reservation.
+                raise ProviderFailure(
+                    PROVIDER_SCHEMA_FAILURE,
+                    False,
+                    "Structured output was invalid.",
+                    usage=None,
+                    attempt_metadata=_metadata_tuple(first_metadata),
+                    usage_complete=False,
+                    attempt_count=1,
+                ) from None
             if first_usage is not None:
-                self._ensure_actual_usage_within_budget(first_usage)
+                try:
+                    self._ensure_actual_usage_within_budget(first_usage)
+                except ProviderFailure as error:
+                    error.set_attempt_metadata(_metadata_tuple(first_metadata))
+                    error.usage_complete = first_usage_complete
+                    error.attempt_count = 1
+                    raise
             repair_allowance = max_output_tokens
             if first_usage is not None:
                 repair_allowance -= first_usage.output_tokens
             if repair_allowance <= 0:
                 raise ProviderFailure(
-                    "OPENAI_SCHEMA_INVALID",
+                    PROVIDER_SCHEMA_FAILURE,
                     False,
                     "Structured output was invalid.",
                     usage=first_usage,
+                    attempt_metadata=_metadata_tuple(first_metadata),
+                    usage_complete=first_usage_complete,
+                    attempt_count=1,
                 ) from None
 
             try:
-                output, second_usage = await self._attempt(
+                second = await self._attempt(
+                    pass_id=pass_id,
                     model=model,
                     input_payload=repair_input,
+                    developer_prompt=repair_prompt,
                     output_type=output_type,
                     max_output_tokens=repair_allowance,
+                    attempt_no=2,
+                    stage="schema_repair",
                 )
             except _SchemaFailure as second_failure:
                 aggregate = self._aggregate_usage(
                     first_usage, second_failure.usage, attempt_count=2
                 )
                 if aggregate is not None:
-                    self._ensure_actual_usage_within_budget(aggregate)
+                    try:
+                        self._ensure_actual_usage_within_budget(aggregate)
+                    except ProviderFailure as error:
+                        error.set_attempt_metadata(
+                            _metadata_tuple(first_metadata, second_failure.metadata)
+                        )
+                        error.usage_complete = (
+                            first_usage_complete and second_failure.usage_complete
+                        )
+                        error.attempt_count = 2
+                        raise
                 raise ProviderFailure(
-                    "OPENAI_SCHEMA_INVALID",
+                    PROVIDER_SCHEMA_FAILURE,
                     False,
                     "Structured output was invalid.",
                     usage=aggregate,
+                    attempt_metadata=_metadata_tuple(first_metadata, second_failure.metadata),
+                    usage_complete=first_usage_complete and second_failure.usage_complete,
+                    attempt_count=2,
                 ) from None
             except ProviderFailure as error:
                 aggregate = self._aggregate_usage(
                     first_usage, error.usage, attempt_count=2
                 )
                 if aggregate is not None:
-                    self._ensure_actual_usage_within_budget(aggregate)
+                    try:
+                        self._ensure_actual_usage_within_budget(aggregate)
+                    except ProviderFailure as budget_error:
+                        budget_error.set_attempt_metadata(
+                            _metadata_tuple(first_metadata, *error.attempt_metadata)
+                        )
+                        budget_error.usage_complete = (
+                            first_usage_complete and error.usage_complete
+                        )
+                        budget_error.attempt_count = 2
+                        raise
                 error.usage = aggregate
+                error.set_attempt_metadata(_metadata_tuple(first_metadata, *error.attempt_metadata))
+                error.usage_complete = first_usage_complete and error.usage_complete
+                error.attempt_count = 2
+                raise
+            try:
+                aggregate = self._checked_aggregate_usage(
+                    first_usage, second.usage, attempt_count=2
+                )
+            except ProviderFailure as error:
+                error.set_attempt_metadata(_metadata_tuple(first_metadata, second.metadata))
+                error.usage_complete = first_usage_complete
+                error.attempt_count = 2
                 raise
             return ProviderCallResult(
-                output=output,
-                usage=self._checked_aggregate_usage(
-                    first_usage, second_usage, attempt_count=2
-                ),
+                output=second.output,
+                usage=aggregate,
+                metadata=second.metadata,
+                attempt_metadata=_metadata_tuple(first_metadata, second.metadata),
+                usage_complete=first_usage_complete,
             )
 
     def _validate_output_allowance(self, max_output_tokens: int) -> None:
@@ -506,17 +765,26 @@ class OpenAiDeclarationProvider:
                 "MODEL_RATE_NOT_CONFIGURED", False, "The model rate is not configured."
             )
 
-    @staticmethod
     def _request_input(
-        prompt: str, content_blocks: list[dict[str, str]]
+        self,
+        prompt: str,
+        content_blocks: list[dict[str, str]],
+        *,
+        model: str,
     ) -> list[dict[str, Any]]:
+        developer_block: dict[str, Any] = {"type": "input_text", "text": prompt}
+        if self._uses_explicit_cache(model):
+            # The SDK has no typed field yet; the compatibility test verifies
+            # this raw block survives its request transformation.
+            developer_block["prompt_cache_breakpoint"] = {"mode": "explicit"}
         return [
-            {"role": "developer", "content": [{"type": "input_text", "text": prompt}]},
+            {"role": "developer", "content": [developer_block]},
             {"role": "user", "content": content_blocks},
         ]
 
     def _request_reservation(
         self,
+        pass_id: str,
         model: str,
         prompt: str,
         content_blocks: list[dict[str, str]],
@@ -524,14 +792,20 @@ class OpenAiDeclarationProvider:
         max_output_tokens: int,
     ) -> ProviderReservationEstimate:
         """Build both possible requests once and estimate their true envelope."""
-        primary = self._request_input(prompt, content_blocks)
+        primary = self._request_input(prompt, content_blocks, model=model)
         repair = self._request_input(
-            f"{prompt}\n\nSchema-only repair: return a fresh response matching the supplied schema.",
-            content_blocks,
+            f"{prompt}\n\nSchema-only repair: return a fresh response matching the supplied schema.", content_blocks, model=model
         )
-        first = self._estimate_input_tokens(model, primary, output_type, max_output_tokens)
+        first = self._estimate_input_tokens(
+            pass_id, model, prompt, primary, output_type, max_output_tokens
+        )
         repair_estimate = self._estimate_input_tokens(
-            model, repair, output_type, max_output_tokens
+            pass_id,
+            model,
+            f"{prompt}\n\nSchema-only repair: return a fresh response matching the supplied schema.",
+            repair,
+            output_type,
+            max_output_tokens,
         )
         return ProviderReservationEstimate(
             input_tokens=first + repair_estimate,
@@ -541,7 +815,9 @@ class OpenAiDeclarationProvider:
 
     def _estimate_input_tokens(
         self,
+        pass_id: str,
         model: str,
+        developer_prompt: str,
         input_payload: list[dict[str, Any]],
         output_type: type[StrictModel],
         max_output_tokens: int,
@@ -555,13 +831,14 @@ class OpenAiDeclarationProvider:
             token_encoder = self._token_encoder or tiktoken.get_encoding("o200k_base")
             encoded = token_encoder.encode(
                 json.dumps(
-                    {
-                        "model": model,
-                        "input": self._input_for_text_estimation(input_payload),
-                        "text": {"format": self._sdk_text_format(output_type)},
-                        "store": False,
-                        "max_output_tokens": max_output_tokens,
-                    },
+                    self._request_envelope(
+                        pass_id=pass_id,
+                        model=model,
+                        developer_prompt=developer_prompt,
+                        input_payload=self._input_for_text_estimation(input_payload),
+                        output_type=output_type,
+                        max_output_tokens=max_output_tokens,
+                    ),
                     ensure_ascii=False,
                     sort_keys=True,
                     separators=(",", ":"),
@@ -581,6 +858,71 @@ class OpenAiDeclarationProvider:
                 "Long-context Luna pricing is not configured.",
             )
         return estimated_input
+
+    def _request_envelope(
+        self,
+        *,
+        pass_id: str,
+        model: str,
+        developer_prompt: str,
+        input_payload: list[dict[str, Any]],
+        output_type: type[StrictModel],
+        max_output_tokens: int,
+    ) -> dict[str, Any]:
+        """The complete, content-free request shape used by live and reserve paths."""
+        envelope: dict[str, Any] = {
+            "model": model,
+            "input": input_payload,
+            "text": {"format": self._sdk_text_format(output_type)},
+            "store": False,
+            "max_output_tokens": max_output_tokens,
+            "reasoning": {"effort": self._reasoning_effort(model)},
+        }
+        if self._uses_explicit_cache(model):
+            fingerprints = self._fingerprints(developer_prompt, output_type)
+            envelope["prompt_cache_key"] = self._prompt_cache_key(
+                model, pass_id, fingerprints
+            )
+            envelope["prompt_cache_options"] = {"mode": "explicit", "ttl": "30m"}
+        return envelope
+
+    def _fingerprints(
+        self, developer_prompt: str, output_type: type[StrictModel]
+    ) -> StaticContractFingerprints:
+        return fingerprint_static_contract(
+            developer_prompt=developer_prompt,
+            schema=self._sdk_text_format(output_type),
+            harness=_STATIC_HARNESS,
+        )
+
+    def _prompt_cache_key(
+        self, model: str, pass_id: str, fingerprints: StaticContractFingerprints
+    ) -> str:
+        material = "|".join(
+            (
+                model,
+                pass_id,
+                self._prompt_version,
+                fingerprints.prompt_sha256,
+                self._schema_version,
+                fingerprints.schema_sha256,
+                self._harness_version,
+                fingerprints.harness_sha256,
+            )
+        )
+        return "decl-" + sha256(material.encode("ascii")).hexdigest()[:59]
+
+    def _uses_explicit_cache(self, model: str) -> bool:
+        return model == self._primary_model == "gpt-5.6-luna"
+
+    def _reasoning_effort(self, model: str) -> str:
+        if model == self._primary_model:
+            return self._primary_reasoning_effort
+        if model == self._escalation_model:
+            return self._escalation_reasoning_effort
+        raise ProviderFailure(
+            "MODEL_RATE_NOT_CONFIGURED", False, "The model rate is not configured."
+        )
 
     @staticmethod
     def _sdk_text_format(output_type: type[StrictModel]) -> dict[str, Any]:
@@ -631,8 +973,17 @@ class OpenAiDeclarationProvider:
             raise ProviderFailure("OPENAI_INPUT_BUDGET_EXCEEDED", False, "Input token budget would be exceeded.")
         rates = self._rates.get(model)
         assert rates is not None
+        input_rate = max(
+            rates.input_usd_per_million,
+            rates.cached_input_usd_per_million,
+            (
+                rates.input_usd_per_million * rates.cache_write_multiplier
+                if rates.cache_write_multiplier is not None
+                else rates.input_usd_per_million
+            ),
+        )
         cost = (
-            Decimal(reservation.input_tokens) * rates.input_usd_per_million
+            Decimal(reservation.input_tokens) * input_rate
             + Decimal(max_output_tokens) * rates.output_usd_per_million
         ) / _MILLION
         if cost > self._max_cost_usd:
@@ -675,42 +1026,367 @@ class OpenAiDeclarationProvider:
     async def _attempt(
         self,
         *,
+        pass_id: str,
         model: str,
         input_payload: list[dict[str, Any]],
+        developer_prompt: str,
         output_type: type[T],
         max_output_tokens: int,
-    ) -> tuple[T, ProviderUsage]:
+        attempt_no: int,
+        stage: str,
+    ) -> _AttemptSuccess:
+        started = self._monotonic_clock()
+        fingerprints = self._fingerprints(developer_prompt, output_type)
+        request_kwargs = self._request_envelope(
+            pass_id=pass_id,
+            model=model,
+            developer_prompt=developer_prompt,
+            input_payload=input_payload,
+            output_type=output_type,
+            max_output_tokens=max_output_tokens,
+        )
         try:
             response = await self._client.responses.parse(
-                model=model,
-                input=input_payload,
+                model=request_kwargs["model"],
+                input=request_kwargs["input"],
                 text_format=output_type,
-                store=False,
+                store=request_kwargs["store"],
                 timeout=self._timeout_seconds,
-                max_output_tokens=max_output_tokens,
+                max_output_tokens=request_kwargs["max_output_tokens"],
+                reasoning=request_kwargs["reasoning"],
+                **{
+                    key: value
+                    for key, value in request_kwargs.items()
+                    if key in {"prompt_cache_key", "prompt_cache_options"}
+                },
             )
         except Exception as error:
+            elapsed = self._latency_ms(started)
+            if isinstance(error, ContentFilterFinishReasonError):
+                metadata = self._metadata(
+                    pass_id=pass_id,
+                    attempt_no=attempt_no,
+                    stage=stage,
+                    model=model,
+                    fingerprints=fingerprints,
+                    usage=None,
+                    latency_ms=elapsed,
+                    failure_class=PROVIDER_REFUSAL,
+                )
+                raise ProviderFailure(
+                    PROVIDER_REFUSAL,
+                    False,
+                    "The provider refused the request.",
+                    attempt_metadata=(metadata,),
+                ) from None
+            if isinstance(error, LengthFinishReasonError):
+                metadata = self._metadata(
+                    pass_id=pass_id,
+                    attempt_no=attempt_no,
+                    stage=stage,
+                    model=model,
+                    fingerprints=fingerprints,
+                    usage=None,
+                    latency_ms=elapsed,
+                    failure_class=PROVIDER_INCOMPLETE,
+                )
+                raise ProviderFailure(
+                    PROVIDER_INCOMPLETE,
+                    True,
+                    "The provider response was incomplete.",
+                    attempt_metadata=(metadata,),
+                ) from None
+            if isinstance(error, APITimeoutError):
+                metadata = self._metadata(
+                    pass_id=pass_id,
+                    attempt_no=attempt_no,
+                    stage=stage,
+                    model=model,
+                    fingerprints=fingerprints,
+                    usage=None,
+                    latency_ms=elapsed,
+                    failure_class=PROVIDER_TIMEOUT,
+                )
+                raise ProviderFailure(
+                    PROVIDER_TIMEOUT,
+                    True,
+                    "OpenAI request timed out.",
+                    attempt_metadata=(metadata,),
+                ) from None
+            if isinstance(error, APIConnectionError):
+                metadata = self._metadata(
+                    pass_id=pass_id,
+                    attempt_no=attempt_no,
+                    stage=stage,
+                    model=model,
+                    fingerprints=fingerprints,
+                    usage=None,
+                    latency_ms=elapsed,
+                    failure_class=PROVIDER_CONNECTION_ERROR,
+                )
+                raise ProviderFailure(
+                    PROVIDER_CONNECTION_ERROR,
+                    True,
+                    "OpenAI connection failed.",
+                    attempt_metadata=(metadata,),
+                ) from None
+            if isinstance(error, RateLimitError):
+                code = "PROVIDER_RATE_LIMIT"
+                metadata = self._metadata(
+                    pass_id=pass_id,
+                    attempt_no=attempt_no,
+                    stage=stage,
+                    model=model,
+                    fingerprints=fingerprints,
+                    usage=None,
+                    latency_ms=elapsed,
+                    failure_class=code,
+                )
+                raise ProviderFailure(code, True, "OpenAI rate limit exceeded.", attempt_metadata=(metadata,)) from None
+            status_code = getattr(error, "status_code", None)
+            if (
+                isinstance(status_code, int)
+                and not isinstance(status_code, bool)
+                and 500 <= status_code <= 599
+            ):
+                code = "PROVIDER_SERVER_ERROR"
+                metadata = self._metadata(
+                    pass_id=pass_id,
+                    attempt_no=attempt_no,
+                    stage=stage,
+                    model=model,
+                    fingerprints=fingerprints,
+                    usage=None,
+                    latency_ms=elapsed,
+                    failure_class=code,
+                )
+                raise ProviderFailure(code, True, "OpenAI server request failed.", attempt_metadata=(metadata,)) from None
             if self._is_schema_exception(error):
-                raise _SchemaFailure() from None
+                metadata = self._metadata(
+                    pass_id=pass_id,
+                    attempt_no=attempt_no,
+                    stage=stage,
+                    model=model,
+                    fingerprints=fingerprints,
+                    usage=None,
+                    latency_ms=elapsed,
+                    failure_class=PROVIDER_SCHEMA_FAILURE,
+                )
+                raise _SchemaFailure(metadata=metadata) from None
+            code = "OPENAI_REQUEST_FAILED"
+            metadata = self._metadata(
+                pass_id=pass_id,
+                attempt_no=attempt_no,
+                stage=stage,
+                model=model,
+                fingerprints=fingerprints,
+                usage=None,
+                latency_ms=elapsed,
+                failure_class=code,
+            )
             raise ProviderFailure(
-                "OPENAI_REQUEST_FAILED",
+                code,
                 self._is_retryable_exception(error),
                 "OpenAI request failed.",
+                attempt_metadata=(metadata,),
             ) from None
 
-        usage = self._validated_usage(getattr(response, "usage", None), model, max_output_tokens)
-        if (
-            getattr(response, "status", "completed") != "completed"
-            or getattr(response, "refusal", None) is not None
-        ):
-            raise _SchemaFailure(usage)
+        elapsed = self._latency_ms(started)
+        returned_model_id = _safe_response_identifier(getattr(response, "model", None))
+        request_id = _safe_response_identifier(getattr(response, "_request_id", None))
+        try:
+            usage = self._validated_usage(
+                getattr(response, "usage", None), model, max_output_tokens
+            )
+        except ProviderFailure as error:
+            if error.code == "OPENAI_USAGE_MISSING":
+                usage = None
+            else:
+                metadata = self._metadata(
+                    pass_id=pass_id,
+                    attempt_no=attempt_no,
+                    stage=stage,
+                    model=model,
+                    fingerprints=fingerprints,
+                    usage=error.usage,
+                    latency_ms=elapsed,
+                    failure_class=error.code,
+                    returned_model_id=returned_model_id,
+                    request_id=request_id,
+                )
+                error.set_attempt_metadata((metadata,))
+                error.usage_complete = error.usage is not None
+                error.attempt_count = attempt_no
+                raise
+        if getattr(response, "refusal", None) is not None or _response_has_refusal(response):
+            metadata = self._metadata(
+                pass_id=pass_id,
+                attempt_no=attempt_no,
+                stage=stage,
+                model=model,
+                fingerprints=fingerprints,
+                usage=usage,
+                latency_ms=elapsed,
+                failure_class=PROVIDER_REFUSAL,
+                returned_model_id=returned_model_id,
+                request_id=request_id,
+            )
+            raise ProviderFailure(
+                PROVIDER_REFUSAL,
+                False,
+                "The provider refused the request.",
+                usage=usage,
+                attempt_metadata=(metadata,),
+            )
+        if getattr(response, "status", "completed") != "completed":
+            metadata = self._metadata(
+                pass_id=pass_id,
+                attempt_no=attempt_no,
+                stage=stage,
+                model=model,
+                fingerprints=fingerprints,
+                usage=usage,
+                latency_ms=elapsed,
+                failure_class=PROVIDER_INCOMPLETE,
+                returned_model_id=returned_model_id,
+                request_id=request_id,
+            )
+            raise ProviderFailure(
+                PROVIDER_INCOMPLETE,
+                True,
+                "The provider response was incomplete.",
+                usage=usage,
+                attempt_metadata=(metadata,),
+            )
         try:
             parsed = response.output_parsed
         except Exception:
-            raise _SchemaFailure(usage) from None
+            metadata = self._metadata(
+                pass_id=pass_id,
+                attempt_no=attempt_no,
+                stage=stage,
+                model=model,
+                fingerprints=fingerprints,
+                usage=usage,
+                latency_ms=elapsed,
+                failure_class=PROVIDER_SCHEMA_FAILURE,
+                returned_model_id=returned_model_id,
+                request_id=request_id,
+            )
+            raise _SchemaFailure(usage, metadata) from None
         if parsed is None or not isinstance(parsed, output_type):
-            raise _SchemaFailure(usage)
-        return parsed, usage
+            metadata = self._metadata(
+                pass_id=pass_id,
+                attempt_no=attempt_no,
+                stage=stage,
+                model=model,
+                fingerprints=fingerprints,
+                usage=usage,
+                latency_ms=elapsed,
+                failure_class=PROVIDER_SCHEMA_FAILURE,
+                returned_model_id=returned_model_id,
+                request_id=request_id,
+            )
+            raise _SchemaFailure(usage, metadata)
+        if usage is None:
+            metadata = self._metadata(
+                pass_id=pass_id,
+                attempt_no=attempt_no,
+                stage=stage,
+                model=model,
+                fingerprints=fingerprints,
+                usage=None,
+                latency_ms=elapsed,
+                failure_class="OPENAI_USAGE_MISSING",
+                returned_model_id=returned_model_id,
+                request_id=request_id,
+            )
+            raise ProviderFailure(
+                "OPENAI_USAGE_MISSING",
+                False,
+                "OpenAI response usage is missing.",
+                attempt_metadata=(metadata,),
+                usage_complete=False,
+                attempt_count=attempt_no,
+            )
+        metadata = self._metadata(
+            pass_id=pass_id,
+            attempt_no=attempt_no,
+            stage=stage,
+            model=model,
+            fingerprints=fingerprints,
+            usage=usage,
+            latency_ms=elapsed,
+            failure_class=None,
+            returned_model_id=returned_model_id,
+            request_id=request_id,
+        )
+        return _AttemptSuccess(output=parsed, usage=usage, metadata=metadata)
+
+    def _latency_ms(self, started: float) -> int:
+        return max(0, int((self._monotonic_clock() - started) * 1000))
+
+    def _metadata(
+        self,
+        *,
+        pass_id: str,
+        attempt_no: int,
+        stage: str,
+        model: str,
+        fingerprints: StaticContractFingerprints,
+        usage: ProviderUsage | None,
+        latency_ms: int,
+        failure_class: str | None,
+        returned_model_id: str | None = None,
+        request_id: str | None = None,
+    ) -> ProviderPassMetadata:
+        observed = usage or ProviderUsage(0, 0, Decimal("0"), 1)
+        reason_codes = (
+            (failure_class,)
+            if failure_class in {
+                PROVIDER_REFUSAL,
+                PROVIDER_INCOMPLETE,
+                PROVIDER_TIMEOUT,
+                PROVIDER_SCHEMA_FAILURE,
+            }
+            else ()
+        )
+        return ProviderPassMetadata.from_values(
+            pass_id=pass_id,
+            attempt_no=attempt_no,
+            stage=stage,
+            configured_model=model,
+            returned_model_id=returned_model_id,
+            reasoning_effort=self._reasoning_effort(model),
+            request_id=request_id,
+            prompt_version=self._prompt_version,
+            prompt_sha256=fingerprints.prompt_sha256,
+            schema_version=self._schema_version,
+            schema_sha256=fingerprints.schema_sha256,
+            harness_version=self._harness_version,
+            harness_sha256=fingerprints.harness_sha256,
+            input_tokens=observed.input_tokens,
+            cached_input_tokens=observed.cached_input_tokens,
+            cache_write_input_tokens=observed.cache_write_input_tokens,
+            output_tokens=observed.output_tokens,
+            estimated_cost_usd=observed.cost_usd,
+            latency_ms=latency_ms,
+            retry_count=attempt_no - 1,
+            route_action="HUMAN_REVIEW" if failure_class else "NONE",
+            route_reason_codes=reason_codes,
+            failure_class=failure_class,
+        )
+
+    def _validate_input_image_blocks(self, content_blocks: Sequence[dict[str, object]]) -> None:
+        for block in content_blocks:
+            if block.get("type") != "input_image":
+                continue
+            if not self._is_valid_png_data_url(block.get("image_url")):
+                raise ProviderFailure(
+                    "OPENAI_IMAGE_INPUT_INVALID",
+                    False,
+                    "Image input must be a valid PNG data URL.",
+                )
 
     def _validated_usage(
         self, raw_usage: object, model: str, max_output_tokens: int
@@ -724,15 +1400,31 @@ class OpenAiDeclarationProvider:
             raise ProviderFailure("OPENAI_USAGE_MISSING", False, "OpenAI response usage is missing.")
         input_tokens = getattr(raw_usage, "input_tokens", None)
         output_tokens = getattr(raw_usage, "output_tokens", None)
+        input_details = getattr(raw_usage, "input_tokens_details", None)
+        cached_input_tokens = getattr(input_details, "cached_tokens", None)
+        cache_write_input_tokens = getattr(input_details, "cache_write_tokens", None)
         if (
             isinstance(input_tokens, bool)
             or isinstance(output_tokens, bool)
+            or isinstance(cached_input_tokens, bool)
+            or isinstance(cache_write_input_tokens, bool)
             or not isinstance(input_tokens, int)
             or not isinstance(output_tokens, int)
+            or not isinstance(cached_input_tokens, int)
+            or not isinstance(cache_write_input_tokens, int)
             or input_tokens < 0
             or output_tokens < 0
+            or cached_input_tokens < 0
+            or cache_write_input_tokens < 0
+            or cached_input_tokens + cache_write_input_tokens > input_tokens
         ):
             raise ProviderFailure("OPENAI_USAGE_INVALID", False, "OpenAI response usage is invalid.")
+        if cache_write_input_tokens and rates.cache_write_multiplier is None:
+            raise ProviderFailure(
+                "OPENAI_CACHE_WRITE_UNSUPPORTED",
+                False,
+                "Explicit cache writes are not supported for this model.",
+            )
         if (
             model == "gpt-5.6-luna"
             and input_tokens > _LUNA_SHORT_CONTEXT_MAX_INPUT_TOKENS
@@ -744,10 +1436,14 @@ class OpenAiDeclarationProvider:
                     input_tokens,
                     output_tokens,
                     rates,
+                    cached_input_tokens=cached_input_tokens,
+                    cache_write_input_tokens=cache_write_input_tokens,
                     input_multiplier=Decimal("2"),
                     output_multiplier=Decimal("1.5"),
                 ),
                 1,
+                cached_input_tokens,
+                cache_write_input_tokens,
             )
             raise ProviderFailure(
                 "OPENAI_LONG_CONTEXT_RATE_UNCONFIGURED",
@@ -755,8 +1451,21 @@ class OpenAiDeclarationProvider:
                 "Long-context Luna pricing is not configured.",
                 usage,
             )
-        cost = self._cost_usd(input_tokens, output_tokens, rates)
-        usage = ProviderUsage(input_tokens, output_tokens, cost, 1)
+        cost = self._cost_usd(
+            input_tokens,
+            output_tokens,
+            rates,
+            cached_input_tokens=cached_input_tokens,
+            cache_write_input_tokens=cache_write_input_tokens,
+        )
+        usage = ProviderUsage(
+            input_tokens,
+            output_tokens,
+            cost,
+            1,
+            cached_input_tokens,
+            cache_write_input_tokens,
+        )
         if output_tokens > max_output_tokens:
             raise ProviderFailure(
                 "OPENAI_OUTPUT_BUDGET_MISMATCH",
@@ -772,12 +1481,21 @@ class OpenAiDeclarationProvider:
         output_tokens: int,
         rates: _Rates,
         *,
+        cached_input_tokens: int = 0,
+        cache_write_input_tokens: int = 0,
         input_multiplier: Decimal = Decimal("1"),
         output_multiplier: Decimal = Decimal("1"),
     ) -> Decimal:
         return (
-            Decimal(input_tokens)
+            Decimal(input_tokens - cached_input_tokens - cache_write_input_tokens)
             * rates.input_usd_per_million
+            * input_multiplier
+            + Decimal(cached_input_tokens)
+            * rates.cached_input_usd_per_million
+            * input_multiplier
+            + Decimal(cache_write_input_tokens)
+            * rates.input_usd_per_million
+            * (rates.cache_write_multiplier or Decimal("0"))
             * input_multiplier
             + Decimal(output_tokens)
             * rates.output_usd_per_million
@@ -824,6 +1542,10 @@ class OpenAiDeclarationProvider:
                 if attempt_count is not None
                 else sum(usage.attempt_count for usage in present)
             ),
+            cached_input_tokens=sum(usage.cached_input_tokens for usage in present),
+            cache_write_input_tokens=sum(
+                usage.cache_write_input_tokens for usage in present
+            ),
         )
 
     @staticmethod
@@ -834,9 +1556,7 @@ class OpenAiDeclarationProvider:
             error,
             (
                 APIResponseValidationError,
-                ContentFilterFinishReasonError,
                 JSONDecodeError,
-                LengthFinishReasonError,
                 ValidationError,
             ),
         )

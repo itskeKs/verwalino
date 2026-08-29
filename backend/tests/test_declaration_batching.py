@@ -105,3 +105,17 @@ def test_oversized_page_fails_when_minimal_marked_segment_cannot_fit() -> None:
         PageBatcher(max_pages=20, max_chars=20, fits_batch=lambda _pages: False).batch(
             (PageInput("doc", 1, "x" * 30, 1.0),)
         )
+
+
+def test_recheck_batches_have_no_overlap_and_keep_a_selected_image_once() -> None:
+    image = "data:image/png;base64,iVBORw0KGgo="
+    batches = PageBatcher(max_pages=1, max_chars=25, overlap=False).batch(
+        (PageInput("doc", 1, "x" * 60, 1.0, image_data_url=image),)
+    )
+
+    pages = [page for batch in batches for page in batch.pages]
+    assert [(page.document_key, page.pdf_page, page.segment_no) for page in pages] == [
+        ("doc", 1, index) for index in range(1, len(pages) + 1)
+    ]
+    assert [page.image_data_url for page in pages].count(image) == 1
+    assert pages[0].image_data_url == image

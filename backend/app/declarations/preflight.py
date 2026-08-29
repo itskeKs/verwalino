@@ -7,6 +7,7 @@ that can safely be handed to a later extraction pipeline.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import math
@@ -233,6 +234,13 @@ class PdfPreflight:
         self._max_pages = max_pages
         self._text_min_chars = text_min_chars
         self._ocr_dpi = ocr_dpi
+        if (
+            isinstance(ocr_timeout_seconds, bool)
+            or not isinstance(ocr_timeout_seconds, int)
+            or ocr_timeout_seconds <= 0
+        ):
+            raise ValueError("ocr_timeout_seconds must be a positive integer")
+        self._vision_timeout_seconds = ocr_timeout_seconds
         self._max_pixels_per_page = max_pixels_per_page
         self._max_temp_bytes = max_temp_bytes
         self._max_ocr_pages_per_import = max_ocr_pages_per_import
@@ -247,6 +255,103 @@ class PdfPreflight:
 
     def new_import_budget(self) -> ImportPreflightBudget:
         return ImportPreflightBudget(started_at=self._monotonic())
+
+    def render_page_data_url(
+        self,
+        pdf_bytes: bytes,
+        page_number: int,
+        *,
+        budget: ImportPreflightBudget,
+    ) -> str:
+        """Rasterize one already-selected safe PDF page into a PNG data URL.
+
+        This is deliberately independent from OCR: a vision recheck is allowed
+        to consume the shared import deadline, pixel and temporary-byte
+        budgets, but it never increments the OCR page allowance.  The caller
+        owns ``pdf_bytes`` and must retain it only on its stack until this
+        method returns; no image or source bytes are retained by preflight.
+        """
+        if not isinstance(pdf_bytes, bytes):
+            raise DocumentIntegrityError("VISION_RENDER_UNAVAILABLE")
+        if isinstance(page_number, bool) or not isinstance(page_number, int):
+            raise DocumentIntegrityError("PDF_PAGE_OUT_OF_RANGE")
+        self._ensure_deadline(budget)
+        if len(pdf_bytes) > self._max_pdf_bytes:
+            raise DocumentIntegrityError("PDF_SIZE_LIMIT_EXCEEDED")
+        self._validate_final_eof(pdf_bytes)
+        structural_pages = self._validate_pdf_safety(pdf_bytes)
+        self._ensure_deadline(budget)
+        if len(structural_pages) > self._max_pages:
+            raise DocumentIntegrityError("PDF_PAGE_LIMIT_EXCEEDED")
+        if page_number < 1 or page_number > len(structural_pages):
+            raise DocumentIntegrityError("PDF_PAGE_OUT_OF_RANGE")
+
+        page = structural_pages[page_number - 1]
+        dpi, estimated_pixels = self._safe_vision_dpi(page)
+        self._reserve_vision_budget(budget, estimated_pixels)
+        temp_root = (
+            str(self._ocr_engine._temporary_root)
+            if isinstance(self._ocr_engine, TesseractOcrEngine)
+            and self._ocr_engine._temporary_root is not None
+            else None
+        )
+        counted_temp_bytes = 0
+        try:
+            from pdf2image import convert_from_bytes
+            from pdf2image.exceptions import PDFPopplerTimeoutError, PopplerNotInstalledError
+            from PIL import Image
+        except ImportError as error:  # pragma: no cover - deployment dependency
+            raise DocumentIntegrityError("VISION_RENDER_UNAVAILABLE") from error
+
+        directory_path: Path | None = None
+        counted_temp_bytes = 0
+        try:
+            with tempfile.TemporaryDirectory(dir=temp_root, prefix="hv-declaration-vision-") as directory:
+                directory_path = Path(directory)
+                paths = convert_from_bytes(
+                    pdf_bytes,
+                    dpi=dpi,
+                    first_page=page_number,
+                    last_page=page_number,
+                    thread_count=1,
+                    timeout=self._vision_operation_timeout(budget),
+                    output_folder=directory,
+                    paths_only=True,
+                )
+                counted_temp_bytes = _directory_size(directory_path)
+                self._account_vision_temp_bytes(budget, counted_temp_bytes)
+                if len(paths) != 1:
+                    raise DocumentIntegrityError("VISION_RENDER_UNAVAILABLE")
+                with Image.open(paths[0]) as image:
+                    rendered_pixels = image.width * image.height
+                    self._account_actual_vision_pixels(budget, rendered_pixels)
+                    encoded = io.BytesIO()
+                    image.save(encoded, format="PNG")
+                png = encoded.getvalue()
+                value = base64.b64encode(png).decode("ascii")
+                self._account_vision_temp_bytes(budget, len(png) + len(value))
+                self._ensure_deadline(budget)
+                return f"data:image/png;base64,{value}"
+        except DocumentIntegrityError:
+            raise
+        except (PDFPopplerTimeoutError, TimeoutError, subprocess.TimeoutExpired) as error:
+            raise DocumentIntegrityError("VISION_RENDER_TIMEOUT") from error
+        except (PopplerNotInstalledError, FileNotFoundError, OSError, RuntimeError) as error:
+            raise DocumentIntegrityError("VISION_RENDER_UNAVAILABLE") from error
+        except Exception as error:
+            raise DocumentIntegrityError("VISION_RENDER_UNAVAILABLE") from error
+        finally:
+            if directory_path is not None:
+                try:
+                    observed_temp_bytes = _directory_size(directory_path)
+                    if observed_temp_bytes > counted_temp_bytes:
+                        self._account_vision_temp_bytes(
+                            budget, observed_temp_bytes - counted_temp_bytes
+                        )
+                except DocumentIntegrityError:
+                    raise
+                except Exception as error:
+                    raise DocumentIntegrityError("VISION_RENDER_UNAVAILABLE") from error
 
     def run_bytes(
         self,
@@ -438,6 +543,11 @@ class PdfPreflight:
             raise DocumentIntegrityError("OCR_PAGE_DIMENSIONS_UNSAFE")
         return dpi, pixels
 
+    def _safe_vision_dpi(self, page: _StructuralPage) -> tuple[int, int]:
+        if isinstance(self._ocr_dpi, bool) or not isinstance(self._ocr_dpi, int) or self._ocr_dpi < 72:
+            raise DocumentIntegrityError("VISION_DPI_CONFIG_INVALID")
+        return self._safe_ocr_dpi(page)
+
     def _reserve_ocr_budget(self, budget: ImportPreflightBudget, estimated_pixels: int) -> None:
         self._ensure_deadline(budget)
         if budget.temporary_bytes >= self._max_temp_bytes:
@@ -448,6 +558,40 @@ class PdfPreflight:
             raise DocumentIntegrityError("OCR_IMPORT_PIXEL_LIMIT_EXCEEDED")
         budget.ocr_pages += 1
         budget.estimated_pixels += estimated_pixels
+
+    def _reserve_vision_budget(self, budget: ImportPreflightBudget, estimated_pixels: int) -> None:
+        """Reserve shared rendering resources without spending an OCR page."""
+        self._ensure_deadline(budget)
+        if budget.temporary_bytes >= self._max_temp_bytes:
+            raise DocumentIntegrityError("VISION_IMPORT_TEMP_BYTES_LIMIT_EXCEEDED")
+        if (
+            max(budget.estimated_pixels, budget.rendered_pixels) + estimated_pixels
+            > self._max_pixels_per_import
+        ):
+            raise DocumentIntegrityError("VISION_IMPORT_PIXEL_LIMIT_EXCEEDED")
+        budget.estimated_pixels += estimated_pixels
+
+    def _account_actual_vision_pixels(
+        self, budget: ImportPreflightBudget, rendered_pixels: int
+    ) -> None:
+        rendered = _nonnegative_int(rendered_pixels)
+        if rendered > self._max_pixels_per_page:
+            raise DocumentIntegrityError("VISION_RENDERED_PIXELS_LIMIT_EXCEEDED")
+        budget.rendered_pixels += rendered
+        if budget.rendered_pixels > self._max_pixels_per_import:
+            raise DocumentIntegrityError("VISION_IMPORT_RENDERED_PIXEL_LIMIT_EXCEEDED")
+
+    def _account_vision_temp_bytes(self, budget: ImportPreflightBudget, value: int) -> None:
+        temporary_bytes = _nonnegative_int(value)
+        budget.temporary_bytes += temporary_bytes
+        if budget.temporary_bytes > self._max_temp_bytes:
+            raise DocumentIntegrityError("VISION_IMPORT_TEMP_BYTES_LIMIT_EXCEEDED")
+
+    def _vision_operation_timeout(self, budget: ImportPreflightBudget) -> int | float:
+        remaining = budget.started_at + self._deadline_seconds - self._monotonic()
+        if remaining <= 0:
+            raise DocumentIntegrityError("PREFLIGHT_DEADLINE_EXCEEDED")
+        return min(self._vision_timeout_seconds, remaining)
 
     def _account_actual_ocr_resources(
         self, budget: ImportPreflightBudget, estimated_pixels: int

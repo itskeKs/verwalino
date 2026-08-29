@@ -4,6 +4,77 @@ Stand: 2026-06-01 · Version 0.1 (Design, vor Implementierung)
 Bezug: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2 · [roadmap.md](roadmap.md)
 Autor: `engine-correctness` (Opus 4.8) · Status: **Entwurf zur Bestätigung durch den Menschen — noch kein Code, kein Commit**
 
+> **Historischer Hinweis:** Die folgenden Abschnitte dokumentieren den
+> M0-Entwurfsstand von 2026-06-01. Sie sind nicht der Status der heutigen
+> Implementierung. Der aktuelle, begrenzte Teilungserklärungs-Workflow ist im
+> folgenden Abschnitt ergänzt; sein Betriebsvertrag steht im
+> [Runbook](operations/declaration-imports.md).
+
+---
+
+## Aktueller Teilungserklärungs-Workflow (2026-08-29)
+
+Die Anwendung verwendet für Teilungserklärungen einen **festen,
+deterministischen Manager**, keinen frei autonomen Agenten. Die
+`DeclarationPipeline` besitzt die feste Passreihenfolge, Budgets, Deadlines,
+Reservations, Retry-Grenzen, lokale Validierung und Veröffentlichung. Ein
+Modell erhält keine Tools, keine Hand-offs und keine Aktionssenke. PDF-Text,
+OCR und Bildseiten sind untrusted data: Sie dürfen Fakten vorschlagen, aber
+weder den Ablauf noch Berechtigungen oder kanonische Daten bestimmen.
+
+```text
+zugelassene PDF -> lokale Vorprüfung/OCR -> Luna-Structured-Outputs
+  -> exakte lokale Evidence-Quote-Validierung + Domain-Checks
+  -> deterministische RouterDecision
+  -> optional: ausgewählte Seite lokal als PNG rendern -> Mini-Recheck
+  -> erneut validieren -> NEEDS_REVIEW -> Human Approval
+```
+
+Luna läuft im Produkt mit `reasoning.effort="medium"`. Der Recheck ist auf
+`gpt-5.4-mini` mit `reasoning.effort="none"` und ausschließlich auf
+routerselektierte Seiten begrenzt. Luna `low`, Terra und die Variante mit
+Mini-Router sind Eval-Konfigurationen, nicht produktive Autopromotion. Jeder
+Pass ist unabhängig: Es gibt kein `previous_response_id` und keinen
+übernommenen Reasoning-Zustand. Der Provider nutzt Responses API Structured
+Outputs, nicht frei geparsten JSON-Text.
+
+Die Evidence-Grenze ist lokal und seitengebunden: Eine Quote wird nur
+akzeptiert, wenn sie nach kanonischer Normalisierung als zusammenhängender
+Text auf genau der behaupteten Seite vorkommt. Unbekannte oder nicht
+renderbare Seiten bleiben bei Human Review. Der reine `RouterDecision`
+entscheidet nur aus lokalen Fehlercodes, Seiteninventar, Renderbarkeit und
+lokaler Qualitätsmessung; weder Dokumenttext noch Modell-Confidence fließen
+ein. Es gibt keinen learned/online Router, solange kein repräsentatives,
+gelabeltes Goldset seine Änderung absichert.
+
+Vision-Eskalation ist eine flüchtige lokale Datenübertragung: Erst nach
+`VISION_RECHECK` wird die exakt ausgewählte Seite innerhalb der bestehenden
+Pixel-, Byte- und Deadline-Grenzen zu PNG gerendert. Schlägt das Rendern fehl,
+wird kein Ersatzbild und keine andere Seite übertragen. Danach gelten erneut
+alle Evidence- und Domain-Gates. Ein erfolgreicher Lauf endet ausschließlich
+in `NEEDS_REVIEW`; **Human Approval** bleibt der einzige Weg in kanonische
+Gebäude- oder Wissensdaten.
+
+Das technische Pass-Ledger ist von den Fachdaten getrennt: eine append-only,
+RLS-geschützte Zeile je SDK-Attempt, gebunden an
+`declaration_extraction_run_id`, enthält ausschließlich allowlist-validierte
+technische Metadaten. Der Cache-Schlüssel für Luna besteht ausschließlich aus
+statischer Modell-/Pass-/Prompt-/Schema-/Harness-Identität; der statische
+Developer-Block steht vor dynamischen Dokumentdaten. Luna nutzt explizites
+Caching mit 30 Minuten, Mini kein explizites Caching. Kosten- und
+Usage-Partitionen werden vor Persistenz fail closed validiert.
+
+Diese Grenzen orientieren sich an [Harness Engineering](https://openai.com/index/harness-engineering/)
+(Repo-Legibilität, erzwingbare Grenzen und Evals statt Autonomie), an den
+[Modellrichtlinien](https://developers.openai.com/api/docs/guides/latest-model),
+[Vision-Hinweisen](https://developers.openai.com/api/docs/guides/images-vision),
+[Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs)
+und der [Prompt-Injection-Resistenz](https://openai.com/index/designing-agents-to-resist-prompt-injection/).
+Routing-Forschung wie [RouteLLM](https://proceedings.iclr.cc/paper_files/paper/2025/file/5503a7c69d48a2f86fc00b3dc09de686-Paper-Conference.pdf)
+und [RouterEval](https://aclanthology.org/2025.findings-emnlp.208.pdf) stützt
+die Entscheidung, Varianten zu messen und zu vergleichen; sie ersetzt keine
+repräsentativen fachlichen Labels.
+
 > Dieses Dokument deckt M0 (und das vorbereitende Datenmodell für M1) ab. Es trifft die tragenden Architekturentscheidungen, die sich später kaum nachrüsten lassen (Mandantentrennung, GoBD-Unveränderbarkeit). Es enthält **kein** Anwendungscode und **keine** Migrations-Implementierung — nur Design, Begründung und einen abarbeitbaren Scaffolding-Plan für `bulk-impl`.
 >
 > **Verbindlichkeit:** Die SDD (v0.2) und die Roadmap sind die Quelle der fachlichen Wahrheit und bleiben unangetastet. Wo dieses Dokument über die SDD hinausgeht, ist das als *Annahme* oder *offener Punkt* markiert. Punkte, die der Mensch entscheiden muss, sind mit **[ENTSCHEIDUNG]** gekennzeichnet. Die zugehörigen Architecture Decision Records liegen unter [adr/](adr/).
