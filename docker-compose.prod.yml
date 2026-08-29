@@ -266,7 +266,12 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - backend
+      # Keep database reachability while making the non-internal egress
+      # network the deterministic default route for provider HTTPS traffic.
+      backend:
+        gw_priority: 0
+      egress:
+        gw_priority: 1
     labels:
       com.karat.hausverwaltung.release: ${HV_RELEASE_ID:?set HV_RELEASE_ID to the reviewed release identifier}
 
@@ -277,6 +282,11 @@ volumes:
 networks:
   backend:
     internal: true
+  # Only the declaration worker joins this non-internal network so it can
+  # resolve and reach the fixed OpenAI API origin. It is deliberately not the
+  # shared Traefik network and no host ports are published.
+  egress:
+    internal: false
   traefik:
     external: true
     name: traefik

@@ -305,6 +305,13 @@ def test_compose_declares_least_privilege_worker_topology() -> None:
         "timeout": "10s",
         "retries": 3,
     }
+    assert worker["networks"] == {
+        "backend": {"gw_priority": 0},
+        "egress": {"gw_priority": 1},
+    }
+    networks = _compose()["networks"]
+    assert networks["backend"] == {"internal": True}
+    assert networks["egress"] == {"internal": False}
 
     environment = _environment(worker)
     assert "app_rw" in environment["HV_DATABASE_URL"]

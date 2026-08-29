@@ -424,6 +424,13 @@ is_new_release_container app "$new_app_id" "$previous_app_id" || {
   echo "new app container was not created from the expected release image" >&2
   exit 1
 }
+# This disposable container overrides the worker entrypoint, so it never runs
+# the consuming worker loop. It makes only Models API GET requests to the
+# SDK's fixed OpenAI origin; no document, prompt, response, or tool request is
+# sent. The existing worker stays alive until the checked replacement starts.
+if declaration_import_is_enabled; then
+  compose run --rm --no-deps --entrypoint python worker -m app.workers.declaration_provider_smoke
+fi
 worker_start_attempted=1
 compose up -d --no-deps worker
 wait_for_health worker

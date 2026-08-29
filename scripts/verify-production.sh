@@ -66,8 +66,13 @@ assert_owned_resources() {
   done
 
   backend_network="${HV_VERIFY_PROJECT_NAME}_backend"
+  egress_network="${HV_VERIFY_PROJECT_NAME}_egress"
   if docker network inspect "$backend_network" >/dev/null 2>&1; then
     project=$(docker network inspect --format '{{index .Labels "com.docker.compose.project"}}' "$backend_network")
+    [ "$project" = "$HV_VERIFY_PROJECT_NAME" ] || return 1
+  fi
+  if docker network inspect "$egress_network" >/dev/null 2>&1; then
+    project=$(docker network inspect --format '{{index .Labels "com.docker.compose.project"}}' "$egress_network")
     [ "$project" = "$HV_VERIFY_PROJECT_NAME" ] || return 1
   fi
 
@@ -182,6 +187,54 @@ for runtime_service in app worker; do
     exit 1
   fi
 done
+
+assert_exact_networks() {
+  container_id=$1
+  expected_networks=$2
+  # Docker appends a blank line to this ranged template. Remove it before
+  # sorting, otherwise command substitution preserves it as a leading byte.
+  actual_networks=$(docker inspect --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$container_id" | sed '/^$/d' | sort)
+  [ "$actual_networks" = "$expected_networks" ] || {
+    echo "runtime container has unexpected Docker network attachments" >&2
+    exit 1
+  }
+}
+
+backend_network="${HV_VERIFY_PROJECT_NAME}_backend"
+egress_network="${HV_VERIFY_PROJECT_NAME}_egress"
+test "$(docker network inspect --format '{{.Internal}}' "$backend_network")" = true || {
+  echo "backend network must remain internal" >&2
+  exit 1
+}
+test "$(docker network inspect --format '{{.Internal}}' "$egress_network")" = false || {
+  echo "worker egress network must permit external DNS and HTTPS" >&2
+  exit 1
+}
+assert_exact_networks "$db_id" "$backend_network"
+assert_exact_networks "$app_id" "$(printf '%s\n%s' "$backend_network" traefik | sort)"
+assert_exact_networks "$worker_id" "$(printf '%s\n%s' "$backend_network" "$egress_network" | sort)"
+egress_gateway=$(docker network inspect --format '{{(index .IPAM.Config 0).Gateway}}' "$egress_network")
+[ -n "$egress_gateway" ] || {
+  echo "worker egress network has no gateway" >&2
+  exit 1
+}
+worker_default_gateway=$(compose exec -T worker python -c "
+import socket
+import struct
+
+for line in open('/proc/net/route', encoding='ascii'):
+    fields = line.split()
+    if len(fields) >= 4 and fields[1] == '00000000' and int(fields[3], 16) & 2:
+        print(socket.inet_ntoa(struct.pack('<L', int(fields[2], 16))))
+        break
+else:
+    raise SystemExit('worker has no default route')
+")
+[ "$worker_default_gateway" = "$egress_gateway" ] || {
+  echo "worker default route does not use the egress network gateway" >&2
+  exit 1
+}
+
 assert_runtime_db_role() {
   runtime_service=$1
   compose exec -T "$runtime_service" python -c "

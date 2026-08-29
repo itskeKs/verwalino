@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import httpx2
 import pytest
 from PIL import Image
+from pydantic import SecretStr
 from openai import (
     APIConnectionError,
     APIResponseValidationError,
@@ -31,6 +32,8 @@ from openai import (
 )
 from openai.lib._parsing._responses import type_to_text_format_param
 
+import app.declarations.openai_provider as openai_provider
+from app.core.config import Settings
 from app.declarations.fake_provider import FakeDeclarationProvider
 from app.declarations.openai_provider import OpenAiDeclarationProvider
 from app.declarations.provider import (
@@ -59,6 +62,27 @@ from app.declarations.prompts import (
 _png_buffer = io.BytesIO()
 Image.new("RGB", (1, 1), "white").save(_png_buffer, format="PNG")
 _PNG_DATA_URL = "data:image/png;base64," + base64.b64encode(_png_buffer.getvalue()).decode("ascii")
+
+
+def test_default_client_pins_the_official_openai_destination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class CapturingAsyncOpenAI:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(openai_provider, "AsyncOpenAI", CapturingAsyncOpenAI)
+
+    OpenAiDeclarationProvider(
+        configured_settings=Settings(openai_api_key=SecretStr("unit-test-key")),
+    )
+
+    assert captured == {
+        "api_key": "unit-test-key",
+        "base_url": "https://api.openai.com/v1",
+    }
 
 
 @dataclass

@@ -81,6 +81,7 @@ _STATIC_HARNESS = (
     "no-previous-response-id|fixed-pass-manager"
 )
 _SAFE_RESPONSE_IDENTIFIER = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+_OPENAI_API_BASE_URL = "https://api.openai.com/v1"
 
 
 def _safe_response_identifier(value: object) -> str | None:
@@ -205,7 +206,11 @@ class OpenAiDeclarationProvider:
                 if configured.openai_api_key is not None
                 else ""
             )
-            self._client = AsyncOpenAI(api_key=api_key) if api_key else None
+            self._client = (
+                AsyncOpenAI(api_key=api_key, base_url=_OPENAI_API_BASE_URL)
+                if api_key
+                else None
+            )
 
     def _configured_rates(self, configured: Settings) -> dict[str, _Rates]:
         rates: dict[str, _Rates] = {}

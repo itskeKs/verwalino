@@ -74,6 +74,40 @@ archive or command line. If this alpha must run without declaration imports, set
 browse/search features remain available in that mode, but the deployment and
 isolated verifier otherwise fail closed before starting runtime containers.
 
+## Declaration-worker network boundary
+
+The PostgreSQL `backend` network remains internal. Database, migration and
+bootstrap services attach only there; the API attaches only to `backend` and
+the shared external `traefik` network. The declaration worker alone additionally
+attaches to the project-local, non-internal `egress` network. It has no Traefik
+attachment and no service publishes a host port. The worker uses the explicit
+Docker gateway priorities `backend: 0` and `egress: 1`, so its default route is
+the egress-network gateway while database traffic remains reachable over
+`backend`.
+
+This gives the worker DNS and HTTPS egress for the fixed
+`https://api.openai.com/v1` SDK origin. The extraction harness has no URL,
+browser, or tool capability: provider calls are structured-output/Models API
+calls only. When declaration imports are enabled, the deploy gate runs after
+the replacement API is healthy but before the consuming replacement worker is
+started. It uses a one-off `compose run --rm --no-deps` worker container with
+an explicit Python entrypoint override, so the normal worker loop never runs.
+That container makes the non-billable Models API lookup for the configured
+primary and escalation model IDs with a short timeout and one bounded SDK
+retry. It sends no prompt, PDF, document content, or Responses API request;
+the key is read solely from the worker container environment and is never
+printed. A smoke failure preserves/restores the prior runtime and prevents
+promotion.
+
+Docker's ordinary non-internal network is **not** a domain firewall. The fixed
+client origin and tool-free harness prevent application-configured alternate
+destinations, but host/network policy must add an egress allowlist if a strict
+network-level restriction to OpenAI is required. The isolated verifier checks
+the exact topology and decodes the worker's live default route from
+`/proc/net/route`, comparing it with the Docker egress gateway. It
+intentionally does not perform an external provider call with its placeholder
+key.
+
 ## Manual release transfer and promotion
 
 Run the following from the reviewed worktree. The archive is deliberately

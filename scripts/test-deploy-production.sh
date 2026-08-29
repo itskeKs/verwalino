@@ -15,6 +15,11 @@ fi
 
 if [ "$(basename "$0")" = mv ]; then
   case "${1:-}" in -Tf|-f) shift ;; esac
+  case "${2:-}" in
+    */current)
+      [ -z "${FAKE_DOCKER_LOG:-}" ] || printf '%s\n' promoted >> "$FAKE_DOCKER_LOG"
+      ;;
+  esac
   /bin/mv -f "$1" "$2"
   exit 0
 fi
@@ -188,6 +193,11 @@ if [ "$(basename "$0")" = docker ]; then
           fi
           exit 0
           ;;
+        *' run --rm --no-deps --entrypoint python worker -m app.workers.declaration_provider_smoke '*)
+          : > "$FAKE_PROVIDER_SMOKE_CALLED"
+          [ "${FAKE_PROVIDER_SMOKE_FAIL:-0}" = 1 ] && exit 99
+          exit 0
+          ;;
         *' run '*' alembic current '*) printf '%s\n' '0028 (head)'; exit 0 ;;
         *' run '*) exit 0 ;;
         *' exec -T app python -c '*'import json'*)
@@ -288,6 +298,60 @@ assert_declaration_worker_runtime() {
     fail 'runtime verifier does not fail closed when an enabled declaration import has no provider key'
 }
 
+assert_worker_egress_isolation() {
+  worker_block=$(sed -n '/^  worker:/,/^volumes:/p' docker-compose.prod.yml)
+  app_block=$(sed -n '/^  app:/,/^  worker:/p' docker-compose.prod.yml)
+  backend_only_services=$(sed -n '/^  db:/,/^  app:/p' docker-compose.prod.yml)
+  network_block=$(sed -n '/^networks:/,$p' docker-compose.prod.yml)
+
+  printf '%s\n' "$worker_block" | grep -Fq '      egress:' || \
+    fail 'declaration worker is not attached to the dedicated egress network'
+  printf '%s\n' "$worker_block" | grep -Eq '^      (- traefik|traefik:)' && \
+    fail 'declaration worker must not join the shared Traefik network'
+  printf '%s\n' "$app_block" | grep -Eq '^      (- egress|egress:)' && \
+    fail 'app must not join the declaration worker egress network'
+  printf '%s\n' "$backend_only_services" | grep -Eq '^      (- egress|egress:)' && \
+    fail 'database, migration, and bootstrap services must remain backend-only'
+  printf '%s\n' "$network_block" | grep -Fq '  egress:' || \
+    fail 'production Compose does not define the dedicated worker egress network'
+  if printf '%s\n' "$network_block" | sed -n '/^  egress:/,/^  [a-z]/p' | grep -Fq 'internal: true'; then
+    fail 'declaration worker egress network must permit external DNS and HTTPS'
+  fi
+  grep -Fq 'assert_exact_networks' scripts/verify-production.sh || \
+    fail 'isolated verifier does not assert exact runtime network attachments'
+  grep -Fq 'egress_network="${HV_VERIFY_PROJECT_NAME}_egress"' scripts/verify-production.sh || \
+    fail 'isolated verifier does not own and clean up the worker egress network'
+  if grep -Fq 'declaration_provider_smoke' scripts/verify-production.sh; then
+    fail 'isolated verifier must not make an external provider call with its placeholder key'
+  fi
+  grep -Fq 'gw_priority: 1' docker-compose.prod.yml || \
+    fail 'worker egress network does not have the deterministic default-route priority'
+  grep -Fq 'gw_priority: 0' docker-compose.prod.yml || \
+    fail 'worker backend network does not have the lower default-route priority'
+  grep -Fq 'worker_default_gateway' scripts/verify-production.sh || \
+    fail 'isolated verifier does not inspect the worker default route'
+  grep -Fq 'egress_gateway' scripts/verify-production.sh || \
+    fail 'isolated verifier does not compare the worker default route to the egress gateway'
+  grep -Fq "| sed '/^\$/d' | sort" scripts/verify-production.sh || \
+    fail 'isolated verifier does not remove Docker inspect blank lines before network comparison'
+}
+
+assert_provider_smoke_gate() {
+  smoke_line=$(grep -nF 'compose run --rm --no-deps --entrypoint python worker -m app.workers.declaration_provider_smoke' scripts/deploy-production.sh | cut -d: -f1)
+  worker_start_line=$(grep -nF 'compose up -d --no-deps worker' scripts/deploy-production.sh | cut -d: -f1)
+  promotion_line=$(grep -nF 'ln -s "releases/$RELEASE_ID" "$root/current.new"' scripts/deploy-production.sh | cut -d: -f1)
+  [ -n "$smoke_line" ] || fail 'deploy does not perform the declaration provider connectivity smoke in an isolated worker container'
+  [ -n "$worker_start_line" ] || fail 'deploy does not start the declaration worker'
+  [ -n "$promotion_line" ] || fail 'deploy does not contain an atomic release promotion'
+  [ "$smoke_line" -lt "$worker_start_line" ] || \
+    fail 'declaration provider connectivity smoke must happen before the consuming worker starts'
+  [ "$worker_start_line" -lt "$promotion_line" ] || \
+    fail 'declaration worker must become ready before promotion'
+  if grep -Fq 'compose exec -T worker python -m app.workers.declaration_provider_smoke' scripts/deploy-production.sh; then
+    fail 'provider smoke must not execute through the consuming worker service'
+  fi
+}
+
 assert_release_replacement_hardening() {
   grep -Fq 'flock -n 9' scripts/deploy-production.sh || \
     fail 'deployment does not acquire an exclusive host lock before Compose work'
@@ -334,6 +398,8 @@ assert_gateway_basic_auth_removed
 assert_admin_password_handling
 assert_verifier_label_assertions
 assert_declaration_worker_runtime
+assert_worker_egress_isolation
+assert_provider_smoke_gate
 assert_release_replacement_hardening
 admin_password='Alpha"$\;{}[]Pass12'
 tmpdir=$(mktemp -d)
@@ -486,9 +552,68 @@ grep -Fq 'releases/old/docker-compose.prod.yml up -d --no-deps worker' "$tmpdir/
 [ -f "$tmpdir/restore-app-restored" ] || fail 'previous app was not restored after replacement failure'
 [ -f "$tmpdir/restore-worker-restored" ] || fail 'previous worker was not restored after replacement failure'
 
+provider_failure_root="$tmpdir/provider-failure-root"
+mkdir -p "$provider_failure_root/releases/test/infra/db" "$provider_failure_root/shared"
+printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' > "$provider_failure_root/shared/.env"
+chmod 600 "$provider_failure_root/shared/.env"
+: > "$provider_failure_root/releases/test/docker-compose.prod.yml"
+: > "$provider_failure_root/releases/test/infra/db/prod-init.sh"
+if printf '%s\n' "$admin_password" | \
+  PATH="$tmpdir/bin:$PATH" \
+  FAKE_DOCKER_LOG="$tmpdir/provider-failure-docker.log" \
+  FAKE_SHARED="$provider_failure_root/shared" \
+  FAKE_APP_CREATED="$tmpdir/provider-failure-app-created" \
+  FAKE_WORKER_CREATED="$tmpdir/provider-failure-worker-created" \
+  FAKE_PROVIDER_SMOKE_CALLED="$tmpdir/provider-smoke-called" \
+  FAKE_ADMIN_PASSWORD="$admin_password" \
+  FAKE_PROVIDER_SMOKE_FAIL=1 \
+  DEPLOY_ROOT="$provider_failure_root" RELEASE_ID=test sh "$deploy_script"; then
+  fail 'deployment unexpectedly succeeded despite the injected provider smoke failure'
+fi
+[ -f "$tmpdir/provider-smoke-called" ] || fail 'provider smoke was not invoked from the worker container'
+[ ! -e "$provider_failure_root/current" ] || fail 'provider smoke failure promoted the release'
+
+provider_restore_root="$tmpdir/provider-restore-root"
+mkdir -p "$provider_restore_root/releases/test/infra/db" "$provider_restore_root/releases/old/infra/db" "$provider_restore_root/shared"
+printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' > "$provider_restore_root/shared/.env"
+chmod 600 "$provider_restore_root/shared/.env"
+: > "$provider_restore_root/releases/test/docker-compose.prod.yml"
+: > "$provider_restore_root/releases/test/infra/db/prod-init.sh"
+: > "$provider_restore_root/releases/old/docker-compose.prod.yml"
+: > "$provider_restore_root/releases/old/infra/db/prod-init.sh"
+ln -s releases/old "$provider_restore_root/current"
+: > "$tmpdir/provider-restore-docker.log"
+if printf '%s\n' "$admin_password" | \
+  PATH="$tmpdir/bin:$PATH" \
+  FAKE_DOCKER_LOG="$tmpdir/provider-restore-docker.log" \
+  FAKE_SHARED="$provider_restore_root/shared" \
+  FAKE_APP_CREATED="$tmpdir/provider-restore-app-created" \
+  FAKE_WORKER_CREATED="$tmpdir/provider-restore-worker-created" \
+  FAKE_APP_RESTORED="$tmpdir/provider-restore-app-restored" \
+  FAKE_WORKER_RESTORED="$tmpdir/provider-restore-worker-restored" \
+  FAKE_PROVIDER_SMOKE_CALLED="$tmpdir/provider-restore-smoke-called" \
+  FAKE_READLINK_F="$provider_restore_root/releases/old" \
+  FAKE_ADMIN_PASSWORD="$admin_password" \
+  FAKE_PROVIDER_SMOKE_FAIL=1 \
+  DEPLOY_ROOT="$provider_restore_root" RELEASE_ID=test sh "$deploy_script"; then
+  fail 'deployment unexpectedly succeeded despite the injected provider smoke failure with a prior release'
+fi
+[ -f "$tmpdir/provider-restore-smoke-called" ] || fail 'provider smoke was not invoked before replacement with a prior release'
+[ -f "$tmpdir/provider-restore-app-restored" ] || fail 'provider smoke failure did not restore the prior app'
+[ -f "$tmpdir/provider-restore-worker-restored" ] || fail 'provider smoke failure did not restore the prior worker'
+grep -Fq 'releases/old/docker-compose.prod.yml up -d --no-deps app' "$tmpdir/provider-restore-docker.log" || \
+  fail 'provider smoke failure did not restore the prior app command'
+grep -Fq 'releases/old/docker-compose.prod.yml up -d --no-deps worker' "$tmpdir/provider-restore-docker.log" || \
+  fail 'provider smoke failure did not restore the prior worker command'
+if grep -Fq "releases/test/docker-compose.prod.yml up -d --no-deps worker" "$tmpdir/provider-restore-docker.log"; then
+  fail 'provider smoke failure started the consuming replacement worker'
+fi
+[ "$(readlink "$provider_restore_root/current")" = releases/old ] || \
+  fail 'provider smoke failure changed the prior current release pointer'
+
 success_root="$tmpdir/success-root"
 mkdir -p "$success_root/releases/test/infra/db" "$success_root/shared"
-printf '%s\n' 'HV_DECLARATION_IMPORT_ENABLED=false' > "$success_root/shared/.env"
+printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' > "$success_root/shared/.env"
 chmod 600 "$success_root/shared/.env"
 : > "$success_root/releases/test/docker-compose.prod.yml"
 : > "$success_root/releases/test/infra/db/prod-init.sh"
@@ -499,10 +624,21 @@ printf '%s\n' "$admin_password" | \
   FAKE_SHARED="$success_root/shared" \
   FAKE_APP_CREATED="$tmpdir/success-app-created" \
   FAKE_WORKER_CREATED="$tmpdir/success-worker-created" \
+  FAKE_PROVIDER_SMOKE_CALLED="$tmpdir/success-smoke-called" \
   FAKE_ADMIN_PASSWORD="$admin_password" \
   DEPLOY_ROOT="$success_root" RELEASE_ID=test sh "$deploy_script"
 [ "$(readlink "$success_root/current")" = releases/test ] || fail 'successful public-gate probe did not promote the release'
 grep -Fq 'up -d --no-deps worker' "$tmpdir/success-docker.log" || \
   fail 'successful deployment did not start the declaration worker'
+success_smoke_line=$(grep -nF 'run --rm --no-deps --entrypoint python worker -m app.workers.declaration_provider_smoke' "$tmpdir/success-docker.log" | cut -d: -f1)
+success_worker_line=$(grep -nF 'up -d --no-deps worker' "$tmpdir/success-docker.log" | cut -d: -f1)
+success_promotion_line=$(grep -nFx promoted "$tmpdir/success-docker.log" | cut -d: -f1)
+[ -n "$success_smoke_line" ] || fail 'successful deployment did not run the isolated provider smoke'
+[ -n "$success_worker_line" ] || fail 'successful deployment did not start the consuming worker'
+[ -n "$success_promotion_line" ] || fail 'successful deployment did not record promotion'
+[ "$success_smoke_line" -lt "$success_worker_line" ] || \
+  fail 'successful deployment ran the consuming worker before the provider smoke'
+[ "$success_worker_line" -lt "$success_promotion_line" ] || \
+  fail 'successful deployment promoted before the consuming worker started'
 
 printf '%s\n' 'deploy-production app and worker cleanup regression probe passed'

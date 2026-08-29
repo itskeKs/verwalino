@@ -194,6 +194,35 @@ Konflikte bleiben `NEEDS_CLARIFICATION`; das System erteilt keine
 Rechtsauskunft. MEA sind als Zähler/Nenner zu behandeln; eine Skala wird nie
 stillschweigend ergänzt oder umgerechnet.
 
+## Netzwerkgrenze des Workers
+
+In Produktion bleibt `backend` ein internes Docker-Netz: Datenbank,
+Migration und Bootstrap sind ausschließlich dort, die API nur zusätzlich im
+gemeinsamen Traefik-Netz. Ausschließlich der Declaration-Worker hängt außerdem
+am projektlokalen nicht-internen Netz `egress`; er hängt nie an Traefik und
+kein Dienst veröffentlicht Host-Ports. Seine expliziten Docker-Gateway-
+Prioritäten sind `backend: 0` und `egress: 1`: Der Default-Route-Gateway liegt
+damit im Egress-Netz, die Datenbank bleibt ausschließlich über `backend`
+erreichbar.
+
+Der OpenAI-Client verwendet fest `https://api.openai.com/v1`. Der Harness hat
+keine URL-, Browser- oder Tool-Fähigkeit und übermittelt nur die vorgesehenen
+Structured-Output-Anfragen. Bei aktivierten Imports prüft der Worker vor einer
+Promotion die beiden konfigurierten Modell-IDs über die nicht-billable Models
+API (kurzer Timeout, höchstens ein SDK-Retry). Dafür startet der Deploy nach
+dem API-Healthcheck, aber vor dem konsumierenden Worker, einen einmaligen
+`compose run --rm --no-deps`-Container mit explizitem Python-EntryPoint. Der
+normale Worker-EntryPoint und seine Endlosschleife laufen darin nicht. Weder
+PDF-/Prompt-Inhalte noch Responses-Aufrufe werden übertragen und der Schlüssel
+wird ausschließlich aus seiner Container-Umgebung gelesen. Ein Fehler erhält
+den vorherigen Runtime-Stand und verhindert die Promotion.
+
+Das nicht-interne Docker-Netz ist keine Domain-Firewall. Wer Egress auf OpenAI
+beschränken muss, benötigt zusätzlich eine Host-/Netzwerk-Allowlist. Der
+isolierte Compose-Verifier prüft zusätzlich die laufende Default-Route gegen
+das Docker-Egress-Gateway, löst mit seinem Platzhalter-Schlüssel aber keinen
+externen Provider-Aufruf aus.
+
 ## Lokale Tests und Gold-Evals
 
 Normale Tests nutzen nur synthetische/redigierte Daten und keine Netzwerkaufrufe.
