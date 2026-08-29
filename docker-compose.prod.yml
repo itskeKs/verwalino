@@ -1,18 +1,12 @@
-# Single-host production deployment: the app image + PostgreSQL.
-# Secrets come from a local .env (see .env.example) -- compose auto-loads it.
-#
-#   cp .env.example .env   # then edit
-#   docker compose -f docker-compose.prod.yml up -d --build   # build locally
-#
-# On a CI-driven host, set APP_IMAGE to the pushed registry image and:
-#   docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
-#
-# Put a TLS-terminating reverse proxy (Caddy/Traefik/nginx) in front; the app
-# serves plain HTTP on :8000 and sets a Secure session cookie (HTTPS required).
+# Production alpha stack. It joins the host's existing Traefik Docker network;
+# this project neither publishes ports nor manages the shared reverse proxy.
+# Base-image manifest-list digests were re-resolved on 2026-08-27.
+
+name: hausverwaltung-alpha
 
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     restart: unless-stopped
     environment:
       POSTGRES_DB: hausverwaltung
@@ -27,29 +21,121 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+      start_period: 10s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - backend
+
+  migrate:
+    image: ${APP_IMAGE:?set APP_IMAGE to an immutable image reference}
+    profiles: ["ops"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      HV_DATABASE_URL_SYNC: postgresql://app_migrator:${MIGRATOR_PASSWORD}@db:5432/hausverwaltung
+    command: ["alembic", "upgrade", "head"]
+    networks:
+      - backend
+
+  bootstrap:
+    image: ${APP_IMAGE:?set APP_IMAGE to an immutable image reference}
+    profiles: ["ops"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      HV_DATABASE_URL_SYNC: postgresql://app_migrator:${MIGRATOR_PASSWORD}@db:5432/hausverwaltung
+    command: ["python", "-m", "app.admin_cli"]
+    networks:
+      - backend
 
   app:
-    image: ${APP_IMAGE:-hausverwaltung:local}
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${APP_IMAGE:?set APP_IMAGE to an immutable image reference}
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
     environment:
       HV_DATABASE_URL: postgresql+asyncpg://app_rw:${APP_RW_PASSWORD}@db:5432/hausverwaltung
-      HV_DATABASE_URL_MIGRATOR: postgresql+asyncpg://app_migrator:${MIGRATOR_PASSWORD}@db:5432/hausverwaltung
-      HV_DATABASE_URL_SYNC: postgresql://app_migrator:${MIGRATOR_PASSWORD}@db:5432/hausverwaltung
       HV_SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
-      HV_SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+      HV_SESSION_COOKIE_NAME: __Host-hv_session
+      HV_SESSION_COOKIE_SECURE: "true"
+      HV_ALLOWED_HOSTS: verwaltung.karat.immo
+      HV_ENABLE_API_DOCS: "false"
       HV_DATA_REGION: EU
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-172.21.0.0/16}
     volumes:
       - documents:/data/documents
-    ports:
-      - "${APP_PORT:-8000}:8000"
+    read_only: true
+    tmpfs:
+      # Three concurrent 25 MiB upload pre-validations spool here before the
+      # stream reaches the document volume; 128 MiB remains below mem_limit.
+      - /tmp:rw,noexec,nosuid,size=128m
+    user: "10001:10001"
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 768m
+    cpus: "1.00"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/api/health/live', headers={'Host': 'verwaltung.karat.immo'}), timeout=2)\""]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - backend
+      - traefik
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "traefik"
+      traefik.http.routers.hausverwaltung-alpha.rule: "Host(`verwaltung.karat.immo`)"
+      traefik.http.routers.hausverwaltung-alpha.entrypoints: "websecure"
+      traefik.http.routers.hausverwaltung-alpha.tls: "true"
+      traefik.http.routers.hausverwaltung-alpha.tls.certresolver: "letsencrypt"
+      traefik.http.routers.hausverwaltung-alpha.service: "hausverwaltung-alpha"
+      traefik.http.routers.hausverwaltung-alpha.middlewares: "hausverwaltung-alpha-security,hausverwaltung-alpha-buffer"
+      traefik.http.routers.hausverwaltung-alpha-login.rule: "Host(`verwaltung.karat.immo`) && Path(`/api/auth/login`)"
+      traefik.http.routers.hausverwaltung-alpha-login.priority: "100"
+      traefik.http.routers.hausverwaltung-alpha-login.entrypoints: "websecure"
+      traefik.http.routers.hausverwaltung-alpha-login.tls: "true"
+      traefik.http.routers.hausverwaltung-alpha-login.tls.certresolver: "letsencrypt"
+      traefik.http.routers.hausverwaltung-alpha-login.service: "hausverwaltung-alpha"
+      traefik.http.routers.hausverwaltung-alpha-login.middlewares: "hausverwaltung-alpha-security,hausverwaltung-alpha-buffer,hausverwaltung-alpha-login-rate"
+      traefik.http.services.hausverwaltung-alpha.loadbalancer.server.port: "8000"
+      traefik.http.middlewares.hausverwaltung-alpha-buffer.buffering.maxRequestBodyBytes: "31457280"
+      traefik.http.middlewares.hausverwaltung-alpha-buffer.buffering.memRequestBodyBytes: "1048576"
+      traefik.http.middlewares.hausverwaltung-alpha-login-rate.ratelimit.average: "5"
+      traefik.http.middlewares.hausverwaltung-alpha-login-rate.ratelimit.period: "1m"
+      traefik.http.middlewares.hausverwaltung-alpha-login-rate.ratelimit.burst: "5"
+      traefik.http.middlewares.hausverwaltung-alpha-security.headers.contentSecurityPolicy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+      traefik.http.middlewares.hausverwaltung-alpha-security.headers.stsSeconds: "31536000"
+      traefik.http.middlewares.hausverwaltung-alpha-security.headers.stsIncludeSubdomains: "true"
+      traefik.http.middlewares.hausverwaltung-alpha-security.headers.contentTypeNosniff: "true"
+      traefik.http.middlewares.hausverwaltung-alpha-security.headers.frameDeny: "true"
+      traefik.http.middlewares.hausverwaltung-alpha-security.headers.referrerPolicy: "no-referrer"
 
 volumes:
   pgdata:
   documents:
+
+networks:
+  backend:
+    internal: true
+  traefik:
+    external: true
+    name: traefik

@@ -17,9 +17,11 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Iterator, Protocol, runtime_checkable
+from urllib.parse import quote
 
 from app.core.config import settings
 
@@ -56,6 +58,10 @@ class DocumentStore(Protocol):
         """Check if a key exists in the store."""
         ...
 
+    def iter_chunks(self, key: str, *, chunk_size: int = 64 * 1024) -> Iterator[bytes]:
+        """Yield a document as fixed-size binary chunks."""
+        ...
+
 
 def compute_sha256(data: bytes) -> str:
     """Compute SHA-256 hex digest of raw bytes."""
@@ -79,10 +85,27 @@ class LocalFsDocumentStore:
     """
 
     def __init__(self, root: str | Path):
-        self._root = Path(root)
+        self._root = Path(root).resolve()
+
+    def _resolve_key(self, key: str) -> Path:
+        """Resolve a document key without permitting filesystem traversal."""
+        candidate_key = Path(key)
+        if (
+            not key
+            or candidate_key.is_absolute()
+            or "\\" in key
+            or any(part in {".", ".."} for part in key.split("/"))
+        ):
+            raise ValueError("Invalid document storage key")
+        candidate = (self._root / candidate_key).resolve()
+        try:
+            candidate.relative_to(self._root)
+        except ValueError as exc:
+            raise ValueError("Invalid document storage key") from exc
+        return candidate
 
     def put(self, key: str, data: bytes, *, content_type: str) -> StoredObjectRef:
-        path = self._root / key
+        path = self._resolve_key(key)
         sha = compute_sha256(data)
 
         if path.exists():
@@ -110,13 +133,59 @@ class LocalFsDocumentStore:
         )
 
     def get(self, key: str) -> bytes:
-        path = self._root / key
+        path = self._resolve_key(key)
         if not path.exists():
             raise FileNotFoundError(f"Document not found: {key}")
         return path.read_bytes()
 
     def exists(self, key: str) -> bool:
-        return (self._root / key).exists()
+        return self._resolve_key(key).exists()
+
+    def iter_chunks(self, key: str, *, chunk_size: int = 64 * 1024) -> Iterator[bytes]:
+        """Yield a stored document without loading it fully into memory."""
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
+        path = self._resolve_key(key)
+        try:
+            handle = path.open("rb")
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Document not found: {key}") from None
+
+        def chunks() -> Iterator[bytes]:
+            try:
+                while chunk := handle.read(chunk_size):
+                    yield chunk
+            finally:
+                handle.close()
+
+        return chunks()
+
+
+_ATTACHMENT_FILENAME_TRANSLATION = str.maketrans(
+    {character: "_" for character in ('"', "\\", "\r", "\n", ";", ":")}
+)
+
+
+def safe_attachment_filename(filename: str) -> str:
+    """Return a filename safe for a quoted Content-Disposition header."""
+    return "".join(
+        "_" if ord(character) < 32 or ord(character) == 127 else character
+        for character in filename.translate(_ATTACHMENT_FILENAME_TRANSLATION)
+    )
+
+
+def attachment_content_disposition(filename: str) -> str:
+    """Build an attachment header with ASCII fallback and RFC 5987 Unicode name."""
+    safe_filename = safe_attachment_filename(filename) or "download"
+    ascii_filename = unicodedata.normalize("NFKD", safe_filename).encode(
+        "ascii", "ignore"
+    ).decode("ascii")
+    ascii_filename = safe_attachment_filename(ascii_filename) or "download"
+    encoded_filename = quote(safe_filename, safe="!#$&+-.^_`|~")
+    return (
+        f'attachment; filename="{ascii_filename}"; '
+        f"filename*=UTF-8''{encoded_filename}"
+    )
 
 
 # --- Module-level singleton (the active store) ---

@@ -60,6 +60,20 @@ def _pdf(name: str, content: bytes, doc_type: str, title: str = ""):
 
 class TestMandateDocuments:
     @pytest.mark.asyncio
+    async def test_multipart_upload_over_limit_is_rejected(
+        self, client_a_admin, mandate_doc_seed, monkeypatch
+    ):
+        import app.api.mandates as mandate_api
+
+        monkeypatch.setattr(mandate_api, "MAX_UPLOAD_BYTES", 4, raising=False)
+        response = await client_a_admin.post(
+            f"/api/mandates/{mandate_doc_seed['mandate_a']}/documents",
+            **_pdf("too-large.pdf", b"abcde", "SONSTIGES"),
+        )
+
+        assert response.status_code == 413
+
+    @pytest.mark.asyncio
     async def test_upload_and_list(self, client_a_admin, mandate_doc_seed):
         mid = mandate_doc_seed["mandate_a"]
         up = _pdf("verwaltervertrag.pdf", b"%PDF-1.4 contract A", "VERWALTERVERTRAG", "Verwaltervertrag 2024")
@@ -89,6 +103,9 @@ class TestMandateDocuments:
         r = await client_a_admin.get(f"/api/mandates/{mid}/documents/{doc_id}/download")
         assert r.status_code == 200
         assert r.content == content
+        assert r.headers["x-content-type-options"] == "nosniff"
+        assert r.headers["content-length"] == str(len(content))
+        assert r.headers["content-disposition"].startswith('attachment; filename="bank.pdf"')
 
     @pytest.mark.asyncio
     async def test_invalid_doc_type_rejected(self, client_a_admin, mandate_doc_seed):

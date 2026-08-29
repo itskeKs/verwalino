@@ -14,16 +14,18 @@ dependencies = [
     "pydantic-settings>=2.0,<3",
     "itsdangerous>=2.2,<3",
     "python-multipart>=0.0.18",
-    "weasyprint>=63,<65",
+    "weasyprint>=69,<70",
     "pdfplumber>=0.11,<1",
 ]
 
 [project.optional-dependencies]
+ops = [
+    "psycopg2-binary>=2.9,<3",
+]
 dev = [
     "pytest>=8,<9",
     "pytest-asyncio>=0.25,<1",
     "httpx>=0.28,<1",
-    "psycopg2-binary>=2.9,<3",
     "reportlab>=4.0,<5",
     # M3: property-based testing of the distribution engine invariants
     # (architecture.md section 6, m3-abrechnungs-engine.md section 9.2).

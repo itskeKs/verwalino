@@ -21,7 +21,8 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.db import get_session_factory, set_tenant_context, _NULL_ORG
+from app.core.auth_db import validate_session_principal
+from app.core.db import get_session_factory, set_tenant_context
 from app.core.security import decode_session_token
 from app.core.rbac import Role, require_role
 from sqlalchemy import text
@@ -37,7 +38,7 @@ class AuthContext:
     role: str
 
 
-def _get_auth_context(request: Request) -> AuthContext | None:
+def _get_session_identities(request: Request) -> tuple[uuid.UUID, uuid.UUID] | None:
     """Extract auth context from the session cookie.  Returns None if absent/invalid."""
     token = request.cookies.get(settings.session_cookie_name)
     if not token:
@@ -45,22 +46,27 @@ def _get_auth_context(request: Request) -> AuthContext | None:
     data = decode_session_token(token)
     if not data:
         return None
-    return AuthContext(
-        user_id=uuid.UUID(data["uid"]),
-        organization_id=uuid.UUID(data["oid"]),
-        role=data["role"],
-    )
+    return uuid.UUID(data["uid"]), uuid.UUID(data["oid"])
 
 
-def get_current_user(request: Request) -> AuthContext:
+async def get_current_user(request: Request) -> AuthContext:
     """FastAPI dependency -- returns AuthContext or raises 401."""
-    ctx = _get_auth_context(request)
-    if ctx is None:
+    identities = _get_session_identities(request)
+    if identities is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    return ctx
+    user_id, organization_id = identities
+    async with get_session_factory()() as session:
+        async with session.begin():
+            role = await validate_session_principal(session, user_id, organization_id)
+    if role is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    return AuthContext(user_id=user_id, organization_id=organization_id, role=role)
 
 
 async def get_db(

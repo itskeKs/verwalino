@@ -5,11 +5,11 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_admin_dep
-from app.core.security import hash_password
+from app.core.security import hash_password, normalize_email, validate_new_password
 from app.core.rbac import Role
 from app.repositories.user_repo import UserRepository
 from app.repositories.membership_repo import MembershipRepository
@@ -33,6 +33,16 @@ class UserCreate(BaseModel):
     password: str
     display_name: str = ""
     role: str = "CLERK"
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def email_has_canonical_form(cls, value: object) -> str:
+        return normalize_email(value)
+
+    @field_validator("password")
+    @classmethod
+    def password_matches_policy(cls, value: str) -> str:
+        return validate_new_password(value)
 
 
 @router.get("", response_model=list[UserOut])

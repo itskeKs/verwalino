@@ -14,8 +14,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.storage import get_store
+from app.core.storage import attachment_content_disposition, get_store
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
+from app.core.uploads import MAX_UPLOAD_BYTES, read_upload_limited
 from app.models.invoice_document import InvoiceDocument
 from app.repositories.invoice_document_repo import InvoiceDocumentRepository
 from app.services.invoice_document_service import InvoiceDocumentService
@@ -86,9 +87,7 @@ async def upload_document(
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a document (PDF, XML, etc.). Creates invoice_document record."""
-    file_bytes = await file.read()
-    if len(file_bytes) == 0:
-        raise HTTPException(status_code=422, detail="Empty file")
+    file_bytes = await read_upload_limited(file, max_bytes=MAX_UPLOAD_BYTES)
 
     svc = InvoiceDocumentService(db, auth.organization_id, auth.user_id)
     doc, _extraction = await svc.upload(
@@ -114,16 +113,19 @@ async def stream_document_content(
 
     store = get_store()
     try:
-        data = store.get(doc.storage_uri)
-    except FileNotFoundError:
+        chunks = store.iter_chunks(doc.storage_uri)
+    except (FileNotFoundError, PermissionError, ValueError):
         raise HTTPException(status_code=404, detail="Document file not found in storage")
 
     return StreamingResponse(
-        iter([data]),
+        chunks,
         media_type=doc.mime_type,
         headers={
-            "Content-Disposition": f'inline; filename="{doc.original_filename or "document"}"',
+            "Content-Disposition": attachment_content_disposition(
+                doc.original_filename or "document"
+            ),
             "Content-Length": str(doc.content_byte_size),
+            "X-Content-Type-Options": "nosniff",
         },
     )
 
@@ -163,9 +165,7 @@ async def create_document_version(
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    file_bytes = await file.read()
-    if len(file_bytes) == 0:
-        raise HTTPException(status_code=422, detail="Empty file")
+    file_bytes = await read_upload_limited(file, max_bytes=MAX_UPLOAD_BYTES)
 
     svc = InvoiceDocumentService(db, auth.organization_id, auth.user_id)
     new_doc = await svc.create_new_version(

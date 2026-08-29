@@ -27,7 +27,7 @@ import {
   listPersons,
 } from "../api/endpoints";
 import type { Organization, DeadlineItem, DeadlineStatus } from "../api/types";
-import { useAuth } from "../auth/AuthContext";
+import { useAuth } from "../auth/useAuth";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
 import { Badge, type BadgeTone } from "../components/ui/badge";
 import { StatCard } from "../components/ui/stat-card";

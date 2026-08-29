@@ -13,6 +13,7 @@ import uuid
 from fastapi import HTTPException
 
 from app.core.storage import compute_sha256, get_store, make_storage_key
+from app.core.uploads import MAX_UPLOAD_BYTES
 from app.models.audit_event import AuditEvent
 from app.models.mandate_document import MandateDocument
 from app.repositories.audit_repo import AuditRepository
@@ -22,9 +23,6 @@ from app.repositories.mandate_repo import MandateRepository
 DOC_TYPES = frozenset(
     {"VERWALTERVERTRAG", "BANKKONTO", "VOLLMACHT", "VERSICHERUNG", "SONSTIGES"}
 )
-MAX_BYTES = 25 * 1024 * 1024  # 25 MiB upload cap
-
-
 class MandateDocumentService:
     def __init__(self, session, org_id: uuid.UUID, user_id: uuid.UUID):
         self._session = session
@@ -57,7 +55,7 @@ class MandateDocumentService:
             )
         if not file_bytes:
             raise HTTPException(status_code=422, detail="Empty file")
-        if len(file_bytes) > MAX_BYTES:
+        if len(file_bytes) > MAX_UPLOAD_BYTES:
             raise HTTPException(status_code=413, detail="File too large (max 25 MB)")
 
         await self._require_mandate(mandate_id)

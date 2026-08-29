@@ -1,28 +1,41 @@
-"""Auth endpoints: login / logout.
-
-Login uses the migrator engine to look up users because the app_rw role
-with RLS cannot query users before knowing the org.
-"""
+"""Auth endpoints backed exclusively by the app runtime database role."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Response, status
-from pydantic import BaseModel
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import BaseModel, field_validator
 
+from app.core.auth_db import lookup_login_principal
 from app.core.config import settings
+from app.core.db import get_session_factory
 from app.core.security import (
+    MAX_PASSWORD_LENGTH,
     create_session_token,
+    hash_password,
+    normalize_email,
     verify_password,
 )
+from app.core.tenant import AuthContext, get_current_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+_DUMMY_PASSWORD_HASH = hash_password("runtime-auth-dummy-password")
 
 
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_login_email(cls, value: object) -> str:
+        return normalize_email(value)
+
+    @field_validator("password")
+    @classmethod
+    def login_password_is_bounded(cls, value: str) -> str:
+        if len(value) > MAX_PASSWORD_LENGTH:
+            raise ValueError(f"Password must not exceed {MAX_PASSWORD_LENGTH} characters")
+        return value
 
 
 class LoginResponse(BaseModel):
@@ -31,67 +44,50 @@ class LoginResponse(BaseModel):
     role: str
 
 
-@router.post("/login", response_model=LoginResponse)
-async def login(body: LoginRequest, response: Response):
-    """Authenticate and set session cookie.
+def _invalid_credentials() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-    Uses the migrator connection for the auth lookup because the
-    user table has RLS and we don't yet know the org.
-    """
-    auth_engine = create_async_engine(settings.database_url_migrator, pool_size=2)
-    try:
-        async with auth_engine.connect() as conn:
-            # Look up user
-            result = await conn.execute(
-                text('SELECT id, organization_id, email, password_hash, is_active FROM "user" WHERE email = :email'),
-                {"email": body.email},
-            )
-            user = result.first()
 
-            if user is None:
-                raise HTTPException(status_code=401, detail="Invalid credentials")
-
-            if not verify_password(body.password, user.password_hash):
-                raise HTTPException(status_code=401, detail="Invalid credentials")
-
-            if not user.is_active:
-                raise HTTPException(status_code=403, detail="Account disabled")
-
-            # Look up membership/role
-            result2 = await conn.execute(
-                text(
-                    "SELECT role FROM membership "
-                    "WHERE user_id = :uid AND organization_id = :oid"
-                ),
-                {"uid": user.id, "oid": user.organization_id},
-            )
-            membership = result2.first()
-
-            if membership is None:
-                raise HTTPException(status_code=403, detail="No role assigned")
-    finally:
-        await auth_engine.dispose()
-
-    token = create_session_token(
-        user_id=user.id,
-        organization_id=user.organization_id,
-        role=membership.role,
-    )
-
+def _set_session_cookie(response: Response, token: str) -> None:
     response.set_cookie(
         key=settings.session_cookie_name,
         value=token,
         httponly=True,
-        secure=settings.session_cookie_secure,  # True in production (HTTPS)
+        secure=settings.session_cookie_secure,
         samesite="lax",
         max_age=settings.session_max_age_seconds,
         path="/",
     )
 
+
+@router.post("/login", response_model=LoginResponse)
+async def login(body: LoginRequest, response: Response):
+    """Authenticate with the narrow app_rw lookup function only."""
+    async with get_session_factory()() as session:
+        async with session.begin():
+            principal = await lookup_login_principal(session, body.email)
+
+    # Always verify one Argon2 hash so unknown identities have no cheap path.
+    password_hash = principal.password_hash if principal is not None else _DUMMY_PASSWORD_HASH
+    password_matches = verify_password(body.password, password_hash)
+    if principal is None or not password_matches or not principal.is_active:
+        raise _invalid_credentials()
+
+    token = create_session_token(principal.user_id, principal.organization_id)
+    _set_session_cookie(response, token)
     return LoginResponse(
-        user_id=str(user.id),
-        organization_id=str(user.organization_id),
-        role=membership.role,
+        user_id=str(principal.user_id),
+        organization_id=str(principal.organization_id),
+        role=principal.role,
+    )
+
+
+@router.get("/session", response_model=LoginResponse)
+async def current_session(auth: AuthContext = Depends(get_current_user)):
+    return LoginResponse(
+        user_id=str(auth.user_id),
+        organization_id=str(auth.organization_id),
+        role=auth.role,
     )
 
 
@@ -99,5 +95,8 @@ async def login(body: LoginRequest, response: Response):
 async def logout(response: Response):
     response.delete_cookie(
         key=settings.session_cookie_name,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite="lax",
         path="/",
     )

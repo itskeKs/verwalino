@@ -3,7 +3,8 @@
 import os
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import auth, organizations, users, mandates
@@ -20,13 +21,19 @@ from app.api import fristen, dsgvo
 from app.core.extraction import set_extractor
 from app.core.pdf_extraction import PdfTextExtractor
 from app.core.einvoice import RoutingExtractor
+from app.core import health
+from app.core.static_files import resolve_spa_file
+from app.core.uploads import RequestBodyLimitMiddleware
+from app.core.config import settings
 
 app = FastAPI(
     title="Hausverwaltung MVP",
     version="0.1.0",
-    docs_url="/api/docs",
-    openapi_url="/api/openapi.json",
+    docs_url=settings.docs_url,
+    openapi_url=settings.openapi_url,
 )
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_host_list)
+app.add_middleware(RequestBodyLimitMiddleware)
 
 # --- Register the routing extractor as default (M5): E-Rechnung (XRechnung/
 # ZUGFeRD) is parsed structurally; everything else falls back to PDF text/OCR. ---
@@ -75,9 +82,17 @@ app.include_router(fristen.router)
 app.include_router(dsgvo.router)
 
 
-@app.get("/api/health")
-async def health():
+@app.get("/api/health/live")
+async def health_live():
     return {"status": "ok"}
+
+
+@app.get("/api/health")
+@app.get("/api/health/ready")
+async def health_ready():
+    if await health.is_ready():
+        return {"status": "ok"}
+    return JSONResponse(status_code=503, content={"status": "unavailable"})
 
 
 # ---------------------------------------------------------------------------
@@ -96,13 +111,8 @@ if _frontend_dist and os.path.isdir(_frontend_dist):
     if os.path.isdir(_assets_dir):
         app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
 
-    _index_html = os.path.join(_frontend_dist, "index.html")
-
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
-        if full_path.startswith("api/"):
+        if full_path == "api" or full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="Not found")
-        candidate = os.path.join(_frontend_dist, full_path)
-        if full_path and os.path.isfile(candidate):
-            return FileResponse(candidate)
-        return FileResponse(_index_html)
+        return FileResponse(resolve_spa_file(_frontend_dist, full_path))

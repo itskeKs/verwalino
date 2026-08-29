@@ -5,6 +5,7 @@
 backend/.pytest_cache/
 backend/.hypothesis/
 .hypothesis/
+**/*.egg-info/
 
 # Node
 **/node_modules/
@@ -29,3 +30,4 @@ infra/
 # CI / compose -- not needed inside the image
 .gitlab-ci.yml
 docker-compose*.yml
+scripts/

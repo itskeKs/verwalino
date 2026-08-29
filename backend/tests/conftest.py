@@ -117,7 +117,7 @@ def seed_data(run_migrations):
     mandate_a_id = uuid.uuid4()
     mandate_b_id = uuid.uuid4()
 
-    pw_hash = hash_password("testpass123")
+    pw_hash = hash_password("testpass1234")
 
     # Use synchronous psycopg2 for seeding (avoids async event loop issues in session fixture)
     import psycopg2
@@ -217,14 +217,14 @@ def seed_data(run_migrations):
 # ---------------------------------------------------------------------------
 # Authenticated test clients
 # ---------------------------------------------------------------------------
-def _make_session_cookie(user_id: uuid.UUID, org_id: uuid.UUID, role: str) -> str:
-    return create_session_token(user_id, org_id, role)
+def _make_session_cookie(user_id: uuid.UUID, org_id: uuid.UUID) -> str:
+    return create_session_token(user_id, org_id)
 
 
 @pytest_asyncio.fixture
 async def client_a_admin(seed_data) -> AsyncGenerator[httpx.AsyncClient, None]:
     token = _make_session_cookie(
-        seed_data["user_a_admin_id"], seed_data["org_a_id"], "OWNER_ADMIN"
+        seed_data["user_a_admin_id"], seed_data["org_a_id"]
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -237,7 +237,7 @@ async def client_a_admin(seed_data) -> AsyncGenerator[httpx.AsyncClient, None]:
 @pytest_asyncio.fixture
 async def client_a_clerk(seed_data) -> AsyncGenerator[httpx.AsyncClient, None]:
     token = _make_session_cookie(
-        seed_data["user_a_clerk_id"], seed_data["org_a_id"], "CLERK"
+        seed_data["user_a_clerk_id"], seed_data["org_a_id"]
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -250,7 +250,7 @@ async def client_a_clerk(seed_data) -> AsyncGenerator[httpx.AsyncClient, None]:
 @pytest_asyncio.fixture
 async def client_a_readonly(seed_data) -> AsyncGenerator[httpx.AsyncClient, None]:
     token = _make_session_cookie(
-        seed_data["user_a_readonly_id"], seed_data["org_a_id"], "READ_ONLY"
+        seed_data["user_a_readonly_id"], seed_data["org_a_id"]
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -263,7 +263,7 @@ async def client_a_readonly(seed_data) -> AsyncGenerator[httpx.AsyncClient, None
 @pytest_asyncio.fixture
 async def client_b_admin(seed_data) -> AsyncGenerator[httpx.AsyncClient, None]:
     token = _make_session_cookie(
-        seed_data["user_b_admin_id"], seed_data["org_b_id"], "OWNER_ADMIN"
+        seed_data["user_b_admin_id"], seed_data["org_b_id"]
     )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),

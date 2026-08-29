@@ -47,7 +47,7 @@ class TestReadOnlyRole:
             "/api/users",
             json={
                 "email": "readonly-attempt@alpha.de",
-                "password": "test1234",
+                "password": "testpassword12",
                 "display_name": "Should Fail",
             },
         )
@@ -81,7 +81,7 @@ class TestClerkRole:
             "/api/users",
             json={
                 "email": "clerk-attempt@alpha.de",
-                "password": "test1234",
+                "password": "testpassword12",
             },
         )
         assert resp.status_code == 403
@@ -116,7 +116,7 @@ class TestOwnerAdminRole:
             "/api/users",
             json={
                 "email": f"newuser-{__import__('uuid').uuid4().hex[:8]}@alpha.de",
-                "password": "securepass",
+                "password": "securepass123",
                 "display_name": "New User",
                 "role": "CLERK",
             },

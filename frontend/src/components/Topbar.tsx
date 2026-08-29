@@ -3,7 +3,7 @@
  */
 
 import { Menu, LogOut } from "lucide-react";
-import { useAuth } from "../auth/AuthContext";
+import { useAuth } from "../auth/useAuth";
 import { Button } from "./ui/button";
 
 interface Props {

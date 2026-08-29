@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
@@ -15,7 +15,8 @@ class UserRepository(TenantRepository[User]):
     model = User
 
     async def get_by_email(self, email: str) -> User | None:
-        stmt = self._base_query().where(User.email == email)
+        canonical_email = func.pg_catalog.lower(func.pg_catalog.btrim(User.email))
+        stmt = self._base_query().where(canonical_email == email)
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 

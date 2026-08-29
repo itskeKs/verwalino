@@ -17,7 +17,7 @@ import {
 } from "../api/endpoints";
 import type { Mandate, MandateDocument, MandateDocType } from "../api/types";
 import { ApiError } from "../api/client";
-import { useAuth } from "../auth/AuthContext";
+import { useAuth } from "../auth/useAuth";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Badge, type BadgeTone } from "../components/ui/badge";

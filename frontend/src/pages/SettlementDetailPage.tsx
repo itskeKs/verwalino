@@ -125,58 +125,7 @@ export function SettlementDetailPage() {
   const isDraft = run?.status === "draft";
   const isFinalized = run?.status === "finalized";
 
-  const reload = useCallback(() => {
-    if (!runId) return;
-    setLoading(true);
-    setError(null);
-    Promise.all([
-      getSettlement(runId),
-      listProperties(),
-      listLeases(),
-      listUnits(),
-      listTenantProfiles(),
-      listPersons(),
-      listCostCategories(),
-    ])
-      .then(([r, p, l, u, tp, per, c]) => {
-        setRun(r);
-        setProperties(p);
-        setLeases(l);
-        setUnits(u);
-        setTenantProfiles(tp);
-        setPersons(per);
-        setCategories(c);
-        setAdvanceValue(r.advance_payments_total ?? "");
-        // Load cost entries for the property
-        if (r.property_id) {
-          listCostEntries({ property_id: r.property_id, status: "confirmed" }).then(
-            (entries) => {
-              setCostEntries(entries);
-              // Initialize structured inputs for entries that need them
-              initStructuredInputs(entries, r, u);
-            },
-          );
-        }
-      })
-      .catch((err) => {
-        if (err instanceof ApiError && err.status === 401) {
-          setError("Nicht authentifiziert.");
-        } else {
-          setError(String(err));
-        }
-      })
-      .finally(() => setLoading(false));
-  }, [runId]);
-
-  useEffect(() => {
-    reload();
-  }, [reload]);
-
-  function initStructuredInputs(
-    entries: CostEntry[],
-    r: SettlementRun,
-    _allUnits: Unit[],
-  ) {
+  function initStructuredInputs(entries: CostEntry[], r: SettlementRun) {
     const unitId = r.unit_id;
     if (!unitId) return;
 
@@ -215,6 +164,53 @@ export function SettlementDetailPage() {
       setUnitMetrics([]);
     }
   }
+
+  const reload = useCallback(() => {
+    if (!runId) return;
+    setLoading(true);
+    setError(null);
+    Promise.all([
+      getSettlement(runId),
+      listProperties(),
+      listLeases(),
+      listUnits(),
+      listTenantProfiles(),
+      listPersons(),
+      listCostCategories(),
+    ])
+      .then(([r, p, l, u, tp, per, c]) => {
+        setRun(r);
+        setProperties(p);
+        setLeases(l);
+        setUnits(u);
+        setTenantProfiles(tp);
+        setPersons(per);
+        setCategories(c);
+        setAdvanceValue(r.advance_payments_total ?? "");
+        // Load cost entries for the property
+        if (r.property_id) {
+          listCostEntries({ property_id: r.property_id, status: "confirmed" }).then(
+            (entries) => {
+              setCostEntries(entries);
+              // Initialize structured inputs for entries that need them
+              initStructuredInputs(entries, r);
+            },
+          );
+        }
+      })
+      .catch((err) => {
+        if (err instanceof ApiError && err.status === 401) {
+          setError("Nicht authentifiziert.");
+        } else {
+          setError(String(err));
+        }
+      })
+      .finally(() => setLoading(false));
+  }, [runId]);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
 
   function getPropertyName(id: string): string {
     const prop = properties.find((p) => p.id === id);

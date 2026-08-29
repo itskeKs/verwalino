@@ -1,51 +1,61 @@
 # syntax=docker/dockerfile:1
 #
-# Single deployable image for the Hausverwaltung MVP:
-#   - Stage 1 builds the React/Vite frontend to static files.
-#   - Stage 2 is the FastAPI backend, which ALSO serves the built SPA
-#     (HV_FRONTEND_DIST) so the whole app runs in one container behind /.
-# Database migrations run on container start (see docker/entrypoint.sh).
+# Digests below were resolved as multi-platform manifest lists on 2026-08-27.
+# Keep them pinned: a tag is not an immutable deployment input.
 
-# ---- Stage 1: build the frontend ----
-FROM node:22-bookworm-slim AS frontend
+FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS frontend
 WORKDIR /fe
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
-RUN npm run build          # -> /fe/dist
+RUN npm run lint && npm test && npm run build
 
-# ---- Stage 2: backend runtime (serves API + built SPA) ----
-FROM python:3.12-slim-bookworm AS runtime
+FROM python:3.12-slim-bookworm@sha256:0f5b26b9518d002b6173fd61daad821fa340635ebfec5bba471013f9ca114579 AS backend-builder
+COPY --from=ghcr.io/astral-sh/uv:0.11.7@sha256:240fb85ab0f263ef12f492d8476aa3a2e4e1e333f7d67fbdd923d00a506a516a /uv /uvx /bin/
+ENV UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1
+WORKDIR /app
+COPY backend/pyproject.toml backend/uv.lock ./
+RUN uv sync --frozen --no-dev --extra ops --no-install-project
+COPY backend/ ./
+RUN uv sync --frozen --no-dev --extra ops --no-editable
 
+FROM python:3.12-slim-bookworm@sha256:0f5b26b9518d002b6173fd61daad821fa340635ebfec5bba471013f9ca114579 AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
     HV_FRONTEND_DIST=/app/frontend_dist \
-    HV_DOCUMENT_STORAGE_ROOT=/data/documents
+    HV_DOCUMENT_STORAGE_ROOT=/data/documents \
+    PATH=/app/.venv/bin:$PATH
 
-# System libraries required by WeasyPrint (PDF rendering) -- needed at import time.
+# WeasyPrint's runtime libraries. The global pip/ensurepip tooling is removed
+# after installation; application commands use only the locked virtualenv.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
       libcairo2 libgdk-pixbuf-2.0-0 libffi8 \
       fonts-dejavu-core shared-mime-info \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.12 \
+    && rm -rf /usr/local/lib/python3.12/site-packages/pip \
+              /usr/local/lib/python3.12/site-packages/pip-*.dist-info \
+    && rm -rf /usr/local/lib/python3.12/ensurepip \
+    && useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser \
+    && mkdir -p /data/documents /app/frontend_dist
 
 WORKDIR /app
-
-# Install the backend (runtime deps from pyproject) + psycopg2 for Alembic.
-COPY backend/ ./
-RUN pip install . psycopg2-binary
-
-# Built SPA from stage 1.
-COPY --from=frontend /fe/dist ./frontend_dist
-
-# Entrypoint: migrate, then serve.
+COPY --from=backend-builder --chown=10001:10001 /app/.venv /app/.venv
+COPY --chown=10001:10001 backend/app ./app
+COPY --chown=10001:10001 backend/alembic.ini ./alembic.ini
+COPY --chown=10001:10001 backend/migrations ./migrations
+COPY --from=frontend --chown=10001:10001 /fe/dist ./frontend_dist
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh \
-    && useradd --create-home --uid 10001 appuser \
-    && mkdir -p /data/documents \
-    && chown -R appuser:appuser /data
+RUN chmod 0555 /usr/local/bin/entrypoint.sh \
+    && chown -R 10001:10001 /data /app \
+    && test ! -e /usr/local/lib/python3.12/site-packages/pip \
+    && ! python -m pip --version >/dev/null 2>&1 \
+    && ! /usr/local/bin/python -m pip --version >/dev/null 2>&1 \
+    && python -c 'import weasyprint; import app.main' \
+    && alembic --version \
+    && python -m app.admin_cli --help >/dev/null
 
-USER appuser
-EXPOSE 8000
+USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

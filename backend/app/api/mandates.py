@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.storage import attachment_content_disposition, get_store
 from app.core.tenant import (
     AuthContext,
     get_current_user,
@@ -17,6 +18,7 @@ from app.core.tenant import (
     require_admin_dep,
     require_write_dep,
 )
+from app.core.uploads import MAX_UPLOAD_BYTES, read_upload_limited
 from app.repositories.mandate_repo import MandateRepository
 from app.models.management_mandate import ManagementMandate
 from app.models.mandate_document import MandateDocument
@@ -162,7 +164,7 @@ async def upload_mandate_document(
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a contract/admin document to a mandate (write role)."""
-    file_bytes = await file.read()
+    file_bytes = await read_upload_limited(file, max_bytes=MAX_UPLOAD_BYTES)
     svc = MandateDocumentService(db, auth.organization_id, auth.user_id)
     doc = await svc.upload(
         mandate_id,
@@ -188,15 +190,19 @@ async def download_mandate_document(
     if doc is None or doc.management_mandate_id != mandate_id:
         raise HTTPException(status_code=404, detail="Document not found")
     try:
-        data = MandateDocumentService.read_bytes(doc.storage_uri)
-    except FileNotFoundError:
+        store = get_store()
+        chunks = store.iter_chunks(doc.storage_uri)
+    except (FileNotFoundError, PermissionError, ValueError):
         raise HTTPException(status_code=404, detail="Document file not found in storage")
     return StreamingResponse(
-        iter([data]),
+        chunks,
         media_type=doc.mime_type,
         headers={
-            "Content-Disposition": f'inline; filename="{doc.original_filename or "dokument"}"',
+            "Content-Disposition": attachment_content_disposition(
+                doc.original_filename or "dokument"
+            ),
             "Content-Length": str(doc.content_byte_size),
+            "X-Content-Type-Options": "nosniff",
         },
     )
 

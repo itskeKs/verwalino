@@ -29,7 +29,7 @@ import {
   KeyRound,
   type LucideIcon,
 } from "lucide-react";
-import { useAuth } from "../auth/AuthContext";
+import { useAuth } from "../auth/useAuth";
 import { cn } from "../lib/utils";
 
 interface Props {

@@ -18,5 +18,10 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    rules: {
+      // Resource loaders start cancellable asynchronous work from effects.
+      // Revisit this once a query abstraction replaces those loaders.
+      "react-hooks/set-state-in-effect": "off",
+    },
   },
 ])

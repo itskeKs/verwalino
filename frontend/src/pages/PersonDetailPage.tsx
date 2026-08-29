@@ -16,7 +16,7 @@ import {
 } from "../api/endpoints";
 import type { Person, OwnerProfile, TenantProfile, Vendor } from "../api/types";
 import { ApiError } from "../api/client";
-import { useAuth } from "../auth/AuthContext";
+import { useAuth } from "../auth/useAuth";
 import { DsgvoPanel } from "../components/DsgvoPanel";
 
 export function PersonDetailPage() {

@@ -4,7 +4,7 @@
  * non-admin roles, and the page itself guards access.
  */
 
-import { useAuth } from "../auth/AuthContext";
+import { useAuth } from "../auth/useAuth";
 
 export function UsersPage() {
   const { session } = useAuth();

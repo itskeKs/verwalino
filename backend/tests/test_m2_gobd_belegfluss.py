@@ -957,3 +957,112 @@ class TestM2ExitPathEndToEnd:
         # 9. Entry is abrechnungsrelevant (active query: confirmed + no superseded_by_id)
         assert confirmed["superseded_by_id"] is None
         # -> This entry would be picked up by M3's active-entry query
+
+
+class TestInvoiceUploadLimits:
+    @pytest.mark.asyncio
+    async def test_multipart_upload_over_limit_is_rejected(
+        self, client_a_admin, tmp_store, monkeypatch
+    ):
+        import app.api.invoice_documents as invoice_api
+
+        monkeypatch.setattr(invoice_api, "MAX_UPLOAD_BYTES", 4, raising=False)
+        response = await client_a_admin.post(
+            "/api/invoice-documents/upload",
+            files={"file": ("too-large.pdf", b"abcde", "application/pdf")},
+        )
+
+        assert response.status_code == 413
+
+    @pytest.mark.asyncio
+    async def test_multipart_version_over_limit_is_rejected(
+        self, client_a_admin, tmp_store, monkeypatch
+    ):
+        import app.api.invoice_documents as invoice_api
+        from fastapi import HTTPException
+
+        original = await client_a_admin.post(
+            "/api/invoice-documents/upload",
+            files={"file": ("original.pdf", b"abc", "application/pdf")},
+        )
+        assert original.status_code == 201
+        monkeypatch.setattr(invoice_api, "MAX_UPLOAD_BYTES", 4)
+
+        async def should_not_receive_oversized_content(*args, **kwargs):
+            raise HTTPException(status_code=500, detail="domain service was called")
+
+        monkeypatch.setattr(
+            invoice_api.InvoiceDocumentService,
+            "create_new_version",
+            should_not_receive_oversized_content,
+        )
+
+        response = await client_a_admin.post(
+            f"/api/invoice-documents/{original.json()['id']}/version",
+            files={"file": ("too-large.pdf", b"abcde", "application/pdf")},
+        )
+
+        assert response.status_code == 413
+
+
+class TestInvoiceDownloadHeaders:
+    @pytest.mark.asyncio
+    async def test_download_uses_safe_attachment_headers(
+        self, client_a_admin, tmp_store
+    ):
+        content = b"invoice-content"
+        response = await client_a_admin.post(
+            "/api/invoice-documents/upload",
+            files={"file": ('invoice; bad:"name.html', content, "text/html")},
+        )
+        assert response.status_code == 201
+
+        download = await client_a_admin.get(
+            f"/api/invoice-documents/{response.json()['id']}/content"
+        )
+
+        assert download.status_code == 200
+        assert download.content == content
+        assert download.headers["content-type"] == "text/html; charset=utf-8"
+        assert download.headers["x-content-type-options"] == "nosniff"
+        assert download.headers["content-length"] == str(len(content))
+        assert download.headers["content-disposition"].startswith(
+            'attachment; filename="invoice_ bad_%22name.html"'
+        )
+
+    @pytest.mark.asyncio
+    async def test_download_does_not_use_unatomic_exists_precheck(
+        self, client_a_admin, tmp_store, monkeypatch
+    ):
+        response = await client_a_admin.post(
+            "/api/invoice-documents/upload",
+            files={"file": ("invoice.pdf", b"invoice-content", "application/pdf")},
+        )
+        assert response.status_code == 201
+
+        def fail_if_called(key):
+            raise AssertionError("download performed an exists() precheck")
+
+        monkeypatch.setattr(tmp_store, "exists", fail_if_called)
+        download = await client_a_admin.get(
+            f"/api/invoice-documents/{response.json()['id']}/content"
+        )
+
+        assert download.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_download_returns_404_when_stored_file_is_missing(
+        self, client_a_admin, tmp_store
+    ):
+        response = await client_a_admin.post(
+            "/api/invoice-documents/upload",
+            files={"file": ("invoice.pdf", b"invoice-content", "application/pdf")},
+        )
+        assert response.status_code == 201
+        next(tmp_store._root.rglob("*.bin")).unlink()
+
+        download = await client_a_admin.get(
+            f"/api/invoice-documents/{response.json()['id']}/content"
+        )
+
+        assert download.status_code == 404

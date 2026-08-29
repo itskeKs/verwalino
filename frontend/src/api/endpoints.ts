@@ -75,6 +75,10 @@ export function login(body: LoginRequest): Promise<LoginResponse> {
   return api.post<LoginResponse>("/api/auth/login", body);
 }
 
+export function getCurrentSession(): Promise<LoginResponse> {
+  return api.get<LoginResponse>("/api/auth/session");
+}
+
 export function logout(): Promise<void> {
   return api.post<void>("/api/auth/logout");
 }
