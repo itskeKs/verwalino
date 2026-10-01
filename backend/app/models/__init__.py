@@ -122,3 +122,5 @@ __all__ = [
     "ApprovedFactSource",
     "PropertyKnowledgeQueryRun",
 ]
+
+from app.models.operation_receipt import OperationReceipt

@@ -9,6 +9,8 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import HTTPException
+from app.repositories.cost_entry_repo import CostEntryRepository
 
 from app.core.extraction import ExtractionResult, get_extractor
 from app.core.storage import (
@@ -37,6 +39,12 @@ class InvoiceDocumentService:
         self._repo = InvoiceDocumentRepository(session, org_id)
         self._audit = AuditRepository(session, org_id)
 
+    async def _lock_cost(self, cost_entry_id):
+        entry = await CostEntryRepository(self._session, self._org_id).get_by_id_for_update(cost_entry_id)
+        if entry is None:
+            raise HTTPException(404, "Cost entry not found")
+        return entry
+
     async def upload(
         self,
         file_bytes: bytes,
@@ -50,6 +58,12 @@ class InvoiceDocumentService:
 
         Returns (InvoiceDocument, ExtractionResult).
         """
+        if cost_entry_id:
+            entry = await self._lock_cost(cost_entry_id)
+            if entry.status == "confirmed":
+                raise HTTPException(409, "Confirmed costs require a correction version")
+            if await self._repo.get_active_for_cost_entry(cost_entry_id):
+                raise HTTPException(409, "Cost entry already has an active source; create a document version")
         if store is None:
             store = get_store()
 
@@ -123,9 +137,32 @@ class InvoiceDocumentService:
         if store is None:
             store = get_store()
 
-        old_active = await self._repo.get_active_by_chain(chain_root_id)
-        if old_active is None:
-            raise ValueError(f"No active document found for chain {chain_root_id}")
+        # Serialize the whole chain, including replacement of an unattached upload.
+        root = await self._repo.get_by_id(chain_root_id)
+        if root is None:
+            raise HTTPException(404, "Document chain not found")
+        # Lock cost before documents, consistently with confirmation/upload.
+        active = await self._repo.get_active_by_chain(chain_root_id)
+        if active is None:
+            raise HTTPException(409, "Document chain has no active version")
+        expected_revision = (active.id, active.cost_entry_id)
+        original_cost = await self._lock_cost(active.cost_entry_id) if active.cost_entry_id else None
+        destination_id = cost_entry_id or active.cost_entry_id
+        destination = original_cost
+        if destination_id and (original_cost is None or destination_id != original_cost.id):
+            destination = await self._lock_cost(destination_id)
+            if original_cost and original_cost.superseded_by_id != destination_id:
+                raise HTTPException(409, "Document can only move to the linked cost correction")
+        await self._repo.get_by_id_for_update(chain_root_id)
+        old_active = await self._repo.get_active_by_chain(chain_root_id, lock=True)
+        if old_active is None or (old_active.id, old_active.cost_entry_id) != expected_revision:
+            raise HTTPException(409, "Document revision changed; reload before replacing")
+        if destination and destination.status == "confirmed":
+            raise HTTPException(409, "Create a cost correction before replacing its source")
+        if destination_id:
+            attached = await self._repo.get_active_for_cost_entry(destination_id)
+            if attached and attached.id != old_active.id:
+                raise HTTPException(409, "Destination cost already has an active source")
 
         sha256 = compute_sha256(file_bytes)
         key = make_storage_key(str(self._org_id), sha256)
@@ -134,7 +171,7 @@ class InvoiceDocumentService:
         # Create new version
         new_doc = InvoiceDocument(
             organization_id=self._org_id,
-            cost_entry_id=cost_entry_id or old_active.cost_entry_id,
+            cost_entry_id=destination_id,
             storage_uri=ref.uri,
             storage_backend=ref.backend,
             storage_version=ref.version,
@@ -150,13 +187,12 @@ class InvoiceDocumentService:
             released_by=None,
             retention_until=None,
         )
-        new_doc = await self._repo.create(new_doc)
-
         # Mark old as superseded (trigger allows active->superseded on released rows)
         now = datetime.now(timezone.utc)
         old_active.status = "superseded"
         old_active.superseded_at = now
         await self._repo.update(old_active)
+        new_doc = await self._repo.create(new_doc)
 
         # Audit events
         await self._audit.create(

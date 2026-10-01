@@ -40,6 +40,11 @@ class TenantRepository(Generic[T]):
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_id_for_update(self, entity_id: uuid.UUID) -> T | None:
+        stmt = self._base_query().where(self.model.id == entity_id).with_for_update()
+        result = await self._session.execute(stmt.execution_options(populate_existing=True))
+        return result.scalar_one_or_none()
+
     async def list_all(self) -> Sequence[T]:
         result = await self._session.execute(self._base_query())
         return result.scalars().all()

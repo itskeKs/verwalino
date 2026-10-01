@@ -1066,3 +1066,168 @@ class TestInvoiceDownloadHeaders:
         )
 
         assert download.status_code == 404
+
+
+class TestUploadFirstAtomic:
+    async def payload(self, client, seed, doc_id=None):
+        categories = (await client.get("/api/cost-categories")).json()
+        return {
+            "property_id": str(seed["property_a_id"]),
+            "cost_category_id": categories[0]["id"],
+            "invoice_date": "2025-06-01",
+            "service_period_from": "2025-01-01",
+            "service_period_to": "2025-12-31",
+            "gross_amount": "100.00",
+            "tenant_apportionable": "UMLAGEFAEHIG",
+            "source": "PDF_IMPORT" if doc_id else "MANUAL",
+            **({"source_document_id": doc_id} if doc_id else {}),
+        }
+
+    async def upload(self, client, content=b"synthetic invoice", cost_id=None):
+        response = await client.post(
+            "/api/invoice-documents/upload",
+            files={"file": ("invoice.pdf", content, "application/pdf")},
+            data={"cost_entry_id": cost_id} if cost_id else {},
+        )
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    @pytest.mark.asyncio
+    async def test_link_replay_confirm_original(self, client_a_admin, m2_seed, tmp_store):
+        doc = await self.upload(client_a_admin)
+        body = await self.payload(client_a_admin, m2_seed, doc["id"])
+        headers = {"Idempotency-Key": str(uuid.uuid4())}
+        first = await client_a_admin.post("/api/cost-entries", json=body, headers=headers)
+        assert first.status_code == 201, first.text
+        replay = await client_a_admin.post("/api/cost-entries", json=body, headers=headers)
+        assert replay.status_code == 201
+        assert replay.json()["id"] == first.json()["id"]
+        linked = (await client_a_admin.get(f"/api/invoice-documents/{doc['id']}")).json()
+        assert linked["cost_entry_id"] == first.json()["id"]
+        conflict = await client_a_admin.post("/api/cost-entries", json={**body, "gross_amount": "200.00"}, headers=headers)
+        assert conflict.status_code == 409
+        confirmed = await client_a_admin.post(f"/api/cost-entries/{first.json()['id']}/confirm")
+        assert confirmed.status_code == 200
+        released = (await client_a_admin.get(f"/api/invoice-documents/{doc['id']}")).json()
+        assert released["released_at"] is not None
+        original = await client_a_admin.get(f"/api/invoice-documents/{doc['id']}/content")
+        assert original.content == b"synthetic invoice"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("same_key", [True, False])
+    async def test_concurrent_creation(self, client_a_admin, m2_seed, tmp_store, same_key):
+        import asyncio
+        doc = await self.upload(client_a_admin)
+        body = await self.payload(client_a_admin, m2_seed, doc["id"])
+        key = str(uuid.uuid4())
+        responses = await asyncio.gather(*[
+            client_a_admin.post("/api/cost-entries", json=body,
+                headers={"Idempotency-Key": key if same_key else str(uuid.uuid4())})
+            for _ in range(2)
+        ])
+        assert sorted(r.status_code for r in responses) == ([201, 201] if same_key else [201, 409])
+        ids = {r.json()["id"] for r in responses if r.status_code == 201}
+        assert len(ids) == 1
+
+    @pytest.mark.asyncio
+    async def test_source_access_and_missing_source(self, client_a_admin, client_b_admin, client_a_readonly, m2_seed, tmp_store):
+        foreign = await self.upload(client_b_admin)
+        body = await self.payload(client_a_admin, m2_seed, foreign["id"])
+        assert (await client_a_admin.post("/api/cost-entries", json=body)).status_code == 404
+        body.pop("source_document_id")
+        assert (await client_a_admin.post("/api/cost-entries", json=body)).status_code == 422
+        local = await self.upload(client_a_admin)
+        body["source_document_id"] = local["id"]
+        assert (await client_a_readonly.post("/api/cost-entries", json=body)).status_code == 403
+        assert (await client_b_admin.get(f"/api/invoice-documents/{local['id']}/content")).status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_cost_first_duplicate_and_foreign(self, client_a_admin, client_b_admin, m2_seed, tmp_store):
+        body = await self.payload(client_a_admin, m2_seed)
+        entry = (await client_a_admin.post("/api/cost-entries", json=body)).json()
+        await self.upload(client_a_admin, cost_id=entry["id"])
+        duplicate = await client_a_admin.post("/api/invoice-documents/upload",
+            files={"file": ("second.pdf", b"second", "application/pdf")}, data={"cost_entry_id": entry["id"]})
+        assert duplicate.status_code == 409
+        foreign = await client_b_admin.post("/api/invoice-documents/upload",
+            files={"file": ("foreign.pdf", b"foreign", "application/pdf")}, data={"cost_entry_id": entry["id"]})
+        assert foreign.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_cannot_create_confirmed_or_wrong_category_version(self, client_a_admin, m2_seed):
+        body = await self.payload(client_a_admin, m2_seed)
+        for change in ({"status": "confirmed"}, {"cost_category_plan_version": 999}):
+            response = await client_a_admin.post("/api/cost-entries", json={**body, **change})
+            assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_db_scope_and_receipt_rls(self, client_a_admin, client_b_admin, m2_seed, tmp_store, app_rw_session):
+        from sqlalchemy.exc import IntegrityError
+        local = await self.upload(client_a_admin)
+        foreign = await self.upload(client_b_admin)
+        body = await self.payload(client_a_admin, m2_seed)
+        entry = (await client_a_admin.post("/api/cost-entries", json=body,
+            headers={"Idempotency-Key": str(uuid.uuid4())})).json()
+        session = app_rw_session
+        # Null links already passed through both orgs' authenticated uploads.
+        await session.execute(text("SELECT set_config('app.current_org_id', :org, true)"), {"org": str(m2_seed["org_b_id"])})
+        with pytest.raises(IntegrityError, match="fk_invoice_document_cost_tenant"):
+            async with session.begin_nested():
+                await session.execute(text("UPDATE invoice_document SET cost_entry_id=:cost WHERE id=:doc"), {"cost": entry["id"], "doc": foreign["id"]})
+        assert not (await session.execute(text("SELECT * FROM operation_receipt"))).all()
+        await session.execute(text("SELECT set_config('app.current_org_id', :org, true)"), {"org": str(m2_seed["org_a_id"])})
+        await session.execute(text("UPDATE invoice_document SET cost_entry_id=:cost WHERE id=:doc"), {"cost": entry["id"], "doc": local["id"]})
+        assert (await session.execute(text("SELECT * FROM operation_receipt WHERE result_id=:id"), {"id": entry["id"]})).one()
+        await session.execute(text("SELECT set_config('app.current_org_id', '', true)"))
+        assert not (await session.execute(text("SELECT * FROM operation_receipt"))).all()
+
+    @pytest.mark.asyncio
+    async def test_replacement_and_confirmed_correction_chain(self, client_a_admin, m2_seed, tmp_store):
+        doc = await self.upload(client_a_admin)
+        body = await self.payload(client_a_admin, m2_seed, doc["id"])
+        entry = (await client_a_admin.post("/api/cost-entries", json=body)).json()
+        replacement = await client_a_admin.post(f"/api/invoice-documents/{doc['id']}/version",
+            files={"file": ("v2.pdf", b"version 2", "application/pdf")})
+        assert replacement.status_code == 201, replacement.text
+        assert replacement.json()["cost_entry_id"] == entry["id"]
+        assert (await client_a_admin.post(f"/api/cost-entries/{entry['id']}/confirm")).status_code == 200
+        correction = await client_a_admin.post(f"/api/cost-entries/{entry['id']}/correction", json={"gross_amount": "120.00"})
+        assert correction.status_code == 201
+        unrelated = (await client_a_admin.post("/api/cost-entries", json=await self.payload(client_a_admin, m2_seed))).json()
+        for target, expected in [(unrelated["id"], 409), (correction.json()["id"], 201)]:
+            result = await client_a_admin.post(f"/api/invoice-documents/{replacement.json()['id']}/version",
+                files={"file": ("v3.pdf", b"version 3", "application/pdf")}, data={"cost_entry_id": target})
+            assert result.status_code == expected, result.text
+        old = (await client_a_admin.get(f"/api/invoice-documents/{replacement.json()['id']}")).json()
+        assert old["cost_entry_id"] == entry["id"]
+        assert old["released_at"]
+        assert old["status"] == "superseded"
+
+
+    @pytest.mark.asyncio
+    async def test_link_racing_replacement_keeps_cost_source(self, client_a_admin, m2_seed, tmp_store, monkeypatch):
+        import asyncio
+        from app.repositories.invoice_document_repo import InvoiceDocumentRepository
+        doc = await self.upload(client_a_admin)
+        body = await self.payload(client_a_admin, m2_seed, doc["id"])
+        read = asyncio.Event()
+        linked = asyncio.Event()
+        original = InvoiceDocumentRepository.get_active_by_chain
+        async def paused(repo, chain_id, *, lock=False):
+            result = await original(repo, chain_id, lock=lock)
+            if not lock:
+                read.set()
+                await linked.wait()
+            return result
+        monkeypatch.setattr(InvoiceDocumentRepository, "get_active_by_chain", paused)
+        replacement = asyncio.create_task(client_a_admin.post(f"/api/invoice-documents/{doc['id']}/version",
+            files={"file": ("v2.pdf", b"second", "application/pdf")}))
+        await asyncio.wait_for(read.wait(), 5)
+        try:
+            created = await client_a_admin.post("/api/cost-entries", json=body)
+            assert created.status_code == 201
+        finally:
+            linked.set()
+        assert (await replacement).status_code == 409
+        active = (await client_a_admin.get(f"/api/invoice-documents?cost_entry_id={created.json()['id']}")).json()
+        assert any(d["status"] == "active" for d in active)

@@ -10,7 +10,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,6 +51,7 @@ class CostEntryOut(BaseModel):
 
 
 class CostEntryCreate(BaseModel):
+    source_document_id: uuid.UUID | None = None
     property_id: str
     management_mandate_id: str | None = None
     cost_category_id: str
@@ -138,6 +139,7 @@ async def get_cost_entry(
 @router.post("", response_model=CostEntryOut, status_code=201)
 async def create_cost_entry(
     body: CostEntryCreate,
+    idempotency_key: str | None = Header(None, max_length=128),
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_db),
 ):
@@ -162,7 +164,10 @@ async def create_cost_entry(
         status=body.status,
         source=body.source,
     )
-    entry = await svc.create(entry)
+    from app.services.idempotency_service import IdempotencyService
+    entry = await svc.create(entry, source_document_id=body.source_document_id,
+        idempotency_key=idempotency_key,
+        request_digest=IdempotencyService.digest(body.model_dump(mode="json")))
     return _to_out(entry)
 
 

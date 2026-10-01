@@ -20,6 +20,11 @@ from app.core.storage import DocumentStore, get_store, verify_document_integrity
 from app.models.audit_event import AuditEvent
 from app.models.cost_entry import CostEntry
 from app.models.invoice_document import InvoiceDocument
+from app.repositories.property_repo import PropertyRepository
+from app.repositories.vendor_repo import VendorRepository
+from app.repositories.mandate_repo import MandateRepository
+from app.repositories.cost_category_repo import CostCategoryRepository
+from app.services.idempotency_service import IdempotencyService
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.cost_entry_repo import CostEntryRepository
 from app.repositories.invoice_document_repo import InvoiceDocumentRepository
@@ -62,14 +67,63 @@ class CostEntryService:
         self._doc_repo = InvoiceDocumentRepository(session, org_id)
         self._audit = AuditRepository(session, org_id)
 
-    async def create(self, entry: CostEntry) -> CostEntry:
+    async def _validate_scope(self, entry: CostEntry) -> None:
+        prop = await PropertyRepository(self._session, self._org_id).get_by_id(entry.property_id)
+        if prop is None:
+            raise HTTPException(404, "Property not found")
+        if entry.vendor_id and await VendorRepository(self._session, self._org_id).get_by_id(entry.vendor_id) is None:
+            raise HTTPException(404, "Vendor not found")
+        if entry.management_mandate_id:
+            mandate = await MandateRepository(self._session, self._org_id).get_by_id(entry.management_mandate_id)
+            if mandate is None:
+                raise HTTPException(404, "Management mandate not found")
+            if prop.management_type != "MISCH" and mandate.mandate_type != prop.management_type:
+                raise HTTPException(422, "Management mandate does not match property management type")
+        category = await CostCategoryRepository(self._session).get_by_id(entry.cost_category_id)
+        if category is None or category.plan_version != entry.cost_category_plan_version:
+            raise HTTPException(422, "Cost category/version not found")
+
+    async def create(self, entry: CostEntry, *, source_document_id: uuid.UUID | None = None,
+                     idempotency_key: str | None = None, request_digest: str | None = None) -> CostEntry:
         """Create a new cost entry (manual or from import).
 
         Decision E-6: manual entries start as editable drafts;
         confirm is always an explicit second step.
         """
+        if entry.status not in {"needs_review", "draft_extracted"}:
+            raise HTTPException(422, "New costs must be drafts; confirmation is a separate action")
+        if entry.source != "MANUAL" and source_document_id is None:
+            raise HTTPException(422, "Imported costs require source_document_id")
+        await self._validate_scope(entry)
+        idem = IdempotencyService(self._session, self._org_id, self._user_id)
+        if idempotency_key is not None:
+            if request_digest is None:
+                raise ValueError("Request digest required with idempotency key")
+            previous_id = await idem.replay("cost_entry.create", idempotency_key, request_digest)
+            if previous_id:
+                previous = await self._repo.get_by_id(previous_id)
+                if previous is None:
+                    raise HTTPException(404, "Cost entry not found")
+                if source_document_id and await self._doc_repo.get_by_id(source_document_id) is None:
+                    raise HTTPException(404, "Source document not found")
+                return previous
+        doc = None
+        if source_document_id:
+            doc = await self._doc_repo.get_by_id_for_update(source_document_id)
+            if doc is None:
+                raise HTTPException(404, "Source document not found")
+            if doc.status != "active" or doc.released_at or doc.cost_entry_id:
+                raise HTTPException(409, "Source document is already linked, released or superseded")
         entry.organization_id = self._org_id
         entry = await self._repo.create(entry)
+        if doc:
+            doc.cost_entry_id = entry.id
+            await self._doc_repo.update(doc)
+            await self._audit.create(AuditEvent(actor_user_id=self._user_id,
+                entity_type="invoice_document", entity_id=doc.id, action="document.linked",
+                payload_diff={"cost_entry_id": str(entry.id)}))
+        if idempotency_key is not None:
+            await idem.record("cost_entry.create", idempotency_key, request_digest, entry.id)
 
         await self._audit.create(
             AuditEvent(
@@ -91,7 +145,7 @@ class CostEntryService:
         self, entry_id: uuid.UUID, updates: dict
     ) -> CostEntry:
         """Update a draft/needs_review entry. Confirmed entries cannot be updated."""
-        entry = await self._repo.get_by_id(entry_id)
+        entry = await self._repo.get_by_id_for_update(entry_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="Cost entry not found")
 
@@ -108,6 +162,7 @@ class CostEntryService:
                 setattr(entry, field_name, value)
                 changed[field_name] = {"old": str(old_val), "new": str(value)}
 
+        await self._validate_scope(entry)
         entry = await self._repo.update(entry)
 
         if changed:
@@ -142,7 +197,7 @@ class CostEntryService:
         if store is None:
             store = get_store()
 
-        entry = await self._repo.get_by_id(entry_id)
+        entry = await self._repo.get_by_id_for_update(entry_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="Cost entry not found")
 
@@ -172,6 +227,11 @@ class CostEntryService:
             raise HTTPException(status_code=422, detail="; ".join(errors))
 
         now = datetime.now(timezone.utc)
+
+        await self._validate_scope(entry)
+        doc = await self._doc_repo.get_active_for_cost_entry(entry_id)
+        if entry.source != "MANUAL" and doc is None:
+            raise HTTPException(422, "Imported cost has no active source document")
 
         # 2. Freeze the cost entry
         entry.status = "confirmed"
@@ -238,7 +298,7 @@ class CostEntryService:
 
     async def reject(self, entry_id: uuid.UUID) -> CostEntry:
         """Reject a cost entry (discard from workflow)."""
-        entry = await self._repo.get_by_id(entry_id)
+        entry = await self._repo.get_by_id_for_update(entry_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="Cost entry not found")
 
@@ -273,7 +333,7 @@ class CostEntryService:
         The original is linked via superseded_by_id; its content stays frozen.
         The new entry starts as needs_review with corrected values.
         """
-        original = await self._repo.get_by_id(original_id)
+        original = await self._repo.get_by_id_for_update(original_id)
         if original is None:
             raise HTTPException(status_code=404, detail="Cost entry not found")
 

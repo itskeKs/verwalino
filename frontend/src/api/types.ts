@@ -580,6 +580,7 @@ export interface CostEntry {
 }
 
 export interface CostEntryCreate {
+  source_document_id?: string;
   property_id: string;
   management_mandate_id?: string | null;
   cost_category_id: string;

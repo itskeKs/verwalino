@@ -71,6 +71,8 @@ export function InvoiceDocumentDetailPage() {
   // Version upload
   const versionFileRef = useRef<HTMLInputElement>(null);
 
+  const costAttempt = useRef<{ payload: string; key: string } | null>(null);
+
   // Cost entry creation form (pre-filled from extraction)
   const [showCostForm, setShowCostForm] = useState(false);
   const [costForm, setCostForm] = useState<CostEntryCreate>({
@@ -80,7 +82,7 @@ export function InvoiceDocumentDetailPage() {
     service_period_from: "",
     service_period_to: "",
     gross_amount: "",
-    tenant_apportionable: "full",
+    tenant_apportionable: "UMLAGEFAEHIG",
     source: "PDF_IMPORT",
     status: "draft_extracted",
   });
@@ -174,7 +176,7 @@ export function InvoiceDocumentDetailPage() {
       document_number: ext?.document_number ?? null,
       owner_distribution_key: cat?.owner_distribution_key_default ?? null,
       tenant_distribution_key: cat?.tenant_distribution_key_default ?? null,
-      tenant_apportionable: cat?.tenant_apportionability_default ?? "full",
+      tenant_apportionable: cat?.tenant_apportionability_default ?? "UMLAGEFAEHIG",
       apportionable_tenant_amount: null,
       source: ext?.is_einvoice ? "E_INVOICE" : "PDF_IMPORT",
       status: "draft_extracted",
@@ -188,7 +190,12 @@ export function InvoiceDocumentDetailPage() {
     setActionLoading(true);
     setActionError(null);
     try {
-      const entry = await createCostEntry(costForm);
+      const body = { ...costForm, source_document_id: docId };
+      const payload = JSON.stringify(body);
+      if (costAttempt.current?.payload !== payload) {
+        costAttempt.current = { payload, key: crypto.randomUUID() };
+      }
+      const entry = await createCostEntry(body, costAttempt.current.key);
       // Navigate to the new cost entry
       navigate(`/kosten/${entry.id}`);
     } catch (err) {
@@ -351,7 +358,7 @@ export function InvoiceDocumentDetailPage() {
         >
           Integritaet pruefen
         </button>
-        {!doc.cost_entry_id && (
+        {!doc.cost_entry_id && doc.status === "active" && !doc.released_at && (
           <button
             className="btn btn--primary"
             onClick={openCostForm}

@@ -464,8 +464,9 @@ export function getCostEntry(id: string): Promise<CostEntry> {
   return api.get<CostEntry>(`/api/cost-entries/${id}`);
 }
 
-export function createCostEntry(body: CostEntryCreate): Promise<CostEntry> {
-  return api.post<CostEntry>("/api/cost-entries", body);
+export function createCostEntry(body: CostEntryCreate, idempotencyKey?: string): Promise<CostEntry> {
+  return api.post<CostEntry>("/api/cost-entries", body,
+    idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined);
 }
 
 export function updateCostEntry(id: string, body: CostEntryUpdate): Promise<CostEntry> {

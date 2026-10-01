@@ -48,8 +48,9 @@ export const api = {
   get<T>(url: string, options?: RequestInit): Promise<T> {
     return request<T>(url, options);
   },
-  post<T>(url: string, body?: unknown): Promise<T> {
+  post<T>(url: string, body?: unknown, options?: RequestInit): Promise<T> {
     return request<T>(url, {
+      ...options,
       method: "POST",
       body: body ? JSON.stringify(body) : undefined,
     });

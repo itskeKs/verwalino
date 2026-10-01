@@ -31,7 +31,7 @@ class InvoiceDocumentRepository(TenantRepository[InvoiceDocument]):
         return result.scalar_one_or_none()
 
     async def get_active_by_chain(
-        self, chain_root_id: uuid.UUID
+        self, chain_root_id: uuid.UUID, *, lock: bool = False
     ) -> InvoiceDocument | None:
         """Get the active document in a version chain."""
         stmt = (
@@ -39,6 +39,8 @@ class InvoiceDocumentRepository(TenantRepository[InvoiceDocument]):
             .where(InvoiceDocument.chain_root_id == chain_root_id)
             .where(InvoiceDocument.status == "active")
         )
+        if lock:
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
