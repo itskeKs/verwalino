@@ -4,6 +4,8 @@
 > [product audit and reference software parity plan](2026-10-01-product-audit-and-parity-plan.md).
 > The historical MVP scope below remains useful implementation context, but its
 > exclusions of bank imports and portals do not describe the new product target.
+> The [product, UX and technical delivery design](2026-10-01-product-ux-technical-design.md)
+> now defines the target workflows, data contracts, delivery packages and acceptance gates.
 
 Stand: 2026-08-29 · Bezug: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2
 
