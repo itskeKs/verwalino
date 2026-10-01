@@ -9,6 +9,9 @@
 > The [authenticated reference review](2026-10-01-reference-software-review.md)
 > adds tested synthetic journeys, observed settings and explicit coverage limits.
 > These observations refine the design; they do not mark roadmap features delivered.
+> The [implementation plan](2026-10-01-property-management-implementation-plan.md)
+> provides the executable M-A–M-G sequence, beginning with P0 repairs, with code
+> anchors, migrations, acceptance traceability and separate release decisions.
 
 Stand: 2026-08-29 · Bezug: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2
 

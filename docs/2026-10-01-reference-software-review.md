@@ -6,6 +6,11 @@ not an implementation, security assessment, accounting certification or claim of
 complete parity. It supplements the [design](2026-10-01-product-ux-technical-design.md)
 and [code audit](2026-10-01-product-audit-and-parity-plan.md).
 
+The [implementation plan](2026-10-01-property-management-implementation-plan.md)
+assigns these observations and acceptance deltas to executable delivery units.
+It preserves the evidence depths and does not treat reference results as product
+implementation acceptance.
+
 ## Scope and evidence rules
 
 The user authorized navigation and synthetic test records. All main navigation

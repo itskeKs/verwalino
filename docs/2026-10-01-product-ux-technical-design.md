@@ -5,6 +5,11 @@ product features described as **target behavior**, not delivered functionality.
 Planning baseline: `57edaa7`; application baseline: `1d35f7d`. The working tree was
 clean and no application changes occurred between those revisions and this design.
 
+The [implementation plan](2026-10-01-property-management-implementation-plan.md)
+turns this design and RF01–RF31 evidence into commit-sized M-A–M-G delivery units,
+starting with detailed P0 repairs. It records file/API boundaries, migrations,
+acceptance ownership and unresolved release gates; implementation is still pending.
+
 ## 1. Product decision and evidence boundary
 
 Build one property-management product with two presentation presets: a guided

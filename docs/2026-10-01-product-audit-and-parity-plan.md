@@ -2,6 +2,11 @@
 
 Date: 2026-10-01. Inspected baseline: `1d35f7d`; working tree was clean.
 
+For the executable sequence based on the subsequent design and authenticated
+reference review, see the
+[implementation plan](2026-10-01-property-management-implementation-plan.md).
+Its first milestone repairs P0; later packages retain explicit release gates.
+
 ## Decision and scope
 
 Retain the existing accounting and property-management core. Build the missing
