@@ -6,6 +6,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_admin_dep
@@ -67,11 +68,15 @@ async def list_users(
 
 @router.get("/page", response_model=Page[UserOut])
 async def page_users(
+    eligible_for_scope: bool = False,
     query: PageQuery = Depends(page_query),
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    items, cursor = await page_rows(db, auth, User, User.display_name, [User.display_name, User.email], query)
+    filters = (User.is_active.is_(True), exists(select(Membership.id).where(
+        Membership.organization_id == User.organization_id, Membership.user_id == User.id))) if eligible_for_scope else ()
+    items, cursor = await page_rows(db, auth, User, User.display_name, [User.display_name, User.email], query,
+        filters=filters, context='scope-eligible' if eligible_for_scope else '')
     return Page(items=[UserOut(id=str(u.id),email=u.email,display_name=u.display_name,is_active=u.is_active) for u in items], next_cursor=cursor)
 
 

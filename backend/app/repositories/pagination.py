@@ -33,12 +33,14 @@ def page_query(limit: int = Query(50, ge=1, le=200), q: str = Query("", max_leng
 
 
 async def page_rows(session, auth, model, sort_column, search_columns, query: PageQuery,
-                    *, filters=(), context: str = ""):
+                    *, filters=(), context: str = "", joins=()):
     signer = URLSafeTimedSerializer(settings.session_secret, salt="hv-selector-page-v1")
     scope = [str(auth.organization_id), str(auth.user_id), model.__tablename__, query.q, context]
     order = func.lower(func.coalesce(sort_column, ""))
     statement = select(model, order.label("page_order")).where(
         model.organization_id == auth.organization_id, *filters)
+    for target, condition in joins:
+        statement = statement.join(target, condition)
     if query.q:
         # Escape SQL wildcards: a user's % or _ is literal search input.
         escaped = query.q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

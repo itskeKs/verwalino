@@ -24,6 +24,8 @@ from app.models.management_mandate import ManagementMandate
 from app.models.mandate_document import MandateDocument
 from app.services.mandate_document_service import MandateDocumentService
 
+from app.repositories.pagination import Page, PageQuery, page_query, page_rows
+
 router = APIRouter(prefix="/api/mandates", tags=["mandates"])
 
 
@@ -61,6 +63,15 @@ async def list_mandates(
         )
         for m in mandates
     ]
+
+
+@router.get('/page', response_model=Page[MandateOut])
+async def page_mandates(query: PageQuery = Depends(page_query),
+                       auth: AuthContext = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    items, cursor = await page_rows(db, auth, ManagementMandate, ManagementMandate.label,
+                                   [ManagementMandate.label], query)
+    return Page(items=[MandateOut(id=str(m.id), mandate_type=m.mandate_type, label=m.label,
+                                 start_date=m.start_date, end_date=m.end_date) for m in items], next_cursor=cursor)
 
 
 @router.get("/{mandate_id}", response_model=MandateOut)

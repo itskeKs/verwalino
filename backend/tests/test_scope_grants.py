@@ -201,9 +201,16 @@ async def test_empty_sev_binding_fails_without_poisoning_unit_review(migrator_se
     await s.execute(text("INSERT INTO unit(id,organization_id,property_id,number,location,usage_type) VALUES (:unit,:org,:property,'1','','WOHNUNG')"), ids)
     await s.execute(text("INSERT INTO person(id,organization_id,first_name,last_name,street,zip_code,city) VALUES (:person,:org,'Test','Owner','','','')"), ids)
     await s.execute(text("INSERT INTO owner_profile(id,organization_id,person_id,notes) VALUES (:owner,:org,:person,'')"), ids)
+    await s.execute(text("INSERT INTO ownership_history(organization_id,unit_id,owner_profile_id,valid_from) VALUES (:org,:unit,:owner,'2025-01-01')"), ids)
     await s.execute(text("INSERT INTO accounting_scope_unit(organization_id,scope_id,property_id,unit_id,owner_profile_id) VALUES (:org,:sev,:property,:unit,:owner)"), ids)
-    await bind(s, ids, scope=ids['sev'])
-    await s.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+    with pytest.raises(DBAPIError) as unsupported:
+        async with s.begin_nested():
+            await bind(s, ids, scope=ids['sev'])
+            await s.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+    assert 'SEV financial binding awaits' in str(unsupported.value)
+    await s.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:sev,:clerk,ARRAY['read'],:actor,'Reviewed SEV setup')"), ids)
+    # Future ownership changes remain possible; setup evidence is a snapshot.
+    await s.execute(text("UPDATE ownership_history SET valid_to='2026-01-01' WHERE unit_id=:unit"), ids)
     # The now-used unit set cannot be extended under an existing grant/binding.
     with pytest.raises(DBAPIError):
         async with s.begin_nested():
@@ -334,3 +341,41 @@ async def test_reviewed_legacy_mandate_classification_keeps_booked_original(migr
     assert reversal.management_mandate_id == ids['mandate']
     assert original.management_mandate_id is None
     await s.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+
+
+@pytest.mark.parametrize('mutation', ['role', 'active'])
+async def test_principal_changes_order_against_inflight_scope_effect(migrator_session, seed_data, mutation):
+    from fastapi import HTTPException
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from app.core.rbac import ScopeCapability
+    from app.core.tenant import AuthContext
+    from app.services.authorization_service import AuthorizationService
+    from tests.conftest import MIGRATOR_URL
+    ids = await scope_fixture(migrator_session, seed_data)
+    await migrator_session.commit()
+    engine = create_async_engine(MIGRATOR_URL)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    change = "UPDATE membership SET role='READ_ONLY' WHERE organization_id=:org AND user_id=:clerk" if mutation == 'role' else 'UPDATE "user" SET is_active=false WHERE organization_id=:org AND id=:clerk'
+    restore = "UPDATE membership SET role='CLERK' WHERE organization_id=:org AND user_id=:clerk" if mutation == 'role' else 'UPDATE "user" SET is_active=true WHERE organization_id=:org AND id=:clerk'
+    async def require(session):
+        await session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"), {'org': str(ids['org']), 'actor': str(ids['clerk'])})
+        return await AuthorizationService(session, AuthContext(ids['clerk'], ids['org'], 'CLERK')).require(ids['scope'], ScopeCapability.PREPARE)
+    try:
+        async with factory() as effect, factory() as administrator:
+            async with effect.begin():
+                await require(effect)
+                with pytest.raises(DBAPIError) as blocked:
+                    async with administrator.begin():
+                        await administrator.execute(text("SET LOCAL lock_timeout='100ms'"))
+                        await administrator.execute(text(change), ids)
+                assert 'lock timeout' in str(blocked.value)
+            async with administrator.begin():
+                await administrator.execute(text(change), ids)
+            async with effect.begin():
+                with pytest.raises(HTTPException) as denied:
+                    await require(effect)
+                assert denied.value.status_code == 404
+    finally:
+        async with engine.begin() as connection:
+            await connection.execute(text(restore), ids)
+        await engine.dispose()

@@ -63,7 +63,7 @@ class AuthorizationService:
 
     async def grant(self, scope_id: uuid.UUID, user_id: uuid.UUID,
                     capabilities: set[ScopeCapability], reason: str,
-                    expires_at: datetime | None = None) -> ScopeGrant:
+                    expires_at: datetime | None = None, *, grant_id: uuid.UUID | None = None) -> ScopeGrant:
         await self._require_administration()
         if not reason.strip() or ScopeCapability.READ not in capabilities:
             raise HTTPException(422, "A reason and read capability are required")
@@ -85,7 +85,7 @@ class AuthorizationService:
         ))
         if existing is not None:
             raise HTTPException(409, "Revoke the previous grant before replacing it")
-        grant = ScopeGrant(organization_id=self.auth.organization_id, scope_id=scope_id,
+        grant = ScopeGrant(id=grant_id or uuid.uuid4(), organization_id=self.auth.organization_id, scope_id=scope_id,
                            user_id=user_id, capabilities=sorted(c.value for c in capabilities),
                            granted_by=self.auth.user_id, reason=reason.strip(), expires_at=expires_at)
         self.session.add(grant)

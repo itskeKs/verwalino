@@ -1,0 +1,15 @@
+{
+  "checks": [
+    "lost scope reply replays one immutable scope with the same command key",
+    "lost grant reply replays one grant; exact scoped access appears",
+    "revocation removes scope access and retains visible grant history"
+  ],
+  "pageErrors": [],
+  "failedResponses": [],
+  "initialUnauthenticatedChecks": 2,
+  "mobile": {
+    "visible": 390,
+    "content": 390
+  },
+  "status": "passed"
+}

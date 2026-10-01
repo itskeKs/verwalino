@@ -11,7 +11,7 @@ from app.api import auth, organizations, users, mandates
 from app.api import properties, units, persons, ownership, leases
 from app.api import owner_profiles, tenant_profiles, vendors
 from app.api import cost_categories, cost_entries, invoice_documents
-from app.api import financial_input_coverage
+from app.api import financial_input_coverage, accounting_scopes
 from app.api import settlements
 from app.api import economic_plans, weg_settlements
 from app.api import payments
@@ -42,6 +42,7 @@ app.add_middleware(RequestBodyLimitMiddleware)
 app.include_router(auth.router)
 app.include_router(organizations.router)
 app.include_router(users.router)
+app.include_router(accounting_scopes.router)
 app.include_router(mandates.router)
 
 # M1 Stammdaten

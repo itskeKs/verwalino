@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
 import { usePagedList } from "../hooks/usePagedList";
 import { ListSearch, MoreResults } from "../components/ListSearch";
@@ -22,5 +23,5 @@ function UserList() {
 export function UsersPage() {
   const { session } = useAuth();
   return <div className="paged-list"><h1>Benutzer</h1>{session?.role === "OWNER_ADMIN"
-    ? <UserList /> : <p className="error-text">Zugriff nur für Inhaber/Admin.</p>}</div>;
+    ? <><p><Link to="/berechtigungen">Bereiche und Teamrechte verwalten</Link></p><UserList /></> : <p className="error-text">Zugriff nur für Inhaber/Admin.</p>}</div>;
 }
