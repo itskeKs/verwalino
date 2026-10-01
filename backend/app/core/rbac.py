@@ -41,3 +41,13 @@ def require_admin(current_role: str) -> None:
 def require_write(current_role: str) -> None:
     """Shortcut: OWNER_ADMIN or CLERK."""
     require_role(current_role, [Role.OWNER_ADMIN, Role.CLERK])
+
+
+class ScopeCapability(str, enum.Enum):
+    """Exact accounting-sphere capabilities, independent of organization roles."""
+    READ = "read"
+    PREPARE = "prepare"
+    CONFIRM = "confirm"
+    APPROVE = "approve"
+    SEND = "send"
+    EXPORT = "export"

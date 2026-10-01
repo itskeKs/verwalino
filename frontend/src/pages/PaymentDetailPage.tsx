@@ -34,11 +34,13 @@ import { ApiError } from "../api/client";
 const STATUS_LABELS: Record<string, string> = {
   draft: "Entwurf",
   booked: "Gebucht",
+  cancelled: "Verworfen",
 };
 
 const STATUS_CSS: Record<string, string> = {
   draft: "badge--draft",
   booked: "badge--confirmed",
+  cancelled: "badge--superseded",
 };
 
 const PAYMENT_TYPE_LABELS: Record<string, string> = {
@@ -200,7 +202,7 @@ export function PaymentDetailPage() {
   async function handleDelete() {
     if (!paymentId) return;
     const confirmed = window.confirm(
-      "Entwurf loeschen? Nur nicht-gebuchte Zahlungen koennen geloescht werden.",
+      "Entwurf verwerfen? Die Zahlung kann danach nicht mehr gebucht werden.",
     );
     if (!confirmed) return;
     setActionLoading(true);
@@ -450,7 +452,7 @@ export function PaymentDetailPage() {
               disabled={actionLoading}
               style={{ color: "#b71c1c" }}
             >
-              Entwurf loeschen
+              Entwurf verwerfen
             </button>
           </>
         )}

@@ -134,7 +134,7 @@ class PaymentService:
             organization_id=self._org_id,
             bank_account_id=account.id,
             property_id=account.property_id,  # mirrored (ADR-0010)
-            management_mandate_id=None,  # bank_account has no mandate link in M1
+            management_mandate_id=None,  # DB derives this from the canonical account scope when bound
             direction=direction,
             amount=amount,
             value_date=value_date,
@@ -149,6 +149,7 @@ class PaymentService:
             note=note,
         )
         payment = await self._repo.create(payment)
+        await self._session.refresh(payment, ["management_mandate_id"])
         await self._audit.create(
             AuditEvent(
                 actor_user_id=self._user_id,
@@ -171,7 +172,7 @@ class PaymentService:
         payment = await self._repo.get_by_id(payment_id)
         if payment is None:
             raise HTTPException(status_code=404, detail="Payment not found")
-        if payment.status == "booked":
+        if payment.status == "booked" or payment.cancelled_at is not None:
             raise HTTPException(
                 status_code=409,
                 detail="Cannot edit a booked payment; correct via Storno + Neubuchung",
@@ -179,6 +180,8 @@ class PaymentService:
 
         # If the bank account changes, re-mirror property_id (ADR-0010).
         if "bank_account_id" in updates and updates["bank_account_id"] is not None:
+            if updates["bank_account_id"] != payment.bank_account_id and await self._repo.is_scope_bound(payment.id):
+                raise HTTPException(409, "Discard the scoped draft and create a replacement to change its account")
             account = await self._accounts.get_by_id(updates["bank_account_id"])
             if account is None:
                 raise HTTPException(status_code=404, detail="Bank account not found")
@@ -208,7 +211,7 @@ class PaymentService:
         return payment
 
     async def delete_draft(self, payment_id: uuid.UUID) -> None:
-        """Hard-delete a draft payment. Booked payments are protected (trigger)."""
+        """Discard a scope-bound draft; preserve its canonical evidence. Legacy drafts may be deleted."""
         payment = await self._repo.get_by_id(payment_id)
         if payment is None:
             raise HTTPException(status_code=404, detail="Payment not found")
@@ -217,14 +220,21 @@ class PaymentService:
                 status_code=409,
                 detail="Cannot delete a booked payment (GoBD); reverse it via Storno",
             )
-        await self._repo.delete(payment)
+        if payment.cancelled_at is not None:
+            return
+        bound = await self._repo.is_scope_bound(payment.id)
+        if bound:
+            payment.cancelled_at = datetime.now(timezone.utc)
+            await self._repo.update(payment)
+        else:
+            await self._repo.delete(payment)
         await self._audit.create(
             AuditEvent(
                 actor_user_id=self._user_id,
                 entity_type="payment",
                 entity_id=payment_id,
-                action="payment.deleted",
-                payload_diff={"status": "draft"},
+                action="payment.discarded" if bound else "payment.deleted",
+                payload_diff={"status": "cancelled" if bound else "draft"},
             )
         )
 
@@ -240,7 +250,7 @@ class PaymentService:
         payment = await self._repo.get_by_id(payment_id)
         if payment is None:
             raise HTTPException(status_code=404, detail="Payment not found")
-        if payment.status != "draft":
+        if payment.status != "draft" or payment.cancelled_at is not None:
             raise HTTPException(
                 status_code=409,
                 detail=f"Cannot book from status '{payment.status}'",
@@ -320,6 +330,7 @@ class PaymentService:
             note=note or f"Storno zu {original.id}",
         )
         storno = await self._repo.create(storno)
+        await self._session.refresh(storno, ["management_mandate_id"])
 
         # The single allowed mutation on the booked original.
         original.reversed_by_id = storno.id

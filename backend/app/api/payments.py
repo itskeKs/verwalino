@@ -130,7 +130,7 @@ def _to_out(p: Payment) -> PaymentOut:
         period_year=p.period_year,
         period_month=p.period_month,
         settlement_run_id=str(p.settlement_run_id) if p.settlement_run_id else None,
-        status=p.status,
+        status="cancelled" if p.cancelled_at is not None else p.status,
         booked_at=str(p.booked_at) if p.booked_at else None,
         booked_by=str(p.booked_by) if p.booked_by else None,
         reverses_id=str(p.reverses_id) if p.reverses_id else None,

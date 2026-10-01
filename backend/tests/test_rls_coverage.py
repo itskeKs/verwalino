@@ -14,6 +14,9 @@ from sqlalchemy import text
 # Central table registry -- kept in sync with migrations.
 # Every tenant-behaftet table must be listed here.
 TENANT_TABLES = frozenset({
+    # B1 accounting scope foundation
+    "accounting_scope", "accounting_scope_unit", "accounting_scope_binding",
+    "scope_grant", "scope_migration_exception",
     # M0
     "user", "membership", "management_mandate", "audit_event",
     # M1 Stammdaten

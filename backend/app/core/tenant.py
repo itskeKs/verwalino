@@ -80,6 +80,7 @@ async def get_db(
     async with get_session_factory()() as session:
         async with session.begin():
             await set_tenant_context(session, auth.organization_id)
+            await session.execute(text("SELECT set_config('app.current_user_id', :actor, true)"), {"actor": str(auth.user_id)})
             yield session
 
 

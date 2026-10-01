@@ -865,7 +865,7 @@ export type PaymentType =
   | "RUECKLAGENANTEIL"
   | "SONDERZAHLUNG";
 
-export type PaymentStatus = "draft" | "booked";
+export type PaymentStatus = "draft" | "booked" | "cancelled";
 
 export interface Payment {
   id: string;

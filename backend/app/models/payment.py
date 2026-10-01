@@ -99,6 +99,7 @@ class Payment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     status: Mapped[str] = mapped_column(
         String(12), nullable=False, default="draft"
     )
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     booked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.payment import Payment
+from app.models.accounting_scope import AccountingScopeBinding
 from app.repositories.base import TenantRepository
 
 
@@ -54,8 +55,10 @@ class PaymentRepository(TenantRepository[Payment]):
             stmt = stmt.where(Payment.payment_type == payment_type)
         if period_year is not None:
             stmt = stmt.where(Payment.period_year == period_year)
-        if status is not None:
-            stmt = stmt.where(Payment.status == status)
+        if status == "cancelled":
+            stmt = stmt.where(Payment.cancelled_at.is_not(None))
+        elif status is not None:
+            stmt = stmt.where(Payment.status == status, Payment.cancelled_at.is_(None))
         stmt = stmt.order_by(Payment.value_date.desc(), Payment.created_at.desc())
         result = await self._session.execute(stmt)
         return result.scalars().all()
@@ -130,3 +133,9 @@ class PaymentRepository(TenantRepository[Payment]):
         """Delete a draft payment. Trigger blocks booked rows."""
         await self._session.delete(entity)
         await self._session.flush()
+
+    async def is_scope_bound(self, payment_id: uuid.UUID) -> bool:
+        return await self._session.scalar(select(AccountingScopeBinding.id).where(
+            AccountingScopeBinding.organization_id == self._org_id,
+            AccountingScopeBinding.payment_id == payment_id,
+        )) is not None

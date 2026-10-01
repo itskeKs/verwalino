@@ -126,3 +126,6 @@ __all__ = [
 from app.models.operation_receipt import OperationReceipt
 from app.models.invoice_processing_attempt import InvoiceProcessingAttempt
 from app.models.coverage_declaration import CoverageDeclaration
+
+from app.models.accounting_scope import AccountingScope, AccountingScopeUnit, AccountingScopeBinding, ScopeMigrationException
+from app.models.scope_grant import ScopeGrant

@@ -36,16 +36,19 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "Alle Status" },
   { value: "draft", label: "Entwurf" },
   { value: "booked", label: "Gebucht" },
+  { value: "cancelled", label: "Verworfen" },
 ];
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Entwurf",
   booked: "Gebucht",
+  cancelled: "Verworfen",
 };
 
 const STATUS_CSS: Record<string, string> = {
   draft: "badge--draft",
   booked: "badge--confirmed",
+  cancelled: "badge--superseded",
 };
 
 const PAYMENT_TYPE_OPTIONS: { value: string; label: string }[] = [
