@@ -17,6 +17,8 @@ from app.core.tenant import (
 from app.repositories.person_repo import PersonRepository
 from app.models.person import Person
 
+from app.repositories.pagination import Page, PageQuery, page_query, page_rows
+
 router = APIRouter(prefix="/api/persons", tags=["persons"])
 
 
@@ -73,6 +75,16 @@ async def list_persons(
     repo = PersonRepository(db, auth.organization_id)
     items = await repo.list_all()
     return [_to_out(p) for p in items]
+
+
+@router.get("/page", response_model=Page[PersonOut])
+async def page_persons(
+    query: PageQuery = Depends(page_query),
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    items, cursor = await page_rows(db, auth, Person, Person.last_name, [Person.first_name, Person.last_name, Person.company_name], query)
+    return Page(items=[_to_out(item) for item in items], next_cursor=cursor)
 
 
 @router.get("/{person_id}", response_model=PersonOut)

@@ -32,6 +32,7 @@ class BankAccountCreate(BaseModel):
 
 
 class BankAccountOut(BaseModel):
+    property_name: str | None = None
     id: str
     organization_id: str
     property_id: str
@@ -44,8 +45,9 @@ class BankAccountOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-def _to_out(a: BankAccount) -> BankAccountOut:
+def _to_out(a: BankAccount, property_name: str | None = None) -> BankAccountOut:
     return BankAccountOut(
+        property_name=property_name,
         id=str(a.id),
         organization_id=str(a.organization_id),
         property_id=str(a.property_id),
@@ -67,11 +69,8 @@ async def list_bank_accounts(
     db: AsyncSession = Depends(get_db),
 ):
     repo = BankAccountRepository(db, auth.organization_id)
-    if property_id:
-        items = await repo.list_by_property(property_id)
-    else:
-        items = await repo.list_all()
-    return [_to_out(a) for a in items]
+    items = await repo.list_with_property_names(property_id)
+    return [_to_out(account, name) for account, name in items]
 
 
 @router.get("/{account_id}", response_model=BankAccountOut)

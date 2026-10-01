@@ -20,6 +20,8 @@ from app.models.unit import Unit
 from app.models.property import Property
 from app.repositories.property_repo import PropertyRepository
 
+from app.repositories.pagination import Page, PageQuery, page_query, page_rows
+
 router = APIRouter(prefix="/api/units", tags=["units"])
 
 
@@ -70,6 +72,17 @@ async def list_units(
     else:
         items = await repo.list_all()
     return [_to_out(u) for u in items]
+
+
+@router.get("/page", response_model=Page[UnitOut])
+async def page_units(
+    property_id: uuid.UUID | None = None,
+    query: PageQuery = Depends(page_query),
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    items, cursor = await page_rows(db, auth, Unit, Unit.number, [Unit.number, Unit.location, Unit.building_part], query, filters=([Unit.property_id == property_id] if property_id else []), context=str(property_id or ""))
+    return Page(items=[_to_out(item) for item in items], next_cursor=cursor)
 
 
 @router.get("/{unit_id}", response_model=UnitOut)

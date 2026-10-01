@@ -23,6 +23,8 @@ from app.repositories.audit_repo import AuditRepository
 from app.models.property import Property
 from app.models.audit_event import AuditEvent
 
+from app.repositories.pagination import Page, PageQuery, page_query, page_rows
+
 router = APIRouter(prefix="/api/properties", tags=["properties"])
 
 
@@ -73,6 +75,16 @@ async def list_properties(
     repo = PropertyRepository(db, auth.organization_id)
     items = await repo.list_all()
     return [_to_out(p) for p in items]
+
+
+@router.get("/page", response_model=Page[PropertyOut])
+async def page_properties(
+    query: PageQuery = Depends(page_query),
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    items, cursor = await page_rows(db, auth, Property, Property.name, [Property.name, Property.street, Property.city], query)
+    return Page(items=[_to_out(item) for item in items], next_cursor=cursor)
 
 
 @router.get("/{property_id}", response_model=PropertyOut)

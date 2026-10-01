@@ -859,3 +859,9 @@ code {
 @media (max-width: 768px) {
   .settlement-detail .info-table td:first-child { width: 45%; }
 }
+
+/* Bounded master-data lists retain table columns inside the mobile viewport. */
+.paged-list { min-width: 0; }
+.paged-list > div:first-child { flex-wrap: wrap; gap: 0.75rem; }
+.paged-list .paged-table { max-width: 100%; overflow-x: auto; }
+.paged-list input, .paged-list select { max-width: 100%; }

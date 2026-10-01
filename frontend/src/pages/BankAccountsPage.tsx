@@ -9,10 +9,10 @@ import { useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   listBankAccounts,
-  listProperties,
   createBankAccount,
 } from "../api/endpoints";
-import type { BankAccount, BankAccountCreate, BankAccountType, Property } from "../api/types";
+import type { BankAccount, BankAccountCreate, BankAccountType } from "../api/types";
+import { PropertySelector } from "../components/PropertySelector";
 import { ApiError } from "../api/client";
 
 const ACCOUNT_TYPE_LABELS: Record<string, string> = {
@@ -47,7 +47,6 @@ function makeEmptyForm(): BankAccountCreate {
 export function BankAccountsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
-  const [properties, setProperties] = useState<Property[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -59,14 +58,8 @@ export function BankAccountsPage() {
   const reload = useCallback(() => {
     setLoading(true);
     setError(null);
-    Promise.all([
-      listBankAccounts(propertyFilter || undefined),
-      listProperties(),
-    ])
-      .then(([a, p]) => {
-        setAccounts(a);
-        setProperties(p);
-      })
+    listBankAccounts(propertyFilter || undefined)
+      .then(setAccounts)
       .catch((err) => {
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert. Bitte erneut anmelden.");
@@ -89,11 +82,6 @@ export function BankAccountsPage() {
       next.delete(key);
     }
     setSearchParams(next, { replace: true });
-  }
-
-  function getPropertyName(id: string): string {
-    const prop = properties.find((p) => p.id === id);
-    return prop ? prop.name : id.slice(0, 8);
   }
 
   function openCreate() {
@@ -121,7 +109,7 @@ export function BankAccountsPage() {
   }
 
   return (
-    <div>
+    <div className="paged-list">
       <div
         style={{
           display: "flex",
@@ -147,18 +135,7 @@ export function BankAccountsPage() {
           flexWrap: "wrap",
         }}
       >
-        <select
-          value={propertyFilter}
-          onChange={(e) => setFilter("property_id", e.target.value)}
-          style={{ padding: "0.4rem 0.5rem", fontSize: "0.85rem" }}
-        >
-          <option value="">Alle Objekte</option>
-          {properties.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+        <PropertySelector label="Nach Objekt filtern" value={propertyFilter} onChange={value => setFilter("property_id", value)} />
       </div>
 
       {error && <p className="error-text">{error}</p>}
@@ -167,23 +144,7 @@ export function BankAccountsPage() {
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Neues Bankkonto anlegen</h2>
           <form onSubmit={handleSubmit} className="form-grid">
-            <label>
-              Objekt *
-              <select
-                required
-                value={form.property_id}
-                onChange={(e) =>
-                  setForm({ ...form, property_id: e.target.value })
-                }
-              >
-                <option value="">-- Objekt waehlen --</option>
-                {properties.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <PropertySelector label="Objekt *" required value={form.property_id} emptyLabel="Objekt wählen" onChange={value => setForm({ ...form, property_id: value })} />
             <label>
               Kontotyp *
               <select
@@ -270,7 +231,7 @@ export function BankAccountsPage() {
       ) : accounts.length === 0 ? (
         <p className="empty-hint">Keine Bankkonten vorhanden.</p>
       ) : (
-        <div className="card">
+        <div className="card paged-table">
           <table className="data-table">
             <thead>
               <tr>
@@ -285,7 +246,7 @@ export function BankAccountsPage() {
               {accounts.map((a) => (
                 <tr key={a.id}>
                   <td><strong>{a.label}</strong></td>
-                  <td>{getPropertyName(a.property_id)}</td>
+                  <td>{a.property_name ?? "Objekt nicht verfügbar"}</td>
                   <td>
                     <span className={`badge ${ACCOUNT_TYPE_CSS[a.account_type] ?? ""}`}>
                       {ACCOUNT_TYPE_LABELS[a.account_type] ?? a.account_type}

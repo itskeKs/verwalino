@@ -2,10 +2,12 @@
  * Properties list -- shows all Objekte (properties) with inline creation.
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { listProperties, createProperty, updateProperty } from "../api/endpoints";
+import { createProperty, updateProperty } from "../api/endpoints";
 import type { Property, PropertyCreate, ManagementType } from "../api/types";
+import { usePagedList } from "../hooks/usePagedList";
+import { ListSearch, MoreResults } from "../components/ListSearch";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/useAuth";
 
@@ -28,30 +30,15 @@ const EMPTY_FORM: PropertyCreate = {
 export function PropertiesPage() {
   const { session } = useAuth();
   const isWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
-  const [properties, setProperties] = useState<Property[]>([]);
+  const page = usePagedList<Property>("/api/properties/page");
+  const properties = page.items;
+  const reload = page.reload;
+  const loading = page.loading;
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<PropertyCreate>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
-
-  const reload = useCallback(() => {
-    setLoading(true);
-    setError(null);
-    listProperties()
-      .then(setProperties)
-      .catch((err) => {
-        if (err instanceof ApiError && err.status === 401) {
-          setError("Nicht authentifiziert. Bitte erneut anmelden.");
-        } else {
-          setError(String(err));
-        }
-      })
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => { void Promise.resolve().then(reload); }, [reload]);
 
   function openCreate() {
     setEditId(null);
@@ -97,7 +84,7 @@ export function PropertiesPage() {
   }
 
   return (
-    <div>
+    <div className="paged-list">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <h1 style={{ margin: 0 }}>Objekte</h1>
         {isWrite && <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
@@ -110,7 +97,8 @@ export function PropertiesPage() {
         </div>}
       </div>
 
-      {error && <p className="error-text">{error}</p>}
+      <ListSearch label="Objekte suchen" onSearch={page.setQuery} />
+      {(error || page.error) && <p className="error-text">{error || page.error}</p>}
 
       {isWrite && showForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
@@ -183,12 +171,12 @@ export function PropertiesPage() {
         </div>
       )}
 
-      {loading ? (
+      {loading && properties.length === 0 ? (
         <p>Lade...</p>
       ) : properties.length === 0 ? (
         <p className="empty-hint">Keine Objekte vorhanden.</p>
       ) : (
-        <div className="card">
+        <div className="card paged-table">
           <table className="data-table">
             <thead>
               <tr>
@@ -221,6 +209,7 @@ export function PropertiesPage() {
           </table>
         </div>
       )}
+      <MoreResults available={!!page.nextCursor} loading={loading} onMore={() => void page.loadMore()} />
     </div>
   );
 }

@@ -2,10 +2,12 @@
  * Persons list page -- shows all Personen with inline creation/editing.
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { listPersons, createPerson, updatePerson } from "../api/endpoints";
+import { createPerson, updatePerson } from "../api/endpoints";
 import type { Person, PersonCreate } from "../api/types";
+import { usePagedList } from "../hooks/usePagedList";
+import { ListSearch, MoreResults } from "../components/ListSearch";
 import { ApiError } from "../api/client";
 
 interface PersonFormData {
@@ -37,30 +39,15 @@ const EMPTY_FORM: PersonFormData = {
 };
 
 export function PersonsPage() {
-  const [persons, setPersons] = useState<Person[]>([]);
+  const page = usePagedList<Person>("/api/persons/page");
+  const persons = page.items;
+  const reload = page.reload;
+  const loading = page.loading;
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<PersonFormData>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
-
-  const reload = useCallback(() => {
-    setLoading(true);
-    setError(null);
-    listPersons()
-      .then(setPersons)
-      .catch((err) => {
-        if (err instanceof ApiError && err.status === 401) {
-          setError("Nicht authentifiziert. Bitte erneut anmelden.");
-        } else {
-          setError(String(err));
-        }
-      })
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => { reload(); }, [reload]);
 
   function openCreate() {
     setEditId(null);
@@ -124,7 +111,7 @@ export function PersonsPage() {
   }
 
   return (
-    <div>
+    <div className="paged-list">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <h1 style={{ margin: 0 }}>Personen</h1>
         <button className="btn btn--primary" onClick={openCreate}>
@@ -132,7 +119,8 @@ export function PersonsPage() {
         </button>
       </div>
 
-      {error && <p className="error-text">{error}</p>}
+      <ListSearch label="Personen suchen" onSearch={page.setQuery} />
+      {(error || page.error) && <p className="error-text">{error || page.error}</p>}
 
       {showForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
@@ -244,12 +232,12 @@ export function PersonsPage() {
         </div>
       )}
 
-      {loading ? (
+      {loading && persons.length === 0 ? (
         <p>Lade...</p>
       ) : persons.length === 0 ? (
         <p className="empty-hint">Keine Personen vorhanden.</p>
       ) : (
-        <div className="card">
+        <div className="card paged-table">
           <table className="data-table">
             <thead>
               <tr>
@@ -284,6 +272,7 @@ export function PersonsPage() {
           </table>
         </div>
       )}
+      <MoreResults available={!!page.nextCursor} loading={loading} onMore={() => void page.loadMore()} />
     </div>
   );
 }

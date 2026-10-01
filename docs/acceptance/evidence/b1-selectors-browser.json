@@ -1,0 +1,35 @@
+{
+  "pages": [
+    {
+      "page": "properties",
+      "firstPage": 50,
+      "totalAfterContinue": 55,
+      "unique": 55
+    },
+    {
+      "page": "users",
+      "loaded": true
+    },
+    {
+      "page": "persons",
+      "emptySearch": true
+    },
+    {
+      "page": "bankAccounts",
+      "boundedSelector": true,
+      "selectedRetainedAcrossSearch": true
+    }
+  ],
+  "pageErrors": [],
+  "failedResponses": [],
+  "initialUnauthenticatedChecks": 2,
+  "viewports": [
+    {
+      "page": "properties",
+      "viewport": "390x844",
+      "visible": 390,
+      "content": 390
+    }
+  ],
+  "status": "passed"
+}

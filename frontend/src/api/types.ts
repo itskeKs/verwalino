@@ -833,6 +833,7 @@ export interface PlanComputeRequest {
 export type BankAccountType = "LAUFEND" | "RUECKLAGE" | "KAUTION";
 
 export interface BankAccount {
+  property_name?: string | null;
   id: string;
   organization_id: string;
   property_id: string;

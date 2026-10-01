@@ -11,6 +11,9 @@ from __future__ import annotations
 import uuid
 from typing import Sequence
 
+from sqlalchemy import and_, select
+from app.models.property import Property
+
 from app.models.bank_account import BankAccount
 from app.repositories.base import TenantRepository
 
@@ -22,3 +25,12 @@ class BankAccountRepository(TenantRepository[BankAccount]):
         stmt = self._base_query().where(BankAccount.property_id == property_id)
         result = await self._session.execute(stmt)
         return result.scalars().all()
+
+    async def list_with_property_names(self, property_id: uuid.UUID | None = None):
+        statement = select(BankAccount, Property.name).outerjoin(Property, and_(
+            Property.organization_id == BankAccount.organization_id,
+            Property.id == BankAccount.property_id,
+        )).where(BankAccount.organization_id == self._org_id).order_by(BankAccount.label, BankAccount.id)
+        if property_id is not None:
+            statement = statement.where(BankAccount.property_id == property_id)
+        return (await self._session.execute(statement)).all()

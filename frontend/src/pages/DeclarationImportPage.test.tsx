@@ -1,3 +1,4 @@
+import { api } from "../api/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -544,7 +545,7 @@ describe("Teilungserklärung entry points and legal shares", () => {
   });
 
   it("does not expose property write actions to read-only users", async () => {
-    vi.spyOn(declarationApi, "listProperties").mockResolvedValue([exampleProperty]);
+    vi.spyOn(api, "get").mockResolvedValue({ items: [exampleProperty], next_cursor: null });
     renderWithRole(<MemoryRouter><PropertiesPage /></MemoryRouter>, "READ_ONLY");
     expect(await screen.findByRole("link", { name: "Talstraße 112" })).toBeVisible();
     expect(screen.queryByRole("link", { name: "Teilungserklärung importieren" })).toBeNull();

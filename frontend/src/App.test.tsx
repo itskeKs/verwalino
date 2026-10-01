@@ -1,3 +1,4 @@
+import { api } from "./api/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -16,7 +17,7 @@ function renderRoutes(path: string, role?: string) {
     vi.spyOn(endpoints, "getCurrentSession").mockRejectedValue(new Error("not authenticated"));
   }
   vi.spyOn(endpoints, "getMyOrganization").mockResolvedValue({ id: "org-1", name: "Test" });
-  vi.spyOn(endpoints, "listProperties").mockResolvedValue([]);
+  vi.spyOn(api, "get").mockResolvedValue({ items: [], next_cursor: null });
   vi.spyOn(endpoints, "getPropertyKnowledge").mockResolvedValue({ property_id: "property-1", documents: [], document_relations: [], rules_by_topic: {}, open_rule_topics: [] });
   return render(<MemoryRouter initialEntries={[path]}><AuthProvider><AppRoutes /></AuthProvider></MemoryRouter>);
 }

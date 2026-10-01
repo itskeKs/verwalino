@@ -16,6 +16,8 @@ from app.repositories.membership_repo import MembershipRepository
 from app.models.user import User
 from app.models.membership import Membership
 
+from app.repositories.pagination import Page, PageQuery, page_query, page_rows
+
 router = APIRouter(prefix="/api/users", tags=["users"])
 
 
@@ -61,6 +63,16 @@ async def list_users(
         )
         for u in users
     ]
+
+
+@router.get("/page", response_model=Page[UserOut])
+async def page_users(
+    query: PageQuery = Depends(page_query),
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    items, cursor = await page_rows(db, auth, User, User.display_name, [User.display_name, User.email], query)
+    return Page(items=[UserOut(id=str(u.id),email=u.email,display_name=u.display_name,is_active=u.is_active) for u in items], next_cursor=cursor)
 
 
 @router.get("/{user_id}", response_model=UserOut)
