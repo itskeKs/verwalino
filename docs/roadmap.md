@@ -1,5 +1,10 @@
 # Roadmap: Hausverwaltungssoftware MVP
 
+> Current product direction (2026-10-01): see the
+> [product audit and reference software parity plan](2026-10-01-product-audit-and-parity-plan.md).
+> The historical MVP scope below remains useful implementation context, but its
+> exclusions of bank imports and portals do not describe the new product target.
+
 Stand: 2026-08-29 · Bezug: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2
 
 Diese Roadmap sequenziert den in der SDD beschriebenen Funktionsumfang. Sie ist ein Planungsdokument und ändert nicht den fachlichen Anspruch der SDD — sie legt fest, **in welcher Reihenfolge** gebaut wird und **wann es einen vorzeigbaren Stand** gibt.
