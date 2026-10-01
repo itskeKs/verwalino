@@ -35,6 +35,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
+from tests.financial_coverage_helpers import attest_fixture
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
@@ -285,6 +286,7 @@ async def _create_and_finalize_bk(client, seed, advance="700.00"):
     run_id = await _create_bk_draft(client, seed, advance)
     # Eine einzige WOHNFLAECHE-Position, eine Einheit -> keine externen/Verbrauchs-
     # Extras nötig; der Mieter trägt 100 % der Fläche.
+    await attest_fixture(client, "settlement", run_id, {"advance_payments_total": advance, "advance_payments_source": "MANUAL"})
     fin = await client.post(f"/api/settlements/{run_id}/finalize", json={})
     assert fin.status_code == 200, fin.text
     return run_id

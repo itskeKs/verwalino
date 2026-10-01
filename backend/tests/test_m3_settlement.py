@@ -16,6 +16,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
+from tests.financial_coverage_helpers import attest_fixture
 import pytest
 from sqlalchemy import text
 
@@ -203,6 +204,8 @@ async def _create_run(client, m3_seed, lease_key, advance):
         "advance_payments_total": advance,
     })
     assert resp.status_code == 201, resp.text
+    await attest_fixture(client, "settlement", resp.json()["id"],
+        {"advance_payments_total": advance, "advance_payments_source": "MANUAL"})
     return resp.json()["id"]
 
 
@@ -547,14 +550,17 @@ class TestM3ExitEndToEnd:
         assert orig.json()["status"] == "finalized"
 
     @pytest.mark.asyncio
-    async def test_snapshot_hash_stable_across_two_finalizations(self, client_a_admin, m3_seed):
-        """Two runs over identical inputs -> identical snapshot hash (I-E)."""
+    async def test_identical_results_retain_distinct_attestation_hashes(self, client_a_admin, m3_seed):
+        """Same arithmetic, distinct evidence; persisted hashes remain stable."""
         extras = _extras_for_exit(m3_seed)
         r1 = await _create_run(client_a_admin, m3_seed, "lease_e", "1500.00")
         r2 = await _create_run(client_a_admin, m3_seed, "lease_e", "1500.00")
         f1 = (await client_a_admin.post(f"/api/settlements/{r1}/finalize", json=extras)).json()
         f2 = (await client_a_admin.post(f"/api/settlements/{r2}/finalize", json=extras)).json()
-        assert f1["snapshot_sha256"] == f2["snapshot_sha256"]
+        for key in ("total_cost", "balance", "advance_payments_total"):
+            assert f1[key] == f2[key]
+        assert f1["snapshot_sha256"] != f2["snapshot_sha256"]
+        assert (await client_a_admin.get(f"/api/settlements/{r1}")).json()["snapshot_sha256"] == f1["snapshot_sha256"]
 
     @pytest.mark.asyncio
     async def test_payload_consistent_with_lines(self, client_a_admin, m3_seed, app_rw_session):
@@ -713,6 +719,8 @@ class TestM3AdjacentLeaseReadEdge:
             "advance_payments_total": "0.00",
         })
         assert resp.status_code == 201, resp.text
+        await attest_fixture(client, "settlement", resp.json()["id"],
+            {"advance_payments_total": "0.00", "advance_payments_source": "MANUAL"})
         return resp.json()["id"]
 
     @pytest.mark.asyncio

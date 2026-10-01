@@ -61,8 +61,8 @@ class PlannedCostIn(BaseModel):
 
 
 class PlanComputeRequest(BaseModel):
-    planned_costs: list[PlannedCostIn] = []
-    reserve_contribution_total: str = "0.00"
+    planned_costs: list[PlannedCostIn]
+    reserve_contribution_total: str
 
 
 class PlanLineOut(BaseModel):

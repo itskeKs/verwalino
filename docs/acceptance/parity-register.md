@@ -10,7 +10,7 @@ validation; classification and RF mapping are inherited unchanged from those row
 | Package | Acceptance fixtures | Delivery state | Implementation commit | Check environment/result | Approver / release gates |
 | --- | --- | --- | --- | --- | --- |
 | P0.1 Source integrity | A01 | Implemented; A4 browser/account gate open | `1160431` | Focused checks below | Unassigned; applicable V gates open |
-| P0.2 OCR and truthful completeness | A02,A06 | Planned | — | Not run | Unassigned; applicable V gates open |
+| P0.2 OCR and truthful completeness | A02,A06 | Implemented; A4 browser/migration gate open | A2 `e806859`; A3 pending local commit | Focused checks below | Unassigned; applicable V gates open |
 | P1.1 Shared intake and exceptions | A03,A04 | Planned | — | Not run | Unassigned; applicable V gates open |
 | P1.2 Master import and portfolio | A05 | Planned | — | Not run | Unassigned; applicable V gates open |
 | P2.1 Bank file import and matching | A07 | Planned | — | Not run | Unassigned; applicable V gates open |
@@ -71,3 +71,18 @@ Independent review found queue backpressure could roll back a saved source;
 repaired and delta reviewed with no remaining material findings. Source bytes
 and manual review now survive full/disabled queues. General job fairness and
 capacity, runtime deployment and browser/account acceptance remain open.
+
+### A3 truthful financial inputs
+
+Shared policy now protects rental, WEG, asset and plan computation/finalization.
+Explicit zero and empty budgets need scoped attestations; all period owners and
+property accounts must be covered. Reversed derived payments require rederivation.
+New snapshots freeze evidence; older finalized payloads remain unchanged by the
+writer. Pure accounting/engine, snapshot-name and RLS suite: 248 passed. Independent
+review found a linked-plan staleness gap; repaired with current-final-plan checks,
+plan source revision and mutation locking; delta review found no residual finding. Affected policy/WEG rerun: 36 passed,
+including simultaneous plan correction/finalization. Frontend suite: 60 passed;
+final focused completeness/form tests: 3 passed; lint/build passed, existing
+bundle-size warning remains. A4 migration rehearsal and browser acceptance remain
+open. Organization-level locking and conservative source invalidation require
+M-G capacity evaluation. See `docs/operations/financial-input-coverage.md`.

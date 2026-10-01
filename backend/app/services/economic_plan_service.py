@@ -47,6 +47,7 @@ from app.engine.weg import WegValidationError
 from app.engine.wirtschaftsplan import PlanResult, compute_wirtschaftsplan
 from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.models.audit_event import AuditEvent
+from app.services.financial_input_policy import FinancialInputPolicy
 from app.models.economic_plan import EconomicPlan
 from app.models.economic_plan_line import EconomicPlanLine
 from app.repositories.audit_repo import AuditRepository
@@ -75,8 +76,8 @@ class PlannedCostEntry:
 class PlanInputs:
     """Structured plan inputs supplied at compute time (m4 section 5.1)."""
 
-    planned_costs: list[PlannedCostEntry] = field(default_factory=list)
-    reserve_contribution_total: Decimal = Decimal("0.00")
+    planned_costs: list[PlannedCostEntry] | None = None
+    reserve_contribution_total: Decimal | None = None
 
 
 class EconomicPlanService:
@@ -138,7 +139,7 @@ class EconomicPlanService:
         await self._lines.delete_for_plan(plan.id)
         await self._write_lines(plan, result)
 
-        plan.snapshot_payload = build_plan_snapshot_payload(inp, result)
+        plan.snapshot_payload = {**build_plan_snapshot_payload(inp, result), "financial_input_coverage": self._coverage}
         plan.reserve_contribution_total = inputs.reserve_contribution_total
         await self._plans.update(plan)
 
@@ -163,6 +164,7 @@ class EconomicPlanService:
         inp, result = await self._compute_engine(plan, inputs)
 
         payload = build_plan_snapshot_payload(inp, result)
+        payload["financial_input_coverage"] = self._coverage
         # Eigentümer-/Objekt-Anzeige-Namen einfrieren (ADR-0012), vor dem Hash --
         # s. settlement_service.finalize. Noch OLD.status='draft', Schreiben erlaubt.
         payload[DISPLAY_NAMES_KEY] = freeze_block(
@@ -195,7 +197,7 @@ class EconomicPlanService:
         return plan
 
     async def create_correction_run(self, plan_id: uuid.UUID) -> EconomicPlan:
-        original = await self._plans.get_by_id(plan_id)
+        original = await self._plans.get_by_id_for_update(plan_id)
         if original is None:
             raise HTTPException(status_code=404, detail="Economic plan not found")
         if original.status != "finalized":
@@ -242,7 +244,7 @@ class EconomicPlanService:
     # internals
     # ------------------------------------------------------------------
     async def _get_draft_or_404(self, plan_id: uuid.UUID) -> EconomicPlan:
-        plan = await self._plans.get_by_id(plan_id)
+        plan = await self._plans.get_by_id_for_update(plan_id)
         if plan is None:
             raise HTTPException(status_code=404, detail="Economic plan not found")
         if plan.status != "draft":
@@ -255,6 +257,7 @@ class EconomicPlanService:
     async def _compute_engine(
         self, plan: EconomicPlan, inputs: PlanInputs
     ) -> tuple[WirtschaftsplanInput, PlanResult]:
+        self._coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(plan, "economic_plan", inputs)
         inp = await self._load_engine_input(plan, inputs)
         try:
             result = compute_wirtschaftsplan(inp)

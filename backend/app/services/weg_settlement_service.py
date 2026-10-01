@@ -57,6 +57,7 @@ from app.engine.types import (
 from app.engine.vermoegensbericht import AssetReportResult, build_vermoegensbericht
 from app.engine.weg import WegValidationError, compute_weg_jahresabrechnung
 from app.models.audit_event import AuditEvent
+from app.services.financial_input_policy import FinancialInputPolicy, incomplete
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
 from app.repositories.audit_repo import AuditRepository
@@ -84,9 +85,9 @@ class ManualOwnerAdvance:
 class WegComputeExtras:
     """Structured extra inputs for one WEG compute (m4 section 2.4 / 3.3)."""
 
-    reserve_opening_balance: Decimal = Decimal("0.00")
-    reserve_withdrawals_total: Decimal = Decimal("0.00")
-    paid_advances: list[ManualOwnerAdvance] = field(default_factory=list)
+    reserve_opening_balance: Decimal | None = None
+    reserve_withdrawals_total: Decimal | None = None
+    paid_advances: list[ManualOwnerAdvance] | None = None
 
 
 @dataclass
@@ -107,12 +108,12 @@ class AssetItemEntry:
 class AssetReportInputs:
     """Manual inputs for a Vermoegensbericht (ADR-0008)."""
 
-    reserve_opening_balance: Decimal = Decimal("0.00")
-    reserve_withdrawals_total: Decimal = Decimal("0.00")
-    reserve_contributions_total: Decimal = Decimal("0.00")
-    bank_balances: list[BankBalanceEntry] = field(default_factory=list)
-    receivables: list[AssetItemEntry] = field(default_factory=list)
-    payables: list[AssetItemEntry] = field(default_factory=list)
+    reserve_opening_balance: Decimal | None = None
+    reserve_withdrawals_total: Decimal | None = None
+    reserve_contributions_total: Decimal | None = None
+    bank_balances: list[BankBalanceEntry] | None = None
+    receivables: list[AssetItemEntry] | None = None
+    payables: list[AssetItemEntry] | None = None
 
 
 class WegSettlementService:
@@ -182,12 +183,14 @@ class WegSettlementService:
         self, run_id: uuid.UUID, extras: WegComputeExtras | None = None
     ) -> tuple[SettlementRun, WegResult]:
         run = await self._get_weg_draft_or_404(run_id)
-        inp, result = await self._compute_weg_engine(run, extras or WegComputeExtras())
+        extras = extras or WegComputeExtras()
+        coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", extras)
+        inp, result = await self._compute_weg_engine(run, extras)
 
         await self._lines.delete_for_run(run.id)
         await self._write_weg_lines(run, result)
 
-        run.snapshot_payload = build_weg_snapshot_payload(inp, result)
+        run.snapshot_payload = {**build_weg_snapshot_payload(inp, result), "financial_input_coverage": coverage}
         # objektweit totals: total_cost = Σ Ist (excl. reserve); balance = Σ Spitze.
         run.total_cost = result.cost_total
         run.balance = result.abrechnungsspitze_total
@@ -207,9 +210,12 @@ class WegSettlementService:
         self, run_id: uuid.UUID, extras: WegComputeExtras | None = None
     ) -> SettlementRun:
         run = await self._get_weg_draft_or_404(run_id)
-        inp, result = await self._compute_weg_engine(run, extras or WegComputeExtras())
+        extras = extras or WegComputeExtras()
+        coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", extras)
+        inp, result = await self._compute_weg_engine(run, extras)
 
         payload = build_weg_snapshot_payload(inp, result)
+        payload["financial_input_coverage"] = coverage
         # Eigentümer-Anzeige-Namen einfrieren (ADR-0012), vor dem Hash -- s.
         # settlement_service.finalize. Noch OLD.status='draft', Schreiben erlaubt.
         payload[DISPLAY_NAMES_KEY] = freeze_block(
@@ -275,12 +281,13 @@ class WegSettlementService:
         self, run_id: uuid.UUID, inputs: AssetReportInputs
     ) -> tuple[SettlementRun, AssetReportResult]:
         run = await self._get_report_draft_or_404(run_id)
+        coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", inputs)
         inp, result = self._compute_report_engine(run, inputs)
 
         await self._lines.delete_for_run(run.id)
         self._write_report_lines(run, result)
 
-        run.snapshot_payload = build_asset_report_payload(inp, result)
+        run.snapshot_payload = {**build_asset_report_payload(inp, result), "financial_input_coverage": coverage}
         await self._runs.update(run)
         await self._session.flush()
         await self._audit.create(
@@ -296,9 +303,11 @@ class WegSettlementService:
         self, run_id: uuid.UUID, inputs: AssetReportInputs
     ) -> SettlementRun:
         run = await self._get_report_draft_or_404(run_id)
+        coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", inputs)
         inp, result = self._compute_report_engine(run, inputs)
 
         payload = build_asset_report_payload(inp, result)
+        payload["financial_input_coverage"] = coverage
         # Objekt-Anzeige-Namen einfrieren (ADR-0012), vor dem Hash. Der
         # Vermögensbericht trägt keine Personennamen (nur Objektdaten), wird aber
         # der Konsistenz halber ebenfalls selbsttragend eingefroren.
@@ -333,7 +342,7 @@ class WegSettlementService:
     # internals -- WEG
     # ------------------------------------------------------------------
     async def _get_weg_draft_or_404(self, run_id: uuid.UUID) -> SettlementRun:
-        run = await self._runs.get_by_id(run_id)
+        run = await self._runs.get_by_id_for_update(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="Settlement run not found")
         if run.run_type != "WEG_JAHRESABRECHNUNG":
@@ -346,7 +355,7 @@ class WegSettlementService:
         return run
 
     async def _get_report_draft_or_404(self, run_id: uuid.UUID) -> SettlementRun:
-        run = await self._runs.get_by_id(run_id)
+        run = await self._runs.get_by_id_for_update(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="Settlement run not found")
         if run.run_type != "VERMOEGENSBERICHT":
@@ -486,6 +495,11 @@ class WegSettlementService:
             )
 
         plan_advances = await self._plan_advances_per_owner(run.economic_plan_id)
+        expected_owners = {o.owner_profile_id for o in owner_inputs
+                           if o.valid_from <= run.period_end and (o.valid_to is None or o.valid_to >= run.period_start)}
+        provided_owners = [p.owner_profile_id for p in extras.paid_advances]
+        if set(provided_owners) != expected_owners or len(provided_owners) != len(set(provided_owners)):
+            incomplete("owner_payment_coverage_missing", "paid_advances")
         paid = tuple(
             OwnerAdvanceInput(owner_profile_id=p.owner_profile_id, plan_advance_total=p.paid_total)
             for p in extras.paid_advances

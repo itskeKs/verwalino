@@ -53,6 +53,7 @@ from app.engine.types import (
     UnitInput,
 )
 from app.models.audit_event import AuditEvent
+from app.services.financial_input_policy import FinancialInputPolicy, rental_values, incomplete
 from app.models.property import Property
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
@@ -224,6 +225,8 @@ class SettlementService:
                 status_code=422,
                 detail="DERIVED advance payments require a lease addressee on the run",
             )
+        if run.period_start != date(period_year, 1, 1) or run.period_end != date(period_year, 12, 31):
+            incomplete("unsupported_derived_subperiod", "advance_payments")
         pay_svc = PaymentService(self._session, self._org_id, self._user_id)
         total = await pay_svc.derive_nk_advance_total(run.lease_agreement_id, period_year)
         run.advance_payments_total = total
@@ -266,7 +269,7 @@ class SettlementService:
         await self._lines.delete_for_run(run.id)
         await self._write_lines(run, result)
 
-        run.snapshot_payload = build_snapshot_payload(inp, result)
+        run.snapshot_payload = {**build_snapshot_payload(inp, result), "financial_input_coverage": self._coverage}
         run.total_cost = result.total_cost
         run.balance = result.balance
         await self._runs.update(run)
@@ -315,6 +318,7 @@ class SettlementService:
         inp, result = await self._compute_engine(run, extras)
 
         payload = build_snapshot_payload(inp, result)
+        payload["financial_input_coverage"] = self._coverage
         # Anzeige-Namen einfrieren (ADR-0012): noch als Entwurf (OLD.status =
         # 'draft', der ADR-0003-Trigger lässt das Schreiben zu) werden die für
         # das PDF nötigen Klartext-Namen in den Snapshot geschrieben -- VOR dem
@@ -365,7 +369,7 @@ class SettlementService:
         The finalized original stays frozen; the only allowed mutation on it is
         setting superseded_by_id (the ADR-0003 trigger permits exactly this).
         """
-        original = await self._runs.get_by_id(run_id)
+        original = await self._runs.get_by_id_for_update(run_id)
         if original is None:
             raise HTTPException(status_code=404, detail="Settlement run not found")
         if original.status != "finalized":
@@ -421,7 +425,7 @@ class SettlementService:
     # internals
     # ------------------------------------------------------------------
     async def _get_draft_or_404(self, run_id: uuid.UUID) -> SettlementRun:
-        run = await self._runs.get_by_id(run_id)
+        run = await self._runs.get_by_id_for_update(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="Settlement run not found")
         if run.status != "draft":
@@ -434,6 +438,7 @@ class SettlementService:
     async def _compute_engine(
         self, run: SettlementRun, extras: ComputeExtras | None
     ) -> tuple[SettlementInput, EngineResult]:
+        self._coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", rental_values(run))
         inp = await self._load_engine_input(run, extras or ComputeExtras())
         try:
             result = compute_bk_settlement(inp)
@@ -564,7 +569,7 @@ class SettlementService:
             lease_periods=lease_inputs,
             owner_periods=owner_inputs,
             cost_positions=tuple(position_inputs),
-            advance_payments_total=run.advance_payments_total or Decimal("0.00"),
+            advance_payments_total=run.advance_payments_total,
             advance_payments_source=run.advance_payments_source,
             engine_version=ENGINE_VERSION,
         )

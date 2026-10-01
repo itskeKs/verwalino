@@ -1,3 +1,4 @@
+import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
 /**
  * WEG-Jahresabrechnung detail (M4): reserve inputs, compute, finalize, PDF.
  * Per-owner breakdown with Abrechnungsspitze (Ist - Soll, WEMoG) highlighted.
@@ -6,6 +7,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   getWegRun,
+  getEconomicPlan,
   computeWegRun,
   finalizeWegRun,
   wegRunPdfUrl,
@@ -32,8 +34,10 @@ export function WegSettlementDetailPage() {
   const [properties, setProperties] = useState<Property[]>([]);
   const [ownerProfiles, setOwnerProfiles] = useState<OwnerProfile[]>([]);
   const [persons, setPersons] = useState<Person[]>([]);
-  const [opening, setOpening] = useState("0.00");
-  const [withdrawals, setWithdrawals] = useState("0.00");
+  const [paidOwners, setPaidOwners] = useState<string[]>([]);
+  const [paidValues, setPaidValues] = useState<Record<string, string>>({});
+  const [opening, setOpening] = useState("");
+  const [withdrawals, setWithdrawals] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -46,7 +50,13 @@ export function WegSettlementDetailPage() {
     if (!runId) return;
     setLoading(true);
     Promise.all([getWegRun(runId), listProperties(), listOwnerProfiles(), listPersons()])
-      .then(([r, pr, op, per]) => { setRun(r); setProperties(pr); setOwnerProfiles(op); setPersons(per); })
+      .then(async ([r, pr, op, per]) => {
+        setRun(r); setProperties(pr); setOwnerProfiles(op); setPersons(per);
+        if (r.economic_plan_id) {
+          const plan = await getEconomicPlan(r.economic_plan_id);
+          setPaidOwners([...new Set(plan.lines.map((line) => line.owner_profile_id).filter((id): id is string => Boolean(id)))]);
+        }
+      })
       .catch((err) => setError(err instanceof ApiError && err.status === 401 ? "Nicht authentifiziert." : String(err)))
       .finally(() => setLoading(false));
   }, [runId]);
@@ -65,7 +75,7 @@ export function WegSettlementDetailPage() {
   }
 
   function req(): WegComputeRequest {
-    return { reserve_opening_balance: opening || "0.00", reserve_withdrawals_total: withdrawals || "0.00", paid_advances: [] };
+    return { reserve_opening_balance: opening, reserve_withdrawals_total: withdrawals, paid_advances: paidOwners.map((id) => ({ owner_profile_id: id, paid_total: paidValues[id] ?? "" })) };
   }
 
   async function run_(fn: () => Promise<WegRun>) {
@@ -139,6 +149,9 @@ export function WegSettlementDetailPage() {
       {isDraft && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Rücklage & Berechnung</h2>
+          {paidOwners.map((id) => <label key={id}>Tatsächlich gezahltes Hausgeld · {ownerName(id)}
+            <input inputMode="decimal" placeholder="Unbekannt" value={paidValues[id] ?? ""} onChange={(e) => setPaidValues({ ...paidValues, [id]: e.target.value })} />
+          </label>)}
           <div className="form-grid">
             <label>Rücklagen-Anfangsbestand
               <input type="text" inputMode="decimal" placeholder="0.00" value={opening} onChange={(e) => setOpening(e.target.value)} />
@@ -147,6 +160,7 @@ export function WegSettlementDetailPage() {
               <input type="text" inputMode="decimal" placeholder="0.00" value={withdrawals} onChange={(e) => setWithdrawals(e.target.value)} />
             </label>
           </div>
+      {run.status === "draft" && <FinancialCoverageReview kind="settlement" subjectId={run.id} values={req()} />}
           <div className="form-actions" style={{ marginTop: "1rem" }}>
             <button className="btn btn--primary" disabled={busy} onClick={() => runId && run_(() => computeWegRun(runId, req()))}>
               {busy ? "Berechnen..." : "Berechnen"}

@@ -1,3 +1,4 @@
+import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
 /**
  * Settlement detail page -- view, compute, preview, finalize, PDF download, correction.
  *
@@ -677,7 +678,7 @@ export function SettlementDetailPage() {
           gap: "0.5rem",
         }}
       >
-        <h1 style={{ margin: 0 }}>
+      <h1 style={{ margin: 0 }}>
           Betriebskostenabrechnung{" "}
           <span
             className={`badge ${STATUS_CSS[run.status] ?? ""}`}
@@ -941,6 +942,7 @@ export function SettlementDetailPage() {
         </>
       )}
 
+        {run.status === "draft" && <FinancialCoverageReview kind="settlement" subjectId={run.id} values={{ advance_payments_total: run.advance_payments_total, advance_payments_source: run.advance_payments_source }} />}
       {/* Action buttons */}
       <div
         style={{

@@ -14,6 +14,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
+from tests.financial_coverage_helpers import attest_fixture, finalize_weg_fixture, weg_values
 import pytest
 from sqlalchemy import text
 
@@ -147,6 +148,7 @@ async def _create_and_finalize_plan(client, m4_seed, reserve="6000.00"):
         ],
         "reserve_contribution_total": reserve,
     }
+    await attest_fixture(client, "economic_plan", plan_id, body)
     resp = await client.post(f"/api/economic-plans/{plan_id}/finalize", json=body)
     assert resp.status_code == 200, resp.text
     return plan_id
@@ -316,10 +318,7 @@ class TestM4WegSettlementE2E:
         assert resp.status_code == 201, resp.text
         run_id = resp.json()["id"]
         # Compute + finalize with reserve opening 20000, withdrawal 8000.
-        resp = await client_a_admin.post(f"/api/weg-settlements/{run_id}/finalize", json={
-            "reserve_opening_balance": "20000.00",
-            "reserve_withdrawals_total": "8000.00",
-        })
+        resp = await finalize_weg_fixture(client_a_admin, run_id, m4_seed, "20000.00", "8000.00")
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["status"] == "finalized"
@@ -371,7 +370,7 @@ class TestM4WegSettlementE2E:
             "period_start": "2025-01-01", "period_end": "2025-12-31",
         })
         run_id = resp.json()["id"]
-        resp = await client_a_admin.post(f"/api/weg-settlements/{run_id}/finalize", json={})
+        resp = await finalize_weg_fixture(client_a_admin, run_id, m4_seed)
         lines = resp.json()["lines"]
         s = sum(Decimal(ln["amount"]) for ln in lines if ln["line_type"] == "OWNER_COST_TOTAL")
         assert s == Decimal("7000.00")
@@ -394,7 +393,7 @@ class TestM4WegSettlementE2E:
             "period_start": "2025-01-01", "period_end": "2025-12-31",
         })
         run_id = resp.json()["id"]
-        await client_a_admin.post(f"/api/weg-settlements/{run_id}/finalize", json={})
+        await finalize_weg_fixture(client_a_admin, run_id, m4_seed)
         resp = await client_a_admin.get(f"/api/weg-settlements/{run_id}/pdf")
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "application/pdf"
@@ -408,8 +407,8 @@ class TestM4WegSettlementE2E:
             "period_start": "2025-01-01", "period_end": "2025-12-31",
         })
         run_id = resp.json()["id"]
-        await client_a_admin.post(f"/api/weg-settlements/{run_id}/finalize", json={})
-        resp = await client_a_admin.post(f"/api/weg-settlements/{run_id}/compute", json={})
+        await finalize_weg_fixture(client_a_admin, run_id, m4_seed)
+        resp = await client_a_admin.post(f"/api/weg-settlements/{run_id}/compute", json=weg_values(m4_seed))
         assert resp.status_code == 409
 
     @pytest.mark.asyncio
@@ -420,7 +419,7 @@ class TestM4WegSettlementE2E:
             "period_start": "2025-01-01", "period_end": "2025-12-31",
         })
         run_id = resp.json()["id"]
-        await client_a_admin.post(f"/api/weg-settlements/{run_id}/finalize", json={})
+        await finalize_weg_fixture(client_a_admin, run_id, m4_seed)
 
         await app_rw_session.execute(
             text("SELECT set_config('app.current_org_id', :oid, true)"),
@@ -451,7 +450,7 @@ class TestM4VermoegensberichtE2E:
         })
         assert resp.status_code == 201, resp.text
         run_id = resp.json()["id"]
-        resp = await client_a_admin.post(f"/api/weg-settlements/asset-reports/{run_id}/finalize", json={
+        body = {
             "reserve_opening_balance": "20000.00",
             "reserve_withdrawals_total": "8000.00",
             "reserve_contributions_total": "6000.00",
@@ -461,7 +460,9 @@ class TestM4VermoegensberichtE2E:
             ],
             "receivables": [{"label": "Hausgeldrueckstand", "amount": "500.00"}],
             "payables": [{"label": "offene Rechnung", "amount": "1200.00"}],
-        })
+        }
+        await attest_fixture(client_a_admin, "settlement", run_id, body)
+        resp = await client_a_admin.post(f"/api/weg-settlements/asset-reports/{run_id}/finalize", json=body)
         assert resp.status_code == 200, resp.text
         data = resp.json()
         lines = data["lines"]
@@ -481,10 +482,16 @@ class TestM4VermoegensberichtE2E:
             "period_start": "2025-01-01", "period_end": "2025-12-31",
         })
         run_id = resp.json()["id"]
-        await client_a_admin.post(f"/api/weg-settlements/asset-reports/{run_id}/finalize", json={
-            "reserve_opening_balance": "1000.00",
-            "bank_balances": [{"bank_account_id": m4_seed["bank_giro"], "label": "Giro", "account_type": "LAUFEND", "balance": "500.00"}],
-        })
+        body = {
+            "reserve_opening_balance": "1000.00", "reserve_withdrawals_total": "0.00",
+            "reserve_contributions_total": "0.00", "receivables": [], "payables": [],
+            "bank_balances": [
+                {"bank_account_id": m4_seed["bank_giro"], "label": "Giro", "account_type": "LAUFEND", "balance": "500.00"},
+                {"bank_account_id": m4_seed["bank_ruecklage"], "label": "Reserve", "account_type": "RUECKLAGE", "balance": "0.00"}],
+        }
+        await attest_fixture(client_a_admin, "settlement", run_id, body)
+        finalized = await client_a_admin.post(f"/api/weg-settlements/asset-reports/{run_id}/finalize", json=body)
+        assert finalized.status_code == 200, finalized.text
         resp = await client_a_admin.get(f"/api/weg-settlements/asset-reports/{run_id}/pdf")
         assert resp.status_code == 200
         assert resp.content[:4] == b"%PDF"
@@ -495,10 +502,8 @@ class TestM4VermoegensberichtE2E:
 # ===========================================================================
 class TestM4Determinism:
     @pytest.mark.asyncio
-    async def test_weg_hash_stable_across_two_finalizations(self, client_a_admin, m4_seed):
-        # Same plan + identical inputs -> identical snapshot hash. Use ONE plan
-        # for both runs (the plan id is part of the snapshot, so a fresh plan
-        # would legitimately change the hash -- that is correct, not a defect).
+    async def test_weg_results_stable_with_distinct_attestations(self, client_a_admin, m4_seed):
+        # Identical arithmetic retains separate evidence for each attestation.
         plan_id = await _create_and_finalize_plan(client_a_admin, m4_seed)
 
         async def finalize_once():
@@ -507,11 +512,13 @@ class TestM4Determinism:
                 "period_start": "2025-01-01", "period_end": "2025-12-31",
             })
             run_id = resp.json()["id"]
-            resp = await client_a_admin.post(f"/api/weg-settlements/{run_id}/finalize", json={
-                "reserve_opening_balance": "20000.00", "reserve_withdrawals_total": "8000.00",
-            })
-            return resp.json()["snapshot_sha256"]
+            resp = await finalize_weg_fixture(client_a_admin, run_id, m4_seed, "20000.00", "8000.00")
+            return resp.json()
 
-        h1 = await finalize_once()
-        h2 = await finalize_once()
-        assert h1 == h2
+        first = await finalize_once()
+        second = await finalize_once()
+        assert first["total_cost"] == second["total_cost"]
+        assert [(l["line_type"], l["amount"]) for l in first["lines"]] == [(l["line_type"], l["amount"]) for l in second["lines"]]
+        assert first["snapshot_sha256"] != second["snapshot_sha256"]
+        reloaded = await client_a_admin.get(f"/api/weg-settlements/{first['id']}")
+        assert reloaded.json()["snapshot_sha256"] == first["snapshot_sha256"]

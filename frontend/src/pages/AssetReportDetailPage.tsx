@@ -1,3 +1,4 @@
+import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
 /**
  * Vermoegensbericht detail (M4, §28 IV WEG): manual reserve / receivables /
  * payables inputs (clearly labelled "Verwalter-Angabe"), compute, finalize, PDF.
@@ -7,12 +8,13 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   getWegRun,
+  listBankAccounts,
   computeAssetReport,
   finalizeAssetReport,
   assetReportPdfUrl,
   listProperties,
 } from "../api/endpoints";
-import type { WegRun, AssetItemIn, AssetReportComputeRequest, Property } from "../api/types";
+import type { WegRun, AssetItemIn, AssetReportComputeRequest, Property, BankAccount } from "../api/types";
 import { ApiError } from "../api/client";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
@@ -32,9 +34,11 @@ export function AssetReportDetailPage() {
   const { runId } = useParams<{ runId: string }>();
   const [run, setRun] = useState<WegRun | null>(null);
   const [properties, setProperties] = useState<Property[]>([]);
-  const [opening, setOpening] = useState("0.00");
-  const [contributions, setContributions] = useState("0.00");
-  const [withdrawals, setWithdrawals] = useState("0.00");
+  const [accounts, setAccounts] = useState<BankAccount[]>([]);
+  const [balances, setBalances] = useState<Record<string, string>>({});
+  const [opening, setOpening] = useState("");
+  const [contributions, setContributions] = useState("");
+  const [withdrawals, setWithdrawals] = useState("");
   const [receivables, setReceivables] = useState<AssetItemIn[]>([]);
   const [payables, setPayables] = useState<AssetItemIn[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,7 +53,7 @@ export function AssetReportDetailPage() {
     if (!runId) return;
     setLoading(true);
     Promise.all([getWegRun(runId), listProperties()])
-      .then(([r, pr]) => { setRun(r); setProperties(pr); })
+      .then(async ([r, pr]) => { setRun(r); setProperties(pr); setAccounts(await listBankAccounts(r.property_id)); })
       .catch((err) => setError(err instanceof ApiError && err.status === 401 ? "Nicht authentifiziert." : String(err)))
       .finally(() => setLoading(false));
   }, [runId]);
@@ -62,12 +66,12 @@ export function AssetReportDetailPage() {
 
   function req(): AssetReportComputeRequest {
     return {
-      reserve_opening_balance: opening || "0.00",
-      reserve_withdrawals_total: withdrawals || "0.00",
-      reserve_contributions_total: contributions || "0.00",
-      bank_balances: [],
-      receivables: receivables.filter((r) => r.label && r.amount),
-      payables: payables.filter((p) => p.label && p.amount),
+      reserve_opening_balance: opening,
+      reserve_withdrawals_total: withdrawals,
+      reserve_contributions_total: contributions,
+      bank_balances: accounts.map((account) => ({ bank_account_id: account.id, label: account.label, account_type: account.account_type, balance: balances[account.id] ?? "" })),
+      receivables: receivables,
+      payables: payables,
     };
   }
 
@@ -148,7 +152,7 @@ export function AssetReportDetailPage() {
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Vermögenswerte erfassen</h2>
           <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
-            Erhaltungsrücklage automatisch (Anfang + Zuführung − Entnahme = Ende). Bankkonten-Stände erfordern angelegte Konten (folgt mit M6).
+            Erhaltungsrücklage automatisch (Anfang + Zuführung − Entnahme = Ende). Bitte alle Kontostände zum Stichtag prüfen.
             Forderungen/Verbindlichkeiten sind manuelle Verwalter-Angaben (kein Buchungssaldo).
           </p>
           <div className="form-grid">
@@ -162,8 +166,12 @@ export function AssetReportDetailPage() {
               <input type="text" inputMode="decimal" placeholder="0.00" value={withdrawals} onChange={(e) => setWithdrawals(e.target.value)} />
             </label>
           </div>
+          {accounts.map((account) => <label key={account.id}>Kontostand · {account.label}
+            <input inputMode="decimal" placeholder="Unbekannt" value={balances[account.id] ?? ""} onChange={(e) => setBalances({ ...balances, [account.id]: e.target.value })} />
+          </label>)}
           {itemEditor(receivables, setReceivables, "Forderungen")}
           {itemEditor(payables, setPayables, "Verbindlichkeiten")}
+      {run.status === "draft" && <FinancialCoverageReview kind="settlement" subjectId={run.id} values={req()} />}
           <div className="form-actions" style={{ marginTop: "1rem" }}>
             <button className="btn btn--primary" disabled={busy} onClick={() => runId && run_(() => computeAssetReport(runId, req()))}>
               {busy ? "Berechnen..." : "Berechnen"}

@@ -61,9 +61,9 @@ class PaidAdvanceIn(BaseModel):
 
 
 class WegComputeRequest(BaseModel):
-    reserve_opening_balance: str = "0.00"
-    reserve_withdrawals_total: str = "0.00"
-    paid_advances: list[PaidAdvanceIn] = []
+    reserve_opening_balance: str
+    reserve_withdrawals_total: str
+    paid_advances: list[PaidAdvanceIn]
 
 
 class AssetReportCreate(BaseModel):
@@ -86,12 +86,12 @@ class AssetItemIn(BaseModel):
 
 
 class AssetReportComputeRequest(BaseModel):
-    reserve_opening_balance: str = "0.00"
-    reserve_withdrawals_total: str = "0.00"
-    reserve_contributions_total: str = "0.00"
-    bank_balances: list[BankBalanceIn] = []
-    receivables: list[AssetItemIn] = []
-    payables: list[AssetItemIn] = []
+    reserve_opening_balance: str
+    reserve_withdrawals_total: str
+    reserve_contributions_total: str
+    bank_balances: list[BankBalanceIn]
+    receivables: list[AssetItemIn]
+    payables: list[AssetItemIn]
 
 
 class WegLineOut(BaseModel):

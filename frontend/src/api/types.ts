@@ -1059,7 +1059,7 @@ export interface AssetReportComputeRequest {
   reserve_opening_balance: string;
   reserve_withdrawals_total: string;
   reserve_contributions_total: string;
-  bank_balances: never[];
+  bank_balances: { bank_account_id: string; label: string; account_type: BankAccountType; balance: string }[];
   receivables: AssetItemIn[];
   payables: AssetItemIn[];
 }

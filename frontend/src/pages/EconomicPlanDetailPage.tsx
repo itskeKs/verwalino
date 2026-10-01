@@ -1,3 +1,4 @@
+import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
 /**
  * Wirtschaftsplan detail (M4): planned-cost editor, compute (per-owner monthly
  * Hausgeld), finalize, PDF, correction.
@@ -47,7 +48,7 @@ export function EconomicPlanDetailPage() {
   const [ownerProfiles, setOwnerProfiles] = useState<OwnerProfile[]>([]);
   const [persons, setPersons] = useState<Person[]>([]);
   const [rows, setRows] = useState<CostRow[]>([]);
-  const [reserve, setReserve] = useState("0.00");
+  const [reserve, setReserve] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -66,7 +67,7 @@ export function EconomicPlanDetailPage() {
         setCategories(c);
         setOwnerProfiles(op);
         setPersons(per);
-        setReserve(pl.reserve_contribution_total ?? "0.00");
+        setReserve(pl.status === "finalized" ? pl.reserve_contribution_total : "");
       })
       .catch((err) => setError(err instanceof ApiError && err.status === 401 ? "Nicht authentifiziert." : String(err)))
       .finally(() => setLoading(false));
@@ -112,7 +113,6 @@ export function EconomicPlanDetailPage() {
 
   function buildRequest() {
     const planned_costs: PlannedCostIn[] = rows
-      .filter((r) => r.category_code && r.planned_amount)
       .map((r) => ({
         category_code: r.category_code,
         label: r.label,
@@ -121,7 +121,7 @@ export function EconomicPlanDetailPage() {
         cost_group: r.cost_group,
         category_id: r.category_id,
       }));
-    return { planned_costs, reserve_contribution_total: reserve || "0.00" };
+    return { planned_costs, reserve_contribution_total: reserve };
   }
 
   async function run(fn: () => Promise<EconomicPlan>) {
@@ -240,6 +240,7 @@ export function EconomicPlanDetailPage() {
               <input type="text" inputMode="decimal" placeholder="0.00" value={reserve} onChange={(e) => setReserve(e.target.value)} />
             </label>
           </div>
+      {plan.status === "draft" && <FinancialCoverageReview kind="economic_plan" subjectId={plan.id} values={buildRequest()} />}
           <div className="form-actions" style={{ marginTop: "1rem" }}>
             <button className="btn btn--primary" disabled={busy} onClick={() => planId && run(() => computeEconomicPlan(planId, buildRequest()))}>
               {busy ? "Berechnen..." : "Berechnen"}

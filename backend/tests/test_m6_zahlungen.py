@@ -17,6 +17,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
+from tests.financial_coverage_helpers import attest_fixture
 import pytest
 from sqlalchemy import text
 
@@ -658,6 +659,9 @@ class TestDerivedEqualsManualExit:
             body["advance_payments_total"] = advance
         r = await client.post("/api/settlements", json=body)
         assert r.status_code == 201, r.text
+        if advance is not None:
+            await attest_fixture(client, "settlement", r.json()["id"],
+                {"advance_payments_total": advance, "advance_payments_source": "MANUAL"})
         return r.json()["id"]
 
     @pytest.mark.asyncio
@@ -700,6 +704,8 @@ class TestDerivedEqualsManualExit:
         assert r.json()["advance_payments_source"] == "DERIVED"
         assert r.json()["advance_payments_total"] == "1800.00"  # NK only, not KALTMIETE
 
+        await attest_fixture(client_a_admin, "settlement", run_derived,
+            {"advance_payments_total": "1800.00", "advance_payments_source": "DERIVED"})
         fin_d = await client_a_admin.post(f"/api/settlements/{run_derived}/finalize", json={})
         assert fin_d.status_code == 200, fin_d.text
         d = fin_d.json()
@@ -729,13 +735,15 @@ class TestWegSpitzeUnberuehrtByPayments:
         })
         assert r.status_code == 201, r.text
         plan_id = r.json()["id"]
-        r = await client.post(f"/api/economic-plans/{plan_id}/finalize", json={
+        body = {
             "planned_costs": [
                 {"category_code": "GRUNDSTEUER", "label": "Grundsteuer",
                  "planned_amount": "1200.00", "cost_group": "UMLAGEFAEHIG"},
             ],
             "reserve_contribution_total": "0.00",
-        })
+        }
+        await attest_fixture(client, "economic_plan", plan_id, body)
+        r = await client.post(f"/api/economic-plans/{plan_id}/finalize", json=body)
         assert r.status_code == 200, r.text
         return plan_id
 
@@ -747,8 +755,9 @@ class TestWegSpitzeUnberuehrtByPayments:
         assert r.status_code == 201, r.text
         run_id = r.json()["id"]
         body = {"reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00"}
-        if paid_advances:
-            body["paid_advances"] = paid_advances
+        body["paid_advances"] = paid_advances if paid_advances is not None else [
+            {"owner_profile_id": str(m6_seed["owner"]), "paid_total": "0.00"}]
+        await attest_fixture(client, "settlement", run_id, body)
         r = await client.post(f"/api/weg-settlements/{run_id}/compute", json=body)
         assert r.status_code == 200, r.text
         lines = r.json()["lines"]
