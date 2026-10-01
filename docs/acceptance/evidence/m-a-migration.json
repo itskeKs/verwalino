@@ -1,0 +1,16 @@
+{
+  "from": "0028",
+  "to": "0031",
+  "counts_preserved": {
+    "cost_entry": 1,
+    "payment": 0,
+    "settlement_run": 2,
+    "invoice_document": 1
+  },
+  "legacy_snapshot_hash_preserved": "9826ce1cdf1320600fd653be98c66e05aaed02ec27aa0776952ad60c4a8ee390",
+  "released_source_hash_preserved": "4a0cf1b9cbf4ae62765286d0e6fbcbd357fa1e212c4157c8d8989a59be903ba9",
+  "cost_sum_preserved": "1200.00",
+  "payment_sum_preserved": "0",
+  "legacy_extraction_preserved": true,
+  "numeric_drafts_not_backfilled": true
+}

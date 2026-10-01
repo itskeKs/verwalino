@@ -430,6 +430,7 @@ export function SettlementDetailPage() {
                   <tr key={ln.id || idx}>
                     <td>
                       <strong>{ln.label}</strong>
+                      {ln.cost_entry_id && <div><Link to={`/kosten/${ln.cost_entry_id}`} className="link">Kostenposition und Beleg ansehen</Link></div>}
                       {ln.cost_category_code && (
                         <div
                           style={{
@@ -661,7 +662,7 @@ export function SettlementDetailPage() {
   if (!run) return <p className="error-text">Abrechnung nicht gefunden.</p>;
 
   return (
-    <div>
+    <div className="settlement-detail">
       <p style={{ marginBottom: "0.5rem" }}>
         <Link to="/abrechnungen" className="link">
           &larr; Alle Abrechnungen

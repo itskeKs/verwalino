@@ -43,7 +43,8 @@ unsupported derived periods, owner/account gaps and invalid linked plans. The UI
 preserves entered data, requires renewed confirmation after value edits and gives
 recovery guidance. Confirming coverage does not book payments or release costs.
 
-Rollback means disabling new compute/finalize writes while preserving evidence
+Set `HV_FINANCIAL_COMPUTATION_ENABLED=false` to disable compute/preview/finalize
+through the shared policy. Rollback uses this switch while preserving evidence
 and reads. Never deploy the old unknown-to-zero finalizer or drop this evidence
 in a live rollback. Migration downgrade is for disposable test teardown only.
 A4 records migration/hash preservation and browser acceptance; specialist period

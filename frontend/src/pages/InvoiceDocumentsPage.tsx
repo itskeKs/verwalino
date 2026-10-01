@@ -81,7 +81,7 @@ export function InvoiceDocumentsPage() {
 
       {/* Upload area */}
       <div className="card" style={{ marginBottom: "1rem" }}>
-        <h2>PDF hochladen</h2>
+        <h2>Beleg hochladen</h2>
         <p
           style={{
             fontSize: "0.85rem",
@@ -89,7 +89,7 @@ export function InvoiceDocumentsPage() {
             marginBottom: "0.75rem",
           }}
         >
-          Laden Sie eine Rechnung (PDF) hoch. Das System extrahiert erkannte
+          Laden Sie eine Rechnung als PDF oder XML hoch. Das System extrahiert erkannte
           Felder für einen Entwurf. Sie prüfen und speichern die Kostenposition anschließend.
         </p>
         <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>

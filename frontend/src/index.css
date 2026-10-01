@@ -852,3 +852,10 @@ code {
   .knowledge-rule-expanded,
   .knowledge-rule .knowledge-sources { grid-column: 1; grid-row: auto; }
 }
+
+/* Frozen identifiers and long German titles must remain readable on phones. */
+.settlement-detail { min-width: 0; overflow-wrap: anywhere; }
+.settlement-detail .info-table { table-layout: fixed; }
+@media (max-width: 768px) {
+  .settlement-detail .info-table td:first-child { width: 45%; }
+}

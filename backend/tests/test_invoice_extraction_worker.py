@@ -2,8 +2,30 @@
 import io
 import uuid
 import pytest
+import pytest_asyncio
 from reportlab.pdfgen import canvas
 from app.core.invoice_ocr import extract_invoice, run_isolated_extraction
+
+
+@pytest_asyncio.fixture
+async def worker_tenant():
+    """A dedicated queue, independent of queued originals in other test modules."""
+    import os
+    import psycopg2
+    import httpx
+    from app.core.config import settings
+    from app.core.security import create_session_token
+    from app.main import app
+    org, user = uuid.uuid4(), uuid.uuid4()
+    with psycopg2.connect(os.environ["HV_DATABASE_URL_SYNC"]) as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO organization (id,name) VALUES (%s,'Isolated invoice queue')", (str(org),))
+        cur.execute('INSERT INTO "user" (id,organization_id,email,password_hash,display_name) VALUES (%s,%s,%s,%s,%s)',
+                    (str(user), str(org), f"{user}@invoice-test.invalid", "unused-fixture-password", "Invoice worker test"))
+        cur.execute("INSERT INTO membership (id,organization_id,user_id,role) VALUES (%s,%s,%s,'OWNER_ADMIN')",
+                    (str(uuid.uuid4()), str(org), str(user)))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test",
+                                cookies={settings.session_cookie_name: create_session_token(user, org)}) as client:
+        yield client, {"org_a_id": org, "user_a_admin_id": user}
 
 
 def pdf_bytes(pages=1, *, encrypted=False):
@@ -55,7 +77,8 @@ def test_real_image_only_invoice():
 
 
 @pytest.mark.asyncio
-async def test_upload_is_durable_before_processing(client_a_admin, seed_data, tmp_path):
+async def test_upload_is_durable_before_processing(worker_tenant, tmp_path):
+    client_a_admin, seed_data = worker_tenant
     from app.core.storage import LocalFsDocumentStore, set_store
     from app.core.db import get_session_factory
     from app.workers.invoice_extraction import process_once
@@ -112,7 +135,8 @@ def test_process_timeout_is_bounded():
 
 
 @pytest.mark.asyncio
-async def test_restart_fencing_and_retry_access(client_a_admin, client_b_admin, seed_data, tmp_path):
+async def test_restart_fencing_and_retry_access(worker_tenant, client_b_admin, tmp_path):
+    client_a_admin, seed_data = worker_tenant
     from datetime import datetime, timedelta, timezone
     from sqlalchemy import text
     from app.core.storage import LocalFsDocumentStore, set_store

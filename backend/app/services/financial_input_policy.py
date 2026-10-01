@@ -7,6 +7,7 @@ import json
 import re
 import uuid
 from fastapi import HTTPException
+from app.core.config import settings
 from app.models.coverage_declaration import CoverageDeclaration
 from app.models.audit_event import AuditEvent
 from app.repositories.audit_repo import AuditRepository
@@ -129,6 +130,8 @@ class FinancialInputPolicy:
         return declaration
 
     async def require(self, subject, kind, values):
+        if not settings.financial_computation_enabled:
+            raise HTTPException(503, "Financial computation is temporarily disabled; existing records remain available")
         values = self.validate_values(subject, values, kind)
         await self.repo.lock_sources()
         await self.validate_scope_coverage(subject, kind, values)

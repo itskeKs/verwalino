@@ -254,3 +254,37 @@ async def test_plan_correction_waits_until_weg_snapshot_is_frozen(client_a_admin
     assert correction.status_code == 201, correction.text
     frozen_hash = final.json()["snapshot_sha256"]
     assert (await client_a_admin.get(f"/api/weg-settlements/{run_id}")).json()["snapshot_sha256"] == frozen_hash
+
+
+@pytest.mark.asyncio
+async def test_rollback_switch_preserves_final_read_and_blocks_all_compute_families(client_a_admin, m3_seed, m4_seed, monkeypatch):
+    from app.core.config import settings
+    from tests.test_m4_weg import _create_and_finalize_plan
+    from tests.financial_coverage_helpers import weg_values
+    final_id = await draft(client_a_admin, m3_seed, "0.00")
+    values = {"advance_payments_total": "0.00", "advance_payments_source": "MANUAL"}
+    assert (await attest(client_a_admin, "settlement", final_id, values)).status_code == 201
+    final = await client_a_admin.post(f"/api/settlements/{final_id}/finalize", json=_extras_for_exit(m3_seed))
+    assert final.status_code == 200
+    plan_id = await _create_and_finalize_plan(client_a_admin, m4_seed)
+    rental_id = await draft(client_a_admin, m3_seed, "0.00")
+    weg = await client_a_admin.post("/api/weg-settlements", json={"property_id": m4_seed["property"],
+        "economic_plan_id": plan_id, "period_start": "2025-01-01", "period_end": "2025-12-31"})
+    monkeypatch.setattr(settings, "financial_computation_enabled", False)
+    for action in ("compute", "preview", "finalize"):
+        assert (await client_a_admin.post(f"/api/settlements/{rental_id}/{action}", json=_extras_for_exit(m3_seed))).status_code == 503
+    for action in ("compute", "finalize"):
+        assert (await client_a_admin.post(f"/api/weg-settlements/{weg.json()['id']}/{action}", json=weg_values(m4_seed))).status_code == 503
+    for endpoint, create_extra, body in [
+        ("/api/economic-plans", {"plan_year": 2025}, {"planned_costs": [], "reserve_contribution_total": "0"}),
+        ("/api/weg-settlements/asset-reports", {}, {"reserve_opening_balance": "0", "reserve_withdrawals_total": "0",
+          "reserve_contributions_total": "0", "bank_balances": [], "receivables": [], "payables": []}),
+    ]:
+        created = await client_a_admin.post(endpoint, json={"property_id": m4_seed["property"],
+            "period_start": "2025-01-01", "period_end": "2025-12-31", **create_extra})
+        for action in ("compute", "finalize"):
+            response = await client_a_admin.post(f"{endpoint}/{created.json()['id']}/{action}", json=body)
+            assert response.status_code == 503, response.text
+    read = await client_a_admin.get(f"/api/settlements/{final_id}")
+    assert read.json()["snapshot_sha256"] == final.json()["snapshot_sha256"]
+    assert (await client_a_admin.get(f"/api/settlements/{final_id}/pdf")).status_code == 200

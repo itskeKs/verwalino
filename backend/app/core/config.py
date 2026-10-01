@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     document_storage_root: str = "/tmp/hv-documents"
 
     # --- Ordinary invoice worker (independent of declaration providers) ---
+    financial_computation_enabled: bool = True
     invoice_extraction_enabled: bool = True
     invoice_queue_limit: int = Field(100, ge=1, le=1000)
 

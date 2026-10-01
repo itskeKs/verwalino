@@ -9,8 +9,8 @@ validation; classification and RF mapping are inherited unchanged from those row
 
 | Package | Acceptance fixtures | Delivery state | Implementation commit | Check environment/result | Approver / release gates |
 | --- | --- | --- | --- | --- | --- |
-| P0.1 Source integrity | A01 | Implemented; A4 browser/account gate open | `1160431` | Focused checks below | Unassigned; applicable V gates open |
-| P0.2 OCR and truthful completeness | A02,A06 | Implemented; A4 browser/migration gate open | A2 `e806859`; A3 pending local commit | Focused checks below | Unassigned; applicable V gates open |
+| P0.1 Source integrity | A01 | M-A synthetic acceptance passed | `1160431` | Focused checks and A4 report below | Unassigned; applicable V gates open |
+| P0.2 OCR and truthful completeness | A02,A06 | M-A synthetic acceptance passed | A2 `e806859`; A3 `317e5ff` | Focused checks and A4 report below | Unassigned; applicable V gates open |
 | P1.1 Shared intake and exceptions | A03,A04 | Planned | — | Not run | Unassigned; applicable V gates open |
 | P1.2 Master import and portfolio | A05 | Planned | — | Not run | Unassigned; applicable V gates open |
 | P2.1 Bank file import and matching | A07 | Planned | — | Not run | Unassigned; applicable V gates open |
@@ -86,3 +86,14 @@ final focused completeness/form tests: 3 passed; lint/build passed, existing
 bundle-size warning remains. A4 migration rehearsal and browser acceptance remain
 open. Organization-level locking and conservative source invalidation require
 M-G capacity evaluation. See `docs/operations/financial-input-coverage.md`.
+
+### A4 integrated repaired baseline
+
+A01/A02/A06 and relevant A31/A32 pass in the bounded synthetic environment.
+See [repaired baseline acceptance](m-a-repaired-baseline.md) for exact browser,
+migration, rollback, source integrity and accounting evidence. Desktop journey
+and responsive account/navigation checks pass; no live/provider or professional
+release claim follows. A4 affected backend rerun: 99 passed; remaining integrated
+checks: 67 passed. Frontend: 61 passed, lint/build pass (bundle warning retained).
+Independent source-navigation/rollback review has no unresolved finding.
+M-B–M-G and all specialist/provider/product V gates remain outstanding.

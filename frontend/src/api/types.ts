@@ -688,6 +688,7 @@ export type SettlementStatus = "draft" | "finalized";
 
 export interface SettlementLine {
   id: string;
+  cost_entry_id: string | null;
   line_type: string;
   cost_category_code: string | null;
   label: string;

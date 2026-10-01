@@ -1,0 +1,85 @@
+{
+  "base": "http://127.0.0.1:13000",
+  "viewports": [
+    "1440x1000",
+    "390x844"
+  ],
+  "journeys": [
+    {
+      "name": "four source formats through upload/review/confirm/source",
+      "completed": [
+        {
+          "filename": "text.pdf",
+          "source": "3408ec19-ae0d-424f-9fcc-6636d753b1e0",
+          "cost": "6ac6bbc9-f1e3-43bc-8e0e-47c09b301f34",
+          "hash": "4a0cf1b9cbf4ae62765286d0e6fbcbd357fa1e212c4157c8d8989a59be903ba9",
+          "amount": "119.00"
+        },
+        {
+          "filename": "scan.pdf",
+          "source": "9be32c11-2cac-4d92-aca2-a69c6279f823",
+          "cost": "7b9b8d61-027c-4712-92bb-83c1f7adb11e",
+          "hash": "0e91febceacb88b639452cfd873d1804b0c054f73e63f09e9e5dc121cef17ad8",
+          "amount": "119.00"
+        },
+        {
+          "filename": "invoice.xml",
+          "source": "e43d5340-7a65-489d-a26f-3eaf06297b8c",
+          "cost": "ab3b345d-f96f-4458-b6ca-7b18ed6d7868",
+          "hash": "d6082dcae8707cf6bbd6077e06c77fe5bfcbaa5fd6b9dd68069beb05c74af5c6",
+          "amount": "119.00"
+        },
+        {
+          "filename": "embedded.pdf",
+          "source": "f3656523-c8a2-4fad-be78-666c501ffc29",
+          "cost": "4f67ac8d-541f-43ea-a3a8-9a474950bde8",
+          "hash": "d908f3cb0ca322092459b9a9fb0a8e12a64c3217b2d1f29b27ca3d9d4b9bbf83",
+          "amount": "476.00"
+        }
+      ],
+      "uncertainSaveReplay": true
+    },
+    {
+      "name": "encrypted failure and retry",
+      "originalRetained": true,
+      "noCostCreated": true
+    },
+    {
+      "name": "unknown/zero/1200 account, draft PDF guard, final PDF and source navigation",
+      "unknownRun": "e1b3829b-8ca4-440b-b6da-8676259551aa",
+      "finals": [
+        {
+          "run": "923dc3e0-8e3f-489e-95e4-609e0b5d8744",
+          "amount": "0.00",
+          "totalCost": "2033.00",
+          "balance": "2033.00",
+          "snapshot": "34a6ebbdb3a5f28c29ae1c81efb007389d44a4224d0ba2151d265d2b6771dc58"
+        },
+        {
+          "run": "358529fc-7819-40a8-8dd0-610d769968c7",
+          "amount": "1200.00",
+          "totalCost": "2033.00",
+          "balance": "833.00",
+          "snapshot": "195424a587007264b8e7055e2fb5fff29b2cc4330150355c452ccf8fdb54cdc7"
+        }
+      ]
+    },
+    {
+      "name": "second organization denial",
+      "source": 404,
+      "settlement": 404
+    }
+  ],
+  "console": [
+    "Failed to load resource: the server responded with a status of 503 (Service Unavailable)",
+    "Failed to load resource: the server responded with a status of 422 (Unprocessable Content)",
+    "Failed to load resource: the server responded with a status of 422 (Unprocessable Content)",
+    "Failed to load resource: the server responded with a status of 422 (Unprocessable Content)",
+    "Failed to load resource: the server responded with a status of 422 (Unprocessable Content)",
+    "Failed to load resource: the server responded with a status of 422 (Unprocessable Content)"
+  ],
+  "pageErrors": [],
+  "title": "Hausverwaltung",
+  "url": "http://127.0.0.1:13000/abrechnungen/923dc3e0-8e3f-489e-95e4-609e0b5d8744",
+  "status": "passed"
+}

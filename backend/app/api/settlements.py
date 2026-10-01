@@ -86,6 +86,7 @@ class ComputeRequest(BaseModel):
 
 class SettlementLineOut(BaseModel):
     id: str
+    cost_entry_id: str | None = None
     line_type: str
     cost_category_code: str | None
     label: str
@@ -167,9 +168,10 @@ def _to_extras(body: ComputeRequest | None) -> ComputeExtras:
     )
 
 
-def _line_out(ln: SettlementLine) -> SettlementLineOut:
+def _line_out(ln: SettlementLine, cost_entry_id: str | None = None) -> SettlementLineOut:
     return SettlementLineOut(
         id=str(ln.id),
+        cost_entry_id=cost_entry_id,
         line_type=ln.line_type,
         cost_category_code=ln.cost_category_code,
         label=ln.label,
@@ -190,6 +192,17 @@ def _line_out(ln: SettlementLine) -> SettlementLineOut:
 
 
 def _run_out(run: SettlementRun, lines: list[SettlementLine]) -> SettlementRunOut:
+    # Relational legacy lines omit source IDs. Use only unambiguous exact matches
+    # from the already-frozen snapshot; never infer source links by amount alone.
+    sources = {}
+    for frozen in (run.snapshot_payload or {}).get("result", {}).get("lines", []):
+        key = (frozen.get("sort_order"), frozen.get("line_type"), frozen.get("label"),
+               frozen.get("category_code"), frozen.get("amount"))
+        try:
+            source_id = str(uuid.UUID(frozen["cost_entry_id"])) if frozen.get("cost_entry_id") else None
+        except (ValueError, TypeError):
+            source_id = None
+        sources[key] = None if key in sources else source_id
     return SettlementRunOut(
         id=str(run.id),
         organization_id=str(run.organization_id),
@@ -213,7 +226,7 @@ def _run_out(run: SettlementRun, lines: list[SettlementLine]) -> SettlementRunOu
         finalized_at=str(run.finalized_at) if run.finalized_at else None,
         finalized_by=str(run.finalized_by) if run.finalized_by else None,
         superseded_by_id=str(run.superseded_by_id) if run.superseded_by_id else None,
-        lines=[_line_out(ln) for ln in lines],
+        lines=[_line_out(ln, sources.get((ln.sort_order, ln.line_type, ln.label, ln.cost_category_code, str(ln.amount)))) for ln in lines],
     )
 
 
@@ -338,6 +351,7 @@ async def preview_settlement(
     out.lines = [
         SettlementLineOut(
             id="",
+            cost_entry_id=str(ln.cost_entry_id) if ln.cost_entry_id else None,
             line_type=ln.line_type,
             cost_category_code=ln.category_code,
             label=ln.label,
