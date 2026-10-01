@@ -32,6 +32,10 @@ Evidence labels used below:
 
 - **R**: reference capability documented in official reference software sources; not an
   authenticated screen-by-screen verification.
+- **O**: authenticated UI observation in the
+  [reference review](2026-10-01-reference-software-review.md), with
+  explicit completed/draft/observed/unverified depth. It does not prove our
+  implementation, provider behavior or exhaustive parity.
 - **D**: our product/technical decision, including automation beyond the reference.
 - **V**: behavior, provider contract or specialist interpretation still requiring
   validation before its corresponding release.
@@ -45,9 +49,34 @@ The integration reference
 documents bank, postal, listing and SEPA integrations, imports/exports and email
 document intake. It explicitly describes manual incoming-document assignment.
 Automatic document routing in this design is **D**, not proven reference behavior.
-The earlier visit to the application reached only
-login; no authenticated comparison is claimed. Remaining reference groups inherit
-the audit's linked public-source baseline and require the parity gate in §13.
+The initial visit to the application reached only
+login. A subsequent authenticated review on the same date exercised synthetic
+property/unit/contact/lease creation, meter readings, task completion, contextual
+document filing and saved contract/settlement drafts. The reference review maps
+RF01–RF31 to the P-packages and records settings, validation, defaults, provider
+boundaries and failed or unverified attempts. It supersedes the earlier access
+limitation, not the release gates. Automatic document inference remains **D**;
+contextual filing alone does not demonstrate it. Untested groups retain the
+public-source baseline and require the parity gate in §13.
+
+### 1.1 Authenticated reference deltas
+
+Apply these requirements within the existing packages; the observations are
+evidence for interaction design, not instructions to reproduce every default.
+
+| Reference evidence | Required target behavior | Package / acceptance |
+| --- | --- | --- |
+| RF06/RF19: prefilled unit/party data, contract-only vs master-data change | Show provenance and a scoped diff; a contract draft cannot activate a second lease or silently update master history | P1.2/P5.1/P5.4; A05/A23/A26 |
+| RF07/RF15: paid-through shortcut, contractual advance vs zero booked receipts | Default payment status to unverified unless supported; record migration assertions separately from bank evidence; zero receipts without period coverage is unknown | P2.1/P3.2; A06/A07 |
+| RF09/RF10/RF12: contextual PDF filing, uncertain receipt save and CSV result | Shared intake with immutable source, inference proposals and explicit saved/processing/failed outcome; preserve inputs and idempotent retry; bank preview explains format/count/totals | P0/P1/P2.1; A01/A03/A07/A25/A28 |
+| RF14–RF16: per-step readiness, vacancy split and optional advance suggestion | Surface prerequisites early; incomplete drafts remain editable, finalization still checks all blockers; show suggestion basis, coverage and effective-date impact before adoption | P3.2/P3.3/P5.2; A06/A13/A24 |
+| RF17: completing the only task also completed the case | Define required/optional task and reopen semantics explicitly; retain outcome/history; case completion cannot clear financial blockers | P4.1; A18 |
+| RF20/RF21/RF24: absent email, ineligible portal audience and invite-first rights UI | Explain recipient/channel eligibility before release; valid contact creation remains possible without email; verify rights through isolated fixtures, not UI labels | P4.3/P4.4/P5.6; A20/A21/A31 |
+| RF26/RF31: declared VAT export limit and unverified file delivery | Declare supported export profiles and reconcile artifacts; unsupported tax mappings block relevant export; download failure is visible and retryable | P5.5; A27 |
+
+The reference review's acceptance-delta table is part of the corresponding A-row
+scope. Its 100.00 water / 92-day tenancy fixture supplements A13; it does not
+replace specialist validation or the existing multi-unit/year-boundary fixtures.
 
 ## 2. People, navigation and progressive disclosure
 
@@ -609,8 +638,9 @@ satisfy a display or deletion shortcut.
 ## 10. Parity work packages and interaction specifications
 
 The audit's P0–P5 sequence is retained. Each row is a deliverable with a user journey,
-data boundary and decisive acceptance. R marks reference scope; workflow detail
-is D unless stated otherwise. V items must be resolved at that package's gate.
+data boundary and decisive acceptance. R marks reference scope; O evidence is
+mapped by RF01–RF31 in the reference review. Target workflow detail is D unless
+stated otherwise. V items must be resolved at that package's gate.
 Backend anchors are under `backend/app/`; frontend anchors under
 `frontend/src/pages/`. Proposed files/modules are marked **new**.
 
@@ -814,21 +844,23 @@ specialist/provider/load checks are separate release evidence.
 | A32 | Migration/backfill on representative sanitized data preserves hashes, financial totals, active version uniqueness and old finalized PDFs; ambiguous source/year-only payment becomes an exception; feature rollback preserves readability |
 | A33 | Full §12 load/recovery fixture: measure latency/throughput/fairness, kill/restart worker and restore DB plus blobs. Publish actual hardware, failures and remaining limits; tests alone cannot establish the capacity claim |
 
-Maintain a parity register per P-row: official source/access date, R/D/V status,
-supported behavior and exclusions, authenticated comparison result when available,
+Maintain a parity register per P-row: official source/access date, R/O/D/V status,
+supported behavior and exclusions, authenticated comparison depth and result,
 fixture IDs, implementation commit, checks/environment and approver. Delivery
 requires an executable journey and edge-case ownership, not merely a model, API,
-navigation entry or “AI” label. If reference access remains unavailable, call the
-result **publicly documented functional coverage**, not verified full parity.
+navigation entry or “AI” label. The authenticated reference review supplies
+RF01–RF31, not implementation acceptance. For groups without exercised reference
+behavior, use **publicly documented functional coverage**; inspected controls and
+drafts alone never establish verified full parity.
 
 Verification reused for unchanged baseline application code from the audit:
 1,256 backend tests passed, two optional smoke tests skipped; 56 frontend tests,
 lint and build passed; ~560 kB build warning. These were run on the audit's local
 Python 3.13.13 / Node 26 / disposable PostgreSQL 16 environment. This planning task
 does not rerun them or treat them as proof of the proposed features. Live providers,
-complete browser E2E, load/restore, legal/accounting and authenticated competitor
-acceptance are still absent. Document review and link/format checks are the checks
-appropriate to this design-only change.
+complete product browser E2E, load/restore, legal/accounting and exhaustive
+competitor acceptance are still absent. Document review and link/format checks
+are the checks appropriate to this design-only change.
 
 ## 14. Open decisions, owners and bounded defaults
 
@@ -844,7 +876,7 @@ to proceed without silently resolving material uncertainty.
 | V04 | Product + integration owner: bank, signing, postal, listing and push providers/credentials/contracts | Adapter interfaces, fake providers, file workflows; no live connection or outbound action | Each live integration gate |
 | V05 | Organization admin: review segregation per mandate | Landlord self-review; team preparer/reviewer separation | First team financial finalization |
 | V06 | Privacy/security owner + specialist: retention bases, former-resident access, processor regions and deletion | Restricted evidence access; preserve existing retention obligations; no new provider disclosure | Portal/provider production use |
-| V07 | Product: authenticated reference software settings/mobile/signing/meeting details | Public-source baseline; register unverified behavior; responsive mobile first | Claiming full parity or selecting companion-client architecture |
+| V07 | Product: remaining reference mobile/signing/meeting/provider/permission behavior | Use RF01–RF31 for bounded authenticated evidence; retain unverified depth and public-source baseline elsewhere; responsive mobile first | Claiming full parity or selecting companion-client architecture |
 | V08 | Operations/product: SLO hardware, concurrency, RPO/RTO and provider budgets | §12 provisional fixture/targets and bounded per-org jobs | Professional-capacity launch |
 | V09 | Specialist + product: meeting voting/proxy/circular-resolution scope and rent-change processes | Supported reviewed methods only; proposals do not establish legal effect | P4.5/P5.2 scope release |
 

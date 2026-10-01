@@ -6,6 +6,9 @@
 > exclusions of bank imports and portals do not describe the new product target.
 > The [product, UX and technical delivery design](2026-10-01-product-ux-technical-design.md)
 > now defines the target workflows, data contracts, delivery packages and acceptance gates.
+> The [authenticated reference review](2026-10-01-reference-software-review.md)
+> adds tested synthetic journeys, observed settings and explicit coverage limits.
+> These observations refine the design; they do not mark roadmap features delivered.
 
 Stand: 2026-08-29 · Bezug: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2
 

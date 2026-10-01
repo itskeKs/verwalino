@@ -12,10 +12,13 @@ controls. Functional parity comes before further product expansion.
 
 This assessment and backlog do **not** mean parity has been implemented. Public
 Reference software documentation establishes a provisional feature baseline, not exhaustive
-screen-by-screen acceptance. The app opened at its login page; authenticated
-competitor workflows could not be inspected. No external accounts were modified,
-no production deployment was performed, and no real customer documents were sent
-to a model provider.
+screen-by-screen acceptance. During this original code audit the app opened only
+at its login page; no external accounts were modified at that stage. A subsequent
+[authenticated reference review](2026-10-01-reference-software-review.md)
+on the same date exercised user-authorized synthetic records and documented
+RF01–RF31, saved results, drafts and unverified boundaries. That review updates the
+reference evidence, not the implementation status below. No production deployment
+was performed and no real customer documents were sent to a model provider.
 
 The historical SDD deliberately excludes bank imports, portals and automatic
 posting. Those exclusions no longer describe the requested product destination.
@@ -212,7 +215,8 @@ feature list or its ability to record externally supplied WEG accounts.
 - Add lifecycle features, import/export, finance reports, DATEV, templates/signing,
   listing integration and mobile/push coverage from the parity inventory.
 - Before each submodule, turn its official reference behavior into a bounded
-  acceptance list; finish authenticated comparison when access is available.
+  acceptance list, using RF01–RF31 where applicable; close the reference review's
+  remaining coverage with suitable fixtures, accounts and provider access.
 - Acceptance: each parity row has a runnable user journey, ownership of edge cases
   and evidence. A navigation item or data model alone does not count as delivery.
 
