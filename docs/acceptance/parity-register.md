@@ -9,7 +9,7 @@ validation; classification and RF mapping are inherited unchanged from those row
 
 | Package | Acceptance fixtures | Delivery state | Implementation commit | Check environment/result | Approver / release gates |
 | --- | --- | --- | --- | --- | --- |
-| P0.1 Source integrity | A01 | Implemented; A4 browser/account gate open | A1 commit | Focused checks below | Unassigned; applicable V gates open |
+| P0.1 Source integrity | A01 | Implemented; A4 browser/account gate open | `1160431` | Focused checks below | Unassigned; applicable V gates open |
 | P0.2 OCR and truthful completeness | A02,A06 | Planned | — | Not run | Unassigned; applicable V gates open |
 | P1.1 Shared intake and exceptions | A03,A04 | Planned | — | Not run | Unassigned; applicable V gates open |
 | P1.2 Master import and portfolio | A05 | Planned | — | Not run | Unassigned; applicable V gates open |
@@ -56,3 +56,18 @@ implementation plan §7. No provider, professional review policy, specialist
 fixture, legal method, parity scope, security matrix or capacity target has been
 approved by this implementation task. No live external action is authorized.
 G1 load/restore and G2 document/operator evaluations remain unexecuted.
+
+### A2 ordinary invoice extraction
+
+Implemented locally; P0.2 remains incomplete until A3/A4. Synthetic German scan,
+text PDF, XML and embedded XML pass; failure and restart/fencing fixtures are
+included. A2 combined invoice/PDF/upload/e-invoice/RLS run: 135 passed, one
+transient disposable-PostgreSQL SSL-upgrade connection failure. A focused rerun
+of the disabled-worker and queue-full/version fixtures passed (2 tests). Earlier
+70 focused tests passed. Frontend invoice status/retry tests: 2 passed; lint and
+build passed with the existing bundle-size warning. Test runtime: Python 3.13,
+Node 26, PostgreSQL 16 tmpfs; real local Poppler/Tesseract German language.
+Independent review found queue backpressure could roll back a saved source;
+repaired and delta reviewed with no remaining material findings. Source bytes
+and manual review now survive full/disabled queues. General job fairness and
+capacity, runtime deployment and browser/account acceptance remain open.

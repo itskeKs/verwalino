@@ -359,43 +359,10 @@ class PdfTextExtractor:
         return None
 
     def _tesseract_fallback(self, file_bytes: bytes) -> str | None:
-        """Optional Tesseract OCR fallback for scanned PDFs.
-
-        Returns None (no crash) if Tesseract/poppler/packages are not available.
-        """
-        try:
-            import pytesseract
-            from pdf2image import convert_from_bytes
-        except ImportError:
-            logger.info(
-                "Tesseract fallback requested but pytesseract/pdf2image not installed. "
-                "Install with: pip install 'hausverwaltung-backend[ocr]'"
-            )
-            return None
-
-        try:
-            images = convert_from_bytes(file_bytes, dpi=300)
-        except Exception:
-            logger.info(
-                "pdf2image/poppler failed to convert PDF to images. "
-                "Is poppler-utils installed? (e.g. apt install poppler-utils / brew install poppler)"
-            )
-            return None
-
-        text_parts: list[str] = []
-        try:
-            for img in images:
-                page_text = pytesseract.image_to_string(img, lang="deu")
-                if page_text:
-                    text_parts.append(page_text)
-        except Exception:
-            logger.info(
-                "Tesseract failed to OCR images. Is tesseract installed? "
-                "(e.g. apt install tesseract-ocr tesseract-ocr-deu / brew install tesseract)"
-            )
-            return None
-
-        return "\n".join(text_parts).strip() or None
+        """Use the same bounded subprocess as ordinary invoice processing."""
+        from app.core.invoice_ocr import run_isolated_extraction
+        result = run_isolated_extraction(file_bytes, "application/pdf")
+        return (result.get("payload") or {}).get("raw_text")
 
     def _parse_german_invoice(self, text: str) -> ExtractionResult:
         """Parse extracted text using German invoice heuristics."""

@@ -19,6 +19,7 @@ from app.core.tenant import AuthContext, get_current_user, get_db, require_write
 from app.core.uploads import MAX_UPLOAD_BYTES, read_upload_limited
 from app.models.invoice_document import InvoiceDocument
 from app.repositories.invoice_document_repo import InvoiceDocumentRepository
+from app.services.invoice_processing_service import InvoiceProcessingService
 from app.services.invoice_document_service import InvoiceDocumentService
 
 router = APIRouter(prefix="/api/invoice-documents", tags=["invoice-documents"])
@@ -42,6 +43,8 @@ class InvoiceDocumentOut(BaseModel):
     retention_until: str | None
     superseded_at: str | None
     extraction_payload: dict | None = None
+    processing_status: str = "legacy"
+    processing_error_code: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -178,6 +181,28 @@ async def create_document_version(
     return _to_out(new_doc)
 
 
+@router.post("/{doc_id}/retry", response_model=InvoiceDocumentOut)
+async def retry_extraction(doc_id: uuid.UUID, auth: AuthContext = Depends(require_write_dep),
+                           db: AsyncSession = Depends(get_db)):
+    doc = await InvoiceDocumentRepository(db, auth.organization_id).get_by_id_for_update(doc_id)
+    if doc is None:
+        raise HTTPException(404, "Document not found")
+    await InvoiceProcessingService(db, auth.organization_id).enqueue(doc)
+    return _to_out(doc)
+
+
+@router.get("/{doc_id}/processing-attempts")
+async def processing_attempts(doc_id: uuid.UUID, auth: AuthContext = Depends(get_current_user),
+                              db: AsyncSession = Depends(get_db)):
+    svc = InvoiceProcessingService(db, auth.organization_id)
+    if await svc.documents.get_by_id(doc_id) is None:
+        raise HTTPException(404, "Document not found")
+    return [{"id": str(a.id), "attempt_no": a.attempt_no, "status": a.status,
+             "error_code": a.error_code, "processor_version": a.processor_version,
+             "created_at": a.created_at, "completed_at": a.completed_at}
+            for a in await svc.attempts.history(doc_id)]
+
+
 def _to_out(d: InvoiceDocument) -> InvoiceDocumentOut:
     return InvoiceDocumentOut(
         id=str(d.id),
@@ -197,4 +222,6 @@ def _to_out(d: InvoiceDocument) -> InvoiceDocumentOut:
         retention_until=str(d.retention_until) if d.retention_until else None,
         superseded_at=str(d.superseded_at) if d.superseded_at else None,
         extraction_payload=d.extraction_payload,
+        processing_status=d.processing_status,
+        processing_error_code=d.processing_error_code,
     )

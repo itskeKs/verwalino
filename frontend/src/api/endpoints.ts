@@ -490,6 +490,10 @@ export function createCostEntryCorrection(
 
 // --- M2: Invoice Documents ---
 
+export function retryInvoiceExtraction(id: string): Promise<InvoiceDocument> {
+  return api.post<InvoiceDocument>(`/api/invoice-documents/${id}/retry`);
+}
+
 export function listInvoiceDocuments(costEntryId?: string): Promise<InvoiceDocument[]> {
   const qs = costEntryId ? `?cost_entry_id=${encodeURIComponent(costEntryId)}` : "";
   return api.get<InvoiceDocument[]>(`/api/invoice-documents${qs}`);

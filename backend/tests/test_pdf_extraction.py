@@ -641,7 +641,15 @@ class TestEndToEndPdfUpload:
         assert upload_resp.status_code == 201
         doc = upload_resp.json()
 
-        # Check extraction_payload
+        from app.core.db import get_session_factory
+        from app.workers.invoice_extraction import process_once
+        for _ in range(100):
+            await process_once(get_session_factory(), m2_seed["org_a_id"])
+            doc = (await client_a_admin.get(f"/api/invoice-documents/{doc['id']}")).json()
+            if doc["processing_status"] not in {"queued", "running"}:
+                break
+        assert doc["processing_status"] == "succeeded", doc["processing_error_code"]
+        # Check extraction_payload after durable processing.
         payload = doc["extraction_payload"]
         assert payload is not None
         assert payload["invoice_date"] == "2025-03-10"
@@ -671,7 +679,7 @@ class TestEndToEndPdfUpload:
             "service_period_to": "2025-12-31",
             "gross_amount": "100.00",
             "tenant_apportionable": "UMLAGEFAEHIG",
-            "source": "PDF_IMPORT",
+            "source": "MANUAL",
             "status": "needs_review",
         })
         assert entry_resp.status_code == 201
@@ -689,6 +697,14 @@ class TestEndToEndPdfUpload:
         assert upload_resp.status_code == 201
         doc = upload_resp.json()
         assert doc["cost_entry_id"] == entry_id
+        from app.core.db import get_session_factory
+        from app.workers.invoice_extraction import process_once
+        for _ in range(100):
+            await process_once(get_session_factory(), m2_seed["org_a_id"])
+            doc = (await client_a_admin.get(f"/api/invoice-documents/{doc['id']}")).json()
+            if doc["processing_status"] not in {"queued", "running"}:
+                break
+        assert doc["processing_status"] == "succeeded", doc["processing_error_code"]
         assert doc["extraction_payload"] is not None
         assert doc["extraction_payload"]["gross_amount"] == "250.00"
 

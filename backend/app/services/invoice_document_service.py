@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
 from app.repositories.cost_entry_repo import CostEntryRepository
 
-from app.core.extraction import ExtractionResult, get_extractor
+from app.core.extraction import ExtractionResult
 from app.core.storage import (
     DocumentStore,
     compute_sha256,
@@ -22,6 +22,7 @@ from app.core.storage import (
 )
 from app.models.audit_event import AuditEvent
 from app.models.invoice_document import InvoiceDocument
+from app.services.invoice_processing_service import InvoiceProcessingService
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.invoice_document_repo import InvoiceDocumentRepository
 
@@ -71,9 +72,8 @@ class InvoiceDocumentService:
         key = make_storage_key(str(self._org_id), sha256)
         ref = store.put(key, file_bytes, content_type=mime_type)
 
-        # Run extraction (stub in this run; real OCR is the next step)
-        extractor = get_extractor()
-        extraction = extractor.extract(file_bytes, mime_type)
+        # Persist a durable queue entry; the worker extracts after this transaction.
+        extraction = ExtractionResult()
 
         doc_id = uuid.uuid4()
         doc = InvoiceDocument(
@@ -98,6 +98,7 @@ class InvoiceDocumentService:
         )
 
         doc = await self._repo.create(doc)
+        await InvoiceProcessingService(self._session, self._org_id).enqueue(doc)
 
         # Audit event
         await self._audit.create(
@@ -193,6 +194,7 @@ class InvoiceDocumentService:
         old_active.superseded_at = now
         await self._repo.update(old_active)
         new_doc = await self._repo.create(new_doc)
+        await InvoiceProcessingService(self._session, self._org_id).enqueue(new_doc)
 
         # Audit events
         await self._audit.create(

@@ -655,6 +655,8 @@ export interface ExtractionPayload {
 }
 
 export interface InvoiceDocument {
+  processing_status: string;
+  processing_error_code: string | null;
   id: string;
   organization_id: string;
   cost_entry_id: string | null;

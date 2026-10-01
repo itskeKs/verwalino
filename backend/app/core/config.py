@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 
-from pydantic import SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -39,6 +39,10 @@ class Settings(BaseSettings):
 
     # --- Document Storage ---
     document_storage_root: str = "/tmp/hv-documents"
+
+    # --- Ordinary invoice worker (independent of declaration providers) ---
+    invoice_extraction_enabled: bool = True
+    invoice_queue_limit: int = Field(100, ge=1, le=1000)
 
     # --- Declaration import / PDF preflight ---
     declaration_import_enabled: bool = False

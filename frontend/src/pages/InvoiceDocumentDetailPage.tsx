@@ -11,6 +11,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   getInvoiceDocument,
+  retryInvoiceExtraction,
   verifyInvoiceDocument,
   createInvoiceDocumentVersion,
   invoiceDocumentContentUrl,
@@ -26,6 +27,7 @@ import type {
   CostEntryCreate,
 } from "../api/types";
 import { ApiError } from "../api/client";
+import { InvoiceProcessingStatus } from "../components/InvoiceProcessingStatus";
 import { Badge } from "../components/ui/badge";
 
 /** Human-readable short label for source_format values from the e-invoice parser. */
@@ -115,6 +117,25 @@ export function InvoiceDocumentDetailPage() {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  useEffect(() => {
+    if (!docId || !["queued", "running"].includes(doc?.processing_status ?? "")) return;
+    let active = true;
+    const timer = setTimeout(() => {
+      getInvoiceDocument(docId).then((next) => { if (active) setDoc(next); })
+        .catch(() => { if (active) setActionError("Status konnte nicht aktualisiert werden. Bitte neu laden."); });
+    }, 2000);
+    return () => { active = false; clearTimeout(timer); };
+  }, [docId, doc]);
+
+  async function handleRetry() {
+    if (!docId) return;
+    setActionLoading(true);
+    setActionError(null);
+    try { setDoc(await retryInvoiceExtraction(docId)); }
+    catch (err) { setActionError(err instanceof ApiError ? err.message : String(err)); }
+    finally { setActionLoading(false); }
+  }
 
   async function handleVerify() {
     if (!docId) return;
@@ -219,6 +240,10 @@ export function InvoiceDocumentDetailPage() {
           &larr; Alle Belege
         </Link>
       </p>
+      <p><InvoiceProcessingStatus document={doc} /></p>
+      {["legacy", "needs_review", "unsupported", "unavailable", "timeout", "failed"].includes(doc.processing_status) && !doc.released_at && doc.status === "active" && (
+        <button className="btn" onClick={handleRetry} disabled={actionLoading}>Texterkennung erneut starten</button>
+      )}
       <h1>
         Beleg: {doc.original_filename ?? "Ohne Name"}{" "}
         <span

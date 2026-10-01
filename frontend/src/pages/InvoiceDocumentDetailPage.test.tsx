@@ -34,3 +34,23 @@ it("submits the source and retains the same key and form after uncertain failure
   expect(firstKey).toBeTruthy();
   expect(new Headers(attempts[1].headers).get("Idempotency-Key")).toBe(firstKey);
 });
+
+it("shows a failed extraction as stored original and queues a retry without a cost", async () => {
+  let retried = false;
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url === "/api/cost-categories" || url === "/api/properties") return json([]);
+    if (url.endsWith("/retry")) retried = true;
+    return json({ id: "doc-1", chain_root_id: "doc-1", status: "active", released_at: null,
+      cost_entry_id: null, version: 1, content_byte_size: 100, content_sha256: "a".repeat(64),
+      processing_status: retried ? "queued" : "timeout", processing_error_code: "ocr_timeout", extraction_payload: null });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<MemoryRouter initialEntries={["/belege/doc-1"]}><Routes>
+    <Route path="/belege/:docId" element={<InvoiceDocumentDetailPage />} />
+  </Routes></MemoryRouter>);
+  expect(await screen.findByRole("status")).toHaveTextContent("Zeitlimit erreicht");
+  expect(screen.getByText("Dokument ansehen")).toHaveAttribute("href", "/api/invoice-documents/doc-1/content");
+  fireEvent.click(screen.getByText("Texterkennung erneut starten"));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Gespeichert"));
+  expect(fetchMock.mock.calls.some(([url]) => url === "/api/cost-entries")).toBe(false);
+});

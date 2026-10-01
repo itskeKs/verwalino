@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, DateTime, Date, ForeignKey, ForeignKeyConstraint, Index, text, SmallInteger, String
+from sqlalchemy import BigInteger, DateTime, Date, ForeignKey, ForeignKeyConstraint, UniqueConstraint, Index, text, SmallInteger, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,6 +21,7 @@ from app.models.base import Base, UUIDPrimaryKeyMixin, TimestampMixin
 class InvoiceDocument(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "invoice_document"
     __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_invoice_document_org_id"),
         ForeignKeyConstraint(["organization_id", "cost_entry_id"], ["cost_entry.organization_id", "cost_entry.id"], name="fk_invoice_document_cost_tenant", ondelete="RESTRICT"),
         Index("uq_invoice_document_active_cost", "organization_id", "cost_entry_id", unique=True,
               postgresql_where=text("status = 'active' AND cost_entry_id IS NOT NULL")),
@@ -83,3 +84,6 @@ class InvoiceDocument(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     extraction_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    processing_status: Mapped[str] = mapped_column(String(24), nullable=False, server_default="legacy")
+    processing_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)

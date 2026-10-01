@@ -21,9 +21,6 @@ from app.api import fristen, dsgvo
 from app.api import declaration_imports
 from app.api import property_documents
 from app.api import property_knowledge
-from app.core.extraction import set_extractor
-from app.core.pdf_extraction import PdfTextExtractor
-from app.core.einvoice import RoutingExtractor
 from app.core import health
 from app.core.static_files import resolve_spa_file
 from app.core.uploads import RequestBodyLimitMiddleware
@@ -38,9 +35,7 @@ app = FastAPI(
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_host_list)
 app.add_middleware(RequestBodyLimitMiddleware)
 
-# --- Register the routing extractor as default (M5): E-Rechnung (XRechnung/
-# ZUGFeRD) is parsed structurally; everything else falls back to PDF text/OCR. ---
-set_extractor(RoutingExtractor(PdfTextExtractor()))
+# Invoice extraction runs in the durable worker after upload commits.
 
 # --- Routers ---
 app.include_router(auth.router)

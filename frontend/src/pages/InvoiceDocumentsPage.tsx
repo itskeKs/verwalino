@@ -1,3 +1,4 @@
+import { InvoiceProcessingStatus } from "../components/InvoiceProcessingStatus";
 /**
  * Invoice documents list page -- upload, list, link to detail/review.
  *
@@ -89,7 +90,7 @@ export function InvoiceDocumentsPage() {
           }}
         >
           Laden Sie eine Rechnung (PDF) hoch. Das System extrahiert erkannte
-          Felder und erstellt einen Kostenpositions-Entwurf.
+          Felder für einen Entwurf. Sie prüfen und speichern die Kostenposition anschließend.
         </p>
         <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
           <input
@@ -148,7 +149,7 @@ export function InvoiceDocumentsPage() {
                           : "badge--superseded"
                       }`}
                     >
-                      {doc.status}
+                      {doc.status}<br /><InvoiceProcessingStatus document={doc} />
                     </span>
                     {doc.released_at && (
                       <span
