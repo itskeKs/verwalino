@@ -6,6 +6,7 @@ from tests.test_financial_scope_boundary import scope_seed, worker_tenant  # noq
 from tests.test_access_coverage import fixture, capture
 from tests.test_scoped_account_statements import client, mutate
 from tests.test_scope_payment_reconciliation import read_value
+from app.core.runtime_budget import attest_runtime_budget,runtime_budget_policy
 
 pytestmark = pytest.mark.asyncio
 
@@ -203,7 +204,7 @@ async def test_concurrent_acceptance_has_one_receipt_and_direct_invalid_commands
         current = await reviewed(admin)
         for invalid in [change(ids,capabilities=['read','superuser']),change(ids,capabilities=[] ,expected_grant_id=None)]:
             with pytest.raises(DBAPIError,match='Invalid capabilities'):
-                await read_value('SELECT propose_access_grants(:org,:snapshot,:request,:digest,CAST(:changes AS jsonb),CAST(:policy AS jsonb))',
+                await attested_value('SELECT propose_access_grants(:org,:snapshot,:request,:digest,CAST(:changes AS jsonb),CAST(:policy AS jsonb))',
                     {**ids,'snapshot':uuid.UUID(current['id']),'request':uuid.uuid4(),'digest':current['manifest_digest'],
                      'changes':json.dumps([invalid]),'policy':AccessCoverageService(None,None).policy()},actor_key='actor')
 
@@ -225,6 +226,7 @@ async def test_failure_during_second_write_rolls_back_first_replacement(migrator
         async with get_session_factory()() as db,db.begin():
             await set_tenant_context(db,ids['org'])
             await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(ids['actor'])})
+            await attest_runtime_budget(db,ids['org'],ids['actor'],runtime_budget_policy())
             with pytest.raises(DBAPIError,match='Injected second grant failure'):
                 async with db.begin_nested():
                     await db.execute(text('SELECT accept_access_grants(:org,:proposal,:request,:digest,CAST(:policy AS jsonb))'),
@@ -251,16 +253,18 @@ async def test_direct_expiry_is_absolute_and_timezone_independent(migrator_sessi
     sql='SELECT propose_access_grants(:org,:snapshot,:request,:digest,CAST(:changes AS jsonb),CAST(:policy AS jsonb))'
     for expiry in ['tomorrow','2099-12-31T12:00:00','2099-12-31 12:00:00+01:00']:
         with pytest.raises(DBAPIError,match='absolute with timezone'):
-            await read_value(sql,{**params,'changes':json.dumps([change(ids,expires_at=expiry)])},actor_key='actor')
+            await attested_value(sql,{**params,'changes':json.dumps([change(ids,expires_at=expiry)])},actor_key='actor')
     expiry=datetime.now(timezone.utc)+timedelta(days=30)
     async with get_session_factory()() as db,db.begin():
         await set_tenant_context(db,ids['org'])
         await db.execute(text("SELECT set_config('app.current_user_id',:actor,true),set_config('TimeZone','Pacific/Honolulu',true)"),{'actor':str(ids['actor'])})
+        await attest_runtime_budget(db,ids['org'],ids['actor'],runtime_budget_policy())
         proposal=await db.scalar(text(sql),{**params,'changes':json.dumps([change(ids,expires_at=expiry.isoformat())])})
     assert proposal['changes'][0]['expires_at'].endswith('Z')
     async with get_session_factory()() as db,db.begin():
         await set_tenant_context(db,ids['org'])
         await db.execute(text("SELECT set_config('app.current_user_id',:actor,true),set_config('TimeZone','Asia/Tokyo',true)"),{'actor':str(ids['actor'])})
+        await attest_runtime_budget(db,ids['org'],ids['actor'],runtime_budget_policy())
         receipt=await db.scalar(text('SELECT accept_access_grants(:org,:proposal,:request,:digest,CAST(:policy AS jsonb))'),
             {**params,'proposal':uuid.UUID(proposal['id']),'request':uuid.uuid4(),'digest':proposal['proposal_digest']})
     actual=await read_value('SELECT expires_at FROM scope_grant WHERE id=:new',{'new':uuid.UUID(receipt['results'][0]['grant_id'])})
@@ -292,3 +296,11 @@ async def test_departed_member_grants_remain_visible_and_revocable(migrator_sess
         assert proposal.status_code==201,proposal.text
         assert (await accept(admin,proposal.json())).status_code==201
         assert await read_value('SELECT revoked_at IS NOT NULL FROM property_data_grant WHERE id=:grant',{'grant':uuid.UUID(grant.json()['id'])})
+
+
+async def attested_value(sql,params,actor_key):
+    from app.core.db import get_tenant_session
+    async with get_tenant_session(params['org']) as db:
+        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(params[actor_key])})
+        await attest_runtime_budget(db,params['org'],params[actor_key],params['policy'])
+        return await db.scalar(text(sql),params)

@@ -25,7 +25,7 @@ async def test_snapshot_projects_combined_actor_without_preparation_bypass(migra
     ids = await statement_fixture(migrator_session,scope_seed,'lease')
     async with client(ids,'actor') as admin:
         report = await capture(admin)
-        assert report['checker_version'] == 2
+        assert report['checker_version'] == 3
         rows = await items(admin,report)
         bank = next(r for r in rows if r['kind']=='bank_account' and r['resource_id']==str(ids['bank']))
         assert bank['references']['strict_audience'] == []
@@ -124,10 +124,14 @@ async def test_projection_migration_retains_v2_and_preserves_v1(migrator_session
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
-            with pytest.raises(DBAPIError,match='Retain projected coverage'):
-                with db.begin_nested(): migration.downgrade()
             savepoint = db.begin_nested()
             try:
+                db.execute(text('TRUNCATE runtime_budget_review,runtime_budget_attestation,access_coverage_snapshot CASCADE'))
+                importlib.import_module('migrations.versions.0088_runtime_budget_review').downgrade()
+                db.execute(text("INSERT INTO access_coverage_snapshot(id,organization_id,generated_by,request_key,request_digest,manifest_digest,manifest,item_count,finding_count,checker_version) VALUES(:snapshot,:org,:actor,:request,repeat('a',64),repeat('b',64),jsonb_build_object('checker_version',2,'items','[]'::jsonb),0,0,2)"),
+                    {**ids,'snapshot':uuid.uuid4(),'request':uuid.uuid4()})
+                with pytest.raises(DBAPIError,match='Retain projected coverage'):
+                    with db.begin_nested(): migration.downgrade()
                 db.execute(text('TRUNCATE access_coverage_snapshot CASCADE'))
                 original = {name:db.execute(text('SELECT oid,proowner,proacl::text,provolatile,prosecdef,proconfig FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)'),{'signature':signature}).one()
                     for name,(signature,_) in migration.EXPECTED.items()}

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type { AccessPreparation } from "../api/types";
 import { useAuth } from "../auth/useAuth";
+import { RuntimeBudgetPanel } from "../components/RuntimeBudgetPanel";
 import { AccessCoveragePanel } from "../components/AccessCoveragePanel";
 
 type Metric = [keyof AccessPreparation["counts"], string];
@@ -73,6 +74,7 @@ function Inventory() {
         </section>)}
       </div>
     </>}
+    <RuntimeBudgetPanel />
     <AccessCoveragePanel />
   </div>;
 }

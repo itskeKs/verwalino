@@ -11,6 +11,7 @@ from app.repositories.pagination import Page, PageQuery, page_query
 from app.schemas.access_coverage import CoverageCreate, CoverageSnapshot, CoverageItem, CoverageReviewCreate, CoverageReview, CoverageSummary
 from app.services.access_coverage_service import AccessCoverageService
 from app.schemas.access_preparation import AccessPreparationOut
+from app.schemas.runtime_budget import RuntimeBudgetStatus,RuntimeBudgetReview,RuntimeBudgetReviewCreate
 
 router = APIRouter(prefix='/api/access-preparation', tags=['access_preparation'])
 
@@ -69,3 +70,14 @@ async def grant_proposal(snapshot_id: uuid.UUID, auth: AuthContext = Depends(req
 async def accept_grants(proposal_id: uuid.UUID, body: GrantAcceptanceCreate, idempotency_key: uuid.UUID = Header(),
                         auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(coverage_writer)):
     return await AccessCoverageService(db,auth).accept_grants(proposal_id,body,idempotency_key)
+
+
+@router.get('/runtime-budget', response_model=RuntimeBudgetStatus)
+async def runtime_budget(auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_live_admin_db)):
+    return await AccessCoverageService(db,auth).runtime_budget_status()
+
+
+@router.post('/runtime-budget/review', response_model=RuntimeBudgetReview, status_code=201)
+async def review_runtime_budget(body: RuntimeBudgetReviewCreate, idempotency_key: uuid.UUID = Header(),
+                                auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(coverage_writer)):
+    return await AccessCoverageService(db,auth).review_runtime_budget(body,idempotency_key)

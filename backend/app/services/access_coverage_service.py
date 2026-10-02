@@ -7,6 +7,7 @@ from itsdangerous import BadData, URLSafeTimedSerializer
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from app.core.config import settings
+from app.core.runtime_budget import attest_runtime_budget, runtime_budget_policy
 
 
 class AccessCoverageService:
@@ -14,10 +15,21 @@ class AccessCoverageService:
         self.db, self.auth = db, auth
 
     def policy(self):
-        return json.dumps({'enabled':settings.declaration_qa_enabled,
-            'max_cost_usd':str(settings.declaration_qa_max_cost_usd),
-            'window_minutes':settings.declaration_qa_budget_window_minutes,
-            'reservation_seconds':settings.declaration_qa_reservation_seconds})
+        if not hasattr(self, '_policy'):
+            self._policy = runtime_budget_policy()
+        return self._policy
+
+    async def attest_policy(self):
+        await attest_runtime_budget(self.db,self.auth.organization_id,self.auth.user_id,self.policy())
+
+    async def runtime_budget_status(self):
+        await self.attest_policy()
+        return await self.command('SELECT runtime_budget_status(:org)',{})
+
+    async def review_runtime_budget(self,body,key):
+        await self.attest_policy()
+        return await self.command('SELECT review_runtime_budget(:org,:request,:expected,:digest,:reason)',
+            {'request':key,'expected':body.expected_review_id,'digest':body.policy_digest,'reason':body.reason})
 
     async def command(self, sql, values):
         try:
@@ -33,10 +45,12 @@ class AccessCoverageService:
             raise
 
     async def capture(self, body, key):
+        await self.attest_policy()
         return await self.command('SELECT capture_access_coverage(:org,:request,:predecessor,CAST(:policy AS jsonb))',
             {'request':key,'predecessor':body.predecessor_id,'policy':self.policy()})
 
     async def review(self, snapshot, body, key):
+        await self.attest_policy()
         return await self.command('SELECT review_access_coverage(:org,:snapshot,:request,:digest,CAST(:policy AS jsonb))',
             {'snapshot':snapshot,'request':key,'digest':body.manifest_digest,'policy':self.policy()})
 
@@ -83,6 +97,7 @@ class AccessCoverageService:
         return visible,cursor
 
     async def propose_grants(self, snapshot, body, key):
+        await self.attest_policy()
         return await self.command('SELECT propose_access_grants(:org,:snapshot,:request,:digest,CAST(:changes AS jsonb),CAST(:policy AS jsonb))',
             {'snapshot':snapshot,'request':key,'digest':body.manifest_digest,
              'changes':json.dumps([c.model_dump(mode='json') for c in body.changes]),'policy':self.policy()})
@@ -91,5 +106,6 @@ class AccessCoverageService:
         return await self.command('SELECT access_grant_proposal_for_snapshot(:org,:snapshot)',{'snapshot':snapshot})
 
     async def accept_grants(self, proposal, body, key):
+        await self.attest_policy()
         return await self.command('SELECT accept_access_grants(:org,:proposal,:request,:digest,CAST(:policy AS jsonb))',
             {'proposal':proposal,'request':key,'digest':body.proposal_digest,'policy':self.policy()})

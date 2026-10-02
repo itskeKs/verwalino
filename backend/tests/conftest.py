@@ -87,6 +87,9 @@ def run_migrations():
             CREATE ROLE app_review LOGIN PASSWORD 'review_secret' NOINHERIT NOBYPASSRLS NOCREATEDB NOCREATEROLE;
             END IF; END $$;""")
         clear_disposable_source_context(cursor)
+        cursor.execute("SELECT to_regclass('public.runtime_budget_attestation')")
+        if cursor.fetchone()[0]:
+            cursor.execute("TRUNCATE public.runtime_budget_review,public.runtime_budget_attestation CASCADE")
         cursor.execute("SELECT to_regclass('public.knowledge_budget_policy')")
         if cursor.fetchone()[0]:
             cursor.execute("TRUNCATE public.knowledge_budget_policy")

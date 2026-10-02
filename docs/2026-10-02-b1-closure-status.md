@@ -1,6 +1,6 @@
-# B1 closure status after migration 0087
+# B1 closure status after migration 0088
 
-Baseline: f1ee82f plus accepted local 0087 increment. M-A is accepted; B1 is
+Baseline: f04f5c0 plus accepted local 0088 increment. M-A is accepted; B1 is
 incomplete. B2–G remain outstanding.
 This assessment supersedes historical forward-looking residuals only where later
 accepted migrations demonstrably resolve them. It does not declare team rollout.
@@ -41,8 +41,11 @@ accepted migrations demonstrably resolve them. It does not declare team rollout.
    checked without combining different people's grants. Historical snapshots stay
    immutable; financial pause history participates in staleness checks. API,
    migration, UI and local browser evidence pass. This remains an authorization
-   preview: trusted deployment/budget attestation, retained-disposition acceptance
-   and activation lifecycle integration are still outstanding.
+   preview. Migration 0088 adds trusted per-transaction runtime budget attestation,
+   explicit administrator review, immutable replay-safe receipts and checker-v3
+   correspondence. Its API/DB, UI, migration, concurrency and browser checks pass.
+   Live Q&A reservation consumption, retained-disposition acceptance and activation
+   lifecycle integration remain outstanding.
 4. Implement idempotent activation against the accepted snapshot, rechecking coverage
    under exclusive ACL locking. Include Q&A budget policy review, stale evidence,
    revocation, new-organization bootstrap and audited pause/resume. Never return a

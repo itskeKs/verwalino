@@ -6,6 +6,7 @@ import { api } from "../api/client";
 import * as auth from "../auth/useAuth";
 import type { AccessPreparation } from "../api/types";
 
+vi.mock("../components/RuntimeBudgetPanel", () => ({ RuntimeBudgetPanel: () => null }));
 vi.mock("../components/AccessCoveragePanel", () => ({ AccessCoveragePanel: () => null }));
 
 const snapshot: AccessPreparation = {

@@ -159,6 +159,8 @@ async def test_capture_waits_for_live_admin_and_migration_retains_snapshots(migr
                 try:
                     db.execute(text('TRUNCATE access_coverage_review,access_coverage_snapshot CASCADE'))
                     proposal_migration = importlib.import_module('migrations.versions.0084_access_grant_proposals')
+                    db.execute(text('TRUNCATE runtime_budget_review,runtime_budget_attestation CASCADE'))
+                    importlib.import_module('migrations.versions.0088_runtime_budget_review').downgrade()
                     importlib.import_module('migrations.versions.0087_projected_access_coverage').downgrade()
                     proposal_migration.downgrade()
                     migration.downgrade(); migration.upgrade()
