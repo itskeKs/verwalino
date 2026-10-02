@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import (
 from app.core.security import hash_password, create_session_token
 from app.core.config import settings
 from app.core.declaration_test_database import require_disposable_database_settings
-from app.core.db import override_engine
+from app.core.db import override_engine, override_worker_engine
 from app.main import app
 
 # Approval graph fixtures are shared by API and knowledge-search tests. Keep
@@ -80,6 +80,9 @@ def run_migrations():
     # boundary. Discard only these synthetic associations before the full reset.
     import psycopg2
     with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute("""DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='app_worker') THEN
+            CREATE ROLE app_worker LOGIN PASSWORD 'worker_secret' INHERIT NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+            END IF; END $$; GRANT app_rw TO app_worker;""")
         clear_disposable_source_context(cursor)
         cursor.execute("SELECT to_regclass('public.knowledge_budget_policy')")
         if cursor.fetchone()[0]:
@@ -140,7 +143,12 @@ async def inject_test_engine(run_migrations):
         APP_RW_URL, pool_pre_ping=True, pool_size=10, max_overflow=5
     )
     override_engine(_test_app_rw_engine)
+    from sqlalchemy.engine import make_url
+    worker_engine = create_async_engine(make_url(APP_RW_URL).set(username='app_worker',password='worker_secret'), pool_pre_ping=True)
+    override_worker_engine(worker_engine)
     yield
+    await worker_engine.dispose()
+    override_worker_engine(None)
     await _test_app_rw_engine.dispose()
 
 

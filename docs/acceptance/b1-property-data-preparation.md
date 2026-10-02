@@ -862,3 +862,30 @@ multi-connection concurrency cases passed. See [detailed evidence](../2026-10-02
 Source activation is still false. Worker lifecycle integrity, remaining indirect
 source coverage, legacy remediation and activation evidence remain open. B1 and the
 later implementation milestones are not complete.
+
+## Worker runtime and lifecycle commands (0070)
+
+The declaration worker has a separate RLS-constrained login. Web app_rw cannot
+claim work, renew ownership, submit worker state or assume the worker role. Strict
+raw processing state/budget updates are rejected; closed commands enforce current
+queue actor, source permission, lease token/generation/expiry and allowed stages.
+The DB owns scheduling and completion revisions. Runtime and migration checks
+reject unexpected role inheritance, delegate membership and elevated attributes.
+
+Six initial red cases reproduced raw lifecycle forgery. Worker/principal coverage
+passed 50 cases. Expanded pipeline/source/API coverage passed 161 cases; two older
+fixtures needed current actor setup and a later-migration unwind, and their isolated
+rerun passed. Command/strict-pipeline/approval/review/migration coverage passed 120
+cases. The local fake-Docker deployment regression passed with worker/web credential
+separation and the packaged migration head gate. No deployment was performed.
+
+The known NEEDS_REVIEW revision exception remains intentionally visible in a test:
+a raw preparer can increment it without candidate/audit effects. Worker child-row
+fencing and atomic review commands remain follow-up work. Source activation stays
+false and B1 is incomplete. See [worker command design and evidence](../2026-10-02-declaration-worker-commands.md).
+
+The final worker boundary run passed **35 focused cases**, including role graph and
+attribute drift, PostgreSQL 16 inheritance-edge options, strict extraction to review,
+and retained contact privacy checks. Independent review accepted this bounded
+increment with the documented review residual. Rendered Compose also confirms
+that the API receives no worker connection credential.

@@ -38,7 +38,7 @@ async def test_queue_records_triggering_actor_and_replays_without_replacing_it(s
 from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
-from app.core.db import get_tenant_session
+from app.core.db import get_worker_tenant_session as get_tenant_session
 from app.repositories.declaration_import_repo import DeclarationImportRepository, DeclarationPrincipalDenied
 from tests.test_scoped_account_statements import mutate
 from tests.test_declaration_pipeline import _seed_pipeline_import, _RecordingProvider, make_text_pdf

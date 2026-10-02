@@ -54,6 +54,7 @@ write_compose() {
     '      POSTGRES_USER: app_migrator' \
     '      POSTGRES_PASSWORD: integration-only-password' \
     '      APP_RW_PASSWORD: integration-app-password' \
+    '      APP_WORKER_PASSWORD: integration-worker-password' \
     '    volumes:' \
     "      - $init_script:/docker-entrypoint-initdb.d/10-app-rw.sh:ro" \
     '    healthcheck:' \

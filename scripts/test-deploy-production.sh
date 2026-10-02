@@ -198,7 +198,7 @@ if [ "$(basename "$0")" = docker ]; then
           [ "${FAKE_PROVIDER_SMOKE_FAIL:-0}" = 1 ] && exit 99
           exit 0
           ;;
-        *' run '*' alembic current '*) printf '%s\n' '0028 (head)'; exit 0 ;;
+        *' run '*' alembic current '*) printf '%s\n' '0070 (head)'; exit 0 ;;
         *' run '*) exit 0 ;;
         *' exec -T app python -c '*'import json'*)
           python3 -c '
@@ -286,7 +286,7 @@ assert_verifier_label_assertions() {
 
 assert_declaration_worker_runtime() {
   for file in scripts/deploy-production.sh scripts/verify-production.sh; do
-    grep -Fq '0028 (head)' "$file" || fail "$file does not gate on Alembic head 0028"
+    grep -Fq '0070 (head)' "$file" || fail "$file does not gate on Alembic head 0070"
     grep -Fq 'wait_for_health worker' "$file" || fail "$file does not wait for the declaration worker healthcheck"
     grep -Fq 'runtime_service in app worker' "$file" || fail "$file does not validate both runtime services"
   done
@@ -296,6 +296,14 @@ assert_declaration_worker_runtime() {
     fail 'deploy does not fail closed when an enabled declaration import has no provider key'
   grep -Fq 'declaration import is enabled but no OpenAI provider key is configured' scripts/verify-production.sh || \
     fail 'runtime verifier does not fail closed when an enabled declaration import has no provider key'
+}
+
+assert_worker_database_isolation() {
+  worker_block=$(sed -n '/^  worker:/,/^volumes:/p' docker-compose.prod.yml)
+  app_block=$(sed -n '/^  app:/,/^  worker:/p' docker-compose.prod.yml)
+  printf '%s\n' "$worker_block" | grep -Fq 'HV_DATABASE_URL_WORKER: postgresql+asyncpg://app_worker:' || fail 'worker needs its separate database role'
+  if printf '%s\n' "$app_block" | grep -q 'HV_DATABASE_URL_WORKER'; then fail 'web service must not receive worker credentials'; fi
+  if printf '%s\n' "$worker_block" | grep -q 'HV_DATABASE_URL:'; then fail 'worker must not fall back to web credentials'; fi
 }
 
 assert_worker_egress_isolation() {
@@ -399,6 +407,7 @@ assert_admin_password_handling
 assert_verifier_label_assertions
 assert_declaration_worker_runtime
 assert_worker_egress_isolation
+assert_worker_database_isolation
 assert_provider_smoke_gate
 assert_release_replacement_hardening
 admin_password='Alpha"$\;{}[]Pass12'

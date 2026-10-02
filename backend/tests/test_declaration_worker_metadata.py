@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime,timezone
 import pytest
 from sqlalchemy import text
-from app.core.db import get_tenant_session
+from app.core.db import get_worker_tenant_session as get_tenant_session
 from app.repositories.declaration_import_repo import DeclarationImportRepository, DeclarationPrincipalDenied
 from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noqa: F401
 from tests.test_declaration_import_api import isolated_document_store, enable_declaration_imports  # noqa: F401

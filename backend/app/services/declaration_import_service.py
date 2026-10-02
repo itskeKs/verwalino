@@ -223,19 +223,10 @@ class DeclarationImportService:
             return item
         if item.status in {"APPLYING", "APPLIED"}:
             raise HTTPException(status_code=409, detail="IMPORT_CANNOT_BE_CANCELLED")
-        # Fences any worker which observed the former lease before cancellation.
-        item.lease_generation = int(item.lease_generation) + 1
-        item.status = "CANCELLED"
-        item.current_stage = None
-        await self._imports.close_running_runs_for_import(
-            import_id,
-            error_code="IMPORT_CANCELLED",
-            completed_at=datetime.now(timezone.utc),
-        )
-        item.lease_owner = None
-        item.lease_token = None
-        item.lease_expires_at = None
-        await self._session.flush()
+        if not await self._session.scalar(text("SELECT cancel_declaration_work(:org,:job)"),
+            {"org": self._org_id, "job": import_id}):
+            raise HTTPException(status_code=409, detail="IMPORT_CANNOT_BE_CANCELLED")
+        await self._session.refresh(item)
         return item
 
     async def retry(self, import_id: uuid.UUID, key: uuid.UUID) -> DeclarationImport:

@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 import app.declarations.pipeline as pipeline_module
 from tests.declaration_queue_fixture import queue_fixture
 from app.core.config import settings
-from app.core.db import get_tenant_session
+from app.core.db import get_worker_tenant_session as get_tenant_session
 from app.core.storage import compute_sha256
 from app.declarations.pipeline import (
     DeclarationPipeline,
@@ -2406,6 +2406,8 @@ async def test_cancel_closes_running_run_in_same_real_transaction(seed_data) -> 
             )
         )
         await session.flush()
+        from sqlalchemy import text
+        await session.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor':str(seed_data['user_a_admin_id'])})
         await DeclarationImportService(session, lease.organization_id, seed_data["user_a_admin_id"]).cancel(lease.import_id)
     async with get_tenant_session(lease.organization_id) as session:
         item = await session.scalar(select(DeclarationImport).where(DeclarationImport.id == lease.import_id))

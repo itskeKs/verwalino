@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from tests.declaration_queue_fixture import queue_fixture
 from app.core.config import settings
-from app.core.db import get_tenant_session
+from app.core.db import get_worker_tenant_session as get_tenant_session
 from app.models.declaration_import import DeclarationExtractionRun, DeclarationImport
 from app.models.organization import Organization
 from app.repositories.declaration_import_repo import (
@@ -242,7 +242,11 @@ async def test_heartbeat_requires_current_org_token_generation_expiry_and_status
         assert await repo.heartbeat(wrong_org, now + timedelta(seconds=1), 120) is None
         assert await repo.heartbeat(wrong_token, now + timedelta(seconds=1), 120) is None
         assert await repo.heartbeat(wrong_generation, now + timedelta(seconds=1), 120) is None
-        assert await repo.heartbeat(lease, lease.lease_expires_at + timedelta(seconds=1), 120) is None
+        # A caller's future clock cannot expire a live database lease.
+        assert await repo.heartbeat(lease, lease.lease_expires_at + timedelta(seconds=1), 120) is not None
+        from sqlalchemy import text
+        await session.execute(text("UPDATE declaration_import SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=:job"), {'job':item.id})
+        assert await repo.heartbeat(lease, now, 120) is None
         row = await repo.get_by_id_for_update(item.id)
         assert row is not None
         row.status = "FAILED"
@@ -278,7 +282,7 @@ async def test_worker_rotates_organization_start_after_a_successful_claim(seed_d
         assert await DeclarationImportRepository(session, first.organization_id).transition_with_lease(
             first,
             {"QUEUED"},
-            "RETRY_WAIT",
+            "FAILED",
             {"lease_owner": None, "lease_token": None, "lease_expires_at": None},
         )
     second = await worker.claim_one()

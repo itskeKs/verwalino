@@ -5,7 +5,7 @@ from datetime import datetime,timezone
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
-from app.core.db import get_tenant_session
+from app.core.db import get_tenant_session, get_worker_tenant_session
 from tests.test_scoped_account_statements import mutate,client
 from tests.test_financial_scope_boundary import scope_seed,worker_tenant  # noqa: F401
 from tests.test_declaration_import_api import isolated_document_store,enable_declaration_imports  # noqa: F401
@@ -69,7 +69,7 @@ async def test_enforced_queue_checks_creator_and_current_authority_before_replay
             assert queued.status_code==200,queued.text
             await change_mode(scope_seed,'PAUSED')
             assert (await owner.post(f'/api/declaration-imports/{job}/start',headers=key)).status_code==404
-        async with get_tenant_session(ids['org']) as db:
+        async with get_worker_tenant_session(ids['org']) as db:
             assert await DeclarationImportRepository(db,ids['org']).claim_next('source-test',datetime.now(timezone.utc),120) is None
             await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(ids['actor'])})
             row=(await db.execute(text('SELECT status,error_code FROM declaration_import WHERE id=:id'),{'id':uuid.UUID(job)})).one()
@@ -124,7 +124,7 @@ async def test_claim_uses_receipt_actor_not_privileged_process_actor(scope_seed,
             assert (await api.post(f"/api/property-data-domains/{source['domain']}/grants/{source['uploader_grant']}/revoke")).status_code==204
         await mutate(text("CREATE POLICY test_source_gate ON declaration_import AS RESTRICTIVE FOR SELECT USING(property_source_permitted(organization_id,'declaration_import',id,'read'))"),{})
         try:
-            async with get_tenant_session(ids['org']) as db:
+            async with get_worker_tenant_session(ids['org']) as db:
                 await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(scope_seed['user_a_clerk_id'])})
                 assert await DeclarationImportRepository(db,ids['org']).claim_next('source-test',datetime.now(timezone.utc),120) is None
             async with get_tenant_session(ids['org']) as db:
@@ -156,7 +156,7 @@ async def test_paused_worker_durably_cancels_every_phase_without_source_visibili
         await mutate(text("CREATE POLICY test_source_gate ON declaration_import AS RESTRICTIVE FOR SELECT USING(property_source_permitted(organization_id,'declaration_import',id,'prepare'))"),{})
         try:
             if phase=='heartbeat':
-                async with get_tenant_session(lease.organization_id) as db:
+                async with get_worker_tenant_session(lease.organization_id) as db:
                     result=await DeclarationImportRepository(db,lease.organization_id).heartbeat(lease,datetime.now(timezone.utc),120)
                     assert isinstance(result,DeclarationPrincipalDenied)
             else:
@@ -225,6 +225,8 @@ async def test_state_migration_preserves_evidence_and_roundtrips_empty(scope_see
                 nested=db.begin_nested()
                 try:
                     db.execute(text('TRUNCATE property_source_security'))
+                    db.execute(text('TRUNCATE person CASCADE'))
+                    importlib.import_module('migrations.versions.0069_person_source_access').downgrade()
                     importlib.import_module('migrations.versions.0054_knowledge_source_security').downgrade()
                     migration.downgrade()
                     assert db.scalar(text("SELECT to_regclass('property_source_security')")) is None
@@ -263,14 +265,14 @@ async def test_clerk_state_lookup_and_queue_never_fall_back_to_preparation(scope
         async with client(ids,'actor') as api:
             response=await api.post(f'/api/declaration-imports/{job}/start',headers={'Idempotency-Key':str(uuid.uuid4())})
             assert response.status_code==200,response.text
-        async with get_tenant_session(ids['org']) as db:
+        async with get_worker_tenant_session(ids['org']) as db:
             # Worker has no current actor until the immutable receipt is resolved.
             assert await db.scalar(text('SELECT property_source_security_mode(:org)'),ids)=='ENFORCED'
             lease=await DeclarationImportRepository(db,ids['org']).claim_next('clerk-source',datetime.now(timezone.utc),120)
             assert str(lease.import_id)==job
             assert await db.scalar(text("SELECT current_setting('app.current_user_id')"))==str(ids['actor'])
         await change_mode(scope_seed,'PAUSED')
-        async with get_tenant_session(ids['org']) as db:
+        async with get_worker_tenant_session(ids['org']) as db:
             await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(ids['actor'])})
             assert await db.scalar(text('SELECT property_source_security_mode(:org)'),ids)=='PAUSED'
             assert isinstance(await DeclarationImportRepository(db,ids['org']).heartbeat(lease,datetime.now(timezone.utc),120),DeclarationPrincipalDenied)

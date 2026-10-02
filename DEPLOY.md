@@ -36,7 +36,7 @@ install -d -m 700 "$root" "$root/releases" "$root/shared"
 install -m 600 .env.example "$root/shared/.env"
 ```
 
-Generate the three database/session values without entering a cleartext secret
+Generate the four database/session values without entering a cleartext secret
 in shell history. The values exist only in the current shell and the mode-0600
 environment file; unset them immediately afterwards. This rewrites the blank
 placeholders instead of appending duplicate dotenv keys.
@@ -44,12 +44,14 @@ placeholders instead of appending duplicate dotenv keys.
 ```sh
 migrator_password=$(openssl rand -hex 32)
 app_rw_password=$(openssl rand -hex 32)
+app_worker_password=$(openssl rand -hex 32)
 session_secret=$(openssl rand -hex 32)
 tmp_env=$(mktemp "$root/shared/.env.XXXXXX")
 chmod 600 "$tmp_env"
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
     MIGRATOR_PASSWORD=) printf 'MIGRATOR_PASSWORD=%s\n' "$migrator_password" ;;
+    APP_WORKER_PASSWORD=) printf 'APP_WORKER_PASSWORD=%s\n' "$app_worker_password" ;;
     APP_RW_PASSWORD=) printf 'APP_RW_PASSWORD=%s\n' "$app_rw_password" ;;
     SESSION_SECRET=) printf 'SESSION_SECRET=%s\n' "$session_secret" ;;
     FORWARDED_ALLOW_IPS=*) printf 'FORWARDED_ALLOW_IPS=172.21.0.0/16\n' ;;
@@ -57,7 +59,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   esac
 done < "$root/shared/.env" > "$tmp_env"
 mv -f "$tmp_env" "$root/shared/.env"
-unset migrator_password app_rw_password session_secret
+unset migrator_password app_rw_password app_worker_password session_secret
 ```
 
 Leave `APP_IMAGE=` blank in that file for the host-build flow. The helper
@@ -168,7 +170,7 @@ remain unchanged. After Docker health reports ready, it also waits until the
 unprivileged `app_rw` role can connect as an additional database completion
 gate.
 It then uses the fixed order `db → migrate → bootstrap → app → worker`, waits
-for both runtime health checks, requires exactly Alembic head `0028 (head)`,
+for both runtime health checks, requires exactly Alembic head `0070 (head)`,
 and runs each one-shot `migrate`/`bootstrap` Compose command with `--no-deps`,
 so that command cannot re-evaluate, create, or replace the already verified
 PostgreSQL service. It then verifies per-release ownership labels, Docker image IDs, closed host ports,
@@ -231,3 +233,22 @@ helper only through standard input, never archive content or command
 arguments. CI first requires successful image build, Trivy scan and isolated
 container smoke; the remote helper repeats its host-build scan and full public
 smoke before promotion.
+
+
+### Worker role prerequisite for migration 0070
+
+Provision the separate `app_worker` login before upgrading an existing database.
+Fresh volumes use the reviewed `infra/db/prod-init.sh`; existing volumes do not
+rerun initialization automatically. Use that idempotent role provisioning script
+with the protected `APP_WORKER_PASSWORD` supplied only to the database service.
+Do not reset a populated volume, copy web credentials, or grant `app_worker` to
+`app_rw`. Migration refuses a missing/privileged worker role or reverse membership.
+This procedure requires the separately authorized deployment window.
+
+The worker receives only `HV_DATABASE_URL_WORKER` for its runtime connection and
+verifies that the current role is `app_worker`, without superuser, BYPASSRLS or
+CREATEROLE. The web service continues with `app_rw` and receives no worker URL.
+A missing worker URL fails startup; there is no fallback. Both roles remain subject
+to tenant/source RLS. Only the worker can claim, renew and transition extraction
+leases. After migration, retain this role separation during rollback and pause
+workers before credential rotation. Source enforcement itself remains disabled.

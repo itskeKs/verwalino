@@ -24,7 +24,7 @@ from typing import Any, Callable, Generic, Sequence, TypeVar
 from sqlalchemy import select
 
 from app.core.config import Settings, settings
-from app.core.db import get_tenant_session
+from app.core.db import get_worker_tenant_session
 from app.core.storage import DocumentStore, get_store
 from app.declarations.batching import PageBatch, PageBatcher
 from app.declarations.evidence import EvidenceTextIndex
@@ -242,7 +242,7 @@ class DeclarationPipeline:
         store: DocumentStore | None = None,
         preflight: PdfPreflight | None = None,
         configured: Settings = settings,
-        tenant_session_factory: Callable[[uuid.UUID], AbstractAsyncContextManager] = get_tenant_session,
+        tenant_session_factory: Callable[[uuid.UUID], AbstractAsyncContextManager] = get_worker_tenant_session,
     ) -> None:
         self._provider = provider
         self._store = store or get_store()
@@ -1083,7 +1083,7 @@ class DeclarationPipeline:
                     "output_tokens": ledger.output_tokens,
                     "estimated_cost_usd": ledger.cost_usd,
                     "attempt_count": ledger.attempts,
-                    "draft_revision": DeclarationImport.draft_revision + 1,
+                    "advance_revision": True,
                     "lease_owner": None,
                     "lease_token": None,
                     "lease_expires_at": None,

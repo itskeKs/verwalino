@@ -22,7 +22,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, settings
-from app.core.db import get_tenant_session, get_unscoped_session
+from app.core.db import get_worker_tenant_session, get_worker_unscoped_session
 from app.models.organization import Organization
 from app.repositories.declaration_import_repo import (
     DeclarationImportRepository,
@@ -54,10 +54,10 @@ class DeclarationImportWorker:
         configured: Settings = settings,
         tenant_session_factory: Callable[
             [uuid.UUID], AbstractAsyncContextManager[AsyncSession]
-        ] = get_tenant_session,
+        ] = get_worker_tenant_session,
         unscoped_session_factory: Callable[
             [], AbstractAsyncContextManager[AsyncSession]
-        ] = get_unscoped_session,
+        ] = get_worker_unscoped_session,
         clock: Callable[[], datetime] | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         heartbeat_seconds: float | None = None,
@@ -78,8 +78,8 @@ class DeclarationImportWorker:
 
     def _validate_settings(self, heartbeat_seconds: float | None) -> None:
         worker_id = self._settings.declaration_worker_id
-        if not isinstance(worker_id, str) or not worker_id.strip():
-            raise ValueError("declaration_worker_id must be nonblank")
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id)>120:
+            raise ValueError("declaration_worker_id must be nonblank and at most 120 characters")
         poll = self._settings.declaration_worker_poll_seconds
         if (
             isinstance(poll, bool)
@@ -89,8 +89,8 @@ class DeclarationImportWorker:
         ):
             raise ValueError("declaration_worker_poll_seconds must be finite and positive")
         lease = self._settings.declaration_lease_seconds
-        if isinstance(lease, bool) or not isinstance(lease, int) or lease < 30:
-            raise ValueError("declaration_lease_seconds must be an integer of at least 30")
+        if isinstance(lease, bool) or not isinstance(lease, int) or not 30 <= lease <= 3600:
+            raise ValueError("declaration_lease_seconds must be an integer between 30 and 3600")
         attempts = self._settings.declaration_max_attempts
         if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts <= 0:
             raise ValueError("declaration_max_attempts must be a positive integer")
@@ -127,6 +127,10 @@ class DeclarationImportWorker:
             return bool(await session.scalar(text("""
                 SELECT to_regprocedure('public.next_declaration_queue_metadata(uuid,timestamp with time zone)') IS NOT NULL
                    AND to_regprocedure('public.lock_declaration_lease_metadata(uuid,uuid,uuid,bigint,uuid,text[])') IS NOT NULL
+                   AND to_regprocedure('public.claim_declaration_work(uuid,text,integer)') IS NOT NULL
+                   AND to_regprocedure('public.renew_declaration_work(uuid,uuid,uuid,bigint,uuid,integer)') IS NOT NULL
+                   AND to_regprocedure('public.transition_declaration_work(uuid,uuid,uuid,bigint,uuid,text[],text,jsonb)') IS NOT NULL
+                   AND to_regprocedure('public.cancel_declaration_work(uuid,uuid)') IS NOT NULL
                    AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute
                        WHERE attrelid=to_regclass('public.declaration_candidate_evidence')
                          AND attname='import_id' AND attnum>0 AND NOT attisdropped AND attnotnull)
@@ -296,7 +300,7 @@ async def run_healthcheck(
     configured: Settings = settings,
     unscoped_session_factory: Callable[
         [], AbstractAsyncContextManager[AsyncSession]
-    ] = get_unscoped_session,
+    ] = get_worker_unscoped_session,
     binary_finder: Callable[[str], str | None] = shutil.which,
     command_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     random_name: Callable[[], str] = lambda: secrets.token_hex(16),

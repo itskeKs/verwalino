@@ -395,3 +395,29 @@ checks must join queue-principal resolution before that later activation. Do not
 remove the source-query policy to make an actorless worker find jobs. Downgrade
 removes only the two scheduling helpers and preserves all queue and source data;
 updated workers will report schema-not-ready until the helpers are restored.
+
+## Database worker commands (0070)
+
+Declaration workers require their own `app_worker` connection through
+`HV_DATABASE_URL_WORKER`. There is no fallback to the web URL. Provision the login
+before migration; fresh development/production bootstrap scripts include it. For
+an existing production volume use the separately authorized procedure in DEPLOY.md.
+Never reset a populated volume to rerun init scripts. The web container must not
+receive the worker credential.
+
+`app_worker` inherits only `app_rw` and has no member roles. Neither runtime role
+may have superuser, BYPASSRLS, CREATEROLE, CREATEDB or REPLICATION. Worker sessions
+validate the role and membership graph; losing inheritance also fails validation.
+Claim/renew/transition are worker-only database commands. Manual cancellation
+remains a current-user prepare operation. Lease duration is 30–3600 seconds and
+database time owns expiry/scheduling. An old token cannot renew or complete work.
+
+Strict processing state and maximum budget cannot be changed with raw runtime SQL.
+Reclaim closes abandoned attempts and installs a new fence. Reservation/accounting
+corrections remain part of the trusted pipeline; recorded overrun evidence must not
+be dropped merely because it exceeds a configured prospective budget.
+
+The existing NEEDS_REVIEW revision increment is still a compatibility exception,
+not proof that candidate review and audit happened atomically. Worker child-row
+and review-effect command closure remain required before source activation. Do not
+infer B1 completion from the accepted lifecycle-command increment.

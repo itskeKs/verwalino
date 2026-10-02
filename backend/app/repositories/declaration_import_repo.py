@@ -1,11 +1,12 @@
 """Tenant-scoped persistence for declaration import drafts and links."""
 
+import json
 import uuid
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Sequence
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.declaration_import import (
@@ -62,54 +63,13 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
         lease_seconds: int,
     ) -> WorkerLease | None:
         """Claim one due import using a tenant-local, fenced short transaction."""
-        await self.lock_acl()
-        # Scheduling metadata deliberately excludes original/draft payloads.
-        # The helper locks one candidate even when source RLS requires an actor.
-        candidate = (await self._session.execute(text("SELECT * FROM next_declaration_queue_metadata(:org,:now)"),
-            {"org": self._org_id, "now": now})).mappings().first()
-        if candidate is None:
+        # `now` is retained for caller compatibility; the database owns time.
+        row = (await self._session.execute(text("SELECT * FROM claim_declaration_work(:org,:worker,:seconds)"),
+            {"org": self._org_id, "worker": worker_id, "seconds": lease_seconds})).mappings().first()
+        if row is None:
             return None
-        if not await self._set_queue_actor(candidate['import_id'], candidate['queue_request_id']):
-            await self._session.execute(text("SELECT cancel_unauthorized_declaration(:org,:job,:request,:generation,:token)"),
-                {"org": self._org_id, "job": candidate['import_id'], "request": candidate['queue_request_id'],
-                 "generation": candidate['lease_generation'], "token": candidate['lease_token']})
-            return None
-        item = await self._session.scalar(self._base_query().where(DeclarationImport.id == candidate['import_id']))
-        if item is None:
-            # A source policy can withhold the row even from a live writer.
-            # The gate-aware queue resolver checks immutable-actor authority;
-            # a stricter source policy still cannot be bypassed to load payloads.
-            return None
-        active_statuses = {"PREFLIGHT", "EXTRACTING", "RECONCILING"}
-        if item.status in active_statuses:
-            await self.close_running_runs_for_import(
-                item.id,
-                error_code="WORKER_LEASE_EXPIRED",
-                completed_at=now,
-            )
-            # A partial pass must restart through the pipeline's preflight entry
-            # state; preserving an old intermediate status is unsafe.
-            item.status = "RETRY_WAIT"
-            item.current_stage = "retry_wait"
-            item.next_attempt_at = None
-            item.error_code = "WORKER_LEASE_EXPIRED"
-            item.error_message = "WORKER_LEASE_EXPIRED"
-
-        token = uuid.uuid4()
-        expires_at = now + timedelta(seconds=lease_seconds)
-        item.lease_generation = int(item.lease_generation) + 1
-        item.lease_owner = worker_id
-        item.lease_token = token
-        item.lease_expires_at = expires_at
-        await self._session.flush()
-        return WorkerLease(
-            organization_id=self._org_id,
-            import_id=item.id,
-            lease_generation=item.lease_generation,
-            lease_token=token,
-            lease_expires_at=expires_at,
-            queue_request_id=item.queue_request_id,
-        )
+        return WorkerLease(self._org_id, row['import_id'], row['lease_generation'], row['lease_token'],
+            row['lease_expires_at'], row['queue_request_id'])
 
     async def heartbeat(
         self,
@@ -118,17 +78,15 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
         lease_seconds: int,
     ) -> WorkerLease | DeclarationPrincipalDenied | None:
         """Recheck principal and renew a live fence; denial commits cancellation."""
-        try:
-            item = await self.lock_current_lease(lease, {"QUEUED", "RETRY_WAIT", "PREFLIGHT", "EXTRACTING", "RECONCILING"})
-        except DeclarationPrincipalDenied:
+        if lease.organization_id != self._org_id:
+            return None
+        expiry = await self._session.scalar(text("SELECT renew_declaration_work(:org,:job,:request,:generation,:token,:seconds)"),
+            {"org": self._org_id, "job": lease.import_id, "request": lease.queue_request_id,
+             "generation": lease.lease_generation, "token": lease.lease_token, "seconds": lease_seconds})
+        if expiry is None:
             cancelled = await self.cancel_unauthorized(lease)
             return DeclarationPrincipalDenied() if cancelled else None
-        if item is None or item.lease_expires_at <= now:
-            return None
-        expires_at = now + timedelta(seconds=lease_seconds)
-        item.lease_expires_at = expires_at
-        await self._session.flush()
-        return replace(lease, lease_expires_at=expires_at)
+        return replace(lease, lease_expires_at=expiry)
 
     async def count_extraction_runs(self, import_id: uuid.UUID) -> int:
         """Return the tenant-local worker retry history, never provider usage."""
@@ -386,7 +344,7 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
             return False
         if not expected_statuses:
             raise ValueError("expected_statuses must not be empty")
-        forbidden = {"id", "organization_id", "status", "lease_generation", "queue_request_id", "initiated_by"}
+        forbidden = {"id", "organization_id", "status", "lease_generation", "queue_request_id", "initiated_by", "draft_revision"}
         if forbidden.intersection(values):
             raise ValueError("values may not override identity, status, or lease generation")
         # A caller may only clear the three lease ownership values together;
@@ -400,17 +358,8 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
             raise ValueError("lease values may only be cleared together")
         if await self.lock_current_lease(lease, expected_statuses) is None:
             return False
-        next_values = dict(values)
-        next_values["status"] = new_status
-        result = await self._session.execute(
-            update(DeclarationImport)
-            .where(DeclarationImport.organization_id == self._org_id)
-            .where(DeclarationImport.id == lease.import_id)
-            .where(DeclarationImport.lease_generation == lease.lease_generation)
-            .where(DeclarationImport.lease_token == lease.lease_token)
-            .where(DeclarationImport.lease_expires_at.is_not(None))
-            .where(DeclarationImport.lease_expires_at > func.clock_timestamp())
-            .where(DeclarationImport.status.in_(expected_statuses))
-            .values(**next_values)
-        )
-        return result.rowcount == 1
+        return bool(await self._session.scalar(text(
+            "SELECT transition_declaration_work(:org,:job,:request,:generation,:token,CAST(:expected AS text[]),:target,CAST(:patch AS jsonb))"),
+            {"org": self._org_id, "job": lease.import_id, "request": lease.queue_request_id,
+             "generation": lease.lease_generation, "token": lease.lease_token, "expected": sorted(expected_statuses),
+             "target": new_status, "patch": json.dumps(values, default=str)}))

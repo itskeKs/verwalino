@@ -13,6 +13,7 @@ services:
       POSTGRES_USER: app_migrator
       POSTGRES_PASSWORD: ${MIGRATOR_PASSWORD:?set MIGRATOR_PASSWORD in the protected env file or invoking environment}
       APP_RW_PASSWORD: ${APP_RW_PASSWORD:?set APP_RW_PASSWORD in the protected env file or invoking environment}
+      APP_WORKER_PASSWORD: ${APP_WORKER_PASSWORD:?set APP_WORKER_PASSWORD in the protected env file or invoking environment}
     volumes:
       - pgdata:/var/lib/postgresql/data
       # Deployments install this reviewed script at a stable shared-host path.
@@ -198,7 +199,7 @@ services:
       app:
         condition: service_healthy
     environment:
-      HV_DATABASE_URL: postgresql+asyncpg://app_rw:${APP_RW_PASSWORD}@db:5432/hausverwaltung
+      HV_DATABASE_URL_WORKER: postgresql+asyncpg://app_worker:${APP_WORKER_PASSWORD}@db:5432/hausverwaltung
       HV_OPENAI_API_KEY: ${HV_OPENAI_API_KEY:-}
       HV_DOCUMENT_STORAGE_ROOT: /data/documents
       HV_DATA_REGION: ${HV_DATA_REGION:-EU}

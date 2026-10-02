@@ -149,8 +149,8 @@ wait_for_health db
 wait_for_database_role
 compose --profile ops run --rm --no-deps migrate
 migration_state=$(compose --profile ops run --rm --no-deps migrate alembic current)
-[ "$migration_state" = '0028 (head)' ] || {
-  echo "migration state is not exactly 0028 (head)" >&2
+[ "$migration_state" = '0070 (head)' ] || {
+  echo "migration state is not exactly 0070 (head)" >&2
   exit 1
 }
 compose up -d app
@@ -237,6 +237,10 @@ else:
 
 assert_runtime_db_role() {
   runtime_service=$1
+  case "$runtime_service" in
+    app) runtime_url_key=HV_DATABASE_URL; runtime_role=app_rw ;;
+    worker) runtime_url_key=HV_DATABASE_URL_WORKER; runtime_role=app_worker ;;
+  esac
   compose exec -T "$runtime_service" python -c "
 import asyncio
 import os
@@ -244,10 +248,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 async def main():
-    engine = create_async_engine(os.environ['HV_DATABASE_URL'])
+    engine = create_async_engine(os.environ['$runtime_url_key'])
     try:
         async with engine.connect() as connection:
-            assert await connection.scalar(text('SELECT current_user')) == 'app_rw'
+            assert await connection.scalar(text('SELECT current_user')) == '$runtime_role'
     finally:
         await engine.dispose()
 

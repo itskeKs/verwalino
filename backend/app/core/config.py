@@ -12,6 +12,9 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://app_rw:app_secret@localhost:5433/hausverwaltung"
     )
 
+    # Required only for the declaration worker; never fall back to web credentials.
+    database_url_worker: SecretStr | None = None
+
     # --- Database (migrator role -- owns tables, runs DDL) ---
     database_url_migrator: str = (
         "postgresql+asyncpg://app_migrator:migrator_secret@localhost:5433/hausverwaltung"
