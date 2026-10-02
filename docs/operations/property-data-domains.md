@@ -48,3 +48,13 @@ worker, audit, privacy-export and indirect-view coverage is required before a
 future activation operation can be offered; see the property-data-domain design.
 Populated downgrade refuses to erase prepared evidence. Repair forward. No live
 provider or production activation is included.
+
+Migration 0047 makes property/source row identity, creator and parent context
+immutable before policy activation. An import's mode and target cannot be edited;
+create a separate explicitly reviewed import for a different destination. An
+applied import retains its original destination and approval receipt. Historical
+null uploaders are not inferred from queue actors or approvers. This prerequisite
+does not enable source permissions and does not certify cross-link consistency.
+A populated downgrade refuses to remove these guards. Pause the relevant writers
+and forward-repair through a reviewed migration; do not drop triggers to perform
+an operational reparenting. Original bytes and source evidence remain preserved.

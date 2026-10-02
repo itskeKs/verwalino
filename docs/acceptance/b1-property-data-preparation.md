@@ -58,3 +58,39 @@ an otherwise live writer must not bypass a source policy. The metadata helper
 retains the existing trusted worker-clock due-selection input; durable effects
 remain fenced using the database clock. Startup now requires both metadata helper
 functions as well as lease/principal columns.
+
+## Immutable source origins (0047)
+
+Before enabling property-data authorization, migration 0047 freezes row identity,
+organization and creation time for Property, Unit, property documents, imports,
+import/document links, candidates, evidence, issues and extraction runs. It also
+freezes their existing creator/parent relationships. Import mode and target cannot
+be rewritten; unknown historical uploaders remain unknown. Document publication
+retains its existing one-way unassigned-to-property binding. Applied imports keep
+their destination, approver, approval time, status and idempotent result; an
+existing-property import must publish to its declared target.
+
+This adds no read-policy activation, creator backfill or inferred grant. Parent
+immutability does not prove that all historical/new links are mutually coherent;
+complete graph classification, insertion authorization, destination publication,
+worker and audit/export closure remain required. Existing immutable derived-fact
+and rule guards and column-limited relation grants are retained.
+
+Evidence at base `7b80693` plus this increment: two initial uploader cases failed
+(the known-uploader case reached its existing FK; the valid unknown-to-known
+assignment was allowed). **39 source-context and job-principal cases passed** on
+the disposable PostgreSQL 16 database through `app_rw`. Coverage includes direct
+reparenting attempts, ordinary metadata updates, unknown historical creators,
+one-time document binding, frozen applied receipts and wrong-target publication.
+A migrator-only nested transaction proves populated downgrade refusal and empty
+schema downgrade/re-upgrade without removing committed source evidence. The test
+harness clears only its guarded disposable data before a full schema reset.
+
+The broader pipeline/review/new-property approval/existing-property approval/import
+API run passed **221 cases**. Its one historical migration rehearsal initially
+failed on the deliberately populated downgrade guard. The fixture now clears its
+disposable source rows before its destructive setup and round-trips only 0024/0025
+before restoring head. That case passed after repair; **25 source-context cases**
+also passed on the final production code. The unchanged 221 passing cases and 14
+principal cases were reused. Independent read-only review accepted the increment.
+No UI or provider behavior changed; no browser or live-provider run is claimed.

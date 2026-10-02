@@ -313,6 +313,11 @@ def test_0024_to_0025_backfills_legacy_applied_imports(seed_data) -> None:
     database_at_head = True
 
     try:
+        # This test already destroys later schemas. Clear synthetic source rows
+        # before crossing the populated-origin rollback guard, not its trigger.
+        from tests.conftest import clear_disposable_source_context
+        with psycopg2.connect(sync_url) as connection, connection.cursor() as cursor:
+            clear_disposable_source_context(cursor)
         command.downgrade(config, "0024")
         database_at_head = False
         with psycopg2.connect(sync_url) as connection:
@@ -425,8 +430,9 @@ def test_0024_to_0025_backfills_legacy_applied_imports(seed_data) -> None:
                 )
                 assert cursor.fetchone() == ("APPLIED", str(property_id))
 
-        command.upgrade(config, "head")
-        database_at_head = True
+        # Rehearse only the historical migration under test; later populated
+        # security boundaries deliberately reject this backward round-trip.
+        command.upgrade(config, "0025")
         with psycopg2.connect(sync_url) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(

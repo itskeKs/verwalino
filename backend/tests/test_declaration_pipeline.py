@@ -1415,6 +1415,8 @@ async def _seed_pipeline_import(
     *,
     organization_id: uuid.UUID | None = None,
     status: str = "QUEUED",
+    mode: str = "NEW_PROPERTY",
+    target_property_id: uuid.UUID | None = None,
 ) -> tuple[WorkerLease, str, _MemoryStore]:
     org_id = organization_id or seed_data["org_a_id"]
     initiated_by = (
@@ -1429,7 +1431,8 @@ async def _seed_pipeline_import(
             DeclarationImport(
                 id=import_id,
                 organization_id=org_id,
-                mode="NEW_PROPERTY",
+                mode=mode,
+                target_property_id=target_property_id,
                 status="DRAFT",
                 initiated_by=initiated_by,
                 max_cost_usd=Decimal("1"),

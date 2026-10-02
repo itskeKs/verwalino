@@ -80,14 +80,15 @@ async def test_claim_cancels_revoked_queue_principal(scope_seed, migrator_sessio
 async def test_pipeline_durably_cancels_after_revocation(scope_seed, migrator_session, phase):
     await migrator_session.commit()
     seed = {**scope_seed, 'user_a_admin_id': scope_seed['user_a_clerk_id']}
-    lease, key, store = await _seed_pipeline_import(seed, make_text_pdf('Synthetic declaration'))
-    ids = {'org': lease.organization_id, 'actor': seed['user_a_admin_id']}
+    ids = {'org': seed['org_a_id'], 'actor': seed['user_a_admin_id']}
+    target = None
     if phase == 'convert':
         async with client(ids, 'actor') as api:
             created = await api.post('/api/properties', json={'name':'Synthetic existing target', 'management_type':'WEG'})
             assert created.status_code == 201
-        await mutate(text("UPDATE declaration_import SET mode='EXISTING_PROPERTY',target_property_id=:property WHERE id=:job"),
-            {'property':uuid.UUID(created.json()['id']), 'job':lease.import_id})
+        target = uuid.UUID(created.json()['id'])
+    lease, key, store = await _seed_pipeline_import(seed, make_text_pdf('Synthetic declaration'),
+        mode='EXISTING_PROPERTY' if target else 'NEW_PROPERTY', target_property_id=target)
     reads = []
     original_get = store.get
     def observed_get(path):
