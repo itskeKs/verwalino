@@ -70,6 +70,9 @@ def run_migrations():
     # boundary. Discard only these synthetic associations before the full reset.
     import psycopg2
     with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT to_regclass('public.declaration_queue_request')")
+        if cursor.fetchone()[0] is not None:
+            cursor.execute("TRUNCATE public.declaration_queue_request CASCADE")
         cursor.execute("SELECT to_regclass('public.mandate_document')")
         if cursor.fetchone()[0] is not None:
             cursor.execute("TRUNCATE public.mandate_document")

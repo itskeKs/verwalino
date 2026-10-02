@@ -319,3 +319,35 @@ docker compose -p hv-declaration-tests -f infra/docker-compose.declaration-test.
 
 Echte Nutzer-PDFs, Manifestdaten, API-Schlüssel und Provider-Payloads bleiben
 außerhalb von Git, Test-Fixtures, Reports, Logs und Tickets.
+
+## Explicit queue principals (migration 0043)
+
+New start/retry commands require a UUID `Idempotency-Key`. Keep the key when a
+response is lost. An identical replay returns its `command_receipt_id` alongside
+the current `queue_request_id` and import state; it never queues work again or
+replaces a later principal. A fresh command against active work conflicts. The
+UI retains its command key across request failures. Queue history is immutable
+and tenant-safe; `initiated_by` remains the original draft creator.
+
+Workers resolve the triggering actor from the current receipt, then check active
+writer membership under the shared ACL lock before claiming, heartbeat, source
+reads, target-data reads, budget reservation/checkpoint and publication. Lease
+recovery retains that receipt. Unknown old queue principals are not guessed from
+the creator: they are cancelled as `JOB_PRINCIPAL_UNVERIFIED`. A revoked,
+deactivated or non-writer actor causes `JOB_PERMISSION_CHANGED`. A currently
+authorized writer can explicitly retry these permission cancellations with a new
+key; ordinary user cancellation remains terminal. Run budgets still apply.
+
+Cancellation commits separately from the failed effect transaction, fences stale
+workers, closes running extraction records, and preserves source originals and
+persisted budget reservations. Both pipeline- and heartbeat-origin cancellation
+are reported as permission changes. Already-dispatched provider work cannot be
+recalled; its output cannot publish after revocation. No database transaction is
+held across PDF parsing, OCR or provider I/O. Populated downgrade refuses to erase
+queue history; repair forward. Worker readiness requires the new queue column.
+
+This is an organization-level live-principal prerequisite. It does not grant a
+property-source or accounting-scope entitlement, automatically classify old
+sources, activate live providers or satisfy the full B1 rollout gate. Browser
+acceptance uses synthetic local originals and the production cancellation helper
+against the guarded disposable database; it does not run a live provider.

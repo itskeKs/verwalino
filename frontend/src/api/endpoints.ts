@@ -192,8 +192,8 @@ export function updateDeclarationDocument(
   );
 }
 
-export function startDeclarationImport(importId: string): Promise<DeclarationImport> {
-  return api.post<DeclarationImport>(`/api/declaration-imports/${importId}/start`);
+export function startDeclarationImport(importId: string, requestKey: string): Promise<DeclarationImport> {
+  return api.post<DeclarationImport>(`/api/declaration-imports/${importId}/start`, undefined, { headers: { "Idempotency-Key": requestKey } });
 }
 
 export function getDeclarationImport(importId: string): Promise<DeclarationImport> {
@@ -236,8 +236,8 @@ export function approveDeclarationImport(
   return api.post<ApprovalResult>(`/api/declaration-imports/${importId}/approve`, body);
 }
 
-export function retryDeclarationImport(importId: string): Promise<DeclarationImport> {
-  return api.post<DeclarationImport>(`/api/declaration-imports/${importId}/retry`);
+export function retryDeclarationImport(importId: string, requestKey: string): Promise<DeclarationImport> {
+  return api.post<DeclarationImport>(`/api/declaration-imports/${importId}/retry`, undefined, { headers: { "Idempotency-Key": requestKey } });
 }
 
 export function cancelDeclarationImport(importId: string): Promise<DeclarationImport> {

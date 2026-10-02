@@ -59,6 +59,7 @@ class DeclarationImport(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         UUID(as_uuid=True),
         nullable=False,
     )
+    queue_request_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     approved_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         nullable=True,
@@ -95,6 +96,11 @@ class DeclarationImport(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __table_args__ = (
         UniqueConstraint("organization_id", "id", name="uq_declaration_import_organization_id_id"),
+        ForeignKeyConstraint(
+            ["organization_id", "id", "queue_request_id"],
+            ["declaration_queue_request.organization_id", "declaration_queue_request.import_id", "declaration_queue_request.id"],
+            name="fk_declaration_current_queue", use_alter=True,
+        ),
         ForeignKeyConstraint(
             ["organization_id", "target_property_id"],
             ["property.organization_id", "property.id"],
@@ -258,4 +264,28 @@ class DeclarationImportPass(Base, UUIDPrimaryKeyMixin):
             "declaration_import_pass_safe_metadata_is_valid(safe_metadata, attempt_no)",
             name="ck_declaration_import_pass_safe_metadata",
         ),
+    )
+
+
+class DeclarationQueueRequest(Base, UUIDPrimaryKeyMixin):
+    """Append-only queue command evidence; written through the database command."""
+    __tablename__ = "declaration_queue_request"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organization.id"), nullable=False)
+    import_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    request_key: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    operation: Mapped[str] = mapped_column(Text, nullable=False)
+    previous_request_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.clock_timestamp())
+
+    __table_args__ = (
+        UniqueConstraint("organization_id", "import_id", "id"),
+        UniqueConstraint("organization_id", "import_id", "request_key"),
+        UniqueConstraint("organization_id", "import_id", "previous_request_id", postgresql_nulls_not_distinct=True),
+        ForeignKeyConstraint(["organization_id", "import_id"], ["declaration_import.organization_id", "declaration_import.id"]),
+        ForeignKeyConstraint(["organization_id", "actor_user_id"], ["user.organization_id", "user.id"]),
+        ForeignKeyConstraint(["organization_id", "import_id", "previous_request_id"],
+            ["declaration_queue_request.organization_id", "declaration_queue_request.import_id", "declaration_queue_request.id"]),
+        CheckConstraint("operation IN ('START','RETRY')", name="declaration_queue_operation"),
     )

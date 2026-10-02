@@ -152,6 +152,8 @@ export type DeclarationImportStatus =
   | "CANCELLED";
 
 export interface DeclarationImport {
+  queue_request_id?: string | null;
+  command_receipt_id?: string | null;
   id: string;
   mode: DeclarationImportMode;
   target_property_id: string | null;

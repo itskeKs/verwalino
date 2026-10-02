@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ReactNode } from "react";
 import * as declarationApi from "../api/endpoints";
-import type { DeclarationImport, Property, Unit } from "../api/types";
+import type { DeclarationDocument, DeclarationImport, Property, Unit } from "../api/types";
 import { DeclarationImportPage } from "./DeclarationImportPage";
 import { PropertiesPage } from "./PropertiesPage";
 import { PropertyDetailPage } from "./PropertyDetailPage";
@@ -281,6 +281,9 @@ describe("Teilungserklärung upload wizard", () => {
   });
 
   it("uploads multiple PDFs, lets their metadata be changed, and gates start", async () => {
+    vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(pendingImport());
+    vi.spyOn(declarationApi, "listDeclarationDocuments").mockResolvedValue([]);
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
     vi.spyOn(declarationApi, "createDeclarationImport").mockResolvedValue(pendingImport());
     const uploadSpy = vi.spyOn(declarationApi, "uploadDeclarationDocument")
       .mockResolvedValueOnce({
@@ -303,6 +306,7 @@ describe("Teilungserklärung upload wizard", () => {
     const input = await screen.findByLabelText("PDF-Dateien auswählen");
 
     expect(screen.getByRole("button", { name: "Import starten" })).toBeDisabled();
+    await waitFor(() => expect(input).toBeEnabled());
     fireEvent.change(input, {
       target: { files: [
         new File(["%PDF"], "eins.pdf", { type: "application/pdf" }),
@@ -329,7 +333,7 @@ describe("Teilungserklärung upload wizard", () => {
 
   it("loads a durable import, polls every five seconds, and enters the readiness state", async () => {
     vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(
-      pendingImport({ mode: "EXISTING_PROPERTY", target_property_id: "property-42", status: "NEEDS_REVIEW", progress_percent: 100 }),
+      pendingImport({ mode: "EXISTING_PROPERTY", target_property_id: "property-42", status: "QUEUED", progress_percent: 0 }),
     );
     vi.spyOn(declarationApi, "listDeclarationDocuments").mockResolvedValue([]);
     const pollSpy = vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation((_id, options) => {
@@ -355,7 +359,7 @@ describe("Teilungserklärung upload wizard", () => {
 
     expect(await screen.findByText(/Zeitüberschreitung beim Dienstleister/i)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Erneut versuchen" }));
-    await waitFor(() => expect(declarationApi.retryDeclarationImport).toHaveBeenCalledWith("import-1"));
+    await waitFor(() => expect(declarationApi.retryDeclarationImport).toHaveBeenCalledWith("import-1", expect.any(String)));
     await waitFor(() => expect(pollSpy).toHaveBeenCalledTimes(2));
   });
 
@@ -563,4 +567,39 @@ describe("Teilungserklärung entry points and legal shares", () => {
     expect(screen.queryByRole("button", { name: "+ Neue Einheit" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Bearbeiten" })).toBeNull();
   });
+});
+
+
+describe("durable declaration queue commands", () => {
+  it("retains the retry key after a lost response and explains permission cancellation", async () => {
+    vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(
+      pendingImport({ status: "CANCELLED", error_code: "JOB_PERMISSION_CHANGED" }),
+    );
+    vi.spyOn(declarationApi, "listDeclarationDocuments").mockResolvedValue([]);
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
+    const retry = vi.spyOn(declarationApi, "retryDeclarationImport")
+      .mockRejectedValueOnce(new Error("lost response"))
+      .mockResolvedValueOnce(pendingImport({ status: "QUEUED" }));
+    renderImportRoute("/teilungserklaerung/import/import-1");
+    expect(await screen.findByText(/Berechtigung des auslösenden Benutzers/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Erneut versuchen" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Erneut versuchen" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Erneut versuchen" }));
+    await waitFor(() => expect(retry).toHaveBeenCalledTimes(2));
+    expect(retry.mock.calls[0][1]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(retry.mock.calls[1]).toEqual(retry.mock.calls[0]);
+  });
+});
+
+it("waits for the persisted draft documents before accepting upload selections", async () => {
+  vi.spyOn(declarationApi, "createDeclarationImport").mockResolvedValue(pendingImport());
+  vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(pendingImport());
+  let finish!: (documents: DeclarationDocument[]) => void;
+  vi.spyOn(declarationApi, "listDeclarationDocuments").mockReturnValue(new Promise(resolve => { finish = resolve; }));
+  vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
+  renderImportRoute();
+  await waitFor(() => expect(declarationApi.listDeclarationDocuments).toHaveBeenCalledWith("import-1"));
+  expect(screen.getByLabelText("PDF-Dateien auswählen", { exact: true })).toBeDisabled();
+  finish([]);
+  await waitFor(() => expect(screen.getByLabelText("PDF-Dateien auswählen", { exact: true })).toBeEnabled());
 });

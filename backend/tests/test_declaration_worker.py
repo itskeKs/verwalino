@@ -9,6 +9,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import select
 
+from tests.declaration_queue_fixture import queue_fixture
 from app.core.config import settings
 from app.core.db import get_tenant_session
 from app.models.declaration_import import DeclarationExtractionRun, DeclarationImport
@@ -57,10 +58,10 @@ async def _create_import(
             mode="NEW_PROPERTY",
             target_property_id=None,
             applied_property_id=None,
-            status=status,
+            status="DRAFT",
             initiated_by=user_id,
-            approved_by=user_id if status == "APPLYING" else None,
-            approved_at=datetime.now(timezone.utc) if status == "APPLYING" else None,
+            approved_by=None,
+            approved_at=None,
             max_cost_usd=Decimal("1.00"),
             next_attempt_at=next_attempt_at,
             lease_owner="existing-worker" if lease_expires_at is not None else None,
@@ -69,6 +70,16 @@ async def _create_import(
             lease_expires_at=lease_expires_at,
         )
         session.add(item)
+        await session.flush()
+        await queue_fixture(session, item, user_id, needs_document=True)
+        item.status = status
+        item.approved_by = user_id if status == "APPLYING" else None
+        item.approved_at = datetime.now(timezone.utc) if status == "APPLYING" else None
+        item.next_attempt_at = next_attempt_at
+        item.lease_owner = "existing-worker" if lease_expires_at is not None else None
+        item.lease_token = uuid.uuid4() if lease_expires_at is not None else None
+        item.lease_generation = 1 if lease_expires_at is not None else 0
+        item.lease_expires_at = lease_expires_at
         await session.flush()
         return item
 

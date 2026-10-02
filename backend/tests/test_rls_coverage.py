@@ -43,7 +43,7 @@ TENANT_TABLES = frozenset({
     "mandate_document",
     # Declaration import legal source and review graph
     "property_document",
-    "declaration_import",
+    "declaration_import", "declaration_queue_request",
     "declaration_import_document",
     "declaration_extraction_run",
     "declaration_import_pass",

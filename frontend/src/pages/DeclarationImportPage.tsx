@@ -21,6 +21,10 @@ import type {
 const MAX_PDF_BYTES = 25 * 1024 * 1024;
 const RETRYABLE_FAILURE_CODES = new Set([
   "PROVIDER_TIMEOUT",
+  "PROVIDER_INCOMPLETE",
+  "PROVIDER_CONNECTION_ERROR",
+  "JOB_PRINCIPAL_UNVERIFIED",
+  "JOB_PERMISSION_CHANGED",
   "PROVIDER_RATE_LIMIT",
   "PROVIDER_SERVER_ERROR",
   "OCR_TIMEOUT",
@@ -28,6 +32,8 @@ const RETRYABLE_FAILURE_CODES = new Set([
 ]);
 
 const FAILURE_MESSAGES: Record<string, string> = {
+  JOB_PRINCIPAL_UNVERIFIED: "Für diesen älteren Auftrag ist kein bestätigter Auslöser gespeichert. Ein berechtigter Benutzer kann ihn erneut starten.",
+  JOB_PERMISSION_CHANGED: "Die Berechtigung des auslösenden Benutzers gilt nicht mehr. Ein berechtigter Benutzer kann den Import erneut starten.",
   PROVIDER_TIMEOUT: "Zeitüberschreitung beim Dienstleister. Bitte versuchen Sie den Import erneut.",
   PROVIDER_RATE_LIMIT: "Der Dienst ist gerade ausgelastet. Bitte versuchen Sie den Import erneut.",
   PROVIDER_SERVER_ERROR: "Der Dienstleister hat einen Serverfehler gemeldet. Bitte versuchen Sie es später erneut.",
@@ -94,6 +100,7 @@ export function DeclarationImportPage() {
   const [pollGeneration, setPollGeneration] = useState(0);
   const [uploadingBatch, setUploadingBatch] = useState(false);
   const [reordering, setReordering] = useState(false);
+  const queueKeys = useRef<Record<string, string>>({});
   const creationStarted = useRef(false);
   const reviewNavigated = useRef(false);
   const uploadInFlight = useRef(false);
@@ -183,7 +190,7 @@ export function DeclarationImportPage() {
   };
 
   const uploadReadyDocuments = async () => {
-    if (!activeImportId || item?.status !== "DRAFT" || uploadInFlight.current) return;
+    if (!activeImportId || loadedImportId !== activeImportId || item?.status !== "DRAFT" || uploadInFlight.current) return;
     const ready = documents.filter((document) => document.status === "ready" && document.file);
     if (!ready.length) return;
     uploadInFlight.current = true;
@@ -294,7 +301,10 @@ export function DeclarationImportPage() {
     setStarting(true);
     setStatusError(null);
     try {
-      applyImportUpdate(await startDeclarationImport(activeImportId));
+      const command = `${activeImportId}:start`;
+      const key = queueKeys.current[command] ??= crypto.randomUUID();
+      applyImportUpdate(await startDeclarationImport(activeImportId, key));
+      delete queueKeys.current[command];
     } catch (error) {
       setStatusError(safeErrorMessage(error));
     } finally {
@@ -307,7 +317,10 @@ export function DeclarationImportPage() {
     setRetrying(true);
     setStatusError(null);
     try {
-      applyImportUpdate(await retryDeclarationImport(activeImportId));
+      const command = `${activeImportId}:retry`;
+      const key = queueKeys.current[command] ??= crypto.randomUUID();
+      applyImportUpdate(await retryDeclarationImport(activeImportId, key));
+      delete queueKeys.current[command];
       setPollGeneration((generation) => generation + 1);
     } catch (error) {
       setStatusError(safeErrorMessage(error));
@@ -318,10 +331,10 @@ export function DeclarationImportPage() {
 
   const hasPendingUpload = documents.some((document) => document.status === "ready" || document.status === "uploading");
   const hasUploadedDocument = documents.some((document) => document.status === "uploaded");
-  const canStart = hasUploadedDocument && !hasPendingUpload && item?.status === "DRAFT";
+  const canStart = loadedImportId === activeImportId && hasUploadedDocument && !hasPendingUpload && item?.status === "DRAFT";
   const failureMessage = item?.error_code ? FAILURE_MESSAGES[item.error_code] : undefined;
   const isRetryable = !!item?.error_code && RETRYABLE_FAILURE_CODES.has(item.error_code);
-  const draftEditable = item?.status === "DRAFT";
+  const draftEditable = loadedImportId === activeImportId && item?.status === "DRAFT";
   const targetMode = item?.mode ?? routeMode;
   const targetPropertyId = item?.target_property_id ?? propertyId;
 
@@ -425,7 +438,7 @@ export function DeclarationImportPage() {
         <h2 id="declaration-result-heading">4. Ergebnis</h2>
         {item?.status === "NEEDS_REVIEW" && <p><strong>Bereit für die fachliche Prüfung</strong><br />Die erkannten Angaben liegen als Entwurf zur Prüfung vor. Die eigentliche Prüfoberfläche folgt im nächsten Schritt.</p>}
         {item?.status === "APPLIED" && <p><strong>Übernommen</strong><br />Der freigegebene Entwurf wurde in das Objekt übernommen.</p>}
-        {item?.status === "CANCELLED" && <p><strong>Abgebrochen</strong><br />Der Import wurde abgebrochen.</p>}
+        {item?.status === "CANCELLED" && <><p><strong>Abgebrochen</strong><br />{failureMessage ?? "Der Import wurde abgebrochen."}</p>{isRetryable && <button type="button" className="btn btn--primary" disabled={retrying} onClick={() => void retryImport()}>{retrying ? "Wird erneut gestartet…" : "Erneut versuchen"}</button>}</>}
         {item?.status === "FAILED" && <>
           <p className="error-text" role="alert"><strong>Verarbeitung fehlgeschlagen.</strong><br />{failureMessage ?? item.error_message ?? "Der Import kann nicht fortgesetzt werden."}</p>
           {isRetryable && <button type="button" className="btn btn--primary" disabled={retrying} onClick={() => void retryImport()}>{retrying ? "Wird erneut gestartet…" : "Erneut versuchen"}</button>}

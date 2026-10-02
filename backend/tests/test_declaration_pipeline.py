@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 import app.declarations.pipeline as pipeline_module
+from tests.declaration_queue_fixture import queue_fixture
 from app.core.config import settings
 from app.core.db import get_tenant_session
 from app.core.storage import compute_sha256
@@ -1429,7 +1430,7 @@ async def _seed_pipeline_import(
                 id=import_id,
                 organization_id=org_id,
                 mode="NEW_PROPERTY",
-                status=status,
+                status="DRAFT",
                 initiated_by=initiated_by,
                 max_cost_usd=Decimal("1"),
                 lease_owner="test-worker",
@@ -1464,8 +1465,16 @@ async def _seed_pipeline_import(
                 document_role="DECLARATION",
             )
         )
+        await session.flush()
+        item = await session.get(DeclarationImport, import_id)
+        request = await queue_fixture(session, item, initiated_by)
+        item.status = status
+        item.lease_owner = 'test-worker'
+        item.lease_token = token
+        item.lease_generation = 1
+        item.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
     return (
-        WorkerLease(org_id, import_id, 1, token, datetime.now(timezone.utc) + timedelta(minutes=30)),
+        WorkerLease(org_id, import_id, 1, token, datetime.now(timezone.utc) + timedelta(minutes=30), request),
         str(document_id),
         _MemoryStore({key: pdf}),
     )

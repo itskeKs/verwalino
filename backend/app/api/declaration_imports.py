@@ -6,7 +6,7 @@ import uuid
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -60,6 +60,8 @@ class DeclarationImportOut(BaseModel):
     estimated_cost_usd: Decimal
     attempt_count: int
     max_cost_usd: Decimal
+    queue_request_id: str | None = None
+    command_receipt_id: str | None = None
 
 
 class PropertyDocumentOut(BaseModel):
@@ -163,10 +165,11 @@ async def list_import_documents(
 @router.post("/{import_id}/start", response_model=DeclarationImportOut)
 async def start_import(
     import_id: uuid.UUID,
+    idempotency_key: uuid.UUID = Header(alias="Idempotency-Key"),
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_db),
 ):
-    return _import_out(await DeclarationImportService(db, auth.organization_id, auth.user_id).start(import_id))
+    return _import_out(await DeclarationImportService(db, auth.organization_id, auth.user_id).start(import_id, idempotency_key))
 
 
 @router.get("/{import_id}", response_model=DeclarationImportOut)
@@ -237,10 +240,11 @@ async def approval_preview(
 @router.post("/{import_id}/retry", response_model=DeclarationImportOut)
 async def retry_import(
     import_id: uuid.UUID,
+    idempotency_key: uuid.UUID = Header(alias="Idempotency-Key"),
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_db),
 ):
-    return _import_out(await DeclarationImportService(db, auth.organization_id, auth.user_id).retry(import_id))
+    return _import_out(await DeclarationImportService(db, auth.organization_id, auth.user_id).retry(import_id, idempotency_key))
 
 
 @router.post("/{import_id}/approve")
@@ -274,6 +278,8 @@ def _import_out(item: DeclarationImport) -> DeclarationImportOut:
         input_tokens=item.input_tokens, output_tokens=item.output_tokens,
         estimated_cost_usd=item.estimated_cost_usd, attempt_count=item.attempt_count,
         max_cost_usd=item.max_cost_usd,
+        queue_request_id=str(item.queue_request_id) if item.queue_request_id else None,
+        command_receipt_id=str(item.command_receipt_id) if getattr(item, "command_receipt_id", None) else None,
     )
 
 

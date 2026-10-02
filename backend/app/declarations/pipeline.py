@@ -70,7 +70,7 @@ from app.repositories.declaration_candidate_repo import (
     DraftEvidence,
     DraftIssue,
 )
-from app.repositories.declaration_import_repo import DeclarationImportRepository, WorkerLease
+from app.repositories.declaration_import_repo import DeclarationImportRepository, DeclarationPrincipalDenied, WorkerLease
 from app.repositories.unit_repo import UnitRepository
 
 
@@ -266,7 +266,12 @@ class DeclarationPipeline:
 
     async def run(self, lease: WorkerLease) -> None:
         async with self._run_guard:
-            await self._run_unlocked(lease)
+            try:
+                await self._run_unlocked(lease)
+            except DeclarationPrincipalDenied:
+                async with self._tenant_session_factory(lease.organization_id) as session:
+                    await DeclarationImportRepository(session, lease.organization_id).cancel_unauthorized(lease)
+                raise
 
     async def _run_unlocked(self, lease: WorkerLease) -> None:
         self._active_lease = lease
@@ -310,7 +315,7 @@ class DeclarationPipeline:
                 preflight_issues,
                 source_pdf_bytes,
                 preflight_budget,
-            ) = self._preflight_documents(documents)
+            ) = await self._preflight_documents(lease, documents)
             evidence_index = EvidenceTextIndex.from_pages(page_inputs)
             await self._transition(lease, {"PREFLIGHT"}, "EXTRACTING", {"current_stage": "extracting"})
             batches = self._page_batches(page_inputs)
@@ -406,11 +411,13 @@ class DeclarationPipeline:
                             )
 
             drafts, draft_issues = await self._convert(
-                imported, inventory, reconciliation, issues, document_ids, lease.organization_id
+                imported, inventory, reconciliation, issues, document_ids, lease
             )
             if len(drafts) > self._settings.declaration_max_candidates:
                 raise PipelineFailure("CANDIDATE_LIMIT_EXCEEDED")
             await self._publish(lease, page_counts, drafts, draft_issues, ledger)
+        except DeclarationPrincipalDenied:
+            raise
         except DocumentIntegrityError as exc:
             await self._fail(lease, exc.code, retryable=False, ledger=ledger)
         except ProviderFailure as exc:
@@ -435,7 +442,7 @@ class DeclarationPipeline:
                 raise PipelineFailure("LEASE_LOST")
             return item, tuple(await imports.list_documents(lease.import_id))
 
-    def _preflight_documents(self, documents):
+    async def _preflight_documents(self, lease, documents):
         budget = self._preflight.new_import_budget()
         pages: list[PageInput] = []
         counts: dict[str, int] = {}
@@ -448,7 +455,11 @@ class DeclarationPipeline:
         for _link, document in documents:
             key = _document_key(document)
             try:
-                data = self._store.get(document.storage_uri)
+                async with self._tenant_session_factory(lease.organization_id) as session:
+                    repo = DeclarationImportRepository(session, lease.organization_id)
+                    if await repo.lock_current_lease(lease, {"PREFLIGHT"}) is None:
+                        raise PipelineFailure("LEASE_LOST")
+                    data = self._store.get(document.storage_uri)
             except FileNotFoundError as exc:
                 raise DocumentIntegrityError("STORAGE_INTEGRITY_MISMATCH") from exc
             result = self._preflight.run_bytes(
@@ -1014,11 +1025,14 @@ class DeclarationPipeline:
         by_key = {(page.document_key, page.pdf_page): page for page in pages}
         return tuple(by_key[key] for key in decision.page_keys), decision.reason_codes
 
-    async def _convert(self, imported, inventory, output, issues, document_ids, org_id):
+    async def _convert(self, imported, inventory, output, issues, document_ids, lease):
+        org_id = lease.organization_id
         existing_property: Property | None = None
         existing_units: Sequence[Unit] = ()
         if imported.mode == "EXISTING_PROPERTY" and imported.target_property_id:
             async with self._tenant_session_factory(org_id) as session:
+                if await DeclarationImportRepository(session, org_id).lock_current_lease(lease, {"RECONCILING"}) is None:
+                    raise PipelineFailure("LEASE_LOST")
                 existing_property = await session.scalar(
                     select(Property)
                     .where(Property.organization_id == org_id)

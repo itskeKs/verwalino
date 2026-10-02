@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -157,23 +158,48 @@ class DeclarationImportService:
             raise
         return document, link
 
-    async def start(self, import_id: uuid.UUID) -> DeclarationImport:
+    async def _queue_command(self, import_id: uuid.UUID, key: uuid.UUID, operation: str):
         require_declaration_import_enabled()
+        await self._imports.lock_acl()
+        role = await self._session.scalar(text("SELECT scope_actor_role(:org)"), {"org": self._org_id})
+        if role not in {"OWNER_ADMIN", "CLERK"}:
+            raise HTTPException(status_code=403, detail="Writer required")
         item = await self._get_for_update(import_id)
-        if item.status in ACTIVE_OR_COMPLETE_STATUSES:
+        receipt = (await self._session.execute(text("SELECT id,actor_user_id,operation FROM declaration_queue_request WHERE organization_id=:org AND import_id=:job AND request_key=:key"),
+            {"org": self._org_id, "job": import_id, "key": key})).mappings().first()
+        if receipt:
+            if receipt['actor_user_id'] != self._user_id or receipt['operation'] != operation:
+                raise HTTPException(status_code=409, detail="QUEUE_COMMAND_CONFLICT")
+            item.command_receipt_id = receipt['id']
             return item
-        if item.status == "FAILED":
-            raise HTTPException(status_code=409, detail="USE_RETRY")
-        if item.status == "CANCELLED":
-            raise HTTPException(status_code=409, detail="IMPORT_CANCELLED")
-        if item.status != "DRAFT":
-            raise HTTPException(status_code=409, detail="INVALID_IMPORT_STATUS")
-        if await self._imports.count_documents(import_id) == 0:
-            raise HTTPException(status_code=422, detail="IMPORT_REQUIRES_DOCUMENT")
-        item.status = "QUEUED"
-        item.current_stage = "queued"
-        await self._session.flush()
+        if operation == 'START':
+            if item.status == 'CANCELLED':
+                raise HTTPException(status_code=409, detail="IMPORT_CANCELLED")
+            if item.status == 'FAILED':
+                raise HTTPException(status_code=409, detail="USE_RETRY")
+            if item.status != 'DRAFT':
+                raise HTTPException(status_code=409, detail="INVALID_IMPORT_STATUS")
+            if await self._imports.count_documents(import_id) == 0:
+                raise HTTPException(status_code=422, detail="IMPORT_REQUIRES_DOCUMENT")
+        else:
+            retryable = item.status in {'FAILED', 'RETRY_WAIT'} and item.error_code in {
+                'PROVIDER_TIMEOUT', 'PROVIDER_INCOMPLETE', 'PROVIDER_RATE_LIMIT',
+                'PROVIDER_SERVER_ERROR', 'PROVIDER_CONNECTION_ERROR', 'OCR_TIMEOUT', 'WORKER_INTERRUPTED'}
+            permission_cancelled = item.status == 'CANCELLED' and item.error_code in {
+                'JOB_PRINCIPAL_UNVERIFIED', 'JOB_PERMISSION_CHANGED'}
+            if not (retryable or permission_cancelled):
+                raise HTTPException(status_code=409, detail="IMPORT_NOT_RETRYABLE")
+            if (await self._imports.count_extraction_runs(import_id) >= settings.declaration_max_attempts
+                or item.estimated_cost_usd >= item.max_cost_usd):
+                raise HTTPException(status_code=409, detail="RETRY_BUDGET_EXHAUSTED")
+        receipt_id = await self._session.scalar(text("SELECT record_declaration_queue_request(:org,:job,:key,:operation)"),
+            {"org": self._org_id, "job": import_id, "key": key, "operation": operation})
+        await self._session.refresh(item)
+        item.command_receipt_id = receipt_id
         return item
+
+    async def start(self, import_id: uuid.UUID, key: uuid.UUID) -> DeclarationImport:
+        return await self._queue_command(import_id, key, 'START')
 
     async def cancel(self, import_id: uuid.UUID) -> DeclarationImport:
         item = await self._get_for_update(import_id)
@@ -196,37 +222,8 @@ class DeclarationImportService:
         await self._session.flush()
         return item
 
-    async def retry(self, import_id: uuid.UUID) -> DeclarationImport:
-        require_declaration_import_enabled()
-        item = await self._get_for_update(import_id)
-        if item.status in {"QUEUED", "PREFLIGHT", "EXTRACTING", "RECONCILING"}:
-            return item
-        allowed_errors = {
-            "PROVIDER_TIMEOUT",
-            "PROVIDER_INCOMPLETE",
-            "PROVIDER_RATE_LIMIT",
-            "PROVIDER_SERVER_ERROR",
-            "PROVIDER_CONNECTION_ERROR",
-            "OCR_TIMEOUT", "WORKER_INTERRUPTED",
-        }
-        if item.status not in {"FAILED", "RETRY_WAIT"} or item.error_code not in allowed_errors:
-            raise HTTPException(status_code=409, detail="IMPORT_NOT_RETRYABLE")
-        # Provider calls are batched and do not represent worker-run retries.
-        # Keep this in lockstep with the worker's tenant-scoped run budget.
-        if (
-            await self._imports.count_extraction_runs(import_id)
-            >= settings.declaration_max_attempts
-            or item.estimated_cost_usd >= item.max_cost_usd
-        ):
-            raise HTTPException(status_code=409, detail="RETRY_BUDGET_EXHAUSTED")
-        item.status = "QUEUED"
-        item.current_stage = "queued"
-        item.next_attempt_at = None
-        item.lease_owner = None
-        item.lease_token = None
-        item.lease_expires_at = None
-        await self._session.flush()
-        return item
+    async def retry(self, import_id: uuid.UUID, key: uuid.UUID) -> DeclarationImport:
+        return await self._queue_command(import_id, key, 'RETRY')
 
     async def list_candidates(self, import_id: uuid.UUID):
         await self.get(import_id)
@@ -238,6 +235,7 @@ class DeclarationImportService:
             raise HTTPException(status_code=409, detail="IMPORT_NOT_DRAFT")
 
     async def _get_for_update(self, import_id: uuid.UUID) -> DeclarationImport:
+        await self._imports.lock_acl()
         item = await self._imports.get_by_id_for_update(import_id)
         if item is None:
             raise HTTPException(status_code=404, detail="Declaration import not found")

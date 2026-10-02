@@ -1,0 +1,13 @@
+{
+  "checks": [
+    "UI upload and start persist a queue receipt; a lost committed response reuses the same command key",
+    "revocation durably cancels through the production fenced helper without provider access; UI explains cancellation and explicit retry creates a new receipt",
+    "old command replay acknowledges its original receipt without replacing the current retry principal"
+  ],
+  "pageErrors": [],
+  "mobile": {
+    "visible": 360,
+    "content": 360
+  },
+  "status": "passed"
+}

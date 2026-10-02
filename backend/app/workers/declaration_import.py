@@ -26,13 +26,14 @@ from app.core.db import get_tenant_session, get_unscoped_session
 from app.models.organization import Organization
 from app.repositories.declaration_import_repo import (
     DeclarationImportRepository,
+    DeclarationPrincipalDenied,
     WorkerLease,
 )
 
 logger = logging.getLogger(__name__)
 
 _PIPELINE_ENTRY_STATUSES = {"QUEUED", "RETRY_WAIT"}
-_REQUIRED_LEASE_COLUMNS = {"lease_token", "lease_generation", "lease_expires_at"}
+_REQUIRED_LEASE_COLUMNS = {"lease_token", "lease_generation", "lease_expires_at", "queue_request_id"}
 _HEALTHCHECK_TESSERACT_TIMEOUT_SECONDS = 5
 
 
@@ -115,7 +116,7 @@ class DeclarationImportWorker:
               AND c.relkind IN ('r', 'p')
               AND a.attnum > 0
               AND NOT a.attisdropped
-              AND a.attname IN ('lease_token', 'lease_generation', 'lease_expires_at')
+              AND a.attname IN ('lease_token', 'lease_generation', 'lease_expires_at', 'queue_request_id')
             """
         )
         async with self._unscoped_session_factory() as session:
@@ -151,6 +152,8 @@ class DeclarationImportWorker:
     async def _attempt_limit_reached(self, lease: WorkerLease) -> bool:
         async with self._tenant_session_factory(lease.organization_id) as session:
             repo = DeclarationImportRepository(session, lease.organization_id)
+            if await repo.lock_current_lease(lease, _PIPELINE_ENTRY_STATUSES) is None:
+                return False
             return (
                 await repo.count_extraction_runs(lease.import_id)
                 >= self._settings.declaration_max_attempts
@@ -173,8 +176,8 @@ class DeclarationImportWorker:
                 },
             )
 
-    async def _heartbeat(self, initial_lease: WorkerLease) -> bool:
-        """Return true only when the lease has been lost; retain each renewal."""
+    async def _heartbeat(self, initial_lease: WorkerLease) -> bool | str:
+        """Distinguish committed permission cancellation from ordinary lease loss."""
         lease = initial_lease
         while True:
             try:
@@ -191,6 +194,8 @@ class DeclarationImportWorker:
                 raise
             except Exception:
                 return True
+            if isinstance(renewed, DeclarationPrincipalDenied):
+                return "JOB_PERMISSION_CHANGED"
             if renewed is None:
                 return True
             lease = renewed
@@ -214,6 +219,8 @@ class DeclarationImportWorker:
                     await pipeline_task
                 except asyncio.CancelledError:
                     raise
+                except DeclarationPrincipalDenied:
+                    return WorkerResult("JOB_PERMISSION_CHANGED", lease.import_id)
                 except Exception:
                     # Do not log arbitrary exception text: providers and parsers
                     # may attach untrusted document fragments to it.
@@ -229,7 +236,7 @@ class DeclarationImportWorker:
                     pipeline_task.cancel()
                     with suppress(asyncio.CancelledError, Exception):
                         await pipeline_task
-                    return WorkerResult("LEASE_LOST", lease.import_id)
+                    return WorkerResult(lease_lost if isinstance(lease_lost, str) else "LEASE_LOST", lease.import_id)
             raise RuntimeError("worker wait completed without a task result")
         finally:
             for task in (pipeline_task, heartbeat_task):
@@ -247,11 +254,16 @@ class DeclarationImportWorker:
         lease = await self.claim_one()
         if lease is None:
             return WorkerResult("IDLE")
-        if await self._attempt_limit_reached(lease):
-            if await self._fail_attempt_limit(lease):
-                return WorkerResult("WORKER_ATTEMPT_LIMIT_REACHED", lease.import_id)
-            return WorkerResult("LEASE_LOST", lease.import_id)
-        return await self._run_claimed(lease)
+        try:
+            if await self._attempt_limit_reached(lease):
+                if await self._fail_attempt_limit(lease):
+                    return WorkerResult("WORKER_ATTEMPT_LIMIT_REACHED", lease.import_id)
+                return WorkerResult("LEASE_LOST", lease.import_id)
+            return await self._run_claimed(lease)
+        except DeclarationPrincipalDenied:
+            async with self._tenant_session_factory(lease.organization_id) as session:
+                await DeclarationImportRepository(session, lease.organization_id).cancel_unauthorized(lease)
+            return WorkerResult("JOB_PERMISSION_CHANGED", lease.import_id)
 
     async def run_forever(self) -> None:
         delay = float(self._settings.declaration_worker_poll_seconds)

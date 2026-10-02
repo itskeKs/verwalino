@@ -381,3 +381,56 @@ Browser script: `scripts/acceptance/b1_mandate_sources_browser.cjs`; report:
 The compatibility branch for unclassified documents, historical source review,
 declaration/property-source jobs and full B1 activation remain unfinished. This
 adapter provides no automatic old-document classification or release approval.
+
+## Declaration queue principals (0043)
+
+Each explicit start/retry now retains a tenant-safe immutable command receipt
+with the actual triggering actor, UUID key, operation and predecessor. Creator
+provenance is immutable. The current request pointer and lease fence keep automatic
+recovery attached to the same command. Exact replay acknowledges the old command
+without replacing a later request; a different actor/operation with that key or a
+fresh key against active work conflicts.
+
+Every worker database step, each bounded original read, and existing-target
+metadata reads check the live receipt actor. ACL shared lock precedes the import
+row lock. Parsing/OCR/provider work run outside those transactions. Revocation
+unwinds the effect and commits a separately fenced cancellation with safe audit
+and failed-run evidence. Budget reservations and originals survive. The reviewer
+identified incorrect worker status propagation for pipeline/heartbeat cancellation;
+both are repaired and covered by worker-level regressions. An unknown historical
+principal is quarantined rather than inferred. Explicit retry can replace a
+permission-cancelled principal, within existing budgets.
+
+Evidence on disposable PostgreSQL 16/Python 3.13, base `03c691f` plus this increment:
+
+- The initial focused case failed for the missing queue receipt after correcting
+  fixture transaction setup. The first broad run passed 163 cases; 17 failures
+  exposed legacy synthetic fixtures and obsolete service-only retry mocks.
+- After fixture repairs, 85 principal/worker/API cases passed. Final focused
+  principal/API verification passed **68 tests**, including creator/starter
+  distinction, same-key concurrency, role/deactivation before claim,
+  load/bytes/provider/target-read/publication revocation, durable cancellation,
+  preserved reservations, heartbeat interruption, old replay and stale fences,
+  unknown legacy principal, foreign tenant denial, immutable evidence and both
+  populated downgrade refusal and empty round-trip with rollback restoration.
+- Worker/RLS passing cases from the immediately preceding focused run and normal
+  pipeline/review cases from the broad run were reused. The changed target-data
+  read path was rerun through principal and existing-property API cases. The sole
+  final migration-harness failure (asyncpg cannot execute migration multi-command
+  SQL) was corrected to the synchronous migrator connection and then passed.
+- Independent read-only review accepted the boundary and the target-read guard.
+  Live providers remain disabled. This increment does not prove property-source
+  classification or full B1 activation.
+- **29 UI tests**, lint and production build passed (existing approximately 597 KB
+  bundle warning). Browser verification found and repaired an initial-load upload
+  race: the file picker now waits for persisted draft documents. A regression
+  covers that wait. The mobile fieldset now shrinks within its container.
+- Local Chromium passed upload → committed response lost → identical-key retry →
+  role revocation/fenced cancellation → visible explanation → explicit new retry →
+  replay of original command without principal replacement. The revoked read-only
+  actor receives 403 on the import API. The browser role change/cancellation is a
+  guarded synthetic control; actual worker claim/publication paths are covered by
+  the database tests. At viewport 390 px, visible/content widths both measure
+  360 px, and the inspected screenshot shows the cancellation and retry action.
+  No page errors. Script: `scripts/acceptance/b1_declaration_principal_browser.cjs`;
+  report: `b1-declaration-principal-browser.json`.

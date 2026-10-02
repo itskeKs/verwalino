@@ -809,7 +809,7 @@ async def test_start_is_idempotent_and_queues_without_extraction(client_a_admin)
         "/api/declaration-imports", json={"mode": "NEW_PROPERTY"}
     )
     import_id = created.json()["id"]
-    empty_start = await client_a_admin.post(f"/api/declaration-imports/{import_id}/start")
+    empty_start = await client_a_admin.post(f"/api/declaration-imports/{import_id}/start", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"})
     assert empty_start.status_code == 422
 
     uploaded = await client_a_admin.post(
@@ -819,10 +819,10 @@ async def test_start_is_idempotent_and_queues_without_extraction(client_a_admin)
     )
     assert uploaded.status_code == 201
 
-    started = await client_a_admin.post(f"/api/declaration-imports/{import_id}/start")
+    started = await client_a_admin.post(f"/api/declaration-imports/{import_id}/start", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"})
     assert started.status_code == 200
     assert started.json()["status"] == "QUEUED"
-    repeated = await client_a_admin.post(f"/api/declaration-imports/{import_id}/start")
+    repeated = await client_a_admin.post(f"/api/declaration-imports/{import_id}/start", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"})
     assert repeated.status_code == 200
     assert repeated.json()["status"] == "QUEUED"
     cancelled = await client_a_admin.post(f"/api/declaration-imports/{import_id}/cancel")
@@ -862,7 +862,7 @@ async def test_upload_rejects_duplicate_sequence_and_non_draft_update(client_a_a
     assert metadata.json()["document_role"] == "AMENDMENT"
     assert metadata.json()["sequence_no"] == 2
 
-    started = await client_a_admin.post(f"/api/declaration-imports/{import_id}/start")
+    started = await client_a_admin.post(f"/api/declaration-imports/{import_id}/start", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"})
     assert started.status_code == 200
     update = await client_a_admin.patch(
         f"/api/declaration-imports/{import_id}/documents/{first.json()['id']}",
@@ -886,7 +886,7 @@ async def test_cancelled_import_returns_stable_start_error_and_hides_candidates_
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "CANCELLED"
 
-    start = await client_a_admin.post(f"/api/declaration-imports/{import_id}/start")
+    start = await client_a_admin.post(f"/api/declaration-imports/{import_id}/start", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"})
     assert start.status_code == 409
     assert start.json()["detail"] == "IMPORT_CANCELLED"
     candidates = await client_a_readonly.get(
@@ -938,7 +938,7 @@ async def test_public_new_property_import_reaches_review_with_two_documents_and_
     declaration_document_id = uploaded_declaration.json()["id"]
     amendment_document_id = uploaded_amendment.json()["id"]
 
-    started = await client_a_admin.post(f"/api/declaration-imports/{import_id}/start")
+    started = await client_a_admin.post(f"/api/declaration-imports/{import_id}/start", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"})
     assert started.status_code == 200
     provider = _provider_for_uploaded_documents(
         declaration_document_id, amendment_document_id
@@ -1062,7 +1062,7 @@ async def test_existing_property_import_proposes_street_update_without_deleting_
         data={"document_role": "DECLARATION", "sequence_no": "1"},
     )
     assert uploaded.status_code == 201
-    assert (await client_a_admin.post(f"/api/declaration-imports/{import_id}/start")).status_code == 200
+    assert (await client_a_admin.post(f"/api/declaration-imports/{import_id}/start", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"})).status_code == 200
     provider = _provider_for_uploaded_documents(
         uploaded.json()["id"], street="Neue Straße 10", include_unit=False
     )
@@ -1396,7 +1396,7 @@ async def test_declaration_import_disabled_blocks_create_upload_and_start(
         data={"document_role": "DECLARATION", "sequence_no": "1"},
     )
     blocked_start = await client_a_admin.post(
-        f"/api/declaration-imports/{import_id}/start"
+        f"/api/declaration-imports/{import_id}/start", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"}
     )
 
     for response in (blocked_create, blocked_upload, blocked_start):
@@ -1431,7 +1431,7 @@ async def test_declaration_import_disabled_does_not_requeue_retryable_import(
 
         monkeypatch.setattr(settings, "declaration_import_enabled", False)
         response = await client_a_admin.post(
-            f"/api/declaration-imports/{import_id}/retry"
+            f"/api/declaration-imports/{import_id}/retry", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"}
         )
         assert response.status_code == 503
         assert response.json()["detail"] == "DECLARATION_IMPORT_DISABLED"
@@ -1448,74 +1448,19 @@ async def test_declaration_import_disabled_does_not_requeue_retryable_import(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "error_code", ["PROVIDER_INCOMPLETE", "PROVIDER_CONNECTION_ERROR"]
-)
-async def test_manual_retry_accepts_retryable_provider_outcome(monkeypatch, error_code: str) -> None:
-    """Manual retry follows the same explicit bounded-worker outcome policy."""
-    from app.services.declaration_import_service import DeclarationImportService
-
-    item = SimpleNamespace(
-        status="FAILED",
-        error_code=error_code,
-        estimated_cost_usd=Decimal("0"),
-        max_cost_usd=Decimal("1"),
-        current_stage=None,
-        next_attempt_at=None,
-        lease_owner="worker",
-        lease_token="token",
-        lease_expires_at=datetime.now(timezone.utc),
-    )
-
-    async def get_for_update(_import_id):
-        return item
-
-    async def async_value(value):
-        return value
-
-    service = object.__new__(DeclarationImportService)
-    service._get_for_update = get_for_update
-    service._imports = SimpleNamespace(count_extraction_runs=lambda _import_id: async_value(0))
-    service._session = SimpleNamespace(flush=lambda: async_value(None))
-    monkeypatch.setattr(settings, "declaration_import_enabled", True)
-
-    result = await service.retry(uuid.uuid4())
-
-    assert result is item
-    assert item.status == "QUEUED"
-    assert item.current_stage == "queued"
-    assert item.lease_owner is None
-
-
-@pytest.mark.asyncio
-async def test_manual_retry_rejects_permanent_openai_request_failure(monkeypatch) -> None:
-    """A stable generic 4xx/auth failure must never enter the retry queue."""
-    from app.services.declaration_import_service import DeclarationImportService
-
-    item = SimpleNamespace(
-        status="FAILED",
-        error_code="OPENAI_REQUEST_FAILED",
-        estimated_cost_usd=Decimal("0"),
-        max_cost_usd=Decimal("1"),
-        current_stage=None,
-        next_attempt_at=None,
-        lease_owner="worker",
-        lease_token="token",
-        lease_expires_at=datetime.now(timezone.utc),
-    )
-
-    async def get_for_update(_import_id):
-        return item
-
-    service = object.__new__(DeclarationImportService)
-    service._get_for_update = get_for_update
-    monkeypatch.setattr(settings, "declaration_import_enabled", True)
-
-    with pytest.raises(HTTPException) as exc_info:
-        await service.retry(uuid.uuid4())
-
-    assert exc_info.value.status_code == 409
-    assert exc_info.value.detail == "IMPORT_NOT_RETRYABLE"
+@pytest.mark.parametrize("error_code,expected", [("PROVIDER_INCOMPLETE",200), ("PROVIDER_CONNECTION_ERROR",200), ("OPENAI_REQUEST_FAILED",409)])
+async def test_manual_retry_provider_outcomes_use_durable_queue_receipts(client_a_admin, seed_data, error_code, expected):
+    from tests.test_scoped_account_statements import mutate
+    created = await client_a_admin.post('/api/declaration-imports', json={'mode':'NEW_PROPERTY'})
+    job = uuid.UUID(created.json()['id'])
+    await mutate(text("UPDATE declaration_import SET status='FAILED',error_code=:error WHERE id=:job"), {'job':job, 'error':error_code})
+    response = await client_a_admin.post(f'/api/declaration-imports/{job}/retry', headers={'Idempotency-Key':str(uuid.uuid4())})
+    assert response.status_code == expected, response.text
+    if expected == 200:
+        assert response.json()['status'] == 'QUEUED'
+        assert response.json()['queue_request_id'] == response.json()['command_receipt_id']
+    else:
+        assert response.json()['detail'] == 'IMPORT_NOT_RETRYABLE'
 
 
 @pytest.mark.asyncio
@@ -1625,7 +1570,7 @@ async def test_parallel_upload_and_start_are_serialized(client_a_admin, monkeypa
     try:
         await asyncio.wait_for(entered_upload.wait(), timeout=2)
         start_task = asyncio.create_task(
-            client_a_admin.post(f"/api/declaration-imports/{import_id}/start")
+            client_a_admin.post(f"/api/declaration-imports/{import_id}/start", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"})
         )
         await asyncio.sleep(0.05)
         assert not start_task.done()

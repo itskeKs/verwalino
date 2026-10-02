@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Sequence
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.declaration_import import (
@@ -26,10 +26,34 @@ class WorkerLease:
     lease_generation: int
     lease_token: uuid.UUID
     lease_expires_at: datetime
+    queue_request_id: uuid.UUID | None = None
+
+
+class DeclarationPrincipalDenied(Exception):
+    """Unwind effects before committing a separately fenced cancellation."""
 
 
 class DeclarationImportRepository(TenantRepository[DeclarationImport]):
     model = DeclarationImport
+
+    async def lock_acl(self):
+        await self._session.execute(text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
+            {"key": f"scope-acl:{self._org_id}"})
+
+    async def _set_queue_actor(self, item: DeclarationImport) -> bool:
+        actor = await self._session.scalar(text("SELECT declaration_queue_actor(:org,:job,:request)"),
+            {"org": self._org_id, "job": item.id, "request": item.queue_request_id})
+        if actor is None:
+            return False
+        await self._session.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {"actor": str(actor)})
+        return True
+
+    async def cancel_unauthorized(self, lease: WorkerLease) -> bool:
+        if lease.organization_id != self._org_id:
+            return False
+        return bool(await self._session.scalar(text("SELECT cancel_unauthorized_declaration(:org,:job,:request,:generation,:token)"),
+            {"org": self._org_id, "job": lease.import_id, "request": lease.queue_request_id,
+             "generation": lease.lease_generation, "token": lease.lease_token}))
 
     async def claim_next(
         self,
@@ -38,6 +62,7 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
         lease_seconds: int,
     ) -> WorkerLease | None:
         """Claim one due import using a tenant-local, fenced short transaction."""
+        await self.lock_acl()
         inactive_lease = or_(
             DeclarationImport.lease_expires_at.is_(None),
             DeclarationImport.lease_expires_at <= now,
@@ -73,6 +98,12 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
         if item is None:
             return None
 
+        if not await self._set_queue_actor(item):
+            await self._session.execute(text("SELECT cancel_unauthorized_declaration(:org,:job,:request,:generation,:token)"),
+                {"org": self._org_id, "job": item.id, "request": item.queue_request_id,
+                 "generation": item.lease_generation, "token": item.lease_token})
+            return None
+
         if item.status in active_statuses:
             await self.close_running_runs_for_import(
                 item.id,
@@ -100,6 +131,7 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
             lease_generation=item.lease_generation,
             lease_token=token,
             lease_expires_at=expires_at,
+            queue_request_id=item.queue_request_id,
         )
 
     async def heartbeat(
@@ -107,35 +139,19 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
         lease: WorkerLease,
         now: datetime,
         lease_seconds: int,
-    ) -> WorkerLease | None:
-        """Renew only a live, current processing lease in one fenced UPDATE."""
-        if lease.organization_id != self._org_id:
+    ) -> WorkerLease | DeclarationPrincipalDenied | None:
+        """Recheck principal and renew a live fence; denial commits cancellation."""
+        try:
+            item = await self.lock_current_lease(lease, {"QUEUED", "RETRY_WAIT", "PREFLIGHT", "EXTRACTING", "RECONCILING"})
+        except DeclarationPrincipalDenied:
+            cancelled = await self.cancel_unauthorized(lease)
+            return DeclarationPrincipalDenied() if cancelled else None
+        if item is None or item.lease_expires_at <= now:
             return None
         expires_at = now + timedelta(seconds=lease_seconds)
-        result = await self._session.execute(
-            update(DeclarationImport)
-            .where(DeclarationImport.organization_id == self._org_id)
-            .where(DeclarationImport.id == lease.import_id)
-            .where(DeclarationImport.lease_generation == lease.lease_generation)
-            .where(DeclarationImport.lease_token == lease.lease_token)
-            .where(DeclarationImport.lease_expires_at.is_not(None))
-            .where(DeclarationImport.lease_expires_at > now)
-            .where(
-                DeclarationImport.status.in_(
-                    {"QUEUED", "RETRY_WAIT", "PREFLIGHT", "EXTRACTING", "RECONCILING"}
-                )
-            )
-            .values(lease_expires_at=expires_at)
-        )
-        if result.rowcount != 1:
-            return None
-        return WorkerLease(
-            organization_id=lease.organization_id,
-            import_id=lease.import_id,
-            lease_generation=lease.lease_generation,
-            lease_token=lease.lease_token,
-            lease_expires_at=expires_at,
-        )
+        item.lease_expires_at = expires_at
+        await self._session.flush()
+        return replace(lease, lease_expires_at=expires_at)
 
     async def count_extraction_runs(self, import_id: uuid.UUID) -> int:
         """Return the tenant-local worker retry history, never provider usage."""
@@ -311,18 +327,7 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
         return link
 
     async def verify_lease(self, lease: WorkerLease) -> bool:
-        if lease.organization_id != self._org_id:
-            return False
-        result = await self._session.execute(
-            select(DeclarationImport.id)
-            .where(DeclarationImport.organization_id == self._org_id)
-            .where(DeclarationImport.id == lease.import_id)
-            .where(DeclarationImport.lease_generation == lease.lease_generation)
-            .where(DeclarationImport.lease_token == lease.lease_token)
-            .where(DeclarationImport.lease_expires_at.is_not(None))
-            .where(DeclarationImport.lease_expires_at > func.now())
-        )
-        return result.scalar_one_or_none() is not None
+        return await self.lock_current_lease(lease, {"QUEUED", "RETRY_WAIT", "PREFLIGHT", "EXTRACTING", "RECONCILING"}) is not None
 
     async def lock_current_lease(
         self,
@@ -337,17 +342,27 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
         """
         if lease.organization_id != self._org_id or not expected_statuses:
             return None
+        await self.lock_acl()
         result = await self._session.execute(
             self._base_query()
             .where(DeclarationImport.id == lease.import_id)
+            .where(DeclarationImport.queue_request_id.is_not_distinct_from(lease.queue_request_id))
             .where(DeclarationImport.lease_generation == lease.lease_generation)
             .where(DeclarationImport.lease_token == lease.lease_token)
             .where(DeclarationImport.lease_expires_at.is_not(None))
-            .where(DeclarationImport.lease_expires_at > func.now())
+            .where(DeclarationImport.lease_expires_at > func.clock_timestamp())
             .where(DeclarationImport.status.in_(expected_statuses))
             .with_for_update()
         )
-        return result.scalar_one_or_none()
+        item = result.scalar_one_or_none()
+        if item is not None:
+            # Recheck expiry after waiting for the row lock as well.
+            current_time = await self._session.scalar(select(func.clock_timestamp()))
+            if item.lease_expires_at <= current_time:
+                return None
+            if not await self._set_queue_actor(item):
+                raise DeclarationPrincipalDenied()
+        return item
 
     async def get_run_for_import_for_update(
         self,
@@ -405,7 +420,7 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
             return False
         if not expected_statuses:
             raise ValueError("expected_statuses must not be empty")
-        forbidden = {"id", "organization_id", "status", "lease_generation"}
+        forbidden = {"id", "organization_id", "status", "lease_generation", "queue_request_id", "initiated_by"}
         if forbidden.intersection(values):
             raise ValueError("values may not override identity, status, or lease generation")
         # A caller may only clear the three lease ownership values together;
@@ -417,6 +432,8 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
             or any(values[name] is not None for name in lease_fields)
         ):
             raise ValueError("lease values may only be cleared together")
+        if await self.lock_current_lease(lease, expected_statuses) is None:
+            return False
         next_values = dict(values)
         next_values["status"] = new_status
         result = await self._session.execute(
@@ -426,7 +443,7 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
             .where(DeclarationImport.lease_generation == lease.lease_generation)
             .where(DeclarationImport.lease_token == lease.lease_token)
             .where(DeclarationImport.lease_expires_at.is_not(None))
-            .where(DeclarationImport.lease_expires_at > func.now())
+            .where(DeclarationImport.lease_expires_at > func.clock_timestamp())
             .where(DeclarationImport.status.in_(expected_statuses))
             .values(**next_values)
         )

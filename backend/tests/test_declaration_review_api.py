@@ -572,7 +572,7 @@ async def test_global_blocker_retry_allowlist_and_cancel_fence(
     review_import.item.estimated_cost_usd = Decimal("0")
     await _add_failed_runs(review_session, review_import.item, 1)
     await review_session.commit()
-    retry = await client_a_clerk.post(f"/api/declaration-imports/{review_import.item.id}/retry")
+    retry = await client_a_clerk.post(f"/api/declaration-imports/{review_import.item.id}/retry", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"})
     assert retry.status_code == 200
     assert retry.json()["status"] == "QUEUED"
 
@@ -636,19 +636,19 @@ async def test_retry_rejects_non_allowlisted_and_run_budget_and_cancel_rejects_a
     await review_session.commit()
     preview = await client_a_clerk.get(f"/api/declaration-imports/{review_import.item.id}/approval-preview")
     assert preview.status_code == 409
-    assert (await client_a_clerk.post(f"/api/declaration-imports/{review_import.item.id}/retry")).status_code == 409
+    assert (await client_a_clerk.post(f"/api/declaration-imports/{review_import.item.id}/retry", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"})).status_code == 409
 
     from app.core.config import settings
     review_import.item.error_code = "OCR_TIMEOUT"
     review_import.item.attempt_count = 0
     await _add_failed_runs(review_session, review_import.item, settings.declaration_max_attempts)
     await review_session.commit()
-    assert (await client_a_clerk.post(f"/api/declaration-imports/{review_import.item.id}/retry")).json()["detail"] == "RETRY_BUDGET_EXHAUSTED"
+    assert (await client_a_clerk.post(f"/api/declaration-imports/{review_import.item.id}/retry", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"})).json()["detail"] == "RETRY_BUDGET_EXHAUSTED"
 
     review_import.item.attempt_count = 0
     review_import.item.estimated_cost_usd = review_import.item.max_cost_usd
     await review_session.commit()
-    assert (await client_a_clerk.post(f"/api/declaration-imports/{review_import.item.id}/retry")).json()["detail"] == "RETRY_BUDGET_EXHAUSTED"
+    assert (await client_a_clerk.post(f"/api/declaration-imports/{review_import.item.id}/retry", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"})).json()["detail"] == "RETRY_BUDGET_EXHAUSTED"
 
     from fastapi import HTTPException
     from app.services.declaration_import_service import DeclarationImportService
