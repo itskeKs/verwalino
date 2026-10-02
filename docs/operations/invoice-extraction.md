@@ -14,7 +14,7 @@ env -u USER python -m app.workers.invoice_extraction --organization ORGANIZATION
 # Add --once for one bounded pass.
 ```
 
-The worker uses app_rw and tenant context. Claims commit before source reading or
+The worker uses the isolated app_worker login and tenant context. Claims commit before source reading or
 extraction. A private child process performs all parsing; results commit in a new
 transaction only if the attempt token and 150-second lease still match. A crash
 expires the lease; a later claim records timeout and makes the next attempt,
@@ -46,3 +46,10 @@ Rollback: set `HV_INVOICE_EXTRACTION_ENABLED=false` to stop new claims, keep
 originals and attempt history readable and use manual review. Stop workers before
 an application rollback. Do not downgrade a populated database. Storage/queue
 reconciliation and resource/fairness metrics remain part of M-B/M-G acceptance.
+
+
+Since migration 0081, the invoice worker requires `HV_DATABASE_URL_WORKER` for the
+existing isolated `app_worker` login. Supply it through the worker secret store,
+as for declaration workers. The web service must not receive this credential.
+The CLI uses the worker connection and has no app_rw fallback; queue metadata
+commands reject the web login. Local worker tests likewise use the worker pool.

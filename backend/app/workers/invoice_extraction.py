@@ -3,7 +3,7 @@ import argparse
 import asyncio
 import uuid
 from app.core.config import settings
-from app.core.db import get_session_factory, set_tenant_context
+from app.core.db import get_worker_session_factory, set_tenant_context
 from app.core.invoice_ocr import outcome, run_isolated_extraction
 from app.core.storage import compute_sha256, get_store
 from app.services.invoice_processing_service import InvoiceProcessingService
@@ -39,7 +39,7 @@ async def main():
     # One process at a time, round robin across the explicitly configured orgs.
     while True:
         for org_id in args.organization:
-            await process_once(get_session_factory(), org_id)
+            await process_once(get_worker_session_factory(), org_id)
         if args.once:
             return
         await asyncio.sleep(2)

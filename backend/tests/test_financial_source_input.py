@@ -10,6 +10,8 @@ from tests.test_financial_input_policy import draft, attest
 from tests.test_m3_settlement import m3_seed, _extras_for_exit  # noqa: F401
 from tests.test_m4_weg import m4_seed  # noqa: F401
 from tests.test_scoped_account_statements import mutate
+from tests.strict_finance_fixture import classify_property_finance
+from tests.contact_source_fixtures import grant_property_contacts
 
 pytestmark = pytest.mark.asyncio
 
@@ -19,13 +21,15 @@ async def clear_synthetic_source_grants():
     yield
     # The financial seed properties are shared by the module. Only this guarded
     # disposable harness can discard immutable test configuration between cases.
-    await mutate(text('TRUNCATE property_data_domain CASCADE'), {})
+    await mutate(text('TRUNCATE property_data_domain,person_data_domain,accounting_scope CASCADE'), {})
 
 
 async def test_rental_calculations_require_current_source_authority(client_a_admin, seed_data, m3_seed):
     run = await draft(client_a_admin, m3_seed, '0.00')
     values = {'advance_payments_total':'0.00','advance_payments_source':'MANUAL'}
     assert (await attest(client_a_admin, 'settlement', run, values)).status_code == 201
+    await classify_property_finance(seed_data, m3_seed['property'], scope_type='MIET')
+    await grant_property_contacts(client_a_admin, seed_data, m3_seed['property'])
     async with synthetic_enforcement(seed_data):
         for action in ['compute','preview','finalize']:
             response = await client_a_admin.post(f'/api/settlements/{run}/{action}', json=_extras_for_exit(m3_seed))
@@ -98,6 +102,8 @@ async def test_all_weg_compute_and_finalize_paths_require_complete_sources(clien
     assert created.status_code == 201, created.text
     subject = created.json()['id']
     assert (await attest(client_a_admin, kind, subject, values)).status_code == 201
+    await classify_property_finance(seed_data, m4_seed['property'])
+    await grant_property_contacts(client_a_admin, seed_data, m4_seed['property'])
     async with synthetic_enforcement(seed_data):
         for action in ['compute','finalize']:
             response = await client_a_admin.post(f'{endpoint}/{subject}/{action}', json=values)
@@ -211,6 +217,8 @@ async def test_financial_output_writer_waits_for_acl_before_parent_row(client_a_
     created = await client_a_admin.post('/api/economic-plans', json={'plan_year':2025,'property_id':m4_seed['property'],
         'period_start':'2025-01-01','period_end':'2025-12-31'})
     plan = uuid.UUID(created.json()['id'])
+    await classify_property_finance(seed_data, m4_seed['property'])
+    await grant_property_contacts(client_a_admin, seed_data, m4_seed['property'])
     marker = 'financial-source-wait-'+uuid.uuid4().hex
     async def write():
         with pytest.raises(DBAPIError, match='Complete financial source authority required'):

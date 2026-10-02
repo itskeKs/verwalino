@@ -83,7 +83,8 @@ normal development/customer URLs are rejected before migration.
    and writes the synthetic fixture manifest and five source files.
 4. From backend start
    `env -u USER .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 18000`.
-   Start `env -u USER .venv/bin/python -m app.workers.invoice_extraction --organization UUID`,
+   With `HV_DATABASE_URL_WORKER` supplied through the existing worker secret store,
+   start `env -u USER .venv/bin/python -m app.workers.invoice_extraction --organization UUID`,
    using `org_a_id` from the manifest and the same app database/storage environment.
 5. From frontend use the existing Vite installation with the explicit local proxy:
 

@@ -58,12 +58,16 @@ class FinancialScopeService:
 
     async def prepare_new(self, subject, scope_id=None):
         await self.lock_inputs()
+        mode = await self.session.scalar(text('SELECT property_source_security_mode(:org)'), {'org': self.org_id})
+        if mode == 'PAUSED':
+            raise HTTPException(404, 'Financial creation is paused')
         selected = await self.session.scalar(text("SELECT NULLIF(current_setting('app.current_scope_id',true),'')::uuid"))
         if scope_id is not None and selected is not None and scope_id != selected:
             raise HTTPException(409, 'Creation scope differs from its financial source')
         scope_id = scope_id or selected
         if scope_id is None:
-            if await self.session.scalar(text('SELECT property_has_classified_finance(:org,:property)'),
+            if mode != 'PREPARATION' or await self.session.scalar(text(
+                    'SELECT property_has_classified_finance(:org,:property)'),
                     {'org': self.org_id, 'property': subject.property_id}):
                 raise HTTPException(409, 'Select an exact accounting scope for this property')
             return None

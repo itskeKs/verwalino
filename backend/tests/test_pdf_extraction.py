@@ -641,10 +641,10 @@ class TestEndToEndPdfUpload:
         assert upload_resp.status_code == 201
         doc = upload_resp.json()
 
-        from app.core.db import get_session_factory
+        from app.core.db import get_worker_session_factory
         from app.workers.invoice_extraction import process_once
         for _ in range(100):
-            await process_once(get_session_factory(), m2_seed["org_a_id"])
+            await process_once(get_worker_session_factory(), m2_seed["org_a_id"])
             doc = (await client_a_admin.get(f"/api/invoice-documents/{doc['id']}")).json()
             if doc["processing_status"] not in {"queued", "running"}:
                 break
@@ -697,10 +697,10 @@ class TestEndToEndPdfUpload:
         assert upload_resp.status_code == 201
         doc = upload_resp.json()
         assert doc["cost_entry_id"] == entry_id
-        from app.core.db import get_session_factory
+        from app.core.db import get_worker_session_factory
         from app.workers.invoice_extraction import process_once
         for _ in range(100):
-            await process_once(get_session_factory(), m2_seed["org_a_id"])
+            await process_once(get_worker_session_factory(), m2_seed["org_a_id"])
             doc = (await client_a_admin.get(f"/api/invoice-documents/{doc['id']}")).json()
             if doc["processing_status"] not in {"queued", "running"}:
                 break

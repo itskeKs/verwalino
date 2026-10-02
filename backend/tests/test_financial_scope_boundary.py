@@ -169,7 +169,7 @@ from tests.test_invoice_extraction_worker import worker_tenant  # dedicated queu
 @pytest.mark.parametrize('change', ['revoke', 'deactivate', 'role'])
 async def test_invoice_job_rechecks_persisted_principal(migrator_session, worker_tenant, phase, change):
     from sqlalchemy.ext.asyncio import create_async_engine
-    from app.core.db import get_session_factory, set_tenant_context
+    from app.core.db import get_worker_session_factory, set_tenant_context
     from app.services.invoice_processing_service import InvoiceProcessingService
     from tests.conftest import MIGRATOR_URL
     _, seed = worker_tenant
@@ -182,7 +182,7 @@ async def test_invoice_job_rechecks_persisted_principal(migrator_session, worker
     await session.commit()
     claim = None
     if phase == 'before_finish':
-        async with get_session_factory()() as worker, worker.begin():
+        async with get_worker_session_factory()() as worker, worker.begin():
             await set_tenant_context(worker, ids['org'])
             claim = await InvoiceProcessingService(worker, ids['org']).claim()
             assert claim is not None
@@ -195,7 +195,7 @@ async def test_invoice_job_rechecks_persisted_principal(migrator_session, worker
                 'role': "UPDATE membership SET role='READ_ONLY' WHERE organization_id=:org AND user_id=:actor",
             }[change]
             await connection.execute(text(command), ids)
-        async with get_session_factory()() as worker, worker.begin():
+        async with get_worker_session_factory()() as worker, worker.begin():
             await set_tenant_context(worker, ids['org'])
             service = InvoiceProcessingService(worker, ids['org'])
             if phase == 'before_claim':

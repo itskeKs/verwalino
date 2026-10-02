@@ -80,7 +80,7 @@ def test_real_image_only_invoice():
 async def test_upload_is_durable_before_processing(worker_tenant, tmp_path):
     client_a_admin, seed_data = worker_tenant
     from app.core.storage import LocalFsDocumentStore, set_store
-    from app.core.db import get_session_factory
+    from app.core.db import get_worker_session_factory
     from app.workers.invoice_extraction import process_once
     set_store(LocalFsDocumentStore(str(tmp_path)))
     try:
@@ -93,13 +93,13 @@ async def test_upload_is_durable_before_processing(worker_tenant, tmp_path):
         def processor(data, mime):
             called.append(data)
             return extract_invoice(data, mime)
-        assert await process_once(get_session_factory(), seed_data["org_a_id"], processor=processor)
+        assert await process_once(get_worker_session_factory(), seed_data["org_a_id"], processor=processor)
         ready = (await client_a_admin.get(f"/api/invoice-documents/{doc['id']}")).json()
         assert ready["processing_status"] == "succeeded"
         assert ready["extraction_payload"]["gross_amount"] == "119.00"
         assert ready["cost_entry_id"] is None
         assert len(called) == 1
-        assert not await process_once(get_session_factory(), seed_data["org_a_id"], processor=processor)
+        assert not await process_once(get_worker_session_factory(), seed_data["org_a_id"], processor=processor)
     finally:
         set_store(None)
 
@@ -140,12 +140,12 @@ async def test_restart_fencing_and_retry_access(worker_tenant, client_b_admin, t
     from datetime import datetime, timedelta, timezone
     from sqlalchemy import text
     from app.core.storage import LocalFsDocumentStore, set_store
-    from app.core.db import get_session_factory, set_tenant_context
+    from app.core.db import get_worker_session_factory, set_tenant_context
     from app.services.invoice_processing_service import InvoiceProcessingService
     set_store(LocalFsDocumentStore(str(tmp_path)))
     try:
         doc = (await client_a_admin.post("/api/invoice-documents/upload", files={"file": ("invoice.pdf", pdf_bytes(), "application/pdf")})).json()
-        factory = get_session_factory()
+        factory = get_worker_session_factory()
         async def claim():
             async with factory() as s, s.begin():
                 await set_tenant_context(s, seed_data["org_a_id"])

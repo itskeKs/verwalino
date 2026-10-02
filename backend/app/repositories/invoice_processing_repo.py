@@ -1,6 +1,7 @@
 """Tenant-scoped processing history and bounded queue queries."""
-from datetime import datetime, timezone
-from sqlalchemy import func, or_, select, text
+import uuid
+from types import SimpleNamespace
+from sqlalchemy import text
 from app.models.invoice_processing_attempt import InvoiceProcessingAttempt as Attempt
 from app.repositories.base import TenantRepository
 
@@ -14,17 +15,11 @@ class InvoiceProcessingRepository(TenantRepository[Attempt]):
         return list(result.scalars())
 
     async def queue_count_locked(self):
-        # Serialize admission per org, independent of the idempotency key domain.
-        await self._session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:scope, 0))"),
-                                    {"scope": f"invoice-queue:{self._org_id}"})
-        result = await self._session.execute(select(func.count()).select_from(Attempt).where(
-            Attempt.organization_id == self._org_id, Attempt.status.in_(["queued", "running"])))
-        return result.scalar_one()
+        # Whole-tenant admission must include jobs hidden by source RLS.
+        return await self._session.scalar(text('SELECT invoice_queue_count(:org)'), {'org': self._org_id})
 
-    async def next_document(self):
-        now = datetime.now(timezone.utc)
-        result = await self._session.execute(self._base_query().where(or_(
-            Attempt.status == "queued", (Attempt.status == "running") & (Attempt.lease_until < now)))
-            .order_by(Attempt.created_at, Attempt.id).limit(1))
-        attempt = result.scalar_one_or_none()
-        return attempt.document_id if attempt else None
+    async def principal_metadata(self, attempt_id=None):
+        """Only immutable principal and fence metadata cross the scheduling boundary."""
+        row = await self._session.scalar(text('SELECT invoice_queue_metadata(:org,:attempt)'),
+                                         {'org': self._org_id, 'attempt': attempt_id})
+        return SimpleNamespace(**{key: uuid.UUID(value) if value else None for key, value in row.items()}) if row else None

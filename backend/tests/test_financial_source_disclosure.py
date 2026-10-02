@@ -45,7 +45,7 @@ async def test_unbound_pdf_denied_and_bound_pdf_needs_financial_export(client_a_
         async with synthetic_enforcement(seed_data):
             for mode in ['ENFORCED','PAUSED']:
                 await change_mode(seed_data, mode)
-                assert (await client_a_admin.get(f'/api/economic-plans/{plan}')).status_code == 200
+                assert (await client_a_admin.get(f'/api/economic-plans/{plan}')).status_code == 404
                 assert (await client_a_admin.get(f'/api/economic-plans/{plan}/pdf')).status_code == 404
             ids = await bind_output(seed_data, m4_seed['property'], plan, caps=['read'])
             assert (await client_a_admin.get(f'/api/economic-plans/{plan}/pdf')).status_code == 404

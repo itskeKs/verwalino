@@ -91,7 +91,7 @@ async def test_pause_preserves_export_grant_and_resume_does_not_restore_revoked_
 @pytest.mark.parametrize('phase', ['before_claim', 'before_finish'])
 @pytest.mark.parametrize('bound', [True, False])
 async def test_pause_fences_scoped_invoice_jobs_but_retains_unclassified_compatibility(migrator_session, worker_tenant, phase, bound):
-    from app.core.db import get_session_factory, set_tenant_context
+    from app.core.db import get_worker_session_factory, set_tenant_context
     from app.services.invoice_processing_service import InvoiceProcessingService
     _, seed = worker_tenant
     ids = await financial_fixture(migrator_session, {**seed, 'user_a_clerk_id': seed['user_a_admin_id']})
@@ -112,12 +112,12 @@ async def test_pause_fences_scoped_invoice_jobs_but_retains_unclassified_compati
     await migrator_session.commit()
     claim = None
     if phase == 'before_finish':
-        async with get_session_factory()() as session, session.begin():
+        async with get_worker_session_factory()() as session, session.begin():
             await set_tenant_context(session, ids['org'])
             claim = await InvoiceProcessingService(session, ids['org']).claim()
             assert claim is not None
     assert (await change(ids)).status_code == 201
-    async with get_session_factory()() as session, session.begin():
+    async with get_worker_session_factory()() as session, session.begin():
         await set_tenant_context(session, ids['org'])
         service = InvoiceProcessingService(session, ids['org'])
         if phase == 'before_claim':

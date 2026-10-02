@@ -46,11 +46,10 @@ class InvoiceProcessingService:
         return attempt
 
     async def claim(self):
-        document_id = await self.attempts.next_document()
-        if document_id is None:
+        current = await self.attempts.principal_metadata()
+        if current is None:
             return None
-        history = await self.attempts.history(document_id)
-        current = history[0]
+        document_id = current.document_id
         if not await self._enter_principal(current):
             await self._cancel_denied(current)
             return None
@@ -99,7 +98,7 @@ class InvoiceProcessingService:
                 "mime_type": document.mime_type}
 
     async def finish(self, claim, result):
-        pending = await self.attempts.get_by_id(claim['attempt_id'])
+        pending = await self.attempts.principal_metadata(claim['attempt_id'])
         if pending is None or pending.document_id != claim['document_id'] or pending.token != claim['token']:
             return False
         if not await self._enter_principal(pending):

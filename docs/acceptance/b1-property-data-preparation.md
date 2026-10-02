@@ -1071,3 +1071,23 @@ Independent review found no actionable issue. Chromium verified confirmation,
 lost committed-response replay, reload persistence, failed-load recovery and
 inspected desktop/mobile layouts. See [implementation and evidence](../2026-10-02-dunning-legacy-quarantine.md).
 Activation remains false; B1 and the full plan remain incomplete.
+
+
+### Strict unclassified finance closure (0081)
+
+Missing bindings no longer restore org-wide money access in ENFORCED/PAUSED.
+First creation requires an exact scope, atomically installed before the final
+guard. Linked invoice reads/writes and processing attempts inherit the parent.
+Invoice worker scheduling uses the existing isolated worker connection; ordinary
+web access cannot obtain hidden attempt fences. Shared ACL locks precede source
+and queue locks. Whole-tenant admission counts preserve hidden pending work.
+
+Evidence: two REDs, initial33 and focused22 passes;108 integration passes;
+final53 strict-finance/worker/scope-pause passes after independent-review repairs,
+plus52 PDF cases including both upload/OCR journeys. Final review accepted.
+Migration roundtrip retains original rows/function identity and rejects strict
+rollback. Shell/simulated deployment pass; no frontend change or browser rerun.
+See [implementation and limits](../2026-10-02-strict-financial-scope.md) and
+[consolidated B1 closure assessment](../2026-10-02-b1-closure-status.md).
+Standalone invoice custody, reviewed coverage/proposals and activation remain;
+B1 and M-A–M-G are not complete.
