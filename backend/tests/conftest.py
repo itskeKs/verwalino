@@ -110,7 +110,7 @@ def run_migrations():
             cursor.execute("TRUNCATE public.declaration_queue_request CASCADE")
         cursor.execute("SELECT to_regclass('public.mandate_document')")
         if cursor.fetchone()[0] is not None:
-            cursor.execute("TRUNCATE public.mandate_document")
+            cursor.execute("TRUNCATE public.mandate_document CASCADE")
         cursor.execute("SELECT to_regclass('public.scope_control_event')")
         if cursor.fetchone()[0] is not None:
             cursor.execute("TRUNCATE public.scope_control_event")

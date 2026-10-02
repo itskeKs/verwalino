@@ -1017,3 +1017,23 @@ checks pass. Same function OID and historical hashes survive preparation roundtr
 strict downgrade refuses widening. Independent review, shell and simulated deploy
 checks pass. See [implementation](../2026-10-02-mandate-source-enforcement.md).
 Legacy remediation and B1 activation remain pending.
+
+
+### Mandate legacy quarantine cutoff (0078)
+
+Historical unclassified mandate uploader/storage metadata was mutable and cannot
+justify a known-uploader admission path. A locked migration observes current
+metadata hashes without rewriting originals, retains those rows in quarantine,
+and prevents further unclassified insertion or legacy mutation in every mode.
+Ordinary metadata, bytes and audit remain inaccessible. New operational originals
+require an independent upload into an explicitly authorized scope with a reason.
+This records contemporary custody; it does not recover historical provenance.
+
+Evidence: backend/UI REDs fixed;31 expanded cases plus12 focused/general mandate
+passes after a transient DB setup retry; three UI tests, lint/build, shell and
+simulated deployment pass. Populated rollback refuses evidence loss; hashes remain
+unchanged. Independent review's obsolete UI claim is corrected. Chromium verified
+fresh upload/download and desktop/mobile controls. See
+[cutoff and evidence](../2026-10-02-mandate-legacy-quarantine.md).
+Administrative disposition review of frozen identifiers remains subsequent work.
+B1 activation and the rest of M-A–M-G remain incomplete.

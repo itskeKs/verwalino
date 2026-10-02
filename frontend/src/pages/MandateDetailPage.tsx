@@ -118,7 +118,7 @@ function MandateDetail({ mandateId }: { mandateId: string }) {
 
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault();
-    if (!mandateId || !file || (scope && !scopeReason.trim())) return;
+    if (!mandateId || !file || (!scope || !scopeReason.trim())) return;
     setUploading(true);
     setUploadError(null);
     try {
@@ -203,16 +203,17 @@ function MandateDetail({ mandateId }: { mandateId: string }) {
           <CardTitle>Zugängliche Dokumente</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <p>Diese Liste enthält nur Unterlagen mit Ihren aktuellen Leserechten und ist keine vollständige Mandatsakte. Ohne Bereichszuordnung gilt weiterhin der bisherige Zugriff innerhalb der Organisation.</p>
+          <p>Diese Liste enthält nur Unterlagen mit Ihren aktuellen Leserechten und ist keine vollständige Mandatsakte. Alte Unterlagen ohne geprüfte Bereichszuordnung bleiben in Quarantäne und sind hier nicht zugänglich.</p>
           <label><input type="checkbox" checked={includeArchived} onChange={e => setIncludeArchived(e.target.checked)} /> Archivierte Unterlagen anzeigen</label>
           <Button type="button" onClick={reload}>Unterlagen neu laden</Button>
           {isWrite && (
             <form onSubmit={handleUpload} className="rounded-md border border-border bg-secondary/40 p-4">
               <p className="mb-3 text-sm font-medium">Dokument hochladen</p>
+              <p className="mb-3 text-sm">Laden Sie ein eigenständig vorliegendes Original in einen ausdrücklich berechtigten Bereich hoch. Alte Unterlagen ohne geprüfte Zuordnung bleiben in Quarantäne; historische Upload-Angaben belegen keine Herkunft.</p>
               {uploadError && <p className="error-text mb-2">{uploadError}</p>}
               <fieldset className="form-grid" disabled={uploading} style={{ border: 0, padding: 0, minWidth: 0 }}>
                 <SearchChoice<DocumentScope> endpoint={`/api/accounting-scopes/page?management_mandate_id=${mandateId}&capability=prepare`}
-                  value={scope} onChange={setScope} label="Bereich für neuen Upload (optional)"
+                  value={scope} onChange={setScope} required label="Bereich für neuen Upload *"
                   display={item => `${item.label} · ${item.scope_type} · ${item.valid_from} – ${item.valid_to || "offen"}`} />
                 {scope && <label>Begründung der Bereichszuordnung<input required maxLength={2000} value={scopeReason} onChange={e => setScopeReason(e.target.value)} /></label>}
                 {scope && <p className="form-full-width">Prüfen Sie, dass der gesamte Dateiinhalt für diesen Bereich bestimmt ist. Die Zuordnung und das Original werden unveränderlich gespeichert.</p>}
@@ -247,7 +248,7 @@ function MandateDetail({ mandateId }: { mandateId: string }) {
                   />
                 </label>
                 <div className="form-actions">
-                  <Button type="submit" disabled={uploading || !file}>
+                  <Button type="submit" disabled={uploading || !file || !scope || !scopeReason.trim()}>
                     <Upload className="h-4 w-4" />
                     {uploading ? "Lade hoch…" : "Hochladen"}
                   </Button>

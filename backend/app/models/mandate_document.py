@@ -1,7 +1,7 @@
 """Contract/admin documents with optional immutable reviewed scope provenance.
 
-Unclassified legacy rows retain compatibility. New scoped originals can only be
-archived with actor/reason evidence; their file metadata and context are retained.
+Unclassified legacy rows are retained in quarantine. New scoped originals can
+only be archived with actor/reason evidence; their metadata/context are retained.
 """
 
 from __future__ import annotations

@@ -109,7 +109,7 @@ async def test_archive_retains_immutable_original_and_audit_and_requires_live_pr
         set_store(None)
 
 
-async def test_export_and_pause_recheck_while_legacy_documents_remain_compatible(migrator_session, scope_seed, tmp_path):
+async def test_export_and_pause_recheck_while_unclassified_upload_is_denied(migrator_session, scope_seed, tmp_path):
     from app.core.storage import LocalFsDocumentStore, set_store
     from tests.test_scope_control import change
     set_store(LocalFsDocumentStore(tmp_path))
@@ -131,8 +131,7 @@ async def test_export_and_pause_recheck_while_legacy_documents_remain_compatible
             assert (await api.post(path + '/archive', json={'reason': 'Paused bypass'})).status_code == 404
             assert (await api.get(path + '/download')).status_code == 200
             legacy = await api.post(endpoint, **upload(ids, scoped=False))
-            assert legacy.status_code == 201, legacy.text
-            assert (await api.delete(endpoint + '/' + legacy.json()['id'])).status_code == 204
+            assert legacy.status_code == 404, legacy.text
         await mutate(text('UPDATE scope_grant SET revoked_at=clock_timestamp(),revoked_by=:actor WHERE organization_id=:org AND scope_id=:source_scope AND revoked_at IS NULL'), ids)
         async with client(ids) as api:
             assert (await api.get(path + '/download')).status_code == 404
@@ -202,7 +201,7 @@ async def test_database_context_key_original_storage_and_populated_downgrade(mig
                 with pytest.raises(DBAPIError, match='Preserve classified mandate originals'):
                     with connection.begin_nested(), Operations.context(MigrationContext.configure(connection)):
                         migration.downgrade()
-                connection.execute(text('TRUNCATE mandate_document'))
+                connection.execute(text('TRUNCATE mandate_document CASCADE'))
                 with Operations.context(MigrationContext.configure(connection)):
                     migration.downgrade()
                     migration.upgrade()

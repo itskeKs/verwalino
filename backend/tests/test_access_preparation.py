@@ -139,9 +139,8 @@ async def test_inventory_counts_unclassified_legacy_without_changing_originals(m
     ids.update(mandate=uuid.uuid4(), unbound_bank=uuid.uuid4(), sha='a' * 64)
     from tests.test_scoped_account_statements import mutate
     await mutate(text("INSERT INTO management_mandate(id,organization_id,mandate_type,label,start_date) VALUES(:mandate,:org,'MIET','Hidden legacy mandate','2024-01-01')"), ids)
-    await mutate(text("""INSERT INTO mandate_document(organization_id,management_mandate_id,doc_type,title,original_filename,
-        mime_type,content_byte_size,content_sha256,storage_uri,storage_backend)
-        VALUES(:org,:mandate,'SONSTIGES','Hidden mandate original','private.pdf','application/pdf',1,:sha,'synthetic/legacy','TEST')"""), ids)
+    from tests.mandate_legacy_fixture import seed_legacy_mandate
+    await seed_legacy_mandate(ids)
     for prop in (ids['property'], None):
         await mutate(text("""INSERT INTO property_document(organization_id,property_id,doc_type,title,original_filename,mime_type,
             content_byte_size,content_sha256,storage_uri,storage_backend,page_count)

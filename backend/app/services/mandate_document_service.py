@@ -1,8 +1,8 @@
 """Mandate source access and retained originals.
 
-Unclassified legacy metadata keeps its existing deletion behavior. Explicitly
-scoped sources preserve their original bytes/context and record one-way archive
-transitions; this does not infer a retention duration or activate team rollout.
+Unclassified legacy metadata is retained in quarantine. New originals require
+an explicit scope; scoped originals record one-way archive transitions. Neither
+quarantine nor a new upload authenticates historical custody or retention duration.
 """
 
 from __future__ import annotations

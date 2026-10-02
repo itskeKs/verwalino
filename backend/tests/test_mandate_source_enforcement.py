@@ -7,6 +7,7 @@ from tests.test_scoped_mandate_documents import document_fixture, upload
 from tests.test_scoped_account_statements import client, mutate
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_property_source_enforcement import synthetic_enforcement, change_mode
+from tests.mandate_legacy_fixture import seed_legacy_mandate
 
 pytestmark = pytest.mark.asyncio
 
@@ -18,10 +19,7 @@ async def test_strict_legacy_mandate_original_is_hidden_and_retained(migrator_se
     ids = await document_fixture(migrator_session, scope_seed)
     endpoint = f"/api/mandates/{ids['mandate']}/documents"
     try:
-        async with client(ids) as api:
-            response = await api.post(endpoint, **upload(ids, scoped=False))
-            assert response.status_code == 201, response.text
-            ids['document'] = uuid.UUID(response.json()['id'])
+        ids['document'] = await seed_legacy_mandate(ids)
         def denied_storage(*args, **kwargs):
             raise AssertionError('Unknown scope must be denied before storage')
         monkeypatch.setattr(store, 'iter_chunks', denied_storage)
@@ -37,8 +35,9 @@ async def test_strict_legacy_mandate_original_is_hidden_and_retained(migrator_se
                 assert await read_value('SELECT count(*) FROM audit_event WHERE entity_id=:document', ids, actor_key=actor) == 0
                 assert await read_value("UPDATE mandate_document SET title='Forbidden' WHERE id=:document RETURNING id", ids, actor_key=actor) is None
                 assert await read_value('DELETE FROM mandate_document WHERE id=:document RETURNING id', ids, actor_key=actor) is None
-        # Returning to preparation is only the disposable test cleanup, not a supported rollback.
+        # Quarantine now remains closed even in preparation after 0078.
         assert await read_value('SELECT count(*) FROM mandate_document WHERE id=:document', ids) == 1
+        assert await read_value('SELECT count(*) FROM mandate_document WHERE id=:document', ids, actor_key='clerk') == 0
     finally:
         set_store(None)
 
@@ -137,9 +136,7 @@ async def test_mandate_source_migration_preserves_history_and_refuses_strict_dow
     migration = importlib.import_module('migrations.versions.0077_mandate_source_enforcement')
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
-        async with client(ids) as api:
-            response = await api.post(f"/api/mandates/{ids['mandate']}/documents", **upload(ids, scoped=False))
-            assert response.status_code == 201, response.text
+        ids['document'] = await seed_legacy_mandate(ids)
         async with synthetic_enforcement(scope_seed):
             with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
                 with pytest.raises(DBAPIError, match='Retain strict mandate source access'):

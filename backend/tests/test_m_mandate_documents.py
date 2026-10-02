@@ -1,8 +1,8 @@
 """Mandate document tests -- upload / list / download / delete + RBAC + RLS.
 
 Documents are attached to a management mandate (Verwaltervertrag, Bankkonto-
-Unterlagen, …). They reuse the content-addressed document store. Unlike GoBD
-invoice documents they are deletable.
+Unterlagen, …). They reuse the content-addressed document store. Scoped originals are retained and archived; unclassified legacy originals
+remain in quarantine.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ def mandate_doc_seed(seed_data):
 
     org_a = str(seed_data["org_a_id"])
     org_b = str(seed_data["org_b_id"])
-    ids = {"mandate_a": uuid.uuid4(), "mandate_b": uuid.uuid4()}
+    ids = {"mandate_a": uuid.uuid4(), "mandate_b": uuid.uuid4(), "property": uuid.uuid4(), "scope": uuid.uuid4()}
 
     conn = psycopg2.connect(SYNC_URL)
     conn.autocommit = False
@@ -41,6 +41,12 @@ def mandate_doc_seed(seed_data):
             "VALUES (%s,%s,%s,%s,%s)",
             (str(ids["mandate_b"]), org_b, "MIET", "Doc-Test B", date(2024, 1, 1)),
         )
+        cur.execute("INSERT INTO property(id,organization_id,name,street,zip_code,city,management_type) VALUES(%s,%s,'Document test','','','','WEG')",
+                    (str(ids['property']),org_a))
+        cur.execute("INSERT INTO accounting_scope(id,organization_id,property_id,management_mandate_id,scope_type,label,valid_from,origin,created_by) VALUES(%s,%s,%s,%s,'WEG','Explicit document scope','2024-01-01','REVIEWED',%s)",
+                    (str(ids['scope']),org_a,str(ids['property']),str(ids['mandate_a']),str(seed_data['user_a_admin_id'])))
+        cur.execute("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES(%s,%s,%s,ARRAY['read','prepare','export'],%s,'Explicit test grant')",
+                    (org_a,str(ids['scope']),str(seed_data['user_a_admin_id']),str(seed_data['user_a_admin_id'])))
         conn.commit()
     except Exception:
         conn.rollback()
@@ -51,10 +57,10 @@ def mandate_doc_seed(seed_data):
     return {**seed_data, **{k: str(v) for k, v in ids.items()}}
 
 
-def _pdf(name: str, content: bytes, doc_type: str, title: str = ""):
+def _pdf(name: str, content: bytes, doc_type: str, title: str = "", *, scope=None):
     return {
         "files": {"file": (name, content, "application/pdf")},
-        "data": {"doc_type": doc_type, "title": title},
+        "data": {"doc_type": doc_type, "title": title, **({"accounting_scope_id": scope, "scope_reason": "Reviewed original"} if scope else {})},
     }
 
 
@@ -76,7 +82,7 @@ class TestMandateDocuments:
     @pytest.mark.asyncio
     async def test_upload_and_list(self, client_a_admin, mandate_doc_seed):
         mid = mandate_doc_seed["mandate_a"]
-        up = _pdf("verwaltervertrag.pdf", b"%PDF-1.4 contract A", "VERWALTERVERTRAG", "Verwaltervertrag 2024")
+        up = _pdf("verwaltervertrag.pdf", b"%PDF-1.4 contract A", "VERWALTERVERTRAG", "Verwaltervertrag 2024", scope=mandate_doc_seed["scope"])
         r = await client_a_admin.post(f"/api/mandates/{mid}/documents", **up)
         assert r.status_code == 201, r.text
         d = r.json()
@@ -95,7 +101,7 @@ class TestMandateDocuments:
         mid = mandate_doc_seed["mandate_a"]
         content = b"%PDF-1.4 bankvertrag-eindeutige-bytes-123"
         r = await client_a_admin.post(
-            f"/api/mandates/{mid}/documents", **_pdf("bank.pdf", content, "BANKKONTO")
+            f"/api/mandates/{mid}/documents", **_pdf("bank.pdf", content, "BANKKONTO", scope=mandate_doc_seed["scope"])
         )
         assert r.status_code == 201
         doc_id = r.json()["id"]
@@ -124,17 +130,20 @@ class TestMandateDocuments:
         assert r.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_delete(self, client_a_admin, mandate_doc_seed):
+    async def test_scoped_original_cannot_be_deleted(self, client_a_admin, mandate_doc_seed):
         mid = mandate_doc_seed["mandate_a"]
         r = await client_a_admin.post(
             f"/api/mandates/{mid}/documents",
-            **_pdf("weg.pdf", b"%PDF to delete", "SONSTIGES"),
+            **_pdf("weg.pdf", b"%PDF to retain", "SONSTIGES", scope=mandate_doc_seed["scope"]),
         )
         doc_id = r.json()["id"]
         r = await client_a_admin.delete(f"/api/mandates/{mid}/documents/{doc_id}")
-        assert r.status_code == 204
+        assert r.status_code == 409
+        r = await client_a_admin.post(f"/api/mandates/{mid}/documents/{doc_id}/archive", json={"reason": "Replaced by current original"})
+        assert r.status_code == 200
         r = await client_a_admin.get(f"/api/mandates/{mid}/documents/{doc_id}/download")
-        assert r.status_code == 404
+        assert r.status_code == 200
+        assert r.content == b"%PDF to retain"
 
     @pytest.mark.asyncio
     async def test_readonly_cannot_upload(self, client_a_readonly, mandate_doc_seed):

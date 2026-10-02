@@ -21,7 +21,8 @@ it("describes visible documents as partial and preserves original evidence throu
   const post = vi.spyOn(api, "post").mockImplementation(async () => { archived = true; return { ...doc, archived_at: "2026-10-02" }; });
   renderPage();
   await screen.findByText("Source contract");
-  expect(screen.getByText(/keine vollständige Mandatsakte/)).toBeInTheDocument();
+  expect(screen.getByText(/keine vollständige Mandatsakte/)).toHaveTextContent("bleiben in Quarantäne und sind hier nicht zugänglich");
+  expect(screen.queryByText(/bisherige Zugriff innerhalb der Organisation/)).toBeNull();
   expect(screen.queryByRole("button", { name: "Löschen" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Archivieren" }));
   expect(screen.getByRole("button", { name: "Archivierung speichern" })).toBeDisabled();
@@ -49,4 +50,17 @@ it("hides stale documents after a failed reload instead of claiming an empty man
   await screen.findByRole("alert");
   expect(screen.queryByText("Source contract")).toBeNull();
   expect(screen.queryByText("Keine zugänglichen Unterlagen für diese Auswahl.")).toBeNull();
+});
+
+it("requires an explicit scope and review reason before uploading an independently held original", async () => {
+  vi.spyOn(api, "get").mockImplementation(async url => {
+    if (url.includes("/documents")) return [];
+    if (url.includes("/accounting-scopes")) return { items: [], next_cursor: null };
+    return mandate;
+  });
+  renderPage();
+  const file = await screen.findByLabelText("Datei *");
+  fireEvent.change(file, { target: { files: [new File(["synthetic original"], "original.pdf", { type: "application/pdf" })] } });
+  expect(screen.getByRole("button", { name: "Hochladen" })).toBeDisabled();
+  expect(screen.getByText(/eigenständig vorliegendes Original/)).toBeVisible();
 });
