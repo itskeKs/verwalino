@@ -142,3 +142,26 @@ rejected. Rental obligations stay inside the scope's term and units. WEG scopes
 do not display tenant-debt totals. Partial fiscal or next-plan years remain
 blocked pending reviewed coverage. Scoped document retention is explicitly
 unavailable until source assignment can prove complete document coverage.
+
+### Scoped dunning
+
+Tenant dunning selects a rental accounting scope and a matching lease whose term
+overlaps the requested period. Open Items carries that scope into the draft form;
+the form checks the live preparation permission before enabling creation. Failed
+or mismatched inherited scopes remain visible and block submission until the user
+explicitly changes the selection. Owner dunning in a WEG scope requires a bound,
+finalized economic plan covering the requested period. Payment-only scoped owner
+dunning is not yet available.
+
+Preparing a draft requires PREPARE, issuing requires APPROVE, and PDF export
+requires EXPORT, each with live READ access to that exact scope. Organization
+administrators also need these grants. Discarding a scoped draft preserves the
+immutable context and audit record and prevents later issue. Existing unclassified
+legacy drafts retain their deletion behavior.
+
+Escalation only counts issued letters in the selected scope. Unresolved legacy
+issued letters block escalation, and legacy letters for classified financial
+subjects are quarantined from ordinary list/detail/export access. A proven legacy
+review/backfill workflow remains outstanding; do not invent historical provenance
+or remove the context table to restore access. Migration 0039 refuses downgrade
+when scoped notices exist. Repair forward with sources and grants preserved.

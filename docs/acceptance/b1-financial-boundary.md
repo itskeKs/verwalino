@@ -208,3 +208,48 @@ versus WEG selection, dashboard recovery, unknown retention, revocation and mobi
 390/390. Evidence is `b1-scoped-deadlines-browser.json`; screenshot inspected at
 `/tmp/hv-b1-deadlines-acceptance/deadlines-mobile.png`. Browser plugin not available;
 regular Playwright used against API18000/Vite13000/disposable DB55432 only.
+
+## Immutable dunning provenance (0039)
+
+New scoped tenant and owner notices retain an immutable `PREPARED` context with
+scope, exact lease or finalized plan, period, creator and reason. Deferred database
+checks validate tenant/source/property/unit membership and lease overlap, or the
+owner's advance line and same-scope finalized plan. Missing provenance cannot be
+bypassed with direct app-role inserts. An issued notice retains its existing frozen
+body; cancelling a scoped draft preserves its context and audit trail.
+
+Live capabilities separate READ, PREPARE, APPROVE and EXPORT. Administrative role
+alone grants no financial access. Detail, list, PDF, generic audit and privacy
+exports honor that boundary. Escalation counts only the selected scope's issued
+history; any unresolved legacy issued history blocks calculation. Unknown legacy
+letters associated with classified finance are quarantined. They are not assigned
+a guessed source. Proven legacy review/backfill remains unfinished B1 work, so
+this increment does not establish full B1 activation or a permanent quarantine policy.
+Scoped owner dunning requires a bound finalized economic plan; a payment-only
+owner adapter remains unsupported. The populated migration cannot be downgraded;
+use forward repair and preserve the context table. Only the disposable test reset
+explicitly discards synthetic contexts before a full schema reset.
+
+Evidence: 48 backend tests passed across scoped dunning, legacy M7 and RLS coverage.
+After exact selector capability hydration was added, 18 affected scoped-dunning and
+scope-API tests passed, reusing unaffected legacy evidence. Tests cover raw app-role
+rejection, immutable provenance even under the migration principal, populated
+downgrade refusal, audit visibility, complete authorized privacy export, export
+capability loss, 100-versus-900 money separation, per-scope escalation and live
+revocation. Independent read-only review accepted the repaired boundary and UI.
+
+Twelve UI regressions pass across scoped dunning, statements, overviews and bank
+creation. The Open Items shortcut preserves a visibly hydrated scope. Delayed
+source loading, wrong-property or unavailable inherited scopes block submission;
+the UI does not silently replace them with legacy context. Hydration checks the
+requested live preparation capability. Cancelled notices display as discarded;
+denied actions hide previously loaded amounts, and list failures never appear as
+an empty successful result. Lint passes without warnings; the production build
+passes with the existing bundle-size warning (approximately 586 KB).
+
+The Chromium journey in `scripts/acceptance/b1_scoped_dunning_browser.cjs` passed
+against only the disposable local API/database. It checks Open Items → scope
+prefill → invalid-period retry → 7,100 EUR draft → issue → denied/authorized PDF,
+retained cancellation, separate 6,700 EUR scope at level 1, and revoked detail/PDF.
+The 390 px mobile screenshot was inspected; the main content stays within 390 px.
+The report is `b1-scoped-dunning-browser.json`; there were no page errors.

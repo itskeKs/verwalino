@@ -65,6 +65,15 @@ def run_migrations():
         os.path.join(os.path.dirname(__file__), "..", "migrations"),
     )
 
+    # This harness is already restricted to the disposable test database above.
+    # Production downgrade intentionally refuses to remove a populated dunning
+    # boundary. Discard only these synthetic associations before the full reset.
+    import psycopg2
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT to_regclass('public.dunning_scope_context')")
+        if cursor.fetchone()[0] is not None:
+            cursor.execute("TRUNCATE public.dunning_scope_context")
+
     # Downgrade to clean state, then upgrade to head
     command.downgrade(alembic_cfg, "base")
     command.upgrade(alembic_cfg, "head")

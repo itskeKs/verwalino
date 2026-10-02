@@ -7,7 +7,7 @@
  * and status-dependent actions.
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   getDunningNotice,
@@ -29,6 +29,7 @@ import { ApiError } from "../api/client";
 const STATUS_LABELS: Record<string, string> = {
   draft: "Entwurf",
   issued: "Ausgestellt",
+  cancelled: "Verworfen",
 };
 
 const STATUS_CSS: Record<string, string> = {
@@ -55,6 +56,7 @@ export function DunningNoticeDetailPage() {
   const { dunningId } = useParams<{ dunningId: string }>();
   const navigate = useNavigate();
 
+  const requestId = useRef(0);
   const [notice, setNotice] = useState<DunningNotice | null>(null);
   const [tenantProfiles, setTenantProfiles] = useState<TenantProfile[]>([]);
   const [ownerProfiles, setOwnerProfiles] = useState<OwnerProfile[]>([]);
@@ -66,6 +68,8 @@ export function DunningNoticeDetailPage() {
 
   const reload = useCallback(() => {
     if (!dunningId) return;
+    const current = ++requestId.current;
+    setNotice(null);
     setLoading(true);
     setError(null);
     Promise.all([
@@ -75,23 +79,26 @@ export function DunningNoticeDetailPage() {
       listPersons(),
     ])
       .then(([dn, tp, op, per]) => {
+        if (current !== requestId.current) return;
         setNotice(dn);
         setTenantProfiles(tp);
         setOwnerProfiles(op);
         setPersons(per);
       })
       .catch((err) => {
+        if (current !== requestId.current) return;
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert.");
         } else {
           setError(String(err));
         }
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (current === requestId.current) setLoading(false); });
+    return () => { requestId.current++; };
   }, [dunningId]);
 
   useEffect(() => {
-    reload();
+    return reload();
   }, [reload]);
 
   function getPersonName(personId: string): string {
@@ -133,6 +140,7 @@ export function DunningNoticeDetailPage() {
       setNotice(updated);
     } catch (err) {
       if (err instanceof ApiError) {
+        if ([401, 403, 404].includes(err.status)) { setNotice(null); setError(err.message); }
         if (err.status === 409) {
           setActionError(
             "Fehler: Die Mahnung kann in diesem Status nicht ausgegeben werden. " +
@@ -152,7 +160,9 @@ export function DunningNoticeDetailPage() {
   async function handleDelete() {
     if (!dunningId) return;
     const confirmed = window.confirm(
-      "Entwurf loeschen? Nur nicht-ausgestellte Mahnungen koennen geloescht werden.",
+      notice?.accounting_scope_id
+        ? "Entwurf verwerfen? Er bleibt mit seiner Zuordnung nachvollziehbar und kann nicht mehr ausgestellt werden."
+        : "Entwurf löschen? Nur nicht ausgestellte Mahnungen können gelöscht werden.",
     );
     if (!confirmed) return;
     setActionLoading(true);
@@ -162,6 +172,7 @@ export function DunningNoticeDetailPage() {
       navigate("/mahnungen");
     } catch (err) {
       if (err instanceof ApiError) {
+        if ([401, 403, 404].includes(err.status)) { setNotice(null); setError(err.message); }
         if (err.status === 409) {
           setActionError(
             "Fehler: Ausgestellte Mahnungen koennen nicht geloescht werden (GoBD).",
@@ -185,7 +196,7 @@ export function DunningNoticeDetailPage() {
   // --- Render ---
 
   if (loading) return <p>Lade...</p>;
-  if (error && !notice) return <p className="error-text">{error}</p>;
+  if (error) return <p role="alert" className="error-text">{error} <button className="btn" onClick={reload}>Erneut laden</button></p>;
   if (!notice) return <p className="error-text">Mahnung nicht gefunden.</p>;
 
   const includedItems = notice.included_items ?? [];
@@ -428,7 +439,7 @@ export function DunningNoticeDetailPage() {
               disabled={actionLoading}
               style={{ color: "#b71c1c" }}
             >
-              Entwurf loeschen
+              {notice.accounting_scope_id ? "Entwurf verwerfen" : "Entwurf loeschen"}
             </button>
           </>
         )}

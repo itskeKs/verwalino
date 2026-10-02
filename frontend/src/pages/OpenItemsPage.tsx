@@ -294,7 +294,7 @@ export function OpenItemsPage() {
             </Link>
             {r.totalOpen > 0 && (
               <Link
-                to={`/mahnungen?create=tenant&tenant_profile_id=${encodeURIComponent(r.lease.tenant_profile_id)}&lease_agreement_id=${encodeURIComponent(r.lease.id)}&period_start=${encodeURIComponent(periodStart)}&period_end=${encodeURIComponent(periodEnd)}`}
+                to={`/mahnungen?create=tenant&tenant_profile_id=${encodeURIComponent(r.lease.tenant_profile_id)}&lease_agreement_id=${encodeURIComponent(r.lease.id)}&period_start=${encodeURIComponent(periodStart)}&period_end=${encodeURIComponent(periodEnd)}${scopeId ? `&accounting_scope_id=${encodeURIComponent(scopeId)}` : ""}`}
                 className="btn btn--small"
                 style={{ color: "#b71c1c" }}
               >

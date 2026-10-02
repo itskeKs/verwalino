@@ -19,7 +19,6 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
-from app.services.financial_scope_service import FinancialScopeService
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
@@ -42,6 +41,8 @@ from app.engine.mietkonto import (
 from app.models.audit_event import AuditEvent
 from app.models.dunning_notice import DunningNotice
 from app.repositories.audit_repo import AuditRepository
+from app.core.rbac import ScopeCapability
+from app.services.dunning_scope_service import DunningScopeService
 from app.repositories.dunning_notice_repo import DunningNoticeRepository
 from app.repositories.economic_plan_repo import (
     EconomicPlanLineRepository,
@@ -102,12 +103,15 @@ class DunningService:
         reference_date: date | None = None,
         grace_days: int = 0,
         override_fee: Decimal | None = None,
+        accounting_scope_id: uuid.UUID | None = None,
     ) -> DunningNotice:
         """Create a draft dunning notice for a tenant based on overdue open items.
 
         Reuses the M6 account_statement derivation -- does NOT duplicate it.
         """
         ref_date = reference_date or date.today()
+        context = DunningScopeService(self._session, self._org_id, self._user_id)
+        sphere = await context.prepare(accounting_scope_id, 'MIET', period_start, period_end)
 
         # Resolve lease
         lease = await self._leases.get_by_id(lease_agreement_id)
@@ -118,6 +122,11 @@ class DunningService:
         tenant = await self._tenants.get_by_id(tenant_profile_id)
         if tenant is None:
             raise HTTPException(status_code=404, detail="Tenant profile not found")
+
+        if lease.tenant_profile_id != tenant_profile_id:
+            raise HTTPException(422, 'Lease and dunning recipient must match')
+        if lease.valid_from > period_end or (lease.valid_to is not None and lease.valid_to <= period_start):
+            raise HTTPException(422, 'Lease must overlap the dunning period')
 
         # Compute Soll/Ist via M6 engine
         lc = LeaseChargeInput(
@@ -143,6 +152,7 @@ class DunningService:
             )
 
         # Escalation level
+        await context.history(tenant_id=tenant_profile_id)
         issued_count = await self._repo.count_issued_for_tenant(tenant_profile_id)
 
         # Assemble
@@ -169,7 +179,9 @@ class DunningService:
             included_items=dunning.items_snapshot(),
             status="draft",
         )
+        await context.attach(notice, sphere, period_start, period_end, lease_id=lease_agreement_id)
         notice = await self._repo.create(notice)
+        await self._session.refresh(notice)
 
         await self._audit.create(
             AuditEvent(
@@ -201,9 +213,14 @@ class DunningService:
         reference_date: date | None = None,
         grace_days: int = 0,
         override_fee: Decimal | None = None,
+        accounting_scope_id: uuid.UUID | None = None,
     ) -> DunningNotice:
         """Create a draft dunning notice for an owner based on overdue open items."""
         ref_date = reference_date or date.today()
+        context = DunningScopeService(self._session, self._org_id, self._user_id)
+        sphere = await context.prepare(accounting_scope_id, 'WEG', period_start, period_end)
+        if sphere is not None and economic_plan_id is None:
+            raise HTTPException(422, 'Scoped owner dunning requires a finalized economic plan')
 
         owner = await self._owners.get_by_id(owner_profile_id)
         if owner is None:
@@ -215,7 +232,12 @@ class DunningService:
             plan = await self._plans.get_by_id(economic_plan_id)
             if plan is None:
                 raise HTTPException(404, "Economic plan not found")
-            await FinancialScopeService(self._session, self._org_id, self._user_id).enter(plan, computation=True)
+            plan_scope = await context.financial.enter(plan, computation=True)
+            sphere = await context.prepare(accounting_scope_id, 'WEG', period_start, period_end)
+            if sphere is not None and plan_scope is None:
+                raise HTTPException(422, 'Economic plan must be bound to the selected scope')
+            if sphere is not None and (plan.status != 'finalized' or period_start < plan.period_start or period_end > plan.period_end):
+                raise HTTPException(422, 'Scoped owner dunning requires a finalized plan covering its period')
             if plan.status == "finalized":
                 lines = await self._plan_lines.list_for_plan(economic_plan_id)
                 advance_lines = [
@@ -246,6 +268,7 @@ class DunningService:
                 detail="No overdue items found for this owner in the given period",
             )
 
+        await context.history(owner_id=owner_profile_id)
         issued_count = await self._repo.count_issued_for_owner(owner_profile_id)
         dunning = assemble_dunning(
             overdue_items=overdue,
@@ -269,7 +292,9 @@ class DunningService:
             included_items=dunning.items_snapshot(),
             status="draft",
         )
+        await context.attach(notice, sphere, period_start, period_end, plan_id=economic_plan_id)
         notice = await self._repo.create(notice)
+        await self._session.refresh(notice)
 
         await self._audit.create(
             AuditEvent(
@@ -298,10 +323,13 @@ class DunningService:
         Sets status='issued', issued_at/by + audit. The trigger (0019)
         freezes it from commit. Only issued notices can be rendered as PDF.
         """
-        notice = await self._repo.get_by_id(dunning_id)
+        context = DunningScopeService(self._session, self._org_id, self._user_id)
+        await context.financial.lock_inputs()
+        notice = await self._repo.get_by_id_for_update(dunning_id)
         if notice is None:
             raise HTTPException(status_code=404, detail="Dunning notice not found")
-        if notice.status != "draft":
+        await context.enter(notice, ScopeCapability.APPROVE)
+        if notice.status != "draft" or notice.cancelled_at is not None:
             raise HTTPException(
                 status_code=409,
                 detail=f"Cannot issue from status '{notice.status}'",
@@ -338,24 +366,35 @@ class DunningService:
     # ------------------------------------------------------------------
     async def delete_draft(self, dunning_id: uuid.UUID) -> None:
         """Delete a draft dunning notice. Issued notices are protected by trigger."""
-        notice = await self._repo.get_by_id(dunning_id)
+        context = DunningScopeService(self._session, self._org_id, self._user_id)
+        await context.financial.lock_inputs()
+        notice = await self._repo.get_by_id_for_update(dunning_id)
         if notice is None:
             raise HTTPException(status_code=404, detail="Dunning notice not found")
+        scope = await context.enter(notice, ScopeCapability.PREPARE)
         if notice.status == "issued":
             raise HTTPException(
                 status_code=409,
                 detail="Cannot delete an issued dunning notice",
             )
-        await self._repo.delete(notice)
+        if scope is not None:
+            if notice.cancelled_at is not None:
+                return
+            notice.cancelled_at = datetime.now(timezone.utc)
+            await self._repo.update(notice)
         await self._audit.create(
             AuditEvent(
                 actor_user_id=self._user_id,
                 entity_type="dunning_notice",
                 entity_id=dunning_id,
-                action="dunning_notice.deleted",
+                action="dunning_notice.cancelled" if scope is not None else "dunning_notice.deleted",
                 payload_diff={"status": "draft"},
             )
         )
+        if scope is None:
+            # INSERT RETURNING audits need the original recipient for the live
+            # read policy; persist the event before removing its legacy source.
+            await self._repo.delete(notice)
 
     # ------------------------------------------------------------------
     # Name resolution for PDF

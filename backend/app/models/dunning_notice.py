@@ -30,11 +30,12 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, SmallInteger, String
+from sqlalchemy import Date, DateTime, ForeignKey, Numeric, SmallInteger, String, select
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, column_property
 
 from app.models.base import Base, UUIDPrimaryKeyMixin, TimestampMixin
+from app.models.dunning_scope_context import DunningScopeContext
 
 
 class DunningNotice(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -96,6 +97,7 @@ class DunningNotice(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     status: Mapped[str] = mapped_column(
         String(12), nullable=False, default="draft"
     )
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     issued_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -108,3 +110,12 @@ class DunningNotice(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
     # CHECK constraints + trigger live in migration 0019.
+
+
+# Read-only canonical scope; never a mutable attribute of the frozen letter.
+DunningNotice.accounting_scope_id = column_property(
+    select(DunningScopeContext.scope_id).where(
+        DunningScopeContext.organization_id == DunningNotice.organization_id,
+        DunningScopeContext.dunning_notice_id == DunningNotice.id,
+    ).correlate_except(DunningScopeContext).scalar_subquery(), expire_on_flush=False
+)

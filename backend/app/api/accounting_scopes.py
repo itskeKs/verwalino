@@ -50,9 +50,9 @@ async def create_scope(body: ScopeCreate, idempotency_key: uuid.UUID = Header(),
 
 
 @router.get('/{scope_id}', response_model=ScopeDetail)
-async def scope_detail(scope_id: uuid.UUID, auth: AuthContext = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def scope_detail(scope_id: uuid.UUID, capability: ScopeCapability | None = None, auth: AuthContext = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     service = AccountingScopeService(db, auth)
-    scope = await service.get(scope_id)
+    scope = await service.require(scope_id, capability) if capability is not None else await service.get(scope_id)
     units = await service.repo.units(scope.id)
     return ScopeDetail(**ScopeOut.model_validate(scope).model_dump(),
         units=[ScopeUnitInput(unit_id=u.unit_id, owner_profile_id=u.owner_profile_id) for u in units])

@@ -129,3 +129,5 @@ from app.models.coverage_declaration import CoverageDeclaration
 
 from app.models.accounting_scope import AccountingScope, AccountingScopeUnit, AccountingScopeBinding, ScopeMigrationException
 from app.models.scope_grant import ScopeGrant
+
+from app.models.dunning_scope_context import DunningScopeContext

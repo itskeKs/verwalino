@@ -22,6 +22,8 @@ from app.models.dunning_notice import DunningNotice
 from app.repositories.dunning_notice_repo import DunningNoticeRepository
 from app.services.dunning_pdf import render_dunning_pdf
 from app.services.dunning_service import DunningService
+from app.services.dunning_scope_service import DunningScopeService
+from app.core.rbac import ScopeCapability
 
 router = APIRouter(prefix="/api/dunning", tags=["dunning"])
 
@@ -30,6 +32,7 @@ router = APIRouter(prefix="/api/dunning", tags=["dunning"])
 # Schemas
 # ---------------------------------------------------------------------------
 class DunningCreateTenant(BaseModel):
+    accounting_scope_id: uuid.UUID | None = None
     tenant_profile_id: str
     lease_agreement_id: str
     period_start: date
@@ -40,6 +43,7 @@ class DunningCreateTenant(BaseModel):
 
 
 class DunningCreateOwner(BaseModel):
+    accounting_scope_id: uuid.UUID | None = None
     owner_profile_id: str
     period_start: date
     period_end: date
@@ -50,6 +54,7 @@ class DunningCreateOwner(BaseModel):
 
 
 class DunningOut(BaseModel):
+    accounting_scope_id: str | None = None
     id: str
     organization_id: str
     tenant_profile_id: str | None
@@ -72,6 +77,7 @@ class DunningOut(BaseModel):
 def _to_out(n: DunningNotice) -> DunningOut:
     return DunningOut(
         id=str(n.id),
+        accounting_scope_id=str(n.accounting_scope_id) if n.accounting_scope_id else None,
         organization_id=str(n.organization_id),
         tenant_profile_id=str(n.tenant_profile_id) if n.tenant_profile_id else None,
         owner_profile_id=str(n.owner_profile_id) if n.owner_profile_id else None,
@@ -82,7 +88,7 @@ def _to_out(n: DunningNotice) -> DunningOut:
         fee_amount=str(n.fee_amount),
         total_amount=str(n.total_amount),
         included_items=n.included_items,
-        status=n.status,
+        status="cancelled" if n.cancelled_at else n.status,
         issued_at=str(n.issued_at) if n.issued_at else None,
         issued_by=str(n.issued_by) if n.issued_by else None,
         note=n.note,
@@ -149,6 +155,7 @@ async def create_dunning_for_tenant(
 ):
     svc = DunningService(db, auth.organization_id, auth.user_id)
     notice = await svc.create_dunning_for_tenant(
+        accounting_scope_id=body.accounting_scope_id,
         tenant_profile_id=uuid.UUID(body.tenant_profile_id),
         lease_agreement_id=uuid.UUID(body.lease_agreement_id),
         period_start=body.period_start,
@@ -168,6 +175,7 @@ async def create_dunning_for_owner(
 ):
     svc = DunningService(db, auth.organization_id, auth.user_id)
     notice = await svc.create_dunning_for_owner(
+        accounting_scope_id=body.accounting_scope_id,
         owner_profile_id=uuid.UUID(body.owner_profile_id),
         period_start=body.period_start,
         period_end=body.period_end,
@@ -226,6 +234,7 @@ async def dunning_pdf(
             detail="PDF is only available for issued dunning notices",
         )
 
+    await DunningScopeService(db, auth.organization_id, auth.user_id).enter(notice, ScopeCapability.EXPORT)
     # Anzeige-Namen: eingefroren aus der ausgestellten Mahnung, sonst live
     # (Altbestand ohne eingefrorene Namen) -- s. DunningService / ADR-0012.
     names = await svc.render_display_names(notice)

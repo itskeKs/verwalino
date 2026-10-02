@@ -7,7 +7,7 @@
  * Supports dunning for tenants (Mieter) and owners (Eigentuemer).
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import {
   listDunningNotices,
@@ -17,6 +17,7 @@ import {
   listOwnerProfiles,
   listPersons,
   listLeases,
+  listUnits,
   listEconomicPlans,
 } from "../api/endpoints";
 import type {
@@ -27,19 +28,23 @@ import type {
   OwnerProfile,
   Person,
   LeaseRecord,
+  Unit,
   EconomicPlan,
 } from "../api/types";
+import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { ApiError } from "../api/client";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "Alle Status" },
   { value: "draft", label: "Entwurf" },
   { value: "issued", label: "Ausgestellt" },
+  { value: "cancelled", label: "Verworfen" },
 ];
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Entwurf",
   issued: "Ausgestellt",
+  cancelled: "Verworfen",
 };
 
 const STATUS_CSS: Record<string, string> = {
@@ -96,6 +101,9 @@ export function DunningNoticesPage() {
   const [ownerProfiles, setOwnerProfiles] = useState<OwnerProfile[]>([]);
   const [persons, setPersons] = useState<Person[]>([]);
   const [leases, setLeases] = useState<LeaseRecord[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
+  const requestId = useRef(0);
+  const [listError, setListError] = useState<string | null>(null);
   const [economicPlans, setEconomicPlans] = useState<EconomicPlan[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -103,6 +111,7 @@ export function DunningNoticesPage() {
   const [recipientType, setRecipientType] = useState<RecipientType>("tenant");
   const [tenantForm, setTenantForm] = useState<DunningCreateTenant>(makeEmptyTenantForm());
   const [ownerForm, setOwnerForm] = useState<DunningCreateOwner>(makeEmptyOwnerForm());
+  const [scopeValid, setScopeValid] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const statusFilter = searchParams.get("status") ?? "";
@@ -121,12 +130,14 @@ export function DunningNoticesPage() {
         ...makeEmptyTenantForm(),
         tenant_profile_id: prefillTenant,
         lease_agreement_id: prefillLease,
+        accounting_scope_id: searchParams.get("accounting_scope_id"),
         period_start: prefillStart,
         period_end: prefillEnd,
       });
       setShowForm(true);
       // Clean up URL params so they don't persist on reload
       const next = new URLSearchParams(searchParams);
+      next.delete("accounting_scope_id");
       next.delete("create");
       next.delete("tenant_profile_id");
       next.delete("lease_agreement_id");
@@ -138,8 +149,10 @@ export function DunningNoticesPage() {
   }, []);
 
   const reload = useCallback(() => {
+    const current = ++requestId.current;
     setLoading(true);
-    setError(null);
+    setListError(null);
+    setNotices([]);
     const params: Record<string, string | number | undefined> = {};
     if (statusFilter) params.status = statusFilter;
     if (levelFilter) params.level = parseInt(levelFilter, 10);
@@ -151,8 +164,11 @@ export function DunningNoticesPage() {
       listPersons(),
       listLeases(),
       listEconomicPlans(),
+      listUnits(),
     ])
-      .then(([dn, tp, op, per, l, ep]) => {
+      .then(([dn, tp, op, per, l, ep, u]) => {
+        if (current !== requestId.current) return;
+        setUnits(u);
         setNotices(dn);
         setTenantProfiles(tp);
         setOwnerProfiles(op);
@@ -161,17 +177,19 @@ export function DunningNoticesPage() {
         setEconomicPlans(ep);
       })
       .catch((err) => {
+        if (current !== requestId.current) return;
         if (err instanceof ApiError && err.status === 401) {
-          setError("Nicht authentifiziert. Bitte erneut anmelden.");
+          setListError("Nicht authentifiziert. Bitte erneut anmelden.");
         } else {
-          setError(String(err));
+          setListError(String(err));
         }
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (current === requestId.current) setLoading(false); });
+    return () => { requestId.current++; };
   }, [statusFilter, levelFilter]);
 
   useEffect(() => {
-    reload();
+    return reload();
   }, [reload]);
 
   function setFilter(key: string, value: string) {
@@ -214,6 +232,12 @@ export function DunningNoticesPage() {
     ? leases.filter((l) => l.tenant_profile_id === tenantForm.tenant_profile_id)
     : leases;
 
+  const selectedLease = leases.find(item => item.id === tenantForm.lease_agreement_id);
+  const selectedPlan = economicPlans.find(item => item.id === ownerForm.economic_plan_id);
+  const creationProperty = recipientType === "tenant"
+    ? units.find(item => item.id === selectedLease?.unit_id)?.property_id
+    : selectedPlan?.property_id;
+
   function openCreate() {
     setTenantForm(makeEmptyTenantForm());
     setOwnerForm(makeEmptyOwnerForm());
@@ -224,6 +248,7 @@ export function DunningNoticesPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!scopeValid) return;
     setSaving(true);
     setError(null);
     try {
@@ -312,7 +337,8 @@ export function DunningNoticesPage() {
             werden automatisch ermittelt. Gibt es keine offenen Posten, wird eine
             entsprechende Meldung angezeigt.
           </p>
-          <form onSubmit={handleSubmit} className="form-grid">
+          <form onSubmit={handleSubmit}>
+            <fieldset disabled={saving} className="form-grid" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             {/* Recipient type toggle */}
             <label>
               Empfaengertyp *
@@ -342,6 +368,7 @@ export function DunningNoticesPage() {
                         ...tenantForm,
                         tenant_profile_id: e.target.value,
                         lease_agreement_id: "",
+                        accounting_scope_id: null,
                       })
                     }
                   >
@@ -359,7 +386,7 @@ export function DunningNoticesPage() {
                     required
                     value={tenantForm.lease_agreement_id}
                     onChange={(e) =>
-                      setTenantForm({ ...tenantForm, lease_agreement_id: e.target.value })
+                      setTenantForm({ ...tenantForm, lease_agreement_id: e.target.value, accounting_scope_id: null })
                     }
                   >
                     <option value="">-- Mietvertrag waehlen --</option>
@@ -451,7 +478,7 @@ export function DunningNoticesPage() {
                     required
                     value={ownerForm.owner_profile_id}
                     onChange={(e) =>
-                      setOwnerForm({ ...ownerForm, owner_profile_id: e.target.value })
+                      setOwnerForm({ ...ownerForm, owner_profile_id: e.target.value, economic_plan_id: null, accounting_scope_id: null })
                     }
                   >
                     <option value="">-- Eigentuemer waehlen --</option>
@@ -492,10 +519,11 @@ export function DunningNoticesPage() {
                       setOwnerForm({
                         ...ownerForm,
                         economic_plan_id: e.target.value || null,
+                        accounting_scope_id: null,
                       })
                     }
                   >
-                    <option value="">(automatisch)</option>
+                    <option value="">Ohne Wirtschaftsplan (Altbestand)</option>
                     {economicPlans.map((ep) => (
                       <option key={ep.id} value={ep.id}>
                         {ep.plan_year} ({ep.period_start} - {ep.period_end})
@@ -548,11 +576,17 @@ export function DunningNoticesPage() {
               </>
             )}
 
+            <AccountingScopeSelector key={`${recipientType}-${tenantForm.lease_agreement_id}-${ownerForm.owner_profile_id}-${ownerForm.economic_plan_id}`}
+              onValidityChange={setScopeValid} propertyId={creationProperty} kind={recipientType === "tenant" ? "MIET" : "WEG"}
+              value={recipientType === "tenant" ? tenantForm.accounting_scope_id : ownerForm.accounting_scope_id}
+              onChange={accounting_scope_id => recipientType === "tenant"
+                ? setTenantForm({ ...tenantForm, accounting_scope_id }) : setOwnerForm({ ...ownerForm, accounting_scope_id })} />
+            <p className="form-hint">Für bereits zugeordnete Zahlungen einen Abrechnungskreis wählen. Eigentümermahnungen in einem Abrechnungskreis benötigen einen zugeordneten, finalisierten Wirtschaftsplan.</p>
             <div className="form-actions">
               <button
                 type="submit"
                 className="btn btn--primary"
-                disabled={saving}
+                disabled={saving || !scopeValid}
               >
                 {saving ? "Erstellen..." : "Mahnung erstellen"}
               </button>
@@ -564,12 +598,15 @@ export function DunningNoticesPage() {
                 Abbrechen
               </button>
             </div>
+            </fieldset>
           </form>
         </div>
       )}
 
       {loading ? (
         <p>Lade...</p>
+      ) : listError ? (
+        <p role="alert" className="error-text">Mahnungen nicht verfügbar: {listError} <button className="btn" onClick={reload}>Erneut laden</button></p>
       ) : notices.length === 0 ? (
         <p className="empty-hint">Keine Mahnungen vorhanden.</p>
       ) : (

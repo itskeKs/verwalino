@@ -24,7 +24,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
     const params = new URL(input, "http://test").searchParams;
     expect(params.get("capability")).toBe("read");
-    return new Response(JSON.stringify({ items: [{ id: "scope", label: "Lesebereich", scope_type: params.get("scope_type"), valid_from: "2025-01-01", valid_to: null }], next_cursor: null }), { status: 200, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ items: [{ id: "scope", property_id: params.get("property_id") || "property", label: "Lesebereich", scope_type: params.get("scope_type"), valid_from: "2025-01-01", valid_to: null }], next_cursor: null }), { status: 200, headers: { "Content-Type": "application/json" } });
   }));
 });
 const statement = { soll_total: "7200.00", ist_total: "100.00", balance: "-7100.00", open_items: [] };

@@ -12,7 +12,7 @@ it("clears incompatible scope when switching between deposit and reserve account
     if (url.pathname === "/api/properties/page") return json({ items: [{ id: "property", name: "Testhaus", management_type: "MISCH" }], next_cursor: null });
     if (url.pathname === "/api/accounting-scopes/page") {
       const scopes = ["WEG", "MIET"].filter(kind => !url.searchParams.get("scope_type") || url.searchParams.get("scope_type") === kind);
-      return json({ items: scopes.map(kind => ({ id: kind, label: `Bereich ${kind}`, scope_type: kind, valid_from: "2025-01-01", valid_to: null })), next_cursor: null });
+      return json({ items: scopes.map(kind => ({ id: kind, property_id: "property", label: `Bereich ${kind}`, scope_type: kind, valid_from: "2025-01-01", valid_to: null })), next_cursor: null });
     }
     throw new Error(`Unexpected URL: ${input}`);
   }));

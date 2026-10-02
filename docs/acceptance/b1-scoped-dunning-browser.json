@@ -1,0 +1,44 @@
+{
+  "checks": [
+    "open-items shortcut preserves visible scope; failed period validation retains it; prepared principal includes only its 100 EUR payment",
+    "issue succeeds with approval; PDF remains denied until an exact export grant exists",
+    "discard preserves provenance and shows its status; another scope starts at level 1 with its own amount",
+    "live revocation removes detail and PDF access with no stale financial snapshot"
+  ],
+  "pageErrors": [],
+  "responses": [
+    {
+      "status": 401,
+      "path": "/api/auth/session"
+    },
+    {
+      "status": 401,
+      "path": "/api/auth/session"
+    },
+    {
+      "status": 409,
+      "path": "/api/fristen"
+    },
+    {
+      "status": 409,
+      "path": "/api/fristen"
+    },
+    {
+      "status": 422,
+      "path": "/api/dunning/tenant"
+    },
+    {
+      "status": 404,
+      "path": "/api/dunning/56a03120-67e6-4d67-a856-7f0097ff1681"
+    },
+    {
+      "status": 404,
+      "path": "/api/dunning/56a03120-67e6-4d67-a856-7f0097ff1681"
+    }
+  ],
+  "mobile": {
+    "visible": 390,
+    "content": 390
+  },
+  "status": "passed"
+}

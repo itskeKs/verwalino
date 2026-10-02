@@ -40,8 +40,10 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
             stmt = stmt.where(DunningNotice.owner_profile_id == owner_profile_id)
         if level is not None:
             stmt = stmt.where(DunningNotice.level == level)
-        if status is not None:
-            stmt = stmt.where(DunningNotice.status == status)
+        if status == 'cancelled':
+            stmt = stmt.where(DunningNotice.cancelled_at.is_not(None))
+        elif status is not None:
+            stmt = stmt.where(DunningNotice.status == status, DunningNotice.cancelled_at.is_(None))
         stmt = stmt.order_by(
             DunningNotice.issue_date.desc(), DunningNotice.created_at.desc()
         )

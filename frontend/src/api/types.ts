@@ -944,9 +944,10 @@ export interface MietkontoResult {
 
 // --- M7 Dunning (Mahnwesen) ---
 
-export type DunningStatus = "draft" | "issued";
+export type DunningStatus = "draft" | "issued" | "cancelled";
 
 export interface DunningNotice {
+  accounting_scope_id?: string | null;
   id: string;
   organization_id: string;
   tenant_profile_id: string | null;
@@ -974,6 +975,7 @@ export interface DunningIncludedItem {
 }
 
 export interface DunningCreateTenant {
+  accounting_scope_id?: string | null;
   tenant_profile_id: string;
   lease_agreement_id: string;
   period_start: string;
@@ -984,6 +986,7 @@ export interface DunningCreateTenant {
 }
 
 export interface DunningCreateOwner {
+  accounting_scope_id?: string | null;
   owner_profile_id: string;
   period_start: string;
   period_end: string;
