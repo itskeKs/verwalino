@@ -9,7 +9,7 @@ from app.core.live_principal import get_live_member_db,get_live_writer_db
 from app.services.intake_service import IntakeService
 
 router=APIRouter(prefix='/api/logical-documents',tags=['logical_documents'])
-FIELDS='id,document_ref_id,content_sha256,page_start,page_end,verified_page_count,review_state,reason,created_at'
+FIELDS='id,document_ref_id,content_sha256,page_start,page_end,verified_page_count,review_state,origin,reason,created_at'
 
 
 class LogicalDocumentCreate(BaseModel):

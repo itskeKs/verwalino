@@ -154,8 +154,9 @@ async def test_extraction_migration_retains_revisions_and_restores_empty_schema(
             with pytest.raises(DBAPIError,match='Retain extraction'),db.begin_nested():migration.downgrade()
             point=db.begin_nested()
             try:
-                db.execute(text('TRUNCATE field_evidence,extraction_revision,outbox_event'))
+                db.execute(text('TRUNCATE logical_document,field_evidence,extraction_revision,outbox_event CASCADE'))
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
+                importlib.import_module('migrations.versions.0097_internal_outbox_delivery').downgrade()
                 migration.downgrade();migration.upgrade()
                 assert db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))==oid
             finally:point.rollback()

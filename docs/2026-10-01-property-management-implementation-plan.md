@@ -381,8 +381,10 @@ extraction revisions and explicit unlocated field evidence through the existing
 A2 worker; see `2026-10-03-extraction-revision-foundation.md`. An optional serial
 runner now adapts the existing inspection, invoice and declaration queues while
 preserving their leases and reconciliation; see `2026-10-03-shared-workflow-runner.md`.
-Intake extraction, located field evidence, shared runtime qualification, reviewed partitions and outbox
-delivery remain outstanding. Real scanner
+Migration 0097 adds fenced internal inspection-event delivery with exact attempt
+provenance, whole-source candidate reuse and atomic completion; see
+`2026-10-03-internal-outbox-delivery.md`. Intake extraction, located field evidence,
+shared runtime qualification and reviewed partitions remain outstanding. Real scanner
 qualification is still unavailable locally; this does not accept B2.
 
 **B3 — Assignment, duplicates, splits and shared exceptions.** P1.1 after B2.

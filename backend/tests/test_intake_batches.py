@@ -201,6 +201,10 @@ async def test_intake_invalidates_coverage_and_blocks_active_work(migrator_sessi
         active=await assessment(admin,current)
         assert active['active_work_count']==1 and not active['acceptance_available']
         assert await process_once(get_worker_session_factory(),ids['org'],inspector=lambda data,mime:result(data,'blocked','scanner_unavailable',mime=mime))
+        pending=await assessment(admin,await reviewed(admin))
+        assert pending['active_work_count']==1 and not pending['acceptance_available']
+        from app.workers.outbox import process_once as deliver_once
+        assert await deliver_once(get_worker_session_factory(),ids['org'])
         decision=await accepted(admin)
         assert (await transition(admin,transition_body(await status(admin),'ENFORCED',decision))).status_code==201
         assert (await api.get('/api/document-refs/page',params={'source_id':receipt['original_id']})).json()['items']==[]
@@ -262,6 +266,7 @@ async def test_intake_migration_refuses_data_and_preserves_function_identity(mig
             try:
                 db.execute(text('TRUNCATE intake_batch,intake_upload_admission CASCADE'))
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
+                importlib.import_module('migrations.versions.0097_internal_outbox_delivery').downgrade()
                 importlib.import_module('migrations.versions.0096_extraction_evidence').downgrade()
                 importlib.import_module('migrations.versions.0095_logical_documents').downgrade()
                 importlib.import_module('migrations.versions.0094_intake_inbox_status').downgrade()
