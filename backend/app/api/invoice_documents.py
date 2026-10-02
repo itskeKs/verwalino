@@ -187,7 +187,7 @@ async def retry_extraction(doc_id: uuid.UUID, auth: AuthContext = Depends(requir
     doc = await InvoiceDocumentRepository(db, auth.organization_id).get_by_id_for_update(doc_id)
     if doc is None:
         raise HTTPException(404, "Document not found")
-    await InvoiceProcessingService(db, auth.organization_id).enqueue(doc)
+    await InvoiceProcessingService(db, auth.organization_id).enqueue(doc, initiated_by=auth.user_id)
     return _to_out(doc)
 
 

@@ -8,6 +8,8 @@ import re
 import uuid
 from fastapi import HTTPException
 from app.core.config import settings
+from app.core.rbac import ScopeCapability
+from app.services.financial_scope_service import FinancialScopeService
 from app.models.coverage_declaration import CoverageDeclaration
 from app.models.audit_event import AuditEvent
 from app.repositories.audit_repo import AuditRepository
@@ -102,6 +104,8 @@ class FinancialInputPolicy:
                 incomplete("bank_account_type_mismatch", "bank_balances")
 
     async def attest(self, subject, kind, values, reason, source_document_ids):
+        await FinancialScopeService(self.session, self.org_id, self.user_id).enter(
+            subject, capability=ScopeCapability.CONFIRM, computation=True)
         if subject.status != "draft":
             raise HTTPException(409, "Only draft inputs can be attested")
         values = self.validate_values(subject, values, kind)
@@ -130,6 +134,7 @@ class FinancialInputPolicy:
         return declaration
 
     async def require(self, subject, kind, values):
+        await FinancialScopeService(self.session, self.org_id, self.user_id).enter(subject, computation=True)
         if not settings.financial_computation_enabled:
             raise HTTPException(503, "Financial computation is temporarily disabled; existing records remain available")
         values = self.validate_values(subject, values, kind)

@@ -98,7 +98,7 @@ class InvoiceDocumentService:
         )
 
         doc = await self._repo.create(doc)
-        await InvoiceProcessingService(self._session, self._org_id).enqueue(doc)
+        await InvoiceProcessingService(self._session, self._org_id).enqueue(doc, initiated_by=self._user_id)
 
         # Audit event
         await self._audit.create(
@@ -194,7 +194,7 @@ class InvoiceDocumentService:
         old_active.superseded_at = now
         await self._repo.update(old_active)
         new_doc = await self._repo.create(new_doc)
-        await InvoiceProcessingService(self._session, self._org_id).enqueue(new_doc)
+        await InvoiceProcessingService(self._session, self._org_id).enqueue(new_doc, initiated_by=self._user_id)
 
         # Audit events
         await self._audit.create(

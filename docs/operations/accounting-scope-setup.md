@@ -1,9 +1,11 @@
 # Reviewed accounting scope setup
 
-This is a B1 preparation increment. It does not activate scoped team rollout or
-replace the existing organization-wide financial read policies. The UI states
-that restriction explicitly. Full enforcement, proven legacy migration,
-quarantine, jobs and source downloads remain required before activation.
+This remains a B1 preparation increment; scoped team rollout is not activated.
+Migrations 0034–0035 restrict explicitly bound financial resources and their
+invoice jobs. Unclassified resources retain compatibility behavior. The UI
+continues to state that full rollout is unavailable. Aggregate integration,
+proven legacy migration, quarantine and complete document/job coverage remain
+required before activation.
 
 Administrators use `/berechtigungen`, linked from the user list, to create an
 immutable scope and explicitly grant/revoke team capabilities. Scope creation
@@ -66,3 +68,27 @@ Production rollback must pause exposed scoped writers, retaining scopes, grants,
 bindings and original financial facts. Alembic downgrade is for disposable
 verification only. Reverting to organization-only access is not a valid rollout
 rollback.
+
+## Bound resource and invoice job boundary (0034–0035)
+
+Canonical financial rows, their calculation lines, linked invoice originals,
+coverage declarations and financial audit entries require a live exact scope
+grant. Administrator status alone does not grant financial access. Normal
+navigation can list all individually authorized scopes; a server-selected
+calculation context restricts sources and units to one exact scope. Computation
+rejects unclassified property inputs instead of treating invisible inputs as zero.
+Confirming costs and finalizing runs/plans require separate confirm/approve
+capabilities at the database boundary.
+
+Invoice attempts persist an immutable initiating actor and requested scope.
+Claims and completion recheck current membership, activation and scope grant.
+Revocation, deactivation or role changes cancel the attempt without passing
+source bytes to extraction or saving extraction results. A narrow fenced definer
+function records cancellation metadata and an audit event; an older canceled
+attempt cannot overwrite a newer result. Existing attempts without a proven
+initiator are canceled and require an explicit new retry.
+
+This boundary does not certify all computations, exports or retention workflows.
+Exact contexts for statements/derived totals, correction inheritance, source
+registries, privacy retention and staged enforcement remain activation blockers.
+Never roll back to organization-wide visibility for already classified resources.

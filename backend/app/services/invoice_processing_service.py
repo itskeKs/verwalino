@@ -2,6 +2,8 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
+from sqlalchemy import select, text
+from app.models.accounting_scope import AccountingScopeBinding
 from app.core.config import settings
 from app.models.invoice_processing_attempt import InvoiceProcessingAttempt as Attempt
 from app.repositories.invoice_document_repo import InvoiceDocumentRepository
@@ -15,7 +17,7 @@ class InvoiceProcessingService:
         self.documents = InvoiceDocumentRepository(session, org_id)
         self.attempts = InvoiceProcessingRepository(session, org_id)
 
-    async def enqueue(self, document):
+    async def enqueue(self, document, *, initiated_by):
         history = await self.attempts.history(document.id)
         if history and history[0].status in {"queued", "running"}:
             return history[0]
@@ -34,8 +36,10 @@ class InvoiceProcessingService:
             document.processing_error_code = "queue_full"
             await self.session.flush()
             return None
-        attempt = await self.attempts.create(Attempt(document_id=document.id,
-            attempt_no=len(history) + 1, status="queued"))
+        requested_scope = await self.session.scalar(select(AccountingScopeBinding.scope_id).where(
+            AccountingScopeBinding.organization_id == self.org_id, AccountingScopeBinding.cost_entry_id == document.cost_entry_id)) if document.cost_entry_id else None
+        attempt = await self.attempts.create(Attempt(document_id=document.id, initiated_by=initiated_by,
+            requested_scope_id=requested_scope, attempt_no=len(history) + 1, status="queued"))
         document.processing_status = "queued"
         document.processing_error_code = None
         await self.session.flush()
@@ -45,9 +49,21 @@ class InvoiceProcessingService:
         document_id = await self.attempts.next_document()
         if document_id is None:
             return None
-        document = await self.documents.get_by_id_for_update(document_id)
         history = await self.attempts.history(document_id)
         current = history[0]
+        if not await self._enter_principal(current):
+            await self._cancel_denied(current)
+            return None
+        document = await self.documents.get_by_id_for_update(document_id)
+        if document is None:
+            await self._cancel_denied(current)
+            return None
+        # Refresh after waiting on the document lock; another worker may have claimed it.
+        history = await self.attempts.history(document_id)
+        current = history[0]
+        if not await self._enter_principal(current):
+            await self._cancel_denied(current)
+            return None
         now = datetime.now(timezone.utc)
         if current.status == "running" and current.lease_until >= now:
             return None
@@ -71,6 +87,7 @@ class InvoiceProcessingService:
                 await self.session.flush()
                 return None
             current = await self.attempts.create(Attempt(document_id=document_id,
+                initiated_by=current.initiated_by, requested_scope_id=current.requested_scope_id,
                 attempt_no=current.attempt_no + 1, status="queued"))
         current.status = "running"
         current.token = uuid.uuid4()
@@ -82,7 +99,16 @@ class InvoiceProcessingService:
                 "mime_type": document.mime_type}
 
     async def finish(self, claim, result):
+        pending = await self.attempts.get_by_id(claim['attempt_id'])
+        if pending is None or pending.document_id != claim['document_id'] or pending.token != claim['token']:
+            return False
+        if not await self._enter_principal(pending):
+            await self._cancel_denied(pending, fence=claim['token'])
+            return False
         document = await self.documents.get_by_id_for_update(claim["document_id"])
+        if document is None:
+            await self._cancel_denied(pending, fence=claim['token'])
+            return False
         attempt = await self.attempts.get_by_id_for_update(claim["attempt_id"])
         now = datetime.now(timezone.utc)
         if attempt is None or attempt.status != "running" or attempt.token != claim["token"] or attempt.lease_until < now:
@@ -101,3 +127,13 @@ class InvoiceProcessingService:
                                           "processor_version": attempt.processor_version}
         await self.session.flush()
         return True
+
+    async def _enter_principal(self, attempt):
+        await self.session.execute(text("SELECT set_config('app.current_user_id',:actor,true),set_config('app.current_scope_id','',true)"),
+            {'actor': str(attempt.initiated_by) if attempt.initiated_by else ''})
+        return bool(await self.session.scalar(text('SELECT invoice_attempt_authorized(:org,:attempt)'),
+            {'org': self.org_id, 'attempt': attempt.id}))
+
+    async def _cancel_denied(self, attempt, *, fence=None):
+        return await self.session.scalar(text('SELECT cancel_unauthorized_invoice_attempt(:org,:attempt,:fence)'),
+            {'org': self.org_id, 'attempt': attempt.id, 'fence': fence if fence is not None else attempt.token})
