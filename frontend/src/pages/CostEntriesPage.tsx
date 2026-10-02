@@ -24,6 +24,7 @@ import type {
   Vendor,
 } from "../api/types";
 import { ApiError } from "../api/client";
+import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { SourceBadge } from "../components/SourceBadge";
 
 const STATUS_OPTIONS: { value: CostEntryStatus | ""; label: string }[] = [
@@ -263,7 +264,7 @@ export function CostEntriesPage() {
                 required
                 value={form.property_id}
                 onChange={(e) =>
-                  setForm({ ...form, property_id: e.target.value })
+                  setForm({ ...form, accounting_scope_id: null, property_id: e.target.value })
                 }
               >
                 <option value="">-- Objekt waehlen --</option>
@@ -464,6 +465,7 @@ export function CostEntriesPage() {
                 }
               />
             </label>
+            <AccountingScopeSelector key={form.property_id} propertyId={form.property_id} value={form.accounting_scope_id} onChange={id => setForm({ ...form, accounting_scope_id: id })} />
             <div className="form-actions">
               <button
                 type="submit"

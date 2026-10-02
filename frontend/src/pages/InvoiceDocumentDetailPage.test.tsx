@@ -15,6 +15,7 @@ it("submits the source and retains the same key and form after uncertain failure
     }
     if (url === "/api/cost-categories") return json([{ id: "cat-1", code: "WASSER", label: "Wasser", plan_version: 1, tenant_apportionability_default: "UMLAGEFAEHIG" }]);
     if (url === "/api/properties") return json([{ id: "property-1", name: "Testhaus" }]);
+    if (url.startsWith("/api/accounting-scopes/page")) return json({ items: [{ id: "scope-1", label: "Mietbereich", scope_type: "MIET", valid_from: "2025-01-01", valid_to: null }], next_cursor: null });
     return json({ id: "doc-1", chain_root_id: "doc-1", status: "active", cost_entry_id: null, version: 1, content_byte_size: 100, content_sha256: "a".repeat(64), extraction_payload: { suggested_category_code: "WASSER", gross_amount: "100.00", invoice_date: "2025-06-01", service_period_from: "2025-01-01", service_period_to: "2025-12-31" } });
   }));
   render(<MemoryRouter initialEntries={["/belege/doc-1"]}><Routes>
@@ -23,13 +24,17 @@ it("submits the source and retains the same key and form after uncertain failure
   </Routes></MemoryRouter>);
   fireEvent.click(await screen.findByText("Kostenposition erstellen"));
   fireEvent.change(screen.getByLabelText("Objekt *"), { target: { value: "property-1" } });
+  await screen.findByRole("option", { name: /Mietbereich/ });
+  fireEvent.change(screen.getByRole("combobox", { name: "Abrechnungskreis" }), { target: { value: "scope-1" } });
   fireEvent.click(screen.getByText("Entwurf erstellen"));
   await screen.findByText("Retry required");
+  expect(screen.getByRole("combobox", { name: "Abrechnungskreis" })).toHaveValue("scope-1");
   expect(screen.getByLabelText("Objekt *")).toHaveValue("property-1");
   fireEvent.click(screen.getByText("Entwurf erstellen"));
   await screen.findByText("Saved cost");
   await waitFor(() => expect(attempts).toHaveLength(2));
   expect(JSON.parse(attempts[0].body as string).source_document_id).toBe("doc-1");
+  expect(JSON.parse(attempts[0].body as string).accounting_scope_id).toBe("scope-1");
   const firstKey = new Headers(attempts[0].headers).get("Idempotency-Key");
   expect(firstKey).toBeTruthy();
   expect(new Headers(attempts[1].headers).get("Idempotency-Key")).toBe(firstKey);

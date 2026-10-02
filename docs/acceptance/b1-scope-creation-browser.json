@@ -1,0 +1,19 @@
+{
+  "checks": [
+    "account type change clears scope and restricts deposit accounts to rental scopes",
+    "bank creation submits exact scope; property switch clears scope; admin configuration without grant excluded",
+    "/kosten offers permitted accounting type",
+    "/abrechnungen offers permitted accounting type",
+    "/wirtschaftsplaene offers permitted accounting type",
+    "/vermoegensberichte offers permitted accounting type",
+    "upload-first scoped cost lost reply replays same key/result and retains scope selection"
+  ],
+  "pageErrors": [],
+  "failedResponses": [],
+  "blockedLegacyOverviews": 2,
+  "mobile": {
+    "visible": 390,
+    "content": 390
+  },
+  "status": "passed"
+}

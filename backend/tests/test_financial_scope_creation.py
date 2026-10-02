@@ -186,3 +186,15 @@ async def test_upload_link_failure_restores_context_and_rolls_back_cost(migrator
     assert await session.scalar(text('SELECT count(*) FROM cost_entry WHERE property_id=:property'), ids) == before
     assert await session.scalar(text('SELECT cost_entry_id FROM invoice_document WHERE id=:unlinked'), ids) is None
     await session.execute(text('RESET ROLE'))
+
+
+async def test_creation_scope_choices_require_explicit_prepare_grant(migrator_session, scope_seed, worker_tenant):
+    session = migrator_session
+    ids = await financial_fixture(session, scope_seed)
+    await session.commit()
+    admin, _ = worker_tenant
+    # Administrators can inspect configuration, but it is not creation authority.
+    configured = await admin.get(f"/api/accounting-scopes/page?property_id={ids['property']}")
+    assert configured.status_code == 200 and len(configured.json()['items']) == 2
+    selectable = await admin.get(f"/api/accounting-scopes/page?property_id={ids['property']}&capability=prepare&financial_creation=true")
+    assert selectable.status_code == 200 and selectable.json()['items'] == []

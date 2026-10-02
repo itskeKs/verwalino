@@ -6,6 +6,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { listWegRuns, listProperties, createAssetReport } from "../api/endpoints";
 import type { WegRun, AssetReportCreate, Property } from "../api/types";
 import { ApiError } from "../api/client";
+import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
 const STATUS_CSS: Record<string, string> = { draft: "badge--draft", finalized: "badge--confirmed" };
@@ -71,7 +72,7 @@ export function AssetReportsPage() {
           <form onSubmit={handleSubmit} className="form-grid">
             <label>
               WEG-Objekt *
-              <select required value={form.property_id} onChange={(e) => setForm({ ...form, property_id: e.target.value })}>
+              <select required value={form.property_id} onChange={(e) => setForm({ ...form, accounting_scope_id: null, property_id: e.target.value })}>
                 <option value="">-- Objekt waehlen --</option>
                 {wegProps.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.management_type})</option>)}
               </select>
@@ -82,6 +83,7 @@ export function AssetReportsPage() {
             <label>Stichtag (bis) *
               <input type="date" required value={form.period_end} onChange={(e) => setForm({ ...form, period_end: e.target.value })} />
             </label>
+            <AccountingScopeSelector key={form.property_id} propertyId={form.property_id} value={form.accounting_scope_id} onChange={id => setForm({ ...form, accounting_scope_id: id })} kind="WEG" />
             <div className="form-actions">
               <button type="submit" className="btn btn--primary" disabled={saving}>{saving ? "Anlegen..." : "Anlegen"}</button>
               <button type="button" className="btn" onClick={() => setShowForm(false)}>Abbrechen</button>

@@ -1,11 +1,13 @@
 """Explicit reviewed scope configuration. This API does not activate team rollout."""
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.rbac import ScopeCapability
 from app.core.tenant import AuthContext, get_current_user, get_db, require_admin_dep
 from app.models.accounting_scope import AccountingScope
 from app.models.scope_grant import ScopeGrant
@@ -20,11 +22,20 @@ router = APIRouter(prefix='/api/accounting-scopes', tags=['accounting_scopes'])
 
 
 @router.get('/page', response_model=Page[ScopeOut])
-async def page_scopes(property_id: uuid.UUID | None = None, query: PageQuery = Depends(page_query),
-                      auth: AuthContext = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    filters = (AccountingScope.property_id == property_id,) if property_id else ()
+async def page_scopes(property_id: uuid.UUID | None = None, capability: ScopeCapability | None = None,
+                      scope_type: Literal['WEG', 'MIET', 'SEV'] | None = None, financial_creation: bool = False,
+                      query: PageQuery = Depends(page_query), auth: AuthContext = Depends(get_current_user),
+                      db: AsyncSession = Depends(get_db)):
+    filters = [AccountingScope.property_id == property_id] if property_id else []
+    if capability is not None:
+        filters.append(func.has_scope_capability(AccountingScope.organization_id, AccountingScope.id, capability.value))
+    if scope_type is not None:
+        filters.append(AccountingScope.scope_type == scope_type)
+    if financial_creation:
+        filters.append(AccountingScope.scope_type != 'SEV')
+    context = f'{property_id or ""}:{capability.value if capability else ""}:{scope_type or ""}:{financial_creation}'
     items, cursor = await page_rows(db, auth, AccountingScope, AccountingScope.label,
-        [AccountingScope.label], query, filters=filters, context=str(property_id or ''))
+        [AccountingScope.label], query, filters=tuple(filters), context=context)
     return Page(items=[ScopeOut.model_validate(item) for item in items], next_cursor=cursor)
 
 

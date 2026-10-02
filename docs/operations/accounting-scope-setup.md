@@ -109,5 +109,12 @@ rejects wrong property/type/period/unit before writing; the database independent
 creates and validates the binding atomically. WEG runs inherit the chosen plan's
 context. Corrections retain the original context; moving a correction to another
 scope is not supported. Existing unclassified properties retain compatibility
-creation until staged activation. Financial UI selectors and general creation
-idempotency are still pending; only the existing cost request has replay receipts.
+creation until staged activation. General creation idempotency remains pending; only the existing cost request has
+replay receipts. Financial UI selectors are described below.
+
+
+Financial creation forms now expose the exact scope selector. The page endpoint
+accepts `capability`, `scope_type` and `financial_creation`; these filter choices,
+not authorization of effects. Every save independently validates live access.
+Property and bank-type changes reset selection. General creation idempotency and
+full staged rollout remain outstanding; UI scope selection does not activate them.

@@ -84,5 +84,46 @@ optional request fields; the existing approximately 579 KB bundle warning remain
 Independent review accepted the boundary after the savepoint repair. Its final
 request to verify the latest fixtures is satisfied by the 127-test run.
 
-This is an API/database increment. Financial creation scope selectors, broader
+This is an API/database increment; creation selectors are covered below. Broader
 financial-write idempotency, SEV adapters and full rollout remain outstanding.
+
+## Financial creation scope selectors
+
+The six independent creation forms (account, manual cost, upload-first cost,
+rental settlement, economic plan and asset report) now provide a bounded scope
+search filtered by the authenticated actor's current prepare grant. Configuration
+visibility does not imply eligibility. The page API binds property, capability,
+accounting type and creation filters into its cursor. SEV remains unavailable.
+WEG settlement creation explains that its selected plan supplies the scope.
+
+Property changes clear the selected scope. Bank type changes also clear it and
+restrict deposits to rental scopes and reserves to WEG. Search retains an explicit
+selection; uncertain cost creation retains both selection and request identity.
+
+Verification: **17 backend tests passed**, **four frontend tests passed** (three
+selector/upload-first tests, plus the bank-type transition test after review).
+Lint and production build passed; the existing bundle warning is approximately
+581 KB. Independent review found and verified the bank-type reset repair.
+
+The final real Chromium run of `scripts/acceptance/b1_scope_creation_browser.cjs`
+passed bank save, object/type reset, grant/type filtering on all six forms,
+upload-first lost-response replay with the same key/result, and mobile width
+390/390. The final screenshot was visually inspected. There were no page errors
+or unexpected HTTP failures. Two dashboard calls received the documented 409 for
+the still-unavailable legacy organization-wide deadline monitor; these are recorded
+separately in `b1-scope-creation-browser.json`, not counted as successful overview
+behavior. Initial browser attempts corrected ambiguous test locators; final evidence
+uses the completed run. Disposable original bytes/screenshots remain under `/tmp`.
+
+The browser script expects an existing synthetic PDF at
+`/tmp/hv-scope-creation.pdf`, or `HV_SCOPE_INVOICE_FIXTURE`. Generate one with the
+installed backend runtime before starting the browser:
+
+```sh
+env -u USER backend/.venv/bin/python -c "from reportlab.pdfgen import canvas; c=canvas.Canvas('/tmp/hv-scope-creation.pdf'); c.drawString(70,750,'Synthetic scope invoice: 119.00 EUR'); c.save()"
+```
+
+Run against only the disposable database with API port 18000 and Vite port 13000.
+Set `HV_PLAYWRIGHT_PACKAGE` and `HV_CHROMIUM_EXECUTABLE` to existing runtime paths;
+no package installation or live provider is required. The script uses the synthetic
+Alpha seed account and writes only disposable test records.

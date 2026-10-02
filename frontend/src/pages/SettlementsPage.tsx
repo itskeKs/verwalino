@@ -26,6 +26,7 @@ import type {
   Person,
 } from "../api/types";
 import { ApiError } from "../api/client";
+import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "Alle Status" },
@@ -239,7 +240,7 @@ export function SettlementsPage() {
                 required
                 value={form.property_id}
                 onChange={(e) =>
-                  setForm({ ...form, property_id: e.target.value, lease_agreement_id: "" })
+                  setForm({ ...form, accounting_scope_id: null, property_id: e.target.value, lease_agreement_id: "" })
                 }
               >
                 <option value="">-- Objekt waehlen --</option>
@@ -308,6 +309,7 @@ export function SettlementsPage() {
               Abrechnungstyp
               <input type="text" value="BK (Betriebskosten)" disabled />
             </label>
+            <AccountingScopeSelector key={form.property_id} propertyId={form.property_id} value={form.accounting_scope_id} onChange={id => setForm({ ...form, accounting_scope_id: id })} kind="MIET" />
             <div className="form-actions">
               <button
                 type="submit"

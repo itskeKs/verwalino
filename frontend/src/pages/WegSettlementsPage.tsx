@@ -78,6 +78,7 @@ export function WegSettlementsPage() {
             <p className="empty-hint">Für dieses Objekt gibt es noch keinen Wirtschaftsplan. Bitte zuerst einen Wirtschaftsplan anlegen (Soll-Quelle für die Abrechnungsspitze).</p>
           )}
           <form onSubmit={handleSubmit} className="form-grid">
+            <p>Der Abrechnungskreis wird aus dem gewählten Wirtschaftsplan übernommen.</p>
             <label>
               WEG-Objekt *
               <select required value={form.property_id} onChange={(e) => setForm({ ...form, property_id: e.target.value, economic_plan_id: "" })}>

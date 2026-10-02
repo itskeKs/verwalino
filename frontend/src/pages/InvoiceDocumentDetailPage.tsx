@@ -27,6 +27,7 @@ import type {
   CostEntryCreate,
 } from "../api/types";
 import { ApiError } from "../api/client";
+import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { InvoiceProcessingStatus } from "../components/InvoiceProcessingStatus";
 import { Badge } from "../components/ui/badge";
 
@@ -540,7 +541,7 @@ export function InvoiceDocumentDetailPage() {
                 required
                 value={costForm.property_id}
                 onChange={(e) =>
-                  setCostForm({ ...costForm, property_id: e.target.value })
+                  setCostForm({ ...costForm, accounting_scope_id: null, property_id: e.target.value })
                 }
               >
                 <option value="">-- Objekt waehlen --</option>
@@ -688,6 +689,7 @@ export function InvoiceDocumentDetailPage() {
                 <option value="none">Nicht umlagefaehig</option>
               </select>
             </label>
+            <AccountingScopeSelector key={costForm.property_id} propertyId={costForm.property_id} value={costForm.accounting_scope_id} onChange={id => setCostForm({ ...costForm, accounting_scope_id: id })} />
             <div className="form-actions">
               <button
                 type="submit"

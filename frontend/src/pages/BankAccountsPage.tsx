@@ -14,6 +14,7 @@ import {
 import type { BankAccount, BankAccountCreate, BankAccountType } from "../api/types";
 import { PropertySelector } from "../components/PropertySelector";
 import { ApiError } from "../api/client";
+import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 
 const ACCOUNT_TYPE_LABELS: Record<string, string> = {
   LAUFEND: "Laufendes Konto",
@@ -144,14 +145,14 @@ export function BankAccountsPage() {
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Neues Bankkonto anlegen</h2>
           <form onSubmit={handleSubmit} className="form-grid">
-            <PropertySelector label="Objekt *" required value={form.property_id} emptyLabel="Objekt wählen" onChange={value => setForm({ ...form, property_id: value })} />
+            <PropertySelector label="Objekt *" required value={form.property_id} emptyLabel="Objekt wählen" onChange={value => setForm({ ...form, accounting_scope_id: null, property_id: value })} />
             <label>
               Kontotyp *
               <select
                 required
                 value={form.account_type}
                 onChange={(e) =>
-                  setForm({ ...form, account_type: e.target.value as BankAccountType })
+                  setForm({ ...form, accounting_scope_id: null, account_type: e.target.value as BankAccountType })
                 }
               >
                 {ACCOUNT_TYPE_OPTIONS.map((o) => (
@@ -206,6 +207,7 @@ export function BankAccountsPage() {
                 placeholder="Commerzbank"
               />
             </label>
+            <AccountingScopeSelector key={`${form.property_id}:${form.account_type}`} kind={form.account_type === "KAUTION" ? "MIET" : form.account_type === "RUECKLAGE" ? "WEG" : undefined} propertyId={form.property_id} value={form.accounting_scope_id} onChange={id => setForm({ ...form, accounting_scope_id: id })} />
             <div className="form-actions">
               <button
                 type="submit"
