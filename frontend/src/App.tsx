@@ -13,6 +13,7 @@ import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { MandatePage } from "./pages/MandatePage";
+import { DunningQuarantinePage } from "./pages/DunningQuarantinePage";
 import { MandateQuarantinePage } from "./pages/MandateQuarantinePage";
 import { AccessPreparationPage } from "./pages/AccessPreparationPage";
 import { SourceClassificationsPage } from "./pages/SourceClassificationsPage";
@@ -109,6 +110,7 @@ export function AppRoutes() {
         <Route path="/beschluss-sammlung" element={<ResolutionRegisterPage />} />
         <Route path="/fristen" element={<FristenmonitorPage />} />
         <Route path="/users" element={<UsersPage />} />
+        <Route path="/mahnquarantaene" element={<DunningQuarantinePage />} />
         <Route path="/mandatsquarantaene" element={<MandateQuarantinePage />} />
         <Route path="/freigaben-vorbereiten" element={<AccessPreparationPage />} />
         <Route path="/altquellen" element={<SourceClassificationsPage />} />

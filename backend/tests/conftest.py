@@ -117,6 +117,9 @@ def run_migrations():
         cursor.execute("SELECT to_regclass('public.scope_payment_reconciliation')")
         if cursor.fetchone()[0] is not None:
             cursor.execute("TRUNCATE public.scope_payment_reconciliation_item, public.scope_payment_reconciliation")
+        cursor.execute("SELECT to_regclass('public.dunning_quarantine_disposition')")
+        if cursor.fetchone()[0] is not None:
+            cursor.execute("TRUNCATE public.dunning_quarantine_disposition")
         cursor.execute("SELECT to_regclass('public.dunning_scope_context')")
         if cursor.fetchone()[0] is not None:
             cursor.execute("TRUNCATE public.dunning_scope_context")

@@ -198,7 +198,7 @@ if [ "$(basename "$0")" = docker ]; then
           [ "${FAKE_PROVIDER_SMOKE_FAIL:-0}" = 1 ] && exit 99
           exit 0
           ;;
-        *' run '*' alembic current '*) printf '%s\n' '0079 (head)'; exit 0 ;;
+        *' run '*' alembic current '*) printf '%s\n' '0080 (head)'; exit 0 ;;
         *' run '*) exit 0 ;;
         *' exec -T app python -c '*'import json'*)
           python3 -c '
@@ -286,7 +286,7 @@ assert_verifier_label_assertions() {
 
 assert_declaration_worker_runtime() {
   for file in scripts/deploy-production.sh scripts/verify-production.sh; do
-    grep -Fq '0079 (head)' "$file" || fail "$file does not gate on Alembic head 0079"
+    grep -Fq '0080 (head)' "$file" || fail "$file does not gate on Alembic head 0080"
     grep -Fq 'wait_for_health worker' "$file" || fail "$file does not wait for the declaration worker healthcheck"
     grep -Fq 'runtime_service in app worker' "$file" || fail "$file does not validate both runtime services"
   done

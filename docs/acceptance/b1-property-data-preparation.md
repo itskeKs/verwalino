@@ -1055,3 +1055,19 @@ response and confirmed identical retry key/receipt, reload persistence, failed-l
 recovery and desktop/mobile rendering. Shell/simulated deployment checks pass.
 See [implementation and operator entry](../2026-10-02-mandate-quarantine-disposition.md).
 Activation remains false; B1 and the full plan are not complete.
+
+
+### Explicit legacy dunning quarantine (0080)
+
+Administrators review opaque notice identifiers and current digests, then record
+continued quarantine with a closed reason and immutable receipt. Reviewed rows
+cannot be changed, deleted or supplied an invented scope context. Ordinary notice,
+PDF and audit access is denied; issued rows remain in escalation and privacy
+completeness checks. New scoped notices remain supported.
+
+Evidence: two initial HTTP REDs; 20 initial and 58 final expanded backend cases,
+11 frontend cases, lint/build and shell/simulated deployment checks pass.
+Independent review found no actionable issue. Chromium verified confirmation,
+lost committed-response replay, reload persistence, failed-load recovery and
+inspected desktop/mobile layouts. See [implementation and evidence](../2026-10-02-dunning-legacy-quarantine.md).
+Activation remains false; B1 and the full plan remain incomplete.
