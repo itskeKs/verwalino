@@ -132,3 +132,13 @@ subject blocks the result instead of disappearing from a partial debt list. A
 changed selection clears old results, and query controls stay fixed until the
 response arrives. An omitted scope works only for legacy contexts whose inputs
 are not classified; administrative role alone never authorizes scoped reports.
+
+### Scoped deadline overview
+
+Select an accounting scope on the dashboard or deadline monitor to recover a
+classified-finance overview. A reference date after the scope ends is allowed so
+outstanding deadlines can still be inspected; dates before the scope starts are
+rejected. Rental obligations stay inside the scope's term and units. WEG scopes
+do not display tenant-debt totals. Partial fiscal or next-plan years remain
+blocked pending reviewed coverage. Scoped document retention is explicitly
+unavailable until source assignment can prove complete document coverage.

@@ -73,36 +73,47 @@ def _run_overlaps(run, period_start: date, period_end: date) -> bool:
 
 
 class FristenService:
-    def __init__(self, session, org_id: uuid.UUID):
+    def __init__(self, session, org_id: uuid.UUID, user_id: uuid.UUID | None = None):
         self._session = session
         self._org_id = org_id
+        self._user_id = user_id
         self._repo = FristenRepository(session, org_id)
         self._payments = PaymentRepository(session, org_id)
 
-    async def build_monitor(self, reference_date: date) -> list[DeadlineItem]:
-        await FinancialScopeService(self._session, self._org_id, None).lock_inputs()
-        await self._repo.require_complete_overview()
-        properties = await self._repo.list_properties()
+    async def build_monitor(self, reference_date: date, accounting_scope_id=None) -> list[DeadlineItem]:
+        sphere = await FinancialScopeService(self._session, self._org_id, self._user_id).select_read_scope(accounting_scope_id)
+        if sphere is None:
+            await self._repo.require_complete_overview()
+        elif sphere.scope_type not in ('MIET', 'WEG'):
+            raise HTTPException(422, 'Deadline monitor does not support this accounting scope type')
+        elif reference_date < sphere.valid_from:
+            raise HTTPException(422, 'Reference date is before accounting scope')
+        properties = await self._repo.list_properties(sphere.property_id if sphere else None)
         fiscal_obligations: list[FiscalYearObligationInput] = []
         wp_obligations: list[WirtschaftsplanObligationInput] = []
 
         for prop in properties:
-            await self._collect_property(prop, fiscal_obligations, wp_obligations, reference_date)
+            await self._collect_property(prop, fiscal_obligations, wp_obligations, reference_date, sphere)
 
-        overdue_count = await self._overdue_count(reference_date)
-        earliest, doc_count = await self._repo.retention_anchor()
+        overdue = None
+        if sphere is None or sphere.scope_type == 'MIET':
+            overdue = OverdueItemsInput(overdue_item_count=await self._overdue_count(reference_date, sphere))
+        # Upload-first sources have no complete accounting-scope classification
+        # yet. Do not turn their RLS invisibility into a zero/partial retention count.
+        earliest, doc_count = await self._repo.retention_anchor() if sphere is None else (None, 0)
         retention_anchors = [
             RetentionAnchorInput(
-                label="Belege (Rechnungsdokumente)",
+                label="Belege (Rechnungsdokumente)" if sphere is None else f"Belege im Abrechnungskreis {sphere.label}",
                 earliest_retention_until=earliest,
                 document_count=doc_count,
+                coverage_complete=sphere is None,
             )
         ]
 
         return build_fristenmonitor(
             fiscal_obligations=fiscal_obligations,
             wirtschaftsplan_obligations=wp_obligations,
-            overdue=OverdueItemsInput(overdue_item_count=overdue_count),
+            overdue=overdue,
             retention_anchors=retention_anchors,
             reference_date=reference_date,
         )
@@ -114,11 +125,15 @@ class FristenService:
         fiscal_obligations: list,
         wp_obligations: list,
         reference_date: date,
+        sphere=None,
     ) -> None:
+        management_type = sphere.scope_type if sphere else prop.management_type
         periods = await self._repo.confirmed_cost_periods(prop.id)
         fy_map: dict[str, tuple[date, date]] = {}
         for _from, _to in periods:
             label, ps, pe = _fiscal_year_bounds(_to, prop.fiscal_year_start_month)
+            if sphere and (ps < sphere.valid_from or sphere.valid_to is not None and pe > sphere.valid_to):
+                raise HTTPException(409, 'A partial fiscal-year scope requires reviewed deadline coverage before this overview is available')
             fy_map[label] = (ps, pe)
 
         if fy_map:
@@ -136,6 +151,7 @@ class FristenService:
                     r.lease_agreement_id
                     for r in bk_runs
                     if r.lease_agreement_id and _run_overlaps(r, ps, pe)
+                    and (sphere is None or r.period_start <= ps and r.period_end >= pe)
                 }
                 has_finalized_bk = has_tenant_lease and all(
                     l.id in covered for l in overlapping
@@ -144,7 +160,7 @@ class FristenService:
                     FiscalYearObligationInput(
                         property_id=prop.id,
                         property_name=prop.name,
-                        management_type=prop.management_type,
+                        management_type=management_type,
                         fiscal_year_label=label,
                         period_start=ps,
                         period_end=pe,
@@ -152,16 +168,22 @@ class FristenService:
                         has_tenant_lease=has_tenant_lease,
                         has_finalized_bk=has_finalized_bk,
                         has_finalized_weg_abrechnung=any(
-                            _run_overlaps(r, ps, pe) for r in weg_runs
+                            (_run_overlaps(r, ps, pe) if sphere is None else r.period_start <= ps and r.period_end >= pe) for r in weg_runs
                         ),
                         has_finalized_vermoegensbericht=any(
-                            _run_overlaps(r, ps, pe) for r in vb_runs
+                            (_run_overlaps(r, ps, pe) if sphere is None else r.period_start <= ps and r.period_end >= pe) for r in vb_runs
                         ),
                     )
                 )
 
-        if prop.management_type in ("WEG", "MISCH"):
+        if management_type in ("WEG", "MISCH"):
             plan_year = reference_date.year + 1
+            if sphere is not None:
+                start, end = date(plan_year, 1, 1), date(plan_year, 12, 31)
+                if sphere.valid_to is not None and start > sphere.valid_to:
+                    return
+                if start < sphere.valid_from or sphere.valid_to is not None and end > sphere.valid_to:
+                    raise HTTPException(409, 'A partial plan-year scope requires reviewed deadline coverage before this overview is available')
             finalized_years = await self._repo.finalized_plan_years(prop.id)
             wp_obligations.append(
                 WirtschaftsplanObligationInput(
@@ -177,14 +199,14 @@ class FristenService:
     # Tenant leases only [section 18/fachlich]; owner Hausgeld arrears are
     # surfaced via the owner dunning workflow, not this aggregate.
     # ------------------------------------------------------------------
-    async def _overdue_count(self, reference_date: date) -> int:
+    async def _overdue_count(self, reference_date: date, sphere=None) -> int:
         leases = await self._repo.all_leases()
         total = 0
         for lease in leases:
             try:
                 inc_to = db_exclusive_to_engine_inclusive(lease.valid_to)
-                period_start = lease.valid_from
-                period_end = reference_date
+                period_start = max(lease.valid_from, sphere.valid_from) if sphere else lease.valid_from
+                period_end = min(reference_date, sphere.valid_to) if sphere and sphere.valid_to else reference_date
                 if inc_to is not None and inc_to < period_end:
                     period_end = inc_to
                 if period_start > period_end:
@@ -209,9 +231,9 @@ class FristenService:
             except HTTPException:
                 # Missing access is unknown, never a zero overdue count.
                 raise
-            except Exception:
-                # A single malformed lease must never break the read-only monitor.
-                continue
+            except Exception as error:
+                # A malformed input cannot be silently omitted from a total.
+                raise HTTPException(409, 'Deadline overview cannot calculate all lease inputs') from error
         return total
 
 

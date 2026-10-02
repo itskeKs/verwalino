@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2 } from "lucide-react";
 import { listFristen } from "../api/endpoints";
 import type { DeadlineItem, DeadlineStatus } from "../api/types";
+import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { ApiError } from "../api/client";
 import { Card, CardContent } from "../components/ui/card";
 import { Badge, type BadgeTone } from "../components/ui/badge";
@@ -47,29 +48,31 @@ function formatDate(iso: string): string {
 
 export function FristenmonitorPage() {
   const [referenceDate, setReferenceDate] = useState<string>(todayIso());
+  const [scopeId, setScopeId] = useState<string | null>(null);
   const [result, setResult] = useState<{
     referenceDate: string;
+    scopeId: string | null;
     items: DeadlineItem[];
     error: string | null;
   } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    listFristen(referenceDate)
+    listFristen(referenceDate, scopeId || undefined)
       .then(items => {
-        if (!cancelled) setResult({ referenceDate, items, error: null });
+        if (!cancelled) setResult({ referenceDate, scopeId, items, error: null });
       })
       .catch(err => {
         if (cancelled) return;
         const error = err instanceof ApiError && err.status === 401
           ? "Nicht authentifiziert. Bitte erneut anmelden."
           : String(err);
-        setResult({ referenceDate, items: [], error });
+        setResult({ referenceDate, scopeId, items: [], error });
       });
     return () => { cancelled = true; };
-  }, [referenceDate]);
+  }, [referenceDate, scopeId]);
 
-  const loading = result?.referenceDate !== referenceDate;
+  const loading = result?.referenceDate !== referenceDate || result?.scopeId !== scopeId;
   const error = loading ? null : result?.error;
   const items = !loading && !error ? result?.items ?? [] : [];
   const available = !loading && !error;
@@ -87,12 +90,15 @@ export function FristenmonitorPage() {
           <input
             type="date"
             value={referenceDate}
-            onChange={(e) => setReferenceDate(e.target.value || todayIso())}
+            onChange={(e) => { const date = e.target.value || todayIso(); if (date !== referenceDate) { setResult(null); setReferenceDate(date); } }}
             className="h-9 rounded-md border border-border bg-card px-2.5 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring/30"
           />
         </label>
       </div>
 
+      <div className="form-grid max-w-xl">
+        <AccountingScopeSelector capability="read" value={scopeId} onChange={id => { if (id !== scopeId) { setResult(null); setScopeId(id); } }} />
+      </div>
       <p className="text-sm text-muted-foreground">
         {loading ? "Fristen werden geladen." : error ? "Fristenübersicht nicht verfügbar." : actionCount > 0
           ? `${actionCount} Frist(en) erfordern Aufmerksamkeit (überfällig oder fällig).`

@@ -9,6 +9,7 @@ not change anything). Tenant-scoped via the session as everywhere else.
 from __future__ import annotations
 
 from datetime import date
+import uuid
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -34,12 +35,13 @@ class DeadlineItemOut(BaseModel):
 @router.get("", response_model=list[DeadlineItemOut])
 async def list_fristen(
     reference_date: date | None = None,
+    accounting_scope_id: uuid.UUID | None = None,
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     ref = reference_date or date.today()
-    svc = FristenService(db, auth.organization_id)
-    items = await svc.build_monitor(ref)
+    svc = FristenService(db, auth.organization_id, auth.user_id)
+    items = await svc.build_monitor(ref, accounting_scope_id)
     return [
         DeadlineItemOut(
             kind=i.kind,

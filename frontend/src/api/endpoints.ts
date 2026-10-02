@@ -923,9 +923,11 @@ export function registerPdfUrl(propertyId: string): string {
 }
 
 // --- M9 Fristen ---
-export function listFristen(referenceDate?: string): Promise<DeadlineItem[]> {
-  const q = referenceDate ? `?reference_date=${encodeURIComponent(referenceDate)}` : "";
-  return api.get<DeadlineItem[]>(`/api/fristen${q}`);
+export function listFristen(referenceDate?: string, accountingScopeId?: string): Promise<DeadlineItem[]> {
+  const query = new URLSearchParams();
+  if (referenceDate) query.set("reference_date", referenceDate);
+  if (accountingScopeId) query.set("accounting_scope_id", accountingScopeId);
+  return api.get<DeadlineItem[]>(`/api/fristen?${query}`);
 }
 
 // --- M9 DSGVO (OWNER_ADMIN only) ---

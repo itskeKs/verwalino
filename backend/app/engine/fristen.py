@@ -185,6 +185,7 @@ class RetentionAnchorInput:
     label: str
     earliest_retention_until: date | None
     document_count: int
+    coverage_complete: bool = True
 
 
 # ===========================================================================
@@ -467,7 +468,9 @@ def evaluate_retention_anchors(
     """
     items: list[DeadlineItem] = []
     for a in anchors:
-        if a.earliest_retention_until is None or a.document_count == 0:
+        if not a.coverage_complete:
+            detail = "Aufbewahrungsübersicht nicht verfügbar; die Belegzuordnung ist noch unvollständig."
+        elif a.earliest_retention_until is None or a.document_count == 0:
             detail = f"{a.document_count} Beleg(e); keine anstehende Aufbewahrungsfrist."
         else:
             detail = (
@@ -478,7 +481,7 @@ def evaluate_retention_anchors(
             DeadlineItem(
                 kind=KIND_BELEG_AUFBEWAHRUNG,
                 reference=a.label,
-                due_date=a.earliest_retention_until,
+                due_date=a.earliest_retention_until if a.coverage_complete else None,
                 status=STATUS_INFO,
                 detail=detail,
             )
@@ -502,7 +505,7 @@ _STATUS_RANK = {
 def build_fristenmonitor(
     fiscal_obligations: list[FiscalYearObligationInput],
     wirtschaftsplan_obligations: list[WirtschaftsplanObligationInput],
-    overdue: OverdueItemsInput,
+    overdue: OverdueItemsInput | None,
     retention_anchors: list[RetentionAnchorInput],
     reference_date: date,
 ) -> list[DeadlineItem]:
@@ -518,7 +521,8 @@ def build_fristenmonitor(
     items += evaluate_wirtschaftsplan_obligations(
         wirtschaftsplan_obligations, reference_date
     )
-    items += evaluate_overdue_items(overdue)
+    if overdue is not None:
+        items += evaluate_overdue_items(overdue)
     items += evaluate_retention_anchors(retention_anchors, reference_date)
 
     def _key(it: DeadlineItem):

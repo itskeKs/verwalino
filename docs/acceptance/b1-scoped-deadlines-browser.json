@@ -1,0 +1,56 @@
+{
+  "checks": [
+    "rental scope shows its BK deadline and 24 obligation months; retention stays unknown",
+    "WEG scope replaces rental rows and omits tenant debt and out-of-term plans",
+    "dashboard recovers after selecting a scope and does not invent WEG tenant-debt zero",
+    "revocation blocks the next query and removes stale rows without an all-clear"
+  ],
+  "pageErrors": [],
+  "responses": [
+    {
+      "status": 401,
+      "path": "/api/auth/session"
+    },
+    {
+      "status": 401,
+      "path": "/api/auth/session"
+    },
+    {
+      "status": 409,
+      "path": "/api/fristen"
+    },
+    {
+      "status": 409,
+      "path": "/api/fristen"
+    },
+    {
+      "status": 409,
+      "path": "/api/fristen"
+    },
+    {
+      "status": 409,
+      "path": "/api/fristen"
+    },
+    {
+      "status": 409,
+      "path": "/api/fristen"
+    },
+    {
+      "status": 409,
+      "path": "/api/fristen"
+    },
+    {
+      "status": 409,
+      "path": "/api/fristen"
+    },
+    {
+      "status": 404,
+      "path": "/api/fristen"
+    }
+  ],
+  "mobile": {
+    "visible": 390,
+    "content": 390
+  },
+  "status": "passed"
+}

@@ -40,12 +40,14 @@ class FristenRepository:
         if classified:
             raise HTTPException(409, 'The organization-wide deadline monitor is unavailable for classified financial data; a scoped view is required')
 
-    async def list_properties(self) -> Sequence[Property]:
+    async def list_properties(self, property_id=None) -> Sequence[Property]:
         stmt = (
             select(Property)
             .where(Property.organization_id == self._org_id)
             .order_by(Property.name)
         )
+        if property_id is not None:
+            stmt = stmt.where(Property.id == property_id)
         result = await self._session.execute(stmt)
         return result.scalars().all()
 

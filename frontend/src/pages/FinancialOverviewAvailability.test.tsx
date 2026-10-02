@@ -7,6 +7,7 @@ import { getMyOrganization, listFristen, listPersons, listProperties } from "../
 import type { DeadlineItem } from "../api/types";
 
 vi.mock("../api/endpoints", () => ({ getMyOrganization: vi.fn(), listFristen: vi.fn(), listPersons: vi.fn(), listProperties: vi.fn() }));
+vi.mock("../components/AccountingScopeSelector", () => ({ AccountingScopeSelector: () => null }));
 vi.mock("../auth/useAuth", () => ({ useAuth: () => ({ session: null }) }));
 afterEach(cleanup);
 beforeEach(() => {

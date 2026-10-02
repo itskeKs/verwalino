@@ -179,3 +179,32 @@ test locators, then exposed and fixed a real long-label selector overflow.
 
 This increment does not enable scoped dunning, change the existing year-based
 payment attribution rules, or claim completion of the remaining B1 adapters.
+
+### Scoped dashboard and deadline monitor (2026-10-02)
+
+The dashboard and deadline monitor now accept a live read-capable accounting
+scope. Property, accounting type and effective unit set determine the inputs;
+rental obligations are bounded by the scope's effective dates. WEG reports omit
+the tenant-debt metric instead of displaying a tenant-debt zero. A closed scope
+does not acquire next-year plan obligations outside its term. Partial fiscal or
+plan years require reviewed coverage and return an explicit conflict. Scoped
+completion requires full fiscal coverage from finalized runs; legacy rules remain
+unchanged. A malformed lease blocks an aggregate rather than disappearing.
+
+Independent review found that unlinked invoice documents could be hidden by RLS
+and falsely become a scoped zero-retention count. Scoped retention now remains an
+explicit unavailable INFO item; no count or expiry date is queried or inferred.
+An unlinked-document regression verifies this. The complete source-assignment
+adapter remains pending. Review accepted the repair with no remaining findings.
+
+Evidence: four scoped acceptance cases first failed on the missing API context;
+eight final scoped cases plus existing deadline engine/API and scoped statement
+regressions pass (51 tests). Eleven frontend tests, lint and production build pass
+(existing approximately 583 KB bundle warning). One intermediate DB connection
+rejected an SSL upgrade; the disposable container remained healthy and the full
+focused rerun passed. No application change was needed for that transient failure.
+Browser script `scripts/acceptance/b1_scoped_deadlines_browser.cjs` passes rental
+versus WEG selection, dashboard recovery, unknown retention, revocation and mobile
+390/390. Evidence is `b1-scoped-deadlines-browser.json`; screenshot inspected at
+`/tmp/hv-b1-deadlines-acceptance/deadlines-mobile.png`. Browser plugin not available;
+regular Playwright used against API18000/Vite13000/disposable DB55432 only.

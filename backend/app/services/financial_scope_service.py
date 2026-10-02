@@ -19,14 +19,8 @@ class FinancialScopeService:
         await self.session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
             {'key': f'financial-inputs:{self.org_id}'})
 
-    async def select_report_scope(self, scope_id, *, scope_type, period_start, period_end):
-        """Install a read-only report context before looking up its subjects.
-
-        An omitted scope preserves legacy access only where repository completeness
-        checks allow it. An inherited plan context receives the same live checks.
-        """
-        if period_start > period_end:
-            raise HTTPException(422, 'Report period must not end before it starts')
+    async def select_read_scope(self, scope_id=None):
+        """Install one live, complete read context; omitted means legacy only."""
         await self.lock_inputs()
         selected = await self.session.scalar(text("SELECT NULLIF(current_setting('app.current_scope_id',true),'')::uuid"))
         if selected is not None and scope_id is not None and selected != scope_id:
@@ -36,14 +30,23 @@ class FinancialScopeService:
             return None
         sphere = await AuthorizationService(self.session,
             AuthContext(self.user_id, self.org_id, 'live database role required')).require(scope_id, ScopeCapability.READ)
-        if sphere.scope_type != scope_type:
-            raise HTTPException(422, 'Accounting scope does not support this report type')
-        if period_start < sphere.valid_from or sphere.valid_to is not None and period_end > sphere.valid_to:
-            raise HTTPException(422, 'Report period is outside accounting scope')
         await self.session.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"), {'scope': str(scope_id)})
         if not await self.session.scalar(text('SELECT scope_financial_inputs_classified(:org,:scope)'),
                 {'org': self.org_id, 'scope': scope_id}):
             raise HTTPException(409, 'Review unclassified financial inputs before calculating this accounting scope')
+        return sphere
+
+    async def select_report_scope(self, scope_id, *, scope_type, period_start, period_end):
+        """Read-only statement context, including an inherited plan context."""
+        if period_start > period_end:
+            raise HTTPException(422, 'Report period must not end before it starts')
+        sphere = await self.select_read_scope(scope_id)
+        if sphere is None:
+            return None
+        if sphere.scope_type != scope_type:
+            raise HTTPException(422, 'Accounting scope does not support this report type')
+        if period_start < sphere.valid_from or sphere.valid_to is not None and period_end > sphere.valid_to:
+            raise HTTPException(422, 'Report period is outside accounting scope')
         return sphere
 
     async def prepare_new(self, subject, scope_id=None):

@@ -27,6 +27,7 @@ import {
   listPersons,
 } from "../api/endpoints";
 import type { Organization, DeadlineItem, DeadlineStatus } from "../api/types";
+import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { useAuth } from "../auth/useAuth";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
 import { Badge, type BadgeTone } from "../components/ui/badge";
@@ -82,30 +83,32 @@ export function DashboardPage() {
   const [propertyCount, setPropertyCount] = useState<number | null>(null);
   const [personCount, setPersonCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [scopeId, setScopeId] = useState<string | null>(null);
+  const [resultScope, setResultScope] = useState<string | null | undefined>(undefined);
+  const loading = resultScope !== scopeId;
 
   useEffect(() => {
     let cancelled = false;
     Promise.allSettled([
       getMyOrganization(),
-      listFristen(todayIso()),
+      listFristen(todayIso(), scopeId || undefined),
       listProperties(),
       listPersons(),
     ])
       .then(([o, f, props, persons]) => {
         if (cancelled) return;
-        if (o.status === "fulfilled") setOrg(o.value);
-        if (f.status === "fulfilled") setFristen(f.value);
-        if (props.status === "fulfilled") setPropertyCount(props.value.length);
-        if (persons.status === "fulfilled") setPersonCount(persons.value.length);
+        setOrg(o.status === "fulfilled" ? o.value : null);
+        setFristen(f.status === "fulfilled" ? f.value : null);
+        setPropertyCount(props.status === "fulfilled" ? props.value.length : null);
+        setPersonCount(persons.status === "fulfilled" ? persons.value.length : null);
         const failures = [o, f, props, persons].filter(result => result.status === "rejected");
-        if (failures.length) setError(failures.map(result => String(result.reason)).join(" · "));
-        setLoading(false);
+        setError(failures.length ? failures.map(result => String(result.reason)).join(" · ") : null);
+        setResultScope(scopeId);
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [scopeId]);
 
   const financeAvailable = !loading && fristen !== null;
   const overdue = (fristen ?? []).filter((f) => f.status === "OVERDUE");
@@ -135,7 +138,10 @@ export function DashboardPage() {
         </h1>
       </div>
 
-      {error && (
+      <div className="form-grid max-w-xl">
+        <AccountingScopeSelector capability="read" value={scopeId} onChange={id => { if (id !== scopeId) { setResultScope(undefined); setScopeId(id); } }} />
+      </div>
+      {error && !loading && (
         <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
@@ -170,7 +176,7 @@ export function DashboardPage() {
           value={loading ? "…" : openItemsCount ?? "—"}
           icon={CircleAlert}
           tone={!openItemsAvailable ? "default" : openItemsCount > 0 ? "warning" : "success"}
-          hint={loading ? undefined : !openItemsAvailable ? "Nicht verfügbar" : openItemsCount > 0 ? "Mahnwesen prüfen" : "keine offenen Posten"}
+          hint={loading ? undefined : !financeAvailable ? "Nicht verfügbar" : !openItemsAvailable ? "Für diesen Bereich nicht ausgewiesen" : openItemsCount > 0 ? "Mahnwesen prüfen" : "keine offenen Posten"}
           to="/offene-posten"
         />
       </div>
