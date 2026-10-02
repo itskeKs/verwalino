@@ -54,3 +54,26 @@ it("reports stale evidence explicitly and supports failed history recovery",asyn
   fireEvent.click(screen.getByRole("button",{name:"Stand als geprüft vermerken"}));
   await screen.findByText(/Der Prüfstand ist veraltet/);
 });
+
+it("distinguishes projected combined rights from existing grants and keeps activation unavailable",async()=>{
+  vi.spyOn(api,"get").mockImplementation(async url=>url.includes("/items") ? {items:[{
+    ...item,kind:"bank_account",findings:["COMBINED_READER_REQUIRED"],
+    references:{strict_audience:[]},audience:[{grant_id:"grant-1",user_id:"team-1",effective_capabilities:["read"],capabilities:["read"]}],
+  }],next_cursor:null} : {items:[snapshot],next_cursor:null});
+  render(<MemoryRouter><AccessCoveragePanel /></MemoryRouter>);
+  fireEvent.change(await screen.findByLabelText("Gespeicherten Stand auswählen"),{target:{value:snapshot.id}});
+  await screen.findByText("Keine gemeinsam ausreichenden Berechtigungen.");
+  expect(screen.getByText("Teamkennung team-1: Lesen")).toBeInTheDocument();
+  expect(screen.getByText(/Kein Teammitglied kann diesen Eintrag/)).toBeInTheDocument();
+  expect(screen.queryByRole("button",{name:/aktivieren/i})).not.toBeInTheDocument();
+});
+
+it("renders the saved combined audience in readable language",async()=>{
+  vi.spyOn(api,"get").mockImplementation(async url=>url.includes("/items") ? {items:[{
+    ...item,findings:[],references:{strict_audience:[{user_id:"team-2",capabilities:["prepare","read"]}]},
+  }],next_cursor:null} : {items:[snapshot],next_cursor:null});
+  render(<MemoryRouter><AccessCoveragePanel /></MemoryRouter>);
+  fireEvent.change(await screen.findByLabelText("Gespeicherten Stand auswählen"),{target:{value:snapshot.id}});
+  expect(await screen.findByText("Teamkennung team-2: Vorbereiten, Lesen")).toBeInTheDocument();
+  expect(screen.getByText(/Diese Vorschau erteilt keine Freigaben/)).toBeInTheDocument();
+});

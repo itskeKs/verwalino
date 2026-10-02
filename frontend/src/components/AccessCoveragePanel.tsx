@@ -11,6 +11,9 @@ interface Grant { grant_id: string; user_id: string; effective_capabilities: str
 interface Item { id: string; kind: string; resource_id: string; references: Record<string, unknown>; findings: string[]; audience: Grant[] }
 
 const findings: Record<string, string> = {
+  COMBINED_READER_REQUIRED: "Kein Teammitglied kann diesen Eintrag mit allen benötigten Quellen und Kontakten lesen.",
+  PROCESSING_PRINCIPAL_DENIED: "Dem vorgesehenen Bearbeiter fehlen aktuelle Rechte für diese Verarbeitung oder ihren Abrechnungskreis.",
+  DEPLOYMENT_POLICY_ATTESTATION_REQUIRED: "Der verbindliche Abgleich der Budgetregel mit dem laufenden System steht noch aus.",
   DOMAIN_REQUIRED: "Ein ausdrücklicher Datenbereich fehlt.", LIVE_READER_REQUIRED: "Es gibt keine aktuelle Lesefreigabe.",
   HISTORY_GRAPH_INVALID: "Beziehungen in der Historie müssen geprüft werden.", MEETING_GRAPH_INVALID: "Versammlungsbezüge müssen geprüft werden.",
   QUARANTINED_INPUTS_BLOCK_OPERATIONS: "Quellen in Quarantäne können Berechnungen und Auskünfte blockieren.",
@@ -50,6 +53,14 @@ const kinds: Record<string,string> = { property:"Objekt", person:"Kontakt", acco
   invoice_processing_attempt:"Belegverarbeitung", property_knowledge_query_run:"Wissensauskunft", property_legal_reference:"Rechtsgrundlage",
   property_assignment:"Nutzungszuordnung", property_document_relation:"Dokumentbezug", property_rule_relation:"Regelbezug", property_rule_source:"Regelquelle" };
 const capabilities: Record<string,string> = { read:"Lesen", prepare:"Vorbereiten", confirm:"Bestätigen", approve:"Freigeben", send:"Senden", export:"Exportieren" };
+
+interface StrictAudience { user_id: string; capabilities: string[] }
+function strictAudience(value: unknown): StrictAudience[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.filter((row): row is StrictAudience => row !== null && typeof row === "object"
+    && typeof row.user_id === "string" && Array.isArray(row.capabilities)
+    && row.capabilities.every((cap: unknown) => typeof cap === "string"));
+}
 
 function proposal(kind: string): [string,string] | null {
   if (["property","unit"].includes(kind)) return ["/gebaeudedaten-rechte","Datenbereich und Teamfreigaben prüfen"];
@@ -93,11 +104,18 @@ function SnapshotDetail({ snapshot, onReviewed }: { snapshot: Snapshot; onReview
     {page.error && <p role="alert" className="error-text">Prüfeinträge nicht verfügbar. Bitte erneut laden.</p>}
     <div className="space-y-3">{page.items.map(item => {
       const next = proposal(item.kind);
+      const projected = strictAudience(item.references.strict_audience);
       return <article className="card min-w-0 space-y-2" key={item.id}>
         <h4>{kinds[item.kind] ?? "Quellenbezug"}</h4><p className="break-all text-sm">Kennung: {item.resource_id}</p>
         {item.findings.length ? <ul className="list-disc pl-5">{item.findings.map(code => <li key={code}>{findings[code] ?? "Dieser Eintrag benötigt eine gesonderte Prüfung."}</li>)}</ul>
-          : <p>Keine strukturelle Prüfhilfe für diesen Eintrag. Die vorgesehenen Teamaufgaben und abhängigen Quellen weiterhin ausdrücklich prüfen.</p>}
+          : <p>Keine offenen Befunde in dieser Prüfung. Aktuelle Rechte und fachliche Voraussetzungen werden beim Vorgang erneut geprüft.</p>}
         {item.audience.map(grant => <p key={grant.grant_id} className="break-words text-sm">Teamkennung {grant.user_id}: {grant.effective_capabilities.map(cap => capabilities[cap] ?? cap).join(", ") || "Keine wirksame Berechtigung"}</p>)}
+        {projected && <section className="space-y-1" aria-label="Gemeinsam geprüfte Berechtigungen">
+          <h5>Gemeinsam geprüfte Berechtigungen · Vorschau</h5>
+          <p className="text-sm">Berücksichtigt die benötigten Quellen, Kontakte und Abrechnungskreise je Teammitglied. Diese Vorschau erteilt keine Freigaben.</p>
+          {projected.length ? projected.map(row => <p key={row.user_id} className="break-words text-sm">Teamkennung {row.user_id}: {row.capabilities.map(cap => capabilities[cap] ?? cap).join(", ")}</p>)
+            : <p className="text-sm">Keine gemeinsam ausreichenden Berechtigungen.</p>}
+        </section>}
         <details><summary>Zuordnungen und Freigabekennungen</summary><pre className="whitespace-pre-wrap break-all text-xs">{JSON.stringify({ references:item.references, grants:item.audience },null,2)}</pre></details>
         {next && <Link className="link" to={next[0]}>{next[1]}</Link>}
       </article>;

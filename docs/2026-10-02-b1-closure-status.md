@@ -1,6 +1,6 @@
-# B1 closure status after migration 0086
+# B1 closure status after migration 0087
 
-Baseline: 4e34859 plus accepted local 0086 increment. M-A is accepted; B1 is
+Baseline: f1ee82f plus accepted local 0087 increment. M-A is accepted; B1 is
 incomplete. B2–G remain outstanding.
 This assessment supersedes historical forward-looking residuals only where later
 accepted migrations demonstrably resolve them. It does not declare team rollout.
@@ -35,8 +35,14 @@ accepted migrations demonstrably resolve them. It does not declare team rollout.
    Independent financial pause and selected-scope boundaries remain live. All 13
    final projection tests pass, including the 25-predicate/three-mode comparison,
    exact rollback, private ACLs and admitted/quarantined canonical sources.
-   These gates still require composition with meetings, lifecycle/processing and
-   retained dispositions into a complete versioned readiness checker.
+   Migration 0087 adds six original/import/meeting/classification predicates and
+   a checker-v2 combined audience for each modeled resource family. Exact parent
+   property, recipients, invoice references and active processing principals are
+   checked without combining different people's grants. Historical snapshots stay
+   immutable; financial pause history participates in staleness checks. API,
+   migration, UI and local browser evidence pass. This remains an authorization
+   preview: trusted deployment/budget attestation, retained-disposition acceptance
+   and activation lifecycle integration are still outstanding.
 4. Implement idempotent activation against the accepted snapshot, rechecking coverage
    under exclusive ACL locking. Include Q&A budget policy review, stale evidence,
    revocation, new-organization bootstrap and audited pause/resume. Never return a

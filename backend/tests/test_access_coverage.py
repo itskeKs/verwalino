@@ -159,6 +159,7 @@ async def test_capture_waits_for_live_admin_and_migration_retains_snapshots(migr
                 try:
                     db.execute(text('TRUNCATE access_coverage_review,access_coverage_snapshot CASCADE'))
                     proposal_migration = importlib.import_module('migrations.versions.0084_access_grant_proposals')
+                    importlib.import_module('migrations.versions.0087_projected_access_coverage').downgrade()
                     proposal_migration.downgrade()
                     migration.downgrade(); migration.upgrade()
                     proposal_migration.upgrade()
@@ -251,4 +252,4 @@ async def test_hidden_vendor_tax_identifiers_are_never_administrative_references
             page = response.json(); rows.extend(page['items']); cursor = page['next_cursor']
             if not cursor: break
         vendor = next(row for row in rows if row['kind']=='vendor')
-        assert vendor['references'] == {'person_id':str(ids['person'])}
+        assert vendor['references'] == {'person_id':str(ids['person']),'strict_audience':[]}
