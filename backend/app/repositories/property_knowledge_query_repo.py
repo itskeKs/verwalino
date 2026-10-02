@@ -14,6 +14,7 @@ from sqlalchemy.exc import DBAPIError
 from fastapi import HTTPException
 from sqlalchemy.orm import aliased
 
+from app.core.runtime_budget import attest_runtime_budget, runtime_budget_policy
 from app.models.approved_fact_source import ApprovedFactSource
 from app.models.property import Property
 from app.models.property_document import PropertyDocument
@@ -65,7 +66,7 @@ class PropertyKnowledgeQueryRepository:
     ) -> KnowledgeQueryReservation | None:
         """Atomically reclaim expired rows and reserve one bounded Q&A attempt."""
         # Both commands reserve atomically under ACL then whole-org budget locks.
-        # Strict mode derives cap, window and expiry exclusively from DB policy.
+        # Strict mode also requires this runtime to match the reviewed DB policy.
         params = {"org": self._organization_id, "property": property_id,
                   "provider": provider, "model": model, "amount": reserved_cost_usd}
         try:
@@ -76,9 +77,12 @@ class PropertyKnowledgeQueryRepository:
                               expires=reservation_expires_at)
                 command = "SELECT * FROM reserve_knowledge_query_compat(:org,:property,:provider,:model,:amount,:window,:cap,:expires)"
             else:
+                await attest_runtime_budget(self._session,self._organization_id,actor_user_id,runtime_budget_policy())
                 command = "SELECT * FROM reserve_knowledge_query(:org,:property,:provider,:model,:amount)"
             row = (await self._session.execute(text(command), params)).mappings().one_or_none()
         except DBAPIError as exc:
+            if getattr(exc.orig, "sqlstate", None) == "55000":
+                raise HTTPException(status_code=503, detail="Reviewed knowledge budget unavailable") from None
             if getattr(exc.orig, "sqlstate", None) == "42501":
                 raise HTTPException(status_code=404, detail="Property not found") from exc
             raise

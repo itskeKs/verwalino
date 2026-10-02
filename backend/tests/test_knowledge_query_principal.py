@@ -202,19 +202,26 @@ async def test_migration_preserves_unknowns_and_refuses_loss_of_known_principals
             with pytest.raises(DBAPIError,match='Retain populated'):
                 with connection.begin_nested(), Operations.context(MigrationContext.configure(connection)):
                     migration.downgrade()
-            connection.execute(text('DELETE FROM property_knowledge_query_run WHERE id=:run'),{'run':run})
-            with Operations.context(MigrationContext.configure(connection)):
-                migration.downgrade()
-                connection.execute(text("""INSERT INTO property_knowledge_query_run
-                  (id,organization_id,property_id,budget_window_start,provider,model,reserved_cost_usd,reservation_expires_at)
-                  VALUES(:run,:org,:property,date_trunc('hour',now()),'fake','legacy',0.01,now()-interval '1 hour')"""),
-                  {'run':legacy,'org':graph.organization_id,'property':graph.property_id})
-                migration.upgrade()
-            assert connection.scalar(text('SELECT initiated_by FROM property_knowledge_query_run WHERE id=:run'),{'run':legacy}) is None
-        async with get_tenant_session(graph.organization_id) as session:
-            await set_actor(session,seed_data['user_a_admin_id'])
-            await session.execute(text("UPDATE property_knowledge_query_run SET status='EXPIRED',outcome='RESERVATION_EXPIRED',error_code='RESERVATION_EXPIRED',finalized_at=now() WHERE id=:run"), {'run':legacy})
-            assert await session.scalar(text('SELECT initiated_by FROM property_knowledge_query_run WHERE id=:run'),{'run':legacy}) is None
+            signatures = ('guard_knowledge_principal()','cancel_unauthorized_knowledge(uuid,uuid)')
+            before = {signature:connection.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),{'signature':signature}) for signature in signatures}
+            point = connection.begin_nested()
+            try:
+                connection.execute(text('DELETE FROM property_knowledge_query_run WHERE id=:run'),{'run':run})
+                with Operations.context(MigrationContext.configure(connection)):
+                    migration.downgrade()
+                    connection.execute(text("""INSERT INTO property_knowledge_query_run
+                      (id,organization_id,property_id,budget_window_start,provider,model,reserved_cost_usd,reservation_expires_at)
+                      VALUES(:run,:org,:property,date_trunc('hour',now()),'fake','legacy',0.01,now()-interval '1 hour')"""),
+                      {'run':legacy,'org':graph.organization_id,'property':graph.property_id})
+                    migration.upgrade()
+                assert connection.scalar(text('SELECT initiated_by FROM property_knowledge_query_run WHERE id=:run'),{'run':legacy}) is None
+                connection.execute(text('SET LOCAL ROLE app_rw'))
+                connection.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+                    {'org':str(graph.organization_id),'actor':str(seed_data['user_a_admin_id'])})
+                expired = connection.execute(text("UPDATE property_knowledge_query_run SET status='EXPIRED',outcome='RESERVATION_EXPIRED',error_code='RESERVATION_EXPIRED',finalized_at=now() WHERE id=:run RETURNING status,initiated_by"), {'run':legacy}).one()
+                assert expired == ('EXPIRED',None)
+            finally: point.rollback()
+            assert {signature:connection.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),{'signature':signature}) for signature in signatures}==before
     finally:
         engine.dispose()
         await cleanup_runs(migrator_session,graph)

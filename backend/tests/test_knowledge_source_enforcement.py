@@ -29,46 +29,44 @@ from tests.test_scoped_account_statements import mutate
 
 
 async def configure_budget(seed):
-    from sqlalchemy.ext.asyncio import create_async_engine
-    from tests.conftest import MIGRATOR_URL
-    from app.core.config import settings
-    engine=create_async_engine(MIGRATOR_URL)
-    try:
-        async with engine.begin() as db:
-            await db.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
-                {'org':str(seed['org_a_id']),'actor':str(seed['user_a_admin_id'])})
-            await db.execute(text("INSERT INTO knowledge_budget_policy(organization_id,max_cost_usd,window_minutes,reservation_seconds,changed_by,reason) "
-                "VALUES(:org,:cap,:window,:seconds,:actor,'Synthetic configured Q&A policy')"),
-                {'org':seed['org_a_id'],'actor':seed['user_a_admin_id'],'cap':settings.declaration_qa_max_cost_usd,
-                 'window':settings.declaration_qa_budget_window_minutes,'seconds':settings.declaration_qa_reservation_seconds})
-    finally: await engine.dispose()
+    import uuid
+    from app.core.runtime_budget import attest_runtime_budget,runtime_budget_policy
+    async with get_tenant_session(seed['org_a_id']) as db:
+        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(seed['user_a_admin_id'])})
+        proof = await attest_runtime_budget(db,seed['org_a_id'],seed['user_a_admin_id'],runtime_budget_policy())
+        state = await db.scalar(text('SELECT runtime_budget_status(:org)'),{'org':seed['org_a_id']})
+        await db.execute(text("SELECT review_runtime_budget(:org,:request,:prior,:digest,'Synthetic configured Q&A policy')"),
+            {'org':seed['org_a_id'],'request':uuid.uuid4(),'prior':uuid.UUID(state['review']['id']) if state['review'] else None,'digest':proof['policy_digest']})
 
 
 @asynccontextmanager
 async def granted_graph(api,seed,graph):
-    import uuid
-    from tests.test_bound_source_access import classify
-    domain,grant_id=await grant(api,seed,graph.property_id,caps=['read','prepare','approve'])
-    try:
-        # The fixture contains bound legacy originals. Review their known actual
-        # uploader through the production API before exercising strict Q&A.
-        async with get_tenant_session(graph.organization_id) as db:
-            documents=(await db.scalars(text('SELECT id FROM property_document WHERE property_id=:property'),{'property':graph.property_id})).all()
-        for document in documents:
-            await classify(api,{'document':document,'property':graph.property_id})
-        assert (await api.post(f'/api/property-data-domains/{domain}/grants/{grant_id}/revoke')).status_code==204
-        response=await api.post(f'/api/property-data-domains/{domain}/grants',headers={'Idempotency-Key':str(uuid.uuid4())},
-            json={'user_id':str(seed['user_a_admin_id']),'capabilities':['read'],'reason':'Query source reader'})
-        assert response.status_code==201,response.text
-        grant_id=response.json()['id']
-        await configure_budget(seed)
-        yield domain,grant_id
-    finally:
-        await mutate(text('DELETE FROM property_knowledge_query_run WHERE property_id=:property'),{'property':graph.property_id})
-        # Only the guarded disposable test DB permits dropping synthetic immutable
-        # setup through TRUNCATE. Production cleanup cannot erase these receipts.
-        await mutate(text('TRUNCATE property_data_domain CASCADE'),{})
-        await mutate(text('TRUNCATE knowledge_budget_policy'),{})
+    from app.core.config import settings
+    with pytest.MonkeyPatch.context() as budget_settings:
+        budget_settings.setattr(settings,'declaration_qa_enabled',True)
+        import uuid
+        from tests.test_bound_source_access import classify
+        domain,grant_id=await grant(api,seed,graph.property_id,caps=['read','prepare','approve'])
+        try:
+            # The fixture contains bound legacy originals. Review their known actual
+            # uploader through the production API before exercising strict Q&A.
+            async with get_tenant_session(graph.organization_id) as db:
+                documents=(await db.scalars(text('SELECT id FROM property_document WHERE property_id=:property'),{'property':graph.property_id})).all()
+            for document in documents:
+                await classify(api,{'document':document,'property':graph.property_id})
+            assert (await api.post(f'/api/property-data-domains/{domain}/grants/{grant_id}/revoke')).status_code==204
+            response=await api.post(f'/api/property-data-domains/{domain}/grants',headers={'Idempotency-Key':str(uuid.uuid4())},
+                json={'user_id':str(seed['user_a_admin_id']),'capabilities':['read'],'reason':'Query source reader'})
+            assert response.status_code==201,response.text
+            grant_id=response.json()['id']
+            await configure_budget(seed)
+            yield domain,grant_id
+        finally:
+            await mutate(text('DELETE FROM property_knowledge_query_run WHERE property_id=:property'),{'property':graph.property_id})
+            # Only the guarded disposable test DB permits dropping synthetic immutable
+            # setup through TRUNCATE. Production cleanup cannot erase these receipts.
+            await mutate(text('TRUNCATE property_data_domain CASCADE'),{})
+            await mutate(text('TRUNCATE knowledge_budget_policy'),{})
 
 
 async def ledger(graph):
@@ -123,7 +121,10 @@ async def test_source_loss_between_phases_denies_provider_or_durably_cancels_hid
                     await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(seed_data['user_a_admin_id'])})
                     assert await db.scalar(text('SELECT count(*) FROM property_knowledge_query_run WHERE id=:run'),{'run':row['id']})==0
                     assert not await db.scalar(text('SELECT cancel_unauthorized_knowledge(:org,:run)'),{'org':graph.organization_id,'run':row['id']})
-                    assert await db.scalar(text("SELECT count(*) FROM audit_event WHERE entity_id=:run AND action='knowledge.permission_cancelled'"),{'run':row['id']})==1
+                    # Source audit RLS (0065) hides the now inaccessible run's event.
+                    assert await db.scalar(text("SELECT count(*) FROM audit_event WHERE entity_id=:run AND action='knowledge.permission_cancelled'"),{'run':row['id']})==0
+                from tests.test_scope_payment_reconciliation import read_value
+                assert await read_value("SELECT count(*) FROM audit_event WHERE entity_id=:run AND action='knowledge.permission_cancelled'",{'run':row['id']})==1
         finally:
             await mutate(text('DROP POLICY test_knowledge_source ON property_knowledge_query_run'),{})
             app.dependency_overrides.pop(get_knowledge_provider,None)
@@ -248,6 +249,8 @@ async def test_strict_reserve_owns_window_expiry_and_caps_atomic_admission(appro
     async with granted_graph(client_a_admin,seed_data,graph),synthetic_enforcement(seed_data):
         async with get_tenant_session(graph.organization_id) as db:
             await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(seed_data['user_a_admin_id'])})
+            from app.core.runtime_budget import attest_runtime_budget,runtime_budget_policy
+            await attest_runtime_budget(db,graph.organization_id,seed_data['user_a_admin_id'],runtime_budget_policy())
             params={'org':graph.organization_id,'property':graph.property_id,'amount':settings.declaration_qa_max_cost_usd+Decimal('0.000001')}
             command=text("SELECT * FROM reserve_knowledge_query(:org,:property,'fake','policy',:amount)")
             assert (await db.execute(command,params)).first() is None
@@ -270,7 +273,7 @@ async def test_strict_query_missing_budget_policy_fails_before_provider(approved
         async with granted_graph(client_a_admin,seed_data,graph),synthetic_enforcement(seed_data):
             await mutate(text('TRUNCATE knowledge_budget_policy'),{})
             response=await client_a_admin.post(f'/api/properties/{graph.property_id}/knowledge/query',json={'question':'Heizkosten'})
-            assert response.status_code==404,response.text
+            assert response.status_code==503,response.text
             assert provider.calls==[] and not await ledger(graph)
     finally: app.dependency_overrides.pop(get_knowledge_provider,None)
 
@@ -292,6 +295,7 @@ async def test_knowledge_migration_preserves_policy_and_roundtrips_empty(approve
                 nested=db.begin_nested()
                 try:
                     db.execute(text('TRUNCATE knowledge_budget_policy'))
+                    importlib.import_module('migrations.versions.0089_runtime_budget_reservation').downgrade()
                     migration.downgrade()
                     assert db.scalar(text("SELECT to_regclass('knowledge_budget_policy')")) is None
                     migration.upgrade()
@@ -332,6 +336,8 @@ async def test_concurrent_strict_reservations_share_one_org_budget(approved_know
         async def reserve():
             async with get_tenant_session(graph.organization_id) as db:
                 await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(seed_data['user_a_admin_id'])})
+                from app.core.runtime_budget import attest_runtime_budget,runtime_budget_policy
+                await attest_runtime_budget(db,graph.organization_id,seed_data['user_a_admin_id'],runtime_budget_policy())
                 await barrier.wait()
                 return (await db.execute(text("SELECT * FROM reserve_knowledge_query(:org,:property,'fake','parallel',:amount)"),
                     {'org':graph.organization_id,'property':graph.property_id,'amount':settings.declaration_qa_max_cost_usd*Decimal('0.6')})).first()
