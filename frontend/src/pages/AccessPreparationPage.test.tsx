@@ -6,6 +6,8 @@ import { api } from "../api/client";
 import * as auth from "../auth/useAuth";
 import type { AccessPreparation } from "../api/types";
 
+vi.mock("../components/AccessCoveragePanel", () => ({ AccessCoveragePanel: () => null }));
+
 const snapshot: AccessPreparation = {
   generated_at: "2026-10-02T12:00:00Z", mode: "PREPARATION", activation_available: false,
   counts: { properties_total: 5, properties_without_domain: 2, properties_without_current_reader: 3,

@@ -1,0 +1,19 @@
+{
+  "milestone": "0083 structural access coverage",
+  "baseline": "28314ed plus uncommitted 0083 implementation",
+  "environment": "Disposable local PostgreSQL 16, API 18000, Vite 13000, Playwright Chromium",
+  "synthetic_item_count": 57,
+  "default_page_size": 50,
+  "capture_committed_response_loss_same_key_and_result": true,
+  "review_committed_response_loss_same_key_and_result": true,
+  "review_requires_acknowledgment_and_all_pages_loaded": true,
+  "review_receipt_survives_reload": true,
+  "failed_item_reload_clears_rows_and_recovers": true,
+  "viewports": [[1440, 1000], [390, 844]],
+  "mobile_document_overflow": false,
+  "page_errors": [],
+  "screenshots_inspected": ["/tmp/hv-coverage-desktop.png", "/tmp/hv-coverage-mobile.png"],
+  "harness": "/tmp/hv-coverage-browser.mjs",
+  "activation_available": false,
+  "production_deployment": false
+}

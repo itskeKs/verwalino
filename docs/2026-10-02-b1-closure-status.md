@@ -1,6 +1,6 @@
-# B1 closure status after migration 0082
+# B1 closure status after migration 0083
 
-Baseline: 20f9b65 plus accepted local 0082 increment. M-A is accepted; B1 is
+Baseline: 28314ed plus accepted local 0083 increment. M-A is accepted; B1 is
 incomplete. B2–G remain outstanding.
 This assessment supersedes historical forward-looking residuals only where later
 accepted migrations demonstrably resolve them. It does not declare team rollout.
@@ -17,11 +17,14 @@ accepted migrations demonstrably resolve them. It does not declare team rollout.
    unknown standalone invoices remain retained and inaccessible in strict mode;
    no creator is backfilled. Its 118 integration and final 12 custody checks cover
    the repaired upload/extraction/link path and concurrent authorization lifetime.
-2. Produce reviewed, versioned coverage and migration proposals. Existing 0076 counts
-   establish neither current admission proof nor intended team authority. Enumerate
-   exact domain/scope identities, eligible grants, valid proof/quarantine dispositions
-   and exceptions. Reuse explicit setup commands; role-based suggestions never grant
-   authority automatically. Financial, property and contact audiences stay separate.
+2. Migration 0083 supplies immutable versioned structural coverage snapshots,
+   paginated typed identities, effective grants, valid proof/quarantine findings and
+   append-only inspection acknowledgments. It preserves explicit unresolved findings
+   for dependent/recipient combined authority instead of projecting compatibility
+   success into strict readiness. Grant-change proposals and their explicit acceptance
+   remain to be delivered; acknowledgment does not resolve findings. Reuse explicit
+   setup commands; role-based suggestions never grant authority automatically.
+   Financial, property and contact audiences stay separate.
 3. Implement idempotent activation against the accepted snapshot, rechecking coverage
    under exclusive ACL locking. Include Q&A budget policy review, stale evidence,
    revocation, new-organization bootstrap and audited pause/resume. Never return a

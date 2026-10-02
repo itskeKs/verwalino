@@ -105,7 +105,11 @@ async def test_financial_draft_audit_requires_sources_even_when_parent_is_visibl
     from tests.test_financial_input_policy import draft
     from tests.test_property_source_access import grant
     from tests.test_financial_source_disclosure import clear_disclosure_grants
+    from tests.strict_finance_fixture import classify_property_finance
+    from tests.contact_source_fixtures import grant_property_contacts
     run=await draft(client_a_admin,m3_seed,'0.00')
+    await classify_property_finance(seed_data,m3_seed['property'],scope_type='MIET')
+    await grant_property_contacts(client_a_admin,seed_data,m3_seed['property'])
     org=seed_data['org_a_id']
     events=await add_events(org,seed_data['user_a_admin_id'],{'settlement_run':uuid.UUID(run)})
     try:
