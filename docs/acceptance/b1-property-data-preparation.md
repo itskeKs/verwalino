@@ -1001,3 +1001,19 @@ simulated deployment pass. Chromium desktop/mobile, failed-refresh recovery and
 clerk denial passed; independent review found no issue. See
 [implementation and limits](../2026-10-02-access-preparation-inventory.md).
 B1 and the remaining full plan are incomplete; activation remains unavailable.
+
+
+### Strict mandate original boundary (0077)
+
+Unclassified mandate originals no longer retain organization-wide compatibility
+access in strict source mode. Existing explicit scope grants govern metadata,
+bytes and audit visibility. PAUSED retains authorized disclosure and blocks upload
+or archive effects. Upload checks the shared helper before storage; database RLS
+rechecks it during persistence. Originals and audit history are not rewritten.
+
+Evidence: disclosure/upload/pause RED cases fixed; 15 focused checks, 24 expanded
+passes plus a corrected expiry fixture, then 47 enforcement/legacy/RBAC/tenant
+checks pass. Same function OID and historical hashes survive preparation roundtrip;
+strict downgrade refuses widening. Independent review, shell and simulated deploy
+checks pass. See [implementation](../2026-10-02-mandate-source-enforcement.md).
+Legacy remediation and B1 activation remain pending.

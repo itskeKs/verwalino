@@ -75,6 +75,12 @@ class MandateDocumentService:
             if scope.management_mandate_id != mandate_id:
                 raise HTTPException(422, "Document and scope must reference the same mandate")
 
+        # The same helper guards RLS. Check before writing bytes, including the
+        # formerly unscoped compatibility path and organization source pause.
+        if not await self._session.scalar(text("SELECT mandate_source_access(:org,:scope,'prepare')"),
+                {"org": self._org_id, "scope": accounting_scope_id}):
+            raise HTTPException(404, "Document scope not accessible")
+
         sha = compute_sha256(file_bytes)
         key = make_storage_key(str(self._org_id), sha)
         ref = get_store().put(key, file_bytes, content_type=mime_type)
