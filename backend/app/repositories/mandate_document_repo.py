@@ -13,13 +13,17 @@ class MandateDocumentRepository(TenantRepository[MandateDocument]):
     model = MandateDocument
 
     async def list_by_mandate(
-        self, mandate_id: uuid.UUID
+        self, mandate_id: uuid.UUID, *, include_archived=False, scope_id=None
     ) -> Sequence[MandateDocument]:
         stmt = (
             self._base_query()
             .where(MandateDocument.management_mandate_id == mandate_id)
             .order_by(MandateDocument.created_at.desc())
         )
+        if not include_archived:
+            stmt = stmt.where(MandateDocument.archived_at.is_(None))
+        if scope_id is not None:
+            stmt = stmt.where(MandateDocument.accounting_scope_id == scope_id)
         result = await self._session.execute(stmt)
         return result.scalars().all()
 

@@ -218,3 +218,39 @@ Migration 0041 preserves the existing capability function's policy references an
 refuses to remove recorded control history. Use an audited resume rather than a
 populated schema downgrade. Empty downgrade/upgrade has been rehearsed on the
 isolated disposable database; it is not authorization for a production rollback.
+
+### New scoped mandate documents (0042)
+
+On a mandate's **Zugängliche Dokumente** page, select a preparation-authorized
+scope from that exact mandate before uploading a new source. Record why the
+entire file belongs to the selected scope. A mandate spanning several properties
+does not prove that its documents belong to any one property's scope. The
+explicit scope and reason are retained with the original file metadata.
+
+READ permits listing; EXPORT is checked separately before opening a download
+stream. An administrator without the exact financial grants cannot bypass these
+checks. Scope pause prevents new scoped uploads and archiving while preserving
+currently granted read/export. In-flight effects share the ACL lock; expiry is
+also rechecked at database insertion after storage returns. A failed insertion
+may leave an unreferenced content-addressed blob, but commits no source record.
+
+Classified originals cannot be edited, moved to another scope, or hard-deleted.
+Choose **Archivieren**, give a reason, and use **Archivierte Unterlagen anzeigen**
+to inspect retained metadata. Original bytes remain available with EXPORT. Archive
+records retain actor/reason evidence; the same retry returns the existing archive,
+while a changed reason conflicts. This is evidence preservation, not an inferred
+retention duration or a general disposal policy.
+
+Lists explicitly contain only accessible documents and cannot establish a complete
+mandate file. The array endpoint signals `X-Document-Visibility: accessible-only`;
+`accounting_scope_id` optionally selects one authorized same-mandate scope and
+`include_archived=true` includes its retained archives. Failed UI refreshes hide
+stale rows and report unavailable state instead of a successful empty result.
+
+Unclassified legacy documents keep their current organization-level compatibility
+access and deletion behavior. They are not classified automatically or through a
+raw context update. A later legacy review must verify original bytes and provenance;
+archived and unclassified sources remain part of the outstanding historical-coverage
+work before enforced rollout. This increment does not cover declaration extraction
+jobs or property legal-source access. Populated 0042 downgrade refuses to erase the
+classified boundary; preserve originals and repair forward.

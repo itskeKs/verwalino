@@ -1,17 +1,15 @@
-"""MandateDocument -- a document attached to a management mandate.
+"""Contract/admin documents with optional immutable reviewed scope provenance.
 
-Verwaltervertrag, Bankkonto-Unterlagen, Vollmachten, Versicherungen etc. These
-are contract/admin documents, NOT GoBD Buchungsbelege -- they are mutable and
-deletable (no immutability trigger). File bytes live in the content-addressed
-document store (app.core.storage); this row holds metadata + the storage ref.
-Tenant-behaftet: carries organization_id, RLS active.
+Unclassified legacy rows retain compatibility. New scoped originals can only be
+archived with actor/reason evidence; their file metadata and context are retained.
 """
 
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import BigInteger, ForeignKey, String
+from sqlalchemy import BigInteger, ForeignKey, ForeignKeyConstraint, DateTime, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -51,4 +49,15 @@ class MandateDocument(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         UUID(as_uuid=True),
         ForeignKey("user.id", ondelete="SET NULL"),
         nullable=True,
+    )
+
+    accounting_scope_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    scope_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archived_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    archive_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "management_mandate_id", "accounting_scope_id"],
+            ["accounting_scope.organization_id", "accounting_scope.management_mandate_id", "accounting_scope.id"], name="fk_mandate_document_scope"),
+        ForeignKeyConstraint(["organization_id", "archived_by"], ["user.organization_id", "user.id"], name="fk_mandate_document_archiver"),
     )

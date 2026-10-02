@@ -50,6 +50,10 @@ export interface MandateDocument {
   content_byte_size: number;
   uploaded_at: string | null;
   uploaded_by: string | null;
+  accounting_scope_id: string | null;
+  scope_reason: string | null;
+  archived_at: string | null;
+  archive_reason: string | null;
 }
 
 export interface User {

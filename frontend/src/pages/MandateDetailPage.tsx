@@ -5,7 +5,7 @@
  * Verwaltervertrag, Bankkonto-Unterlagen, Vollmachten, Versicherungen.
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, Upload, Download, Trash2, FileText } from "lucide-react";
 import {
@@ -14,8 +14,10 @@ import {
   uploadMandateDocument,
   mandateDocumentDownloadUrl,
   deleteMandateDocument,
+  archiveMandateDocument,
 } from "../api/endpoints";
 import type { Mandate, MandateDocument, MandateDocType } from "../api/types";
+import { SearchChoice } from "../components/SearchChoice";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/useAuth";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
@@ -63,13 +65,26 @@ function formatDate(iso: string | null): string {
   return new Date(iso).toLocaleDateString("de-DE");
 }
 
+interface DocumentScope { id: string; label: string; scope_type: string; valid_from: string; valid_to: string | null }
+
 export function MandateDetailPage() {
   const { mandateId } = useParams<{ mandateId: string }>();
+  return mandateId ? <MandateDetail key={mandateId} mandateId={mandateId} /> : <p>Mandat nicht gefunden.</p>;
+}
+
+function MandateDetail({ mandateId }: { mandateId: string }) {
   const { session } = useAuth();
   const isWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
 
   const [mandate, setMandate] = useState<Mandate | null>(null);
   const [docs, setDocs] = useState<MandateDocument[]>([]);
+  const [scope, setScope] = useState<DocumentScope | null>(null);
+  const [scopeReason, setScopeReason] = useState("");
+  const [includeArchived, setIncludeArchived] = useState(false);
+  const [archiveDoc, setArchiveDoc] = useState<string | null>(null);
+  const [archiveReason, setArchiveReason] = useState("");
+  const [archiving, setArchiving] = useState(false);
+  const requestVersion = useRef<symbol | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -81,24 +96,29 @@ export function MandateDetailPage() {
 
   const reload = useCallback(() => {
     if (!mandateId) return;
+    const version = Symbol();
+    requestVersion.current = version;
     setLoading(true);
     setError(null);
-    Promise.all([getMandate(mandateId), listMandateDocuments(mandateId)])
+    setDocs([]);
+    Promise.all([getMandate(mandateId), listMandateDocuments(mandateId, includeArchived)])
       .then(([m, d]) => {
+        if (version !== requestVersion.current) return;
         setMandate(m);
         setDocs(d);
       })
-      .catch((err) => setError(err instanceof ApiError ? err.message : String(err)))
-      .finally(() => setLoading(false));
-  }, [mandateId]);
+      .catch((err) => { if (version === requestVersion.current) setError(err instanceof ApiError ? err.message : String(err)); })
+      .finally(() => { if (version === requestVersion.current) setLoading(false); });
+  }, [mandateId, includeArchived]);
 
   useEffect(() => {
     reload();
+    return () => { requestVersion.current = null; };
   }, [reload]);
 
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault();
-    if (!mandateId || !file) return;
+    if (!mandateId || !file || (scope && !scopeReason.trim())) return;
     setUploading(true);
     setUploadError(null);
     try {
@@ -106,6 +126,7 @@ export function MandateDetailPage() {
       fd.append("file", file);
       fd.append("doc_type", docType);
       fd.append("title", title);
+      if (scope) { fd.append("accounting_scope_id", scope.id); fd.append("scope_reason", scopeReason.trim()); }
       await uploadMandateDocument(mandateId, fd);
       setTitle("");
       setFile(null);
@@ -130,6 +151,16 @@ export function MandateDetailPage() {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     }
+  }
+
+  async function handleArchive(e: React.FormEvent) {
+    e.preventDefault();
+    if (!archiveDoc || !archiveReason.trim() || archiving) return;
+    setArchiving(true); setError(null);
+    try {
+      await archiveMandateDocument(mandateId, archiveDoc, archiveReason.trim());
+      setArchiveDoc(null); setArchiveReason(""); reload();
+    } catch (err) { setError(String(err)); } finally { setArchiving(false); }
   }
 
   if (loading) return <p className="text-sm text-muted-foreground">Lade…</p>;
@@ -169,14 +200,22 @@ export function MandateDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Dokumente</CardTitle>
+          <CardTitle>Zugängliche Dokumente</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          <p>Diese Liste enthält nur Unterlagen mit Ihren aktuellen Leserechten und ist keine vollständige Mandatsakte. Ohne Bereichszuordnung gilt weiterhin der bisherige Zugriff innerhalb der Organisation.</p>
+          <label><input type="checkbox" checked={includeArchived} onChange={e => setIncludeArchived(e.target.checked)} /> Archivierte Unterlagen anzeigen</label>
+          <Button type="button" onClick={reload}>Unterlagen neu laden</Button>
           {isWrite && (
             <form onSubmit={handleUpload} className="rounded-md border border-border bg-secondary/40 p-4">
               <p className="mb-3 text-sm font-medium">Dokument hochladen</p>
               {uploadError && <p className="error-text mb-2">{uploadError}</p>}
-              <div className="form-grid">
+              <fieldset className="form-grid" disabled={uploading} style={{ border: 0, padding: 0, minWidth: 0 }}>
+                <SearchChoice<DocumentScope> endpoint={`/api/accounting-scopes/page?management_mandate_id=${mandateId}&capability=prepare`}
+                  value={scope} onChange={setScope} label="Bereich für neuen Upload (optional)"
+                  display={item => `${item.label} · ${item.scope_type} · ${item.valid_from} – ${item.valid_to || "offen"}`} />
+                {scope && <label>Begründung der Bereichszuordnung<input required maxLength={2000} value={scopeReason} onChange={e => setScopeReason(e.target.value)} /></label>}
+                {scope && <p className="form-full-width">Prüfen Sie, dass der gesamte Dateiinhalt für diesen Bereich bestimmt ist. Die Zuordnung und das Original werden unveränderlich gespeichert.</p>}
                 <label>
                   Art *
                   <select
@@ -213,12 +252,18 @@ export function MandateDetailPage() {
                     {uploading ? "Lade hoch…" : "Hochladen"}
                   </Button>
                 </div>
-              </div>
+              </fieldset>
             </form>
           )}
 
-          {docs.length === 0 ? (
-            <p className="empty-hint">Noch keine Dokumente zu diesem Mandat.</p>
+          {archiveDoc && <form onSubmit={handleArchive}>
+            <label>Begründung der Archivierung<input required maxLength={2000} disabled={archiving} value={archiveReason} onChange={e => setArchiveReason(e.target.value)} /></label>
+            <Button type="submit" disabled={archiving || !archiveReason.trim()}>Archivierung speichern</Button>
+            <Button type="button" disabled={archiving} onClick={() => setArchiveDoc(null)}>Abbrechen</Button>
+            <p>Original und Zuordnung bleiben erhalten. Archivierte Unterlagen können weiterhin mit Exportrecht geöffnet werden.</p>
+          </form>}
+          {error ? <p role="alert">Unterlagen derzeit nicht verfügbar. Bitte neu laden.</p> : docs.length === 0 ? (
+            <p className="empty-hint">Keine zugänglichen Unterlagen für diese Auswahl.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="data-table">
@@ -250,7 +295,7 @@ export function MandateDetailPage() {
                           <span className="text-xs text-muted-foreground">{d.original_filename}</span>
                         )}
                       </td>
-                      <td className="tabular-nums">{formatSize(d.content_byte_size)}</td>
+                      <td className="tabular-nums">{formatSize(d.content_byte_size)}<br />{d.accounting_scope_id ? "Bereichsgebunden" : "Ohne Bereich"}{d.archived_at && <span><br />Archiviert · {d.archive_reason}</span>}</td>
                       <td className="tabular-nums">{formatDate(d.uploaded_at)}</td>
                       <td>
                         <div className="flex items-center justify-end gap-2">
@@ -262,7 +307,8 @@ export function MandateDetailPage() {
                           >
                             <Download className="h-3.5 w-3.5" /> Öffnen
                           </a>
-                          {isWrite && (
+                          {isWrite && d.accounting_scope_id && !d.archived_at && <Button type="button" onClick={() => { setArchiveDoc(d.id); setArchiveReason(""); }}>Archivieren</Button>}
+                          {isWrite && !d.accounting_scope_id && (
                             <button
                               className="btn btn--small btn--danger"
                               onClick={() => handleDelete(d.id)}

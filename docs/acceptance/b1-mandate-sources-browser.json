@@ -1,0 +1,13 @@
+{
+  "checks": [
+    "explicit same-mandate scope and review reason persist with the upload; listing is accessible-only and administration alone cannot see it",
+    "export needs an additional exact grant; archive retains the original bytes and review history and removes the active-row archive action",
+    "failed reload hides stale documents without an empty success claim; later revocation blocks archived downloads and removes source rows"
+  ],
+  "pageErrors": [],
+  "mobile": {
+    "visible": 390,
+    "content": 390
+  },
+  "status": "passed"
+}

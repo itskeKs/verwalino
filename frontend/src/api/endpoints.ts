@@ -111,8 +111,8 @@ export function getMandate(id: string): Promise<Mandate> {
   return api.get<Mandate>(`/api/mandates/${id}`);
 }
 
-export function listMandateDocuments(mandateId: string): Promise<MandateDocument[]> {
-  return api.get<MandateDocument[]>(`/api/mandates/${mandateId}/documents`);
+export function listMandateDocuments(mandateId: string, includeArchived = false): Promise<MandateDocument[]> {
+  return api.get<MandateDocument[]>(`/api/mandates/${mandateId}/documents?include_archived=${includeArchived}`);
 }
 
 export function uploadMandateDocument(
@@ -127,6 +127,10 @@ export function uploadMandateDocument(
 
 export function mandateDocumentDownloadUrl(mandateId: string, docId: string): string {
   return `/api/mandates/${mandateId}/documents/${docId}/download`;
+}
+
+export function archiveMandateDocument(mandateId: string, docId: string, reason: string): Promise<MandateDocument> {
+  return api.post<MandateDocument>(`/api/mandates/${mandateId}/documents/${docId}/archive`, { reason });
 }
 
 export function deleteMandateDocument(mandateId: string, docId: string): Promise<void> {

@@ -22,6 +22,7 @@ class AccountingScope(Base, UUIDPrimaryKeyMixin):
     request_key: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     __table_args__ = (
+        UniqueConstraint("organization_id", "management_mandate_id", "id", name="uq_scope_mandate_context"),
         CheckConstraint("scope_type IN ('WEG','MIET','SEV')", name="accounting_scope_check_24"),
         CheckConstraint("valid_to IS NULL OR valid_to>=valid_from", name="accounting_scope_check_25"),
         CheckConstraint("length(trim(label))>0", name="accounting_scope_check_26"),

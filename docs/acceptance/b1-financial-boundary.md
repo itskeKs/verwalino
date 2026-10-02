@@ -339,3 +339,45 @@ See `scripts/acceptance/b1_scope_control_browser.cjs` and
 `b1-scope-control-browser.json`. The browser used only synthetic local fixtures.
 B1 remains partial: legacy dunning/source review, initial scope/role proposals,
 document and job adapters, enforced activation and SEV coverage remain open.
+
+## Explicit new mandate sources (0042)
+
+Mandate uploads may now carry an explicit accounting scope and review reason.
+The database validates the exact tenant/mandate/scope reference and canonical
+organization/hash storage key. It rechecks live PREPARE after storage returns;
+source metadata and context become immutable. Scoped deletion is replaced by a
+one-way archive transition with actor/reason audit. READ governs source listing,
+EXPORT is checked before opening storage, and grants remain effective for archived
+originals. An organization administrator has no implicit source-content access.
+
+A guarded same-OID extension of `financial_scope_id` makes the existing generic
+audit policy agree with the mandate-source policy inside selected contexts. Its
+regression checks an authorized source scope and a different authorized scope.
+A failed list refresh drops stale documents. The UI and array response explicitly
+state accessible-only visibility, without claiming complete mandate coverage.
+
+Evidence on the isolated PostgreSQL 16 database, base `f4f02fa` plus this increment:
+
+- Before implementation, the focused upload test failed because the scope field
+  was absent. The first complete source/legacy/control/RLS/scope API run passed
+  **38 tests**. After the audit mapping repair, **37 source/dunning/financial-boundary
+  tests passed**. The 33 unaffected cases from the earlier run were reused.
+- Five dedicated source cases cover pre-storage denial, distinct export rights,
+  immutable source JSON across archive, scoped audit visibility, identical archive
+  retry, changed-reason conflict, pause/revocation, legacy compatibility,
+  grant expiry during storage, wrong-mandate/foreign-storage rejection, populated
+  downgrade refusal and empty downgrade/upgrade with transactional restoration.
+- Two UI tests passed; lint passed without warnings; production build passed with
+  the existing bundle warning (approximately 596 KB). Independent read-only review
+  accepted the adapter and audit lookup repair.
+- Local Chromium passed explicit scoped upload/reason → READ without EXPORT →
+  exact export grant → archive → archived original download → failed list reload →
+  revocation. Original bytes were identical before/after archive. No page errors;
+  mobile content and visible width both measure 390 px. The inspected screenshot
+  shows the document table inside its horizontal scroll container.
+
+Browser script: `scripts/acceptance/b1_mandate_sources_browser.cjs`; report:
+`b1-mandate-sources-browser.json`. All sources and accounts were synthetic and local.
+The compatibility branch for unclassified documents, historical source review,
+declaration/property-source jobs and full B1 activation remain unfinished. This
+adapter provides no automatic old-document classification or release approval.

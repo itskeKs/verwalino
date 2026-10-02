@@ -28,18 +28,20 @@ router = APIRouter(prefix='/api/accounting-scopes', tags=['accounting_scopes'])
 
 
 @router.get('/page', response_model=Page[ScopeOut])
-async def page_scopes(property_id: uuid.UUID | None = None, capability: ScopeCapability | None = None,
+async def page_scopes(property_id: uuid.UUID | None = None, management_mandate_id: uuid.UUID | None = None, capability: ScopeCapability | None = None,
                       scope_type: Literal['WEG', 'MIET', 'SEV'] | None = None, financial_creation: bool = False,
                       query: PageQuery = Depends(page_query), auth: AuthContext = Depends(get_current_user),
                       db: AsyncSession = Depends(get_db)):
     filters = [AccountingScope.property_id == property_id] if property_id else []
+    if management_mandate_id is not None:
+        filters.append(AccountingScope.management_mandate_id == management_mandate_id)
     if capability is not None:
         filters.append(func.has_scope_capability(AccountingScope.organization_id, AccountingScope.id, capability.value))
     if scope_type is not None:
         filters.append(AccountingScope.scope_type == scope_type)
     if financial_creation:
         filters.append(AccountingScope.scope_type != 'SEV')
-    context = f'{property_id or ""}:{capability.value if capability else ""}:{scope_type or ""}:{financial_creation}'
+    context = f'{property_id or ""}:{management_mandate_id or ""}:{capability.value if capability else ""}:{scope_type or ""}:{financial_creation}'
     items, cursor = await page_rows(db, auth, AccountingScope, AccountingScope.label,
         [AccountingScope.label], query, filters=tuple(filters), context=context)
     return Page(items=[ScopeOut.model_validate(item) for item in items], next_cursor=cursor)

@@ -5,10 +5,11 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import Response, APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import DBAPIError
 
 from app.core.storage import attachment_content_disposition, get_store
 from app.core.tenant import (
@@ -134,6 +135,10 @@ class MandateDocumentOut(BaseModel):
     content_byte_size: int
     uploaded_at: str | None
     uploaded_by: str | None
+    accounting_scope_id: uuid.UUID | None
+    scope_reason: str | None
+    archived_at: str | None
+    archive_reason: str | None
 
     model_config = {"from_attributes": True}
 
@@ -141,6 +146,10 @@ class MandateDocumentOut(BaseModel):
 def _doc_to_out(d: MandateDocument) -> MandateDocumentOut:
     return MandateDocumentOut(
         id=str(d.id),
+        accounting_scope_id=d.accounting_scope_id,
+        scope_reason=d.scope_reason,
+        archived_at=d.archived_at.isoformat() if d.archived_at else None,
+        archive_reason=d.archive_reason,
         management_mandate_id=str(d.management_mandate_id),
         doc_type=d.doc_type,
         title=d.title,
@@ -155,11 +164,15 @@ def _doc_to_out(d: MandateDocument) -> MandateDocumentOut:
 @router.get("/{mandate_id}/documents", response_model=list[MandateDocumentOut])
 async def list_mandate_documents(
     mandate_id: uuid.UUID,
+    response: Response,
+    include_archived: bool = False,
+    accounting_scope_id: uuid.UUID | None = None,
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     svc = MandateDocumentService(db, auth.organization_id, auth.user_id)
-    docs = await svc.list_for_mandate(mandate_id)
+    response.headers["X-Document-Visibility"] = "accessible-only"
+    docs = await svc.list_for_mandate(mandate_id, include_archived=include_archived, scope_id=accounting_scope_id)
     return [_doc_to_out(d) for d in docs]
 
 
@@ -171,20 +184,29 @@ async def upload_mandate_document(
     file: UploadFile = File(...),
     doc_type: str = Form(...),
     title: str = Form(""),
+    accounting_scope_id: uuid.UUID | None = Form(None),
+    scope_reason: str | None = Form(None),
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a contract/admin document to a mandate (write role)."""
     file_bytes = await read_upload_limited(file, max_bytes=MAX_UPLOAD_BYTES)
     svc = MandateDocumentService(db, auth.organization_id, auth.user_id)
-    doc = await svc.upload(
-        mandate_id,
-        file_bytes,
-        doc_type=doc_type,
-        title=title,
-        original_filename=file.filename,
-        mime_type=file.content_type or "application/octet-stream",
-    )
+    try:
+        doc = await svc.upload(
+            mandate_id,
+            file_bytes,
+            doc_type=doc_type,
+            title=title,
+            original_filename=file.filename,
+            mime_type=file.content_type or "application/octet-stream",
+            accounting_scope_id=accounting_scope_id,
+            scope_reason=scope_reason,
+        )
+    except DBAPIError as error:
+        if getattr(error.orig, 'sqlstate', None) == '42501':
+            raise HTTPException(404, "Document scope no longer accessible") from None
+        raise
     return _doc_to_out(doc)
 
 
@@ -200,6 +222,7 @@ async def download_mandate_document(
     doc = await svc.get(doc_id)
     if doc is None or doc.management_mandate_id != mandate_id:
         raise HTTPException(status_code=404, detail="Document not found")
+    await svc.require_document_capability(doc, "export")
     try:
         store = get_store()
         chunks = store.iter_chunks(doc.storage_uri)
@@ -231,3 +254,19 @@ async def delete_mandate_document(
     if doc is None or doc.management_mandate_id != mandate_id:
         raise HTTPException(status_code=404, detail="Document not found")
     await svc.delete(doc_id)
+
+
+class ArchiveMandateDocument(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+@router.post("/{mandate_id}/documents/{doc_id}/archive", response_model=MandateDocumentOut)
+async def archive_mandate_document(mandate_id: uuid.UUID, doc_id: uuid.UUID, body: ArchiveMandateDocument,
+                                  auth: AuthContext = Depends(require_write_dep), db: AsyncSession = Depends(get_db)):
+    try:
+        return _doc_to_out(await MandateDocumentService(db, auth.organization_id, auth.user_id).archive(doc_id, mandate_id, body.reason))
+    except DBAPIError as error:
+        if getattr(error.orig, 'sqlstate', None) == '42501':
+            raise HTTPException(404, "Document scope no longer accessible") from None
+        raise
