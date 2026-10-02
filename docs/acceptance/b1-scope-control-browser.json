@@ -1,0 +1,35 @@
+{
+  "checks": [
+    "scoped pause keeps exact read access and original bank data while blocking new scoped effects; UI explicitly describes legacy compatibility",
+    "lost committed response is retried with the same command and key, and the UI reloads the live state",
+    "resume retains revoked financial permissions; replay of the old pause returns its receipt without pausing the current state"
+  ],
+  "pageErrors": [],
+  "responses": [
+    {
+      "status": 401,
+      "path": "/api/auth/session"
+    },
+    {
+      "status": 401,
+      "path": "/api/auth/session"
+    },
+    {
+      "status": 409,
+      "path": "/api/fristen"
+    },
+    {
+      "status": 409,
+      "path": "/api/fristen"
+    },
+    {
+      "status": 503,
+      "path": "/api/accounting-scopes/control"
+    }
+  ],
+  "mobile": {
+    "visible": 390,
+    "content": 390
+  },
+  "status": "passed"
+}

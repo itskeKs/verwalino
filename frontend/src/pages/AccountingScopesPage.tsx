@@ -1,3 +1,4 @@
+import { ScopeControl } from "../components/ScopeControl";
 import { ScopePaymentReconciliation } from "../components/ScopePaymentReconciliation";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
@@ -153,6 +154,7 @@ export function AccountingScopesPage() {
   if (session?.role !== "OWNER_ADMIN") return <p className="error-text">Zugriff nur für Inhaber/Admin.</p>;
   return <div className="paged-list scope-setup"><h1>Bereiche und Teamrechte</h1>
     <p>Vorbereitung: Die Zugriffsbeschränkung für den Teambetrieb ist noch nicht aktiviert. SEV-Bereiche können vorbereitet, Finanzdaten dort noch nicht zugeordnet werden.</p>
+    <ScopeControl />
     {scopeId ? <ScopeGrants key={scopeId} scopeId={scopeId} /> : <ScopeList />}
   </div>;
 }

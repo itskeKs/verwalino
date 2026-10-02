@@ -9,6 +9,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 it("retries a lost grant reply with one key and starts a new explicit grant with a fresh key", async () => {
   vi.spyOn(api, "get").mockImplementation(async url => {
+    if (url.endsWith("/control")) return { mode: "compatibility", event: null };
     if (url.includes("/users/page")) {
       expect(url).toContain("eligible_for_scope=true");
       return { items: [{ id: "member", display_name: "Clerk", email: "clerk@example.test" }], next_cursor: null };

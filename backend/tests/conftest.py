@@ -70,6 +70,9 @@ def run_migrations():
     # boundary. Discard only these synthetic associations before the full reset.
     import psycopg2
     with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT to_regclass('public.scope_control_event')")
+        if cursor.fetchone()[0] is not None:
+            cursor.execute("TRUNCATE public.scope_control_event")
         cursor.execute("SELECT to_regclass('public.scope_payment_reconciliation')")
         if cursor.fetchone()[0] is not None:
             cursor.execute("TRUNCATE public.scope_payment_reconciliation_item, public.scope_payment_reconciliation")

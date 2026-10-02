@@ -21,6 +21,9 @@ from app.services.accounting_scope_service import AccountingScopeService
 from app.schemas.scope_payment_reconciliation import LegacyPaymentCandidate, ReconciliationCommand, ReconciliationResult
 from app.services.scope_payment_reconciliation_service import ScopePaymentReconciliationService
 
+from app.schemas.scope_control import ScopeControlCommand, ScopeControlEvent, ScopeControlState
+from app.services.scope_control_service import ScopeControlService
+
 router = APIRouter(prefix='/api/accounting-scopes', tags=['accounting_scopes'])
 
 
@@ -50,6 +53,17 @@ async def create_scope(body: ScopeCreate, idempotency_key: uuid.UUID = Header(),
             return await AccountingScopeService(db, auth).create_scope(body, idempotency_key)
     except IntegrityError:
         raise HTTPException(422, 'Scope definition conflicts with the property, mandate or ownership history') from None
+
+
+@router.get('/control', response_model=ScopeControlState)
+async def scope_control(auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db)):
+    return await ScopeControlService(db, auth).current()
+
+
+@router.post('/control', response_model=ScopeControlEvent, status_code=201)
+async def change_scope_control(body: ScopeControlCommand, idempotency_key: uuid.UUID = Header(),
+                               auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db)):
+    return await ScopeControlService(db, auth).change(body, idempotency_key)
 
 
 @router.get('/{scope_id}', response_model=ScopeDetail)

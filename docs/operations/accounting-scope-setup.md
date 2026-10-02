@@ -187,3 +187,34 @@ Migration 0040 records immutable receipt items referencing the exact payment
 bindings. It does not modify original booked records and refuses populated
 downgrade. Preserve the evidence and repair forward; never delete bindings or
 rewrite historical transactions to restore compatibility behavior.
+
+### Scoped effect pause and recovery (0041)
+
+The **Bereichsbezogene Finanzaktionen** control on the scope administration page
+pauses PREPARE, CONFIRM, APPROVE and SEND for already classified financial scopes
+throughout the organization. An active administrator records a reason for every
+pause or resume. The control does not itself grant financial access. READ and
+EXPORT retain their existing exact-scope requirements; grants, bindings, money
+and released results are preserved. Grant administration remains available.
+
+This is **not an organization-wide financial freeze**: unclassified legacy writes
+and invoice jobs retain their compatibility behavior. Full enforced team rollout
+is still unavailable. Do not describe this control as stopping every financial
+workflow, source import or background job. Scoped invoice attempts recheck their
+persisted principal before claim and before storing results; a pause at either
+check cancels the attempt without applying extraction results. An attempt already
+canceled stays canceled after resume. A scoped effect transaction already holding
+the ACL lock finishes before the pause is accepted.
+
+Resume restores evaluation of current grants, not historical grants. Revoked or
+expired access remains denied. Retry an unchanged failed command to recover its
+immutable receipt; a retry never reapplies an old pause after a later resume. The
+UI therefore reloads the current state after every successful receipt. A concurrent
+change rejects a stale expected predecessor; reload and review before issuing a
+new command. A failed status load is unavailable, never an assumed active state.
+
+The append-only event chain records actor, reason, predecessor and request key.
+Migration 0041 preserves the existing capability function's policy references and
+refuses to remove recorded control history. Use an audited resume rather than a
+populated schema downgrade. Empty downgrade/upgrade has been rehearsed on the
+isolated disposable database; it is not authorization for a production rollback.

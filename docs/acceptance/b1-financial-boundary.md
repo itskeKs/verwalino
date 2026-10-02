@@ -298,3 +298,44 @@ B1 remains incomplete: other historical resources, dunning source review,
 proven initial scope/role proposals, document/job adapters, staged activation and
 SEV adapters still require their own evidence. No team rollout or release gate
 has been activated by this increment.
+
+## Scoped effect rollback control (0041)
+
+The organization-level control applies narrowly to **classified financial effects**.
+It does not activate enforced rollout or stop unclassified legacy workflows. Paused
+PREPARE/CONFIRM/APPROVE/SEND checks fail through the existing capability function,
+whose OID is preserved so stored RLS dependencies retain the gate. READ and EXPORT
+continue to require live exact grants. Events form an immutable linear chain with
+one genesis/successor per organization, a deterministic sequence and actor-bound
+retry keys. The exclusive ACL lock precedes live administration, replay and
+expected-predecessor checks. Resume changes no grant or financial row.
+
+On the isolated PostgreSQL 16 database, **89 backend tests passed**: control,
+existing scope grants, financial boundary/creation, scoped dunning, legacy payment
+reconciliation and RLS coverage. The ten control cases include concurrent identical
+retries and conflicting successors, in-flight shared-lock ordering, read/export
+retention, live administration, tenant/audit isolation, unchanged originals, revoked
+rights after resume, and paired scoped/unclassified invoice jobs before claim and
+finish. Scoped cancellation leaves extraction payloads unapplied; unclassified
+compatibility is asserted deliberately. Populated downgrade is rejected; empty
+0041 downgrade/upgrade preserves the capability OID and is rolled back to restore
+all synthetic control evidence. The initial API regression failed before the
+literal control routes existed.
+
+Four UI tests passed, including lost-response retry, replay followed by a later
+resume, unavailable current state, and predecessor selection. Lint passed; the
+production build passed after correcting an unsupported test-query option. The
+existing bundle size warning remains (approximately 593 KB). Independent static
+review found no actionable issue. Checks run against the 0041 increment on base
+`ee0c74e`, using the repository Python environment and installed frontend toolchain;
+no production data or services were used.
+
+Local Chromium acceptance also passed pause → simulated lost committed response →
+same-key retry → live paused state → retained read/blocked creation → revoke →
+resume → blocked financial access. Replaying the earlier pause returns the original
+receipt while the current mode remains compatibility. No page errors; mobile
+content and visible width both measure 390 px and the screenshot was inspected.
+See `scripts/acceptance/b1_scope_control_browser.cjs` and
+`b1-scope-control-browser.json`. The browser used only synthetic local fixtures.
+B1 remains partial: legacy dunning/source review, initial scope/role proposals,
+document and job adapters, enforced activation and SEV coverage remain open.
