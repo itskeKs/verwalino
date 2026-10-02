@@ -1,7 +1,9 @@
-# B1 closure status after migration 0091
+# B1 local closure after migration 0091
 
-Baseline: 9c7987c plus verified local 0091 increment. M-A is accepted; B1 is
-incomplete. B2–G remain outstanding.
+Baseline: accepted lifecycle `9cea16b` plus final activated qualification.
+M-A and B1 are locally accepted for the supported WEG/rental paths. B2–G remain
+outstanding. See `acceptance/b1-activated-qualification.md` for the requirement map,
+new verification and explicitly reused evidence.
 This assessment supersedes historical forward-looking residuals only where later
 accepted migrations demonstrably resolve them. It does not declare team rollout.
 
@@ -25,8 +27,8 @@ accepted migrations demonstrably resolve them. It does not declare team rollout.
    across separate financial, property and contact audiences. Immutable receipts,
    exact predecessor grants and canonical expiries prevent stale or ambiguous
    application; replay never recreates later-revoked rights. Snapshot acknowledgment
-   alone still resolves no finding. Complete projected strict combined-authority
-   readiness remains to be delivered; role-based suggestions grant nothing.
+   alone still resolves no finding. The following increments complete projected strict combined-authority evidence;
+   role-based suggestions grant nothing.
 3. Migration 0085 establishes private property-source evaluation for a supplied
    security mode, sharing predicates with live enforcement while preserving runtime
    OIDs/ACLs. Projection never changes the organization's mode or actor settings.
@@ -64,9 +66,12 @@ accepted migrations demonstrably resolve them. It does not declare team rollout.
    selection, reason and acknowledgment. Its local API/DB, concurrency, migration,
    UI and browser evidence passes, including empty-org bootstrap with an explicit
    first-property audience. Readiness is no longer a literal false stub; it remains
-   inaccessible outside the exact authorized transaction. Final B1 integration
-   qualification against the plan is still outstanding; this increment alone does
-   not declare B1 complete or authorize team rollout.
+   inaccessible outside the exact authorized transaction. Final B1 qualification then exercises the real lifecycle over an empty and a
+   populated graph, explicit financial bootstrap, two intra-org scopes, two-org
+   selectors/details, immutable account/payment binding, original access and
+   revoked bulk/worker effects. The journey and corrected central RLS registry
+   pass; independent review found no remaining essential gap for local supported
+   WEG/rental B1 acceptance. This does not authorize team rollout.
 
 Earlier source, worker/review, indirect disclosure and quarantine increments provide
 reusable evidence. New checks should target the integration and any changed paths,
@@ -79,5 +84,6 @@ The implementation plan explicitly allows unrelated local work while V decisions
 remain open. V05 gates team financial finalization; V06 gates relevant provider and
 portal disclosure. Unsupported SEV financial adapters remain rejected, without
 preventing supported rental/WEG implementation. B2 registry/intake contracts and
-fake-provider jobs can progress locally; B1-dependent integration and team activation
-cannot be accepted before the boundary closes. No production rollout is authorized.
+fake-provider jobs can now progress on the qualified B1 foundation. Every new B2–G
+adapter must integrate and verify the same boundary. V05/V06 and unsupported SEV
+remain release limitations. No production rollout is authorized.

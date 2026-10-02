@@ -13,7 +13,20 @@ from sqlalchemy import text
 
 # Central table registry -- kept in sync with migrations.
 # Every tenant-behaftet table must be listed here.
+PRIVATE_POLICIES = {
+    "access_grant_proposal": "coverage_private", "access_grant_acceptance": "coverage_private",
+    "access_coverage_snapshot": "coverage_private", "access_coverage_review": "coverage_private",
+    "invoice_upload_admission": "invoice_admission_private", "dunning_quarantine_disposition": "dunning_disposition_private",
+    "mandate_quarantine_disposition": "mandate_disposition_private", "mandate_legacy_observation": "mandate_observation_private",
+    "declaration_worker_context": "worker_context_private", "declaration_review_context": "review_context_private",
+    "declaration_review_receipt": "review_receipt_private", "runtime_budget_attestation": "runtime_budget_private",
+    "runtime_budget_review": "runtime_budget_private", "access_disposition_acceptance": "disposition_private",
+    "source_security_authorization": "authorization_private", "source_security_transition": "transition_private",
+}
+
 TENANT_TABLES = frozenset({
+    "runtime_budget_attestation", "runtime_budget_review", "access_disposition_acceptance",
+    "source_security_authorization", "source_security_transition",
     "access_grant_proposal", "access_grant_acceptance", "access_coverage_snapshot", "access_coverage_review", "invoice_upload_admission", "dunning_quarantine_disposition", "mandate_quarantine_disposition", "mandate_legacy_observation", "declaration_review_receipt", "declaration_review_context", "declaration_worker_context", "person_data_domain", "person_data_grant",
     "property_creation_receipt", "property_source_classification", "knowledge_budget_policy", "property_source_security", "property_data_domain", "property_data_grant", "property_source_admission", "property_source_admission_review",
     # B1 accounting scope foundation
@@ -128,8 +141,8 @@ class TestRLSCoverage:
             policy_names = {p.policyname for p in policies}
             policy_cmds = {p.cmd for p in policies}
 
-            if table in {"access_grant_proposal", "access_grant_acceptance", "access_coverage_snapshot", "access_coverage_review", "invoice_upload_admission", "dunning_quarantine_disposition", "mandate_quarantine_disposition", "mandate_legacy_observation", "declaration_worker_context", "declaration_review_context", "declaration_review_receipt"}:
-                assert policy_names == { {"access_grant_proposal": "coverage_private", "access_grant_acceptance": "coverage_private", "access_coverage_snapshot": "coverage_private", "access_coverage_review": "coverage_private", "invoice_upload_admission": "invoice_admission_private", "dunning_quarantine_disposition": "dunning_disposition_private", "mandate_quarantine_disposition": "mandate_disposition_private", "mandate_legacy_observation": "mandate_observation_private", "declaration_worker_context": "worker_context_private", "declaration_review_context": "review_context_private", "declaration_review_receipt": "review_receipt_private"}[table] }
+            if table in PRIVATE_POLICIES:
+                assert policy_names == {PRIVATE_POLICIES[table]}
                 assert policy_cmds == {"ALL"}
                 assert (await migrator_session.execute(text(
                     "SELECT qual,with_check FROM pg_policies WHERE tablename=:name"

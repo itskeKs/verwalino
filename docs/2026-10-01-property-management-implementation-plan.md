@@ -337,6 +337,12 @@ DB tests, revoked-job/download tests and selector paging. A31/A32, RF02/RF24.
 V05 approval policy and V06 sensitive access remain explicit. Rollback pauses scoped
 writers rather than widening access to the old org-only policy.
 
+Local B1 acceptance (2026-10-02): the supported WEG/rental foundation and actual
+activation/pause/resume journey are qualified through migration 0091. See
+`acceptance/b1-activated-qualification.md` and `2026-10-02-b1-closure-status.md`.
+V05/V06, unsupported SEV and production rollout remain separate release limits.
+This does not accept B2–B4 or M-B as a whole.
+
 **B2 — Shared originals, intake jobs and outbox.** P1.1 after B1/A2. Add **new**
 `document_ref`, `intake_batch`, `intake_item`, `extraction_revision`, `field_evidence`,
 `outbox_event` and `job_attempt` module families, `services/intake_service.py`,
