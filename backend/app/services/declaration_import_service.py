@@ -69,6 +69,10 @@ class DeclarationImportService:
         )
 
     async def get(self, import_id: uuid.UUID) -> DeclarationImport:
+        await self._imports.lock_acl()
+        if not await self._session.scalar(text("SELECT property_import_runtime_access(:org,:job,'read')"),
+                {'org': self._org_id, 'job': import_id}):
+            raise HTTPException(status_code=404, detail="Declaration import not found")
         item = await self._imports.get_by_id(import_id)
         if item is None:
             raise HTTPException(status_code=404, detail="Declaration import not found")
@@ -239,6 +243,9 @@ class DeclarationImportService:
 
     async def _get_for_update(self, import_id: uuid.UUID) -> DeclarationImport:
         await self._imports.lock_acl()
+        if not await self._session.scalar(text("SELECT property_import_runtime_access(:org,:job,'prepare')"),
+                {'org': self._org_id, 'job': import_id}):
+            raise HTTPException(status_code=404, detail="Declaration import not found")
         item = await self._imports.get_by_id_for_update(import_id)
         if item is None:
             raise HTTPException(status_code=404, detail="Declaration import not found")

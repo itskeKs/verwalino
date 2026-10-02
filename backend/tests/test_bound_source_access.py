@@ -81,7 +81,9 @@ async def test_new_publication_remains_accessible_after_binding(client_a_admin, 
         assert response.status_code == 200, response.text
         assert await access(seed_data, 'declaration_import', item.id)
         async with get_tenant_session(seed_data['org_a_id']) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor':str(seed_data['user_a_admin_id'])})
             documents = (await db.scalars(text('SELECT document_id FROM declaration_import_document WHERE import_id=:job'), {'job':item.id})).all()
+        assert documents
         for document in documents:
             assert await access(seed_data, 'property_document', document)
 
@@ -139,6 +141,10 @@ async def test_quarantined_original_blocks_all_derived_and_qa_input(approved_kno
     try:
         async with get_tenant_session(graph.organization_id) as db:
             documents = (await db.scalars(text('SELECT id FROM property_document WHERE property_id=:property ORDER BY id'), {'property':graph.property_id})).all()
+            derived = {}
+            for kind in ['approved_fact_source', 'property_rule_source', 'property_document_relation']:
+                derived[kind] = (await db.scalars(text(f'SELECT id FROM {kind} WHERE property_id=:property'), {'property':graph.property_id})).all()
+                assert derived[kind]
         for index, document in enumerate(documents):
             await classify(client_a_admin, {'document':document}, 'QUARANTINED' if index == 0 else 'ADMITTED')
         async with synthetic_enforcement(seed_data):
@@ -150,10 +156,10 @@ async def test_quarantined_original_blocks_all_derived_and_qa_input(approved_kno
                 async with get_tenant_session(graph.organization_id) as db:
                     await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor':str(seed_data['user_a_admin_id'])})
                     assert await db.scalar(text('SELECT count(*) FROM property_document WHERE property_id=:property'), {'property':graph.property_id}) == len(documents)-1
-                    for kind in ['approved_fact_source', 'property_rule_source', 'property_document_relation']:
+                    for kind, expected in derived.items():
                         rows = (await db.scalars(text(f"SELECT id FROM {kind} WHERE property_id=:property"), {'property':graph.property_id})).all()
-                        assert rows
-                        results = [await access(seed_data, kind, row) for row in rows]
+                        assert rows == []
+                        results = [await access(seed_data, kind, row) for row in expected]
                         assert not all(results), kind
                 response = await client_a_admin.post(f'/api/properties/{graph.property_id}/knowledge/query',json={'question':'Aufzug'})
                 assert response.status_code == 404, response.text

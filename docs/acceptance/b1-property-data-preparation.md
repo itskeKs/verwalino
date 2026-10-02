@@ -635,3 +635,36 @@ ID. A final 15-case master/MEA run passed after removing a redundant unit prefli
 This milestone covers property/unit master boundaries and creation. Original and
 derived source CRUD/RLS, audit/privacy/report closure and reviewed activation
 coverage remain required. B1 and the full M-A–M-G delivery are not complete.
+
+## Derived source rows and review preflights (0062)
+
+At base `fc5aa15`, expected red cases demonstrated other creators reading review
+children, source facts remaining visible without grants, read-only grants writing
+canonical rows and an inaccessible review appearing as an empty draft. The new
+migration covers fifteen SELECT boundaries and fourteen effect boundaries using
+actual row metadata, complete expected graphs, typed provenance and current roles.
+Service checks happen before child loading, approval/replay or upload storage.
+
+The initial integrated run passed 104 cases with two failures: the existing
+PREPARATION explicit-publication replay check needed retention, and a strict test
+fixture needed an explicit creation audience. Both were repaired. Further focused
+runs exposed historical assertions relying on actorless or partial graph reads;
+these now set the actual actor or capture known IDs before strict filtering, and
+assert that whole-graph denial hides all copied facts. No production guard was
+weakened. The strict existing-amendment fixture explicitly records its required
+individual review.
+
+The compatibility run passed **136 cases**, including strict existing-property
+amendment and replay, import API, new approval, immutable source contexts and
+original exports. The final RLS/bound/derived run passed **49 cases**, with one
+obsolete quarantine assertion repaired separately; that focused case then passed. Coverage includes strict
+upload/worker first inserts, all seven review-child types, all seven canonical
+types, stored Q&A PAUSED read/revocation, sixteen NOWAIT dependencies and strict
+rollback refusal plus PREPARATION round trip. Independent reviewer accepted the
+bounded 0062 diff without remaining findings. No frontend changes or UI checks
+were required. Logs: `/tmp/hv-derived-{integration,targeted,final-focus,
+compatibility,accepted,quarantine}.log`.
+
+Original/import row RLS, purpose-bound review exceptions, indirect disclosure and
+reviewed activation coverage remain open. Source activation stays disabled; B1
+and the full M-A–M-G implementation are not complete.

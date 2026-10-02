@@ -54,12 +54,18 @@ class DeclarationApprovalService:
         item = await self._reviews.lock_import(import_id)
         if item is None:
             raise HTTPException(status_code=404, detail="Declaration import not found")
+        capability = 'prepare' if item.mode == 'NEW_PROPERTY' and item.status != 'APPLIED' else 'approve'
+        if not await self._session.scalar(text('SELECT property_import_runtime_access(:org,:job,:capability)'),
+                {'org': self._organization_id, 'job': item.id, 'capability': capability}):
+            raise HTTPException(404, "Declaration import not accessible")
         if item.status == "APPLIED":
-            if item.publication_domain_id is not None:
-                permitted = await self._session.scalar(text("SELECT property_source_access(:org,'declaration_import',:id,'approve')"),
-                    {"org": self._organization_id, "id": item.id})
-                if not permitted:
-                    raise HTTPException(404, "Declaration import not accessible")
+            # Explicit publication receipts already require current authority in
+            # PREPARATION; the runtime gate adds this requirement for legacy rows
+            # when source enforcement is enabled.
+            if item.publication_domain_id is not None and not await self._session.scalar(text(
+                    "SELECT property_source_access(:org,'declaration_import',:id,'approve')"),
+                    {'org': self._organization_id, 'id': item.id}):
+                raise HTTPException(404, "Declaration import not accessible")
             if item.approval_idempotency_key == request.idempotency_key and item.approval_result_json is not None:
                 if (item.approval_request_digest is not None and item.approval_request_digest != digest
                         or item.approval_request_digest is None and request.new_property_audience is not None):

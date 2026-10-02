@@ -140,6 +140,10 @@ class PropertyDocumentService:
                 detail="original_filename must be at most 255 characters",
             )
 
+        await self._imports.lock_acl()
+        if not await self._session.scalar(text("SELECT property_import_runtime_access(:org,:job,'prepare')"),
+                {'org': self._org_id, 'job': import_id}):
+            raise HTTPException(status_code=404, detail="Declaration import not found")
         active_store = store or get_store()
         sha256 = compute_sha256(file_bytes)
         stored = active_store.put(

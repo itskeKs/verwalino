@@ -330,3 +330,19 @@ The new property creation receipt is immutable and actor-scoped. Rollback refuse
 to remove retained receipts or strict authority. Keep source activation disabled
 until the remaining original/derived source and indirect disclosure boundaries are
 closed and legacy coverage is reviewed.
+
+## Derived source records (0062)
+
+Strict import children use current parent source READ/prepare authority. Canonical
+facts and relations use the current property audience plus the complete expected
+source READ graph; writes require approve and an APPLIED matching origin. Typed
+subjects and referenced originals retain their own source checks. Existing column
+privileges and immutable origin/receipt guards remain in place.
+
+Stored Q&A reads use current whole-source READ, including during PAUSED. Parent
+preflights prevent hidden children from appearing as empty review drafts; direct
+uploads check prepare before storage. Existing-property approval and applied
+replays check approve. Metadata-only row contexts support first inserts without
+widening access. All sixteen migration dependencies use NOWAIT, and strict state
+refuses downgrade. Original/import row policies and purpose-specific review paths
+remain outstanding; source activation is still unavailable.

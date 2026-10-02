@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.declaration_candidate import (
@@ -25,7 +25,11 @@ class DeclarationReviewRepository:
         self._organization_id = organization_id
         self._imports = DeclarationImportRepository(session, organization_id)
 
-    async def lock_import(self, import_id: uuid.UUID) -> DeclarationImport | None:
+    async def lock_import(self, import_id: uuid.UUID, *, capability: str = 'read') -> DeclarationImport | None:
+        await self._imports.lock_acl()
+        if not await self._session.scalar(text('SELECT property_import_runtime_access(:org,:job,:capability)'),
+                {'org': self._organization_id, 'job': import_id, 'capability': capability}):
+            return None
         return await self._imports.get_by_id_for_update(import_id)
 
     async def lock_candidates(

@@ -135,7 +135,10 @@ async def test_hidden_mismatched_source_blocks_whole_provider_input(approved_kno
     async with granted_graph(client_a_admin,seed_data,graph),synthetic_enforcement(seed_data):
         # Deliberately inconsistent legacy provenance is not made safe by hiding
         # this one rule in ordinary RLS-filtered search results.
-        other=await client_a_admin.post('/api/properties',json={'name':'Other source target','management_type':'WEG'})
+        from tests.test_property_master_access import audience
+        other=await client_a_admin.post('/api/properties',headers={'Idempotency-Key':str(uuid.uuid4())},
+            json={'name':'Other source target','management_type':'WEG','data_audience':audience(seed_data)})
+        assert other.status_code==201,other.text
         job=uuid.uuid4()
         await mutate(text("INSERT INTO declaration_import(id,organization_id,mode,target_property_id,status,initiated_by,max_cost_usd) "
             "VALUES(:job,:org,'EXISTING_PROPERTY',:property,'DRAFT',:actor,1)"),
@@ -153,7 +156,9 @@ async def test_hidden_mismatched_source_blocks_whole_provider_input(approved_kno
         try:
             async with get_tenant_session(graph.organization_id) as db:
                 await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(seed_data['user_a_admin_id'])})
-                assert await db.scalar(text('SELECT count(*) FROM property_rule WHERE property_id=:property'),{'property':graph.property_id})>0
+                # The expected-graph barrier now hides all copied rules, not just
+                # the mismatched row. A filtered subset cannot prove completeness.
+                assert await db.scalar(text('SELECT count(*) FROM property_rule WHERE property_id=:property'),{'property':graph.property_id})==0
                 assert await db.scalar(text('SELECT count(*) FROM property_rule WHERE id=:rule'),{'rule':bad_rule})==0
             response=await client_a_admin.post(f'/api/properties/{graph.property_id}/knowledge/query',json={'question':'Aufzug'})
             assert response.status_code==404,response.text

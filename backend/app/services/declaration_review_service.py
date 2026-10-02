@@ -152,7 +152,7 @@ class DeclarationReviewService:
         raise HTTPException(status_code=409, detail={"code": "APPROVAL_NOT_IMPLEMENTED"})
 
     async def _lock_reviewable(self, import_id: uuid.UUID, revision: int):
-        item = await self._reviews.lock_import(import_id)
+        item = await self._reviews.lock_import(import_id, capability='prepare')
         if item is None:
             raise _not_found()
         if item.status != "NEEDS_REVIEW":

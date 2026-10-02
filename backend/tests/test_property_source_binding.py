@@ -87,6 +87,7 @@ async def test_strict_new_property_approval_binds_all_originals_atomically(clien
         response=await client_a_admin.post(f'/api/declaration-imports/{item.id}/approve',json=command(seed_data,item))
         assert response.status_code==200,response.text
         async with get_tenant_session(seed_data['org_a_id']) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(seed_data['user_a_admin_id'])})
             docs=(await db.execute(text('SELECT d.id,d.property_id FROM property_document d JOIN declaration_import_document l ON l.document_id=d.id AND l.organization_id=d.organization_id WHERE l.import_id=:job'),{'job':item.id})).all()
             assert docs and all(str(row.property_id)==response.json()['property_id'] for row in docs)
             assert await db.scalar(text("SELECT count(*) FROM audit_event WHERE action='property_document.binding_approved' AND payload_diff->>'import_id'=:job"),{'job':str(item.id)})==len(docs)
@@ -124,6 +125,7 @@ async def test_binding_migration_refuses_strict_rollback_and_roundtrips_preparat
                 nested=db.begin_nested()
                 try:
                     db.execute(text('TRUNCATE property_source_security,property_source_classification,property_creation_receipt'))
+                    importlib.import_module('migrations.versions.0062_derived_source_access').downgrade()
                     importlib.import_module('migrations.versions.0061_property_master_access').downgrade()
                     importlib.import_module('migrations.versions.0059_financial_source_input').downgrade()
                     importlib.import_module('migrations.versions.0056_property_source_classification').downgrade()
@@ -203,5 +205,6 @@ async def test_competing_binding_and_extra_link_preserve_single_source_topology(
                         {'org':seed_data['org_a_id'],'job':uuid.UUID(other.json()['id']),'document':ids['document']})
         await asyncio.wait_for(asyncio.gather(bind(seed_data,ids),extra_link()),5)
         async with get_tenant_session(seed_data['org_a_id']) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(seed_data['user_a_admin_id'])})
             assert await db.scalar(text('SELECT count(*) FROM declaration_import_document WHERE document_id=:document'),ids)==1
             assert await db.scalar(text('SELECT property_id FROM property_document WHERE id=:document'),ids)==ids['property']
