@@ -33,3 +33,28 @@ regular Playwright was used. Reproducible script:
 `scripts/acceptance/b1_property_data_domains_browser.cjs`; sanitized result:
 `docs/acceptance/b1-property-data-browser.json`. API/Vite processes were stopped
 after verification. No live providers or external systems are used.
+
+## Worker scheduling prerequisite (0046)
+
+On base `b869a2e`, two red cases added a temporary test-only source RLS policy.
+They reproduced an actorless claim silently missing eligible work and a hidden
+revoked lease returning no result instead of committing cancellation. The worker
+now obtains only a single tenant-local queue candidate's four fence fields from a
+narrow definer helper, resolves the immutable queue actor, then reads the import
+through ordinary RLS. Lease checks likewise verify metadata before actor/source
+access, including a database-clock check after row-lock waits. No original bytes,
+questions, candidates, approval results or error messages cross the metadata path.
+
+**37 principal/worker cases passed** after implementation. **79 metadata/pipeline
+cases passed** after adding bounded/foreign-tenant metadata, observed row-lock
+expiry, migration round-trip and readiness coverage. Existing due-time selection,
+concurrent claims, lease recovery, stale fences, conservative budgets and provider
+publication checks remain covered. Independent read-only review accepted the
+increment. There are no frontend changes or browser reruns for this prerequisite.
+
+This does not enable source RLS. Future domain policy activation must add the exact
+property-data permission to `declaration_queue_actor` and cancellation semantics;
+an otherwise live writer must not bypass a source policy. The metadata helper
+retains the existing trusted worker-clock due-selection input; durable effects
+remain fenced using the database clock. Startup now requires both metadata helper
+functions as well as lease/principal columns.

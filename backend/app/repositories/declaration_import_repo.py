@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Sequence
 
-from sqlalchemy import and_, func, or_, select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.declaration_import import (
@@ -40,9 +40,9 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
         await self._session.execute(text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
             {"key": f"scope-acl:{self._org_id}"})
 
-    async def _set_queue_actor(self, item: DeclarationImport) -> bool:
+    async def _set_queue_actor(self, import_id: uuid.UUID, queue_request_id: uuid.UUID | None) -> bool:
         actor = await self._session.scalar(text("SELECT declaration_queue_actor(:org,:job,:request)"),
-            {"org": self._org_id, "job": item.id, "request": item.queue_request_id})
+            {"org": self._org_id, "job": import_id, "request": queue_request_id})
         if actor is None:
             return False
         await self._session.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {"actor": str(actor)})
@@ -63,47 +63,24 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
     ) -> WorkerLease | None:
         """Claim one due import using a tenant-local, fenced short transaction."""
         await self.lock_acl()
-        inactive_lease = or_(
-            DeclarationImport.lease_expires_at.is_(None),
-            DeclarationImport.lease_expires_at <= now,
-        )
-        expired_active_lease = and_(
-            DeclarationImport.lease_expires_at.is_not(None),
-            DeclarationImport.lease_expires_at <= now,
-        )
-        active_statuses = {"PREFLIGHT", "EXTRACTING", "RECONCILING"}
-        eligible = or_(
-            and_(DeclarationImport.status == "QUEUED", inactive_lease),
-            and_(
-                DeclarationImport.status == "RETRY_WAIT",
-                inactive_lease,
-                or_(
-                    DeclarationImport.next_attempt_at.is_(None),
-                    DeclarationImport.next_attempt_at <= now,
-                ),
-            ),
-            and_(
-                DeclarationImport.status.in_(active_statuses),
-                expired_active_lease,
-            ),
-        )
-        result = await self._session.execute(
-            self._base_query()
-            .where(eligible)
-            .order_by(DeclarationImport.created_at, DeclarationImport.id)
-            .with_for_update(skip_locked=True)
-            .limit(1)
-        )
-        item = result.scalar_one_or_none()
-        if item is None:
+        # Scheduling metadata deliberately excludes original/draft payloads.
+        # The helper locks one candidate even when source RLS requires an actor.
+        candidate = (await self._session.execute(text("SELECT * FROM next_declaration_queue_metadata(:org,:now)"),
+            {"org": self._org_id, "now": now})).mappings().first()
+        if candidate is None:
             return None
-
-        if not await self._set_queue_actor(item):
+        if not await self._set_queue_actor(candidate['import_id'], candidate['queue_request_id']):
             await self._session.execute(text("SELECT cancel_unauthorized_declaration(:org,:job,:request,:generation,:token)"),
-                {"org": self._org_id, "job": item.id, "request": item.queue_request_id,
-                 "generation": item.lease_generation, "token": item.lease_token})
+                {"org": self._org_id, "job": candidate['import_id'], "request": candidate['queue_request_id'],
+                 "generation": candidate['lease_generation'], "token": candidate['lease_token']})
             return None
-
+        item = await self._session.scalar(self._base_query().where(DeclarationImport.id == candidate['import_id']))
+        if item is None:
+            # A source policy can withhold the row even from a live writer.
+            # Domain authorization must be incorporated in declaration_queue_actor
+            # before that policy is enabled; never bypass it to load the source.
+            return None
+        active_statuses = {"PREFLIGHT", "EXTRACTING", "RECONCILING"}
         if item.status in active_statuses:
             await self.close_running_runs_for_import(
                 item.id,
@@ -343,26 +320,15 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
         if lease.organization_id != self._org_id or not expected_statuses:
             return None
         await self.lock_acl()
-        result = await self._session.execute(
-            self._base_query()
-            .where(DeclarationImport.id == lease.import_id)
-            .where(DeclarationImport.queue_request_id.is_not_distinct_from(lease.queue_request_id))
-            .where(DeclarationImport.lease_generation == lease.lease_generation)
-            .where(DeclarationImport.lease_token == lease.lease_token)
-            .where(DeclarationImport.lease_expires_at.is_not(None))
-            .where(DeclarationImport.lease_expires_at > func.clock_timestamp())
-            .where(DeclarationImport.status.in_(expected_statuses))
-            .with_for_update()
-        )
-        item = result.scalar_one_or_none()
-        if item is not None:
-            # Recheck expiry after waiting for the row lock as well.
-            current_time = await self._session.scalar(select(func.clock_timestamp()))
-            if item.lease_expires_at <= current_time:
-                return None
-            if not await self._set_queue_actor(item):
-                raise DeclarationPrincipalDenied()
-        return item
+        current = await self._session.scalar(text(
+            "SELECT lock_declaration_lease_metadata(:org,:job,:request,:generation,:token,CAST(:statuses AS text[]))"),
+            {"org": self._org_id, "job": lease.import_id, "request": lease.queue_request_id,
+             "generation": lease.lease_generation, "token": lease.lease_token, "statuses": sorted(expected_statuses)})
+        if not current:
+            return None
+        if not await self._set_queue_actor(lease.import_id, lease.queue_request_id):
+            raise DeclarationPrincipalDenied()
+        return await self._session.scalar(self._base_query().where(DeclarationImport.id == lease.import_id))
 
     async def get_run_for_import_for_update(
         self,

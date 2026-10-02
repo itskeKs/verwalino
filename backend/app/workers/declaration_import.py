@@ -121,7 +121,9 @@ class DeclarationImportWorker:
         )
         async with self._unscoped_session_factory() as session:
             found = set((await session.execute(statement)).scalars().all())
-        return _REQUIRED_LEASE_COLUMNS.issubset(found)
+            if not _REQUIRED_LEASE_COLUMNS.issubset(found):
+                return False
+            return bool(await session.scalar(text("SELECT to_regprocedure('public.next_declaration_queue_metadata(uuid,timestamp with time zone)') IS NOT NULL AND to_regprocedure('public.lock_declaration_lease_metadata(uuid,uuid,uuid,bigint,uuid,text[])') IS NOT NULL")))
 
     async def _organization_ids(self) -> tuple[uuid.UUID, ...]:
         """Use the global table only; tenant scans always happen below."""

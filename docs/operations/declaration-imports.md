@@ -378,3 +378,20 @@ actors stay unknown; an active member can expire a timed-out reservation without
 adopting its identity. Downgrade refuses to erase recorded principals; repair
 forward. This is an organization-level prerequisite, not accounting-scope source
 classification or authorization to enable a live provider.
+
+## Scheduling metadata before source access (migration 0046)
+
+Workers require `next_declaration_queue_metadata` and
+`lock_declaration_lease_metadata` at startup. These tenant-fenced helpers expose
+only bounded scheduling/fence metadata and perform ACL-before-row locking. The
+worker resolves and sets its persisted queue principal before loading the import
+through ordinary RLS. A hidden revoked job can still be safely cancelled through
+the existing exact-fence cancellation helper; absence from a source query is not
+used as evidence that no job exists. Lease expiry is checked with the database
+clock after lock waits. Provider I/O remains outside database transactions.
+
+No production source policy is enabled by this migration. Property-data-domain
+checks must join queue-principal resolution before that later activation. Do not
+remove the source-query policy to make an actorless worker find jobs. Downgrade
+removes only the two scheduling helpers and preserves all queue and source data;
+updated workers will report schema-not-ready until the helpers are restored.
