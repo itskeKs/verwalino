@@ -131,6 +131,8 @@ class DeclarationImportWorker:
                    AND to_regprocedure('public.renew_declaration_work(uuid,uuid,uuid,bigint,uuid,integer)') IS NOT NULL
                    AND to_regprocedure('public.transition_declaration_work(uuid,uuid,uuid,bigint,uuid,text[],text,jsonb)') IS NOT NULL
                    AND to_regprocedure('public.cancel_declaration_work(uuid,uuid)') IS NOT NULL
+                   AND to_regprocedure('public.declaration_worker_effect_access(uuid,uuid,text[])') IS NOT NULL
+                   AND to_regclass('public.declaration_worker_context') IS NOT NULL
                    AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute
                        WHERE attrelid=to_regclass('public.declaration_candidate_evidence')
                          AND attname='import_id' AND attnum>0 AND NOT attisdropped AND attnotnull)

@@ -97,6 +97,7 @@ async def test_lease_expiring_during_row_lock_wait_is_rejected(scope_seed,migrat
         try:
             async with engine.connect() as observer:
                 for _ in range(100):
+                    await observer.execute(text('SELECT pg_stat_clear_snapshot()'))
                     blocked = await observer.scalar(text("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%SELECT lock_declaration_lease_metadata%')"))
                     if blocked:
                         break
@@ -109,6 +110,7 @@ async def test_lease_expiring_during_row_lock_wait_is_rejected(scope_seed,migrat
 
 
 async def test_readiness_requires_metadata_helpers(scope_seed,migrator_session):
+    await migrator_session.commit()
     import importlib
     from sqlalchemy import create_engine
     from alembic.migration import MigrationContext
@@ -123,6 +125,7 @@ async def test_readiness_requires_metadata_helpers(scope_seed,migrator_session):
             nested = connection.begin_nested()
             try:
                 with Operations.context(MigrationContext.configure(connection)):
+                    importlib.import_module('migrations.versions.0071_declaration_worker_effects').downgrade()
                     migration.downgrade()
                     assert connection.scalar(text("SELECT to_regprocedure('next_declaration_queue_metadata(uuid,timestamptz)')")) is None
                     migration.upgrade()

@@ -889,3 +889,21 @@ attribute drift, PostgreSQL 16 inheritance-edge options, strict extraction to re
 and retained contact privacy checks. Independent review accepted this bounded
 increment with the documented review residual. Rendered Compose also confirms
 that the API receives no worker connection credential.
+
+## Worker output transaction fencing (0071)
+
+Strict writes to extraction runs, pass metadata, candidates, evidence, issues and
+page counts require a private database-owned receipt for the actual worker login,
+current transaction and current lease. Expiry and queue-source authority are
+rechecked under the ACL and import locks. Web callers and forged GUCs cannot mint
+worker authority. Cancellation serializes with output writes and invalidates the
+old lease; only narrow trusted cleanup commands bypass the worker trigger.
+
+Compatibility verification passed 195 cases, with three fixture repairs passing a
+14-case focused rerun. Private-table RLS, expiry, cross-transaction reuse, direct
+pass/evidence attacks, human-review forgery, cancellation and migration locks are
+covered. Independent review found no new blocker. Deployment-script simulation
+passed with head 0071. See [details](../2026-10-02-declaration-worker-effects.md).
+
+The NEEDS_REVIEW candidate/issue/revision compatibility remains a separate open
+boundary. Activation remains false; B1 and M-B–M-G are not complete.

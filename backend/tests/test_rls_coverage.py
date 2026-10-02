@@ -14,7 +14,7 @@ from sqlalchemy import text
 # Central table registry -- kept in sync with migrations.
 # Every tenant-behaftet table must be listed here.
 TENANT_TABLES = frozenset({
-    "person_data_domain", "person_data_grant",
+    "declaration_worker_context", "person_data_domain", "person_data_grant",
     "property_creation_receipt", "property_source_classification", "knowledge_budget_policy", "property_source_security", "property_data_domain", "property_data_grant", "property_source_admission", "property_source_admission_review",
     # B1 accounting scope foundation
     "accounting_scope", "accounting_scope_unit", "accounting_scope_binding",
@@ -127,6 +127,14 @@ class TestRLSCoverage:
             policies = result.fetchall()
             policy_names = {p.policyname for p in policies}
             policy_cmds = {p.cmd for p in policies}
+
+            if table == "declaration_worker_context":
+                assert policy_names == {"worker_context_private"}
+                assert policy_cmds == {"ALL"}
+                assert (await migrator_session.execute(text(
+                    "SELECT qual,with_check FROM pg_policies WHERE tablename=:name"
+                ), {"name": table})).one() == ("false", "false")
+                continue
 
             assert len(policies) >= 2, (
                 f"Table '{table}' has fewer than 2 policies: {policy_names}"

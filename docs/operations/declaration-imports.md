@@ -421,3 +421,18 @@ The existing NEEDS_REVIEW revision increment is still a compatibility exception,
 not proof that candidate review and audit happened atomically. Worker child-row
 and review-effect command closure remain required before source activation. Do not
 infer B1 completion from the accepted lifecycle-command increment.
+
+## Worker output receipts (0071)
+
+Workers require the effect-access helper and private context table at startup.
+Each output transaction obtains its current lease through
+`lock_declaration_lease_metadata`; only the actual app_worker login receives a
+private receipt keyed to that database connection and transaction. Ordinary runtime
+SQL cannot read or write the receipt table. A new transaction must validate the
+lease again; setting a token GUC is insufficient. Expired receipts are removed in
+bounded, nonwaiting batches. The table contains no source text or approval history.
+
+Strict output triggers guard runs, passes, candidates, evidence, issues and page
+counts. Manual cancellation/reclaim retains trusted cleanup. Downgrade refuses
+ENFORCED/PAUSED organizations and takes NOWAIT dependency locks. Source activation
+remains disabled pending atomic human-review effects and other B1 coverage.
