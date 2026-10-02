@@ -27,6 +27,9 @@ class Person(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         index=True,
     )
 
+    # Actual creator only; historical custody is never inferred.
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+
     # Contact data
     first_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     last_name: Mapped[str] = mapped_column(String(255), nullable=False)

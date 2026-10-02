@@ -440,6 +440,8 @@ export interface DeclarationApprovalRequest {
 
 export interface Person {
   id: string;
+  can_prepare: boolean;
+  can_export: boolean;
   first_name: string;
   last_name: string;
   company_name: string | null;

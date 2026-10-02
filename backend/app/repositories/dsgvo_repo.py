@@ -1,7 +1,7 @@
 """DSGVO repository -- read-only retention-binding discovery + person lookup.
 
-No mutation here EXCEPT the person row is fetched as a managed ORM instance for
-the service to anonymize (the service flushes). All other methods only READ the
+No mutation here. Person is fetched as a managed ORM instance; the service refreshes
+it after the authoritative database privacy command. All other methods only READ the
 records that may bind a person to statutory retention (ADR-0012 section 1):
 
   * vendor -> confirmed cost entries (Belege)        BINDING_COST_ENTRY_VENDOR

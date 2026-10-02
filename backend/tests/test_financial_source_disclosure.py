@@ -9,6 +9,7 @@ from tests.test_financial_input_policy import draft, attest
 from tests.test_property_source_access import grant
 from tests.test_property_source_enforcement import synthetic_enforcement, change_mode
 from tests.test_scoped_account_statements import mutate
+from tests.contact_source_fixtures import grant_property_contacts
 
 pytestmark = pytest.mark.asyncio
 
@@ -33,12 +34,13 @@ async def bind_output(seed, property_id, subject, *, kind='economic_plan', scope
 
 
 async def clear_disclosure_grants():
-    await mutate(text('TRUNCATE property_data_domain,accounting_scope CASCADE'), {})
+    await mutate(text('TRUNCATE property_data_domain,person_data_domain,accounting_scope CASCADE'), {})
 
 
 async def test_unbound_pdf_denied_and_bound_pdf_needs_financial_export(client_a_admin, seed_data, m4_seed):
     plan = await _create_and_finalize_plan(client_a_admin, m4_seed)
     try:
+        await grant_property_contacts(client_a_admin,seed_data,m4_seed['property'])
         await grant(client_a_admin, seed_data, m4_seed['property'], caps=['read','export'])
         async with synthetic_enforcement(seed_data):
             for mode in ['ENFORCED','PAUSED']:
@@ -70,6 +72,7 @@ async def test_saved_plan_rows_and_pdf_require_current_source_access(client_a_ad
                 await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor':str(seed_data['user_a_admin_id'])})
                 for table, key in [('economic_plan','id'),('economic_plan_line','economic_plan_id'),('coverage_declaration','economic_plan_id')]:
                     assert await db.scalar(text(f'SELECT count(*) FROM {table} WHERE {key}=:id'), {'id':uuid.UUID(plan)}) == 0
+            await grant_property_contacts(client_a_admin,seed_data,m4_seed['property'])
             domain, receipt = await grant(client_a_admin, seed_data, m4_seed['property'], caps=['read'])
             result = await client_a_admin.get(f'/api/economic-plans/{plan}')
             assert result.status_code == 200 and result.json()['snapshot_sha256'] == original_hash
@@ -138,6 +141,7 @@ async def test_each_pdf_family_checks_source_export_before_render(client_a_admin
     await bind_output(seed_data, property_id, subject, kind='settlement_run',
         scope_type='MIET' if family == 'rental' else 'WEG', linked_plan=linked_plan)
     try:
+        await grant_property_contacts(client_a_admin,seed_data,property_id)
         domain, receipt = await grant(client_a_admin, seed_data, property_id, caps=['read'])
         async with synthetic_enforcement(seed_data):
             def forbidden(*args, **kwargs): raise AssertionError('Denied source export must not render PDF')

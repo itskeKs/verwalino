@@ -43,6 +43,10 @@ class DunningScopeService:
 
     async def enter(self, notice, capability):
         await self.financial.lock_inputs()
+        contact_capability = 'export' if capability == ScopeCapability.EXPORT else 'read' if capability == ScopeCapability.READ else 'prepare'
+        if not await self.session.scalar(text('SELECT dunning_contact_access(:org,:tenant,:owner,:capability)'),
+                {'org':self.org_id, 'tenant':notice.tenant_profile_id, 'owner':notice.owner_profile_id, 'capability':contact_capability}):
+            raise HTTPException(404, 'Dunning recipient source not accessible')
         if not await self.session.scalar(text('SELECT dunning_scope_access(:org,:notice,:capability)'),
                 {'org': self.org_id, 'notice': notice.id, 'capability': capability.value}):
             raise HTTPException(404, 'Dunning notice not accessible')

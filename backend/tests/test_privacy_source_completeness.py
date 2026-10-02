@@ -11,6 +11,7 @@ from tests.test_financial_input_policy import draft,attest
 from tests.test_financial_source_disclosure import bind_output,clear_disclosure_grants
 from tests.test_property_source_enforcement import synthetic_enforcement,change_mode
 from tests.test_property_source_access import grant
+from tests.contact_source_fixtures import grant_property_contacts
 
 pytestmark=pytest.mark.asyncio
 
@@ -23,6 +24,7 @@ async def retained_rental(api,seed,m3):
     await bind_output(seed,m3['property'],run,kind='settlement_run',scope_type='MIET')
     async with get_tenant_session(seed['org_a_id']) as db:
         person=await db.scalar(text('SELECT person_id FROM tenant_profile WHERE id=:tenant'),{'tenant':uuid.UUID(m3['tp_a'])})
+    await grant_property_contacts(api,seed,m3['property'])
     return person,run
 
 
@@ -61,6 +63,7 @@ async def test_retention_read_is_distinct_from_export_and_survives_pause(client_
 async def test_hidden_retained_plan_blocks_privacy_even_with_financial_export(client_a_admin,seed_data,m4_seed):
     try:
         plan=await _create_and_finalize_plan(client_a_admin,m4_seed)
+        await grant_property_contacts(client_a_admin,seed_data,m4_seed['property'])
         await bind_output(seed_data,m4_seed['property'],plan)
         async with synthetic_enforcement(seed_data):
             response=await client_a_admin.get(f"/api/dsgvo/persons/{m4_seed['person_a']}/status")

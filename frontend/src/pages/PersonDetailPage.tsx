@@ -3,7 +3,7 @@
  * A person can be designated as owner, tenant, or vendor (Dienstleister).
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   getPerson,
@@ -22,6 +22,7 @@ import { DsgvoPanel } from "../components/DsgvoPanel";
 export function PersonDetailPage() {
   const { personId } = useParams<{ personId: string }>();
   const { session } = useAuth();
+  const requestVersion = useRef(0);
   const [person, setPerson] = useState<Person | null>(null);
   const [ownerProfiles, setOwnerProfiles] = useState<OwnerProfile[]>([]);
   const [tenantProfiles, setTenantProfiles] = useState<TenantProfile[]>([]);
@@ -38,8 +39,11 @@ export function PersonDetailPage() {
 
   const reload = useCallback(() => {
     if (!personId) return;
+    const version = ++requestVersion.current;
     setLoading(true);
     setError(null);
+    setPerson(null);
+    setShowVendorForm(false);
     Promise.all([
       getPerson(personId),
       listOwnerProfiles(personId),
@@ -47,22 +51,25 @@ export function PersonDetailPage() {
       listVendors(personId),
     ])
       .then(([p, op, tp, v]) => {
+        if (version !== requestVersion.current) return;
         setPerson(p);
         setOwnerProfiles(op);
         setTenantProfiles(tp);
         setVendors(v);
       })
       .catch((err) => {
+        if (version !== requestVersion.current) return;
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert.");
         } else {
           setError(String(err));
         }
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (version === requestVersion.current) setLoading(false); });
   }, [personId]);
 
-  useEffect(() => { reload(); }, [reload]);
+  const invalidateRequests = useCallback(() => { requestVersion.current++; }, []);
+  useEffect(() => { reload(); return invalidateRequests; }, [reload, invalidateRequests]);
 
   async function addOwnerProfile() {
     if (!personId) return;
@@ -173,24 +180,24 @@ export function PersonDetailPage() {
         </div>
 
         <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-          {!hasOwner && (
+          {person.can_prepare && !hasOwner && (
             <button className="btn btn--small" onClick={addOwnerProfile} disabled={actionLoading}>
               Als Eigentuemer kennzeichnen
             </button>
           )}
-          {!hasTenant && (
+          {person.can_prepare && !hasTenant && (
             <button className="btn btn--small" onClick={addTenantProfile} disabled={actionLoading}>
               Als Mieter kennzeichnen
             </button>
           )}
-          {!hasVendor && !showVendorForm && (
+          {person.can_prepare && !hasVendor && !showVendorForm && (
             <button className="btn btn--small" onClick={() => setShowVendorForm(true)} disabled={actionLoading}>
               Als Dienstleister kennzeichnen
             </button>
           )}
         </div>
 
-        {showVendorForm && (
+        {person.can_prepare && showVendorForm && (
           <form onSubmit={handleVendorSubmit} style={{ marginTop: "1rem" }} className="form-grid">
             <label>
               Steuer-Nr.
@@ -221,7 +228,7 @@ export function PersonDetailPage() {
       </div>
 
       {isAdmin && personId && (
-        <DsgvoPanel personId={personId} onChanged={reload} />
+        <DsgvoPanel key={personId} personId={personId} canPrepare={person.can_prepare} canExport={person.can_export} onChanged={reload} />
       )}
 
       {hasVendor && (

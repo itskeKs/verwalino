@@ -843,3 +843,22 @@ Independent review accepted the implementation with no actionable findings.
 
 Person/profile source RLS and consumer completeness are still required. Source
 activation remains false; this preparation increment does not complete B1.
+
+## Contact source access and authoritative privacy (0069)
+
+Contact creator custody, exact audience RLS and expected financial/dunning contact
+consumers now form an independent source boundary. Privacy-state mutations use a
+current-admin database command with trusted retention facts and ACL/financial-input
+serialization. Ordinary SQL cannot forge privacy state. Waiting cost writers also
+recheck contact state after erasure. Current API capabilities drive contact controls;
+stale detail and denied-repeat export data is removed from the UI.
+
+Final focused backend verification passed **95 tests**; frontend verification passed
+four detail/domain tests plus one export-denial regression, lint and build (existing
+bundle warning). Real strict Chromium journeys passed creator, reader, preparer and
+revocation behavior with inspected desktop/mobile captures. Migration and three
+multi-connection concurrency cases passed. See [detailed evidence](../2026-10-02-contact-source-access.md).
+
+Source activation is still false. Worker lifecycle integrity, remaining indirect
+source coverage, legacy remediation and activation evidence remain open. B1 and the
+later implementation milestones are not complete.

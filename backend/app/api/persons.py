@@ -6,12 +6,14 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.live_principal import get_live_member_db, get_live_writer_db
+from app.services.person_source_access import require_person_prepare, require_contact_creation
 from app.core.tenant import (
     AuthContext,
     get_current_user,
-    get_db,
     require_write_dep,
 )
 from app.repositories.person_repo import PersonRepository
@@ -24,6 +26,8 @@ router = APIRouter(prefix="/api/persons", tags=["persons"])
 
 class PersonOut(BaseModel):
     id: str
+    can_prepare: bool = False
+    can_export: bool = False
     first_name: str
     last_name: str
     company_name: str | None
@@ -70,43 +74,44 @@ class PersonUpdate(BaseModel):
 @router.get("", response_model=list[PersonOut])
 async def list_persons(
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     repo = PersonRepository(db, auth.organization_id)
     items = await repo.list_all()
-    return [_to_out(p) for p in items]
+    return await _outputs(db, items)
 
 
 @router.get("/page", response_model=Page[PersonOut])
 async def page_persons(
     query: PageQuery = Depends(page_query),
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     items, cursor = await page_rows(db, auth, Person, Person.last_name, [Person.first_name, Person.last_name, Person.company_name], query)
-    return Page(items=[_to_out(item) for item in items], next_cursor=cursor)
+    return Page(items=await _outputs(db, items), next_cursor=cursor)
 
 
 @router.get("/{person_id}", response_model=PersonOut)
 async def get_person(
     person_id: uuid.UUID,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     repo = PersonRepository(db, auth.organization_id)
     p = await repo.get_by_id(person_id)
     if p is None:
         raise HTTPException(status_code=404, detail="Person not found")
-    return _to_out(p)
+    return (await _outputs(db, [p]))[0]
 
 
 @router.post("", response_model=PersonOut, status_code=201)
 async def create_person(
     body: PersonCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     repo = PersonRepository(db, auth.organization_id)
+    await require_contact_creation(db, auth.organization_id)
     person = Person(
         first_name=body.first_name,
         last_name=body.last_name,
@@ -125,7 +130,7 @@ async def create_person(
         person.bank_name = body.bank_name
 
     person = await repo.create(person)
-    return _to_out(person)
+    return (await _outputs(db, [person]))[0]
 
 
 @router.put("/{person_id}", response_model=PersonOut)
@@ -133,13 +138,14 @@ async def update_person(
     person_id: uuid.UUID,
     body: PersonUpdate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     repo = PersonRepository(db, auth.organization_id)
     person = await repo.get_by_id(person_id)
     if person is None:
         raise HTTPException(status_code=404, detail="Person not found")
 
+    await require_person_prepare(db, auth.organization_id, person_id)
     for field in (
         "first_name", "last_name", "company_name", "email", "phone",
         "street", "zip_code", "city", "iban", "bic", "bank_name",
@@ -149,7 +155,23 @@ async def update_person(
             setattr(person, field, val)
 
     await db.flush()
-    return _to_out(person)
+    return (await _outputs(db, [person]))[0]
+
+
+async def _outputs(db, people):
+    if not people:
+        return []
+    # One bounded metadata query for the page; never infer edit rights from role.
+    rows = (await db.execute(select(Person.id,
+        (func.scope_actor_role(Person.organization_id).in_(['OWNER_ADMIN','CLERK']) &
+         func.person_source_access(Person.organization_id,Person.id,'prepare')).label('prepare'),
+        func.person_source_access(Person.organization_id,Person.id,'export').label('export'),
+    ).where(Person.id.in_([p.id for p in people])))).all()
+    rights = {row.id: (row.prepare,row.export) for row in rows}
+    if any(person.id not in rights for person in people):
+        raise HTTPException(409, 'Contact access changed; reload the page')
+    return [PersonOut(**_to_out(p).model_dump(exclude={'can_prepare','can_export'}),
+        can_prepare=rights.get(p.id,(False,False))[0],can_export=rights.get(p.id,(False,False))[1]) for p in people]
 
 
 def _to_out(p: Person) -> PersonOut:

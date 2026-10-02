@@ -262,7 +262,7 @@ export function PersonsPage() {
                   <td>{p.phone ?? "-"}</td>
                   <td>{[p.zip_code, p.city].filter(Boolean).join(" ") || "-"}</td>
                   <td>
-                    <button className="btn btn--small" onClick={() => openEdit(p)}>
+                    <button className="btn btn--small" disabled={!p.can_prepare} onClick={() => openEdit(p)}>
                       Bearbeiten
                     </button>
                   </td>

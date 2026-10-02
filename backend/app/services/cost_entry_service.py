@@ -76,6 +76,10 @@ class CostEntryService:
             raise HTTPException(404, "Property not found")
         if entry.vendor_id and await VendorRepository(self._session, self._org_id).get_by_id(entry.vendor_id) is None:
             raise HTTPException(404, "Vendor not found")
+        if entry.vendor_id and not await self._session.scalar(text(
+            "SELECT profile_reference_access(:org,'vendor',:vendor)"),
+            {'org': self._org_id, 'vendor': entry.vendor_id}):
+            raise HTTPException(404, "Vendor not found")
         if entry.management_mandate_id:
             mandate = await MandateRepository(self._session, self._org_id).get_by_id(entry.management_mandate_id)
             if mandate is None:

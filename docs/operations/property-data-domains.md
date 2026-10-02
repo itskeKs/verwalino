@@ -439,3 +439,20 @@ source mode blocks downgrade; do not remove evidence to force production rollbac
 This is preparation only. Person/profile source policies and downstream contact
 completeness remain follow-up work. The activation gate remains false. See the
 [contact authorization design](../2026-10-02-contact-data-domain-design.md).
+
+## Contact source boundary (0069)
+
+New contacts record their actual creator; old unknown custody remains unknown.
+An explicit contact audience replaces creator fallback permanently, including after
+revocation. Person, owner/tenant/vendor profiles and copied financial recipients
+require the independent contact permissions. Property rights alone do not expose
+contact details. Person/profile writes require contact PREPARE; consuming a contact
+for an authorized destination requires READ and, for new references, an active
+(non-anonymized) contact. Exports additionally require contact EXPORT.
+
+Privacy-state changes use the typed database privacy command and current
+administrator authority. Direct application SQL cannot mark a contact anonymized,
+restricted or deletion-requested. Retention decisions inspect expected sources,
+not filtered absences. Anonymized identity cannot be repopulated. Preserve populated
+custody and strict policies on rollback. Activation remains disabled until the
+remaining B1 coverage is accepted. See [contact boundary evidence](../2026-10-02-contact-source-access.md).

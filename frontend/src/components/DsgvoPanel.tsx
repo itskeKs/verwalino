@@ -31,10 +31,12 @@ const BINDING_LABELS: Record<string, string> = {
 
 interface Props {
   personId: string;
+  canPrepare: boolean;
+  canExport: boolean;
   onChanged?: () => void;
 }
 
-export function DsgvoPanel({ personId, onChanged }: Props) {
+export function DsgvoPanel({ personId, canPrepare, canExport, onChanged }: Props) {
   const [status, setStatus] = useState<DsgvoStatus | null>(null);
   const [exportData, setExportData] = useState<DsgvoExport | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -76,6 +78,7 @@ export function DsgvoPanel({ personId, onChanged }: Props) {
   }
 
   async function showExport() {
+    setExportData(null);
     setBusy(true);
     setError(null);
     try {
@@ -154,7 +157,7 @@ export function DsgvoPanel({ personId, onChanged }: Props) {
             <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
               <button
                 className="btn btn--small"
-                disabled={busy}
+                disabled={busy || !canPrepare}
                 onClick={() =>
                   runAction(
                     () => requestPersonDeletion(personId),
@@ -168,7 +171,7 @@ export function DsgvoPanel({ personId, onChanged }: Props) {
               </button>
               <button
                 className="btn btn--small btn--danger"
-                disabled={busy}
+                disabled={busy || !canPrepare}
                 onClick={() =>
                   runAction(
                     () => anonymizePerson(personId),
@@ -178,7 +181,7 @@ export function DsgvoPanel({ personId, onChanged }: Props) {
               >
                 Anonymisieren
               </button>
-              <button className="btn btn--small" disabled={busy} onClick={showExport}>
+              <button className="btn btn--small" disabled={busy || !canExport} onClick={showExport}>
                 Daten anzeigen (Art. 15)
               </button>
             </div>

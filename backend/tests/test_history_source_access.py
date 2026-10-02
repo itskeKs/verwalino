@@ -10,6 +10,7 @@ from tests.test_derived_source_access import actor_session
 from tests.test_property_source_access import grant
 from tests.test_property_source_enforcement import synthetic_enforcement,change_mode
 from tests.test_financial_source_disclosure import clear_disclosure_grants
+from tests.contact_source_fixtures import grant_property_contacts,grant_contact
 
 pytestmark=pytest.mark.asyncio
 
@@ -37,9 +38,11 @@ async def test_history_read_grant_does_not_authorize_raw_changes(client_a_admin,
 async def test_privacy_requires_expected_history_even_without_retained_outputs(client_a_admin,seed_data,m3_seed):
     async with get_tenant_session(seed_data['org_a_id']) as db:
         person=await db.scalar(text('SELECT person_id FROM tenant_profile WHERE id=:id'),{'id':uuid.UUID(m3_seed['tp_b'])})
+    await grant_contact(client_a_admin,seed_data,person)
     async with synthetic_enforcement(seed_data):
         assert (await client_a_admin.get(f'/api/dsgvo/persons/{person}/status')).status_code==409
         assert (await client_a_admin.get(f'/api/dsgvo/persons/{person}/export')).status_code==409
+    await clear_disclosure_grants()
 
 
 async def test_mixed_history_cannot_be_filtered_into_apparent_complete_property(client_a_admin,seed_data,m3_seed,m4_seed):
@@ -84,6 +87,7 @@ async def test_strict_relationship_create_read_audit_and_pause(client_a_admin,se
         table='ownership_history'; endpoint='/api/ownership'; prop=m4_seed['property']
         body={'unit_id':m4_seed['u1'],'owner_profile_id':m4_seed['owner_a'],'valid_from':'1990-01-01','valid_to':'1990-12-31','mea_share':'1'}
     try:
+        await grant_property_contacts(client_a_admin,seed_data,prop)
         domain,receipt=await grant(client_a_admin,seed_data,prop,caps=['read','prepare'])
         async with synthetic_enforcement(seed_data):
             response=await client_a_admin.post(endpoint,json=body)
@@ -107,6 +111,7 @@ async def test_strict_relationship_create_read_audit_and_pause(client_a_admin,se
 
 async def test_history_prepare_cannot_attach_foreign_profile_or_reparent(client_a_admin,seed_data,m3_seed):
     try:
+        await grant_property_contacts(client_a_admin,seed_data,m3_seed['property'])
         await grant(client_a_admin,seed_data,m3_seed['property'])
         async with synthetic_enforcement(seed_data):
             body={'unit_id':m3_seed['u1'],'tenant_profile_id':str(uuid.uuid4()),'valid_from':'1981-01-01','valid_to':'1981-12-31','base_rent':'1','advance_payment':'1'}
@@ -132,6 +137,7 @@ async def test_privacy_history_export_is_distinct_and_expiry_cannot_erase_active
     async with get_tenant_session(seed_data['org_a_id']) as db:
         person=await db.scalar(text('SELECT person_id FROM tenant_profile WHERE id=:id'),{'id':uuid.UUID(m3_seed['tp_b'])})
     try:
+        await grant_property_contacts(client_a_admin,seed_data,m3_seed['property'])
         domain,receipt=await grant(client_a_admin,seed_data,m3_seed['property'],caps=['read'])
         async with synthetic_enforcement(seed_data):
             status=await client_a_admin.get(f'/api/dsgvo/persons/{person}/status')
@@ -256,23 +262,31 @@ async def test_waiting_history_insert_cannot_activate_an_anonymized_person(clien
                 {'id':history,'org':seed_data['org_a_id'],'unit':unit_id,'profile':profile})
     eraser=None; writer=None
     try:
+        await grant_property_contacts(client_a_admin,seed_data,m3_seed['property'])
         await grant(client_a_admin,seed_data,m3_seed['property'],caps=['read','prepare'])
         async with synthetic_enforcement(seed_data):
-            eraser=asyncio.create_task(erase())
-            await asyncio.wait_for(checked.wait(),3)
-            writer=asyncio.create_task(activate())
-            async with get_tenant_session(seed_data['org_a_id']) as db:
-                blocked=False
-                for _ in range(60):
-                    blocked=await db.scalar(text("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='hv-history-privacy-race' AND wait_event='advisory')"))
-                    if blocked: break
-                    await asyncio.sleep(.02)
-                assert blocked,'History writer must share the existing financial-inputs serialization'
-            release.set()
-            await asyncio.wait_for(eraser,3)
-            with pytest.raises(DBAPIError) as denied:
-                await asyncio.wait_for(writer,3)
-            assert denied.value.orig.sqlstate=='42501'
+            try:
+                eraser=asyncio.create_task(erase())
+                await asyncio.wait_for(checked.wait(),3)
+                writer=asyncio.create_task(activate())
+                async with get_tenant_session(seed_data['org_a_id']) as db:
+                    blocked=False
+                    for _ in range(60):
+                        blocked=await db.scalar(text("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='hv-history-privacy-race' AND wait_event='advisory')"))
+                        if blocked: break
+                        await asyncio.sleep(.02)
+                    assert blocked,'History writer must share the existing financial-inputs serialization'
+                release.set()
+                await asyncio.wait_for(eraser,3)
+                with pytest.raises(DBAPIError) as denied:
+                    await asyncio.wait_for(writer,3)
+                assert denied.value.orig.sqlstate=='42501'
+            finally:
+                release.set()
+                pending=[task for task in (eraser,writer) if task is not None]
+                for task in pending:
+                    if not task.done(): task.cancel()
+                await asyncio.gather(*pending,return_exceptions=True)
     finally:
         release.set()
         if eraser is not None: await asyncio.gather(eraser,return_exceptions=True)

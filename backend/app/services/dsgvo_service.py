@@ -3,8 +3,8 @@
 Boundary discipline (SDD section 16): this service loads ORM rows, builds the
 pure ``app.engine.dsgvo`` reconciliation inputs, lets the engine DECIDE
 (RESTRICT vs. ANONYMIZE_NOW), and applies the decision. It NEVER re-implements
-the restrict/anonymize logic and NEVER touches a retention-bound record -- it
-only ever mutates the ``person`` row (ADR-0012 section 6 invariant).
+the retention preview. Effects use an authoritative database command that changes
+only the person row and canonical audit, never retained financial records.
 
 Three operations:
   * request_deletion -- the Art. 17 entry point. Gathers retention bindings,
@@ -22,7 +22,7 @@ the pure engine (which only knows retention dates).
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date
 
 from fastapi import HTTPException
 
@@ -31,15 +31,10 @@ from app.engine.dsgvo import (
     BINDING_DUNNING,
     BINDING_FINALIZED_OWNERSHIP,
     BINDING_SETTLEMENT_ADDRESSEE,
-    DECISION_RESTRICT,
-    PersonPii,
     RetentionBinding,
-    anonymized_values,
     decide_deletion,
     retention_from_year_end,
 )
-from app.models.audit_event import AuditEvent
-from app.repositories.audit_repo import AuditRepository
 from app.repositories.dsgvo_repo import DsgvoRepository
 
 
@@ -49,7 +44,6 @@ class DsgvoService:
         self._org_id = org_id
         self._user_id = user_id
         self._repo = DsgvoRepository(session, org_id)
-        self._audit = AuditRepository(session, org_id)
 
     # ==================================================================
     # Public operations
@@ -64,99 +58,34 @@ class DsgvoService:
         return self._state_dict(person, decision, has_active, applied="NONE")
 
     async def request_deletion(self, person_id: uuid.UUID) -> dict:
-        """Art. 17 deletion request: RESTRICT if retention-bound, else ANONYMIZE."""
-        person = await self._require_person(person_id)
-        ref = date.today()
-        now = _utcnow_naive()
-
-        if person.anonymized_at is not None:
-            decision = decide_deletion(
-                await self._gather_bindings(person_id), ref
-            )
-            return self._state_dict(person, decision, False, applied="NONE_ALREADY_ANONYMIZED")
-
-        if await self._has_active_relationship(person_id, ref):
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Person hat eine aktive vertragliche Beziehung (laufendes "
-                    "Miet-/Eigentumsverhaeltnis). Loeschung/Einschraenkung erst "
-                    "nach Beendigung des Verhaeltnisses moeglich."
-                ),
-            )
-
-        bindings = await self._gather_bindings(person_id)
-        decision = decide_deletion(bindings, ref)
-        person.deletion_requested_at = now
-
-        if decision.decision == DECISION_RESTRICT:
-            person.processing_restricted = True
-            applied = "RESTRICTED"
-            await self._audit_event(
-                person_id,
-                "dsgvo.deletion_requested",
-                {
-                    "outcome": "RESTRICTED",
-                    "is_bound": True,
-                    "governing_retention_until": _iso(
-                        decision.governing_retention_until
-                    ),
-                    "binding_count": len(decision.bindings),
-                },
-            )
-        else:  # ANONYMIZE_NOW (unbound, or all retention already expired)
-            self._apply_anonymization(person, now)
-            applied = "ANONYMIZED"
-            await self._audit_event(
-                person_id,
-                "dsgvo.deletion_requested",
-                {
-                    "outcome": "ANONYMIZED",
-                    "is_bound": decision.is_bound,
-                    "purgeable_now": decision.purgeable_now,
-                },
-            )
-            await self._audit_event(person_id, "dsgvo.anonymized", {"source": "request_deletion"})
-
-        await self._session.flush()
-        return self._state_dict(person, decision, False, applied=applied)
+        return await self._apply_privacy_command(person_id, "REQUEST_DELETION")
 
     async def anonymize(self, person_id: uuid.UUID) -> dict:
-        """Explicit anonymization / purge. Refuses while still retention-bound."""
+        return await self._apply_privacy_command(person_id, "ANONYMIZE")
+
+    async def _apply_privacy_command(self, person_id, command):
+        from sqlalchemy import text
         person = await self._require_person(person_id)
-        ref = date.today()
-        now = _utcnow_naive()
-
-        if person.anonymized_at is not None:
-            decision = decide_deletion(await self._gather_bindings(person_id), ref)
-            return self._state_dict(person, decision, False, applied="NONE_ALREADY_ANONYMIZED")
-
-        if await self._has_active_relationship(person_id, ref):
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Person hat eine aktive vertragliche Beziehung; Anonymisierung "
-                    "erst nach Beendigung moeglich."
-                ),
-            )
-
         bindings = await self._gather_bindings(person_id)
-        decision = decide_deletion(bindings, ref)
-        if decision.is_bound and not decision.purgeable_now:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Person ist aufbewahrungspflichtig gebunden bis "
-                    f"{_iso(decision.governing_retention_until)}; Anonymisierung "
-                    "erst nach Ablauf der Aufbewahrungsfrist zulaessig (ADR-0012). "
-                    "Bis dahin gilt Verarbeitungseinschraenkung (Art. 18 DSGVO)."
-                ),
-            )
-
-        self._apply_anonymization(person, now)
-        await self._audit_event(person_id, "dsgvo.anonymized", {"source": "explicit"})
-        await self._session.flush()
-        return self._state_dict(person, decision, False, applied="ANONYMIZED")
+        decision = decide_deletion(bindings, date.today())
+        outcome = await self._session.scalar(text('SELECT apply_person_privacy(:org,:person,:command)'),
+            {'org': self._org_id, 'person': person_id, 'command': command})
+        errors = {
+            'INVALID': (422, 'Invalid privacy command'),
+            'FORBIDDEN': (403, 'Current administrator and contact preparation rights required'),
+            'NOT_FOUND': (404, 'Person not found'),
+            'PAUSED': (409, 'Source effects are paused'),
+            'INCOMPLETE': (409, 'Complete financial and source access is required'),
+            'ACTIVE': (409, 'Person hat eine aktive vertragliche Beziehung'),
+            'RETAINED': (409, f'Person ist aufbewahrungspflichtig gebunden bis {_iso(decision.governing_retention_until)}'),
+        }
+        if outcome in errors:
+            status, detail = errors[outcome]
+            raise HTTPException(status, detail)
+        if outcome not in {'RESTRICTED', 'ANONYMIZED', 'NONE_ALREADY_ANONYMIZED'}:
+            raise RuntimeError('Unknown privacy command result')
+        await self._session.refresh(person)
+        return self._state_dict(person, decision, False, applied=outcome)
 
     async def export_person_data(self, person_id: uuid.UUID) -> dict:
         """Art. 15/20 export: the person's stored PII, roles, and bindings."""
@@ -281,50 +210,6 @@ class DsgvoService:
             return True
         return False
 
-    def _apply_anonymization(self, person, now: datetime) -> None:
-        """Neutralize the person's PII via the pure engine; preserve id/FKs."""
-        av = anonymized_values(
-            PersonPii(
-                first_name=person.first_name,
-                last_name=person.last_name,
-                company_name=person.company_name,
-                email=person.email,
-                phone=person.phone,
-                street=person.street,
-                zip_code=person.zip_code,
-                city=person.city,
-                iban=person.iban,
-                bic=person.bic,
-                bank_name=person.bank_name,
-                already_anonymized=person.anonymized_at is not None,
-            )
-        )
-        person.first_name = av.first_name
-        person.last_name = av.last_name
-        person.company_name = av.company_name
-        person.email = av.email
-        person.phone = av.phone
-        person.street = av.street
-        person.zip_code = av.zip_code
-        person.city = av.city
-        person.iban = av.iban
-        person.bic = av.bic
-        person.bank_name = av.bank_name
-        person.anonymized_at = now
-        # Restriction is lifted: the data is now neutralized, nothing left to restrict.
-        person.processing_restricted = False
-
-    async def _audit_event(self, person_id: uuid.UUID, action: str, payload: dict) -> None:
-        await self._audit.create(
-            AuditEvent(
-                actor_user_id=self._user_id,
-                entity_type="person",
-                entity_id=person_id,
-                action=action,
-                payload_diff=payload,
-            )
-        )
-
     def _state_dict(self, person, decision, has_active: bool, applied: str) -> dict:
         return {
             "person_id": str(person.id),
@@ -341,16 +226,6 @@ class DsgvoService:
             "governing_retention_until": _iso(decision.governing_retention_until),
             "bindings": [_binding_dict(b) for b in decision.bindings],
         }
-
-
-def _utcnow_naive() -> datetime:
-    """Naive UTC timestamp for person.deletion_requested_at / anonymized_at.
-
-    Those columns are TIMESTAMP WITHOUT TIME ZONE (unlike the tz-aware
-    issued_at/finalized_at on the Beleg tables), so we strip the tzinfo and
-    store UTC wall-clock.
-    """
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _iso(value) -> str | None:

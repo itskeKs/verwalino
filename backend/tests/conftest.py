@@ -93,6 +93,9 @@ def run_migrations():
         cursor.execute("SELECT to_regclass('public.person_data_domain')")
         if cursor.fetchone()[0]:
             cursor.execute("TRUNCATE public.person_data_grant,public.person_data_domain")
+        cursor.execute("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='person' AND column_name='created_by')")
+        if cursor.fetchone()[0]:
+            cursor.execute("TRUNCATE public.person CASCADE")
         cursor.execute("SELECT to_regclass('public.property_knowledge_query_run')")
         if cursor.fetchone()[0]:
             cursor.execute("TRUNCATE public.property_knowledge_query_run")
