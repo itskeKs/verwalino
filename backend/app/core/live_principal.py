@@ -3,10 +3,10 @@ from fastapi import Depends, HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
+from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep, require_admin_dep
 
 
-async def require_live_principal(db: AsyncSession, auth: AuthContext, *, writer: bool, exclusive: bool = False) -> None:
+async def require_live_principal(db: AsyncSession, auth: AuthContext, *, writer: bool, exclusive: bool = False, administrator: bool = False) -> None:
     # The authentication dependency used a different, already closed transaction.
     # Take the shared ACL lock before domain row locks, then read a fresh role.
     # Membership/deactivation changes take this lock exclusively (migration 0033).
@@ -16,6 +16,8 @@ async def require_live_principal(db: AsyncSession, auth: AuthContext, *, writer:
     role = await db.scalar(text("SELECT scope_actor_role(:org)"), {"org": auth.organization_id})
     if role is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    if administrator and role != 'OWNER_ADMIN':
+        raise HTTPException(status_code=403, detail="Administrator required")
     if writer and role not in {"OWNER_ADMIN", "CLERK"}:
         raise HTTPException(status_code=403, detail="Writer required")
 
@@ -43,4 +45,12 @@ async def get_live_member_db(
     db: AsyncSession = Depends(get_db),
 ) -> AsyncSession:
     await require_live_principal(db, auth, writer=False)
+    return db
+
+
+async def get_live_admin_db(
+    auth: AuthContext = Depends(require_admin_dep),
+    db: AsyncSession = Depends(get_db),
+) -> AsyncSession:
+    await require_live_principal(db, auth, writer=False, administrator=True)
     return db

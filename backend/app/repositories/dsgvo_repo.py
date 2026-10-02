@@ -54,7 +54,7 @@ class DsgvoRepository:
             'SELECT privacy_financial_context_complete(:org,:person,:capability)'),
             {'org': self._org_id, 'person': person_id, 'capability': capability})
         if not complete:
-            raise HTTPException(409, 'Complete financial access is required to review retention or export this person')
+            raise HTTPException(409, 'Complete financial and source access is required to review retention or export this person')
 
     async def get_person(self, person_id: uuid.UUID) -> Person | None:
         stmt = (

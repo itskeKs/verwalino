@@ -714,3 +714,27 @@ and database boundaries.
 The two adapted consumer cases passed in the final focused run
 (`/tmp/hv-original-source-last-repairs.log`). All 0063 checks now have passing
 applicable evidence; no unresolved review blocker remains within its stated scope.
+
+## Privacy source completeness (0064)
+
+At base `fc62b79`, six expected red tests demonstrated that finalized rental/plan
+outputs hidden by source RLS disappeared from retention status and export. Direct
+request-deletion/anonymize calls could then treat retained evidence as absent.
+The failing mutation tests ran in rolled-back transactions, preserving fixture PII.
+The new private enumerator checks every expected recipient property through the
+complete source READ/EXPORT graph in addition to the existing financial predicate.
+The first regression run passed 48 privacy/financial/dunning cases.
+
+Three more expected red cases reproduced expiry during binding discovery and a
+stale authenticated administrator continuing after demotion. The service now repeats
+completeness after ordinary binding reads, retaining EXPORT for exports; all privacy
+routes recheck the current administrator under the data transaction's ACL lock.
+The expanded run passed **74 cases** including all eighteen new completeness,
+expiry, principal, private-function, rollback and NOWAIT cases, plus M9 privacy,
+financial scope, dunning and RBAC. Independent review accepted the bounded change
+without actionable findings. Logs: `/tmp/hv-privacy-source-{red,first,phase-red,
+accepted}.log`. No frontend changes were required.
+
+This closes retained outputs hidden by 0060. Person/profile/history, audit/general
+report disclosure, raw worker transition hardening and reviewed activation coverage
+remain open. Source activation stays false; B1 and M-A–M-G remain incomplete.

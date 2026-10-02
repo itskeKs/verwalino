@@ -362,3 +362,15 @@ export, exact custody and quarantine checks, and verify stored bytes once. All s
 migration dependencies use NOWAIT, strict state refuses rollback, and compatibility
 round trips preserve sources. Indirect disclosure and reviewed activation coverage
 remain open; source activation is still unavailable.
+
+## Privacy retention completeness (0064)
+
+Retention status, erasure review and privacy export now check the expected finalized
+settlement/plan recipient graph independently of ordinary source-filtered rows.
+Every expected property's complete source READ or EXPORT authority is required in
+addition to financial access. Discovery rechecks completeness after loading bindings
+so grant expiry cannot turn hidden records into apparently absent retention.
+All privacy routes recheck the current administrator inside the data transaction.
+PAUSED retains authorized inspection/export and existing erasure rules; originals
+and retention periods are unchanged. Eight NOWAIT dependencies and strict rollback
+refusal protect the boundary. Person/history, audit/report and activation work remain.

@@ -16,7 +16,8 @@ import uuid
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.tenant import AuthContext, get_db, require_admin_dep
+from app.core.tenant import AuthContext, require_admin_dep
+from app.core.live_principal import get_live_admin_db
 from app.services.dsgvo_service import DsgvoService
 
 router = APIRouter(prefix="/api/dsgvo", tags=["dsgvo"])
@@ -26,7 +27,7 @@ router = APIRouter(prefix="/api/dsgvo", tags=["dsgvo"])
 async def dsgvo_status(
     person_id: uuid.UUID,
     auth: AuthContext = Depends(require_admin_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_admin_db),
 ):
     """Preview the DSGVO state + what a deletion request would do (no mutation)."""
     svc = DsgvoService(db, auth.organization_id, auth.user_id)
@@ -37,7 +38,7 @@ async def dsgvo_status(
 async def dsgvo_export(
     person_id: uuid.UUID,
     auth: AuthContext = Depends(require_admin_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_admin_db),
 ):
     """Art. 15/20 data export: stored PII + roles + retention bindings."""
     svc = DsgvoService(db, auth.organization_id, auth.user_id)
@@ -48,7 +49,7 @@ async def dsgvo_export(
 async def dsgvo_request_deletion(
     person_id: uuid.UUID,
     auth: AuthContext = Depends(require_admin_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_admin_db),
 ):
     """Art. 17 request: RESTRICT if retention-bound, else ANONYMIZE immediately."""
     svc = DsgvoService(db, auth.organization_id, auth.user_id)
@@ -59,7 +60,7 @@ async def dsgvo_request_deletion(
 async def dsgvo_anonymize(
     person_id: uuid.UUID,
     auth: AuthContext = Depends(require_admin_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_admin_db),
 ):
     """Explicit anonymization / purge. Refused (409) while retention-bound."""
     svc = DsgvoService(db, auth.organization_id, auth.user_id)

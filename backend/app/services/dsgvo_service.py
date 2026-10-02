@@ -161,7 +161,7 @@ class DsgvoService:
     async def export_person_data(self, person_id: uuid.UUID) -> dict:
         """Art. 15/20 export: the person's stored PII, roles, and bindings."""
         person = await self._require_person(person_id, capability='export')
-        bindings = await self._gather_bindings(person_id)
+        bindings = await self._gather_bindings(person_id, capability='export')
         return {
             "person": {
                 "id": str(person.id),
@@ -205,7 +205,7 @@ class DsgvoService:
         await self._repo.require_complete_financial_context(person_id, capability=capability)
         return person
 
-    async def _gather_bindings(self, person_id: uuid.UUID) -> list[RetentionBinding]:
+    async def _gather_bindings(self, person_id: uuid.UUID, *, capability='read') -> list[RetentionBinding]:
         vendor_ids = await self._repo.vendor_ids(person_id)
         tenant_ids = await self._repo.tenant_profile_ids(person_id)
         owner_ids = await self._repo.owner_profile_ids(person_id)
@@ -264,6 +264,10 @@ class DsgvoService:
                 )
             )
 
+        # ACL locking serializes revocation, but grants can expire while these
+        # ordinary RLS-filtered reads run. Recheck completeness before treating
+        # an empty/partial result as an erasure decision or exportable evidence.
+        await self._repo.require_complete_financial_context(person_id, capability=capability)
         return bindings
 
     async def _has_active_relationship(
