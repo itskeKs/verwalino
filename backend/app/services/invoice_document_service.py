@@ -6,8 +6,10 @@ m2-gobd-belegfluss.md section 4/5, section 8.4.
 from __future__ import annotations
 
 import uuid
+import json
 from datetime import datetime, timezone
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
 from app.repositories.cost_entry_repo import CostEntryRepository
@@ -40,6 +42,31 @@ class InvoiceDocumentService:
         self._repo = InvoiceDocumentRepository(session, org_id)
         self._audit = AuditRepository(session, org_id)
 
+    async def require_source(self, document_id, capability):
+        if not await self._session.scalar(text('SELECT invoice_source_access(:org,:document,:capability)'),
+                {'org':self._org_id, 'document':document_id, 'capability':capability}):
+            raise HTTPException(404, 'Invoice source not accessible')
+
+    async def prepare_storage_write(self, cost_entry_id=None):
+        from app.services.financial_scope_service import FinancialScopeService
+        await FinancialScopeService(self._session, self._org_id, self._user_id).lock_inputs()
+        if not await self._session.scalar(text("SELECT scope_actor_role(:org) IN ('OWNER_ADMIN','CLERK') AND property_source_security_mode(:org)<>'PAUSED'"), {'org':self._org_id}):
+            raise HTTPException(404, 'Invoice preparation not accessible')
+        if cost_entry_id is not None and not await self._session.scalar(text("SELECT financial_scope_access(:org,'cost_entry',:cost,'prepare')"), {'org':self._org_id,'cost':cost_entry_id}):
+            raise HTTPException(404, 'Invoice destination not accessible')
+
+    async def admit_uploaded_document(self, document):
+        from app.core.db import get_review_tenant_session
+        fields = ('id','organization_id','uploaded_by','cost_entry_id','storage_uri','storage_backend','storage_version',
+                  'original_filename','mime_type','content_byte_size','content_sha256','version','supersedes_id','chain_root_id')
+        document.uploaded_by = self._user_id
+        payload = {field: str(value) if isinstance(value, uuid.UUID) else value
+                   for field in fields for value in [getattr(document, field)]}
+        async with get_review_tenant_session(self._org_id) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor':str(self._user_id)})
+            await db.execute(text('SELECT admit_invoice_upload(:org,:document,CAST(:payload AS jsonb))'),
+                             {'org':self._org_id,'document':document.id,'payload':json.dumps(payload)})
+
     async def _lock_cost(self, cost_entry_id):
         entry = await CostEntryRepository(self._session, self._org_id).get_by_id_for_update(cost_entry_id)
         if entry is None:
@@ -59,6 +86,7 @@ class InvoiceDocumentService:
 
         Returns (InvoiceDocument, ExtractionResult).
         """
+        await self.prepare_storage_write(cost_entry_id)
         if cost_entry_id:
             entry = await self._lock_cost(cost_entry_id)
             if entry.status == "confirmed":
@@ -97,6 +125,7 @@ class InvoiceDocumentService:
             extraction_payload=extraction.to_dict(),
         )
 
+        await self.admit_uploaded_document(doc)
         doc = await self._repo.create(doc)
         await InvoiceProcessingService(self._session, self._org_id).enqueue(doc, initiated_by=self._user_id)
 
@@ -138,6 +167,7 @@ class InvoiceDocumentService:
         if store is None:
             store = get_store()
 
+        await self.prepare_storage_write(cost_entry_id)
         # Serialize the whole chain, including replacement of an unattached upload.
         root = await self._repo.get_by_id(chain_root_id)
         if root is None:
@@ -146,6 +176,11 @@ class InvoiceDocumentService:
         active = await self._repo.get_active_by_chain(chain_root_id)
         if active is None:
             raise HTTPException(409, "Document chain has no active version")
+        await self.require_source(active.id, 'prepare')
+        if active.released_at is not None:
+            await self.require_source(active.id, 'confirm')
+        if active.cost_entry_id is None and active.uploaded_by != self._user_id:
+            raise HTTPException(404, 'Known standalone invoice custody required')
         expected_revision = (active.id, active.cost_entry_id)
         original_cost = await self._lock_cost(active.cost_entry_id) if active.cost_entry_id else None
         destination_id = cost_entry_id or active.cost_entry_id
@@ -171,6 +206,7 @@ class InvoiceDocumentService:
 
         # Create new version
         new_doc = InvoiceDocument(
+            id=uuid.uuid4(),
             organization_id=self._org_id,
             cost_entry_id=destination_id,
             storage_uri=ref.uri,
@@ -188,6 +224,7 @@ class InvoiceDocumentService:
             released_by=None,
             retention_until=None,
         )
+        await self.admit_uploaded_document(new_doc)
         # Mark old as superseded (trigger allows active->superseded on released rows)
         now = datetime.now(timezone.utc)
         old_active.status = "superseded"

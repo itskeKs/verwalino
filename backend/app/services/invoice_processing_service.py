@@ -46,6 +46,8 @@ class InvoiceProcessingService:
         return attempt
 
     async def claim(self):
+        from app.services.financial_scope_service import FinancialScopeService
+        await FinancialScopeService(self.session, self.org_id, None).lock_inputs()
         current = await self.attempts.principal_metadata()
         if current is None:
             return None
@@ -98,6 +100,8 @@ class InvoiceProcessingService:
                 "mime_type": document.mime_type}
 
     async def finish(self, claim, result):
+        from app.services.financial_scope_service import FinancialScopeService
+        await FinancialScopeService(self.session, self.org_id, None).lock_inputs()
         pending = await self.attempts.principal_metadata(claim['attempt_id'])
         if pending is None or pending.document_id != claim['document_id'] or pending.token != claim['token']:
             return False

@@ -23,6 +23,7 @@ class InvoiceDocument(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("organization_id", "id", name="uq_invoice_document_org_id"),
         ForeignKeyConstraint(["organization_id", "cost_entry_id"], ["cost_entry.organization_id", "cost_entry.id"], name="fk_invoice_document_cost_tenant", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["organization_id", "uploaded_by"], ["user.organization_id", "user.id"], name="fk_invoice_uploader"),
         Index("uq_invoice_document_active_cost", "organization_id", "cost_entry_id", unique=True,
               postgresql_where=text("status = 'active' AND cost_entry_id IS NOT NULL")),
     )
@@ -39,6 +40,8 @@ class InvoiceDocument(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         nullable=True,
         index=True,
     )
+
+    uploaded_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     storage_uri: Mapped[str] = mapped_column(String(1024), nullable=False)
     storage_backend: Mapped[str] = mapped_column(String(16), nullable=False)

@@ -144,6 +144,9 @@ async def test_source_download_checks_current_grant_and_revocation(migrator_sess
     await session.execute(text("INSERT INTO membership(organization_id,user_id,role) VALUES (:org,:clerk,'CLERK')"),
         {'clerk': seed['user_a_clerk_id'], 'org': seed['org_a_id']})
     ids = await financial_fixture(session, seed)
+    await session.execute(text('UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE id=:grant'), ids)
+    ids['grant'] = uuid.uuid4()
+    await session.execute(text("INSERT INTO scope_grant(id,organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES(:grant,:org,:scope,:clerk,ARRAY['read','export'],:actor,'Explicit original export')"), ids)
     await session.commit()
     store = LocalFsDocumentStore(str(tmp_path))
     store.put('synthetic/scoped.pdf', b'test', content_type='application/pdf')

@@ -1,6 +1,7 @@
-# B1 closure status after migration 0080
+# B1 closure status after migration 0082
 
-Baseline: ca67d5d. M-A is accepted; B1 is incomplete. B2–G remain outstanding.
+Baseline: 20f9b65 plus accepted local 0082 increment. M-A is accepted; B1 is
+incomplete. B2–G remain outstanding.
 This assessment supersedes historical forward-looking residuals only where later
 accepted migrations demonstrably resolve them. It does not declare team rollout.
 
@@ -10,8 +11,12 @@ accepted migrations demonstrably resolve them. It does not declare team rollout.
    branch and 0038's first-resource insertion still retain compatibility independently
    of source mode. The accepted fix preserves PREPARATION and valid atomic scoped
    creation, closes linked children/jobs, and isolates invoice worker scheduling.
-   Strict pause preserves authorized reads and denies effects. Standalone invoice intake needs explicit creator custody;
-   no immutable uploader exists in the current invoice model.
+   Strict pause preserves authorized reads and denies effects. Migration 0082 adds
+   immutable custody and private fresh-upload admissions for new standalone invoices,
+   exact source export checks and serialized lineage/worker effects. Historical
+   unknown standalone invoices remain retained and inaccessible in strict mode;
+   no creator is backfilled. Its 118 integration and final 12 custody checks cover
+   the repaired upload/extraction/link path and concurrent authorization lifetime.
 2. Produce reviewed, versioned coverage and migration proposals. Existing 0076 counts
    establish neither current admission proof nor intended team authority. Enumerate
    exact domain/scope identities, eligible grants, valid proof/quarantine dispositions

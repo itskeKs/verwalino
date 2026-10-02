@@ -114,6 +114,7 @@ async def stream_document_content(
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
 
+    await InvoiceDocumentService(db, auth.organization_id, auth.user_id).require_source(doc.id, 'export')
     store = get_store()
     try:
         chunks = store.iter_chunks(doc.storage_uri)
@@ -146,6 +147,7 @@ async def verify_document(
         raise HTTPException(status_code=404, detail="Document not found")
 
     svc = InvoiceDocumentService(db, auth.organization_id, auth.user_id)
+    await svc.require_source(doc.id, 'export')
     ok = await svc.verify_integrity(doc)
     return VerifyResult(
         document_id=str(doc.id),
@@ -184,9 +186,12 @@ async def create_document_version(
 @router.post("/{doc_id}/retry", response_model=InvoiceDocumentOut)
 async def retry_extraction(doc_id: uuid.UUID, auth: AuthContext = Depends(require_write_dep),
                            db: AsyncSession = Depends(get_db)):
+    source = InvoiceDocumentService(db, auth.organization_id, auth.user_id)
+    await source.prepare_storage_write()
     doc = await InvoiceDocumentRepository(db, auth.organization_id).get_by_id_for_update(doc_id)
     if doc is None:
         raise HTTPException(404, "Document not found")
+    await source.require_source(doc.id, 'prepare')
     await InvoiceProcessingService(db, auth.organization_id).enqueue(doc, initiated_by=auth.user_id)
     return _to_out(doc)
 

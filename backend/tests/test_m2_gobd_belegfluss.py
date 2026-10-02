@@ -272,14 +272,15 @@ class TestCostEntryDraftEditable:
 # ============================================================
 class TestInvoiceDocumentReleasedImmutable:
     @pytest.mark.asyncio
-    async def test_update_sha256_on_released_rejected(self, app_rw_session, m2_seed):
-        session = app_rw_session
+    async def test_update_sha256_on_released_rejected(self, migrator_session, m2_seed):
+        session = migrator_session
         org_id = m2_seed["org_a_id"]
         await session.execute(
             text("SELECT set_config('app.current_org_id', :org, true)"),
             {"org": str(org_id)},
         )
 
+        await session.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor':str(m2_seed['user_a_admin_id'])})
         doc_id = uuid.uuid4()
         await session.execute(
             text("""
@@ -301,23 +302,25 @@ class TestInvoiceDocumentReleasedImmutable:
             },
         )
 
+        await session.execute(text('SET LOCAL ROLE app_rw'))
         # UPDATE content_sha256 -> must fail
-        with pytest.raises(Exception, match="GoBD.*content_sha256.*released"):
+        with pytest.raises(Exception, match="immutable|GoBD.*content_sha256.*released"):
             await session.execute(
                 text("UPDATE invoice_document SET content_sha256 = :sha WHERE id = :id"),
                 {"id": str(doc_id), "sha": "b" * 64},
             )
 
     @pytest.mark.asyncio
-    async def test_active_to_superseded_allowed(self, app_rw_session, m2_seed):
+    async def test_active_to_superseded_allowed(self, migrator_session, m2_seed):
         """Status transition active->superseded on released doc is allowed."""
-        session = app_rw_session
+        session = migrator_session
         org_id = m2_seed["org_a_id"]
         await session.execute(
             text("SELECT set_config('app.current_org_id', :org, true)"),
             {"org": str(org_id)},
         )
 
+        await session.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor':str(m2_seed['user_a_admin_id'])})
         doc_id = uuid.uuid4()
         await session.execute(
             text("""
@@ -339,6 +342,7 @@ class TestInvoiceDocumentReleasedImmutable:
             },
         )
 
+        await session.execute(text('SET LOCAL ROLE app_rw'))
         # active -> superseded should succeed
         await session.execute(
             text("""
@@ -429,15 +433,16 @@ class TestCostEntryCorrectionVersion:
 # ============================================================
 class TestDocumentVersionChain:
     @pytest.mark.asyncio
-    async def test_no_second_active_per_chain(self, app_rw_session, m2_seed):
+    async def test_no_second_active_per_chain(self, migrator_session, m2_seed):
         """Partial unique index blocks a second active doc per chain."""
-        session = app_rw_session
+        session = migrator_session
         org_id = m2_seed["org_a_id"]
         await session.execute(
             text("SELECT set_config('app.current_org_id', :org, true)"),
             {"org": str(org_id)},
         )
 
+        await session.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor':str(m2_seed['user_a_admin_id'])})
         chain_root = uuid.uuid4()
         doc1_id = chain_root
         await session.execute(
@@ -1171,11 +1176,13 @@ class TestUploadFirstAtomic:
         session = app_rw_session
         # Null links already passed through both orgs' authenticated uploads.
         await session.execute(text("SELECT set_config('app.current_org_id', :org, true)"), {"org": str(m2_seed["org_b_id"])})
+        await session.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor':str(m2_seed['user_b_admin_id'])})
         with pytest.raises(IntegrityError, match="fk_invoice_document_cost_tenant"):
             async with session.begin_nested():
                 await session.execute(text("UPDATE invoice_document SET cost_entry_id=:cost WHERE id=:doc"), {"cost": entry["id"], "doc": foreign["id"]})
         assert not (await session.execute(text("SELECT * FROM operation_receipt"))).all()
         await session.execute(text("SELECT set_config('app.current_org_id', :org, true)"), {"org": str(m2_seed["org_a_id"])})
+        await session.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor':str(m2_seed['user_a_admin_id'])})
         await session.execute(text("UPDATE invoice_document SET cost_entry_id=:cost WHERE id=:doc"), {"cost": entry["id"], "doc": local["id"]})
         assert (await session.execute(text("SELECT * FROM operation_receipt WHERE result_id=:id"), {"id": entry["id"]})).one()
         await session.execute(text("SELECT set_config('app.current_org_id', '', true)"))
@@ -1208,26 +1215,34 @@ class TestUploadFirstAtomic:
     async def test_link_racing_replacement_keeps_cost_source(self, client_a_admin, m2_seed, tmp_store, monkeypatch):
         import asyncio
         from app.repositories.invoice_document_repo import InvoiceDocumentRepository
+        from tests.test_scope_payment_reconciliation import read_value
         doc = await self.upload(client_a_admin)
         body = await self.payload(client_a_admin, m2_seed, doc["id"])
-        read = asyncio.Event()
-        linked = asyncio.Event()
+        read, release = asyncio.Event(), asyncio.Event()
         original = InvoiceDocumentRepository.get_active_by_chain
         async def paused(repo, chain_id, *, lock=False):
             result = await original(repo, chain_id, lock=lock)
             if not lock:
                 read.set()
-                await linked.wait()
+                await release.wait()
             return result
         monkeypatch.setattr(InvoiceDocumentRepository, "get_active_by_chain", paused)
         replacement = asyncio.create_task(client_a_admin.post(f"/api/invoice-documents/{doc['id']}/version",
             files={"file": ("v2.pdf", b"second", "application/pdf")}))
-        await asyncio.wait_for(read.wait(), 5)
+        linked = None
         try:
-            created = await client_a_admin.post("/api/cost-entries", json=body)
-            assert created.status_code == 201
+            await asyncio.wait_for(read.wait(), 5)
+            linked = asyncio.create_task(client_a_admin.post("/api/cost-entries", json=body))
+            for _ in range(100):
+                blocked = await read_value("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE usename='app_rw' AND wait_event='advisory')", {})
+                if blocked: break
+                await asyncio.sleep(.01)
+            assert blocked and not linked.done()
         finally:
-            linked.set()
-        assert (await replacement).status_code == 409
-        active = (await client_a_admin.get(f"/api/invoice-documents?cost_entry_id={created.json()['id']}")).json()
-        assert any(d["status"] == "active" for d in active)
+            release.set()
+        replaced, created = await asyncio.wait_for(asyncio.gather(replacement, linked), 5)
+        assert replaced.status_code == 201, replaced.text
+        assert created.status_code == 409, created.text
+        # The serialized loser cannot attach a superseded original or leave a cost.
+        assert (await client_a_admin.get(f"/api/invoice-documents/{doc['id']}")).json()['cost_entry_id'] is None
+        assert replaced.json()['cost_entry_id'] is None
