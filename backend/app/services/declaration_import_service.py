@@ -164,6 +164,9 @@ class DeclarationImportService:
         role = await self._session.scalar(text("SELECT scope_actor_role(:org)"), {"org": self._org_id})
         if role not in {"OWNER_ADMIN", "CLERK"}:
             raise HTTPException(status_code=403, detail="Writer required")
+        if not await self._session.scalar(text("SELECT property_source_permitted(:org,'declaration_import',:job,'prepare')"),
+            {"org":self._org_id,"job":import_id}):
+            raise HTTPException(status_code=404,detail="Import inaccessible")
         item = await self._get_for_update(import_id)
         receipt = (await self._session.execute(text("SELECT id,actor_user_id,operation FROM declaration_queue_request WHERE organization_id=:org AND import_id=:job AND request_key=:key"),
             {"org": self._org_id, "job": import_id, "key": key})).mappings().first()

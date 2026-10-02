@@ -305,3 +305,37 @@ This does not classify unknown custody or already-bound legacy sources. Universa
 proof-required first binding and complete legacy classification are mandatory
 activation gates. Source RLS, workers/Q&A, financial completeness, indirect exports
 and atomic reviewed organization activation remain unfinished; B1 is not complete.
+
+## Dormant organization state and worker integration (0053)
+
+At base `9f6ce8f`, internal PREPARATION/ENFORCED/PAUSED state integrates declaration
+work with the shared source resolver. No app state writes or activation endpoint
+exist; the private readiness gate returns false. Strict state is installed only
+by a guarded disposable-test substitution. Shared ACL authorization and exclusive
+state changes serialize. Once strict state exists it cannot return to compatibility
+or be deleted; pause keeps strict reads and rejects prepare/approve effects.
+
+Queue start and replay now check the same gate-aware prepare permission. Worker
+claim and every fenced phase resolve the immutable receipt actor, never the
+process's current actor. Existing safe cancellation checks that resolver and
+retains cancellation/status/usage evidence when source rows become invisible.
+
+The first state/RLS run passed seven tests and exposed the registry's required
+explicit denied-insert policy; adding it retained zero app table privileges.
+**34 worker/RLS cases passed.** The expanded suite passed **83 cases** and found a
+test-observer issue: PostgreSQL statistics were cached across polling statements.
+Clearing that observer snapshot proved the actual advisory-lock wait; the repaired
+focused test passed. Independent review highlighted a possible filtered-state
+fallback with a misconfigured definer owner. The mode-only definer now sets
+`row_security=off`, so this fails with an RLS error instead of widening to
+PREPARATION. **17 final focused cases passed**, including real Clerk state lookup,
+claim and paused cancellation, an actual temporary non-bypass owner, direct SQL
+unadmitted-source denial, paused claim/heartbeat/provider/publication cancellation,
+privileged process versus revoked receipt actor, state lock serialization,
+immutable rollback refusal/empty round-trip and all four NOWAIT dependencies.
+Earlier unchanged passing regression evidence is reused; independent review accepted.
+
+All checks used Python 3.13, disposable PostgreSQL 16 and ordinary app_rw sessions
+for enforcement, with fake providers only. No UI change or production activation.
+Q&A complete-input/budget/cancellation integration is next; general source policies,
+legacy classification and reviewed activation remain blocked.

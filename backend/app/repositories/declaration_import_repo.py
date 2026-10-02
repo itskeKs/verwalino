@@ -77,8 +77,8 @@ class DeclarationImportRepository(TenantRepository[DeclarationImport]):
         item = await self._session.scalar(self._base_query().where(DeclarationImport.id == candidate['import_id']))
         if item is None:
             # A source policy can withhold the row even from a live writer.
-            # Domain authorization must be incorporated in declaration_queue_actor
-            # before that policy is enabled; never bypass it to load the source.
+            # The gate-aware queue resolver checks immutable-actor authority;
+            # a stricter source policy still cannot be bypassed to load payloads.
             return None
         active_statuses = {"PREFLIGHT", "EXTRACTING", "RECONCILING"}
         if item.status in active_statuses:

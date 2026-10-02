@@ -154,3 +154,22 @@ Populated downgrade refuses; preserve proof and repair forward. This prepares
 admission without activating general source RLS. Unknown or already-bound legacy
 custody still needs explicit classification before organization activation, and
 universal proof-required binding must be installed with that enforcement.
+
+## Internal enforcement staging (0053)
+
+The internal organization state remains PREPARATION by default. There is no
+application write privilege or activation endpoint, and the readiness function
+rejects strict activation until graph closure and coverage are implemented.
+Do not replace that function or edit state manually outside the guarded disposable
+integration tests. Presence of this table is not evidence of an active boundary.
+
+When strict state is eventually enabled, declaration queue commands and replays
+require current source prepare authority. Every worker phase resolves its durable
+queue actor, including grant expiry/revocation. PAUSED rejects effects, retains
+strict read authorization and durably cancels pending work through its existing
+lease fence. Enforced state cannot be deleted or reverted to broad compatibility
+access. Migration 0053 refuses populated downgrade; preserve state and repair
+forward. Its dependency locks use NOWAIT on organization, user, imports and queue
+receipts. The trusted definer role must retain its documented RLS bypass; a
+misconfigured mode reader fails rather than silently treating hidden state as
+PREPARATION. The application role stays NOBYPASSRLS with no state write privileges.

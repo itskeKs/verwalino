@@ -81,6 +81,9 @@ def run_migrations():
     import psycopg2
     with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
         clear_disposable_source_context(cursor)
+        cursor.execute("SELECT to_regclass('public.property_source_security')")
+        if cursor.fetchone()[0]:
+            cursor.execute("TRUNCATE public.property_source_security")
         cursor.execute("SELECT to_regclass('public.property_data_domain')")
         if cursor.fetchone()[0]:
             cursor.execute("TRUNCATE public.property_data_grant,public.property_data_domain CASCADE")
