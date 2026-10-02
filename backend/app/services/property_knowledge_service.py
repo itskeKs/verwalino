@@ -720,9 +720,12 @@ def _usage_for_reservation(
     return sanitized, _stored_cost(expected_cost), None
 
 
-async def _knowledge_actor(session: AsyncSession, organization_id: uuid.UUID, actor_user_id: uuid.UUID) -> None:
+async def _knowledge_actor(session: AsyncSession, organization_id: uuid.UUID, actor_user_id: uuid.UUID, property_id: uuid.UUID) -> None:
     await session.execute(text("SELECT set_config('app.current_user_id', :actor, true)"), {"actor": str(actor_user_id)})
     await require_live_principal(session, AuthContext(actor_user_id, organization_id, ""), writer=False)
+    if not await session.scalar(text("SELECT knowledge_query_source_access(:org,:property)"),
+        {"org":organization_id,"property":property_id}):
+        raise HTTPException(status_code=404,detail="Property not found")
 
 
 async def query_property_knowledge(
@@ -740,7 +743,7 @@ async def query_property_knowledge(
     # Resolve the tenant-local property before process-local backpressure so an
     # unknown/foreign identifier remains a stable 404 even under load.
     async with get_tenant_session(organization_id) as session:
-        await _knowledge_actor(session, organization_id, actor_user_id)
+        await _knowledge_actor(session, organization_id, actor_user_id, property_id)
         service = PropertyKnowledgeService(session, organization_id)
         prepared = await service.prepare_question(property_id, question)
         if not prepared.hits:
@@ -758,7 +761,7 @@ async def query_property_knowledge(
         raise KnowledgeQueryBudgetExceeded("QA_CONCURRENCY_EXCEEDED")
     try:
         async with get_tenant_session(organization_id) as session:
-            await _knowledge_actor(session, organization_id, actor_user_id)
+            await _knowledge_actor(session, organization_id, actor_user_id, property_id)
             try:
                 estimate = provider.estimate_reservation(
                     prepared.request,
@@ -834,10 +837,11 @@ async def query_property_knowledge(
         try:
             async with get_tenant_session(organization_id) as session:
                 # Resolve the immutable stored actor before reading any answer sources.
-                persisted_actor = await session.scalar(text("SELECT initiated_by FROM property_knowledge_query_run WHERE organization_id=:org AND id=:run"), {"org": organization_id, "run": reservation.run_id})
+                await session.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {"actor":str(actor_user_id)})
+                persisted_actor = await session.scalar(text("SELECT knowledge_query_actor(:org,:run)"), {"org": organization_id, "run": reservation.run_id})
                 if persisted_actor != actor_user_id:
                     raise HTTPException(status_code=401, detail="Not authenticated")
-                await _knowledge_actor(session, organization_id, persisted_actor)
+                await _knowledge_actor(session, organization_id, persisted_actor, property_id)
                 if provider_result is not None and mismatch is None:
                     answer = await PropertyKnowledgeService(session, organization_id).finalize_provider_result(
                         prepared, provider_result,

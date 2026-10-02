@@ -339,3 +339,42 @@ All checks used Python 3.13, disposable PostgreSQL 16 and ordinary app_rw sessio
 for enforcement, with fake providers only. No UI change or production activation.
 Q&A complete-input/budget/cancellation integration is next; general source policies,
 legacy classification and reviewed activation remain blocked.
+
+## Complete Q&A source and budget admission (0054)
+
+At base `12ec556`, Q&A validates the expected privileged source graph before
+preparation, reservation and answer publication. An ordinary RLS-filtered result
+cannot establish completeness. Its final phase resolves only its own immutable
+ledger actor through a narrow metadata helper. Grant loss or pause commits a
+sanitized fixed-reservation-cost cancellation even when the ledger row is hidden.
+The resolver now handles all supported fact subjects, including RULE and the
+legal-reference, assignment and document-relation source chains.
+
+Independent review identified and resolved two blockers: unsupported RULE fact
+sources and a caller-parameterized budget boolean followed by an unguarded INSERT.
+The final implementation has a private audited budget policy, an atomic strict
+reservation command using database cap/window/expiry, and an invoker INSERT guard
+that requires the trusted command owner's SQL identity. Direct app INSERT,
+compatibility-command use under enforcement, private aggregate calls and policy
+access are denied. Whole-organization accounting includes hidden properties and
+expires eligible reservations without exposing their content. Missing strict
+policy blocks admission. PREPARATION retains existing application configuration.
+
+Disposable PostgreSQL 16/Python 3.13 evidence: **8 initial integration cases passed**
+after the budget repair. The Q&A/principal/RLS boundary run passed **72 cases** and
+found a missing required date in the new RULE fixture. After correcting the
+fixture, the expanded source/enforcement/search run passed **71 cases**, including
+RULE, concurrent budget admission, canonical policy audit, exact window/expiry,
+missing policy, direct SQL denial, paused/revoked phases, hidden source rejection,
+hidden organization spend, migration round-trip/refusal and three NOWAIT locks.
+Two historical search-migration rehearsals initially encountered retained test
+source evidence. Their guarded disposable cleanup was made explicit, as was the
+seed-user dependency that a focused run exposed; **both repaired cases passed**.
+Previously passing checks with unchanged production code are reused. Independent
+read-only review accepted the repair delta. No UI change, browser rerun or live
+provider call is claimed.
+
+Strict activation still returns false. A reviewed matching budget policy becomes
+an additional activation prerequisite. General source RLS, original binding and
+legacy classification, financial completeness and indirect disclosure closure
+remain necessary; this does not complete B1.

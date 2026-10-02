@@ -224,6 +224,7 @@ async def test_state_migration_preserves_evidence_and_roundtrips_empty(scope_see
                 nested=db.begin_nested()
                 try:
                     db.execute(text('TRUNCATE property_source_security'))
+                    importlib.import_module('migrations.versions.0054_knowledge_source_security').downgrade()
                     migration.downgrade()
                     assert db.scalar(text("SELECT to_regclass('property_source_security')")) is None
                     migration.upgrade()

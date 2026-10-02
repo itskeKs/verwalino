@@ -33,7 +33,14 @@ def _alembic_config() -> Config:
 
 
 @pytest.fixture
-def migration_config_at_head(request) -> Config:
+def migration_config_at_head(request, seed_data) -> Config:
+    # This destructive historical rehearsal runs only against the disposable DB.
+    # Retained source/policy evidence from preceding cases must not be erased by
+    # weakening production downgrade guards.
+    from tests.conftest import clear_disposable_source_context
+    with psycopg2.connect(os.environ["HV_DATABASE_URL_SYNC"]) as connection, connection.cursor() as cursor:
+        clear_disposable_source_context(cursor)
+        cursor.execute("TRUNCATE knowledge_budget_policy,property_source_security")
     config = _alembic_config()
     request.addfinalizer(lambda: command.upgrade(config, "head"))
     return config

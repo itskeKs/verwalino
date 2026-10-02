@@ -173,3 +173,27 @@ forward. Its dependency locks use NOWAIT on organization, user, imports and queu
 receipts. The trusted definer role must retain its documented RLS bypass; a
 misconfigured mode reader fails rather than silently treating hidden state as
 PREPARATION. The application role stays NOBYPASSRLS with no state write privileges.
+
+
+## Knowledge source and budget integration (0054)
+
+Strict Q&A checks the complete expected source graph before preparation,
+reservation and answer publication. Hidden or unauthorized source rows block the
+whole request. A grant loss or pause during the provider call records a sanitized
+fixed-reservation-cost cancellation even when ordinary ledger reads are withheld.
+No provider content is stored in that cancellation path.
+
+Strict reservation requires an internal `knowledge_budget_policy` row with the
+reviewed organization cap, window length and reservation duration. These values
+must mirror approved deployment configuration before future activation; missing
+policy blocks requests. The database owns strict windows and expiry and counts
+all organization reservations, including other properties hidden from the actor.
+The app cannot read or modify policy or supply a replacement cap/window. Policy
+changes retain administrator, reason, database timestamp and audit evidence under
+the exclusive ACL lock. There is no new policy setup or activation endpoint.
+PREPARATION continues to use existing application settings.
+
+Migration 0054 uses NOWAIT locks on organization, user and Q&A ledger dependencies.
+Populated policy or strict state refuses downgrade. Preserve evidence and repair
+forward. General source RLS and organization activation remain unavailable pending
+the remaining closure and coverage gates; this migration does not complete B1.

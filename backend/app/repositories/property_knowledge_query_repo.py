@@ -10,6 +10,8 @@ from typing import Iterable
 
 from sqlalchemy import String, and_, case, cast, exists, func, literal, null, or_, select, union_all, update, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import DBAPIError
+from fastapi import HTTPException
 from sqlalchemy.orm import aliased
 
 from app.models.approved_fact_source import ApprovedFactSource
@@ -62,57 +64,32 @@ class PropertyKnowledgeQueryRepository:
         budget_cap_usd: Decimal,
     ) -> KnowledgeQueryReservation | None:
         """Atomically reclaim expired rows and reserve one bounded Q&A attempt."""
-        await self._session.execute(text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"), {"key": f"scope-acl:{self._organization_id}"})
-        await self._session.execute(
-            text("SELECT lock_knowledge_budget(:org, :window)"),
-            {"org": self._organization_id, "window": budget_window_start},
-        )
-        await self._session.execute(
-            update(PropertyKnowledgeQueryRun).where(
-                PropertyKnowledgeQueryRun.organization_id == self._organization_id,
-                PropertyKnowledgeQueryRun.budget_window_start == budget_window_start,
-                PropertyKnowledgeQueryRun.status == "RESERVED",
-                PropertyKnowledgeQueryRun.reservation_expires_at <= now,
-            ).values(
-                status="EXPIRED",
-                finalized_at=now,
-                outcome="RESERVATION_EXPIRED",
-                error_code="RESERVATION_EXPIRED",
-            )
-        )
-        spent = await self._session.scalar(
-            select(func.coalesce(func.sum(
-                case(
-                    (PropertyKnowledgeQueryRun.status == "FINALIZED", PropertyKnowledgeQueryRun.estimated_cost_usd),
-                    else_=PropertyKnowledgeQueryRun.reserved_cost_usd,
-                )
-            ), Decimal("0"))).where(
-                PropertyKnowledgeQueryRun.organization_id == self._organization_id,
-                PropertyKnowledgeQueryRun.budget_window_start == budget_window_start,
-                PropertyKnowledgeQueryRun.status.in_(("FINALIZED", "RESERVED")),
-            )
-        )
-        current = Decimal(str(spent or "0"))
-        if current + reserved_cost_usd > budget_cap_usd:
+        # Both commands reserve atomically under ACL then whole-org budget locks.
+        # Strict mode derives cap, window and expiry exclusively from DB policy.
+        params = {"org": self._organization_id, "property": property_id,
+                  "provider": provider, "model": model, "amount": reserved_cost_usd}
+        try:
+            mode = await self._session.scalar(
+                text("SELECT property_source_security_mode(:org)"), params)
+            if mode == "PREPARATION":
+                params.update(window=budget_window_start, cap=budget_cap_usd,
+                              expires=reservation_expires_at)
+                command = "SELECT * FROM reserve_knowledge_query_compat(:org,:property,:provider,:model,:amount,:window,:cap,:expires)"
+            else:
+                command = "SELECT * FROM reserve_knowledge_query(:org,:property,:provider,:model,:amount)"
+            row = (await self._session.execute(text(command), params)).mappings().one_or_none()
+        except DBAPIError as exc:
+            if getattr(exc.orig, "sqlstate", None) == "42501":
+                raise HTTPException(status_code=404, detail="Property not found") from exc
+            raise
+        if row is None:
             return None
-        run = PropertyKnowledgeQueryRun(
-            organization_id=self._organization_id,
-            property_id=property_id,
-            initiated_by=actor_user_id,
-            budget_window_start=budget_window_start,
-            provider=provider[:120],
-            model=model[:120],
-            reserved_cost_usd=reserved_cost_usd,
-            reservation_expires_at=reservation_expires_at,
-        )
-        self._session.add(run)
-        await self._session.flush()
         return KnowledgeQueryReservation(
-            run_id=run.id,
-            budget_window_start=budget_window_start,
+            run_id=row["run_id"],
+            budget_window_start=row["budget_window_start"],
             reserved_input_tokens=reserved_input_tokens,
             max_output_tokens=max_output_tokens,
-            reserved_cost_usd=reserved_cost_usd,
+            reserved_cost_usd=row["reserved_cost_usd"],
         )
 
     async def finalize_query(
