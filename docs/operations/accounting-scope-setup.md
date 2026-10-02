@@ -92,3 +92,12 @@ This boundary does not certify all computations, exports or retention workflows.
 Exact contexts for statements/derived totals, correction inheritance, source
 registries, privacy retention and staged enforcement remain activation blockers.
 Never roll back to organization-wide visibility for already classified resources.
+
+
+Payment aggregate adapters (0036) require an exact context once relevant classified
+finance exists. Owner statements and WEG paid-advance derivation use the explicitly
+chosen plan. Other legacy statement paths return 409 until supplied a validated
+scope. Privacy operations (0037) refuse incomplete retained-reference visibility;
+exports require export grants. The legacy organization-wide deadline monitor is
+unavailable for classified finance until its scoped adapter is implemented. These
+errors prevent partial counts or hidden retention records from becoming decisions.

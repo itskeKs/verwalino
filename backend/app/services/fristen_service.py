@@ -19,6 +19,8 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
+from fastapi import HTTPException
+from app.services.financial_scope_service import FinancialScopeService
 from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.engine.dunning import find_overdue_items
 from app.engine.fristen import (
@@ -78,6 +80,8 @@ class FristenService:
         self._payments = PaymentRepository(session, org_id)
 
     async def build_monitor(self, reference_date: date) -> list[DeadlineItem]:
+        await FinancialScopeService(self._session, self._org_id, None).lock_inputs()
+        await self._repo.require_complete_overview()
         properties = await self._repo.list_properties()
         fiscal_obligations: list[FiscalYearObligationInput] = []
         wp_obligations: list[WirtschaftsplanObligationInput] = []
@@ -202,6 +206,9 @@ class FristenService:
                     list(result.open_items), reference_date, grace_days=0
                 )
                 total += len(overdue)
+            except HTTPException:
+                # Missing access is unknown, never a zero overdue count.
+                raise
             except Exception:
                 # A single malformed lease must never break the read-only monitor.
                 continue

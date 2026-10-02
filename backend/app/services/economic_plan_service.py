@@ -47,6 +47,7 @@ from app.engine.weg import WegValidationError
 from app.engine.wirtschaftsplan import PlanResult, compute_wirtschaftsplan
 from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.models.audit_event import AuditEvent
+from app.services.financial_scope_service import FinancialScopeService
 from app.services.financial_input_policy import FinancialInputPolicy
 from app.models.economic_plan import EconomicPlan
 from app.models.economic_plan_line import EconomicPlanLine
@@ -244,6 +245,12 @@ class EconomicPlanService:
     # internals
     # ------------------------------------------------------------------
     async def _get_draft_or_404(self, plan_id: uuid.UUID) -> EconomicPlan:
+        scope = FinancialScopeService(self._session, self._org_id, self._user_id)
+        plan = await self._plans.get_by_id(plan_id)
+        if plan is None:
+            raise HTTPException(404, "Financial draft not found")
+        await scope.enter(plan)
+        await scope.lock_inputs()
         plan = await self._plans.get_by_id_for_update(plan_id)
         if plan is None:
             raise HTTPException(status_code=404, detail="Economic plan not found")

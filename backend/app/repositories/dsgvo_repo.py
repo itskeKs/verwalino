@@ -23,7 +23,8 @@ import uuid
 from datetime import date
 from typing import Sequence
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
+from fastapi import HTTPException
 
 from app.models.cost_entry import CostEntry
 from app.models.dunning_notice import DunningNotice
@@ -48,6 +49,13 @@ class DsgvoRepository:
     # ------------------------------------------------------------------
     # Person + role profiles
     # ------------------------------------------------------------------
+    async def require_complete_financial_context(self, person_id, *, capability='read'):
+        complete = await self._session.scalar(text(
+            'SELECT privacy_financial_context_complete(:org,:person,:capability)'),
+            {'org': self._org_id, 'person': person_id, 'capability': capability})
+        if not complete:
+            raise HTTPException(409, 'Complete financial access is required to review retention or export this person')
+
     async def get_person(self, person_id: uuid.UUID) -> Person | None:
         stmt = (
             select(Person)

@@ -12,7 +12,8 @@ import uuid
 from datetime import date
 from typing import Sequence
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
+from fastapi import HTTPException
 
 from app.models.cost_entry import CostEntry
 from app.models.economic_plan import EconomicPlan
@@ -31,6 +32,14 @@ class FristenRepository:
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
+    async def require_complete_overview(self):
+        classified = await self._session.scalar(text("""SELECT
+          NULLIF(current_setting('app.current_scope_id',true),'') IS NOT NULL OR EXISTS(
+            SELECT 1 FROM property p WHERE p.organization_id=:org
+              AND property_has_classified_finance(:org,p.id))"""), {'org': self._org_id})
+        if classified:
+            raise HTTPException(409, 'The organization-wide deadline monitor is unavailable for classified financial data; a scoped view is required')
+
     async def list_properties(self) -> Sequence[Property]:
         stmt = (
             select(Property)

@@ -53,6 +53,7 @@ from app.engine.types import (
     UnitInput,
 )
 from app.models.audit_event import AuditEvent
+from app.services.financial_scope_service import FinancialScopeService
 from app.services.financial_input_policy import FinancialInputPolicy, rental_values, incomplete
 from app.models.property import Property
 from app.models.settlement_line import SettlementLine
@@ -227,6 +228,7 @@ class SettlementService:
             )
         if run.period_start != date(period_year, 1, 1) or run.period_end != date(period_year, 12, 31):
             incomplete("unsupported_derived_subperiod", "advance_payments")
+        await FinancialScopeService(self._session, self._org_id, self._user_id).enter(run, computation=True)
         pay_svc = PaymentService(self._session, self._org_id, self._user_id)
         total = await pay_svc.derive_nk_advance_total(run.lease_agreement_id, period_year)
         run.advance_payments_total = total
@@ -425,6 +427,12 @@ class SettlementService:
     # internals
     # ------------------------------------------------------------------
     async def _get_draft_or_404(self, run_id: uuid.UUID) -> SettlementRun:
+        scope = FinancialScopeService(self._session, self._org_id, self._user_id)
+        run = await self._runs.get_by_id(run_id)
+        if run is None:
+            raise HTTPException(404, "Financial draft not found")
+        await scope.enter(run)
+        await scope.lock_inputs()
         run = await self._runs.get_by_id_for_update(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="Settlement run not found")

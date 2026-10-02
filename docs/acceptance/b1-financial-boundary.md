@@ -30,3 +30,30 @@ and correction bindings, privacy retention/export completeness, other document/j
 adapters, legacy reconciliation/quarantine, and explicit staged activation. SEV
 financial binding remains disabled pending exact unit/owner adapters. This evidence
 does not establish full B1 acceptance or close any external release decision.
+
+## Aggregate and privacy completeness follow-up (0036–0037)
+
+Payment statements, derived NK/Hausgeld totals and dunning queries now reject a
+missing computation context whenever relevant classified finance exists. Explicit
+plan workflows select the plan's scope before loading lines or payments. A selected
+owner must have a relationship in that scope; a foreign owner cannot produce a
+misleading zero. Draft computation locks follow ACL → financial inputs → draft row.
+
+Privacy status, deletion, anonymization and export require complete visibility of
+retained cost/run/plan references. Export additionally requires the exact export
+capability. Definer checks return only completeness, never hidden financial data.
+The organization-wide deadline monitor returns 409 when classified finance exists,
+pending a scoped overview adapter; it no longer swallows authorization errors as
+zero overdue items. This is an explicit temporary functionality limit.
+
+Final verification: **155 passed** across boundary, financial-input policy, M3,
+M4, M6 payments, M7 dunning, M9 privacy and M9 deadlines. Positive coverage includes
+one owner with 100 in the selected scope and 900 elsewhere, exact derived 100,
+foreign-scope owner rejection, complete retained bindings for an authorized reader,
+read-only export denial and successful explicitly granted export. Negative privacy
+and missing-context statement tests were observed failing before their fixes.
+
+Independent review found the owner-membership and swallowed-monitor errors; both
+were repaired and reviewed before the final passing suite. Boundary fixtures use
+isolated organizations because direct DB test fixtures commit at teardown. No
+frontend changes or full scoped-rollout claim in this increment.

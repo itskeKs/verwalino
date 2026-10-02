@@ -43,6 +43,7 @@ from app.engine.mietkonto import (
     tenant_expected_charges,
 )
 from app.models.audit_event import AuditEvent
+from app.services.financial_scope_service import FinancialScopeService
 from app.models.payment import Payment
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.bank_account_repo import BankAccountRepository
@@ -402,6 +403,7 @@ class PaymentService:
             plan = await self._plans.get_by_id(economic_plan_id)
             if plan is None:
                 raise HTTPException(status_code=404, detail="Economic plan not found")
+            await FinancialScopeService(self._session, self._org_id, self._user_id).enter(plan, computation=True)
             if plan.status == "finalized":
                 lines = await self._plan_lines.list_for_plan(economic_plan_id)
                 advance_lines = [

@@ -160,7 +160,7 @@ class DsgvoService:
 
     async def export_person_data(self, person_id: uuid.UUID) -> dict:
         """Art. 15/20 export: the person's stored PII, roles, and bindings."""
-        person = await self._require_person(person_id)
+        person = await self._require_person(person_id, capability='export')
         bindings = await self._gather_bindings(person_id)
         return {
             "person": {
@@ -198,10 +198,11 @@ class DsgvoService:
     # ==================================================================
     # Internals
     # ==================================================================
-    async def _require_person(self, person_id: uuid.UUID):
+    async def _require_person(self, person_id: uuid.UUID, *, capability="read"):
         person = await self._repo.get_person(person_id)
         if person is None:
             raise HTTPException(status_code=404, detail="Person not found")
+        await self._repo.require_complete_financial_context(person_id, capability=capability)
         return person
 
     async def _gather_bindings(self, person_id: uuid.UUID) -> list[RetentionBinding]:

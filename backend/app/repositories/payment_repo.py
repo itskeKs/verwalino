@@ -12,7 +12,8 @@ from __future__ import annotations
 import uuid
 from typing import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.payment import Payment
@@ -22,6 +23,13 @@ from app.repositories.base import TenantRepository
 
 class PaymentRepository(TenantRepository[Payment]):
     model = Payment
+
+    async def require_computation_context(self, *, lease_id=None, owner_id=None):
+        allowed = await self._session.scalar(text(
+            'SELECT payment_computation_context_valid(:org,:lease,:owner)'),
+            {'org': self._org_id, 'lease': lease_id, 'owner': owner_id})
+        if not allowed:
+            raise HTTPException(409, 'Select an exact accounting scope and review unclassified inputs before calculating payments')
 
     # ------------------------------------------------------------------
     # General queries
@@ -64,6 +72,7 @@ class PaymentRepository(TenantRepository[Payment]):
         return result.scalars().all()
 
     async def list_for_lease(self, lease_agreement_id: uuid.UUID) -> Sequence[Payment]:
+        await self.require_computation_context(lease_id=lease_agreement_id)
         stmt = (
             self._base_query()
             .where(Payment.lease_agreement_id == lease_agreement_id)
@@ -73,6 +82,7 @@ class PaymentRepository(TenantRepository[Payment]):
         return result.scalars().all()
 
     async def list_for_owner(self, owner_profile_id: uuid.UUID) -> Sequence[Payment]:
+        await self.require_computation_context(owner_id=owner_profile_id)
         stmt = (
             self._base_query()
             .where(Payment.owner_profile_id == owner_profile_id)
@@ -99,6 +109,7 @@ class PaymentRepository(TenantRepository[Payment]):
         self, lease_agreement_id: uuid.UUID, period_year: int
     ) -> Sequence[Payment]:
         """booked, active NK_VORAUSZAHLUNG payments for one lease + year (§6.2)."""
+        await self.require_computation_context(lease_id=lease_agreement_id)
         stmt = (
             self._booked_active()
             .where(Payment.payment_type == "NK_VORAUSZAHLUNG")
@@ -112,6 +123,7 @@ class PaymentRepository(TenantRepository[Payment]):
         self, owner_profile_id: uuid.UUID, period_year: int
     ) -> Sequence[Payment]:
         """booked, active HAUSGELD_VORSCHUSS payments for one owner + year (§6.3)."""
+        await self.require_computation_context(owner_id=owner_profile_id)
         stmt = (
             self._booked_active()
             .where(Payment.payment_type == "HAUSGELD_VORSCHUSS")

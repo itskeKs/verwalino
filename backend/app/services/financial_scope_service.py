@@ -12,6 +12,13 @@ class FinancialScopeService:
     def __init__(self, session, org_id, user_id):
         self.session, self.org_id, self.user_id = session, org_id, user_id
 
+    async def lock_inputs(self):
+        # Stable order: scope ACL, financial sources, then financial row locks.
+        await self.session.execute(text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
+            {'key': f'scope-acl:{self.org_id}'})
+        await self.session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
+            {'key': f'financial-inputs:{self.org_id}'})
+
     async def enter(self, subject, *, capability=ScopeCapability.READ, computation=False):
         # Keep classification stable too: setup takes this lock exclusively.
         await self.session.execute(text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
@@ -34,8 +41,7 @@ class FinancialScopeService:
         if computation:
             # Source writers share this existing lock. Acquire it before the
             # completeness check, not only later when hashing visible rows.
-            await self.session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
-                {'key': f'financial-inputs:{self.org_id}'})
+            await self.lock_inputs()
         if computation and not await self.session.scalar(text('SELECT scope_financial_inputs_classified(:org,:scope)'),
                 {'org': self.org_id, 'scope': scope_id}):
             raise HTTPException(409, 'Review unclassified financial inputs before calculating this accounting scope')

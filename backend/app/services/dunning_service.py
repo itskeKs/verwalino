@@ -19,6 +19,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
+from app.services.financial_scope_service import FinancialScopeService
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
@@ -212,7 +213,10 @@ class DunningService:
         charges = []
         if economic_plan_id is not None:
             plan = await self._plans.get_by_id(economic_plan_id)
-            if plan is not None and plan.status == "finalized":
+            if plan is None:
+                raise HTTPException(404, "Economic plan not found")
+            await FinancialScopeService(self._session, self._org_id, self._user_id).enter(plan, computation=True)
+            if plan.status == "finalized":
                 lines = await self._plan_lines.list_for_plan(economic_plan_id)
                 advance_lines = [
                     OwnerAdvanceChargeInput(

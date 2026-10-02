@@ -57,6 +57,7 @@ from app.engine.types import (
 from app.engine.vermoegensbericht import AssetReportResult, build_vermoegensbericht
 from app.engine.weg import WegValidationError, compute_weg_jahresabrechnung
 from app.models.audit_event import AuditEvent
+from app.services.financial_scope_service import FinancialScopeService
 from app.services.financial_input_policy import FinancialInputPolicy, incomplete
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
@@ -342,6 +343,12 @@ class WegSettlementService:
     # internals -- WEG
     # ------------------------------------------------------------------
     async def _get_weg_draft_or_404(self, run_id: uuid.UUID) -> SettlementRun:
+        scope = FinancialScopeService(self._session, self._org_id, self._user_id)
+        run = await self._runs.get_by_id(run_id)
+        if run is None:
+            raise HTTPException(404, "Financial draft not found")
+        await scope.enter(run)
+        await scope.lock_inputs()
         run = await self._runs.get_by_id_for_update(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="Settlement run not found")
@@ -355,6 +362,12 @@ class WegSettlementService:
         return run
 
     async def _get_report_draft_or_404(self, run_id: uuid.UUID) -> SettlementRun:
+        scope = FinancialScopeService(self._session, self._org_id, self._user_id)
+        run = await self._runs.get_by_id(run_id)
+        if run is None:
+            raise HTTPException(404, "Financial draft not found")
+        await scope.enter(run)
+        await scope.lock_inputs()
         run = await self._runs.get_by_id_for_update(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="Settlement run not found")
@@ -418,6 +431,10 @@ class WegSettlementService:
         """
         from app.services.payment_service import PaymentService
 
+        plan = await self._plans.get_by_id(economic_plan_id)
+        if plan is None:
+            raise HTTPException(404, "Economic plan not found")
+        await FinancialScopeService(self._session, self._org_id, self._user_id).enter(plan, computation=True)
         pay_svc = PaymentService(self._session, self._org_id, self._user_id)
         plan_advances = await self._plan_advances_per_owner(economic_plan_id)
         result: list[ManualOwnerAdvance] = []
