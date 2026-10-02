@@ -38,6 +38,13 @@ class DeclarationReviewRepository:
             return None
         return await self._imports.get_by_id_for_update(import_id)
 
+    async def review_request(self, import_id: uuid.UUID, kind: str, key: uuid.UUID,
+                             digest: str, result: dict | None = None) -> dict | None:
+        return await self._session.scalar(text(
+            'SELECT declaration_review_request(:org,:job,:kind,:key,:digest,CAST(:result AS jsonb))'),
+            {'org': self._organization_id, 'job': import_id, 'kind': kind, 'key': key,
+             'digest': digest, 'result': json.dumps(result) if result is not None else None})
+
     async def apply_review(self, import_id: uuid.UUID, revision: int,
                            candidate_ids: Sequence[uuid.UUID], decision: str,
                            correction: dict | None, comment: str | None, *, bulk: bool) -> int:

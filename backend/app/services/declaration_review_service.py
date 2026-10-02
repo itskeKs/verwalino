@@ -38,6 +38,7 @@ from app.models.declaration_candidate import (
     DeclarationCandidateIssue,
 )
 from app.repositories.declaration_review_repo import DeclarationReviewRepository
+from app.services.idempotency_service import IdempotencyService
 
 _REJECTION_COMMENT_TYPES = {
     "UPDATE", "RULE", "DOCUMENT_RELATION", "MEA_RESCALE", "WARNING", "BLOCKER"
@@ -59,8 +60,14 @@ class DeclarationReviewService:
         return await self._out_candidates(import_id, candidates)
 
     async def review_one(
-        self, import_id: uuid.UUID, candidate_id: uuid.UUID, request: CandidateReviewRequest
+        self, import_id: uuid.UUID, candidate_id: uuid.UUID, request: CandidateReviewRequest,
+        idempotency_key: uuid.UUID | None = None,
     ) -> ReviewImportOut:
+        digest = IdempotencyService.digest({'import_id': str(import_id), 'candidate_id': str(candidate_id),
+                                             'request': request.model_dump(mode='json')})
+        replay = await self._request_replay(import_id, 'single', idempotency_key, digest)
+        if replay is not None:
+            return replay
         item = await self._lock_reviewable(import_id, request.draft_revision)
         candidates = await self._reviews.lock_candidates(import_id, [candidate_id])
         if not candidates:
@@ -70,23 +77,28 @@ class DeclarationReviewService:
         corrected = self._canonical_correction(candidate, request.corrected_value) if request.decision == "CORRECTED" else None
         evidence, issues = await self._candidate_context(import_id, candidates)
         self._validate_decision(candidate, request.decision, normalized_comment, evidence, issues)
-        if self._is_exact_replay(item.draft_revision, request.draft_revision, candidate, request.decision, corrected, normalized_comment):
-            return ReviewImportOut(draft_revision=item.draft_revision, candidate=(await self._out_candidates(import_id, [candidate]))[0])
         await self._apply_review(import_id, request.draft_revision, [candidate.id],
                                          request.decision, corrected, normalized_comment, bulk=False)
         await self._session.refresh(item)
         await self._session.refresh(candidate)
         await self._revalidate_managed_issues(import_id, item.draft_revision)
         await self._session.flush()
-        return ReviewImportOut(draft_revision=item.draft_revision, candidate=(await self._out_candidates(import_id, [candidate]))[0])
+        result = ReviewImportOut(draft_revision=item.draft_revision, candidate=(await self._out_candidates(import_id, [candidate]))[0])
+        return await self._record_request(import_id, 'single', idempotency_key, digest, result)
 
-    async def review_bulk(self, import_id: uuid.UUID, request: BulkCandidateReviewRequest) -> ReviewImportOut:
+    async def review_bulk(self, import_id: uuid.UUID, request: BulkCandidateReviewRequest,
+                          idempotency_key: uuid.UUID | None = None) -> ReviewImportOut:
         try:
             ids = [uuid.UUID(value) for value in request.candidate_ids]
         except ValueError as exc:
             raise HTTPException(status_code=422, detail={"code": "INVALID_CANDIDATE_ID"}) from exc
         if len(ids) != len(set(ids)):
             raise HTTPException(status_code=422, detail={"code": "DUPLICATE_CANDIDATE_ID"})
+        digest = IdempotencyService.digest({'import_id': str(import_id),
+            'request': {**request.model_dump(mode='json'), 'candidate_ids': sorted(str(value) for value in ids)}})
+        replay = await self._request_replay(import_id, 'bulk', idempotency_key, digest)
+        if replay is not None:
+            return replay
         item = await self._lock_reviewable(import_id, request.draft_revision)
         candidates = await self._reviews.lock_candidates(import_id, ids)
         if not candidates:
@@ -98,8 +110,6 @@ class DeclarationReviewService:
             raise HTTPException(status_code=409, detail={"code": "INDIVIDUAL_REVIEW_REQUIRED"})
         for candidate in candidates:
             self._validate_decision(candidate, request.decision, comment, evidence, issues)
-        if all(self._is_exact_replay(item.draft_revision, request.draft_revision, candidate, request.decision, None, comment) for candidate in candidates):
-            return ReviewImportOut(draft_revision=item.draft_revision, candidates=await self._out_candidates(import_id, candidates))
         await self._apply_review(import_id, request.draft_revision, [candidate.id for candidate in candidates],
                                          request.decision, None, comment, bulk=True)
         await self._session.refresh(item)
@@ -107,7 +117,22 @@ class DeclarationReviewService:
             await self._session.refresh(candidate)
         await self._revalidate_managed_issues(import_id, item.draft_revision)
         await self._session.flush()
-        return ReviewImportOut(draft_revision=item.draft_revision, candidates=await self._out_candidates(import_id, candidates))
+        result = ReviewImportOut(draft_revision=item.draft_revision, candidates=await self._out_candidates(import_id, candidates))
+        return await self._record_request(import_id, 'bulk', idempotency_key, digest, result)
+
+    async def _request_replay(self, import_id, kind, key, digest):
+        if key is None:
+            return None
+        if await self._reviews.lock_import(import_id, capability='prepare') is None:
+            raise _not_found()
+        result = await self._review_command(self._reviews.review_request, import_id, kind, key, digest)
+        return ReviewImportOut.model_validate(result) if result is not None else None
+
+    async def _record_request(self, import_id, kind, key, digest, result):
+        if key is not None:
+            await self._review_command(self._reviews.review_request, import_id, kind, key, digest,
+                                       result.model_dump(mode='json'))
+        return result
 
     async def _apply_review(self, *args, **kwargs):
         return await self._review_command(self._reviews.apply_review, *args, **kwargs)
@@ -124,6 +149,8 @@ class DeclarationReviewService:
             if state == '40001':
                 raise _stale() from exc
             if state == '22023':
+                if 'IDEMPOTENCY_KEY_CONFLICT' in str(exc.orig):
+                    raise HTTPException(status_code=409, detail={'code': 'IDEMPOTENCY_KEY_CONFLICT'}) from exc
                 for code in ('IMPORT_NOT_REVIEWABLE', 'REVIEW_CANDIDATE_NOT_FOUND', 'INVALID_REVIEW_COMMAND',
                              'EVIDENCE_REQUIRED', 'COMMENT_REQUIRED', 'INDIVIDUAL_REVIEW_REQUIRED'):
                     if code in str(exc.orig):
@@ -340,13 +367,6 @@ class DeclarationReviewService:
                     )
                 )
 
-    def _is_exact_replay(self, current_revision, request_revision, candidate, decision, corrected, comment) -> bool:
-        return (
-            request_revision == current_revision
-            and candidate.review_status == decision
-            and candidate.corrected_value_json == corrected
-            and _normalize_comment(candidate.review_comment) == comment
-        )
 
 def _policy(candidate: DeclarationCandidate, evidence, issues) -> CandidateDecision:
     return classify_candidate(CandidateContext(

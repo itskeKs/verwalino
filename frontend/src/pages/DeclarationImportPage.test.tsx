@@ -106,12 +106,13 @@ describe("declaration import API contract", () => {
       draft_revision: 1,
       decision: "CORRECTED",
       corrected_value: "Talstraße 112",
-    });
+    }, "review-key");
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/declaration-imports/import-1/candidates/candidate-1",
       expect.objectContaining({
         method: "PATCH",
+        headers: expect.objectContaining({ "Idempotency-Key": "review-key" }),
         body: JSON.stringify({
           draft_revision: 1,
           decision: "CORRECTED",

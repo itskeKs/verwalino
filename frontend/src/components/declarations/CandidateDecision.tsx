@@ -28,6 +28,7 @@ export function CandidateDecision({ importId, candidate, draftRevision, onSaved,
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mutationInFlight = useRef(false);
+  const reviewRequest = useRef<{ fingerprint: string; key: string } | null>(null);
 
   const submit = async (decision: "ACCEPTED" | "CORRECTED" | "REJECTED" | "NEEDS_CLARIFICATION") => {
     if (pending || mutationInFlight.current) return;
@@ -56,8 +57,13 @@ export function CandidateDecision({ importId, candidate, draftRevision, onSaved,
         : decision === "NEEDS_CLARIFICATION"
           ? { draft_revision: draftRevision, decision, comment: comment.trim() }
           : { draft_revision: draftRevision, decision, ...(comment.trim() ? { comment: comment.trim() } : {}) };
-      const result = await reviewDeclarationCandidate(importId, candidate.id, body);
+      const fingerprint = JSON.stringify([importId, candidate.id, body]);
+      if (reviewRequest.current?.fingerprint !== fingerprint) {
+        reviewRequest.current = { fingerprint, key: globalThis.crypto.randomUUID() };
+      }
+      const result = await reviewDeclarationCandidate(importId, candidate.id, body, reviewRequest.current.key);
       await onSaved(result);
+      reviewRequest.current = null;
     } catch (caught) {
       if (caught instanceof ApiError && caught.status === 409) {
         setError("Der Entwurf wurde parallel geändert. Aktuelle Daten wurden neu geladen; Ihre Korrektur bleibt erhalten.");

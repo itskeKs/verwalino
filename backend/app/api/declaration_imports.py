@@ -213,20 +213,22 @@ async def review_candidate(
     import_id: uuid.UUID,
     candidate_id: uuid.UUID,
     body: CandidateReviewRequest,
+    idempotency_key: uuid.UUID | None = Header(default=None, alias="Idempotency-Key"),
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_live_review_db),
 ):
-    return await DeclarationReviewService(db, auth.organization_id, auth.user_id).review_one(import_id, candidate_id, body)
+    return await DeclarationReviewService(db, auth.organization_id, auth.user_id).review_one(import_id, candidate_id, body, idempotency_key)
 
 
 @router.post("/{import_id}/candidates/bulk-review", response_model=ReviewImportOut)
 async def bulk_review_candidates(
     import_id: uuid.UUID,
     body: BulkCandidateReviewRequest,
+    idempotency_key: uuid.UUID | None = Header(default=None, alias="Idempotency-Key"),
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_live_review_db),
 ):
-    return await DeclarationReviewService(db, auth.organization_id, auth.user_id).review_bulk(import_id, body)
+    return await DeclarationReviewService(db, auth.organization_id, auth.user_id).review_bulk(import_id, body, idempotency_key)
 
 
 @router.get("/{import_id}/approval-preview", response_model=ApprovalPreviewOut)

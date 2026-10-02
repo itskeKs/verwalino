@@ -950,3 +950,21 @@ See [design, trust contract and evidence](../2026-10-02-declaration-review-runti
 Durable review request-key replay, remaining indirect consumers, legacy reconciliation
 and reviewed activation evidence still remain. Activation is false and B1 is not
 complete; the full M-A–M-G implementation continues.
+
+### Durable review request retries (0074)
+
+Optional UUID Idempotency-Key headers preserve legacy API compatibility while the
+first-party single/bulk review UI always sends a retained key. Private actor/operation
+receipts commit with the full review transaction; identical retries return the saved
+response after checking current source READ/PREPARE and live writer authority.
+Bulk UUID selection order is canonical. Changed request content returns 409; newer
+review decisions are never overwritten by replay. Missing keys keep stale-revision
+behavior. Downgrade refuses to erase completed receipts.
+
+Evidence: 32 initial backend checks; 104 expanded checks plus two corrected new
+fixture expectations; final 11 idempotency/migration cases pass. Two UI RED tests
+then 43 UI passes; lint/build, simulated deployment and shell syntax pass. Chromium
+proved lost-response retry, identical key/result, one revision and reload persistence
+under strict source enforcement. Independent review's bulk-order finding is fixed.
+See [review retry implementation](../2026-10-02-declaration-review-idempotency.md).
+B1 activation and the remaining overall plan are still incomplete.

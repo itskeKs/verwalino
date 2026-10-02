@@ -121,6 +121,10 @@ def run_migrations():
         if cursor.fetchone()[0] is not None:
             cursor.execute("TRUNCATE public.dunning_scope_context")
 
+        cursor.execute("SELECT to_regclass('public.declaration_review_receipt')")
+        if cursor.fetchone()[0] is not None:
+            cursor.execute("TRUNCATE public.declaration_review_receipt")
+
     # Downgrade to clean state, then upgrade to head
     command.downgrade(alembic_cfg, "base")
     command.upgrade(alembic_cfg, "head")

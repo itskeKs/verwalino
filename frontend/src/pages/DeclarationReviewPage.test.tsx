@@ -181,7 +181,40 @@ describe("Teilungserklärung review", () => {
 
     await waitFor(() => expect(bulk).toHaveBeenCalledWith("import-1", {
       draft_revision: 3, candidate_ids: ["safe"], decision: "ACCEPTED",
-    }));
+    }, expect.any(String)));
+  });
+
+  it("reuses the single-review key after a lost response and replaces it when input changes", async () => {
+    mockReviewData([candidate()]);
+    const review = vi.spyOn(declarationApi, "reviewDeclarationCandidate").mockRejectedValue(new Error("Antwort verloren"));
+    const randomUUID = vi.fn().mockReturnValueOnce("review-key-1").mockReturnValueOnce("review-key-2");
+    vi.stubGlobal("crypto", { randomUUID });
+    renderReview();
+    fireEvent.click(await screen.findByRole("button", { name: "Akzeptieren" }));
+    await screen.findByText("Antwort verloren");
+    fireEvent.click(screen.getByRole("button", { name: "Akzeptieren" }));
+    await waitFor(() => expect(review).toHaveBeenCalledTimes(2));
+    expect(review.mock.calls[0]).toEqual(review.mock.calls[1]);
+    expect(review.mock.calls[1][3]).toBe("review-key-1");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Akzeptieren" })).toBeEnabled());
+    fireEvent.change(screen.getByLabelText("Kommentar"), { target: { value: "Geprüft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Akzeptieren" }));
+    await waitFor(() => expect(review).toHaveBeenCalledTimes(3));
+    expect(review.mock.calls[2][3]).toBe("review-key-2");
+  });
+
+  it("reuses the bulk-review key after a lost response", async () => {
+    mockReviewData([candidate({ id: "safe" })]);
+    const bulk = vi.spyOn(declarationApi, "bulkReviewDeclarationCandidates").mockRejectedValue(new Error("Antwort verloren"));
+    vi.stubGlobal("crypto", { randomUUID: () => "bulk-key" });
+    renderReview();
+    fireEvent.click(await screen.findByRole("checkbox", { name: /für sammelfreigabe auswählen/i }));
+    fireEvent.click(screen.getByRole("button", { name: /sichere vorschläge akzeptieren/i }));
+    await screen.findByText("Antwort verloren");
+    fireEvent.click(screen.getByRole("button", { name: /sichere vorschläge akzeptieren/i }));
+    await waitFor(() => expect(bulk).toHaveBeenCalledTimes(2));
+    expect(bulk.mock.calls[0]).toEqual(bulk.mock.calls[1]);
+    expect(bulk.mock.calls[1][2]).toBe("bulk-key");
   });
 
   it("submits a correction as parsed JSON, not as a display string", async () => {
@@ -199,7 +232,7 @@ describe("Teilungserklärung review", () => {
 
     await waitFor(() => expect(review).toHaveBeenCalledWith("import-1", "candidate-1", {
       draft_revision: 3, decision: "CORRECTED", corrected_value: { kind: "MEA", numerator: 18, denominator: 1000 },
-    }));
+    }, expect.any(String)));
   });
 
   it("retains an unsent MEA correction during and after a delayed stale reload", async () => {

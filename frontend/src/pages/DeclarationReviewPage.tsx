@@ -60,6 +60,8 @@ function DeclarationReviewImportPage({ importId }: { importId: string | undefine
   const openingConfirmation = useRef(false);
   const idempotencyKeyRef = useRef<string | null>(null);
   const approvalInFlight = useRef(false);
+  const bulkRequest = useRef<{ fingerprint: string; key: string } | null>(null);
+  const bulkInFlight = useRef(false);
   const submittedApproval = useRef<DeclarationApprovalRequest | null>(null);
   const [audienceEnabled, setAudienceEnabled] = useState(false);
   const [audienceLabel, setAudienceLabel] = useState("Gebäudedaten");
@@ -121,15 +123,23 @@ function DeclarationReviewImportPage({ importId }: { importId: string | undefine
   }, [reload]);
 
   const handleBulkAccept = useCallback(async (ids: string[]) => {
-    if (!importId || !preview || ids.length === 0 || bulkPending) return;
+    if (!importId || !preview || ids.length === 0 || bulkPending || bulkInFlight.current) return;
+    bulkInFlight.current = true;
     setBulkPending(true);
     setError(null);
     try {
-      await bulkReviewDeclarationCandidates(importId, { draft_revision: preview.draft_revision, candidate_ids: ids, decision: "ACCEPTED" });
+      const body = { draft_revision: preview.draft_revision, candidate_ids: [...ids].sort(), decision: "ACCEPTED" as const };
+      const fingerprint = JSON.stringify([importId, body]);
+      if (bulkRequest.current?.fingerprint !== fingerprint) {
+        bulkRequest.current = { fingerprint, key: globalThis.crypto.randomUUID() };
+      }
+      await bulkReviewDeclarationCandidates(importId, body, bulkRequest.current.key);
       await reload();
+      bulkRequest.current = null;
     } catch (caught) {
       setError(readableError(caught));
     } finally {
+      bulkInFlight.current = false;
       setBulkPending(false);
     }
   }, [bulkPending, importId, preview, reload]);

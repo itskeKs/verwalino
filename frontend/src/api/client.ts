@@ -76,8 +76,9 @@ export const api = {
       body: body ? JSON.stringify(body) : undefined,
     });
   },
-  patch<T>(url: string, body?: unknown): Promise<T> {
+  patch<T>(url: string, body?: unknown, options?: RequestInit): Promise<T> {
     return request<T>(url, {
+      ...options,
       method: "PATCH",
       body: body ? JSON.stringify(body) : undefined,
     });

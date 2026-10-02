@@ -209,20 +209,24 @@ export function reviewDeclarationCandidate(
   importId: string,
   candidateId: string,
   body: CandidateReviewRequest,
+  idempotencyKey?: string,
 ): Promise<CandidateReviewResult> {
   return api.patch<CandidateReviewResult>(
     `/api/declaration-imports/${importId}/candidates/${candidateId}`,
     body,
+    idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined,
   );
 }
 
 export function bulkReviewDeclarationCandidates(
   importId: string,
   body: BulkCandidateReviewRequest,
+  idempotencyKey?: string,
 ): Promise<CandidateReviewResult> {
   return api.post<CandidateReviewResult>(
     `/api/declaration-imports/${importId}/candidates/bulk-review`,
     body,
+    idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined,
   );
 }
 

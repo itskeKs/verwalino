@@ -472,3 +472,20 @@ no source text and expire via bounded nonwaiting cleanup.
 This protects the review pipeline against ordinary runtime SQL, not compromise of
 the trusted API process or review secret. Worker provider processing never receives
 that credential. Source activation remains disabled pending the rest of B1.
+
+### Review retry receipts (0074)
+
+Both review mutation endpoints accept an optional UUID Idempotency-Key header.
+First-party clients retain the key for an unchanged request after a network failure;
+a changed revision, selection, decision or correction starts a new key. Replays
+recheck current live writer and source access, then return the original response
+without applying another decision. Refresh current review state after success.
+Keys are actor/operation scoped; bulk candidate ordering is canonical. Changed
+content under the same key returns IDEMPOTENCY_KEY_CONFLICT (409).
+
+The private declaration_review_receipt table is accessed only by the isolated
+review runtime command; do not grant direct runtime access. Its response can contain
+source-backed candidate/evidence data and must remain protected as source material.
+Do not purge receipts to resolve retry conflicts. A schema downgrade with receipts
+refuses to discard them; disable writers or forward-repair instead. Source activation
+remains disabled until the remaining B1 acceptance work is complete.
