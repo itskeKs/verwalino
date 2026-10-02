@@ -2,7 +2,7 @@
 import uuid
 from fastapi import APIRouter,Depends,Header
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.live_principal import get_live_writer_db,get_live_member_db
+from app.core.live_principal import get_live_writer_db,get_live_member_db,get_live_publication_db
 from app.core.tenant import AuthContext,require_admin_dep,get_current_user
 from app.repositories.pagination import Page,PageQuery,page_query
 from app.schemas.property_source_classification import SourceClassificationCreate,SourceClassificationOut,PendingSourceClassificationOut
@@ -25,7 +25,7 @@ async def original_content(document_id: uuid.UUID,auth: AuthContext=Depends(requ
 
 @router.post('',response_model=SourceClassificationOut,status_code=201)
 async def classify_source(body: SourceClassificationCreate,idempotency_key: uuid.UUID=Header(),
-    auth: AuthContext=Depends(require_admin_dep),db: AsyncSession=Depends(get_live_writer_db)):
+    auth: AuthContext=Depends(require_admin_dep),db: AsyncSession=Depends(get_live_publication_db)):
     return await PropertySourceClassificationService(db,auth).classify(body,idempotency_key)
 
 

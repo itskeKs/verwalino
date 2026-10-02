@@ -46,9 +46,23 @@ async def configure_budget(seed):
 
 @asynccontextmanager
 async def granted_graph(api,seed,graph):
-    domain,grant_id=await grant(api,seed,graph.property_id,caps=['read'])
-    await configure_budget(seed)
-    try: yield domain,grant_id
+    import uuid
+    from tests.test_bound_source_access import classify
+    domain,grant_id=await grant(api,seed,graph.property_id,caps=['read','prepare','approve'])
+    try:
+        # The fixture contains bound legacy originals. Review their known actual
+        # uploader through the production API before exercising strict Q&A.
+        async with get_tenant_session(graph.organization_id) as db:
+            documents=(await db.scalars(text('SELECT id FROM property_document WHERE property_id=:property'),{'property':graph.property_id})).all()
+        for document in documents:
+            await classify(api,{'document':document,'property':graph.property_id})
+        assert (await api.post(f'/api/property-data-domains/{domain}/grants/{grant_id}/revoke')).status_code==204
+        response=await api.post(f'/api/property-data-domains/{domain}/grants',headers={'Idempotency-Key':str(uuid.uuid4())},
+            json={'user_id':str(seed['user_a_admin_id']),'capabilities':['read'],'reason':'Query source reader'})
+        assert response.status_code==201,response.text
+        grant_id=response.json()['id']
+        await configure_budget(seed)
+        yield domain,grant_id
     finally:
         await mutate(text('DELETE FROM property_knowledge_query_run WHERE property_id=:property'),{'property':graph.property_id})
         # Only the guarded disposable test DB permits dropping synthetic immutable

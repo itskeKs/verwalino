@@ -484,13 +484,13 @@ async def approved_knowledge_graph(seed_data):
                     id=created["main"], organization_id=org_id, property_id=property_row.id,
                     doc_type="DECLARATION", title="Teilungserklärung", original_filename="synthetic-main.pdf",
                     mime_type="application/pdf", content_byte_size=1, content_sha256="1" * 64,
-                    storage_uri="test/synthetic-main.pdf", storage_backend="LOCAL", page_count=4, uploaded_by=user_id,
+                    storage_uri="test/synthetic-main.pdf", storage_backend="LOCAL", page_count=4, uploaded_by=seed_data['user_a_admin_id'],
                 )
                 amendment = PropertyDocument(
                     id=created["amendment"], organization_id=org_id, property_id=property_row.id,
                     doc_type="AMENDMENT", title="Nachtrag", original_filename="synthetic-amendment.pdf",
                     mime_type="application/pdf", content_byte_size=1, content_sha256="2" * 64,
-                    storage_uri="test/synthetic-amendment.pdf", storage_backend="LOCAL", page_count=3, uploaded_by=user_id,
+                    storage_uri="test/synthetic-amendment.pdf", storage_backend="LOCAL", page_count=3, uploaded_by=seed_data['user_a_admin_id'],
                 )
                 unit_one = Unit(id=created["unit_one"], organization_id=org_id, property_id=property_row.id, number="1", location="EG", building_part="Haus A", area=Decimal("50"), heated_area=Decimal("50.0"), usage_type="WOHNUNG", mea=Decimal("47732"))
                 unit_two = Unit(id=created["unit_two"], organization_id=org_id, property_id=property_row.id, number="2", location="OG", building_part="Haus A", usage_type="WOHNUNG", mea=Decimal("47732"))

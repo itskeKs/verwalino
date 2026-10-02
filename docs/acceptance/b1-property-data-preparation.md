@@ -453,3 +453,37 @@ The UI explicitly says these are staged decisions and do not yet restrict curren
 compatibility access. Classification-aware source resolution, quarantine dominance,
 source CRUD/RLS, complete indirect disclosure/effect checks and reviewed activation
 coverage still gate B1 completion.
+
+## Strict bound-source proof resolution (0057)
+
+At base `5560667`, two test-first failures demonstrated acceptance of a bound
+legacy original without proof and a quarantined original with older attachment
+proof. The new private bound-source predicate rejects both outside PREPARATION.
+Exact retained attachment/review/publication and ADMITTED classification remain
+usable with the consuming actor's current rights. Quarantine dominates all proof.
+Document and import resolution use the same metadata predicate without recursion.
+Classification authority changes acquire exclusive ACL before source row locks.
+
+**19 initial binding/new cases passed**, followed by **50 expanded cases** covering
+Q&A source enforcement, classification retries and source locks. **150 further
+regression cases passed** across source access/admission/review/enforcement,
+publication and knowledge search/query. One migration assertion incorrectly
+expected the real readiness gate inside its deliberately substituted disposable
+enforcement context; correcting that test expectation produced a **passing focused
+rerun**. No production change was needed for that failure. Reuse unchanged passing
+evidence; UI behavior is unchanged by this backend-only increment.
+
+Evidence includes earlier proof retention and NEW publication after binding,
+reviewer versus reader revocation, current classification through the production
+API, actual concurrent ACL waiting before import/document row locks, wrong definer
+owner failing closed, application execution denial for private helpers, seven
+NOWAIT migration dependencies, strict rollback refusal and PREPARATION roundtrip
+retaining classification rows. A hidden quarantined original blocks derived
+source access and the entire Q&A request with zero provider calls/reservations.
+An incompatible queued bound original is durably cancelled before extraction.
+The independent read-only reviewer found no actionable security/correctness issue.
+Logs: `/tmp/hv-bound-source-{red,first,boundary,regression,migration-final}.log`.
+
+Strict activation remains unavailable. Source CRUD/RLS, financial whole-input
+checks, copied snapshots, export/audit/privacy closure and reviewed coverage still
+gate B1 completion; this does not claim a complete source authorization rollout.

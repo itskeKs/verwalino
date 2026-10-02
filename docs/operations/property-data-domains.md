@@ -240,3 +240,25 @@ Populated downgrade refuses to discard classification evidence. Preserve it and
 repair forward. Integrating classification into strict source resolution, making
 quarantine dominate earlier proof, and enforcing complete activation coverage are
 still subsequent requirements.
+
+## Strict bound-source resolution (0057)
+
+The prepared strict resolver now honors the classifications above. QUARANTINED
+always denies source access in ENFORCED and PAUSED state, including when earlier
+admission evidence exists. ADMITTED must match the original hash, property,
+uploader and exact current source context. Existing valid attachment, unbound
+review and explicit new-property publication evidence remain valid. A historical
+property association alone is insufficient. Current reader grants remain required
+independently of the retained reviewer's former grant.
+
+Classification commits take the exclusive organization ACL lock before source
+rows, serializing decisions with in-flight authorization. Q&A checks the complete
+expected graph and refuses partial input when a denied original is hidden by RLS.
+Workers reject incompatible bound sources before loading them. These are staged
+strict-mode integrations: ordinary compatibility access is unchanged and there is
+still no supported activation command. Full indirect disclosure/effect coverage
+and source CRUD/RLS remain required.
+
+Migration 0057 refuses busy proof/source dependencies immediately and refuses
+rollback while any organization is ENFORCED or PAUSED. A PREPARATION rollback
+retains classifications and restores the earlier prepared resolvers.

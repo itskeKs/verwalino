@@ -81,7 +81,7 @@ class PropertySourceClassificationService(AuthorizationService):
         return previous
 
     async def classify(self,body,key):
-        await self._lock()
+        await self._lock(exclusive=True)
         digest=await self.session.scalar(text("SELECT encode(sha256(convert_to(CAST(:body AS jsonb)::text,'UTF8')),'hex')"),
             {'body':json.dumps(body.model_dump(mode='json'))})
         previous=await self._previous(body.document_id,key)
