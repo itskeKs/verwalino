@@ -405,3 +405,19 @@ references remain hidden. Audience/parent identities cannot move; optional agend
 associations retain same-meeting lifecycle behavior. Existing register immutability
 and history survive migration and rollback rehearsal. See
 [meeting boundary evidence](../2026-10-02-meeting-source-access.md).
+
+## Relationship history source boundary (0067)
+
+Strict lease and ownership history reads require complete property source READ;
+changes require PREPARE and a non-anonymized person. Expected profile/person/unit
+organization coherence is checked before consumers can treat the source graph as
+complete. Preserve malformed history for reviewed remediation instead of interpreting
+filtered rows as vacancy. Person-linked privacy decisions and exports require all
+expected history properties, including inactive relationships.
+
+History audience IDs and profile-to-person identity cannot be reassigned. Existing
+financial-input serialization remains in force; a writer released after anonymization
+is rejected using current person state. PAUSED retains authorized reads while
+stopping effects. History audit entries inherit the same ordinary source boundary.
+See [history evidence](../2026-10-02-history-source-access.md); contact custody and
+full person/profile access remain pending before activation.

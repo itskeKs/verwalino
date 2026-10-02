@@ -12,9 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.tenant import (
     AuthContext,
     get_current_user,
-    get_db,
     require_write_dep,
 )
+from app.core.live_principal import get_live_member_db, get_live_writer_db
+from app.services.history_source_access import require_history_prepare
 from app.core.temporal import (
     db_exclusive_to_api_inclusive,
     inclusive_last_day_to_db_exclusive,
@@ -49,7 +50,7 @@ async def list_ownership(
     unit_id: uuid.UUID | None = None,
     at_date: date | None = None,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     repo = OwnershipHistoryRepository(db, auth.organization_id)
     if unit_id and at_date:
@@ -65,7 +66,7 @@ async def list_ownership(
 async def create_ownership(
     body: OwnershipCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     from decimal import Decimal
 
@@ -75,12 +76,14 @@ async def create_ownership(
     # (last day + 1). valid_from unchanged; NULL stays open-ended. Lets a seamless
     # owner change "Alt bis 30.06." + "Neu ab 01.07." coexist without a false 409.
     oh = OwnershipHistory(
+        id=uuid.uuid4(),
         unit_id=uuid.UUID(body.unit_id),
         owner_profile_id=uuid.UUID(body.owner_profile_id),
         valid_from=body.valid_from,
         valid_to=inclusive_last_day_to_db_exclusive(body.valid_to),
         mea_share=Decimal(body.mea_share) if body.mea_share else None,
     )
+    await require_history_prepare(db, auth.organization_id, "ownership_history", oh)
     try:
         oh = await repo.create(oh)
     except Exception as e:

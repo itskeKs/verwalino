@@ -13,9 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.tenant import (
     AuthContext,
     get_current_user,
-    get_db,
     require_write_dep,
 )
+from app.core.live_principal import get_live_member_db, get_live_writer_db
+from app.services.history_source_access import require_history_prepare
 from app.core.temporal import (
     db_exclusive_to_api_inclusive,
     inclusive_last_day_to_db_exclusive,
@@ -56,7 +57,7 @@ async def list_leases(
     unit_id: uuid.UUID | None = None,
     at_date: date | None = None,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     repo = LeaseAgreementRepository(db, auth.organization_id)
     if unit_id and at_date:
@@ -73,7 +74,7 @@ async def list_leases(
 async def create_lease(
     body: LeaseCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     repo = LeaseAgreementRepository(db, auth.organization_id)
     # API write edge (ADR-0006): the user enters the INCLUSIVE last occupied day
@@ -82,6 +83,7 @@ async def create_lease(
     # first occupied day and is stored unchanged; NULL stays open-ended. This is
     # what lets "A bis 30.06." + "B ab 01.07." coexist without a false EXCLUDE 409.
     la = LeaseAgreement(
+        id=uuid.uuid4(),
         unit_id=uuid.UUID(body.unit_id),
         tenant_profile_id=uuid.UUID(body.tenant_profile_id),
         valid_from=body.valid_from,
@@ -91,6 +93,7 @@ async def create_lease(
         deposit=Decimal(body.deposit) if body.deposit else None,
         notes=body.notes,
     )
+    await require_history_prepare(db, auth.organization_id, "lease_agreement", la)
     try:
         la = await repo.create(la)
     except Exception as e:

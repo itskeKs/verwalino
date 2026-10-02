@@ -784,3 +784,32 @@ review accepted the boundary without actionable findings. Evidence is linked in
 No E5 legal voting/process completion is claimed. Person/profile/history, indirect
 reports, worker lifecycle integrity and activation coverage remain open. B1 is still
 incomplete; source activation remains false and later M-B–M-G work remains.
+
+## Relationship history source boundary (0067)
+
+At base `87c7067`, four expected red cases reproduced ordinary history disclosure,
+writes under READ alone, privacy access without expected history sources, and mixed
+historical context accepted as complete. History CRUD now resolves current unit/
+property authority and same-organization profile/person identity. The complete
+source predicate validates expected history coherence before financial, master,
+Q&A and meeting consumers can treat filtered rows as complete inputs. Privacy also
+checks every expected relationship property, including inactive history.
+
+Initial privacy/M3/M4/M9 integration passed **83 tests**, and expanded history,
+financial-input, master, profile, account-statement and meeting coverage passed
+**83 tests**. Two additional red cases exposed profile-to-person reassignment;
+identity triggers now prevent it. The next focused run passed 71 cases.
+
+Independent review prompted a two-connection check of erasure and history writes.
+The existing 0031 financial-input lock already serialized them, but the regression
+confirmed a waiting writer could create an active relationship after erasure. The
+write predicate now checks current person state after that wait. Final history/
+profile/master/privacy verification passed **72 cases**, and the race passed alone
+with explicit positive pre-wait authority assertions. Review accepted the boundary
+without remaining findings. Migration round-trip preserves history/audit hashes,
+strict downgrade is refused, and all nine NOWAIT dependencies are covered.
+
+See [history source evidence](../2026-10-02-history-source-access.md). Person/profile
+contact custody, other source/indirect report coverage, worker lifecycle integrity
+and activation evidence remain open. Source activation is false; B1 and later
+implementation milestones remain incomplete.
