@@ -20,6 +20,7 @@ import uuid
 from datetime import date, datetime, timezone
 
 from fastapi import HTTPException
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agenda_item import AgendaItem
@@ -50,6 +51,18 @@ class MeetingService:
         self._persons = PersonRepository(session, org_id)
         self._audit = AuditRepository(session, org_id)
 
+    async def require_source_access(self, kind: str, resource: uuid.UUID, capability: str) -> None:
+        if kind == 'property':
+            allowed = await self._session.scalar(text(
+                'SELECT property_meeting_property_access(:org,:resource,:capability)'),
+                {'org': self._org_id, 'resource': resource, 'capability': capability})
+        else:
+            allowed = await self._session.scalar(text(
+                'SELECT property_meeting_access(:org,:kind,:resource,:capability)'),
+                {'org': self._org_id, 'kind': kind, 'resource': resource, 'capability': capability})
+        if not allowed:
+            raise HTTPException(status_code=404, detail="Meeting source access unavailable")
+
     # ------------------------------------------------------------------
     # Meeting CRUD
     # ------------------------------------------------------------------
@@ -61,6 +74,7 @@ class MeetingService:
         location: str = "",
         invitation_text: str | None = None,
     ) -> OwnersMeeting:
+        await self.require_source_access("property", property_id, "prepare")
         prop = await self._properties.get_by_id(property_id)
         if prop is None:
             raise HTTPException(status_code=404, detail="Property not found")
@@ -100,6 +114,7 @@ class MeetingService:
         invitation_text: str | None = ...,  # type: ignore[assignment]
         protocol_text: str | None = ...,  # type: ignore[assignment]
     ) -> OwnersMeeting:
+        await self.require_source_access("owners_meeting", meeting_id, "prepare")
         meeting = await self._meetings.get_by_id(meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail="Meeting not found")
@@ -146,6 +161,7 @@ class MeetingService:
 
     async def mark_held(self, meeting_id: uuid.UUID) -> OwnersMeeting:
         """Transition a PLANNED meeting to HELD (one-way)."""
+        await self.require_source_access("owners_meeting", meeting_id, "prepare")
         meeting = await self._meetings.get_by_id(meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail="Meeting not found")
@@ -166,6 +182,7 @@ class MeetingService:
 
     async def delete_meeting(self, meeting_id: uuid.UUID) -> None:
         """Delete a PLANNED meeting. HELD meetings cannot be deleted."""
+        await self.require_source_access("owners_meeting", meeting_id, "prepare")
         meeting = await self._meetings.get_by_id(meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail="Meeting not found")
@@ -189,6 +206,7 @@ class MeetingService:
         title: str,
         description: str | None = None,
     ) -> AgendaItem:
+        await self.require_source_access("owners_meeting", meeting_id, "prepare")
         meeting = await self._meetings.get_by_id(meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail="Meeting not found")
@@ -223,6 +241,7 @@ class MeetingService:
         title: str | None = None,
         description: str | None = ...,  # type: ignore[assignment]
     ) -> AgendaItem:
+        await self.require_source_access("agenda_item", item_id, "prepare")
         item = await self._agenda.get_by_id(item_id)
         if item is None:
             raise HTTPException(status_code=404, detail="Agenda item not found")
@@ -248,6 +267,7 @@ class MeetingService:
         return item
 
     async def delete_agenda_item(self, item_id: uuid.UUID) -> None:
+        await self.require_source_access("agenda_item", item_id, "prepare")
         item = await self._agenda.get_by_id(item_id)
         if item is None:
             raise HTTPException(status_code=404, detail="Agenda item not found")
@@ -278,6 +298,7 @@ class MeetingService:
         votes_abstain_mea: str | None = None,
         majority_type: str | None = None,
     ) -> Resolution:
+        await self.require_source_access("owners_meeting", meeting_id, "prepare")
         meeting = await self._meetings.get_by_id(meeting_id)
         if meeting is None:
             raise HTTPException(status_code=404, detail="Meeting not found")
@@ -326,6 +347,7 @@ class MeetingService:
 
     async def delete_resolution(self, resolution_id: uuid.UUID) -> None:
         """Delete a resolution. Fails if it has a register entry."""
+        await self.require_source_access("resolution", resolution_id, "prepare")
         res = await self._resolutions.get_by_id(resolution_id)
         if res is None:
             raise HTTPException(status_code=404, detail="Resolution not found")
@@ -359,6 +381,7 @@ class MeetingService:
         Assigns the next sequential number for the property. The UNIQUE
         constraint prevents duplicates; on collision the caller must retry.
         """
+        await self.require_source_access("resolution", resolution_id, "approve")
         resolution = await self._resolutions.get_by_id(resolution_id)
         if resolution is None:
             raise HTTPException(status_code=404, detail="Resolution not found")
@@ -412,6 +435,7 @@ class MeetingService:
 
         This is the ONLY allowed mutation on a register entry (ADR-0011).
         """
+        await self.require_source_access("resolution_register_entry", entry_id, "approve")
         entry = await self._register.get_by_id(entry_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="Register entry not found")

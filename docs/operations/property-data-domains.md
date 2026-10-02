@@ -389,3 +389,19 @@ tables retain their lack of direct app SELECT rights. Person/history and meeting
 audit kinds are preactivation exclusions until their policies are integrated.
 No event history is rewritten, and strict rollback refuses to remove this boundary.
 See [audit disclosure evidence](../2026-10-02-source-audit-disclosure.md).
+
+## Meeting source boundary (0066)
+
+Strict meeting, agenda, resolution and register readers require the complete
+property source audience. PREPARE governs ordinary edits; APPROVE governs register
+entry and annotation. PAUSED allows authorized reads/exports and refuses effects.
+Both PDF routes require READ plus EXPORT throughout collection/rendering/release.
+Mixed historical parent relationships block the affected meeting graph, including
+exports, instead of silently removing rows. Preserve those records for reviewed
+remediation; never fix their audience by guessing another property.
+
+Meeting audit events now use the same source contract. Strict missing/deleted
+references remain hidden. Audience/parent identities cannot move; optional agenda
+associations retain same-meeting lifecycle behavior. Existing register immutability
+and history survive migration and rollback rehearsal. See
+[meeting boundary evidence](../2026-10-02-meeting-source-access.md).

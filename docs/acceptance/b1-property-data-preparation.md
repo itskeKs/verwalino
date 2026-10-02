@@ -762,3 +762,25 @@ Person/history and meeting audit kinds remain hidden in strict mode until their
 source policies are integrated. Ordinary history/meeting/report surfaces, worker
 lifecycle integrity and activation coverage remain open. Source activation stays
 false, and B1 plus subsequent M-B–M-G work remain incomplete.
+
+## Meeting source boundary (0066)
+
+At base `7d846aa`, four expected red tests demonstrated meeting source read/write
+and both PDF export bypasses. Four-table CRUD policies now require current source
+READ/PREPARE, with APPROVE for register effects and EXPORT for both PDFs. Trusted
+expected graph validation rejects mixed historical relationships; immutable audience
+and parent identities prevent reparenting. The optional agenda association remains
+within the same meeting and retains its existing delete-to-null behavior.
+
+The first 46-case run passed; the expanded source/M8/audit run passed **51 cases**.
+Strict positive lifecycle, audit visibility, paused export, revoked reads, register
+approval, malformed legacy graphs, raw context attacks and expiry during PDF
+discovery are covered. A separate run passed **45 migration and isolation cases**,
+including all seven NOWAIT dependencies, history-preserving preparation round-trip
+and strict rollback refusal, RLS coverage, RBAC and tenant isolation. Independent
+review accepted the boundary without actionable findings. Evidence is linked in
+[the meeting source note](../2026-10-02-meeting-source-access.md).
+
+No E5 legal voting/process completion is claimed. Person/profile/history, indirect
+reports, worker lifecycle integrity and activation coverage remain open. B1 is still
+incomplete; source activation remains false and later M-B–M-G work remains.

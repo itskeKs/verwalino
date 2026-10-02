@@ -16,7 +16,8 @@ from pydantic import BaseModel
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
+from app.core.tenant import AuthContext, get_current_user, require_write_dep
+from app.core.live_principal import get_live_member_db, get_live_writer_db
 from app.repositories.agenda_item_repo import AgendaItemRepository
 from app.repositories.owners_meeting_repo import OwnersMeetingRepository
 from app.repositories.register_entry_repo import RegisterEntryRepository
@@ -203,7 +204,7 @@ def _entry_out(e) -> RegisterEntryOut:
 async def list_meetings(
     property_id: uuid.UUID | None = None,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     repo = OwnersMeetingRepository(db, auth.organization_id)
     if property_id:
@@ -217,7 +218,7 @@ async def list_meetings(
 async def get_meeting(
     meeting_id: uuid.UUID,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     repo = OwnersMeetingRepository(db, auth.organization_id)
     m = await repo.get_by_id(meeting_id)
@@ -230,7 +231,7 @@ async def get_meeting(
 async def create_meeting(
     body: MeetingCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = MeetingService(db, auth.organization_id, auth.user_id)
     m = await svc.create_meeting(
@@ -248,7 +249,7 @@ async def update_meeting(
     meeting_id: uuid.UUID,
     body: MeetingUpdate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = MeetingService(db, auth.organization_id, auth.user_id)
     # Convert None fields to sentinel for optional update
@@ -267,7 +268,7 @@ async def update_meeting(
 async def mark_meeting_held(
     meeting_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = MeetingService(db, auth.organization_id, auth.user_id)
     m = await svc.mark_held(meeting_id)
@@ -278,7 +279,7 @@ async def mark_meeting_held(
 async def delete_meeting(
     meeting_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = MeetingService(db, auth.organization_id, auth.user_id)
     await svc.delete_meeting(meeting_id)
@@ -291,7 +292,7 @@ async def delete_meeting(
 async def list_agenda_items(
     meeting_id: uuid.UUID,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     repo = AgendaItemRepository(db, auth.organization_id)
     items = await repo.list_for_meeting(meeting_id)
@@ -303,7 +304,7 @@ async def create_agenda_item(
     meeting_id: uuid.UUID,
     body: AgendaItemCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = MeetingService(db, auth.organization_id, auth.user_id)
     item = await svc.create_agenda_item(
@@ -319,7 +320,7 @@ async def update_agenda_item(
     item_id: uuid.UUID,
     body: AgendaItemUpdate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = MeetingService(db, auth.organization_id, auth.user_id)
     item = await svc.update_agenda_item(
@@ -334,7 +335,7 @@ async def update_agenda_item(
 async def delete_agenda_item(
     item_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = MeetingService(db, auth.organization_id, auth.user_id)
     await svc.delete_agenda_item(item_id)
@@ -347,7 +348,7 @@ async def delete_agenda_item(
 async def list_resolutions(
     meeting_id: uuid.UUID,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     repo = ResolutionRepository(db, auth.organization_id)
     items = await repo.list_for_meeting(meeting_id)
@@ -358,7 +359,7 @@ async def list_resolutions(
 async def create_resolution(
     body: ResolutionCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = MeetingService(db, auth.organization_id, auth.user_id)
     r = await svc.create_resolution(
@@ -381,7 +382,7 @@ async def create_resolution(
 async def delete_resolution(
     resolution_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = MeetingService(db, auth.organization_id, auth.user_id)
     await svc.delete_resolution(resolution_id)
@@ -398,7 +399,7 @@ async def delete_resolution(
 async def enter_into_register(
     resolution_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = MeetingService(db, auth.organization_id, auth.user_id)
     entry = await svc.enter_into_register(resolution_id)
@@ -409,7 +410,7 @@ async def enter_into_register(
 async def list_register_entries(
     property_id: uuid.UUID,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     repo = RegisterEntryRepository(db, auth.organization_id)
     entries = await repo.list_for_property(property_id)
@@ -421,7 +422,7 @@ async def annotate_challenge(
     entry_id: uuid.UUID,
     body: ChallengeAnnotation,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = MeetingService(db, auth.organization_id, auth.user_id)
     entry = await svc.annotate_challenge(entry_id, body.annotation)
@@ -435,15 +436,16 @@ async def annotate_challenge(
 async def meeting_protocol_pdf(
     meeting_id: uuid.UUID,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     """Render the Niederschrift (minutes) for a meeting as PDF."""
+    svc = MeetingService(db, auth.organization_id, auth.user_id)
+    await svc.require_source_access('owners_meeting', meeting_id, 'export')
     meeting_repo = OwnersMeetingRepository(db, auth.organization_id)
     meeting = await meeting_repo.get_by_id(meeting_id)
     if meeting is None:
         raise HTTPException(status_code=404, detail="Meeting not found")
 
-    svc = MeetingService(db, auth.organization_id, auth.user_id)
     agenda_repo = AgendaItemRepository(db, auth.organization_id)
     resolution_repo = ResolutionRepository(db, auth.organization_id)
 
@@ -453,7 +455,9 @@ async def meeting_protocol_pdf(
     prop_name, prop_addr = await svc.resolve_property_display(meeting.property_id)
     names = MeetingDisplayNames(property_name=prop_name, property_address=prop_addr)
 
+    await svc.require_source_access('owners_meeting', meeting_id, 'export')
     pdf_bytes = render_niederschrift_pdf(meeting, agenda_items, resolutions, names)
+    await svc.require_source_access('owners_meeting', meeting_id, 'export')
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -467,17 +471,20 @@ async def meeting_protocol_pdf(
 async def register_pdf(
     property_id: uuid.UUID,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     """Render the Beschluss-Sammlung for a WEG property as PDF."""
     svc = MeetingService(db, auth.organization_id, auth.user_id)
+    await svc.require_source_access('property', property_id, 'export')
     register_repo = RegisterEntryRepository(db, auth.organization_id)
 
     entries = list(await register_repo.list_for_property(property_id))
     prop_name, prop_addr = await svc.resolve_property_display(property_id)
     names = MeetingDisplayNames(property_name=prop_name, property_address=prop_addr)
 
+    await svc.require_source_access('property', property_id, 'export')
     pdf_bytes = render_register_pdf(entries, names)
+    await svc.require_source_access('property', property_id, 'export')
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
