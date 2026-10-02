@@ -1,6 +1,6 @@
-# B1 closure status after migration 0089
+# B1 closure status after migration 0090
 
-Baseline: 8d80b67 plus accepted local 0089 increment. M-A is accepted; B1 is
+Baseline: 536ceb6 plus verified local 0090 increment. M-A is accepted; B1 is
 incomplete. B2–G remain outstanding.
 This assessment supersedes historical forward-looking residuals only where later
 accepted migrations demonstrably resolve them. It does not declare team rollout.
@@ -48,8 +48,12 @@ accepted migrations demonstrably resolve them. It does not declare team rollout.
    policy at strict Q&A reservation admission. Configuration drift blocks paid work;
    already admitted work retains cost accounting. Shared ACL serialization,
    cross-transaction rejection, current database budget limits and strict rollback
-   guards are verified. Retained-disposition acceptance and activation lifecycle
-   integration remain outstanding.
+   guards are verified. Migration 0090 adds snapshot-bound retained-disposition
+   acceptance with two explicit acknowledgments, immutable replay-safe receipts,
+   current trusted evidence and active-work blocking. Retention uses narrow actual
+   strict-denial cases; an empty combined audience alone never qualifies. Backend,
+   UI, browser, migration and independent review evidence pass. Activation lifecycle
+   integration remains outstanding.
 4. Implement idempotent activation against the accepted snapshot, rechecking coverage
    under exclusive ACL locking. Include Q&A budget policy review, stale evidence,
    revocation, new-organization bootstrap and audited pause/resume. Never return a

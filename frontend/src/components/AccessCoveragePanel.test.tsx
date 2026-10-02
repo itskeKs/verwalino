@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { AccessCoveragePanel } from "./AccessCoveragePanel";
 
+vi.mock("./AccessDispositionPanel",()=>({AccessDispositionPanel:()=>null}));
 vi.mock("./AccessGrantProposalPanel",()=>({AccessGrantProposalPanel:()=>null}));
 
 const snapshot = { id:"snapshot-1",generated_at:"2026-10-02T15:00:00Z",manifest_digest:"a".repeat(64),item_count:1,finding_count:1,review:null };

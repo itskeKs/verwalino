@@ -11,6 +11,7 @@ from app.repositories.pagination import Page, PageQuery, page_query
 from app.schemas.access_coverage import CoverageCreate, CoverageSnapshot, CoverageItem, CoverageReviewCreate, CoverageReview, CoverageSummary
 from app.services.access_coverage_service import AccessCoverageService
 from app.schemas.access_preparation import AccessPreparationOut
+from app.schemas.access_disposition import DispositionStatus,DispositionItem,DispositionAcceptance,DispositionAcceptCreate
 from app.schemas.runtime_budget import RuntimeBudgetStatus,RuntimeBudgetReview,RuntimeBudgetReviewCreate
 
 router = APIRouter(prefix='/api/access-preparation', tags=['access_preparation'])
@@ -81,3 +82,23 @@ async def runtime_budget(auth: AuthContext = Depends(require_admin_dep), db: Asy
 async def review_runtime_budget(body: RuntimeBudgetReviewCreate, idempotency_key: uuid.UUID = Header(),
                                 auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(coverage_writer)):
     return await AccessCoverageService(db,auth).review_runtime_budget(body,idempotency_key)
+
+
+
+
+@router.get('/snapshots/{snapshot_id}/disposition', response_model=DispositionStatus)
+async def disposition_status(snapshot_id: uuid.UUID, auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(coverage_writer)):
+    return await AccessCoverageService(db,auth).disposition_status(snapshot_id)
+
+
+@router.get('/snapshots/{snapshot_id}/disposition/items', response_model=Page[DispositionItem])
+async def disposition_items(snapshot_id: uuid.UUID, query: PageQuery = Depends(page_query),
+                            auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_live_admin_db)):
+    items,cursor = await AccessCoverageService(db,auth).page(snapshot_id,query,disposition=True)
+    return Page(items=items,next_cursor=cursor)
+
+
+@router.post('/snapshots/{snapshot_id}/disposition/accept', response_model=DispositionAcceptance, status_code=201)
+async def accept_disposition(snapshot_id: uuid.UUID, body: DispositionAcceptCreate, idempotency_key: uuid.UUID = Header(),
+                             auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(coverage_writer)):
+    return await AccessCoverageService(db,auth).accept_disposition(snapshot_id,body,idempotency_key)

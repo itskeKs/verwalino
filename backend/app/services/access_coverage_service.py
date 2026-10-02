@@ -54,10 +54,21 @@ class AccessCoverageService:
         return await self.command('SELECT review_access_coverage(:org,:snapshot,:request,:digest,CAST(:policy AS jsonb))',
             {'snapshot':snapshot,'request':key,'digest':body.manifest_digest,'policy':self.policy()})
 
-    async def page(self, snapshot, query):
+    async def accept_disposition(self, snapshot, body, key):
+        await self.attest_policy()
+        return await self.command('SELECT accept_access_disposition(:org,:snapshot,:request,:manifest,:assessment,:reason,:team,:retention,CAST(:policy AS jsonb))',
+            {'snapshot':snapshot,'request':key,'manifest':body.manifest_digest,'assessment':body.assessment_digest,
+             'reason':body.reason,'team':body.team_acknowledged,'retention':body.retention_acknowledged,'policy':self.policy()})
+
+    async def disposition_status(self, snapshot):
+        await self.attest_policy()
+        return await self.command('SELECT access_disposition_status(:org,:snapshot,CAST(:policy AS jsonb))',
+                                  {'snapshot':snapshot,'policy':self.policy()})
+
+    async def page(self, snapshot, query, *, disposition=False):
         if query.q:
             raise HTTPException(422, 'Coverage pages do not search protected source content')
-        signer = URLSafeTimedSerializer(settings.session_secret, salt='hv-access-coverage-v1')
+        signer = URLSafeTimedSerializer(settings.session_secret, salt='hv-access-disposition-v1' if disposition else 'hv-access-coverage-v1')
         scope = [str(self.auth.organization_id),str(self.auth.user_id),str(snapshot)]
         kind, resource = None, None
         if query.cursor:
@@ -68,7 +79,8 @@ class AccessCoverageService:
                 kind, resource = value['kind'], uuid.UUID(value['id'])
             except (BadData,ValueError,TypeError,KeyError):
                 raise HTTPException(422, 'Invalid or expired coverage cursor') from None
-        rows = await self.command('SELECT access_coverage_page(:org,:snapshot,:kind,:resource,:take)',
+        command = 'access_disposition_page' if disposition else 'access_coverage_page'
+        rows = await self.command(f'SELECT {command}(:org,:snapshot,:kind,:resource,:take)',
             {'snapshot':snapshot,'kind':kind,'resource':resource,'take':query.limit+1})
         visible = rows[:query.limit]
         cursor = signer.dumps({'scope':scope,'kind':visible[-1]['kind'],'id':visible[-1]['resource_id']}) if len(rows)>query.limit else None

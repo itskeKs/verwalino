@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { usePagedList } from "../hooks/usePagedList";
 import { AccessGrantProposalPanel } from "./AccessGrantProposalPanel";
+import { AccessDispositionPanel } from "./AccessDispositionPanel";
+import { coverageFindings as findings, coverageKinds as kinds } from "./accessCoverageLabels";
 import { MoreResults } from "./ListSearch";
 
 interface Review { id: string; reviewed_at: string; finding_count: number }
@@ -10,48 +12,6 @@ interface Snapshot { id: string; generated_at: string; manifest_digest: string; 
 interface Grant { grant_id: string; user_id: string; effective_capabilities: string[]; capabilities: string[] }
 interface Item { id: string; kind: string; resource_id: string; references: Record<string, unknown>; findings: string[]; audience: Grant[] }
 
-const findings: Record<string, string> = {
-  COMBINED_READER_REQUIRED: "Kein Teammitglied kann diesen Eintrag mit allen benötigten Quellen und Kontakten lesen.",
-  PROCESSING_PRINCIPAL_DENIED: "Dem vorgesehenen Bearbeiter fehlen aktuelle Rechte für diese Verarbeitung oder ihren Abrechnungskreis.",
-  DEPLOYMENT_POLICY_ATTESTATION_REQUIRED: "Der verbindliche Abgleich der Budgetregel mit dem laufenden System steht noch aus.",
-  DOMAIN_REQUIRED: "Ein ausdrücklicher Datenbereich fehlt.", LIVE_READER_REQUIRED: "Es gibt keine aktuelle Lesefreigabe.",
-  HISTORY_GRAPH_INVALID: "Beziehungen in der Historie müssen geprüft werden.", MEETING_GRAPH_INVALID: "Versammlungsbezüge müssen geprüft werden.",
-  QUARANTINED_INPUTS_BLOCK_OPERATIONS: "Quellen in Quarantäne können Berechnungen und Auskünfte blockieren.",
-  SOURCE_DEPENDENCY_BLOCKS_OPERATIONS: "Abhängige Quellen haben keinen gültigen Freigabenachweis; Vorgänge bleiben blockiert.",
-  SEV_FINANCIAL_ADAPTER_UNSUPPORTED: "Finanzvorgänge für diesen SEV-Bereich sind noch nicht unterstützt.",
-  FINANCIAL_BINDING_REQUIRED: "Eine geprüfte Zuordnung zu einem Abrechnungskreis fehlt.",
-  REVIEWED_QUARANTINE: "Die weitere Quarantäne wurde ausdrücklich dokumentiert.",
-  VALID_BOUND_PROOF_REQUIRED: "Der zugeordneten Quelle fehlt ein aktuell gültiger Herkunftsnachweis.",
-  UNKNOWN_CUSTODY: "Die ursprüngliche Zuständigkeit ist unbekannt und wird nicht nachgetragen.",
-  MULTIPLE_IMPORT_CONTEXTS: "Mehrere Importbezüge benötigen eine gesonderte Prüfung.",
-  SOURCE_AUDIENCE_REVIEW_REQUIRED: "Der Leserkreis dieser Quelle muss geprüft werden.",
-  IMPORT_AUDIENCE_REVIEW_REQUIRED: "Der Leserkreis dieses Imports muss geprüft werden.",
-  DERIVED_AUDIENCE_REVIEW_REQUIRED: "Die Freigaben der zugrunde liegenden Quellen müssen geprüft werden.",
-  LIVE_CREATOR_REQUIRED: "Der private Ersteller hat keine aktive Mitgliedschaft.",
-  WORK_IN_PROGRESS: "Eine Verarbeitung ist noch offen.", QUARANTINE_REVIEW_REQUIRED: "Die weitere Quarantäne muss geprüft werden.",
-  DUNNING_CONTEXT_REVIEW_REQUIRED: "Mahnungsursprung oder weitere Quarantäne müssen geprüft werden.",
-  EXPLICIT_TEAM_ASSIGNMENT_REVIEW: "Vorgesehene Teamaufgaben mit den ausdrücklichen Freigaben abgleichen.",
-  INACTIVE_PRINCIPAL: "Inaktives Konto oder fehlende Mitgliedschaft; keine wirksame Freigabe.",
-  BUDGET_POLICY_REVIEW_REQUIRED: "Die geprüfte Budgetregel für Wissensauskünfte fehlt.",
-  BUDGET_POLICY_CONFIGURATION_MISMATCH: "Budgetregel und aktuelle Konfiguration stimmen nicht überein.",
-  PARENT_CONTEXT_REVIEW_REQUIRED: "Übergeordnete Quellen und gemeinsame Zugriffsrechte ausdrücklich prüfen; ihre Vollständigkeit ist hier noch nicht bestätigt.",
-  RECIPIENT_ACCESS_REVIEW_REQUIRED: "Finanzfreigabe und Zugriff auf den Zahlungsempfänger gemeinsam prüfen.",
-  PROCESSING_PRINCIPAL_REVIEW_REQUIRED: "Die Verarbeitung hat keinen bekannten aktiven Bearbeiter mit Schreibrolle.",
-  PARENT_PROPERTY_MISMATCH: "Der angegebene Objektbezug stimmt nicht mit dem übergeordneten Vorgang überein.",
-  INVALID_REFERENCE_ARRAY: "Eine historische Quellenliste enthält ungültige Verweise und muss gesondert geprüft werden.",
-};
-const kinds: Record<string,string> = { property:"Objekt", person:"Kontakt", accounting_scope:"Abrechnungskreis", member:"Teammitglied",
-  bank_account:"Objektkonto", payment:"Zahlung", cost_entry:"Kosten", settlement_run:"Abrechnung", economic_plan:"Wirtschaftsplan",
-  property_document:"Gebäudeoriginal", declaration_import:"Import", invoice_document:"Rechnungsoriginal", mandate_document:"Mandatsunterlage",
-  dunning_notice:"Mahnung", knowledge_budget_policy:"Budgetregel", unit:"Einheit", property_rule:"Regel", approved_fact_source:"Bestätigte Quelle",
-  management_mandate:"Verwaltungsmandat", owner_profile:"Eigentümerprofil", tenant_profile:"Mieterprofil", vendor:"Dienstleister",
-  ownership_history:"Eigentümerhistorie", lease_agreement:"Mietvertrag", settlement_line:"Abrechnungsposition", economic_plan_line:"Wirtschaftsplanposition",
-  coverage_declaration:"Bestätigung der Datengrundlage", owners_meeting:"Eigentümerversammlung", agenda_item:"Tagesordnungspunkt",
-  resolution:"Beschluss", resolution_register_entry:"Eintrag in der Beschlusssammlung", declaration_import_document:"Import-Originalbezug",
-  declaration_queue_request:"Verarbeitungsauftrag", declaration_candidate:"Importvorschlag", declaration_candidate_evidence:"Belegstelle eines Importvorschlags",
-  declaration_candidate_issue:"Prüfpunkt eines Imports", declaration_extraction_run:"Extraktionslauf", declaration_import_pass:"Verarbeitungsschritt",
-  invoice_processing_attempt:"Belegverarbeitung", property_knowledge_query_run:"Wissensauskunft", property_legal_reference:"Rechtsgrundlage",
-  property_assignment:"Nutzungszuordnung", property_document_relation:"Dokumentbezug", property_rule_relation:"Regelbezug", property_rule_source:"Regelquelle" };
 const capabilities: Record<string,string> = { read:"Lesen", prepare:"Vorbereiten", confirm:"Bestätigen", approve:"Freigeben", send:"Senden", export:"Exportieren" };
 
 interface StrictAudience { user_id: string; capabilities: string[] }
@@ -129,6 +89,7 @@ function SnapshotDetail({ snapshot, onReviewed }: { snapshot: Snapshot; onReview
         {page.nextCursor && <p>Vor dem Prüfvermerk alle Einträge laden.</p>}
       </div>}
     {error && <p role="alert" className="error-text">{error}</p>}
+    <AccessDispositionPanel snapshotId={snapshot.id} />
     <AccessGrantProposalPanel snapshotId={snapshot.id} digest={snapshot.manifest_digest} items={page.items} complete={!page.loading && !page.error && !page.nextCursor} reviewed={!!reviewed} />
   </section>;
 }
