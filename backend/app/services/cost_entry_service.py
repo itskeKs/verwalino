@@ -13,11 +13,14 @@ import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException
+from app.core.rbac import ScopeCapability, status
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.storage import DocumentStore, get_store, verify_document_integrity
 from app.models.audit_event import AuditEvent
+from app.services.financial_scope_service import FinancialScopeService
 from app.models.cost_entry import CostEntry
 from app.models.invoice_document import InvoiceDocument
 from app.repositories.property_repo import PropertyRepository
@@ -83,7 +86,7 @@ class CostEntryService:
         if category is None or category.plan_version != entry.cost_category_plan_version:
             raise HTTPException(422, "Cost category/version not found")
 
-    async def create(self, entry: CostEntry, *, source_document_id: uuid.UUID | None = None,
+    async def create(self, entry: CostEntry, *, accounting_scope_id: uuid.UUID | None = None, source_document_id: uuid.UUID | None = None,
                      idempotency_key: str | None = None, request_digest: str | None = None) -> CostEntry:
         """Create a new cost entry (manual or from import).
 
@@ -94,6 +97,7 @@ class CostEntryService:
             raise HTTPException(422, "New costs must be drafts; confirmation is a separate action")
         if entry.source != "MANUAL" and source_document_id is None:
             raise HTTPException(422, "Imported costs require source_document_id")
+        await FinancialScopeService(self._session, self._org_id, self._user_id).lock_inputs()
         await self._validate_scope(entry)
         idem = IdempotencyService(self._session, self._org_id, self._user_id)
         if idempotency_key is not None:
@@ -114,11 +118,22 @@ class CostEntryService:
                 raise HTTPException(404, "Source document not found")
             if doc.status != "active" or doc.released_at or doc.cost_entry_id:
                 raise HTTPException(409, "Source document is already linked, released or superseded")
+        sphere = await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(entry, accounting_scope_id)
         entry.organization_id = self._org_id
         entry = await self._repo.create(entry)
         if doc:
-            doc.cost_entry_id = entry.id
-            await self._doc_repo.update(doc)
+            # This locked original was authorized before selecting the destination
+            # sphere. Its old unclassified row must remain visible for the link;
+            # the DB write guard checks the destination's prepare capability.
+            # SET LOCAL rolls back with this savepoint if linking fails; a
+            # finally-query would itself fail after a PostgreSQL flush error.
+            async with self._session.begin_nested():
+                if sphere is not None:
+                    await self._session.execute(text("SELECT set_config('app.current_scope_id','',true)"))
+                doc.cost_entry_id = entry.id
+                await self._doc_repo.update(doc)
+                if sphere is not None:
+                    await self._session.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"), {'scope': str(sphere.id)})
             await self._audit.create(AuditEvent(actor_user_id=self._user_id,
                 entity_type="invoice_document", entity_id=doc.id, action="document.linked",
                 payload_diff={"cost_entry_id": str(entry.id)}))
@@ -333,6 +348,12 @@ class CostEntryService:
         The original is linked via superseded_by_id; its content stays frozen.
         The new entry starts as needs_review with corrected values.
         """
+        scope = FinancialScopeService(self._session, self._org_id, self._user_id)
+        original = await self._repo.get_by_id(original_id)
+        if original is None:
+            raise HTTPException(404, "Financial original not found")
+        await scope.enter(original, capability=ScopeCapability.CONFIRM)
+        await scope.lock_inputs()
         original = await self._repo.get_by_id_for_update(original_id)
         if original is None:
             raise HTTPException(status_code=404, detail="Cost entry not found")
@@ -391,6 +412,7 @@ class CostEntryService:
             status="needs_review",
             source="MANUAL",
         )
+        await scope.prepare_new(new_entry)
         new_entry = await self._repo.create(new_entry)
 
         # Link original to new version (the only allowed mutation on confirmed rows)

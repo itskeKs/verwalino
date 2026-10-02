@@ -101,3 +101,13 @@ scope. Privacy operations (0037) refuse incomplete retained-reference visibility
 exports require export grants. The legacy organization-wide deadline monitor is
 unavailable for classified finance until its scoped adapter is implemented. These
 errors prevent partial counts or hidden retention records from becoming decisions.
+
+
+Creation API requests may supply `accounting_scope_id` (0038). It is required once
+the property has classified finance. The server derives the scope's mandate and
+rejects wrong property/type/period/unit before writing; the database independently
+creates and validates the binding atomically. WEG runs inherit the chosen plan's
+context. Corrections retain the original context; moving a correction to another
+scope is not supported. Existing unclassified properties retain compatibility
+creation until staged activation. Financial UI selectors and general creation
+idempotency are still pending; only the existing cost request has replay receipts.

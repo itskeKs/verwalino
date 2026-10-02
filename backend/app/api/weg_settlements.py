@@ -48,6 +48,7 @@ router = APIRouter(prefix="/api/weg-settlements", tags=["weg-settlements"])
 # Schemas
 # ---------------------------------------------------------------------------
 class WegRunCreate(BaseModel):
+    accounting_scope_id: uuid.UUID | None = None
     property_id: str
     economic_plan_id: str
     period_start: date
@@ -67,6 +68,7 @@ class WegComputeRequest(BaseModel):
 
 
 class AssetReportCreate(BaseModel):
+    accounting_scope_id: uuid.UUID | None = None
     property_id: str
     period_start: date
     period_end: date
@@ -264,6 +266,7 @@ async def create_weg_run(
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
     run = await svc.create_weg_draft(
+        accounting_scope_id=body.accounting_scope_id,
         property_id=uuid.UUID(body.property_id),
         economic_plan_id=uuid.UUID(body.economic_plan_id),
         period_start=body.period_start,
@@ -312,6 +315,7 @@ async def create_asset_report(
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
     run = await svc.create_asset_report_draft(
+        accounting_scope_id=body.accounting_scope_id,
         property_id=uuid.UUID(body.property_id),
         period_start=body.period_start,
         period_end=body.period_end,

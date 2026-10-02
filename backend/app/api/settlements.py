@@ -44,6 +44,7 @@ router = APIRouter(prefix="/api/settlements", tags=["settlements"])
 # Schemas
 # ---------------------------------------------------------------------------
 class SettlementRunCreate(BaseModel):
+    accounting_scope_id: uuid.UUID | None = None
     property_id: str
     lease_agreement_id: str
     period_start: date
@@ -271,6 +272,7 @@ async def create_settlement(
 ):
     svc = SettlementService(db, auth.organization_id, auth.user_id)
     run = await svc.create_draft(
+        accounting_scope_id=body.accounting_scope_id,
         property_id=uuid.UUID(body.property_id),
         lease_agreement_id=uuid.UUID(body.lease_agreement_id),
         period_start=body.period_start,

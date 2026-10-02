@@ -580,6 +580,7 @@ export interface CostEntry {
 }
 
 export interface CostEntryCreate {
+  accounting_scope_id?: string | null;
   source_document_id?: string;
   property_id: string;
   management_mandate_id?: string | null;
@@ -728,6 +729,7 @@ export interface SettlementRun {
 }
 
 export interface SettlementRunCreate {
+  accounting_scope_id?: string | null;
   property_id: string;
   lease_agreement_id: string;
   period_start: string;
@@ -805,6 +807,7 @@ export interface EconomicPlan {
 }
 
 export interface EconomicPlanCreate {
+  accounting_scope_id?: string | null;
   property_id: string;
   plan_year: number;
   period_start: string;
@@ -845,6 +848,7 @@ export interface BankAccount {
 }
 
 export interface BankAccountCreate {
+  accounting_scope_id?: string | null;
   property_id: string;
   account_type: BankAccountType;
   label: string;
@@ -1027,6 +1031,7 @@ export interface WegRun {
 }
 
 export interface WegRunCreate {
+  accounting_scope_id?: string | null;
   property_id: string;
   economic_plan_id: string;
   period_start: string;
@@ -1046,6 +1051,7 @@ export interface WegComputeRequest {
 }
 
 export interface AssetReportCreate {
+  accounting_scope_id?: string | null;
   property_id: string;
   period_start: string;
   period_end: string;

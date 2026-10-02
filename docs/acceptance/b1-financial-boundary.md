@@ -57,3 +57,32 @@ Independent review found the owner-membership and swallowed-monitor errors; both
 were repaired and reviewed before the final passing suite. Boundary fixtures use
 isolated organizations because direct DB test fixtures commit at teardown. No
 frontend changes or full scoped-rollout claim in this increment.
+
+## Atomic creation and correction inheritance (0038)
+
+Creation APIs for accounts, costs, rental/WEG settlements, asset reports and plans
+accept an explicit `accounting_scope_id`. Server checks require prepare access,
+matching property, mandate, accounting type, unit and effective period. Classified
+properties reject omitted context. A BEFORE INSERT trigger writes the typed binding
+in the same transaction, derives the mandate and retains deferred composite checks.
+New WEG runs inherit their explicitly referenced plan's context. Corrections inherit
+the original context and retain the WEG plan reference; database checks reject
+cross-scope successor pointers and linked plans. No released facts are rewritten.
+
+Upload-first cost creation preserves source authorization before selecting the
+destination. A savepoint limits the temporary visibility context needed to link an
+unclassified original; failure restores the context and request rollback removes
+cost, binding and link. Existing idempotent cost replay still checks current access.
+
+Verification: **127 passed** across creation, boundary, M2, M3, M4 and bank-account
+suites after all changes. The nine creation tests include raw app_rw inserts,
+missing-context denial, exact correction inheritance, API upload-first plus replay,
+mandate inheritance, period rejection, cross-scope chain rejection and forced-link
+rollback. Four initial new-resource/correction regressions were observed failing
+before implementation. Frontend TypeScript/production build passed after adding the
+optional request fields; the existing approximately 579 KB bundle warning remains.
+Independent review accepted the boundary after the savepoint repair. Its final
+request to verify the latest fixtures is satisfied by the 127-test run.
+
+This is an API/database increment. Financial creation scope selectors, broader
+financial-write idempotency, SEV adapters and full rollout remain outstanding.

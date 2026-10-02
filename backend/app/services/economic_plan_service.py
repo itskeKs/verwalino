@@ -25,6 +25,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
+from app.core.rbac import ScopeCapability
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.engine.canonical import canonical_json, sha256_hex
@@ -103,6 +104,7 @@ class EconomicPlanService:
         reserve_contribution_total: Decimal | None = None,
         monthly_due_day: int | None = None,
         management_mandate_id: uuid.UUID | None = None,
+        accounting_scope_id: uuid.UUID | None = None,
     ) -> EconomicPlan:
         plan = EconomicPlan(
             organization_id=self._org_id,
@@ -116,6 +118,7 @@ class EconomicPlanService:
             status="draft",
             engine_version=ENGINE_VERSION,
         )
+        await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(plan, accounting_scope_id)
         plan = await self._plans.create(plan)
         await self._audit.create(
             AuditEvent(
@@ -198,6 +201,12 @@ class EconomicPlanService:
         return plan
 
     async def create_correction_run(self, plan_id: uuid.UUID) -> EconomicPlan:
+        scope = FinancialScopeService(self._session, self._org_id, self._user_id)
+        original = await self._plans.get_by_id(plan_id)
+        if original is None:
+            raise HTTPException(404, "Financial original not found")
+        await scope.enter(original, capability=ScopeCapability.APPROVE)
+        await scope.lock_inputs()
         original = await self._plans.get_by_id_for_update(plan_id)
         if original is None:
             raise HTTPException(status_code=404, detail="Economic plan not found")
@@ -221,6 +230,7 @@ class EconomicPlanService:
             status="draft",
             engine_version=ENGINE_VERSION,
         )
+        await scope.prepare_new(new_plan)
         new_plan = await self._plans.create(new_plan)
         original.superseded_by_id = new_plan.id
         await self._plans.update(original)

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
 from app.models.bank_account import BankAccount
+from app.services.financial_scope_service import FinancialScopeService
 from app.repositories.bank_account_repo import BankAccountRepository
 
 router = APIRouter(prefix="/api/bank-accounts", tags=["bank_accounts"])
@@ -23,6 +24,7 @@ router = APIRouter(prefix="/api/bank-accounts", tags=["bank_accounts"])
 # Schemas
 # ---------------------------------------------------------------------------
 class BankAccountCreate(BaseModel):
+    accounting_scope_id: uuid.UUID | None = None
     property_id: str
     account_type: str  # LAUFEND | RUECKLAGE | KAUTION
     label: str
@@ -109,6 +111,6 @@ async def create_bank_account(
         bic=body.bic,
         bank_name=body.bank_name,
     )
+    await FinancialScopeService(db, auth.organization_id, auth.user_id).prepare_new(account, body.accounting_scope_id)
     account = await repo.create(account)
-    await db.commit()
     return _to_out(account)

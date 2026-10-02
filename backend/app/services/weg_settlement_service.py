@@ -25,6 +25,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
+from app.core.rbac import ScopeCapability
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
@@ -138,6 +139,7 @@ class WegSettlementService:
         period_start: date,
         period_end: date,
         management_mandate_id: uuid.UUID | None = None,
+        accounting_scope_id: uuid.UUID | None = None,
     ) -> SettlementRun:
         """Create a draft objektweite WEG_JAHRESABRECHNUNG run (E4-4).
 
@@ -147,6 +149,7 @@ class WegSettlementService:
         plan = await self._plans.get_by_id(economic_plan_id)
         if plan is None:
             raise HTTPException(status_code=404, detail="Economic plan not found")
+        await FinancialScopeService(self._session, self._org_id, self._user_id).enter(plan, capability=ScopeCapability.PREPARE)
         if plan.property_id != property_id:
             raise HTTPException(
                 status_code=422,
@@ -169,6 +172,7 @@ class WegSettlementService:
             status="draft",
             engine_version=ENGINE_VERSION,
         )
+        await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(run, accounting_scope_id)
         run = await self._runs.create(run)
         await self._audit.create(
             AuditEvent(
@@ -256,6 +260,7 @@ class WegSettlementService:
         period_start: date,
         period_end: date,
         management_mandate_id: uuid.UUID | None = None,
+        accounting_scope_id: uuid.UUID | None = None,
     ) -> SettlementRun:
         run = SettlementRun(
             organization_id=self._org_id,
@@ -268,6 +273,7 @@ class WegSettlementService:
             status="draft",
             engine_version=ENGINE_VERSION,
         )
+        await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(run, accounting_scope_id)
         run = await self._runs.create(run)
         await self._audit.create(
             AuditEvent(

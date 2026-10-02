@@ -28,6 +28,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
+from app.core.rbac import ScopeCapability
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
@@ -143,6 +144,7 @@ class SettlementService:
         period_end: date,
         advance_payments_total: Decimal | None = None,
         management_mandate_id: uuid.UUID | None = None,
+        accounting_scope_id: uuid.UUID | None = None,
     ) -> SettlementRun:
         """Create a draft BK_MIETER run for one lease/addressee."""
         from app.repositories.lease_agreement_repo import LeaseAgreementRepository
@@ -169,6 +171,7 @@ class SettlementService:
             status="draft",
             engine_version=ENGINE_VERSION,
         )
+        await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(run, accounting_scope_id)
         run = await self._runs.create(run)
 
         await self._audit.create(
@@ -371,6 +374,12 @@ class SettlementService:
         The finalized original stays frozen; the only allowed mutation on it is
         setting superseded_by_id (the ADR-0003 trigger permits exactly this).
         """
+        scope = FinancialScopeService(self._session, self._org_id, self._user_id)
+        original = await self._runs.get_by_id(run_id)
+        if original is None:
+            raise HTTPException(404, "Financial original not found")
+        await scope.enter(original, capability=ScopeCapability.APPROVE)
+        await scope.lock_inputs()
         original = await self._runs.get_by_id_for_update(run_id)
         if original is None:
             raise HTTPException(status_code=404, detail="Settlement run not found")
@@ -387,6 +396,7 @@ class SettlementService:
             property_id=original.property_id,
             management_mandate_id=original.management_mandate_id,
             run_type=original.run_type,
+            economic_plan_id=original.economic_plan_id,
             period_start=original.period_start,
             period_end=original.period_end,
             unit_id=original.unit_id,
@@ -397,6 +407,7 @@ class SettlementService:
             status="draft",
             engine_version=ENGINE_VERSION,
         )
+        await scope.prepare_new(new_run)
         new_run = await self._runs.create(new_run)
 
         # The single allowed mutation on the finalized original.

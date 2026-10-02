@@ -51,6 +51,7 @@ class CostEntryOut(BaseModel):
 
 
 class CostEntryCreate(BaseModel):
+    accounting_scope_id: uuid.UUID | None = None
     source_document_id: uuid.UUID | None = None
     property_id: str
     management_mandate_id: str | None = None
@@ -165,7 +166,7 @@ async def create_cost_entry(
         source=body.source,
     )
     from app.services.idempotency_service import IdempotencyService
-    entry = await svc.create(entry, source_document_id=body.source_document_id,
+    entry = await svc.create(entry, accounting_scope_id=body.accounting_scope_id, source_document_id=body.source_document_id,
         idempotency_key=idempotency_key,
         request_digest=IdempotencyService.digest(body.model_dump(mode="json")))
     return _to_out(entry)

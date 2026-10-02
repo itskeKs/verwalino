@@ -42,6 +42,7 @@ router = APIRouter(prefix="/api/economic-plans", tags=["economic-plans"])
 # Schemas
 # ---------------------------------------------------------------------------
 class EconomicPlanCreate(BaseModel):
+    accounting_scope_id: uuid.UUID | None = None
     property_id: str
     plan_year: int
     period_start: date
@@ -204,6 +205,7 @@ async def create_plan(
 ):
     svc = EconomicPlanService(db, auth.organization_id, auth.user_id)
     plan = await svc.create_draft(
+        accounting_scope_id=body.accounting_scope_id,
         property_id=uuid.UUID(body.property_id),
         plan_year=body.plan_year,
         period_start=body.period_start,
