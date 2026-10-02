@@ -374,3 +374,18 @@ All privacy routes recheck the current administrator inside the data transaction
 PAUSED retains authorized inspection/export and existing erasure rules; originals
 and retention periods are unchanged. Eight NOWAIT dependencies and strict rollback
 refusal protect the boundary. Person/history, audit/report and activation work remain.
+
+## Audit source disclosure (0065)
+
+Strict audit readers must be able to read the referenced typed resource through
+its ordinary RLS policies. Financial output audits also require the complete source
+graph for an otherwise visible empty draft. Unknown, missing and foreign references
+remain hidden; audit author identity and configuration administration do not grant
+source access. Authorized reads survive PAUSED mode. Audit writes remain append-only
+and do not require returning the newly written row.
+
+Administrator control metadata uses exact known record identities. Internal control
+tables retain their lack of direct app SELECT rights. Person/history and meeting
+audit kinds are preactivation exclusions until their policies are integrated.
+No event history is rewritten, and strict rollback refuses to remove this boundary.
+See [audit disclosure evidence](../2026-10-02-source-audit-disclosure.md).

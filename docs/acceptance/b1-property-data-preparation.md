@@ -738,3 +738,27 @@ accepted}.log`. No frontend changes were required.
 This closes retained outputs hidden by 0060. Person/profile/history, audit/general
 report disclosure, raw worker transition hardening and reviewed activation coverage
 remain open. Source activation stays false; B1 and M-A–M-G remain incomplete.
+
+## Typed audit disclosure (0065)
+
+At base `808d178`, four expected red tests reproduced copied audit payload leaks.
+The typed allowlist now inherits ordinary source RLS, with complete graph access
+for financial output history even when an empty draft parent is visible. Missing,
+foreign and unknown targets fail closed. Current administrators can read control
+metadata through a bounded boolean without receiving internal table SELECT rights.
+AuditRepository appends without RETURNING so hidden events can still be retained.
+
+The focused source/original run passed 18 tests. A separate control-metadata red
+case exposed missing direct internal table privileges and led to the narrow helper.
+The final integrated run passed **153 cases** covering audit, original and derived
+sources, privacy, financial output disclosure, M2 receipts and M8 meetings. It also
+verified strict rollback refusal, preparation round-trip history preservation and
+NOWAIT locks. An intermediate setup failure came from the disposable database's
+earlier uncommitted migration; the clean repaired run passed. Logs are recorded
+in [the boundary note](../2026-10-02-source-audit-disclosure.md). Independent review
+accepted the milestone without actionable findings.
+
+Person/history and meeting audit kinds remain hidden in strict mode until their
+source policies are integrated. Ordinary history/meeting/report surfaces, worker
+lifecycle integrity and activation coverage remain open. Source activation stays
+false, and B1 plus subsequent M-B–M-G work remain incomplete.
