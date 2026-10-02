@@ -1,6 +1,6 @@
-# B1 closure status after migration 0090
+# B1 closure status after migration 0091
 
-Baseline: 536ceb6 plus verified local 0090 increment. M-A is accepted; B1 is
+Baseline: 9c7987c plus verified local 0091 increment. M-A is accepted; B1 is
 incomplete. B2–G remain outstanding.
 This assessment supersedes historical forward-looking residuals only where later
 accepted migrations demonstrably resolve them. It does not declare team rollout.
@@ -52,13 +52,21 @@ accepted migrations demonstrably resolve them. It does not declare team rollout.
    acceptance with two explicit acknowledgments, immutable replay-safe receipts,
    current trusted evidence and active-work blocking. Retention uses narrow actual
    strict-denial cases; an empty combined audience alone never qualifies. Backend,
-   UI, browser, migration and independent review evidence pass. Activation lifecycle
-   integration remains outstanding.
-4. Implement idempotent activation against the accepted snapshot, rechecking coverage
-   under exclusive ACL locking. Include Q&A budget policy review, stale evidence,
-   revocation, new-organization bootstrap and audited pause/resume. Never return a
-   strict organization to legacy compatibility. The readiness function remains false
-   until these prerequisites and their integration checks are delivered.
+   UI, browser, migration and independent review evidence pass. The explicit lifecycle is delivered in 0091 as described below.
+4. Migration 0091 delivers explicit activation and pause/resume against selected
+   accepted evidence under exclusive ACL then financial-input locks. Private
+   transaction-bound authorization satisfies the existing readiness trigger only
+   within the validated command. Immutable receipts bind exact predecessor state;
+   historical replay never changes mode. Pause and status work without the runtime
+   budget registrar. Resumption requires a snapshot newer than the last state
+   change, protecting repeated-mode cycles. Request timestamps are canonical across
+   timezones; unlogged state divergence is rejected. The UI requires separate
+   selection, reason and acknowledgment. Its local API/DB, concurrency, migration,
+   UI and browser evidence passes, including empty-org bootstrap with an explicit
+   first-property audience. Readiness is no longer a literal false stub; it remains
+   inaccessible outside the exact authorized transaction. Final B1 integration
+   qualification against the plan is still outstanding; this increment alone does
+   not declare B1 complete or authorize team rollout.
 
 Earlier source, worker/review, indirect disclosure and quarantine increments provide
 reusable evidence. New checks should target the integration and any changed paths,

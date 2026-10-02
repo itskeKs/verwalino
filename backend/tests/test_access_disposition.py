@@ -194,6 +194,8 @@ async def test_retained_acceptance_is_private_immutable_and_prevents_downgrade(m
             point = db.begin_nested()
             try:
                 before = db.scalar(text('SELECT jsonb_agg(to_jsonb(s) ORDER BY id)::text FROM access_coverage_snapshot s'))
+                db.execute(text('TRUNCATE source_security_transition,source_security_authorization,property_source_security'))
+                importlib.import_module('migrations.versions.0091_source_security_lifecycle').downgrade()
                 db.execute(text('TRUNCATE access_disposition_acceptance'))
                 migration.downgrade();migration.upgrade()
                 assert db.scalar(text('SELECT jsonb_agg(to_jsonb(s) ORDER BY id)::text FROM access_coverage_snapshot s'))==before

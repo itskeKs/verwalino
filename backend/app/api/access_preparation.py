@@ -14,6 +14,8 @@ from app.schemas.access_preparation import AccessPreparationOut
 from app.schemas.access_disposition import DispositionStatus,DispositionItem,DispositionAcceptance,DispositionAcceptCreate
 from app.schemas.runtime_budget import RuntimeBudgetStatus,RuntimeBudgetReview,RuntimeBudgetReviewCreate
 
+from app.schemas.source_security import SourceSecurityStatus,SourceSecurityTransition,SourceSecurityTransitionCreate
+
 router = APIRouter(prefix='/api/access-preparation', tags=['access_preparation'])
 
 
@@ -102,3 +104,14 @@ async def disposition_items(snapshot_id: uuid.UUID, query: PageQuery = Depends(p
 async def accept_disposition(snapshot_id: uuid.UUID, body: DispositionAcceptCreate, idempotency_key: uuid.UUID = Header(),
                              auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(coverage_writer)):
     return await AccessCoverageService(db,auth).accept_disposition(snapshot_id,body,idempotency_key)
+
+
+@router.get('/source-security',response_model=SourceSecurityStatus)
+async def source_security_status(auth: AuthContext=Depends(require_admin_dep),db: AsyncSession=Depends(get_live_admin_db)):
+    return await AccessCoverageService(db,auth).source_security_status()
+
+
+@router.post('/source-security/transitions',response_model=SourceSecurityTransition,status_code=201)
+async def transition_source_security(body: SourceSecurityTransitionCreate,idempotency_key: uuid.UUID=Header(),
+                                     auth: AuthContext=Depends(require_admin_dep),db: AsyncSession=Depends(coverage_writer)):
+    return await AccessCoverageService(db,auth).transition_source_security(body,idempotency_key)

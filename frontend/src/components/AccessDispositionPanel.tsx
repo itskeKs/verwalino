@@ -4,7 +4,9 @@ import { usePagedList } from "../hooks/usePagedList";
 import { MoreResults } from "./ListSearch";
 import { coverageFindings, coverageKinds } from "./accessCoverageLabels";
 
-interface Receipt { id: string; accepted_at: string; reason: string; retained_count: number; team_count: number }
+import type { ActivationDecision } from "./SourceSecurityPanel";
+
+interface Receipt extends ActivationDecision { id: string; accepted_at: string; reason: string; retained_count: number; team_count: number }
 interface Status {
   manifest_digest: string; assessment_digest: string; current: boolean; reviewed: boolean; acceptance_available: boolean;
   ready_count: number; retained_count: number; team_count: number; blocker_count: number; active_work_count: number; acceptance: Receipt | null;
@@ -12,7 +14,7 @@ interface Status {
 interface Item { id: string; kind: string; resource_id: string; findings: string[]; disposition: "READY" | "RETAIN_BLOCKED" | "TEAM_REVIEW" | "BLOCKED" }
 const labels = { READY: "Keine zusätzliche Entscheidung erforderlich", RETAIN_BLOCKED: "Nach Umstellung weiterhin gesperrt aufbewahren", TEAM_REVIEW: "Teamzuordnung ausdrücklich prüfen", BLOCKED: "Vor einer Entscheidung zu klären" };
 
-export function AccessDispositionPanel({ snapshotId }: { snapshotId: string }) {
+export function AccessDispositionPanel({ snapshotId, onDecisionSelected }: { snapshotId: string; onDecisionSelected?: (decision: ActivationDecision) => void }) {
   const path = `/api/access-preparation/snapshots/${snapshotId}/disposition`;
   const page = usePagedList<Item>(`${path}/items`);
   const [state, setState] = useState<Status | null>(null);
@@ -86,6 +88,8 @@ export function AccessDispositionPanel({ snapshotId }: { snapshotId: string }) {
       {!allLoaded && <p>Vor der Entscheidung alle Einträge laden und prüfen.</p>}
       <button className="btn" type="button" disabled={busy || loading || !verified || !state?.acceptance_available || !allLoaded || !team || !retention || !reason.trim()} onClick={() => void accept()}>Altbestandsentscheidung speichern</button>
     </>}
+    {saved && onDecisionSelected && <button className="btn" type="button" disabled={busy || loading || !verified || !state?.current || !allLoaded || !!state.blocker_count || !!state.active_work_count}
+      onClick={() => { onDecisionSelected(saved); document.getElementById("zugriffsmodus")?.scrollIntoView({ behavior: "smooth" }); }}>Als Grundlage für die Umstellung auswählen</button>}
     {error && <p role="alert" className="error-text">{error}</p>}
   </section>;
 }

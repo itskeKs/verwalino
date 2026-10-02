@@ -158,6 +158,8 @@ async def test_capture_waits_for_live_admin_and_migration_retains_snapshots(migr
                 point = db.begin_nested()
                 try:
                     db.execute(text('TRUNCATE access_coverage_review,access_coverage_snapshot CASCADE'))
+                    db.execute(text('TRUNCATE source_security_transition,source_security_authorization,property_source_security'))
+                    importlib.import_module('migrations.versions.0091_source_security_lifecycle').downgrade()
                     importlib.import_module('migrations.versions.0090_access_disposition').downgrade()
                     proposal_migration = importlib.import_module('migrations.versions.0084_access_grant_proposals')
                     db.execute(text('TRUNCATE runtime_budget_review,runtime_budget_attestation CASCADE'))

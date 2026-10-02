@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import type { AccessPreparation } from "../api/types";
 import { useAuth } from "../auth/useAuth";
 import { RuntimeBudgetPanel } from "../components/RuntimeBudgetPanel";
+import { SourceSecurityPanel, type ActivationDecision } from "../components/SourceSecurityPanel";
 import { AccessCoveragePanel } from "../components/AccessCoveragePanel";
 
 type Metric = [keyof AccessPreparation["counts"], string];
@@ -31,6 +32,7 @@ const groups: { title: string; metrics: Metric[]; to: string; action: string }[]
 ];
 
 function Inventory() {
+  const [decision, setDecision] = useState<ActivationDecision | null>(null);
   const [revision, setRevision] = useState(0);
   const [data, setData] = useState<AccessPreparation | null>(null);
   const [pending, setPending] = useState(true);
@@ -51,8 +53,9 @@ function Inventory() {
     <header><h1>Freigaben vorbereiten</h1>
       <p>Bestandsübersicht für die ausdrückliche Prüfung von Datenbereichen, Quellen und Teamrechten.</p>
     </header>
+    <SourceSecurityPanel decision={decision} />
     <div className="card space-y-2">
-      <h2>Aktivierung noch nicht verfügbar</h2>
+      <h2>Bestand vor der Umstellung prüfen</h2>
       <p>Diese Zahlen zeigen vorhandene Zuordnungen. Sie bestätigen weder vollständige Quellenprüfung noch ausreichende Teamrechte. Auch bei null offenen Einträgen wird kein Zugriff freigeschaltet.</p>
       <p>Ein bekannter privater Ersteller kann seinen Kontakt weiterhin lesen. Ein gemeinsamer Datenbereich braucht ausdrückliche Lesefreigaben. Prüfvermerke bei Originalen ersetzen keine aktuelle Quellenprüfung.</p>
       <p>Alte Mahnungen benötigen eine gesonderte Prüfung ihres Ursprungs. Unzugeordnete Mandatsunterlagen bleiben in Quarantäne. Die Übersicht ändert keine Originale.</p>
@@ -62,7 +65,7 @@ function Inventory() {
     {pending && <p role="status">Bestand wird geprüft…</p>}
     {error && <p className="error-text" role="alert">{error}</p>}
     {data && <>
-      <p>Stand: {new Date(data.generated_at).toLocaleString("de-DE")} · Zugriffsmodus: {{ PREPARATION: "Vorbereitung", ENFORCED: "Eingeschränkt", PAUSED: "Aktionen pausiert" }[data.mode]}</p>
+      <p>Stand: {new Date(data.generated_at).toLocaleString("de-DE")} · Modus beim Bestandsabruf: {{ PREPARATION: "Vorbereitung", ENFORCED: "Eingeschränkt", PAUSED: "Aktionen pausiert" }[data.mode]}</p>
       <p>Die Kategorien können sich überschneiden. Finanzzahlen enthalten auch Entwürfe und aufbewahrte Einträge.</p>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {groups.map(group => <section className="card min-w-0 space-y-3" key={group.title}>
@@ -75,7 +78,7 @@ function Inventory() {
       </div>
     </>}
     <RuntimeBudgetPanel />
-    <AccessCoveragePanel />
+    <AccessCoveragePanel onDecisionSelected={setDecision} />
   </div>;
 }
 

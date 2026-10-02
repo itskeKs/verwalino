@@ -44,7 +44,9 @@ async def change_mode(seed,mode):
 @asynccontextmanager
 async def synthetic_enforcement(seed):
     # This suite is constrained by require_disposable_database_settings. Only the
-    # future readiness gate is substituted; production transitions stay blocked.
+    # readiness gate is substituted; restore its exact current implementation.
+    from tests.test_scope_payment_reconciliation import read_value
+    definition = await read_value("SELECT pg_get_functiondef('property_source_activation_ready(uuid)'::regprocedure)",{})
     await mutate(text('CREATE OR REPLACE FUNCTION property_source_activation_ready(org uuid) RETURNS boolean '
                       'LANGUAGE sql SET search_path=pg_catalog,pg_temp AS $$ SELECT true $$'),{})
     try:
@@ -52,8 +54,7 @@ async def synthetic_enforcement(seed):
         yield
     finally:
         await mutate(text('TRUNCATE property_source_security'),{})
-        await mutate(text('CREATE OR REPLACE FUNCTION property_source_activation_ready(org uuid) RETURNS boolean '
-                          'LANGUAGE sql SET search_path=pg_catalog,pg_temp AS $$ SELECT false $$'),{})
+        await mutate(text(definition),{})
 
 
 async def test_enforced_queue_checks_creator_and_current_authority_before_replay(scope_seed,migrator_session):
@@ -226,6 +227,7 @@ async def test_state_migration_preserves_evidence_and_roundtrips_empty(scope_see
                 try:
                     db.execute(text('TRUNCATE property_source_security'))
                     db.execute(text('TRUNCATE person CASCADE'))
+                    db.execute(text('TRUNCATE knowledge_budget_policy'))
                     importlib.import_module('migrations.versions.0069_person_source_access').downgrade()
                     importlib.import_module('migrations.versions.0054_knowledge_source_security').downgrade()
                     migration.downgrade()

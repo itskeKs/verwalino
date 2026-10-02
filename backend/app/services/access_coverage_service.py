@@ -44,6 +44,19 @@ class AccessCoverageService:
                 raise HTTPException(422, 'Invalid coverage request') from None
             raise
 
+    async def source_security_status(self):
+        return await self.command('SELECT source_security_status(:org)',{})
+
+    async def transition_source_security(self,body,key):
+        values={'request':key,'payload':body.model_dump_json()}
+        # A replay remains available during registrar outages and never reapplies mode.
+        receipt=await self.command('SELECT replay_source_security_transition(:org,:request,CAST(:payload AS jsonb))',values)
+        if receipt is not None:
+            return receipt
+        if body.target_mode=='ENFORCED':
+            await self.attest_policy()
+        return await self.command('SELECT transition_source_security(:org,:request,CAST(:payload AS jsonb))',values)
+
     async def capture(self, body, key):
         await self.attest_policy()
         return await self.command('SELECT capture_access_coverage(:org,:request,:predecessor,CAST(:policy AS jsonb))',

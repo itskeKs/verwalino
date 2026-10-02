@@ -6,6 +6,7 @@ import { api } from "../api/client";
 import * as auth from "../auth/useAuth";
 import type { AccessPreparation } from "../api/types";
 
+vi.mock("../components/SourceSecurityPanel", () => ({ SourceSecurityPanel: () => null }));
 vi.mock("../components/RuntimeBudgetPanel", () => ({ RuntimeBudgetPanel: () => null }));
 vi.mock("../components/AccessCoveragePanel", () => ({ AccessCoveragePanel: () => null }));
 
@@ -27,7 +28,7 @@ it("shows aggregate gaps and explicit setup links without an activation action",
   vi.spyOn(api, "get").mockResolvedValue(snapshot);
   show();
   expect(await screen.findByText("100")).toBeVisible();
-  expect(screen.getByRole("heading", { name: "Aktivierung noch nicht verfügbar" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Bestand vor der Umstellung prüfen" })).toBeVisible();
   expect(screen.getByRole("link", { name: "Altquellen prüfen" })).toHaveAttribute("href", "/altquellen");
   expect(screen.queryByRole("button", { name: /aktivieren/i })).not.toBeInTheDocument();
 });

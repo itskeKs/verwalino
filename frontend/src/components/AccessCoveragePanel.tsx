@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { usePagedList } from "../hooks/usePagedList";
 import { AccessGrantProposalPanel } from "./AccessGrantProposalPanel";
+import type { ActivationDecision } from "./SourceSecurityPanel";
 import { AccessDispositionPanel } from "./AccessDispositionPanel";
 import { coverageFindings as findings, coverageKinds as kinds } from "./accessCoverageLabels";
 import { MoreResults } from "./ListSearch";
@@ -33,7 +34,7 @@ function proposal(kind: string): [string,string] | null {
   return null;
 }
 
-function SnapshotDetail({ snapshot, onReviewed }: { snapshot: Snapshot; onReviewed: () => void }) {
+function SnapshotDetail({ snapshot, onReviewed, onDecisionSelected }: { snapshot: Snapshot; onReviewed: () => void; onDecisionSelected?: (decision: ActivationDecision) => void }) {
   const page = usePagedList<Item>(`/api/access-preparation/snapshots/${snapshot.id}/items`);
   const [acknowledged,setAcknowledged] = useState(false);
   const [busy,setBusy] = useState(false);
@@ -89,12 +90,12 @@ function SnapshotDetail({ snapshot, onReviewed }: { snapshot: Snapshot; onReview
         {page.nextCursor && <p>Vor dem Prüfvermerk alle Einträge laden.</p>}
       </div>}
     {error && <p role="alert" className="error-text">{error}</p>}
-    <AccessDispositionPanel snapshotId={snapshot.id} />
+    <AccessDispositionPanel snapshotId={snapshot.id} onDecisionSelected={onDecisionSelected} />
     <AccessGrantProposalPanel snapshotId={snapshot.id} digest={snapshot.manifest_digest} items={page.items} complete={!page.loading && !page.error && !page.nextCursor} reviewed={!!reviewed} />
   </section>;
 }
 
-export function AccessCoveragePanel() {
+export function AccessCoveragePanel({ onDecisionSelected }: { onDecisionSelected?: (decision: ActivationDecision) => void }) {
   const history = usePagedList<Snapshot>("/api/access-preparation/snapshots");
   const [selected,setSelected] = useState<string|null>(null);
   const [created,setCreated] = useState<Snapshot|null>(null);
@@ -115,7 +116,7 @@ export function AccessCoveragePanel() {
   }
   return <section className="space-y-4" aria-label="Versionierte Prüfstände">
     <h2>Prüfstand mit konkreten Zuordnungen</h2>
-    <p>Erfasst Kennungen, wirksame Freigaben und Prüfhilfen. Quelleninhalte werden hier nicht angezeigt. Die Aktivierung bleibt gesperrt.</p>
+    <p>Erfasst Kennungen, wirksame Freigaben und Prüfhilfen. Quelleninhalte werden hier nicht angezeigt. Das Erfassen und Prüfen eines Stands allein aktiviert keine Zugriffsregeln.</p>
     <div className="flex flex-wrap gap-2"><button className="btn" type="button" disabled={busy} onClick={()=>void capture()}>Neuen Prüfstand erfassen</button>
       <button className="btn" type="button" disabled={history.loading} onClick={history.reload}>Gespeicherte Prüfstände laden</button></div>
     {error && <p role="alert" className="error-text">{error}</p>}
@@ -126,6 +127,6 @@ export function AccessCoveragePanel() {
         <option value="">Bitte auswählen</option>{history.items.map(row=><option key={row.id} value={row.id}>{new Date(row.generated_at).toLocaleString("de-DE")} · {row.item_count} Einträge{row.review ? " · geprüft" : ""}</option>)}
       </select></label>}
     <MoreResults available={!!history.nextCursor} loading={history.loading} onMore={()=>void history.loadMore()} />
-    {active && <SnapshotDetail key={active.id} snapshot={active} onReviewed={history.reload} />}
+    {active && <SnapshotDetail key={active.id} snapshot={active} onDecisionSelected={onDecisionSelected} onReviewed={history.reload} />}
   </section>;
 }
