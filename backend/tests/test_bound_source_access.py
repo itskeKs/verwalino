@@ -2,7 +2,7 @@
 import uuid
 import pytest
 from sqlalchemy import text
-from app.core.db import get_tenant_session
+from app.core.db import get_tenant_session, get_worker_tenant_session
 from tests.test_property_source_access import access
 from tests.test_property_source_admission import setup
 from tests.test_property_source_binding import approve_grant, applied, bind
@@ -263,7 +263,7 @@ async def test_worker_cancels_queued_bound_quarantined_source_before_load(client
     response = await client_a_admin.post(f"/api/declaration-imports/{ids['job']}/start", headers={'Idempotency-Key':str(uuid.uuid4())})
     assert response.status_code == 200, response.text
     async with synthetic_enforcement(seed_data):
-        async with get_tenant_session(seed_data['org_a_id']) as db:
+        async with get_worker_tenant_session(seed_data['org_a_id']) as db:
             assert await DeclarationImportRepository(db, seed_data['org_a_id']).claim_next('bound-quarantine', datetime.now(timezone.utc), 120) is None
             await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor':str(seed_data['user_a_admin_id'])})
             assert await db.scalar(text('SELECT count(*) FROM declaration_import WHERE id=:job'), ids) == 0

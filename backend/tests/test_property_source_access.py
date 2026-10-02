@@ -214,7 +214,7 @@ async def test_derived_sources_and_ledgers_use_the_same_audience(client_a_admin,
         assert not await access(seed_data,kind,resource),kind
 
 
-async def test_unactivated_resolver_roundtrip_preserves_domain_grants(client_a_admin,seed_data):
+async def test_out_of_order_historical_downgrade_preserves_domain_grants(client_a_admin,seed_data):
     import importlib
     from sqlalchemy import create_engine
     from alembic.migration import MigrationContext
@@ -222,31 +222,19 @@ async def test_unactivated_resolver_roundtrip_preserves_domain_grants(client_a_a
     from tests.conftest import MIGRATOR_SYNC_URL
     _,rows=await graph(seed_data)
     domain,_=await grant(client_a_admin,seed_data,rows['property'])
-    migration=importlib.import_module('migrations.versions.0049_property_source_access')
     engine=create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.begin() as connection:
-            nested=connection.begin_nested()
-            try:
-                connection.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
-                    {'org':str(seed_data['org_a_id']),'actor':str(seed_data['user_a_admin_id'])})
-                with Operations.context(MigrationContext.configure(connection)):
-                    # Later admission policies depend on this resolver. Rehearse
-                    # the historical boundary below them, inside the rollback.
-                    connection.execute(text('TRUNCATE property_source_admission'))
-                    connection.execute(text('TRUNCATE property_source_admission_review'))
-                    connection.execute(text('TRUNCATE property_source_classification'))
-                    importlib.import_module('migrations.versions.0056_property_source_classification').downgrade()
-                    importlib.import_module('migrations.versions.0052_property_source_admission_review').downgrade()
+            connection.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+                {'org':str(seed_data['org_a_id']),'actor':str(seed_data['user_a_admin_id'])})
+            # 0063 and later policies retain publication context. An isolated
+            # historical downgrade must refuse rather than drop those policies.
+            with pytest.raises(DBAPIError,match='other objects depend'):
+                with connection.begin_nested(),Operations.context(MigrationContext.configure(connection)):
                     importlib.import_module('migrations.versions.0051_declaration_publication_audience').downgrade()
-                    importlib.import_module('migrations.versions.0050_property_source_admission').downgrade()
-                    migration.downgrade()
-                    assert connection.scalar(text("SELECT has_property_data_capability(:org,:domain,'read')"),
-                        {'org':seed_data['org_a_id'],'domain':uuid.UUID(domain)})
-                    migration.upgrade()
-                    assert connection.scalar(text("SELECT property_source_access(:org,'property',:property,'read')"),
-                        {'org':seed_data['org_a_id'],'property':rows['property']})
-            finally:
-                nested.rollback()
+            assert connection.scalar(text("SELECT has_property_data_capability(:org,:domain,'read')"),
+                {'org':seed_data['org_a_id'],'domain':uuid.UUID(domain)})
+            assert connection.scalar(text("SELECT property_source_access(:org,'property',:property,'read')"),
+                {'org':seed_data['org_a_id'],'property':rows['property']})
     finally:
         engine.dispose()
