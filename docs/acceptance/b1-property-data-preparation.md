@@ -968,3 +968,20 @@ proved lost-response retry, identical key/result, one revision and reload persis
 under strict source enforcement. Independent review's bulk-order finding is fixed.
 See [review retry implementation](../2026-10-02-declaration-review-idempotency.md).
 B1 activation and the remaining overall plan are still incomplete.
+
+### Indirect statement, deadline and dunning sources (0075)
+
+Strict report contexts now require an exact financial scope and complete source READ,
+including payment-only contacts. The deadline monitor cannot turn hidden leases into
+“No overdue items.” Dunning notice/provenance RLS and PDF/effect entry checks preserve
+separate source READ/EXPORT and financial capabilities; PAUSED permits authorized
+reads/exports and denies effects. Unknown legacy dunning provenance remains blocked.
+Privacy completeness includes hidden issued notices; snapshots are never rewritten.
+
+Evidence: two initial disclosure RED tests, then 29 checks passed; additional contact
+revocation and false-zero deadline RED tests fixed. Compatibility112passed plus one
+legacy error-order regression repaired; final53 report/deadline/payment tests pass.
+Migration roundtrip preserves hashes and refuses strict downgrade. Independent
+review, shell syntax and fake-Docker deployment checks pass. See
+[report source implementation](../2026-10-02-report-source-access.md).
+Activation stays false; legacy reconciliation/coverage and later milestones remain.

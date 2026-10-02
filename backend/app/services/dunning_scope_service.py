@@ -22,6 +22,9 @@ class DunningScopeService:
             period_start=period_start, period_end=period_end)
         if sphere is not None:
             await self.auth.require(sphere.id, ScopeCapability.PREPARE)
+        if not await self.session.scalar(text("SELECT report_scope_source_access(:org,:scope,'prepare')"),
+                {'org': self.org_id, 'scope': sphere.id if sphere is not None else None}):
+            raise HTTPException(404, 'Complete dunning sources not accessible')
         return sphere
 
     async def history(self, *, tenant_id=None, owner_id=None):
@@ -44,6 +47,9 @@ class DunningScopeService:
     async def enter(self, notice, capability):
         await self.financial.lock_inputs()
         contact_capability = 'export' if capability == ScopeCapability.EXPORT else 'read' if capability == ScopeCapability.READ else 'prepare'
+        if not await self.session.scalar(text('SELECT dunning_source_access(:org,:notice,:capability)'),
+                {'org': self.org_id, 'notice': notice.id, 'capability': contact_capability}):
+            raise HTTPException(404, 'Dunning property sources not accessible')
         if not await self.session.scalar(text('SELECT dunning_contact_access(:org,:tenant,:owner,:capability)'),
                 {'org':self.org_id, 'tenant':notice.tenant_profile_id, 'owner':notice.owner_profile_id, 'capability':contact_capability}):
             raise HTTPException(404, 'Dunning recipient source not accessible')

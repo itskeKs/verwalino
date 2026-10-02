@@ -27,6 +27,7 @@ class FinancialScopeService:
             raise HTTPException(409, 'Report scope differs from its financial source')
         scope_id = scope_id or selected
         if scope_id is None:
+            await self.require_report_sources(None)
             return None
         sphere = await AuthorizationService(self.session,
             AuthContext(self.user_id, self.org_id, 'live database role required')).require(scope_id, ScopeCapability.READ)
@@ -34,7 +35,13 @@ class FinancialScopeService:
         if not await self.session.scalar(text('SELECT scope_financial_inputs_classified(:org,:scope)'),
                 {'org': self.org_id, 'scope': scope_id}):
             raise HTTPException(409, 'Review unclassified financial inputs before calculating this accounting scope')
+        await self.require_report_sources(scope_id)
         return sphere
+
+    async def require_report_sources(self, scope_id):
+        if not await self.session.scalar(text("SELECT report_scope_source_access(:org,:scope,'read')"),
+                {'org': self.org_id, 'scope': scope_id}):
+            raise HTTPException(404, 'Complete report sources not accessible')
 
     async def select_report_scope(self, scope_id, *, scope_type, period_start, period_end):
         """Read-only statement context, including an inherited plan context."""

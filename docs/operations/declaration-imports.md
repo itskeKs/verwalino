@@ -489,3 +489,16 @@ source-backed candidate/evidence data and must remain protected as source materi
 Do not purge receipts to resolve retry conflicts. A schema downgrade with receipts
 refuses to discard them; disable writers or forward-repair instead. Source activation
 remains disabled until the remaining B1 acceptance work is complete.
+
+### Indirect report source coverage (0075)
+
+Strict-mode account statements/open items/deadlines require one reviewed accounting
+scope and complete current source READ access, including payment-only recipients.
+Missing source access is a denied report, never a partial balance or empty overview.
+Dunning snapshots and their provenance follow the same property audience. PDF export
+also requires source EXPORT; financial permissions remain independently necessary.
+PAUSED keeps authorized disclosure available and blocks dunning effects. Unclassified
+legacy dunning notices require reviewed provenance before strict-mode disclosure;
+contact access alone is insufficient. Privacy checks retain hidden issued notices
+as blockers. Do not remove source policies or rewrite historical notices to resolve
+coverage gaps. Activation remains unavailable pending reviewed legacy coverage.

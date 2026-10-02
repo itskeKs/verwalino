@@ -242,7 +242,7 @@ async def test_contact_source_migration_refuses_busy_dependencies(seed_data,tabl
     finally: engine.dispose()
 
 
-async def test_dunning_copied_recipient_needs_contact_read_and_separate_export(client_a_admin,seed_data,m7_seed):
+async def test_legacy_dunning_contact_grant_does_not_establish_source_provenance(client_a_admin,seed_data,m7_seed):
     from tests.test_financial_source_disclosure import clear_disclosure_grants
     result=await client_a_admin.post('/api/dunning/tenant',json={
         'tenant_profile_id':str(m7_seed['tenant_m7']),'lease_agreement_id':str(m7_seed['lease_m7']),
@@ -254,7 +254,8 @@ async def test_dunning_copied_recipient_needs_contact_read_and_separate_export(c
         async with synthetic_enforcement(seed_data):
             assert (await client_a_admin.get('/api/dunning/'+notice)).status_code==404
             domain,grant=await audience(client_a_admin,str(m7_seed['person_m7']),seed_data['user_a_admin_id'])
-            assert (await client_a_admin.get('/api/dunning/'+notice)).status_code==200
+            # A contact audience alone cannot classify historical property sources.
+            assert (await client_a_admin.get('/api/dunning/'+notice)).status_code==404
             assert (await client_a_admin.get('/api/dunning/'+notice+'/pdf')).status_code==404
             assert (await client_a_admin.post(f'/api/person-data-domains/{domain}/grants/{grant}/revoke')).status_code==204
             assert (await client_a_admin.get('/api/dunning/'+notice)).status_code==404

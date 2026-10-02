@@ -28,6 +28,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
@@ -405,6 +406,9 @@ class PaymentService:
         context = FinancialScopeService(self._session, self._org_id, self._user_id)
         sphere = await context.select_report_scope(accounting_scope_id,
             scope_type='WEG', period_start=period_start, period_end=period_end)
+        if not await self._session.scalar(text("SELECT property_source_security_mode(:org)='PREPARATION' OR profile_source_access(:org,'owner_profile',:profile,'read')"),
+                {'org': self._org_id, 'profile': owner_profile_id}):
+            raise HTTPException(404, 'Owner profile not accessible')
         charges = []
         if economic_plan_id is not None:
             plan = await self._plans.get_by_id(economic_plan_id)
