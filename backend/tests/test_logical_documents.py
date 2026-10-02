@@ -134,8 +134,9 @@ async def test_logical_migration_preserves_evidence_and_function_identity(migrat
                 migration.downgrade()
             point=db.begin_nested()
             try:
-                db.execute(text('TRUNCATE logical_document,outbox_event'))
+                db.execute(text('TRUNCATE logical_document,field_evidence,extraction_revision,outbox_event'))
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
+                importlib.import_module('migrations.versions.0096_extraction_evidence').downgrade()
                 migration.downgrade();migration.upgrade()
                 assert db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))==oid
             finally:

@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api import auth, organizations, users, mandates, intake_batches
 from app.api import properties, units, persons, ownership, leases
 from app.api import owner_profiles, tenant_profiles, vendors
-from app.api import cost_categories, cost_entries, invoice_documents, document_refs, logical_documents
+from app.api import cost_categories, cost_entries, invoice_documents, document_refs, logical_documents, extraction_revisions
 from app.api import financial_input_coverage, accounting_scopes, access_preparation, mandate_quarantine, dunning_quarantine
 from app.api import settlements
 from app.api import economic_plans, weg_settlements
@@ -69,6 +69,7 @@ app.include_router(cost_entries.router)
 app.include_router(invoice_documents.router)
 app.include_router(document_refs.router)
 app.include_router(logical_documents.router)
+app.include_router(extraction_revisions.router)
 app.include_router(intake_batches.router)
 
 # M3 Verteilungs-/Abrechnungs-Engine (Betriebskostenabrechnung Mieter)

@@ -1,5 +1,6 @@
 """Durable queue, bounded retry and fencing in short caller-owned transactions."""
 import uuid
+import json
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 from sqlalchemy import select, text
@@ -117,7 +118,12 @@ class InvoiceProcessingService:
         if attempt is None or attempt.status != "running" or attempt.token != claim["token"] or attempt.lease_until < now:
             return False
         if document.released_at or document.status != "active":
-            result = {"status": "canceled", "error_code": "source_no_longer_editable", "payload": None}
+            from app.core.invoice_ocr import outcome
+            result = outcome("canceled", "source_no_longer_editable")
+        from app.core.extraction_evidence import valid_invoice_outcome
+        if not valid_invoice_outcome(result):
+            from app.core.invoice_ocr import outcome
+            result = outcome("failed", "processor_failed")
         attempt.status = result["status"]
         attempt.error_code = result.get("error_code")
         attempt.processor_version = result.get("processor_version")
@@ -129,6 +135,8 @@ class InvoiceProcessingService:
             document.extraction_payload = {**result["payload"], "attempt_id": str(attempt.id),
                                           "processor_version": attempt.processor_version}
         await self.session.flush()
+        await self.session.execute(text('SELECT record_invoice_extraction_revision(:org,:attempt,:token,CAST(:result AS jsonb))'),
+            {'org':self.org_id,'attempt':attempt.id,'token':claim['token'],'result':json.dumps(result)})
         return True
 
     async def _enter_principal(self, attempt):

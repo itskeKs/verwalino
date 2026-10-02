@@ -117,6 +117,7 @@ async def test_registry_constraints_backfill_and_guarded_downgrade(migrator_sess
             point=db.begin_nested()
             try:
                 db.execute(text('TRUNCATE document_ref,intake_batch,intake_upload_admission CASCADE'))
+                importlib.import_module('migrations.versions.0096_extraction_evidence').downgrade()
                 importlib.import_module('migrations.versions.0095_logical_documents').downgrade()
                 importlib.import_module('migrations.versions.0094_intake_inbox_status').downgrade()
                 importlib.import_module('migrations.versions.0093_intake_quarantine').downgrade()
