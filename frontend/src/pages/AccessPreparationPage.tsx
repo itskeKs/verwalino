@@ -53,8 +53,9 @@ function Inventory() {
       <h2>Aktivierung noch nicht verfügbar</h2>
       <p>Diese Zahlen zeigen vorhandene Zuordnungen. Sie bestätigen weder vollständige Quellenprüfung noch ausreichende Teamrechte. Auch bei null offenen Einträgen wird kein Zugriff freigeschaltet.</p>
       <p>Ein bekannter privater Ersteller kann seinen Kontakt weiterhin lesen. Ein gemeinsamer Datenbereich braucht ausdrückliche Lesefreigaben. Prüfvermerke bei Originalen ersetzen keine aktuelle Quellenprüfung.</p>
-      <p>Alte Mahnungen und Mandatsunterlagen benötigen noch eine gesonderte, belegte Zuordnungsprüfung. Die Übersicht ändert keine Originale.</p>
+      <p>Alte Mahnungen benötigen eine gesonderte Prüfung ihres Ursprungs. Unzugeordnete Mandatsunterlagen bleiben in Quarantäne. Die Übersicht ändert keine Originale.</p>
     </div>
+    <p><Link className="link" to="/mandatsquarantaene">Mandatsquarantäne prüfen</Link></p>
     <button className="btn" type="button" onClick={refresh} disabled={pending}>Bestand aktualisieren</button>
     {pending && <p role="status">Bestand wird geprüft…</p>}
     {error && <p className="error-text" role="alert">{error}</p>}

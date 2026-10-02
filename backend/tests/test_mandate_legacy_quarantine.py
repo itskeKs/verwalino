@@ -67,6 +67,8 @@ async def test_quarantine_migration_observes_legacy_without_rewriting_or_losing_
                 # Rehearse the actual 0077->0078 transition only in this guarded,
                 # disposable transaction, then restore all current fixtures.
                 db.execute(text('TRUNCATE mandate_document CASCADE'))
+                disposition = importlib.import_module('migrations.versions.0079_mandate_quarantine_disposition')
+                disposition.downgrade()
                 migration.downgrade()
                 db.execute(text("""INSERT INTO mandate_document(id,organization_id,management_mandate_id,doc_type,title,mime_type,
                     content_byte_size,content_sha256,storage_uri,storage_backend,uploaded_by)

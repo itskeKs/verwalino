@@ -11,7 +11,7 @@ from app.api import auth, organizations, users, mandates
 from app.api import properties, units, persons, ownership, leases
 from app.api import owner_profiles, tenant_profiles, vendors
 from app.api import cost_categories, cost_entries, invoice_documents
-from app.api import financial_input_coverage, accounting_scopes, access_preparation
+from app.api import financial_input_coverage, accounting_scopes, access_preparation, mandate_quarantine
 from app.api import settlements
 from app.api import economic_plans, weg_settlements
 from app.api import payments
@@ -45,6 +45,7 @@ app.include_router(organizations.router)
 app.include_router(users.router)
 app.include_router(accounting_scopes.router)
 app.include_router(access_preparation.router)
+app.include_router(mandate_quarantine.router)
 app.include_router(property_data_domains.router)
 app.include_router(person_data_domains.router)
 app.include_router(property_source_admission_reviews.router)

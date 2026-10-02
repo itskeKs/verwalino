@@ -1037,3 +1037,21 @@ fresh upload/download and desktop/mobile controls. See
 [cutoff and evidence](../2026-10-02-mandate-legacy-quarantine.md).
 Administrative disposition review of frozen identifiers remains subsequent work.
 B1 activation and the rest of M-A–M-G remain incomplete.
+
+
+### Administrative mandate quarantine review (0079)
+
+Administrators can page through opaque legacy observations and record continued
+quarantine with a closed reason code, observed digest, current reviewer and server
+time. Original names, uploaders, storage references and bytes remain hidden.
+One private immutable disposition and audit commit together. Current authority is
+required before idempotent replay; conflicts never overwrite an earlier decision.
+The UI explains that review grants no access and does not authenticate history.
+
+Evidence: two HTTP REDs then9 focused and20 expanded API/RLS/concurrency/role/
+paging/downgrade cases pass; seven final UI tests and lint/build pass. Independent
+review's stale local receipt-state finding is fixed. Chromium dropped a committed
+response and confirmed identical retry key/receipt, reload persistence, failed-load
+recovery and desktop/mobile rendering. Shell/simulated deployment checks pass.
+See [implementation and operator entry](../2026-10-02-mandate-quarantine-disposition.md).
+Activation remains false; B1 and the full plan are not complete.
