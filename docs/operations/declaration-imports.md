@@ -451,3 +451,24 @@ Its issue writes and complex correction semantics are still explicitly untrusted
 compatibility boundaries before activation. Downgrade refuses strict mode, takes
 NOWAIT locks and preserves decisions/audit history. Release gate is 0072; this code
 change does not authorize deployment or source activation.
+
+## Trusted semantic review connection (0073)
+
+Set the API-only `HV_DATABASE_URL_REVIEW` to the independent app_review login.
+Missing/unsafe configuration fails closed; ordinary web and worker connections
+cannot substitute. The review role must have no inherited roles/delegates, ownership,
+elevated flags, public-schema CREATE or unexpected table/column privileges. It reads
+only the four review graph tables and executes narrow graph-lock/decision/issue
+commands. Existing-volume provisioning requires the separately authorized procedure
+in DEPLOY.md; never reset a populated volume to recreate roles.
+
+Review mutation requests keep one transaction for authenticated context, live writer
+check, graph locking, canonical correction, decision, revalidation and issue effects.
+A private five-minute transaction receipt binds the final command. The repository
+submits status-only effects and the DB supplies/restores canonical resolution
+metadata. Role/receipt failure rolls back the transaction. Private receipts contain
+no source text and expire via bounded nonwaiting cleanup.
+
+This protects the review pipeline against ordinary runtime SQL, not compromise of
+the trusted API process or review secret. Worker provider processing never receives
+that credential. Source activation remains disabled pending the rest of B1.

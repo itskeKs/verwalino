@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import (
 from app.core.security import hash_password, create_session_token
 from app.core.config import settings
 from app.core.declaration_test_database import require_disposable_database_settings
-from app.core.db import override_engine, override_worker_engine
+from app.core.db import override_engine, override_worker_engine, override_review_engine
 from app.main import app
 
 # Approval graph fixtures are shared by API and knowledge-search tests. Keep
@@ -83,6 +83,9 @@ def run_migrations():
         cursor.execute("""DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='app_worker') THEN
             CREATE ROLE app_worker LOGIN PASSWORD 'worker_secret' INHERIT NOBYPASSRLS NOCREATEDB NOCREATEROLE;
             END IF; END $$; GRANT app_rw TO app_worker;""")
+        cursor.execute("""DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='app_review') THEN
+            CREATE ROLE app_review LOGIN PASSWORD 'review_secret' NOINHERIT NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+            END IF; END $$;""")
         clear_disposable_source_context(cursor)
         cursor.execute("SELECT to_regclass('public.knowledge_budget_policy')")
         if cursor.fetchone()[0]:
@@ -146,7 +149,11 @@ async def inject_test_engine(run_migrations):
     from sqlalchemy.engine import make_url
     worker_engine = create_async_engine(make_url(APP_RW_URL).set(username='app_worker',password='worker_secret'), pool_pre_ping=True)
     override_worker_engine(worker_engine)
+    review_engine = create_async_engine(make_url(APP_RW_URL).set(username='app_review',password='review_secret'), pool_pre_ping=True)
+    override_review_engine(review_engine)
     yield
+    await review_engine.dispose()
+    override_review_engine(None)
     await worker_engine.dispose()
     override_worker_engine(None)
     await _test_app_rw_engine.dispose()

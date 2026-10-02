@@ -31,3 +31,11 @@ DO $$ BEGIN
 END $$;
 GRANT app_rw TO app_worker;
 GRANT CONNECT ON DATABASE hausverwaltung TO app_worker;
+
+-- Human review validation has explicit graph reads/commands, no inherited roles.
+DO $$ BEGIN
+  IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='app_review') THEN
+    CREATE ROLE app_review LOGIN PASSWORD 'review_secret' NOINHERIT NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+  END IF;
+END $$;
+GRANT CONNECT ON DATABASE hausverwaltung TO app_review;

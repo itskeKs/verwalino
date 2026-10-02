@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     # Required only for the declaration worker; never fall back to web credentials.
     database_url_worker: SecretStr | None = None
+    database_url_review: SecretStr | None = None
 
     # --- Database (migrator role -- owns tables, runs DDL) ---
     database_url_migrator: str = (

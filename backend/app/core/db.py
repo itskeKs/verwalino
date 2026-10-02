@@ -157,3 +157,50 @@ async def get_worker_tenant_session(org_id: uuid.UUID) -> AsyncGenerator[AsyncSe
 async def get_worker_unscoped_session() -> AsyncGenerator[AsyncSession, None]:
     async with get_worker_tenant_session(uuid.UUID(_NULL_ORG)) as session:
         yield session
+
+
+_review_engine: AsyncEngine | None = None
+_review_session_factory: async_sessionmaker[AsyncSession] | None = None
+
+
+def override_review_engine(engine: AsyncEngine | None) -> None:
+    global _review_engine, _review_session_factory
+    _review_engine = engine
+    _review_session_factory = async_sessionmaker(engine, expire_on_commit=False) if engine else None
+
+
+def get_review_session_factory() -> async_sessionmaker[AsyncSession]:
+    global _review_engine, _review_session_factory
+    if _review_session_factory is None:
+        if settings.database_url_review is None:
+            raise RuntimeError('HV_DATABASE_URL_REVIEW is required for human review validation')
+        _review_engine = create_async_engine(settings.database_url_review.get_secret_value(), pool_pre_ping=True,
+                                            pool_size=5, max_overflow=2)
+        _review_session_factory = async_sessionmaker(_review_engine, expire_on_commit=False)
+    return _review_session_factory
+
+
+REVIEW_ROLE_CHECK = """SELECT current_user='app_review' AND session_user=current_user AND r.rolcanlogin
+    AND NOT r.rolinherit AND NOT r.rolsuper AND NOT r.rolbypassrls AND NOT r.rolcreatedb AND NOT r.rolcreaterole AND NOT r.rolreplication
+    AND NOT EXISTS(SELECT 1 FROM pg_auth_members WHERE roleid=r.oid OR member=r.oid)
+    AND NOT EXISTS(SELECT 1 FROM pg_class WHERE relowner=r.oid)
+    AND NOT EXISTS(SELECT 1 FROM pg_proc WHERE proowner=r.oid)
+    AND NOT EXISTS(SELECT 1 FROM pg_namespace WHERE nspowner=r.oid)
+    AND NOT EXISTS(SELECT 1 FROM pg_database WHERE datdba=r.oid)
+    AND NOT has_schema_privilege(r.oid,'public','CREATE')
+    AND NOT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+      WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') AND (
+        has_table_privilege(r.oid,c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+        OR has_any_column_privilege(r.oid,c.oid,'INSERT,UPDATE,REFERENCES')
+        OR (c.relname NOT IN ('declaration_import','declaration_candidate','declaration_candidate_evidence','declaration_candidate_issue')
+          AND has_any_column_privilege(r.oid,c.oid,'SELECT'))))
+    FROM pg_roles r WHERE r.rolname=current_user"""
+
+
+@asynccontextmanager
+async def get_review_tenant_session(org_id: uuid.UUID) -> AsyncGenerator[AsyncSession, None]:
+    async with get_review_session_factory()() as session, session.begin():
+        if not await session.scalar(text(REVIEW_ROLE_CHECK)):
+            raise RuntimeError('Human reviews require the isolated app_review database role')
+        await set_tenant_context(session, org_id)
+        yield session

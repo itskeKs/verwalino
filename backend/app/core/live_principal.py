@@ -4,6 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep, require_admin_dep
+from app.core.db import get_review_tenant_session
 
 
 async def require_live_principal(db: AsyncSession, auth: AuthContext, *, writer: bool, exclusive: bool = False, administrator: bool = False) -> None:
@@ -28,6 +29,17 @@ async def get_live_writer_db(
 ) -> AsyncSession:
     await require_live_principal(db, auth, writer=True)
     return db
+
+
+async def get_live_review_db(auth: AuthContext = Depends(require_write_dep)):
+    """One isolated transaction for canonical correction and graph validation."""
+    try:
+        async with get_review_tenant_session(auth.organization_id) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor': str(auth.user_id)})
+            await require_live_principal(db, auth, writer=True)
+            yield db
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail={'code': 'REVIEW_RUNTIME_UNAVAILABLE'}) from exc
 
 
 async def get_live_publication_db(

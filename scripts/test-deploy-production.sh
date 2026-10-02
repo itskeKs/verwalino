@@ -198,7 +198,7 @@ if [ "$(basename "$0")" = docker ]; then
           [ "${FAKE_PROVIDER_SMOKE_FAIL:-0}" = 1 ] && exit 99
           exit 0
           ;;
-        *' run '*' alembic current '*) printf '%s\n' '0072 (head)'; exit 0 ;;
+        *' run '*' alembic current '*) printf '%s\n' '0073 (head)'; exit 0 ;;
         *' run '*) exit 0 ;;
         *' exec -T app python -c '*'import json'*)
           python3 -c '
@@ -286,7 +286,7 @@ assert_verifier_label_assertions() {
 
 assert_declaration_worker_runtime() {
   for file in scripts/deploy-production.sh scripts/verify-production.sh; do
-    grep -Fq '0072 (head)' "$file" || fail "$file does not gate on Alembic head 0072"
+    grep -Fq '0073 (head)' "$file" || fail "$file does not gate on Alembic head 0073"
     grep -Fq 'wait_for_health worker' "$file" || fail "$file does not wait for the declaration worker healthcheck"
     grep -Fq 'runtime_service in app worker' "$file" || fail "$file does not validate both runtime services"
   done
@@ -304,6 +304,11 @@ assert_worker_database_isolation() {
   printf '%s\n' "$worker_block" | grep -Fq 'HV_DATABASE_URL_WORKER: postgresql+asyncpg://app_worker:' || fail 'worker needs its separate database role'
   if printf '%s\n' "$app_block" | grep -q 'HV_DATABASE_URL_WORKER'; then fail 'web service must not receive worker credentials'; fi
   if printf '%s\n' "$worker_block" | grep -q 'HV_DATABASE_URL:'; then fail 'worker must not fall back to web credentials'; fi
+  printf '%s\n' "$app_block" | grep -Fq 'HV_DATABASE_URL_REVIEW: postgresql+asyncpg://app_review:' || fail 'review endpoints need isolated review credentials'
+  if printf '%s\n' "$worker_block" | grep -q 'HV_DATABASE_URL_REVIEW'; then fail 'worker must not receive human review credentials'; fi
+  for file in scripts/deploy-production.sh scripts/verify-production.sh; do
+    grep -Fq 'assert_runtime_db_role review' "$file" || fail 'review role deployment check missing'
+  done
 }
 
 assert_worker_egress_isolation() {

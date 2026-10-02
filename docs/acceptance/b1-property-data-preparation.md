@@ -927,3 +927,26 @@ Complex correction semantics and raw managed-issue resolution remain application
 compatibility boundaries. Current-revision exact replay is preserved; durable
 idempotency-key replay is not implemented by this command. These remain explicit
 activation blockers. Source activation remains false and B1 is incomplete.
+
+## Isolated semantic review runtime (0073)
+
+Canonical correction parsing and full graph revalidation now run in a separate
+app_review transaction on the two review mutation routes. The role has only explicit
+review-graph reads and narrow commands, no inherited roles/table writes/ownership
+or elevated attributes. Web and worker SQL cannot assume it, invoke its commands,
+submit unchecked corrections or resolve managed issues. A private DB context binds
+issue outcomes to the actor/import/revision/backend/transaction established by the
+review command. Only controlled managed resolutions and allocation BLOCKER inserts
+are permitted; source identities and messages cannot be rewritten by a caller.
+
+The semantic runtime is trusted Python code; the database does not claim to prove
+Python executed or resist compromise of the API process/review credential. This
+closes the ordinary-runtime SQL bypass while retaining one authoritative validator.
+The 32/66 focused/expanded runs, 150 compatibility cases and final 42 role/expiry/
+strict HTTP/RLS cases passed. Independent review accepted the boundary. Rendered
+synthetic Compose and fake deployment checks passed; no deployment occurred.
+See [design, trust contract and evidence](../2026-10-02-declaration-review-runtime.md).
+
+Durable review request-key replay, remaining indirect consumers, legacy reconciliation
+and reviewed activation evidence still remain. Activation is false and B1 is not
+complete; the full M-A–M-G implementation continues.

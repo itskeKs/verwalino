@@ -36,7 +36,7 @@ install -d -m 700 "$root" "$root/releases" "$root/shared"
 install -m 600 .env.example "$root/shared/.env"
 ```
 
-Generate the four database/session values without entering a cleartext secret
+Generate the five database/session values without entering a cleartext secret
 in shell history. The values exist only in the current shell and the mode-0600
 environment file; unset them immediately afterwards. This rewrites the blank
 placeholders instead of appending duplicate dotenv keys.
@@ -45,6 +45,7 @@ placeholders instead of appending duplicate dotenv keys.
 migrator_password=$(openssl rand -hex 32)
 app_rw_password=$(openssl rand -hex 32)
 app_worker_password=$(openssl rand -hex 32)
+app_review_password=$(openssl rand -hex 32)
 session_secret=$(openssl rand -hex 32)
 tmp_env=$(mktemp "$root/shared/.env.XXXXXX")
 chmod 600 "$tmp_env"
@@ -52,6 +53,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
     MIGRATOR_PASSWORD=) printf 'MIGRATOR_PASSWORD=%s\n' "$migrator_password" ;;
     APP_WORKER_PASSWORD=) printf 'APP_WORKER_PASSWORD=%s\n' "$app_worker_password" ;;
+    APP_REVIEW_PASSWORD=) printf 'APP_REVIEW_PASSWORD=%s\n' "$app_review_password" ;;
     APP_RW_PASSWORD=) printf 'APP_RW_PASSWORD=%s\n' "$app_rw_password" ;;
     SESSION_SECRET=) printf 'SESSION_SECRET=%s\n' "$session_secret" ;;
     FORWARDED_ALLOW_IPS=*) printf 'FORWARDED_ALLOW_IPS=172.21.0.0/16\n' ;;
@@ -59,7 +61,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   esac
 done < "$root/shared/.env" > "$tmp_env"
 mv -f "$tmp_env" "$root/shared/.env"
-unset migrator_password app_rw_password app_worker_password session_secret
+unset migrator_password app_rw_password app_worker_password app_review_password session_secret
 ```
 
 Leave `APP_IMAGE=` blank in that file for the host-build flow. The helper
@@ -252,3 +254,29 @@ A missing worker URL fails startup; there is no fallback. Both roles remain subj
 to tenant/source RLS. Only the worker can claim, renew and transition extraction
 leases. After migration, retain this role separation during rollback and pause
 workers before credential rotation. Source enforcement itself remains disabled.
+
+
+## Isolated review runtime (0073)
+
+Provision the independent `app_review` login before migration 0073 on an existing
+volume, using the protected `APP_REVIEW_PASSWORD` and the reviewed `prod-init.sh`
+procedure in a separately authorized maintenance operation. Do not reset volumes
+or grant app_rw/app_worker membership. The review role is NOINHERIT, owns no objects,
+has no elevated flags, parent roles or delegates, and receives only explicit graph
+SELECT privileges and narrow review commands from the migration. Startup of a new
+volume includes it automatically. Existing database-service environment changes
+must be accounted for in the maintenance procedure; the deploy helper still refuses
+an unexpected replacement of the stable database container.
+
+Only the API receives `HV_DATABASE_URL_REVIEW`; the extraction worker must never
+receive it. The two mutation endpoints use a separate pool with no fallback to
+HV_DATABASE_URL. Missing/unsafe review configuration returns REVIEW_RUNTIME_UNAVAILABLE.
+Read-only review views keep their ordinary connection. Local development uses the
+same dedicated setting, pointed at the dev-only app_review login from init.sql.
+
+The runtime checks actual session/current role, no membership edges, no elevated
+attributes or ownership, and no public-schema CREATE privilege. Both deployment
+helpers test the review connection from the API container. This separation protects
+against arbitrary ordinary-runtime SQL; it does not protect against compromise of
+the API process or its dedicated review credential. Keep that credential server-side
+and rotate it independently. Source activation remains disabled by this release.

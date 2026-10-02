@@ -402,8 +402,8 @@ if [ -n "$db_before_id" ] && [ "$db_before_id" != "$db_after_id" ]; then
 fi
 compose --profile ops run --rm --no-deps migrate
 migration_state=$(compose --profile ops run --rm --no-deps migrate alembic current)
-[ "$migration_state" = '0072 (head)' ] || {
-  echo "migration state is not exactly 0072 (head)" >&2
+[ "$migration_state" = '0073 (head)' ] || {
+  echo "migration state is not exactly 0073 (head)" >&2
   exit 1
 }
 printf '%s\n' "$admin_password" | compose --profile ops run --rm --no-deps -T bootstrap \
@@ -478,18 +478,22 @@ assert_runtime_db_role() {
   case "$runtime_service" in
     app) runtime_url_key=HV_DATABASE_URL; runtime_role=app_rw ;;
     worker) runtime_url_key=HV_DATABASE_URL_WORKER; runtime_role=app_worker ;;
+    review) runtime_url_key=HV_DATABASE_URL_REVIEW; runtime_role=app_review; runtime_service=app ;;
   esac
   compose exec -T "$runtime_service" python -c "
 import asyncio
 import os
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
+from app.core.db import REVIEW_ROLE_CHECK
 
 async def main():
     engine = create_async_engine(os.environ['$runtime_url_key'])
     try:
         async with engine.connect() as connection:
             assert await connection.scalar(text('SELECT current_user')) == '$runtime_role'
+            if '$runtime_role' == 'app_review':
+                assert await connection.scalar(text(REVIEW_ROLE_CHECK)), 'Unsafe review role topology'
     finally:
         await engine.dispose()
 
@@ -498,6 +502,7 @@ asyncio.run(main())
 }
 assert_runtime_db_role app
 assert_runtime_db_role worker
+assert_runtime_db_role review
 
 cookie_jar=$(mktemp)
 public_headers=$(mktemp)

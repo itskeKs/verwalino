@@ -3,7 +3,7 @@ import uuid
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
-from app.core.db import get_tenant_session
+from app.core.db import get_tenant_session, get_review_tenant_session
 from tests.test_derived_source_access import committed_scope,actor_session  # noqa: F401
 from tests.test_financial_scope_boundary import scope_seed,worker_tenant  # noqa: F401
 from tests.test_declaration_import_api import isolated_document_store,enable_declaration_imports  # noqa: F401
@@ -52,19 +52,21 @@ def command_params(params,**changes):
 
 async def test_command_owns_actor_revision_versions_audit_and_exact_current_revision_replay(committed_scope):
     seed=committed_scope;params=await review_seed(seed)
-    async with synthetic_enforcement(seed),get_tenant_session(params['org']) as db:
+    async with synthetic_enforcement(seed),get_review_tenant_session(params['org']) as db:
         await actor_session(db,params['actor'])
         assert await db.scalar(text(COMMAND),command_params(params))==2
         candidate=(await db.execute(text('SELECT review_status,reviewed_by,reviewed_at,candidate_version FROM declaration_candidate WHERE id=:candidate'),params)).one()
         assert candidate.review_status=='ACCEPTED' and candidate.reviewed_by==params['actor'] and candidate.reviewed_at and candidate.candidate_version==2
+        assert await db.scalar(text(COMMAND),command_params(params,revision=2))==2
+        assert (await db.execute(text('SELECT review_status,reviewed_by,reviewed_at,candidate_version FROM declaration_candidate WHERE id=:candidate'),params)).one()==candidate
+        with pytest.raises(DBAPIError,match='STALE_DRAFT_REVISION'):
+            async with db.begin_nested(): await db.execute(text(COMMAND),command_params(params))
+    async with get_tenant_session(params['org']) as db:
+        await actor_session(db,params['actor'])
         audit=(await db.execute(text("SELECT actor_user_id,payload_diff FROM audit_event WHERE entity_id=:job AND action='declaration_import.candidate_reviewed'"),params)).one()
         assert audit.actor_user_id==params['actor'] and audit.payload_diff=={
             'import_id':str(params['job']),'candidate_id':str(params['candidate']),'decision':'ACCEPTED','revision':2}
-        assert await db.scalar(text(COMMAND),command_params(params,revision=2))==2
-        assert (await db.execute(text('SELECT review_status,reviewed_by,reviewed_at,candidate_version FROM declaration_candidate WHERE id=:candidate'),params)).one()==candidate
         assert await db.scalar(text("SELECT count(*) FROM audit_event WHERE entity_id=:job AND action='declaration_import.candidate_reviewed'"),params)==1
-        with pytest.raises(DBAPIError,match='STALE_DRAFT_REVISION'):
-            async with db.begin_nested(): await db.execute(text(COMMAND),command_params(params))
 
 
 @pytest.mark.parametrize('change,code',[
@@ -75,12 +77,14 @@ async def test_command_owns_actor_revision_versions_audit_and_exact_current_revi
 ])
 async def test_command_invalid_envelopes_have_no_partial_effects(committed_scope,change,code):
     seed=committed_scope;params=await review_seed(seed)
-    async with synthetic_enforcement(seed),get_tenant_session(params['org']) as db:
+    async with synthetic_enforcement(seed),get_review_tenant_session(params['org']) as db:
         await actor_session(db,params['actor'])
         with pytest.raises(DBAPIError,match=code):
             async with db.begin_nested(): await db.execute(text(COMMAND),command_params(params,**change))
         assert await db.scalar(text('SELECT draft_revision FROM declaration_import WHERE id=:job'),params)==1
         assert await db.scalar(text('SELECT review_status FROM declaration_candidate WHERE id=:candidate'),params)=='PENDING'
+    async with get_tenant_session(params['org']) as db:
+        await actor_session(db,params['actor'])
         assert await db.scalar(text("SELECT count(*) FROM audit_event WHERE entity_id=:job AND action='declaration_import.candidate_reviewed'"),params)==0
 
 
@@ -92,7 +96,7 @@ async def test_review_command_rejects_identity_and_source_boundaries(committed_s
     if boundary=='duplicate_candidate': command.update(ids=[params['candidate']]*2,bulk=True)
     if boundary=='wrong_org': command['org']=seed_data['org_b_id']
     if boundary=='missing_evidence': await mutate(text('DELETE FROM declaration_candidate_evidence WHERE candidate_id=:candidate'),params)
-    factory=get_worker_tenant_session if boundary=='worker' else get_tenant_session
+    factory=get_worker_tenant_session if boundary=='worker' else get_review_tenant_session
     async with synthetic_enforcement(seed):
         if boundary=='inactive_actor': await mutate(text('UPDATE "user" SET is_active=false WHERE id=:actor'),params)
         try:
@@ -108,7 +112,7 @@ async def test_command_reopens_managed_issues_without_trusting_caller_revalidati
     seed=committed_scope;params=await review_seed(seed)
     await mutate(text("""INSERT INTO declaration_candidate_issue(organization_id,import_id,candidate_id,code,severity,message,
       resolution_status,resolved_by,resolved_at) VALUES(:org,:job,:candidate,'CONFLICTING_ALTERNATIVES','BLOCKER','Synthetic','RESOLVED',:actor,clock_timestamp())"""),params)
-    async with synthetic_enforcement(seed),get_tenant_session(params['org']) as db:
+    async with synthetic_enforcement(seed),get_review_tenant_session(params['org']) as db:
         await actor_session(db,params['actor'])
         assert await db.scalar(text(COMMAND),command_params(params))==2
         assert (await db.execute(text('SELECT resolution_status,resolved_by,resolved_at FROM declaration_candidate_issue WHERE import_id=:job'),params)).one()==('OPEN',None,None)
@@ -116,7 +120,7 @@ async def test_command_reopens_managed_issues_without_trusting_caller_revalidati
 
 async def test_command_and_caller_transaction_failure_roll_back_together(committed_scope):
     seed=committed_scope;params=await review_seed(seed)
-    async with synthetic_enforcement(seed),get_tenant_session(params['org']) as db:
+    async with synthetic_enforcement(seed),get_review_tenant_session(params['org']) as db:
         await actor_session(db,params['actor'])
         with pytest.raises(DBAPIError):
             async with db.begin_nested():
@@ -124,6 +128,8 @@ async def test_command_and_caller_transaction_failure_roll_back_together(committ
                 await db.execute(text('SELECT 1/0'))
         assert await db.scalar(text('SELECT draft_revision FROM declaration_import WHERE id=:job'),params)==1
         assert await db.scalar(text('SELECT review_status FROM declaration_candidate WHERE id=:candidate'),params)=='PENDING'
+    async with get_tenant_session(params['org']) as db:
+        await actor_session(db,params['actor'])
         assert await db.scalar(text("SELECT count(*) FROM audit_event WHERE entity_id=:job AND action='declaration_import.candidate_reviewed'"),params)==0
 
 
@@ -132,7 +138,7 @@ async def test_simultaneous_reviews_have_one_revision_winner(committed_scope):
     seed=committed_scope;params=await review_seed(seed)
     async def review(decision):
         try:
-            async with get_tenant_session(params['org']) as db:
+            async with get_review_tenant_session(params['org']) as db:
                 await actor_session(db,params['actor'])
                 return await db.scalar(text(COMMAND),command_params(params,decision=decision))
         except DBAPIError as exc:
@@ -154,7 +160,7 @@ async def test_waiting_review_rechecks_revoked_actor_after_acl_lock(committed_sc
     seed=committed_scope;params=await review_seed(seed);engine=create_async_engine(MIGRATOR_URL)
     started=asyncio.Event()
     async def review():
-        async with get_tenant_session(params['org']) as db:
+        async with get_review_tenant_session(params['org']) as db:
             await actor_session(db,params['actor'])
             started.set()
             with pytest.raises(DBAPIError,match='Current human review authority required'):
@@ -189,7 +195,7 @@ async def test_review_command_migration_preserves_history_and_refuses_strict_dow
     engine=create_engine(MIGRATOR_SYNC_URL)
     try:
         async with synthetic_enforcement(seed):
-            async with get_tenant_session(params['org']) as db:
+            async with get_review_tenant_session(params['org']) as db:
                 await actor_session(db,params['actor'])
                 assert await db.scalar(text(COMMAND),command_params(params))==2
             with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
@@ -200,6 +206,7 @@ async def test_review_command_migration_preserves_history_and_refuses_strict_dow
             try:
                 snapshots={table:db.scalar(text(f"SELECT md5(COALESCE(string_agg(to_jsonb(r)::text,',' ORDER BY id),'')) FROM {table} r"))
                            for table in ['declaration_candidate','declaration_candidate_issue','declaration_import','audit_event']}
+                importlib.import_module('migrations.versions.0073_declaration_review_runtime').downgrade()
                 migration.downgrade();migration.upgrade()
                 for table,digest in snapshots.items():
                     assert db.scalar(text(f"SELECT md5(COALESCE(string_agg(to_jsonb(r)::text,',' ORDER BY id),'')) FROM {table} r"))==digest
@@ -246,8 +253,10 @@ async def test_bulk_low_risk_command_has_one_revision_and_one_audit_per_candidat
       'unit:2',field_key,operation,proposed_value_json,confidence,risk_class FROM declaration_candidate WHERE id=:candidate"""),params)
     await mutate(text("""INSERT INTO declaration_candidate_evidence(organization_id,candidate_id,document_id,pdf_page,quote)
       VALUES(:org,:second,:document,1,'Synthetic')"""),params)
-    async with synthetic_enforcement(seed),get_tenant_session(params['org']) as db:
+    async with synthetic_enforcement(seed),get_review_tenant_session(params['org']) as db:
         await actor_session(db,params['actor'])
         assert await db.scalar(text(COMMAND),command_params(params,bulk=True,ids=[params['candidate'],params['second']]))==2
         assert await db.scalar(text('SELECT count(*) FROM declaration_candidate WHERE import_id=:job AND candidate_version=2'),params)==2
+    async with get_tenant_session(params['org']) as db:
+        await actor_session(db,params['actor'])
         assert await db.scalar(text("SELECT count(*) FROM audit_event WHERE entity_id=:job AND action='declaration_import.candidate_reviewed' AND payload_diff->>'revision'='2'"),params)==2

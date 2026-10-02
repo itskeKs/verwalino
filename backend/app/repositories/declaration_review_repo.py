@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import uuid
 import json
-from datetime import datetime
 from collections.abc import Sequence
 
 from sqlalchemy import select, text
@@ -26,8 +25,13 @@ class DeclarationReviewRepository:
         self._session = session
         self._organization_id = organization_id
         self._imports = DeclarationImportRepository(session, organization_id)
+        self._graph_locked_by_command = False
 
     async def lock_import(self, import_id: uuid.UUID, *, capability: str = 'read') -> DeclarationImport | None:
+        if capability == 'prepare':
+            self._graph_locked_by_command = bool(await self._session.scalar(text(
+                'SELECT lock_declaration_review_graph(:org,:job)'), {'org': self._organization_id, 'job': import_id}))
+            return await self._imports.get_by_id(import_id) if self._graph_locked_by_command else None
         await self._imports.lock_acl()
         if not await self._session.scalar(text('SELECT property_import_runtime_access(:org,:job,:capability)'),
                 {'org': self._organization_id, 'job': import_id, 'capability': capability}):
@@ -36,12 +40,8 @@ class DeclarationReviewRepository:
 
     async def apply_review(self, import_id: uuid.UUID, revision: int,
                            candidate_ids: Sequence[uuid.UUID], decision: str,
-                           correction: dict | None, comment: str | None, *, bulk: bool
-                           ) -> dict[uuid.UUID, tuple[uuid.UUID | None, datetime | None]]:
-        prior_resolutions = {row.id: (row.resolved_by, row.resolved_at) for row in
-                             await self.issues_for_import(import_id, for_update=True)
-                             if row.resolution_status == 'RESOLVED'}
-        await self._session.scalar(text(
+                           correction: dict | None, comment: str | None, *, bulk: bool) -> int:
+        result = await self._session.scalar(text(
             'SELECT apply_declaration_review(:org,:job,:revision,CAST(:ids AS uuid[]),'
             ':decision,CAST(:correction AS jsonb),:comment,:bulk)'),
             {'org': self._organization_id, 'job': import_id, 'revision': revision,
@@ -51,7 +51,26 @@ class DeclarationReviewRepository:
         # The command owns candidate/parent state and conservatively reopens
         # managed issues. Do not reuse pre-command ORM snapshots of those rows.
         self._session.expire_all()
-        return prior_resolutions
+        return int(result)
+
+    async def apply_issue_revalidation(self, import_id: uuid.UUID, revision: int) -> None:
+        effects = []
+        with self._session.no_autoflush:
+            for issue in list(self._session.new):
+                if isinstance(issue, DeclarationCandidateIssue):
+                    if issue.import_id != import_id or issue.organization_id != self._organization_id:
+                        raise ValueError('Issue revalidation crossed import context')
+                    effects.append({'candidate_id': str(issue.candidate_id), 'code': issue.code})
+                    self._session.expunge(issue)
+            for issue in list(self._session.dirty):
+                if isinstance(issue, DeclarationCandidateIssue):
+                    if issue.import_id != import_id or issue.organization_id != self._organization_id:
+                        raise ValueError('Issue revalidation crossed import context')
+                    effects.append({'id': str(issue.id), 'resolution_status': issue.resolution_status})
+                    self._session.expire(issue)
+            await self._session.execute(text(
+                'SELECT apply_declaration_issue_revalidation(:org,:job,:revision,CAST(:effects AS jsonb))'),
+                {'org': self._organization_id, 'job': import_id, 'revision': revision, 'effects': json.dumps(effects)})
 
     async def lock_candidates(
         self, import_id: uuid.UUID, candidate_ids: Sequence[uuid.UUID]
@@ -59,14 +78,16 @@ class DeclarationReviewRepository:
         ids = sorted(set(candidate_ids), key=str)
         if not ids:
             return []
-        result = await self._session.execute(
+        statement = (
             select(DeclarationCandidate)
             .where(DeclarationCandidate.organization_id == self._organization_id)
             .where(DeclarationCandidate.import_id == import_id)
             .where(DeclarationCandidate.id.in_(ids))
             .order_by(DeclarationCandidate.id)
-            .with_for_update()
         )
+        if not self._graph_locked_by_command:
+            statement = statement.with_for_update()
+        result = await self._session.execute(statement)
         rows = result.scalars().all()
         return rows if len(rows) == len(ids) else []
 
@@ -129,7 +150,7 @@ class DeclarationReviewRepository:
             .where(DeclarationCandidateIssue.import_id == import_id)
             .order_by(DeclarationCandidateIssue.created_at, DeclarationCandidateIssue.id)
         )
-        if for_update:
+        if for_update and not self._graph_locked_by_command:
             statement = statement.with_for_update()
         result = await self._session.execute(statement)
         return result.scalars().all()

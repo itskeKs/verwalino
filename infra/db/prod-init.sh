@@ -5,13 +5,15 @@
 set -eu
 
 : "${APP_WORKER_PASSWORD:?APP_WORKER_PASSWORD must be set for the db service}"
+: "${APP_REVIEW_PASSWORD:?APP_REVIEW_PASSWORD must be set for the db service}"
 : "${APP_RW_PASSWORD:?APP_RW_PASSWORD must be set for the db service}"
 
 psql -v ON_ERROR_STOP=1 \
   --username "$POSTGRES_USER" \
   --dbname "$POSTGRES_DB" \
   --set=app_rw_password="$APP_RW_PASSWORD" \
-  --set=app_worker_password="$APP_WORKER_PASSWORD" <<'SQL'
+  --set=app_worker_password="$APP_WORKER_PASSWORD" \
+  --set=app_review_password="$APP_REVIEW_PASSWORD" <<'SQL'
 SELECT pg_catalog.format(
   'CREATE ROLE app_rw LOGIN PASSWORD %L NOBYPASSRLS NOCREATEDB NOCREATEROLE',
   :'app_rw_password'
@@ -26,7 +28,13 @@ SELECT pg_catalog.format(
 WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'app_worker')
 \gexec
 GRANT app_rw TO app_worker;
-GRANT CONNECT ON DATABASE hausverwaltung TO app_rw,app_worker;
+SELECT pg_catalog.format(
+  'CREATE ROLE app_review LOGIN PASSWORD %L NOINHERIT NOBYPASSRLS NOCREATEDB NOCREATEROLE',
+  :'app_review_password'
+)
+WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'app_review')
+\gexec
+GRANT CONNECT ON DATABASE hausverwaltung TO app_rw,app_worker,app_review;
 SQL
 
-echo "[db-init] app_rw and isolated app_worker roles ensured."
+echo "[db-init] app_rw, isolated app_worker and app_review roles ensured."
