@@ -23,5 +23,5 @@ function UserList() {
 export function UsersPage() {
   const { session } = useAuth();
   return <div className="paged-list"><h1>Benutzer</h1>{session?.role === "OWNER_ADMIN"
-    ? <><p><Link to="/berechtigungen">Bereiche und Teamrechte verwalten</Link> · <Link to="/gebaeudedaten-rechte">Gemeinsame Gebäudedaten vorbereiten</Link></p><UserList /></> : <p className="error-text">Zugriff nur für Inhaber/Admin.</p>}</div>;
+    ? <><p><Link to="/berechtigungen">Bereiche und Teamrechte verwalten</Link> · <Link to="/gebaeudedaten-rechte">Gemeinsame Gebäudedaten vorbereiten</Link> · <Link to="/kontaktdaten-rechte">Kontaktdaten-Rechte vorbereiten</Link></p><UserList /></> : <p className="error-text">Zugriff nur für Inhaber/Admin.</p>}</div>;
 }

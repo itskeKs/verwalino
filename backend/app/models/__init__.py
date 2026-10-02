@@ -135,6 +135,7 @@ from app.models.dunning_scope_context import DunningScopeContext
 from app.models.scope_payment_reconciliation import ScopePaymentReconciliation, ScopePaymentReconciliationItem
 
 from app.models.property_data_domain import PropertyDataDomain, PropertyDataGrant
+from app.models.person_data_domain import PersonDataDomain, PersonDataGrant
 
 from app.models.property_source_admission import PropertySourceAdmission
 from app.models.property_source_admission_review import PropertySourceAdmissionReview

@@ -421,3 +421,21 @@ is rejected using current person state. PAUSED retains authorized reads while
 stopping effects. History audit entries inherit the same ordinary source boundary.
 See [history evidence](../2026-10-02-history-source-access.md); contact custody and
 full person/profile access remain pending before activation.
+
+## Contact audience preparation (0068)
+
+Use Team → Kontaktdaten-Rechte to prepare an independent audience for an exact
+contact. Administrative setup gives no implicit contact permission. Property and
+financial grants remain independent. Only READ, PREPARE and EXPORT are available;
+READ is required and current READ_ONLY members cannot exercise PREPARE.
+
+Domain labels are generated from the contact UUID. Select a controlled reason
+code; do not put personal data in administration metadata. Contact selection uses
+ordinary person reads. Grant replacement requires revocation and a new request;
+retrying a committed request never restores revoked rights. Expiry uses DB time.
+Configuration and actor evidence are immutable. Populated configuration or strict
+source mode blocks downgrade; do not remove evidence to force production rollback.
+
+This is preparation only. Person/profile source policies and downstream contact
+completeness remain follow-up work. The activation gate remains false. See the
+[contact authorization design](../2026-10-02-contact-data-domain-design.md).

@@ -213,6 +213,8 @@ async def test_domain_migration_refuses_evidence_loss_and_roundtrips_empty_confi
                     # historical rehearsal; retain every committed receipt.
                     connection.execute(text('TRUNCATE property_source_admission_review'))
                     connection.execute(text('TRUNCATE property_source_classification'))
+                    importlib.import_module('migrations.versions.0063_original_source_access').downgrade()
+                    importlib.import_module('migrations.versions.0062_derived_source_access').downgrade()
                     importlib.import_module('migrations.versions.0056_property_source_classification').downgrade()
                     importlib.import_module('migrations.versions.0052_property_source_admission_review').downgrade()
                     importlib.import_module('migrations.versions.0051_declaration_publication_audience').downgrade()

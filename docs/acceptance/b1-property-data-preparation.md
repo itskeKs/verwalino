@@ -813,3 +813,33 @@ See [history source evidence](../2026-10-02-history-source-access.md). Person/pr
 contact custody, other source/indirect report coverage, worker lifecycle integrity
 and activation evidence remain open. Source activation is false; B1 and later
 implementation milestones remain incomplete.
+
+## Independent contact audience preparation (0068)
+
+An exact Person now has a separate immutable audience with explicit read, prepare
+and export grants. No administrator, property or financial permission creates a
+contact grant. Current role, deactivation, expiry and revocation apply immediately.
+The database generates the opaque label; API and DB accept only controlled reason
+codes. Canonical audit contains no client-supplied label or free-text reason.
+
+Evidence on the disposable PostgreSQL 16 database: 7 initial and 30 expanded
+backend checks passed. The combined contact/property/audit run passed 60 cases;
+its one failure was an older migration rehearsal which attempted to remove
+publication columns while later policies still referenced them. Explicitly
+unwinding 0063/0062 within that rollback-only rehearsal repaired it; its isolated
+rerun passed. This includes 31 contact cases covering raw metadata forgery,
+concurrent replay, cursor context, current principals, audit disclosure, safe
+round-trip and five NOWAIT dependencies. No production migration was weakened.
+
+Four frontend tests, lint and production build passed (existing bundle-size
+warning). Chromium on the real local API verified create with a lost committed
+response and same-key retry, a team grant, revoke, reload persistence, desktop and
+390px mobile layout. Native select options require an attached-state wait and the
+mobile capture waits for the sidebar transition to finish. Visual inspection found
+the shared flex shell retaining its intrinsic width; adding min-width: 0 lets the
+content shrink while the grant table scrolls locally. A repeat browser journey
+verified the form and main area fit the viewport. No browser page errors.
+Independent review accepted the implementation with no actionable findings.
+
+Person/profile source RLS and consumer completeness are still required. Source
+activation remains false; this preparation increment does not complete B1.

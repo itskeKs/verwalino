@@ -15,6 +15,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { MandatePage } from "./pages/MandatePage";
 import { SourceClassificationsPage } from "./pages/SourceClassificationsPage";
 import { SourceAdmissionReviewsPage } from "./pages/SourceAdmissionReviewsPage";
+import { PersonDataDomainsPage } from "./pages/PersonDataDomainsPage";
 import { PropertyDataDomainsPage } from "./pages/PropertyDataDomainsPage";
 import { AccountingScopesPage } from "./pages/AccountingScopesPage";
 import { UsersPage } from "./pages/UsersPage";
@@ -110,6 +111,8 @@ export function AppRoutes() {
         <Route path="/altquellen/:reviewId" element={<SourceClassificationsPage />} />
         <Route path="/quellenfreigaben" element={<SourceAdmissionReviewsPage />} />
         <Route path="/quellenfreigaben/:reviewId" element={<SourceAdmissionReviewsPage />} />
+        <Route path="/kontaktdaten-rechte" element={<PersonDataDomainsPage />} />
+        <Route path="/kontaktdaten-rechte/:domainId" element={<PersonDataDomainsPage />} />
         <Route path="/gebaeudedaten-rechte" element={<PropertyDataDomainsPage />} />
         <Route path="/gebaeudedaten-rechte/:domainId" element={<PropertyDataDomainsPage />} />
         <Route path="/berechtigungen" element={<AccountingScopesPage />} />

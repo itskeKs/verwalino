@@ -25,7 +25,7 @@ export function AppShell({ children }: Props) {
         />
       )}
 
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Topbar onToggleSidebar={() => setSidebarOpen((o) => !o)} />
         <main className="flex-1 overflow-y-auto px-4 py-6 md:px-8 md:py-8">
           <div className="mx-auto max-w-6xl">{children}</div>
