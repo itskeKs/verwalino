@@ -378,8 +378,10 @@ uploads, interrupted-transfer recovery, reconnect and explicit retry. See
 logical children bound to verified page ranges and the original audience; see
 `2026-10-03-logical-document-foundation.md`. Migration 0096 adds immutable invoice
 extraction revisions and explicit unlocated field evidence through the existing
-A2 worker; see `2026-10-03-extraction-revision-foundation.md`. Intake extraction,
-located field evidence, shared worker adapters, reviewed partitions and outbox
+A2 worker; see `2026-10-03-extraction-revision-foundation.md`. An optional serial
+runner now adapts the existing inspection, invoice and declaration queues while
+preserving their leases and reconciliation; see `2026-10-03-shared-workflow-runner.md`.
+Intake extraction, located field evidence, shared runtime qualification, reviewed partitions and outbox
 delivery remain outstanding. Real scanner
 qualification is still unavailable locally; this does not accept B2.
 

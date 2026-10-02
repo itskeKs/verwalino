@@ -144,9 +144,9 @@ class DeclarationImportWorker:
             result = await session.execute(select(Organization.id).order_by(Organization.id))
             return tuple(result.scalars().all())
 
-    async def claim_one(self) -> WorkerLease | None:
+    async def claim_one(self, organization_id: uuid.UUID | None = None) -> WorkerLease | None:
         now = self._clock()
-        organization_ids = await self._organization_ids()
+        organization_ids = (organization_id,) if organization_id is not None else await self._organization_ids()
         if self._last_claimed_organization_id in organization_ids:
             start = organization_ids.index(self._last_claimed_organization_id) + 1
             organization_ids = organization_ids[start:] + organization_ids[:start]
@@ -259,14 +259,14 @@ class DeclarationImportWorker:
                     task.cancel()
             await asyncio.gather(pipeline_task, heartbeat_task, return_exceptions=True)
 
-    async def run_once(self) -> WorkerResult:
+    async def run_once(self, *, organization_id: uuid.UUID | None = None) -> WorkerResult:
         # A disabled import feature must not acquire a lease or invoke external
         # parsing. The independent healthcheck still probes worker readiness.
         if not self._settings.declaration_import_enabled:
             return WorkerResult("DECLARATION_IMPORT_DISABLED")
         if not await self.schema_ready():
             return WorkerResult("SCHEMA_NOT_READY")
-        lease = await self.claim_one()
+        lease = await self.claim_one(organization_id) if organization_id is not None else await self.claim_one()
         if lease is None:
             return WorkerResult("IDLE")
         try:

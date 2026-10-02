@@ -8,6 +8,7 @@ from sqlalchemy import text
 from app.core.db import set_tenant_context
 from app.core.intake_inspection import run_isolated_inspection,valid_result,VERSION
 from app.core.storage import get_store
+from app.core.worker_process import run_bounded_processor
 
 
 async def process_once(session_factory,org_id,*,inspector=run_isolated_inspection):
@@ -40,7 +41,7 @@ async def process_once(session_factory,org_id,*,inspector=run_isolated_inspectio
             'content_byte_size':claim['content_byte_size'],'mime_type':claim['mime_type'],'page_count':None,'inspector_version':VERSION}
     else:
         try:
-            inspection=await asyncio.to_thread(inspector,data,claim['mime_type'])
+            inspection=await run_bounded_processor(inspector,data,claim['mime_type'])
             if not valid_result(inspection,data,claim['mime_type']):
                 raise ValueError('Invalid inspector result')
         except Exception:

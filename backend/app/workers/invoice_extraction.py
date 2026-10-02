@@ -6,6 +6,7 @@ from app.core.config import settings
 from app.core.db import get_worker_session_factory, set_tenant_context
 from app.core.invoice_ocr import outcome, run_isolated_extraction
 from app.core.storage import compute_sha256, get_store
+from app.core.worker_process import run_bounded_processor
 from app.services.invoice_processing_service import InvoiceProcessingService
 
 
@@ -22,7 +23,7 @@ async def process_once(factory, org_id, *, processor=run_isolated_extraction):
         if compute_sha256(data) != claim["sha256"]:
             result = outcome("failed", "source_integrity_failed")
         else:
-            result = await asyncio.to_thread(processor, data, claim["mime_type"])
+            result = await run_bounded_processor(processor, data, claim["mime_type"])
     except Exception:
         result = outcome("failed", "processor_failed")
     async with factory() as session, session.begin():
