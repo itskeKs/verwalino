@@ -310,3 +310,23 @@ cannot be exported in ENFORCED/PAUSED until reviewed into an accounting scope;
 PREPARATION retains legacy compatibility. Eight dependencies use NOWAIT locks and
 strict state refuses rollback. This closes these stored output tables and PDF
 routes; it does not complete general reports, privacy/audit or source activation.
+
+## Canonical property and unit access (0061)
+
+Strict property/unit lists, details, selectors and raw SQL require their current
+data-domain grant and complete source READ authority. Unproven or quarantined
+sources also hide copied master fields. Editing additionally requires prepare;
+PAUSED preserves reads but denies master writes. Units cannot be moved to an
+unauthorized property by raw SQL.
+
+New strict properties require an explicitly chosen audience. Domain/grants and the
+property commit atomically; an administrator role alone grants no source access.
+The manual creation form offers an unchecked choice with a reason. Its request key
+survives retry; audience creation requires that key. Reviewed declaration publication
+uses the same audience-before-parent ordering. An admin can prepare a data domain
+for a known property ID without obtaining its source fields.
+
+The new property creation receipt is immutable and actor-scoped. Rollback refuses
+to remove retained receipts or strict authority. Keep source activation disabled
+until the remaining original/derived source and indirect disclosure boundaries are
+closed and legacy coverage is reviewed.

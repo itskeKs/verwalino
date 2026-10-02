@@ -8,11 +8,12 @@ from decimal import Decimal, InvalidOperation
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.live_principal import get_live_member_db, get_live_writer_db
+from app.services.property_master_service import require_property_master
 
 from app.core.tenant import (
     AuthContext,
     get_current_user,
-    get_db,
     require_write_dep,
 )
 from app.repositories.unit_repo import UnitRepository
@@ -64,7 +65,7 @@ class UnitUpdate(BaseModel):
 async def list_units(
     property_id: uuid.UUID | None = None,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     repo = UnitRepository(db, auth.organization_id)
     if property_id:
@@ -79,7 +80,7 @@ async def page_units(
     property_id: uuid.UUID | None = None,
     query: PageQuery = Depends(page_query),
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     items, cursor = await page_rows(db, auth, Unit, Unit.number, [Unit.number, Unit.location, Unit.building_part], query, filters=([Unit.property_id == property_id] if property_id else []), context=str(property_id or ""))
     return Page(items=[_to_out(item) for item in items], next_cursor=cursor)
@@ -89,7 +90,7 @@ async def page_units(
 async def get_unit(
     unit_id: uuid.UUID,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     repo = UnitRepository(db, auth.organization_id)
     u = await repo.get_by_id(unit_id)
@@ -102,8 +103,9 @@ async def get_unit(
 async def create_unit(
     body: UnitCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
+    await require_property_master(db, auth.organization_id, uuid.UUID(body.property_id))
     _validate_usage_type(body.usage_type)
     repo = UnitRepository(db, auth.organization_id)
     mea = _parse_mea_numerator(body.mea) if body.mea is not None else None
@@ -132,12 +134,14 @@ async def update_unit(
     unit_id: uuid.UUID,
     body: UnitUpdate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     repo = UnitRepository(db, auth.organization_id)
     unit = await repo.get_by_id(unit_id)
     if unit is None:
         raise HTTPException(status_code=404, detail="Unit not found")
+
+    await require_property_master(db, auth.organization_id, unit.property_id)
 
     if body.usage_type is not None:
         _validate_usage_type(body.usage_type)

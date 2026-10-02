@@ -1,8 +1,8 @@
 """Administrative preparation; no implicit source or financial entitlement."""
 from datetime import datetime, timezone
+import uuid
 from fastapi import HTTPException
 from sqlalchemy import select, text
-from app.models.property import Property
 from app.models.property_data_domain import PropertyDataDomain, PropertyDataGrant
 from app.schemas.property_data_domain import DomainCreate, DataGrantCreate
 from app.services.authorization_service import AuthorizationService
@@ -16,7 +16,7 @@ class PropertyDataDomainService(AuthorizationService):
             raise HTTPException(404,'Property data domain not accessible')
         return row
 
-    async def create(self, command: DomainCreate, key):
+    async def create(self, command: DomainCreate, key, *, new_property=False):
         await self._require_administration()
         previous = await self.session.scalar(select(PropertyDataDomain).where(
             PropertyDataDomain.organization_id == self.auth.organization_id,
@@ -25,8 +25,8 @@ class PropertyDataDomainService(AuthorizationService):
             if any(getattr(previous, field) != getattr(command, field) for field in DomainCreate.model_fields):
                 raise HTTPException(409,'Idempotency-Key already used with a different request')
             return previous
-        if not await self.session.scalar(select(Property.id).where(
-                Property.organization_id == self.auth.organization_id, Property.id == command.property_id)):
+        if not new_property and not await self.session.scalar(text('SELECT property_data_setup_target_exists(:org,:property)'),
+                {'org':self.auth.organization_id,'property':command.property_id}):
             raise HTTPException(404,'Property not accessible')
         if await self.session.scalar(select(PropertyDataDomain.id).where(
                 PropertyDataDomain.organization_id == self.auth.organization_id, PropertyDataDomain.property_id == command.property_id)):
@@ -36,6 +36,21 @@ class PropertyDataDomainService(AuthorizationService):
         self.session.add(row)
         await self.session.flush()
         return row
+
+    async def prepare_new_audience(self, property_id, audience):
+        """Explicit authority precedes a new parent in the same deferred-FK transaction."""
+        await self._require_administration()
+        if not any(grant.user_id == self.auth.user_id and {'read','prepare'} <= grant.capabilities
+                   for grant in audience.grants):
+            raise HTTPException(422, 'Explicit creator read and prepare grant required')
+        domain = await self.create(DomainCreate(property_id=property_id, label=audience.label, reason=audience.reason),
+            uuid.uuid5(property_id, 'creation-domain'), new_property=True)
+        publisher_grant = None
+        for command in audience.grants:
+            receipt = await self.grant_data(domain.id, command, uuid.uuid5(property_id, f'creation-grant:{command.user_id}'))
+            if command.user_id == self.auth.user_id:
+                publisher_grant = receipt.id
+        return domain, publisher_grant
 
     async def grant_data(self, domain_id, command: DataGrantCreate, key):
         await self._require_administration()

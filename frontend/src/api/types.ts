@@ -82,6 +82,7 @@ export interface Property {
 export type MeaScaleStatus = "LEGACY_UNCONFIRMED" | "CONFIRMED";
 
 export interface PropertyCreate {
+  data_audience?: DeclarationApprovalRequest["new_property_audience"];
   name: string;
   street?: string;
   zip_code?: string;

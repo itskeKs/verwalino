@@ -20,7 +20,7 @@ class PropertyDataDomain(Base, UUIDPrimaryKeyMixin):
         UniqueConstraint('organization_id','id'), UniqueConstraint('organization_id','property_id'),
         UniqueConstraint('organization_id','property_id','id',name='uq_property_data_domain_context'),
         UniqueConstraint('organization_id','created_by','request_key'),
-        ForeignKeyConstraint(['organization_id','property_id'],['property.organization_id','property.id']),
+        ForeignKeyConstraint(['organization_id','property_id'],['property.organization_id','property.id'], deferrable=True, initially='DEFERRED'),
         ForeignKeyConstraint(['organization_id','created_by'],['user.organization_id','user.id']),
     )
 

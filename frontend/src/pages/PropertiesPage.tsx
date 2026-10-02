@@ -39,8 +39,14 @@ export function PropertiesPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<PropertyCreate>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [creationKey, setCreationKey] = useState(() => crypto.randomUUID());
+  const [withAudience, setWithAudience] = useState(false);
+  const [audienceReason, setAudienceReason] = useState("");
 
   function openCreate() {
+    setCreationKey(crypto.randomUUID());
+    setWithAudience(false);
+    setAudienceReason("");
     setEditId(null);
     setForm(EMPTY_FORM);
     setShowForm(true);
@@ -67,7 +73,11 @@ export function PropertiesPage() {
       if (editId) {
         await updateProperty(editId, form);
       } else {
-        await createProperty(form);
+        await createProperty({ ...form, ...(withAudience && session ? { data_audience: {
+          label: form.name.trim(), reason: audienceReason.trim(), grants: [{
+            user_id: session.user_id, capabilities: ["read", "prepare", "approve", "export"], reason: audienceReason.trim(),
+          }],
+        } } : {}) }, creationKey);
       }
       setShowForm(false);
       setEditId(null);
@@ -159,6 +169,17 @@ export function PropertiesPage() {
                 ))}
               </select>
             </label>
+            {!editId && session?.role === "OWNER_ADMIN" && <fieldset style={{ gridColumn: "1 / -1", minWidth: 0, display: "grid", gap: "0.65rem" }}>
+              <legend>Datenfreigabe für das neue Objekt</legend>
+              <label style={{ display: "flex", flexDirection: "row", alignItems: "flex-start", gap: "0.5rem" }}>
+                <input type="checkbox" style={{ marginTop: "0.2rem", flexShrink: 0 }} checked={withAudience} onChange={event => setWithAudience(event.target.checked)} />
+                <span>Datenbereich anlegen und mir Lesen, Bearbeiten, Freigeben und Exportieren erlauben</span>
+              </label>
+              {withAudience && <label>Begründung der Freigabe
+                <input required maxLength={2000} value={audienceReason} onChange={event => setAudienceReason(event.target.value)} />
+              </label>}
+              <p className="muted">Weitere Teamfreigaben können anschließend unter Gebäudedaten-Rechte eingerichtet werden.</p>
+            </fieldset>}
             <div className="form-actions">
               <button type="submit" className="btn btn--primary" disabled={saving}>
                 {saving ? "Speichern..." : "Speichern"}

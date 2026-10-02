@@ -7,14 +7,20 @@ from datetime import date
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+from app.core.live_principal import get_live_member_db, get_live_writer_db, get_live_publication_db
+from app.declarations.review_schemas import NewPropertyAudience
+from app.services.property_data_domain_service import PropertyDataDomainService
+from app.services.idempotency_service import IdempotencyService
+from app.repositories.property_creation_repo import PropertyCreationRepository
+from app.services.property_master_service import require_property_master
 
 from app.core.tenant import (
     AuthContext,
     get_current_user,
-    get_db,
     require_write_dep,
 )
 from app.repositories.property_repo import PropertyRepository
@@ -50,6 +56,7 @@ class PropertyCreate(BaseModel):
     management_type: str
     fiscal_year_start_month: int = 1
     mea_denominator: int | None = Field(default=None, ge=1, le=1_000_000_000_000)
+    data_audience: NewPropertyAudience | None = None
 
 
 class PropertyUpdate(BaseModel):
@@ -70,7 +77,7 @@ class MeaScaleConfirmation(BaseModel):
 @router.get("", response_model=list[PropertyOut])
 async def list_properties(
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     repo = PropertyRepository(db, auth.organization_id)
     items = await repo.list_all()
@@ -81,7 +88,7 @@ async def list_properties(
 async def page_properties(
     query: PageQuery = Depends(page_query),
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     items, cursor = await page_rows(db, auth, Property, Property.name, [Property.name, Property.street, Property.city], query)
     return Page(items=[_to_out(item) for item in items], next_cursor=cursor)
@@ -91,7 +98,7 @@ async def page_properties(
 async def get_property(
     property_id: uuid.UUID,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     repo = PropertyRepository(db, auth.organization_id)
     p = await repo.get_by_id(property_id)
@@ -103,12 +110,42 @@ async def get_property(
 @router.post("", response_model=PropertyOut, status_code=201)
 async def create_property(
     body: PropertyCreate,
+    idempotency_key: uuid.UUID | None = Header(default=None),
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_publication_db),
 ):
     _validate_management_type(body.management_type)
     repo = PropertyRepository(db, auth.organization_id)
+    mode = await db.scalar(text('SELECT property_source_security_mode(:org)'), {'org':auth.organization_id})
+    if mode == 'PAUSED':
+        raise HTTPException(404, 'Property creation is paused')
+    if mode != 'PREPARATION' and body.data_audience is None:
+        raise HTTPException(422, 'Explicit property data audience required')
+    if body.data_audience is not None and idempotency_key is None:
+        raise HTTPException(422, 'Idempotency-Key required for audience creation')
+    payload = body.model_dump(mode='json')
+    if body.data_audience is not None:
+        for grant in payload['data_audience']['grants']:
+            grant['capabilities'] = sorted(grant['capabilities'])
+        payload['data_audience']['grants'].sort(key=lambda grant: grant['user_id'])
+    receipts = PropertyCreationRepository(db, auth.organization_id, auth.user_id)
+    digest = IdempotencyService.digest(payload)
+    if idempotency_key is not None:
+        receipt = await receipts.get(idempotency_key)
+        if receipt and receipt['request_digest'] != digest:
+            raise HTTPException(409, 'Idempotency-Key already used with a different request')
+        prior = receipt['property_id'] if receipt else None
+        if prior:
+            await require_property_master(db, auth.organization_id, prior)
+            saved = await repo.get_by_id(prior)
+            if saved is None:
+                raise HTTPException(404, 'Property not accessible')
+            return _to_out(saved)
+    property_id = uuid.uuid4()
+    if body.data_audience is not None:
+        await PropertyDataDomainService(db, auth).prepare_new_audience(property_id, body.data_audience)
     prop = Property(
+        id=property_id,
         name=body.name,
         street=body.street,
         zip_code=body.zip_code,
@@ -119,6 +156,8 @@ async def create_property(
         mea_scale_status=("CONFIRMED" if body.mea_denominator is not None else "LEGACY_UNCONFIRMED"),
     )
     prop = await repo.create(prop)
+    if idempotency_key is not None:
+        await receipts.record(idempotency_key, digest, prop.id)
     return _to_out(prop)
 
 
@@ -127,8 +166,9 @@ async def update_property(
     property_id: uuid.UUID,
     body: PropertyUpdate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
+    await require_property_master(db, auth.organization_id, property_id)
     repo = PropertyRepository(db, auth.organization_id)
     prop = await repo.get_by_id(property_id)
     if prop is None:
@@ -151,8 +191,9 @@ async def confirm_mea_scale(
     property_id: uuid.UUID,
     body: MeaScaleConfirmation,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
+    await require_property_master(db, auth.organization_id, property_id)
     property_repo = PropertyRepository(db, auth.organization_id)
     prop = await property_repo.get_by_id_for_update(property_id)
     if prop is None:

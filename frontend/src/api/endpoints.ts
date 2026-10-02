@@ -152,8 +152,8 @@ export function getProperty(id: string): Promise<Property> {
   return api.get<Property>(`/api/properties/${id}`);
 }
 
-export function createProperty(body: PropertyCreate): Promise<Property> {
-  return api.post<Property>("/api/properties", body);
+export function createProperty(body: PropertyCreate, key?: string): Promise<Property> {
+  return api.post<Property>("/api/properties", body, key ? { headers: { "Idempotency-Key": key } } : undefined);
 }
 
 export function updateProperty(id: string, body: PropertyUpdate): Promise<Property> {

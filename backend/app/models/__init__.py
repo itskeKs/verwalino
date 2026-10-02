@@ -140,3 +140,5 @@ from app.models.property_source_admission import PropertySourceAdmission
 from app.models.property_source_admission_review import PropertySourceAdmissionReview
 
 from app.models.property_source_classification import PropertySourceClassification
+
+from app.models.property_creation_receipt import PropertyCreationReceipt

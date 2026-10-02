@@ -585,3 +585,53 @@ boundary,final,unbound-red,export-repair,accepted}.log`.
 This protects the named financial output tables and PDF routes. Source CRUD/RLS,
 audit/privacy/general report closure and reviewed activation coverage remain open;
 B1 and source activation are not complete.
+
+## Canonical master data and explicit creation (0061)
+
+At base `a8c027a`, four expected red tests demonstrated missing direct property/unit
+read and write barriers, implicit creation without an audience, and raw reparenting.
+Restrictive policies now enforce the current property capability. Independent
+review additionally confirmed that copied master fields require the complete source
+READ graph: two further expected red tests showed unproven/quarantined source facts
+still visible. The repaired predicate hides and protects those fields while allowing
+ADMITTED evidence. PREPARATION stays compatible; PAUSED keeps authorized reads.
+
+New properties can prepare their explicit domain/grants before the parent, using a
+deferred composite FK within the same transaction. An own read/prepare grant is
+mandatory; declaration publication retains its additional approve requirement.
+Manual creation has an immutable typed actor-scoped receipt and rechecks access on
+replay. The old generic-looking receipt was found to be cost-only; its FK is retained.
+A narrowly admin-only existence helper supports setup by known property ID without
+returning source fields. Tests prove failed parent creation rolls back all audience
+rows, concurrent retries create one result, changed requests conflict, raw writes
+cannot choose another audience, and strict/populated migration rollback refuses.
+
+Early integrated runs passed 74 and 112 cases with one historical rehearsal failure
+each. The 0055 rehearsal now unwinds its new 0061 trigger dependency inside its
+rollback-only savepoint. The 0023 negative-MEA rehearsal previously attempted a full
+downgrade through later populated immutable source migrations. It now applies the
+actual 0023 upgrade to isolated TEMP pre-migration tables and verifies retained
+negative history plus rejection of a new negative row. The final combined run passed
+**189 cases** across master access, source proof/binding, declaration publication and
+approval, MEA, financial source input/disclosure and RLS registration. Independent
+review accepted the repaired boundary. Logs: `/tmp/hv-master-access-*.log` and
+`/tmp/hv-master-source-proof-red.log`.
+
+**16 UI tests passed**, with the two property-form tests rerun after checkbox spacing
+repair. Final lint/build passed; the existing ~619 KB bundle advisory remains.
+Regular Playwright was used because the Browser plugin/skill is unavailable. The
+first temporary Vite launch used the wrong working directory and produced a CSS
+overlay; restarting from frontend resolved it. The final Chromium loop passed at
+1440×1000 and 390×844 under synthetic strict state: explicit unchecked audience,
+retained input after a committed create's simulated lost response, exact body/key
+retry, and one durable property/domain after reload. Both screenshots were visually
+inspected; mobile form width/content were 316/316 px. No runtime errors or unexpected
+HTTP errors remained. Script and evidence: `/tmp/hv-master-browser.cjs`,
+`/tmp/hv-master-acceptance/`. Task API/Vite/browser processes stopped and synthetic
+strict state was removed; the activation predicate remains false. Five publication
+denial cases passed after correcting their rollback assertion to the target property
+ID. A final 15-case master/MEA run passed after removing a redundant unit preflight.
+
+This milestone covers property/unit master boundaries and creation. Original and
+derived source CRUD/RLS, audit/privacy/report closure and reviewed activation
+coverage remain required. B1 and the full M-A–M-G delivery are not complete.

@@ -9,8 +9,6 @@ from urllib.parse import urlparse
 import psycopg2
 import pytest
 import pytest_asyncio
-from alembic import command
-from alembic.config import Config
 
 try:
     SYNC_URL = os.environ["HV_DATABASE_URL_SYNC"]
@@ -86,28 +84,6 @@ def _audit_event_exists(action: str, entity_id: str) -> bool:
                 (action, entity_id),
             )
             return cur.fetchone()[0]
-
-
-def _declaration_alembic_config() -> Config:
-    config = Config(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
-    config.set_main_option("sqlalchemy.url", SYNC_URL)
-    config.attributes["hv_declaration_test_database"] = True
-    config.set_main_option(
-        "script_location", os.path.join(os.path.dirname(__file__), "..", "migrations")
-    )
-    return config
-
-
-def _delete_legacy_migration_test_data(
-    property_id: uuid.UUID, unit_id: uuid.UUID
-) -> None:
-    with psycopg2.connect(SYNC_URL) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM unit WHERE id = %s AND property_id = %s AND mea = %s",
-                (str(unit_id), str(property_id), "-1"),
-            )
-            cur.execute("DELETE FROM property WHERE id = %s", (str(property_id),))
 
 
 async def _wait_for_property_lock_waiters(expected_waiters: int) -> None:
@@ -191,61 +167,32 @@ def cleanup_oversized_test_unit():
 
 
 def test_nonnegative_mea_constraint_preserves_negative_legacy_rows(seed_data) -> None:
-    """0023 must accept legal pre-migration rows while protecting future writes."""
-    property_id = uuid.uuid4()
-    unit_id = uuid.uuid4()
-    config = _declaration_alembic_config()
-    upgraded_to_0023 = False
-
+    """Rehearse actual 0023 against isolated pre-migration tables, retaining later evidence."""
+    import importlib
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.exc import DBAPIError
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    migration = importlib.import_module('migrations.versions.0023_property_mea_scale')
+    engine = create_engine(SYNC_URL)
     try:
-        command.downgrade(config, "0022")
-        with psycopg2.connect(SYNC_URL) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO property "
-                    "(id, organization_id, name, street, zip_code, city, management_type) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                    (
-                        str(property_id),
-                        str(seed_data["org_a_id"]),
-                        "Negative legacy MEA",
-                        "Altweg negativ",
-                        "41000",
-                        "Mönchengladbach",
-                        "WEG",
-                    ),
-                )
-                cur.execute(
-                    "INSERT INTO unit "
-                    "(id, organization_id, property_id, number, usage_type, mea) "
-                    "VALUES (%s,%s,%s,%s,%s,%s)",
-                    (
-                        str(unit_id),
-                        str(seed_data["org_a_id"]),
-                        str(property_id),
-                        "negative-legacy",
-                        "WOHNUNG",
-                        "-1",
-                    ),
-                )
-
-        command.upgrade(config, "0023")
-        upgraded_to_0023 = True
-        with psycopg2.connect(SYNC_URL) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT mea FROM unit WHERE id = %s", (str(unit_id),))
-                assert str(cur.fetchone()[0]) == "-1.000000"
-                cur.execute(
-                    "SELECT convalidated FROM pg_constraint "
-                    "WHERE conname = %s AND conrelid = 'unit'::regclass",
-                    ("ck_unit_mea_nonnegative",),
-                )
-                assert cur.fetchone() == (False,)
-    finally:
-        if not upgraded_to_0023:
-            _delete_legacy_migration_test_data(property_id, unit_id)
-        command.upgrade(config, "head")
-        _delete_legacy_migration_test_data(property_id, unit_id)
+        with engine.connect() as db:
+            transaction = db.begin()
+            try:
+                db.execute(text('SET LOCAL search_path=pg_temp,public'))
+                db.execute(text('CREATE TEMP TABLE property(id uuid PRIMARY KEY) ON COMMIT DROP'))
+                db.execute(text('CREATE TEMP TABLE unit(id uuid PRIMARY KEY, mea numeric(12,6)) ON COMMIT DROP'))
+                unit_id = uuid.uuid4()
+                db.execute(text('INSERT INTO unit(id,mea) VALUES (:id,-1)'), {'id':unit_id})
+                with Operations.context(MigrationContext.configure(db)):
+                    migration.upgrade()
+                assert str(db.scalar(text('SELECT mea FROM unit WHERE id=:id'), {'id':unit_id})) == '-1.000000'
+                assert db.scalar(text("SELECT convalidated FROM pg_constraint WHERE conname='ck_unit_mea_nonnegative' AND conrelid='pg_temp.unit'::regclass")) is False
+                with pytest.raises(DBAPIError):
+                    with db.begin_nested():
+                        db.execute(text('INSERT INTO unit(id,mea) VALUES (:id,-1)'), {'id':uuid.uuid4()})
+            finally: transaction.rollback()
+    finally: engine.dispose()
 
 
 @pytest.mark.asyncio

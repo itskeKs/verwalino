@@ -11,7 +11,6 @@ from sqlalchemy import text
 from app.core.tenant import AuthContext
 from app.services.authorization_service import AuthorizationService
 from app.services.property_data_domain_service import PropertyDataDomainService
-from app.schemas.property_data_domain import DomainCreate
 from app.services.idempotency_service import IdempotencyService
 
 from app.declarations.approval import (
@@ -74,6 +73,9 @@ class DeclarationApprovalService:
 
         audience = request.new_property_audience
         domain_service = PropertyDataDomainService(self._session, auth)
+        if item.mode == 'NEW_PROPERTY' and audience is None and await self._session.scalar(text(
+                'SELECT property_source_security_mode(:org)'), {'org':self._organization_id}) != 'PREPARATION':
+            raise HTTPException(422, 'Explicit new-property audience required')
         if audience is not None:
             await domain_service._require_administration()
             if item.mode != "NEW_PROPERTY":
@@ -121,16 +123,11 @@ class DeclarationApprovalService:
             raise _conflict(exc.code) from exc
 
         approved_at = datetime.now(timezone.utc)
+        if audience is not None:
+            domain, publisher_grant_id = await domain_service.prepare_new_audience(plan.property_id, audience)
         if item.mode == "NEW_PROPERTY":
             await self._knowledge.create_destination(plan)
         if audience is not None:
-            domain = await domain_service.create(DomainCreate(property_id=plan.property_id,
-                label=audience.label, reason=audience.reason), uuid.uuid5(item.id, "publication-domain"))
-            for grant_command in audience.grants:
-                granted = await domain_service.grant_data(domain.id, grant_command,
-                    uuid.uuid5(item.id, f"publication-grant:{grant_command.user_id}"))
-                if grant_command.user_id == self._user_id:
-                    publisher_grant_id = granted.id
             item.publication_domain_id = domain.id
             item.publication_grant_id = publisher_grant_id
         result = plan.response(item.draft_revision)

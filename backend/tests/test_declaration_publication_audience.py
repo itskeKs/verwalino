@@ -64,7 +64,8 @@ async def test_publication_audience_denials_leave_the_draft_unchanged(client_a_a
         assert await db.scalar(text('SELECT status FROM declaration_import WHERE id=:id'),{'id':item.id})=='NEEDS_REVIEW'
         assert await db.scalar(text('SELECT count(*) FROM property WHERE id=:id'),
             {'id':deterministic_id(seed_data['org_a_id'],item.id,'property','new')})==0
-        assert await db.scalar(text('SELECT count(*) FROM property_data_domain WHERE request_key=:key'),{'key':uuid.uuid5(item.id,'publication-domain')})==0
+        assert await db.scalar(text('SELECT count(*) FROM property_data_domain WHERE property_id=:property'),
+            {'property':deterministic_id(seed_data['org_a_id'],item.id,'property','new')})==0
 
 
 async def test_guarded_publication_resolves_unbound_sources_and_rolls_back_on_late_failure(client_a_admin,seed_data,fully_reviewed_new_property_import,monkeypatch):
