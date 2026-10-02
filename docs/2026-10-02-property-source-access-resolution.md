@@ -76,10 +76,17 @@ Publication order is a hard activation prerequisite. In one transaction: create
 or lock the destination property; create its domain and explicit reviewed grants
 or validate the existing destination; persist the applied import destination and
 idempotent receipt; then bind originals and create derived rows. All steps roll
-back together on failure. The current writer binds originals before recording
-the applied destination and must change before source policies are activated.
+back together on failure. Source policies require this order when resolving the
+publication destination.
 The temporary internal ordering must not create a visible partially published
 import. Creator ownership alone never grants publication authority.
+
+The ordering prerequisite is implemented after 0050: the service now creates only
+the new destination, flushes the applied import destination/result, then persists
+original binding and derived data, all in the request transaction. Existing-target
+publication uses its already locked destination. Explicit domain/grant bootstrap
+and the corresponding authorized transition remain prerequisites before policy
+activation; this ordering change alone does not grant publication access.
 
 ## Integration gate
 

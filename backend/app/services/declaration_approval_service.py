@@ -24,7 +24,7 @@ from app.repositories.unit_repo import UnitRepository
 
 
 class DeclarationApprovalService:
-    """Apply a NEW_PROPERTY review without committing the request session."""
+    """Publish a reviewed import atomically in the request-owned transaction."""
 
     def __init__(self, session: AsyncSession, organization_id: uuid.UUID, user_id: uuid.UUID):
         self._session = session
@@ -83,11 +83,23 @@ class DeclarationApprovalService:
             raise _conflict(exc.code) from exc
 
         approved_at = datetime.now(timezone.utc)
+        if item.mode == "NEW_PROPERTY":
+            await self._knowledge.create_destination(plan)
+        result = plan.response(item.draft_revision)
+        # Publication context must exist before original/derived writes resolve
+        # their audience. No intermediate state commits outside this transaction.
+        item.approved_by = self._user_id
+        item.approved_at = approved_at
+        item.approval_idempotency_key = request.idempotency_key
+        item.applied_property_id = plan.property_id
+        item.approval_result_json = result
+        item.status = "APPLIED"
+        item.current_stage = "applied"
+        await self._session.flush()
         if item.mode == "EXISTING_PROPERTY":
             await self._knowledge.apply_existing(plan, self._user_id, approved_at, documents)
         else:
             await self._knowledge.apply(plan, self._user_id, approved_at, documents)
-        result = plan.response(item.draft_revision)
         if item.mode == "EXISTING_PROPERTY" and plan.mea_scale_confirmed:
             await self._audit.create(AuditEvent(
                 organization_id=self._organization_id,
@@ -107,13 +119,6 @@ class DeclarationApprovalService:
                     "existing_values_confirmed_as_numerators": True,
                 },
             ))
-        item.approved_by = self._user_id
-        item.approved_at = approved_at
-        item.approval_idempotency_key = request.idempotency_key
-        item.applied_property_id = plan.property_id
-        item.approval_result_json = result
-        item.status = "APPLIED"
-        item.current_stage = "applied"
         await self._audit.create(AuditEvent(
             organization_id=self._organization_id,
             actor_user_id=self._user_id,

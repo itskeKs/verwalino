@@ -192,3 +192,21 @@ regression, **34 admission/resolver/link/RLS cases passed** on disposable
 PostgreSQL 16/Python 3.13. No source-policy activation or UI change is claimed.
 Explicit historical review, publication bootstrap and complete downstream
 authorization remain activation prerequisites.
+
+## Atomic publication ordering
+
+At base `4c7b04c`, publication now creates the NEW destination first, flushes the
+applied import receipt/result next, then binds sources and persists derived rows.
+Existing-target publication uses the already locked target. Two integration
+observers initially failed on the old NEEDS_REVIEW state; they now inspect the
+actual database receipt before source mutation and prove another transaction
+still sees the original draft (and no new destination). The entire sequence is
+owned by the request transaction, including canonical audit publication.
+
+The first approval regression run passed 67 cases and exposed a lost local
+destination variable in NEW fact-source display labels. The repository now loads
+the exact tenant destination before applying sources. **44 NEW/order cases passed**
+after repair; the unchanged existing-target cases from the first run are reused.
+Existing failure injection tests prove a late failure rolls back the destination,
+receipt, bindings and derived graph. Independent review accepted the repair.
+No schema, UI, bootstrap grant or source-policy activation is included.

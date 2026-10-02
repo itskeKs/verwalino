@@ -35,13 +35,8 @@ class PropertyKnowledgeRepository:
         self._session = session
         self._organization_id = organization_id
 
-    async def apply(
-        self,
-        plan: ApprovalPlan,
-        approved_by: uuid.UUID,
-        approved_at: datetime,
-        documents: Sequence[PropertyDocument],
-    ) -> None:
+    async def create_destination(self, plan: ApprovalPlan) -> None:
+        """Create only the destination before its publication context is recorded."""
         property_row = Property(
             id=plan.property_id,
             organization_id=self._organization_id,
@@ -54,6 +49,22 @@ class PropertyKnowledgeRepository:
             mea_scale_status="CONFIRMED",
         )
         self._session.add(property_row)
+        await self._session.flush()
+
+    async def apply(
+        self,
+        plan: ApprovalPlan,
+        approved_by: uuid.UUID,
+        approved_at: datetime,
+        documents: Sequence[PropertyDocument],
+    ) -> None:
+        """Persist sources after the service has flushed destination and receipt."""
+        property_row = await self._session.scalar(select(Property).where(
+            Property.organization_id == self._organization_id,
+            Property.id == plan.property_id,
+        ))
+        if property_row is None:
+            raise ValueError("publication destination is missing")
         for unit in plan.units:
             self._session.add(Unit(
                 id=unit.id,
