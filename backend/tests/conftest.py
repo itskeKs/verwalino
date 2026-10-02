@@ -70,6 +70,9 @@ def run_migrations():
     # boundary. Discard only these synthetic associations before the full reset.
     import psycopg2
     with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT to_regclass('public.property_data_domain')")
+        if cursor.fetchone()[0]:
+            cursor.execute("TRUNCATE public.property_data_grant,public.property_data_domain CASCADE")
         cursor.execute("SELECT to_regclass('public.property_knowledge_query_run')")
         if cursor.fetchone()[0]:
             cursor.execute("TRUNCATE public.property_knowledge_query_run")

@@ -133,3 +133,5 @@ from app.models.scope_grant import ScopeGrant
 from app.models.dunning_scope_context import DunningScopeContext
 
 from app.models.scope_payment_reconciliation import ScopePaymentReconciliation, ScopePaymentReconciliationItem
+
+from app.models.property_data_domain import PropertyDataDomain, PropertyDataGrant

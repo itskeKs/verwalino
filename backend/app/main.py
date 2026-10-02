@@ -21,7 +21,7 @@ from app.api import meetings
 from app.api import fristen, dsgvo
 from app.api import declaration_imports
 from app.api import property_documents
-from app.api import property_knowledge
+from app.api import property_knowledge, property_data_domains
 from app.core import health
 from app.core.static_files import resolve_spa_file
 from app.core.uploads import RequestBodyLimitMiddleware
@@ -43,6 +43,7 @@ app.include_router(auth.router)
 app.include_router(organizations.router)
 app.include_router(users.router)
 app.include_router(accounting_scopes.router)
+app.include_router(property_data_domains.router)
 app.include_router(mandates.router)
 
 # M1 Stammdaten

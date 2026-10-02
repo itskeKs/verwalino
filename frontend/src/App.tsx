@@ -13,6 +13,7 @@ import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { MandatePage } from "./pages/MandatePage";
+import { PropertyDataDomainsPage } from "./pages/PropertyDataDomainsPage";
 import { AccountingScopesPage } from "./pages/AccountingScopesPage";
 import { UsersPage } from "./pages/UsersPage";
 import { PropertiesPage } from "./pages/PropertiesPage";
@@ -103,6 +104,8 @@ export function AppRoutes() {
         <Route path="/beschluss-sammlung" element={<ResolutionRegisterPage />} />
         <Route path="/fristen" element={<FristenmonitorPage />} />
         <Route path="/users" element={<UsersPage />} />
+        <Route path="/gebaeudedaten-rechte" element={<PropertyDataDomainsPage />} />
+        <Route path="/gebaeudedaten-rechte/:domainId" element={<PropertyDataDomainsPage />} />
         <Route path="/berechtigungen" element={<AccountingScopesPage />} />
         <Route path="/berechtigungen/:scopeId" element={<AccountingScopesPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

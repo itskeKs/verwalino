@@ -1,0 +1,13 @@
+{
+  "browserPath": "Browser plugin not available; regular Playwright",
+  "checks": [
+    "user administration -> prepared domain -> lost committed reply -> identical retry -> explicit member grant -> durable revocation",
+    "preparation and separate financial permissions remain explicit; 390px content fits with scrollable grant table"
+  ],
+  "pageErrors": [],
+  "mobile": {
+    "visible": 390,
+    "content": 390
+  },
+  "status": "passed"
+}
