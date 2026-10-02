@@ -46,6 +46,21 @@ from app.declarations.schemas import (
 )
 from app.workers.declaration_import import DeclarationImportWorker
 from tests.declaration_fixtures import make_text_pdf
+from tests.test_invoice_extraction_worker import worker_tenant  # noqa: F401
+
+
+@pytest_asyncio.fixture
+async def isolated_declaration_worker(worker_tenant, monkeypatch):
+    """Keep API pipeline journeys out of queues populated by other test cases."""
+    from app.core.db import get_tenant_session
+    client, seed = worker_tenant
+    async def organization_ids(self):
+        return (seed['org_a_id'],)
+    # Enumeration/fairness is tested by the worker suite. This API journey uses
+    # the real claim/principal/lease/pipeline against its own fresh tenant queue.
+    monkeypatch.setattr(DeclarationImportWorker, '_organization_ids', organization_ids)
+    async with get_tenant_session(seed['org_a_id']) as db:
+        yield client, db
 
 
 @pytest.fixture(autouse=True)
@@ -904,10 +919,10 @@ async def test_cancelled_import_returns_stable_start_error_and_hides_candidates_
 
 @pytest.mark.asyncio
 async def test_public_new_property_import_reaches_review_with_two_documents_and_no_canonical_writes(
-    client_a_admin,
+    isolated_declaration_worker,
     client_a_readonly,
-    tenant_session: AsyncSession,
 ) -> None:
+    client_a_admin, tenant_session = isolated_declaration_worker
     before_properties = await tenant_session.scalar(select(func.count()).select_from(Property))
     before_units = await tenant_session.scalar(select(func.count()).select_from(Unit))
 
@@ -1026,9 +1041,9 @@ async def test_public_new_property_import_reaches_review_with_two_documents_and_
 
 @pytest.mark.asyncio
 async def test_existing_property_import_proposes_street_update_without_deleting_omitted_unit(
-    client_a_admin,
-    tenant_session: AsyncSession,
+    isolated_declaration_worker,
 ) -> None:
+    client_a_admin, tenant_session = isolated_declaration_worker
     property_response = await client_a_admin.post(
         "/api/properties",
         json={

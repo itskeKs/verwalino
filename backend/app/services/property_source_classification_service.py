@@ -42,7 +42,7 @@ class PropertySourceClassificationService(AuthorizationService):
                 PropertySourceClassification.organization_id==self.auth.organization_id,PropertySourceClassification.document_id==row.document_id)):
                 continue
             name=await self.session.scalar(select(Property.name).where(Property.organization_id==self.auth.organization_id,Property.id==context.property_id))
-            can_preview=await self.session.scalar(text('SELECT property_source_classification_content_access(:org,:document)'),
+            can_preview=await self.session.scalar(text("SELECT property_source_export_access(:org,:document,'CLASSIFICATION_REVIEW')"),
                 {'org':self.auth.organization_id,'document':row.document_id})
             items.append(PendingSourceClassificationOut(id=row.document_id,document_id=row.document_id,property_id=context.property_id,
                 property_name=name or 'Unavailable property',content_sha256=context.content_sha256,source_context_digest=context.source_context_digest,
@@ -52,7 +52,7 @@ class PropertySourceClassificationService(AuthorizationService):
 
     async def content(self,document_id):
         await self._lock()
-        if not await self.session.scalar(text('SELECT property_source_classification_content_access(:org,:document)'),
+        if not await self.session.scalar(text("SELECT property_source_export_access(:org,:document,'CLASSIFICATION_REVIEW')"),
             {'org':self.auth.organization_id,'document':document_id}):
             raise HTTPException(404,'Source classification not accessible')
         document=await self.session.scalar(select(PropertyDocument).where(PropertyDocument.organization_id==self.auth.organization_id,PropertyDocument.id==document_id))

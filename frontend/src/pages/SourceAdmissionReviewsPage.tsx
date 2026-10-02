@@ -44,7 +44,7 @@ function ReviewForm({ source }: { source: PendingSource }) {
   return <form className="card min-w-0" onSubmit={submit}>
     <h2 className="break-words">{source.title}</h2>
     <p>Zielobjekt: <Link to={`/objekte/${source.property_id}`}>{source.property_name}</Link> · Revision {source.draft_revision}</p>
-    <p><a className="break-words" href={`${endpoint}/originals/${source.document_id}/content`} target="_blank" rel="noreferrer">Original prüfen: {source.original_filename}</a></p>
+    {source.can_preview ? <p><a className="break-words" href={`${endpoint}/originals/${source.document_id}/content`} target="_blank" rel="noreferrer">Original prüfen: {source.original_filename}</a></p> : <p>Die Originaldatei ist mit Ihren aktuellen Rechten nicht zugänglich.</p>}
     <details><summary>Original identifizieren</summary><p className="break-all">SHA-256: {source.content_sha256}</p></details>
     <div className="review-reason"><label htmlFor={`reason-${source.id}`}>Begründung der Quellenfreigabe</label>
       <textarea id={`reason-${source.id}`} className="w-full" required maxLength={2000} rows={3} value={reason} disabled={busy || submitted} onChange={e => setReason(e.target.value)} /></div>

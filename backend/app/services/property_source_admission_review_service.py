@@ -24,9 +24,11 @@ class PropertySourceAdmissionReviewService(AuthorizationService):
                 {'org':self.auth.organization_id,'document':document.id}):
                 continue  # Recheck pending state after the page query.
             name=await self.session.scalar(select(Property.name).where(Property.organization_id==self.auth.organization_id,Property.id==context.property_id))
+            can_preview=await self.session.scalar(text("SELECT property_source_export_access(:org,:document,'ADMISSION_REVIEW')"),
+                {'org':self.auth.organization_id,'document':document.id})
             items.append(PendingSourceReviewOut(id=document.id,document_id=document.id,import_id=context.import_id,
                 property_id=context.property_id,property_name=name or 'Unavailable property',draft_revision=context.draft_revision,
-                title=document.title,original_filename=document.original_filename,content_sha256=document.content_sha256))
+                title=document.title,original_filename=document.original_filename,content_sha256=document.content_sha256,can_preview=can_preview))
         return items,cursor
 
     async def get(self,review_id):
@@ -40,7 +42,7 @@ class PropertySourceAdmissionReviewService(AuthorizationService):
 
     async def content(self,document_id):
         await self._lock()
-        if not await self.session.scalar(text('SELECT property_source_review_access(:org,:document)'),
+        if not await self.session.scalar(text("SELECT property_source_export_access(:org,:document,'ADMISSION_REVIEW')"),
             {'org':self.auth.organization_id,'document':document_id}):
             raise HTTPException(404,'Source review not accessible')
         document=await self.session.scalar(select(PropertyDocument).where(

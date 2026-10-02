@@ -262,3 +262,19 @@ and source CRUD/RLS remain required.
 Migration 0057 refuses busy proof/source dependencies immediately and refuses
 rollback while any organization is ENFORCED or PAUSED. A PREPARATION rollback
 retains classifications and restores the earlier prepared resolvers.
+
+## Original export authority (0058)
+
+Every property-original PDF endpoint now checks explicit export authority before
+loading the document or storage bytes. In strict state, ordinary source access
+needs both current read and export rights and valid source proof. Review previews
+retain their narrow known-own-original exception so an original can be inspected
+before admission, but also require export rights on the exact destination domain.
+A QUARANTINED decision blocks strict review preview even for the original uploader.
+PAUSED keeps these strict read/export checks; it does not widen access.
+
+Both review lists report current preview availability. They hide the PDF link when
+export is unavailable. PREPARATION retains existing preview compatibility. All
+successful paths still read storage once, verify length and hash, and return those
+same bytes. The ACL lock remains held during that bounded read. Migration rollback
+refuses strict state; no activation capability is added.

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import re
 
 from fastapi import HTTPException
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -40,6 +41,7 @@ def safe_inline_filename(original_filename: str) -> str:
 
 class PropertyDocumentService:
     def __init__(self, session: AsyncSession, org_id: uuid.UUID, user_id: uuid.UUID):
+        self._session = session
         self._org_id = org_id
         self._user_id = user_id
         self._documents = PropertyDocumentRepository(session, org_id)
@@ -59,6 +61,7 @@ class PropertyDocumentService:
         *,
         store: DocumentStore | None = None,
     ) -> VerifiedPropertyDocumentContent:
+        await self._require_export(document_id)
         document = await self._documents.get_active_for_property(property_id, document_id)
         if document is None:
             raise HTTPException(status_code=404, detail="Document not found")
@@ -72,10 +75,17 @@ class PropertyDocumentService:
         store: DocumentStore | None = None,
     ) -> VerifiedPropertyDocumentContent:
         """Return only an active, unbound document linked to this review draft."""
+        await self._require_export(document_id)
         document = await self._imports.get_active_review_draft_document(import_id, document_id)
         if document is None:
             raise HTTPException(status_code=404, detail="Document not found")
         return self._read_verified_content(document, store=store)
+
+    async def _require_export(self, document_id: uuid.UUID) -> None:
+        # Holds the organization ACL through the single verified storage read.
+        if not await self._session.scalar(text("SELECT property_source_export_access(:org,:document,'SOURCE')"),
+            {'org': self._org_id, 'document': document_id}):
+            raise HTTPException(status_code=404, detail="Document not found")
 
     @staticmethod
     def _read_verified_content(

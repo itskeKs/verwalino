@@ -32,3 +32,4 @@ class PendingSourceReviewOut(BaseModel):
     title: str
     original_filename: str
     content_sha256: str
+    can_preview: bool

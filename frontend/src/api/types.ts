@@ -1260,6 +1260,7 @@ export interface PendingSourceAdmissionReview extends Omit<SourceAdmissionReview
   property_name: string;
   title: string;
   original_filename: string;
+  can_preview: boolean;
 }
 
 export interface SourceAdmissionReviewReceipt extends SourceAdmissionReviewCommand {

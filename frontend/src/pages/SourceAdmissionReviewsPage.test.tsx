@@ -5,13 +5,20 @@ import { SourceAdmissionReviewsPage } from "./SourceAdmissionReviewsPage";
 import { api, ApiError } from "../api/client";
 
 const source = { id: "original", document_id: "original", import_id: "import", property_id: "property", property_name: "Haus am Park",
-  title: "Teilungserklärung", original_filename: "declaration.pdf", draft_revision: 7, content_sha256: "a".repeat(64) };
+  title: "Teilungserklärung", original_filename: "declaration.pdf", draft_revision: 7, content_sha256: "a".repeat(64), can_preview: true };
 let role = "OWNER_ADMIN";
 vi.mock("../auth/useAuth", () => ({ useAuth: () => ({ session: { role } }) }));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); role = "OWNER_ADMIN"; });
 function show(path = "/quellenfreigaben") {
   render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/quellenfreigaben" element={<SourceAdmissionReviewsPage />} /><Route path="/quellenfreigaben/:reviewId" element={<SourceAdmissionReviewsPage />} /></Routes></MemoryRouter>);
 }
+
+it("hides the original link when the current export check denies preview", async () => {
+  vi.spyOn(api, "get").mockResolvedValue({ items: [{ ...source, can_preview: false }], next_cursor: null });
+  show();
+  expect(await screen.findByText("Die Originaldatei ist mit Ihren aktuellen Rechten nicht zugänglich.")).toBeVisible();
+  expect(screen.queryByRole("link", { name: /Original prüfen/ })).not.toBeInTheDocument();
+});
 
 it("requires explicit source review and retains the exact command after a lost response", async () => {
   vi.spyOn(api, "get").mockResolvedValue({ items: [source], next_cursor: null });

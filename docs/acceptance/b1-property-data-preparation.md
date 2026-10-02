@@ -487,3 +487,32 @@ Logs: `/tmp/hv-bound-source-{red,first,boundary,regression,migration-final}.log`
 Strict activation remains unavailable. Source CRUD/RLS, financial whole-input
 checks, copied snapshots, export/audit/privacy closure and reviewed coverage still
 gate B1 completion; this does not claim a complete source authorization rollout.
+
+## Imperative original export checks (0058)
+
+At base `97bd02e`, **five expected test-first failures** showed that ordinary bound
+PDFs, import draft PDFs, unbound admission review and bound classification review
+could reach storage without strict export permission, including quarantined review.
+The new boolean export helper checks current org/actor, a closed purpose allowlist,
+ordinary proof/read/export or the exact known-own review exception plus destination
+export. Strict quarantine dominates that exception. All four services call it
+before ORM source loading/storage. Review lists expose current preview availability.
+
+**58 first focused cases passed**. After adding list flags, migrations and denial
+coverage, **112 cases passed** with two pre-existing API worker journeys returning
+IDLE in the combined suite. Both passed in isolation. Inspection found shared
+fixture queues containing earlier queued test rows; the bounded worker correctly
+visits/cancels those before later jobs. Those two journeys now use fresh tenant
+queues, with organization enumeration restricted to that test tenant while retaining
+real claim/principal/lease/pipeline behavior. The complete combined rerun passed
+**114 cases**. No worker production behavior changed. **12 UI tests, lint and build
+passed**; the existing bundle-size advisory remains (~618 KB).
+
+Tests prove denial before storage, one verified read on success, current grant
+revocation, strict PAUSED reads, cross-tenant/other-custody denial, purpose spoofing,
+preview flag consistency, five NOWAIT dependencies and rollback refusal/roundtrip.
+Independent review found no actionable export or purpose-bypass issue. Logs are
+`/tmp/hv-source-export-{red,first,final,worker-isolated,final-isolated,ui,lint,build}.log`.
+The prior desktop/mobile layout evidence remains valid; this increment changes a
+link's availability and has dedicated rendering coverage rather than a new browser
+layout acceptance claim. Source CRUD/RLS and full activation closure remain open.
