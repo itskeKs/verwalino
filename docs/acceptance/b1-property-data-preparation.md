@@ -378,3 +378,34 @@ Strict activation still returns false. A reviewed matching budget policy becomes
 an additional activation prerequisite. General source RLS, original binding and
 legacy classification, financial completeness and indirect disclosure closure
 remain necessary; this does not complete B1.
+
+## Strict original publication and source-link topology (0055)
+
+At base `63734d1`, six initial tests demonstrated absent first-binding enforcement
+and audit. Strict first binding now requires current destination approval, exact
+retained audience proof and the matching APPLIED import receipt with the same
+approver. Bound INSERT is denied; a no-op update does not duplicate the canonical
+audit. Shared ACL statement locks precede row locks. The guard reads actual state
+with `row_security=off`, preventing a hidden-state compatibility fallback.
+Strict link insertion locks the original and rejects already-bound or second-link
+topology. Existing source identity/content/binding immutability prevents UPDATE
+from bypassing that insert check.
+
+**10 focused cases passed**, including real new-property API approval and complete
+original binding, existing attachment/current-review proof, missing proof/right/
+applied receipt, pause, direct bound INSERT and second links before/after binding.
+The compatibility and boundary run passed **111 cases**, including existing
+approval, source review/admission/context, publication audiences, concurrent
+binding, populated strict downgrade refusal, migration round-trip, both NOWAIT
+dependencies and a temporarily misconfigured non-bypass definer owner. Independent
+read-only review accepted the code delta; final competing binding/link and worker/
+Q&A integration checks are recorded below. All checks use the guarded disposable
+PostgreSQL 16 database and Python 3.13; no external provider or UI change.
+
+This increment supplies first-publication proof enforcement without retroactively
+classifying any already-bound legacy source. Broader CRUD/principal policies,
+financial completeness, indirect disclosure closure and reviewed activation are
+still mandatory. No source activation or B1 completion is claimed.
+
+The final **51 binding/worker/Q&A cases passed**, including competing binding and
+extra-link transactions. Earlier unchanged passing compatibility evidence is reused.

@@ -197,3 +197,16 @@ Migration 0054 uses NOWAIT locks on organization, user and Q&A ledger dependenci
 Populated policy or strict state refuses downgrade. Preserve evidence and repair
 forward. General source RLS and organization activation remain unavailable pending
 the remaining closure and coverage gates; this migration does not complete B1.
+
+## Strict original binding (0055)
+
+Future strict publication requires an unbound original, retained exact audience
+proof, a matching applied import receipt and the same approver's current property
+approval right. A newly inserted already-bound original is rejected. PAUSED denies
+first binding. Strict originals cannot acquire a second import link or be attached
+after binding. Successful publication has one canonical audit in its transaction.
+
+This does not classify historical bound originals or enable source RLS. Complete
+legacy coverage and the remaining indirect disclosure/effect checks still gate
+activation. Migration 0055 takes NOWAIT locks on originals and their import links;
+strict state refuses downgrade. Preserve evidence and repair forward.
