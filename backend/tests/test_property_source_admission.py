@@ -160,6 +160,8 @@ async def test_migrator_guard_and_rollback_preserve_admission_evidence(client_a_
                 try:
                     connection.execute(text('TRUNCATE property_source_admission'))
                     connection.execute(text('TRUNCATE property_source_admission_review'))
+                    connection.execute(text('TRUNCATE property_source_classification'))
+                    importlib.import_module('migrations.versions.0056_property_source_classification').downgrade()
                     importlib.import_module('migrations.versions.0052_property_source_admission_review').downgrade()
                     importlib.import_module('migrations.versions.0051_declaration_publication_audience').downgrade()
                     migration.downgrade()

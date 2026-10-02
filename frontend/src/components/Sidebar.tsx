@@ -64,6 +64,7 @@ const GROUPS: NavGroup[] = [
     items: [
       { to: "/objekte", label: "Objekte", icon: Building2 },
       { to: "/quellenfreigaben", label: "Quellenfreigaben", icon: FileText },
+      { to: "/altquellen", label: "Altquellen prüfen", icon: FileText },
       { to: "/personen", label: "Personen", icon: Users },
     ],
   },

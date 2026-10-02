@@ -1269,3 +1269,27 @@ export interface SourceAdmissionReviewReceipt extends SourceAdmissionReviewComma
   reviewed_by: string;
   created_at: string;
 }
+
+export interface SourceClassificationCommand {
+  document_id: string;
+  property_id: string;
+  content_sha256: string;
+  source_context_digest: string;
+  decision: "ADMITTED" | "QUARANTINED";
+  reason: string;
+}
+export interface PendingSourceClassification extends Omit<SourceClassificationCommand, "reason" | "decision"> {
+  id: string;
+  property_name: string;
+  source_uploaded_by: string | null;
+  linked_import_count: number;
+  can_admit: boolean;
+  can_preview: boolean;
+  quiescent: boolean;
+}
+export interface SourceClassificationReceipt extends SourceClassificationCommand {
+  id: string;
+  domain_id: string;
+  reviewed_by: string;
+  created_at: string;
+}

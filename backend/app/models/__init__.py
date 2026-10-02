@@ -138,3 +138,5 @@ from app.models.property_data_domain import PropertyDataDomain, PropertyDataGran
 
 from app.models.property_source_admission import PropertySourceAdmission
 from app.models.property_source_admission_review import PropertySourceAdmissionReview
+
+from app.models.property_source_classification import PropertySourceClassification

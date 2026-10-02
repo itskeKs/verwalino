@@ -210,3 +210,33 @@ This does not classify historical bound originals or enable source RLS. Complete
 legacy coverage and the remaining indirect disclosure/effect checks still gate
 activation. Migration 0055 takes NOWAIT locks on originals and their import links;
 strict state refuses downgrade. Preserve evidence and repair forward.
+
+## Current classification of bound originals (0056)
+
+Use **Altquellen prüfen** for originals already associated with a property. Only a
+current administrator with explicit read, prepare and approve rights on that
+property-data domain can record a decision. **Quelle freigeben** additionally
+requires the known uploader to be that reviewer, an active original and coherent,
+quiescent source context. Unknown custody or conflicting/multiple import links
+permit only **Quelle sperren**. Such originals have no preview; the list supplies
+only bounded identifying metadata and never exposes their filenames or bytes.
+
+Both choices prepare future enforcement. Neither changes current compatibility
+access, activates source RLS or retroactively supplies historical custody. The page
+states this explicitly. The original, reviewed source links and classification
+receipt remain immutable. Link role/order changes also invalidate an outstanding
+review and are forbidden after classification. The exact hash, context digest,
+reviewer, grant chain, database clock and reason are retained with a canonical audit.
+New classification effects are rejected while source state is PAUSED.
+
+After an unconfirmed response, repeat the same frozen command. A confirmed conflict
+requires list refresh, renewed inspection and confirmation. Changing the selected
+decision clears confirmation. Existing receipts remain subject to current access.
+Source metadata uses bounded, actor/query-bound cursor pages; document-ID search
+can locate a particular original without searching undisclosed filenames.
+
+Migration 0056 takes NOWAIT locks on originals, imports, links, domains and grants.
+Populated downgrade refuses to discard classification evidence. Preserve it and
+repair forward. Integrating classification into strict source resolution, making
+quarantine dominate earlier proof, and enforcing complete activation coverage are
+still subsequent requirements.

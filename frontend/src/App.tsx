@@ -13,6 +13,7 @@ import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { MandatePage } from "./pages/MandatePage";
+import { SourceClassificationsPage } from "./pages/SourceClassificationsPage";
 import { SourceAdmissionReviewsPage } from "./pages/SourceAdmissionReviewsPage";
 import { PropertyDataDomainsPage } from "./pages/PropertyDataDomainsPage";
 import { AccountingScopesPage } from "./pages/AccountingScopesPage";
@@ -105,6 +106,8 @@ export function AppRoutes() {
         <Route path="/beschluss-sammlung" element={<ResolutionRegisterPage />} />
         <Route path="/fristen" element={<FristenmonitorPage />} />
         <Route path="/users" element={<UsersPage />} />
+        <Route path="/altquellen" element={<SourceClassificationsPage />} />
+        <Route path="/altquellen/:reviewId" element={<SourceClassificationsPage />} />
         <Route path="/quellenfreigaben" element={<SourceAdmissionReviewsPage />} />
         <Route path="/quellenfreigaben/:reviewId" element={<SourceAdmissionReviewsPage />} />
         <Route path="/gebaeudedaten-rechte" element={<PropertyDataDomainsPage />} />

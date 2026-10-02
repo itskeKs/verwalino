@@ -409,3 +409,47 @@ still mandatory. No source activation or B1 completion is claimed.
 
 The final **51 binding/worker/Q&A cases passed**, including competing binding and
 extra-link transactions. Earlier unchanged passing compatibility evidence is reused.
+
+## Bound-original current classification (0056)
+
+At base `b4ff59c`, the new classification workflow records an immutable current
+ADMITTED or QUARANTINED decision. A current administrator needs explicit property
+read/prepare/approve rights. Admission additionally requires known own custody,
+active bytes and coherent quiescent topology. Unknown or mixed custody exposes
+neither original bytes nor filenames and can only be marked for future quarantine.
+The metadata-only page helper remains usable when ordinary source RLS withholds
+those originals. Preview separately checks admissibility before normal ORM/storage
+and byte-integrity verification. No historical owner or admission is backfilled.
+
+Two initial API tests failed on absent routes. **31 first boundary cases passed**.
+Independent review found mutable classified link role/order, incomplete ACL lock
+ordering and a preview path for a known-uploader mixed source. The repairs freeze
+all link mutations, include link role/sequence in the context digest, take statement
+ACL locks before link rows and require admissible context before preview. The next
+run passed **67 cases** and found three variable-name mistakes in historical test
+adaptations. After repair, **27 focused cases passed**, including those three
+historical rehearsals. These also cover raw SQL actor denial and canonical digest/
+clock, receipt immutability, late rollback, identical concurrent retries, mixed
+source storage denial, actual two-connection ACL waits with import/link NOWAIT
+probes, five migration dependency locks, populated rollback refusal/empty roundtrip,
+and both paused dispositions. Earlier unchanged passing checks are reused.
+Independent read-only review accepted the repair delta.
+
+**6 final UI tests, lint and production build passed**; the existing bundle-size
+advisory reports approximately 618 KB. Actual local Chromium acceptance passed at
+1440×1000 and 390×844: exact document-ID search, verified original bytes, renewed
+confirmation after decision changes, server commit followed by simulated lost
+response, identical retry, stable receipt navigation/reload, and quarantine-only
+unknown custody with no preview. Mobile form width/content were both 358px and the
+screenshots were visually inspected. The first browser launch used the wrong
+working directory for Tailwind configuration; restarting the task Vite server from
+`frontend` resolved it. Final evidence is in `/tmp/hv-classification-acceptance/`;
+the fixture and browser scripts are `/tmp/hv-classification-browser-fixture.py` and
+`/tmp/hv-classification-browser.cjs`. API/Vite/browser processes were stopped.
+All database work used disposable PostgreSQL 16, Python 3.13 and fake local PDFs;
+no external provider was called.
+
+The UI explicitly says these are staged decisions and do not yet restrict current
+compatibility access. Classification-aware source resolution, quarantine dominance,
+source CRUD/RLS, complete indirect disclosure/effect checks and reviewed activation
+coverage still gate B1 completion.

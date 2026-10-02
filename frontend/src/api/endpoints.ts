@@ -3,7 +3,7 @@
  */
 
 import { api, uploadFormData } from "./client";
-import type { SourceAdmissionReviewCommand, SourceAdmissionReviewReceipt } from "./types";
+import type { SourceClassificationCommand, SourceClassificationReceipt, SourceAdmissionReviewCommand, SourceAdmissionReviewReceipt } from "./types";
 import type {
   DeadlineItem,
   DsgvoStatus,
@@ -960,5 +960,15 @@ export const sourceAdmissionReviewApi = {
   },
   review(body: SourceAdmissionReviewCommand, key: string) {
     return api.post<SourceAdmissionReviewReceipt>(this.base, body, { headers: { "Idempotency-Key": key } });
+  },
+};
+
+export const sourceClassificationApi = {
+  base: "/api/property-source-classifications",
+  get(id: string, signal?: AbortSignal) {
+    return api.get<SourceClassificationReceipt>(`${this.base}/${id}`, { signal });
+  },
+  classify(body: SourceClassificationCommand, key: string) {
+    return api.post<SourceClassificationReceipt>(this.base, body, { headers: { "Idempotency-Key": key } });
   },
 };

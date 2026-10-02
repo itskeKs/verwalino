@@ -909,8 +909,10 @@ code {
 .scope-setup .form-grid .scope-check { display: flex; flex-direction: row; align-items: center; gap: 0.5rem; }
 .scope-setup .form-grid input[type="checkbox"] { width: auto; }
 
+.source-admission-review .review-decision,
 .source-admission-review .review-reason { display: grid; gap: 0.5rem; margin-block: 1rem; }
 .source-admission-review textarea,
+.source-admission-review select,
 .source-admission-review input[type="search"] {
   min-width: 0;
   padding: 0.6rem 0.75rem;
@@ -920,6 +922,6 @@ code {
   font: inherit;
 }
 .source-admission-review textarea { width: 100%; resize: vertical; }
-.source-admission-review :is(textarea, input):focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+.source-admission-review :is(textarea, input, select):focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
 .source-admission-review .review-confirmation { display: flex; align-items: baseline; gap: 0.5rem; margin-bottom: 1rem; }
 .source-admission-review .review-confirmation input { flex: none; }
