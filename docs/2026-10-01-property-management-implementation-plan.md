@@ -374,8 +374,10 @@ path, private manifests, fenced attempts, explicit retry and transactional outbo
 records; see `2026-10-03-intake-quarantine-delivery.md`. Migration 0094 adds private
 inbox headers and live action availability; the inbox UI now supports bounded
 uploads, interrupted-transfer recovery, reconnect and explicit retry. See
-`2026-10-03-intake-inbox-delivery.md`. Logical children, extraction
-evidence/adapters and outbox delivery remain outstanding. Real scanner
+`2026-10-03-intake-inbox-delivery.md`. Migration 0095 adds immutable unreviewed
+logical children bound to verified page ranges and the original audience; see
+`2026-10-03-logical-document-foundation.md`. Extraction evidence/adapters,
+reviewed partitions and outbox delivery remain outstanding. Real scanner
 qualification is still unavailable locally; this does not accept B2.
 
 **B3 — Assignment, duplicates, splits and shared exceptions.** P1.1 after B2.
