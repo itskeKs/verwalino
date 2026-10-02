@@ -459,3 +459,36 @@ classification remain separate unfinished adapters.
 Independent read-only review accepted the adapter. Bounded upload/storage operations
 retain the request's shared ACL lock; deployment request/storage timeouts remain
 necessary for availability and are not established by the byte-size limit.
+
+## Live knowledge-query principals (migration 0044)
+
+Approved knowledge overview, rule and lexical-search routes now require an active
+member in the data transaction. Optional Q&A carries the actual requesting actor
+through separate source, reservation and answer-validation transactions. The
+immutable tenant-safe ledger principal is never inferred for historical rows;
+active READ_ONLY compatibility is retained. Shared ACL locking precedes budget
+and domain locks; no transaction crosses provider network I/O.
+
+If membership is lost during the provider request, the answer is suppressed. A
+separate narrow cancellation transaction records `QA_PERMISSION_CHANGED`, a
+content-free audit event and the full reserved cost. Cancellation cannot modify
+foreign, wrong-actor or completed reservations. Expiry explicitly permits an active
+member to reclaim expired historical/cross-actor rows using the database clock and
+fixed expiry metadata. A populated downgrade refuses to erase known principals.
+The common SQL budget lock preserves existing UTC window lock keys.
+
+Evidence on disposable PostgreSQL 16/Python 3.13, base `444468a` plus this increment:
+initial actor-persistence test failed on the absent column. After production and
+legacy-fixture changes, **74 focused principal/query/search cases passed**, including
+stale HTTP authentication, active read-only access, denial before reservation,
+deactivation during provider I/O, durable conservative accounting/audit, actor
+immutability, tenant/finalization/cancellation fences, early/invalid expiry denial,
+cross-actor and unknown-principal expiry, populated downgrade refusal, migration
+round-trip, budget concurrency and citation validation. No frontend changes or
+browser rerun; fake providers only. The final **14 principal cases passed** after
+adding explicit missing/mismatched/foreign insertion identity tests and correcting
+the canonical audit actor column. The previous query/search passing evidence was
+reused for unchanged behavior. Independent implementation review accepted the
+change after that audit repair.
+This does not classify property sources or derived facts into accounting scopes,
+enable providers, or complete B1.

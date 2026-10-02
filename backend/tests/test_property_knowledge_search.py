@@ -590,6 +590,8 @@ async def test_query_run_lifecycle_rejects_rewriting_sanitized_reservation(
     migrator_session, seed_data,
 ) -> None:
     organization_id = seed_data["org_a_id"]
+    session = migrator_session
+    await session.execute(text("SELECT set_config('app.current_org_id', :org, true), set_config('app.current_user_id', :actor, true)"), {"org": str(organization_id), "actor": str(seed_data["user_a_admin_id"])})
     property_id = uuid.uuid4()
     await migrator_session.execute(
         text(
@@ -602,8 +604,8 @@ async def test_query_run_lifecycle_rejects_rewriting_sanitized_reservation(
     await migrator_session.execute(
         text(
             "INSERT INTO property_knowledge_query_run "
-            "(id, organization_id, property_id, budget_window_start, provider, model, reserved_cost_usd, reservation_expires_at) "
-            "VALUES (:id, :organization_id, :property_id, now(), 'fake', 'test', 0.01, now() + interval '1 hour')"
+            "(id, organization_id, initiated_by, property_id, budget_window_start, provider, model, reserved_cost_usd, reservation_expires_at) "
+            "VALUES (:id, :organization_id, current_setting('app.current_user_id')::uuid, :property_id, now(), 'fake', 'test', 0.01, now() + interval '1 hour')"
         ),
         {"id": row_id, "organization_id": organization_id, "property_id": property_id},
     )
@@ -614,12 +616,15 @@ async def test_query_run_lifecycle_rejects_rewriting_sanitized_reservation(
                 {"id": row_id},
             )
 
+    await migrator_session.execute(text("DELETE FROM property_knowledge_query_run WHERE id=:id"), {"id": row_id})
+
 
 @pytest.mark.asyncio
 async def test_app_rw_query_run_reservations_require_reserved_lifecycle(
     app_rw_session, seed_data,
 ) -> None:
     organization_id = seed_data["org_a_id"]
+    await app_rw_session.execute(text("SELECT set_config('app.current_user_id', :actor, true)"), {"actor": str(seed_data["user_a_admin_id"])})
     await app_rw_session.execute(
         text("SELECT set_config('app.current_org_id', :org, true)"),
         {"org": str(organization_id)},
@@ -635,8 +640,8 @@ async def test_app_rw_query_run_reservations_require_reserved_lifecycle(
     reservation_id = uuid.uuid4()
     insert = text(
         "INSERT INTO property_knowledge_query_run "
-        "(id, organization_id, property_id, budget_window_start, status, provider, model, reserved_cost_usd, reservation_expires_at) "
-        "VALUES (:id, :organization_id, :property_id, now(), :status, 'fake', 'test', 0.01, now() + interval '1 hour')"
+        "(id, organization_id, initiated_by, property_id, budget_window_start, status, provider, model, reserved_cost_usd, reservation_expires_at) "
+        "VALUES (:id, :organization_id, current_setting('app.current_user_id')::uuid, :property_id, now(), :status, 'fake', 'test', 0.01, now() + interval '1 hour')"
     )
     for status in ("FINALIZED", "EXPIRED"):
         with pytest.raises(Exception, match="RESERVED"):

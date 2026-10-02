@@ -1000,6 +1000,7 @@ async def test_query_endpoint_budget_reservation_allows_only_one_racing_call(
 @pytest.mark.asyncio
 async def test_query_endpoint_reclaims_expired_reservation_before_budget_sum(
     approved_knowledge_graph,
+    seed_data,
     client_a_admin,
     migrator_session,
     monkeypatch,
@@ -1018,8 +1019,10 @@ async def test_query_endpoint_reclaims_expired_reservation_before_budget_sum(
     now = datetime.now(timezone.utc)
     monkeypatch.setattr(settings, "declaration_qa_max_cost_usd", Decimal("0.001204"))
     async with get_tenant_session(approved_knowledge_graph.organization_id) as session:
+        await _set_query_actor(session, seed_data["user_a_admin_id"])
         session.add(PropertyKnowledgeQueryRun(
             organization_id=approved_knowledge_graph.organization_id,
+            initiated_by=seed_data["user_a_admin_id"],
             property_id=approved_knowledge_graph.property_id,
             budget_window_start=_utc_window_start(now, settings.declaration_qa_budget_window_minutes),
             provider="test", model="test", reserved_cost_usd=Decimal("0.001204"),
@@ -1150,6 +1153,7 @@ def test_usage_mismatch_preserves_numeric_usage_and_conservative_actual_cost() -
 @pytest.mark.asyncio
 async def test_denied_reservation_commits_expiry_transition_before_rate_limit(
     approved_knowledge_graph,
+    seed_data,
     client_a_admin,
     migrator_session,
     monkeypatch,
@@ -1169,8 +1173,10 @@ async def test_denied_reservation_commits_expiry_transition_before_rate_limit(
     window = _utc_window_start(now, settings.declaration_qa_budget_window_minutes)
     monkeypatch.setattr(settings, "declaration_qa_max_cost_usd", Decimal("0.001204"))
     async with get_tenant_session(approved_knowledge_graph.organization_id) as session:
+        await _set_query_actor(session, seed_data["user_a_admin_id"])
         expired = PropertyKnowledgeQueryRun(
             organization_id=approved_knowledge_graph.organization_id,
+            initiated_by=seed_data["user_a_admin_id"],
             property_id=approved_knowledge_graph.property_id,
             budget_window_start=window, provider="test", model="test",
             reserved_cost_usd=Decimal("0.001204"),
@@ -1178,6 +1184,7 @@ async def test_denied_reservation_commits_expiry_transition_before_rate_limit(
         )
         finalized = PropertyKnowledgeQueryRun(
             organization_id=approved_knowledge_graph.organization_id,
+            initiated_by=seed_data["user_a_admin_id"],
             property_id=approved_knowledge_graph.property_id,
             budget_window_start=window, provider="test", model="test",
             reserved_cost_usd=Decimal("0.001204"),
@@ -1202,6 +1209,7 @@ async def test_denied_reservation_commits_expiry_transition_before_rate_limit(
         assert response.status_code == 429
         assert provider.calls == []
         async with get_tenant_session(approved_knowledge_graph.organization_id) as session:
+            await _set_query_actor(session, seed_data["user_a_admin_id"])
             status = await session.scalar(select(PropertyKnowledgeQueryRun.status).where(
                 PropertyKnowledgeQueryRun.id == expired.id,
             ))
@@ -1216,6 +1224,7 @@ async def test_denied_reservation_commits_expiry_transition_before_rate_limit(
 @pytest.mark.asyncio
 async def test_advisory_lock_serializes_two_open_tenant_reservation_transactions(
     approved_knowledge_graph,
+    seed_data,
     migrator_session,
 ) -> None:
     import asyncio
@@ -1234,10 +1243,12 @@ async def test_advisory_lock_serializes_two_open_tenant_reservation_transactions
 
     async def reserve_in_second_transaction(started: asyncio.Event):
         async with get_tenant_session(approved_knowledge_graph.organization_id) as session:
+            await _set_query_actor(session, seed_data["user_a_admin_id"])
             started.set()
             return await PropertyKnowledgeQueryRepository(
                 session, approved_knowledge_graph.organization_id,
             ).reserve_query(
+                actor_user_id=seed_data["user_a_admin_id"],
                 property_id=approved_knowledge_graph.property_id,
                 budget_window_start=window,
                 now=now,
@@ -1249,11 +1260,13 @@ async def test_advisory_lock_serializes_two_open_tenant_reservation_transactions
 
     first_context = get_tenant_session(approved_knowledge_graph.organization_id)
     first_session = await first_context.__aenter__()
+    await _set_query_actor(first_session, seed_data["user_a_admin_id"])
     second_task = None
     try:
         first = await PropertyKnowledgeQueryRepository(
             first_session, approved_knowledge_graph.organization_id,
         ).reserve_query(
+            actor_user_id=seed_data["user_a_admin_id"],
             property_id=approved_knowledge_graph.property_id,
             budget_window_start=window,
             now=now,
@@ -1284,6 +1297,7 @@ async def test_advisory_lock_serializes_two_open_tenant_reservation_transactions
 @pytest.mark.asyncio
 async def test_live_reservation_is_not_reclaimed_during_configured_provider_timeout(
     approved_knowledge_graph,
+    seed_data,
     migrator_session,
 ) -> None:
     from datetime import datetime, timedelta, timezone
@@ -1299,7 +1313,9 @@ async def test_live_reservation_is_not_reclaimed_during_configured_provider_time
     window = _utc_window_start(now, settings.declaration_qa_budget_window_minutes)
     reserved_cost = _stored_cost(_configured_cost(17, settings.declaration_qa_max_output_tokens))
     async with get_tenant_session(approved_knowledge_graph.organization_id) as session:
+        await _set_query_actor(session, seed_data["user_a_admin_id"])
         first = await PropertyKnowledgeQueryRepository(session, approved_knowledge_graph.organization_id).reserve_query(
+            actor_user_id=seed_data["user_a_admin_id"],
             property_id=approved_knowledge_graph.property_id,
             budget_window_start=window, now=now,
             reservation_expires_at=now + timedelta(seconds=settings.declaration_qa_reservation_seconds),
@@ -1310,7 +1326,9 @@ async def test_live_reservation_is_not_reclaimed_during_configured_provider_time
 
     try:
         async with get_tenant_session(approved_knowledge_graph.organization_id) as session:
+            await _set_query_actor(session, seed_data["user_a_admin_id"])
             second = await PropertyKnowledgeQueryRepository(session, approved_knowledge_graph.organization_id).reserve_query(
+                actor_user_id=seed_data["user_a_admin_id"],
                 property_id=approved_knowledge_graph.property_id,
                 budget_window_start=window,
                 now=now + timedelta(seconds=settings.declaration_qa_timeout_seconds),
@@ -1329,3 +1347,8 @@ async def test_live_reservation_is_not_reclaimed_during_configured_provider_time
         await migrator_session.execute(delete(PropertyKnowledgeQueryRun).where(
             PropertyKnowledgeQueryRun.property_id == approved_knowledge_graph.property_id,
         ))
+
+
+async def _set_query_actor(session, actor):
+    from sqlalchemy import text
+    await session.execute(text("SELECT set_config('app.current_user_id', :actor, true)"), {"actor": str(actor)})

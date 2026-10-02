@@ -11,7 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.tenant import AuthContext, get_current_user, get_db
+from app.core.live_principal import get_live_member_db
+from app.core.tenant import AuthContext, get_current_user
 from app.declarations.knowledge_schemas import (
     KnowledgeAnswerOut,
     KnowledgeQuestionRequest,
@@ -91,7 +92,7 @@ async def list_property_rules(
     status: list[RuleStatus] | None = Query(default=None),
     include_history: bool = False,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ) -> list[RuleOut]:
     history_requested = include_history or bool(
         status and any(item in _HISTORY_STATUSES for item in status)
@@ -115,7 +116,7 @@ async def get_property_knowledge(
     property_id: uuid.UUID,
     include_history: bool = False,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ) -> PropertyKnowledgeOverview:
     try:
         return await PropertyKnowledgeService(db, auth.organization_id).overview(
@@ -133,7 +134,7 @@ async def search_property_knowledge(
     limit: int = Query(default=20, ge=1, le=50),
     include_history: bool = False,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ) -> KnowledgeSearchResponse:
     try:
         return await PropertyKnowledgeService(db, auth.organization_id).search(
@@ -159,6 +160,7 @@ async def query_property_knowledge_endpoint(
     try:
         return await query_property_knowledge(
             organization_id=auth.organization_id,
+            actor_user_id=auth.user_id,
             property_id=property_id,
             question=body,
             provider_factory=provider_source,

@@ -50,6 +50,7 @@ class PropertyKnowledgeQueryRepository:
         self,
         *,
         property_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
         budget_window_start: datetime,
         now: datetime,
         reservation_expires_at: datetime,
@@ -61,10 +62,10 @@ class PropertyKnowledgeQueryRepository:
         budget_cap_usd: Decimal,
     ) -> KnowledgeQueryReservation | None:
         """Atomically reclaim expired rows and reserve one bounded Q&A attempt."""
-        lock_key = f"{self._organization_id}:{budget_window_start.isoformat()}"
+        await self._session.execute(text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"), {"key": f"scope-acl:{self._organization_id}"})
         await self._session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtextextended(CAST(:key AS text), 0))"),
-            {"key": lock_key},
+            text("SELECT lock_knowledge_budget(:org, :window)"),
+            {"org": self._organization_id, "window": budget_window_start},
         )
         await self._session.execute(
             update(PropertyKnowledgeQueryRun).where(
@@ -97,6 +98,7 @@ class PropertyKnowledgeQueryRepository:
         run = PropertyKnowledgeQueryRun(
             organization_id=self._organization_id,
             property_id=property_id,
+            initiated_by=actor_user_id,
             budget_window_start=budget_window_start,
             provider=provider[:120],
             model=model[:120],
@@ -126,10 +128,10 @@ class PropertyKnowledgeQueryRepository:
         error_code: str | None,
     ) -> bool:
         """Finalize only this reservation, under the same budget-window lock."""
-        lock_key = f"{self._organization_id}:{reservation.budget_window_start.isoformat()}"
+        await self._session.execute(text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"), {"key": f"scope-acl:{self._organization_id}"})
         await self._session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtextextended(CAST(:key AS text), 0))"),
-            {"key": lock_key},
+            text("SELECT lock_knowledge_budget(:org, :window)"),
+            {"org": self._organization_id, "window": reservation.budget_window_start},
         )
         result = await self._session.execute(
             update(PropertyKnowledgeQueryRun).where(

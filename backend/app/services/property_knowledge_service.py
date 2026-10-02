@@ -14,7 +14,10 @@ from decimal import Decimal
 from decimal import InvalidOperation, ROUND_UP
 from typing import Any, Callable, Mapping
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, text
+from fastapi import HTTPException
+from app.core.live_principal import require_live_principal
+from app.core.tenant import AuthContext
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -717,9 +720,15 @@ def _usage_for_reservation(
     return sanitized, _stored_cost(expected_cost), None
 
 
+async def _knowledge_actor(session: AsyncSession, organization_id: uuid.UUID, actor_user_id: uuid.UUID) -> None:
+    await session.execute(text("SELECT set_config('app.current_user_id', :actor, true)"), {"actor": str(actor_user_id)})
+    await require_live_principal(session, AuthContext(actor_user_id, organization_id, ""), writer=False)
+
+
 async def query_property_knowledge(
     *,
     organization_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
     property_id: uuid.UUID,
     question: KnowledgeQuestionRequest,
     provider: KnowledgeAnswerProvider | None = None,
@@ -731,6 +740,7 @@ async def query_property_knowledge(
     # Resolve the tenant-local property before process-local backpressure so an
     # unknown/foreign identifier remains a stable 404 even under load.
     async with get_tenant_session(organization_id) as session:
+        await _knowledge_actor(session, organization_id, actor_user_id)
         service = PropertyKnowledgeService(session, organization_id)
         prepared = await service.prepare_question(property_id, question)
         if not prepared.hits:
@@ -748,6 +758,7 @@ async def query_property_knowledge(
         raise KnowledgeQueryBudgetExceeded("QA_CONCURRENCY_EXCEEDED")
     try:
         async with get_tenant_session(organization_id) as session:
+            await _knowledge_actor(session, organization_id, actor_user_id)
             try:
                 estimate = provider.estimate_reservation(
                     prepared.request,
@@ -775,6 +786,7 @@ async def query_property_knowledge(
             provider_name, model = _provider_identity(provider)
             reservation = await repository.reserve_query(
                 property_id=property_id,
+                actor_user_id=actor_user_id,
                 budget_window_start=window_start,
                 now=now,
                 reservation_expires_at=now + timedelta(seconds=settings.declaration_qa_reservation_seconds),
@@ -819,24 +831,36 @@ async def query_property_knowledge(
         error_code = mismatch or (getattr(provider_error, "code", None) if provider_error is not None else None)
         answer: KnowledgeAnswerOut | None = None
         finalized = False
-        async with get_tenant_session(organization_id) as session:
-            if provider_result is not None and mismatch is None:
-                answer = await PropertyKnowledgeService(session, organization_id).finalize_provider_result(
-                    prepared, provider_result,
+        try:
+            async with get_tenant_session(organization_id) as session:
+                # Resolve the immutable stored actor before reading any answer sources.
+                persisted_actor = await session.scalar(text("SELECT initiated_by FROM property_knowledge_query_run WHERE organization_id=:org AND id=:run"), {"org": organization_id, "run": reservation.run_id})
+                if persisted_actor != actor_user_id:
+                    raise HTTPException(status_code=401, detail="Not authenticated")
+                await _knowledge_actor(session, organization_id, persisted_actor)
+                if provider_result is not None and mismatch is None:
+                    answer = await PropertyKnowledgeService(session, organization_id).finalize_provider_result(
+                        prepared, provider_result,
+                    )
+                    if answer.answer == UNVERIFIED_ANSWER_TEXT:
+                        outcome = "UNVERIFIED_OUTPUT"
+                        error_code = "UNVERIFIED_OUTPUT"
+                finalized = await PropertyKnowledgeQueryRepository(session, organization_id).finalize_query(
+                    reservation,
+                    now=datetime.now(timezone.utc),
+                    estimated_cost_usd=finalized_cost,
+                    input_tokens=usage.input_tokens if usage is not None else 0,
+                    output_tokens=usage.output_tokens if usage is not None else 0,
+                    latency_ms=latency_ms,
+                    outcome=outcome,
+                    error_code=error_code,
                 )
-                if answer.answer == UNVERIFIED_ANSWER_TEXT:
-                    outcome = "UNVERIFIED_OUTPUT"
-                    error_code = "UNVERIFIED_OUTPUT"
-            finalized = await PropertyKnowledgeQueryRepository(session, organization_id).finalize_query(
-                reservation,
-                now=datetime.now(timezone.utc),
-                estimated_cost_usd=finalized_cost,
-                input_tokens=usage.input_tokens if usage is not None else 0,
-                output_tokens=usage.output_tokens if usage is not None else 0,
-                latency_ms=latency_ms,
-                outcome=outcome,
-                error_code=error_code,
-            )
+        except HTTPException:
+            # Commit safe cancellation separately after the effect transaction rolls back.
+            async with get_tenant_session(organization_id) as session:
+                await session.execute(text("SELECT set_config('app.current_user_id', :actor, true)"), {"actor": str(actor_user_id)})
+                await session.execute(text("SELECT cancel_unauthorized_knowledge(:org, :run)"), {"org": organization_id, "run": reservation.run_id})
+            raise
 
         if not finalized:
             raise KnowledgeQueryUnavailable("QA_TEMPORARILY_UNAVAILABLE")

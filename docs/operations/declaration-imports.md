@@ -359,5 +359,22 @@ membership returns 401. A role change concurrent with an already-authorized shor
 request waits for that request's shared ACL lock. Subsequent requests use the
 changed permissions. Approved property-document metadata/PDF routes require a
 currently active member; their unclassified read-only compatibility is retained.
-This check does not confer accounting-scope access or protect the separate optional
-knowledge-provider workflow, which requires its own per-phase principal checks.
+This check does not confer accounting-scope access. The optional knowledge-provider
+workflow uses the separate per-phase principal checks described below.
+
+## Knowledge-query principal checks (migration 0044)
+
+Approved knowledge overview, rules and lexical search now use the live-member
+request guard. Optional Q&A persists the initiating actor on its content-free cost
+ledger and checks active membership separately before source retrieval, reservation
+and final answer validation. Read-only members retain current approved-knowledge
+compatibility. No database transaction spans provider network I/O.
+
+Deactivation or membership removal during provider execution suppresses the answer
+with HTTP 401. A separate cancellation transaction records `QA_PERMISSION_CHANGED`
+and conservatively retains the full reserved amount as estimated cost, with a safe
+audit event. Already-dispatched provider input cannot be recalled. Historical null
+actors stay unknown; an active member can expire a timed-out reservation without
+adopting its identity. Downgrade refuses to erase recorded principals; repair
+forward. This is an organization-level prerequisite, not accounting-scope source
+classification or authorization to enable a live provider.

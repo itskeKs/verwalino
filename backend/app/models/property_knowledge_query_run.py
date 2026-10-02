@@ -21,6 +21,7 @@ class PropertyKnowledgeQueryRun(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organization.id", ondelete="RESTRICT"), nullable=False)
     property_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    initiated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     budget_window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="RESERVED")
     provider: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -36,6 +37,7 @@ class PropertyKnowledgeQueryRun(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "initiated_by"], ["user.organization_id", "user.id"], name="fk_knowledge_query_actor", ondelete="RESTRICT"),
         ForeignKeyConstraint(["organization_id", "property_id"], ["property.organization_id", "property.id"], name="fk_property_knowledge_query_run_property_tenant", ondelete="RESTRICT"),
         CheckConstraint("status IN ('RESERVED', 'FINALIZED', 'EXPIRED')", name=conv("ck_property_knowledge_query_run_status")),
         CheckConstraint("reserved_cost_usd >= 0", name=conv("ck_property_knowledge_query_run_reserved_cost_nonnegative")),
