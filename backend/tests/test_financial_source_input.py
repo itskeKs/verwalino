@@ -65,7 +65,9 @@ async def test_hidden_unproven_source_cannot_produce_plan_or_coverage(client_a_a
             assert (await attest(client_a_admin, 'economic_plan', plan, values)).status_code == 404
             async with get_tenant_session(seed_data['org_a_id']) as db:
                 assert await db.scalar(text('SELECT snapshot_payload FROM economic_plan WHERE id=:plan'), {'plan':uuid.UUID(plan)}) is None
-                assert await db.scalar(text('SELECT count(*) FROM coverage_declaration WHERE economic_plan_id=:plan'), {'plan':uuid.UUID(plan)}) == 1
+                assert await db.scalar(text('SELECT count(*) FROM coverage_declaration WHERE economic_plan_id=:plan'), {'plan':uuid.UUID(plan)}) == 0
+        async with get_tenant_session(seed_data['org_a_id']) as db:
+            assert await db.scalar(text('SELECT count(*) FROM coverage_declaration WHERE economic_plan_id=:plan'), {'plan':uuid.UUID(plan)}) == 1
     finally:
         await mutate(text('DROP POLICY test_financial_hidden_original ON property_document'), {})
         await mutate(text('DELETE FROM property_document WHERE id=:document'), {'document':document})
@@ -120,32 +122,38 @@ async def test_direct_sql_cannot_write_calculation_outputs_without_source_rights
     other = await client_a_admin.post('/api/properties', json={'name':'Different source audience','management_type':'WEG'})
     other_id = uuid.UUID(other.json()['id'])
     await grant(client_a_admin, seed_data, other_id, caps=['read'])
+    import json
+    saved = {}
+    cases = [('settlement_run','id',rental),('economic_plan','id',plan),
+             ('settlement_line','settlement_run_id',rental),('economic_plan_line','economic_plan_id',plan),
+             ('coverage_declaration','settlement_run_id',rental),('coverage_declaration','economic_plan_id',plan)]
+    async with get_tenant_session(seed_data['org_a_id']) as db:
+        for table, key, value in cases:
+            saved[(table,value)] = await db.scalar(text(f'SELECT to_jsonb(r) FROM {table} r WHERE {key}=:id LIMIT 1'), {'id':uuid.UUID(value)})
+            assert saved[(table,value)]
     async with synthetic_enforcement(seed_data), get_tenant_session(seed_data['org_a_id']) as db:
         await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor':str(seed_data['user_a_admin_id'])})
-        for table, key, value in [('settlement_run','id',rental),('economic_plan','id',plan),
-                                  ('settlement_line','settlement_run_id',rental),('economic_plan_line','economic_plan_id',plan)]:
-            assert await db.scalar(text(f'SELECT count(*) FROM {table} WHERE {key}=:id'), {'id':uuid.UUID(value)}) > 0
+        for table, key, value in cases[:4]:
+            # Current SELECT policies also prevent targeting an inaccessible
+            # existing output. Raw INSERT still reaches the write guard below.
+            assert await db.scalar(text(f'SELECT count(*) FROM {table} WHERE {key}=:id'), {'id':uuid.UUID(value)}) == 0
             field = "snapshot_payload='{}'::jsonb" if table.endswith('_run') or table=='economic_plan' else "label='Forged calculation'"
+            assert (await db.execute(text(f'UPDATE {table} SET {field} WHERE {key}=:id'), {'id':uuid.UUID(value)})).rowcount == 0
+            assert (await db.execute(text(f'DELETE FROM {table} WHERE {key}=:id'), {'id':uuid.UUID(value)})).rowcount == 0
+            record = {**saved[(table,value)], 'id':str(uuid.uuid4())}
             with pytest.raises(DBAPIError, match='Complete financial source authority required'):
                 async with db.begin_nested():
-                    await db.execute(text(f'UPDATE {table} SET {field} WHERE {key}=:id'), {'id':uuid.UUID(value)})
-            if table.endswith('_line'):
-                with pytest.raises(DBAPIError, match='Complete financial source authority required'):
-                    async with db.begin_nested():
-                        await db.execute(text(f'DELETE FROM {table} WHERE {key}=:id'), {'id':uuid.UUID(value)})
-                with pytest.raises(DBAPIError, match='Complete financial source authority required'):
-                    async with db.begin_nested():
-                        await db.execute(text(f"INSERT INTO {table} SELECT (jsonb_populate_record(NULL::{table},to_jsonb(r)||jsonb_build_object('id',gen_random_uuid()))).* FROM {table} r WHERE {key}=:id LIMIT 1"), {'id':uuid.UUID(value)})
+                    await db.execute(text(f'INSERT INTO {table} SELECT (jsonb_populate_record(NULL::{table},CAST(:record AS jsonb))).*'), {'record':json.dumps(record)})
+        record = {**saved[('coverage_declaration',plan)], 'id':str(uuid.uuid4()), 'revision':2}
         with pytest.raises(DBAPIError, match='Complete financial source authority required'):
             async with db.begin_nested():
-                await db.execute(text("INSERT INTO coverage_declaration SELECT (jsonb_populate_record(NULL::coverage_declaration,to_jsonb(c)||jsonb_build_object('id',gen_random_uuid(),'revision',revision+1))).* FROM coverage_declaration c WHERE economic_plan_id=:id LIMIT 1"), {'id':uuid.UUID(plan)})
-        for parent, foreign_key, value in [('settlement_run','settlement_run_id',rental),('economic_plan','economic_plan_id',plan)]:
+                await db.execute(text('INSERT INTO coverage_declaration SELECT (jsonb_populate_record(NULL::coverage_declaration,CAST(:record AS jsonb))).*'), {'record':json.dumps(record)})
+        for parent, value in [('settlement_run',rental),('economic_plan',plan)]:
+            record = {**saved[('coverage_declaration',value)], 'id':str(uuid.uuid4()), 'revision':2, 'property_id':str(other_id)}
             with pytest.raises(DBAPIError, match='Coverage property differs from financial subject'):
                 async with db.begin_nested():
-                    await db.execute(text(f"INSERT INTO coverage_declaration SELECT (jsonb_populate_record(NULL::coverage_declaration,to_jsonb(c)||jsonb_build_object('id',gen_random_uuid(),'revision',revision+1,'property_id',CAST(:other AS uuid)))).* FROM coverage_declaration c WHERE {foreign_key}=:id LIMIT 1"), {'id':uuid.UUID(value),'other':other_id})
-            with pytest.raises(DBAPIError, match='Complete financial source authority required'):
-                async with db.begin_nested():
-                    await db.execute(text(f'UPDATE {parent} SET property_id=:other WHERE id=:id'), {'id':uuid.UUID(value),'other':other_id})
+                    await db.execute(text('INSERT INTO coverage_declaration SELECT (jsonb_populate_record(NULL::coverage_declaration,CAST(:record AS jsonb))).*'), {'record':json.dumps(record)})
+            assert (await db.execute(text(f'UPDATE {parent} SET property_id=:other WHERE id=:id'), {'id':uuid.UUID(value),'other':other_id})).rowcount == 0
 
 
 async def test_financial_source_migration_refuses_strict_rollback_and_roundtrips(seed_data):

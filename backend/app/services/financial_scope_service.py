@@ -117,3 +117,13 @@ class FinancialScopeService:
                 {'org': self.org_id, 'scope': scope_id}):
             raise HTTPException(409, 'Review unclassified financial inputs before calculating this accounting scope')
         return scope_id
+
+    async def require_export(self, subject):
+        """Copied source facts need both financial and property export rights."""
+        scope_id = await self.enter(subject, capability=ScopeCapability.EXPORT)
+        if scope_id is None and await self.session.scalar(text(
+                'SELECT property_source_security_mode(:org)'), {'org': self.org_id}) != 'PREPARATION':
+            raise HTTPException(404, 'Financial export requires a reviewed accounting scope')
+        if not await self.session.scalar(text("SELECT property_financial_disclosure_access(:org,:property,'export')"),
+                {'org': self.org_id, 'property': subject.property_id}):
+            raise HTTPException(404, 'Financial source export not accessible')

@@ -26,6 +26,7 @@ from app.repositories.settlement_repo import (
     SettlementLineRepository,
     SettlementRunRepository,
 )
+from app.services.financial_scope_service import FinancialScopeService
 from app.services.render_names import (
     vermoegensbericht_render_names,
     weg_render_names,
@@ -367,6 +368,7 @@ async def get_weg_pdf(
         raise HTTPException(status_code=404, detail="WEG-Jahresabrechnung not found")
     if run.status != "finalized":
         raise HTTPException(status_code=409, detail="PDF is only available for a finalized run")
+    await FinancialScopeService(db, auth.organization_id, auth.user_id).require_export(run)
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
 
@@ -396,6 +398,7 @@ async def get_asset_report_pdf(
         raise HTTPException(status_code=404, detail="Vermoegensbericht not found")
     if run.status != "finalized":
         raise HTTPException(status_code=409, detail="PDF is only available for a finalized run")
+    await FinancialScopeService(db, auth.organization_id, auth.user_id).require_export(run)
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
 

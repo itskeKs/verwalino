@@ -27,6 +27,7 @@ from app.repositories.economic_plan_repo import (
     EconomicPlanLineRepository,
     EconomicPlanRepository,
 )
+from app.services.financial_scope_service import FinancialScopeService
 from app.services.economic_plan_service import (
     EconomicPlanService,
     PlanInputs,
@@ -269,6 +270,7 @@ async def get_plan_pdf(
         raise HTTPException(status_code=404, detail="Economic plan not found")
     if plan.status != "finalized":
         raise HTTPException(status_code=409, detail="PDF is only available for a finalized plan")
+    await FinancialScopeService(db, auth.organization_id, auth.user_id).require_export(plan)
     line_repo = EconomicPlanLineRepository(db, auth.organization_id)
     lines = await line_repo.list_for_plan(plan_id)
     # Anzeige-Namen: eingefroren aus dem Snapshot (finalisiert), sonst live.

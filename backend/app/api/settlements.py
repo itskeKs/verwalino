@@ -27,6 +27,7 @@ from app.repositories.settlement_repo import (
     SettlementLineRepository,
     SettlementRunRepository,
 )
+from app.services.financial_scope_service import FinancialScopeService
 from app.services.render_names import settlement_render_names
 from app.services.settlement_pdf import render_settlement_pdf
 from app.services.settlement_service import (
@@ -417,6 +418,7 @@ async def get_settlement_pdf(
             status_code=409,
             detail="PDF is only available for a finalized settlement run",
         )
+    await FinancialScopeService(db, auth.organization_id, auth.user_id).require_export(run)
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
 

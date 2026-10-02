@@ -555,3 +555,33 @@ boundary,focused,repair,final}.log`.
 The preflight conservatively requires the whole property-source graph. Source
 CRUD/RLS, complete copied-snapshot and report/privacy/audit disclosure handling,
 and reviewed activation coverage still gate B1 completion.
+
+## Stored financial disclosure (0060)
+
+At base `23c088f`, two expected red cases showed copied plan/settlement sources
+readable without current source rights. Restrictive SELECT policies now cover
+parents, lines and coverage using trusted complete-source and exact-parent checks.
+The first expanded run passed 86 cases and failed one obsolete coverage count
+assertion: denied coverage is now hidden, not deleted. The repaired assertion
+verifies zero in strict mode and the retained row after PREPARATION restoration.
+A subsequent 67-case boundary run passed, including scoped statements, financial
+boundaries, raw writes and RLS coverage.
+
+Independent review identified unbound legacy PDFs bypassing financial EXPORT.
+A regression first reproduced PDF 200 instead of 404. The repair denies unbound
+outputs in ENFORCED/PAUSED until reviewed into an accounting scope. Bound outputs
+require exact financial EXPORT separately from source EXPORT. Fifteen disclosure
+cases passed, including all four PDF families, financial read-only denial, retained
+stored reads in PAUSED, eight NOWAIT dependencies and strict refusal/roundtrip.
+The reviewer accepted the repaired delta without remaining concrete findings.
+
+The final combined run passed **82 cases**: disclosure, complete financial source
+input, M3 rental and M4 WEG/plan/asset flows. Earlier valid statement/RLS evidence
+was reused; no frontend changes require UI checks. Raw insertion regressions use
+captured PREPARATION fixtures rather than SELECT from newly hidden rows, so the
+write guard remains exercised. Logs: `/tmp/hv-financial-disclosure-{red,first,
+boundary,final,unbound-red,export-repair,accepted}.log`.
+
+This protects the named financial output tables and PDF routes. Source CRUD/RLS,
+audit/privacy/general report closure and reviewed activation coverage remain open;
+B1 and source activation are not complete.

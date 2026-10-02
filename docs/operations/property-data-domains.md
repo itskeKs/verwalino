@@ -294,3 +294,19 @@ settlement/plan; its declared property must match. Computed draft reparenting ch
 both audiences. Eight migration dependencies use NOWAIT; strict state refuses
 rollback. Current stored-result, report and privacy disclosure closure remains a
 separate prerequisite, and source activation remains unavailable.
+
+## Stored financial disclosure (0060)
+
+In strict and paused state, computed/final settlement and plan rows, their lines,
+and coverage declarations require complete current source READ authority. Parent
+lookups use trusted metadata, and coverage must match its actual parent's property.
+Only empty draft parent metadata retains its existing financial visibility.
+Snapshot contents and hashes remain unchanged. PAUSED permits authorized stored
+reads while calculation and attestation effects stay blocked.
+
+All four financial PDF routes additionally require exact financial EXPORT and
+whole-source EXPORT before line loading or rendering. Unbound legacy outputs
+cannot be exported in ENFORCED/PAUSED until reviewed into an accounting scope;
+PREPARATION retains legacy compatibility. Eight dependencies use NOWAIT locks and
+strict state refuses rollback. This closes these stored output tables and PDF
+routes; it does not complete general reports, privacy/audit or source activation.
