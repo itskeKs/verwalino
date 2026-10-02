@@ -25,6 +25,7 @@ PRIVATE_POLICIES = {
 }
 
 TENANT_TABLES = frozenset({
+    "document_ref",
     "runtime_budget_attestation", "runtime_budget_review", "access_disposition_acceptance",
     "source_security_authorization", "source_security_transition",
     "access_grant_proposal", "access_grant_acceptance", "access_coverage_snapshot", "access_coverage_review", "invoice_upload_admission", "dunning_quarantine_disposition", "mandate_quarantine_disposition", "mandate_legacy_observation", "declaration_review_receipt", "declaration_review_context", "declaration_worker_context", "person_data_domain", "person_data_grant",

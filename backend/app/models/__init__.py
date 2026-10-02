@@ -21,6 +21,7 @@ from app.models.meter import Meter, MeterReading
 from app.models.cost_category import CostCategory
 from app.models.cost_entry import CostEntry
 from app.models.invoice_document import InvoiceDocument
+from app.models.document_ref import DocumentRef
 
 # M3 Verteilungs-/Abrechnungs-Engine (Betriebskostenabrechnung Mieter)
 from app.models.settlement_run import SettlementRun
@@ -89,6 +90,7 @@ __all__ = [
     "CostCategory",
     "CostEntry",
     "InvoiceDocument",
+    "DocumentRef",
     # M3
     "SettlementRun",
     "SettlementLine",

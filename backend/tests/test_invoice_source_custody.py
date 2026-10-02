@@ -319,6 +319,7 @@ async def test_strict_upload_extract_and_idempotent_link_preserves_custody(migra
         assert await process_once(get_worker_session_factory(), ids['org'], processor=extract_invoice)
         ready = await api.get(f"/api/invoice-documents/{ids['document']}")
         assert ready.json()['extraction_payload']['gross_amount'] == '119.00'
+        reference = (await api.get('/api/document-refs/page', params={'source_id': str(ids['document'])})).json()['items'][0]
         body = {'accounting_scope_id':str(ids['scope']), 'source_document_id':str(ids['document']),
                 'property_id':str(ids['property']), 'cost_category_id':str(category), 'invoice_date':'2025-06-01',
                 'service_period_from':'2025-01-01', 'service_period_to':'2025-12-31', 'gross_amount':'119.00',
@@ -340,11 +341,14 @@ async def test_strict_upload_extract_and_idempotent_link_preserves_custody(migra
                                   files={'file':('linked.pdf',pdf_bytes(),'application/pdf')})
         assert attached.status_code == 201, attached.text
         assert attached.json()['cost_entry_id'] == draft.json()['id']
+        assert (await api.get('/api/document-refs/' + reference['id'])).json() == reference
         monkeypatch.setattr(store, 'put', lambda *a, **k: pytest.fail('Unauthorized linked upload reached storage'))
         async with client(ids, 'actor') as other:
             denied = await other.post('/api/invoice-documents/upload', data={'cost_entry_id':draft.json()['id']},
                                       files={'file':('denied.pdf',pdf_bytes(),'application/pdf')})
             assert denied.status_code == 404, denied.text
+        await mutate(text('UPDATE scope_grant SET revoked_at=clock_timestamp(),revoked_by=:actor WHERE scope_id=:scope AND revoked_at IS NULL'), ids)
+        assert (await api.get('/api/document-refs/' + reference['id'])).status_code == 404
 
 
 async def test_custody_migration_retains_evidence_and_empty_roundtrip(migrator_session, scope_seed, store):

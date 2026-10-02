@@ -367,6 +367,11 @@ close/reconnect, worker kill before/after commit, unauthorized original fetch an
 malicious payload fixtures. Keep declaration-specific contracts/evals passing only
 where shared mechanics change. No live provider needed; V06 gates disclosure.
 
+Local B2 progress (2026-10-02): migration 0092 adds the verified typed original
+registry and read-only metadata API. See `2026-10-02-document-registry-foundation.md`.
+Logical children, quarantine, intake manifests/jobs/outbox and inbox UI remain
+outstanding; this does not accept B2.
+
 **B3 — Assignment, duplicates, splits and shared exceptions.** P1.1 after B2.
 Add **new** `assignment_proposal`, `mapping_version`, `exception_case`,
 `document_cost_link` / allocation-set models and services,

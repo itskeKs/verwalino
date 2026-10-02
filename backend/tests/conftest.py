@@ -86,6 +86,9 @@ def run_migrations():
         cursor.execute("""DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='app_review') THEN
             CREATE ROLE app_review LOGIN PASSWORD 'review_secret' NOINHERIT NOBYPASSRLS NOCREATEDB NOCREATEROLE;
             END IF; END $$;""")
+        cursor.execute("SELECT to_regclass('public.document_ref')")
+        if cursor.fetchone()[0]:
+            cursor.execute("TRUNCATE public.document_ref CASCADE")
         clear_disposable_source_context(cursor)
         cursor.execute("SELECT to_regclass('public.source_security_transition')")
         if cursor.fetchone()[0]:
