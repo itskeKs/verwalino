@@ -9,7 +9,8 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.tenant import AuthContext, get_current_user, get_db
+from app.core.tenant import AuthContext, get_current_user
+from app.core.live_principal import get_live_member_db
 from app.models.property_document import PropertyDocument
 from app.repositories.property_repo import PropertyRepository
 from app.services.property_document_service import (
@@ -37,7 +38,7 @@ class PropertyDocumentOut(BaseModel):
 async def list_property_documents(
     property_id: uuid.UUID,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     await _require_property(db, auth, property_id)
     items = await PropertyDocumentService(db, auth.organization_id, auth.user_id).list_approved_for_property(
@@ -52,7 +53,7 @@ async def get_property_document_content(
     document_id: uuid.UUID,
     page: int | None = Query(default=None, gt=0),
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     # The PDF viewer may preserve a page in links.  It intentionally never
     # affects storage key resolution or response selection.

@@ -12,7 +12,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.tenant import AuthContext, get_db, require_write_dep
+from app.core.tenant import AuthContext, require_write_dep
+from app.core.live_principal import get_live_writer_db
 from app.core.uploads import read_upload_limited
 from app.declarations.review_schemas import (
     ApprovalPreviewOut,
@@ -87,7 +88,7 @@ class DocumentMetadataUpdate(BaseModel):
 async def create_import(
     body: DeclarationImportCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     return _import_out(await DeclarationImportService(db, auth.organization_id, auth.user_id).create(
         body.mode, body.target_property_id
@@ -101,7 +102,7 @@ async def upload_document(
     document_role: str = Form(...),
     sequence_no: int = Form(...),
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     # Fail before consuming the multipart stream when imports are disabled,
     # then enforce the deploy-time byte limit during the bounded read.
@@ -125,7 +126,7 @@ async def update_document_metadata(
     document_id: uuid.UUID,
     body: DocumentMetadataUpdate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     document, link = await DeclarationImportService(
         db, auth.organization_id, auth.user_id
@@ -147,7 +148,7 @@ async def update_document_metadata(
 async def list_import_documents(
     import_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     rows = await DeclarationImportService(
         db, auth.organization_id, auth.user_id
@@ -167,7 +168,7 @@ async def start_import(
     import_id: uuid.UUID,
     idempotency_key: uuid.UUID = Header(alias="Idempotency-Key"),
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     return _import_out(await DeclarationImportService(db, auth.organization_id, auth.user_id).start(import_id, idempotency_key))
 
@@ -176,7 +177,7 @@ async def start_import(
 async def get_import(
     import_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     return _import_out(await DeclarationImportService(db, auth.organization_id, auth.user_id).get(import_id))
 
@@ -187,7 +188,7 @@ async def get_import_document_content(
     document_id: uuid.UUID,
     page: int | None = Query(default=None, gt=0),
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     # Accepted for PDF-viewer compatibility only; storage always uses the
     # persisted content-addressed URI from the authorized document row.
@@ -202,7 +203,7 @@ async def get_import_document_content(
 async def list_candidates(
     import_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     return await DeclarationReviewService(db, auth.organization_id, auth.user_id).list_candidates(import_id)
 
@@ -213,7 +214,7 @@ async def review_candidate(
     candidate_id: uuid.UUID,
     body: CandidateReviewRequest,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     return await DeclarationReviewService(db, auth.organization_id, auth.user_id).review_one(import_id, candidate_id, body)
 
@@ -223,7 +224,7 @@ async def bulk_review_candidates(
     import_id: uuid.UUID,
     body: BulkCandidateReviewRequest,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     return await DeclarationReviewService(db, auth.organization_id, auth.user_id).review_bulk(import_id, body)
 
@@ -232,7 +233,7 @@ async def bulk_review_candidates(
 async def approval_preview(
     import_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     return await DeclarationReviewService(db, auth.organization_id, auth.user_id).preview(import_id)
 
@@ -242,7 +243,7 @@ async def retry_import(
     import_id: uuid.UUID,
     idempotency_key: uuid.UUID = Header(alias="Idempotency-Key"),
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     return _import_out(await DeclarationImportService(db, auth.organization_id, auth.user_id).retry(import_id, idempotency_key))
 
@@ -252,7 +253,7 @@ async def approve_import_boundary(
     import_id: uuid.UUID,
     body: ApprovalRequest,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     return await DeclarationApprovalService(
         db, auth.organization_id, auth.user_id
@@ -262,7 +263,7 @@ async def approve_import_boundary(
 async def cancel_import(
     import_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     return _import_out(await DeclarationImportService(db, auth.organization_id, auth.user_id).cancel(import_id))
 

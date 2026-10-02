@@ -434,3 +434,28 @@ Evidence on disposable PostgreSQL 16/Python 3.13, base `03c691f` plus this incre
   360 px, and the inspected screenshot shows the cancellation and retry action.
   No page errors. Script: `scripts/acceptance/b1_declaration_principal_browser.cjs`;
   report: `b1-declaration-principal-browser.json`.
+
+## Live principals for interactive declaration and source requests
+
+The short authentication transaction is a snapshot, so role revocation can commit
+before the endpoint's separate data transaction starts. Declaration HTTP routes
+now acquire the shared ACL lock and re-read the active database role in the same
+transaction as draft access, upload, metadata changes, review, approval, queue
+commands and cancellation. Approved property-document metadata/content uses the
+same active-member check while preserving existing read-only compatibility.
+The lock precedes domain row locks and remains held through bounded source access
+and transaction completion. No provider or OCR work runs in these endpoints.
+
+On base `3498f5c`, stale-role reproductions initially failed in 10 of 12 cases;
+start/retry were already protected. **17 focused boundary cases now pass** across
+all 14 declaration routes, approved-source deactivation and actual PostgreSQL
+advisory-lock ordering. The ordering case observes a waiting revocation lock,
+completes the already-authorized read, then verifies denial of the next request.
+Original-store sentinels prove denied reads/uploads never access bytes. **84
+existing API, property-source and review cases passed** in focused runs and were
+reused after test-only additions. No frontend changes or new migration were needed;
+no browser rerun is claimed. Knowledge queries and explicit accounting-scope
+classification remain separate unfinished adapters.
+Independent read-only review accepted the adapter. Bounded upload/storage operations
+retain the request's shared ACL lock; deployment request/storage timeouts remain
+necessary for availability and are not established by the byte-size limit.

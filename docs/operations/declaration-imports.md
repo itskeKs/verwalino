@@ -351,3 +351,13 @@ property-source or accounting-scope entitlement, automatically classify old
 sources, activate live providers or satisfy the full B1 rollout gate. Browser
 acceptance uses synthetic local originals and the production cancellation helper
 against the guarded disposable database; it does not run a live provider.
+
+Interactive declaration endpoints also revalidate the current writer role inside
+the transaction that handles source access and review/approval. A role downgrade
+between initial authentication and this check returns 403; deactivation or missing
+membership returns 401. A role change concurrent with an already-authorized short
+request waits for that request's shared ACL lock. Subsequent requests use the
+changed permissions. Approved property-document metadata/PDF routes require a
+currently active member; their unclassified read-only compatibility is retained.
+This check does not confer accounting-scope access or protect the separate optional
+knowledge-provider workflow, which requires its own per-phase principal checks.
