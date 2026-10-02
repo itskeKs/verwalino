@@ -86,7 +86,16 @@ application role. There is no supported actor-impersonation or policy-toggle API
 The integration and atomic publication prerequisites are recorded in the
 [property-source resolution design](../2026-10-02-property-source-access-resolution.md).
 For an existing-target draft whose original is still unbound, the prepared resolver
-also requires the uploader's live target prepare grant. Losing it hides that draft
-until reviewed admission is resolved. This is a conservative safeguard while
-permanent source-admission evidence is unfinished. Once the reviewed original is
-bound to its property, the former uploader's continued grant is not required.
+requires an exact durable attachment-admission receipt from migration 0050. A
+live uploader's explicit target prepare grant is captured when the original is
+attached; losing that grant later does not remove the target audience's access.
+Every viewer still needs their own live grant. Legacy attachments receive no
+receipt from later grants. Direct SQL inserts cannot manufacture historical proof;
+the receipt guard accepts only the nested attachment trigger. Historical sources
+need a separately reviewed reconciliation workflow before activation.
+
+Migration 0050 takes final table locks with NOWAIT; quiesce relevant traffic before
+retrying a busy migration. Receipt, source link and canonical admission audit are
+atomic and immutable. A receipt also fixes the original's eventual destination.
+Populated downgrade refuses to remove proof. Preserve it and forward-repair.
+No source-policy activation is included.

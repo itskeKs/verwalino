@@ -82,6 +82,10 @@ async def test_migration_proves_legacy_links_before_expanding(seed_data,legacy):
             nested=connection.begin_nested()
             try:
                 with Operations.context(MigrationContext.configure(connection)):
+                    # Admission is a later dependent boundary. The outer nested
+                    # rollback retains all receipts and restores its policy.
+                    connection.execute(text('TRUNCATE property_source_admission'))
+                    importlib.import_module('migrations.versions.0050_property_source_admission').downgrade()
                     with pytest.raises(DBAPIError,match='cannot remove populated source link'):
                         with connection.begin_nested():
                             migration.downgrade()

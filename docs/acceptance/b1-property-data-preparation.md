@@ -164,3 +164,31 @@ grant, denial on revocation and stable destination access after reviewed binding
 **28 final resolver/domain cases passed** after the repair; independent review
 accepted it. Durable admission/remediation remains an activation prerequisite,
 so this temporary conservative rule is not represented as a finished team workflow.
+
+## Durable attachment admission (0050)
+
+An actual existing-target draft attachment now captures immutable evidence when
+its uploader is a live writer with the target's explicit prepare grant. The
+receipt references the exact tenant, import/document link, property/domain and
+actor/grant using composite foreign keys. A database audit event commits or rolls
+back with the attachment. Application sessions may only read authorized receipts;
+updates/deletes and direct insertion, including a valid later-grant migrator
+insert, are rejected. The nested attachment trigger is the sole capture path.
+
+The prepared resolver requires this receipt for an unbound existing-target
+original. Uploader revocation no longer withdraws properly admitted team sources;
+the viewer's own live grant remains mandatory. Legacy uploads without proof stay
+unadmitted even if granted later. Wrong destination binding and removal of a
+receipt's source link are blocked. Populated downgrade preserves evidence by
+refusing; an empty schema round-trip remains supported.
+
+Evidence at base `4581375` plus this increment: initial receipt coverage failed
+before the table existed; the first real API-upload integration passed. The
+boundary suite passed 32 cases and exposed a missing explicit deny-insert RLS
+policy required by the coverage test. After repair, 12 admission/RLS cases passed.
+Independent review identified the valid later-grant direct-insert bypass. After
+restricting receipt insertion to the nested capture trigger and adding that
+regression, **34 admission/resolver/link/RLS cases passed** on disposable
+PostgreSQL 16/Python 3.13. No source-policy activation or UI change is claimed.
+Explicit historical review, publication bootstrap and complete downstream
+authorization remain activation prerequisites.

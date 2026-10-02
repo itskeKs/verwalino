@@ -29,10 +29,11 @@ one import must have exactly one audience. An attached property-bound original
 must already belong to that import's actual destination. For a NEW unassigned
 import, every unbound original must have `uploaded_by = initiated_by`; an existing
 property draft may have a different known uploader within its target audience.
-Until durable attachment-admission evidence exists, an unbound existing-target
-original additionally requires its uploader's live prepare grant for that target.
-This conservative check does not infer historical permission. Revoking that grant
-hides the unbound draft until reviewed admission is resolved. After explicit
+Migration 0050 requires durable attachment-admission evidence for an unbound
+existing-target original, captured under the uploader's live prepare grant at
+attachment. Later grants cannot manufacture historical permission. Revoking the
+uploader's grant leaves admitted sources available to other authorized viewers.
+Legacy sources without that proof need explicit reviewed reconciliation. After explicit
 publication binds the original, its property audience no longer depends on its
 former uploader's membership or grant. Durable admission/remediation is an
 activation prerequisite for historical and team-upload workflows.

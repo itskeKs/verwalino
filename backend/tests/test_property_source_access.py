@@ -97,7 +97,7 @@ async def test_ambiguous_or_mixed_intake_fails_closed_without_recursive_access(s
         assert not await access(seed_data,kind,rows[kind]),(problem,kind)
 
 
-async def test_existing_target_requires_both_source_admission_and_viewer_audience(client_a_admin,seed_data):
+async def test_legacy_target_requires_admission_not_merely_a_later_grant(client_a_admin,seed_data):
     from tests.test_declaration_pipeline import _seed_pipeline_import,make_text_pdf
     _,rows=await graph(seed_data)
     domain,_=await grant(client_a_admin,seed_data,rows['property'],actor=seed_data['user_a_clerk_id'])
@@ -112,7 +112,8 @@ async def test_existing_target_requires_both_source_admission_and_viewer_audienc
         json={'user_id':str(seed_data['user_a_admin_id']),'capabilities':['read','prepare'],'reason':'Explicit source admission'})
     assert response.status_code==201,response.text
     for kind,resource in resources:
-        assert await access(seed_data,kind,resource,actor=seed_data['user_a_clerk_id'])
+        # A later grant cannot fabricate proof of the earlier attachment.
+        assert not await access(seed_data,kind,resource,actor=seed_data['user_a_clerk_id'])
     assert (await client_a_admin.post(f"/api/property-data-domains/{domain}/grants/{response.json()['id']}/revoke")).status_code==204
     for kind,resource in resources:
         assert not await access(seed_data,kind,resource,actor=seed_data['user_a_clerk_id'])
@@ -230,6 +231,10 @@ async def test_unactivated_resolver_roundtrip_preserves_domain_grants(client_a_a
                 connection.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
                     {'org':str(seed_data['org_a_id']),'actor':str(seed_data['user_a_admin_id'])})
                 with Operations.context(MigrationContext.configure(connection)):
+                    # Later admission policies depend on this resolver. Rehearse
+                    # the historical boundary below them, inside the rollback.
+                    connection.execute(text('TRUNCATE property_source_admission'))
+                    importlib.import_module('migrations.versions.0050_property_source_admission').downgrade()
                     migration.downgrade()
                     assert connection.scalar(text("SELECT has_property_data_capability(:org,:domain,'read')"),
                         {'org':seed_data['org_a_id'],'domain':uuid.UUID(domain)})

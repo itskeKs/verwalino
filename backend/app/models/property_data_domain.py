@@ -18,6 +18,7 @@ class PropertyDataDomain(Base, UUIDPrimaryKeyMixin):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     __table_args__ = (
         UniqueConstraint('organization_id','id'), UniqueConstraint('organization_id','property_id'),
+        UniqueConstraint('organization_id','property_id','id',name='uq_property_data_domain_context'),
         UniqueConstraint('organization_id','created_by','request_key'),
         ForeignKeyConstraint(['organization_id','property_id'],['property.organization_id','property.id']),
         ForeignKeyConstraint(['organization_id','created_by'],['user.organization_id','user.id']),
@@ -39,6 +40,7 @@ class PropertyDataGrant(Base, UUIDPrimaryKeyMixin):
     revoked_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     __table_args__ = (
         UniqueConstraint('organization_id','granted_by','request_key'),
+        UniqueConstraint('organization_id','domain_id','user_id','id',name='uq_property_data_grant_actor_context'),
         ForeignKeyConstraint(['organization_id','domain_id'],['property_data_domain.organization_id','property_data_domain.id']),
         ForeignKeyConstraint(['organization_id','user_id'],['user.organization_id','user.id']),
         ForeignKeyConstraint(['organization_id','granted_by'],['user.organization_id','user.id']),
