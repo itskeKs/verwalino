@@ -1,6 +1,6 @@
-# B1 closure status after migration 0085
+# B1 closure status after migration 0086
 
-Baseline: 78f472a plus accepted local 0085 increment. M-A is accepted; B1 is
+Baseline: 4e34859 plus accepted local 0086 increment. M-A is accepted; B1 is
 incomplete. B2–G remain outstanding.
 This assessment supersedes historical forward-looking residuals only where later
 accepted migrations demonstrably resolve them. It does not declare team rollout.
@@ -30,8 +30,13 @@ accepted migrations demonstrably resolve them. It does not declare team rollout.
 3. Migration 0085 establishes private property-source evaluation for a supplied
    security mode, sharing predicates with live enforcement while preserving runtime
    OIDs/ACLs. Projection never changes the organization's mode or actor settings.
-   Contact, financial, invoice, recipient and processing authority still require
-   composition into a complete versioned readiness checker.
+   Migration 0086 extends shared evaluation to 25 contact, financial, invoice,
+   mandate, report, history and derived-row predicates with explicit target actor.
+   Independent financial pause and selected-scope boundaries remain live. All 13
+   final projection tests pass, including the 25-predicate/three-mode comparison,
+   exact rollback, private ACLs and admitted/quarantined canonical sources.
+   These gates still require composition with meetings, lifecycle/processing and
+   retained dispositions into a complete versioned readiness checker.
 4. Implement idempotent activation against the accepted snapshot, rechecking coverage
    under exclusive ACL locking. Include Q&A budget policy review, stale evidence,
    revocation, new-organization bootstrap and audited pause/resume. Never return a

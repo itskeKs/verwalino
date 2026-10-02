@@ -131,6 +131,8 @@ async def test_financial_scope_migration_preserves_rows_and_function_identity(mi
                     return [db.scalar(text(f"SELECT md5(COALESCE(string_agg(to_jsonb(r)::text,',' ORDER BY id),'')) FROM {table} r")) for table in migration.TABLES]
                 before = hashes()
                 oid = db.scalar(text("SELECT 'financial_scope_access(uuid,text,uuid,text)'::regprocedure::oid"))
+                # Restore the original predicate bodies before testing this older revision.
+                importlib.import_module('migrations.versions.0086_combined_authority_projection').downgrade()
                 migration.downgrade()
                 migration.upgrade()
                 assert db.scalar(text("SELECT 'financial_scope_access(uuid,text,uuid,text)'::regprocedure::oid")) == oid

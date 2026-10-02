@@ -368,6 +368,8 @@ async def test_custody_migration_retains_evidence_and_empty_roundtrip(migrator_s
             try:
                 db.execute(text('TRUNCATE invoice_document,invoice_upload_admission CASCADE'))
                 oid = db.scalar(text("SELECT 'financial_scope_access(uuid,text,uuid,text)'::regprocedure::oid"))
+                # Restore the original predicate bodies before testing this older revision.
+                importlib.import_module('migrations.versions.0086_combined_authority_projection').downgrade()
                 migration.downgrade()
                 migration.upgrade()
                 assert db.scalar(text("SELECT 'financial_scope_access(uuid,text,uuid,text)'::regprocedure::oid")) == oid
