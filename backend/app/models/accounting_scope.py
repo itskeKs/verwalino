@@ -66,6 +66,7 @@ class AccountingScopeBinding(Base, UUIDPrimaryKeyMixin):
     reviewed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_reconciliation_binding_org_id"),
         ForeignKeyConstraint(["organization_id", "property_id", "scope_id"], ["accounting_scope.organization_id", "accounting_scope.property_id", "accounting_scope.id"]),
         ForeignKeyConstraint(["organization_id", "reviewed_by"], ["user.organization_id", "user.id"]),
         *[ForeignKeyConstraint(["organization_id", "property_id", column], [f"{table}.organization_id", f"{table}.property_id", f"{table}.id"], deferrable=True, initially="DEFERRED")

@@ -165,3 +165,25 @@ subjects are quarantined from ordinary list/detail/export access. A proven legac
 review/backfill workflow remains outstanding; do not invent historical provenance
 or remove the context table to restore access. Migration 0039 refuses downgrade
 when scoped notices exist. Repair forward with sources and grants preserved.
+
+### Proven legacy payment review
+
+In a scope's setup page, choose **Altzahlungen prüfen** after reviewing and binding
+the original bank account. Active administrators also need that scope's PREPARE
+grant. The preview lists still-unclassified payments on those accounts and explains
+which ones require individual review. Select up to 200 proven rows, enter a reason,
+and apply the selection. A conflicting or changed row rejects the complete batch;
+reload the preview before changing the selection. Unknown period allocations are
+preserved, not promoted to verified attribution.
+
+If a response is lost, retry the unchanged selection and reason: the same request
+key returns its original receipt without another financial effect. Permission loss
+or expiry blocks both application and replay. The UI retains the command after an
+error; deliberately changing the command uses a new key. Partial-unit/SEV and
+unbooked sources remain unsupported by this automatic proof. Other resources do
+not become classified merely because these payments were reconciled.
+
+Migration 0040 records immutable receipt items referencing the exact payment
+bindings. It does not modify original booked records and refuses populated
+downgrade. Preserve the evidence and repair forward; never delete bindings or
+rewrite historical transactions to restore compatibility behavior.

@@ -1,0 +1,31 @@
+{
+  "checks": [
+    "explicit preview separates the proven bank descendant from a blocked historical period; only proven rows can be selected",
+    "lost committed response retries with the same command and returns the identical receipt; original payment is unchanged and the unresolved row remains",
+    "revocation blocks preview and receipt replay without an empty-success message"
+  ],
+  "pageErrors": [],
+  "responses": [
+    {
+      "status": 401,
+      "path": "/api/auth/session"
+    },
+    {
+      "status": 401,
+      "path": "/api/auth/session"
+    },
+    {
+      "status": 503,
+      "path": "/api/accounting-scopes/2fdf972e-fcde-40c3-bc0c-0586747b3eed/legacy-payments"
+    },
+    {
+      "status": 404,
+      "path": "/api/accounting-scopes/2fdf972e-fcde-40c3-bc0c-0586747b3eed/legacy-payments"
+    }
+  ],
+  "mobile": {
+    "visible": 390,
+    "content": 390
+  },
+  "status": "passed"
+}

@@ -1,3 +1,4 @@
+import { ScopePaymentReconciliation } from "../components/ScopePaymentReconciliation";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
@@ -142,6 +143,7 @@ function ScopeGrants({ scopeId }: { scopeId: string }) {
       {page.items.map(grant => <tr key={grant.id}><td>{grant.user_display_name}</td><td>{grant.capabilities.map(value => caps[value as keyof typeof caps]).join(", ")}</td><td>{grant.reason}</td><td>{grant.revoked_at ? "Widerrufen" : grant.expires_at ? `Erteilt bis ${new Date(grant.expires_at).toLocaleString("de-DE")}` : "Erteilt ohne Ablauf"}</td><td>{!grant.revoked_at && <button className="btn" disabled={busy} onClick={() => void revoke(grant)}>Widerrufen</button>}</td></tr>)}
     </tbody></table></div>
     <MoreResults available={!!page.nextCursor} loading={page.loading} onMore={() => void page.loadMore()} />
+    {scope && <ScopePaymentReconciliation scopeId={scopeId} />}
   </>;
 }
 

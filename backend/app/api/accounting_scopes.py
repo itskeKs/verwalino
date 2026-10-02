@@ -18,6 +18,9 @@ from app.schemas.accounting_scope import (
 )
 from app.services.accounting_scope_service import AccountingScopeService
 
+from app.schemas.scope_payment_reconciliation import LegacyPaymentCandidate, ReconciliationCommand, ReconciliationResult
+from app.services.scope_payment_reconciliation_service import ScopePaymentReconciliationService
+
 router = APIRouter(prefix='/api/accounting-scopes', tags=['accounting_scopes'])
 
 
@@ -92,3 +95,15 @@ async def bind_resource(scope_id: uuid.UUID, body: BindingCreate,
     binding = await AccountingScopeService(db, auth).bind_resource(scope_id, body)
     return BindingOut(id=binding.id, scope_id=binding.scope_id, resource_type=body.resource_type,
         resource_id=body.resource_id, reason=binding.reason)
+
+
+@router.get('/{scope_id}/legacy-payments', response_model=Page[LegacyPaymentCandidate])
+async def legacy_payment_preview(scope_id: uuid.UUID, query: PageQuery = Depends(page_query),
+                                 auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db)):
+    return await ScopePaymentReconciliationService(db, auth).preview(scope_id, query)
+
+
+@router.post('/{scope_id}/legacy-payments', response_model=ReconciliationResult, status_code=201)
+async def reconcile_payments(scope_id: uuid.UUID, body: ReconciliationCommand, idempotency_key: uuid.UUID = Header(),
+                             auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db)):
+    return await ScopePaymentReconciliationService(db, auth).apply(scope_id, body, idempotency_key)

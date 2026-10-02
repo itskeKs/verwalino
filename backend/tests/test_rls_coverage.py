@@ -17,6 +17,7 @@ TENANT_TABLES = frozenset({
     # B1 accounting scope foundation
     "accounting_scope", "accounting_scope_unit", "accounting_scope_binding",
     "scope_grant", "scope_migration_exception",
+    "scope_payment_reconciliation", "scope_payment_reconciliation_item",
     # M0
     "user", "membership", "management_mandate", "audit_event",
     # M1 Stammdaten

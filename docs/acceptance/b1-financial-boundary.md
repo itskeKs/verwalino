@@ -253,3 +253,48 @@ prefill → invalid-period retry → 7,100 EUR draft → issue → denied/author
 retained cancellation, separate 6,700 EUR scope at level 1, and revoked detail/PDF.
 The 390 px mobile screenshot was inspected; the main content stays within 390 px.
 The report is `b1-scoped-dunning-browser.json`; there were no page errors.
+
+## Proven legacy bank descendants (0040)
+
+A bounded, explicit review now classifies already-booked payments whose immutable
+bank association proves an existing accounting scope. It does not infer scope
+from property presentation type, counterparty role, or a year-only allocation.
+Partial-unit and SEV scopes, unbooked payments, incompatible financial semantics,
+unclassified linked settlements and conflicting correction accounts remain review
+blockers. The preview is limited to descendants of accounts in the selected scope;
+it is not a completeness claim for every historical financial resource.
+
+The API and narrow SECURITY DEFINER apply function both require active organization
+administration plus exact PREPARE. The general binding INSERT policy still only
+permits REVIEWED rows. The definer revalidates canonical payment/bank/scope hashes
+under ACL → financial → receipt → ordered source locks, then writes only immutable
+PROVEN_LEGACY sidecars, typed receipt items and audit evidence. A batch has at most
+200 explicitly selected IDs; one conflict aborts the entire batch. Original money,
+periods and frozen rows remain unchanged. Retry keys are actor-scoped and command-
+bound; replay rechecks live authorization, including grant expiry after waiting
+for the financial lock. Downgrade refuses to erase populated reconciliation evidence.
+
+Final focused checks: **17 passed** (10 reconciliation cases plus 7 RLS coverage),
+including concurrent identical retries, changed-command conflict, all-or-nothing
+failure and retry, full original-row JSON equality, cross-organization denial,
+raw app-role forgery denial, receipt/audit isolation, immutable evidence, blocked
+partial scopes, bounded signed cursors and populated downgrade refusal. The expiry
+race was reproduced failing before the post-lock recheck. An earlier combined run
+also passed the 17 unchanged accounting-scope API and financial-creation tests;
+that valid evidence was reused after the reconciliation-only repair. Migration
+functions were created by the disposable database's real migration principal and
+invoked by app_rw. Independent review accepted the implementation and expiry delta.
+
+Four UI tests pass across reconciliation and scope setup. Lint and production build
+pass with the existing size warning (approximately 590 KB). The local Chromium
+journey passed preview → blocked/proven selection → lost committed response → same-
+key retry → unchanged original → revocation. No page errors; mobile main content
+and visible width both measure 390 px, and the screenshot was inspected. See
+`scripts/acceptance/b1_payment_reconciliation_browser.cjs` and
+`b1-payment-reconciliation-browser.json`. The browser evidence remains valid after
+the isolated post-lock expiry repair, which is covered by the dedicated regression.
+
+B1 remains incomplete: other historical resources, dunning source review,
+proven initial scope/role proposals, document/job adapters, staged activation and
+SEV adapters still require their own evidence. No team rollout or release gate
+has been activated by this increment.
