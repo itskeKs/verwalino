@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { usePagedList } from "../hooks/usePagedList";
+import { AccessGrantProposalPanel } from "./AccessGrantProposalPanel";
 import { MoreResults } from "./ListSearch";
 
 interface Review { id: string; reviewed_at: string; finding_count: number }
@@ -110,6 +111,7 @@ function SnapshotDetail({ snapshot, onReviewed }: { snapshot: Snapshot; onReview
         {page.nextCursor && <p>Vor dem Prüfvermerk alle Einträge laden.</p>}
       </div>}
     {error && <p role="alert" className="error-text">{error}</p>}
+    <AccessGrantProposalPanel snapshotId={snapshot.id} digest={snapshot.manifest_digest} items={page.items} complete={!page.loading && !page.error && !page.nextCursor} reviewed={!!reviewed} />
   </section>;
 }
 

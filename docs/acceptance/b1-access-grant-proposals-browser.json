@@ -1,0 +1,25 @@
+{
+  "baseline": "ddb4d92 plus migration 0084 worktree",
+  "environment": "Guarded disposable PostgreSQL 16, local FastAPI/Vite, headless Chromium",
+  "result": "PASS",
+  "checks": {
+    "separate_domains": 3,
+    "proposal_committed_response_loss_replay": true,
+    "acceptance_committed_response_loss_replay": true,
+    "explicit_acknowledgment": true,
+    "receipt_reload": true,
+    "mobile_390px": true,
+    "horizontal_overflow": false,
+    "page_errors": 0
+  },
+  "screenshots": [
+    "/tmp/hv-grant-proposals-desktop.png",
+    "/tmp/hv-grant-proposals-mobile.png"
+  ],
+  "harness": "/tmp/hv-grant-proposals-browser.mjs",
+  "limits": [
+    "Synthetic local data only",
+    "No activation or deployment",
+    "Screenshots and harness are local temporary evidence"
+  ]
+}

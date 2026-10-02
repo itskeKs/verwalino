@@ -4,6 +4,8 @@ import { MemoryRouter } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { AccessCoveragePanel } from "./AccessCoveragePanel";
 
+vi.mock("./AccessGrantProposalPanel",()=>({AccessGrantProposalPanel:()=>null}));
+
 const snapshot = { id:"snapshot-1",generated_at:"2026-10-02T15:00:00Z",manifest_digest:"a".repeat(64),item_count:1,finding_count:1,review:null };
 const item = { id:"property:property-1",kind:"property",resource_id:"property-1",references:{},findings:["DOMAIN_REQUIRED"],audience:[] };
 afterEach(()=>{cleanup();vi.restoreAllMocks();});

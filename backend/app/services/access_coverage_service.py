@@ -81,3 +81,15 @@ class AccessCoverageService:
         visible = rows[:query.limit]
         cursor = signer.dumps({'scope':scope,'at':visible[-1]['generated_at'],'id':visible[-1]['id']}) if len(rows)>query.limit else None
         return visible,cursor
+
+    async def propose_grants(self, snapshot, body, key):
+        return await self.command('SELECT propose_access_grants(:org,:snapshot,:request,:digest,CAST(:changes AS jsonb),CAST(:policy AS jsonb))',
+            {'snapshot':snapshot,'request':key,'digest':body.manifest_digest,
+             'changes':json.dumps([c.model_dump(mode='json') for c in body.changes]),'policy':self.policy()})
+
+    async def grant_proposal(self, snapshot):
+        return await self.command('SELECT access_grant_proposal_for_snapshot(:org,:snapshot)',{'snapshot':snapshot})
+
+    async def accept_grants(self, proposal, body, key):
+        return await self.command('SELECT accept_access_grants(:org,:proposal,:request,:digest,CAST(:policy AS jsonb))',
+            {'proposal':proposal,'request':key,'digest':body.proposal_digest,'policy':self.policy()})

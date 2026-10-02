@@ -117,6 +117,9 @@ def run_migrations():
         cursor.execute("SELECT to_regclass('public.scope_payment_reconciliation')")
         if cursor.fetchone()[0] is not None:
             cursor.execute("TRUNCATE public.scope_payment_reconciliation_item, public.scope_payment_reconciliation")
+        cursor.execute("SELECT to_regclass('public.access_grant_proposal')")
+        if cursor.fetchone()[0] is not None:
+            cursor.execute("TRUNCATE public.access_grant_acceptance,public.access_grant_proposal CASCADE")
         cursor.execute("SELECT to_regclass('public.access_coverage_snapshot')")
         if cursor.fetchone()[0] is not None:
             cursor.execute("TRUNCATE public.access_coverage_review,public.access_coverage_snapshot CASCADE")

@@ -1,6 +1,6 @@
-# B1 closure status after migration 0083
+# B1 closure status after migration 0084
 
-Baseline: 28314ed plus accepted local 0083 increment. M-A is accepted; B1 is
+Baseline: ddb4d92 plus accepted local 0084 increment. M-A is accepted; B1 is
 incomplete. B2–G remain outstanding.
 This assessment supersedes historical forward-looking residuals only where later
 accepted migrations demonstrably resolve them. It does not declare team rollout.
@@ -21,10 +21,12 @@ accepted migrations demonstrably resolve them. It does not declare team rollout.
    paginated typed identities, effective grants, valid proof/quarantine findings and
    append-only inspection acknowledgments. It preserves explicit unresolved findings
    for dependent/recipient combined authority instead of projecting compatibility
-   success into strict readiness. Grant-change proposals and their explicit acceptance
-   remain to be delivered; acknowledgment does not resolve findings. Reuse explicit
-   setup commands; role-based suggestions never grant authority automatically.
-   Financial, property and contact audiences stay separate.
+   success into strict readiness. Migration 0084 adds explicit snapshot-bound grant proposals and atomic acceptance
+   across separate financial, property and contact audiences. Immutable receipts,
+   exact predecessor grants and canonical expiries prevent stale or ambiguous
+   application; replay never recreates later-revoked rights. Snapshot acknowledgment
+   alone still resolves no finding. Complete projected strict combined-authority
+   readiness remains to be delivered; role-based suggestions grant nothing.
 3. Implement idempotent activation against the accepted snapshot, rechecking coverage
    under exclusive ACL locking. Include Q&A budget policy review, stale evidence,
    revocation, new-organization bootstrap and audited pause/resume. Never return a

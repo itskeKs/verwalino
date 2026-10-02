@@ -1,5 +1,6 @@
 """Read-only administrative inventory, independent from source-data disclosure."""
 import uuid
+from app.schemas.access_grant_proposal import GrantProposalCreate, GrantProposal, GrantAcceptanceCreate, GrantAcceptance
 from fastapi import APIRouter, Depends, Header
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,3 +51,21 @@ async def items(snapshot_id: uuid.UUID, query: PageQuery = Depends(page_query),
 async def review(snapshot_id: uuid.UUID, body: CoverageReviewCreate, idempotency_key: uuid.UUID = Header(),
                  auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(coverage_writer)):
     return await AccessCoverageService(db,auth).review(snapshot_id,body,idempotency_key)
+
+
+@router.post('/snapshots/{snapshot_id}/grant-proposals', response_model=GrantProposal, status_code=201)
+async def propose_grants(snapshot_id: uuid.UUID, body: GrantProposalCreate, idempotency_key: uuid.UUID = Header(),
+                         auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(coverage_writer)):
+    return await AccessCoverageService(db,auth).propose_grants(snapshot_id,body,idempotency_key)
+
+
+@router.get('/snapshots/{snapshot_id}/grant-proposal', response_model=GrantProposal | None)
+async def grant_proposal(snapshot_id: uuid.UUID, auth: AuthContext = Depends(require_admin_dep),
+                         db: AsyncSession = Depends(get_live_admin_db)):
+    return await AccessCoverageService(db,auth).grant_proposal(snapshot_id)
+
+
+@router.post('/grant-proposals/{proposal_id}/accept', response_model=GrantAcceptance, status_code=201)
+async def accept_grants(proposal_id: uuid.UUID, body: GrantAcceptanceCreate, idempotency_key: uuid.UUID = Header(),
+                        auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(coverage_writer)):
+    return await AccessCoverageService(db,auth).accept_grants(proposal_id,body,idempotency_key)

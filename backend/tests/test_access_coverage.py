@@ -158,7 +158,10 @@ async def test_capture_waits_for_live_admin_and_migration_retains_snapshots(migr
                 point = db.begin_nested()
                 try:
                     db.execute(text('TRUNCATE access_coverage_review,access_coverage_snapshot CASCADE'))
+                    proposal_migration = importlib.import_module('migrations.versions.0084_access_grant_proposals')
+                    proposal_migration.downgrade()
                     migration.downgrade(); migration.upgrade()
+                    proposal_migration.upgrade()
                     assert not db.scalar(text('SELECT property_source_activation_ready(:org)'),ids)
                 finally:
                     point.rollback()
