@@ -5,14 +5,15 @@ interface ScopeChoice {
   id: string; label: string; scope_type: string; valid_from: string; valid_to: string | null;
 }
 
-/** Explicit creation context; the server filters by live prepare grants. */
-export function AccountingScopeSelector({ propertyId, value, onChange, kind }: {
-  propertyId: string; value?: string | null; onChange: (id: string | null) => void;
-  kind?: "WEG" | "MIET";
+/** Explicit financial context; the server filters by the required live capability. */
+export function AccountingScopeSelector({ propertyId, value, onChange, kind, capability = "prepare" }: {
+  propertyId?: string; value?: string | null; onChange: (id: string | null) => void;
+  kind?: "WEG" | "MIET"; capability?: "prepare" | "read";
 }) {
   const [selected, setSelected] = useState<ScopeChoice | null>(null);
-  if (!propertyId) return null;
-  const query = new URLSearchParams({ property_id: propertyId, capability: "prepare", financial_creation: "true" });
+  if (!propertyId && capability === "prepare") return null;
+  const query = new URLSearchParams({ capability, financial_creation: "true" });
+  if (propertyId) query.set("property_id", propertyId);
   if (kind) query.set("scope_type", kind);
   return <SearchChoice<ScopeChoice>
     endpoint={`/api/accounting-scopes/page?${query}`}

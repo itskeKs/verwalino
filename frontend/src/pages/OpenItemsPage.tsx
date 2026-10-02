@@ -1,8 +1,7 @@
 /**
  * Open items page -- overview of offene Posten across all leases.
  *
- * M6 offene Posten: loads all leases, queries the open items endpoint
- * for each, and displays a summary per tenant/lease.
+ * Loads one complete scoped result and displays a summary per tenant/lease.
  * Rueckstand (debt) highlighted in red, Guthaben in green.
  */
 
@@ -14,7 +13,7 @@ import {
   listPersons,
   listUnits,
   listProperties,
-  leaseOpenItems,
+  allLeaseOpenItems,
 } from "../api/endpoints";
 import type {
   LeaseRecord,
@@ -24,6 +23,7 @@ import type {
   Property,
   OpenItem,
 } from "../api/types";
+import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { ApiError } from "../api/client";
 
 const PAYMENT_TYPE_LABELS: Record<string, string> = {
@@ -54,7 +54,8 @@ export function OpenItemsPage() {
   const [periodStart, setPeriodStart] = useState(`${currentYear}-01-01`);
   const [periodEnd, setPeriodEnd] = useState(`${currentYear}-12-31`);
 
-  const [results, setResults] = useState<LeaseOpenItems[]>([]);
+  const [results, setResults] = useState<LeaseOpenItems[] | null>(null);
+  const [scopeId, setScopeId] = useState<string | null>(null);
   const [querying, setQuerying] = useState(false);
 
   const loadLookups = useCallback(() => {
@@ -113,28 +114,17 @@ export function OpenItemsPage() {
   }
 
   async function handleLoadAll() {
-    if (!periodStart || !periodEnd || leases.length === 0) return;
+    if (!periodStart || !periodEnd) return;
     setQuerying(true);
     setError(null);
-    setResults([]);
+    setResults(null);
     try {
-      const allResults: LeaseOpenItems[] = [];
-      // Query open items for each lease in parallel
-      const promises = leases.map(async (lease) => {
-        try {
-          const items = await leaseOpenItems(lease.id, periodStart, periodEnd);
-          if (items.length > 0) {
-            const totalOpen = items.reduce(
-              (sum, i) => sum + parseFloat(i.open_amount),
-              0,
-            );
-            allResults.push({ lease, items, totalOpen });
-          }
-        } catch {
-          // Skip leases that fail (e.g. no matching data)
-        }
+      const response = await allLeaseOpenItems(periodStart, periodEnd, scopeId || undefined);
+      const allResults = response.map(row => {
+        const lease = leases.find(candidate => candidate.id === row.lease_agreement_id);
+        if (!lease) throw new Error("Mietvertragsdaten haben sich geändert. Bitte Seite neu laden.");
+        return { lease, items: row.items, totalOpen: row.items.reduce((sum, item) => sum + parseFloat(item.open_amount), 0) };
       });
-      await Promise.all(promises);
       // Sort by total open amount (largest debt first)
       allResults.sort((a, b) => b.totalOpen - a.totalOpen);
       setResults(allResults);
@@ -155,12 +145,13 @@ export function OpenItemsPage() {
     <div>
       <h1>Offene Posten</h1>
 
-      {error && <p className="error-text">{error}</p>}
+      {error && <p role="alert" className="error-text">{error}</p>}
 
       {/* Period selection */}
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <h2>Zeitraum waehlen</h2>
-        <div className="form-grid">
+        <fieldset disabled={querying} className="form-grid" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} onChangeCapture={() => { setResults(null); setError(null); }}>
+          <AccountingScopeSelector kind="MIET" capability="read" value={scopeId} onChange={setScopeId} />
           <label>
             Zeitraum von *
             <input
@@ -188,17 +179,17 @@ export function OpenItemsPage() {
               {querying ? "Laden..." : "Offene Posten laden"}
             </button>
           </div>
-        </div>
+        </fieldset>
       </div>
 
       {/* Results */}
-      {results.length === 0 && !querying && (
+      {results !== null && results.length === 0 && !querying && !error && (
         <p className="empty-hint">
-          Keine offenen Posten vorhanden oder noch nicht abgefragt.
+          Keine offenen Posten im abgefragten Bereich und Zeitraum.
         </p>
       )}
 
-      {results.map((r) => (
+      {(results ?? []).map((r) => (
         <div
           key={r.lease.id}
           className="card"

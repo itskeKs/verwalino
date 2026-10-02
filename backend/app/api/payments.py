@@ -22,6 +22,8 @@ from app.core.tenant import AuthContext, get_current_user, get_db, require_write
 from app.models.payment import Payment
 from app.repositories.payment_repo import PaymentRepository
 from app.services.payment_service import PaymentService
+from app.services.financial_scope_service import FinancialScopeService
+from app.repositories.lease_agreement_repo import LeaseAgreementRepository
 
 router = APIRouter(prefix="/api/payments", tags=["payments"])
 
@@ -106,6 +108,11 @@ class OpenItemOut(BaseModel):
     open_amount: str
 
 
+class LeaseOpenItemsOut(BaseModel):
+    lease_agreement_id: str
+    items: list[OpenItemOut]
+
+
 class MietkontoOut(BaseModel):
     open_items: list[OpenItemOut]
     soll_total: str
@@ -168,12 +175,13 @@ async def lease_statement(
     lease_agreement_id: uuid.UUID,
     period_start: date,
     period_end: date,
+    accounting_scope_id: uuid.UUID | None = None,
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     result = await svc.account_statement_for_lease(
-        lease_agreement_id, period_start, period_end
+        lease_agreement_id, period_start, period_end, accounting_scope_id
     )
     return _mietkonto_out(result)
 
@@ -184,14 +192,37 @@ async def owner_statement(
     period_start: date,
     period_end: date,
     economic_plan_id: uuid.UUID | None = None,
+    accounting_scope_id: uuid.UUID | None = None,
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     result = await svc.account_statement_for_owner(
-        owner_profile_id, economic_plan_id, period_start, period_end
+        owner_profile_id, economic_plan_id, period_start, period_end, accounting_scope_id
     )
     return _mietkonto_out(result)
+
+
+@router.get("/open-items", response_model=list[LeaseOpenItemsOut])
+async def all_lease_open_items(
+    period_start: date,
+    period_end: date,
+    accounting_scope_id: uuid.UUID | None = None,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return one complete view; a denied lease must never disappear silently."""
+    await FinancialScopeService(db, auth.organization_id, auth.user_id).select_report_scope(
+        accounting_scope_id, scope_type='MIET', period_start=period_start, period_end=period_end)
+    leases = await LeaseAgreementRepository(db, auth.organization_id).list_all()
+    service = PaymentService(db, auth.organization_id, auth.user_id)
+    rows = []
+    for lease in leases:
+        result = await service.account_statement_for_lease(lease.id, period_start, period_end, accounting_scope_id)
+        items = [item for item in _mietkonto_out(result).open_items if Decimal(item.open_amount) != 0]
+        if items:
+            rows.append(LeaseOpenItemsOut(lease_agreement_id=str(lease.id), items=items))
+    return rows
 
 
 @router.get("/open-items/lease/{lease_agreement_id}", response_model=list[OpenItemOut])
@@ -199,13 +230,14 @@ async def lease_open_items(
     lease_agreement_id: uuid.UUID,
     period_start: date,
     period_end: date,
+    accounting_scope_id: uuid.UUID | None = None,
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """The non-zero offene Posten of a lease (Rueckstand/Guthaben) -- M7 input."""
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     result = await svc.account_statement_for_lease(
-        lease_agreement_id, period_start, period_end
+        lease_agreement_id, period_start, period_end, accounting_scope_id
     )
     return [
         OpenItemOut(

@@ -1,0 +1,57 @@
+{
+  "checks": [
+    "selected statement displays 100 EUR and excludes 900 EUR from another granted circle",
+    "invalid period hides prior result; corrected period retries with the retained circle",
+    "atomic open-items view matches the selected lease statement",
+    "revocation blocks retry and hides previous debt without false empty success",
+    "blocked dashboard and deadline monitor render unavailable without all-clear claims"
+  ],
+  "pageErrors": [],
+  "responses": [
+    {
+      "status": 401,
+      "path": "/api/auth/session"
+    },
+    {
+      "status": 401,
+      "path": "/api/auth/session"
+    },
+    {
+      "status": 409,
+      "path": "/api/fristen"
+    },
+    {
+      "status": 409,
+      "path": "/api/fristen"
+    },
+    {
+      "status": 422,
+      "path": "/api/payments/mietkonto/lease/05fe214d-2bc8-473c-9f8a-8723e766883f"
+    },
+    {
+      "status": 404,
+      "path": "/api/payments/open-items"
+    },
+    {
+      "status": 409,
+      "path": "/api/fristen"
+    },
+    {
+      "status": 409,
+      "path": "/api/fristen"
+    },
+    {
+      "status": 409,
+      "path": "/api/fristen"
+    },
+    {
+      "status": 409,
+      "path": "/api/fristen"
+    }
+  ],
+  "mobile": {
+    "visible": 390,
+    "content": 390
+  },
+  "status": "passed"
+}

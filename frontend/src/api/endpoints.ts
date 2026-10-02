@@ -736,9 +736,10 @@ export function leaseStatement(
   leaseId: string,
   periodStart: string,
   periodEnd: string,
+  accountingScopeId?: string,
 ): Promise<MietkontoResult> {
   return api.get<MietkontoResult>(
-    `/api/payments/mietkonto/lease/${leaseId}?period_start=${periodStart}&period_end=${periodEnd}`,
+    `/api/payments/mietkonto/lease/${leaseId}?period_start=${periodStart}&period_end=${periodEnd}${accountingScopeId ? `&accounting_scope_id=${encodeURIComponent(accountingScopeId)}` : ""}`,
   );
 }
 
@@ -747,8 +748,10 @@ export function ownerStatement(
   periodStart: string,
   periodEnd: string,
   economicPlanId?: string,
+  accountingScopeId?: string,
 ): Promise<MietkontoResult> {
   let qs = `?period_start=${periodStart}&period_end=${periodEnd}`;
+  if (accountingScopeId) qs += `&accounting_scope_id=${encodeURIComponent(accountingScopeId)}`;
   if (economicPlanId) qs += `&economic_plan_id=${encodeURIComponent(economicPlanId)}`;
   return api.get<MietkontoResult>(`/api/payments/mietkonto/owner/${ownerProfileId}${qs}`);
 }
@@ -757,10 +760,17 @@ export function leaseOpenItems(
   leaseId: string,
   periodStart: string,
   periodEnd: string,
+  accountingScopeId?: string,
 ): Promise<OpenItem[]> {
   return api.get<OpenItem[]>(
-    `/api/payments/open-items/lease/${leaseId}?period_start=${periodStart}&period_end=${periodEnd}`,
+    `/api/payments/open-items/lease/${leaseId}?period_start=${periodStart}&period_end=${periodEnd}${accountingScopeId ? `&accounting_scope_id=${encodeURIComponent(accountingScopeId)}` : ""}`,
   );
+}
+
+export function allLeaseOpenItems(periodStart: string, periodEnd: string, accountingScopeId?: string): Promise<{ lease_agreement_id: string; items: OpenItem[] }[]> {
+  const params = new URLSearchParams({ period_start: periodStart, period_end: periodEnd });
+  if (accountingScopeId) params.set("accounting_scope_id", accountingScopeId);
+  return api.get(`/api/payments/open-items?${params}`);
 }
 
 // --- M6/M3 bridge: DERIVED advance payments ---

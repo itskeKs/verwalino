@@ -366,9 +366,12 @@ class PaymentService:
     # Mietkonto views (read-only, pure-engine-backed)
     # ------------------------------------------------------------------
     async def account_statement_for_lease(
-        self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date
+        self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date,
+        accounting_scope_id: uuid.UUID | None = None,
     ) -> MietkontoResult:
         """Soll/Ist/Saldo + offene Posten of one lease over a period (§3.1)."""
+        await FinancialScopeService(self._session, self._org_id, self._user_id).select_report_scope(
+            accounting_scope_id, scope_type='MIET', period_start=period_start, period_end=period_end)
         lease = await self._leases.get_by_id(lease_agreement_id)
         if lease is None:
             raise HTTPException(status_code=404, detail="Lease agreement not found")
@@ -391,6 +394,7 @@ class PaymentService:
         economic_plan_id: uuid.UUID | None,
         period_start: date,
         period_end: date,
+        accounting_scope_id: uuid.UUID | None = None,
     ) -> MietkontoResult:
         """Hausgeld Soll/Ist/Saldo of one owner over a period (§2.2/§3.1).
 
@@ -398,12 +402,19 @@ class PaymentService:
         Soll). Without a finalized plan the statement shows only Ist (no Soll
         abgleich) -- the engine does not invent a Soll.
         """
+        context = FinancialScopeService(self._session, self._org_id, self._user_id)
+        sphere = await context.select_report_scope(accounting_scope_id,
+            scope_type='WEG', period_start=period_start, period_end=period_end)
         charges = []
         if economic_plan_id is not None:
             plan = await self._plans.get_by_id(economic_plan_id)
             if plan is None:
                 raise HTTPException(status_code=404, detail="Economic plan not found")
-            await FinancialScopeService(self._session, self._org_id, self._user_id).enter(plan, computation=True)
+            await context.enter(plan, computation=True)
+            sphere = await context.select_report_scope(accounting_scope_id,
+                scope_type='WEG', period_start=period_start, period_end=period_end)
+            if sphere is not None and (period_start < plan.period_start or period_end > plan.period_end):
+                raise HTTPException(422, 'Report period is outside economic plan')
             if plan.status == "finalized":
                 lines = await self._plan_lines.list_for_plan(economic_plan_id)
                 advance_lines = [

@@ -142,3 +142,40 @@ build pass. The existing approximately 582 KB bundle warning remains. Independen
 read-only review accepted the change. No backend policy or financial calculation
 changed; the classified-finance overview remains explicitly blocked until its
 scoped adapter is complete.
+
+### Scoped statements and complete open-items queries (2026-10-02)
+
+Lease/owner statement and lease open-item APIs accept an explicit accounting scope.
+Live read permission, rental/WEG type, effective dates and classified-input
+completeness are checked before reading subjects or calculating balances. Lease
+units and owner evidence remain constrained by RLS. A selected plan can provide
+an owner's scope; its period and any explicit scope must agree. Report access does
+not require preparation permission and has no administrator fallback.
+
+The tenant open-items page now calls one transactional aggregate endpoint. Any
+unavailable input blocks the whole response; a failed lease is never silently
+omitted. Both statement screens use bounded read-grant selectors, discard results
+when criteria change, and freeze criteria while a request is pending. Shared
+selector controls fit long scope labels inside a mobile viewport.
+
+Verification: 80 combined backend tests passed for the statement increment plus
+existing payment, dunning and financial-boundary regressions. The expanded final
+nine statement tests additionally exercise partial unit scopes, expired periods,
+plan inheritance/mismatch and out-of-plan periods. Eleven relevant frontend tests
+passed; the final selector adjustment received a focused four-test rerun. Frontend
+lint/build pass (existing approximately 583 KB bundle warning). Independent
+read-only review accepted the implementation. The new backend fixture initially
+needed its dedicated tenant fixture import and a fresh migration connection after
+commit; these harness issues were corrected before the passing runs.
+
+Browser reproduction uses `scripts/acceptance/b1_scope_statements_browser.cjs`,
+local API 18000, Vite 13000 and the disposable database 55432. Supply the same
+`HV_PLAYWRIGHT_PACKAGE` and `HV_CHROMIUM_EXECUTABLE` values as the scoped-creation
+acceptance. Browser plugin not available; regular Playwright is the fallback.
+Only synthetic local records are created. Browser evidence covers selected 100 EUR
+versus excluded 900 EUR, rejected period and retry, matching bulk debt, grant
+revocation, unavailable dashboard/deadlines, and mobile width. Early runs corrected
+test locators, then exposed and fixed a real long-label selector overflow.
+
+This increment does not enable scoped dunning, change the existing year-based
+payment attribution rules, or claim completion of the remaining B1 adapters.

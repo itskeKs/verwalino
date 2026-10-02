@@ -27,6 +27,7 @@ import type {
   MietkontoResult,
   EconomicPlan,
 } from "../api/types";
+import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { ApiError } from "../api/client";
 
 const PAYMENT_TYPE_LABELS: Record<string, string> = {
@@ -56,6 +57,10 @@ export function MietkontoPage() {
   const [selectedLeaseId, setSelectedLeaseId] = useState("");
   const [selectedOwnerId, setSelectedOwnerId] = useState("");
   const [selectedPlanId, setSelectedPlanId] = useState("");
+  const [scopeId, setScopeId] = useState<string | null>(null);
+  const scopePropertyId = viewMode === "lease"
+    ? units.find(unit => unit.id === leases.find(lease => lease.id === selectedLeaseId)?.unit_id)?.property_id
+    : economicPlans.find(plan => plan.id === selectedPlanId)?.property_id;
   const currentYear = new Date().getFullYear();
   const [periodStart, setPeriodStart] = useState(`${currentYear}-01-01`);
   const [periodEnd, setPeriodEnd] = useState(`${currentYear}-12-31`);
@@ -130,7 +135,7 @@ export function MietkontoPage() {
     setResult(null);
     try {
       if (viewMode === "lease") {
-        const r = await leaseStatement(selectedLeaseId, periodStart, periodEnd);
+        const r = await leaseStatement(selectedLeaseId, periodStart, periodEnd, scopeId || undefined);
         setResult(r);
       } else {
         const r = await ownerStatement(
@@ -138,6 +143,7 @@ export function MietkontoPage() {
           periodStart,
           periodEnd,
           selectedPlanId || undefined,
+          scopeId || undefined,
         );
         setResult(r);
       }
@@ -177,7 +183,7 @@ export function MietkontoPage() {
       {/* Selection form */}
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <h2>Kontoauszug abrufen</h2>
-        <div className="form-grid">
+        <fieldset disabled={querying} className="form-grid" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} onChangeCapture={() => { setResult(null); setError(null); }}>
           <label>
             Ansicht
             <select
@@ -185,6 +191,7 @@ export function MietkontoPage() {
               onChange={(e) => {
                 setViewMode(e.target.value as ViewMode);
                 setResult(null);
+                setScopeId(null);
               }}
             >
               <option value="lease">Mietvertrag (Mieter)</option>
@@ -198,7 +205,7 @@ export function MietkontoPage() {
               <select
                 required
                 value={selectedLeaseId}
-                onChange={(e) => setSelectedLeaseId(e.target.value)}
+                onChange={(e) => { setSelectedLeaseId(e.target.value); setScopeId(null); }}
               >
                 <option value="">-- Mietvertrag waehlen --</option>
                 {leases.map((l) => (
@@ -215,7 +222,7 @@ export function MietkontoPage() {
                 <select
                   required
                   value={selectedOwnerId}
-                  onChange={(e) => setSelectedOwnerId(e.target.value)}
+                  onChange={(e) => { setSelectedOwnerId(e.target.value); setScopeId(null); }}
                 >
                   <option value="">-- Eigentuemer waehlen --</option>
                   {ownerProfiles.map((op) => (
@@ -229,7 +236,7 @@ export function MietkontoPage() {
                 Wirtschaftsplan (fuer Soll)
                 <select
                   value={selectedPlanId}
-                  onChange={(e) => setSelectedPlanId(e.target.value)}
+                  onChange={(e) => { setSelectedPlanId(e.target.value); setScopeId(null); }}
                 >
                   <option value="">(kein -- nur Ist)</option>
                   {economicPlans
@@ -247,6 +254,10 @@ export function MietkontoPage() {
             </>
           )}
 
+          <AccountingScopeSelector key={`${viewMode}:${selectedLeaseId}:${selectedOwnerId}:${selectedPlanId}`}
+            propertyId={scopePropertyId} kind={viewMode === "lease" ? "MIET" : "WEG"}
+            capability="read" value={scopeId} onChange={setScopeId} />
+          {viewMode === "owner" && selectedPlanId && <p className="muted">Ohne Auswahl wird der Abrechnungskreis des Wirtschaftsplans verwendet.</p>}
           <label>
             Zeitraum von *
             <input
@@ -275,7 +286,7 @@ export function MietkontoPage() {
               {querying ? "Laden..." : "Abrufen"}
             </button>
           </div>
-        </div>
+        </fieldset>
       </div>
 
       {/* Result */}

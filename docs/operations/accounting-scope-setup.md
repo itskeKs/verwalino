@@ -118,3 +118,17 @@ accepts `capability`, `scope_type` and `financial_creation`; these filter choice
 not authorization of effects. Every save independently validates live access.
 Property and bank-type changes reset selection. General creation idempotency and
 full staged rollout remain outstanding; UI scope selection does not activate them.
+
+### Read-only statements and open items
+
+Mietkonto and the tenant open-items overview offer accounting scopes using live
+`read` grants. Preparation permission is not required. Choose a rental scope for
+a lease and a WEG scope for an owner; the requested interval must fit the scope.
+An owner statement with a selected economic plan can inherit that plan's scope.
+An explicit different scope is rejected, as is a period outside the scoped plan.
+
+The open-items overview is a single database transaction. A failed or denied
+subject blocks the result instead of disappearing from a partial debt list. A
+changed selection clears old results, and query controls stay fixed until the
+response arrives. An omitted scope works only for legacy contexts whose inputs
+are not classified; administrative role alone never authorizes scoped reports.
