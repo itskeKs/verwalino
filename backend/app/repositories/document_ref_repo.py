@@ -15,7 +15,7 @@ class DocumentRefRepository:
         filters=[]
         if source_kind: filters.append(DocumentRef.source_kind==source_kind)
         if source_id:
-            filters.append(or_(DocumentRef.invoice_document_id==source_id,DocumentRef.property_document_id==source_id,DocumentRef.mandate_document_id==source_id))
+            filters.append(or_(DocumentRef.invoice_document_id==source_id,DocumentRef.property_document_id==source_id,DocumentRef.mandate_document_id==source_id,DocumentRef.intake_original_id==source_id))
         return await page_rows(self.session,self.auth,DocumentRef,DocumentRef.source_kind,(),query,
             filters=tuple(filters),context=f'{source_kind or ""}:{source_id or ""}')
 

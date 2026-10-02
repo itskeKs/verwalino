@@ -116,7 +116,8 @@ async def test_registry_constraints_backfill_and_guarded_downgrade(migrator_sess
                 migration.downgrade()
             point=db.begin_nested()
             try:
-                db.execute(text('TRUNCATE document_ref'))
+                db.execute(text('TRUNCATE document_ref,intake_batch,intake_upload_admission CASCADE'))
+                importlib.import_module('migrations.versions.0093_intake_quarantine').downgrade()
                 migration.downgrade()
                 migration.upgrade()
                 assert db.scalar(text('SELECT count(*) FROM document_ref WHERE organization_id=:org'),ids)==refs

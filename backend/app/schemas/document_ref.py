@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from pydantic import BaseModel,ConfigDict
 
-SourceKind=Literal['invoice_document','property_document','mandate_document']
+SourceKind=Literal['invoice_document','property_document','mandate_document','intake_original']
 
 
 class DocumentRefOut(BaseModel):

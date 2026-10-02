@@ -14,6 +14,7 @@ from sqlalchemy import text
 # Central table registry -- kept in sync with migrations.
 # Every tenant-behaftet table must be listed here.
 PRIVATE_POLICIES = {
+    **{table:"intake_private" for table in ("intake_batch","intake_item","intake_upload_admission","workflow_job","job_attempt","outbox_event","intake_retry_receipt")},
     "access_grant_proposal": "coverage_private", "access_grant_acceptance": "coverage_private",
     "access_coverage_snapshot": "coverage_private", "access_coverage_review": "coverage_private",
     "invoice_upload_admission": "invoice_admission_private", "dunning_quarantine_disposition": "dunning_disposition_private",
@@ -25,7 +26,7 @@ PRIVATE_POLICIES = {
 }
 
 TENANT_TABLES = frozenset({
-    "document_ref",
+    "document_ref", "intake_batch", "intake_item", "intake_upload_admission", "intake_original", "workflow_job", "job_attempt", "outbox_event", "intake_retry_receipt",
     "runtime_budget_attestation", "runtime_budget_review", "access_disposition_acceptance",
     "source_security_authorization", "source_security_transition",
     "access_grant_proposal", "access_grant_acceptance", "access_coverage_snapshot", "access_coverage_review", "invoice_upload_admission", "dunning_quarantine_disposition", "mandate_quarantine_disposition", "mandate_legacy_observation", "declaration_review_receipt", "declaration_review_context", "declaration_worker_context", "person_data_domain", "person_data_grant",

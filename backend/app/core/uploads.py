@@ -123,6 +123,8 @@ class RequestBodyLimitMiddleware:
                 and parts[3] == "version"
                 or parts[1] == "mandates"
                 and parts[3] == "documents"
+                or parts[1] == "intake-batches"
+                and parts[3] == "items"
                 or parts[1] == "declaration-imports"
                 and parts[3] == "documents"
             )

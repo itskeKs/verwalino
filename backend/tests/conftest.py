@@ -89,6 +89,9 @@ def run_migrations():
         cursor.execute("SELECT to_regclass('public.document_ref')")
         if cursor.fetchone()[0]:
             cursor.execute("TRUNCATE public.document_ref CASCADE")
+        cursor.execute("SELECT to_regclass('public.intake_batch')")
+        if cursor.fetchone()[0]:
+            cursor.execute("TRUNCATE public.intake_batch,public.intake_upload_admission CASCADE")
         clear_disposable_source_context(cursor)
         cursor.execute("SELECT to_regclass('public.source_security_transition')")
         if cursor.fetchone()[0]:

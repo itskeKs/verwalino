@@ -349,3 +349,16 @@ async def test_request_body_limit_rejects_chunked_declaration_upload_and_closes_
     assert sent[0]["status"] == 413
     assert len(created) == 1
     assert created[0].closed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('headers,messages',[
+    ([(b'content-length',b'5')],[]),
+    ([],[{'type':'http.request','body':b'abc','more_body':True},{'type':'http.request','body':b'de','more_body':False}]),
+])
+async def test_intake_item_body_is_bounded_before_multipart_parser(headers,messages):
+    async def forbidden(*args):
+        pytest.fail('Oversized intake reached multipart parsing')
+    sent=await _run_asgi_app(RequestBodyLimitMiddleware(forbidden,max_body_bytes=4),
+        headers=headers,messages=messages,path='/api/intake-batches/00000000-0000-0000-0000-000000000001/items')
+    assert sent[0]['status']==413

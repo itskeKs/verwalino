@@ -168,9 +168,9 @@ def valid_result(answer, data: bytes, declared_mime: str) -> bool:
     if mime is not None and (not isinstance(mime,str) or mime not in {'application/pdf','application/xml','image/png','image/jpeg'}):
         return False
     if state!='clean':
-        return pages is None and isinstance(code,str) and state==('blocked' if code in {'scanner_failed','scanner_timeout','scanner_unavailable','parser_unavailable'} else 'rejected') and code in {
+        return pages is None and isinstance(code,str) and state==('blocked' if code in {'scanner_failed','scanner_timeout','scanner_unavailable','parser_unavailable','inspector_failed','inspection_timeout'} else 'rejected') and code in {
             'empty_file','file_size_limit','mime_mismatch','scanner_detected','scanner_failed',
-            'scanner_timeout','scanner_unavailable','parser_unavailable','encrypted_pdf',
+            'scanner_timeout','scanner_unavailable','parser_unavailable','inspector_failed','inspection_timeout','encrypted_pdf',
             'pdf_page_limit','image_pixel_limit','unsupported_image_frames','xml_expansion_limit',
             'xml_declaration_forbidden','invalid_document'}
     declared=declared_mime.split(';',1)[0].strip().lower()
