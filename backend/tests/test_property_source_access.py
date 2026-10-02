@@ -234,6 +234,7 @@ async def test_unactivated_resolver_roundtrip_preserves_domain_grants(client_a_a
                     # Later admission policies depend on this resolver. Rehearse
                     # the historical boundary below them, inside the rollback.
                     connection.execute(text('TRUNCATE property_source_admission'))
+                    importlib.import_module('migrations.versions.0051_declaration_publication_audience').downgrade()
                     importlib.import_module('migrations.versions.0050_property_source_admission').downgrade()
                     migration.downgrade()
                     assert connection.scalar(text("SELECT has_property_data_capability(:org,:domain,'read')"),

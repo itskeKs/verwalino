@@ -210,3 +210,54 @@ after repair; the unchanged existing-target cases from the first run are reused.
 Existing failure injection tests prove a late failure rolls back the destination,
 receipt, bindings and derived graph. Independent review accepted the repair.
 No schema, UI, bootstrap grant or source-policy activation is included.
+
+## Explicit publication audience (0051)
+
+At base `cef3aa2`, NEW_PROPERTY approval accepts an optional explicit audience
+command. The administrator must own the intake sources and explicitly name their
+read/prepare/approve grant. Destination/domain/grants, applied receipt, original
+binding, derived facts and canonical audits commit together. Typed composite FKs
+retain the exact publication grant. Database guards enforce current creator and
+destination authority, immutable proof and published source links. The resolver
+supports the guarded NEW applied-but-unbound transition while checking each
+viewer's live grant. Compatibility approval remains without authority proof.
+
+Approval obtains the exclusive ACL lock before source/shared locks. Normalized
+payload digests reject changed replay payloads; current destination authorization
+precedes replay of evidenced publication. The browser keeps the exact submitted
+payload after a lost response. No source-policy activation is claimed.
+
+Backend evidence on disposable PostgreSQL 16/Python 3.13/app_rw: the initial API
+case failed on the missing command, then passed after schema/service work and an
+array-type correction. A boundary run passed 27 cases and found one missing test
+feature flag. A wider run passed **170 cases** and found two old tests expecting
+changed-revision replay plus one catalog-session dummy signature. The replay
+tests now assert 409 for changed payload and 200 for the identical request. The
+dummy accepts catalog query parameters. **18 final focused cases passed**, covering
+those repairs, concurrent commands, valid-ID raw SQL denials, late rollback,
+revocation, migration round-trip/readiness and both referenced-table NOWAIT
+contention cases. Independent review accepted the parent-lock repair. The 170
+unchanged passing cases are reused.
+
+Frontend evidence: **12 component cases, lint and production build passed again
+after the browser-discovered form repair**. The existing large-bundle advisory
+remains. The Browser plugin/skill was absent, so the installed Playwright runtime
+and Chromium were used against local API 18000/Vite 13000 and a synthetic reviewed
+import. The temporary Vite server first used the wrong working directory, causing
+a Tailwind configuration error; restarting from frontend fixed the environment.
+The next browser run exposed inline field layout and unstable implicit labeling
+of a populated textarea. Explicit label associations, separate full-width fields
+and a bounded scrollable dialog repaired this actual UI issue.
+
+The final browser loop passed at 1440×1000 and 390×844: correct page/title, meaningful
+content, no framework overlay, required explicit choice/reason, no horizontal
+dialog overflow (358px content/358px viewport), and a successful exact retry after
+the server committed but its response was deliberately aborted. Database-backed
+API reads confirmed exactly one domain and one explicit grant. No page exceptions
+occurred; console errors were limited to expected unauthenticated session probes
+and the deliberate failed response. Screenshots and the compact report are kept
+outside the repository under `/tmp/hv-publication-audience-acceptance/`.
+Task-started browser, fixture, API and Vite processes were stopped afterwards.
+
+Historical reviewed admission, source RLS and complete worker/Q&A/financial/audit/
+export integration remain unfinished; this is a preparation increment, not B1 exit.

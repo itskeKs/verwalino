@@ -33,7 +33,8 @@ from app.repositories.declaration_import_repo import (
 logger = logging.getLogger(__name__)
 
 _PIPELINE_ENTRY_STATUSES = {"QUEUED", "RETRY_WAIT"}
-_REQUIRED_LEASE_COLUMNS = {"lease_token", "lease_generation", "lease_expires_at", "queue_request_id"}
+_REQUIRED_IMPORT_COLUMNS = {"lease_token", "lease_generation", "lease_expires_at", "queue_request_id",
+                            "approval_request_digest", "publication_domain_id", "publication_grant_id"}
 _HEALTHCHECK_TESSERACT_TIMEOUT_SECONDS = 5
 
 
@@ -116,12 +117,12 @@ class DeclarationImportWorker:
               AND c.relkind IN ('r', 'p')
               AND a.attnum > 0
               AND NOT a.attisdropped
-              AND a.attname IN ('lease_token', 'lease_generation', 'lease_expires_at', 'queue_request_id')
+              AND a.attname = ANY(:columns)
             """
         )
         async with self._unscoped_session_factory() as session:
-            found = set((await session.execute(statement)).scalars().all())
-            if not _REQUIRED_LEASE_COLUMNS.issubset(found):
+            found = set((await session.execute(statement, {"columns": sorted(_REQUIRED_IMPORT_COLUMNS)})).scalars().all())
+            if not _REQUIRED_IMPORT_COLUMNS.issubset(found):
                 return False
             return bool(await session.scalar(text("""
                 SELECT to_regprocedure('public.next_declaration_queue_metadata(uuid,timestamp with time zone)') IS NOT NULL

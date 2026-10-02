@@ -5,6 +5,7 @@ import * as declarationApi from "../api/endpoints";
 import { ApiError } from "../api/client";
 import type { ApprovalPreview, DeclarationCandidate, DeclarationDocument } from "../api/types";
 import { DeclarationReviewPage } from "./DeclarationReviewPage";
+import * as auth from "../auth/useAuth";
 
 const documents: DeclarationDocument[] = [{
   id: "document-1", property_id: null, doc_type: "DECLARATION", document_role: "DECLARATION",
@@ -27,6 +28,7 @@ function candidate(overrides: Partial<DeclarationCandidate> = {}): DeclarationCa
 
 const approveablePreview: ApprovalPreview = {
   import_id: "import-1", draft_revision: 3, can_approve: true, issues: [], pending_candidate_ids: [],
+  import_mode: "NEW_PROPERTY",
 };
 
 function mockReviewData(items: DeclarationCandidate[] = [candidate()], preview = approveablePreview) {
@@ -47,6 +49,7 @@ function RouteSwitchButton() {
 }
 
 function renderReview(withRouteSwitch = false) {
+  vi.spyOn(auth, "useAuth").mockReturnValue({ loading: false, session: { user_id: "publisher", organization_id: "org", role: "OWNER_ADMIN" }, login: vi.fn(), logout: vi.fn() });
   return render(
     <MemoryRouter initialEntries={["/teilungserklaerung/import/import-1/review"]}>
       <Routes>
@@ -64,6 +67,39 @@ afterEach(() => {
 });
 
 describe("Teilungserklärung review", () => {
+  it("requires an explicit audience choice and reason, then retries the exact submitted grant", async () => {
+    mockReviewData([candidate({ review_status: "ACCEPTED" })]);
+    const approve = vi.spyOn(declarationApi, "approveDeclarationImport").mockRejectedValue(new Error("Antwort verloren"));
+    vi.stubGlobal("crypto", { randomUUID: () => "audience-command-key" });
+    renderReview();
+    fireEvent.click(await screen.findByRole("button", { name: "Übernahme vorbereiten" }));
+    const choice = screen.getByRole("checkbox", { name: /Für mich Lesen/ });
+    expect(choice).not.toBeChecked();
+    fireEvent.click(choice);
+    expect(screen.getByRole("button", { name: "Endgültig übernehmen" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Begründung"), { target: { value: "Objektfreigabe geprüft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Endgültig übernehmen" }));
+    expect(await screen.findByText("Antwort verloren")).toBeVisible();
+    expect(screen.getByLabelText("Begründung")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Endgültig übernehmen" }));
+    await waitFor(() => expect(approve).toHaveBeenCalledTimes(2));
+    expect(approve.mock.calls[0]).toEqual(approve.mock.calls[1]);
+    expect(approve.mock.calls[0][1]).toEqual({
+      draft_revision: 3, idempotency_key: "audience-command-key",
+      new_property_audience: { label: "Gebäudedaten", reason: "Objektfreigabe geprüft", grants: [
+        { user_id: "publisher", capabilities: ["read", "prepare", "approve", "export"], reason: "Objektfreigabe geprüft" },
+      ] },
+    });
+    expect(screen.getByText(/Zugriffsbeschränkung ist noch nicht aktiviert/)).toBeVisible();
+  });
+
+  it("does not offer new audience creation for an existing property amendment", async () => {
+    mockReviewData([candidate()], { ...approveablePreview, import_mode: "EXISTING_PROPERTY" });
+    renderReview();
+    fireEvent.click(await screen.findByRole("button", { name: "Übernahme vorbereiten" }));
+    expect(screen.queryByRole("checkbox", { name: /Für mich Lesen/ })).not.toBeInTheDocument();
+  });
+
   it("groups candidates and renders source-first review metadata", async () => {
     mockReviewData([
       candidate(),

@@ -398,6 +398,7 @@ export interface ApprovalPreview {
   can_approve: boolean;
   issues: CandidateIssue[];
   pending_candidate_ids: string[];
+  import_mode: "NEW_PROPERTY" | "EXISTING_PROPERTY";
 }
 
 export type ApprovalSummary =
@@ -429,6 +430,11 @@ export interface ApprovalResult {
 export interface DeclarationApprovalRequest {
   draft_revision: number;
   idempotency_key: string;
+  new_property_audience?: {
+    label: string;
+    reason: string;
+    grants: { user_id: string; capabilities: ("read" | "prepare" | "approve" | "export")[]; reason: string; expires_at?: string | null }[];
+  };
 }
 
 export interface Person {

@@ -918,24 +918,31 @@ async def fully_reviewed_new_property_import(seed_data: dict) -> SimpleNamespace
                 factory = async_sessionmaker(cleanup_engine, class_=AsyncSession, expire_on_commit=False)
                 async with factory() as cleanup:
                     async with cleanup.begin():
-                        from app.declarations.approval import deterministic_id
-                        property_id = deterministic_id(item.organization_id, item.id, "property", "new")
-                        await cleanup.execute(text("DELETE FROM approved_fact_source WHERE source_import_id = :import_id"), {"import_id": item.id})
-                        await cleanup.execute(text("DELETE FROM property_rule_source WHERE property_rule_id IN (SELECT id FROM property_rule WHERE source_import_id = :import_id)"), {"import_id": item.id})
-                        await cleanup.execute(text("DELETE FROM property_rule_relation WHERE source_import_id = :import_id"), {"import_id": item.id})
-                        await cleanup.execute(text("DELETE FROM property_rule WHERE source_import_id = :import_id"), {"import_id": item.id})
-                        await cleanup.execute(text("DELETE FROM property_document_relation WHERE source_import_id = :import_id"), {"import_id": item.id})
-                        await cleanup.execute(text("DELETE FROM property_assignment WHERE source_import_id = :import_id"), {"import_id": item.id})
-                        await cleanup.execute(text("DELETE FROM property_legal_reference WHERE source_import_id = :import_id"), {"import_id": item.id})
-                        await cleanup.execute(text("DELETE FROM audit_event WHERE entity_id = :import_id AND action = 'declaration_import.applied'"), {"import_id": item.id})
-                        await cleanup.execute(text("DELETE FROM declaration_candidate_evidence WHERE candidate_id IN (SELECT id FROM declaration_candidate WHERE import_id = :import_id)"), {"import_id": item.id})
-                        await cleanup.execute(text("DELETE FROM declaration_candidate_issue WHERE import_id = :import_id"), {"import_id": item.id})
-                        await cleanup.execute(text("DELETE FROM declaration_candidate WHERE import_id = :import_id"), {"import_id": item.id})
-                        await cleanup.execute(text("DELETE FROM declaration_import_document WHERE import_id = :import_id"), {"import_id": item.id})
-                        await cleanup.execute(text("DELETE FROM declaration_import WHERE id = :import_id"), {"import_id": item.id})
-                        await cleanup.execute(text("DELETE FROM property_document WHERE id IN (:main_id, :amendment_id)"), {"main_id": main.id, "amendment_id": amendment.id})
-                        await cleanup.execute(text("DELETE FROM unit WHERE property_id = :property_id"), {"property_id": property_id})
-                        await cleanup.execute(text("DELETE FROM property WHERE id = :property_id"), {"property_id": property_id})
+                        # Published source sets cannot be surgically deleted, even
+                        # by the migrator. Reset only guarded disposable sources.
+                        published = await cleanup.scalar(text("SELECT publication_domain_id FROM declaration_import WHERE id=:id"), {"id": item.id})
+                        if published is not None:
+                            from tests.conftest import clear_disposable_source_context
+                            await cleanup.run_sync(lambda sync: clear_disposable_source_context(sync.connection().connection.cursor()))
+                        else:
+                            from app.declarations.approval import deterministic_id
+                            property_id = deterministic_id(item.organization_id, item.id, "property", "new")
+                            await cleanup.execute(text("DELETE FROM approved_fact_source WHERE source_import_id = :import_id"), {"import_id": item.id})
+                            await cleanup.execute(text("DELETE FROM property_rule_source WHERE property_rule_id IN (SELECT id FROM property_rule WHERE source_import_id = :import_id)"), {"import_id": item.id})
+                            await cleanup.execute(text("DELETE FROM property_rule_relation WHERE source_import_id = :import_id"), {"import_id": item.id})
+                            await cleanup.execute(text("DELETE FROM property_rule WHERE source_import_id = :import_id"), {"import_id": item.id})
+                            await cleanup.execute(text("DELETE FROM property_document_relation WHERE source_import_id = :import_id"), {"import_id": item.id})
+                            await cleanup.execute(text("DELETE FROM property_assignment WHERE source_import_id = :import_id"), {"import_id": item.id})
+                            await cleanup.execute(text("DELETE FROM property_legal_reference WHERE source_import_id = :import_id"), {"import_id": item.id})
+                            await cleanup.execute(text("DELETE FROM audit_event WHERE entity_id = :import_id AND action = 'declaration_import.applied'"), {"import_id": item.id})
+                            await cleanup.execute(text("DELETE FROM declaration_candidate_evidence WHERE candidate_id IN (SELECT id FROM declaration_candidate WHERE import_id = :import_id)"), {"import_id": item.id})
+                            await cleanup.execute(text("DELETE FROM declaration_candidate_issue WHERE import_id = :import_id"), {"import_id": item.id})
+                            await cleanup.execute(text("DELETE FROM declaration_candidate WHERE import_id = :import_id"), {"import_id": item.id})
+                            await cleanup.execute(text("DELETE FROM declaration_import_document WHERE import_id = :import_id"), {"import_id": item.id})
+                            await cleanup.execute(text("DELETE FROM declaration_import WHERE id = :import_id"), {"import_id": item.id})
+                            await cleanup.execute(text("DELETE FROM property_document WHERE id IN (:main_id, :amendment_id)"), {"main_id": main.id, "amendment_id": amendment.id})
+                            await cleanup.execute(text("DELETE FROM unit WHERE property_id = :property_id"), {"property_id": property_id})
+                            await cleanup.execute(text("DELETE FROM property WHERE id = :property_id"), {"property_id": property_id})
             finally:
                 await cleanup_engine.dispose()
 
@@ -1011,6 +1018,11 @@ async def test_new_property_approval_is_atomic_and_traceable(
     replay = await client_a_clerk.post(
         f"/api/declaration-imports/{item.id}/approve",
         json={"draft_revision": 0, "idempotency_key": "new-property-approval-0001"},
+    )
+    assert replay.status_code == 409
+    replay = await client_a_clerk.post(
+        f"/api/declaration-imports/{item.id}/approve",
+        json={"draft_revision": item.draft_revision, "idempotency_key": "new-property-approval-0001"},
     )
     assert replay.status_code == 200
     assert replay.json() == result

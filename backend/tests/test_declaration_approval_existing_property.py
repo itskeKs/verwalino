@@ -554,6 +554,11 @@ async def test_existing_property_approval_is_atomic_traceable_and_idempotent(
         f"/api/declaration-imports/{item.id}/approve",
         json={"draft_revision": 0, "idempotency_key": "existing-property-approval-0001"},
     )
+    assert replay.status_code == 409
+    replay = await client_a_clerk.post(
+        f"/api/declaration-imports/{item.id}/approve",
+        json={"draft_revision": item.draft_revision, "idempotency_key": "existing-property-approval-0001"},
+    )
     assert replay.status_code == 200 and replay.json() == result
     conflict = await client_a_clerk.post(
         f"/api/declaration-imports/{item.id}/approve",

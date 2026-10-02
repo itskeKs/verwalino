@@ -99,3 +99,33 @@ retrying a busy migration. Receipt, source link and canonical admission audit ar
 atomic and immutable. A receipt also fixes the original's eventual destination.
 Populated downgrade refuses to remove proof. Preserve it and forward-repair.
 No source-policy activation is included.
+
+## Explicit new-property publication (0051)
+
+An administrator who created an unassigned declaration import can optionally
+prepare its new property audience in the approval dialog. The unchecked choice
+explicitly requests read, prepare, approve and export for that administrator,
+with a label and reviewed reason. Additional members can be added afterwards
+through the existing domain administration. The API also accepts a bounded list
+of explicit named grants. The publishing actor must explicitly receive read,
+prepare and approve; no automatic grant is implied by administration or creation.
+
+Destination, domain, grants, immutable publication proof, originals, derived facts
+and audits commit together. If any step fails, all changes roll back. This option
+does not activate source RLS. Legacy compatibility approval continues without
+publication authority proof. A new audience command cannot retrofit an already
+applied import. Historical source review remains a separate prerequisite.
+
+After submitting, the dialog retains the exact confirmation for a retry and
+disables editing it. To change the instruction, cancel and reopen confirmation.
+New approval receipts require identical normalized payloads, including the draft
+revision; a changed payload under the same key returns 409. Replaying evidenced
+publication requires a current destination approve grant and never recreates
+revoked grants. Earlier receipts without digests retain their compatibility
+replay behavior, but cannot accept a new audience command.
+
+Migration 0051 takes final NOWAIT locks on imports, import/document links and both
+domain/grant FK parents. Busy readers or writers cause immediate refusal; quiesce
+traffic before retrying. Populated downgrade refuses to erase proof or digests.
+Worker readiness checks all added import columns before claims. Preserve evidence
+and repair forward rather than dropping guards or widening policies.

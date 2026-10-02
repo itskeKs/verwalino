@@ -300,7 +300,7 @@ async def test_worker_rotates_organization_start_after_a_successful_claim(seed_d
 @pytest.mark.asyncio
 async def test_schema_guard_short_circuits_without_tenant_enumeration() -> None:
     class CatalogOnlySession:
-        async def execute(self, _statement):
+        async def execute(self, _statement, _parameters=None):
             class Result:
                 def scalars(self):
                     class Scalars:

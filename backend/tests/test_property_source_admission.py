@@ -159,6 +159,7 @@ async def test_migrator_guard_and_rollback_preserve_admission_evidence(client_a_
                 nested=connection.begin_nested()
                 try:
                     connection.execute(text('TRUNCATE property_source_admission'))
+                    importlib.import_module('migrations.versions.0051_declaration_publication_audience').downgrade()
                     migration.downgrade()
                     assert connection.scalar(text("SELECT to_regclass('property_source_admission')")) is None
                     migration.upgrade()

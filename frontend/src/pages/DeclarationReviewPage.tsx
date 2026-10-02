@@ -8,7 +8,8 @@ import {
   listDeclarationCandidates,
   listDeclarationDocuments,
 } from "../api/endpoints";
-import type { ApprovalPreview, DeclarationCandidate, DeclarationDocument } from "../api/types";
+import type { ApprovalPreview, DeclarationApprovalRequest, DeclarationCandidate, DeclarationDocument } from "../api/types";
+import { useAuth } from "../auth/useAuth";
 import { ApprovalSummary } from "../components/declarations/ApprovalSummary";
 import { ReviewGroup } from "../components/declarations/ReviewGroup";
 
@@ -41,6 +42,7 @@ export function DeclarationReviewPage() {
 }
 
 function DeclarationReviewImportPage({ importId }: { importId: string | undefined }) {
+  const { session } = useAuth();
   const navigate = useNavigate();
   const [candidates, setCandidates] = useState<DeclarationCandidate[]>([]);
   const [documents, setDocuments] = useState<DeclarationDocument[]>([]);
@@ -58,6 +60,13 @@ function DeclarationReviewImportPage({ importId }: { importId: string | undefine
   const openingConfirmation = useRef(false);
   const idempotencyKeyRef = useRef<string | null>(null);
   const approvalInFlight = useRef(false);
+  const submittedApproval = useRef<DeclarationApprovalRequest | null>(null);
+  const [audienceEnabled, setAudienceEnabled] = useState(false);
+  const [audienceLabel, setAudienceLabel] = useState("Gebäudedaten");
+  const [audienceReason, setAudienceReason] = useState("");
+  const [approvalAttempted, setApprovalAttempted] = useState(false);
+  const canPrepareAudience = session?.role === "OWNER_ADMIN" && preview?.import_mode === "NEW_PROPERTY";
+  const audienceInvalid = audienceEnabled && (!audienceLabel.trim() || !audienceReason.trim());
 
   const reload = useCallback(async () => {
     if (!importId) return;
@@ -131,6 +140,8 @@ function DeclarationReviewImportPage({ importId }: { importId: string | undefine
     setApprovalError(null);
     const key = globalThis.crypto.randomUUID();
     idempotencyKeyRef.current = key;
+    submittedApproval.current = null;
+    setApprovalAttempted(false);
     setShowConfirmation(true);
   };
 
@@ -138,21 +149,31 @@ function DeclarationReviewImportPage({ importId }: { importId: string | undefine
     if (approvalPending) return;
     openingConfirmation.current = false;
     idempotencyKeyRef.current = null;
+    submittedApproval.current = null;
     setShowConfirmation(false);
     setApprovalError(null);
   };
 
   const applyApproval = async () => {
     const key = idempotencyKeyRef.current;
-    if (!importId || !preview?.can_approve || !key || approvalPending || approvalInFlight.current) return;
+    if (!importId || !preview?.can_approve || !key || approvalPending || approvalInFlight.current || audienceInvalid) return;
     approvalInFlight.current = true;
     setApprovalPending(true);
     setApprovalError(null);
     try {
-      const result = await approveDeclarationImport(importId, {
+      const body: DeclarationApprovalRequest = submittedApproval.current ?? {
         draft_revision: preview.draft_revision,
         idempotency_key: key,
-      });
+        ...(canPrepareAudience && audienceEnabled && session ? {
+          new_property_audience: {
+            label: audienceLabel.trim(), reason: audienceReason.trim(),
+            grants: [{ user_id: session.user_id, capabilities: ["read", "prepare", "approve", "export"], reason: audienceReason.trim() }],
+          },
+        } : {}),
+      };
+      submittedApproval.current = body;
+      setApprovalAttempted(true);
+      const result = await approveDeclarationImport(importId, body);
       openingConfirmation.current = false;
       idempotencyKeyRef.current = null;
       setShowConfirmation(false);
@@ -212,7 +233,20 @@ function DeclarationReviewImportPage({ importId }: { importId: string | undefine
           onClose={closeConfirmation}
           error={approvalError}
           dialogRef={dialogRef}
-        />
+          confirmationBlocked={audienceInvalid}
+        >
+          {canPrepareAudience && <fieldset className="declaration-publication-audience" disabled={approvalPending || approvalAttempted}>
+            <legend>Gebäudedatenrechte vorbereiten</legend>
+            <p>Die Rechte werden mit der Übernahme gespeichert. Die Zugriffsbeschränkung ist noch nicht aktiviert.</p>
+            <label className="declaration-publication-choice"><input type="checkbox" checked={audienceEnabled} onChange={(event) => setAudienceEnabled(event.target.checked)} /><span>Für mich Lesen, Bearbeiten, Freigeben und Exportieren vorbereiten</span></label>
+            {audienceEnabled && <>
+              <div className="declaration-publication-field"><label htmlFor="publication-audience-label">Bezeichnung</label><input id="publication-audience-label" value={audienceLabel} maxLength={255} onChange={(event) => setAudienceLabel(event.target.value)} /></div>
+              <div className="declaration-publication-field"><label htmlFor="publication-audience-reason">Begründung</label><textarea id="publication-audience-reason" value={audienceReason} maxLength={2000} onChange={(event) => setAudienceReason(event.target.value)} /></div>
+              <p>Weitere Teammitglieder können Sie anschließend unter Gebäudedatenrechte hinzufügen.</p>
+            </>}
+          </fieldset>}
+          {approvalAttempted && approvalError && <p>Ein erneuter Versuch verwendet dieselbe Bestätigung. Für Änderungen brechen Sie ab und öffnen die Übernahme erneut.</p>}
+        </ApprovalSummary>
       )}
     </main>
   );

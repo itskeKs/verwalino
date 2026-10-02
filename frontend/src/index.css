@@ -661,7 +661,38 @@ code {
   box-shadow: 0 12px 36px rgba(16, 24, 40, 0.2);
   color: hsl(var(--foreground));
   max-width: min(620px, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
   padding: 1.25rem;
+}
+
+.declaration-publication-audience {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  margin-block: 1rem;
+  padding: 0;
+  border: 0;
+}
+
+.declaration-publication-audience legend { font-weight: 600; margin-bottom: 0.5rem; }
+.declaration-publication-choice { display: flex; align-items: baseline; gap: 0.5rem; }
+.declaration-publication-choice input { flex: none; }
+.declaration-publication-field { display: grid; gap: 0.35rem; }
+.declaration-publication-field input,
+.declaration-publication-field textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid hsl(var(--ui-border));
+  border-radius: var(--radius);
+  background: hsl(var(--background));
+  font: inherit;
+}
+.declaration-publication-field textarea { min-height: 5rem; resize: vertical; }
+.declaration-publication-field :is(input, textarea):focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
 }
 
 .declaration-approval-dialog::backdrop {

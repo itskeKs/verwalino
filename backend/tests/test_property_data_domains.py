@@ -207,8 +207,12 @@ async def test_domain_migration_refuses_evidence_loss_and_roundtrips_empty_confi
                     migration.downgrade()
             transaction = connection.begin_nested()
             try:
-                connection.execute(text('TRUNCATE property_data_grant,property_data_domain'))
+                connection.execute(text('TRUNCATE property_data_grant,property_data_domain CASCADE'))
                 with Operations.context(MigrationContext.configure(connection)):
+                    # Remove later typed FK boundaries inside this rollback-only
+                    # historical rehearsal; retain every committed receipt.
+                    importlib.import_module('migrations.versions.0051_declaration_publication_audience').downgrade()
+                    importlib.import_module('migrations.versions.0050_property_source_admission').downgrade()
                     migration.downgrade()
                     migration.upgrade()
                 assert connection.scalar(text("SELECT to_regclass('public.property_data_domain')"))

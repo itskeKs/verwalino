@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from app.schemas.property_data_domain import DataGrantCreate
 
 
 Decision = Literal["ACCEPTED", "CORRECTED", "REJECTED", "NEEDS_CLARIFICATION"]
@@ -89,6 +90,21 @@ class ApprovalPreviewOut(BaseModel):
     can_approve: bool
     issues: list[IssueOut]
     pending_candidate_ids: list[str]
+    import_mode: Literal["NEW_PROPERTY", "EXISTING_PROPERTY"]
+
+
+class NewPropertyAudience(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    label: str = Field(min_length=1, max_length=255)
+    reason: str = Field(min_length=1, max_length=2000)
+    grants: list[DataGrantCreate] = Field(min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def unique_users(self):
+        if len({grant.user_id for grant in self.grants}) != len(self.grants):
+            raise ValueError("Each audience member needs exactly one explicit grant")
+        return self
 
 
 class ApprovalRequest(BaseModel):
@@ -96,3 +112,4 @@ class ApprovalRequest(BaseModel):
 
     draft_revision: int = Field(ge=0)
     idempotency_key: str = Field(min_length=16, max_length=128)
+    new_property_audience: NewPropertyAudience | None = None

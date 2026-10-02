@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.tenant import AuthContext, require_write_dep
-from app.core.live_principal import get_live_writer_db
+from app.core.live_principal import get_live_writer_db, get_live_publication_db
 from app.core.uploads import read_upload_limited
 from app.declarations.review_schemas import (
     ApprovalPreviewOut,
@@ -253,7 +253,7 @@ async def approve_import_boundary(
     import_id: uuid.UUID,
     body: ApprovalRequest,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_live_writer_db),
+    db: AsyncSession = Depends(get_live_publication_db),
 ):
     return await DeclarationApprovalService(
         db, auth.organization_id, auth.user_id

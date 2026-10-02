@@ -133,6 +133,7 @@ class DeclarationReviewService:
         ]
         return ApprovalPreviewOut(
             import_id=str(item.id), draft_revision=item.draft_revision,
+            import_mode=item.mode,
             can_approve=not blockers and not pending and not missing_evidence and not rule_warnings,
             issues=sorted(
                 [

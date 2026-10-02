@@ -84,9 +84,12 @@ import. Creator ownership alone never grants publication authority.
 The ordering prerequisite is implemented after 0050: the service now creates only
 the new destination, flushes the applied import destination/result, then persists
 original binding and derived data, all in the request transaction. Existing-target
-publication uses its already locked destination. Explicit domain/grant bootstrap
-and the corresponding authorized transition remain prerequisites before policy
-activation; this ordering change alone does not grant publication access.
+publication uses its already locked destination. Migration 0051 adds an optional
+explicit administrator/creator bootstrap with exact domain/grant proof, immutable
+request digest and source-set protection. Its guarded receipt resolves the NEW
+applied-but-unbound transition. Compatibility publication still creates no
+authorization proof. Full policy integration and historical reviewed admission
+remain prerequisites before source-policy activation.
 
 ## Integration gate
 

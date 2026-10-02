@@ -1,4 +1,4 @@
-import { type RefObject } from "react";
+import { type RefObject, type ReactNode } from "react";
 import type { ApprovalPreview, DeclarationCandidate, DeclarationDocument } from "../../api/types";
 
 interface ApprovalSummaryProps {
@@ -10,13 +10,15 @@ interface ApprovalSummaryProps {
   onClose: () => void;
   error: string | null;
   dialogRef: RefObject<HTMLDialogElement | null>;
+  children?: ReactNode;
+  confirmationBlocked?: boolean;
 }
 
 function issuePrefix(severity: string): string {
   return { INFO: "Hinweis", WARNING: "Prüfen", BLOCKER: "Freigabe gesperrt" }[severity] ?? severity;
 }
 
-export function ApprovalSummary({ preview, candidates, documents, submitting, onConfirm, onClose, error, dialogRef }: ApprovalSummaryProps) {
+export function ApprovalSummary({ preview, candidates, documents, submitting, onConfirm, onClose, error, dialogRef, children, confirmationBlocked }: ApprovalSummaryProps) {
   const effective = candidates.filter((candidate) => candidate.review_status === "ACCEPTED" || candidate.review_status === "CORRECTED");
   const creates = effective.filter((candidate) => candidate.operation === "CREATE").length;
   const updates = effective.filter((candidate) => candidate.operation === "UPDATE").length;
@@ -48,10 +50,11 @@ export function ApprovalSummary({ preview, candidates, documents, submitting, on
         <div><dt>MEA-Skalierungseffekte</dt><dd>{meaEffects}</dd></div>
       </dl>
       {preview.issues.length > 0 && <ul className="declaration-issues">{preview.issues.map((issue) => <li key={issue.id}>{issuePrefix(issue.severity)}: {issue.message}</li>)}</ul>}
+      {children}
       {error && <p className="error-text" role="alert">{error}</p>}
       <div className="form-actions">
         <button type="button" className="btn" autoFocus disabled={submitting} onClick={onClose}>Abbrechen</button>
-        <button type="button" className="btn btn--primary" disabled={submitting || !preview.can_approve} onClick={onConfirm}>Endgültig übernehmen</button>
+        <button type="button" className="btn btn--primary" disabled={submitting || !preview.can_approve || confirmationBlocked} onClick={onConfirm}>Endgültig übernehmen</button>
       </div>
     </dialog>
   );

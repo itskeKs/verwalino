@@ -93,9 +93,29 @@ class DeclarationImport(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         String(128), nullable=True
     )
     approval_result_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    approval_request_digest: Mapped[str | None] = mapped_column(String(64))
+    publication_domain_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    publication_grant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
 
     __table_args__ = (
         UniqueConstraint("organization_id", "id", name="uq_declaration_import_organization_id_id"),
+        CheckConstraint("approval_request_digest IS NULL OR (status='APPLIED' AND approval_request_digest ~ '^[0-9a-f]{64}$')",
+            name=conv("ck_declaration_publication_digest")),
+        CheckConstraint("(publication_domain_id IS NULL AND publication_grant_id IS NULL) OR "
+            "(publication_domain_id IS NOT NULL AND publication_grant_id IS NOT NULL AND mode='NEW_PROPERTY' "
+            "AND status='APPLIED' AND applied_property_id IS NOT NULL AND approved_by IS NOT NULL "
+            "AND approved_at IS NOT NULL AND approval_request_digest IS NOT NULL)",
+            name=conv("ck_declaration_publication_context")),
+        ForeignKeyConstraint(
+            ["organization_id", "applied_property_id", "publication_domain_id"],
+            ["property_data_domain.organization_id", "property_data_domain.property_id", "property_data_domain.id"],
+            name="fk_declaration_publication_domain",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "publication_domain_id", "approved_by", "publication_grant_id"],
+            ["property_data_grant.organization_id", "property_data_grant.domain_id", "property_data_grant.user_id", "property_data_grant.id"],
+            name="fk_declaration_publication_grant",
+        ),
         ForeignKeyConstraint(
             ["organization_id", "id", "queue_request_id"],
             ["declaration_queue_request.organization_id", "declaration_queue_request.import_id", "declaration_queue_request.id"],
