@@ -436,3 +436,18 @@ Strict output triggers guard runs, passes, candidates, evidence, issues and page
 counts. Manual cancellation/reclaim retains trusted cleanup. Downgrade refuses
 ENFORCED/PAUSED organizations and takes NOWAIT dependency locks. Source activation
 remains disabled pending atomic human-review effects and other B1 coverage.
+
+## Atomic review decisions (0072)
+
+Review endpoints use `apply_declaration_review` in their caller transaction. The DB
+owns human actor/time, candidate versions, revision and canonical no-value audit;
+strict raw writes cannot stamp those independently. The actual worker login is
+excluded even though it inherits ordinary runtime function privileges. Expired or
+revoked review authority returns a conflict instead of leaking SQL or source data.
+
+Changing a decision conservatively reopens managed resolved issues. The service
+refreshes DB-owned state and runs the existing graph validator before committing.
+Its issue writes and complex correction semantics are still explicitly untrusted
+compatibility boundaries before activation. Downgrade refuses strict mode, takes
+NOWAIT locks and preserves decisions/audit history. Release gate is 0072; this code
+change does not authorize deployment or source activation.

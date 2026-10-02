@@ -11,6 +11,7 @@ from typing import Any, Sequence
 
 from fastapi import HTTPException
 from pydantic import TypeAdapter, ValidationError
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.declarations.policy import CandidateContext, CandidateDecision, classify_candidate
@@ -31,13 +32,11 @@ from app.declarations.schemas import (
     RulePayload,
 )
 from app.declarations.validation import validate_allocation_formulas, validate_mea_totals
-from app.models.audit_event import AuditEvent
 from app.models.declaration_candidate import (
     DeclarationCandidate,
     DeclarationCandidateEvidence,
     DeclarationCandidateIssue,
 )
-from app.repositories.audit_repo import AuditRepository
 from app.repositories.declaration_review_repo import DeclarationReviewRepository
 
 _REJECTION_COMMENT_TYPES = {
@@ -51,7 +50,6 @@ class DeclarationReviewService:
         self._organization_id = organization_id
         self._user_id = user_id
         self._reviews = DeclarationReviewRepository(session, organization_id)
-        self._audit = AuditRepository(session, organization_id)
 
     async def list_candidates(self, import_id: uuid.UUID) -> list[CandidateOut]:
         item = await self._reviews.lock_import(import_id)
@@ -74,10 +72,11 @@ class DeclarationReviewService:
         self._validate_decision(candidate, request.decision, normalized_comment, evidence, issues)
         if self._is_exact_replay(item.draft_revision, request.draft_revision, candidate, request.decision, corrected, normalized_comment):
             return ReviewImportOut(draft_revision=item.draft_revision, candidate=(await self._out_candidates(import_id, [candidate]))[0])
-        self._persist(candidate, request.decision, corrected, normalized_comment)
-        await self._revalidate_managed_issues(import_id)
-        item.draft_revision += 1
-        await self._audit_review(item.id, candidate.id, request.decision, item.draft_revision)
+        prior_resolutions = await self._apply_review(import_id, request.draft_revision, [candidate.id],
+                                         request.decision, corrected, normalized_comment, bulk=False)
+        await self._session.refresh(item)
+        await self._session.refresh(candidate)
+        await self._revalidate_managed_issues(import_id, prior_resolutions)
         await self._session.flush()
         return ReviewImportOut(draft_revision=item.draft_revision, candidate=(await self._out_candidates(import_id, [candidate]))[0])
 
@@ -101,13 +100,33 @@ class DeclarationReviewService:
             self._validate_decision(candidate, request.decision, comment, evidence, issues)
         if all(self._is_exact_replay(item.draft_revision, request.draft_revision, candidate, request.decision, None, comment) for candidate in candidates):
             return ReviewImportOut(draft_revision=item.draft_revision, candidates=await self._out_candidates(import_id, candidates))
+        prior_resolutions = await self._apply_review(import_id, request.draft_revision, [candidate.id for candidate in candidates],
+                                         request.decision, None, comment, bulk=True)
+        await self._session.refresh(item)
         for candidate in candidates:
-            self._persist(candidate, request.decision, None, comment)
-            await self._audit_review(item.id, candidate.id, request.decision, item.draft_revision + 1)
-        await self._revalidate_managed_issues(import_id)
-        item.draft_revision += 1
+            await self._session.refresh(candidate)
+        await self._revalidate_managed_issues(import_id, prior_resolutions)
         await self._session.flush()
         return ReviewImportOut(draft_revision=item.draft_revision, candidates=await self._out_candidates(import_id, candidates))
+
+    async def _apply_review(self, *args, **kwargs):
+        try:
+            return await self._reviews.apply_review(*args, **kwargs)
+        except DBAPIError as exc:
+            # Authority/expiry may change after application validation. Preserve
+            # actionable HTTP semantics without returning SQL or source values.
+            state = getattr(exc.orig, 'sqlstate', None)
+            if state == '42501':
+                raise HTTPException(status_code=409, detail={'code': 'REVIEW_AUTHORITY_CHANGED'}) from exc
+            if state == '40001':
+                raise _stale() from exc
+            if state == '22023':
+                for code in ('IMPORT_NOT_REVIEWABLE', 'REVIEW_CANDIDATE_NOT_FOUND', 'INVALID_REVIEW_COMMAND',
+                             'EVIDENCE_REQUIRED', 'COMMENT_REQUIRED', 'INDIVIDUAL_REVIEW_REQUIRED'):
+                    if code in str(exc.orig):
+                        raise HTTPException(status_code=409 if code in {'IMPORT_NOT_REVIEWABLE', 'INDIVIDUAL_REVIEW_REQUIRED'} else 422,
+                                            detail={'code': code}) from exc
+            raise
 
     async def preview(self, import_id: uuid.UUID) -> ApprovalPreviewOut:
         item = await self._reviews.lock_import(import_id)
@@ -241,14 +260,7 @@ class DeclarationReviewService:
         if decision == "REJECTED" and (candidate.operation == "UPDATE" or candidate.candidate_type in _REJECTION_COMMENT_TYPES or has_flagged_issue) and not comment:
             raise HTTPException(status_code=422, detail={"code": "COMMENT_REQUIRED"})
 
-    def _persist(self, candidate, decision, corrected, comment) -> None:
-        candidate.review_status = decision
-        candidate.corrected_value_json = corrected
-        candidate.review_comment = comment
-        candidate.reviewed_by = self._user_id
-        candidate.reviewed_at = datetime.now(timezone.utc)
-
-    async def _revalidate_managed_issues(self, import_id: uuid.UUID) -> None:
+    async def _revalidate_managed_issues(self, import_id: uuid.UUID, prior_resolutions: dict) -> None:
         """Reconcile only invariants provable from the complete effective graph.
 
         The import row is already locked by the caller.  Every candidate remains
@@ -275,6 +287,12 @@ class DeclarationReviewService:
                 issue.resolution_status = "OPEN"
                 issue.resolved_by = None
                 issue.resolved_at = None
+        # Preserve historical resolution timestamps only after the complete new
+        # graph independently proves the same managed issue resolved again.
+        for issue in issues:
+            if (issue.code in _REVALIDATED_ISSUE_CODES | _ALLOCATION_ISSUE_CODES
+                    and issue.resolution_status == 'RESOLVED' and issue.id in prior_resolutions):
+                issue.resolved_by, issue.resolved_at = prior_resolutions[issue.id]
 
     def _reconcile_allocation_issues(
         self,
@@ -331,15 +349,6 @@ class DeclarationReviewService:
             and candidate.corrected_value_json == corrected
             and _normalize_comment(candidate.review_comment) == comment
         )
-
-    async def _audit_review(self, import_id, candidate_id, decision, revision) -> None:
-        await self._audit.create(AuditEvent(
-            organization_id=self._organization_id, actor_user_id=self._user_id,
-            entity_type="declaration_import", entity_id=import_id,
-            action="declaration_import.candidate_reviewed",
-            payload_diff={"import_id": str(import_id), "candidate_id": str(candidate_id), "decision": decision, "revision": revision},
-        ))
-
 
 def _policy(candidate: DeclarationCandidate, evidence, issues) -> CandidateDecision:
     return classify_candidate(CandidateContext(

@@ -44,8 +44,10 @@ async def test_review_rows_are_hidden_from_other_creator_and_pause_blocks_raw_ch
         await actor_session(db,seed['user_a_admin_id'])
         for table in tables:
             assert await db.scalar(text(f'SELECT count(*) FROM {table} WHERE id=:id'),{'id':rows[table]})==1,table
-        assert (await db.execute(text("UPDATE declaration_candidate SET review_comment='Current creator' WHERE id=:id"),
-            {'id':rows['declaration_candidate']})).rowcount==1
+        with pytest.raises(DBAPIError,match='Atomic declaration review command required'):
+            async with db.begin_nested():
+                await db.execute(text("UPDATE declaration_candidate SET review_comment='Current creator' WHERE id=:id"),
+                    {'id':rows['declaration_candidate']})
     async with synthetic_enforcement(seed):
         await change_mode(seed,'PAUSED')
         async with get_tenant_session(org) as db:
@@ -231,20 +233,29 @@ async def test_strict_existing_amendment_updates_facts_and_replay_requires_appro
         upload=await client_a_admin.post(f'/api/declaration-imports/{job}/documents',
             files={'file':('amendment.pdf',b'%PDF-1.4\n%%EOF','application/pdf')},data={'document_role':'AMENDMENT','sequence_no':'1'})
         assert upload.status_code==201,upload.text
-        async with get_tenant_session(seed_data['org_a_id']) as db:
-            await actor_session(db,seed_data['user_a_admin_id'])
-            candidate=DeclarationCandidate(organization_id=seed_data['org_a_id'],import_id=job,stable_key='property:street',
-                candidate_type='PROPERTY_FIELD',subject_key='property:current',field_key='street',operation='UPDATE',
-                previous_value_json={'kind':'TEXT','value':master.json()['street']},
-                proposed_value_json={'kind':'TEXT','value':'Reviewed amendment street'},confidence=1,risk_class='CRITICAL',requires_individual_review=True,
-                review_status='ACCEPTED',reviewed_by=seed_data['user_a_admin_id'],reviewed_at=datetime.now(timezone.utc))
-            db.add(candidate)
-            await db.flush()
-            db.add(DeclarationCandidateEvidence(organization_id=seed_data['org_a_id'],candidate_id=candidate.id,
-                document_id=uuid.UUID(upload.json()['id']),pdf_page=1,quote='Reviewed amendment street'))
-            await db.flush()
-            await db.execute(text("UPDATE declaration_import SET status='NEEDS_REVIEW',draft_revision=1 WHERE id=:job"),{'job':job})
-        body={'draft_revision':1,'idempotency_key':str(uuid.uuid4())}
+        # Seed extraction output as migration-owned fixture data, then exercise
+        # the real strict human review command before canonical publication.
+        from sqlalchemy.ext.asyncio import AsyncSession,create_async_engine
+        from tests.conftest import MIGRATOR_URL
+        engine=create_async_engine(MIGRATOR_URL)
+        try:
+            async with AsyncSession(engine,expire_on_commit=False) as db,db.begin():
+                await actor_session(db,seed_data['user_a_admin_id'])
+                candidate=DeclarationCandidate(organization_id=seed_data['org_a_id'],import_id=job,stable_key='property:street',
+                    candidate_type='PROPERTY_FIELD',subject_key='property:current',field_key='street',operation='UPDATE',
+                    previous_value_json={'kind':'TEXT','value':master.json()['street']},
+                    proposed_value_json={'kind':'TEXT','value':'Reviewed amendment street'},confidence=1,risk_class='CRITICAL',requires_individual_review=True)
+                db.add(candidate)
+                await db.flush()
+                db.add(DeclarationCandidateEvidence(organization_id=seed_data['org_a_id'],candidate_id=candidate.id,
+                    document_id=uuid.UUID(upload.json()['id']),pdf_page=1,quote='Reviewed amendment street'))
+                await db.flush()
+                await db.execute(text("UPDATE declaration_import SET status='NEEDS_REVIEW',draft_revision=1 WHERE id=:job"),{'job':job})
+        finally: await engine.dispose()
+        reviewed=await client_a_admin.patch(f'/api/declaration-imports/{job}/candidates/{candidate.id}',
+            json={'draft_revision':1,'decision':'ACCEPTED'})
+        assert reviewed.status_code==200,reviewed.text
+        body={'draft_revision':reviewed.json()['draft_revision'],'idempotency_key':str(uuid.uuid4())}
         response=await client_a_admin.post(f'/api/declaration-imports/{job}/approve',json=body)
         assert response.status_code==200,response.text
         assert (await client_a_admin.get(f'/api/properties/{property_id}')).json()['street']=='Reviewed amendment street'

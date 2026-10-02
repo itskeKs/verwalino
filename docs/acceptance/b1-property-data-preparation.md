@@ -907,3 +907,23 @@ passed with head 0071. See [details](../2026-10-02-declaration-worker-effects.md
 
 The NEEDS_REVIEW candidate/issue/revision compatibility remains a separate open
 boundary. Activation remains false; B1 and M-B–M-G are not complete.
+
+## Atomic human review decisions (0072)
+
+Human decision fields, actor/timestamps, candidate versions, draft revision and
+canonical review audit now change through one database command. Strict raw writes
+to those fields and review audit are rejected, including from the worker login.
+Commands recheck current human/source authority, exact candidate sets, revision,
+evidence/comment requirements and the conservative bulk policy. Managed resolved
+issues reopen on change; Python must revalidate the complete graph in the same
+transaction. Stale ORM instances are expired before reading the result.
+
+Review/approval/source compatibility passed 153 cases; a 34-case focused run passed
+fixture repairs and a transient connection rerun, concurrency, strict HTTP review,
+rollback and migration checks. Independent review accepted the bounded increment.
+See [design, limits and evidence](../2026-10-02-declaration-review-command.md).
+
+Complex correction semantics and raw managed-issue resolution remain application
+compatibility boundaries. Current-revision exact replay is preserved; durable
+idempotency-key replay is not implemented by this command. These remain explicit
+activation blockers. Source activation remains false and B1 is incomplete.

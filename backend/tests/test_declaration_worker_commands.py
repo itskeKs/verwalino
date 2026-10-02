@@ -25,7 +25,8 @@ async def test_strict_raw_preparer_cannot_forge_worker_state(committed_scope,pat
     seed=committed_scope; ids=actors(seed); job=uuid.UUID(await new_draft(ids))
     async with synthetic_enforcement(seed),get_tenant_session(ids['org']) as db:
         await actor_session(db,ids['actor'])
-        with pytest.raises(DBAPIError,match='Worker lifecycle command required'):
+        message='Atomic declaration review command required' if patch.startswith('draft_revision=') else 'Worker lifecycle command required'
+        with pytest.raises(DBAPIError,match=message):
             async with db.begin_nested():
                 await db.execute(text('UPDATE declaration_import SET '+patch+' WHERE id=:job'),{'job':job})
 
@@ -194,14 +195,15 @@ async def test_migration_rejects_unsafe_worker_role_membership(seed_data,unsafe_
     finally: engine.dispose()
 
 
-async def test_review_revision_compatibility_is_explicitly_not_worker_proof(committed_scope):
+async def test_raw_review_revision_compatibility_is_closed_by_atomic_command(committed_scope):
     from tests.test_scoped_account_statements import mutate
     seed=committed_scope;ids=actors(seed);job=uuid.UUID(await new_draft(ids))
     await mutate(text("UPDATE declaration_import SET status='NEEDS_REVIEW' WHERE id=:job"),{'job':job})
     async with synthetic_enforcement(seed),get_tenant_session(ids['org']) as db:
         await actor_session(db,ids['actor'])
-        # Preexisting review-service compatibility remains an explicit B1 gap.
-        assert (await db.execute(text('UPDATE declaration_import SET draft_revision=draft_revision+1 WHERE id=:job'),{'job':job})).rowcount==1
+        with pytest.raises(DBAPIError,match='Atomic declaration review command required'):
+            async with db.begin_nested():
+                await db.execute(text('UPDATE declaration_import SET draft_revision=draft_revision+1 WHERE id=:job'),{'job':job})
 
 
 @pytest.mark.parametrize('change,repair',[

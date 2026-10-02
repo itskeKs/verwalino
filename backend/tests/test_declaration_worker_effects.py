@@ -133,7 +133,8 @@ async def test_worker_receipt_cannot_forge_human_review(committed_scope,table,pa
         assert await DeclarationImportRepository(db,lease.organization_id).lock_current_lease(lease,{'RECONCILING'})
         await db.execute(text(CANDIDATE_SQL),params)
         await db.execute(text("INSERT INTO declaration_candidate_issue(organization_id,import_id,code,severity,message) VALUES(:org,:job,'TEST','WARNING','Synthetic')"),params)
-        with pytest.raises(DBAPIError,match='Current worker effect receipt required'):
+        message='Atomic declaration review command required' if table=='declaration_candidate' else 'Current worker effect receipt required'
+        with pytest.raises(DBAPIError,match=message):
             async with db.begin_nested(): await db.execute(text(f'UPDATE {table} SET {patch} WHERE import_id=:job'),params)
 
 

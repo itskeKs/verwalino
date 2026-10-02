@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import uuid
+import json
+from datetime import datetime
 from collections.abc import Sequence
 
 from sqlalchemy import select, text
@@ -31,6 +33,25 @@ class DeclarationReviewRepository:
                 {'org': self._organization_id, 'job': import_id, 'capability': capability}):
             return None
         return await self._imports.get_by_id_for_update(import_id)
+
+    async def apply_review(self, import_id: uuid.UUID, revision: int,
+                           candidate_ids: Sequence[uuid.UUID], decision: str,
+                           correction: dict | None, comment: str | None, *, bulk: bool
+                           ) -> dict[uuid.UUID, tuple[uuid.UUID | None, datetime | None]]:
+        prior_resolutions = {row.id: (row.resolved_by, row.resolved_at) for row in
+                             await self.issues_for_import(import_id, for_update=True)
+                             if row.resolution_status == 'RESOLVED'}
+        await self._session.scalar(text(
+            'SELECT apply_declaration_review(:org,:job,:revision,CAST(:ids AS uuid[]),'
+            ':decision,CAST(:correction AS jsonb),:comment,:bulk)'),
+            {'org': self._organization_id, 'job': import_id, 'revision': revision,
+             'ids': list(candidate_ids), 'decision': decision,
+             'correction': json.dumps(correction) if correction is not None else None,
+             'comment': comment, 'bulk': bulk})
+        # The command owns candidate/parent state and conservatively reopens
+        # managed issues. Do not reuse pre-command ORM snapshots of those rows.
+        self._session.expire_all()
+        return prior_resolutions
 
     async def lock_candidates(
         self, import_id: uuid.UUID, candidate_ids: Sequence[uuid.UUID]
