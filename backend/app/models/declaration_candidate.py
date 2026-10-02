@@ -10,8 +10,10 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    FetchedValue,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     Numeric,
     String,
@@ -75,6 +77,7 @@ class DeclarationCandidate(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("organization_id", "id", name="uq_declaration_candidate_organization_id_id"),
         UniqueConstraint("import_id", "stable_key", name="uq_declaration_candidate_stable_key"),
+        UniqueConstraint("organization_id", "import_id", "id", name="uq_declaration_candidate_import_context"),
         ForeignKeyConstraint(
             ["organization_id", "import_id"],
             ["declaration_import.organization_id", "declaration_import.id"],
@@ -104,6 +107,8 @@ class DeclarationCandidateEvidence(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         nullable=False,
         index=True,
     )
+    # Filled from the immutable candidate parent for older insert callers.
+    import_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, server_default=FetchedValue())
     candidate_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         nullable=False,
@@ -121,12 +126,14 @@ class DeclarationCandidateEvidence(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     quote: Mapped[str] = mapped_column(String(2000), nullable=False)
 
     __table_args__ = (
-        ForeignKeyConstraint(
-            ["organization_id", "candidate_id"],
-            ["declaration_candidate.organization_id", "declaration_candidate.id"],
-            name="fk_declaration_candidate_evidence_candidate_tenant",
-            ondelete="RESTRICT",
-        ),
+        ForeignKeyConstraint(["organization_id", "import_id", "candidate_id"],
+            ["declaration_candidate.organization_id", "declaration_candidate.import_id", "declaration_candidate.id"],
+            name="fk_declaration_evidence_candidate_import_context", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["organization_id", "import_id", "document_id"],
+            ["declaration_import_document.organization_id", "declaration_import_document.import_id", "declaration_import_document.document_id"],
+            name="fk_declaration_evidence_document_import_context", ondelete="RESTRICT"),
+        Index("ix_declaration_evidence_import_document", "organization_id", "import_id", "document_id"),
+
         ForeignKeyConstraint(
             ["organization_id", "document_id"],
             ["property_document.organization_id", "property_document.id"],
@@ -171,18 +178,16 @@ class DeclarationCandidateIssue(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "import_id", "candidate_id"],
+            ["declaration_candidate.organization_id", "declaration_candidate.import_id", "declaration_candidate.id"],
+            name="fk_declaration_issue_import_context", ondelete="RESTRICT"),
         ForeignKeyConstraint(
             ["organization_id", "import_id"],
             ["declaration_import.organization_id", "declaration_import.id"],
             name="fk_declaration_candidate_issue_import_tenant",
             ondelete="RESTRICT",
         ),
-        ForeignKeyConstraint(
-            ["organization_id", "candidate_id"],
-            ["declaration_candidate.organization_id", "declaration_candidate.id"],
-            name="fk_declaration_candidate_issue_candidate_tenant",
-            ondelete="RESTRICT",
-        ),
+
         ForeignKeyConstraint(
             ["organization_id", "resolved_by"],
             ["user.organization_id", "user.id"],

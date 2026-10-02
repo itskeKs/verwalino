@@ -18,7 +18,7 @@ from app.models.declaration_candidate import (
     DeclarationCandidateEvidence,
     DeclarationCandidateIssue,
 )
-from app.models.declaration_import import DeclarationExtractionRun, DeclarationImport
+from app.models.declaration_import import DeclarationExtractionRun, DeclarationImport, DeclarationImportDocument
 from app.models.property_document import PropertyDocument
 from app.models.property import Property
 from app.models.unit import Unit
@@ -74,6 +74,9 @@ async def review_import(review_session: AsyncSession, seed_data: dict) -> Simple
         original_filename="review.pdf",
     )
     review_session.add_all([item, document])
+    await review_session.flush()
+    review_session.add(DeclarationImportDocument(organization_id=item.organization_id,
+        import_id=item.id, document_id=document.id, sequence_no=1, document_role="DECLARATION"))
     await review_session.flush()
 
     street = DeclarationCandidate(
@@ -188,8 +191,11 @@ async def _add_evidence(
     candidate: DeclarationCandidate,
 ) -> None:
     document = await session.scalar(
-        select(PropertyDocument).where(
+        select(PropertyDocument).join(DeclarationImportDocument,
+            (DeclarationImportDocument.organization_id == PropertyDocument.organization_id)
+            & (DeclarationImportDocument.document_id == PropertyDocument.id)).where(
             PropertyDocument.organization_id == item.organization_id,
+            DeclarationImportDocument.import_id == item.id,
             PropertyDocument.title == "Review source",
         )
     )

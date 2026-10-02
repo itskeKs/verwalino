@@ -94,3 +94,34 @@ before restoring head. That case passed after repair; **25 source-context cases*
 also passed on the final production code. The unchanged 221 passing cases and 14
 principal cases were reused. Independent read-only review accepted the increment.
 No UI or provider behavior changed; no browser or live-provider run is claimed.
+
+## Tenant and import source links (0048)
+
+Unit now uses the tenant/property composite FK. Review issues may refer only to
+candidates of their own import. Evidence carries an import ID mechanically copied
+from its immutable candidate parent and references both that candidate and an
+actual document link in the same import. Its import context cannot subsequently
+change, and referenced source links cannot be deleted. General issues with no
+candidate remain supported. The old weaker FKs are replaced, keeping implicit ORM
+joins unambiguous. The invoker-rights insert bridge supports old callers without
+adding source visibility. Worker readiness requires the expanded evidence column.
+
+The migration checks legacy edges before expansion, reports only mismatch counts
+and never invents missing links. It takes final DDL-strength locks with NOWAIT,
+so a busy source graph fails immediately and releases partial locks. A populated
+downgrade cannot remove the stronger boundary. Source RLS, destination grants,
+multi-import sharing policy and audited activation remain unfinished.
+
+Evidence at base `5deb8c0` plus this increment, PostgreSQL 16/Python 3.13/app_rw:
+three initial cross-tenant/import cases failed because the invalid inserts were
+accepted. After implementation, **105 source-link/pipeline/review cases passed**.
+A boundary run passed **187 cases** covering worker, master data, tenant isolation,
+approval and import API paths. Its stale FK-name assertion was updated to check
+the new composite keys; one fixture teardown encountered a transient PostgreSQL
+SSL-upgrade connection rejection. After database reachability was confirmed,
+**13 final focused cases passed**, including both affected cases, exact historical
+backfill, three counted legacy-mismatch refusals, populated rollback refusal,
+worker readiness and two-connection reader/writer lock contention. The unchanged
+passing cases were reused. The initial duplicate-FK join ambiguity and title-based
+fixture lookup were repaired before the 105-case pass. Independent read-only
+review accepted the final lock repair. No UI or live-provider change/run.

@@ -123,7 +123,13 @@ class DeclarationImportWorker:
             found = set((await session.execute(statement)).scalars().all())
             if not _REQUIRED_LEASE_COLUMNS.issubset(found):
                 return False
-            return bool(await session.scalar(text("SELECT to_regprocedure('public.next_declaration_queue_metadata(uuid,timestamp with time zone)') IS NOT NULL AND to_regprocedure('public.lock_declaration_lease_metadata(uuid,uuid,uuid,bigint,uuid,text[])') IS NOT NULL")))
+            return bool(await session.scalar(text("""
+                SELECT to_regprocedure('public.next_declaration_queue_metadata(uuid,timestamp with time zone)') IS NOT NULL
+                   AND to_regprocedure('public.lock_declaration_lease_metadata(uuid,uuid,uuid,bigint,uuid,text[])') IS NOT NULL
+                   AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute
+                       WHERE attrelid=to_regclass('public.declaration_candidate_evidence')
+                         AND attname='import_id' AND attnum>0 AND NOT attisdropped AND attnotnull)
+            """)))
 
     async def _organization_ids(self) -> tuple[uuid.UUID, ...]:
         """Use the global table only; tenant scans always happen below."""

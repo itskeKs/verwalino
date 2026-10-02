@@ -171,6 +171,7 @@ class DeclarationImportDocument(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             ondelete="RESTRICT",
         ),
         UniqueConstraint("import_id", "document_id", name="uq_declaration_import_document"),
+        UniqueConstraint("organization_id", "import_id", "document_id", name="uq_declaration_document_import_context"),
         UniqueConstraint("import_id", "sequence_no", name="uq_declaration_import_sequence"),
     )
 

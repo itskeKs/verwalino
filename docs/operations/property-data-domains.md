@@ -58,3 +58,20 @@ does not enable source permissions and does not certify cross-link consistency.
 A populated downgrade refuses to remove these guards. Pause the relevant writers
 and forward-repair through a reviewed migration; do not drop triggers to perform
 an operational reparenting. Original bytes and source evidence remain preserved.
+
+Migration 0048 validates the complete tenant edge of Unit → Property and import
+edges of review issues and evidence. An evidence row's added import ID is copied
+exactly from its immutable candidate parent. Its document must already be linked
+to that same import. Older insert callers may omit the import ID; an invoker-rights
+trigger fills it from the visible candidate, then the same foreign keys apply.
+The worker refuses to claim work until the expanded evidence column is present.
+
+Run this migration in a quiet window. It takes its final table locks with NOWAIT;
+an active reader or writer makes it fail immediately and roll back. Quiesce traffic
+before retrying. Its preflight reports counts of foreign-property units,
+cross-import issues and evidence without a matching import/document link. Any
+nonzero count aborts before schema expansion. Reconcile such rows explicitly;
+do not create speculative links to make the preflight pass. Original data and
+unknown ownership are unchanged by a failed migration. Populated downgrade refuses
+to remove the strengthened constraints; forward repair remains the rollback path.
+These edges do not grant source access or activate domain enforcement.

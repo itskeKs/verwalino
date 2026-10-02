@@ -366,10 +366,12 @@ async def test_new_tenant_edges_include_organization_id(migrator_session) -> Non
         "fk_declaration_extraction_run_import_tenant",
         "fk_declaration_candidate_import_tenant",
         "fk_declaration_candidate_reviewed_by_tenant",
-        "fk_declaration_candidate_evidence_candidate_tenant",
+        "fk_declaration_evidence_candidate_import_context",
+        "fk_declaration_evidence_document_import_context",
         "fk_declaration_candidate_evidence_document_tenant",
         "fk_declaration_candidate_issue_import_tenant",
-        "fk_declaration_candidate_issue_candidate_tenant",
+        "fk_declaration_issue_import_context",
+        "fk_unit_property_tenant",
         "fk_declaration_candidate_issue_resolved_by_tenant",
     }
     result = await migrator_session.execute(
@@ -400,10 +402,15 @@ async def test_new_tenant_edges_include_organization_id(migrator_session) -> Non
     )
     rows = {row.constraint_name: row for row in result}
     assert set(rows) == edge_names
+    composite_parents = {
+        "fk_declaration_evidence_candidate_import_context": ["organization_id", "import_id", "id"],
+        "fk_declaration_evidence_document_import_context": ["organization_id", "import_id", "document_id"],
+        "fk_declaration_issue_import_context": ["organization_id", "import_id", "id"],
+    }
     assert all(
         list(row.child_columns)[0] == "organization_id"
-        and list(row.parent_columns) == ["organization_id", "id"]
-        for row in rows.values()
+        and list(row.parent_columns) == composite_parents.get(name, ["organization_id", "id"])
+        for name, row in rows.items()
     )
 
 

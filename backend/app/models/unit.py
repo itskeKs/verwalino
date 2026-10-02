@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, ForeignKey, Numeric, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, ForeignKeyConstraint, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,7 +29,6 @@ class Unit(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     property_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("property.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
@@ -51,6 +50,8 @@ class Unit(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "property_id"], ["property.organization_id", "property.id"],
+            name="fk_unit_property_tenant", ondelete="RESTRICT"),
         UniqueConstraint(
             "organization_id",
             "property_id",

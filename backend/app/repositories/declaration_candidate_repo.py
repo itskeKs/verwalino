@@ -117,6 +117,7 @@ class DeclarationCandidateRepository(TenantRepository[DeclarationCandidate]):
                 self._session.add(
                     DeclarationCandidateEvidence(
                         organization_id=self._org_id,
+                        import_id=import_id,
                         candidate_id=item.id,
                         document_id=evidence.document_id,
                         field_path=evidence.field_path,
