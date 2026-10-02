@@ -6,7 +6,7 @@
  * Sorted by urgency by the backend (OVERDUE -> DUE -> UPCOMING -> INFO -> OK).
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { CheckCircle2 } from "lucide-react";
 import { listFristen } from "../api/endpoints";
 import type { DeadlineItem, DeadlineStatus } from "../api/types";
@@ -46,29 +46,33 @@ function formatDate(iso: string): string {
 }
 
 export function FristenmonitorPage() {
-  const [items, setItems] = useState<DeadlineItem[]>([]);
   const [referenceDate, setReferenceDate] = useState<string>(todayIso());
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const reload = useCallback(() => {
-    setLoading(true);
-    setError(null);
-    listFristen(referenceDate)
-      .then(setItems)
-      .catch((err) => {
-        if (err instanceof ApiError && err.status === 401) {
-          setError("Nicht authentifiziert. Bitte erneut anmelden.");
-        } else {
-          setError(String(err));
-        }
-      })
-      .finally(() => setLoading(false));
-  }, [referenceDate]);
+  const [result, setResult] = useState<{
+    referenceDate: string;
+    items: DeadlineItem[];
+    error: string | null;
+  } | null>(null);
 
   useEffect(() => {
-    reload();
-  }, [reload]);
+    let cancelled = false;
+    listFristen(referenceDate)
+      .then(items => {
+        if (!cancelled) setResult({ referenceDate, items, error: null });
+      })
+      .catch(err => {
+        if (cancelled) return;
+        const error = err instanceof ApiError && err.status === 401
+          ? "Nicht authentifiziert. Bitte erneut anmelden."
+          : String(err);
+        setResult({ referenceDate, items: [], error });
+      });
+    return () => { cancelled = true; };
+  }, [referenceDate]);
+
+  const loading = result?.referenceDate !== referenceDate;
+  const error = loading ? null : result?.error;
+  const items = !loading && !error ? result?.items ?? [] : [];
+  const available = !loading && !error;
 
   const actionCount = items.filter(
     (i) => i.status === "OVERDUE" || i.status === "DUE",
@@ -90,18 +94,18 @@ export function FristenmonitorPage() {
       </div>
 
       <p className="text-sm text-muted-foreground">
-        {actionCount > 0
+        {loading ? "Fristen werden geladen." : error ? "Fristenübersicht nicht verfügbar." : actionCount > 0
           ? `${actionCount} Frist(en) erfordern Aufmerksamkeit (überfällig oder fällig).`
           : "Keine überfälligen oder fälligen Fristen zum Stichtag."}{" "}
         Die BK-Frist (§556 III BGB) ist gesetzlich; WEG-/Wirtschaftsplan-Fristen
         sind provisorisch ([§18] fachlich zu bestätigen).
       </p>
 
-      {error && <p className="error-text">{error}</p>}
+      {error && <p role="alert" className="error-text">{error}</p>}
 
       {loading ? (
         <p className="text-sm text-muted-foreground">Lade…</p>
-      ) : items.length === 0 ? (
+      ) : error ? null : items.length === 0 ? (
         <p className="empty-hint">Keine Fristen ermittelt.</p>
       ) : (
         <Card>
@@ -152,7 +156,7 @@ export function FristenmonitorPage() {
         </Card>
       )}
 
-      {!loading && actionCount === 0 && items.length > 0 && (
+      {available && actionCount === 0 && items.length > 0 && (
         <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
           <CheckCircle2 className="h-5 w-5 shrink-0" />
           Alle fälligen Fristen sind erledigt.

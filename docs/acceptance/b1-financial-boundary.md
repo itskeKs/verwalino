@@ -127,3 +127,18 @@ Run against only the disposable database with API port 18000 and Vite port 13000
 Set `HV_PLAYWRIGHT_PACKAGE` and `HV_CHROMIUM_EXECUTABLE` to existing runtime paths;
 no package installation or live provider is required. The script uses the synthetic
 Alpha seed account and writes only disposable test records.
+
+### Unavailable overview presentation (2026-10-02)
+
+A blocked or failed deadline query now renders unavailable finance on the dashboard
+and deadline monitor. It cannot become a green zero, an empty success, or a retained
+result for another reference date. Dashboard master counts survive an independent
+finance failure; missing open-item evidence remains unknown. Obsolete date requests
+cannot overwrite the current result.
+
+Verification: six focused `FinancialOverviewAvailability.test.tsx` tests pass
+(initial five failures reproduced before the fix), frontend lint and production
+build pass. The existing approximately 582 KB bundle warning remains. Independent
+read-only review accepted the change. No backend policy or financial calculation
+changed; the classified-finance overview remains explicitly blocked until its
+scoped adapter is complete.

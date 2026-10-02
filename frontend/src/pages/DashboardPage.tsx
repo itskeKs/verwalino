@@ -78,7 +78,7 @@ function greeting(): string {
 export function DashboardPage() {
   const { session } = useAuth();
   const [org, setOrg] = useState<Organization | null>(null);
-  const [fristen, setFristen] = useState<DeadlineItem[]>([]);
+  const [fristen, setFristen] = useState<DeadlineItem[] | null>(null);
   const [propertyCount, setPropertyCount] = useState<number | null>(null);
   const [personCount, setPersonCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -86,7 +86,7 @@ export function DashboardPage() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
+    Promise.allSettled([
       getMyOrganization(),
       listFristen(todayIso()),
       listProperties(),
@@ -94,26 +94,28 @@ export function DashboardPage() {
     ])
       .then(([o, f, props, persons]) => {
         if (cancelled) return;
-        setOrg(o);
-        setFristen(f);
-        setPropertyCount(props.length);
-        setPersonCount(persons.length);
-      })
-      .catch((err) => !cancelled && setError(String(err)))
-      .finally(() => !cancelled && setLoading(false));
+        if (o.status === "fulfilled") setOrg(o.value);
+        if (f.status === "fulfilled") setFristen(f.value);
+        if (props.status === "fulfilled") setPropertyCount(props.value.length);
+        if (persons.status === "fulfilled") setPersonCount(persons.value.length);
+        const failures = [o, f, props, persons].filter(result => result.status === "rejected");
+        if (failures.length) setError(failures.map(result => String(result.reason)).join(" · "));
+        setLoading(false);
+      });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const overdue = fristen.filter((f) => f.status === "OVERDUE");
-  const due = fristen.filter((f) => f.status === "DUE");
+  const financeAvailable = !loading && fristen !== null;
+  const overdue = (fristen ?? []).filter((f) => f.status === "OVERDUE");
+  const due = (fristen ?? []).filter((f) => f.status === "DUE");
   const actionItems = [...overdue, ...due];
 
-  const openItemsEntry = fristen.find((f) => f.kind === "OFFENE_POSTEN");
-  const openItemsCount = openItemsEntry
-    ? Number(openItemsEntry.detail.match(/\d+/)?.[0] ?? 0)
-    : 0;
+  const openItemsEntry = fristen?.find((f) => f.kind === "OFFENE_POSTEN");
+  const openItemsMatch = openItemsEntry?.detail.match(/\d+/);
+  const openItemsCount = openItemsMatch ? Number(openItemsMatch[0]) : null;
+  const openItemsAvailable = financeAvailable && openItemsCount !== null;
 
   const dateLabel = new Date().toLocaleDateString("de-DE", {
     weekday: "long",
@@ -134,7 +136,7 @@ export function DashboardPage() {
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
       )}
@@ -143,32 +145,32 @@ export function DashboardPage() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           label="Fristen überfällig"
-          value={loading ? "…" : overdue.length}
+          value={loading ? "…" : financeAvailable ? overdue.length : "—"}
           icon={AlertTriangle}
-          tone={overdue.length > 0 ? "destructive" : "success"}
-          hint={due.length > 0 ? `${due.length} demnächst fällig` : "alles im grünen Bereich"}
+          tone={!financeAvailable ? "default" : overdue.length > 0 ? "destructive" : "success"}
+          hint={loading ? undefined : !financeAvailable ? "Nicht verfügbar" : due.length > 0 ? `${due.length} demnächst fällig` : "alles im grünen Bereich"}
           to="/fristen"
         />
         <StatCard
           label="Objekte"
-          value={loading ? "…" : (propertyCount ?? 0)}
+          value={loading ? "…" : (propertyCount ?? "—")}
           icon={Building2}
           tone="primary"
           to="/objekte"
         />
         <StatCard
           label="Personen"
-          value={loading ? "…" : (personCount ?? 0)}
+          value={loading ? "…" : (personCount ?? "—")}
           icon={Users}
           tone="default"
           to="/personen"
         />
         <StatCard
           label="Überfällige Posten"
-          value={loading ? "…" : openItemsCount}
+          value={loading ? "…" : openItemsCount ?? "—"}
           icon={CircleAlert}
-          tone={openItemsCount > 0 ? "warning" : "success"}
-          hint={openItemsCount > 0 ? "Mahnwesen prüfen" : "keine offenen Posten"}
+          tone={!openItemsAvailable ? "default" : openItemsCount > 0 ? "warning" : "success"}
+          hint={loading ? undefined : !openItemsAvailable ? "Nicht verfügbar" : openItemsCount > 0 ? "Mahnwesen prüfen" : "keine offenen Posten"}
           to="/offene-posten"
         />
       </div>
@@ -188,6 +190,8 @@ export function DashboardPage() {
           <CardContent>
             {loading ? (
               <p className="text-sm text-muted-foreground">Lade…</p>
+            ) : !financeAvailable ? (
+              <p className="text-sm text-muted-foreground">Fristenübersicht nicht verfügbar. Der Handlungsbedarf kann derzeit nicht ermittelt werden.</p>
             ) : actionItems.length === 0 ? (
               <div className="flex items-center gap-3 rounded-md bg-emerald-50 px-4 py-6 text-emerald-700">
                 <CheckCircle2 className="h-5 w-5 shrink-0" />
