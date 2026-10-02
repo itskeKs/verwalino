@@ -985,3 +985,19 @@ Migration roundtrip preserves hashes and refuses strict downgrade. Independent
 review, shell syntax and fake-Docker deployment checks pass. See
 [report source implementation](../2026-10-02-report-source-access.md).
 Activation stays false; legacy reconciliation/coverage and later milestones remain.
+
+
+### Aggregate preparation inventory (0076)
+
+Administrators can review 18 tenant-only structural counts without source names,
+identifiers, amounts or original contents. Live role, expiry and revocation checks
+apply. Definer visibility counts hidden legacy rows rather than reporting false
+zeroes. No automatic grants, classification, custody proof or activation follows.
+Failed UI refresh clears stale counts and supports retry.
+
+Evidence: 16 initial backend/RLS passes; 11 final inventory checks plus a passing
+representative legacy/roundtrip case; three UI checks, lint/build, shell syntax and
+simulated deployment pass. Chromium desktop/mobile, failed-refresh recovery and
+clerk denial passed; independent review found no issue. See
+[implementation and limits](../2026-10-02-access-preparation-inventory.md).
+B1 and the remaining full plan are incomplete; activation remains unavailable.

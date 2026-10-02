@@ -1297,3 +1297,29 @@ export interface SourceClassificationReceipt extends SourceClassificationCommand
   reviewed_by: string;
   created_at: string;
 }
+
+export interface AccessPreparation {
+  generated_at: string;
+  mode: "PREPARATION" | "ENFORCED" | "PAUSED";
+  activation_available: false;
+  counts: {
+    properties_total: number;
+    properties_without_domain: number;
+    properties_without_current_reader: number;
+    contacts_total: number;
+    contacts_without_domain: number;
+    contacts_unknown_creator: number;
+    contacts_without_current_reader: number;
+    originals_total: number;
+    bound_originals_without_review_record: number;
+    originals_quarantined: number;
+    unbound_originals_unknown_uploader: number;
+    bank_accounts_without_scope: number;
+    payments_without_scope: number;
+    cost_entries_without_scope: number;
+    settlements_without_scope: number;
+    economic_plans_without_scope: number;
+    dunning_without_context: number;
+    mandate_originals_without_scope: number;
+  };
+}
