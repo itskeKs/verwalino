@@ -1244,3 +1244,28 @@ export interface DsgvoExport {
   };
   retention_bindings: DsgvoBinding[];
 }
+
+
+export interface SourceAdmissionReviewCommand {
+  document_id: string;
+  import_id: string;
+  draft_revision: number;
+  content_sha256: string;
+  reason: string;
+}
+
+export interface PendingSourceAdmissionReview extends Omit<SourceAdmissionReviewCommand, "reason"> {
+  id: string;
+  property_id: string;
+  property_name: string;
+  title: string;
+  original_filename: string;
+}
+
+export interface SourceAdmissionReviewReceipt extends SourceAdmissionReviewCommand {
+  id: string;
+  property_id: string;
+  domain_id: string;
+  reviewed_by: string;
+  created_at: string;
+}

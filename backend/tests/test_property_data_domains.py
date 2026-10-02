@@ -211,6 +211,8 @@ async def test_domain_migration_refuses_evidence_loss_and_roundtrips_empty_confi
                 with Operations.context(MigrationContext.configure(connection)):
                     # Remove later typed FK boundaries inside this rollback-only
                     # historical rehearsal; retain every committed receipt.
+                    connection.execute(text('TRUNCATE property_source_admission_review'))
+                    importlib.import_module('migrations.versions.0052_property_source_admission_review').downgrade()
                     importlib.import_module('migrations.versions.0051_declaration_publication_audience').downgrade()
                     importlib.import_module('migrations.versions.0050_property_source_admission').downgrade()
                     migration.downgrade()

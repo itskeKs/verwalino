@@ -33,7 +33,9 @@ Migration 0050 requires durable attachment-admission evidence for an unbound
 existing-target original, captured under the uploader's live prepare grant at
 attachment. Later grants cannot manufacture historical permission. Revoking the
 uploader's grant leaves admitted sources available to other authorized viewers.
-Legacy sources without that proof need explicit reviewed reconciliation. After explicit
+Migration 0052 supplies separate contemporary reviewed admission for eligible
+known uploaders; it does not reconstruct attachment history. Unknown or bound
+legacy custody remains a classification gate. After explicit
 publication binds the original, its property audience no longer depends on its
 former uploader's membership or grant. Durable admission/remediation is an
 activation prerequisite for historical and team-upload workflows.

@@ -193,6 +193,7 @@ async def test_publication_migration_retains_evidence_and_worker_checks_expanded
             nested=connection.begin_nested()
             try:
                 clear_disposable_source_context(connection.connection.cursor())
+                importlib.import_module('migrations.versions.0052_property_source_admission_review').downgrade()
                 migration.downgrade()
                 assert not await worker.schema_ready()
                 migration.upgrade()

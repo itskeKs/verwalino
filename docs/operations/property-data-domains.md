@@ -129,3 +129,28 @@ domain/grant FK parents. Busy readers or writers cause immediate refusal; quiesc
 traffic before retrying. Populated downgrade refuses to erase proof or digests.
 Worker readiness checks all added import columns before claims. Preserve evidence
 and repair forward rather than dropping guards or widening policies.
+
+## Current review of older unbound originals (0052)
+
+Use **Quellenfreigaben** to inspect an eligible own original, its exact target,
+revision and hash. Open the original, enter a reason and explicitly confirm the
+current disclosure. Eligibility requires known original ownership and current
+read, prepare and approve rights on that target. Sources with uncertain custody,
+multiple links, a bound property, active work or an outstanding lease are excluded.
+A separate review receipt records this decision; it never reconstructs historical
+attachment authority. The original and financial rights are unchanged.
+
+After an unconfirmed response, retry the same frozen command. A confirmed conflict
+requires **Liste neu laden**, a fresh inspection and confirmation. The resulting
+receipt has a stable detail link and remains subject to current source read rights.
+Revoking the original reviewer's grant does not erase the accepted disclosure;
+each viewer independently needs their current grant. Receipt, canonical audit and
+exact source/grant chain are retained. Wrong-target binding and a second import
+link for a reviewed source are rejected.
+
+Migration 0052 uses NOWAIT locks on imports, links, original documents and both
+domain/grant parents. Quiesce relevant traffic before retrying a busy migration.
+Populated downgrade refuses; preserve proof and repair forward. This prepares
+admission without activating general source RLS. Unknown or already-bound legacy
+custody still needs explicit classification before organization activation, and
+universal proof-required binding must be installed with that enforcement.

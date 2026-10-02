@@ -122,6 +122,7 @@ export function PropertyDataDomainsPage() {
   if (session?.role !== "OWNER_ADMIN") return <p className="error-text">Zugriff nur für Inhaber/Admin.</p>;
   return <div className="paged-list scope-setup"><h1>Gemeinsame Gebäudedaten</h1>
     <p>Vorbereitung: Diese Freigaben beschränken den bisherigen Zugriff noch nicht. Die gemeinsame Zugriffskontrolle für Gebäudedaten und Quellen ist noch nicht aktiviert.</p>
+    <p><Link to="/quellenfreigaben">Eigene Originale prüfen und für den Datenbereich freigeben</Link></p>
     <p>Finanzielle Berechtigungen werden separat in den <Link to="/berechtigungen">Abrechnungsbereichen</Link> verwaltet.</p>
     {domainId ? <DomainGrants key={domainId} domainId={domainId} /> : <DomainList />}
   </div>;

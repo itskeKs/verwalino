@@ -3,6 +3,7 @@
  */
 
 import { api, uploadFormData } from "./client";
+import type { SourceAdmissionReviewCommand, SourceAdmissionReviewReceipt } from "./types";
 import type {
   DeadlineItem,
   DsgvoStatus,
@@ -950,3 +951,14 @@ export function requestPersonDeletion(personId: string): Promise<DsgvoStatus> {
 export function anonymizePerson(personId: string): Promise<DsgvoStatus> {
   return api.post<DsgvoStatus>(`/api/dsgvo/persons/${personId}/anonymize`);
 }
+
+
+export const sourceAdmissionReviewApi = {
+  base: "/api/property-source-admission-reviews",
+  get(id: string, signal?: AbortSignal) {
+    return api.get<SourceAdmissionReviewReceipt>(`${this.base}/${id}`, { signal });
+  },
+  review(body: SourceAdmissionReviewCommand, key: string) {
+    return api.post<SourceAdmissionReviewReceipt>(this.base, body, { headers: { "Idempotency-Key": key } });
+  },
+};

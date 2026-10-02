@@ -261,3 +261,47 @@ Task-started browser, fixture, API and Vite processes were stopped afterwards.
 
 Historical reviewed admission, source RLS and complete worker/Q&A/financial/audit/
 export integration remain unfinished; this is a preparation increment, not B1 exit.
+
+## Contemporary source admission review (0052)
+
+At base `9b83f49`, a separate immutable receipt records an explicit present-day
+review of a previously unadmitted original. The known uploader must have current
+read/prepare/approve rights for its exact existing target. Single-link topology,
+quiescence, lease expiry, revision and immutable hash are checked under ACL,
+import and document locks. Database-generated digest/time and canonical audit
+commit atomically. No 0050 historical attachment receipt is fabricated. Current
+viewers still require live grants. Receipt detail is available through current
+receipt RLS; original bytes use authorized ordinary ORM/storage reads.
+
+**86 backend cases passed**, covering this boundary, earlier source/domain
+migration rehearsals, publication and RLS coverage. **22 focused cases passed**
+after adding inter-query pending freshness and concurrent second-link tests.
+Evidence includes direct SQL actor/grant/hash/revision denial, no unauthorized
+storage reads, reader/uploader revocation distinctions, partial-import denial,
+identical concurrent commands, atomic receipt/audit rollback, immutable receipts,
+wrong binding/second-link denial, private proof-helper privileges and NULL denial,
+all five NOWAIT dependencies, populated downgrade refusal and empty round-trip.
+Python 3.13/PostgreSQL 16/app_rw; disposable schema only. Earlier unchanged passing
+cases are reused. Independent review accepted the backend and UI recovery delta.
+
+**Seven frontend cases, lint and production build passed** on the final UI;
+the existing bundle-size advisory remains. Confirmed conflicts require explicit
+list refresh and new source confirmation, which creates a new request key/body.
+Ambiguous responses retain the exact frozen command. The Browser plugin remains
+unavailable; installed Playwright/Chromium tested the actual API on local 18000
+and Vite on 13000. The first browser script used a relative URL with an API request
+context; correcting that test URL enabled the actual flow. Visual inspection led
+to clearer field borders and checkbox/button spacing, then the full browser loop
+and frontend checks passed again.
+
+Browser evidence at 1440×1000 and 390×844 proves actual original-byte access,
+explicit confirmation/reason, no horizontal form overflow (358/358px), server
+commit followed by deliberately lost response, exact key/body retry, and a stable
+receipt surviving navigation/reload. No page exceptions; console errors only
+expected session probes and deliberate aborted response. Captures and compact
+report: `/tmp/hv-reviewed-source-acceptance/`. No real provider was called.
+
+This does not classify unknown custody or already-bound legacy sources. Universal
+proof-required first binding and complete legacy classification are mandatory
+activation gates. Source RLS, workers/Q&A, financial completeness, indirect exports
+and atomic reviewed organization activation remain unfinished; B1 is not complete.
