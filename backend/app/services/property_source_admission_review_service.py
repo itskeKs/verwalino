@@ -1,12 +1,14 @@
 """Checked present-day admission; no implicit historical permission or binding."""
 import json
+import uuid
 from fastapi import HTTPException
-from sqlalchemy import func,select,text,or_
+from itsdangerous import BadData,URLSafeTimedSerializer
+from sqlalchemy import select,text,or_
 from sqlalchemy.exc import DBAPIError
+from app.core.config import settings
 from app.models.property import Property
 from app.models.property_document import PropertyDocument
 from app.models.property_source_admission_review import PropertySourceAdmissionReview
-from app.repositories.pagination import page_rows
 from app.schemas.property_source_admission_review import PendingSourceReviewOut
 from app.services.authorization_service import AuthorizationService
 from app.services.property_document_service import PropertyDocumentService
@@ -14,19 +16,32 @@ from app.services.property_document_service import PropertyDocumentService
 
 class PropertySourceAdmissionReviewService(AuthorizationService):
     async def pending(self,query):
-        rows,cursor=await page_rows(self.session,self.auth,PropertyDocument,PropertyDocument.title,[PropertyDocument.title],query,
-            filters=(func.property_source_review_pending(self.auth.organization_id,PropertyDocument.id),),context='pending-source-review')
+        await self._lock()
+        signer=URLSafeTimedSerializer(settings.session_secret,salt='hv-source-admission-page-v1')
+        scope=[str(self.auth.organization_id),str(self.auth.user_id),query.q]
+        after=None
+        if query.cursor:
+            try:
+                payload=signer.loads(query.cursor,max_age=86400)
+                if not isinstance(payload,dict) or payload.get('scope')!=scope: raise ValueError('Cursor mismatch')
+                after=uuid.UUID(payload['id'])
+            except (BadData,ValueError,TypeError,KeyError):
+                raise HTTPException(422,'Invalid or expired page cursor') from None
+        rows=(await self.session.execute(text('SELECT * FROM property_source_admission_candidates(:org,:after,:limit,:q)'),
+            {'org':self.auth.organization_id,'after':after,'limit':query.limit+1,'q':query.q})).mappings().all()
+        visible=rows[:query.limit]
+        cursor=signer.dumps({'scope':scope,'id':str(visible[-1]['document_id'])}) if len(rows)>query.limit else None
         items=[]
-        for document in rows:
-            context=await self._context(document.id)
+        for document in visible:
+            context=await self._context(document.document_id)
             if context is None or not await self.session.scalar(
                 text('SELECT property_source_review_pending(:org,:document)'),
-                {'org':self.auth.organization_id,'document':document.id}):
+                {'org':self.auth.organization_id,'document':document.document_id}):
                 continue  # Recheck pending state after the page query.
             name=await self.session.scalar(select(Property.name).where(Property.organization_id==self.auth.organization_id,Property.id==context.property_id))
             can_preview=await self.session.scalar(text("SELECT property_source_export_access(:org,:document,'ADMISSION_REVIEW')"),
-                {'org':self.auth.organization_id,'document':document.id})
-            items.append(PendingSourceReviewOut(id=document.id,document_id=document.id,import_id=context.import_id,
+                {'org':self.auth.organization_id,'document':document.document_id})
+            items.append(PendingSourceReviewOut(id=document.document_id,document_id=document.document_id,import_id=context.import_id,
                 property_id=context.property_id,property_name=name or 'Unavailable property',draft_revision=context.draft_revision,
                 title=document.title,original_filename=document.original_filename,content_sha256=document.content_sha256,can_preview=can_preview))
         return items,cursor
@@ -45,8 +60,9 @@ class PropertySourceAdmissionReviewService(AuthorizationService):
         if not await self.session.scalar(text("SELECT property_source_export_access(:org,:document,'ADMISSION_REVIEW')"),
             {'org':self.auth.organization_id,'document':document_id}):
             raise HTTPException(404,'Source review not accessible')
-        document=await self.session.scalar(select(PropertyDocument).where(
-            PropertyDocument.organization_id==self.auth.organization_id,PropertyDocument.id==document_id))
+        document=await self.session.scalar(select(PropertyDocument).from_statement(text(
+            "SELECT * FROM property_source_review_original(:org,:document,'ADMISSION_REVIEW')")),
+            {'org':self.auth.organization_id,'document':document_id})
         if document is None:
             raise HTTPException(404,'Source review not accessible')
         return PropertyDocumentService._read_verified_content(document)
@@ -86,8 +102,8 @@ class PropertySourceAdmissionReviewService(AuthorizationService):
             return await self._replay(previous,key,digest)
         if context is None:
             raise HTTPException(404,'Source review not accessible')
-        document=await self.session.scalar(select(PropertyDocument).where(PropertyDocument.organization_id==self.auth.organization_id,
-            PropertyDocument.id==body.document_id))
+        document=(await self.session.execute(text('SELECT * FROM property_source_admission_metadata(:org,:document)'),
+            {'org':self.auth.organization_id,'document':body.document_id})).mappings().one_or_none()
         if document is None:
             raise HTTPException(404,'Source review not accessible')
         if context.import_id!=body.import_id or context.draft_revision!=body.draft_revision or document.content_sha256!=body.content_sha256:

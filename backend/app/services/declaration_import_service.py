@@ -52,12 +52,21 @@ class DeclarationImportService:
             raise HTTPException(status_code=422, detail="target_property_id is required")
         if mode == "NEW_PROPERTY" and target_property_id is not None:
             raise HTTPException(status_code=422, detail="target_property_id is not allowed")
+        await self._imports.lock_acl()
+        draft_id = uuid.uuid4()
+        if not await self._session.scalar(text("SELECT property_import_row_access(:org,jsonb_build_object("
+                "'id',CAST(:id AS uuid),'organization_id',CAST(:org AS uuid),'mode',CAST(:mode AS text),"
+                "'initiated_by',CAST(:actor AS uuid),'status','DRAFT','target_property_id',CAST(:target AS uuid)),"
+                "'prepare',true)"),
+                {'org': self._org_id, 'id': draft_id, 'mode': mode, 'actor': self._user_id, 'target': target_property_id}):
+            raise HTTPException(status_code=404, detail="Declaration import not accessible")
         if target_property_id is not None and await PropertyRepository(
             self._session, self._org_id
         ).get_by_id(target_property_id) is None:
             raise HTTPException(status_code=404, detail="Property not found")
         return await self._imports.create(
             DeclarationImport(
+                id=draft_id,
                 organization_id=self._org_id,
                 mode=mode,
                 target_property_id=target_property_id,

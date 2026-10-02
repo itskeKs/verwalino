@@ -51,8 +51,10 @@ async def revoke(ids, change='role'):
     await mutate(text(statement), ids)
 
 
-async def inspect_job(lease):
+async def inspect_job(lease,actor=None):
     async with get_tenant_session(lease.organization_id) as session:
+        if actor is not None:
+            await session.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(actor)})
         item = (await session.execute(text('SELECT * FROM declaration_import WHERE id=:id'), {'id': lease.import_id})).mappings().one()
         candidates = await session.scalar(text('SELECT count(*) FROM declaration_candidate WHERE import_id=:id'), {'id': lease.import_id})
         runs = (await session.execute(text('SELECT status,error_code FROM declaration_extraction_run WHERE import_id=:id'), {'id': lease.import_id})).all()

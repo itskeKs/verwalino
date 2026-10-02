@@ -55,7 +55,9 @@ class PropertySourceClassificationService(AuthorizationService):
         if not await self.session.scalar(text("SELECT property_source_export_access(:org,:document,'CLASSIFICATION_REVIEW')"),
             {'org':self.auth.organization_id,'document':document_id}):
             raise HTTPException(404,'Source classification not accessible')
-        document=await self.session.scalar(select(PropertyDocument).where(PropertyDocument.organization_id==self.auth.organization_id,PropertyDocument.id==document_id))
+        document=await self.session.scalar(select(PropertyDocument).from_statement(text(
+            "SELECT * FROM property_source_review_original(:org,:document,'CLASSIFICATION_REVIEW')")),
+            {'org':self.auth.organization_id,'document':document_id})
         if document is None: raise HTTPException(404,'Source classification not accessible')
         return PropertyDocumentService._read_verified_content(document)
 

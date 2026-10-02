@@ -668,3 +668,49 @@ compatibility,accepted,quarantine}.log`.
 Original/import row RLS, purpose-bound review exceptions, indirect disclosure and
 reviewed activation coverage remain open. Source activation stays disabled; B1
 and the full M-A–M-G implementation are not complete.
+
+## Ordinary source rows and explicit review channels (0063)
+
+At base `1008290`, four expected red tests reproduced ordinary cross-creator
+original/import visibility, forged creators, and review exceptions sharing the
+ordinary row channel. Eight restrictive policies now cover source CRUD; actual
+row metadata supports first inserts/returning and preserves publication ordering.
+Separate bounded metadata and purpose-allowlisted original functions keep legacy
+admission/classification usable without broadening ordinary reads. The first four
+focused cases passed. The initial integration passed 114/122; eight historical
+assertions were updated for actor-scoped reads, RLS-rejected zero-row updates and
+the new migration dependency. The repaired boundary run passed 45 cases.
+
+Independent review found an unlinked-original claim attack: a preparer could link
+another creator's hidden original into their own draft by known UUID. A new raw
+SQL regression first failed to reject that link. The repair checks prepare for
+both parent and original under ACL → import → original locks, retaining existing
+single-link guards. A second expected red reproduced prepare-only forgery of
+APPLYING approval metadata; that context now requires approve. The reviewer
+accepted both repairs and the bounded milestone.
+
+An intermediate validation attempt failed at test setup because the disposable
+DB held the earlier uncommitted 0063 schema without the newly added trigger. The
+actual new guard was installed in that disposable database before the harness
+performed its clean downgrade/upgrade. No production migration or source records
+were changed. The following expanded run passed **123 cases**, covering originals,
+derived records, binding, import API and queue-principal behavior. Logs:
+`/tmp/hv-original-{source-red,source-first,source-integration,source-repaired,
+link-red,approval-red,source-reviewed,source-consumers}.log`.
+
+Database-enforced lifecycle/progress/lease transition hardening is an explicit
+pre-activation follow-up; existing queue actors and application fencing remain.
+Indirect privacy/audit/report disclosure and reviewed legacy coverage are still
+open. Source activation remains false. B1 and the full implementation are unfinished.
+
+The consumer run passed **85 cases** across master data, stored financial
+outputs, Q&A, bound sources, RLS coverage and explicit publication. Two historical
+checks needed adaptation: quarantined worker cancellation is now inspected after
+leaving synthetic strict mode while asserting the strict row remains hidden, and
+the 0051 rehearsal unwinds 0063's policy dependency before removing publication
+columns. These changes do not alter production authority. No frontend code changed;
+existing UI rendering checks were reused, with new review contracts verified at API
+and database boundaries.
+The two adapted consumer cases passed in the final focused run
+(`/tmp/hv-original-source-last-repairs.log`). All 0063 checks now have passing
+applicable evidence; no unresolved review blocker remains within its stated scope.

@@ -32,7 +32,7 @@ async def applied(seed,ids):
 async def bind(seed,ids,actor=None):
     async with get_tenant_session(seed['org_a_id']) as db:
         await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(actor or seed['user_a_admin_id'])})
-        await db.execute(text('UPDATE property_document SET property_id=:property WHERE id=:document'),ids)
+        return (await db.execute(text('UPDATE property_document SET property_id=:property WHERE id=:document'),ids)).rowcount
 
 
 @pytest.mark.parametrize('problem',['no_proof','no_approve','paused','not_applied'])
@@ -42,10 +42,16 @@ async def test_strict_binding_rejects_missing_proof_right_or_active_state(client
     if problem!='not_applied': await applied(seed_data,ids)
     async with synthetic_enforcement(seed_data):
         if problem=='paused': await change_mode(seed_data,'PAUSED')
-        with pytest.raises(DBAPIError,match='Original binding requires'):
-            await bind(seed_data,ids)
-        async with get_tenant_session(seed_data['org_a_id']) as db:
-            assert await db.scalar(text('SELECT property_id FROM property_document WHERE id=:document'),ids) is None
+        if problem in ('no_proof','paused'):
+            # Ordinary RLS now rejects the update before the binding trigger.
+            assert await bind(seed_data,ids)==0
+        else:
+            with pytest.raises(DBAPIError,match='Original binding requires'):
+                await bind(seed_data,ids)
+    # Compatibility inspection proves the original was retained and unbound,
+    # independently of strict visibility filtering.
+    async with get_tenant_session(seed_data['org_a_id']) as db:
+        assert (await db.execute(text('SELECT property_id FROM property_document WHERE id=:document'),ids)).one().property_id is None
 
 
 @pytest.mark.parametrize('proof',['attachment','review'])
@@ -62,6 +68,7 @@ async def test_strict_binding_accepts_exact_proof_and_audits_once(client_a_admin
         await bind(seed_data,ids)
         await bind(seed_data,ids)
         async with get_tenant_session(seed_data['org_a_id']) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(seed_data['user_a_admin_id'])})
             assert await db.scalar(text('SELECT property_id FROM property_document WHERE id=:document'),ids)==ids['property']
             audit=(await db.execute(text("SELECT actor_user_id,payload_diff FROM audit_event WHERE entity_id=:document AND action='property_document.binding_approved'"),ids)).one()
             assert audit.actor_user_id==seed_data['user_a_admin_id']
@@ -125,6 +132,7 @@ async def test_binding_migration_refuses_strict_rollback_and_roundtrips_preparat
                 nested=db.begin_nested()
                 try:
                     db.execute(text('TRUNCATE property_source_security,property_source_classification,property_creation_receipt'))
+                    importlib.import_module('migrations.versions.0063_original_source_access').downgrade()
                     importlib.import_module('migrations.versions.0062_derived_source_access').downgrade()
                     importlib.import_module('migrations.versions.0061_property_master_access').downgrade()
                     importlib.import_module('migrations.versions.0059_financial_source_input').downgrade()
@@ -182,7 +190,7 @@ async def test_incorrect_binding_definer_owner_cannot_hide_strict_state(client_a
                     db.execute(text('ALTER FUNCTION guard_strict_property_source_binding() OWNER TO app_rw'))
                     db.execute(text('SET LOCAL ROLE app_rw'))
                     db.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
-                        {'org':str(seed_data['org_a_id']),'actor':str(seed_data['user_a_clerk_id'])})
+                        {'org':str(seed_data['org_a_id']),'actor':str(seed_data['user_a_admin_id'])})
                     with pytest.raises(DBAPIError,match='row-level security'):
                         with db.begin_nested(): db.execute(text('UPDATE property_document SET property_id=:property WHERE id=:document'),ids)
                 finally: nested.rollback()

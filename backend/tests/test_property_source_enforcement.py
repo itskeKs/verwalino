@@ -71,6 +71,7 @@ async def test_enforced_queue_checks_creator_and_current_authority_before_replay
             assert (await owner.post(f'/api/declaration-imports/{job}/start',headers=key)).status_code==404
         async with get_tenant_session(ids['org']) as db:
             assert await DeclarationImportRepository(db,ids['org']).claim_next('source-test',datetime.now(timezone.utc),120) is None
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(ids['actor'])})
             row=(await db.execute(text('SELECT status,error_code FROM declaration_import WHERE id=:id'),{'id':uuid.UUID(job)})).one()
             assert row==('CANCELLED','JOB_PERMISSION_CHANGED')
 
@@ -273,7 +274,7 @@ async def test_clerk_state_lookup_and_queue_never_fall_back_to_preparation(scope
             await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(ids['actor'])})
             assert await db.scalar(text('SELECT property_source_security_mode(:org)'),ids)=='PAUSED'
             assert isinstance(await DeclarationImportRepository(db,ids['org']).heartbeat(lease,datetime.now(timezone.utc),120),DeclarationPrincipalDenied)
-        item,_,_,audits=await inspect_job(lease)
+        item,_,_,audits=await inspect_job(lease,actor=ids['actor'])
         assert item['status']=='CANCELLED' and audits==1
 
 

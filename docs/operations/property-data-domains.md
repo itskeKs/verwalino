@@ -346,3 +346,19 @@ replays check approve. Metadata-only row contexts support first inserts without
 widening access. All sixteen migration dependencies use NOWAIT, and strict state
 refuses downgrade. Original/import row policies and purpose-specific review paths
 remain outstanding; source activation is still unavailable.
+
+## Ordinary originals and imports (0063)
+
+Strict ordinary rows now require current custody/destination authority for read
+and prepare, with approve for applied-import changes and first original binding.
+New drafts must identify the current creator and begin unapplied. PAUSED retains
+reads and rejects original/import effects. The API checks creation before ORM
+writes, and statement ACL locks precede row locks.
+
+Legacy review uses separate bounded metadata and purpose-only original readers;
+it never adds an exception to ordinary source SELECT. Admission pages use signed
+actor/query cursors and stable UUID order. Review previews retain explicit target
+export, exact custody and quarantine checks, and verify stored bytes once. All six
+migration dependencies use NOWAIT, strict state refuses rollback, and compatibility
+round trips preserve sources. Indirect disclosure and reviewed activation coverage
+remain open; source activation is still unavailable.

@@ -265,6 +265,11 @@ async def test_worker_cancels_queued_bound_quarantined_source_before_load(client
     async with synthetic_enforcement(seed_data):
         async with get_tenant_session(seed_data['org_a_id']) as db:
             assert await DeclarationImportRepository(db, seed_data['org_a_id']).claim_next('bound-quarantine', datetime.now(timezone.utc), 120) is None
-            row = (await db.execute(text('SELECT status,error_code FROM declaration_import WHERE id=:job'), ids)).one()
-            assert row == ('CANCELLED','JOB_PERMISSION_CHANGED')
-            assert await db.scalar(text('SELECT count(*) FROM declaration_extraction_run WHERE import_id=:job'), ids) == 0
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor':str(seed_data['user_a_admin_id'])})
+            assert await db.scalar(text('SELECT count(*) FROM declaration_import WHERE id=:job'), ids) == 0
+    # Inspect retained cancellation after leaving the synthetic strict state;
+    # hidden ordinary rows cannot prove whether the worker durably cancelled.
+    async with get_tenant_session(seed_data['org_a_id']) as db:
+        row = (await db.execute(text('SELECT status,error_code FROM declaration_import WHERE id=:job'), ids)).one()
+        assert row == ('CANCELLED','JOB_PERMISSION_CHANGED')
+        assert await db.scalar(text('SELECT count(*) FROM declaration_extraction_run WHERE import_id=:job'), ids) == 0
