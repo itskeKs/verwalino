@@ -262,6 +262,7 @@ async def test_intake_migration_refuses_data_and_preserves_function_identity(mig
             try:
                 db.execute(text('TRUNCATE intake_batch,intake_upload_admission CASCADE'))
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
+                importlib.import_module('migrations.versions.0094_intake_inbox_status').downgrade()
                 migration.downgrade()
                 assert db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))==oid
                 migration.upgrade()
@@ -337,3 +338,25 @@ async def test_coverage_projects_actual_intake_read_and_export(migrator_session,
         source=next(item for item in entries if item['resource_id']==receipt['original_id'])
         assert source['references']['strict_audience']==[{'user_id':str(ids['clerk']),'capabilities':['read','export'] if exportable else ['read']}]
         assert (await api.get('/api/intake-batches/originals/'+receipt['original_id']+'/content')).status_code==(200 if exportable else 404)
+
+
+async def test_inbox_headers_and_actions_use_current_private_authority(migrator_session,scope_seed,store,client_b_admin):
+    from app.core.db import get_worker_session_factory
+    from app.core.intake_inspection import result
+    from app.workers.workflow import process_once
+    ids=await fixture(migrator_session,scope_seed);data=pdf_bytes()
+    async with client(ids) as api,client(ids,'actor') as admin:
+        first=await create(api,data)
+        second,receipt=await receive(api,data)
+        response=await api.get('/api/intake-batches',params={'limit':1})
+        assert response.status_code==200,response.text
+        first_page=response.json();assert first_page['items'][0]['id']==second['id']
+        next_page=(await api.get('/api/intake-batches',params={'limit':1,'cursor':first_page['next_cursor']})).json()
+        assert next_page['items'][0]['id']==first['id'] and next_page['next_cursor'] is None
+        assert (await admin.get('/api/intake-batches')).json()['items']==[]
+        assert (await client_b_admin.get('/api/intake-batches',params={'cursor':first_page['next_cursor']})).status_code==422
+        waiting=(await api.get('/api/intake-batches/'+first['id'])).json()['items'][0]
+        assert waiting['can_upload'] and not waiting['can_export'] and not waiting['can_retry']
+        assert await process_once(get_worker_session_factory(),ids['org'],inspector=lambda data,mime:result(data,'blocked','scanner_unavailable',mime=mime))
+        blocked=(await api.get('/api/intake-batches/'+second['id'])).json()['items'][0]
+        assert blocked['can_retry'] and not blocked['can_upload'] and not blocked['can_export']

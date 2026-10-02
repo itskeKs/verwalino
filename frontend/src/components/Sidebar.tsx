@@ -73,6 +73,7 @@ const GROUPS: NavGroup[] = [
     items: [
       { to: "/kosten", label: "Kostenpositionen", icon: ReceiptText },
       { to: "/belege", label: "Belege", icon: FileText },
+      { to: "/posteingang", label: "Posteingang", icon: FileText },
     ],
   },
   {

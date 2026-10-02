@@ -1,4 +1,5 @@
 """Atomic intake commands; the trusted admission attests freshly received bytes."""
+from datetime import datetime
 import hashlib
 import json
 import uuid
@@ -28,6 +29,28 @@ class IntakeService:
     async def create(self,body,key):
         return await self.call('SELECT create_intake_batch(:org,:request,:scope,CAST(:items AS jsonb))',request=key,
             scope=body.scope_hint_id,items=json.dumps([item.model_dump() for item in body.items]))
+
+    async def headers(self,limit,cursor):
+        signer=URLSafeTimedSerializer(settings.session_secret,salt='hv-intake-headers-v1')
+        context=[str(self.auth.organization_id),str(self.auth.user_id)]
+        before_time=before_id=None
+        if cursor:
+            try:
+                payload=signer.loads(cursor,max_age=86400)
+                if not isinstance(payload,dict) or payload.get('context')!=context:
+                    raise ValueError()
+                before_time=datetime.fromisoformat(payload['time'])
+                if before_time.tzinfo is None:
+                    raise ValueError()
+                before_id=uuid.UUID(payload['id'])
+            except (BadData,ValueError,TypeError,KeyError):
+                raise HTTPException(422,'Invalid or expired inbox cursor') from None
+        rows=await self.call('SELECT intake_batch_headers(:org,:before_time,:before_id,:take)',before_time=before_time,before_id=before_id,take=limit)
+        cursor=None
+        if len(rows)>limit:
+            rows=rows[:limit];last=rows[-1]
+            cursor=signer.dumps({'context':context,'time':last['created_at'],'id':last['id']})
+        return {'items':rows,'next_cursor':cursor}
 
     async def status(self,batch,limit,cursor):
         signer=URLSafeTimedSerializer(settings.session_secret,salt='hv-intake-page-v1')

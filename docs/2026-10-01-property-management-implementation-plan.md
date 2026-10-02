@@ -371,8 +371,11 @@ Local B2 progress (2026-10-02): migration 0092 adds the verified typed original
 registry and read-only metadata API. See `2026-10-02-document-registry-foundation.md`.
 Migration 0093 now adds the locally verified backend upload/quarantine/inspection
 path, private manifests, fenced attempts, explicit retry and transactional outbox
-records; see `2026-10-03-intake-quarantine-delivery.md`. Logical children, extraction
-evidence/adapters, outbox delivery and inbox UI remain outstanding. Real scanner
+records; see `2026-10-03-intake-quarantine-delivery.md`. Migration 0094 adds private
+inbox headers and live action availability; the inbox UI now supports bounded
+uploads, interrupted-transfer recovery, reconnect and explicit retry. See
+`2026-10-03-intake-inbox-delivery.md`. Logical children, extraction
+evidence/adapters and outbox delivery remain outstanding. Real scanner
 qualification is still unavailable locally; this does not accept B2.
 
 **B3 — Assignment, duplicates, splits and shared exceptions.** P1.1 after B2.

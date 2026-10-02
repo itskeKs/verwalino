@@ -17,6 +17,12 @@ async def create(body:IntakeBatchCreate,idempotency_key:uuid.UUID=Header(),
     return await IntakeService(db,auth).create(body,idempotency_key)
 
 
+@router.get('')
+async def headers(limit:int=Query(50,ge=1,le=200),cursor:str|None=Query(None,max_length=4096),
+                  auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_member_db)):
+    return await IntakeService(db,auth).headers(limit,cursor)
+
+
 @router.get('/{batch_id}')
 async def status(batch_id:uuid.UUID,limit:int=Query(50,ge=1,le=200),cursor:str|None=Query(None,max_length=4096),
                  auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_member_db)):
