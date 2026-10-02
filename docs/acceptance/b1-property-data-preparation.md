@@ -125,3 +125,42 @@ worker readiness and two-connection reader/writer lock contention. The unchanged
 passing cases were reused. The initial duplicate-FK join ambiguity and title-based
 fixture lookup were repaired before the 105-case pass. Independent read-only
 review accepted the final lock repair. No UI or live-provider change/run.
+
+## Prepared common source-audience resolver (0049)
+
+The typed `property_source_access` function returns a boolean for the authenticated
+transaction actor. It is not yet attached to source policies. Private explicit-
+actor helpers are unavailable to `app_rw` and PUBLIC; future queue integration may
+use them only from a trusted definer with the immutable receipt actor. The existing
+domain helper delegates to the same live principal/grant logic without changing
+its public signature or OID.
+
+Resolution covers property/unit, original/import/review/run/pass/queue rows,
+approved facts/references/assignments/rules/relations and Q&A accounting. Creator
+ownership permits unassigned intake and preparation, never publication. Applied
+or existing-target imports require explicit domain capabilities. Import evaluation
+uses attached originals' local metadata, so document delegation cannot recurse
+through an import/document cycle. Mixed destinations, multiple import links and
+unknown/mismatching unbound creators fail closed. Derived provenance checks its
+source import's destination as well as original access. Invalid polymorphic fact
+subjects also fail closed. No administrator or financial grant implies access.
+
+Initial missing-resolver coverage failed before implementation. **18 initial
+resolver/domain cases passed**, then **11 expanded resolver cases passed** on
+PostgreSQL 16/Python 3.13 through `app_rw`. These cover creator and target audiences,
+live role/deactivation, revoked grants across source/derived/ledger types,
+unsupported topology, foreign/unknown resources, private-helper privileges and a
+populated migration round-trip preserving explicit domain grants. A test query
+needed an explicit OID cast to select PostgreSQL's privilege-check overload; no
+production repair resulted from that fixture failure. The valid existing domain
+API evidence is reused. No source-policy activation, worker/Q&A domain adaptation,
+publication bootstrap, indirect-export closure or complete B1 claim is made.
+
+Independent review found that a known uploader alone did not prove admission to
+an existing target audience. The resolver now conservatively requires that
+uploader's live target `prepare` capability while the original is unbound. The
+new regression proves denial without that grant, admission after an explicit
+grant, denial on revocation and stable destination access after reviewed binding.
+**28 final resolver/domain cases passed** after the repair; independent review
+accepted it. Durable admission/remediation remains an activation prerequisite,
+so this temporary conservative rule is not represented as a finished team workflow.

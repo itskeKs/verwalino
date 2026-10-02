@@ -75,3 +75,18 @@ do not create speculative links to make the preflight pass. Original data and
 unknown ownership are unchanged by a failed migration. Populated downgrade refuses
 to remove the strengthened constraints; forward repair remains the rollback path.
 These edges do not grant source access or activate domain enforcement.
+
+Migration 0049 prepares a common typed source-access resolver without attaching it
+to any source policy. Existing reads remain in compatibility mode. Unassigned
+creator ownership never authorizes publication; property-bound access requires an
+explicit live domain grant. Mixed-property originals, multi-import originals and
+unknown unbound creators are denied by the resolver and must be reconciled before
+activation. Its internal actor-parameter functions are not executable by the
+application role. There is no supported actor-impersonation or policy-toggle API.
+The integration and atomic publication prerequisites are recorded in the
+[property-source resolution design](../2026-10-02-property-source-access-resolution.md).
+For an existing-target draft whose original is still unbound, the prepared resolver
+also requires the uploader's live target prepare grant. Losing it hides that draft
+until reviewed admission is resolved. This is a conservative safeguard while
+permanent source-admission evidence is unfinished. Once the reviewed original is
+bound to its property, the former uploader's continued grant is not required.
