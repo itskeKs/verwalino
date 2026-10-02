@@ -218,38 +218,46 @@ async def test_plan_correction_waits_until_weg_snapshot_is_frozen(client_a_admin
     from tests.test_m4_weg import _create_and_finalize_plan
     from tests.financial_coverage_helpers import weg_values
     from app.repositories.coverage_declaration_repo import CoverageDeclarationRepository
-    from app.repositories.economic_plan_repo import EconomicPlanRepository
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from tests.conftest import MIGRATOR_URL
     plan_id = await _create_and_finalize_plan(client_a_admin, m4_seed)
     run = await client_a_admin.post("/api/weg-settlements", json={"property_id": m4_seed["property"],
         "economic_plan_id": plan_id, "period_start": "2025-01-01", "period_end": "2025-12-31"})
     run_id = run.json()["id"]
     values = weg_values(m4_seed)
     assert (await attest(client_a_admin, "settlement", run_id, values)).status_code == 201
-    locked, release, correction_entered = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    locked, release = asyncio.Event(), asyncio.Event()
     original_revision = CoverageDeclarationRepository.source_revision
-    original_create = EconomicPlanRepository.create
 
     async def paused_revision(self, property_id):
         locked.set()
         await release.wait()
         return await original_revision(self, property_id)
 
-    async def signal_create(self, entity):
-        correction_entered.set()
-        return await original_create(self, entity)
-
     monkeypatch.setattr(CoverageDeclarationRepository, "source_revision", paused_revision)
-    monkeypatch.setattr(EconomicPlanRepository, "create", signal_create)
     final_task = asyncio.create_task(client_a_admin.post(f"/api/weg-settlements/{run_id}/finalize", json=values))
     await asyncio.wait_for(locked.wait(), 5)
     correction_task = asyncio.create_task(client_a_admin.post(f"/api/economic-plans/{plan_id}/correction"))
+    observer_engine = create_async_engine(MIGRATOR_URL)
     try:
-        await asyncio.wait_for(correction_entered.wait(), 5)
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(asyncio.shield(correction_task), 0.1)
+        # Scope integration locks the financial inputs before creating a
+        # correction row. Observe that real wait rather than an unreachable
+        # repository-create hook after the lock.
+        async with observer_engine.connect() as observer:
+            blocked = False
+            for _ in range(300):
+                await observer.execute(text('SELECT pg_stat_clear_snapshot()'))
+                blocked = await observer.scalar(text("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event='advisory' AND query LIKE 'SELECT pg_advisory_xact_lock(%')"))
+                if blocked: break
+                await asyncio.sleep(.01)
+            assert blocked and not correction_task.done()
     finally:
         release.set()
-    final, correction = await asyncio.wait_for(asyncio.gather(final_task, correction_task), 10)
+        try:
+            final, correction = await asyncio.wait_for(asyncio.gather(final_task, correction_task), 10)
+        finally:
+            await observer_engine.dispose()
     assert final.status_code == 200, final.text
     assert correction.status_code == 201, correction.text
     frozen_hash = final.json()["snapshot_sha256"]

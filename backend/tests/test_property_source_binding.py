@@ -124,6 +124,7 @@ async def test_binding_migration_refuses_strict_rollback_and_roundtrips_preparat
                 nested=db.begin_nested()
                 try:
                     db.execute(text('TRUNCATE property_source_security,property_source_classification'))
+                    importlib.import_module('migrations.versions.0059_financial_source_input').downgrade()
                     importlib.import_module('migrations.versions.0056_property_source_classification').downgrade()
                     migration.downgrade()
                     assert db.scalar(text("SELECT to_regprocedure('guard_strict_property_source_binding()')")) is None

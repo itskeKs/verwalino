@@ -94,6 +94,9 @@ class FinancialScopeService:
         kind = subject.__tablename__
         if kind not in {'bank_account', 'payment', 'cost_entry', 'settlement_run', 'economic_plan'}:
             raise ValueError('Unknown financial subject')
+        if computation and not await self.session.scalar(text('SELECT property_financial_source_access(:org,:property)'),
+                {'org': self.org_id, 'property': subject.property_id}):
+            raise HTTPException(404, 'Complete property sources not accessible')
         scope_id = await self.session.scalar(select(AccountingScopeBinding.scope_id).where(
             AccountingScopeBinding.organization_id == self.org_id,
             getattr(AccountingScopeBinding, kind + '_id') == subject.id))

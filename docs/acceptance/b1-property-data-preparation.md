@@ -516,3 +516,42 @@ Independent review found no actionable export or purpose-bypass issue. Logs are
 The prior desktop/mobile layout evidence remains valid; this increment changes a
 link's availability and has dedicated rendering coverage rather than a new browser
 layout acceptance claim. Source CRUD/RLS and full activation closure remain open.
+
+## Complete financial source input (0059)
+
+At base `bb1b2f7`, **two expected red cases** demonstrated a rental calculation
+without current source authority and a plan calculation ignoring an RLS-hidden
+unproven original. Strict calculation/attestation entry now requires the complete
+property source graph plus units before ordinary input queries. Five database
+output/coverage tables also guard raw snapshot, line and attestation effects.
+Current financial scope authority remains independently required.
+
+The initial run passed 16 cases before an existing concurrency test timed out: it
+expected correction creation to begin before the financial lock, but earlier scope
+integration takes that lock first. Its failed hook left background requests active;
+the task-owned pytest process was stopped. The repaired test observes the actual
+PostgreSQL advisory wait and always releases/awaits both requests. The resulting
+**39-case boundary run passed**. Initial expanded cases exposed shared module seed
+properties retaining source grants; explicit disposable cleanup fixed that test
+isolation. **Six expanded source cases passed**.
+
+Independent review found a raw cross-property coverage bypass: a declaration could
+refer to subject A while supplying source-authorized property B. The trigger now
+derives both source targets from the actual parent, rejects a mismatching declared
+property and checks both audiences on computed draft reparenting. Dedicated raw SQL
+regressions cover both settlement and plan. Computed parent deletion requires the
+source gate; only a blank draft retains the early return. The repair was accepted
+by independent review.
+
+The final **99-case run passed**, covering the new source suite, financial input
+policy, M3 rental and M4 WEG/plan/asset flows, and original-binding rehearsals. Cases
+include all four financial families succeeding after explicit read grants, denial
+and revocation before writes, strict pause, hidden original completeness, direct
+snapshot/line/coverage write denial, cross-property forgery, ACL waiting before a
+parent row lock, eight NOWAIT dependencies and strict rollback refusal/roundtrip.
+No UI or engine arithmetic changed. Logs: `/tmp/hv-financial-source-{red,first,
+boundary,focused,repair,final}.log`.
+
+The preflight conservatively requires the whole property-source graph. Source
+CRUD/RLS, complete copied-snapshot and report/privacy/audit disclosure handling,
+and reviewed activation coverage still gate B1 completion.

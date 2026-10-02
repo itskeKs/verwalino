@@ -278,3 +278,19 @@ export is unavailable. PREPARATION retains existing preview compatibility. All
 successful paths still read storage once, verify length and hash, and return those
 same bytes. The ACL lock remains held during that bounded read. Migration rollback
 refuses strict state; no activation capability is added.
+
+## Financial calculation input (0059)
+
+Strict calculations and coverage attestations require read access to the complete
+property-source graph independently of financial scope grants. An unproven or
+quarantined expected original blocks calculation even when RLS hides it. This is a
+conservative property-wide check, including historical sources. It neither calls
+Q&A providers nor depends on their budget policy. Pausing source effects also stops
+these calculations. Existing compatibility behavior is retained in PREPARATION.
+
+The database guards calculation snapshots, result lines and coverage declarations
+as well as the service preflight. Coverage authority derives from the referenced
+settlement/plan; its declared property must match. Computed draft reparenting checks
+both audiences. Eight migration dependencies use NOWAIT; strict state refuses
+rollback. Current stored-result, report and privacy disclosure closure remains a
+separate prerequisite, and source activation remains unavailable.
