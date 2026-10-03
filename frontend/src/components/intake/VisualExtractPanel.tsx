@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
 import type { LogicalDocument } from '../../api/intake';
 import { visualExtractApi, type ExtractCommand, type VisualExtract } from '../../api/visualExtracts';
+import { VisualDisclosurePanel } from './VisualDisclosurePanel';
 
 type Props = { documents: LogicalDocument[]; partitionId: string | null; memberIds: string[];
   canRead: boolean; canGenerate: boolean; disabled: boolean; parentGeneration: number };
@@ -22,6 +23,7 @@ export function VisualExtractPanel({ documents, partitionId, memberIds, canRead,
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<VisualExtract | null>(null);
   const [accessDenied, setAccessDenied] = useState(false);
+  const [disclosure, setDisclosure] = useState<VisualExtract | null>(null), [disclosurePending, setDisclosurePending] = useState(false);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => { setSaved(null); }, [parentGeneration, canRead]);
@@ -43,7 +45,7 @@ export function VisualExtractPanel({ documents, partitionId, memberIds, canRead,
   const selected = documents.find(row => row.id === logical);
   const supported = !!selected && selected.page_start !== null && selected.page_end !== null && selected.page_end - selected.page_start + 1 <= 20;
   const valid = supported && !!partitionId && memberIds.includes(logical) && !!reason.trim();
-  const blocked = disabled || sending;
+  const blocked = disabled || sending || disclosurePending;
   async function create() {
     if (blocked || !canRead || accessDenied || !canGenerate || (!pending && !valid)) return;
     const request = pending ?? { logical, body: { partition_revision_id: partitionId!, reason: reason.trim() }, key: crypto.randomUUID() };
@@ -62,11 +64,11 @@ export function VisualExtractPanel({ documents, partitionId, memberIds, canRead,
   }
   return <section className="space-y-3 border-t pt-4" aria-label="Private Seitenauszüge">
     <h3>Privaten Seitenauszug vorbereiten</h3>
-    <p>Der Auszug enthält sichtbare Seiten als Bilder. Suchtext, eingebettete Rechnungsdaten und elektronische Signaturen werden nicht übernommen. Er bleibt privat; eine Weitergabe ist hier noch nicht freigegeben.</p>
+    <p>Der Auszug enthält sichtbare Seiten als Bilder. Suchtext, eingebettete Rechnungsdaten und elektronische Signaturen werden nicht übernommen. Der erzeugte Auszug bleibt zunächst privat. Eine Freigabe für einen Zielbereich erfordert eine separate Sichtprüfung.</p>
     <fieldset disabled={blocked || !!pending || !canRead || accessDenied} className="space-y-3">
       <label className="block" htmlFor={selectionId}>Beleg für den Auszug</label>
         <select id={selectionId} className="w-full rounded-md border p-2" value={logical} onChange={event => {
-          setLogical(event.target.value); setReason(''); setSaved(null); setError(null); setItems([]); setCursor(null); setNext(null);
+          setLogical(event.target.value); setReason(''); setSaved(null); setDisclosure(null); setError(null); setItems([]); setCursor(null); setNext(null);
         }}><option value="">Beleg auswählen</option>{documents.filter(row => row.page_start !== null).map(row =>
           <option key={row.id} value={row.id}>Seiten {row.page_start}–{row.page_end}{memberIds.includes(row.id) ? ' · aktuelle Aufteilung' : ''}</option>)}</select>
       <label className="block">Grund für den Auszug
@@ -87,8 +89,11 @@ export function VisualExtractPanel({ documents, partitionId, memberIds, canRead,
         <a className="underline" href={visualExtractApi.content(item.id)} target="_blank" rel="noreferrer">Seiten {item.page_start}–{item.page_end} öffnen</a>
         {' · '}{new Date(item.created_at).toLocaleString('de-DE')} · {item.reason}
         {item.partition_revision_id !== partitionId && ' · frühere Aufteilung'}
+        <button className="btn ml-2" disabled={blocked || !!pending} onClick={() => setDisclosure(item)}>Freigabe dieses Auszugs prüfen</button>
       </li>)}</ul>}
       {next && <button className="btn" disabled={blocked || loading} onClick={() => setCursor(next)}>Ältere Auszüge</button>}
     </div>}
+    {disclosure && <VisualDisclosurePanel key={disclosure.id} artifact={disclosure} canRead={canRead && !accessDenied}
+      canPublish={canGenerate} parentGeneration={parentGeneration} onPendingChange={setDisclosurePending} />}
   </section>;
 }

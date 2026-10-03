@@ -21,6 +21,7 @@ import { SourceAdmissionReviewsPage } from "./pages/SourceAdmissionReviewsPage";
 import { PersonDataDomainsPage } from "./pages/PersonDataDomainsPage";
 import { PropertyDataDomainsPage } from "./pages/PropertyDataDomainsPage";
 import { AccountingScopesPage } from "./pages/AccountingScopesPage";
+import { VisualDisclosuresPage } from "./pages/VisualDisclosuresPage";
 import { UsersPage } from "./pages/UsersPage";
 import { PropertiesPage } from "./pages/PropertiesPage";
 import { PropertyDetailPage } from "./pages/PropertyDetailPage";
@@ -134,6 +135,7 @@ export function AppRoutes() {
         <Route path="/gebaeudedaten-rechte" element={<PropertyDataDomainsPage />} />
         <Route path="/gebaeudedaten-rechte/:domainId" element={<PropertyDataDomainsPage />} />
         <Route path="/berechtigungen" element={<AccountingScopesPage />} />
+        <Route path="/seitenauszuege" element={<VisualDisclosuresPage />} />
         <Route path="/berechtigungen/:scopeId" element={<AccountingScopesPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

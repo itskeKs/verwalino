@@ -77,6 +77,7 @@ export function InvoiceDocumentsPage() {
         }}
       >
         <h1 style={{ margin: 0 }}>Belege</h1>
+        <Link className="btn" to="/seitenauszuege">Freigegebene Seitenauszüge</Link>
       </div>
 
       {/* Upload area */}

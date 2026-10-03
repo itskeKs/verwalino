@@ -467,6 +467,8 @@ A bounded isolated PDF renderer now produces fresh visual page extracts without 
 
 Migration 0117 adds immutable private visual artifacts with current inspected partition membership, verified storage readback and trusted transaction-bound renderer attestations. Authorized historical replay, signed history and exact-byte downloads remain within original custody/export rights. The source UI supports uncertain-response recovery and separates artifact export denial from original read access. Backend, independent review, migration, UI and actual browser qualification are recorded in `2026-10-03-scoped-visual-extracts.md`. Destination disclosure and scoped financial adoption remain open; this does not accept B3 or M-B.
 
+Migration 0118 implements explicit single-destination disclosure and withdrawal of exact reviewed visual artifacts, separate from original custody and financial adoption. Backend, independent review, historical migration, UI and actual two-user browser qualification are recorded in `2026-10-03-visual-disclosure-design.md`. Scoped financial source identity/adoption and remaining B3 requirements are still open; this does not accept B3 or M-B.
+
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,
 `api/master_imports.py`, `MasterImportPage.tsx`; extend property/unit/person/lease/

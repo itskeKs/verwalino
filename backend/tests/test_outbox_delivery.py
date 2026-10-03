@@ -167,6 +167,8 @@ async def test_outbox_migration_backfills_exact_events_and_retains_delivery_hist
                 db.execute(text('TRUNCATE exception_completion CASCADE'))
                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
+                db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+                importlib.import_module('migrations.versions.0118_visual_disclosures').downgrade()
                 importlib.import_module('migrations.versions.0117_visual_extract_artifacts').downgrade()
                 importlib.import_module('migrations.versions.0116_correction_followup_completions').downgrade()
                 importlib.import_module('migrations.versions.0115_financial_computation_evidence').downgrade()
