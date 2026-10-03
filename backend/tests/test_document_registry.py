@@ -119,6 +119,8 @@ async def test_registry_constraints_backfill_and_guarded_downgrade(migrator_sess
                 db.execute(text('TRUNCATE document_ref,intake_batch,intake_upload_admission CASCADE'))
                 db.execute(text('TRUNCATE source_partition_revision CASCADE'))
                 db.execute(text('TRUNCATE exception_case CASCADE'))
+                db.execute(text('TRUNCATE duplicate_comparison CASCADE'))
+                importlib.import_module('migrations.versions.0106_duplicate_comparisons').downgrade()
                 db.execute(text('TRUNCATE allocation_proposal CASCADE'))
                 importlib.import_module('migrations.versions.0105_allocation_proposals').downgrade()
                 db.execute(text('TRUNCATE context_decision CASCADE'))

@@ -232,6 +232,8 @@ async def test_migration_backfill_guard_and_function_identity(migrator_session,s
                 oid=db.scalar(text("SELECT 'access_disposition_work(uuid)'::regprocedure::oid"))
                 db.execute(text('TRUNCATE source_partition_revision CASCADE'))
                 db.execute(text('TRUNCATE exception_case CASCADE'))
+                db.execute(text('TRUNCATE duplicate_comparison CASCADE'))
+                importlib.import_module('migrations.versions.0106_duplicate_comparisons').downgrade()
                 db.execute(text('TRUNCATE allocation_proposal CASCADE'))
                 importlib.import_module('migrations.versions.0105_allocation_proposals').downgrade()
                 db.execute(text('TRUNCATE context_decision CASCADE'))
