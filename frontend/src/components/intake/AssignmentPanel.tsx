@@ -7,7 +7,7 @@ import { SearchChoice } from '../SearchChoice';
 
 type Scope = { id: string; label: string; scope_type: string };
 type View = { partition: PartitionState; items: AssignmentProposal[]; more: boolean };
-type Draft = { expected: string | null; partition: string | null; extraction: string | null; scope: Scope | null; reason: string };
+type Draft = { expected: string | null; partition: string | null; extraction: string | null; scope: Scope | null; reason: string; mappingNote?: string };
 const fresh = (view: View, extraction: string | null): Draft => ({ expected: view.items[0]?.id ?? null, partition: view.partition.current?.id ?? null, extraction, scope: null, reason: '' });
 const blockers: Record<string, string> = { scope_hint_conflict: 'Upload-Kontext und vorgeschlagener Abrechnungskreis weichen voneinander ab.', unsupported_scope_type: 'Für diese Abrechnungsart ist die finanzielle Übernahme noch nicht verfügbar.' };
 
@@ -36,10 +36,11 @@ export function AssignmentPanel({ logicalId, refId, extractionId, evidenceReady,
   const member = !!view?.partition.current?.logical_document_ids.includes(logicalId);
   const blocked = busy || parentBusy || sending;
   const ready = member && evidenceReady && !!extractionId;
+  const submittedReason = [draft?.reason.trim(), draft?.mappingNote].filter(Boolean).join('\n');
   async function save() {
-    if (blocked || !view?.partition.can_review || !draft || (!pending.current && (stale || !ready || !draft.scope || !draft.reason.trim()))) return;
+    if (blocked || !view?.partition.can_review || !draft || (!pending.current && (stale || !ready || !draft.scope || !draft.reason.trim() || submittedReason.length > 1000))) return;
     if (!pending.current && draft.scope && draft.partition && draft.extraction) pending.current = { key: crypto.randomUUID(), expected: draft.expected,
-      body: { partition_revision_id: draft.partition, extraction_revision_id: draft.extraction, scope_id: draft.scope.id, reason: draft.reason.trim() } };
+      body: { partition_revision_id: draft.partition, extraction_revision_id: draft.extraction, scope_id: draft.scope.id, reason: submittedReason } };
     if (!pending.current) return;
     const request = pending.current; setSending(true); setSubmitted(true); setError(null);
     try {
@@ -83,15 +84,18 @@ export function AssignmentPanel({ logicalId, refId, extractionId, evidenceReady,
           disabled={blocked || submitted || stale || !ready} parentGeneration={parentGeneration + generation}
           onPick={candidate => { if (!blocked && !submitted && !stale && ready) setDraft({ ...draft,
             scope: { id: candidate.scope_id, label: candidate.scope_label, scope_type: candidate.scope_type },
+            mappingNote: candidate.mappings?.[0] ? `Gespeicherter Hinweis ${candidate.mappings[0].id}, gültig ${candidate.mappings[0].valid_from} bis ${candidate.mappings[0].valid_to}; erneut manuell prüfen.` : undefined,
             reason: draft.reason || `Belegangabe auf Seite ${candidate.evidence[0].page_number}: ${candidate.evidence[0].quotation}`.slice(0, 1000) }); }} />
         <fieldset disabled={blocked || submitted || !ready} className="space-y-3 min-w-0">
           <SearchChoice<Scope> label="Vorgeschlagener Abrechnungskreis" endpoint="/api/accounting-scopes/page?capability=prepare&financial_creation=true"
-            value={draft.scope} onChange={scope => setDraft({ ...draft, scope })} display={scope => `${scope.label} · ${scope.scope_type}`} />
+            value={draft.scope} onChange={scope => setDraft({ ...draft, scope, mappingNote: undefined })} display={scope => `${scope.label} · ${scope.scope_type}`} />
           <label className="block" htmlFor="assignment-reason">Begründung des Zuordnungsvorschlags</label>
           <textarea id="assignment-reason" className="w-full rounded-md border border-input bg-background px-3 py-2 disabled:opacity-60" maxLength={1000}
             value={draft.reason} onChange={event => setDraft({ ...draft, reason: event.target.value })} />
         </fieldset>
-        <button className="btn" disabled={blocked || (!submitted && (stale || !ready || !draft.scope || !draft.reason.trim()))} onClick={() => void save()}>
+        {draft.mappingNote && <p className="break-words">Dieser Hinweis wird Ihrer Begründung angefügt: {draft.mappingNote}</p>}
+        {submittedReason.length > 1000 && <p role="alert">Bitte die Begründung kürzen. Zusammen mit dem gespeicherten Hinweis sind höchstens 1000 Zeichen möglich.</p>}
+        <button className="btn" disabled={blocked || (!submitted && (stale || !ready || !draft.scope || !draft.reason.trim() || submittedReason.length > 1000))} onClick={() => void save()}>
           {submitted ? 'Denselben Zuordnungsvorschlag erneut senden' : 'Zuordnung vorschlagen'}</button>
       </>}
     </>}

@@ -29,6 +29,10 @@ class ContextCandidateService(IntakeService):
               ORDER BY m.id LIMIT 501'''),{'org':self.auth.organization_id,'properties':list({scope['property_id'] for scope in scopes})})).mappings().all()
             if len(meters)>500:return {**response,'status':'comparison_limit'}
         rows,conflicting=candidate_matches(scopes,meters,signals,source,source['scope_hint_id'])
+        mappings=await self.call('SELECT context_mapping_candidates(:org,:logical,:partition,:extraction)',logical=logical,partition=partition,extraction=extraction)
+        for row in rows:
+            row['mappings']=[item for item in mappings['items'] if item['scope_id']==row['scope_id'] and not row['exclusions']]
         return {**response,'items':rows,'conflicting_properties':conflicting,'ambiguous_scopes':len(rows)>1,
+                'mapping_status':mappings['status'],
                 'unmatched_evidence':[signal for signal in signals if not any(signal in row['evidence'] for row in rows)],
                 'status':'manual_review' if rows else 'no_matching_context'}

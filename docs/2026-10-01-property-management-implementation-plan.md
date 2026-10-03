@@ -451,6 +451,8 @@ Migration 0110 adds explicit exception completion backed by immutable confirmed 
 
 Migration 0111 exposes exact authorized source pages for bounded read-only context suggestions. Labelled property identifiers, meter numbers and complete service addresses are compared only with authorized master data; alternative scopes and unmatched source assertions remain visible. The UI requires explicit copying and separate manual submission, preserving explanations and unknown requests. Qualification is recorded in `2026-10-03-context-candidate-design.md`. Automatic assignment, opt-in versioned mappings and the other remaining B3 transitions are not accepted by this increment.
 
+Migration 0112 adds explicitly opted-in, versioned property-ID/meter-number hints backed by a current adopted source, exact page proof, an explicit service interval and reuse consent. Private origin evidence is separated from sanitized descriptors; all retained target rights are checked, revocation remains possible after uploader departure, and historical retries never change the current head. Reuse annotates manual candidates without financial or resolution effects. Backend, UI, concurrent master-data, migration and actual browser qualification are recorded in `2026-10-03-opt-in-context-mapping-design.md`. Automatic draft attachment, customer/contract aliases, cross-scope disclosure and grouped corrections/replacements remain open; this does not accept B3 or M-B as a whole.
+
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,
 `api/master_imports.py`, `MasterImportPage.tsx`; extend property/unit/person/lease/

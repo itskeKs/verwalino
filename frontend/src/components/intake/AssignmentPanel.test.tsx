@@ -99,11 +99,11 @@ it('waits for initial extraction evidence without treating normal loading as an 
 });
 
 
-it('copies a candidate explicitly without overwriting a deliberate reason or sending a request', async () => {
+it('copies a saved candidate explicitly, preserves the reason and submits its visible reference separately', async () => {
   const requests: RequestInit[] = [];
   const candidates = { logical_document_id: 'logical', partition_revision_id: 'partition', extraction_revision_id: 'extraction', status: 'manual_review', can_prepare: true,
     conflicting_properties: false, ambiguous_scopes: false, unmatched_evidence: [], items: [{ scope_id: 'scope', scope_label: 'Objekt Nord', scope_type: 'WEG', property_id: 'property', property_name: 'Nord',
-      exclusions: [], requires_manual_review: true, meter_period_unverified: false, evidence: [{ kind: 'property_id', value: 'property', page_number: 1, quotation: 'Objekt-ID: property', method: 'text_layer' }] }] };
+      exclusions: [], requires_manual_review: true, meter_period_unverified: false, mappings: [{ id: 'mapping-v1', revision_number: 1, valid_from: '2026-01-01', valid_to: '2027-12-31' }], evidence: [{ kind: 'property_id', value: 'property', page_number: 1, quotation: 'Objekt-ID: property', method: 'text_layer' }] }] };
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => { if (init?.method === 'POST') requests.push(init); return url.includes('/assignment-candidates?') ? json(candidates) : respond(url); }));
   page(); await screen.findByRole('button', { name: 'Als manuelle Auswahl übernehmen: Objekt Nord' });
   expect(screen.getByLabelText('Vorgeschlagener Abrechnungskreis')).toHaveValue('');
@@ -112,4 +112,8 @@ it('copies a candidate explicitly without overwriting a deliberate reason or sen
   expect(screen.getByLabelText('Vorgeschlagener Abrechnungskreis')).toHaveValue('scope');
   expect(screen.getByLabelText('Begründung des Zuordnungsvorschlags')).toHaveValue('My deliberate source comparison');
   expect(requests).toHaveLength(0);
+  expect(screen.getByText(/Dieser Hinweis wird Ihrer Begründung angefügt/)).toHaveTextContent('mapping-v1');
+  fireEvent.click(screen.getByRole('button', { name: 'Zuordnung vorschlagen' }));
+  await waitFor(() => expect(requests).toHaveLength(1));
+  expect(JSON.parse(String(requests[0].body)).reason).toBe('My deliberate source comparison\nGespeicherter Hinweis mapping-v1, gültig 2026-01-01 bis 2027-12-31; erneut manuell prüfen.');
 });

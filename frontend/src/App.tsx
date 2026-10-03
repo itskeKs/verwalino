@@ -34,6 +34,7 @@ import { IntakeBatchPage } from "./pages/IntakeBatchPage";
 import { ExceptionsPage } from "./pages/ExceptionsPage";
 import { ExceptionDetailPage } from "./pages/ExceptionDetailPage";
 import { IntakeSourcePage } from "./pages/IntakeSourcePage";
+import { ContextMappingPage } from "./pages/ContextMappingPage";
 import { InvoiceDocumentsPage } from "./pages/InvoiceDocumentsPage";
 import { InvoiceDocumentDetailPage } from "./pages/InvoiceDocumentDetailPage";
 import { SettlementsPage } from "./pages/SettlementsPage";
@@ -94,6 +95,7 @@ export function AppRoutes() {
         <Route path="/kosten" element={<CostEntriesPage />} />
         <Route path="/kosten/:entryId" element={<CostEntryDetailPage />} />
         <Route path="/klaerungsfaelle" element={<ExceptionsPage />} />
+        <Route path="/zuordnungen/:versionId" element={<ContextMappingPage />} />
         <Route path="/klaerungsfaelle/:caseId" element={<ExceptionDetailPage />} />
         <Route path="/posteingang" element={<InboxPage />} />
         <Route path="/posteingang/:batchId" element={<IntakeBatchPage />} />

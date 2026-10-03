@@ -1,8 +1,10 @@
 import { api } from './client';
+import type { ContextMapping } from './contextMappings';
 export interface ContextEvidence { kind: 'property_id' | 'meter_number' | 'service_address'; value: string; page_number: number; quotation: string; method: 'text_layer' | 'ocr' }
 export interface ContextCandidate {
   scope_id: string; scope_label: string; scope_type: string; property_id: string; property_name: string;
   evidence: ContextEvidence[]; exclusions: string[]; requires_manual_review: true; meter_period_unverified: boolean;
+  mappings?: ContextMapping[];
 }
 export interface ContextCandidates {
   logical_document_id: string; partition_revision_id: string; extraction_revision_id: string;

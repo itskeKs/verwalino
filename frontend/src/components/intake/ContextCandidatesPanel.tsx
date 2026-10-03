@@ -30,6 +30,7 @@ export function ContextCandidatesPanel({ logicalId, partitionId, extractionId, d
       <ul className="space-y-4">{view.items.map(item => <li key={item.scope_id} className="min-w-0 space-y-2 border-b border-input pb-3">
         <h4 className="break-words">{item.property_name} · {item.scope_label} · {item.scope_type}</h4>
         {item.evidence.map((evidence, index) => <Evidence key={index} item={evidence} />)}
+        {item.mappings?.map(mapping => <p className="break-words" key={mapping.id}>Gespeicherter Hinweis · Version {mapping.revision_number} · Leistungszeitraum {mapping.valid_from} bis {mapping.valid_to}. <a className="underline" href={`/zuordnungen/${mapping.id}`}>Zuordnung prüfen oder widerrufen</a></p>)}
         {item.meter_period_unverified && <p>Die Zählernummer belegt keine Gültigkeit im Leistungszeitraum und keine Zuständigkeit für das gesamte Objekt.</p>}
         {item.exclusions.map(reason => <p key={reason}>{exclusions[reason] ?? 'Weitere Prüfung erforderlich.'}</p>)}
         <button type="button" className="btn btn--wrap" disabled={disabled || busy || !view.can_prepare || item.exclusions.length > 0} onClick={() => onPick(item)}>Als manuelle Auswahl übernehmen: {item.scope_label}</button>
