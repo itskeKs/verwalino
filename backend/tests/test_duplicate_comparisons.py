@@ -266,6 +266,8 @@ async def test_duplicate_coverage_provenance_and_guarded_downgrade(migrator_sess
             point=db.begin_nested()
             try:
                 db.execute(text('TRUNCATE exception_case CASCADE'))
+                db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
+                importlib.import_module('migrations.versions.0108_allocation_treatments').downgrade()
                 importlib.import_module('migrations.versions.0107_duplicate_exceptions').downgrade()
                 db.execute(text('TRUNCATE duplicate_comparison'))
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))

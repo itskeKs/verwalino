@@ -163,6 +163,8 @@ async def test_duplicate_exception_backfill_constraints_coverage_and_downgrade(m
                   FROM exception_case_event e WHERE e.duplicate_comparison_id=:comparison'''),{'comparison':uuid.UUID(comparison['id'])})
             point=db.begin_nested()
             try:
+                db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
+                importlib.import_module('migrations.versions.0108_allocation_treatments').downgrade()
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 migration.downgrade()
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))

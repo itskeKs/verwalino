@@ -7,7 +7,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import auth, organizations, users, mandates, intake_batches, intake_items, exceptions, invoice_reviews, context_decisions, allocation_proposals, duplicate_comparisons
+from app.api import auth, organizations, users, mandates, intake_batches, intake_items, exceptions, invoice_reviews, context_decisions, allocation_proposals, allocation_treatments, duplicate_comparisons
 from app.api import properties, units, persons, ownership, leases
 from app.api import owner_profiles, tenant_profiles, vendors
 from app.api import cost_categories, cost_entries, invoice_documents, document_refs, logical_documents, extraction_revisions, source_partitions
@@ -77,6 +77,7 @@ app.include_router(exceptions.router)
 app.include_router(invoice_reviews.router)
 app.include_router(context_decisions.router)
 app.include_router(allocation_proposals.router)
+app.include_router(allocation_treatments.router)
 app.include_router(duplicate_comparisons.router)
 
 # M3 Verteilungs-/Abrechnungs-Engine (Betriebskostenabrechnung Mieter)

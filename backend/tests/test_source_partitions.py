@@ -150,6 +150,8 @@ async def test_partition_changes_coverage_and_rollback_preserves_history(migrato
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 db.execute(text('TRUNCATE exception_case CASCADE'))
+                db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
+                importlib.import_module('migrations.versions.0108_allocation_treatments').downgrade()
                 importlib.import_module('migrations.versions.0107_duplicate_exceptions').downgrade()
                 db.execute(text('TRUNCATE duplicate_comparison CASCADE'))
                 importlib.import_module('migrations.versions.0106_duplicate_comparisons').downgrade()

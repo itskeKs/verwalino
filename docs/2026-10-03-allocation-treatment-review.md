@@ -1,0 +1,43 @@
+# Explicit treatment of reviewed allocation lines
+
+## Intended next boundary
+
+Retain a human review of how every line of an exact allocation proposal is intended to be treated. This fills missing inputs before the later adoption adapter. It does not create costs, establish legal eligibility, approve a tax position, publish sources or resolve duplicate cases. Existing specialist gates V01/V03 remain release prerequisites for supported financial interpretations.
+
+Current inspection found that allocation proposals retain amounts and categories but no explicit tenant amount, distribution choice or tax intent. Legacy cost records have tenant apportionability/amount and distribution keys; WEG processing can fall back to category defaults. The new path must not silently inherit those defaults. Existing imported-cost confirmation requires an active legacy source document and atomically verifies/releases it. A future allocation adapter must preserve that evidence and confirmation boundary rather than create independent manual costs to bypass it.
+
+## Review contract
+
+An immutable `allocation_treatment_review` pins the current allocation, context comparison, field review, source and scope. Its sealed child set contains exactly one record for every allocation line, identified by the line's immutable ID. A per-logical-document predecessor chain and actor/request digest provide optimistic concurrency and exact historical replay. Reads inherit allocation/context/property/source audiences. Commands require actual interactive runtime, unpaused current original/destination prepare, latest allocation/context/field/proposal/partition/extraction and an explicit acknowledgement/reason. Current authority precedes historical replay; new writes recheck freshness.
+
+Each line explicitly records:
+
+- Expense intent: operating expense, reserve-related, capitalization-related or unresolved. These are human assertions; reserve and capitalization need later specialist treatment.
+- Tax intent: gross expense without an input-VAT claim, input-VAT treatment requested or unresolved. Invoice VAT remains the reviewed invoice assertion, including unknown; no choice changes or invents that amount. Requested deductions remain unsupported pending their separate policy/evidence contract.
+- Tenant treatment: full, partial, none or unresolved; exact signed tenant amount and an explicit distribution key where an amount is assigned. Full equals the line's signed gross; none is exact zero; partial is nonzero, same sign and strictly smaller in absolute value. Unresolved retains null amount/key. A negative credit allocation preserves signs. There is no category-derived default or inference that a legal contract permits charging tenants.
+- Owner distribution key for WEG, or an explicit not-applicable choice for a MIET scope. The legacy key vocabulary is retained; keys requiring external allocations, measured consumption or manual per-recipient amounts stay subject to downstream evidence requirements.
+- A bounded explanation of the documentary basis used for that line.
+
+The server validates exact cents without rounding, complete unique line membership and scope-compatible field shape. It derives unresolved/unsupported markers from the submitted assertions. Their absence means only that the recorded fields are internally complete, not that adoption or accounting is approved. The immutable parent state remains `review_only`.
+
+A read preview provides line amounts, category identity/version and a whitelisted current category snapshot with a digest. The snapshot is informational, never a default selection. Commands serialize and lock categories with the established NOWAIT inversion handling, require their exact active versions and verify the submitted preview digest. Retained reads/replay keep historical category facts after metadata changes. Later adoption must revalidate the exact current review and category basis rather than apply an old treatment to revised allocation lines.
+
+## Downstream adoption obligations
+
+The adoption milestone must bind the immutable review to every resulting cost and source link, consume exact signed cents once, re-evaluate duplicate evidence privately under serialization (including inaccessible and retained adopted evidence), define readiness for unprocessed receipts, enforce source-integrity attestation and current confirm authority, and preserve atomic rollback/replay. It must explicitly support the selected expense/tax/distribution policies; unsupported choices remain blocked. It must adapt the existing single-primary compatibility reader without allowing an extra full-amount charge. Whole-original publication and partial-page/cross-scope disclosure require their separate reviewed audience contract. The current review ledger grants none of these permissions.
+
+## Qualification
+
+Verify full/partial/zero/unknown and credit signs, no rounding/nonfinite numbers, complete line membership and deferred sealing, no inferred defaults, category snapshot races/deactivation, stale allocation/context/review bases, current-authority historical replay, original/property/scope revocation, actual roles/pause, provenance FKs, immutability, rollback, predecessor races, coverage and guarded downgrade. UI checks require explicit selections, retained exact retry, reset acknowledgement on edits, no stale automatic reuse and clearing inaccessible retained drafts. No test should claim legal/tax correctness or financial adoption for this evidence-only milestone.
+
+## Design review refinements
+
+Child FKs bind each exact allocation line to the allocation pinned by its treatment parent; unique membership plus deferred cardinality checks seal the complete set. Tenant none requires zero and null key; unresolved requires null amount/key. WEG owner choice is either a supported key or the explicit value `unresolved`; MIET requires the explicit value `not_applicable`. Owner and tenant perspectives are independent: owner distribution concerns the full gross amount, never an automatically computed gross-minus-tenant remainder.
+
+Category snapshots include `cost_group`, `reserve_relevant`, identity/version/active state and displayed defaults. Reserve-intent mismatch and a non-apportionable category with a positive/negative tenant share produce conflict markers; an assertion never overrides category behavior. Marker policy `allocation-treatment-v1` is closed and server-derived: `expense_unresolved`, `reserve_treatment_unsupported`, `capitalization_treatment_unsupported`, `tax_unresolved`, `input_vat_treatment_unsupported`, `tenant_treatment_unresolved`, `owner_distribution_unresolved`, `tenant_distribution_evidence_required`, `owner_distribution_evidence_required`, `category_expense_conflict`, `category_tenant_conflict`. Consumption, external allocation and manual-recipient keys require downstream evidence. Direct-recipient totals must conserve the reviewed amount; the current engine gives them precedence over a tenant amount.
+
+Legacy `is_billable_to_tenant` treats every flag except `NICHT_UMLAGEFAEHIG` as billable. The future adapter must never encode unresolved treatment as `MANUELL_PRUEFEN` and thereby expose the full gross to billing. This increment changes no legacy engine behavior and permits no adoption. Historical replay rechecks current source/property/scope authority but does not require a still-active category or unchanged metadata.
+
+## Backend qualification receipt
+
+Migration 0108 and its API passed eleven treatment tests: nine in `/tmp/hv-treatment-qualified.log`, the category lock-order test in `/tmp/hv-treatment-scope-lock.log`, and the corrected MIET fixture in `/tmp/hv-treatment-miet.log`. The original MIET test attempted to mutate immutable scope identity; it was corrected to create an independent rental property/scope with an explicit grant. No production constraint was relaxed. The 121 adjacent intake, extraction, partition, assignment, field/context review, allocation and duplicate-case regression tests passed in `/tmp/hv-treatment-regression.log`. The fake-Docker deployment gate passed at head 0108 in `/tmp/hv-treatment-deploy.log`; no deployment was performed. Independent static review found no actionable backend defect. These receipts establish the evidence-ledger behavior, not legal/tax eligibility or financial adoption.

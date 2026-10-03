@@ -204,6 +204,8 @@ async def test_context_coverage_constraints_and_guarded_downgrade(migrator_sessi
             point=db.begin_nested()
             try:
                 db.execute(text('TRUNCATE exception_case CASCADE'))
+                db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
+                importlib.import_module('migrations.versions.0108_allocation_treatments').downgrade()
                 importlib.import_module('migrations.versions.0107_duplicate_exceptions').downgrade()
                 db.execute(text('TRUNCATE duplicate_comparison CASCADE'))
                 importlib.import_module('migrations.versions.0106_duplicate_comparisons').downgrade()

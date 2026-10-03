@@ -196,6 +196,8 @@ async def test_field_review_coverage_source_constraints_and_guarded_downgrade(mi
                       FROM invoice_review_revision r WHERE r.id=:review'''),{'review':uuid.UUID(review['id']),'field':field,'value':value})
             point=db.begin_nested()
             try:
+                db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
+                importlib.import_module('migrations.versions.0108_allocation_treatments').downgrade()
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 importlib.import_module('migrations.versions.0107_duplicate_exceptions').downgrade()
                 db.execute(text('TRUNCATE duplicate_comparison CASCADE'))
