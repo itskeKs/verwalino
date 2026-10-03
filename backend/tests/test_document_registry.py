@@ -118,6 +118,8 @@ async def test_registry_constraints_backfill_and_guarded_downgrade(migrator_sess
             try:
                 db.execute(text('TRUNCATE document_ref,intake_batch,intake_upload_admission CASCADE'))
                 db.execute(text('TRUNCATE source_partition_revision CASCADE'))
+                db.execute(text('TRUNCATE exception_case CASCADE'))
+                importlib.import_module('migrations.versions.0102_exception_cases').downgrade()
                 importlib.import_module('migrations.versions.0101_assignment_proposals').downgrade()
                 importlib.import_module('migrations.versions.0100_source_partitions').downgrade()
                 importlib.import_module('migrations.versions.0099_intake_extraction_status').downgrade()

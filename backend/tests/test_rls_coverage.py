@@ -29,6 +29,7 @@ PRIVATE_POLICIES = {
 
 TENANT_TABLES = frozenset({
     "source_partition_revision", "source_partition_member", "assignment_proposal",
+    "exception_case", "exception_dependency", "exception_case_event",
     "intake_extraction_job", "intake_extraction_attempt", "intake_extraction_retry",
     "document_ref", "logical_document", "extraction_revision", "field_evidence", "intake_batch", "intake_item", "intake_upload_admission", "intake_original", "workflow_job", "job_attempt", "outbox_event", "intake_retry_receipt", "outbox_delivery", "outbox_delivery_attempt",
     "runtime_budget_attestation", "runtime_budget_review", "access_disposition_acceptance",

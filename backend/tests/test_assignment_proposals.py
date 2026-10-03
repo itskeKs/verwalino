@@ -149,6 +149,8 @@ async def test_assignment_evidence_changes_coverage_and_cannot_be_downgraded(mig
             with pytest.raises(DBAPIError,match='Retain assignment'),db.begin_nested():migration.downgrade()
             point=db.begin_nested()
             try:
+                db.execute(text('TRUNCATE exception_case CASCADE'))
+                importlib.import_module('migrations.versions.0102_exception_cases').downgrade()
                 db.execute(text('TRUNCATE assignment_proposal'))
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
                 migration.downgrade();migration.upgrade()
