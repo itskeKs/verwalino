@@ -274,6 +274,8 @@ async def test_completion_sealed_membership_coverage_and_guarded_roundtrip(migra
             point=db.begin_nested()
             try:
                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                db.execute(text('TRUNCATE mapping_version CASCADE'))
+                importlib.import_module('migrations.versions.0113_allocation_correction_preview').downgrade()
                 importlib.import_module('migrations.versions.0112_context_mappings').downgrade()
                 importlib.import_module('migrations.versions.0111_context_candidate_source').downgrade()
                 functions=['access_coverage_manifest(uuid,jsonb)','exception_case_access(uuid,uuid)','exception_case_work_access(uuid,uuid)','append_exception_event(uuid,uuid,uuid,uuid,text,text,timestamptz)']

@@ -453,6 +453,8 @@ Migration 0111 exposes exact authorized source pages for bounded read-only conte
 
 Migration 0112 adds explicitly opted-in, versioned property-ID/meter-number hints backed by a current adopted source, exact page proof, an explicit service interval and reuse consent. Private origin evidence is separated from sanitized descriptors; all retained target rights are checked, revocation remains possible after uploader departure, and historical retries never change the current head. Reuse annotates manual candidates without financial or resolution effects. Backend, UI, concurrent master-data, migration and actual browser qualification are recorded in `2026-10-03-opt-in-context-mapping-design.md`. Automatic draft attachment, customer/contract aliases, cross-scope disclosure and grouped corrections/replacements remain open; this does not accept B3 or M-B as a whole.
 
+Migration 0113 adds a read-only, complete correction-readiness preview for a new whole-original allocation in the same property and scope. It compares all old/new signed lines, distinguishes actual cost consumption, possible computation changes, coverage renewal and explicit source-evidence review, and blocks hidden or unsupported dependencies without partial results. Its private discovery, exact dependency digest, actual snapshot compatibility and browser qualification are recorded in `2026-10-03-allocation-correction-design.md`. Atomic replacement and evidence-based follow-up completion remain open; this does not accept B3.
+
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,
 `api/master_imports.py`, `MasterImportPage.tsx`; extend property/unit/person/lease/

@@ -45,3 +45,8 @@ async def result(logical_id:uuid.UUID,auth:AuthContext=Depends(get_current_user)
 async def create(logical_id:uuid.UUID,body:AdoptionCreate,idempotency_key:uuid.UUID=Header(),expected:uuid.UUID|None=Depends(expected_revision),
                  auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_writer_db)):
     return await AllocationAdoptionService(db,auth).create(logical_id,body,idempotency_key,expected)
+
+
+@router.get('/api/allocation-sets/{set_id}/correction-preview')
+async def correction_preview(set_id:uuid.UUID,treatment_review_id:uuid.UUID,auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_member_db)):
+    return await AllocationAdoptionService(db,auth).correction_preview(set_id,treatment_review_id)

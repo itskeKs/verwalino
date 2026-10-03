@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
 import { allocationAdoptionsApi, type AdoptionCommand, type AdoptionPreview, type AllocationSet } from '../../api/allocationAdoptions';
 import { ContextMappingPanel } from './ContextMappingPanel';
+import { AllocationCorrectionPreview } from './AllocationCorrectionPreview';
 
 type Draft = { review: string; preview: AdoptionPreview; reason: string; costs: boolean; disclosure: boolean };
 const denied = (error: unknown) => error instanceof ApiError && [401, 403, 404].includes(error.status);
@@ -79,6 +80,7 @@ export function AllocationAdoptionPanel({ logicalId, reviewId, ready, parentBusy
       </fieldset>
       <button className="btn" disabled={blocked || (!submitted && (!eligible || stale || !draft.costs || !draft.disclosure || !draft.reason.trim()))} onClick={() => void save()}>{submitted ? 'Dieselbe Kostenübernahme erneut senden' : 'Teilkosten bestätigen und Original freigeben'}</button>
     </>}
+    {view?.result && <AllocationCorrectionPreview allocationId={view.result.id} reviewId={reviewId} parentBusy={blocked} parentGeneration={parentGeneration + generation} />}
     <ContextMappingPanel allocationId={view?.result?.id ?? null} parentGeneration={parentGeneration + generation} parentBusy={blocked} />
   </section>;
 }

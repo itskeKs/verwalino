@@ -12,6 +12,9 @@ class AllocationAdoptionService(IntakeService):
     async def preview(self,target):
         return await self.call('SELECT allocation_adoption_preview(:org,:target)',target=target)
 
+    async def correction_preview(self,predecessor,target):
+        return await self.call('SELECT allocation_correction_preview(:org,:predecessor,:target)',predecessor=predecessor,target=target)
+
     async def result(self,logical):
         target=await self.call('SELECT allocation_adoption_result(:org,:logical)',logical=logical)
         return {'item':await self.detail(target) if target is not None else None}

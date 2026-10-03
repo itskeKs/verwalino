@@ -357,6 +357,7 @@ async def test_adoption_retained_evidence_blocks_downgrade_and_empty_roundtrip_r
             try:
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                importlib.import_module('migrations.versions.0113_allocation_correction_preview').downgrade()
                 importlib.import_module('migrations.versions.0112_context_mappings').downgrade()
                 importlib.import_module('migrations.versions.0111_context_candidate_source').downgrade()
                 importlib.import_module('migrations.versions.0110_exception_completions').downgrade()

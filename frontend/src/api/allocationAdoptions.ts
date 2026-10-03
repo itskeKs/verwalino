@@ -15,3 +15,23 @@ export const allocationAdoptionsApi = {
   create: (logical: string, body: AdoptionCommand, key: string) => api.post<AllocationSet>(`/api/logical-documents/${logical}/allocation-adoptions`, body, {
     headers: { 'Idempotency-Key': key, 'If-Match': `"${body.treatment_review_id}"` } }),
 };
+
+export interface CorrectionImpact {
+  kind: 'settlement_run' | 'economic_plan'; id: string; run_type: string; status: 'draft' | 'finalized';
+  period_start: string; period_end: string; superseded_by_id: string | null;
+  effects: { exact_cost_consumption: boolean; potential_calculation_change: boolean; coverage_renewal: boolean; source_evidence_review: boolean };
+  follow_up: 'refresh_and_revalidate' | 'review_finalized_successor';
+}
+export interface CorrectionPreview {
+  can_review: boolean; preview_digest: string | null; blocker: string | null; impacts: CorrectionImpact[];
+  financial_state?: 'preview_only'; predecessor_id?: string; treatment_review_id?: string;
+  old?: CorrectionAmounts; proposed?: CorrectionAmounts;
+}
+interface CorrectionAmounts {
+  gross_amount: string; service_period_from: string; service_period_to: string;
+  costs: { position: number; gross_amount: string; vat_amount: string | null; tenant_amount: string | null }[];
+}
+export const correctionPreviewApi = {
+  get: (setId: string, reviewId: string, signal?: AbortSignal) => api.get<CorrectionPreview>(
+    `/api/allocation-sets/${setId}/correction-preview?treatment_review_id=${encodeURIComponent(reviewId)}`, { signal }),
+};
