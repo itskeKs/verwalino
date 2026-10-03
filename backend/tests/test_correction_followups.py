@@ -208,7 +208,9 @@ async def test_followup_context_backfill_two_orgs_without_tenant_guc_and_guarded
     engine=create_engine(MIGRATOR_SYNC_URL);migration=importlib.import_module('migrations.versions.0116_correction_followup_completions')
     try:
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
-            with pytest.raises(DBAPIError,match='Retain correction follow-up'),db.begin_nested():migration.downgrade()
+            with pytest.raises(DBAPIError,match='Retain correction follow-up'),db.begin_nested():
+                importlib.import_module('migrations.versions.0117_visual_extract_artifacts').downgrade()
+                migration.downgrade()
             with pytest.raises(DBAPIError,match='immutable|Immutable'),db.begin_nested():
                 db.execute(text('DELETE FROM allocation_correction_context WHERE impact_id=:id'),{'id':retained[0]})
             definition=db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
@@ -216,7 +218,9 @@ async def test_followup_context_backfill_two_orgs_without_tenant_guc_and_guarded
             try:
                 db.execute(text("SELECT set_config('app.current_org_id','',true)"))
                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
+                importlib.import_module('migrations.versions.0117_visual_extract_artifacts').downgrade()
                 migration.downgrade();migration.upgrade()
+                importlib.import_module('migrations.versions.0117_visual_extract_artifacts').upgrade()
                 assert definition==db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
                 assert db.scalar(text('SELECT count(*) FROM allocation_correction_context WHERE impact_id=ANY(:ids)'),{'ids':retained})==2
                 assert db.scalar(text('SELECT count(*) FROM allocation_correction_context WHERE impact_id=ANY(:ids)'),{'ids':unproven})==0

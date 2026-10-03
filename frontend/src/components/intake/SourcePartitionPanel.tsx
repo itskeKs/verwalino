@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
 import { intakeApi, partitionApi, type LogicalDocument, type PartitionReview, type PartitionState } from '../../api/intake';
+import { VisualExtractPanel } from './VisualExtractPanel';
 
 const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-2 disabled:opacity-60';
 const denied = (failure: unknown) => failure instanceof ApiError && [401, 403, 404].includes(failure.status);
@@ -99,6 +100,10 @@ export function SourcePartitionPanel({ refId, documents, parentBusy, parentGener
           {submitted ? 'Dieselbe Aufteilung erneut senden' : 'Aufteilung speichern'}</button>
       </>}
     </>}
+    {pages !== null && pages > 0 && <VisualExtractPanel key={`extract-${refId}`} documents={documents}
+      partitionId={state?.current?.id ?? null} memberIds={state?.current?.logical_document_ids ?? []}
+      canRead={!!state?.can_export} canGenerate={!!state?.can_review && !!state?.can_export}
+      parentGeneration={generation + parentGeneration} disabled={blocked || submitted} />}
     {pages !== null && pages > 0 && <div hidden={!state?.can_review || !draft}>
       <RangeCreator refId={refId} documents={documents} pages={pages} disabled={blocked || submitted || stale || !state?.can_review || !draft}
         onDenied={onDenied} onCreated={onCreated} onBusy={setRangeBusy} />

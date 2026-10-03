@@ -164,6 +164,7 @@ async def test_extraction_migration_retains_revisions_and_restores_empty_schema(
                 db.execute(text('TRUNCATE exception_completion CASCADE'))
                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
+                importlib.import_module('migrations.versions.0117_visual_extract_artifacts').downgrade()
                 importlib.import_module('migrations.versions.0116_correction_followup_completions').downgrade()
                 importlib.import_module('migrations.versions.0115_financial_computation_evidence').downgrade()
                 importlib.import_module('migrations.versions.0114_allocation_corrections').downgrade()

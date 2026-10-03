@@ -465,6 +465,8 @@ Financial correction continuation now exposes WEG/asset-report draft creation an
 
 A bounded isolated PDF renderer now produces fresh visual page extracts without copying source objects, hidden text or attachments. Exact source/range bindings, visible CropBox/rotation/annotation fixtures, resource limits, forced-stop cleanup and strict child protocol are qualified in `2026-10-03-scoped-visual-extracts.md`. This unconnected foundation grants no disclosure or financial authority; durable review/publication and the remaining B3 requirements are still open.
 
+Migration 0117 adds immutable private visual artifacts with current inspected partition membership, verified storage readback and trusted transaction-bound renderer attestations. Authorized historical replay, signed history and exact-byte downloads remain within original custody/export rights. The source UI supports uncertain-response recovery and separates artifact export denial from original read access. Backend, independent review, migration, UI and actual browser qualification are recorded in `2026-10-03-scoped-visual-extracts.md`. Destination disclosure and scoped financial adoption remain open; this does not accept B3 or M-B.
+
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,
 `api/master_imports.py`, `MasterImportPage.tsx`; extend property/unit/person/lease/

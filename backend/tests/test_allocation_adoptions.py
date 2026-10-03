@@ -359,6 +359,7 @@ async def test_adoption_retained_evidence_blocks_downgrade_and_empty_roundtrip_r
                 db.execute(text('TRUNCATE exception_completion CASCADE'))
                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
+                importlib.import_module('migrations.versions.0117_visual_extract_artifacts').downgrade()
                 importlib.import_module('migrations.versions.0116_correction_followup_completions').downgrade()
                 importlib.import_module('migrations.versions.0115_financial_computation_evidence').downgrade()
                 importlib.import_module('migrations.versions.0114_allocation_corrections').downgrade()

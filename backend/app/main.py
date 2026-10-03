@@ -11,7 +11,7 @@ from app.api import auth, organizations, users, mandates, intake_batches, intake
 from app.api import context_mappings
 from app.api import properties, units, persons, ownership, leases
 from app.api import owner_profiles, tenant_profiles, vendors
-from app.api import cost_categories, cost_entries, invoice_documents, document_refs, logical_documents, extraction_revisions, source_partitions
+from app.api import cost_categories, cost_entries, invoice_documents, document_refs, logical_documents, extraction_revisions, source_partitions, visual_extracts
 from app.api import financial_input_coverage, accounting_scopes, access_preparation, mandate_quarantine, dunning_quarantine
 from app.api import settlements
 from app.api import economic_plans, weg_settlements
@@ -71,6 +71,7 @@ app.include_router(invoice_documents.router)
 app.include_router(document_refs.router)
 app.include_router(logical_documents.router)
 app.include_router(source_partitions.router)
+app.include_router(visual_extracts.router)
 app.include_router(extraction_revisions.router)
 app.include_router(intake_batches.router)
 app.include_router(intake_items.router)
