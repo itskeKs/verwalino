@@ -203,6 +203,8 @@ async def test_context_coverage_constraints_and_guarded_downgrade(migrator_sessi
                       FROM context_decision d WHERE d.id=:decision'''),{'decision':uuid.UUID(decision['id']),'field':field,'value':value})
             point=db.begin_nested()
             try:
+                db.execute(text('TRUNCATE exception_case CASCADE'))
+                importlib.import_module('migrations.versions.0107_duplicate_exceptions').downgrade()
                 db.execute(text('TRUNCATE duplicate_comparison CASCADE'))
                 importlib.import_module('migrations.versions.0106_duplicate_comparisons').downgrade()
                 db.execute(text('TRUNCATE allocation_proposal CASCADE'))
@@ -251,18 +253,22 @@ async def test_context_event_insert_failure_is_atomic(migrator_session,scope_see
     ids=await fixture(migrator_session,scope_seed)
     async with client(ids) as api:
         _,child,_,_,p,review,preview=await basis(api,ids)
-        await mutate(text("""CREATE FUNCTION synthetic_context_event_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-          IF NEW.action='context_reviewed' THEN RAISE EXCEPTION 'Synthetic case event rejection' USING ERRCODE='23514'; END IF; RETURN NEW; END $$;
-          """),{})
-        await mutate(text('CREATE TRIGGER synthetic_context_event_failure BEFORE INSERT ON exception_case_event FOR EACH ROW EXECUTE FUNCTION synthetic_context_event_failure()'),{})
+        # One command makes synthetic function/trigger setup atomic.
+        await mutate(text("""DO $setup$ BEGIN
+          EXECUTE $ddl$CREATE OR REPLACE FUNCTION synthetic_context_event_failure() RETURNS trigger LANGUAGE plpgsql AS $body$ BEGIN
+            IF NEW.action='context_reviewed' THEN RAISE EXCEPTION 'Synthetic case event rejection' USING ERRCODE='23514'; END IF; RETURN NEW; END $body$;$ddl$;
+          EXECUTE 'CREATE TRIGGER synthetic_context_event_failure BEFORE INSERT ON exception_case_event FOR EACH ROW EXECUTE FUNCTION synthetic_context_event_failure()';
+        END $setup$;"""),{})
         try:
             result=await api.post('/api/logical-documents/'+child['id']+'/context-decisions',**command(p,review,preview))
             assert result.status_code==422,result.text
             assert await read_value('SELECT count(*) FROM context_decision WHERE organization_id=:org',ids)==0
             assert (await api.get('/api/exceptions/'+preview['case_id'])).json()['revision_id']==preview['case_event_id']
         finally:
-            await mutate(text('DROP TRIGGER synthetic_context_event_failure ON exception_case_event'),{})
-            await mutate(text('DROP FUNCTION synthetic_context_event_failure()'),{})
+            await mutate(text("""DO $cleanup$ BEGIN
+              EXECUTE 'DROP TRIGGER IF EXISTS synthetic_context_event_failure ON exception_case_event';
+              EXECUTE 'DROP FUNCTION IF EXISTS synthetic_context_event_failure()';
+            END $cleanup$;"""),{})
 
 
 async def test_context_period_concurrency_and_historical_replay(migrator_session,scope_seed,store):

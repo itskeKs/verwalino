@@ -441,6 +441,8 @@ Migration 0105 records immutable single-scope allocation proposals with exact si
 
 Migration 0106 adds same-scope duplicate candidates and immutable oriented comparisons on exact field reviews, with audience intersection, latest-head discovery, signed pagination and historical retry. The side-by-side UI and backend/browser qualification are recorded in `2026-10-03-duplicate-comparison-design.md`. Results remain evidence only; typed duplicate exceptions, tax/eligibility, source publication and financial adoption remain outstanding. B3 remains incomplete.
 
+Migration 0107 connects derived duplicate evidence to typed shared-case dependencies and automatic comparison observations. Full retained-source audience intersection and all-source prepare protect case reads/actions; comparisons remain evidence only and cases remain unresolved. Backend, migration, UI and browser qualification are recorded in `2026-10-03-duplicate-exception-integration.md`. Tax/eligibility, source publication, financial adoption and cross-scope allocation remain pending.
+
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,
 `api/master_imports.py`, `MasterImportPage.tsx`; extend property/unit/person/lease/

@@ -265,6 +265,8 @@ async def test_duplicate_coverage_provenance_and_guarded_downgrade(migrator_sess
                       {'field':field,'first':uuid.UUID(first['id'])})
             point=db.begin_nested()
             try:
+                db.execute(text('TRUNCATE exception_case CASCADE'))
+                importlib.import_module('migrations.versions.0107_duplicate_exceptions').downgrade()
                 db.execute(text('TRUNCATE duplicate_comparison'))
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
                 migration.downgrade();migration.upgrade()

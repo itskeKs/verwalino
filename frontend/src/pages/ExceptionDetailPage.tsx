@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ApiError } from '../api/client';
-import { exceptionApi, exceptionActions, exceptionCauses, type ExceptionAction, type ExceptionCase, type ExceptionCommand, type ExceptionDependency, type ExceptionEvent, type RevisionPage } from '../api/exceptions';
+import { exceptionApi, exceptionActions, exceptionCauses, type DuplicateExceptionDependency, type ExceptionAction, type ExceptionCase, type ExceptionCommand, type ExceptionDependency, type ExceptionEvent, type RevisionPage } from '../api/exceptions';
 import { useAuth } from '../auth/useAuth';
 
-type View = { item: ExceptionCase; events: RevisionPage<ExceptionEvent>; dependencies: RevisionPage<ExceptionDependency> };
+type View = { item: ExceptionCase; events: RevisionPage<ExceptionEvent>; dependencies: RevisionPage<ExceptionDependency>; duplicates: RevisionPage<DuplicateExceptionDependency> };
 type Draft = { expected: string; action: ExceptionAction; reason: string; until: string };
 const fresh = (item: ExceptionCase): Draft => ({ expected: item.revision_id, action: 'claim', reason: '', until: '' });
 const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-2 disabled:opacity-60';
@@ -24,8 +24,8 @@ function ExceptionDetail({ id }: { id: string }) {
   const alive = useRef(true); useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
     const controller = new AbortController(); setBusy(true); setView(null);
-    Promise.all([exceptionApi.get(id, controller.signal), exceptionApi.events(id, undefined, controller.signal), exceptionApi.dependencies(id, undefined, controller.signal)])
-      .then(([item, events, dependencies]) => { if (!controller.signal.aborted) { setView({ item, events, dependencies }); setDraft(previous => previous ?? fresh(item)); } })
+    Promise.all([exceptionApi.get(id, controller.signal), exceptionApi.events(id, undefined, controller.signal), exceptionApi.dependencies(id, undefined, controller.signal), exceptionApi.duplicateDependencies(id, undefined, controller.signal)])
+      .then(([item, events, dependencies, duplicates]) => { if (!controller.signal.aborted) { setView({ item, events, dependencies, duplicates }); setDraft(previous => previous ?? fresh(item)); } })
       .catch(failure => { if (!controller.signal.aborted) {
         setError(denied(failure) ? 'Dieser Fall ist nicht mehr zugänglich.' : 'Fall derzeit nicht verfügbar. Bitte erneut laden.');
         if (denied(failure)) { setDraft(null); pending.current = null; setSubmitted(false); setNotice(null); }
@@ -60,7 +60,7 @@ function ExceptionDetail({ id }: { id: string }) {
       } else setError('Keine bestätigte Antwort erhalten. Wiederholen Sie denselben Auftrag.');
     } finally { if (alive.current) setSending(false); }
   }
-  async function older(kind: 'events' | 'dependencies') {
+  async function older(kind: 'events' | 'dependencies' | 'duplicates') {
     const before = view?.[kind].next_before_revision;
     if (!before || blocked || !view) return;
     setBusy(true); setError(null);
@@ -68,6 +68,9 @@ function ExceptionDetail({ id }: { id: string }) {
       if (kind === 'events') {
         const page = await exceptionApi.events(id, before);
         if (alive.current) setView(value => value ? { ...value, events: page } : null);
+      } else if (kind === 'duplicates') {
+        const page = await exceptionApi.duplicateDependencies(id, before);
+        if (alive.current) setView(value => value ? { ...value, duplicates: page } : null);
       } else {
         const page = await exceptionApi.dependencies(id, before);
         if (alive.current) setView(value => value ? { ...value, dependencies: page } : null);
@@ -91,12 +94,13 @@ function ExceptionDetail({ id }: { id: string }) {
         <p className="break-words">{view.item.scope_label} · {view.item.scope_type}</p>
         <p>{view.item.workflow_state === 'snoozed' ? `Zurückgestellt bis ${new Date(view.item.snoozed_until!).toLocaleString('de-DE')}` : 'Offen'} · Fachlich ungeklärt · Version {view.item.revision_number}</p>
         <p>{ownClaim ? 'Von Ihnen beansprucht' : view.item.claimant_id ? 'Bearbeitung beansprucht' : 'Noch nicht beansprucht'}</p>
-        <p>{view.item.dependency_count} verknüpfte Zuordnungsvorschläge. Frühere Vorschläge bleiben als Belege erhalten.</p>
+        {view.item.dependency_count > 0 && <p>{view.item.dependency_count} verknüpfte Zuordnungsvorschläge. Frühere Vorschläge bleiben als Belege erhalten.</p>}
+        {!!view.item.duplicate_dependency_count && <p>{view.item.duplicate_dependency_count} Dublettenhinweise auf konkrete Prüfstände. Frühere Hinweise bleiben erhalten; ein Belegvergleich schließt den Fall nicht ab.</p>}
         <Link to={`/posteingang/belege/${view.item.document_ref_id}?logical_document_id=${encodeURIComponent(view.item.logical_document_id)}&extraction_revision_id=${encodeURIComponent(view.item.extraction_revision_id)}`}>Original und Zuordnungsvorschläge prüfen</Link>
       </section>
       <section className="card min-w-0 space-y-3" aria-label="Bearbeitung dokumentieren">
         <h2>Bearbeitung dokumentieren</h2>
-        <p>Ein Anspruch dient der Abstimmung und sperrt den Fall nicht für andere Berechtigte. Zurückstellen hebt die fachliche Sperre nicht auf. Neue Vorschläge öffnen den Fall erneut.</p>
+        <p>Ein Anspruch dient der Abstimmung und sperrt den Fall nicht für andere Berechtigte. Zurückstellen hebt die fachliche Sperre nicht auf. Neue Hinweise öffnen die Bearbeitung erneut.</p>
         {!view.item.can_work && <p>Dieser Fall ist derzeit nur lesbar.</p>}
         {view.item.can_work && draft && <>
           {stale && !submitted && <div className="space-y-2"><p>Prüfen Sie den aktuellen Fallstand, bevor Sie Ihre Aktion darauf anwenden.</p>
@@ -120,16 +124,33 @@ function ExceptionDetail({ id }: { id: string }) {
         <p>Die Einträge zeigen den Stand zum jeweiligen Zeitpunkt.</p>
         <ol className="space-y-3">{view.events.items.map(event => <li key={event.id} className="min-w-0 border-b border-input pb-3 space-y-1">
           <h3>{exceptionActions[event.action]} · Version {event.revision_number}</h3>
-          <p>{new Date(event.created_at).toLocaleString('de-DE')} · {event.actor_id === null ? 'Automatisch aus Vorschlag' : event.actor_id === session?.user_id ? 'Von Ihnen' : 'Manuelle Bearbeitung'}</p>
-          {event.action !== 'evidence_added' && <p className="break-words">{event.reason}</p>}
+          <p>{new Date(event.created_at).toLocaleString('de-DE')} · {event.actor_id === null ? event.action.startsWith('duplicate_') ? 'Automatisch verknüpft; Zeitpunkt der Erfassung' : 'Automatisch aus Vorschlag' : event.actor_id === session?.user_id ? 'Von Ihnen' : 'Manuelle Bearbeitung'}</p>
+          {event.actor_id !== null && <p className="break-words">{event.reason}</p>}
           {event.snoozed_until && <p>Damals zurückgestellt bis {new Date(event.snoozed_until).toLocaleString('de-DE')}</p>}
         </li>)}</ol>
         {view.events.next_before_revision && <button className="btn" disabled={blocked} onClick={() => void older('events')}>Ältere Ereignisse</button>}
       </section>
-      <section className="card min-w-0 space-y-3" aria-label="Verknüpfte Vorschläge"><h2>Verknüpfte Vorschläge</h2>
+      {!!view.item.duplicate_dependency_count && <section className="card min-w-0 space-y-3" aria-label="Verknüpfte Dublettenhinweise"><h2>Verknüpfte Dublettenhinweise</h2>
+        <p>Hinweise und Vergleiche beziehen sich auf die damals erfassten Prüfstände. Neue oder nicht mehr übereinstimmende Feldwerte lösen den Fall nicht automatisch.</p>
+        <ul className="space-y-4">{view.duplicates.items.map(dependency => <li key={dependency.id} className="space-y-2 border-b border-input pb-3 min-w-0">
+          <h3>Dublettenhinweis · Fallversion {dependency.revision_number}</h3>
+          <div className="grid gap-3 md:grid-cols-2"><div className="min-w-0"><p className="break-words">Beleg A: {dependency.anchor_seller_name} · {dependency.anchor_document_number}</p>
+            <Link className="link" to={`/posteingang/belege/${dependency.anchor_document_ref_id}?logical_document_id=${encodeURIComponent(dependency.anchor_logical_id)}&extraction_revision_id=${encodeURIComponent(dependency.anchor_extraction_id)}`}>Beleg A am Original prüfen</Link></div>
+            <div className="min-w-0"><p className="break-words">Beleg B: {dependency.reference_seller_name} · {dependency.reference_document_number}</p>
+            <Link className="link" to={`/posteingang/belege/${dependency.reference_document_ref_id}?logical_document_id=${encodeURIComponent(dependency.reference_logical_id)}&extraction_revision_id=${encodeURIComponent(dependency.reference_extraction_id)}`}>Beleg B am Original prüfen</Link></div></div>
+          <p>{dependency.evidence.match_reasons.includes('same_bytes_and_range') ? 'Identische Originaldatei und derselbe Seitenbereich.' : 'Übereinstimmende geprüfte Rechnungsmerkmale.'}</p>
+          {dependency.evidence.kind_conflict && <p>Widersprüchliche Belegart: Rechnung und Gutschrift. Feldprüfungen korrigieren.</p>}
+          {dependency.latest_exact_comparison ? <div className="space-y-1">
+            <p>Letzter Vergleich dieser Prüfstände: {dependency.latest_exact_comparison.verdict === 'same_document' ? 'Derselbe Beleg' : dependency.latest_exact_comparison.verdict === 'distinct_documents' ? 'Verschiedene Belege' : dependency.latest_exact_comparison.subject_review_id === dependency.anchor_review_id ? 'Beleg A soll Beleg B ersetzen' : 'Beleg B soll Beleg A ersetzen'}.</p>
+            <p className="break-words">{dependency.latest_exact_comparison.reason}</p><p>Historischer Prüfvermerk; keine Kostenfreigabe und kein Abschluss des Falls.</p>
+          </div> : <p>Für diese Prüfstände ist noch kein menschlicher Vergleich verknüpft.</p>}
+        </li>)}</ul>
+        {view.duplicates.next_before_revision && <button className="btn" disabled={blocked} onClick={() => void older('duplicates')}>Ältere Dublettenhinweise</button>}
+      </section>}
+      {view.item.dependency_count > 0 && <section className="card min-w-0 space-y-3" aria-label="Verknüpfte Vorschläge"><h2>Verknüpfte Vorschläge</h2>
         <ul className="space-y-3">{view.dependencies.items.map(dependency => <li key={dependency.id} className="space-y-1"><h3>Zuordnungsvorschlag {dependency.proposal_revision_number}</h3><p className="break-words">{dependency.proposal_reason}</p><p>Erfasst mit Fallversion {dependency.revision_number} · {new Date(dependency.created_at).toLocaleString('de-DE')}</p></li>)}</ul>
         {view.dependencies.next_before_revision && <button className="btn" disabled={blocked} onClick={() => void older('dependencies')}>Ältere Verknüpfungen</button>}
-      </section>
+      </section>}
     </>}
   </div>;
 }

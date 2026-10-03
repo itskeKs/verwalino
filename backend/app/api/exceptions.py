@@ -42,6 +42,12 @@ async def dependencies(case_id:uuid.UUID,before_revision:int|None=Query(default=
     return await ExceptionService(db,auth).history(case_id,before_revision,limit,dependencies=True)
 
 
+@router.get('/{case_id}/duplicate-dependencies')
+async def duplicate_dependencies(case_id:uuid.UUID,before_revision:int|None=Query(default=None,ge=1),limit:int=Query(default=20,ge=1,le=50),
+                                 auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_member_db)):
+    return await ExceptionService(db,auth).duplicate_dependencies(case_id,before_revision,limit)
+
+
 @router.post('/{case_id}/events',status_code=201)
 async def append(case_id:uuid.UUID,body:ExceptionEventCreate,idempotency_key:uuid.UUID=Header(),expected:uuid.UUID|None=Depends(expected_revision),
                  auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_writer_db)):

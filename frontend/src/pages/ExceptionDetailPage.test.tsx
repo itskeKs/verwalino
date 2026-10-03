@@ -13,6 +13,7 @@ const event = { id: 'event-1', case_id: 'case-1', previous_event_id: null, revis
   snoozed_until: null, reason: 'Evidence', actor_id: null, dependency_id: 'dep-1', created_at: item.created_at };
 const dependency = { id: 'dep-1', case_id: 'case-1', assignment_proposal_id: 'proposal-1', extraction_revision_id: 'extraction-1', cause: item.cause, created_at: item.created_at, revision_number: 1, proposal_revision_number: 1, proposal_reason: 'Original scope needs comparison' };
 function response(url: string, current = item) {
+  if (url.includes('/duplicate-dependencies?')) return json({ items: [], next_before_revision: null });
   if (url.includes('/events?')) return json({ items: [event], next_before_revision: null });
   if (url.includes('/dependencies?')) return json({ items: [dependency], next_before_revision: null });
   return json(current);
@@ -101,7 +102,7 @@ it('rejects a past local snooze before sending and offers only read access when 
   fireEvent.change(screen.getByLabelText('Zurückstellen bis (Ortszeit)'), { target: { value: '2020-01-01T12:00' } });
   fireEvent.change(screen.getByLabelText('Begründung der Aktion'), { target: { value: 'Wait' } });
   fireEvent.click(screen.getByRole('button', { name: 'Aktion speichern' })); await screen.findByText(/zukünftigen Zeitpunkt/);
-  expect(fetch.mock.calls).toHaveLength(3);
+  expect(fetch.mock.calls).toHaveLength(4);
   cleanup(); vi.stubGlobal('fetch', vi.fn(async (url: string) => response(url, { ...item, can_work: false }))); page();
   await screen.findByText('Dieser Fall ist derzeit nur lesbar.');
   expect(screen.queryByLabelText('Begründung der Aktion')).not.toBeInTheDocument();
@@ -135,4 +136,30 @@ it('replaces queue pages, binds the filter and drops old entries after a failed 
   expect(urls.at(-1)).toContain('workflow_state=snoozed'); expect(urls.at(-1)).not.toContain('cursor=');
   offline = true; fireEvent.click(screen.getByRole('button', { name: 'Fälle aktualisieren' })); await screen.findByText(/Klärungsfälle derzeit nicht verfügbar/);
   expect(screen.queryByText('WEG Lindenstraße · WEG')).not.toBeInTheDocument();
+});
+
+it('shows typed duplicate evidence, exact sources and the stored replacement direction', async () => {
+  const duplicate = { id: 'dup-1', case_id: item.id, scope_id: item.scope_id, anchor_review_id: 'review-a', reference_review_id: 'review-b',
+    anchor_document_ref_id: 'source-a', anchor_logical_id: 'logical-a', anchor_extraction_id: 'extraction-a', reference_document_ref_id: 'source-b', reference_logical_id: 'logical-b', reference_extraction_id: 'extraction-b',
+    anchor_seller_name: 'Seller A', anchor_document_number: 'R-A', reference_seller_name: 'Seller B', reference_document_number: 'R-B', created_at: item.created_at, revision_number: 1,
+    evidence: { match_reasons: ['same_reviewed_identity'], kind_conflict: false }, latest_exact_comparison: { subject_review_id: 'review-b', reference_review_id: 'review-a', verdict: 'replacement_requested', reason: 'Corrected source compared' } };
+  const current = { ...item, cause: 'duplicate_candidate', dependency_count: 0, duplicate_dependency_count: 1 };
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.includes('/duplicate-dependencies?')) return json({ items: [duplicate], next_before_revision: null });
+    if (url.includes('/events?')) return json({ items: [{ ...event, action: 'duplicate_evidence_added' }, { ...event, id: 'event-2', action: 'duplicate_comparison_recorded' }], next_before_revision: null });
+    if (url.includes('/dependencies?')) return json({ items: [], next_before_revision: null });
+    return json(current);
+  }));
+  page(); await screen.findByText('Mögliche Dubletten vergleichen');
+  expect(screen.getByRole('link', { name: 'Beleg B am Original prüfen' })).toHaveAttribute('href', '/posteingang/belege/source-b?logical_document_id=logical-b&extraction_revision_id=extraction-b');
+  expect(screen.getByText('Letzter Vergleich dieser Prüfstände: Beleg B soll Beleg A ersetzen.')).toBeInTheDocument();
+  expect(screen.getByText(/keine Kostenfreigabe und kein Abschluss/)).toBeInTheDocument(); expect(screen.getAllByText(/Automatisch verknüpft/)).toHaveLength(2);
+});
+
+it('removes the whole case when a typed duplicate dependency loses its source audience', async () => {
+  let denied = false;
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => denied && url.includes('/duplicate-dependencies?') ? json({}, 404) : response(url)));
+  page(); await screen.findByText('WEG Lindenstraße · WEG'); denied = true;
+  fireEvent.click(screen.getByRole('button', { name: 'Fall aktualisieren' })); await screen.findByText('Dieser Fall ist nicht mehr zugänglich.');
+  expect(screen.queryByText('WEG Lindenstraße · WEG')).not.toBeInTheDocument(); expect(screen.queryByLabelText('Aktion')).not.toBeInTheDocument();
 });

@@ -7,7 +7,7 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.services.intake_service import IntakeService
 
-EVENT_FIELDS='id,case_id,previous_event_id,revision_number,action,resolution_state,workflow_state,claimant_id,snoozed_until,reason,actor_id,dependency_id,context_decision_id,created_at'
+EVENT_FIELDS='id,case_id,previous_event_id,revision_number,action,resolution_state,workflow_state,claimant_id,snoozed_until,reason,actor_id,dependency_id,context_decision_id,duplicate_dependency_id,duplicate_comparison_id,created_at'
 CASE_SOURCE='''exception_case c JOIN accounting_scope s ON s.organization_id=c.organization_id AND s.id=c.scope_id
   JOIN LATERAL (SELECT * FROM exception_case_event e WHERE e.organization_id=c.organization_id AND e.case_id=c.id ORDER BY revision_number DESC LIMIT 1) e ON true'''
 WORKFLOW="CASE WHEN e.snoozed_until>statement_timestamp() THEN 'snoozed' ELSE 'open' END"
@@ -15,7 +15,8 @@ CASE_FIELDS=f'''c.id,c.document_ref_id,c.logical_document_id,c.extraction_revisi
   s.label AS scope_label,s.scope_type,e.id AS revision_id,e.revision_number,e.resolution_state,{WORKFLOW} AS workflow_state,
   e.claimant_id,e.snoozed_until,e.context_decision_id,e.created_at AS updated_at,
   (SELECT count(*) FROM exception_dependency d WHERE d.organization_id=c.organization_id AND d.case_id=c.id) AS dependency_count,
-  (source_partition_access(c.organization_id,c.document_ref_id,true) AND has_scope_capability(c.organization_id,c.scope_id,'prepare')) AS can_work'''
+  (SELECT count(*) FROM duplicate_exception_dependency d WHERE d.organization_id=c.organization_id AND d.case_id=c.id) AS duplicate_dependency_count,
+  exception_case_work_access(c.organization_id,c.id) AS can_work'''
 
 
 class ExceptionService(IntakeService):
@@ -56,6 +57,26 @@ class ExceptionService(IntakeService):
             source+=' JOIN exception_dependency d ON d.organization_id=e.organization_id AND d.id=e.dependency_id AND d.case_id=e.case_id JOIN assignment_proposal p ON p.organization_id=d.organization_id AND p.id=d.assignment_proposal_id'
         rows=(await self.db.execute(text(f'''SELECT {fields} FROM {source} WHERE e.organization_id=:org AND e.case_id=:target
           AND (CAST(:before AS integer) IS NULL OR e.revision_number<:before) ORDER BY e.revision_number DESC LIMIT :take'''),
+          {'org':self.auth.organization_id,'target':target,'before':before,'take':limit+1})).mappings().all()
+        return {'items':[dict(row) for row in rows[:limit]],'next_before_revision':rows[limit-1]['revision_number'] if len(rows)>limit else None}
+
+    async def duplicate_dependencies(self,target,before,limit):
+        await self.detail(target)
+        rows=(await self.db.execute(text("""SELECT d.id,d.case_id,d.scope_id,d.anchor_review_id,d.reference_review_id,
+          d.anchor_document_ref_id,d.anchor_logical_id,d.anchor_extraction_id,d.reference_document_ref_id,d.reference_logical_id,d.reference_extraction_id,
+          d.evidence,d.created_at,e.revision_number,a.seller_name AS anchor_seller_name,a.document_number AS anchor_document_number,
+          b.seller_name AS reference_seller_name,b.document_number AS reference_document_number,
+          (SELECT to_jsonb(c)-ARRAY['organization_id','request_key','request_digest'] FROM duplicate_comparison c
+            WHERE c.organization_id=d.organization_id AND c.scope_id=d.scope_id
+              AND ((c.subject_review_id=d.anchor_review_id AND c.reference_review_id=d.reference_review_id)
+                OR (c.subject_review_id=d.reference_review_id AND c.reference_review_id=d.anchor_review_id))
+            ORDER BY c.revision_number DESC LIMIT 1) AS latest_exact_comparison
+          FROM duplicate_exception_dependency d JOIN exception_case_event e ON e.organization_id=d.organization_id
+            AND e.case_id=d.case_id AND e.duplicate_dependency_id=d.id AND e.action='duplicate_evidence_added'
+          JOIN invoice_review_revision a ON a.organization_id=d.organization_id AND a.id=d.anchor_review_id
+          JOIN invoice_review_revision b ON b.organization_id=d.organization_id AND b.id=d.reference_review_id
+          WHERE d.organization_id=:org AND d.case_id=:target AND (CAST(:before AS integer) IS NULL OR e.revision_number<:before)
+          ORDER BY e.revision_number DESC LIMIT :take"""),
           {'org':self.auth.organization_id,'target':target,'before':before,'take':limit+1})).mappings().all()
         return {'items':[dict(row) for row in rows[:limit]],'next_before_revision':rows[limit-1]['revision_number'] if len(rows)>limit else None}
 
