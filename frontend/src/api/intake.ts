@@ -9,6 +9,8 @@ export type IntakeStatus = 'waiting' | 'received' | 'processing' | 'review' | 'c
 export interface IntakeItem extends IntakeManifestItem {
   id: string; position: number; status: IntakeStatus; original_id: string | null; job_id: string | null;
   fence: string | null; error_code: string | null; can_upload: boolean; can_retry: boolean; can_export: boolean;
+  stage: 'inspection' | 'preparation' | 'extraction' | 'review'; document_ref_id: string | null;
+  logical_counts: { total: number; processing: number; review: number; failed: number };
 }
 export interface IntakeBatch extends IntakeHeader {
   items: IntakeItem[]; counts: Record<IntakeStatus, number>; revision: string; next_cursor: string | null;
@@ -27,6 +29,30 @@ export const intakeApi = {
   retry: (body: { job_id: string; expected_fence: string; reason: string }, key: string) =>
     api.post('/api/intake-batches/retry', body, { headers: { 'Idempotency-Key': key } }),
   content: (id: string) => `/api/intake-batches/originals/${id}/content`,
+};
+
+export interface LogicalDocument {
+  id: string; document_ref_id: string; page_start: number | null; page_end: number | null;
+  origin: 'manual' | 'inspection'; review_state: 'unreviewed'; reason: string;
+}
+export interface ExtractionStatus {
+  id: string; status: string; attempt_number: number; fence: string | null; error_code: string | null; can_retry: boolean;
+}
+export interface FieldEvidence {
+  field_name: string; value: string; confidence: number | string | null; locator_status: 'unlocated' | 'page_quote' | 'xml_path';
+  page_number: number | null; quotation: string | null; xml_path: string | null; method: string;
+}
+export interface ExtractionRevision {
+  id: string; logical_document_id: string; created_at: string; status: string; error_code: string | null;
+  processor_version: string; fields: FieldEvidence[];
+}
+export const extractionApi = {
+  children: (ref: string, signal?: AbortSignal) => api.get<{ items: LogicalDocument[] }>(`/api/logical-documents?document_ref_id=${encodeURIComponent(ref)}`, { signal }),
+  status: (id: string, signal?: AbortSignal) => api.get<ExtractionStatus>(`/api/logical-documents/${id}/processing`, { signal }),
+  history: (ref: string, child: string, signal?: AbortSignal) => api.get<{ items: Pick<ExtractionRevision, 'id'>[] }>(
+    `/api/document-refs/${ref}/extractions?logical_document_id=${encodeURIComponent(child)}`, { signal }),
+  revision: (id: string, signal?: AbortSignal) => api.get<ExtractionRevision>(`/api/extraction-revisions/${id}`, { signal }),
+  retry: (id: string, body: { expected_fence: string; reason: string }, key: string) => api.post(`/api/logical-documents/${id}/retry-extraction`, body, { headers: { 'Idempotency-Key': key } }),
 };
 
 export function intakeMime(file: File): string {

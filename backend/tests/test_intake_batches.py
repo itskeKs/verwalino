@@ -82,7 +82,7 @@ async def test_worker_inspection_releases_only_exact_private_reference(migrator_
         rows=(await api.get('/api/document-refs/page',params={'source_id':receipt['original_id']})).json()['items']
         assert len(rows)==1 and rows[0]['source_kind']=='intake_original'
         assert (await admin.get('/api/document-refs/'+rows[0]['id'])).status_code==404
-        assert (await api.get('/api/intake-batches/'+batch['id'])).json()['counts']['review']==1
+        assert (await api.get('/api/intake-batches/'+batch['id'])).json()['counts']['processing']==1
         assert not await process_once(get_worker_session_factory(),ids['org'],inspector=clean)
 
 
@@ -140,7 +140,7 @@ async def test_stale_worker_cannot_complete_reclaimed_generation(migrator_sessio
         for claim,expected in [(first,False),(second,True),(second,False)]:
             assert await work_sql(ids,'SELECT complete_intake_inspection(:org,:job,:token,CAST(:inspection AS jsonb))',job=uuid.UUID(claim['job_id']),token=uuid.UUID(claim['fence']),inspection=inspection) is expected
         state=(await api.get('/api/intake-batches/'+batch['id'])).json()
-        assert state['counts']['review']==1
+        assert state['counts']['processing']==1
 
 
 async def test_scope_revocation_cancels_work_and_hides_status(migrator_session,scope_seed,store):
@@ -266,6 +266,7 @@ async def test_intake_migration_refuses_data_and_preserves_function_identity(mig
             try:
                 db.execute(text('TRUNCATE intake_batch,intake_upload_admission CASCADE'))
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
+                importlib.import_module('migrations.versions.0099_intake_extraction_status').downgrade()
                 importlib.import_module('migrations.versions.0098_intake_extraction_jobs').downgrade()
                 importlib.import_module('migrations.versions.0097_internal_outbox_delivery').downgrade()
                 importlib.import_module('migrations.versions.0096_extraction_evidence').downgrade()
@@ -321,7 +322,7 @@ async def test_retry_can_recover_without_restarting_completed_work(migrator_sess
         assert retried.status_code==202,retried.text
         assert await process_once(get_worker_session_factory(),ids['org'],inspector=lambda data,mime:result(data,'clean',mime=mime,pages=1))
         assert (await api.post('/api/intake-batches/retry',json=body,headers={'Idempotency-Key':key})).json()==retried.json()
-        assert (await api.get('/api/intake-batches/'+batch['id'])).json()['counts']['review']==1
+        assert (await api.get('/api/intake-batches/'+batch['id'])).json()['counts']['processing']==1
         assert (await api.get('/api/intake-batches/originals/'+receipt['original_id']+'/content')).content==data
         assert not await process_once(get_worker_session_factory(),ids['org'])
 

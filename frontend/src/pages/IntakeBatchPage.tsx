@@ -3,7 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import { fileDigest, intakeApi, type IntakeBatch, type IntakeItem, type IntakeStatus } from '../api/intake';
 
-const labels: Record<IntakeStatus, string> = { waiting: 'Datei fehlt', received: 'Empfangen', processing: 'Prüfung läuft', review: 'Zur Sichtung', confirmed: 'Bestätigt', failed: 'Gesperrt / fehlgeschlagen' };
+const labels: Record<IntakeStatus, string> = { waiting: 'Datei fehlt', received: 'Empfangen', processing: 'In Verarbeitung', review: 'Zur Sichtung', confirmed: 'Bestätigt', failed: 'Gesperrt / fehlgeschlagen' };
+const stageLabels = { inspection: 'Dateiprüfung', preparation: 'Dokumentvorbereitung', extraction: 'Texterkennung', review: 'Vorschläge verfügbar' };
 const explanations: Record<string, string> = {
   scanner_unavailable: 'Die Dateiprüfung ist derzeit nicht verfügbar. Die Datei bleibt gesperrt. Nach Behebung kann die Prüfung wiederholt werden.',
   scanner_timeout: 'Die Dateiprüfung hat zu lange gedauert. Ein erneuter Versuch ist möglich.',
@@ -16,6 +17,10 @@ const explanations: Record<string, string> = {
   attempt_limit: 'Die Höchstzahl der Prüfversuche ist erreicht. Bitte die Ursache klären, bevor Sie einen neuen Eingang anlegen.',
   storage_integrity_mismatch: 'Das gespeicherte Original konnte nicht unverändert bestätigt werden. Bitte die Administration informieren.',
   stored_original_unavailable: 'Das gespeicherte Original ist derzeit nicht verfügbar.',
+  ocr_unavailable: 'Die lokale Texterkennung ist derzeit nicht verfügbar. Ein erneuter Auftrag ist in der Belegansicht möglich.',
+  ocr_timeout: 'Die Texterkennung hat zu lange gedauert. Bitte den Verarbeitungsstand in der Belegansicht prüfen.',
+  extraction_timeout: 'Die Texterkennung wurde wegen Zeitüberschreitung beendet.',
+  processor_failed: 'Die Texterkennung konnte kein gültiges Ergebnis liefern. Bitte die Belegansicht öffnen.',
 };
 
 function ItemActions({ item, batchId, refresh, disabled }: { item: IntakeItem; batchId: string; refresh: () => void; disabled: boolean }) {
@@ -101,12 +106,14 @@ function BatchDetail({ batchId }: { batchId: string }) {
       <section className="grid grid-cols-2 gap-3 md:grid-cols-3" aria-label="Verarbeitungsstand">
         {(Object.keys(labels) as IntakeStatus[]).map(status => <div className="card min-w-0" key={status}><p className="text-2xl font-semibold">{batch.counts[status]}</p><p>{labels[status]}</p></div>)}
       </section>
-      <p>Ein empfangenes Dokument wartet zunächst auf die Dateiprüfung. „Zur Sichtung“ bestätigt die Dateiprüfung; es bestätigt keine Kosten, Zuordnung oder Abrechnung.</p>
+      <p>Nach der Dateiprüfung werden die Belege vorbereitet und ausgelesen. „Zur Sichtung“ zeigt ungeprüfte Vorschläge und bestätigt keine Kosten, Zuordnung oder Abrechnung.</p>
       <p>{batch.item_count} Datei(en) · Eingang vom {new Date(batch.created_at).toLocaleString('de-DE')}</p>
       <div className="space-y-3">{batch.items.map(item => <article className="card min-w-0 space-y-3" key={item.id}>
         <div className="flex flex-wrap items-start justify-between gap-2"><h2 className="min-w-0 break-all">{item.filename}</h2><span className="badge">{labels[item.status]}</span></div>
         <p className="text-sm">{(item.content_byte_size / 1024).toLocaleString('de-DE', { maximumFractionDigits: 1 })} KiB · {item.mime_type}</p>
-        {item.error_code && <p>{explanations[item.error_code] ?? 'Die Prüfung konnte nicht abgeschlossen werden. Bitte die Ursache klären; das Original bleibt gesperrt.'}</p>}
+        {item.stage && <p>{stageLabels[item.stage]}{item.logical_counts?.total > 0 && ` · ${item.logical_counts.total} Beleg(e), ${item.logical_counts.review} zur Sichtung`}</p>}
+        {item.error_code && <p>{explanations[item.error_code] ?? 'Die Verarbeitung konnte nicht abgeschlossen werden. Bitte den Verarbeitungsstand prüfen.'}</p>}
+        {!busy && !error && item.document_ref_id && <Link className="btn" to={`/posteingang/belege/${item.document_ref_id}`}>Belege und Vorschläge ansehen</Link>}
         <ItemActions key={`${item.id}:${item.fence ?? 'waiting'}`} item={item} batchId={batchId} refresh={refresh} disabled={busy || !!error} />
       </article>)}</div>
       {batch.next_cursor && <button className="btn" disabled={busy} onClick={() => setLimit(value => Math.min(200, value + 50))}>Weitere Dateien</button>}

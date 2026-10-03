@@ -230,6 +230,7 @@ async def test_migration_backfill_guard_and_function_identity(migrator_session,s
             try:
                 db.execute(text('TRUNCATE intake_extraction_job CASCADE'))
                 oid=db.scalar(text("SELECT 'access_disposition_work(uuid)'::regprocedure::oid"))
+                importlib.import_module('migrations.versions.0099_intake_extraction_status').downgrade()
                 migration.downgrade();migration.upgrade()
                 assert db.scalar(text("SELECT 'access_disposition_work(uuid)'::regprocedure::oid"))==oid
                 assert db.scalar(text('SELECT count(*) FROM intake_extraction_job WHERE organization_id=:org'),ids)==1
