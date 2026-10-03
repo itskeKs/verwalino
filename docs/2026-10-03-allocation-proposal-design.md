@@ -38,3 +38,15 @@ The immutable proposal/line ledger, authorized monetary preview, history/detail 
 - Independent static design and implementation review found no remaining production blocker. Its membership-sealing, category/version, zero-line, numeric-rounding and deferred-commit concerns are reflected in the implementation and tests.
 
 No cost, approval, duplicate disposition, source release or source audience is created by this increment. UI and downstream financial adoption remain separate work.
+
+## Allocation proposal UI qualification
+
+The source page now provides explicit single-scope cost-category lines, descriptions, signed amounts, separate gross/VAT sum checks, reason and acknowledgement. Integer cents (`BigInt`) avoid binary floating-point arithmetic. Unknown header VAT keeps every line unknown; category defaults never silently determine eligibility or tax treatment. New contexts/stale versions require explicit draft replacement. Unknown POST results remain frozen and require authorization for their exact retained context before display/replay.
+
+- `hv-allocation-preview`: eight backend tests passed after adding the authorized monetary preview and its property-revocation assertions.
+- `hv-allocation-ui-tests`: 25 component/source-page tests passed, including exact decimal boundaries, negative gross/VAT splits, unknown VAT, unknown-response replay, stale input retention and denied-predecessor/readable-successor isolation.
+- `hv-allocation-ui-build` and `hv-allocation-ui-lint` passed; the existing large main-chunk warning remains (approximately 756 KB).
+- Independent static UI review found no actionable defect.
+- `hv-allocation-browser`: actual local API/extraction (synthetic clean inspection), 59.00 + 60.00 = 119.00 split, unknown VAT, lost committed response with exact replay and one retained proposal, reload acknowledgement reset, keyboard save, mobile width, no new costs, and simulated context denial clearing passed. Desktop/mobile screenshots were inspected.
+
+Production scanner, cross-scope allocation, tax/duplicate decisions and financial adoption are still outside this acceptance.

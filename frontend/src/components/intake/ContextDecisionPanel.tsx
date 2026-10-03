@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { AllocationProposalPanel } from './AllocationProposalPanel';
 import { ApiError } from '../../api/client';
 import { contextDecisionsApi, type ContextCommand, type ContextHistory, type ContextPreview, type ContextSnapshot } from '../../api/contextDecisions';
 
@@ -78,7 +79,8 @@ export function ContextDecisionPanel({ logicalId, proposalId, reviewId, ready, p
       } else setError('Keine bestätigte Antwort erhalten. Senden Sie dieselbe Kontextprüfung erneut.');
     } finally { if (alive.current) setSending(false); }
   }
-  return <section className="card min-w-0 space-y-4" aria-label="Objekt und Abrechnungskreis abgleichen">
+  const latestDecision = view?.history.items[0];
+  return <><section className="card min-w-0 space-y-4" aria-label="Objekt und Abrechnungskreis abgleichen">
     <div className="flex flex-wrap justify-between gap-3"><h2>Objekt und Abrechnungskreis abgleichen</h2><button className="btn" disabled={blocked} onClick={() => { setError(null); setGeneration(value => value + 1); }}>Kontextprüfungen aktualisieren</button></div>
     <p>Vergleichen Sie die Objektangaben im Original mit dem vorgesehenen Abrechnungskreis. Die Anschrift des Ausstellers allein belegt das Objekt nicht.</p>
     <p>Diese menschliche Prüfung gilt für genau den ausgewählten Zuordnungsvorschlag und Feldprüfstand. Andere Vorschläge, Steuern und Dubletten bleiben separat zu klären.</p>
@@ -109,5 +111,7 @@ export function ContextDecisionPanel({ logicalId, proposalId, reviewId, ready, p
         <button className="btn" disabled={blocked || (!submitted && (stale || !canReview || !draft.acknowledged || !draft.note.trim() || !draft.quotation.trim() || !draft.locator.trim()))} onClick={() => void save()}>{submitted ? 'Dieselbe Kontextprüfung erneut senden' : 'Kontextprüfung speichern'}</button>
       </>}
     </>}
-  </section>;
+  </section><AllocationProposalPanel logicalId={logicalId} contextDecisionId={latestDecision?.id ?? null}
+    ready={canReview && latestDecision?.assignment_proposal_id === proposalId && latestDecision?.invoice_review_id === reviewId && latestDecision?.snapshot_digest === preview?.snapshot_digest}
+    parentBusy={blocked || !view} parentGeneration={parentGeneration + generation} onDenied={onDenied} /></>;
 }

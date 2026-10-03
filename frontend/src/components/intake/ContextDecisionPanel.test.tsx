@@ -3,6 +3,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import type { ContextPreview } from '../../api/contextDecisions';
 import { ContextDecisionPanel } from './ContextDecisionPanel';
 
+vi.mock('./AllocationProposalPanel', () => ({ AllocationProposalPanel: () => null }));
+
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const preview: ContextPreview = { logical_document_id: 'logical', assignment_proposal_id: 'proposal', invoice_review_id: 'review', case_id: 'case', dependency_id: 'dep', case_event_id: 'event', snapshot_digest: 'a'.repeat(64), page_start: 2, page_end: 3, can_review: true,
   snapshot: { property: { id: 'property', name: 'Reviewed building', street: 'Synthetic street 4', zip_code: '10115', city: 'Berlin' }, scope: { id: 'scope', property_id: 'property', management_mandate_id: null, scope_type: 'WEG', label: 'WEG 2026', valid_from: '2026-01-01', valid_to: null, whole_property: true } } };
