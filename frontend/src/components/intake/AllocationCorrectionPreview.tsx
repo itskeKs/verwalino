@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { correctionPreviewApi, type CorrectionImpact, type CorrectionPreview } from '../../api/allocationAdoptions';
 
 const titles: Record<string, string> = { BK_MIETER: 'Betriebskostenabrechnung', WEG_JAHRESABRECHNUNG: 'WEG-Jahresabrechnung', VERMOEGENSBERICHT: 'Vermögensbericht', WIRTSCHAFTSPLAN: 'Wirtschaftsplan' };
@@ -7,8 +7,8 @@ function destination(item: CorrectionImpact) {
   return `/${base}/${item.id}`;
 }
 
-export function AllocationCorrectionPreview({ allocationId, reviewId, parentBusy, parentGeneration }: {
-  allocationId: string; reviewId: string | null; parentBusy: boolean; parentGeneration: number;
+export function AllocationCorrectionPreview({ allocationId, reviewId, parentBusy, parentGeneration, confirmation }: {
+  allocationId: string; reviewId: string | null; parentBusy: boolean; parentGeneration: number; confirmation?: (preview: CorrectionPreview) => ReactNode;
 }) {
   const [preview, setPreview] = useState<CorrectionPreview | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
@@ -42,7 +42,16 @@ export function AllocationCorrectionPreview({ allocationId, reviewId, parentBusy
           <ol className="space-y-1">{amounts.costs.map(cost => <li key={cost.position}>Teil {cost.position}: {cost.gross_amount} EUR · Mieteranteil {cost.tenant_amount ?? 'nicht angegeben'} EUR</li>)}</ol>
         </div>)}</div>
         <h4>Betroffene Finanzvorgänge</h4>
-        {preview.impacts.length === 0 ? <p>Für diese Prüfgrundlage wurden keine betroffenen Finanzvorgänge gefunden.</p> : <ul className="space-y-4">{preview.impacts.map(item => <li className="space-y-1" key={`${item.kind}:${item.id}`}>
+        {preview.impacts.length === 0 ? <p>Für diese Prüfgrundlage wurden keine betroffenen Finanzvorgänge gefunden.</p> : <CorrectionImpactList items={preview.impacts} />}
+        <p role="status">Nur Vorschau: Die bisherigen Kosten bleiben aktiv. Eine Korrektur wurde noch nicht bestätigt.</p>
+        {confirmation?.(preview)}
+      </>}
+    </>}
+  </section>;
+}
+
+export function CorrectionImpactList({ items }: { items: CorrectionImpact[] }) {
+  return <ul className="space-y-4">{items.map(item => <li className="space-y-1" key={`${item.kind}:${item.id}`}>
           <a className="underline" href={destination(item)}>{titles[item.run_type] ?? 'Finanzvorgang'} · {item.period_start} bis {item.period_end}</a>
           <p>{item.status === 'draft' ? 'Entwurf' : 'Festgeschrieben'}{item.superseded_by_id ? ' · Nachfolger vorhanden; dessen Abschluss muss geprüft werden.' : ''}</p>
           {item.effects.exact_cost_consumption && <p>Bisherige Teilkosten sind in der gespeicherten Berechnung enthalten.</p>}
@@ -50,9 +59,5 @@ export function AllocationCorrectionPreview({ allocationId, reviewId, parentBusy
           {item.effects.coverage_renewal && <p>Deckungserklärung nach der Korrektur erneuern. Dies allein belegt keinen falschen Betrag.</p>}
           {item.effects.source_evidence_review && <p>Eine Deckungserklärung verweist auf das bisher freigegebene Original; Belegnachweis erneut prüfen.</p>}
           <p>{item.follow_up === 'refresh_and_revalidate' ? 'Nach einer Korrektur: Eingaben prüfen, erforderliche Deckung erneuern und neu berechnen.' : 'Nach einer Korrektur: fachliche Gültigkeit und gegebenenfalls eine endgültige Ersatzabrechnung prüfen.'}</p>
-        </li>)}</ul>}
-        <p role="status">Nur Vorschau: Die bisherigen Kosten bleiben aktiv. Eine Korrektur wurde noch nicht bestätigt.</p>
-      </>}
-    </>}
-  </section>;
+        </li>)}</ul>;
 }

@@ -455,6 +455,8 @@ Migration 0112 adds explicitly opted-in, versioned property-ID/meter-number hint
 
 Migration 0113 adds a read-only, complete correction-readiness preview for a new whole-original allocation in the same property and scope. It compares all old/new signed lines, distinguishes actual cost consumption, possible computation changes, coverage renewal and explicit source-evidence review, and blocks hidden or unsupported dependencies without partial results. Its private discovery, exact dependency digest, actual snapshot compatibility and browser qualification are recorded in `2026-10-03-allocation-correction-design.md`. Atomic replacement and evidence-based follow-up completion remain open; this does not accept B3.
 
+Migration 0114 adds atomic whole-allocation corrections with exact reviewed effects, immutable typed receipts, all-member replacement and retained published source revisions. Bounded ancestry preserves earlier open dependencies; historical retry survives a later correction, and current readers select the true head. Backend, migration, UI and actual browser qualification are recorded in `2026-10-03-allocation-correction-design.md`. Evidence-based follow-up completion, cross-scope/page disclosure and remaining B3 requirements are still open; this does not accept B3 or M-B.
+
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,
 `api/master_imports.py`, `MasterImportPage.tsx`; extend property/unit/person/lease/

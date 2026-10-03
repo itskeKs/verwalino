@@ -272,6 +272,7 @@ async def test_intake_migration_refuses_data_and_preserves_function_identity(mig
                 db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                importlib.import_module('migrations.versions.0114_allocation_corrections').downgrade()
                 importlib.import_module('migrations.versions.0113_allocation_correction_preview').downgrade()
                 importlib.import_module('migrations.versions.0112_context_mappings').downgrade()
                 importlib.import_module('migrations.versions.0111_context_candidate_source').downgrade()

@@ -50,3 +50,24 @@ async def create(logical_id:uuid.UUID,body:AdoptionCreate,idempotency_key:uuid.U
 @router.get('/api/allocation-sets/{set_id}/correction-preview')
 async def correction_preview(set_id:uuid.UUID,treatment_review_id:uuid.UUID,auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_member_db)):
     return await AllocationAdoptionService(db,auth).correction_preview(set_id,treatment_review_id)
+
+
+class CorrectionCreate(AdoptionCreate):
+    downstream_followups_reviewed:bool=Field(strict=True)
+
+    @field_validator('downstream_followups_reviewed')
+    @classmethod
+    def followups_acknowledged(cls,value):
+        if value is not True:raise ValueError('Explicit review of all downstream follow-ups required')
+        return value
+
+
+@router.get('/api/allocation-corrections/{correction_id}')
+async def correction_detail(correction_id:uuid.UUID,auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_member_db)):
+    return await AllocationAdoptionService(db,auth).correction_detail(correction_id)
+
+
+@router.post('/api/allocation-sets/{set_id}/corrections',status_code=201)
+async def correct(set_id:uuid.UUID,body:CorrectionCreate,idempotency_key:uuid.UUID=Header(),expected:uuid.UUID|None=Depends(expected_revision),
+                  auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_writer_db)):
+    return await AllocationAdoptionService(db,auth).correct(set_id,body,idempotency_key,expected)

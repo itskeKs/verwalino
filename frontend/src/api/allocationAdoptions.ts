@@ -11,7 +11,7 @@ export interface AllocationSet {
 }
 export const allocationAdoptionsApi = {
   preview: (review: string, signal?: AbortSignal) => api.get<AdoptionPreview>(`/api/allocation-treatments/${review}/adoption-preview`, { signal }),
-  result: (logical: string, signal?: AbortSignal) => api.get<{ item: AllocationSet | null }>(`/api/logical-documents/${logical}/allocation-adoptions`, { signal }),
+  result: (logical: string, signal?: AbortSignal) => api.get<{ item: AllocationSet | null; correction?: CorrectionResult | null }>(`/api/logical-documents/${logical}/allocation-adoptions`, { signal }),
   create: (logical: string, body: AdoptionCommand, key: string) => api.post<AllocationSet>(`/api/logical-documents/${logical}/allocation-adoptions`, body, {
     headers: { 'Idempotency-Key': key, 'If-Match': `"${body.treatment_review_id}"` } }),
 };
@@ -34,4 +34,16 @@ interface CorrectionAmounts {
 export const correctionPreviewApi = {
   get: (setId: string, reviewId: string, signal?: AbortSignal) => api.get<CorrectionPreview>(
     `/api/allocation-sets/${setId}/correction-preview?treatment_review_id=${encodeURIComponent(reviewId)}`, { signal }),
+};
+
+export interface CorrectionCommand extends AdoptionCommand { downstream_followups_reviewed: true }
+export interface CorrectionResult {
+  allocation: AllocationSet;
+  receipt: { id: string; predecessor_id: string; successor_id: string; reason: string; actor_id: string; confirmed_at: string; preview_digest: string;
+    impacts: { id: string; snapshot: CorrectionImpact }[] };
+}
+export const allocationCorrectionsApi = {
+  detail: (id: string, signal?: AbortSignal) => api.get<CorrectionResult>(`/api/allocation-corrections/${id}`, { signal }),
+  create: (predecessor: string, body: CorrectionCommand, key: string) => api.post<CorrectionResult>(`/api/allocation-sets/${predecessor}/corrections`, body, {
+    headers: { 'Idempotency-Key': key, 'If-Match': `"${predecessor}"` } }),
 };

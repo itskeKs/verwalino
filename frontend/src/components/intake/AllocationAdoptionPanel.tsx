@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
-import { allocationAdoptionsApi, type AdoptionCommand, type AdoptionPreview, type AllocationSet } from '../../api/allocationAdoptions';
+import { allocationAdoptionsApi, type AdoptionCommand, type AdoptionPreview, type AllocationSet, type CorrectionResult } from '../../api/allocationAdoptions';
 import { ContextMappingPanel } from './ContextMappingPanel';
-import { AllocationCorrectionPreview } from './AllocationCorrectionPreview';
+import { AllocationCorrectionPanel } from './AllocationCorrectionPanel';
 
 type Draft = { review: string; preview: AdoptionPreview; reason: string; costs: boolean; disclosure: boolean };
 const denied = (error: unknown) => error instanceof ApiError && [401, 403, 404].includes(error.status);
@@ -11,9 +11,10 @@ const fresh = (review: string, preview: AdoptionPreview): Draft => ({ review, pr
 export function AllocationAdoptionPanel({ logicalId, reviewId, ready, parentBusy, parentGeneration }: {
   logicalId: string; reviewId: string | null; ready: boolean; parentBusy: boolean; parentGeneration: number;
 }) {
-  const [view, setView] = useState<{ preview: AdoptionPreview | null; authorizedReview: string | null; result: AllocationSet | null } | null>(null);
+  const [view, setView] = useState<{ preview: AdoptionPreview | null; authorizedReview: string | null; result: AllocationSet | null; correction?: CorrectionResult | null } | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null); const [busy, setBusy] = useState(true); const [sending, setSending] = useState(false);
   const [generation, setGeneration] = useState(0); const [submitted, setSubmitted] = useState(false); const [conflict, setConflict] = useState(false); const [error, setError] = useState<string | null>(null);
+  const [correctionDenial, setCorrectionDenial] = useState(0);
   const pending = useRef<{ body: AdoptionCommand; key: string } | null>(null);
   const alive = useRef(true); useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const retained = draft?.review ?? null;
@@ -24,14 +25,15 @@ export function AllocationAdoptionPanel({ logicalId, reviewId, ready, parentBusy
     Promise.allSettled([allocationAdoptionsApi.result(logicalId, controller.signal), current, old]).then(results => {
       if (controller.signal.aborted) return;
       const [receipt, preview, previous] = results;
+      if (receipt.status === 'rejected' && denied(receipt.reason)) setCorrectionDenial(value => value + 1);
       if (receipt.status === 'rejected' || previous.status === 'rejected' || preview.status === 'rejected') {
         if ((receipt.status === 'rejected' && denied(receipt.reason)) || (previous.status === 'rejected' && denied(previous.reason))) {
           pending.current = null; setSubmitted(false); setDraft(null);
         }
-        setView(receipt.status === 'fulfilled' && previous.status === 'fulfilled' ? { result: receipt.value.item ?? null, preview: null, authorizedReview: previous.value ? retained ?? reviewId : null } : null);
+        setView(receipt.status === 'fulfilled' && previous.status === 'fulfilled' ? { result: receipt.value.item ?? null, correction: receipt.value.correction ?? null, preview: null, authorizedReview: previous.value ? retained ?? reviewId : null } : null);
         setError('Übernahmeprüfung derzeit nicht vollständig verfügbar. Bitte erneut laden.');
       } else {
-        setView({ result: receipt.value.item ?? null, preview: preview.value, authorizedReview: previous.value ? retained ?? reviewId : null });
+        setView({ result: receipt.value.item ?? null, correction: receipt.value.correction ?? null, preview: preview.value, authorizedReview: previous.value ? retained ?? reviewId : null });
         if (reviewId && preview.value && ready && !receipt.value.item) setDraft(prior => prior ?? fresh(reviewId, preview.value!));
       }
       setBusy(false);
@@ -80,7 +82,7 @@ export function AllocationAdoptionPanel({ logicalId, reviewId, ready, parentBusy
       </fieldset>
       <button className="btn" disabled={blocked || (!submitted && (!eligible || stale || !draft.costs || !draft.disclosure || !draft.reason.trim()))} onClick={() => void save()}>{submitted ? 'Dieselbe Kostenübernahme erneut senden' : 'Teilkosten bestätigen und Original freigeben'}</button>
     </>}
-    {view?.result && <AllocationCorrectionPreview allocationId={view.result.id} reviewId={reviewId} parentBusy={blocked} parentGeneration={parentGeneration + generation} />}
+    <div hidden={!view?.result}><AllocationCorrectionPanel key={`${logicalId}:${correctionDenial}`} allocationId={view?.result?.id ?? null} reviewId={reviewId} parentBusy={blocked || !view?.result} parentGeneration={parentGeneration + generation} receipt={view?.correction ?? null} onConfirmed={() => setGeneration(value => value + 1)} /></div>
     <ContextMappingPanel allocationId={view?.result?.id ?? null} parentGeneration={parentGeneration + generation} parentBusy={blocked} />
   </section>;
 }

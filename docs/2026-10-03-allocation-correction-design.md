@@ -32,7 +32,7 @@ Implement and qualify the read-only readiness/impact evaluator first (0113), the
 
 Required cases include 2-to-3 and signed-credit corrections, changed totals, unchanged active money before acceptance, exact conservation, atomic rollback after each effect, competing predecessors, lost-response replay after another correction, no extra same-source adoption, blocked partial/member SQL writes, source-byte failure, live role/grant/pause changes, hidden downstream dependencies, source revision custody, unchanged finalized snapshots, stale completion receipts, mapping behavior, private evidence retention, guarded downgrade and actual UI/browser retries.
 
-Design reviewed in a bounded read-only architecture consultation. Implementation and qualification are in progress; no grouped correction command is accepted yet. Full B3 remains incomplete.
+Design reviewed in a bounded read-only architecture consultation. The read-only preview and bounded atomic command are qualified below. Evidence-based downstream completion and full B3 remain incomplete.
 
 
 ## Qualified 0113 readiness milestone
@@ -59,3 +59,43 @@ All checks ran locally with synthetic data, PostgreSQL 16 at the disposable test
 Relevant source/test/script fingerprint: `1d943593f523a4d7c98de2a7dff09f12946b384e5a85a10cdd00644847327c66`.
 
 The grouped correction command, immutable impact/follow-up records, source-version replacement, exact historical replay and complete downstream resolution remain the next increment. The acceptance list above does not accept those future mutations, full B3, or M-B.
+
+## 0114 command implementation sequence
+
+The next command uses `If-Match` for the exact predecessor set and a separate idempotency key, treatment review, 0113 preview digest, reason and three explicit acknowledgments (whole replacement costs, original disclosure, downstream follow-ups). Authority is checked before historical replay. Fresh preparation requires the current predecessor and new current treatment, recomputes the exact preview under the existing ACL/financial lock order and obtains a new transaction-bound original-byte attestation.
+
+Add a nullable predecessor reference to `allocation_set`; initial-adoption uniqueness becomes partial on predecessor-null rows, while a unique predecessor prevents branches. Add immutable private correction receipts and typed impact rows with organization-bound foreign keys to their settlement or plan parents. The impact rows seal the exact complete preview list and prevent referenced drafts from disappearing without a supported follow-up workflow. Fresh correction never marks these impacts resolved.
+
+Within one transaction, create the successor set and all confirmed costs, seal receipt/impact evidence, advance every predecessor cost pointer, supersede only the old invoice status/timestamp and append the new same-byte published invoice revision. A deferred seal verifies complete predecessor membership, all forward pointers, the identical original/property/scope, new review basis, source chain/version/retention and every impact row. The only admitted changes to old rows are these exact transitions backed by the current transaction’s typed receipt and integrity proof. Raw cost correction and upload routes continue to reject adopted-member edits.
+
+Current readers must choose the true successor head before checking its audience: adoption results, exception-completion hash lookup and fresh mapping activation. Historical receipts retain their exact sets and bodies; retrying after another correction returns that historical receipt without reapplying it. Existing opted-in mappings remain advisory and are not implicitly revoked when the same source allocation changes. Duplicate discovery keeps every historical claim for other documents and excludes only this exact own-original chain for the correction command.
+
+The receipt UI must show all replacement members, the retained source-version link and explicitly open downstream obligations. Evidence-based resolution of those obligations remains a following implementation stage; a settlement successor pointer to a draft cannot count as completed correction work.
+
+
+## Qualified 0114 atomic correction milestone
+
+0114 adds the reviewed whole-set correction command for the supported same-original/property/scope boundary. Acceptance creates every new confirmed cost, seals the immutable receipt and typed downstream impacts, advances every previous member, and publishes exactly one retained same-byte invoice revision atomically. Current allocation, exception-outcome and fresh mapping readers select the correction head. Historical retries return their original result after subsequent corrections and recheck all required authority. Ordinary adoption still cannot create a second charge.
+
+Dependency discovery includes up to 100 ancestor sets, their cost identifiers, published source versions and service periods. Earlier unresolved effects therefore remain part of subsequent previews, authorization and receipts. Hidden inherited dependencies produce a generic blocker without partial identifiers. Financial snapshots remain unchanged and every recorded follow-up stays open in this milestone.
+
+The UI requires a reason and three separate acknowledgments, shows all replacement costs and the published revision, and retains the exact predecessor/body/key through an unknown POST result, failed parent read and refreshed current head. Confirmed source denial clears retained command state. Reloading displays the current authorized correction receipt and its open effects. A reader lacking correction preparation/confirmation rights can still read the current allocation; the stronger private receipt remains unavailable.
+
+Independent reviews identified and repaired inherited-dependency loss, transient parent-read unmounting of unknown commands and overly strong receipt authorization on ordinary reads. Broad regression found and repaired a PL/pgSQL table-alias/variable collision in the current exception-outcome lookup. A test-only migration rehearsal initially waited on its own uncommitted scope fixture; committing that fixture before the rolled-back rehearsal resolved the wait.
+
+### Evidence
+
+All checks used the local disposable PostgreSQL endpoint and synthetic data. No external deployment occurred.
+
+| Check | Result and scope |
+| --- | --- |
+| New command/backend cases | 17 distinct cases qualified in focused runs: invoice/credit 2-to-3, changed gross amount and service period, all old members and one active source version, retention, concurrent exact/different-key requests, seven injected rollback stages, stale impacts, acknowledgments, byte failure, live authority/tenant denial, raw-role and transaction-bound proof rejection, immutable evidence, guarded downgrade/empty roundtrip, repeated-correction ancestry and hidden contact disclosure, historical retry after another head, read-only current allocation, and old exception completion becoming inapplicable. |
+| Related regression | 57 distinct cases qualified across adoption, exception completion, mappings and 17 predecessor migration rehearsals. The combined run had 46 passes and 11 failures from the exception SQL alias collision; the repaired exception module plus the new current-outcome test passed all 13 cases. The 0113 helper roundtrip and updated 0112 mapping roundtrip also passed focused qualification. |
+| UI | 15 tests passed across preview, correction command and adoption integration, including committed-response uncertainty followed by parent GET failure and exact retry against the original predecessor. |
+| Build/lint | Passed after final UI changes. Existing bundle-size warning remains (approximately 824 KB). |
+| Deployment-script probe | Fake-Docker regression passed with required head 0114; no deployment. |
+| Browser | Actual local upload, injected-clean extraction, human review and initial adoption followed by three-line correction. Keyboard confirmation, all acknowledgments, lost committed response, parent read failure, head refresh, identical retry, all old forward pointers, source version 2, retained receipt after page reload and two open impacts passed. Desktop and 390 px mobile screenshots inspected; no horizontal overflow or page errors. Initial harness launch used the wrong Vite working directory and failed CSS loading before login; relaunching in frontend passed. |
+
+Relevant source/test/script fingerprint: `1aed1ec725910a82fd99fad3fe8ec24b44402d42b5a3415a2ba2c86d8eac5c4f`.
+
+The next increment must establish trusted computation evidence before allowing a draft recomputation or finalized successor to complete an impact. A new declaration, audit timestamp, stored hash or pointer to a replacement draft alone is insufficient. Cross-scope/page disclosure, other B3 requirements and M-B remain unaccepted.

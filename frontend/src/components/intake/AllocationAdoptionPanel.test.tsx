@@ -73,3 +73,30 @@ it('blocks new commands when the server reports an unresolved source conflict', 
   render(<AllocationAdoptionPanel {...props} />); await screen.findByText(/Übernahme derzeit nicht möglich/);
   expect(screen.queryByLabelText('Begründung der Kostenübernahme')).not.toBeInTheDocument();
 });
+
+it('preserves an unknown correction across parent GET failure and recovers the exact request', async () => {
+  let failedRead = false; let accepted = false; const posts: { url: string; init: RequestInit }[] = [];
+  const amounts = { gross_amount: '-119.00', service_period_from: '2026-01-01', service_period_to: '2026-12-31', costs: result.costs };
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+    if (init.method === 'POST') { posts.push({ url, init }); accepted = true; return json({}, 503); }
+    if (url.includes('correction-preview')) return json({ can_review: true, preview_digest: 'correction-digest', old: amounts, proposed: amounts, impacts: [] });
+    if (url.includes('allocation-adoptions')) return failedRead ? json({}, 503) : json({ item: { ...result, id: accepted ? 'new-head' : result.id } });
+    if (url.includes('adoption-preview')) return json({ ...preview, can_adopt: false });
+    return json({ options: [], items: [] });
+  }));
+  const view = render(<AllocationAdoptionPanel {...props} />);
+  await screen.findByText('Kostenübernahme bestätigt');
+  fireEvent.click(screen.getByRole('button', { name: 'Korrekturvorschau laden' }));
+  await screen.findByLabelText('Begründung der Korrektur');
+  fireEvent.change(screen.getByLabelText('Begründung der Korrektur'), { target: { value: 'Reviewed correction' } });
+  for (const box of screen.getAllByRole('checkbox')) fireEvent.click(box);
+  fireEvent.click(screen.getByRole('button', { name: 'Gesamte Aufteilung verbindlich korrigieren' }));
+  await screen.findByRole('button', { name: 'Dieselbe Korrektur erneut senden' });
+  failedRead = true; view.rerender(<AllocationAdoptionPanel {...props} parentGeneration={1} />);
+  await waitFor(() => expect(screen.queryByText('Kostenübernahme bestätigt')).not.toBeInTheDocument());
+  expect(screen.queryByRole('button', { name: 'Dieselbe Korrektur erneut senden' })).not.toBeInTheDocument();
+  failedRead = false; view.rerender(<AllocationAdoptionPanel {...props} parentGeneration={2} />);
+  const retry = await screen.findByRole('button', { name: 'Dieselbe Korrektur erneut senden' });
+  await waitFor(() => expect(retry).toBeEnabled()); fireEvent.click(retry);
+  await waitFor(() => expect(posts).toHaveLength(2)); expect(posts[1]).toEqual(posts[0]); expect(posts[1].url).toBe('/api/allocation-sets/set/corrections');
+});

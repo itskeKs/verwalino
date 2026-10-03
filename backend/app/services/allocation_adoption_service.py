@@ -17,7 +17,9 @@ class AllocationAdoptionService(IntakeService):
 
     async def result(self,logical):
         target=await self.call('SELECT allocation_adoption_result(:org,:logical)',logical=logical)
-        return {'item':await self.detail(target) if target is not None else None}
+        receipt=await self.call('SELECT allocation_correction_for_set(:org,:target)',target=target) if target is not None else None
+        return {'item':await self.detail(target) if target is not None else None,
+          'correction':await self.correction_detail(receipt) if receipt is not None else None}
 
     async def detail(self,target):
         row=(await self.db.execute(text('''SELECT a.id,a.kind,a.source_document_id,a.primary_cost_id,a.property_id,a.scope_id,a.cost_count,a.financial_state,a.reason,a.confirmed_at,a.actor_id,
@@ -44,3 +46,25 @@ class AllocationAdoptionService(IntakeService):
               hash=prepared['content_sha256'],size=prepared['content_byte_size'])
         created=await self.call('SELECT adopt_allocation('+arguments+',:proof)',**params,proof=proof)
         return await self.detail(created)
+
+
+    async def correction_detail(self,target):
+        receipt=await self.call('SELECT allocation_correction_detail(:org,:target)',target=target)
+        return {'receipt':receipt,'allocation':await self.detail(uuid.UUID(receipt['successor_id']))}
+
+    async def correct(self,predecessor,body,key,expected):
+        params={'predecessor':predecessor,'target':body.treatment_review_id,'expected':expected,'request':key,'preview':body.preview_digest,
+          'reason':body.reason,'confirmed':body.costs_confirmed,'disclosed':body.whole_original_disclosure_reviewed,
+          'followups':body.downstream_followups_reviewed}
+        arguments=':org,:predecessor,:target,:expected,:request,:preview,:reason,:confirmed,:disclosed,:followups'
+        prepared=await self.call('SELECT prepare_allocation_correction('+arguments+')',**params)
+        if prepared['replay_id'] is not None:return await self.correction_detail(uuid.UUID(prepared['replay_id']))
+        verified=await run_in_threadpool(verify_document_integrity_and_size,prepared['content_sha256'],prepared['content_byte_size'],prepared['storage_uri'],get_store())
+        if not verified:raise HTTPException(409,'Original integrity verification failed; no costs replaced')
+        async with get_review_tenant_session(self.auth.organization_id) as review:
+            await review.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(self.auth.user_id)})
+            proof=await IntakeService(review,self.auth).call('SELECT attest_allocation_integrity(:org,:original,:request,:digest,:pid,:transaction,:hash,:size)',
+              original=uuid.UUID(prepared['original_id']),request=key,digest=prepared['request_digest'],pid=prepared['backend_pid'],transaction=prepared['transaction_id'],
+              hash=prepared['content_sha256'],size=prepared['content_byte_size'])
+        receipt=await self.call('SELECT correct_allocation('+arguments+',:proof)',**params,proof=proof)
+        return await self.correction_detail(receipt)
