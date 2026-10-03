@@ -191,9 +191,12 @@ async def test_migration_empty_roundtrip_retention_manifest_and_private_roles(mi
             point = db.begin_nested()
             try:
                 db.execute(text('TRUNCATE visual_extract_attestation CASCADE'))
+                db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
+                importlib.import_module('migrations.versions.0119_allocation_source_claims').downgrade()
                 importlib.import_module('migrations.versions.0118_visual_disclosures').downgrade()
                 migration.downgrade(); migration.upgrade()
                 importlib.import_module('migrations.versions.0118_visual_disclosures').upgrade()
+                importlib.import_module('migrations.versions.0119_allocation_source_claims').upgrade()
                 assert before == db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
             finally:
                 point.rollback()
@@ -223,6 +226,8 @@ async def test_migration_empty_roundtrip_retention_manifest_and_private_roles(mi
         with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
             with pytest.raises(DBAPIError, match='Retain visual extract'), db.begin_nested():
                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+                db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
+                importlib.import_module('migrations.versions.0119_allocation_source_claims').downgrade()
                 importlib.import_module('migrations.versions.0118_visual_disclosures').downgrade()
                 migration.downgrade()
             with pytest.raises(DBAPIError, match='immutable|Immutable'), db.begin_nested():

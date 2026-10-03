@@ -210,6 +210,8 @@ async def test_followup_context_backfill_two_orgs_without_tenant_guc_and_guarded
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
             with pytest.raises(DBAPIError,match='Retain correction follow-up'),db.begin_nested():
                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+                db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
+                importlib.import_module('migrations.versions.0119_allocation_source_claims').downgrade()
                 importlib.import_module('migrations.versions.0118_visual_disclosures').downgrade()
                 importlib.import_module('migrations.versions.0117_visual_extract_artifacts').downgrade()
                 migration.downgrade()
@@ -221,11 +223,14 @@ async def test_followup_context_backfill_two_orgs_without_tenant_guc_and_guarded
                 db.execute(text("SELECT set_config('app.current_org_id','',true)"))
                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+                db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
+                importlib.import_module('migrations.versions.0119_allocation_source_claims').downgrade()
                 importlib.import_module('migrations.versions.0118_visual_disclosures').downgrade()
                 importlib.import_module('migrations.versions.0117_visual_extract_artifacts').downgrade()
                 migration.downgrade();migration.upgrade()
                 importlib.import_module('migrations.versions.0117_visual_extract_artifacts').upgrade()
                 importlib.import_module('migrations.versions.0118_visual_disclosures').upgrade()
+                importlib.import_module('migrations.versions.0119_allocation_source_claims').upgrade()
                 assert definition==db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
                 assert db.scalar(text('SELECT count(*) FROM allocation_correction_context WHERE impact_id=ANY(:ids)'),{'ids':retained})==2
                 assert db.scalar(text('SELECT count(*) FROM allocation_correction_context WHERE impact_id=ANY(:ids)'),{'ids':unproven})==0

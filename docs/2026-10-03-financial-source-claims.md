@@ -1,0 +1,23 @@
+# Permanent physical-source claims
+
+Status: migration 0119 implemented and locally qualified. Partial-page financial adoption remains disabled.
+
+An allocation root consumes physical source content independently of its current correction, uploaded source identifier, destination scope and regenerated derivative bytes. A private immutable claim records the canonical original SHA-256 and inclusive page bounds. NULL/NULL means the entire original, including nonvisual content; a whole PDF is not reduced to its visible page interval. Every allocation in a correction chain retains the same root claim through an immutable membership row.
+
+This increment admits only the existing whole-original adoption path. All current original-hash/original-ID/logical-ID uniqueness, business-duplicate checks and original bridge seals stay in force. Existing roots are backfilled only after validating their established invoice source links. Existing legacy roots with identical hashes are all retained and explicitly marked as overlapping at migration; the migration does not choose an arbitrary winner or invent separate page intervals. Any new conflicting root is rejected privately across all organization sources and grants. Missing claims cannot be treated as evidence that content is unused.
+
+A claim's root, original hash and interval are derived and sealed by database triggers. Runtime roles cannot insert, enumerate or alter claims or memberships. Admission serializes with financial input mutations before testing overlap. New corrections inherit their immediate predecessor's claim and cannot return consumed pages to the pool. Migration reconstructs ancestry with cycle and depth bounds and rejects missing or incoherent lineage. Private generic overlap evaluation is preparation for the visual adapter, not an externally callable claim reservation API.
+
+The later visual financial adapter must retain both canonical original identity and the exact derivative hash, explicitly acknowledge permanent financial source retention, and adapt duplicate discovery, sealed financial bridge, corrections, source readers and retention atomically. Revoking an 0118 visual disclosure cannot erase a separately accepted financial source. Business identity remains a separate duplicate boundary; different PDF bytes or physical page intervals never prove different invoices.
+
+Qualification will cover whole-versus-range and adjacent/intersecting interval semantics, legacy collision retention, raw-role denial, migration reconstruction, automatic existing-path admission, correction inheritance/rollback and concurrent root conflict admission. This foundation does not accept B3 or M-B.
+
+## Qualification evidence
+
+- Initial 16 focused checks passed (`/tmp/hv-allocation-source-claims-initial.log`): inclusive interval semantics including whole originals, malformed ranges, actual concurrent adoption replay, private role/function ACLs, immutable records, correction inheritance and an injected post-write rollback.
+- 51 focused and existing adoption/correction checks passed (`/tmp/hv-allocation-source-claims-qualified.log`), including the two colliding legacy roots preserved by migration, wrong-hash/partial-claim denial and fail-closed detection after test-only claim truncation. Existing whole-original source/cost atomicity, business duplicates, exact byte proofs, corrections and historical retries remain covered.
+- Independent read-only implementation review found no concrete blocker and requested an explicit correction-chain migration rehearsal. That rehearsal was added. Its first run hit deferred trigger events in the synthetic corruption setup; the fixture now flushes those constraints before restoring its temporarily disabled immutability trigger. Production guards were not weakened.
+- 27 historical migration/rollback and explicit ancestry checks passed (`/tmp/hv-allocation-source-claims-migrations.log`). The correction-chain backfill preserves one permanent root and both members; cyclic and hash-incoherent histories fail migration.
+- The local fake deployment probe passed with the required 0119 head (`/tmp/hv-allocation-source-claims-deploy-probe.log`). No deployment was performed. Frontend code is unchanged in this increment; the 0118 UI/browser evidence remains applicable to its existing behavior.
+
+The private interval helper is qualified for page spans, but runtime admission deliberately rejects partial claims until the entire financial visual-source adapter is ready. The foundation alone does not permit a second allocation from a different page, nor does it claim that disjoint pages prove different business invoices.

@@ -264,7 +264,10 @@ async def test_raw_roles_migration_retention_and_manifest(migrator_session, scop
             point = db.begin_nested()
             try:
                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+                db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
+                importlib.import_module('migrations.versions.0119_allocation_source_claims').downgrade()
                 migration.downgrade(); migration.upgrade()
+                importlib.import_module('migrations.versions.0119_allocation_source_claims').upgrade()
                 assert before == db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
             finally: point.rollback()
             for role in ('app_rw', 'app_worker', 'app_review'):

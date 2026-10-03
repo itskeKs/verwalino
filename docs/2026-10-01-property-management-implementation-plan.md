@@ -469,6 +469,8 @@ Migration 0117 adds immutable private visual artifacts with current inspected pa
 
 Migration 0118 implements explicit single-destination disclosure and withdrawal of exact reviewed visual artifacts, separate from original custody and financial adoption. Backend, independent review, historical migration, UI and actual two-user browser qualification are recorded in `2026-10-03-visual-disclosure-design.md`. Scoped financial source identity/adoption and remaining B3 requirements are still open; this does not accept B3 or M-B.
 
+Migration 0119 records private immutable physical-source claims for allocation roots and direct inheritance by corrections. Conservative whole-original backfill retains all legacy hash collisions; no range reuse or runtime claim reservation is enabled. Backend, independent review and historical migration qualification are recorded in `2026-10-03-financial-source-claims.md`. Visual financial adoption and remaining B3 requirements remain open; this does not accept B3 or M-B.
+
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,
 `api/master_imports.py`, `MasterImportPage.tsx`; extend property/unit/person/lease/
