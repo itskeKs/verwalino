@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { AllocationTreatmentPanel } from './AllocationTreatmentPanel';
 import { ApiError } from '../../api/client';
 import { allocationProposalsApi, displayCents, exactCents, type AllocationCategory, type AllocationCommand, type AllocationHistory, type AllocationPreview } from '../../api/allocationProposals';
 
@@ -112,5 +113,8 @@ export function AllocationProposalPanel({ logicalId, contextDecisionId, ready, p
         <button className="btn" disabled={blocked || (!submitted && (stale || !canPropose || !draft.acknowledged || !draft.reason.trim()))} onClick={() => void save()}>{submitted ? 'Dieselbe Aufteilung erneut senden' : 'Aufteilungsvorschlag speichern'}</button>
       </>}
     </>}
+    <AllocationTreatmentPanel logicalId={logicalId} allocationId={view?.history.items[0]?.id ?? null}
+      ready={ready && !!view?.history.items[0] && view.history.items[0].context_decision_id === contextDecisionId}
+      parentBusy={blocked} parentGeneration={parentGeneration + generation} />
   </section>;
 }

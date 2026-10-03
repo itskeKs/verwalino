@@ -3,6 +3,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { exactCents, displayCents, type AllocationPreview } from '../../api/allocationProposals';
 import { AllocationProposalPanel } from './AllocationProposalPanel';
 
+vi.mock('./AllocationTreatmentPanel', () => ({ AllocationTreatmentPanel: () => null }));
+
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const preview: AllocationPreview = { context_decision_id: 'context', logical_document_id: 'logical', assignment_proposal_id: 'proposal', invoice_review_id: 'review', scope_label: 'Synthetic scope', gross_amount: '119.00', vat_amount: null, currency: 'EUR', can_propose: true };
 const categories = [{ id: 'category', plan_version: 1, code: 'TEST', label: 'Test category', is_active: true }];
