@@ -7,6 +7,7 @@ type Draft = { preview: CompletionPreview; reason: string; acknowledged: boolean
 const fresh = (preview: CompletionPreview): Draft => ({ preview, reason: '', acknowledged: false });
 const denied = (error: unknown) => error instanceof ApiError && [401, 403, 404].includes(error.status);
 const dispositions: Record<string, string> = {
+  fulfilled_by_source_replacement: 'Durch bestätigte Belegersetzung erfüllt',
   fulfilled_by_adoption: 'Durch bestätigte Kostenübernahme erfüllt', superseded_by_adopted_context: 'Durch den übernommenen, neueren Kontext ersetzt',
   fulfilled_by_current_comparison: 'Durch aktuellen Belegvergleich erfüllt', superseded_by_current_comparison: 'Durch aktuellen Belegvergleich ersetzt',
 };
@@ -16,13 +17,14 @@ function Evidence({ evidence }: { evidence: Pick<CompletionPreview, 'members' | 
     <h3>Alle zusammenhängenden Belege</h3>
     <ol className="space-y-3">{evidence.members.map((member, index) => <li className="min-w-0 space-y-1" key={member.logical_document_id}>
       <p className="break-words">Beleg {index + 1}{member.document_number ? ` · ${member.document_number}` : ''}{member.gross_amount ? ` · ${member.gross_amount} EUR` : ''}</p>
-      <p>{member.allocation_set_id ? member.disposition === 'adopted_document' ? `${member.cost_count} bestätigte Teilkosten` : 'Kopie desselben Belegs; durch die bestehende Kostenübernahme abgedeckt' : 'Bestätigte Kostenübernahme fehlt'}</p>
+      <p>{member.allocation_set_id ? member.disposition === 'replaced_document' ? 'Bisheriger Beleg und alle Teilkosten wurden durch eine bestätigte Belegrevision ersetzt.' : member.disposition === 'adopted_document' ? `${member.cost_count} bestätigte Teilkosten` : 'Kopie desselben Belegs; durch die bestehende Kostenübernahme abgedeckt' : 'Bestätigte Kostenübernahme fehlt'}</p>
       <Link className="block underline" to={`/posteingang/belege/${member.document_ref_id}?logical_document_id=${encodeURIComponent(member.logical_document_id)}`}>Beleg {index + 1} prüfen</Link>
       {member.source_document_id && <Link className="block underline" to={`/belege/${member.source_document_id}`}>Freigegebenes Original für Beleg {index + 1}</Link>}
+      {member.replacement && <p><Link className="underline" to={`/belege/${member.replacement.source_document_id}`}>Bestätigten Ersatz für Beleg {index + 1} öffnen</Link> · {member.replacement.cost_count} neue Teilkosten{member.replacement.gross_amount ? ` · ${member.replacement.gross_amount} EUR` : ''}</p>}
       {member.primary_cost_id && <Link className="block underline" to={`/kosten/${member.primary_cost_id}`}>Kostenübernahme für Beleg {index + 1}</Link>}
     </li>)}</ol>
     {evidence.comparisons.length > 0 && <><h3>Erforderliche Belegvergleiche</h3><ul className="space-y-2">{evidence.comparisons.map(pair => <li key={pair.left_logical_id + pair.right_logical_id}>
-      {label(pair.left_logical_id)} und {label(pair.right_logical_id)}: {pair.verdict === 'same_document' ? 'Derselbe Beleg' : pair.verdict === 'distinct_documents' ? 'Verschiedene Belege' : 'Noch nicht abschließend geklärt'}
+      {label(pair.left_logical_id)} und {label(pair.right_logical_id)}: {pair.verdict === 'confirmed_replacement' ? 'Durch bestätigte Belegersetzung verbunden' : pair.verdict === 'same_document' ? 'Derselbe Beleg' : pair.verdict === 'distinct_documents' ? 'Verschiedene Belege' : 'Noch nicht abschließend geklärt'}
     </li>)}</ul></>}
     <h3>Erhaltene Fallhinweise</h3><ul className="space-y-2">{evidence.dispositions.map((item, index) => <li key={item.dependency_id}>
       Hinweis {index + 1} ({item.kind === 'context' ? 'Zuordnung' : 'Dublette'}): {dispositions[item.disposition] ?? 'Noch zu prüfen'}

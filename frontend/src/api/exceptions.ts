@@ -30,12 +30,13 @@ export interface ExceptionCommand { action: ExceptionAction; reason: string; sno
 export interface RevisionPage<T> { items: T[]; next_before_revision: number | null }
 export interface CompletionMember {
   logical_document_id: string; document_ref_id: string; invoice_review_id: string; allocation_set_id: string | null;
-  disposition: 'adopted_document' | 'covered_copy'; source_document_id: string | null; document_number?: string;
+  replacement?: { allocation_head_id: string; replacement_receipt_id: string; source_document_id: string; primary_cost_id: string; cost_count: number; gross_amount?: string };
+  disposition: 'adopted_document' | 'covered_copy' | 'replaced_document'; source_document_id: string | null; document_number?: string;
   gross_amount?: string; cost_count: number | null; primary_cost_id?: string;
 }
 export interface CompletionComparison {
   left_logical_id: string; right_logical_id: string; comparison_id: string | null;
-  verdict: DuplicateComparison['verdict'] | null; subject_review_id: string | null; reference_review_id: string | null;
+  verdict: DuplicateComparison['verdict'] | 'confirmed_replacement' | null; subject_review_id: string | null; reference_review_id: string | null;
 }
 export interface CompletionDisposition {
   dependency_id: string; kind: 'context' | 'duplicate'; disposition: string; comparison_id?: string | null;

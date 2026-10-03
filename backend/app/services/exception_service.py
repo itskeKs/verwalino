@@ -26,8 +26,9 @@ class ExceptionService(IntakeService):
 
     async def completion(self,target,receipt):
         row=(await self.db.execute(text('''SELECT c.id,c.case_id,c.expected_event_id,c.policy,c.basis_digest,c.dispositions,c.comparisons,c.member_count,c.actor_id,c.reason,c.completion_reviewed,c.created_at,
-          (SELECT jsonb_agg((to_jsonb(m)-ARRAY['organization_id','case_id','completion_id'])||jsonb_build_object('source_document_id',a.source_document_id,'primary_cost_id',a.primary_cost_id,'cost_count',a.cost_count) ORDER BY m.logical_document_id)
-            FROM exception_completion_member m JOIN allocation_set a ON a.organization_id=m.organization_id AND a.id=m.allocation_set_id WHERE m.organization_id=c.organization_id AND m.completion_id=c.id) AS members
+          (SELECT jsonb_agg((to_jsonb(m)-ARRAY['organization_id','case_id','completion_id'])||jsonb_build_object('source_document_id',a.source_document_id,'primary_cost_id',a.primary_cost_id,'cost_count',a.cost_count)||CASE WHEN m.replacement_head_id IS NOT NULL THEN jsonb_build_object('replacement',jsonb_build_object(
+              'allocation_head_id',h.id,'replacement_receipt_id',m.replacement_receipt_id,'source_document_id',h.source_document_id,'primary_cost_id',h.primary_cost_id,'cost_count',h.cost_count)) ELSE '{}'::jsonb END ORDER BY m.logical_document_id)
+            FROM exception_completion_member m JOIN allocation_set a ON a.organization_id=m.organization_id AND a.id=m.allocation_set_id LEFT JOIN allocation_set h ON h.organization_id=m.organization_id AND h.id=m.replacement_head_id WHERE m.organization_id=c.organization_id AND m.completion_id=c.id) AS members
           FROM exception_completion c WHERE c.organization_id=:org AND c.case_id=:target AND c.id=:receipt'''),
           {'org':self.auth.organization_id,'target':target,'receipt':receipt})).mappings().first()
         if row is None:raise HTTPException(404,'Completion receipt inaccessible')
