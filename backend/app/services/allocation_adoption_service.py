@@ -23,7 +23,7 @@ class AllocationAdoptionService(IntakeService):
           'correction':await self.correction_detail(receipt) if receipt is not None else None}
 
     async def detail(self,target):
-        row=(await self.db.execute(text('''SELECT a.id,a.kind,a.source_variant,a.source_document_id,a.primary_cost_id,a.property_id,a.scope_id,a.cost_count,a.financial_state,a.reason,a.confirmed_at,a.actor_id,
+        row=(await self.db.execute(text('''SELECT a.id,a.kind,a.source_variant,a.transition_kind,a.source_document_id,a.primary_cost_id,a.property_id,a.scope_id,a.cost_count,a.financial_state,a.reason,a.confirmed_at,a.actor_id,
           (SELECT jsonb_agg(jsonb_build_object('cost_entry_id',l.cost_entry_id,'position',l.position,'gross_amount',c.gross_amount::text,
             'vat_amount',c.vat_amount::text,'tenant_amount',c.apportionable_tenant_amount::text) ORDER BY l.position)
            FROM document_cost_link l JOIN cost_entry c ON c.organization_id=l.organization_id AND c.id=l.cost_entry_id
@@ -98,12 +98,14 @@ class AllocationAdoptionService(IntakeService):
         receipt=await self.call('SELECT allocation_correction_detail(:org,:target)',target=target)
         return {'receipt':receipt,'allocation':await self.detail(uuid.UUID(receipt['successor_id']))}
 
-    async def correct(self,predecessor,body,key,expected):
+    async def correct(self,predecessor,body,key,expected,*,replacement=False):
         params={'predecessor':predecessor,'target':body.treatment_review_id,'expected':expected,'request':key,'preview':body.preview_digest,
           'reason':body.reason,'confirmed':body.costs_confirmed,'disclosed':body.whole_original_disclosure_reviewed,
           'followups':body.downstream_followups_reviewed}
         arguments=':org,:predecessor,:target,:expected,:request,:preview,:reason,:confirmed,:disclosed,:followups'
-        prepared=await self.call('SELECT prepare_allocation_correction('+arguments+')',**params)
+        prepare='prepare_allocation_replacement' if replacement else 'prepare_allocation_correction'
+        command='replace_allocation_source' if replacement else 'correct_allocation'
+        prepared=await self.call('SELECT '+prepare+'('+arguments+')',**params)
         if prepared['replay_id'] is not None:return await self.correction_detail(uuid.UUID(prepared['replay_id']))
         verified=await run_in_threadpool(verify_document_integrity_and_size,prepared['content_sha256'],prepared['content_byte_size'],prepared['storage_uri'],get_store())
         if not verified:raise HTTPException(409,'Original integrity verification failed; no costs replaced')
@@ -112,5 +114,5 @@ class AllocationAdoptionService(IntakeService):
             proof=await IntakeService(review,self.auth).call('SELECT attest_allocation_integrity(:org,:original,:request,:digest,:pid,:transaction,:hash,:size)',
               original=uuid.UUID(prepared['original_id']),request=key,digest=prepared['request_digest'],pid=prepared['backend_pid'],transaction=prepared['transaction_id'],
               hash=prepared['content_sha256'],size=prepared['content_byte_size'])
-        receipt=await self.call('SELECT correct_allocation('+arguments+',:proof)',**params,proof=proof)
+        receipt=await self.call('SELECT '+command+'('+arguments+',:proof)',**params,proof=proof)
         return await self.correction_detail(receipt)

@@ -1,6 +1,6 @@
 """Confirm complete reviewed allocations with explicit original or retained visual evidence."""
 import uuid
-from fastapi import APIRouter,Depends,Header
+from fastapi import APIRouter,Depends,Header,Query
 from pydantic import BaseModel,ConfigDict,Field,field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.tenant import AuthContext,get_current_user
@@ -143,3 +143,20 @@ async def complete_followup(impact_id:uuid.UUID,body:FollowupComplete,idempotenc
                            auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_writer_db)):
     return await AllocationAdoptionService(db,auth).call('SELECT complete_correction_followup(:org,:target,:request,:preview,:reason,:source_reviewed,:confirmed)',
       target=impact_id,request=idempotency_key,preview=body.preview_digest,reason=body.reason,source_reviewed=body.source_reviewed,confirmed=body.confirmed)
+
+
+@router.get('/api/allocation-treatments/{review_id}/replacement-candidates')
+async def replacement_candidates(review_id:uuid.UUID,after:uuid.UUID|None=None,limit:int=Query(20,ge=1,le=50),
+                                 auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_member_db)):
+    return await AllocationAdoptionService(db,auth).call('SELECT allocation_replacement_candidates(:org,:target,:after,:take)',target=review_id,after=after,take=limit)
+
+
+@router.get('/api/allocation-sets/{set_id}/replacement-preview')
+async def replacement_preview(set_id:uuid.UUID,treatment_review_id:uuid.UUID,auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_member_db)):
+    return await AllocationAdoptionService(db,auth).call('SELECT allocation_replacement_preview(:org,:predecessor,:target)',predecessor=set_id,target=treatment_review_id)
+
+
+@router.post('/api/allocation-sets/{set_id}/source-replacements',status_code=201)
+async def replace_source(set_id:uuid.UUID,body:CorrectionCreate,idempotency_key:uuid.UUID=Header(),expected:uuid.UUID|None=Depends(expected_revision),
+                         auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_writer_db)):
+    return await AllocationAdoptionService(db,auth).correct(set_id,body,idempotency_key,expected,replacement=True)

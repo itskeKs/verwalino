@@ -193,6 +193,9 @@ async def test_followup_context_backfill_two_orgs_without_tenant_guc_and_guarded
     from alembic.migration import MigrationContext
     from tests.conftest import MIGRATOR_SYNC_URL
     from tests.test_scope_grants import scope_fixture
+    # This historical backfill fixture starts before visual/replacement finance.
+    # Isolate it from retained allocations created by earlier test modules.
+    await mutate(text('TRUNCATE allocation_set CASCADE'),{})
     first=await scope_fixture(migrator_session,scope_seed)
     second_seed={**seed_data,'org_a_id':seed_data['org_b_id'],'user_a_admin_id':seed_data['user_b_admin_id'],'user_a_clerk_id':seed_data['user_b_admin_id']}
     second=await scope_fixture(migrator_session,second_seed)
@@ -209,6 +212,7 @@ async def test_followup_context_backfill_two_orgs_without_tenant_guc_and_guarded
     try:
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
             with pytest.raises(DBAPIError,match='Retain correction follow-up'),db.begin_nested():
+                importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
                 db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
@@ -225,6 +229,7 @@ async def test_followup_context_backfill_two_orgs_without_tenant_guc_and_guarded
             try:
                 db.execute(text("SELECT set_config('app.current_org_id','',true)"))
                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
+                importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
                 db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
@@ -239,6 +244,7 @@ async def test_followup_context_backfill_two_orgs_without_tenant_guc_and_guarded
                 importlib.import_module('migrations.versions.0119_allocation_source_claims').upgrade()
                 importlib.import_module('migrations.versions.0120_allocation_source_aliases').upgrade()
                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
+                importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
                 assert definition==db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
                 assert db.scalar(text('SELECT count(*) FROM allocation_correction_context WHERE impact_id=ANY(:ids)'),{'ids':retained})==2
                 assert db.scalar(text('SELECT count(*) FROM allocation_correction_context WHERE impact_id=ANY(:ids)'),{'ids':unproven})==0

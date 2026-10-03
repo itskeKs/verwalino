@@ -5,7 +5,7 @@ export interface AdoptionPreview {
 }
 export interface AdoptionCommand { treatment_review_id: string; preview_digest: string; reason: string; costs_confirmed: true; whole_original_disclosure_reviewed: true }
 export interface AllocationSet {
-  id: string; kind: 'intake_reviewed' | 'proven_legacy'; source_variant?: 'original' | 'visual'; source_document_id: string; primary_cost_id: string; property_id: string; scope_id: string;
+  transition_kind?: 'same_source' | 'source_replacement'; id: string; kind: 'intake_reviewed' | 'proven_legacy'; source_variant?: 'original' | 'visual'; source_document_id: string; primary_cost_id: string; property_id: string; scope_id: string;
   cost_count: number; financial_state: 'confirmed'; reason: string; confirmed_at: string; actor_id: string;
   costs: { cost_entry_id: string; position: number; gross_amount: string; vat_amount: string | null; tenant_amount: string | null }[];
 }
@@ -84,4 +84,14 @@ export const visualAllocationApi = {
   correct: (id: string, body: VisualCorrectionCommand, key: string) => api.post<CorrectionResult>(
     `/api/allocation-sets/${id}/visual-corrections`, body,
     { headers: { 'Idempotency-Key': key, 'If-Match': `"${id}"` } }),
+};
+
+export interface ReplacementCandidate { id: string; source_document_id: string; document_number: string; seller_name: string; gross_amount: string; confirmed_at: string }
+export const allocationReplacementsApi = {
+  candidates: (review: string, after?: string, signal?: AbortSignal) => api.get<{ items: ReplacementCandidate[]; next_after: string | null }>(
+    `/api/allocation-treatments/${review}/replacement-candidates${after ? `?after=${encodeURIComponent(after)}` : ''}`, { signal }),
+  preview: (id: string, review: string, signal?: AbortSignal) => api.get<CorrectionPreview>(
+    `/api/allocation-sets/${id}/replacement-preview?treatment_review_id=${encodeURIComponent(review)}`, { signal }),
+  create: (id: string, body: CorrectionCommand, key: string) => api.post<CorrectionResult>(
+    `/api/allocation-sets/${id}/source-replacements`, body, { headers: { 'Idempotency-Key': key, 'If-Match': `"${id}"` } }),
 };

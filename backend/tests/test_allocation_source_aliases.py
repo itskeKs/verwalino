@@ -279,6 +279,7 @@ async def test_alias_migration_roundtrip_and_populated_rollback_refusal(migrator
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
+            importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
             importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
             before = {signature:db.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),{'signature':signature}) for signature,_,_ in migration.PATCHES}
             with pytest.raises(DBAPIError,match='Retain physical source'),db.begin_nested(): migration.downgrade()
@@ -290,4 +291,5 @@ async def test_alias_migration_roundtrip_and_populated_rollback_refusal(migrator
             finally:
                 point.rollback()
                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
+                importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
     finally: engine.dispose()

@@ -160,6 +160,7 @@ async def test_preview_helpers_bound_before_traversal_and_migration_roundtrip(mi
             db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
             db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
             db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
+            importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
             importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
             db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
             db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
@@ -184,6 +185,7 @@ async def test_preview_helpers_bound_before_traversal_and_migration_roundtrip(mi
             importlib.import_module('migrations.versions.0119_allocation_source_claims').upgrade()
             importlib.import_module('migrations.versions.0120_allocation_source_aliases').upgrade()
             importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
+            importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
             for signature in signatures[1:]:
                 assert not db.scalar(text("SELECT has_function_privilege('app_rw',:signature,'EXECUTE')"),{'signature':signature})
             for payload in ({'padding':'x'*2097152,'computation':[{'cost_entry_id':'invalid'}]}, {'inputs':{'cost_positions':[None]}}, {'result':{'lines':{}}}, {'result':{'owners':[{'cost_lines':False}]}}, {'result':{'owners':[None]}}):

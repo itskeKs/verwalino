@@ -6,7 +6,7 @@ import { CorrectionFollowups } from './CorrectionFollowups';
 
 type FinancialCorrection = CorrectionCommand | VisualCorrectionCommand;
 
-function Confirmation({ preview, reviewId, disabled, submit }: { preview: CorrectionPreview; reviewId: string; disabled: boolean; submit: (body: FinancialCorrection) => void }) {
+export function Confirmation({ preview, reviewId, disabled, submit, replacement = false }: { replacement?: boolean; preview: CorrectionPreview; reviewId: string; disabled: boolean; submit: (body: FinancialCorrection) => void }) {
   const [reason, setReason] = useState('');
   const [costs, setCosts] = useState(false); const [disclosure, setDisclosure] = useState(false); const [followups, setFollowups] = useState(false);
   const visual = preview.source_variant === 'visual';
@@ -14,12 +14,12 @@ function Confirmation({ preview, reviewId, disabled, submit }: { preview: Correc
     <p>Die Bestätigung ersetzt alle bisherigen Teilkosten gemeinsam. Frühere Kosten und Belegversionen bleiben erhalten. Betroffene Finanzvorgänge müssen anschließend gesondert bearbeitet werden.</p>
     {visual && <p>Der bereits aufbewahrte Auszug bleibt der Beleg für diese Korrektur, auch nach Widerruf seiner vorübergehenden Freigabe.</p>}
     <fieldset className="min-w-0 space-y-3" disabled={disabled}>
-      <label className="block">Begründung der Korrektur<textarea className="block w-full min-w-0 rounded-md border border-input bg-background px-3 py-2" maxLength={2000} value={reason} onChange={event => { setReason(event.target.value); setCosts(false); setDisclosure(false); setFollowups(false); }} /></label>
+      <label className="block">{replacement ? 'Begründung der Belegersetzung' : 'Begründung der Korrektur'}<textarea className="block w-full min-w-0 rounded-md border border-input bg-background px-3 py-2" maxLength={2000} value={reason} onChange={event => { setReason(event.target.value); setCosts(false); setDisclosure(false); setFollowups(false); }} /></label>
       <label className="flex items-start gap-2"><input type="checkbox" checked={costs} onChange={event => setCosts(event.target.checked)} />Alle neuen Teilkosten, Beträge und Verteilungen geprüft; gemeinsam ersetzen.</label>
-      <label className="flex items-start gap-2"><input type="checkbox" checked={disclosure} onChange={event => setDisclosure(event.target.checked)} />{visual ? 'Aufbewahrten Auszug geprüft; dieselben Seiten als dauerhaften Beleg der Korrektur bestätigen.' : 'Vollständiges Original geprüft; neue Belegversion im Abrechnungskreis freigeben.'}</label>
+      <label className="flex items-start gap-2"><input type="checkbox" checked={disclosure} onChange={event => setDisclosure(event.target.checked)} />{visual ? 'Aufbewahrten Auszug geprüft; dieselben Seiten als dauerhaften Beleg der Korrektur bestätigen.' : replacement ? 'Bisheriges und neues Original verglichen; der neue Beleg ersetzt den bisherigen und wird im Abrechnungskreis dauerhaft aufbewahrt.' : 'Vollständiges Original geprüft; neue Belegversion im Abrechnungskreis freigeben.'}</label>
       <label className="flex items-start gap-2"><input type="checkbox" checked={followups} onChange={event => setFollowups(event.target.checked)} />Alle angezeigten Folgen geprüft; erforderliche Folgearbeiten bleiben offen.</label>
     </fieldset>
-    <button className="btn" disabled={disabled || !reason.trim() || !costs || !disclosure || !followups || !preview.preview_digest || (visual && !preview.visual_content_sha256)} onClick={() => submit({ treatment_review_id: reviewId, preview_digest: preview.preview_digest!, reason: reason.trim(), costs_confirmed: true, ...(visual ? { visual_content_sha256: preview.visual_content_sha256!, retained_visual_source_reviewed: true as const } : { whole_original_disclosure_reviewed: true as const }), downstream_followups_reviewed: true })}>Gesamte Aufteilung verbindlich korrigieren</button>
+    <button className="btn" disabled={disabled || !reason.trim() || !costs || !disclosure || !followups || !preview.preview_digest || (visual && !preview.visual_content_sha256)} onClick={() => submit({ treatment_review_id: reviewId, preview_digest: preview.preview_digest!, reason: reason.trim(), costs_confirmed: true, ...(visual ? { visual_content_sha256: preview.visual_content_sha256!, retained_visual_source_reviewed: true as const } : { whole_original_disclosure_reviewed: true as const }), downstream_followups_reviewed: true })}>{replacement ? 'Beleg und alle Teilkosten verbindlich ersetzen' : 'Gesamte Aufteilung verbindlich korrigieren'}</button>
   </div>;
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
 import { allocationAdoptionsApi, type AdoptionCommand, type AdoptionPreview, type AllocationSet, type CorrectionResult } from '../../api/allocationAdoptions';
+import { AllocationReplacementPanel } from './AllocationReplacementPanel';
 import { VisualAllocationAdoptionPanel } from './VisualAllocationAdoptionPanel';
 import { ContextMappingPanel } from './ContextMappingPanel';
 import { AllocationCorrectionPanel } from './AllocationCorrectionPanel';
@@ -18,6 +19,7 @@ export function AllocationAdoptionPanel({ logicalId, reviewId, ready, parentBusy
   const [correctionDenial, setCorrectionDenial] = useState(0);
   const [sourceVariant, setSourceVariant] = useState<'original' | 'visual'>('original');
   const [visualPending, setVisualPending] = useState(false);
+  const [replacementPending, setReplacementPending] = useState(false);
   const pending = useRef<{ body: AdoptionCommand; key: string } | null>(null);
   const alive = useRef(true); useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const retained = draft?.review ?? null;
@@ -44,7 +46,7 @@ export function AllocationAdoptionPanel({ logicalId, reviewId, ready, parentBusy
     return () => controller.abort();
   }, [logicalId, reviewId, retained, ready, generation, parentGeneration]);
   const baseBlocked = busy || parentBusy || sending;
-  const blocked = baseBlocked || visualPending;
+  const blocked = baseBlocked || visualPending || replacementPending;
   const eligible = ready && !!view?.preview?.can_adopt && !view.result;
   const authorized = !!draft && view?.authorizedReview === draft.review;
   const stale = conflict || !!draft && (draft.review !== reviewId || draft.preview.preview_digest !== view?.preview?.preview_digest);
@@ -90,8 +92,10 @@ export function AllocationAdoptionPanel({ logicalId, reviewId, ready, parentBusy
       </fieldset>
       <button className="btn" disabled={blocked || (!submitted && (!eligible || stale || !draft.costs || !draft.disclosure || !draft.reason.trim()))} onClick={() => void save()}>{submitted ? 'Dieselbe Kostenübernahme erneut senden' : 'Teilkosten bestätigen und Original freigeben'}</button>
     </>}
-    <VisualAllocationAdoptionPanel logicalId={logicalId} reviewId={reviewId} enabled={sourceVariant === 'visual' && (!view?.result || visualPending)} parentBusy={baseBlocked}
+    <VisualAllocationAdoptionPanel logicalId={logicalId} reviewId={reviewId} enabled={sourceVariant === 'visual' && (!view?.result || visualPending)} parentBusy={baseBlocked || replacementPending}
       generation={parentGeneration + generation} onPending={setVisualPending} onConfirmed={() => setGeneration(value => value + 1)} />
+    <AllocationReplacementPanel reviewId={reviewId} enabled={!!view && !view.result && ready && sourceVariant === 'original'} parentBusy={baseBlocked || visualPending || submitted}
+      generation={parentGeneration + generation} onPending={setReplacementPending} onConfirmed={() => setGeneration(value => value + 1)} />
     <div hidden={!view?.result}><AllocationCorrectionPanel sourceVariant={view?.result?.source_variant} key={`${logicalId}:${correctionDenial}`} allocationId={view?.result?.id ?? null} reviewId={reviewId} parentBusy={blocked || !view?.result} parentGeneration={parentGeneration + generation} receipt={view?.correction ?? null} onConfirmed={() => setGeneration(value => value + 1)} /></div>
     <ContextMappingPanel allocationId={view?.result?.id ?? null} parentGeneration={parentGeneration + generation} parentBusy={blocked} />
   </section>;

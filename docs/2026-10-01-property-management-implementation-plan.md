@@ -475,6 +475,8 @@ Migration 0120 preserves physical identity through bounded retained-derivative a
 
 Migration 0121 adds explicit adoption of reviewed visual sources, with separate original/derivative byte proofs, permanent page claims, sanitized financial source bridges and retained visual corrections after transient withdrawal. Disjoint logical invoices can be adopted into separate authorized scopes; equal business identity remains a blocker. Exception outcomes, opt-in mapping evidence and actual financial recomputation remain coherent with canonical private originals. Backend, independent review, historical migration, UI and actual two-user desktop/mobile qualification are recorded in `2026-10-03-visual-allocation-adoption.md`. A conserved allocation of one invoice across multiple scopes and the remaining B3 requirements are not accepted by this increment; B3 and M-B remain incomplete.
 
+Migration 0122 adds explicit whole-original replacement of a confirmed allocation in the same property and scope, including revised totals, permanent old and new source claims, complete cost/source version chains, inherited financial follow-ups and exact historical retry. Qualification and limits are recorded in `2026-10-03-allocation-source-replacements.md`. Typed exception completion for replaced sources, visual/cross-scope replacement, conserved multi-scope invoices, credit-note relationships and the remaining B3 requirements are still open; this does not complete B3 or M-B.
+
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,
 `api/master_imports.py`, `MasterImportPage.tsx`; extend property/unit/person/lease/
