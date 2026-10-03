@@ -59,6 +59,7 @@ from app.engine.vermoegensbericht import AssetReportResult, build_vermoegensberi
 from app.engine.weg import WegValidationError, compute_weg_jahresabrechnung
 from app.models.audit_event import AuditEvent
 from app.services.financial_scope_service import FinancialScopeService
+from app.services.financial_computation_service import begin_computation, record_computation
 from app.services.financial_input_policy import FinancialInputPolicy, incomplete
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
@@ -188,6 +189,7 @@ class WegSettlementService:
         self, run_id: uuid.UUID, extras: WegComputeExtras | None = None
     ) -> tuple[SettlementRun, WegResult]:
         run = await self._get_weg_draft_or_404(run_id)
+        computation_basis = await begin_computation(self._session, self._org_id, run, 'compute')
         extras = extras or WegComputeExtras()
         coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", extras)
         inp, result = await self._compute_weg_engine(run, extras)
@@ -209,12 +211,14 @@ class WegSettlementService:
                               "abrechnungsspitze_total": str(result.abrechnungsspitze_total)},
             )
         )
+        await record_computation(self._session, self._org_id, self._user_id, run, 'compute', computation_basis)
         return run, result
 
     async def finalize_weg(
         self, run_id: uuid.UUID, extras: WegComputeExtras | None = None
     ) -> SettlementRun:
         run = await self._get_weg_draft_or_404(run_id)
+        computation_basis = await begin_computation(self._session, self._org_id, run, 'finalize')
         extras = extras or WegComputeExtras()
         coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", extras)
         inp, result = await self._compute_weg_engine(run, extras)
@@ -249,6 +253,7 @@ class WegSettlementService:
                               "abrechnungsspitze_total": str(result.abrechnungsspitze_total)},
             )
         )
+        await record_computation(self._session, self._org_id, self._user_id, run, 'finalize', computation_basis)
         return run
 
     # ==================================================================
@@ -288,6 +293,7 @@ class WegSettlementService:
         self, run_id: uuid.UUID, inputs: AssetReportInputs
     ) -> tuple[SettlementRun, AssetReportResult]:
         run = await self._get_report_draft_or_404(run_id)
+        computation_basis = await begin_computation(self._session, self._org_id, run, 'compute')
         coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", inputs)
         inp, result = self._compute_report_engine(run, inputs)
 
@@ -304,12 +310,14 @@ class WegSettlementService:
                 payload_diff={"reserve_closing": str(result.reserve.closing_balance)},
             )
         )
+        await record_computation(self._session, self._org_id, self._user_id, run, 'compute', computation_basis)
         return run, result
 
     async def finalize_asset_report(
         self, run_id: uuid.UUID, inputs: AssetReportInputs
     ) -> SettlementRun:
         run = await self._get_report_draft_or_404(run_id)
+        computation_basis = await begin_computation(self._session, self._org_id, run, 'finalize')
         coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", inputs)
         inp, result = self._compute_report_engine(run, inputs)
 
@@ -343,6 +351,7 @@ class WegSettlementService:
                               "reserve_closing": str(result.reserve.closing_balance)},
             )
         )
+        await record_computation(self._session, self._org_id, self._user_id, run, 'finalize', computation_basis)
         return run
 
     # ------------------------------------------------------------------

@@ -269,6 +269,8 @@ async def test_duplicate_coverage_provenance_and_guarded_downgrade(migrator_sess
                 db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                importlib.import_module('migrations.versions.0115_financial_computation_evidence').downgrade()
                 importlib.import_module('migrations.versions.0114_allocation_corrections').downgrade()
                 importlib.import_module('migrations.versions.0113_allocation_correction_preview').downgrade()
                 importlib.import_module('migrations.versions.0112_context_mappings').downgrade()

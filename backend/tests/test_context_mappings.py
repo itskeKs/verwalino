@@ -187,9 +187,13 @@ async def test_mapping_roles_pause_private_table_seal_and_guarded_downgrade(migr
                 db.execute(text('TRUNCATE mapping_version'))
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
                 corrections=importlib.import_module('migrations.versions.0114_allocation_corrections')
+                computation=importlib.import_module('migrations.versions.0115_financial_computation_evidence')
+                db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                computation.downgrade()
                 corrections.downgrade()
                 migration.downgrade();migration.upgrade()
                 corrections.upgrade()
+                computation.upgrade()
                 assert before==db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
             finally:point.rollback()
         async with client(ids) as api:

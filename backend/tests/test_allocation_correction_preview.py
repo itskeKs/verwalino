@@ -158,6 +158,8 @@ async def test_preview_helpers_bound_before_traversal_and_migration_roundtrip(mi
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
             point=db.begin_nested()
             db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
+            db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+            importlib.import_module('migrations.versions.0115_financial_computation_evidence').downgrade()
             importlib.import_module('migrations.versions.0114_allocation_corrections').downgrade()
             before={f:db.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),{'signature':f}) for f in signatures}
             ordinary=db.scalar(text("SELECT pg_get_functiondef('adoption_duplicate_snapshot(uuid,uuid)'::regprocedure)"))
@@ -165,6 +167,7 @@ async def test_preview_helpers_bound_before_traversal_and_migration_roundtrip(mi
             assert before=={f:db.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),{'signature':f}) for f in signatures}
             assert ordinary==db.scalar(text("SELECT pg_get_functiondef('adoption_duplicate_snapshot(uuid,uuid)'::regprocedure)"))
             importlib.import_module('migrations.versions.0114_allocation_corrections').upgrade()
+            importlib.import_module('migrations.versions.0115_financial_computation_evidence').upgrade()
             for signature in signatures[1:]:
                 assert not db.scalar(text("SELECT has_function_privilege('app_rw',:signature,'EXECUTE')"),{'signature':signature})
             for payload in ({'padding':'x'*2097152,'computation':[{'cost_entry_id':'invalid'}]}, {'inputs':{'cost_positions':[None]}}, {'result':{'lines':{}}}, {'result':{'owners':[{'cost_lines':False}]}}, {'result':{'owners':[None]}}):

@@ -55,6 +55,7 @@ from app.engine.types import (
 )
 from app.models.audit_event import AuditEvent
 from app.services.financial_scope_service import FinancialScopeService
+from app.services.financial_computation_service import begin_computation, record_computation
 from app.services.financial_input_policy import FinancialInputPolicy, rental_values, incomplete
 from app.models.property import Property
 from app.models.settlement_line import SettlementLine
@@ -268,6 +269,7 @@ class SettlementService:
         rather than persisting a partial/wrong result.
         """
         run = await self._get_draft_or_404(run_id)
+        computation_basis = await begin_computation(self._session, self._org_id, run, 'compute')
         inp, result = await self._compute_engine(run, extras)
 
         # Rewrite the draft lines from the fresh result.
@@ -291,6 +293,7 @@ class SettlementService:
                 },
             )
         )
+        await record_computation(self._session, self._org_id, self._user_id, run, 'compute', computation_basis)
         return run, result
 
     async def preview(
@@ -320,6 +323,7 @@ class SettlementService:
           run from commit. Any error -> rollback (no half-finalized run).
         """
         run = await self._get_draft_or_404(run_id)
+        computation_basis = await begin_computation(self._session, self._org_id, run, 'finalize')
         inp, result = await self._compute_engine(run, extras)
 
         payload = build_snapshot_payload(inp, result)
@@ -363,6 +367,7 @@ class SettlementService:
                 },
             )
         )
+        await record_computation(self._session, self._org_id, self._user_id, run, 'finalize', computation_basis)
         return run
 
     # ------------------------------------------------------------------

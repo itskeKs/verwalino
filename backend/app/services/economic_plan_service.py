@@ -49,6 +49,7 @@ from app.engine.wirtschaftsplan import PlanResult, compute_wirtschaftsplan
 from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.models.audit_event import AuditEvent
 from app.services.financial_scope_service import FinancialScopeService
+from app.services.financial_computation_service import begin_computation, record_computation
 from app.services.financial_input_policy import FinancialInputPolicy
 from app.models.economic_plan import EconomicPlan
 from app.models.economic_plan_line import EconomicPlanLine
@@ -138,6 +139,7 @@ class EconomicPlanService:
         self, plan_id: uuid.UUID, inputs: PlanInputs
     ) -> tuple[EconomicPlan, PlanResult]:
         plan = await self._get_draft_or_404(plan_id)
+        computation_basis = await begin_computation(self._session, self._org_id, plan, 'compute')
         inp, result = await self._compute_engine(plan, inputs)
 
         await self._lines.delete_for_plan(plan.id)
@@ -156,6 +158,7 @@ class EconomicPlanService:
                 payload_diff={"total_advance_volume": str(result.total_advance_volume)},
             )
         )
+        await record_computation(self._session, self._org_id, self._user_id, plan, 'compute', computation_basis)
         return plan, result
 
     # ------------------------------------------------------------------
@@ -165,6 +168,7 @@ class EconomicPlanService:
         self, plan_id: uuid.UUID, inputs: PlanInputs
     ) -> EconomicPlan:
         plan = await self._get_draft_or_404(plan_id)
+        computation_basis = await begin_computation(self._session, self._org_id, plan, 'finalize')
         inp, result = await self._compute_engine(plan, inputs)
 
         payload = build_plan_snapshot_payload(inp, result)
@@ -198,6 +202,7 @@ class EconomicPlanService:
                               "total_advance_volume": str(result.total_advance_volume)},
             )
         )
+        await record_computation(self._session, self._org_id, self._user_id, plan, 'finalize', computation_basis)
         return plan
 
     async def create_correction_run(self, plan_id: uuid.UUID) -> EconomicPlan:

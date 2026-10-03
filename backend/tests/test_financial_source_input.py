@@ -46,6 +46,11 @@ async def test_rental_calculations_require_current_source_authority(client_a_adm
 
 
 async def test_hidden_unproven_source_cannot_produce_plan_or_coverage(client_a_admin, seed_data, m4_seed):
+    # Registry evidence is retained. Isolate the blocked original from the
+    # shared financial property instead of deleting its registered source.
+    isolated=await client_a_admin.post('/api/properties',json={'name':'Unknown original boundary','management_type':'WEG'})
+    assert isolated.status_code==201,isolated.text
+    m4_seed={**m4_seed,'property':isolated.json()['id']}
     created = await client_a_admin.post('/api/economic-plans', json={'plan_year':2025,'property_id':m4_seed['property'],
         'period_start':'2025-01-01','period_end':'2025-12-31'})
     assert created.status_code == 201, created.text
@@ -74,7 +79,6 @@ async def test_hidden_unproven_source_cannot_produce_plan_or_coverage(client_a_a
             assert await db.scalar(text('SELECT count(*) FROM coverage_declaration WHERE economic_plan_id=:plan'), {'plan':uuid.UUID(plan)}) == 1
     finally:
         await mutate(text('DROP POLICY test_financial_hidden_original ON property_document'), {})
-        await mutate(text('DELETE FROM property_document WHERE id=:document'), {'document':document})
 
 
 @pytest.mark.parametrize('family', ['plan','weg','assets'])

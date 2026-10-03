@@ -457,6 +457,8 @@ Migration 0113 adds a read-only, complete correction-readiness preview for a new
 
 Migration 0114 adds atomic whole-allocation corrections with exact reviewed effects, immutable typed receipts, all-member replacement and retained published source revisions. Bounded ancestry preserves earlier open dependencies; historical retry survives a later correction, and current readers select the true head. Backend, migration, UI and actual browser qualification are recorded in `2026-10-03-allocation-correction-design.md`. Evidence-based follow-up completion, cross-scope/page disclosure and remaining B3 requirements are still open; this does not accept B3 or M-B.
 
+Migration 0115 supplies trusted post-engine computation evidence for rental settlements, WEG annual settlements, asset reports and economic plans, with stable input locking and transaction-bound immutable receipts. Actual engine, forgery, concurrency, scope/source and migration qualification are recorded in `2026-10-03-financial-computation-evidence.md`. This is the foundation for correction follow-up completion; it does not close B3 or M-B.
+
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,
 `api/master_imports.py`, `MasterImportPage.tsx`; extend property/unit/person/lease/

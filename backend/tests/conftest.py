@@ -86,6 +86,9 @@ def run_migrations():
         cursor.execute("""DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='app_review') THEN
             CREATE ROLE app_review LOGIN PASSWORD 'review_secret' NOINHERIT NOBYPASSRLS NOCREATEDB NOCREATEROLE;
             END IF; END $$;""")
+        cursor.execute("SELECT to_regclass('public.financial_computation_attestation')")
+        if cursor.fetchone()[0]:
+            cursor.execute("TRUNCATE public.financial_computation_attestation CASCADE")
         cursor.execute("SELECT to_regclass('public.exception_completion')")
         if cursor.fetchone()[0]:
             cursor.execute("TRUNCATE public.exception_completion CASCADE")
