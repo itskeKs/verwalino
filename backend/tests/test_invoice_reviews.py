@@ -42,7 +42,8 @@ async def test_field_review_exact_basis_corrections_replay_and_no_money(migrator
         assert sorted(r.status_code for r in replies)==[201,409]
         second=next(r.json() for r in replies if r.status_code==201);assert second['previous_revision_id']==first['id'] and second['gross_amount']=='-119.00'
         assert (await api.post(url,**body)).json()==first
-        history=(await api.get(url,params={'limit':1})).json();assert history['items'][0]['id']==second['id'] and history['next_before_revision']==2
+        history=(await api.get(url,params={'limit':1})).json();assert history['reviewable_assignment_id']==p['id']
+        assert history['items'][0]['id']==second['id'] and history['next_before_revision']==2
         assert (await api.get(url,params={'before_revision':2})).json()['items'][0]['id']==first['id']
         assert (await api.get('/api/invoice-reviews/'+first['id'])).json()==first
         assert (await api.post(url,**command(p,key=body['headers']['Idempotency-Key'],gross_amount='120.00'))).status_code==409
@@ -159,7 +160,7 @@ async def test_field_review_roles_sql_validation_pause_and_transaction_rollback(
         with pytest.raises(DBAPIError,match='permission denied'):
             await read_value('DELETE FROM invoice_review_revision WHERE organization_id=:org RETURNING id',ids,actor_key='clerk')
         await change_mode(scope_seed,'PAUSED')
-        assert len((await api.get(url)).json()['items'])==1
+        paused=(await api.get(url)).json();assert len(paused['items'])==1 and paused['reviewable_assignment_id'] is None
         with pytest.raises(DBAPIError,match='inaccessible'):
             async with get_tenant_session(ids['org']) as db:
                 await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(ids['clerk'])})

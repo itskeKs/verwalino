@@ -95,7 +95,7 @@ function Proposals({ document, onDenied, parentBusy, parentGeneration, focusExtr
         </article>)}</div>
       </details>)}
     </>}
-    <AssignmentPanel logicalId={document.id} refId={document.document_ref_id} extractionId={view?.revisions[0]?.id ?? null}
+    <AssignmentPanel extraction={view?.revisions[0] ?? null} logicalId={document.id} refId={document.document_ref_id} extractionId={view?.revisions[0]?.id ?? null}
       evidenceReady={!!view && view.revisions[0]?.payload != null && ['succeeded', 'needs_review'].includes(view.revisions[0]?.status ?? '')} parentBusy={busy || parentBusy || !!error}
       parentGeneration={parentGeneration} onDenied={onDenied} />
   </section>;

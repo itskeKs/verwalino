@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { InvoiceReviewPanel } from './InvoiceReviewPanel';
 import { ApiError } from '../../api/client';
-import { assignmentApi, partitionApi, type AssignmentCreate, type AssignmentProposal, type PartitionState } from '../../api/intake';
+import { assignmentApi, partitionApi, type AssignmentCreate, type AssignmentProposal, type PartitionState, type ExtractionRevision } from '../../api/intake';
 import { SearchChoice } from '../SearchChoice';
 
 type Scope = { id: string; label: string; scope_type: string };
@@ -9,8 +10,8 @@ type Draft = { expected: string | null; partition: string | null; extraction: st
 const fresh = (view: View, extraction: string | null): Draft => ({ expected: view.items[0]?.id ?? null, partition: view.partition.current?.id ?? null, extraction, scope: null, reason: '' });
 const blockers: Record<string, string> = { scope_hint_conflict: 'Upload-Kontext und vorgeschlagener Abrechnungskreis weichen voneinander ab.', unsupported_scope_type: 'Für diese Abrechnungsart ist die finanzielle Übernahme noch nicht verfügbar.' };
 
-export function AssignmentPanel({ logicalId, refId, extractionId, evidenceReady, parentBusy, parentGeneration, onDenied }: {
-  logicalId: string; refId: string; extractionId: string | null; evidenceReady: boolean; parentBusy: boolean; parentGeneration: number; onDenied: () => void;
+export function AssignmentPanel({ logicalId, refId, extractionId, evidenceReady, parentBusy, parentGeneration, onDenied, extraction }: {
+  extraction?: ExtractionRevision | null; logicalId: string; refId: string; extractionId: string | null; evidenceReady: boolean; parentBusy: boolean; parentGeneration: number; onDenied: () => void;
 }) {
   const [view, setView] = useState<View | null>(null); const [draft, setDraft] = useState<Draft | null>(null);
   const [generation, setGeneration] = useState(0); const [busy, setBusy] = useState(false); const [sending, setSending] = useState(false);
@@ -88,5 +89,8 @@ export function AssignmentPanel({ logicalId, refId, extractionId, evidenceReady,
           {submitted ? 'Denselben Zuordnungsvorschlag erneut senden' : 'Zuordnung vorschlagen'}</button>
       </>}
     </>}
+    {extraction !== undefined && <InvoiceReviewPanel logicalId={logicalId} proposal={view?.items[0] ?? null} extraction={extraction}
+      ready={ready && view?.items[0]?.partition_revision_id === view?.partition.current?.id && view?.items[0]?.extraction_revision_id === extractionId}
+      parentBusy={blocked || !view} parentGeneration={parentGeneration + generation} onDenied={onDenied} />}
   </section>;
 }

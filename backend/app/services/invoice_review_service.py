@@ -21,7 +21,12 @@ class InvoiceReviewService(IntakeService):
         rows=(await self.db.execute(text(f'''SELECT {FIELDS} FROM {SOURCE} WHERE r.organization_id=:org AND r.logical_document_id=:logical
           AND (CAST(:before AS integer) IS NULL OR r.revision_number<:before) ORDER BY r.revision_number DESC LIMIT :take'''),
           {'org':self.auth.organization_id,'logical':logical,'before':before,'take':limit+1})).mappings().all()
-        return {'items':[dict(row) for row in rows[:limit]],'next_before_revision':rows[limit-1]['revision_number'] if len(rows)>limit else None}
+        reviewable=await self.db.scalar(text('''SELECT CASE WHEN source_partition_access(organization_id,document_ref_id,true)
+          AND has_scope_capability(organization_id,scope_id,'prepare') THEN id END FROM assignment_proposal
+          WHERE organization_id=:org AND logical_document_id=:logical ORDER BY revision_number DESC LIMIT 1'''),
+          {'org':self.auth.organization_id,'logical':logical})
+        return {'items':[dict(row) for row in rows[:limit]],'next_before_revision':rows[limit-1]['revision_number'] if len(rows)>limit else None,
+                'reviewable_assignment_id':reviewable}
 
     async def create(self,logical,body,key,expected):
         fields=body.model_dump(mode='json',exclude={'assignment_proposal_id','reason','fields_reviewed'})
