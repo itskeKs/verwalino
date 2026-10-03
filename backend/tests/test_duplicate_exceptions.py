@@ -165,6 +165,8 @@ async def test_duplicate_exception_backfill_constraints_coverage_and_downgrade(m
             try:
                 db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
+                db.execute(text('TRUNCATE exception_completion CASCADE'))
+                importlib.import_module('migrations.versions.0110_exception_completions').downgrade()
                 importlib.import_module('migrations.versions.0109_allocation_adoptions').downgrade()
                 importlib.import_module('migrations.versions.0108_allocation_treatments').downgrade()
                 db.execute(text('TRUNCATE exception_case CASCADE'))

@@ -13,6 +13,7 @@ const event = { id: 'event-1', case_id: 'case-1', previous_event_id: null, revis
   snoozed_until: null, reason: 'Evidence', actor_id: null, dependency_id: 'dep-1', created_at: item.created_at };
 const dependency = { id: 'dep-1', case_id: 'case-1', assignment_proposal_id: 'proposal-1', extraction_revision_id: 'extraction-1', cause: item.cause, created_at: item.created_at, revision_number: 1, proposal_revision_number: 1, proposal_reason: 'Original scope needs comparison' };
 function response(url: string, current = item) {
+  if (url.includes('/completion-preview')) return json({ can_complete: false, expected_event_id: current.revision_id, preview_digest: null, members: [], comparisons: [], dispositions: [] });
   if (url.includes('/duplicate-dependencies?')) return json({ items: [], next_before_revision: null });
   if (url.includes('/events?')) return json({ items: [event], next_before_revision: null });
   if (url.includes('/dependencies?')) return json({ items: [dependency], next_before_revision: null });
@@ -102,7 +103,7 @@ it('rejects a past local snooze before sending and offers only read access when 
   fireEvent.change(screen.getByLabelText('Zurückstellen bis (Ortszeit)'), { target: { value: '2020-01-01T12:00' } });
   fireEvent.change(screen.getByLabelText('Begründung der Aktion'), { target: { value: 'Wait' } });
   fireEvent.click(screen.getByRole('button', { name: 'Aktion speichern' })); await screen.findByText(/zukünftigen Zeitpunkt/);
-  expect(fetch.mock.calls).toHaveLength(4);
+  expect(fetch.mock.calls.some(([url]) => url.endsWith('/events'))).toBe(false);
   cleanup(); vi.stubGlobal('fetch', vi.fn(async (url: string) => response(url, { ...item, can_work: false }))); page();
   await screen.findByText('Dieser Fall ist derzeit nur lesbar.');
   expect(screen.queryByLabelText('Begründung der Aktion')).not.toBeInTheDocument();
@@ -148,7 +149,7 @@ it('shows typed duplicate evidence, exact sources and the stored replacement dir
     if (url.includes('/duplicate-dependencies?')) return json({ items: [duplicate], next_before_revision: null });
     if (url.includes('/events?')) return json({ items: [{ ...event, action: 'duplicate_evidence_added' }, { ...event, id: 'event-2', action: 'duplicate_comparison_recorded' }], next_before_revision: null });
     if (url.includes('/dependencies?')) return json({ items: [], next_before_revision: null });
-    return json(current);
+    return response(url, current);
   }));
   page(); await screen.findByText('Mögliche Dubletten vergleichen');
   expect(screen.getByRole('link', { name: 'Beleg B am Original prüfen' })).toHaveAttribute('href', '/posteingang/belege/source-b?logical_document_id=logical-b&extraction_revision_id=extraction-b');

@@ -17,16 +17,20 @@ async def confirm_grant(ids,actor_key='clerk'):
     await mutate(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES(:org,:scope,:subject,ARRAY['read','prepare','confirm','export'],:actor,'Explicit adoption fixture')"),{**ids,'subject':ids[actor_key]})
 
 
-async def reviewed(api,ids,credit=False,scoped=False,**fields):
+async def reviewed(api,ids,credit=False,scoped=False,source_scope=None,field_revisions=1,**fields):
     from tests.test_assignment_proposals import prepared,command as proposal_command
     from tests.test_invoice_reviews import command as field_command
     from tests.test_context_decisions import command as context_command
-    ref,child,partition,extraction=await prepared(api,ids,scoped=scoped)
+    ref,child,partition,extraction=await prepared(api,{**ids,'scope':source_scope or ids['scope']},scoped=scoped or source_scope is not None)
     reply=await api.post('/api/logical-documents/'+child['id']+'/assignment-proposals',**proposal_command(partition,extraction,ids['scope']));assert reply.status_code==201,reply.text
     proposal=reply.json()
     reply=await api.post('/api/logical-documents/'+child['id']+'/invoice-reviews',**field_command(proposal,
       document_kind='credit_note' if credit else 'invoice',gross_amount='-119.00' if credit else '119.00',**fields));assert reply.status_code==201,reply.text
     field_review=reply.json()
+    for _ in range(field_revisions-1):
+        reply=await api.post('/api/logical-documents/'+child['id']+'/invoice-reviews',**field_command(proposal,previous=field_review['id'],
+          document_kind='credit_note' if credit else 'invoice',gross_amount='-119.00' if credit else '119.00',**fields));assert reply.status_code==201,reply.text
+        field_review=reply.json()
     preview=(await api.get('/api/assignment-proposals/'+proposal['id']+'/context-preview')).json()
     reply=await api.post('/api/logical-documents/'+child['id']+'/context-decisions',**context_command(proposal,field_review,preview));assert reply.status_code==201,reply.text
     decision=reply.json()
@@ -352,6 +356,8 @@ async def test_adoption_retained_evidence_blocks_downgrade_and_empty_roundtrip_r
             point=db.begin_nested()
             try:
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
+                db.execute(text('TRUNCATE exception_completion CASCADE'))
+                importlib.import_module('migrations.versions.0110_exception_completions').downgrade()
                 functions=['access_coverage_manifest(uuid,jsonb)','guard_invoice_custody()','privacy_retention_facts(uuid,uuid)']
                 before={f:db.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),{'signature':f}) for f in functions}
                 migration.downgrade();migration.upgrade()

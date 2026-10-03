@@ -21,7 +21,7 @@ export function ExceptionsPage() {
     <div className="max-w-sm space-y-2"><label htmlFor="exception-filter">Bearbeitungsstand</label>
       <select id="exception-filter" className="w-full rounded-md border border-input bg-background px-3 py-2" value={workflow}
         onChange={event => { setWorkflow(event.target.value as ExceptionWorkflow | ''); setCursor(undefined); }}>
-        <option value="open">Offen</option><option value="snoozed">Zurückgestellt</option><option value="">Alle</option>
+        <option value="open">Offen</option><option value="snoozed">Zurückgestellt</option><option value="completed">Abgeschlossen</option><option value="">Alle</option>
       </select></div>
     {busy && <p role="status">Lade Klärungsfälle…</p>}
     {error && <p role="alert" className="error-text">Klärungsfälle derzeit nicht verfügbar. Bitte erneut laden.</p>}
@@ -30,7 +30,7 @@ export function ExceptionsPage() {
       {page.items.map(item => <article key={item.id} className="card min-w-0 space-y-2">
         <h2><Link to={`/klaerungsfaelle/${item.id}`}>{exceptionCauses[item.cause] ?? 'Klärung erforderlich'}</Link></h2>
         <p className="break-words">{item.scope_label} · {item.scope_type}</p>
-        <p>{item.workflow_state === 'snoozed' ? `Zurückgestellt bis ${new Date(item.snoozed_until!).toLocaleString('de-DE')}` : 'Offen'} · Fachlich ungeklärt</p>
+        <p>{item.workflow_state === 'snoozed' ? `Zurückgestellt bis ${new Date(item.snoozed_until!).toLocaleString('de-DE')}` : item.workflow_state === 'completed' ? 'Abgeschlossen · Fachlich geklärt' : 'Offen · Fachlich ungeklärt'}</p>
         <p>{item.claimant_id ? 'Bearbeitung beansprucht' : 'Noch nicht beansprucht'} · {item.dependency_count} verknüpfte Vorschläge</p>
       </article>)}
       <div className="flex flex-wrap gap-3">{cursor && <button className="btn" onClick={() => setCursor(undefined)}>Zur ersten Seite</button>}

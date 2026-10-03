@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import { exceptionApi, exceptionActions, exceptionCauses, type DuplicateExceptionDependency, type ExceptionAction, type ExceptionCase, type ExceptionCommand, type ExceptionDependency, type ExceptionEvent, type RevisionPage } from '../api/exceptions';
+import { ExceptionCompletionPanel } from '../components/intake/ExceptionCompletionPanel';
 import { useAuth } from '../auth/useAuth';
 
 type View = { item: ExceptionCase; events: RevisionPage<ExceptionEvent>; dependencies: RevisionPage<ExceptionDependency>; duplicates: RevisionPage<DuplicateExceptionDependency> };
@@ -17,6 +18,7 @@ export function ExceptionDetailPage() {
 function ExceptionDetail({ id }: { id: string }) {
   const { session } = useAuth();
   const [view, setView] = useState<View | null>(null); const [draft, setDraft] = useState<Draft | null>(null);
+  const [selectedCompletion, setSelectedCompletion] = useState<string | null>(null);
   const [generation, setGeneration] = useState(0); const [busy, setBusy] = useState(true); const [sending, setSending] = useState(false);
   const [submitted, setSubmitted] = useState(false); const [conflict, setConflict] = useState(false);
   const [error, setError] = useState<string | null>(null); const [notice, setNotice] = useState<string | null>(null);
@@ -92,7 +94,7 @@ function ExceptionDetail({ id }: { id: string }) {
       <section className="card min-w-0 space-y-3" aria-label="Fallgrundlage">
         <h2>{exceptionCauses[view.item.cause] ?? 'Klärung erforderlich'}</h2>
         <p className="break-words">{view.item.scope_label} · {view.item.scope_type}</p>
-        <p>{view.item.workflow_state === 'snoozed' ? `Zurückgestellt bis ${new Date(view.item.snoozed_until!).toLocaleString('de-DE')}` : 'Offen'} · Fachlich ungeklärt · Version {view.item.revision_number}</p>
+        <p>{view.item.workflow_state === 'snoozed' ? `Zurückgestellt bis ${new Date(view.item.snoozed_until!).toLocaleString('de-DE')}` : view.item.workflow_state === 'completed' ? 'Abgeschlossen · Fachlich geklärt' : 'Offen · Fachlich ungeklärt'} · Version {view.item.revision_number}</p>
         <p>{ownClaim ? 'Von Ihnen beansprucht' : view.item.claimant_id ? 'Bearbeitung beansprucht' : 'Noch nicht beansprucht'}</p>
         {view.item.dependency_count > 0 && <p>{view.item.dependency_count} verknüpfte Zuordnungsvorschläge. Frühere Vorschläge bleiben als Belege erhalten.</p>}
         {!!view.item.duplicate_dependency_count && <p>{view.item.duplicate_dependency_count} Dublettenhinweise auf konkrete Prüfstände. Frühere Hinweise bleiben erhalten; ein Belegvergleich schließt den Fall nicht ab.</p>}
@@ -109,7 +111,7 @@ function ExceptionDetail({ id }: { id: string }) {
             <label className="block" htmlFor="exception-action">Aktion</label>
             <select id="exception-action" className={inputClass} value={draft.action} onChange={event => setDraft({ ...draft, action: event.target.value as ExceptionAction })}>
               <option value="claim">Für mich beanspruchen</option><option value="release" disabled={!ownClaim}>Meinen Anspruch freigeben</option>
-              <option value="snooze">Zurückstellen</option><option value="reopen">Zur Bearbeitung wieder öffnen</option>
+              <option value="snooze" disabled={view.item.workflow_state === 'completed'}>Zurückstellen</option><option value="reopen">Zur Bearbeitung wieder öffnen</option>
             </select>
             {draft.action === 'snooze' && <><label className="block" htmlFor="exception-until">Zurückstellen bis (Ortszeit)</label>
               <input id="exception-until" className={inputClass} type="datetime-local" value={draft.until} onChange={event => setDraft({ ...draft, until: event.target.value })} /></>}
@@ -126,6 +128,7 @@ function ExceptionDetail({ id }: { id: string }) {
           <h3>{exceptionActions[event.action]} · Version {event.revision_number}</h3>
           <p>{new Date(event.created_at).toLocaleString('de-DE')} · {event.actor_id === null ? event.action.startsWith('duplicate_') ? 'Automatisch verknüpft; Zeitpunkt der Erfassung' : 'Automatisch aus Vorschlag' : event.actor_id === session?.user_id ? 'Von Ihnen' : 'Manuelle Bearbeitung'}</p>
           {event.actor_id !== null && <p className="break-words">{event.reason}</p>}
+          {event.action === 'completion_recorded' && event.completion_id && <button className="btn" disabled={blocked} onClick={() => setSelectedCompletion(event.completion_id!)}>Diesen Abschlussbeleg anzeigen</button>}
           {event.snoozed_until && <p>Damals zurückgestellt bis {new Date(event.snoozed_until).toLocaleString('de-DE')}</p>}
         </li>)}</ol>
         {view.events.next_before_revision && <button className="btn" disabled={blocked} onClick={() => void older('events')}>Ältere Ereignisse</button>}
@@ -152,5 +155,7 @@ function ExceptionDetail({ id }: { id: string }) {
         {view.dependencies.next_before_revision && <button className="btn" disabled={blocked} onClick={() => void older('dependencies')}>Ältere Verknüpfungen</button>}
       </section>}
     </>}
+    <ExceptionCompletionPanel caseId={id} item={view?.item ?? null} parentBusy={blocked} parentGeneration={generation} selectedReceiptId={selectedCompletion}
+      onCompleted={() => { setSelectedCompletion(null); setGeneration(value => value + 1); }} />
   </div>;
 }

@@ -447,6 +447,8 @@ Migration 0108 adds immutable explicit treatment reviews for every exact allocat
 
 Migration 0109 adds atomic confirmation of supported whole-original, single-scope reviewed allocations and a typed published source bridge. All member costs retain exact signed treatment; every source/retention reader follows sealed links. Private duplicate and transaction-bound integrity checks prevent duplicate charges and partial effects, while explicit original disclosure preserves separate private intake custody. Backend, UI, migration and browser qualification are recorded in `2026-10-03-allocation-adoption-design.md`. Cross-scope/page disclosure, grouped corrections/replacements, automated identity/opt-in mappings and typed overall case completion remain open; this does not accept B3 or M-B as a whole.
 
+Migration 0110 adds explicit exception completion backed by immutable confirmed outcomes and a bounded whole-component evaluator. Every retained dependency and current duplicate pair receives an explicit disposition; new relevant evidence reopens effective attention even without a new case event. The UI distinguishes historical receipts from current applicability, reauthorizes retained retries and requires explicit review. Qualification is recorded in `2026-10-03-exception-completion-design.md`. Cross-scope/page disclosure, grouped corrections/replacements, automated identity resolution and opt-in versioned mappings remain open; this does not accept B3 or M-B as a whole.
+
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,
 `api/master_imports.py`, `MasterImportPage.tsx`; extend property/unit/person/lease/

@@ -149,8 +149,8 @@ wait_for_health db
 wait_for_database_role
 compose --profile ops run --rm --no-deps migrate
 migration_state=$(compose --profile ops run --rm --no-deps migrate alembic current)
-[ "$migration_state" = '0109 (head)' ] || {
-  echo "migration state is not exactly 0109 (head)" >&2
+[ "$migration_state" = '0110 (head)' ] || {
+  echo "migration state is not exactly 0110 (head)" >&2
   exit 1
 }
 compose up -d app

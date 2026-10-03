@@ -7,12 +7,13 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.services.intake_service import IntakeService
 
-EVENT_FIELDS='id,case_id,previous_event_id,revision_number,action,resolution_state,workflow_state,claimant_id,snoozed_until,reason,actor_id,dependency_id,context_decision_id,duplicate_dependency_id,duplicate_comparison_id,created_at'
+EVENT_FIELDS='id,case_id,previous_event_id,revision_number,action,resolution_state,workflow_state,claimant_id,snoozed_until,reason,actor_id,dependency_id,context_decision_id,duplicate_dependency_id,duplicate_comparison_id,completion_id,created_at'
 CASE_SOURCE='''exception_case c JOIN accounting_scope s ON s.organization_id=c.organization_id AND s.id=c.scope_id
-  JOIN LATERAL (SELECT * FROM exception_case_event e WHERE e.organization_id=c.organization_id AND e.case_id=c.id ORDER BY revision_number DESC LIMIT 1) e ON true'''
-WORKFLOW="CASE WHEN e.snoozed_until>statement_timestamp() THEN 'snoozed' ELSE 'open' END"
+  JOIN LATERAL (SELECT * FROM exception_case_event e WHERE e.organization_id=c.organization_id AND e.case_id=c.id ORDER BY revision_number DESC LIMIT 1) e ON true CROSS JOIN LATERAL (SELECT exception_completion_state(c.organization_id,c.id) AS value) state'''
+WORKFLOW="state.value->>'workflow_state'"
 CASE_FIELDS=f'''c.id,c.document_ref_id,c.logical_document_id,c.extraction_revision_id,c.scope_id,c.cause,c.created_at,
-  s.label AS scope_label,s.scope_type,e.id AS revision_id,e.revision_number,e.resolution_state,{WORKFLOW} AS workflow_state,
+  s.label AS scope_label,s.scope_type,e.id AS revision_id,e.revision_number,state.value->>'resolution_state' AS resolution_state,{WORKFLOW} AS workflow_state,
+  state.value->>'completion_id' AS completion_id,(state.value->>'completion_changed')::boolean AS completion_changed,
   e.claimant_id,e.snoozed_until,e.context_decision_id,e.created_at AS updated_at,
   (SELECT count(*) FROM exception_dependency d WHERE d.organization_id=c.organization_id AND d.case_id=c.id) AS dependency_count,
   (SELECT count(*) FROM duplicate_exception_dependency d WHERE d.organization_id=c.organization_id AND d.case_id=c.id) AS duplicate_dependency_count,
@@ -20,6 +21,23 @@ CASE_FIELDS=f'''c.id,c.document_ref_id,c.logical_document_id,c.extraction_revisi
 
 
 class ExceptionService(IntakeService):
+    async def completion_preview(self,target):
+        return await self.call('SELECT exception_completion_preview(:org,:target)',target=target)
+
+    async def completion(self,target,receipt):
+        row=(await self.db.execute(text('''SELECT c.id,c.case_id,c.expected_event_id,c.policy,c.basis_digest,c.dispositions,c.comparisons,c.member_count,c.actor_id,c.reason,c.completion_reviewed,c.created_at,
+          (SELECT jsonb_agg((to_jsonb(m)-ARRAY['organization_id','case_id','completion_id'])||jsonb_build_object('source_document_id',a.source_document_id,'primary_cost_id',a.primary_cost_id,'cost_count',a.cost_count) ORDER BY m.logical_document_id)
+            FROM exception_completion_member m JOIN allocation_set a ON a.organization_id=m.organization_id AND a.id=m.allocation_set_id WHERE m.organization_id=c.organization_id AND m.completion_id=c.id) AS members
+          FROM exception_completion c WHERE c.organization_id=:org AND c.case_id=:target AND c.id=:receipt'''),
+          {'org':self.auth.organization_id,'target':target,'receipt':receipt})).mappings().first()
+        if row is None:raise HTTPException(404,'Completion receipt inaccessible')
+        return dict(row)
+
+    async def complete(self,target,body,key,expected):
+        created=await self.call('SELECT create_exception_completion(:org,:target,:expected,:request,:preview,:reason,:ack)',
+          target=target,expected=expected,request=key,preview=body.preview_digest,reason=body.reason,ack=body.completion_reviewed)
+        return await self.completion(target,created)
+
     async def detail(self,target):
         row=(await self.db.execute(text(f'SELECT {CASE_FIELDS} FROM {CASE_SOURCE} WHERE c.organization_id=:org AND c.id=:target'),
             {'org':self.auth.organization_id,'target':target})).mappings().first()
