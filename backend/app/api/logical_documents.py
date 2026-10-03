@@ -55,3 +55,23 @@ async def children(document_ref_id:uuid.UUID,auth:AuthContext=Depends(get_curren
 @router.get('/{document_id}')
 async def detail(document_id:uuid.UUID,auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_member_db)):
     return await read_document(db,auth.organization_id,document_id)
+
+
+@router.get('/{document_id}/processing')
+async def processing(document_id:uuid.UUID,auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_member_db)):
+    status=await db.scalar(text('SELECT intake_extraction_status(:org,:document)'),{'org':auth.organization_id,'document':document_id})
+    if status is None:raise HTTPException(404,'Logical document inaccessible')
+    return status
+
+
+class ExtractionRetry(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    expected_fence:uuid.UUID
+    reason:str=Field(min_length=1,max_length=1000)
+
+
+@router.post('/{document_id}/retry-extraction',status_code=202)
+async def retry_extraction(document_id:uuid.UUID,body:ExtractionRetry,idempotency_key:uuid.UUID=Header(),
+                           auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_writer_db)):
+    return await IntakeService(db,auth).call('SELECT retry_intake_extraction(:org,:document,:request,:fence,:reason)',
+        document=document_id,request=idempotency_key,fence=body.expected_fence,reason=body.reason)

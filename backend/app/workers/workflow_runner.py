@@ -13,7 +13,7 @@ import logging
 import uuid
 
 logger=logging.getLogger(__name__)
-STAGES=('intake_inspection','invoice_extraction','declaration_import','outbox')
+STAGES=('intake_inspection','invoice_extraction','declaration_import','outbox','intake_extraction')
 IDLE_CODES={'IDLE','DECLARATION_IMPORT_DISABLED'}
 
 
@@ -64,12 +64,14 @@ def build_adapters(stages,*,session_factory=None,declaration_worker=None):
     from app.workers.workflow import process_once as inspect_once
     from app.workers.invoice_extraction import process_once as invoice_once
     from app.workers.outbox import process_once as outbox_once
+    from app.workers.intake_extraction import process_once as intake_extract_once
     stages=tuple(dict.fromkeys(stages))
     if not stages or any(stage not in STAGES for stage in stages):raise ValueError('Unknown or empty workflow stages')
     factory=session_factory or get_worker_session_factory()
     async def inspection(org):return 'PROCESSED' if await inspect_once(factory,org) else 'IDLE'
     async def invoice(org):return 'PROCESSED' if await invoice_once(factory,org) else 'IDLE'
     async def outbox(org):return 'PROCESSED' if await outbox_once(factory,org) else 'IDLE'
+    async def intake_extraction(org):return 'PROCESSED' if await intake_extract_once(factory,org) else 'IDLE'
     async def declaration(org):
         nonlocal declaration_worker
         if not settings.declaration_import_enabled:return 'DECLARATION_IMPORT_DISABLED'
@@ -79,7 +81,7 @@ def build_adapters(stages,*,session_factory=None,declaration_worker=None):
             from app.workers.declaration_import import DeclarationImportWorker
             declaration_worker=DeclarationImportWorker(DeclarationPipeline(OpenAiDeclarationProvider()))
         return (await declaration_worker.run_once(organization_id=org)).code
-    available={'intake_inspection':inspection,'invoice_extraction':invoice,'declaration_import':declaration,'outbox':outbox}
+    available={'intake_inspection':inspection,'invoice_extraction':invoice,'declaration_import':declaration,'outbox':outbox,'intake_extraction':intake_extraction}
     return {stage:available[stage] for stage in stages}
 
 

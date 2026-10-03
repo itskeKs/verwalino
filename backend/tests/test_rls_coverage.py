@@ -16,6 +16,7 @@ from sqlalchemy import text
 PRIVATE_POLICIES = {
     **{table:"intake_private" for table in ("intake_batch","intake_item","intake_upload_admission","workflow_job","job_attempt","outbox_event","intake_retry_receipt")},
     **{table:"outbox_private" for table in ("outbox_delivery","outbox_delivery_attempt")},
+    **{table:"extraction_private" for table in ("intake_extraction_job","intake_extraction_attempt","intake_extraction_retry")},
     "access_grant_proposal": "coverage_private", "access_grant_acceptance": "coverage_private",
     "access_coverage_snapshot": "coverage_private", "access_coverage_review": "coverage_private",
     "invoice_upload_admission": "invoice_admission_private", "dunning_quarantine_disposition": "dunning_disposition_private",
@@ -27,6 +28,7 @@ PRIVATE_POLICIES = {
 }
 
 TENANT_TABLES = frozenset({
+    "intake_extraction_job", "intake_extraction_attempt", "intake_extraction_retry",
     "document_ref", "logical_document", "extraction_revision", "field_evidence", "intake_batch", "intake_item", "intake_upload_admission", "intake_original", "workflow_job", "job_attempt", "outbox_event", "intake_retry_receipt", "outbox_delivery", "outbox_delivery_attempt",
     "runtime_budget_attestation", "runtime_budget_review", "access_disposition_acceptance",
     "source_security_authorization", "source_security_transition",

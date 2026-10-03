@@ -385,7 +385,9 @@ Migration 0097 adds fenced internal inspection-event delivery with exact attempt
 provenance, whole-source candidate reuse and atomic completion; see
 `2026-10-03-internal-outbox-delivery.md`. A bounded local logical-source processor
 now produces page/quote and standalone XML element evidence; see
-`2026-10-03-logical-intake-extractor.md`. Durable intake extraction integration,
+`2026-10-03-logical-intake-extractor.md`. Migration 0098 connects it to fenced
+durable jobs, typed history, current source authority and explicit retry; see
+`2026-10-03-durable-intake-extraction.md`. Inbox stage/history integration,
 shared runtime qualification and reviewed partitions remain outstanding. Real scanner
 qualification is still unavailable locally; this does not accept B2.
 
