@@ -389,9 +389,11 @@ now produces page/quote and standalone XML element evidence; see
 durable jobs, typed history, current source authority and explicit retry; see
 `2026-10-03-durable-intake-extraction.md`. Migration 0099 and the source proposal
 view connect durable stage counts, per-child history, evidence and explicit retry
-to the inbox; see `2026-10-03-intake-proposal-view.md`. Shared runtime qualification
-and reviewed partitions remain outstanding. Real scanner
-qualification is still unavailable locally; this does not accept B2.
+to the inbox; see `2026-10-03-intake-proposal-view.md`. Actual process-death recovery
+and a bounded Linux text/timeout probe add partial runtime evidence; see
+`2026-10-03-intake-runtime-qualification.md`. Shared production-runtime activation
+and real scanner qualification remain outstanding; this does not accept B2.
+Reviewed partitions and contextual/financial acceptance belong to B3 below.
 
 **B3 — Assignment, duplicates, splits and shared exceptions.** P1.1 after B2.
 Add **new** `assignment_proposal`, `mapping_version`, `exception_case`,
