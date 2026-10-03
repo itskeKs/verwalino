@@ -383,7 +383,9 @@ runner now adapts the existing inspection, invoice and declaration queues while
 preserving their leases and reconciliation; see `2026-10-03-shared-workflow-runner.md`.
 Migration 0097 adds fenced internal inspection-event delivery with exact attempt
 provenance, whole-source candidate reuse and atomic completion; see
-`2026-10-03-internal-outbox-delivery.md`. Intake extraction, located field evidence,
+`2026-10-03-internal-outbox-delivery.md`. A bounded local logical-source processor
+now produces page/quote and standalone XML element evidence; see
+`2026-10-03-logical-intake-extractor.md`. Durable intake extraction integration,
 shared runtime qualification and reviewed partitions remain outstanding. Real scanner
 qualification is still unavailable locally; this does not accept B2.
 
