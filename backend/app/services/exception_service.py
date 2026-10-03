@@ -7,13 +7,13 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.services.intake_service import IntakeService
 
-EVENT_FIELDS='id,case_id,previous_event_id,revision_number,action,resolution_state,workflow_state,claimant_id,snoozed_until,reason,actor_id,dependency_id,created_at'
+EVENT_FIELDS='id,case_id,previous_event_id,revision_number,action,resolution_state,workflow_state,claimant_id,snoozed_until,reason,actor_id,dependency_id,context_decision_id,created_at'
 CASE_SOURCE='''exception_case c JOIN accounting_scope s ON s.organization_id=c.organization_id AND s.id=c.scope_id
   JOIN LATERAL (SELECT * FROM exception_case_event e WHERE e.organization_id=c.organization_id AND e.case_id=c.id ORDER BY revision_number DESC LIMIT 1) e ON true'''
 WORKFLOW="CASE WHEN e.snoozed_until>statement_timestamp() THEN 'snoozed' ELSE 'open' END"
 CASE_FIELDS=f'''c.id,c.document_ref_id,c.logical_document_id,c.extraction_revision_id,c.scope_id,c.cause,c.created_at,
   s.label AS scope_label,s.scope_type,e.id AS revision_id,e.revision_number,e.resolution_state,{WORKFLOW} AS workflow_state,
-  e.claimant_id,e.snoozed_until,e.created_at AS updated_at,
+  e.claimant_id,e.snoozed_until,e.context_decision_id,e.created_at AS updated_at,
   (SELECT count(*) FROM exception_dependency d WHERE d.organization_id=c.organization_id AND d.case_id=c.id) AS dependency_count,
   (source_partition_access(c.organization_id,c.document_ref_id,true) AND has_scope_capability(c.organization_id,c.scope_id,'prepare')) AS can_work'''
 

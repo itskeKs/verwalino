@@ -6,13 +6,13 @@ export interface ExceptionCase {
   id: string; document_ref_id: string; logical_document_id: string; extraction_revision_id: string;
   scope_id: string; scope_label: string; scope_type: string; cause: string; created_at: string; updated_at: string;
   revision_id: string; revision_number: number; resolution_state: 'unresolved'; workflow_state: ExceptionWorkflow;
-  claimant_id: string | null; snoozed_until: string | null; dependency_count: number; can_work: boolean;
+  claimant_id: string | null; snoozed_until: string | null; dependency_count: number; can_work: boolean; context_decision_id?: string | null;
 }
 export interface ExceptionEvent {
   id: string; case_id: string; previous_event_id: string | null; revision_number: number;
-  action: ExceptionAction | 'evidence_added'; resolution_state: 'unresolved'; workflow_state: ExceptionWorkflow;
+  action: ExceptionAction | 'evidence_added' | 'context_reviewed'; resolution_state: 'unresolved'; workflow_state: ExceptionWorkflow;
   claimant_id: string | null; snoozed_until: string | null; reason: string; actor_id: string | null;
-  dependency_id: string | null; created_at: string;
+  dependency_id: string | null; context_decision_id?: string | null; created_at: string;
 }
 export interface ExceptionDependency {
   id: string; case_id: string; assignment_proposal_id: string; extraction_revision_id: string;
@@ -39,5 +39,5 @@ export const exceptionCauses: Record<string, string> = {
   scope_hint_conflict: 'Abrechnungskreis abgleichen', unsupported_scope_type: 'Abrechnungsart noch nicht unterstützt',
 };
 export const exceptionActions: Record<ExceptionEvent['action'], string> = {
-  evidence_added: 'Weiterer Zuordnungsvorschlag erfasst', claim: 'Bearbeitung beansprucht', release: 'Anspruch freigegeben', snooze: 'Zurückgestellt', reopen: 'Wieder geöffnet',
+  evidence_added: 'Weiterer Zuordnungsvorschlag erfasst', claim: 'Bearbeitung beansprucht', release: 'Anspruch freigegeben', snooze: 'Zurückgestellt', reopen: 'Zur Bearbeitung wieder geöffnet', context_reviewed: 'Kontext einer einzelnen Zuordnung geprüft',
 };

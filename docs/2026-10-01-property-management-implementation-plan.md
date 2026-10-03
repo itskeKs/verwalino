@@ -435,6 +435,8 @@ Migration 0102 adds immutable exception cases, exact proposal dependencies and v
 
 Migration 0103 records immutable human invoice field reviews on one exact current proposal/source basis, with explicit sign/date/decimal validation and preserved original assertions. It produces no financial or resolution effect. Qualification and remaining boundaries are recorded in `2026-10-03-invoice-field-reviews.md`; the explicit field-review UI and its retry/mobile/browser checks are included. Typed context resolution and balanced allocation/adoption remain outstanding.
 
+Migration 0104 adds immutable manual context comparisons tied to the exact current invoice-field review and assignment proposal. Its typed exception event dispositions only the corresponding hint-conflict dependency; the shared case remains unresolved. Property-aware retained-snapshot access, snapshot concurrency, transaction rollback and migration qualification are recorded in `2026-10-03-context-decision-design.md`. Financial adoption and full B3 acceptance remain outstanding.
+
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,
 `api/master_imports.py`, `MasterImportPage.tsx`; extend property/unit/person/lease/

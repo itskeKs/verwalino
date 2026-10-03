@@ -196,6 +196,8 @@ async def test_field_review_coverage_source_constraints_and_guarded_downgrade(mi
                       FROM invoice_review_revision r WHERE r.id=:review'''),{'review':uuid.UUID(review['id']),'field':field,'value':value})
             point=db.begin_nested()
             try:
+                db.execute(text('TRUNCATE context_decision CASCADE'))
+                importlib.import_module('migrations.versions.0104_context_decisions').downgrade()
                 db.execute(text('TRUNCATE invoice_review_revision'))
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
                 migration.downgrade();migration.upgrade()

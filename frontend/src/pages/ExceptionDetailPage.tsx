@@ -105,7 +105,7 @@ function ExceptionDetail({ id }: { id: string }) {
             <label className="block" htmlFor="exception-action">Aktion</label>
             <select id="exception-action" className={inputClass} value={draft.action} onChange={event => setDraft({ ...draft, action: event.target.value as ExceptionAction })}>
               <option value="claim">Für mich beanspruchen</option><option value="release" disabled={!ownClaim}>Meinen Anspruch freigeben</option>
-              <option value="snooze">Zurückstellen</option><option value="reopen">Wieder öffnen</option>
+              <option value="snooze">Zurückstellen</option><option value="reopen">Zur Bearbeitung wieder öffnen</option>
             </select>
             {draft.action === 'snooze' && <><label className="block" htmlFor="exception-until">Zurückstellen bis (Ortszeit)</label>
               <input id="exception-until" className={inputClass} type="datetime-local" value={draft.until} onChange={event => setDraft({ ...draft, until: event.target.value })} /></>}

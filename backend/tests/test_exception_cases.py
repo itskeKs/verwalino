@@ -203,6 +203,8 @@ async def test_exception_backfill_constraints_coverage_and_downgrade_guard(migra
             try:
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
+                db.execute(text('TRUNCATE context_decision CASCADE'))
+                importlib.import_module('migrations.versions.0104_context_decisions').downgrade()
                 db.execute(text('TRUNCATE invoice_review_revision'))
                 importlib.import_module('migrations.versions.0103_invoice_field_reviews').downgrade()
                 migration.downgrade();migration.upgrade()

@@ -149,6 +149,8 @@ async def test_partition_changes_coverage_and_rollback_preserves_history(migrato
                 db.execute(text('TRUNCATE source_partition_revision CASCADE'))
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
                 db.execute(text('TRUNCATE exception_case CASCADE'))
+                db.execute(text('TRUNCATE context_decision CASCADE'))
+                importlib.import_module('migrations.versions.0104_context_decisions').downgrade()
                 db.execute(text('TRUNCATE invoice_review_revision'))
                 importlib.import_module('migrations.versions.0103_invoice_field_reviews').downgrade()
                 importlib.import_module('migrations.versions.0102_exception_cases').downgrade()
