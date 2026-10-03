@@ -159,6 +159,8 @@ async def test_outbox_migration_backfills_exact_events_and_retains_delivery_hist
                 db.execute(text('TRUNCATE logical_document,outbox_delivery_attempt,outbox_delivery CASCADE'))
                 before=db.scalar(text("SELECT count(*) FROM outbox_event WHERE organization_id=:org AND event_type='intake.inspected'"),ids)
                 oid=db.scalar(text("SELECT 'access_disposition_work(uuid)'::regprocedure::oid"))
+                db.execute(text('TRUNCATE source_partition_revision CASCADE'))
+                importlib.import_module('migrations.versions.0100_source_partitions').downgrade()
                 importlib.import_module('migrations.versions.0099_intake_extraction_status').downgrade()
                 importlib.import_module('migrations.versions.0098_intake_extraction_jobs').downgrade()
                 migration.downgrade();migration.upgrade()

@@ -417,6 +417,13 @@ A03/A04, RF09/RF10/RF25; tests for cents conservation, credit sign, split crash,
 duplicate race, altered invoice, ambiguous address, no cross-scope auto-assignment
 and source→cost retries across entry points. V01/V03 block unsupported tax treatment.
 
+B3 foundation progress: migration 0100 adds immutable reviewed visual-page
+partitions with exact source binding, complete nonoverlapping coverage, live
+authority, optimistic concurrency and retained revision history. See
+`2026-10-03-reviewed-source-partitions.md`. UI review, assignment, exceptions,
+duplicate decisions and financial allocations remain outstanding; this does not
+accept B3.
+
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,
 `api/master_imports.py`, `MasterImportPage.tsx`; extend property/unit/person/lease/

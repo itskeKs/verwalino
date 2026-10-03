@@ -266,6 +266,8 @@ async def test_intake_migration_refuses_data_and_preserves_function_identity(mig
             try:
                 db.execute(text('TRUNCATE intake_batch,intake_upload_admission CASCADE'))
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
+                db.execute(text('TRUNCATE source_partition_revision CASCADE'))
+                importlib.import_module('migrations.versions.0100_source_partitions').downgrade()
                 importlib.import_module('migrations.versions.0099_intake_extraction_status').downgrade()
                 importlib.import_module('migrations.versions.0098_intake_extraction_jobs').downgrade()
                 importlib.import_module('migrations.versions.0097_internal_outbox_delivery').downgrade()
