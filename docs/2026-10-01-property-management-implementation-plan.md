@@ -439,6 +439,8 @@ Migration 0104 adds immutable manual context comparisons tied to the exact curre
 
 Migration 0105 records immutable single-scope allocation proposals with exact signed gross/VAT conservation, sealed line membership and category/version provenance. It pins one current context decision and does not create costs or release a source. The remaining adoption, duplicate, tax and cross-scope gates are recorded in `2026-10-03-allocation-proposal-design.md`. B3 remains incomplete.
 
+Migration 0106 adds same-scope duplicate candidates and immutable oriented comparisons on exact field reviews, with audience intersection, latest-head discovery, signed pagination and historical retry. The side-by-side UI and backend/browser qualification are recorded in `2026-10-03-duplicate-comparison-design.md`. Results remain evidence only; typed duplicate exceptions, tax/eligibility, source publication and financial adoption remain outstanding. B3 remains incomplete.
+
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,
 `api/master_imports.py`, `MasterImportPage.tsx`; extend property/unit/person/lease/

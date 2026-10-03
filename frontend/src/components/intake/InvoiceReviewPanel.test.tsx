@@ -4,6 +4,7 @@ import type { AssignmentProposal, ExtractionRevision } from '../../api/intake';
 import type { InvoiceReview, InvoiceReviewHistory } from '../../api/invoiceReviews';
 import { InvoiceReviewPanel } from './InvoiceReviewPanel';
 
+vi.mock('./DuplicateComparisonPanel', () => ({ DuplicateComparisonPanel: () => null }));
 vi.mock('./ContextDecisionPanel', () => ({ ContextDecisionPanel: () => null }));
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });

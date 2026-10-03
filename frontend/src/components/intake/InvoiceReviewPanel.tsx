@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ContextDecisionPanel } from './ContextDecisionPanel';
+import { DuplicateComparisonPanel } from './DuplicateComparisonPanel';
 import { ApiError } from '../../api/client';
 import type { AssignmentProposal, ExtractionRevision } from '../../api/intake';
 import { invoiceReviewsApi, type InvoiceReviewCommand, type InvoiceReviewHistory } from '../../api/invoiceReviews';
@@ -115,7 +116,8 @@ export function InvoiceReviewPanel({ logicalId, proposal, extraction, ready, par
         <button className="btn" disabled={blocked || (!submitted && (stale || !ready || !draft.acknowledged || !draft.reason.trim()))} onClick={() => void save()}>{submitted ? 'Dieselbe Feldprüfung erneut senden' : 'Feldprüfung speichern'}</button>
       </>}
     </>}
-  </section><ContextDecisionPanel logicalId={logicalId} proposalId={proposal?.id ?? null} reviewId={history?.items[0]?.id ?? null}
+  </section><DuplicateComparisonPanel reviewId={history?.items[0]?.id ?? null} ready={ready && history?.items[0]?.assignment_proposal_id === proposal?.id}
+    parentBusy={blocked} parentGeneration={parentGeneration + generation} /><ContextDecisionPanel logicalId={logicalId} proposalId={proposal?.id ?? null} reviewId={history?.items[0]?.id ?? null}
     ready={ready && history?.items[0]?.assignment_proposal_id === proposal?.id} parentBusy={blocked} parentGeneration={parentGeneration + generation}
     onDenied={onDenied} /></>;
 }

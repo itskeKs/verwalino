@@ -10,6 +10,7 @@ const revision = { id: 'revision-1', logical_document_id: 'logical-1', status: '
   payload: { gross_amount: '119.00' }, fields: [{ field_name: 'gross_amount', value: '119.00', confidence: '0.85', locator_status: 'page_quote', page_number: 2, quotation: 'Gesamtbetrag: 119,00 EUR', xml_path: null, method: 'text_layer' },
     { field_name: 'document_number', value: 'R-1234', confidence: null, locator_status: 'unlocated', page_number: null, quotation: null, xml_path: null, method: 'unlocated' }] };
 function response(url: string) {
+  if (url.includes('/duplicate-candidates')) return json({ items: [], next_cursor: null, financial_state: 'evidence_only' });
   if (url.includes('/allocation-proposals')) return json({ items: [], next_before_revision: null });
   if (url === '/api/cost-categories') return json([]);
   if (url.includes('/context-decisions')) return json({ items: [], next_before_revision: null });
