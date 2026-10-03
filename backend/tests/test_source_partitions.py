@@ -148,6 +148,7 @@ async def test_partition_changes_coverage_and_rollback_preserves_history(migrato
             try:
                 db.execute(text('TRUNCATE source_partition_revision CASCADE'))
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
+                importlib.import_module('migrations.versions.0101_assignment_proposals').downgrade()
                 migration.downgrade();migration.upgrade()
                 assert db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))==oid
             finally:point.rollback()
