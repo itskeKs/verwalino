@@ -402,8 +402,8 @@ if [ -n "$db_before_id" ] && [ "$db_before_id" != "$db_after_id" ]; then
 fi
 compose --profile ops run --rm --no-deps migrate
 migration_state=$(compose --profile ops run --rm --no-deps migrate alembic current)
-[ "$migration_state" = '0104 (head)' ] || {
-  echo "migration state is not exactly 0104 (head)" >&2
+[ "$migration_state" = '0105 (head)' ] || {
+  echo "migration state is not exactly 0105 (head)" >&2
   exit 1
 }
 printf '%s\n' "$admin_password" | compose --profile ops run --rm --no-deps -T bootstrap \

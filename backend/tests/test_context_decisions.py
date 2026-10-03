@@ -203,6 +203,8 @@ async def test_context_coverage_constraints_and_guarded_downgrade(migrator_sessi
                       FROM context_decision d WHERE d.id=:decision'''),{'decision':uuid.UUID(decision['id']),'field':field,'value':value})
             point=db.begin_nested()
             try:
+                db.execute(text('TRUNCATE allocation_proposal CASCADE'))
+                importlib.import_module('migrations.versions.0105_allocation_proposals').downgrade()
                 db.execute(text('TRUNCATE context_decision CASCADE'))
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
                 migration.downgrade();migration.upgrade()

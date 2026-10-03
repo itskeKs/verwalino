@@ -150,6 +150,8 @@ async def test_assignment_evidence_changes_coverage_and_cannot_be_downgraded(mig
             point=db.begin_nested()
             try:
                 db.execute(text('TRUNCATE exception_case CASCADE'))
+                db.execute(text('TRUNCATE allocation_proposal CASCADE'))
+                importlib.import_module('migrations.versions.0105_allocation_proposals').downgrade()
                 db.execute(text('TRUNCATE context_decision CASCADE'))
                 importlib.import_module('migrations.versions.0104_context_decisions').downgrade()
                 db.execute(text('TRUNCATE invoice_review_revision'))

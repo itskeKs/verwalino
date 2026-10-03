@@ -158,6 +158,8 @@ async def test_extraction_migration_retains_revisions_and_restores_empty_schema(
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
                 db.execute(text('TRUNCATE source_partition_revision CASCADE'))
                 db.execute(text('TRUNCATE exception_case CASCADE'))
+                db.execute(text('TRUNCATE allocation_proposal CASCADE'))
+                importlib.import_module('migrations.versions.0105_allocation_proposals').downgrade()
                 db.execute(text('TRUNCATE context_decision CASCADE'))
                 importlib.import_module('migrations.versions.0104_context_decisions').downgrade()
                 db.execute(text('TRUNCATE invoice_review_revision'))
