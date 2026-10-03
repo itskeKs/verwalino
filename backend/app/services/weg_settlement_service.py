@@ -130,6 +130,76 @@ class WegSettlementService:
         self._plan_lines = EconomicPlanLineRepository(session, org_id)
         self._audit = AuditRepository(session, org_id)
 
+    async def _plan_transition_run(self, run_id):
+        scope = FinancialScopeService(self._session, self._org_id, self._user_id)
+        await scope.lock_inputs()
+        run = await self._runs.get_by_id_for_update(run_id)
+        if run is None or run.run_type != 'WEG_JAHRESABRECHNUNG':
+            raise HTTPException(404, 'WEG settlement not found')
+        scope_id = await scope.enter(run, capability=ScopeCapability.PREPARE, computation=True)
+        if run.status != 'draft' or run.superseded_by_id is not None:
+            raise HTTPException(409, 'Select a plan successor only for a current draft')
+        return run, scope, scope_id
+
+    async def _current_plan_successor(self, run, scope, scope_id, original_id):
+        """Every frozen hop retains the original obligation context and access."""
+        context_fields = ('property_id', 'management_mandate_id', 'period_start',
+                          'period_end', 'plan_year', 'monthly_due_day')
+        original_context = None
+        seen = set()
+        target = original_id
+        while target is not None and target not in seen and len(seen) < 100:
+            seen.add(target)
+            plan = await self._plans.get_by_id(target)
+            if plan is None:
+                raise HTTPException(404, 'Complete plan successor chain not accessible')
+            plan_scope = await scope.enter(plan, computation=True)
+            if plan_scope != scope_id:
+                raise HTTPException(409, 'Plan successor must retain accounting scope')
+            context = tuple(getattr(plan, field) for field in context_fields)
+            if (plan.status != 'finalized' or plan.property_id != run.property_id
+                    or plan.management_mandate_id != run.management_mandate_id
+                    or plan.period_start != run.period_start or plan.period_end != run.period_end
+                    or original_context is not None and context != original_context):
+                raise HTTPException(409, 'Finalized same-context plan successor required')
+            original_context = context
+            if plan.superseded_by_id is None:
+                return plan
+            target = plan.superseded_by_id
+        raise HTTPException(409, 'Complete bounded plan successor chain required')
+
+    async def plan_successor_preview(self, run_id):
+        run, scope, scope_id = await self._plan_transition_run(run_id)
+        plan = await self._current_plan_successor(run, scope, scope_id, run.economic_plan_id)
+        return {'run_id': run.id, 'current_plan_id': run.economic_plan_id,
+                'successor_id': plan.id if plan.id != run.economic_plan_id else None,
+                'plan_year': plan.plan_year, 'period_start': plan.period_start,
+                'period_end': plan.period_end, 'monthly_due_day': plan.monthly_due_day}
+
+    async def select_plan_successor(self, run_id, expected_plan_id, successor_id, reason):
+        run, scope, scope_id = await self._plan_transition_run(run_id)
+        if run.economic_plan_id not in (expected_plan_id, successor_id):
+            raise HTTPException(409, 'Linked plan changed; review the current successor')
+        plan = await self._current_plan_successor(run, scope, scope_id, expected_plan_id)
+        if plan.id != successor_id or expected_plan_id == successor_id:
+            raise HTTPException(409, 'Select the reviewed current plan successor')
+        if run.economic_plan_id == successor_id:
+            # A lost reply must not erase a computation performed after selection.
+            return run
+        run.economic_plan_id = successor_id
+        await self._lines.delete_for_run(run.id)
+        run.snapshot_payload = None
+        run.snapshot_sha256 = None
+        run.total_cost = None
+        run.balance = None
+        await self._runs.update(run)
+        await self._audit.create(AuditEvent(actor_user_id=self._user_id,
+            entity_type='settlement_run', entity_id=run.id,
+            action='settlement.plan_successor_selected', payload_diff={
+                'previous_plan_id': str(expected_plan_id), 'economic_plan_id': str(successor_id),
+                'reason': reason}))
+        return run
+
     # ==================================================================
     # WEG-Jahresabrechnung
     # ==================================================================

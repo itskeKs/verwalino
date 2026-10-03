@@ -461,6 +461,8 @@ Migration 0115 supplies trusted post-engine computation evidence for rental sett
 
 Migration 0116 adds evidence-based correction-impact completion, immutable parent context and completion history, current applicability and authorized exact replay. It requires a current actual computation or a finalized same-context successor, renewed source coverage where required and deliberate acknowledgments. Scoped coverage source selection and the direct-parent coverage read policy make this executable through the browser. Backend, role/rollback, migration, UI and actual browser qualification are recorded in `2026-10-03-correction-followup-completion.md`. WEG/asset-report correction controls, corrected linked-plan selection, cross-scope/page disclosure and remaining B3 scope are still open; this does not accept B3 or M-B.
 
+Financial correction continuation now exposes WEG/asset-report draft creation and uncertain-response recovery, plus deliberate selection of the current finalized same-context linked-plan successor for a WEG draft. The old calculation is cleared atomically, renewed coverage is required, exact repeated selection preserves later computation, and page navigation resets unreviewed manual inputs. Backend, independent review, page/component and actual browser qualification are recorded in `2026-10-03-financial-correction-continuation.md`. Cross-scope/page disclosure and remaining B3 requirements are still open; this does not accept B3 or M-B.
+
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,
 `api/master_imports.py`, `MasterImportPage.tsx`; extend property/unit/person/lease/

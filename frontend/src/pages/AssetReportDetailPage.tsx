@@ -1,10 +1,11 @@
 import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
+import { FinancialCorrectionControls } from "../components/FinancialCorrectionControls";
 /**
  * Vermoegensbericht detail (M4, §28 IV WEG): manual reserve / receivables /
  * payables inputs (clearly labelled "Verwalter-Angabe"), compute, finalize, PDF.
  * Reserve closing = opening + contributions - withdrawals (auto).
  */
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   getWegRun,
@@ -45,20 +46,26 @@ export function AssetReportDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const pageGeneration = useRef(0);
 
   const isDraft = run?.status === "draft";
   const isFinalized = run?.status === "finalized";
 
-  const reload = useCallback(() => {
+  useEffect(() => {
     if (!runId) return;
-    setLoading(true);
+    let active = true;
+    pageGeneration.current += 1; setBusy(false);
+    setLoading(true); setRun(null); setError(null); setActionError(null);
+    setAccounts([]); setBalances({}); setOpening(''); setContributions(''); setWithdrawals(''); setReceivables([]); setPayables([]);
     Promise.all([getWegRun(runId), listProperties()])
-      .then(async ([r, pr]) => { setRun(r); setProperties(pr); setAccounts(await listBankAccounts(r.property_id)); })
-      .catch((err) => setError(err instanceof ApiError && err.status === 401 ? "Nicht authentifiziert." : String(err)))
-      .finally(() => setLoading(false));
+      .then(async ([r, pr]) => {
+        const accounts = await listBankAccounts(r.property_id);
+        if (active) { setRun(r); setProperties(pr); setAccounts(accounts); }
+      })
+      .catch((err) => { if (active) setError(err instanceof ApiError && err.status === 401 ? "Nicht authentifiziert." : String(err)); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; pageGeneration.current += 1; };
   }, [runId]);
-
-  useEffect(() => reload(), [reload]);
 
   function propName(id: string): string {
     return properties.find((p) => p.id === id)?.name ?? id.slice(0, 8);
@@ -76,14 +83,16 @@ export function AssetReportDetailPage() {
   }
 
   async function run_(fn: () => Promise<WegRun>) {
+    const current = pageGeneration.current;
     setBusy(true);
     setActionError(null);
     try {
-      setRun(await fn());
+      const result = await fn();
+      if (pageGeneration.current === current) setRun(result);
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : String(err));
+      if (pageGeneration.current === current) setActionError(err instanceof ApiError ? err.message : String(err));
     } finally {
-      setBusy(false);
+      if (pageGeneration.current === current) setBusy(false);
     }
   }
 
@@ -188,6 +197,8 @@ export function AssetReportDetailPage() {
           <button className="btn btn--primary" onClick={() => runId && window.open(assetReportPdfUrl(runId), "_blank")}>PDF herunterladen</button>
         </div>
       )}
+
+      <FinancialCorrectionControls key={run.id} run={run} />
 
       {run.lines.length > 0 && (
         <div className="card">

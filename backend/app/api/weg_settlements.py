@@ -16,7 +16,7 @@ from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
@@ -55,6 +55,14 @@ class WegRunCreate(BaseModel):
     period_start: date
     period_end: date
     management_mandate_id: str | None = None
+
+
+class PlanSuccessorSelection(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    expected_plan_id: uuid.UUID
+    successor_id: uuid.UUID
+    reason: str = Field(min_length=1, max_length=2000)
+    confirmed: bool = Field(strict=True)
 
 
 class PaidAdvanceIn(BaseModel):
@@ -259,6 +267,23 @@ async def get_weg_run(
 # ---------------------------------------------------------------------------
 # WEG-Jahresabrechnung
 # ---------------------------------------------------------------------------
+@router.get('/{run_id}/economic-plan-successor')
+async def plan_successor_preview(run_id: uuid.UUID, auth: AuthContext = Depends(require_write_dep),
+                                 db: AsyncSession = Depends(get_db)):
+    return await WegSettlementService(db, auth.organization_id, auth.user_id).plan_successor_preview(run_id)
+
+
+@router.patch('/{run_id}/economic-plan', response_model=WegRunOut)
+async def select_plan_successor(run_id: uuid.UUID, body: PlanSuccessorSelection,
+                                auth: AuthContext = Depends(require_write_dep), db: AsyncSession = Depends(get_db)):
+    if not body.confirmed or not body.reason.strip():
+        raise HTTPException(422, 'Explicit review and reason required')
+    run = await WegSettlementService(db, auth.organization_id, auth.user_id).select_plan_successor(
+        run_id, body.expected_plan_id, body.successor_id, body.reason.strip())
+    lines = await SettlementLineRepository(db, auth.organization_id).list_for_run(run.id)
+    return _run_out(run, list(lines))
+
+
 @router.post("", response_model=WegRunOut, status_code=201)
 async def create_weg_run(
     body: WegRunCreate,
