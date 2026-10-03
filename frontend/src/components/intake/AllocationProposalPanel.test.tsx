@@ -13,6 +13,7 @@ const props = { logicalId: 'logical', contextDecisionId: 'context', ready: true,
 function response(url: string, value = preview) { return json(url.includes('allocation-preview') ? value : url.includes('cost-categories') ? categories : empty); }
 async function fill() {
   await screen.findByLabelText('Kostenart · Zeile 1');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Aufteilungen aktualisieren' })).toBeEnabled());
   fireEvent.change(screen.getByLabelText('Kostenart · Zeile 1'), { target: { value: 'category' } });
   fireEvent.change(screen.getByLabelText('Beschreibung · Zeile 1'), { target: { value: 'Human reviewed service' } });
   fireEvent.change(screen.getByLabelText('Begründung der Aufteilung in Kostenarten'), { target: { value: 'Compared source line totals' } });
@@ -71,6 +72,7 @@ it('privately preserves unknown commands across missing parent context and repla
 it('retains stale lines until the current context is explicitly adopted', async () => {
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => init?.method === 'POST' ? json({}, 409) : response(url)));
   render(<AllocationProposalPanel {...props} />); await fill(); fireEvent.click(screen.getByRole('button', { name: 'Aufteilungsvorschlag speichern' }));
+  await screen.findByText(/Die Aufteilung oder ihre Grundlage wurde geändert/);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Neue Aufteilungsgrundlage übernehmen' })).toBeEnabled());
   expect(screen.getByLabelText('Beschreibung · Zeile 1')).toHaveValue('Human reviewed service');
   fireEvent.click(screen.getByRole('button', { name: 'Neue Aufteilungsgrundlage übernehmen' }));

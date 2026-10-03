@@ -374,6 +374,14 @@ class CostEntryService:
                 detail="This entry has already been superseded",
             )
 
+        adopted = await self._session.scalar(text("""SELECT EXISTS(
+            SELECT 1 FROM document_cost_link l JOIN allocation_set a
+              ON a.organization_id=l.organization_id AND a.id=l.allocation_set_id
+            WHERE l.organization_id=:org AND l.cost_entry_id=:cost AND a.kind='intake_reviewed')"""),
+            {"org": self._org_id, "cost": original_id})
+        if adopted:
+            raise HTTPException(409, "Reviewed split costs require a correction of the complete allocation set")
+
         # Create the new entry with corrected values
         new_entry = CostEntry(
             organization_id=self._org_id,

@@ -12,6 +12,7 @@ const empty = { items: [], next_before_revision: null };
 const props = { logicalId: 'logical', proposalId: 'proposal', reviewId: 'review', ready: true, parentBusy: false, parentGeneration: 0, onDenied: vi.fn() };
 async function fill() {
   await screen.findByLabelText('Seite der Objektangabe');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Kontextprüfungen aktualisieren' })).toBeEnabled());
   fireEvent.change(screen.getByLabelText('Seite der Objektangabe'), { target: { value: '2' } });
   fireEvent.change(screen.getByLabelText('Zitat zur Objektzuordnung'), { target: { value: 'Original property address' } });
   fireEvent.change(screen.getByLabelText('Begründung des Kontextvergleichs'), { target: { value: 'Compared the destination address' } });
@@ -57,6 +58,7 @@ it('preserves stale entries until the new property snapshot is explicitly adopte
     return json(url.includes('context-preview') ? { ...preview, snapshot_digest: advanced ? 'b'.repeat(64) : preview.snapshot_digest } : empty);
   }));
   render(<ContextDecisionPanel {...props} />); await fill(); fireEvent.click(screen.getByRole('button', { name: 'Kontextprüfung speichern' }));
+  await screen.findByText(/Die Kontextgrundlage wurde geändert oder wird gerade bearbeitet/);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Neue Kontextgrundlage übernehmen' })).toBeEnabled());
   expect(screen.getByLabelText('Zitat zur Objektzuordnung')).toHaveValue('Original property address');
   expect(screen.getByRole('button', { name: 'Kontextprüfung speichern' })).toBeDisabled();

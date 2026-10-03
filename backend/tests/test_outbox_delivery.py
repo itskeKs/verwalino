@@ -163,6 +163,8 @@ async def test_outbox_migration_backfills_exact_events_and_retains_delivery_hist
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
+                db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
+                importlib.import_module('migrations.versions.0109_allocation_adoptions').downgrade()
                 importlib.import_module('migrations.versions.0108_allocation_treatments').downgrade()
                 importlib.import_module('migrations.versions.0107_duplicate_exceptions').downgrade()
                 db.execute(text('TRUNCATE duplicate_comparison CASCADE'))

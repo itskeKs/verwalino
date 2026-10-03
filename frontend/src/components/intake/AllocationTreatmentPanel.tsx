@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { AllocationAdoptionPanel } from './AllocationAdoptionPanel';
 import { ApiError } from '../../api/client';
 import { exactCents } from '../../api/allocationProposals';
 import { allocationTreatmentsApi, distributionKeys, type TreatmentCommand, type TreatmentHistory, type TreatmentLine, type TreatmentPreview } from '../../api/allocationTreatments';
@@ -139,5 +140,6 @@ export function AllocationTreatmentPanel({ logicalId, allocationId, ready, paren
         <button className="btn" disabled={blocked || (!submitted && (stale || !canReview || !draft.acknowledged || !draft.reason.trim()))} onClick={() => void save()}>{submitted ? 'Dieselbe Behandlungsprüfung erneut senden' : 'Behandlungsprüfung speichern'}</button>
       </>}
     </>}
+    <AllocationAdoptionPanel logicalId={logicalId} reviewId={view?.history.items[0]?.id ?? null} ready={ready} parentBusy={blocked} parentGeneration={parentGeneration + generation} />
   </section>;
 }

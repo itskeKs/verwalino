@@ -445,6 +445,8 @@ Migration 0107 connects derived duplicate evidence to typed shared-case dependen
 
 Migration 0108 adds immutable explicit treatment reviews for every exact allocation line, preserving signed tenant cents, deliberate distribution choices, unresolved values and server-derived unsupported/conflict markers. The UI requires new choices rather than inheriting category defaults and preserves authorized exact retries. Backend, migration, UI and browser receipts are recorded in `2026-10-03-allocation-treatment-review.md`. This grants no financial adoption, source publication or tax/legal eligibility; B3 remains incomplete.
 
+Migration 0109 adds atomic confirmation of supported whole-original, single-scope reviewed allocations and a typed published source bridge. All member costs retain exact signed treatment; every source/retention reader follows sealed links. Private duplicate and transaction-bound integrity checks prevent duplicate charges and partial effects, while explicit original disclosure preserves separate private intake custody. Backend, UI, migration and browser qualification are recorded in `2026-10-03-allocation-adoption-design.md`. Cross-scope/page disclosure, grouped corrections/replacements, automated identity/opt-in mappings and typed overall case completion remain open; this does not accept B3 or M-B as a whole.
+
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,
 `api/master_imports.py`, `MasterImportPage.tsx`; extend property/unit/person/lease/

@@ -31,6 +31,7 @@ from app.models.dunning_notice import DunningNotice
 from app.models.economic_plan import EconomicPlan
 from app.models.economic_plan_line import EconomicPlanLine
 from app.models.invoice_document import InvoiceDocument
+from app.repositories.document_cost_link import cost_source_predicate
 from app.models.lease_agreement import LeaseAgreement
 from app.models.owner_profile import OwnerProfile
 from app.models.ownership_history import OwnershipHistory
@@ -112,7 +113,7 @@ class DsgvoRepository:
         stmt = (
             select(func.max(InvoiceDocument.retention_until))
             .where(InvoiceDocument.organization_id == self._org_id)
-            .where(InvoiceDocument.cost_entry_id == cost_entry_id)
+            .where(cost_source_predicate(self._org_id, cost_entry_id))
             .where(InvoiceDocument.retention_until.is_not(None))
         )
         return (await self._session.execute(stmt)).scalar_one()

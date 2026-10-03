@@ -270,6 +270,8 @@ async def test_intake_migration_refuses_data_and_preserves_function_identity(mig
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
+                db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
+                importlib.import_module('migrations.versions.0109_allocation_adoptions').downgrade()
                 importlib.import_module('migrations.versions.0108_allocation_treatments').downgrade()
                 importlib.import_module('migrations.versions.0107_duplicate_exceptions').downgrade()
                 db.execute(text('TRUNCATE duplicate_comparison CASCADE'))

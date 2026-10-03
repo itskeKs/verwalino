@@ -216,6 +216,8 @@ async def test_treatment_sql_membership_coverage_and_guarded_downgrade(migrator_
             try:
                 db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
+                db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
+                importlib.import_module('migrations.versions.0109_allocation_adoptions').downgrade()
                 migration.downgrade();migration.upgrade()
                 assert db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))==oid
             finally:point.rollback()

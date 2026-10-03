@@ -205,6 +205,8 @@ async def test_exception_backfill_constraints_coverage_and_downgrade_guard(migra
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
+                db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
+                importlib.import_module('migrations.versions.0109_allocation_adoptions').downgrade()
                 importlib.import_module('migrations.versions.0108_allocation_treatments').downgrade()
                 importlib.import_module('migrations.versions.0107_duplicate_exceptions').downgrade()
                 db.execute(text('TRUNCATE duplicate_comparison CASCADE'))

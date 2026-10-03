@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice_document import InvoiceDocument
+from app.repositories.document_cost_link import cost_source_predicate
 from app.repositories.base import TenantRepository
 
 
@@ -24,7 +25,7 @@ class InvoiceDocumentRepository(TenantRepository[InvoiceDocument]):
         """Get the active (non-superseded) document for a cost entry."""
         stmt = (
             self._base_query()
-            .where(InvoiceDocument.cost_entry_id == cost_entry_id)
+            .where(cost_source_predicate(self._org_id, cost_entry_id))
             .where(InvoiceDocument.status == "active")
         )
         result = await self._session.execute(stmt)
@@ -50,7 +51,7 @@ class InvoiceDocumentRepository(TenantRepository[InvoiceDocument]):
         """List all versions (including superseded) for a cost entry."""
         stmt = (
             self._base_query()
-            .where(InvoiceDocument.cost_entry_id == cost_entry_id)
+            .where(cost_source_predicate(self._org_id, cost_entry_id))
             .order_by(InvoiceDocument.version)
         )
         result = await self._session.execute(stmt)
