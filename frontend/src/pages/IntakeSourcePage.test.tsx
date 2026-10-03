@@ -7,9 +7,11 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const child = { id: 'logical-1', document_ref_id: 'ref-1', page_start: 2, page_end: 2, verified_page_count: 3, origin: 'manual', review_state: 'unreviewed', reason: 'Candidate' };
 const status = { id: 'job-1', status: 'failed', attempt_number: 1, fence: 'fence-1', error_code: 'processor_failed', can_retry: true };
 const revision = { id: 'revision-1', logical_document_id: 'logical-1', status: 'needs_review', error_code: 'missing_fields', created_at: '2026-10-03T12:00:00Z',
-  fields: [{ field_name: 'gross_amount', value: '119.00', confidence: '0.85', locator_status: 'page_quote', page_number: 2, quotation: 'Gesamtbetrag: 119,00 EUR', xml_path: null, method: 'text_layer' },
+  payload: { gross_amount: '119.00' }, fields: [{ field_name: 'gross_amount', value: '119.00', confidence: '0.85', locator_status: 'page_quote', page_number: 2, quotation: 'Gesamtbetrag: 119,00 EUR', xml_path: null, method: 'text_layer' },
     { field_name: 'document_number', value: 'R-1234', confidence: null, locator_status: 'unlocated', page_number: null, quotation: null, xml_path: null, method: 'unlocated' }] };
 function response(url: string) {
+  if (url.includes('/assignment-proposals')) return json({ items: [], next_before_revision: null });
+  if (url.startsWith('/api/accounting-scopes/')) return json({ items: [], next_cursor: null });
   if (url.endsWith('/partition')) return json({ current: null, can_review: true, can_export: true });
   if (url === '/api/document-refs/ref-1') return json({ source_kind: 'intake_original', source_id: 'original-1' });
   if (url.startsWith('/api/logical-documents?')) return json({ items: [child] });
@@ -123,4 +125,15 @@ it('preserves an uncertain partition through a transient parent read failure', a
   await waitFor(() => expect(requests).toHaveLength(2));
   expect(requests[0].body).toBe(requests[1].body);
   expect(new Headers(requests[0].headers).get('Idempotency-Key')).toBe(new Headers(requests[1].headers).get('Idempotency-Key'));
+});
+
+
+it('does not offer assignment for a needs-review result without usable payload', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.endsWith('/partition')) return json({ current: { id: 'partition', logical_document_ids: [child.id] }, can_review: true, can_export: false });
+    if (url.endsWith('/revision-1')) return json({ ...revision, payload: null, fields: [], error_code: 'incomplete_text' });
+    return response(url);
+  }));
+  page(); await screen.findByText('Für einen neuen Vorschlag wird ein verfügbarer Extraktionsstand benötigt.');
+  expect(await screen.findByRole('button', { name: 'Zuordnung vorschlagen' })).toBeDisabled();
 });

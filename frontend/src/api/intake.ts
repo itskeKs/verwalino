@@ -45,7 +45,7 @@ export interface FieldEvidence {
 }
 export interface ExtractionRevision {
   id: string; logical_document_id: string; created_at: string; status: string; error_code: string | null;
-  processor_version: string; fields: FieldEvidence[];
+  processor_version: string; payload: Record<string, unknown> | null; fields: FieldEvidence[];
 }
 export const extractionApi = {
   children: (ref: string, signal?: AbortSignal) => api.get<{ items: LogicalDocument[] }>(`/api/logical-documents?document_ref_id=${encodeURIComponent(ref)}`, { signal }),
@@ -81,4 +81,18 @@ export const partitionApi = {
     `/api/document-refs/${ref}/partition`, body, { headers: { 'Idempotency-Key': key, 'If-Match': `"${expected ?? 'none'}"` } }),
   createRange: (body: { document_ref_id: string; page_start: number; page_end: number; reason: string }, key: string) =>
     api.post<LogicalDocument>('/api/logical-documents', body, { headers: { 'Idempotency-Key': key } }),
+};
+
+
+export interface AssignmentProposal {
+  id: string; document_ref_id: string; logical_document_id: string; partition_revision_id: string; extraction_revision_id: string;
+  scope_id: string; scope_label: string; scope_type: string; scope_hint_id: string | null; previous_proposal_id: string | null;
+  revision_number: number; method: 'manual_selection'; state: 'proposed' | 'blocked'; blockers: string[]; reason: string; created_at: string;
+}
+export interface AssignmentCreate { partition_revision_id: string; extraction_revision_id: string; scope_id: string; reason: string }
+export const assignmentApi = {
+  history: (logical: string, signal?: AbortSignal) => api.get<{ items: AssignmentProposal[]; next_before_revision: number | null }>(
+    `/api/logical-documents/${logical}/assignment-proposals?limit=20`, { signal }),
+  create: (logical: string, body: AssignmentCreate, expected: string | null, key: string) => api.post<AssignmentProposal>(
+    `/api/logical-documents/${logical}/assignment-proposals`, body, { headers: { 'Idempotency-Key': key, 'If-Match': `"${expected ?? 'none'}"` } }),
 };

@@ -55,7 +55,7 @@ export function SourcePartitionPanel({ refId, documents, parentBusy, parentGener
     try {
       const result = await partitionApi.review(refId, request.body, request.expected, request.key);
       if (!alive.current) return;
-      pending.current = null; setSubmitted(false); setConflict(false); setDraft(null); setSaved(result.revision_number); refresh();
+      pending.current = null; setSubmitted(false); setConflict(false); setDraft(null); setSaved(result.revision_number); refresh(); onCreated();
     } catch (failure) {
       if (!alive.current) return;
       if (denied(failure)) { setState(null); setOriginal(null); onDenied(); }

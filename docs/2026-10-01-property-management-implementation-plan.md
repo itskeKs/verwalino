@@ -427,8 +427,9 @@ accept B3.
 
 Migration 0101 adds manual context proposals pinned to exact partition and
 extraction revisions, with current source/destination rights and immutable
-conflict markers; see `2026-10-03-manual-assignment-proposals.md`. Automated
-identity resolution, proposal review/adoption and shared exceptions remain open.
+conflict markers and a manual proposal/history interface; see
+`2026-10-03-manual-assignment-proposals.md`. Automated identity resolution,
+proposal review/adoption and shared exceptions remain open.
 
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,

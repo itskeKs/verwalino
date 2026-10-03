@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { AssignmentPanel } from '../components/intake/AssignmentPanel';
 import { SourcePartitionPanel } from '../components/intake/SourcePartitionPanel';
 import { ApiError } from '../api/client';
 import { extractionApi, type ExtractionRevision, type ExtractionStatus, type LogicalDocument } from '../api/intake';
@@ -88,6 +89,9 @@ function Proposals({ document, onDenied, parentBusy, parentGeneration }: { docum
         </article>)}</div>
       </details>)}
     </>}
+    <AssignmentPanel logicalId={document.id} refId={document.document_ref_id} extractionId={view?.revisions[0]?.id ?? null}
+      evidenceReady={!!view && view.revisions[0]?.payload != null && ['succeeded', 'needs_review'].includes(view.revisions[0]?.status ?? '')} parentBusy={busy || parentBusy || !!error}
+      parentGeneration={parentGeneration} onDenied={onDenied} />
   </section>;
 }
 
