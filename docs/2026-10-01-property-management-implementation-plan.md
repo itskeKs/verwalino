@@ -433,6 +433,8 @@ proposal review/adoption and shared exceptions remain open.
 
 Migration 0102 adds immutable exception cases, exact proposal dependencies and versioned advisory workflow events. New evidence reopens attention; claim, release and snooze never resolve a blocker. Source-and-target authority is rechecked before historical replay. Backfill, rollback, concurrency, expiry, RLS and migration qualification are recorded in `2026-10-03-exception-workflow.md`. The exception list/detail UI now preserves unknown commands and links exact source evidence; browser and mobile qualification are recorded there. Typed resolution/adoption remains outstanding. This does not accept B3.
 
+Migration 0103 records immutable human invoice field reviews on one exact current proposal/source basis, with explicit sign/date/decimal validation and preserved original assertions. It produces no financial or resolution effect. Qualification and remaining boundaries are recorded in `2026-10-03-invoice-field-reviews.md`; field-review UI, typed context resolution and balanced allocation/adoption remain outstanding.
+
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,
 `api/master_imports.py`, `MasterImportPage.tsx`; extend property/unit/person/lease/

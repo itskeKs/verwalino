@@ -161,6 +161,8 @@ async def test_outbox_migration_backfills_exact_events_and_retains_delivery_hist
                 oid=db.scalar(text("SELECT 'access_disposition_work(uuid)'::regprocedure::oid"))
                 db.execute(text('TRUNCATE source_partition_revision CASCADE'))
                 db.execute(text('TRUNCATE exception_case CASCADE'))
+                db.execute(text('TRUNCATE invoice_review_revision'))
+                importlib.import_module('migrations.versions.0103_invoice_field_reviews').downgrade()
                 importlib.import_module('migrations.versions.0102_exception_cases').downgrade()
                 importlib.import_module('migrations.versions.0101_assignment_proposals').downgrade()
                 importlib.import_module('migrations.versions.0100_source_partitions').downgrade()
