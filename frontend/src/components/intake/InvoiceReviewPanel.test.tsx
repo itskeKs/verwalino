@@ -4,6 +4,8 @@ import type { AssignmentProposal, ExtractionRevision } from '../../api/intake';
 import type { InvoiceReview, InvoiceReviewHistory } from '../../api/invoiceReviews';
 import { InvoiceReviewPanel } from './InvoiceReviewPanel';
 
+vi.mock('./ContextDecisionPanel', () => ({ ContextDecisionPanel: () => null }));
+
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const proposal: AssignmentProposal = { id: 'proposal-1', document_ref_id: 'ref', logical_document_id: 'logical', partition_revision_id: 'partition', extraction_revision_id: 'extraction', scope_id: 'scope', scope_label: 'WEG Beispiel', scope_type: 'WEG', scope_hint_id: null, previous_proposal_id: null, revision_number: 1, method: 'manual_selection', state: 'blocked', blockers: ['scope_hint_conflict'], reason: 'Compare context', created_at: '2026-10-03T12:00:00Z' };
 const extraction: ExtractionRevision = { id: 'extraction', document_ref_id: 'ref', logical_document_id: 'logical', created_at: proposal.created_at, status: 'succeeded', error_code: null, processor_version: 'intake-local-v1', payload: { vendor_name: 'Synthetic Utility', document_number: 'R-123', invoice_date: '2026-10-01', gross_amount: '119.00' }, fields: [] };

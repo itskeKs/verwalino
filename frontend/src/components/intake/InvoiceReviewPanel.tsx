@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ContextDecisionPanel } from './ContextDecisionPanel';
 import { ApiError } from '../../api/client';
 import type { AssignmentProposal, ExtractionRevision } from '../../api/intake';
 import { invoiceReviewsApi, type InvoiceReviewCommand, type InvoiceReviewHistory } from '../../api/invoiceReviews';
@@ -79,7 +80,7 @@ export function InvoiceReviewPanel({ logicalId, proposal, extraction, ready, par
       } else setError('Keine bestätigte Antwort erhalten. Senden Sie dieselbe Feldprüfung erneut.');
     } finally { if (alive.current) setSending(false); }
   }
-  return <section className="card min-w-0 space-y-4" aria-label="Rechnungsfelder prüfen">
+  return <><section className="card min-w-0 space-y-4" aria-label="Rechnungsfelder prüfen">
     <div className="flex flex-wrap justify-between gap-3"><h2>Rechnungsfelder prüfen</h2><button className="btn" disabled={blocked} onClick={() => { setError(null); setGeneration(value => value + 1); }}>Feldprüfungen aktualisieren</button></div>
     <p>Hier halten Sie Ihre Prüfung der Feldwerte fest. Zuordnungskonflikte, Steuerbehandlung und Dubletten bleiben separat zu klären; es werden keine Kosten bestätigt.</p>
     {busy && <p role="status">Lade Feldprüfungen…</p>}{error && <p role="alert" className="error-text">{error}</p>}
@@ -114,5 +115,7 @@ export function InvoiceReviewPanel({ logicalId, proposal, extraction, ready, par
         <button className="btn" disabled={blocked || (!submitted && (stale || !ready || !draft.acknowledged || !draft.reason.trim()))} onClick={() => void save()}>{submitted ? 'Dieselbe Feldprüfung erneut senden' : 'Feldprüfung speichern'}</button>
       </>}
     </>}
-  </section>;
+  </section><ContextDecisionPanel logicalId={logicalId} proposalId={proposal?.id ?? null} reviewId={history?.items[0]?.id ?? null}
+    ready={ready && history?.items[0]?.assignment_proposal_id === proposal?.id} parentBusy={blocked} parentGeneration={parentGeneration + generation}
+    onDenied={onDenied} /></>;
 }

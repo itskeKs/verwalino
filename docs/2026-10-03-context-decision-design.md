@@ -52,3 +52,14 @@ The command retains a claimed page/XML locator, quotation and comparison note. I
 - Empty downgrade/upgrade preserves manifest function identity; retained decisions refuse downgrade; complete provenance foreign keys and coverage digest changes are qualified.
 - Fake-Docker deploy/verification head gate passes at 0104 (`hv-context-deploy`). No deployment occurred.
 - Independent static review found no production blocker. The reviewer requested the additional audience, lock-order and atomic rollback checks above.
+
+## Comparison UI qualification
+
+The source evidence page now includes a context comparison panel below invoice field review. It shows the retained property/scope snapshot, requests an explicit page or claimed XML path, quotation, comparison note and acknowledgement, and labels saved records as human assertions. A stale snapshot/review/case version requires explicit replacement of draft inputs. Unknown POST outcomes retain the exact body, key and predecessor for replay across parent refreshes.
+
+An independent UI review found a cached-draft audience gap when parent context disappeared or a readable successor replaced an inaccessible predecessor. The repair requires a successful preview for the draft's own proposal before showing its copied facts or enabling replay. Missing parent context retains the request privately; property-only denial clears the local draft without falsely denying the original. The reviewer found no remaining actionable issue in the repair.
+
+- Forty related component/page tests pass (`hv-context-ui-verified`), including both audience regression cases, source-page integration, unknown replay and stale input replacement.
+- Production build and lint pass (`hv-context-ui-build-final`, `hv-context-ui-lint-final`); the existing large main-chunk warning remains (approximately 746 KB).
+- Actual local browser/API test passes after the audience repair (`hv-context-browser-final`): real extraction with synthetic clean inspection, keyboard submission, lost committed response and exact replay with one retained record, reload acknowledgement reset, changed property snapshot conflict, unchanged cost count, mobile width and simulated property-only denial clearing. Desktop/mobile screenshots were inspected.
+- This evidence does not qualify production scanning or financial adoption. Task-started browser/API/Vite processes were stopped after qualification.
