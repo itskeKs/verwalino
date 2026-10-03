@@ -193,6 +193,8 @@ async def test_mapping_roles_pause_private_table_seal_and_guarded_downgrade(migr
                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
                 db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
+                db.execute(text('TRUNCATE visual_extract_attestation CASCADE'))
+                importlib.import_module('migrations.versions.0120_allocation_source_aliases').downgrade()
                 importlib.import_module('migrations.versions.0119_allocation_source_claims').downgrade()
                 importlib.import_module('migrations.versions.0118_visual_disclosures').downgrade()
                 importlib.import_module('migrations.versions.0117_visual_extract_artifacts').downgrade()
@@ -206,6 +208,7 @@ async def test_mapping_roles_pause_private_table_seal_and_guarded_downgrade(migr
                 importlib.import_module('migrations.versions.0117_visual_extract_artifacts').upgrade()
                 importlib.import_module('migrations.versions.0118_visual_disclosures').upgrade()
                 importlib.import_module('migrations.versions.0119_allocation_source_claims').upgrade()
+                importlib.import_module('migrations.versions.0120_allocation_source_aliases').upgrade()
                 assert before==db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
             finally:point.rollback()
         async with client(ids) as api:

@@ -98,6 +98,8 @@ async def test_migration_preserves_legacy_collisions_and_seals_private_claims(mi
             point = db.begin_nested()
             try:
                 db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
+                db.execute(text('TRUNCATE visual_extract_attestation CASCADE'))
+                importlib.import_module('migrations.versions.0120_allocation_source_aliases').downgrade()
                 migration.downgrade()
                 roots = []
                 # Historically retained legacy roots may legitimately predate the
@@ -161,6 +163,8 @@ async def test_backfill_reconstructs_correction_chain_and_rejects_corrupt_ancest
                 point = db.begin_nested()
                 try:
                     db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
+                    db.execute(text('TRUNCATE visual_extract_attestation CASCADE'))
+                    importlib.import_module('migrations.versions.0120_allocation_source_aliases').downgrade()
                     migration.downgrade()
                     if scenario == 'roundtrip':
                         migration.upgrade()

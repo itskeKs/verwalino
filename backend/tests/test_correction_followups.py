@@ -211,6 +211,8 @@ async def test_followup_context_backfill_two_orgs_without_tenant_guc_and_guarded
             with pytest.raises(DBAPIError,match='Retain correction follow-up'),db.begin_nested():
                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
                 db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
+                db.execute(text('TRUNCATE visual_extract_attestation CASCADE'))
+                importlib.import_module('migrations.versions.0120_allocation_source_aliases').downgrade()
                 importlib.import_module('migrations.versions.0119_allocation_source_claims').downgrade()
                 importlib.import_module('migrations.versions.0118_visual_disclosures').downgrade()
                 importlib.import_module('migrations.versions.0117_visual_extract_artifacts').downgrade()
@@ -224,6 +226,8 @@ async def test_followup_context_backfill_two_orgs_without_tenant_guc_and_guarded
                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
                 db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
+                db.execute(text('TRUNCATE visual_extract_attestation CASCADE'))
+                importlib.import_module('migrations.versions.0120_allocation_source_aliases').downgrade()
                 importlib.import_module('migrations.versions.0119_allocation_source_claims').downgrade()
                 importlib.import_module('migrations.versions.0118_visual_disclosures').downgrade()
                 importlib.import_module('migrations.versions.0117_visual_extract_artifacts').downgrade()
@@ -231,6 +235,7 @@ async def test_followup_context_backfill_two_orgs_without_tenant_guc_and_guarded
                 importlib.import_module('migrations.versions.0117_visual_extract_artifacts').upgrade()
                 importlib.import_module('migrations.versions.0118_visual_disclosures').upgrade()
                 importlib.import_module('migrations.versions.0119_allocation_source_claims').upgrade()
+                importlib.import_module('migrations.versions.0120_allocation_source_aliases').upgrade()
                 assert definition==db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
                 assert db.scalar(text('SELECT count(*) FROM allocation_correction_context WHERE impact_id=ANY(:ids)'),{'ids':retained})==2
                 assert db.scalar(text('SELECT count(*) FROM allocation_correction_context WHERE impact_id=ANY(:ids)'),{'ids':unproven})==0
