@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { SourcePartitionPanel } from '../components/intake/SourcePartitionPanel';
 import { ApiError } from '../api/client';
 import { extractionApi, type ExtractionRevision, type ExtractionStatus, type LogicalDocument } from '../api/intake';
 
@@ -106,10 +107,11 @@ function Source({ refId }: { refId: string }) {
     const controller = new AbortController(); setBusy(true); setError(null);
     extractionApi.children(refId, controller.signal).then(result => { if (!controller.signal.aborted) {
       setDocuments(result.items); setSelected(previous => result.items.some(item => item.id === previous) ? previous : result.items[0]?.id ?? '');
-    } }).catch(() => { if (!controller.signal.aborted) { setDocuments(null); setError('Belege nicht verfügbar. Bitte Berechtigung und Verbindung prüfen.'); } })
+    } }).catch(failure => { if (!controller.signal.aborted) { if (denied(failure)) setDocuments(null); setError('Belege nicht verfügbar. Bitte Berechtigung und Verbindung prüfen.'); } })
       .finally(() => { if (!controller.signal.aborted) setBusy(false); });
     return () => controller.abort();
   }, [refId, generation]);
+  const refresh = useCallback(() => setGeneration(value => value + 1), []);
   const document = documents?.find(item => item.id === selected);
   return <div className="min-w-0 space-y-5">
     <Link to="/posteingang">Zum Posteingang</Link>
@@ -119,10 +121,13 @@ function Source({ refId }: { refId: string }) {
     {error && <p role="alert" className="error-text">{error}</p>}
     {busy && <p role="status">Lade Belege…</p>}
     {documents?.length === 0 && <p>Die Dokumentvorbereitung ist noch nicht abgeschlossen. Bitte den Stand erneut laden.</p>}
+    <div hidden={busy || !!error} className="space-y-5">
     {!!documents?.length && <div className="max-w-xl space-y-2"><label htmlFor="logical-source">Beleg auswählen</label>
       <select id="logical-source" className={inputClass} value={selected} disabled={busy} onChange={event => setSelected(event.target.value)}>
         {documents.map(item => <option key={item.id} value={item.id}>{range(item)} · {item.origin === 'inspection' ? 'Gesamtbeleg vorgeschlagen' : 'Manuell abgegrenzt'}</option>)}
       </select></div>}
-    {document && <Proposals key={document.id} document={document} onDenied={onDenied} parentBusy={busy} parentGeneration={generation} />}
+    {!!documents?.length && <SourcePartitionPanel refId={refId} documents={documents} parentBusy={busy || !!error} parentGeneration={generation} onDenied={onDenied} onCreated={refresh} />}
+    {document && <Proposals key={document.id} document={document} onDenied={onDenied} parentBusy={busy || !!error} parentGeneration={generation} />}
+    </div>
   </div>;
 }

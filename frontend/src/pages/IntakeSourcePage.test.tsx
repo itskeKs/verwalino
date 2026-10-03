@@ -4,12 +4,14 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { IntakeSourcePage } from './IntakeSourcePage';
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
-const child = { id: 'logical-1', document_ref_id: 'ref-1', page_start: 2, page_end: 2, origin: 'manual', review_state: 'unreviewed', reason: 'Candidate' };
+const child = { id: 'logical-1', document_ref_id: 'ref-1', page_start: 2, page_end: 2, verified_page_count: 3, origin: 'manual', review_state: 'unreviewed', reason: 'Candidate' };
 const status = { id: 'job-1', status: 'failed', attempt_number: 1, fence: 'fence-1', error_code: 'processor_failed', can_retry: true };
 const revision = { id: 'revision-1', logical_document_id: 'logical-1', status: 'needs_review', error_code: 'missing_fields', created_at: '2026-10-03T12:00:00Z',
   fields: [{ field_name: 'gross_amount', value: '119.00', confidence: '0.85', locator_status: 'page_quote', page_number: 2, quotation: 'Gesamtbetrag: 119,00 EUR', xml_path: null, method: 'text_layer' },
     { field_name: 'document_number', value: 'R-1234', confidence: null, locator_status: 'unlocated', page_number: null, quotation: null, xml_path: null, method: 'unlocated' }] };
 function response(url: string) {
+  if (url.endsWith('/partition')) return json({ current: null, can_review: true, can_export: true });
+  if (url === '/api/document-refs/ref-1') return json({ source_kind: 'intake_original', source_id: 'original-1' });
   if (url.startsWith('/api/logical-documents?')) return json({ items: [child] });
   if (url.endsWith('/processing')) return json(status);
   if (url.startsWith('/api/document-refs/')) return json({ items: [{ id: revision.id }] });
@@ -98,4 +100,27 @@ it('ignores an old retry denial after switching to another logical source', asyn
   finish!(json({ detail: 'Late denial for previous source' }, 404));
   await waitFor(() => expect(screen.getByText('Gesamtbetrag: 238,00 EUR')).toBeInTheDocument());
   expect(screen.getByLabelText('Beleg auswählen')).toHaveValue('logical-2');
+});
+
+it('preserves an uncertain partition through a transient parent read failure', async () => {
+  const whole = { ...child, page_start: 1, page_end: 3 }; const requests: RequestInit[] = []; let offline = false;
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/partition') && init?.method === 'POST') { requests.push(init); return json({}, 503); }
+    if (url.startsWith('/api/logical-documents?')) return offline ? json({}, 503) : json({ items: [whole] });
+    return response(url);
+  }));
+  page(); await screen.findByText('Noch keine geprüfte Aufteilung.');
+  fireEvent.click(screen.getByLabelText('Seiten 1–3 in Aufteilung aufnehmen'));
+  fireEvent.change(screen.getByLabelText('Begründung der Aufteilung'), { target: { value: 'Whole document reviewed' } });
+  fireEvent.click(screen.getByLabelText(/Alle sichtbaren Seiten im Original geprüft/));
+  fireEvent.click(screen.getByRole('button', { name: 'Aufteilung speichern' })); await screen.findByText(/Keine bestätigte Antwort erhalten. Senden/);
+  offline = true; fireEvent.click(screen.getByRole('button', { name: 'Belege aktualisieren' }));
+  await screen.findByText('Belege nicht verfügbar. Bitte Berechtigung und Verbindung prüfen.');
+  expect(screen.queryByRole('button', { name: 'Dieselbe Aufteilung erneut senden' })).not.toBeInTheDocument();
+  offline = false; fireEvent.click(screen.getByRole('button', { name: 'Belege aktualisieren' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Dieselbe Aufteilung erneut senden' })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Dieselbe Aufteilung erneut senden' }));
+  await waitFor(() => expect(requests).toHaveLength(2));
+  expect(requests[0].body).toBe(requests[1].body);
+  expect(new Headers(requests[0].headers).get('Idempotency-Key')).toBe(new Headers(requests[1].headers).get('Idempotency-Key'));
 });

@@ -33,6 +33,7 @@ export const intakeApi = {
 
 export interface LogicalDocument {
   id: string; document_ref_id: string; page_start: number | null; page_end: number | null;
+  verified_page_count: number | null;
   origin: 'manual' | 'inspection'; review_state: 'unreviewed'; reason: string;
 }
 export interface ExtractionStatus {
@@ -65,3 +66,19 @@ export async function fileDigest(file: File): Promise<string> {
   return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())))
     .map(value => value.toString(16).padStart(2, '0')).join('');
 }
+
+export interface SourcePartition {
+  id: string; document_ref_id: string; previous_revision_id: string | null; revision_number: number;
+  content_sha256: string; verified_page_count: number | null; visual_pages_reviewed: true;
+  reason: string; created_at: string; logical_document_ids: string[];
+}
+export interface PartitionReview { logical_document_ids: string[]; reason: string; visual_pages_reviewed: true }
+export interface PartitionState { current: SourcePartition | null; can_review: boolean; can_export: boolean }
+export const partitionApi = {
+  get: (ref: string, signal?: AbortSignal) => api.get<PartitionState>(`/api/document-refs/${ref}/partition`, { signal }),
+  original: (ref: string, signal?: AbortSignal) => api.get<{ source_id: string; source_kind: string }>(`/api/document-refs/${ref}`, { signal }),
+  review: (ref: string, body: PartitionReview, expected: string | null, key: string) => api.post<SourcePartition>(
+    `/api/document-refs/${ref}/partition`, body, { headers: { 'Idempotency-Key': key, 'If-Match': `"${expected ?? 'none'}"` } }),
+  createRange: (body: { document_ref_id: string; page_start: number; page_end: number; reason: string }, key: string) =>
+    api.post<LogicalDocument>('/api/logical-documents', body, { headers: { 'Idempotency-Key': key } }),
+};

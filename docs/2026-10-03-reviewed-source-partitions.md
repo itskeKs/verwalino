@@ -41,8 +41,8 @@ a partition must not retarget previously adopted drafts or costs. The original's
 `logical_document.review_state` remains an immutable candidate marker; consumers
 must use partition membership rather than treating every candidate as accepted.
 
-The source-review UI, contextual proposals, shared exceptions, learned mappings,
-duplicate decisions and balanced financial allocation remain subsequent work.
+Contextual proposals, shared exceptions, learned mappings, duplicate decisions
+and balanced financial allocation remain subsequent work.
 
 ## Verification
 
@@ -59,3 +59,36 @@ Coverage includes invalid/gapped/overlapping/foreign selections, XML singleton,
 exact replay after replacement, racing initial and replacement reviews, historical
 membership, revocation and pause, transaction rollback, runtime DML denial,
 coverage invalidation, and guarded migration roundtrip preserving function OIDs.
+
+
+## Source review interface
+
+The source page now offers the original only when the current original export
+predicate permits it, manual page-range creation, partition membership selection,
+exact visual coverage feedback, a reason and an explicit visual-review checkbox.
+Successful review shows its saved version and survives a page reload. Existing
+logical candidates and extraction evidence remain available separately.
+
+Concurrent changes preserve the draft and require explicit adoption of the newest
+partition before a new submission. Unknown responses freeze the exact request
+body and idempotency key for replay. Transient parent/partition read failures hide
+and disable stale content while keeping these pending commands mounted; access
+denials clear the page. Range creation uses the existing bounded, immutable
+logical-source command and queues its existing extraction job. New membership is
+never silently added to a previously reviewed partition.
+
+Sixteen source/panel tests pass, including unknown-response replay across parent
+and partition read failures, conflict adoption, range bounds, late responses and
+authority loss. Backend source tests retain seven passing cases; the new export
+capability test passes after its fixture was corrected to revoke/replace the
+single active scope grant. Build and lint pass; the existing bundle-size warning
+remains (approximately 708 kB minified application chunk).
+
+Rendered qualification used the existing local browser runtime with the real
+local API and disposable database: a three-page synthetic PDF, injected clean
+inspection, two manually created logical ranges, keyboard review, reload of the
+saved partition, authorized original download, 1440×1000 desktop and 390×844
+mobile layout without horizontal overflow, and simulated 404 clearing. There
+were no page errors, pre-fault console errors or development overlays. Screenshots
+were visually inspected. The browser harness completed with exit code 0; API
+and Vite were stopped. This is not scanner or production-runtime qualification.

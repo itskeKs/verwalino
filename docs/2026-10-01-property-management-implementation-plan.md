@@ -420,8 +420,9 @@ and source→cost retries across entry points. V01/V03 block unsupported tax tre
 B3 foundation progress: migration 0100 adds immutable reviewed visual-page
 partitions with exact source binding, complete nonoverlapping coverage, live
 authority, optimistic concurrency and retained revision history. See
-`2026-10-03-reviewed-source-partitions.md`. UI review, assignment, exceptions,
-duplicate decisions and financial allocations remain outstanding; this does not
+`2026-10-03-reviewed-source-partitions.md`. The source UI now supports explicit
+range creation and partition review with conflict/reconnect handling. Assignment,
+exceptions, duplicate decisions and financial allocations remain outstanding; this does not
 accept B3.
 
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**

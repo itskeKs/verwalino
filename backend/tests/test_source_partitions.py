@@ -189,3 +189,21 @@ async def test_background_roles_cannot_review_even_with_restored_actor(migrator_
                 await db.execute(text("SELECT review_source_partition(:org,:ref,:request,NULL,ARRAY[CAST(:child AS uuid)],'Restored actor',true)"),
                     {**ids,'ref':uuid.UUID(ref['id']),'request':uuid.uuid4(),'child':uuid.UUID(whole['id'])})
     assert await read_value('SELECT count(*) FROM source_partition_revision WHERE organization_id=:org',ids)==0
+
+
+async def test_partition_view_reports_live_original_export_separately_from_review(migrator_session,scope_seed,store):
+    ids=await fixture(migrator_session,scope_seed)
+    async with client(ids) as api:
+        ref,receipt=await clean_reference(api,ids,scoped=True)
+        url='/api/document-refs/'+ref['id']+'/partition'
+        status=(await api.get(url)).json()
+        assert status['can_review'] and not status['can_export']
+        assert (await api.get('/api/intake-batches/originals/'+receipt['original_id']+'/content')).status_code==404
+        grant=uuid.uuid4()
+        await mutate(text('UPDATE scope_grant SET revoked_at=clock_timestamp(),revoked_by=:actor WHERE id=:grant'),ids)
+        await mutate(text("INSERT INTO scope_grant(id,organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES(:grant,:org,:scope,:clerk,ARRAY['read','prepare','export'],:actor,'Reviewed original access')"),{**ids,'grant':grant})
+        assert (await api.get(url)).json()['can_export']
+        await mutate(text('UPDATE scope_grant SET revoked_at=clock_timestamp(),revoked_by=:actor WHERE id=:grant'),{**ids,'grant':grant})
+        await mutate(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES(:org,:scope,:clerk,ARRAY['read','prepare'],:actor,'Restore review only')"),ids)
+        status=(await api.get(url)).json()
+        assert status['can_review'] and not status['can_export']

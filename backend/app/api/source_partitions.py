@@ -3,6 +3,7 @@ import uuid
 from typing import Literal
 from fastapi import APIRouter,Depends,Header,HTTPException
 from pydantic import BaseModel,ConfigDict,Field
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.tenant import AuthContext,get_current_user
 from app.core.live_principal import get_live_member_db,get_live_writer_db
@@ -20,7 +21,10 @@ class PartitionReview(BaseModel):
 
 @router.get('/{document_ref_id}/partition')
 async def status(document_ref_id:uuid.UUID,auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_member_db)):
-    return await IntakeService(db,auth).call('SELECT source_partition_status(:org,:ref,NULL)',ref=document_ref_id)
+    value=await IntakeService(db,auth).call('SELECT source_partition_status(:org,:ref,NULL)',ref=document_ref_id)
+    value['can_export']=bool(await db.scalar(text('SELECT intake_original_export_access(:org,intake_original_id) FROM document_ref WHERE organization_id=:org AND id=:ref'),
+        {'org':auth.organization_id,'ref':document_ref_id}))
+    return value
 
 
 @router.get('/{document_ref_id}/partition/{partition_id}')
