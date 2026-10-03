@@ -431,7 +431,7 @@ conflict markers and a manual proposal/history interface; see
 `2026-10-03-manual-assignment-proposals.md`. Automated identity resolution,
 proposal review/adoption and shared exceptions remain open.
 
-Migration 0102 adds immutable exception cases, exact proposal dependencies and versioned advisory workflow events. New evidence reopens attention; claim, release and snooze never resolve a blocker. Source-and-target authority is rechecked before historical replay. Backfill, rollback, concurrency, expiry, RLS and migration qualification are recorded in `2026-10-03-exception-workflow.md`. Exception UI and typed resolution/adoption remain outstanding. This does not accept B3.
+Migration 0102 adds immutable exception cases, exact proposal dependencies and versioned advisory workflow events. New evidence reopens attention; claim, release and snooze never resolve a blocker. Source-and-target authority is rechecked before historical replay. Backfill, rollback, concurrency, expiry, RLS and migration qualification are recorded in `2026-10-03-exception-workflow.md`. The exception list/detail UI now preserves unknown commands and links exact source evidence; browser and mobile qualification are recorded there. Typed resolution/adoption remains outstanding. This does not accept B3.
 
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,

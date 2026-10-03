@@ -31,6 +31,8 @@ import { CostEntriesPage } from "./pages/CostEntriesPage";
 import { CostEntryDetailPage } from "./pages/CostEntryDetailPage";
 import { InboxPage } from "./pages/InboxPage";
 import { IntakeBatchPage } from "./pages/IntakeBatchPage";
+import { ExceptionsPage } from "./pages/ExceptionsPage";
+import { ExceptionDetailPage } from "./pages/ExceptionDetailPage";
 import { IntakeSourcePage } from "./pages/IntakeSourcePage";
 import { InvoiceDocumentsPage } from "./pages/InvoiceDocumentsPage";
 import { InvoiceDocumentDetailPage } from "./pages/InvoiceDocumentDetailPage";
@@ -91,6 +93,8 @@ export function AppRoutes() {
         <Route path="/personen/:personId" element={<PersonDetailPage />} />
         <Route path="/kosten" element={<CostEntriesPage />} />
         <Route path="/kosten/:entryId" element={<CostEntryDetailPage />} />
+        <Route path="/klaerungsfaelle" element={<ExceptionsPage />} />
+        <Route path="/klaerungsfaelle/:caseId" element={<ExceptionDetailPage />} />
         <Route path="/posteingang" element={<InboxPage />} />
         <Route path="/posteingang/:batchId" element={<IntakeBatchPage />} />
         <Route path="/posteingang/belege/:documentRefId" element={<IntakeSourcePage />} />

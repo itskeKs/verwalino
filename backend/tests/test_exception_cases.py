@@ -42,7 +42,10 @@ async def test_blocked_proposals_share_one_case_and_preserve_dependency_history(
         assert detail['revision_number']==2 and detail['dependency_count']==2
         events=(await api.get('/api/exceptions/'+case['id']+'/events')).json()['items']
         assert len(events)==2 and all(event['action']=='evidence_added' and event['actor_id'] is None for event in events)
-        assert {row['assignment_proposal_id'] for row in (await api.get('/api/exceptions/'+case['id']+'/dependencies')).json()['items']}=={proposal['id'],second.json()['id']}
+        dependencies=(await api.get('/api/exceptions/'+case['id']+'/dependencies')).json()['items']
+        assert {row['assignment_proposal_id'] for row in dependencies}=={proposal['id'],second.json()['id']}
+        assert {row['proposal_revision_number'] for row in dependencies}=={1,2}
+        assert all(row['proposal_reason']==proposal['reason'] for row in dependencies)
     assert await read_value('SELECT count(*) FROM cost_entry WHERE organization_id=:org',ids)==0
 
 

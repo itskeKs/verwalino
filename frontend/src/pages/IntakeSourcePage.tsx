@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { AssignmentPanel } from '../components/intake/AssignmentPanel';
 import { SourcePartitionPanel } from '../components/intake/SourcePartitionPanel';
 import { ApiError } from '../api/client';
@@ -16,7 +16,7 @@ const denied = (failure: unknown) => failure instanceof ApiError && [401, 403, 4
 const range = (document: LogicalDocument) => document.page_start === null ? 'Gesamtes XML-Dokument'
   : document.page_start === document.page_end ? `Seite ${document.page_start}` : `Seiten ${document.page_start}–${document.page_end}`;
 
-function Proposals({ document, onDenied, parentBusy, parentGeneration }: { document: LogicalDocument; onDenied: () => void; parentBusy: boolean; parentGeneration: number }) {
+function Proposals({ document, onDenied, parentBusy, parentGeneration, focusExtraction }: { focusExtraction?: string; document: LogicalDocument; onDenied: () => void; parentBusy: boolean; parentGeneration: number }) {
   const [view, setView] = useState<{ status: ExtractionStatus; revisions: ExtractionRevision[] } | null>(null);
   const [generation, setGeneration] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -32,7 +32,12 @@ function Proposals({ document, onDenied, parentBusy, parentGeneration }: { docum
     const controller = new AbortController(); setBusy(true); setError(null);
     Promise.all([extractionApi.status(document.id, controller.signal), extractionApi.history(document.document_ref_id, document.id, controller.signal)])
       .then(async ([status, history]) => {
-        const revisions = await Promise.all(history.items.map(row => extractionApi.revision(row.id, controller.signal)));
+        const ids = history.items.map(row => row.id);
+        if (focusExtraction && !ids.includes(focusExtraction)) ids.push(focusExtraction);
+        const revisions = await Promise.all(ids.map(id => extractionApi.revision(id, controller.signal)));
+        if (focusExtraction && !revisions.some(row => row.id === focusExtraction && row.logical_document_id === document.id && row.document_ref_id === document.document_ref_id)) {
+          throw new ApiError(422, 'Pinned extraction does not belong to this source');
+        }
         if (!controller.signal.aborted) {
           setView({ status, revisions });
           if (pending.current && status.fence !== pending.current.body.expected_fence) {
@@ -40,11 +45,11 @@ function Proposals({ document, onDenied, parentBusy, parentGeneration }: { docum
           }
         }
       }).catch(failure => { if (!controller.signal.aborted) {
-        setView(null); setError('Der aktuelle Stand ist nicht verfügbar. Bitte erneut laden.');
+        setView(null); setError(failure instanceof ApiError && failure.status === 422 ? 'Der verknüpfte Extraktionsstand gehört nicht zu diesem Beleg.' : 'Der aktuelle Stand ist nicht verfügbar. Bitte erneut laden.');
         if (denied(failure)) onDenied();
       } }).finally(() => { if (!controller.signal.aborted) setBusy(false); });
     return () => controller.abort();
-  }, [document.id, document.document_ref_id, generation, parentGeneration, onDenied]);
+  }, [document.id, document.document_ref_id, generation, parentGeneration, onDenied, focusExtraction]);
   const active = view?.status.status === 'queued' || view?.status.status === 'running';
   useEffect(() => {
     if (!active || busy || parentBusy || sending || error) return;
@@ -68,6 +73,7 @@ function Proposals({ document, onDenied, parentBusy, parentGeneration }: { docum
     {busy && <p role="status">Lade Verarbeitungsstand und Fundstellen…</p>}
     {error && <p role="alert" className="error-text">{error}</p>}
     {view && <>
+      {focusExtraction && <p>Der Extraktionsstand dieses Klärungsfalls ist in der Historie markiert. Neue Vorschläge verwenden weiterhin die neueste Grundlage.</p>}
       <p>{statuses[view.status.status] ?? 'Verarbeitungsstand unbekannt'} · Versuch {view.status.attempt_number} von höchstens 3</p>
       {!view.revisions.length && <p>Es liegt noch kein Extraktionsergebnis vor.</p>}
       {view.status.can_retry && <fieldset disabled={busy || parentBusy || sending} className="card min-w-0 space-y-2">
@@ -75,8 +81,8 @@ function Proposals({ document, onDenied, parentBusy, parentGeneration }: { docum
         <input id="extraction-retry-reason" className={inputClass} maxLength={1000} value={reason} disabled={submitted} onChange={event => setReason(event.target.value)} />
         <button className="btn" disabled={!reason.trim()} onClick={() => void retry()}>{submitted ? 'Denselben Auftrag wiederholen' : 'Texterkennung erneut anfordern'}</button>
       </fieldset>}
-      {view.revisions.map((revision, index) => <details key={revision.id} className="card min-w-0 space-y-3" open={index === 0}>
-        <summary className="cursor-pointer">{index === 0 ? 'Neuester Versuch' : 'Früherer Versuch'} · {statuses[revision.status] ?? revision.status} · {new Date(revision.created_at).toLocaleString('de-DE')}</summary>
+      {view.revisions.map((revision, index) => <details key={revision.id} className="card min-w-0 space-y-3" open={revision.id === focusExtraction || (!focusExtraction && index === 0)}>
+        <summary className="cursor-pointer">{revision.id === focusExtraction ? 'Grundlage des Klärungsfalls · ' : ''}{index === 0 ? 'Neuester Versuch' : 'Früherer Versuch'} · {statuses[revision.status] ?? revision.status} · {new Date(revision.created_at).toLocaleString('de-DE')}</summary>
         {!revision.fields.length && <p>Dieser Versuch enthält keine Feldvorschläge. Frühere Ergebnisse bleiben in der Historie erhalten.</p>}
         <div className="grid min-w-0 gap-4 lg:grid-cols-2">{revision.fields.map(field => <article key={field.field_name} className="min-w-0 rounded-md border border-input p-3 space-y-2">
           <h3>{fieldLabels[field.field_name] ?? field.field_name}</h3><p className="break-words font-semibold">{field.value}</p>
@@ -97,10 +103,13 @@ function Proposals({ document, onDenied, parentBusy, parentGeneration }: { docum
 
 export function IntakeSourcePage() {
   const { documentRefId = '' } = useParams();
-  return <Source key={documentRefId} refId={documentRefId} />;
+  const [params] = useSearchParams();
+  const logical = params.get('logical_document_id') ?? ''; const extraction = params.get('extraction_revision_id') ?? '';
+  return <Source key={`${documentRefId}:${logical}:${extraction}`} refId={documentRefId} initialLogical={logical} focusExtraction={extraction} />;
 }
 
-function Source({ refId }: { refId: string }) {
+function Source({ refId, initialLogical, focusExtraction }: { refId: string; initialLogical: string; focusExtraction: string }) {
+  const [, setParams] = useSearchParams();
   const [documents, setDocuments] = useState<LogicalDocument[] | null>(null);
   const [selected, setSelected] = useState('');
   const [generation, setGeneration] = useState(0);
@@ -110,11 +119,12 @@ function Source({ refId }: { refId: string }) {
   useEffect(() => {
     const controller = new AbortController(); setBusy(true); setError(null);
     extractionApi.children(refId, controller.signal).then(result => { if (!controller.signal.aborted) {
-      setDocuments(result.items); setSelected(previous => result.items.some(item => item.id === previous) ? previous : result.items[0]?.id ?? '');
+      if (initialLogical && !result.items.some(item => item.id === initialLogical)) { setDocuments(null); setError('Der verknüpfte Teilbeleg gehört nicht zu diesem Original oder ist nicht zugänglich.'); return; }
+      setDocuments(result.items); setSelected(previous => result.items.some(item => item.id === previous) ? previous : initialLogical || result.items[0]?.id || '');
     } }).catch(failure => { if (!controller.signal.aborted) { if (denied(failure)) setDocuments(null); setError('Belege nicht verfügbar. Bitte Berechtigung und Verbindung prüfen.'); } })
       .finally(() => { if (!controller.signal.aborted) setBusy(false); });
     return () => controller.abort();
-  }, [refId, generation]);
+  }, [refId, generation, initialLogical]);
   const refresh = useCallback(() => setGeneration(value => value + 1), []);
   const document = documents?.find(item => item.id === selected);
   return <div className="min-w-0 space-y-5">
@@ -127,11 +137,11 @@ function Source({ refId }: { refId: string }) {
     {documents?.length === 0 && <p>Die Dokumentvorbereitung ist noch nicht abgeschlossen. Bitte den Stand erneut laden.</p>}
     <div hidden={busy || !!error} className="space-y-5">
     {!!documents?.length && <div className="max-w-xl space-y-2"><label htmlFor="logical-source">Beleg auswählen</label>
-      <select id="logical-source" className={inputClass} value={selected} disabled={busy} onChange={event => setSelected(event.target.value)}>
+      <select id="logical-source" className={inputClass} value={selected} disabled={busy} onChange={event => { if (initialLogical || focusExtraction) setParams({ logical_document_id: event.target.value }); else setSelected(event.target.value); }}>
         {documents.map(item => <option key={item.id} value={item.id}>{range(item)} · {item.origin === 'inspection' ? 'Gesamtbeleg vorgeschlagen' : 'Manuell abgegrenzt'}</option>)}
       </select></div>}
     {!!documents?.length && <SourcePartitionPanel refId={refId} documents={documents} parentBusy={busy || !!error} parentGeneration={generation} onDenied={onDenied} onCreated={refresh} />}
-    {document && <Proposals key={document.id} document={document} onDenied={onDenied} parentBusy={busy || !!error} parentGeneration={generation} />}
+    {document && <Proposals key={document.id} document={document} focusExtraction={focusExtraction || undefined} onDenied={onDenied} parentBusy={busy || !!error} parentGeneration={generation} />}
     </div>
   </div>;
 }

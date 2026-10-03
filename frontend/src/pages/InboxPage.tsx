@@ -100,6 +100,7 @@ export function InboxPage() {
   }
   return <div className="min-w-0 space-y-5">
     <header><h1>Posteingang</h1><p>Eigene Dokumentenstapel einreichen und ihren Verarbeitungsstand wieder aufrufen.</p></header>
+    <Link className="btn" to="/klaerungsfaelle">Klärungsfälle öffnen</Link>
     {canWrite && <NewIntake />}
     <section className="space-y-3" aria-label="Gespeicherte Eingänge">
       <div className="flex flex-wrap items-center justify-between gap-3"><h2>Ihre Eingänge</h2><button className="btn" disabled={busy} onClick={() => setGeneration(value => value + 1)}>Liste aktualisieren</button></div>

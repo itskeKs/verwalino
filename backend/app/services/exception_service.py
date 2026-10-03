@@ -52,8 +52,8 @@ class ExceptionService(IntakeService):
         fields=','.join('e.'+field for field in EVENT_FIELDS.split(','))
         source='exception_case_event e'
         if dependencies:
-            fields='d.id,d.case_id,d.assignment_proposal_id,d.extraction_revision_id,d.cause,d.created_at,e.revision_number'
-            source+=' JOIN exception_dependency d ON d.organization_id=e.organization_id AND d.id=e.dependency_id AND d.case_id=e.case_id'
+            fields='d.id,d.case_id,d.assignment_proposal_id,d.extraction_revision_id,d.cause,d.created_at,e.revision_number,p.revision_number AS proposal_revision_number,p.reason AS proposal_reason'
+            source+=' JOIN exception_dependency d ON d.organization_id=e.organization_id AND d.id=e.dependency_id AND d.case_id=e.case_id JOIN assignment_proposal p ON p.organization_id=d.organization_id AND p.id=d.assignment_proposal_id'
         rows=(await self.db.execute(text(f'''SELECT {fields} FROM {source} WHERE e.organization_id=:org AND e.case_id=:target
           AND (CAST(:before AS integer) IS NULL OR e.revision_number<:before) ORDER BY e.revision_number DESC LIMIT :take'''),
           {'org':self.auth.organization_id,'target':target,'before':before,'take':limit+1})).mappings().all()

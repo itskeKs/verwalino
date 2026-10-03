@@ -44,7 +44,7 @@ export interface FieldEvidence {
   page_number: number | null; quotation: string | null; xml_path: string | null; method: string;
 }
 export interface ExtractionRevision {
-  id: string; logical_document_id: string; created_at: string; status: string; error_code: string | null;
+  id: string; document_ref_id: string; logical_document_id: string; created_at: string; status: string; error_code: string | null;
   processor_version: string; payload: Record<string, unknown> | null; fields: FieldEvidence[];
 }
 export const extractionApi = {

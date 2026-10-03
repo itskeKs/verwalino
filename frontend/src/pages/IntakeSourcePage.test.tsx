@@ -137,3 +137,35 @@ it('does not offer assignment for a needs-review result without usable payload',
   page(); await screen.findByText('Für einen neuen Vorschlag wird ein verfügbarer Extraktionsstand benötigt.');
   expect(await screen.findByRole('button', { name: 'Zuordnung vorschlagen' })).toBeDisabled();
 });
+
+it('selects the linked non-first child and pins an older extraction outside the loaded history', async () => {
+  const second = { ...child, id: 'logical-2', page_start: 3, page_end: 3 };
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.startsWith('/api/logical-documents?')) return json({ items: [child, second] });
+    if (url.includes('logical_document_id=logical-2')) return json({ items: [{ id: 'latest-2' }] });
+    if (url.endsWith('/latest-2')) return json({ ...revision, id: 'latest-2', document_ref_id: 'ref-1', logical_document_id: second.id, fields: [] });
+    if (url.endsWith('/pinned-2')) return json({ ...revision, id: 'pinned-2', document_ref_id: 'ref-1', logical_document_id: second.id, fields: [{ ...revision.fields[0], quotation: 'Historischer Betrag des zweiten Belegs' }] });
+    return response(url);
+  }));
+  render(<MemoryRouter initialEntries={['/posteingang/belege/ref-1?logical_document_id=logical-2&extraction_revision_id=pinned-2']}><Routes><Route path="/posteingang/belege/:documentRefId" element={<IntakeSourcePage />} /></Routes></MemoryRouter>);
+  await screen.findByText('Historischer Betrag des zweiten Belegs');
+  expect(screen.getByLabelText('Beleg auswählen')).toHaveValue('logical-2');
+  expect(screen.getByText(/Grundlage des Klärungsfalls · Früherer Versuch/).closest('details')).toHaveAttribute('open');
+  expect(screen.queryByText('Gesamtbetrag: 119,00 EUR')).not.toBeInTheDocument();
+});
+
+it('rejects a linked child from another original without falling back to the first child', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => response(url)));
+  render(<MemoryRouter initialEntries={['/posteingang/belege/ref-1?logical_document_id=foreign']}><Routes><Route path="/posteingang/belege/:documentRefId" element={<IntakeSourcePage />} /></Routes></MemoryRouter>);
+  await screen.findByText(/Der verknüpfte Teilbeleg gehört nicht/);
+  expect(screen.queryByLabelText('Beleg auswählen')).not.toBeInTheDocument();
+  expect(screen.queryByText('Gesamtbetrag: 119,00 EUR')).not.toBeInTheDocument();
+});
+
+it('rejects a pinned extraction from a different child before displaying its fields', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => url.endsWith('/foreign-extraction') ? json({ ...revision, id: 'foreign-extraction', document_ref_id: 'ref-1', logical_document_id: 'other', fields: [{ ...revision.fields[0], quotation: 'Wrong source quote' }] }) : response(url)));
+  render(<MemoryRouter initialEntries={['/posteingang/belege/ref-1?logical_document_id=logical-1&extraction_revision_id=foreign-extraction']}><Routes><Route path="/posteingang/belege/:documentRefId" element={<IntakeSourcePage />} /></Routes></MemoryRouter>);
+  await screen.findByText('Der verknüpfte Extraktionsstand gehört nicht zu diesem Beleg.');
+  expect(screen.queryByText('Wrong source quote')).not.toBeInTheDocument();
+  expect(screen.queryByText('Gesamtbetrag: 119,00 EUR')).not.toBeInTheDocument();
+});
