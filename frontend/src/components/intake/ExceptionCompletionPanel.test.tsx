@@ -13,7 +13,9 @@ const receipt: CompletionReceipt = { id: 'receipt', case_id: 'case', basis_diges
 const props = { caseId: 'case', item, parentBusy: false, parentGeneration: 0, onCompleted: vi.fn() };
 function panel(overrides: Partial<typeof props> & { selectedReceiptId?: string } = {}) { return <MemoryRouter><ExceptionCompletionPanel {...props} {...overrides} /></MemoryRouter>; }
 async function fill() {
-  fireEvent.change(await screen.findByLabelText('Begründung des Abschlusses'), { target: { value: 'All outcomes checked' } });
+  await screen.findByLabelText('Begründung des Abschlusses');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Abschlussprüfung aktualisieren' })).toBeEnabled());
+  fireEvent.change(screen.getByLabelText('Begründung des Abschlusses'), { target: { value: 'All outcomes checked' } });
   fireEvent.click(screen.getByRole('checkbox', { name: /Alle Belege, Vergleiche/ }));
 }
 async function refreshed() { await waitFor(() => expect(screen.getByRole('button', { name: 'Abschlussprüfung aktualisieren' })).toBeEnabled()); }

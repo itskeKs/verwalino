@@ -97,3 +97,19 @@ it('waits for initial extraction evidence without treating normal loading as an 
   expect(screen.queryByRole('button', { name: 'Aktuelle Grundlage übernehmen' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Zuordnung vorschlagen' })).not.toBeDisabled();
 });
+
+
+it('copies a candidate explicitly without overwriting a deliberate reason or sending a request', async () => {
+  const requests: RequestInit[] = [];
+  const candidates = { logical_document_id: 'logical', partition_revision_id: 'partition', extraction_revision_id: 'extraction', status: 'manual_review', can_prepare: true,
+    conflicting_properties: false, ambiguous_scopes: false, unmatched_evidence: [], items: [{ scope_id: 'scope', scope_label: 'Objekt Nord', scope_type: 'WEG', property_id: 'property', property_name: 'Nord',
+      exclusions: [], requires_manual_review: true, meter_period_unverified: false, evidence: [{ kind: 'property_id', value: 'property', page_number: 1, quotation: 'Objekt-ID: property', method: 'text_layer' }] }] };
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => { if (init?.method === 'POST') requests.push(init); return url.includes('/assignment-candidates?') ? json(candidates) : respond(url); }));
+  page(); await screen.findByRole('button', { name: 'Als manuelle Auswahl übernehmen: Objekt Nord' });
+  expect(screen.getByLabelText('Vorgeschlagener Abrechnungskreis')).toHaveValue('');
+  fireEvent.change(screen.getByLabelText('Begründung des Zuordnungsvorschlags'), { target: { value: 'My deliberate source comparison' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Als manuelle Auswahl übernehmen: Objekt Nord' }));
+  expect(screen.getByLabelText('Vorgeschlagener Abrechnungskreis')).toHaveValue('scope');
+  expect(screen.getByLabelText('Begründung des Zuordnungsvorschlags')).toHaveValue('My deliberate source comparison');
+  expect(requests).toHaveLength(0);
+});

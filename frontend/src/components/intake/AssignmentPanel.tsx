@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ContextCandidatesPanel } from './ContextCandidatesPanel';
 import { InvoiceReviewPanel } from './InvoiceReviewPanel';
 import { ApiError } from '../../api/client';
 import { assignmentApi, partitionApi, type AssignmentCreate, type AssignmentProposal, type PartitionState, type ExtractionRevision } from '../../api/intake';
@@ -78,6 +79,11 @@ export function AssignmentPanel({ logicalId, refId, extractionId, evidenceReady,
       {view.partition.can_review && draft && <>
         {stale && !submitted && <div className="space-y-2"><p>Die aktuelle Grundlage muss ausdrücklich übernommen werden. Ihre Formulareingaben werden dabei zurückgesetzt.</p>
           <button className="btn" disabled={blocked} onClick={() => { setDraft(fresh(view, extractionId)); setConflict(false); setError(null); }}>Aktuelle Grundlage übernehmen</button></div>}
+        <ContextCandidatesPanel logicalId={logicalId} partitionId={view.partition.current?.id ?? null} extractionId={extractionId}
+          disabled={blocked || submitted || stale || !ready} parentGeneration={parentGeneration + generation}
+          onPick={candidate => { if (!blocked && !submitted && !stale && ready) setDraft({ ...draft,
+            scope: { id: candidate.scope_id, label: candidate.scope_label, scope_type: candidate.scope_type },
+            reason: draft.reason || `Belegangabe auf Seite ${candidate.evidence[0].page_number}: ${candidate.evidence[0].quotation}`.slice(0, 1000) }); }} />
         <fieldset disabled={blocked || submitted || !ready} className="space-y-3 min-w-0">
           <SearchChoice<Scope> label="Vorgeschlagener Abrechnungskreis" endpoint="/api/accounting-scopes/page?capability=prepare&financial_creation=true"
             value={draft.scope} onChange={scope => setDraft({ ...draft, scope })} display={scope => `${scope.label} · ${scope.scope_type}`} />

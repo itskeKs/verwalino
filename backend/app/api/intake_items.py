@@ -7,6 +7,7 @@ from app.core.tenant import AuthContext,get_current_user
 from app.core.live_principal import get_live_member_db,get_live_writer_db
 from app.api.preconditions import expected_revision
 from app.services.assignment_service import AssignmentService
+from app.services.context_candidate_service import ContextCandidateService
 
 router=APIRouter(prefix='/api/logical-documents',tags=['assignment_proposals'])
 
@@ -29,3 +30,9 @@ async def history(logical_id:uuid.UUID,before_revision:int|None=Query(default=No
 async def create(logical_id:uuid.UUID,body:AssignmentCreate,idempotency_key:uuid.UUID=Header(),expected:uuid.UUID|None=Depends(expected_revision),
                  auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_writer_db)):
     return await AssignmentService(db,auth).create(logical_id,body,idempotency_key,expected)
+
+
+@router.get('/{logical_id}/assignment-candidates')
+async def candidates(logical_id:uuid.UUID,partition_revision_id:uuid.UUID,extraction_revision_id:uuid.UUID,
+                     auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_member_db)):
+    return await ContextCandidateService(db,auth).discover(logical_id,partition_revision_id,extraction_revision_id)

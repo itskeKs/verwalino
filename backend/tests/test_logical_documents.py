@@ -142,6 +142,7 @@ async def test_logical_migration_preserves_evidence_and_function_identity(migrat
                 db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                importlib.import_module('migrations.versions.0111_context_candidate_source').downgrade()
                 importlib.import_module('migrations.versions.0110_exception_completions').downgrade()
                 importlib.import_module('migrations.versions.0109_allocation_adoptions').downgrade()
                 importlib.import_module('migrations.versions.0108_allocation_treatments').downgrade()
