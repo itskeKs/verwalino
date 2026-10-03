@@ -143,6 +143,8 @@ async def test_logical_migration_preserves_evidence_and_function_identity(migrat
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
                 db.execute(text('TRUNCATE exception_completion CASCADE'))
                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
+                importlib.import_module('migrations.versions.0116_correction_followup_completions').downgrade()
                 importlib.import_module('migrations.versions.0115_financial_computation_evidence').downgrade()
                 importlib.import_module('migrations.versions.0114_allocation_corrections').downgrade()
                 importlib.import_module('migrations.versions.0113_allocation_correction_preview').downgrade()

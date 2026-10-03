@@ -39,7 +39,7 @@ it('retains the exact unknown command and predecessor through head/review refres
   expect(posts[0].url).toBe('/api/allocation-sets/old/corrections'); expect(posts[0].options.headers).toMatchObject({ 'If-Match': '"old"' });
   expect(JSON.parse(posts[0].options.body as string)).toMatchObject({ treatment_review_id: 'review', preview_digest: 'digest', downstream_followups_reviewed: true });
   view.rerender(<AllocationCorrectionPanel {...props} allocationId="new" receipt={receipt} parentGeneration={3} />);
-  expect(screen.getByRole('heading', { name: 'Offene Folgearbeiten' })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Folgearbeiten' })).toBeInTheDocument();
   expect(screen.getByRole('link', { name: /Belegversion der Korrektur/ })).toHaveAttribute('href', '/belege/source-v2');
   expect(screen.getByText(/Nachfolger vorhanden; dessen Abschluss muss geprüft/)).toBeInTheDocument();
 });

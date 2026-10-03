@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
 import { allocationCorrectionsApi, type CorrectionCommand, type CorrectionPreview, type CorrectionResult } from '../../api/allocationAdoptions';
-import { AllocationCorrectionPreview, CorrectionImpactList } from './AllocationCorrectionPreview';
+import { AllocationCorrectionPreview } from './AllocationCorrectionPreview';
+import { CorrectionFollowups } from './CorrectionFollowups';
 
 function Confirmation({ preview, reviewId, disabled, submit }: { preview: CorrectionPreview; reviewId: string; disabled: boolean; submit: (body: CorrectionCommand) => void }) {
   const [reason, setReason] = useState('');
@@ -54,9 +55,9 @@ export function AllocationCorrectionPanel({ allocationId, reviewId, parentBusy, 
       <h3>Aufteilung korrigiert</h3><p>{new Date(receipt.receipt.confirmed_at).toLocaleString('de-DE')} · {receipt.allocation.cost_count} neue Teilkosten</p>
       <p className="break-words">{receipt.receipt.reason}</p>
       <a className="block underline" href={`/belege/${receipt.allocation.source_document_id}`}>Freigegebene Belegversion der Korrektur öffnen</a>
-      <h4>Offene Folgearbeiten</h4>
-      {receipt.receipt.impacts.length ? <><p>Die Korrektur hat diese Vorgänge nicht neu berechnet oder abgeschlossen.</p><CorrectionImpactList items={receipt.receipt.impacts.map(item => item.snapshot)} /></> : <p>Für diese Korrektur wurden keine betroffenen Finanzvorgänge festgestellt.</p>}
+      {receipt.receipt.impacts.length ? <p>Prüfen Sie den aktuellen Bearbeitungsstand der betroffenen Finanzvorgänge.</p> : <p>Für diese Korrektur wurden keine betroffenen Finanzvorgänge festgestellt.</p>}
     </section>}
+    <CorrectionFollowups items={receipt?.receipt.impacts ?? []} parentBusy={parentBusy} generation={parentGeneration} />
     {error && <p role="alert" className="error-text">{error}</p>}
     {sending && <p role="status">Bestätige vollständige Korrektur…</p>}
     {unknown && <button className="btn" disabled={sending || parentBusy} onClick={() => void send()}>Dieselbe Korrektur erneut senden</button>}

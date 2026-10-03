@@ -1,11 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { correctionPreviewApi, type CorrectionImpact, type CorrectionPreview } from '../../api/allocationAdoptions';
+import { correctionDestination } from './correctionLinks';
 
 const titles: Record<string, string> = { BK_MIETER: 'Betriebskostenabrechnung', WEG_JAHRESABRECHNUNG: 'WEG-Jahresabrechnung', VERMOEGENSBERICHT: 'Vermögensbericht', WIRTSCHAFTSPLAN: 'Wirtschaftsplan' };
-function destination(item: CorrectionImpact) {
-  const base = item.kind === 'economic_plan' ? 'wirtschaftsplaene' : item.run_type === 'WEG_JAHRESABRECHNUNG' ? 'weg-abrechnungen' : item.run_type === 'VERMOEGENSBERICHT' ? 'vermoegensberichte' : 'abrechnungen';
-  return `/${base}/${item.id}`;
-}
 
 export function AllocationCorrectionPreview({ allocationId, reviewId, parentBusy, parentGeneration, confirmation }: {
   allocationId: string; reviewId: string | null; parentBusy: boolean; parentGeneration: number; confirmation?: (preview: CorrectionPreview) => ReactNode;
@@ -52,7 +49,7 @@ export function AllocationCorrectionPreview({ allocationId, reviewId, parentBusy
 
 export function CorrectionImpactList({ items }: { items: CorrectionImpact[] }) {
   return <ul className="space-y-4">{items.map(item => <li className="space-y-1" key={`${item.kind}:${item.id}`}>
-          <a className="underline" href={destination(item)}>{titles[item.run_type] ?? 'Finanzvorgang'} · {item.period_start} bis {item.period_end}</a>
+          <a className="underline" href={correctionDestination(item)}>{titles[item.run_type] ?? 'Finanzvorgang'} · {item.period_start} bis {item.period_end}</a>
           <p>{item.status === 'draft' ? 'Entwurf' : 'Festgeschrieben'}{item.superseded_by_id ? ' · Nachfolger vorhanden; dessen Abschluss muss geprüft werden.' : ''}</p>
           {item.effects.exact_cost_consumption && <p>Bisherige Teilkosten sind in der gespeicherten Berechnung enthalten.</p>}
           {item.effects.potential_calculation_change && <p>Der bisherige oder neue Leistungszeitraum kann diese Berechnung beeinflussen.</p>}

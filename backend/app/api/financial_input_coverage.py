@@ -4,6 +4,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 from app.core.tenant import AuthContext, get_db, require_write_dep
 from app.repositories.settlement_repo import SettlementRunRepository
 from app.repositories.economic_plan_repo import EconomicPlanRepository
@@ -21,8 +22,27 @@ class Attestation(BaseModel):
     source_document_ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)
 
 
+@router.get('/source-options')
+async def source_options(subject_kind:Literal['settlement','economic_plan'],subject_id:uuid.UUID,after:uuid.UUID|None=None,
+                         auth:AuthContext=Depends(require_write_dep),db:AsyncSession=Depends(get_db)):
+    from app.services.financial_scope_service import FinancialScopeService
+    from app.core.rbac import ScopeCapability
+    repo=EconomicPlanRepository(db,auth.organization_id) if subject_kind=='economic_plan' else SettlementRunRepository(db,auth.organization_id)
+    subject=await repo.get_by_id(subject_id)
+    if subject is None:raise HTTPException(404,'Financial subject not found')
+    await FinancialScopeService(db,auth.organization_id,auth.user_id).enter(subject,capability=ScopeCapability.CONFIRM,computation=True)
+    rows=(await db.execute(text('''SELECT d.id,d.original_filename,d.version,c.document_number FROM invoice_document d
+      JOIN cost_entry c ON c.organization_id=d.organization_id AND c.id=d.cost_entry_id
+      WHERE d.organization_id=:org AND c.property_id=:property AND c.superseded_by_id IS NULL
+        AND d.status='active' AND d.released_at IS NOT NULL AND (CAST(:after AS uuid) IS NULL OR d.id>CAST(:after AS uuid))
+      ORDER BY d.id LIMIT 26'''),{'org':auth.organization_id,'property':subject.property_id,'after':after})).mappings().all()
+    return {'items':[dict(row) for row in rows[:25]],'next_cursor':str(rows[24]['id']) if len(rows)>25 else None}
+
+
 @router.post("", status_code=201)
 async def attest(body: Attestation, auth: AuthContext = Depends(require_write_dep), db: AsyncSession = Depends(get_db)):
+    from app.services.financial_scope_service import FinancialScopeService
+    await FinancialScopeService(db,auth.organization_id,auth.user_id).lock_inputs()
     repo = EconomicPlanRepository(db, auth.organization_id) if body.subject_kind == "economic_plan" else SettlementRunRepository(db, auth.organization_id)
     subject = await repo.get_by_id_for_update(body.subject_id)
     if subject is None:

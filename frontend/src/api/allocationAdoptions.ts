@@ -47,3 +47,19 @@ export const allocationCorrectionsApi = {
   create: (predecessor: string, body: CorrectionCommand, key: string) => api.post<CorrectionResult>(`/api/allocation-sets/${predecessor}/corrections`, body, {
     headers: { 'Idempotency-Key': key, 'If-Match': `"${predecessor}"` } }),
 };
+
+export interface FollowupReceipt {
+  id: string; impact_id: string; computation_id: string; allocation_head_id: string;
+  kind: 'settlement_run' | 'economic_plan'; target_id: string; source_document_id: string;
+  basis_digest: string; source_reviewed: boolean; reason: string; actor_id: string; completed_at: string;
+}
+export interface FollowupStatus {
+  impact_id: string; status: 'open' | 'completed' | 'changed'; ready: boolean; blocker: string | null;
+  preview_digest: string | null; kind: 'settlement_run' | 'economic_plan' | null; target_id: string | null;
+  source_document_id: string | null; source_review_required: boolean; history: FollowupReceipt[];
+}
+export interface FollowupCommand { preview_digest: string; reason: string; source_reviewed: boolean; confirmed: true }
+export const correctionFollowupsApi = {
+  status: (id: string, signal?: AbortSignal) => api.get<FollowupStatus>(`/api/allocation-correction-impacts/${id}/follow-up`, { signal }),
+  complete: (id: string, body: FollowupCommand, key: string) => api.post<FollowupReceipt>(`/api/allocation-correction-impacts/${id}/completions`, body, { headers: { 'Idempotency-Key': key } }),
+};

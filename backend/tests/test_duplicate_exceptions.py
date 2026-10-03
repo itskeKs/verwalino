@@ -167,6 +167,8 @@ async def test_duplicate_exception_backfill_constraints_coverage_and_downgrade(m
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
                 db.execute(text('TRUNCATE exception_completion CASCADE'))
                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
+                importlib.import_module('migrations.versions.0116_correction_followup_completions').downgrade()
                 importlib.import_module('migrations.versions.0115_financial_computation_evidence').downgrade()
                 importlib.import_module('migrations.versions.0114_allocation_corrections').downgrade()
                 importlib.import_module('migrations.versions.0113_allocation_correction_preview').downgrade()

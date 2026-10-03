@@ -71,3 +71,23 @@ async def correction_detail(correction_id:uuid.UUID,auth:AuthContext=Depends(get
 async def correct(set_id:uuid.UUID,body:CorrectionCreate,idempotency_key:uuid.UUID=Header(),expected:uuid.UUID|None=Depends(expected_revision),
                   auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_writer_db)):
     return await AllocationAdoptionService(db,auth).correct(set_id,body,idempotency_key,expected)
+
+
+class FollowupComplete(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    preview_digest:str=Field(pattern=r'^[0-9a-f]{64}$')
+    reason:str=Field(min_length=1,max_length=2000)
+    source_reviewed:bool=Field(strict=True)
+    confirmed:bool=Field(strict=True)
+
+
+@router.get('/api/allocation-correction-impacts/{impact_id}/follow-up')
+async def followup_status(impact_id:uuid.UUID,auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_member_db)):
+    return await AllocationAdoptionService(db,auth).call('SELECT correction_followup_status(:org,:target)',target=impact_id)
+
+
+@router.post('/api/allocation-correction-impacts/{impact_id}/completions',status_code=201)
+async def complete_followup(impact_id:uuid.UUID,body:FollowupComplete,idempotency_key:uuid.UUID=Header(),
+                           auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_writer_db)):
+    return await AllocationAdoptionService(db,auth).call('SELECT complete_correction_followup(:org,:target,:request,:preview,:reason,:source_reviewed,:confirmed)',
+      target=impact_id,request=idempotency_key,preview=body.preview_digest,reason=body.reason,source_reviewed=body.source_reviewed,confirmed=body.confirmed)

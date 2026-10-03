@@ -183,9 +183,13 @@ async def test_correction_guards_runtime_writes_and_retains_evidence_on_downgrad
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
                 computation=importlib.import_module('migrations.versions.0115_financial_computation_evidence')
                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                followup=importlib.import_module('migrations.versions.0116_correction_followup_completions')
+                db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
+                followup.downgrade()
                 computation.downgrade()
                 migration.downgrade();migration.upgrade()
                 computation.upgrade()
+                followup.upgrade()
                 assert before=={f:db.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),{'signature':f}) for f in functions}
             finally:point.rollback()
     finally:engine.dispose()
