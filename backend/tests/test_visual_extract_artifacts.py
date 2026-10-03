@@ -190,6 +190,7 @@ async def test_migration_empty_roundtrip_retention_manifest_and_private_roles(mi
             before = db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
             point = db.begin_nested()
             try:
+                importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
                 db.execute(text('TRUNCATE visual_extract_attestation CASCADE'))
                 db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
                 importlib.import_module('migrations.versions.0120_allocation_source_aliases').downgrade()
@@ -199,6 +200,7 @@ async def test_migration_empty_roundtrip_retention_manifest_and_private_roles(mi
                 importlib.import_module('migrations.versions.0118_visual_disclosures').upgrade()
                 importlib.import_module('migrations.versions.0119_allocation_source_claims').upgrade()
                 importlib.import_module('migrations.versions.0120_allocation_source_aliases').upgrade()
+                importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
                 assert before == db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
             finally:
                 point.rollback()
@@ -227,6 +229,7 @@ async def test_migration_empty_roundtrip_retention_manifest_and_private_roles(mi
                                 'target': uuid.UUID(reply.json()['id']), 'partition': uuid.UUID(body['partition_revision_id']), 'request': uuid.uuid4()})
         with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
             with pytest.raises(DBAPIError, match='Retain visual extract'), db.begin_nested():
+                importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
                 db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
                 db.execute(text('TRUNCATE allocation_set CASCADE'))

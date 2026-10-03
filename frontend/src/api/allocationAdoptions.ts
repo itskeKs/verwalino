@@ -5,7 +5,7 @@ export interface AdoptionPreview {
 }
 export interface AdoptionCommand { treatment_review_id: string; preview_digest: string; reason: string; costs_confirmed: true; whole_original_disclosure_reviewed: true }
 export interface AllocationSet {
-  id: string; kind: 'intake_reviewed' | 'proven_legacy'; source_document_id: string; primary_cost_id: string; property_id: string; scope_id: string;
+  id: string; kind: 'intake_reviewed' | 'proven_legacy'; source_variant?: 'original' | 'visual'; source_document_id: string; primary_cost_id: string; property_id: string; scope_id: string;
   cost_count: number; financial_state: 'confirmed'; reason: string; confirmed_at: string; actor_id: string;
   costs: { cost_entry_id: string; position: number; gross_amount: string; vat_amount: string | null; tenant_amount: string | null }[];
 }
@@ -24,7 +24,7 @@ export interface CorrectionImpact {
 }
 export interface CorrectionPreview {
   can_review: boolean; preview_digest: string | null; blocker: string | null; impacts: CorrectionImpact[];
-  financial_state?: 'preview_only'; predecessor_id?: string; treatment_review_id?: string;
+  source_variant?: 'original' | 'visual'; visual_content_sha256?: string; source_document_id?: string; financial_state?: 'preview_only'; predecessor_id?: string; treatment_review_id?: string;
   old?: CorrectionAmounts; proposed?: CorrectionAmounts;
 }
 interface CorrectionAmounts {
@@ -62,4 +62,26 @@ export interface FollowupCommand { preview_digest: string; reason: string; sourc
 export const correctionFollowupsApi = {
   status: (id: string, signal?: AbortSignal) => api.get<FollowupStatus>(`/api/allocation-correction-impacts/${id}/follow-up`, { signal }),
   complete: (id: string, body: FollowupCommand, key: string) => api.post<FollowupReceipt>(`/api/allocation-correction-impacts/${id}/completions`, body, { headers: { 'Idempotency-Key': key } }),
+};
+
+export interface VisualAdoptionPreview extends AdoptionPreview {
+  source_variant: 'visual'; visual_content_sha256?: string; output_page_count?: number;
+}
+export interface VisualFinancialCommand {
+  treatment_review_id: string; visual_content_sha256: string; preview_digest: string; reason: string;
+  costs_confirmed: true; retained_visual_source_reviewed: true;
+}
+export interface VisualAdoptionCommand extends VisualFinancialCommand { disclosure_id: string }
+export interface VisualCorrectionCommand extends VisualFinancialCommand { downstream_followups_reviewed: true }
+export const visualAllocationApi = {
+  preview: (review: string, disclosure: string, signal?: AbortSignal) => api.get<VisualAdoptionPreview>(
+    `/api/allocation-treatments/${review}/visual-adoption-preview?disclosure_id=${encodeURIComponent(disclosure)}`, { signal }),
+  create: (logical: string, body: VisualAdoptionCommand, key: string) => api.post<AllocationSet>(
+    `/api/logical-documents/${logical}/visual-allocation-adoptions`, body,
+    { headers: { 'Idempotency-Key': key, 'If-Match': `"${body.treatment_review_id}"` } }),
+  correctionPreview: (id: string, review: string, signal?: AbortSignal) => api.get<CorrectionPreview>(
+    `/api/allocation-sets/${id}/visual-correction-preview?treatment_review_id=${encodeURIComponent(review)}`, { signal }),
+  correct: (id: string, body: VisualCorrectionCommand, key: string) => api.post<CorrectionResult>(
+    `/api/allocation-sets/${id}/visual-corrections`, body,
+    { headers: { 'Idempotency-Key': key, 'If-Match': `"${id}"` } }),
 };

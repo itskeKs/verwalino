@@ -1,4 +1,4 @@
-"""Confirm one complete reviewed allocation and explicitly disclose its original."""
+"""Confirm complete reviewed allocations with explicit original or retained visual evidence."""
 import uuid
 from fastapi import APIRouter,Depends,Header
 from pydantic import BaseModel,ConfigDict,Field,field_validator
@@ -79,6 +79,58 @@ class FollowupComplete(BaseModel):
     reason:str=Field(min_length=1,max_length=2000)
     source_reviewed:bool=Field(strict=True)
     confirmed:bool=Field(strict=True)
+
+
+class VisualFinancialReview(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    treatment_review_id:uuid.UUID
+    visual_content_sha256:str=Field(pattern=r'^[0-9a-f]{64}$')
+    preview_digest:str=Field(pattern=r'^[0-9a-f]{64}$')
+    reason:str=Field(min_length=1,max_length=2000)
+    costs_confirmed:bool=Field(strict=True)
+    retained_visual_source_reviewed:bool=Field(strict=True)
+
+    @field_validator('costs_confirmed','retained_visual_source_reviewed')
+    @classmethod
+    def acknowledged(cls,value):
+        if value is not True:raise ValueError('Explicit financial and permanent visual source review required')
+        return value
+
+
+class VisualAdoptionCreate(VisualFinancialReview):
+    disclosure_id:uuid.UUID
+
+
+class VisualCorrectionCreate(VisualFinancialReview):
+    downstream_followups_reviewed:bool=Field(strict=True)
+
+    @field_validator('downstream_followups_reviewed')
+    @classmethod
+    def followups_acknowledged(cls,value):
+        if value is not True:raise ValueError('Explicit review of all downstream follow-ups required')
+        return value
+
+
+@router.get('/api/allocation-treatments/{review_id}/visual-adoption-preview')
+async def visual_preview(review_id:uuid.UUID,disclosure_id:uuid.UUID,auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_member_db)):
+    return await AllocationAdoptionService(db,auth).visual_preview(review_id,disclosure_id)
+
+
+@router.post('/api/logical-documents/{logical_id}/visual-allocation-adoptions',status_code=201)
+async def create_visual(logical_id:uuid.UUID,body:VisualAdoptionCreate,idempotency_key:uuid.UUID=Header(),expected:uuid.UUID|None=Depends(expected_revision),
+                        auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_writer_db)):
+    return await AllocationAdoptionService(db,auth).create_visual(logical_id,body,idempotency_key,expected)
+
+
+@router.get('/api/allocation-sets/{set_id}/visual-correction-preview')
+async def visual_correction_preview(set_id:uuid.UUID,treatment_review_id:uuid.UUID,auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_member_db)):
+    return await AllocationAdoptionService(db,auth).visual_correction_preview(set_id,treatment_review_id)
+
+
+@router.post('/api/allocation-sets/{set_id}/visual-corrections',status_code=201)
+async def correct_visual(set_id:uuid.UUID,body:VisualCorrectionCreate,idempotency_key:uuid.UUID=Header(),expected:uuid.UUID|None=Depends(expected_revision),
+                         auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_writer_db)):
+    return await AllocationAdoptionService(db,auth).correct_visual(set_id,body,idempotency_key,expected)
 
 
 @router.get('/api/allocation-correction-impacts/{impact_id}/follow-up')

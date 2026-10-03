@@ -263,6 +263,7 @@ async def test_raw_roles_migration_retention_and_manifest(migrator_session, scop
             before = db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
             point = db.begin_nested()
             try:
+                importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
                 db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
                 db.execute(text('TRUNCATE visual_extract_attestation CASCADE'))
@@ -271,6 +272,7 @@ async def test_raw_roles_migration_retention_and_manifest(migrator_session, scop
                 migration.downgrade(); migration.upgrade()
                 importlib.import_module('migrations.versions.0119_allocation_source_claims').upgrade()
                 importlib.import_module('migrations.versions.0120_allocation_source_aliases').upgrade()
+                importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
                 assert before == db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
             finally: point.rollback()
             for role in ('app_rw', 'app_worker', 'app_review'):
@@ -301,6 +303,7 @@ async def test_raw_roles_migration_retention_and_manifest(migrator_session, scop
                     db.execute(text(f'DELETE FROM {table} WHERE organization_id=:org'), ids)
             # Even an orphaned trusted observation must prevent evidence destruction.
             with db.begin_nested() as point:
+                importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
                 db.execute(text('TRUNCATE visual_disclosure_event'))
                 with pytest.raises(DBAPIError, match='Retain visual disclosure'), db.begin_nested(): migration.downgrade()
                 point.rollback()

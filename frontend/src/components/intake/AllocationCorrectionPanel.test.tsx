@@ -10,6 +10,7 @@ const props = { allocationId: 'old', reviewId: 'review', parentBusy: false, pare
 const receipt = { receipt: { id: 'receipt', predecessor_id: 'old', successor_id: 'new', reason: 'Reviewed replacement', confirmed_at: '2026-10-03T10:00:00Z', impacts: [{ id: 'impact', snapshot: impact }] }, allocation: { id: 'new', cost_count: 3, source_document_id: 'source-v2' } } as CorrectionResult;
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 async function complete() {
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Korrekturvorschau laden' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Korrekturvorschau laden' }));
   await screen.findByLabelText('Begründung der Korrektur');
   fireEvent.change(screen.getByLabelText('Begründung der Korrektur'), { target: { value: 'Reviewed complete correction' } });
@@ -56,4 +57,25 @@ it('hides retained receipt and cancels the confirmation when parent authority is
   view.rerender(<AllocationCorrectionPanel {...props} receipt={receipt} parentBusy />);
   expect(screen.queryByRole('link')).not.toBeInTheDocument(); expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Korrekturvorschau laden' })).toBeDisabled();
+});
+it('keeps the retained visual source and exact correction route through an unknown retry', async () => {
+  const posts: { url: string; options: RequestInit }[] = [];
+  const hash = 'b'.repeat(64);
+  vi.stubGlobal('fetch', vi.fn(async (url: string, options: RequestInit) => {
+    if (options.method === 'POST') { posts.push({ url, options }); return json({}, 503); }
+    expect(url).toContain('/visual-correction-preview?');
+    return json({ ...preview, source_variant: 'visual', visual_content_sha256: hash });
+  }));
+  const view = render(<AllocationCorrectionPanel {...props} sourceVariant="visual" />); await complete();
+  expect(screen.getByRole('checkbox', { name: /Aufbewahrten Auszug geprüft/ })).toBeChecked();
+  expect(screen.queryByRole('checkbox', { name: /Vollständiges Original/ })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Gesamte Aufteilung verbindlich korrigieren' }));
+  await screen.findByText(/Keine bestätigte Antwort/);
+  view.rerender(<AllocationCorrectionPanel {...props} sourceVariant="original" allocationId="new-head" reviewId="new-review" parentGeneration={1} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Dieselbe Korrektur erneut senden' }));
+  await waitFor(() => expect(posts).toHaveLength(2)); expect(posts[1]).toEqual(posts[0]);
+  expect(posts[0].url).toBe('/api/allocation-sets/old/visual-corrections');
+  const body = JSON.parse(String(posts[0].options.body));
+  expect(body).toMatchObject({ visual_content_sha256: hash, retained_visual_source_reviewed: true, downstream_followups_reviewed: true });
+  expect(body).not.toHaveProperty('whole_original_disclosure_reviewed');
 });

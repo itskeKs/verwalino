@@ -279,6 +279,7 @@ async def test_alias_migration_roundtrip_and_populated_rollback_refusal(migrator
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
+            importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
             before = {signature:db.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),{'signature':signature}) for signature,_,_ in migration.PATCHES}
             with pytest.raises(DBAPIError,match='Retain physical source'),db.begin_nested(): migration.downgrade()
             point = db.begin_nested()
@@ -286,5 +287,7 @@ async def test_alias_migration_roundtrip_and_populated_rollback_refusal(migrator
                 db.execute(text('TRUNCATE visual_extract_attestation CASCADE'))
                 migration.downgrade(); migration.upgrade()
                 assert before == {signature:db.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),{'signature':signature}) for signature in before}
-            finally: point.rollback()
+            finally:
+                point.rollback()
+                importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
     finally: engine.dispose()

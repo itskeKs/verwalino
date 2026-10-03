@@ -471,6 +471,10 @@ Migration 0118 implements explicit single-destination disclosure and withdrawal 
 
 Migration 0119 records private immutable physical-source claims for allocation roots and direct inheritance by corrections. Conservative whole-original backfill retains all legacy hash collisions; no range reuse or runtime claim reservation is enabled. Backend, independent review and historical migration qualification are recorded in `2026-10-03-financial-source-claims.md`. Visual financial adoption and remaining B3 requirements remain open; this does not accept B3 or M-B.
 
+Migration 0120 preserves physical identity through bounded retained-derivative ancestry, including legacy correction chains and alternate direct financial entry points. Its independent review and backend/migration qualification are recorded in `2026-10-03-financial-source-aliases.md`.
+
+Migration 0121 adds explicit adoption of reviewed visual sources, with separate original/derivative byte proofs, permanent page claims, sanitized financial source bridges and retained visual corrections after transient withdrawal. Disjoint logical invoices can be adopted into separate authorized scopes; equal business identity remains a blocker. Exception outcomes, opt-in mapping evidence and actual financial recomputation remain coherent with canonical private originals. Backend, independent review, historical migration, UI and actual two-user desktop/mobile qualification are recorded in `2026-10-03-visual-allocation-adoption.md`. A conserved allocation of one invoice across multiple scopes and the remaining B3 requirements are not accepted by this increment; B3 and M-B remain incomplete.
+
 **B4 — Onboarding/master migration and portfolio.** P1.2 after B3. Add **new**
 `master_import` / `setup_session` module families, `services/master_import_service.py`,
 `api/master_imports.py`, `MasterImportPage.tsx`; extend property/unit/person/lease/

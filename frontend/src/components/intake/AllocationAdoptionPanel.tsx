@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
 import { allocationAdoptionsApi, type AdoptionCommand, type AdoptionPreview, type AllocationSet, type CorrectionResult } from '../../api/allocationAdoptions';
+import { VisualAllocationAdoptionPanel } from './VisualAllocationAdoptionPanel';
 import { ContextMappingPanel } from './ContextMappingPanel';
 import { AllocationCorrectionPanel } from './AllocationCorrectionPanel';
 
@@ -15,6 +16,8 @@ export function AllocationAdoptionPanel({ logicalId, reviewId, ready, parentBusy
   const [draft, setDraft] = useState<Draft | null>(null); const [busy, setBusy] = useState(true); const [sending, setSending] = useState(false);
   const [generation, setGeneration] = useState(0); const [submitted, setSubmitted] = useState(false); const [conflict, setConflict] = useState(false); const [error, setError] = useState<string | null>(null);
   const [correctionDenial, setCorrectionDenial] = useState(0);
+  const [sourceVariant, setSourceVariant] = useState<'original' | 'visual'>('original');
+  const [visualPending, setVisualPending] = useState(false);
   const pending = useRef<{ body: AdoptionCommand; key: string } | null>(null);
   const alive = useRef(true); useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const retained = draft?.review ?? null;
@@ -40,7 +43,8 @@ export function AllocationAdoptionPanel({ logicalId, reviewId, ready, parentBusy
     });
     return () => controller.abort();
   }, [logicalId, reviewId, retained, ready, generation, parentGeneration]);
-  const blocked = busy || parentBusy || sending;
+  const baseBlocked = busy || parentBusy || sending;
+  const blocked = baseBlocked || visualPending;
   const eligible = ready && !!view?.preview?.can_adopt && !view.result;
   const authorized = !!draft && view?.authorizedReview === draft.review;
   const stale = conflict || !!draft && (draft.review !== reviewId || draft.preview.preview_digest !== view?.preview?.preview_digest);
@@ -65,13 +69,17 @@ export function AllocationAdoptionPanel({ logicalId, reviewId, ready, parentBusy
   }
   return <section className="min-w-0 space-y-4 border-t border-input pt-4" aria-label="Kosten übernehmen">
     <div className="flex flex-wrap justify-between gap-3"><h2>Kosten übernehmen</h2><button className="btn" disabled={blocked} onClick={() => { setError(null); setGeneration(value => value + 1); }}>Übernahme aktualisieren</button></div>
-    <p>Mit der Übernahme werden alle geprüften Teilkosten verbindlich bestätigt und das vollständige Original im gewählten Abrechnungskreis freigegeben.</p>
+    <p>Mit der Übernahme werden alle geprüften Teilkosten verbindlich bestätigt. Wählen Sie den Beleg, der im Abrechnungskreis aufbewahrt werden soll.</p>
+    {!view?.result && <fieldset className="flex flex-wrap gap-4" disabled={blocked || submitted}><legend>Beleg für die Kostenübernahme</legend>
+      <label><input type="radio" name={`financial-source-${logicalId}`} checked={sourceVariant === 'original'} onChange={() => setSourceVariant('original')} /> Vollständiges Original</label>
+      <label><input type="radio" name={`financial-source-${logicalId}`} checked={sourceVariant === 'visual'} onChange={() => setSourceVariant('visual')} /> Freigegebener Auszug</label>
+    </fieldset>}
     {busy && <p role="status">Prüfe Kostenübernahme…</p>}{error && <p role="alert" className="error-text">{error}</p>}
     {view?.result && <div className="space-y-3" role="status"><h3>Kostenübernahme bestätigt</h3><p>{new Date(view.result.confirmed_at).toLocaleString('de-DE')} · {view.result.cost_count} bestätigte Teilkosten</p>
       <ol className="space-y-2">{view.result.costs.map(cost => <li key={cost.cost_entry_id}><a className="underline" href={`/kosten/${cost.cost_entry_id}`}>Teilkosten {cost.position}: {cost.gross_amount} EUR</a><span> · Mieteranteil {cost.tenant_amount ?? 'nicht angegeben'} EUR</span></li>)}</ol>
-      <a className="block underline" href={`/belege/${view.result.source_document_id}`}>Freigegebenes Original zu allen Teilkosten öffnen</a><p className="break-words">{view.result.reason}</p></div>}
-    {view && !view.result && !eligible && <p>Übernahme derzeit nicht möglich. Aktuelle Berechtigungen, vollständige Behandlung und offene Belegkonflikte müssen geklärt sein.</p>}
-    {draft && authorized && (eligible || submitted) && <>
+      <a className="block underline" href={`/belege/${view.result.source_document_id}`}>{view.result.source_variant === 'visual' ? 'Dauerhaft aufbewahrten Auszug zu allen Teilkosten öffnen' : 'Freigegebenes Original zu allen Teilkosten öffnen'}</a><p className="break-words">{view.result.reason}</p></div>}
+    {sourceVariant === 'original' && view && !view.result && !eligible && <p>Übernahme derzeit nicht möglich. Aktuelle Berechtigungen, vollständige Behandlung und offene Belegkonflikte müssen geklärt sein.</p>}
+    {sourceVariant === 'original' && draft && authorized && (eligible || submitted) && <>
       {stale && !submitted && <div><p>Die bisherige Bestätigung gilt nicht für die geänderte Grundlage.</p><button className="btn" disabled={blocked || !eligible} onClick={() => { if (reviewId && view?.preview) { setDraft(fresh(reviewId, view.preview)); setConflict(false); setError(null); } }}>Aktuelle Übernahmegrundlage prüfen</button></div>}
       <p className="break-words">Abrechnungskreis: {draft.preview.scope_label ?? 'aus der geprüften Zuordnung'} · {draft.preview.cost_count} Teilkosten · Gesamtbetrag {draft.preview.gross_amount} EUR</p>
       <p>Das vollständige Original wird für die zum Beleg berechtigten Personen dieses Abrechnungskreises zugänglich. Prüfen Sie auch alle weiteren Seiten und enthaltenen Angaben.</p>
@@ -82,7 +90,9 @@ export function AllocationAdoptionPanel({ logicalId, reviewId, ready, parentBusy
       </fieldset>
       <button className="btn" disabled={blocked || (!submitted && (!eligible || stale || !draft.costs || !draft.disclosure || !draft.reason.trim()))} onClick={() => void save()}>{submitted ? 'Dieselbe Kostenübernahme erneut senden' : 'Teilkosten bestätigen und Original freigeben'}</button>
     </>}
-    <div hidden={!view?.result}><AllocationCorrectionPanel key={`${logicalId}:${correctionDenial}`} allocationId={view?.result?.id ?? null} reviewId={reviewId} parentBusy={blocked || !view?.result} parentGeneration={parentGeneration + generation} receipt={view?.correction ?? null} onConfirmed={() => setGeneration(value => value + 1)} /></div>
+    <VisualAllocationAdoptionPanel logicalId={logicalId} reviewId={reviewId} enabled={sourceVariant === 'visual' && (!view?.result || visualPending)} parentBusy={baseBlocked}
+      generation={parentGeneration + generation} onPending={setVisualPending} onConfirmed={() => setGeneration(value => value + 1)} />
+    <div hidden={!view?.result}><AllocationCorrectionPanel sourceVariant={view?.result?.source_variant} key={`${logicalId}:${correctionDenial}`} allocationId={view?.result?.id ?? null} reviewId={reviewId} parentBusy={blocked || !view?.result} parentGeneration={parentGeneration + generation} receipt={view?.correction ?? null} onConfirmed={() => setGeneration(value => value + 1)} /></div>
     <ContextMappingPanel allocationId={view?.result?.id ?? null} parentGeneration={parentGeneration + generation} parentBusy={blocked} />
   </section>;
 }

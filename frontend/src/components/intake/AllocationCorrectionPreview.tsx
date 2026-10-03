@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { correctionPreviewApi, type CorrectionImpact, type CorrectionPreview } from '../../api/allocationAdoptions';
+import { correctionPreviewApi, visualAllocationApi, type CorrectionImpact, type CorrectionPreview } from '../../api/allocationAdoptions';
 import { correctionDestination } from './correctionLinks';
 
 const titles: Record<string, string> = { BK_MIETER: 'Betriebskostenabrechnung', WEG_JAHRESABRECHNUNG: 'WEG-Jahresabrechnung', VERMOEGENSBERICHT: 'Vermögensbericht', WIRTSCHAFTSPLAN: 'Wirtschaftsplan' };
 
-export function AllocationCorrectionPreview({ allocationId, reviewId, parentBusy, parentGeneration, confirmation }: {
-  allocationId: string; reviewId: string | null; parentBusy: boolean; parentGeneration: number; confirmation?: (preview: CorrectionPreview) => ReactNode;
+export function AllocationCorrectionPreview({ allocationId, reviewId, parentBusy, parentGeneration, sourceVariant = 'original', confirmation }: {
+  sourceVariant?: 'original' | 'visual'; allocationId: string; reviewId: string | null; parentBusy: boolean; parentGeneration: number; confirmation?: (preview: CorrectionPreview) => ReactNode;
 }) {
   const [preview, setPreview] = useState<CorrectionPreview | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
@@ -13,13 +13,13 @@ export function AllocationCorrectionPreview({ allocationId, reviewId, parentBusy
   useEffect(() => {
     request.current?.abort(); setPreview(null); setError(null); setBusy(false);
     return () => request.current?.abort();
-  }, [allocationId, reviewId, parentBusy, parentGeneration]);
+  }, [allocationId, reviewId, parentBusy, parentGeneration, sourceVariant]);
   async function load() {
     if (parentBusy || !reviewId || busy) return;
     request.current?.abort(); const controller = new AbortController(); request.current = controller;
     setBusy(true); setPreview(null); setError(null);
     try {
-      const value = await correctionPreviewApi.get(allocationId, reviewId, controller.signal);
+      const value = await (sourceVariant === 'visual' ? visualAllocationApi.correctionPreview : correctionPreviewApi.get)(allocationId, reviewId, controller.signal);
       if (!controller.signal.aborted) setPreview(value);
     } catch {
       if (!controller.signal.aborted) setError('Korrekturfolgen nicht vollständig verfügbar. Bitte Berechtigungen und Prüfgrundlage prüfen und erneut laden.');
