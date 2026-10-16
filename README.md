@@ -23,5 +23,5 @@ Weiterführende Dokumentation:
 
 - [Deployment](DEPLOY.md)
 - [Architektur](docs/architecture.md)
-- [Roadmap](docs/roadmap.md)
+- [MVP-Plan und Aufgabenliste](docs/mvp.md)
 - [Teilungserklärungen und Gebäudewissen](docs/operations/declaration-imports.md) — Upload, prüfbare Extraktion, freigegebene Gebäuderegeln und Betrieb.
