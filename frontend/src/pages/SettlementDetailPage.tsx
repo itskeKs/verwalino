@@ -76,19 +76,19 @@ const DISTRIBUTION_KEY_LABELS: Record<string, string> = {
  * Determine which cost entries need structured input (EXTERNAL, CONSUMPTION,
  * PERSON_COUNT, MANUAL distribution keys).
  */
-function needsExternalInput(entry: CostEntry): boolean {
+export function needsExternalInput(entry: CostEntry): boolean {
   return entry.tenant_distribution_key === "EXTERNAL";
 }
 
-function needsManualInput(entry: CostEntry): boolean {
+export function needsManualInput(entry: CostEntry): boolean {
   return entry.tenant_distribution_key === "MANUAL";
 }
 
-function needsConsumption(entries: CostEntry[]): boolean {
+export function needsConsumption(entries: CostEntry[]): boolean {
   return entries.some((e) => e.tenant_distribution_key === "CONSUMPTION");
 }
 
-function needsPersonCount(entries: CostEntry[]): boolean {
+export function needsPersonCount(entries: CostEntry[]): boolean {
   return entries.some((e) => e.tenant_distribution_key === "PERSON_COUNT");
 }
 
