@@ -1,0 +1,13 @@
+{
+  "stopped": true,
+  "sha256": "a63d9eb3fb0a37f7e0cb096359ad4b94d3894cadee0a51ecb800b075208cc9a0",
+  "size": 3705152,
+  "counts": {
+    "packets": 47168,
+    "syn": 18782,
+    "ssl_request": 9391,
+    "fin": 18782,
+    "server_N": 213
+  },
+  "limits": "IPv4-only; does not capture IPv6 self-connect. This filter recorded SSLRequest/control packets but no short N replies; not a complete SSL-response wire proof. Native callbacks provide reply bytes/endpoints. Raw PCAP remains private in /tmp."
+}

@@ -1,0 +1,312 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.13, pytest-8.4.2, pluggy-1.6.0 -- /Users/keks/Developer/hausverwaltung/backend/.venv/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/keks/Developer/hausverwaltung/backend
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-0.26.0, hypothesis-6.165.10
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 14 items
+
+tests/test_declaration_publication_order.py::test_new_destination_and_receipt_precede_source_binding PASSED [  7%]
+tests/test_declaration_publication_order.py::test_existing_destination_receipt_precedes_source_binding PASSED [ 14%]
+tests/test_declaration_pass_ledger.py::test_pass_ledger_model_and_repository_expose_typed_append_only_seam PASSED [ 21%]
+tests/test_declaration_pass_ledger.py::test_pass_ledger_schema_is_rls_force_and_append_only FAILED [ 28%]
+tests/test_declaration_pass_ledger.py::test_pass_ledger_append_uses_safe_metadata_and_global_attempt_numbers PASSED [ 35%]
+tests/test_declaration_pass_ledger.py::test_pass_ledger_rejects_untyped_or_duplicate_append PASSED [ 42%]
+tests/test_declaration_pass_ledger.py::test_pipeline_checkpoint_persists_one_content_free_row_per_sdk_attempt PASSED [ 50%]
+tests/test_declaration_pass_ledger.py::test_two_attempt_provider_failure_persists_before_retry_wait_without_duplicates PASSED [ 57%]
+tests/test_declaration_pass_ledger.py::test_checkpoint_renumbers_two_schema_repair_attempts_globally FAILED [ 64%]
+tests/test_declaration_pass_ledger.py::test_failure_persists_pending_attempt_before_retry_wait FAILED [ 71%]
+tests/test_declaration_pass_ledger.py::test_failure_with_missing_active_run_keeps_queue_and_import_unchanged PASSED [ 78%]
+tests/test_declaration_pass_ledger.py::test_checkpoint_rollback_retains_queue_and_retry_writes_no_duplicate FAILED [ 85%]
+tests/test_declaration_pass_ledger.py::test_pass_ledger_hides_cross_tenant_rows_and_denies_mutation PASSED [ 92%]
+tests/test_allocation_corrections.py::test_changed_amount_period_and_competing_corrections_are_complete PASSED [100%]
+
+=================================== FAILURES ===================================
+_____________ test_pass_ledger_schema_is_rls_force_and_append_only _____________
+tests/test_declaration_pass_ledger.py:81: in test_pass_ledger_schema_is_rls_force_and_append_only
+    assert {row.cmd for row in policies} == {"SELECT", "INSERT"}
+E   AssertionError: assert {'DELETE', 'I...CT', 'UPDATE'} == {'INSERT', 'SELECT'}
+E     
+E     Extra items in the left set:
+E     'UPDATE'
+E     'DELETE'
+E     
+E     Full diff:
+E       {...
+E     
+E     ...Full output truncated (5 lines hidden), use '-vv' to show
+________ test_checkpoint_renumbers_two_schema_repair_attempts_globally _________
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv/lib/python3.13/site-packages/asyncpg/prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.InsufficientPrivilegeError: permission denied for function transition_declaration_work
+
+The above exception was the direct cause of the following exception:
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.ProgrammingError: <class 'asyncpg.exceptions.InsufficientPrivilegeError'>: permission denied for function transition_declaration_work
+
+The above exception was the direct cause of the following exception:
+tests/test_declaration_pass_ledger.py:285: in test_checkpoint_renumbers_two_schema_repair_attempts_globally
+    await pipeline._checkpoint(ledger)
+app/declarations/pipeline.py:1200: in _checkpoint
+    if not await repo.transition_with_lease(
+app/repositories/declaration_import_repo.py:361: in transition_with_lease
+    return bool(await self._session.scalar(text(
+.venv/lib/python3.13/site-packages/sqlalchemy/ext/asyncio/session.py:504: in scalar
+    return await greenlet_spawn(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py:2421: in scalar
+    return self._execute_internal(
+.venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py:2266: in _execute_internal
+    return conn.scalar(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1310: in scalar
+    return meth(
+.venv/lib/python3.13/site-packages/sqlalchemy/sql/elements.py:544: in _execute_on_scalar
+    return self._execute_on_connection(
+.venv/lib/python3.13/site-packages/sqlalchemy/sql/elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.ProgrammingError: (sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.InsufficientPrivilegeError'>: permission denied for function transition_declaration_work
+E   [SQL: SELECT transition_declaration_work($1,$2,$3,$4,$5,CAST($6 AS text[]),$7,CAST($8 AS jsonb))]
+E   [parameters: (UUID('894b30e9-b67a-4792-91de-c3d82bf62f41'), UUID('be7d83ef-3ac4-44b1-ba96-22528d4e9db1'), UUID('8de0c2d6-9fb9-4607-a152-e875e21f9035'), 1, UUID('a73bae0e-a2ff-4d63-bdfd-9efbbd5d3a01'), ['PREFLIGHT'], 'PREFLIGHT', '{"input_tokens": 0, "output_tokens": 0, "estimated_cost_usd": "0", "attempt_count": 0}')]
+E   (Background on this error at: https://sqlalche.me/e/20/f405)
+___________ test_failure_persists_pending_attempt_before_retry_wait ____________
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv/lib/python3.13/site-packages/asyncpg/prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.InsufficientPrivilegeError: permission denied for function transition_declaration_work
+
+The above exception was the direct cause of the following exception:
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.ProgrammingError: <class 'asyncpg.exceptions.InsufficientPrivilegeError'>: permission denied for function transition_declaration_work
+
+The above exception was the direct cause of the following exception:
+tests/test_declaration_pass_ledger.py:308: in test_failure_persists_pending_attempt_before_retry_wait
+    await pipeline._fail(lease, "PROVIDER_TIMEOUT", retryable=True, ledger=ledger)
+app/declarations/pipeline.py:1128: in _fail
+    if not await repo.transition_with_lease(
+app/repositories/declaration_import_repo.py:361: in transition_with_lease
+    return bool(await self._session.scalar(text(
+.venv/lib/python3.13/site-packages/sqlalchemy/ext/asyncio/session.py:504: in scalar
+    return await greenlet_spawn(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py:2421: in scalar
+    return self._execute_internal(
+.venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py:2266: in _execute_internal
+    return conn.scalar(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1310: in scalar
+    return meth(
+.venv/lib/python3.13/site-packages/sqlalchemy/sql/elements.py:544: in _execute_on_scalar
+    return self._execute_on_connection(
+.venv/lib/python3.13/site-packages/sqlalchemy/sql/elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.ProgrammingError: (sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.InsufficientPrivilegeError'>: permission denied for function transition_declaration_work
+E   [SQL: SELECT transition_declaration_work($1,$2,$3,$4,$5,CAST($6 AS text[]),$7,CAST($8 AS jsonb))]
+E   [parameters: (UUID('894b30e9-b67a-4792-91de-c3d82bf62f41'), UUID('c03d727a-7899-4ed9-978d-4c77903e5cbc'), UUID('797bb522-ab9e-4f68-83b9-4c7b47cad73f'), 1, UUID('1c2114df-2c53-4e44-9fe8-f621b7a0ee8a'), ['EXTRACTING', 'PREFLIGHT', 'RECONCILING'], 'RETRY_WAIT', '{"current_stage": "retry_wait", "error_code": "PROVIDER_TIMEOUT", "error_message": "PROVIDER_TIMEOUT", "input_tokens": 0, "output_tokens": 0, "estima ... (13 characters truncated) ... : "0", "attempt_count": 0, "next_attempt_at": "2026-10-11 12:43:20.914461+00:00", "lease_owner": null, "lease_token": null, "lease_expires_at": null}')]
+E   (Background on this error at: https://sqlalche.me/e/20/f405)
+_____ test_checkpoint_rollback_retains_queue_and_retry_writes_no_duplicate _____
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv/lib/python3.13/site-packages/asyncpg/prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.InsufficientPrivilegeError: permission denied for function transition_declaration_work
+
+The above exception was the direct cause of the following exception:
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.ProgrammingError: <class 'asyncpg.exceptions.InsufficientPrivilegeError'>: permission denied for function transition_declaration_work
+
+The above exception was the direct cause of the following exception:
+tests/test_declaration_pass_ledger.py:359: in test_checkpoint_rollback_retains_queue_and_retry_writes_no_duplicate
+    await pipeline._checkpoint(ledger)
+app/declarations/pipeline.py:1200: in _checkpoint
+    if not await repo.transition_with_lease(
+app/repositories/declaration_import_repo.py:361: in transition_with_lease
+    return bool(await self._session.scalar(text(
+.venv/lib/python3.13/site-packages/sqlalchemy/ext/asyncio/session.py:504: in scalar
+    return await greenlet_spawn(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py:2421: in scalar
+    return self._execute_internal(
+.venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py:2266: in _execute_internal
+    return conn.scalar(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1310: in scalar
+    return meth(
+.venv/lib/python3.13/site-packages/sqlalchemy/sql/elements.py:544: in _execute_on_scalar
+    return self._execute_on_connection(
+.venv/lib/python3.13/site-packages/sqlalchemy/sql/elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.ProgrammingError: (sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.InsufficientPrivilegeError'>: permission denied for function transition_declaration_work
+E   [SQL: SELECT transition_declaration_work($1,$2,$3,$4,$5,CAST($6 AS text[]),$7,CAST($8 AS jsonb))]
+E   [parameters: (UUID('894b30e9-b67a-4792-91de-c3d82bf62f41'), UUID('d2beb894-0b61-4ddc-bd24-dee57f236cc1'), UUID('24702779-0f85-4a76-b58f-38679d9e83d7'), 1, UUID('24e3f2fe-3109-41b1-b046-85eb79bc22d7'), ['PREFLIGHT'], 'PREFLIGHT', '{"input_tokens": 0, "output_tokens": 0, "estimated_cost_usd": "0", "attempt_count": 0}')]
+E   (Background on this error at: https://sqlalche.me/e/20/f405)
+=========================== short test summary info ============================
+FAILED tests/test_declaration_pass_ledger.py::test_pass_ledger_schema_is_rls_force_and_append_only
+FAILED tests/test_declaration_pass_ledger.py::test_checkpoint_renumbers_two_schema_repair_attempts_globally
+FAILED tests/test_declaration_pass_ledger.py::test_failure_persists_pending_attempt_before_retry_wait
+FAILED tests/test_declaration_pass_ledger.py::test_checkpoint_rollback_retains_queue_and_retry_writes_no_duplicate
+======================== 4 failed, 10 passed in 13.69s =========================

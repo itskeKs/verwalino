@@ -1,0 +1,13 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.13, pytest-8.4.2, pluggy-1.6.0 -- /Users/keks/Developer/hausverwaltung/backend/.venv/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/keks/Developer/hausverwaltung/backend
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-0.26.0, hypothesis-6.165.10
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 1 item
+
+tests/test_exception_completions.py::test_completion_sealed_membership_coverage_and_guarded_roundtrip PASSED [100%]
+
+============================== 1 passed in 8.75s ===============================

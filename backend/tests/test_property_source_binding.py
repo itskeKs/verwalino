@@ -131,12 +131,8 @@ async def test_binding_migration_refuses_strict_rollback_and_roundtrips_preparat
                     with db.begin_nested(): migration.downgrade()
                 nested=db.begin_nested()
                 try:
-                    db.execute(text('TRUNCATE property_source_security,property_source_classification,property_creation_receipt'))
-                    importlib.import_module('migrations.versions.0063_original_source_access').downgrade()
-                    importlib.import_module('migrations.versions.0062_derived_source_access').downgrade()
-                    importlib.import_module('migrations.versions.0061_property_master_access').downgrade()
-                    importlib.import_module('migrations.versions.0059_financial_source_input').downgrade()
-                    importlib.import_module('migrations.versions.0056_property_source_classification').downgrade()
+                    from tests.migration_rehearsal import prepare_historical_revision
+                    prepare_historical_revision(db, '0055')
                     migration.downgrade()
                     assert db.scalar(text("SELECT to_regprocedure('guard_strict_property_source_binding()')")) is None
                     migration.upgrade()
@@ -173,6 +169,7 @@ async def test_parallel_bindings_produce_one_canonical_audit(client_a_admin,seed
     async with synthetic_enforcement(seed_data):
         await asyncio.wait_for(asyncio.gather(bind(seed_data,ids),bind(seed_data,ids)),5)
         async with get_tenant_session(seed_data['org_a_id']) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(seed_data['user_a_admin_id'])})
             assert await db.scalar(text("SELECT count(*) FROM audit_event WHERE entity_id=:document AND action='property_document.binding_approved'"),ids)==1
 
 

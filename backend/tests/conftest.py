@@ -53,12 +53,44 @@ MIGRATOR_URL, APP_RW_URL, MIGRATOR_SYNC_URL = require_disposable_database_settin
 # ---------------------------------------------------------------------------
 def clear_disposable_source_context(cursor):
     """Only for destructive migration rehearsals in the guarded disposable DB."""
+    from psycopg2 import sql
+    from sqlalchemy.engine import make_url
+
+    _, _, sync_url = require_disposable_database_settings(settings)
+    expected = make_url(sync_url)
+    connection = cursor.connection.info
+    if (connection.host, connection.port, connection.dbname, connection.user) != (
+        expected.host, expected.port, expected.database, expected.username
+    ):
+        raise RuntimeError("Migration rehearsal cursor is not the guarded disposable connection")
+    cursor.execute("SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()")
+    if cursor.fetchone() != ('app_migrator',):
+        raise RuntimeError("Migration rehearsal requires the owned disposable database")
     cursor.execute("SELECT to_regprocedure('public.guard_property_source_context()')")
-    if cursor.fetchone()[0]:
-        cursor.execute("TRUNCATE public.property,public.unit,public.property_document,"
-                       "public.declaration_import,public.declaration_import_document,"
-                       "public.declaration_candidate,public.declaration_candidate_evidence,"
-                       "public.declaration_candidate_issue,public.declaration_extraction_run CASCADE")
+    if not cursor.fetchone()[0]:
+        return
+
+    # Modern receipts can be independent of property/document foreign keys.
+    # No CASCADE: a new reverse FK must not silently erase the shared seeds.
+    retained = ['alembic_version', 'organization', 'user', 'membership',
+                'management_mandate', 'audit_event', 'cost_category']
+    cursor.execute("""SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+      WHERE n.nspname='public' AND c.relkind IN ('r','p') AND c.relname<>ALL(%s)
+      AND NOT EXISTS(SELECT 1 FROM pg_depend d WHERE d.classid='pg_class'::regclass
+        AND d.objid=c.oid AND d.deptype='e') ORDER BY c.relname""", (retained,))
+    tables = [sql.Identifier('public', row[0]) for row in cursor.fetchall()]
+    if tables:
+        cursor.execute(sql.SQL('TRUNCATE {}').format(sql.SQL(',').join(tables)))
+
+
+async def fixture_has_registered_documents(session: AsyncSession, document_ids: list[uuid.UUID]) -> bool:
+    if not await session.scalar(text("SELECT to_regclass('public.document_ref')")):
+        return False
+    return bool(await session.scalar(
+        text("SELECT EXISTS(SELECT 1 FROM public.document_ref "
+             "WHERE property_document_id=ANY(CAST(:document_ids AS uuid[])))"),
+        {"document_ids": document_ids},
+    ))
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -625,30 +657,36 @@ async def approved_knowledge_graph(seed_data):
         try:
             async with async_sessionmaker(cleanup_engine, class_=AsyncSession)() as cleanup:
                 async with cleanup.begin():
-                    for statement in (
-                        "DELETE FROM approved_fact_source WHERE source_import_id = :import_id",
-                        "DELETE FROM property_rule_source WHERE property_rule_id IN (:heating, :old, :new, :repair)",
-                        "DELETE FROM property_rule_relation WHERE source_import_id = :import_id",
-                        "DELETE FROM property_rule WHERE source_import_id = :import_id",
-                        "DELETE FROM property_document_relation WHERE source_import_id = :import_id",
-                        "DELETE FROM property_assignment WHERE source_import_id = :import_id",
-                        "DELETE FROM property_legal_reference WHERE source_import_id = :import_id",
-                        "DELETE FROM declaration_import WHERE id = :import_id",
-                        "DELETE FROM property_document WHERE id IN (:main, :amendment)",
-                        "DELETE FROM unit WHERE id IN (:unit_one, :unit_two)",
-                        "DELETE FROM property WHERE id IN (:property_id, :foreign)",
-                    ):
-                        await cleanup.execute(
-                            text(statement),
-                            {
-                                **created,
-                                "import_id": created["import"],
-                                "property_id": created["property"],
-                                "heating": created["heating"],
-                                "old": created["elevator_old"],
-                                "new": created["elevator_new"],
-                                "repair": created["repair"],
-                            },
-                        )
+                    registered = await fixture_has_registered_documents(
+                        cleanup, [created["main"], created["amendment"]]
+                    )
+                    # Registered originals are retained until the guarded session reset.
+                    # Do not bypass their append-only protection for fixture teardown.
+                    if not registered:
+                        for statement in (
+                            "DELETE FROM approved_fact_source WHERE source_import_id = :import_id",
+                            "DELETE FROM property_rule_source WHERE property_rule_id IN (:heating, :old, :new, :repair)",
+                            "DELETE FROM property_rule_relation WHERE source_import_id = :import_id",
+                            "DELETE FROM property_rule WHERE source_import_id = :import_id",
+                            "DELETE FROM property_document_relation WHERE source_import_id = :import_id",
+                            "DELETE FROM property_assignment WHERE source_import_id = :import_id",
+                            "DELETE FROM property_legal_reference WHERE source_import_id = :import_id",
+                            "DELETE FROM declaration_import WHERE id = :import_id",
+                            "DELETE FROM property_document WHERE id IN (:main, :amendment)",
+                            "DELETE FROM unit WHERE id IN (:unit_one, :unit_two)",
+                            "DELETE FROM property WHERE id IN (:property_id, :foreign)",
+                        ):
+                            await cleanup.execute(
+                                text(statement),
+                                {
+                                    **created,
+                                    "import_id": created["import"],
+                                    "property_id": created["property"],
+                                    "heating": created["heating"],
+                                    "old": created["elevator_old"],
+                                    "new": created["elevator_new"],
+                                    "repair": created["repair"],
+                                },
+                            )
         finally:
             await cleanup_engine.dispose()

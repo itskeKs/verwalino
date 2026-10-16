@@ -1,0 +1,6 @@
+﻿Datum;Uhrzeit (MEZ/MESZ);Typ;Beschreibung;Betrag;Saldo
+02.10.2026;00:05;Anfangsbestand;"TEST opening reserve, fictional";10000,00;10000,00
+02.10.2026;00:06;Manuelle Anpassung;"TEST annual reserve contributions 2025";2400,00;12400,00
+02.10.2026;00:06;Manuelle Anpassung;"TEST fictional reserve-funded repair 2025";-1800,00;10600,00
+
+;;;"Aktueller Saldo:";;"10600,00"

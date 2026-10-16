@@ -466,25 +466,30 @@ async def reviewed_existing_property_import(seed_data: dict):
             try:
                 async with async_sessionmaker(cleanup_engine, class_=AsyncSession)() as cleanup:
                     async with cleanup.begin():
-                        for statement in (
-                            "DELETE FROM approved_fact_source WHERE source_import_id = :id",
-                            "DELETE FROM property_rule_source WHERE property_id = :property",
-                            "DELETE FROM property_rule_source WHERE property_rule_id IN (SELECT id FROM property_rule WHERE source_import_id = :id)",
-                            "DELETE FROM property_rule_relation WHERE source_import_id = :id",
-                            "DELETE FROM property_rule WHERE source_import_id = :id",
-                            "DELETE FROM property_document_relation WHERE source_import_id = :id",
-                            "DELETE FROM property_assignment WHERE source_import_id = :id",
-                            "DELETE FROM property_legal_reference WHERE source_import_id = :id",
-                            "DELETE FROM audit_event WHERE entity_id = :id",
-                            "DELETE FROM declaration_candidate_evidence WHERE candidate_id IN (SELECT id FROM declaration_candidate WHERE import_id = :id)",
-                            "DELETE FROM declaration_candidate WHERE import_id = :id",
-                            "DELETE FROM declaration_import_document WHERE import_id = :id",
-                            "DELETE FROM declaration_import WHERE id = :id",
-                        ):
-                            await cleanup.execute(text(statement), {"id": item.id, "property": property_row.id})
-                        await cleanup.execute(text("DELETE FROM property_document WHERE id IN (:main, :amendment)"), {"main": main.id, "amendment": amendment.id})
-                        await cleanup.execute(text("DELETE FROM unit WHERE property_id = :property"), {"property": property_row.id})
-                        await cleanup.execute(text("DELETE FROM property WHERE id = :property"), {"property": property_row.id})
+                        from tests.conftest import fixture_has_registered_documents
+
+                        registered = await fixture_has_registered_documents(cleanup, [main.id, amendment.id])
+                        # Registered originals remain until the guarded session reset.
+                        if not registered:
+                            for statement in (
+                                "DELETE FROM approved_fact_source WHERE source_import_id = :id",
+                                "DELETE FROM property_rule_source WHERE property_id = :property",
+                                "DELETE FROM property_rule_source WHERE property_rule_id IN (SELECT id FROM property_rule WHERE source_import_id = :id)",
+                                "DELETE FROM property_rule_relation WHERE source_import_id = :id",
+                                "DELETE FROM property_rule WHERE source_import_id = :id",
+                                "DELETE FROM property_document_relation WHERE source_import_id = :id",
+                                "DELETE FROM property_assignment WHERE source_import_id = :id",
+                                "DELETE FROM property_legal_reference WHERE source_import_id = :id",
+                                "DELETE FROM audit_event WHERE entity_id = :id",
+                                "DELETE FROM declaration_candidate_evidence WHERE candidate_id IN (SELECT id FROM declaration_candidate WHERE import_id = :id)",
+                                "DELETE FROM declaration_candidate WHERE import_id = :id",
+                                "DELETE FROM declaration_import_document WHERE import_id = :id",
+                                "DELETE FROM declaration_import WHERE id = :id",
+                            ):
+                                await cleanup.execute(text(statement), {"id": item.id, "property": property_row.id})
+                            await cleanup.execute(text("DELETE FROM property_document WHERE id IN (:main, :amendment)"), {"main": main.id, "amendment": amendment.id})
+                            await cleanup.execute(text("DELETE FROM unit WHERE property_id = :property"), {"property": property_row.id})
+                            await cleanup.execute(text("DELETE FROM property WHERE id = :property"), {"property": property_row.id})
             finally:
                 await cleanup_engine.dispose()
 

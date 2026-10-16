@@ -1,0 +1,118 @@
+"""Bounded local transport observation; delegates every native SSL callback."""
+import asyncio
+from collections import Counter
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import sys
+import time
+
+os.chdir('/Users/keks/Developer/hausverwaltung/backend')
+sys.path.insert(0, os.getcwd())
+os.environ.pop('USER', None)
+os.environ.pop('HV_OPENAI_API_KEY', None)
+os.environ.update(
+    HV_DATABASE_URL_MIGRATOR='postgresql+asyncpg://app_migrator:migrator_secret@localhost:55432/hausverwaltung',
+    HV_DATABASE_URL='postgresql+asyncpg://app_rw:app_secret@localhost:55432/hausverwaltung',
+    HV_DATABASE_URL_SYNC='postgresql://app_migrator:migrator_secret@localhost:55432/hausverwaltung',
+)
+from asyncpg import connect, connect_utils
+import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+
+trace_path = '/tmp/04a-captured-negotiations.jsonl'
+trace = os.fdopen(os.open(trace_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w')
+original_data = connect_utils.TLSUpgradeProto.data_received
+original_made = connect_utils.TLSUpgradeProto.connection_made
+counts = Counter()
+unexpected = []
+phase = 'preflight'
+completed = Counter()
+
+def emit(kind, **fields):
+    record = {'event': kind, 'time_ns': time.time_ns(), 'phase': phase, **fields}
+    trace.write(json.dumps(record) + '\n')
+    trace.flush()
+    return record
+
+def made(self, transport):
+    self._diagnostic_addresses = {'peer': transport.get_extra_info('peername'),
+                                  'local': transport.get_extra_info('sockname')}
+    return original_made(self, transport)
+
+def observed(self, data):
+    config = {'advisory': self.ssl_is_advisory,
+              'verify_mode': int(self.ssl_context.verify_mode),
+              'check_hostname': self.ssl_context.check_hostname}
+    key = json.dumps({'hex': data[:256].hex(), 'length': len(data), **config}, sort_keys=True)
+    counts[key] += 1
+    record = emit('ssl_response', host=self.host, port=self.port, hex=data[:256].hex(),
+                  length=len(data), future_done=self.on_data.done(), **config,
+                  **getattr(self, '_diagnostic_addresses', {}))
+    if data != b'N' or not self.ssl_is_advisory or self.ssl_context.verify_mode != 0:
+        unexpected.append(record)
+        print('UNEXPECTED_NEGOTIATION', json.dumps(record), flush=True)
+    return original_data(self, data)
+
+async def probe():
+    global phase
+    for i in range(3000):
+        phase = 'sqlalchemy:' + str(i)
+        role, password = ('app_rw', 'app_secret') if i % 2 else ('app_migrator', 'migrator_secret')
+        engine = create_async_engine(f'postgresql+asyncpg://{role}:{password}@localhost:55432/hausverwaltung')
+        try:
+            async with engine.begin() as connection:
+                if await connection.scalar(text('SELECT 1')) != 1:
+                    raise RuntimeError('Unexpected database response')
+            completed['sqlalchemy'] += 1
+        finally:
+            await engine.dispose()
+        if unexpected:
+            raise RuntimeError('Unexpected SSL negotiation; stopping bounded probe')
+        if (i + 1) % 500 == 0:
+            print('SQLALCHEMY_CONNECTIONS', i + 1, flush=True)
+    for i in range(3000):
+        phase = 'asyncpg:' + str(i)
+        role, password = ('app_rw', 'app_secret') if i % 2 else ('app_migrator', 'migrator_secret')
+        connection = await connect(host='localhost', port=55432, database='hausverwaltung',
+                                   user=role, password=password, timeout=10)
+        try:
+            if await connection.fetchval('SELECT 1') != 1:
+                raise RuntimeError('Unexpected database response')
+            completed['asyncpg'] += 1
+        finally:
+            await connection.close()
+        if unexpected:
+            raise RuntimeError('Unexpected SSL negotiation; stopping bounded probe')
+        if (i + 1) % 500 == 0:
+            print('ASYNCPG_CONNECTIONS', i + 1, flush=True)
+
+result = 1
+try:
+    if Path('/tmp/04a-tls-transport.pcap').stat().st_size < 24:
+        raise RuntimeError('Capture file unavailable')
+    print('START', datetime.now(timezone.utc).isoformat(), 'TLS options unchanged', flush=True)
+    emit('start')
+    connect_utils.TLSUpgradeProto.connection_made = made
+    connect_utils.TLSUpgradeProto.data_received = observed
+    asyncio.run(probe())
+    phase = 'query-tests'
+    result = pytest.main(['tests/test_property_knowledge_query.py', '-v', '--tb=short', '-rs'])
+    if unexpected:
+        result = 1
+except Exception as error:
+    emit('error', error_type=type(error).__name__, message=str(error))
+    print('DIAGNOSTIC_ERROR', type(error).__name__, str(error), flush=True)
+    raise
+finally:
+    connect_utils.TLSUpgradeProto.data_received = original_data
+    connect_utils.TLSUpgradeProto.connection_made = original_made
+    emit('end', result=result, completed=dict(completed), unexpected_count=len(unexpected))
+    trace.close()
+    print('END', datetime.now(timezone.utc).isoformat(), flush=True)
+    print('COMPLETED_CONNECTIONS', json.dumps(dict(completed)), flush=True)
+    print('SSL_NEGOTIATION_COUNTS', json.dumps(dict(counts)), flush=True)
+    print('UNEXPECTED_NEGOTIATIONS', len(unexpected), flush=True)
+raise SystemExit(result)

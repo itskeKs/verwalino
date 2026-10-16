@@ -1,0 +1,35 @@
+{
+  "native_callback": {
+    "event": "ssl_response",
+    "time_ns": 1791814700450805000,
+    "phase": "asyncpg:308",
+    "host": "localhost",
+    "port": 55432,
+    "hex": "0000000804d2162f",
+    "length": 8,
+    "future_done": false,
+    "advisory": true,
+    "verify_mode": 0,
+    "check_hostname": false,
+    "peer": [
+      "::1",
+      55432,
+      0,
+      0
+    ],
+    "local": [
+      "::1",
+      55432,
+      0,
+      0
+    ]
+  },
+  "bound_server": "127.0.0.1:55432",
+  "ephemeral_range": [
+    49152,
+    65535
+  ],
+  "cause": "localhost resolves IPv6 first; ::1:55432 is unbound and within ephemeral range. The source endpoint equals the target, so the client reads its own SSLRequest, not a PostgreSQL reply.",
+  "capture_limit": "The IPv4-only BPF did not capture this IPv6 socket. The direct self-connect proof is the unchanged native callback and matching socket endpoints.",
+  "fix": "Use explicit 127.0.0.1 for the guarded local test URLs only; no TLS changes."
+}

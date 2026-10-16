@@ -1,0 +1,200 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.13, pytest-8.4.2, pluggy-1.6.0 -- /Users/keks/Developer/hausverwaltung/backend/.venv/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/keks/Developer/hausverwaltung/backend
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-0.26.0, hypothesis-6.165.10
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 84 items
+
+tests/test_runtime_budget_review.py::test_runtime_budget_review_is_explicit_idempotent_and_snapshot_visible PASSED [  1%]
+tests/test_runtime_budget_review.py::test_changed_runtime_policy_requires_fresh_review_and_replay_never_restores_it PASSED [  2%]
+tests/test_runtime_budget_review.py::test_untrusted_runtime_cannot_self_attest_or_approve_and_clerk_is_denied PASSED [  3%]
+tests/test_runtime_budget_review.py::test_attestation_is_bound_to_connection_transaction_and_actor PASSED [  4%]
+tests/test_runtime_budget_review.py::test_equivalent_policy_has_identical_digest_but_request_cannot_change PASSED [  5%]
+tests/test_runtime_budget_review.py::test_concurrent_reviews_have_one_effect[False] PASSED [  7%]
+tests/test_runtime_budget_review.py::test_concurrent_reviews_have_one_effect[True] PASSED [  8%]
+tests/test_runtime_budget_review.py::test_failed_audit_rolls_back_review_and_budget PASSED [  9%]
+tests/test_runtime_budget_review.py::test_runtime_unavailable_and_invalid_confirmation_cannot_approve[failure0] PASSED [ 10%]
+tests/test_runtime_budget_review.py::test_runtime_unavailable_and_invalid_confirmation_cannot_approve[failure1] PASSED [ 11%]
+tests/test_runtime_budget_review.py::test_registrar_progresses_while_revocation_waits PASSED [ 13%]
+tests/test_runtime_budget_review.py::test_budget_migration_retains_evidence_and_preserves_historical_reports PASSED [ 14%]
+tests/test_runtime_budget_review.py::test_budget_review_stales_prior_snapshot_and_replay_requires_current_admin PASSED [ 15%]
+tests/test_projected_access_coverage.py::test_snapshot_projects_combined_actor_without_preparation_bypass PASSED [ 16%]
+tests/test_projected_access_coverage.py::test_projected_snapshot_stales_when_independent_financial_pause_changes PASSED [ 17%]
+tests/test_projected_access_coverage.py::test_projection_never_turns_a_missing_parent_into_a_reader PASSED [ 19%]
+tests/test_projected_access_coverage.py::test_coverage_declaration_requires_exact_parent_property[False] PASSED [ 20%]
+tests/test_projected_access_coverage.py::test_coverage_declaration_requires_exact_parent_property[True] PASSED [ 21%]
+tests/test_projected_access_coverage.py::test_meeting_and_classification_projection_matches_live[PREPARATION] PASSED [ 22%]
+tests/test_projected_access_coverage.py::test_meeting_and_classification_projection_matches_live[ENFORCED] PASSED [ 23%]
+tests/test_projected_access_coverage.py::test_meeting_and_classification_projection_matches_live[PAUSED] ERROR [ 25%]
+tests/test_projected_access_coverage.py::test_projection_migration_retains_v2_and_preserves_v1 PASSED [ 26%]
+tests/test_projected_access_coverage.py::test_financial_coverage_cannot_borrow_source_authority[own] PASSED [ 27%]
+tests/test_projected_access_coverage.py::test_financial_coverage_cannot_borrow_source_authority[other_actor] PASSED [ 28%]
+tests/test_projected_access_coverage.py::test_financial_coverage_cannot_borrow_source_authority[missing] PASSED [ 29%]
+tests/test_projected_access_coverage.py::test_financial_coverage_cannot_borrow_source_authority[malformed] PASSED [ 30%]
+tests/test_projected_access_coverage.py::test_financial_pause_removes_effect_caps_from_new_snapshot_only PASSED [ 32%]
+tests/test_projected_access_coverage.py::test_applied_import_projection_uses_approve_even_when_prepare_is_granted PASSED [ 33%]
+tests/test_extraction_revisions.py::test_invoice_retries_append_private_revisions_and_unlocated_field_evidence PASSED [ 34%]
+tests/test_extraction_revisions.py::test_malformed_processor_output_is_recorded_as_failure_without_proposals[status] PASSED [ 35%]
+tests/test_extraction_revisions.py::test_malformed_processor_output_is_recorded_as_failure_without_proposals[amount] PASSED [ 36%]
+tests/test_extraction_revisions.py::test_malformed_processor_output_is_recorded_as_failure_without_proposals[pages] PASSED [ 38%]
+tests/test_extraction_revisions.py::test_malformed_processor_output_is_recorded_as_failure_without_proposals[version] PASSED [ 39%]
+tests/test_extraction_revisions.py::test_malformed_processor_output_is_recorded_as_failure_without_proposals[huge_confidence] PASSED [ 40%]
+tests/test_extraction_revisions.py::test_malformed_processor_output_is_recorded_as_failure_without_proposals[surrogate] PASSED [ 41%]
+tests/test_extraction_revisions.py::test_malformed_processor_output_is_recorded_as_failure_without_proposals[nul] PASSED [ 42%]
+tests/test_extraction_revisions.py::test_finish_rollback_loses_no_history_and_retry_commits_one_effect PASSED [ 44%]
+tests/test_extraction_revisions.py::test_reprocessing_preserves_manual_cost_values_and_revoked_source_hides_evidence PASSED [ 45%]
+tests/test_extraction_revisions.py::test_extraction_migration_retains_revisions_and_restores_empty_schema PASSED [ 46%]
+tests/test_pdf_extraction.py::TestEndToEndPdfUpload::test_upload_pdf_with_cost_entry_prefill PASSED [ 47%]
+tests/test_financial_computation_evidence.py::test_actual_compute_and_finalize_have_exact_distinct_receipts[rental] PASSED [ 48%]
+tests/test_financial_computation_evidence.py::test_actual_compute_and_finalize_have_exact_distinct_receipts[plan] PASSED [ 50%]
+tests/test_financial_computation_evidence.py::test_actual_compute_and_finalize_have_exact_distinct_receipts[weg] PASSED [ 51%]
+tests/test_financial_computation_evidence.py::test_actual_compute_and_finalize_have_exact_distinct_receipts[asset] PASSED [ 52%]
+tests/test_financial_computation_evidence.py::test_changed_persisted_state_after_trusted_attestation_is_not_consumed[snapshot] PASSED [ 53%]
+tests/test_financial_computation_evidence.py::test_changed_persisted_state_after_trusted_attestation_is_not_consumed[line] PASSED [ 54%]
+tests/test_financial_computation_evidence.py::test_changed_persisted_state_after_trusted_attestation_is_not_consumed[source] PASSED [ 55%]
+tests/test_financial_computation_evidence.py::test_changed_persisted_state_after_trusted_attestation_is_not_consumed[coverage] PASSED [ 57%]
+tests/test_financial_computation_evidence.py::test_deferred_seal_rolls_back_changes_after_consumption PASSED [ 58%]
+tests/test_financial_computation_evidence.py::test_private_proof_requires_exact_role_actor_and_transaction PASSED [ 59%]
+tests/test_financial_computation_evidence.py::test_contact_aba_cannot_change_names_during_trusted_computation PASSED [ 60%]
+tests/test_financial_computation_evidence.py::test_newer_other_parent_type_cannot_suppress_deferred_seal PASSED [ 61%]
+tests/test_financial_computation_evidence.py::test_forcing_constraints_early_cannot_bypass_later_mutation_seal[output] PASSED [ 63%]
+tests/test_financial_computation_evidence.py::test_forcing_constraints_early_cannot_bypass_later_mutation_seal[source] PASSED [ 64%]
+tests/test_financial_computation_evidence.py::test_mismatched_or_expired_trusted_proof_is_not_consumed[actor] PASSED [ 65%]
+tests/test_financial_computation_evidence.py::test_mismatched_or_expired_trusted_proof_is_not_consumed[tenant] PASSED [ 66%]
+tests/test_financial_computation_evidence.py::test_mismatched_or_expired_trusted_proof_is_not_consumed[parent] PASSED [ 67%]
+tests/test_financial_computation_evidence.py::test_mismatched_or_expired_trusted_proof_is_not_consumed[operation] PASSED [ 69%]
+tests/test_financial_computation_evidence.py::test_mismatched_or_expired_trusted_proof_is_not_consumed[pid] PASSED [ 70%]
+tests/test_financial_computation_evidence.py::test_mismatched_or_expired_trusted_proof_is_not_consumed[transaction] PASSED [ 71%]
+tests/test_financial_computation_evidence.py::test_mismatched_or_expired_trusted_proof_is_not_consumed[expired] PASSED [ 72%]
+tests/test_financial_computation_evidence.py::test_computation_evidence_is_immutable_manifested_and_roundtrips PASSED [ 73%]
+tests/test_financial_computation_evidence.py::test_busy_contact_source_refuses_computation_without_waiting PASSED [ 75%]
+tests/test_financial_scope_boundary.py::test_bound_financial_reads_require_exact_grant_even_for_administrator PASSED [ 76%]
+tests/test_financial_scope_boundary.py::test_selected_scope_does_not_mix_two_authorized_spheres PASSED [ 77%]
+tests/test_financial_scope_boundary.py::test_preparation_grant_cannot_confirm_cost_or_finalize_plan PASSED [ 78%]
+tests/test_financial_scope_boundary.py::test_computation_context_rejects_unclassified_inputs PASSED [ 79%]
+tests/test_financial_scope_boundary.py::test_partial_scope_filters_units_and_dependent_master_rows PASSED [ 80%]
+tests/test_financial_scope_boundary.py::test_source_download_checks_current_grant_and_revocation PASSED [ 82%]
+tests/test_financial_scope_boundary.py::test_invoice_job_rechecks_persisted_principal[revoke-before_claim] PASSED [ 83%]
+tests/test_financial_scope_boundary.py::test_invoice_job_rechecks_persisted_principal[revoke-before_finish] PASSED [ 84%]
+tests/test_financial_scope_boundary.py::test_invoice_job_rechecks_persisted_principal[deactivate-before_claim] PASSED [ 85%]
+tests/test_financial_scope_boundary.py::test_invoice_job_rechecks_persisted_principal[deactivate-before_finish] PASSED [ 86%]
+tests/test_financial_scope_boundary.py::test_invoice_job_rechecks_persisted_principal[role-before_claim] PASSED [ 88%]
+tests/test_financial_scope_boundary.py::test_invoice_job_rechecks_persisted_principal[role-before_finish] PASSED [ 89%]
+tests/test_financial_scope_boundary.py::test_old_cancellation_cannot_override_newer_invoice_attempt PASSED [ 90%]
+tests/test_financial_scope_boundary.py::test_invoice_attempt_principal_is_immutable[initiated_by-actor] PASSED [ 91%]
+tests/test_financial_scope_boundary.py::test_invoice_attempt_principal_is_immutable[requested_scope_id-other_scope] PASSED [ 92%]
+tests/test_financial_scope_boundary.py::test_statement_cannot_treat_hidden_scoped_money_as_zero PASSED [ 94%]
+tests/test_financial_scope_boundary.py::test_privacy_cannot_erase_or_export_incomplete_retention[status] PASSED [ 95%]
+tests/test_financial_scope_boundary.py::test_privacy_cannot_erase_or_export_incomplete_retention[request_deletion] PASSED [ 96%]
+tests/test_financial_scope_boundary.py::test_privacy_cannot_erase_or_export_incomplete_retention[anonymize] PASSED [ 97%]
+tests/test_financial_scope_boundary.py::test_privacy_cannot_erase_or_export_incomplete_retention[export_person_data] PASSED [ 98%]
+tests/test_financial_scope_boundary.py::test_plan_payment_derivation_enters_exact_scope_before_summing PASSED [100%]
+
+==================================== ERRORS ====================================
+_ ERROR at setup of test_meeting_and_classification_projection_matches_live[PAUSED] _
+.venv/lib/python3.13/site-packages/pytest_asyncio/plugin.py:391: in _async_fixture_wrapper
+    result = event_loop.run_until_complete(setup_task)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../.local/share/uv/python/cpython-3.13.13-macos-x86_64-none/lib/python3.13/asyncio/base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/pytest_asyncio/plugin.py:386: in setup
+    res = await func(**_add_kwargs(func, kwargs, event_loop, request))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_financial_scope_boundary.py:22: in scope_seed
+    await migrator_session.execute(text("""INSERT INTO "user" (id,organization_id,email,password_hash,display_name)
+.venv/lib/python3.13/site-packages/sqlalchemy/ext/asyncio/session.py:448: in execute
+    result = await greenlet_spawn(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py:2373: in execute
+    return self._execute_internal(
+.venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py:2261: in _execute_internal
+    conn = self._connection_for_bind(bind)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py:2113: in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/orm/state_changes.py:137: in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py:1191: in _connection_for_bind
+    conn = bind.connect()
+           ^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:3295: in connect
+    return self._connection_cls(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:144: in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:3319: in raw_connection
+    return self.pool.connect()
+           ^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py:448: in connect
+    return _ConnectionFairy._checkout(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py:1272: in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py:712: in checkout
+    rec = pool._do_get()
+          ^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/pool/impl.py:178: in _do_get
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py:122: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+.venv/lib/python3.13/site-packages/sqlalchemy/pool/impl.py:176: in _do_get
+    return self._create_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py:389: in _create_connection
+    return _ConnectionRecord(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py:674: in __init__
+    self.__connect()
+.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py:900: in __connect
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py:122: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+.venv/lib/python3.13/site-packages/sqlalchemy/pool/base.py:896: in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/create.py:667: in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:630: in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:955: in connect
+    await_only(creator_fn(*arg, **kw)),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connection.py:2443: in connect
+    return await connect_utils._connect(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1249: in _connect
+    raise last_error or exceptions.TargetServerAttributeNotMatched(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1218: in _connect
+    conn = await _connect_addr(
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1054: in _connect_addr
+    return await __connect_addr(params, True, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:1099: in __connect_addr
+    tr, pr = await connector
+             ^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/connect_utils.py:977: in _create_ssl_connection
+    do_ssl_upgrade = await pr.on_data
+                     ^^^^^^^^^^^^^^^^
+E   ConnectionError: PostgreSQL server at "localhost:55432" rejected SSL upgrade
+=========================== short test summary info ============================
+ERROR tests/test_projected_access_coverage.py::test_meeting_and_classification_projection_matches_live[PAUSED]
+========================= 83 passed, 1 error in 51.51s =========================

@@ -1,0 +1,5 @@
+Whole bg219 failed Exit1:2367passed135failed184errors2existing skips.
+After fixes: bg22020passed95.26s, bg2212passed7.08s,bg22221passed9.44s. Head0123,30costcategories,no saved DBs. Not a green whole suite.
+Compose runtime-config line317 expects worker.HV_DATABASE_URL/app_rw; actual docker-compose.prod.yml worker only HV_DATABASE_URL_WORKER postgresql+asyncpg://app_worker:${APP_WORKER_PASSWORD}@db:5432/hausverwaltung. No credentials or topology changed to satisfy obsolete assertion.
+RLS coverage TestRLSCoverage.test_no_unknown_tables reports25 unclassified current tables. Do not hide them, downgrade scope or label tenant tables global without audit; explicit permission needed to update inventory/expected parametrized scope.
+Other unresolved whole-run signatures: projected_access_coverage downgrade retains intake originals/work and refuses; runtime_budget_review downgrade AssertionError; extraction_revisions invalid UUID (possibly category cascade), PDF upload missing category (cascade). Separate diagnosis required; no claim these are fixed.

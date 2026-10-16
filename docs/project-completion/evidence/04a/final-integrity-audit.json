@@ -1,0 +1,12 @@
+{
+  "tracked_test_harness_files": 49,
+  "test_names_and_decorators_unchanged": true,
+  "assertions_unchanged_except_authorized_compose_function": true,
+  "authorized_assertion_exception": [
+    {
+      "path": "backend/tests/test_declaration_runtime_config.py",
+      "function": "test_compose_declares_least_privilege_worker_topology"
+    }
+  ],
+  "production_migrations_and_tenant_diff": []
+}

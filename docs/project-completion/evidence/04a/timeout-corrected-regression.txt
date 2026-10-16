@@ -1,0 +1,26 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.13, pytest-8.4.2, pluggy-1.6.0 -- /Users/keks/Developer/hausverwaltung/backend/.venv/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/keks/Developer/hausverwaltung/backend
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-0.26.0, hypothesis-6.165.10
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 14 items
+
+tests/test_declaration_publication_order.py::test_new_destination_and_receipt_precede_source_binding PASSED [  7%]
+tests/test_declaration_publication_order.py::test_existing_destination_receipt_precedes_source_binding PASSED [ 14%]
+tests/test_declaration_pass_ledger.py::test_pass_ledger_model_and_repository_expose_typed_append_only_seam PASSED [ 21%]
+tests/test_declaration_pass_ledger.py::test_pass_ledger_schema_is_rls_force_and_append_only PASSED [ 28%]
+tests/test_declaration_pass_ledger.py::test_pass_ledger_append_uses_safe_metadata_and_global_attempt_numbers PASSED [ 35%]
+tests/test_declaration_pass_ledger.py::test_pass_ledger_rejects_untyped_or_duplicate_append PASSED [ 42%]
+tests/test_declaration_pass_ledger.py::test_pipeline_checkpoint_persists_one_content_free_row_per_sdk_attempt PASSED [ 50%]
+tests/test_declaration_pass_ledger.py::test_two_attempt_provider_failure_persists_before_retry_wait_without_duplicates PASSED [ 57%]
+tests/test_declaration_pass_ledger.py::test_checkpoint_renumbers_two_schema_repair_attempts_globally PASSED [ 64%]
+tests/test_declaration_pass_ledger.py::test_failure_persists_pending_attempt_before_retry_wait PASSED [ 71%]
+tests/test_declaration_pass_ledger.py::test_failure_with_missing_active_run_keeps_queue_and_import_unchanged PASSED [ 78%]
+tests/test_declaration_pass_ledger.py::test_checkpoint_rollback_retains_queue_and_retry_writes_no_duplicate PASSED [ 85%]
+tests/test_declaration_pass_ledger.py::test_pass_ledger_hides_cross_tenant_rows_and_denies_mutation PASSED [ 92%]
+tests/test_allocation_corrections.py::test_changed_amount_period_and_competing_corrections_are_complete PASSED [100%]
+
+============================= 14 passed in 13.20s ==============================

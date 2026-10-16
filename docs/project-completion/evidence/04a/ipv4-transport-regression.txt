@@ -1,0 +1,107 @@
+START 2026-10-12T14:24:04.709732+00:00 TLS options unchanged
+SQLALCHEMY_CONNECTIONS 500
+SQLALCHEMY_CONNECTIONS 1000
+SQLALCHEMY_CONNECTIONS 1500
+SQLALCHEMY_CONNECTIONS 2000
+SQLALCHEMY_CONNECTIONS 2500
+SQLALCHEMY_CONNECTIONS 3000
+ASYNCPG_CONNECTIONS 500
+ASYNCPG_CONNECTIONS 1000
+ASYNCPG_CONNECTIONS 1500
+ASYNCPG_CONNECTIONS 2000
+ASYNCPG_CONNECTIONS 2500
+ASYNCPG_CONNECTIONS 3000
+============================= test session starts ==============================
+platform darwin -- Python 3.13.13, pytest-8.4.2, pluggy-1.6.0 -- /Users/keks/Developer/hausverwaltung/backend/.venv/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/keks/Developer/hausverwaltung/backend
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-0.26.0, hypothesis-6.165.10
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 78 items
+
+tests/test_property_knowledge_query.py::test_fake_provider_is_deterministic_and_returns_sanitized_usage PASSED [  1%]
+tests/test_property_knowledge_query.py::test_fake_provider_returns_clarification_for_conflicted_hit_and_estimates_reservation PASSED [  2%]
+tests/test_property_knowledge_query.py::test_fake_provider_enforces_transmitted_and_configured_output_caps PASSED [  3%]
+tests/test_property_knowledge_query.py::test_fake_provider_rejects_non_positive_output_limit PASSED [  5%]
+tests/test_property_knowledge_query.py::test_fake_timeout_keeps_sanitized_billable_usage PASSED [  6%]
+tests/test_property_knowledge_query.py::test_no_retrieval_hit_returns_fixed_abstention_without_calling_provider PASSED [  7%]
+tests/test_property_knowledge_query.py::test_invalid_provider_citation_never_returns_provider_prose PASSED [  8%]
+tests/test_property_knowledge_query.py::test_invalid_provider_output_never_returns_provider_prose PASSED [ 10%]
+tests/test_property_knowledge_query.py::test_final_validation_rejects_a_fact_that_became_stale_after_retrieval PASSED [ 11%]
+tests/test_property_knowledge_query.py::test_openai_adapter_uses_data_only_tool_free_strict_request PASSED [ 12%]
+tests/test_property_knowledge_query.py::test_openai_adapter_rejects_nonstandard_source_id_prefix_after_billed_response PASSED [ 14%]
+tests/test_property_knowledge_query.py::test_openai_adapter_rejects_output_overrun_with_attached_usage PASSED [ 15%]
+tests/test_property_knowledge_query.py::test_openai_reservation_is_public_and_answer_uses_its_exact_ceiling PASSED [ 16%]
+tests/test_property_knowledge_query.py::test_openai_structured_parse_failure_is_invalid_output_not_unavailable PASSED [ 17%]
+tests/test_property_knowledge_query.py::test_openai_pydantic_parse_failure_is_invalid_output_not_unavailable PASSED [ 19%]
+tests/test_property_knowledge_query.py::test_openai_reservation_counts_developer_prompt_and_schema_with_injected_encoder PASSED [ 20%]
+tests/test_property_knowledge_query.py::test_citation_validation_rejects_invented_ids_and_preserves_safe_text PASSED [ 21%]
+tests/test_property_knowledge_query.py::test_citation_validation_requires_ids_and_ownership_from_original_retrieval PASSED [ 23%]
+tests/test_property_knowledge_query.py::test_citation_validation_rejects_duplicate_and_detached_source PASSED [ 24%]
+tests/test_property_knowledge_query.py::test_citation_validation_requires_clarification_for_unresolved_same_topic_conflict PASSED [ 25%]
+tests/test_property_knowledge_query.py::test_citation_validation_keeps_original_conflicts_and_rejects_changed_support PASSED [ 26%]
+tests/test_property_knowledge_query.py::test_query_endpoint_uses_injected_provider_and_returns_exact_sources PASSED [ 28%]
+tests/test_property_knowledge_query.py::test_query_endpoint_allows_read_roles_and_rejects_foreign_or_invalid_requests PASSED [ 29%]
+tests/test_property_knowledge_query.py::test_query_endpoint_no_hit_short_circuits_disabled_provider PASSED [ 30%]
+tests/test_property_knowledge_query.py::test_query_endpoint_disabled_and_transport_outage_do_not_break_search PASSED [ 32%]
+tests/test_property_knowledge_query.py::test_query_endpoint_finalizes_usage_overrun_before_rate_limiting PASSED [ 33%]
+tests/test_property_knowledge_query.py::test_query_endpoint_concurrency_guard_rejects_second_provider_attempt PASSED [ 34%]
+tests/test_property_knowledge_query.py::test_query_endpoint_budget_reservation_allows_only_one_racing_call PASSED [ 35%]
+tests/test_property_knowledge_query.py::test_query_endpoint_reclaims_expired_reservation_before_budget_sum PASSED [ 37%]
+tests/test_property_knowledge_query.py::test_provider_construction_is_deferred_until_known_property_has_hits PASSED [ 38%]
+tests/test_property_knowledge_query.py::test_estimator_failure_is_sanitized_after_property_resolution PASSED [ 39%]
+tests/test_property_knowledge_query.py::test_qa_reservation_outlives_provider_timeout_and_finalization_margin PASSED [ 41%]
+tests/test_property_knowledge_query.py::test_usage_mismatch_preserves_numeric_usage_and_conservative_actual_cost PASSED [ 42%]
+tests/test_property_knowledge_query.py::test_denied_reservation_commits_expiry_transition_before_rate_limit PASSED [ 43%]
+tests/test_property_knowledge_query.py::test_advisory_lock_serializes_two_open_tenant_reservation_transactions PASSED [ 44%]
+tests/test_property_knowledge_query.py::test_live_reservation_is_not_reclaimed_during_configured_provider_timeout PASSED [ 46%]
+tests/test_disposable_database_guard.py::test_collection_refuses_a_missing_database_url[HV_DATABASE_URL] PASSED [ 47%]
+tests/test_disposable_database_guard.py::test_collection_refuses_a_missing_database_url[HV_DATABASE_URL_MIGRATOR] PASSED [ 48%]
+tests/test_disposable_database_guard.py::test_collection_refuses_a_missing_database_url[HV_DATABASE_URL_SYNC] PASSED [ 50%]
+tests/test_disposable_database_guard.py::test_collection_refuses_non_disposable_database_urls[<lambda>0-HV_DATABASE_URL] PASSED [ 51%]
+tests/test_disposable_database_guard.py::test_collection_refuses_non_disposable_database_urls[<lambda>0-HV_DATABASE_URL_MIGRATOR] PASSED [ 52%]
+tests/test_disposable_database_guard.py::test_collection_refuses_non_disposable_database_urls[<lambda>0-HV_DATABASE_URL_SYNC] PASSED [ 53%]
+tests/test_disposable_database_guard.py::test_collection_refuses_non_disposable_database_urls[<lambda>1-HV_DATABASE_URL] PASSED [ 55%]
+tests/test_disposable_database_guard.py::test_collection_refuses_non_disposable_database_urls[<lambda>1-HV_DATABASE_URL_MIGRATOR] PASSED [ 56%]
+tests/test_disposable_database_guard.py::test_collection_refuses_non_disposable_database_urls[<lambda>1-HV_DATABASE_URL_SYNC] PASSED [ 57%]
+tests/test_disposable_database_guard.py::test_collection_refuses_non_disposable_database_urls[<lambda>2-HV_DATABASE_URL] PASSED [ 58%]
+tests/test_disposable_database_guard.py::test_collection_refuses_non_disposable_database_urls[<lambda>2-HV_DATABASE_URL_MIGRATOR] PASSED [ 60%]
+tests/test_disposable_database_guard.py::test_collection_refuses_non_disposable_database_urls[<lambda>2-HV_DATABASE_URL_SYNC] PASSED [ 61%]
+tests/test_disposable_database_guard.py::test_collection_refuses_database_url_query_overrides[host=database.example.test-HV_DATABASE_URL] PASSED [ 62%]
+tests/test_disposable_database_guard.py::test_collection_refuses_database_url_query_overrides[host=database.example.test-HV_DATABASE_URL_MIGRATOR] PASSED [ 64%]
+tests/test_disposable_database_guard.py::test_collection_refuses_database_url_query_overrides[host=database.example.test-HV_DATABASE_URL_SYNC] PASSED [ 65%]
+tests/test_disposable_database_guard.py::test_collection_refuses_database_url_query_overrides[port=55431-HV_DATABASE_URL] PASSED [ 66%]
+tests/test_disposable_database_guard.py::test_collection_refuses_database_url_query_overrides[port=55431-HV_DATABASE_URL_MIGRATOR] PASSED [ 67%]
+tests/test_disposable_database_guard.py::test_collection_refuses_database_url_query_overrides[port=55431-HV_DATABASE_URL_SYNC] PASSED [ 69%]
+tests/test_disposable_database_guard.py::test_collection_refuses_database_url_query_overrides[dbname=unexpected_database-HV_DATABASE_URL] PASSED [ 70%]
+tests/test_disposable_database_guard.py::test_collection_refuses_database_url_query_overrides[dbname=unexpected_database-HV_DATABASE_URL_MIGRATOR] PASSED [ 71%]
+tests/test_disposable_database_guard.py::test_collection_refuses_database_url_query_overrides[dbname=unexpected_database-HV_DATABASE_URL_SYNC] PASSED [ 73%]
+tests/test_disposable_database_guard.py::test_collection_refuses_database_url_fragments[HV_DATABASE_URL] PASSED [ 74%]
+tests/test_disposable_database_guard.py::test_collection_refuses_database_url_fragments[HV_DATABASE_URL_MIGRATOR] PASSED [ 75%]
+tests/test_disposable_database_guard.py::test_collection_refuses_database_url_fragments[HV_DATABASE_URL_SYNC] PASSED [ 76%]
+tests/test_disposable_database_guard.py::test_collection_refuses_lowercase_database_url_overrides[HV_DATABASE_URL] PASSED [ 78%]
+tests/test_disposable_database_guard.py::test_collection_refuses_lowercase_database_url_overrides[HV_DATABASE_URL_MIGRATOR] PASSED [ 79%]
+tests/test_disposable_database_guard.py::test_collection_refuses_lowercase_database_url_overrides[HV_DATABASE_URL_SYNC] PASSED [ 80%]
+tests/test_disposable_database_guard.py::test_direct_alembic_refuses_lowercase_sync_url_override PASSED [ 82%]
+tests/test_disposable_database_guard.py::test_direct_alembic_refuses_lowercase_disposable_sync_url_with_query_override PASSED [ 83%]
+tests/test_disposable_database_guard.py::test_collection_accepts_all_disposable_database_urls PASSED [ 84%]
+tests/test_disposable_database_guard.py::test_collection_accepts_only_explicit_gitlab_ci_database_profile PASSED [ 85%]
+tests/test_disposable_database_guard.py::test_collection_refuses_gitlab_urls_without_exact_ci_profile[None-None] PASSED [ 87%]
+tests/test_disposable_database_guard.py::test_collection_refuses_gitlab_urls_without_exact_ci_profile[gitlab-ci-None] PASSED [ 88%]
+tests/test_disposable_database_guard.py::test_collection_refuses_gitlab_urls_without_exact_ci_profile[gitlab-ci-false] PASSED [ 89%]
+tests/test_disposable_database_guard.py::test_collection_refuses_gitlab_urls_without_exact_ci_profile[local-true] PASSED [ 91%]
+tests/test_disposable_database_guard.py::test_collection_refuses_gitlab_profile_url_variants[HV_DATABASE_URL-postgresql+asyncpg://app_rw:app_secret@localhost:5432/hausverwaltung] PASSED [ 92%]
+tests/test_disposable_database_guard.py::test_collection_refuses_gitlab_profile_url_variants[HV_DATABASE_URL_MIGRATOR-postgresql+asyncpg://app_migrator:migrator_secret@localhost:55432/hausverwaltung] PASSED [ 93%]
+tests/test_disposable_database_guard.py::test_collection_refuses_gitlab_profile_url_variants[HV_DATABASE_URL_SYNC-postgresql://app_migrator:migrator_secret@localhost:55432/other] PASSED [ 94%]
+tests/test_disposable_database_guard.py::test_collection_refuses_gitlab_profile_url_variants[HV_DATABASE_URL-postgresql+asyncpg://app_migrator:app_secret@localhost:55432/hausverwaltung] PASSED [ 96%]
+tests/test_disposable_database_guard.py::test_collection_refuses_gitlab_profile_url_variants[HV_DATABASE_URL_SYNC-postgresql://app_migrator:migrator_secret@localhost:55432/hausverwaltung?sslmode=disable] PASSED [ 97%]
+tests/test_disposable_database_guard.py::test_collection_refuses_gitlab_profile_url_variants[HV_DATABASE_URL_MIGRATOR-postgresql+asyncpg://app_migrator:migrator_secret@localhost:55432/hausverwaltung#x] PASSED [ 98%]
+tests/test_disposable_database_guard.py::test_collection_refuses_gitlab_profile_url_variants[HV_DATABASE_URL_SYNC-postgresql+asyncpg://app_migrator:migrator_secret@postgres:5432/hausverwaltung] PASSED [100%]
+
+======================== 78 passed in 84.34s (0:01:24) =========================
+END 2026-10-12T14:28:25.087711+00:00
+COMPLETED_CONNECTIONS {"sqlalchemy": 3000, "asyncpg": 3000}
+SSL_NEGOTIATION_COUNTS {"{\"advisory\": true, \"check_hostname\": false, \"hex\": \"4e\", \"length\": 1, \"verify_mode\": 0}": 6079}
+UNEXPECTED_NEGOTIATIONS 0

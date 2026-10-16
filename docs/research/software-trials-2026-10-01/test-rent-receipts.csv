@@ -1,0 +1,3 @@
+Buchungstag;Valutadatum;Auftraggeber/Empfänger;Verwendungszweck;Betrag;Waehrung
+03.09.2026;03.09.2026;TEST Anna Beispiel;TEST MV-01 Miete September 2026;800,00;EUR
+04.09.2026;04.09.2026;TEST Ben Muster;TEST MV-02 Teilzahlung Miete September 2026;900,00;EUR

@@ -238,6 +238,7 @@ async def test_migration_backfill_guard_and_function_identity(migrator_session,s
                 db.execute(text('TRUNCATE exception_completion CASCADE'))
                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
+                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))

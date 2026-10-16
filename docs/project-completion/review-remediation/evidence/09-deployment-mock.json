@@ -1,0 +1,7 @@
+{
+  "command": "env -u HV_OPENAI_API_KEY -u USER sh scripts/test-deploy-production.sh",
+  "exit_code": 0,
+  "duration_seconds": 8.97,
+  "scope": "Local test doubles only; no real Docker daemon, SSH, deployment or provider calls.",
+  "log": "evidence/09-deployment-mock.log"
+}

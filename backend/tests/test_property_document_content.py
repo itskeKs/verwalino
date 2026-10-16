@@ -29,10 +29,15 @@ async def _migrator_execute(statement: str, parameters: dict) -> None:
 
 
 async def _cleanup_content_graph(graph: "ContentGraph") -> None:
-    """Remove committed fixture rows in FK order after each HTTP test."""
+    """Retain registered fixture graphs; otherwise remove rows in FK order."""
     engine = create_async_engine(MIGRATOR_URL)
     try:
         async with engine.begin() as connection:
+            if await connection.scalar(text(
+                'SELECT EXISTS(SELECT 1 FROM document_ref WHERE property_document_id = ANY(:ids))'
+            ), {'ids': [graph.document_id, graph.other_property_document_id,
+                       graph.import_document_id, graph.archived_document_id, graph.foreign_document_id]}):
+                return
             await connection.execute(
                 text(
                     "DELETE FROM declaration_import_document "

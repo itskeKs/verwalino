@@ -118,10 +118,18 @@ async def test_blocked_inspection_retries_same_original_with_bounded_replay(migr
             assert retried.status_code==(202 if attempt<3 else 409),retried.text
             if attempt<3:
                 assert (await api.post('/api/intake-batches/retry',json=body,headers={'Idempotency-Key':key})).json()==retried.json()
-        assert not await process_once(get_worker_session_factory(),ids['org'])
+        restored=await api.post('/api/intake-batches/retry',json=body,headers={'Idempotency-Key':str(uuid.uuid4())})
+        assert restored.status_code==409,restored.text
+        scanner_calls=[]
+        def restored_scanner(data,mime):
+            scanner_calls.append(data)
+            return result(data,'clean',mime=mime,pages=1)
+        assert not await process_once(get_worker_session_factory(),ids['org'],inspector=restored_scanner)
+        assert scanner_calls==[]
         assert (await api.get('/api/document-refs/page',params={'source_id':receipt['original_id']})).json()['items']==[]
     assert await read_value('SELECT count(*) FROM job_attempt WHERE job_id=:job',{**ids,'job':uuid.UUID(receipt['job_id'])})==3
     assert await read_value("SELECT count(*) FROM outbox_event WHERE resource_id=:original AND event_type='intake.received'",{**ids,'original':uuid.UUID(receipt['original_id'])})==1
+    assert await read_value("SELECT count(*) FROM outbox_event WHERE resource_id=:original AND event_type='intake.inspected'",{**ids,'original':uuid.UUID(receipt['original_id'])})==3
 
 
 async def test_stale_worker_cannot_complete_reclaimed_generation(migrator_session,scope_seed,store):
@@ -274,6 +282,7 @@ async def test_intake_migration_refuses_data_and_preserves_function_identity(mig
                 db.execute(text('TRUNCATE exception_completion CASCADE'))
                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
+                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))

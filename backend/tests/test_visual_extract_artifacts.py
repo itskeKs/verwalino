@@ -180,7 +180,7 @@ async def test_migration_empty_roundtrip_retention_manifest_and_private_roles(mi
     from sqlalchemy.exc import DBAPIError
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
-    from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.conftest import MIGRATOR_SYNC_URL, clear_disposable_source_context
     from tests.test_access_coverage import capture
     ids = await fixture(migrator_session, scope_seed)
     migration = importlib.import_module('migrations.versions.0117_visual_extract_artifacts')
@@ -190,6 +190,8 @@ async def test_migration_empty_roundtrip_retention_manifest_and_private_roles(mi
             before = db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
             point = db.begin_nested()
             try:
+                clear_disposable_source_context(db.connection.cursor())
+                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
                 db.execute(text('TRUNCATE visual_extract_attestation CASCADE'))
@@ -203,6 +205,7 @@ async def test_migration_empty_roundtrip_retention_manifest_and_private_roles(mi
                 importlib.import_module('migrations.versions.0120_allocation_source_aliases').upgrade()
                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
+                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').upgrade()
                 assert before == db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
             finally:
                 point.rollback()
@@ -231,11 +234,12 @@ async def test_migration_empty_roundtrip_retention_manifest_and_private_roles(mi
                                 'target': uuid.UUID(reply.json()['id']), 'partition': uuid.UUID(body['partition_revision_id']), 'request': uuid.uuid4()})
         with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
             with pytest.raises(DBAPIError, match='Retain visual extract'), db.begin_nested():
+                db.execute(text('TRUNCATE allocation_set,allocation_correction CASCADE'))
+                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
                 db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
-                db.execute(text('TRUNCATE allocation_set CASCADE'))
                 importlib.import_module('migrations.versions.0120_allocation_source_aliases').downgrade()
                 importlib.import_module('migrations.versions.0119_allocation_source_claims').downgrade()
                 importlib.import_module('migrations.versions.0118_visual_disclosures').downgrade()

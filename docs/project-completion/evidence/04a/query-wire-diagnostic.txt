@@ -1,0 +1,51 @@
+SERIAL_CONNECTION_PROBE 600 completed; TLS options unchanged
+============================= test session starts ==============================
+platform darwin -- Python 3.13.13, pytest-8.4.2, pluggy-1.6.0 -- /Users/keks/Developer/hausverwaltung/backend/.venv/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/keks/Developer/hausverwaltung/backend
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-0.26.0, hypothesis-6.165.10
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 36 items
+
+tests/test_property_knowledge_query.py::test_fake_provider_is_deterministic_and_returns_sanitized_usage PASSED [  2%]
+tests/test_property_knowledge_query.py::test_fake_provider_returns_clarification_for_conflicted_hit_and_estimates_reservation PASSED [  5%]
+tests/test_property_knowledge_query.py::test_fake_provider_enforces_transmitted_and_configured_output_caps PASSED [  8%]
+tests/test_property_knowledge_query.py::test_fake_provider_rejects_non_positive_output_limit PASSED [ 11%]
+tests/test_property_knowledge_query.py::test_fake_timeout_keeps_sanitized_billable_usage PASSED [ 13%]
+tests/test_property_knowledge_query.py::test_no_retrieval_hit_returns_fixed_abstention_without_calling_provider PASSED [ 16%]
+tests/test_property_knowledge_query.py::test_invalid_provider_citation_never_returns_provider_prose PASSED [ 19%]
+tests/test_property_knowledge_query.py::test_invalid_provider_output_never_returns_provider_prose PASSED [ 22%]
+tests/test_property_knowledge_query.py::test_final_validation_rejects_a_fact_that_became_stale_after_retrieval PASSED [ 25%]
+tests/test_property_knowledge_query.py::test_openai_adapter_uses_data_only_tool_free_strict_request PASSED [ 27%]
+tests/test_property_knowledge_query.py::test_openai_adapter_rejects_nonstandard_source_id_prefix_after_billed_response PASSED [ 30%]
+tests/test_property_knowledge_query.py::test_openai_adapter_rejects_output_overrun_with_attached_usage PASSED [ 33%]
+tests/test_property_knowledge_query.py::test_openai_reservation_is_public_and_answer_uses_its_exact_ceiling PASSED [ 36%]
+tests/test_property_knowledge_query.py::test_openai_structured_parse_failure_is_invalid_output_not_unavailable PASSED [ 38%]
+tests/test_property_knowledge_query.py::test_openai_pydantic_parse_failure_is_invalid_output_not_unavailable PASSED [ 41%]
+tests/test_property_knowledge_query.py::test_openai_reservation_counts_developer_prompt_and_schema_with_injected_encoder PASSED [ 44%]
+tests/test_property_knowledge_query.py::test_citation_validation_rejects_invented_ids_and_preserves_safe_text PASSED [ 47%]
+tests/test_property_knowledge_query.py::test_citation_validation_requires_ids_and_ownership_from_original_retrieval PASSED [ 50%]
+tests/test_property_knowledge_query.py::test_citation_validation_rejects_duplicate_and_detached_source PASSED [ 52%]
+tests/test_property_knowledge_query.py::test_citation_validation_requires_clarification_for_unresolved_same_topic_conflict PASSED [ 55%]
+tests/test_property_knowledge_query.py::test_citation_validation_keeps_original_conflicts_and_rejects_changed_support PASSED [ 58%]
+tests/test_property_knowledge_query.py::test_query_endpoint_uses_injected_provider_and_returns_exact_sources PASSED [ 61%]
+tests/test_property_knowledge_query.py::test_query_endpoint_allows_read_roles_and_rejects_foreign_or_invalid_requests PASSED [ 63%]
+tests/test_property_knowledge_query.py::test_query_endpoint_no_hit_short_circuits_disabled_provider PASSED [ 66%]
+tests/test_property_knowledge_query.py::test_query_endpoint_disabled_and_transport_outage_do_not_break_search PASSED [ 69%]
+tests/test_property_knowledge_query.py::test_query_endpoint_finalizes_usage_overrun_before_rate_limiting PASSED [ 72%]
+tests/test_property_knowledge_query.py::test_query_endpoint_concurrency_guard_rejects_second_provider_attempt PASSED [ 75%]
+tests/test_property_knowledge_query.py::test_query_endpoint_budget_reservation_allows_only_one_racing_call PASSED [ 77%]
+tests/test_property_knowledge_query.py::test_query_endpoint_reclaims_expired_reservation_before_budget_sum PASSED [ 80%]
+tests/test_property_knowledge_query.py::test_provider_construction_is_deferred_until_known_property_has_hits PASSED [ 83%]
+tests/test_property_knowledge_query.py::test_estimator_failure_is_sanitized_after_property_resolution PASSED [ 86%]
+tests/test_property_knowledge_query.py::test_qa_reservation_outlives_provider_timeout_and_finalization_margin PASSED [ 88%]
+tests/test_property_knowledge_query.py::test_usage_mismatch_preserves_numeric_usage_and_conservative_actual_cost PASSED [ 91%]
+tests/test_property_knowledge_query.py::test_denied_reservation_commits_expiry_transition_before_rate_limit PASSED [ 94%]
+tests/test_property_knowledge_query.py::test_advisory_lock_serializes_two_open_tenant_reservation_transactions PASSED [ 97%]
+tests/test_property_knowledge_query.py::test_live_reservation_is_not_reclaimed_during_configured_provider_timeout PASSED [100%]
+
+============================= 36 passed in 12.33s ==============================
+SSL_NEGOTIATION_COUNTS {"{\"advisory\": true, \"check_hostname\": false, \"hex\": \"4e\", \"host\": \"localhost\", \"port\": 55432, \"verify_mode\": 0}": 679}
+UNEXPECTED_SSL_NEGOTIATIONS []

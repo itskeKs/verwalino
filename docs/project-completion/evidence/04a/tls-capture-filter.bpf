@@ -1,0 +1,1 @@
+ip and tcp port 55432 and ((tcp[tcpflags] & 7 != 0) or (tcp[((tcp[12] & 0xf0) >> 2):4] = 8 and tcp[(((tcp[12] & 0xf0) >> 2) + 4):4] = 80877103) or (tcp src port 55432 and (tcp[((tcp[12] & 0xf0) >> 2)] = 0x4e or tcp[((tcp[12] & 0xf0) >> 2)] = 0x45)))

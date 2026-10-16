@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from app.core.db import get_tenant_session
 from app.services.dsgvo_service import DsgvoService
-from tests.test_m3_settlement import m3_seed, _extras_for_exit  # noqa: F401
+from tests.test_m3_settlement import m3_seed as shared_m3_seed, _extras_for_exit
 from tests.test_m4_weg import m4_seed, _create_and_finalize_plan  # noqa: F401
 from tests.test_financial_input_policy import draft,attest
 from tests.test_financial_source_disclosure import bind_output,clear_disclosure_grants
@@ -14,6 +14,12 @@ from tests.test_property_source_access import grant
 from tests.contact_source_fixtures import grant_property_contacts
 
 pytestmark=pytest.mark.asyncio
+
+
+@pytest.fixture
+def m3_seed(seed_data):
+    # Retained finalized accounts must not share people with earlier ACL scenarios.
+    return shared_m3_seed.__wrapped__(seed_data)
 
 
 async def retained_rental(api,seed,m3):

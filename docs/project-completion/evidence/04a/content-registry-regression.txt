@@ -1,0 +1,23 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.13, pytest-8.4.2, pluggy-1.6.0 -- /Users/keks/Developer/hausverwaltung/backend/.venv/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/keks/Developer/hausverwaltung/backend
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-0.26.0, hypothesis-6.165.10
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 11 items
+
+tests/test_property_document_content.py::test_property_listing_and_content_are_readonly_safe PASSED [  9%]
+tests/test_property_document_content.py::test_content_routes_hide_unbound_archived_foreign_and_other_property_documents PASSED [ 18%]
+tests/test_property_document_content.py::test_import_draft_content_is_writer_only_and_status_limited PASSED [ 27%]
+tests/test_property_document_content.py::test_import_content_status_is_checked_with_its_document_link PASSED [ 36%]
+tests/test_property_document_content.py::test_import_content_requires_exact_document_link PASSED [ 45%]
+tests/test_property_document_content.py::test_missing_or_corrupt_content_fails_before_response PASSED [ 54%]
+tests/test_property_document_content.py::test_content_reads_the_persisted_uri_exactly_once PASSED [ 63%]
+tests/test_document_registry.py::test_registry_automatically_registers_intake_without_widening_custody PASSED [ 72%]
+tests/test_document_registry.py::test_mandate_reference_tracks_selected_scope_archive_and_revocation PASSED [ 81%]
+tests/test_document_registry.py::test_registry_constraints_backfill_and_guarded_downgrade PASSED [ 90%]
+tests/test_document_registry.py::test_registry_failure_rolls_back_original_insert PASSED [100%]
+
+============================= 11 passed in 12.26s ==============================

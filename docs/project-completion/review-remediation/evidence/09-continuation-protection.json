@@ -1,0 +1,141 @@
+{
+  "baseline_sha256": "4617deaa9119f604642e3fd4de10b770ce80bc3ade259766d3101c5bd20a1ccc",
+  "compared_files": 1179,
+  "allowlist": [
+    "DEPLOY.md",
+    "docs/acceptance/parity-register.md",
+    "docs/project-completion/README.md",
+    "docs/project-completion/contract.md",
+    "docs/project-completion/review-remediation/README.md",
+    "docs/project-completion/review-remediation/contract.md",
+    "docs/project-completion/review-remediation/crossreview-remediation-qwen36-49k.plan.md",
+    "docs/project-completion/review-remediation/evidence/09-acceptance-matrix.md",
+    "docs/project-completion/review-remediation/evidence/09-audit-manifest.json",
+    "docs/project-completion/review-remediation/evidence/09-audit.py",
+    "docs/project-completion/review-remediation/evidence/09-baseline-comparison.json",
+    "docs/project-completion/review-remediation/evidence/09-continuation-protection.json",
+    "docs/project-completion/review-remediation/evidence/09-deployment-mock.json",
+    "docs/project-completion/review-remediation/evidence/09-deployment-mock.log",
+    "docs/project-completion/review-remediation/evidence/09-document-audit.json",
+    "docs/project-completion/review-remediation/evidence/09-gap-list.md",
+    "docs/project-completion/review-remediation/evidence/09-normative-pa-ic-audit.md",
+    "docs/project-completion/review-remediation/evidence/09-repair-state-baseline.diff",
+    "docs/project-completion/review-remediation/evidence/09-test-nodes.json",
+    "docs/project-completion/review-remediation/handoff-2026-10-13.md",
+    "docs/project-completion/review-remediation/receipts/final-acceptance.md",
+    "docs/project-completion/review-remediation/receipts/plan-contract-state-alignment.md",
+    "docs/project-completion/review-remediation/state.md",
+    "docs/project-completion/review-remediation/steps/09-final-audit.md"
+  ],
+  "changed": [
+    {
+      "path": "DEPLOY.md",
+      "before_sha256": "85e3107549bcf329fa5f0780d6f26bd230359d8b58833cba4c40e64abe11dc8b",
+      "current_sha256": "1f439584ee58f25250d8816e151fcb6d5e4a764cb7d78aecce5137d50e7113c8"
+    },
+    {
+      "path": "docs/acceptance/parity-register.md",
+      "before_sha256": "1f7e640aeefc00557da6d55e13b5443000a415a508ea081176d2b194da88ab42",
+      "current_sha256": "067d5b31dd1d84393bfb611650a9c75931d92d27b516eb7011fea9da4180ef99"
+    },
+    {
+      "path": "docs/project-completion/README.md",
+      "before_sha256": "ccfb31edd1594b8e9267deb7c7ead62f5b8cd52a96a3cb8d6eb764df45405fda",
+      "current_sha256": "2c8c04cfc31b1a33ad3055733d28044c2eb5f4807cd682a6e86c02f9f5016bde"
+    },
+    {
+      "path": "docs/project-completion/contract.md",
+      "before_sha256": "a8bb8118fe5ba4ad946f91b34d6da72455910414ed97806ef4d337d0e4f42c04",
+      "current_sha256": "8a2c02915855cc304a4624f0b253573d207f2a7e2210e1f4ca16d3e99f17093a"
+    },
+    {
+      "path": "docs/project-completion/review-remediation/README.md",
+      "before_sha256": "8e681b581dc8ce7458b67a170b4c11a15e6417880b01195342147aca0a9a23ad",
+      "current_sha256": "d37d93d382dacdb86b1a1dcf3717b1870a239d1b2c5b3f3db6d26a5170f16b41"
+    },
+    {
+      "path": "docs/project-completion/review-remediation/contract.md",
+      "before_sha256": "5f799628da8ddca6eb177b2c23f9ad41223f10e75001d2644e1f94c3bd7cc1a5",
+      "current_sha256": "d47e1af30f670074861dd13f7f10d40356bfaf950ffd84342b69c5a24c0bbd52"
+    },
+    {
+      "path": "docs/project-completion/review-remediation/crossreview-remediation-qwen36-49k.plan.md",
+      "before_sha256": "f80a518bd36ab92455c2afaec5433c63278732c2b5d1ba56cf6e26f75e58b112",
+      "current_sha256": "d52ace23ec46c5783a8e6e31ec8170d26f8dd737e54a37d9b3d7b783a8a2ce3b"
+    },
+    {
+      "path": "docs/project-completion/review-remediation/evidence/09-acceptance-matrix.md",
+      "before_sha256": "9ee37dcc3a99c09997b59924e662d4b8811fb154c020e508d637490b763ff5c4",
+      "current_sha256": "f95df7ffdc0031a39b4727f5b8b51fedff2e49540c5ac62d91e5f49daf1e1e24"
+    },
+    {
+      "path": "docs/project-completion/review-remediation/evidence/09-audit-manifest.json",
+      "before_sha256": "f91443b3169b8c9fc062b290261bbf1536652a201ee1b1a1e5760090f2bcebc6",
+      "current_sha256": "3f8602db4e6c2040fec377267e3e317ec9d928282cf84bfd30a52404c57773eb"
+    },
+    {
+      "path": "docs/project-completion/review-remediation/evidence/09-audit.py",
+      "before_sha256": "3e19eb180c1924d3e3833154c4504fe249c3b24ea936cc627bf4b8c6f1215335",
+      "current_sha256": "760f2d900ed6ab2db195567d913f3b807ead2de0d8e37d7df5c590fa432e3d5f"
+    },
+    {
+      "path": "docs/project-completion/review-remediation/evidence/09-baseline-comparison.json",
+      "before_sha256": "4aeebc0589b20b5f75920f845a3693f524650df473248015048d799b0e85afdf",
+      "current_sha256": "5f4d243ae069e259874343537c1a7caaf774dee073c28e0833f5abe566f44ea8"
+    },
+    {
+      "path": "docs/project-completion/review-remediation/evidence/09-document-audit.json",
+      "before_sha256": "3bbd8636d2b3d4813222add39a8d5d9d2aa2f4d69718348f87a596b9832333cf",
+      "current_sha256": "84a84f4c3954c431999b59d7017c55edbec1c3305cc76800df56db7910cdf9e6"
+    },
+    {
+      "path": "docs/project-completion/review-remediation/evidence/09-gap-list.md",
+      "before_sha256": "9313096d7b61cb0cc296bdaead9f3def5acdecf4dd2025314c3bb05e811f0ea2",
+      "current_sha256": "4ecaf68d784c39b3af8879c107d10ed3f317e75e05e7f474790c4a81a29b203d"
+    },
+    {
+      "path": "docs/project-completion/review-remediation/evidence/09-normative-pa-ic-audit.md",
+      "before_sha256": "3097853f6b51bc4d2e249f2a064d2560ef0553f71b6296e25a960d7bd49a5a57",
+      "current_sha256": "e1c859b5ad634a92748df1cdcca1f6a5f1925b9a856b0d89e3e1f9f6583b32e4"
+    },
+    {
+      "path": "docs/project-completion/review-remediation/evidence/09-repair-state-baseline.diff",
+      "before_sha256": "5eea98b02ccdef4722bbee427fec7363b4a181c0ebb9c95781e242b247390024",
+      "current_sha256": "1b640924ffeef6bbdc40bda3489c36e3954153069a65a0b7eb8157f8c4decd1c"
+    },
+    {
+      "path": "docs/project-completion/review-remediation/handoff-2026-10-13.md",
+      "before_sha256": "067458d89f635ad7b964a39004a93d3a8e39f776aa59960f2cb824899dd05a3d",
+      "current_sha256": "1e52a6efa8e6286421f7a8393ccdcd0eb6acd7a375e0b32ec41397832e375064"
+    },
+    {
+      "path": "docs/project-completion/review-remediation/receipts/final-acceptance.md",
+      "before_sha256": "28c59ddabe0e2300d8d773eedd35d3794bbe827d148c039a39a4aa4b1f4837dd",
+      "current_sha256": "f4f8d1604fc32c8b21c663b2752ff4c03d7e34da9690416a7c9c3a63e3a1d4a0"
+    },
+    {
+      "path": "docs/project-completion/review-remediation/receipts/plan-contract-state-alignment.md",
+      "before_sha256": "2343ae9a672c45fc26399f924c293201bf4b9a28e0b96d65f095702df1fb8c3a",
+      "current_sha256": "5e984de7ac16cf6488054c4c02c228bf7b8daf2b6812021a5beb0c6c8e0f035a"
+    },
+    {
+      "path": "docs/project-completion/review-remediation/state.md",
+      "before_sha256": "51fa9b2e6a0d05f399531607bd6a32aaacdbad1f77739478bf6231e8e009477a",
+      "current_sha256": "1ffd2a1f09e537127f85867be3671b1c985e786b51d675e43c5bdbdc8a4cd38a"
+    },
+    {
+      "path": "docs/project-completion/review-remediation/steps/09-final-audit.md",
+      "before_sha256": "397f6002fe19f588a58d1deccb73d6836116e90fdc5c519ff851b4e3c6236dd0",
+      "current_sha256": "fd80543028d8eb248fe441943ad79296b9b2617fc1ee2ec46aa05f22c2f48dfd"
+    }
+  ],
+  "new_paths": [
+    "docs/project-completion/review-remediation/evidence/09-continuation-protection.json",
+    "docs/project-completion/review-remediation/evidence/09-deployment-mock.json"
+  ],
+  "unexpected_paths": [],
+  "all_non_allowlisted_files_unchanged": true,
+  "research": "docs/research/ excluded from reads and writes",
+  "limits": "Compares this continuation to its pre-edit working tree, not to Git HEAD or historical test execution.",
+  "exit_code": 0
+}

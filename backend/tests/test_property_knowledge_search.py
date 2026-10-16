@@ -48,8 +48,11 @@ def migration_config_at_head(request, seed_data) -> Config:
 
 def _delete_backfill_graph(ids: dict[str, uuid.UUID]) -> None:
     """Remove the committed migration fixture in FK-safe order at any schema >= 0025."""
+    from tests.conftest import clear_disposable_source_context
+
     with psycopg2.connect(os.environ["HV_DATABASE_URL_SYNC"]) as connection:
         with connection.cursor() as cursor:
+            clear_disposable_source_context(cursor)
             cursor.execute(
                 "DELETE FROM approved_fact_source WHERE source_import_id = %s",
                 (str(ids["import"]),),

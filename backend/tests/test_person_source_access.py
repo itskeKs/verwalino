@@ -210,7 +210,8 @@ async def test_person_migration_keeps_custody_and_roundtrips_legacy_without_back
                 with db.begin_nested(): migration.downgrade()
             savepoint=db.begin_nested()
             try:
-                db.execute(text('TRUNCATE person CASCADE'))
+                from tests.migration_rehearsal import prepare_historical_revision
+                prepare_historical_revision(db, '0069')
                 legacy=uuid.uuid4()
                 db.execute(text("INSERT INTO person(id,organization_id,first_name,last_name) VALUES(:id,:org,'Legacy','No inferred custody')"),{'id':legacy,'org':seed_data['org_a_id']})
                 before=db.scalar(text("SELECT md5(first_name||last_name) FROM person WHERE id=:id"),{'id':legacy})

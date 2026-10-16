@@ -1,0 +1,193 @@
+
+> frontend@0.0.0 test
+> vitest run
+
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.11 [39m[90m/Users/keks/Developer/hausverwaltung/frontend[39m
+
+ [32m✓[39m src/components/intake/ExceptionCompletionPanel.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[33m 1529[2mms[22m[39m
+   [33m[2m✓[22m[39m shows every connected source, pair and retained disposition and requires explicit acknowledgement [33m 429[2mms[22m[39m
+ [32m✓[39m src/components/intake/ContextDecisionPanel.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[33m 1504[2mms[22m[39m
+   [33m[2m✓[22m[39m requires explicit source comparison and clears acknowledgement after edits [33m 335[2mms[22m[39m
+ [32m✓[39m src/components/intake/DuplicateComparisonPanel.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[33m 1814[2mms[22m[39m
+   [33m[2m✓[22m[39m shows exact review evidence, requires choice and prevents distinct verdict on identical bytes [33m 403[2mms[22m[39m
+   [33m[2m✓[22m[39m preserves stale drafts for explicit discard and makes invoice-credit conflicts read-only [33m 349[2mms[22m[39m
+ [32m✓[39m src/components/intake/InvoiceReviewPanel.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 1803[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps type, currency and missing period explicit and resets acknowledgement after field edits [33m 427[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps an uncertain review frozen across missing parent context and failed read then replays its original basis [33m 311[2mms[22m[39m
+   [33m[2m✓[22m[39m retains stale input until explicitly replacing it with the current human review [33m 615[2mms[22m[39m
+ [32m✓[39m src/components/intake/AllocationProposalPanel.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 2046[2mms[22m[39m
+   [33m[2m✓[22m[39m requires exact balanced amounts and retains unknown VAT without category defaults [33m 538[2mms[22m[39m
+   [33m[2m✓[22m[39m checks negative split and known VAT totals separately [33m 556[2mms[22m[39m
+   [33m[2m✓[22m[39m privately preserves unknown commands across missing parent context and replays unchanged [33m 338[2mms[22m[39m
+   [33m[2m✓[22m[39m retains stale lines until the current context is explicitly adopted [33m 373[2mms[22m[39m
+ [32m✓[39m src/components/intake/AllocationCorrectionPanel.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 1939[2mms[22m[39m
+   [33m[2m✓[22m[39m requires a reason and all three deliberate acknowledgments; edits reset them [33m 482[2mms[22m[39m
+   [33m[2m✓[22m[39m retains the exact unknown command and predecessor through head/review refresh, then reloads current receipts [33m 434[2mms[22m[39m
+   [33m[2m✓[22m[39m clears rejected confirmation and requires a fresh preview after 403 [33m 321[2mms[22m[39m
+ [32m✓[39m src/pages/ExceptionDetailPage.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[33m 2357[2mms[22m[39m
+   [33m[2m✓[22m[39m shows source, cause, immutable evidence and advisory actions without a resolve control [33m 468[2mms[22m[39m
+   [33m[2m✓[22m[39m preserves an uncertain frozen snooze across transient read failure and a newer case version [33m 425[2mms[22m[39m
+ [32m✓[39m src/components/intake/AllocationAdoptionPanel.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 2724[2mms[22m[39m
+   [33m[2m✓[22m[39m requires separate financial and disclosure acknowledgments, sends exact review and shows all saved links [33m 1194[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps an unknown exact command after committed history and denied newer treatment [33m 427[2mms[22m[39m
+   [33m[2m✓[22m[39m clears a denied retained source and never restores its pending retry [33m 324[2mms[22m[39m
+   [33m[2m✓[22m[39m preserves an unknown correction across parent GET failure and recovers the exact request [33m 461[2mms[22m[39m
+ [32m✓[39m src/pages/DeclarationImportPage.test.tsx [2m([22m[2m29 tests[22m[2m)[22m[33m 3076[2mms[22m[39m
+     [33m[2m✓[22m[39m defaults to a new-property import and discloses OpenAI processing [33m 475[2mms[22m[39m
+     [33m[2m✓[22m[39m uploads multiple PDFs, lets their metadata be changed, and gates start [33m 533[2mms[22m[39m
+     [33m[2m✓[22m[39m shows the property import entry, building part, and exact legal MEA [33m 414[2mms[22m[39m
+ [32m✓[39m src/pages/PropertyKnowledgePage.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[33m 3194[2mms[22m[39m
+     [33m[2m✓[22m[39m shows approved documents, effective rules and exact source metadata [33m 1137[2mms[22m[39m
+     [33m[2m✓[22m[39m uses a dialog viewer that focuses, recovers PDF loading, and returns focus on escape [33m 497[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps deterministic search usable when the Q&A provider is unavailable [33m 486[2mms[22m[39m
+     [33m[2m✓[22m[39m expands rules accessibly and distinguishes Q&A abstention states [33m 484[2mms[22m[39m
+ [32m✓[39m src/components/VisualDisclosures.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[33m 3249[2mms[22m[39m
+   [33m[2m✓[22m[39m requires selecting the destination and opening the exact artifact before acknowledgment [33m 957[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps an unknown publication exact through parent refresh and labels a withdrawn historical receipt [33m 457[2mms[22m[39m
+   [33m[2m✓[22m[39m retains a lost withdrawal after a refreshed destination list no longer contains it [33m 321[2mms[22m[39m
+   [33m[2m✓[22m[39m handles an uncertain publication followed by target status 404 [33m 349[2mms[22m[39m
+   [33m[2m✓[22m[39m handles an uncertain publication followed by target status 503 [33m 324[2mms[22m[39m
+   [33m[2m✓[22m[39m refreshes the publisher status after a confirmed withdrawal below it [33m 413[2mms[22m[39m
+ [32m✓[39m src/components/intake/VisualAllocationAdoptionPanel.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 3353[2mms[22m[39m
+   [33m[2m✓[22m[39m offers visual adoption for a partial logical document and binds the exact reviewed publication and hash [33m 1364[2mms[22m[39m
+   [33m[2m✓[22m[39m retains an unknown exact visual command through a missing current review and withdrawn publication [33m 605[2mms[22m[39m
+   [33m[2m✓[22m[39m clears preview and acknowledgments on refresh and never restores a denied pending request [33m 894[2mms[22m[39m
+   [33m[2m✓[22m[39m discards a late failed POST after a concurrent authorization denial without resurrecting its retry [33m 487[2mms[22m[39m
+ [32m✓[39m src/components/intake/AllocationTreatmentPanel.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 4356[2mms[22m[39m
+   [33m[2m✓[22m[39m starts without defaults and validates exact negative partial cents with acknowledgment reset [33m 1699[2mms[22m[39m
+   [33m[2m✓[22m[39m requires deliberate zero for none and clears obsolete amount/key on treatment change [33m 625[2mms[22m[39m
+   [33m[2m✓[22m[39m retries the exact unknown command after committed history and a denied new allocation [33m 761[2mms[22m[39m
+   [33m[2m✓[22m[39m does not automatically reuse treatment on a changed category snapshot [33m 486[2mms[22m[39m
+   [33m[2m✓[22m[39m clears an inaccessible retained treatment and cannot resurrect its retry [33m 492[2mms[22m[39m
+ [32m✓[39m src/pages/DeclarationReviewPage.test.tsx [2m([22m[2m14 tests[22m[2m)[22m[33m 5351[2mms[22m[39m
+     [33m[2m✓[22m[39m requires an explicit audience choice and reason, then retries the exact submitted grant [33m 1272[2mms[22m[39m
+     [33m[2m✓[22m[39m groups candidates and renders source-first review metadata [33m 786[2mms[22m[39m
+     [33m[2m✓[22m[39m never exposes bulk selection for individually reviewed or policy-sensitive candidates [33m 999[2mms[22m[39m
+     [33m[2m✓[22m[39m reuses one idempotency key after a network failure and navigates to the canonical property [33m 583[2mms[22m[39m
+     [33m[2m✓[22m[39m isolates dialog, approval key, and review data when the route changes to another import [33m 325[2mms[22m[39m
+ [32m✓[39m src/pages/ContextMappingPage.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 1086[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps unknown revocation pinned after a newer activation and distinguishes receipt from current state [33m 897[2mms[22m[39m
+ [32m✓[39m src/pages/IntakeSourcePage.test.tsx [2m([22m[2m11 tests[22m[2m)[22m[33m 6311[2mms[22m[39m
+   [33m[2m✓[22m[39m renders unverified source evidence and requests complete child history [33m 593[2mms[22m[39m
+   [33m[2m✓[22m[39m clears quotes and source selection after access revocation [33m 958[2mms[22m[39m
+   [33m[2m✓[22m[39m replays uncertain retry unchanged across parent refresh [33m 1132[2mms[22m[39m
+   [33m[2m✓[22m[39m hides retry and field data after a failed fresh read [33m 514[2mms[22m[39m
+   [33m[2m✓[22m[39m allows a new retry reason when a later attempt fails [33m 594[2mms[22m[39m
+   [33m[2m✓[22m[39m ignores an old retry denial after switching to another logical source [33m 481[2mms[22m[39m
+   [33m[2m✓[22m[39m preserves an uncertain partition through a transient parent read failure [33m 1173[2mms[22m[39m
+   [33m[2m✓[22m[39m does not offer assignment for a needs-review result without usable payload [33m 410[2mms[22m[39m
+ [32m✓[39m src/components/intake/CorrectionFollowups.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 1838[2mms[22m[39m
+   [33m[2m✓[22m[39m requires source review and deliberate confirmation, and links the computed successor [33m 866[2mms[22m[39m
+   [33m[2m✓[22m[39m retains the exact unknown request across a missing parent receipt and a newer head [33m 319[2mms[22m[39m
+ [32m✓[39m src/components/intake/AssignmentPanel.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[33m 2381[2mms[22m[39m
+   [33m[2m✓[22m[39m submits manual context against exact evidence and shows its unresolved blocker [33m 979[2mms[22m[39m
+   [33m[2m✓[22m[39m preserves a frozen assignment through a failed fresh read [33m 413[2mms[22m[39m
+ [32m✓[39m src/components/intake/SourcePartitionPanel.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[33m 3152[2mms[22m[39m
+   [33m[2m✓[22m[39m requires exact coverage and sends an explicit visual review with predecessor [33m 1076[2mms[22m[39m
+   [33m[2m✓[22m[39m retains an uncertain command across refresh and replays the same key and body [33m 405[2mms[22m[39m
+   [33m[2m✓[22m[39m preserves edits on conflict until the user adopts the newest revision [33m 314[2mms[22m[39m
+   [33m[2m✓[22m[39m creates a bounded page candidate and preserves the exact uncertain range request [33m 339[2mms[22m[39m
+   [33m[2m✓[22m[39m retains an uncertain range across a failed partition read and recovery [33m 339[2mms[22m[39m
+ [32m✓[39m src/components/intake/ContextCandidatesPanel.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 829[2mms[22m[39m
+   [33m[2m✓[22m[39m shows exact evidence and copies only after an explicit action [33m 552[2mms[22m[39m
+ [32m✓[39m src/pages/ScopedDunning.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 2992[2mms[22m[39m
+   [33m[2m✓[22m[39m preserves and displays the open-items scope, retains it after an error, and clears it on source changes [33m 1443[2mms[22m[39m
+   [33m[2m✓[22m[39m passes the explicit owner plan and WEG preparation scope [33m 766[2mms[22m[39m
+   [33m[2m✓[22m[39m blocks delayed mismatched prefill and failed scope hydration without silently switching to legacy [33m 361[2mms[22m[39m
+ [32m✓[39m src/pages/FinancialCorrectionPages.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 1970[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps one stable plan selector when its parent blocks financial actions [33m 985[2mms[22m[39m
+   [33m[2m✓[22m[39m ignores a late financial command from the previous weg page [33m 318[2mms[22m[39m
+ [32m✓[39m src/pages/FinancialOverviewAvailability.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 2439[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps successful master counts and marks failed dashboard finance unavailable, including while loading [33m 1294[2mms[22m[39m
+   [33m[2m✓[22m[39m does not invent missing financial counts or failed master counts [33m 455[2mms[22m[39m
+   [33m[2m✓[22m[39m preserves verified zero counts and completed deadlines after a successful response [33m 496[2mms[22m[39m
+ [32m✓[39m src/pages/LoginPage.test.tsx [2m([22m[2m1 test[22m[2m)[22m[33m 962[2mms[22m[39m
+     [33m[2m✓[22m[39m shows the generic API error and disables submit while pending [33m 960[2mms[22m[39m
+ [32m✓[39m src/pages/ScopedStatements.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 2072[2mms[22m[39m
+   [33m[2m✓[22m[39m passes the selected read scope and clears stale results and scope when changing lease [33m 1229[2mms[22m[39m
+   [33m[2m✓[22m[39m passes owner scope and plan and freezes query controls until the response arrives [33m 475[2mms[22m[39m
+   [33m[2m✓[22m[39m never turns a blocked open-items query into an empty success and can retry the same scope [33m 366[2mms[22m[39m
+ [32m✓[39m src/components/intake/ContextMappingPanel.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 2065[2mms[22m[39m
+   [33m[2m✓[22m[39m requires explicit identifier, blank dates and unchecked consent before separate saving [33m 936[2mms[22m[39m
+   [33m[2m✓[22m[39m preserves exact unknown request while its source becomes stale or parent result disappears [33m 359[2mms[22m[39m
+ [32m✓[39m src/pages/BankAccountsPage.test.tsx [2m([22m[2m1 test[22m[2m)[22m[33m 2013[2mms[22m[39m
+   [33m[2m✓[22m[39m clears incompatible scope when switching between deposit and reserve accounts [33m 2011[2mms[22m[39m
+ [32m✓[39m src/components/FinancialCoverageReview.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[33m 1691[2mms[22m[39m
+   [33m[2m✓[22m[39m requires reason and explicit completeness for zero, and rechecks after an edit [33m 677[2mms[22m[39m
+ [32m✓[39m src/pages/MandateDetailPage.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 1954[2mms[22m[39m
+   [33m[2m✓[22m[39m describes visible documents as partial and preserves original evidence through explicit reasoned archive [33m 1583[2mms[22m[39m
+ [32m✓[39m src/pages/IntakePages.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 1784[2mms[22m[39m
+   [33m[2m✓[22m[39m replays uncertain batch creation with its exact key before separate file requests [33m 870[2mms[22m[39m
+ [32m✓[39m src/pages/ScopedOverviews.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 1831[2mms[22m[39m
+   [33m[2m✓[22m[39m changes monitor scope without retaining another scope's rows or accepting an obsolete reply [33m 884[2mms[22m[39m
+   [33m[2m✓[22m[39m dashboard recovers with a scoped result and does not invent a WEG tenant-debt zero [33m 945[2mms[22m[39m
+ [32m✓[39m src/components/FinancialCorrectionControls.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[33m 1698[2mms[22m[39m
+   [33m[2m✓[22m[39m requires deliberate correction creation and links the right financial family (WEG_JAHRESABRECHNUNG) [33m 652[2mms[22m[39m
+   [33m[2m✓[22m[39m retains the exact reviewed plan choice through a lost reply [33m 435[2mms[22m[39m
+ [32m✓[39m src/pages/SourceClassificationsPage.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 1935[2mms[22m[39m
+   [33m[2m✓[22m[39m retains exact classification, digest and key after an unconfirmed response [33m 1182[2mms[22m[39m
+   [33m[2m✓[22m[39m requires refreshed context and new confirmation after conflict [33m 359[2mms[22m[39m
+ [32m✓[39m src/components/intake/AllocationReplacementPanel.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 1902[2mms[22m[39m
+   [33m[2m✓[22m[39m compares old and new totals and requires explicit source selection and every acknowledgment [33m 1047[2mms[22m[39m
+   [33m[2m✓[22m[39m freezes predecessor, source review, route, body and key while a lost result is retried after refresh [33m 326[2mms[22m[39m
+ [32m✓[39m src/components/SourceSecurityPanel.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[33m 1631[2mms[22m[39m
+   [33m[2m✓[22m[39m requires an explicitly selected and verified decision and separate acknowledgment [33m 512[2mms[22m[39m
+   [33m[2m✓[22m[39m preserves reason and exact request after response loss, then refreshes current mode [33m 385[2mms[22m[39m
+ [32m✓[39m src/pages/PropertyDataDomainsPage.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 2016[2mms[22m[39m
+   [33m[2m✓[22m[39m retains the creation key after a lost response and clearly labels preparation [33m 1283[2mms[22m[39m
+   [33m[2m✓[22m[39m retries a grant with one key, then reloads durable revocation [33m 731[2mms[22m[39m
+ [32m✓[39m src/pages/PersonDataDomainsPage.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 2010[2mms[22m[39m
+   [33m[2m✓[22m[39m retains the creation key after a lost response and clearly labels preparation [33m 1264[2mms[22m[39m
+   [33m[2m✓[22m[39m retries a grant with one key, then reloads durable revocation [33m 744[2mms[22m[39m
+ [32m✓[39m src/components/AccessDispositionPanel.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 1547[2mms[22m[39m
+   [33m[2m✓[22m[39m requires both explicit acknowledgments and every page [33m 842[2mms[22m[39m
+ [32m✓[39m src/pages/SourceAdmissionReviewsPage.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 1832[2mms[22m[39m
+   [33m[2m✓[22m[39m hides the original link when the current export check denies preview [33m 589[2mms[22m[39m
+   [33m[2m✓[22m[39m requires explicit source review and retains the exact command after a lost response [33m 671[2mms[22m[39m
+   [33m[2m✓[22m[39m reloads a changed source after a definitive conflict and submits a newly confirmed command [33m 358[2mms[22m[39m
+ [32m✓[39m src/pages/InvoiceDocumentDetailPage.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 1853[2mms[22m[39m
+   [33m[2m✓[22m[39m submits the source and retains the same key and form after uncertain failure [33m 1765[2mms[22m[39m
+ [32m✓[39m src/components/AccessGrantProposalPanel.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 1539[2mms[22m[39m
+   [33m[2m✓[22m[39m gates drafts on reviewed complete evidence and preserves the request after response loss [33m 1142[2mms[22m[39m
+ [32m✓[39m src/components/AccessCoveragePanel.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 1444[2mms[22m[39m
+   [33m[2m✓[22m[39m preserves the capture key after a lost response and shows concrete findings [33m 847[2mms[22m[39m
+ [32m✓[39m src/pages/AccountingScopesPage.test.tsx [2m([22m[2m1 test[22m[2m)[22m[33m 1459[2mms[22m[39m
+   [33m[2m✓[22m[39m retries a lost grant reply with one key and starts a new explicit grant with a fresh key [33m 1457[2mms[22m[39m
+ [32m✓[39m src/pages/AssetReportDetailPage.test.tsx [2m([22m[2m1 test[22m[2m)[22m[33m 1028[2mms[22m[39m
+   [33m[2m✓[22m[39m keeps missing reserve/account values blank and sends an explicitly reviewed zero [33m 1026[2mms[22m[39m
+ [32m✓[39m src/components/intake/VisualExtractPanel.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 1457[2mms[22m[39m
+   [33m[2m✓[22m[39m requires current membership and explicit reason, then links the stored bytes [33m 737[2mms[22m[39m
+ [32m✓[39m src/components/intake/AllocationCorrectionPreview.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 897[2mms[22m[39m
+   [33m[2m✓[22m[39m loads explicitly, explains different effects and never presents a financial confirmation [33m 677[2mms[22m[39m
+ [32m✓[39m src/components/RuntimeBudgetPanel.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 1191[2mms[22m[39m
+   [33m[2m✓[22m[39m shows exact configuration and requires explicit confirmation without automatic writes [33m 562[2mms[22m[39m
+   [33m[2m✓[22m[39m retains input and reuses the exact request after a lost response [33m 310[2mms[22m[39m
+ [32m✓[39m src/pages/MandateQuarantinePage.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 956[2mms[22m[39m
+   [33m[2m✓[22m[39m requires explicit confirmation and reuses the request key after a lost response [33m 705[2mms[22m[39m
+ [32m✓[39m src/components/ScopePaymentReconciliation.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 977[2mms[22m[39m
+   [33m[2m✓[22m[39m requires a review action, disables ambiguous rows and reuses the exact command after a failed response [33m 741[2mms[22m[39m
+ [32m✓[39m src/pages/DunningQuarantinePage.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 830[2mms[22m[39m
+   [33m[2m✓[22m[39m requires explicit confirmation and reuses the request key after a lost response [33m 550[2mms[22m[39m
+ [32m✓[39m src/hooks/usePagedList.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[32m 189[2mms[22m[39m
+ [32m✓[39m src/auth/AuthContext.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 374[2mms[22m[39m
+ [32m✓[39m src/pages/AccessPreparationPage.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 583[2mms[22m[39m
+   [33m[2m✓[22m[39m shows aggregate gaps and explicit setup links without an activation action [33m 441[2mms[22m[39m
+ [32m✓[39m src/components/AccountingScopeSelector.test.tsx [2m([22m[2m1 test[22m[2m)[22m[33m 543[2mms[22m[39m
+   [33m[2m✓[22m[39m requests exact preparable choices, preserves searched selection and clears it on property change [33m 541[2mms[22m[39m
+ [32m✓[39m src/components/ScopeControl.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 613[2mms[22m[39m
+   [33m[2m✓[22m[39m reuses a lost command but refreshes current state instead of treating its old receipt as current [33m 506[2mms[22m[39m
+ [32m✓[39m src/pages/PersonDetailPage.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 356[2mms[22m[39m
+ [32m✓[39m src/pages/PropertiesPage.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 613[2mms[22m[39m
+   [33m[2m✓[22m[39m requires explicit audience choice and retains creation payload/key after a lost response [33m 582[2mms[22m[39m
+ [32m✓[39m src/api/client.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 21[2mms[22m[39m
+ [32m✓[39m src/components/DsgvoPanel.test.tsx [2m([22m[2m1 test[22m[2m)[22m[33m 327[2mms[22m[39m
+   [33m[2m✓[22m[39m removes a previous export when renewed access is denied [33m 325[2mms[22m[39m
+ [32m✓[39m src/App.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 584[2mms[22m[39m
+     [33m[2m✓[22m[39m redirects READ_ONLY from draft imports [33m 428[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m60 passed[39m[22m[90m (60)[39m
+[2m      Tests [22m [1m[32m318 passed[39m[22m[90m (318)[39m
+[2m   Start at [22m 12:03:31
+[2m   Duration [22m 25.69s[2m (transform 36.81s, setup 27.18s, import 44.14s, tests 108.07s, environment 157.01s)[22m
+

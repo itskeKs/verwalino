@@ -1,0 +1,63 @@
+{
+  "fixture_id": "HV-EVAL-2026-10-01",
+  "fictional": true,
+  "currency": "EUR",
+  "instructions": "Independent deterministic test scenarios. Never use these records as live financial instructions. Optional contact channels and bank details remain empty.",
+  "workspace": {"name": "Fiktive Testverwaltung – Softwareevaluation", "timezone": "Europe/Berlin"},
+  "rental_property": {
+    "id": "TEST-MV-01",
+    "name": "TEST Mietshaus Lindenhof",
+    "address": "Fiktive Teststraße 10, 00000 Teststadt",
+    "owner": "TEST Eigentümer Alpha",
+    "total_area_m2": 200,
+    "units": [
+      {"id": "MV-01", "area_m2": 60, "tenant": "TEST Anna Beispiel", "start": "2025-01-01", "base_rent": 650, "operating_advance": 150, "deposit": 1950},
+      {"id": "MV-02", "area_m2": 80, "tenant": "TEST Ben Muster", "start": "2025-01-01", "base_rent": 850, "operating_advance": 200, "deposit": 2550},
+      {"id": "MV-03", "area_m2": 60, "tenant": null, "status": "vacant", "base_rent": 0, "operating_advance": 0}
+    ],
+    "rent_scenario": {
+      "month": "2026-09",
+      "receipts": [{"unit": "MV-01", "date": "2026-09-03", "amount": 800}, {"unit": "MV-02", "date": "2026-09-04", "amount": 900}],
+      "expected": {"total_due": 1850, "total_received": 1700, "total_outstanding": 150, "outstanding_by_unit": {"MV-01": 0, "MV-02": 150, "MV-03": 0}}
+    },
+    "annual_operating_cost_scenario": {
+      "year": 2025,
+      "category": "TEST building cleaning",
+      "amount": 2400,
+      "allocation": "area",
+      "annual_advances": {"MV-01": 1800, "MV-02": 2400, "MV-03": 0},
+      "expected_costs": {"MV-01": 720, "MV-02": 960, "MV-03": 720},
+      "expected_tenant_credit": {"MV-01": 1080, "MV-02": 1440},
+      "expected_vacancy_owner_cost": 720,
+      "note": "One-category arithmetic fixture; not a complete real-world operating-cost statement. Advance-payment receipts must be separately entered for this accounting year."
+    }
+  },
+  "weg_property": {
+    "id": "TEST-WEG-01",
+    "name": "TEST WEG Birkenhof",
+    "address": "Fiktiver Testweg 20, 00000 Teststadt",
+    "shares_denominator": 1000,
+    "units": [
+      {"id": "WEG-01", "area_m2": 60, "shares": 200, "owner": "TEST Eigentümer Beta"},
+      {"id": "WEG-02", "area_m2": 80, "shares": 267, "owner": "TEST Eigentümer Gamma", "sev": true, "tenant": "TEST Clara Demo"},
+      {"id": "WEG-03", "area_m2": 60, "shares": 200, "owner": "TEST Eigentümer Delta"},
+      {"id": "WEG-04", "area_m2": 100, "shares": 333, "owner": "TEST Eigentümer Epsilon"}
+    ],
+    "annual_cost_scenario": {"year": 2025, "cost": 6000, "allocation": "ownership shares", "expected_costs": {"WEG-01": 1200, "WEG-02": 1602, "WEG-03": 1200, "WEG-04": 1998}},
+    "reserve_scenario": {"year": 2025, "opening": 10000, "additions": 2400, "expenditure": 1800, "expected_closing": 10600},
+    "budget_scenario": {"year": 2027, "operating_cost": 6000, "reserve_additions": 2400, "expected_annual_total": 8400, "expected_monthly_total": 700, "expected_monthly_by_unit": {"WEG-01": 140, "WEG-02": 186.9, "WEG-03": 140, "WEG-04": 233.1}}
+  },
+  "sev_scenario": {
+    "unit": "WEG-02",
+    "month": "2026-09",
+    "base_rent": 900,
+    "operating_advance": 200,
+    "received": 1100,
+    "housegeld": 300,
+    "management_fee_gross": 35,
+    "repair_gross": 119,
+    "expected_owner_balance": 646,
+    "note": "Housegeld 300 is a fixed amount for the 2026 mandate. The 2027 draft budget is a separate scenario. Fees and repair amounts are gross; no additional VAT is added."
+  },
+  "repair_case": {"id": "TEST-CASE-01", "unit": "WEG-02", "title": "TEST dripping kitchen tap", "description": "Fictional evaluation case. No real dispatch, appointment or order.", "vendor": "TEST Repair Service", "invoice_reference": "TEST-INV-001", "gross_amount": 119, "statuses": ["new", "assigned", "in_progress", "completed"]}
+}

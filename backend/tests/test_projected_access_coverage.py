@@ -126,7 +126,13 @@ async def test_projection_migration_retains_v2_and_preserves_v1(migrator_session
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
             savepoint = db.begin_nested()
             try:
-                db.execute(text('TRUNCATE runtime_budget_review,runtime_budget_attestation,access_coverage_snapshot CASCADE'))
+                from tests.conftest import clear_disposable_source_context
+                clear_disposable_source_context(db.connection.cursor())
+                from pathlib import Path
+                from alembic.script import ScriptDirectory
+                versions = ScriptDirectory(str(Path(__file__).resolve().parents[1] / 'migrations'))
+                for revision in versions.iterate_revisions('head', '0088'):
+                    revision.module.downgrade()
                 importlib.import_module('migrations.versions.0088_runtime_budget_review').downgrade()
                 db.execute(text("INSERT INTO access_coverage_snapshot(id,organization_id,generated_by,request_key,request_digest,manifest_digest,manifest,item_count,finding_count,checker_version) VALUES(:snapshot,:org,:actor,:request,repeat('a',64),repeat('b',64),jsonb_build_object('checker_version',2,'items','[]'::jsonb),0,0,2)"),
                     {**ids,'snapshot':uuid.uuid4(),'request':uuid.uuid4()})

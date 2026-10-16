@@ -220,7 +220,13 @@ async def test_budget_migration_retains_evidence_and_preserves_historical_report
                 with db.begin_nested(): migration.downgrade()
             point = db.begin_nested()
             try:
-                db.execute(text('TRUNCATE runtime_budget_attestation,runtime_budget_review,access_coverage_snapshot CASCADE'))
+                from tests.conftest import clear_disposable_source_context
+                clear_disposable_source_context(db.connection.cursor())
+                from pathlib import Path
+                from alembic.script import ScriptDirectory
+                versions = ScriptDirectory(str(Path(__file__).resolve().parents[1] / 'migrations'))
+                for revision in versions.iterate_revisions('head', '0088'):
+                    revision.module.downgrade()
                 migration.downgrade()
                 for version in (1,2):
                     db.execute(text("INSERT INTO access_coverage_snapshot(organization_id,generated_by,request_key,request_digest,manifest_digest,manifest,item_count,finding_count,checker_version) VALUES(:org,:actor,:request,repeat('a',64),repeat('b',64),jsonb_build_object('checker_version',:version,'items','[]'::jsonb),0,0,:version)"),

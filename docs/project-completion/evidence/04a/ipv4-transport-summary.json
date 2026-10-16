@@ -1,0 +1,36 @@
+{
+  "completed_connections": {
+    "sqlalchemy": 3000,
+    "asyncpg": 3000
+  },
+  "tests_passed": 78,
+  "native_ssl_callbacks": 6079,
+  "all_hex": "4e",
+  "all_peers": [
+    "127.0.0.1",
+    55432
+  ],
+  "all_tls_options": {
+    "advisory": true,
+    "verify_mode": 0,
+    "check_hostname": false
+  },
+  "unexpected": 0,
+  "first": {
+    "event": "start",
+    "time_ns": 1791815044709841000,
+    "phase": "preflight"
+  },
+  "last": {
+    "event": "end",
+    "time_ns": 1791815305087620000,
+    "phase": "query-tests",
+    "result": 0,
+    "completed": {
+      "sqlalchemy": 3000,
+      "asyncpg": 3000
+    },
+    "unexpected_count": 0
+  },
+  "capture_note": "IPv4-only filter does not capture the actual IPv6 self-connect; native socket endpoints and echoed SSLRequest are decisive evidence."
+}

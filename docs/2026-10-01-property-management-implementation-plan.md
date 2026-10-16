@@ -1,5 +1,9 @@
 # Property management implementation plan
 
+> Kontextarmer Ausführungseinstieg (49k): [project-completion/README.md](project-completion/README.md).
+> Für die Umsetzung nur State, Vertrag und aktuellen Teilplan laden; dieses Dokument
+> bleibt normative Gesamtreferenz, nicht der pro Sitzung mitzuschleppende Arbeitsplan.
+
 Date: 2026-10-01. Planning/code inspection baseline: `be99a3c` (clean tree).
 Status: planned, **no product functionality implemented by this document**.
 

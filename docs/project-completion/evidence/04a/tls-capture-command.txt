@@ -1,0 +1,8 @@
+Authorized local negotiation capture; BPF offline compilation exit0.
+Host BPF denied; sudo -n requires password.
+Listener OrbStack39188/keks/IPv4 127.0.0.1:55432; ::1:55432 refused. DB0123/30categories/app_migrator/tmpfs; server ssl=off, SCRAM-SHA-256.
+No TLS/test changes or new DB test run.
+
+Run in local terminal; authenticate only to sudo, never paste credentials into chat.
+Leave capture running; reply capture is running. Stop with Ctrl-C once bounded diagnostic finishes.
+sudo /usr/sbin/tcpdump -i lo0 -nn -U -s 96 -Z keks -w /tmp/04a-tls-transport.pcap 'ip and tcp port 55432 and ((tcp[tcpflags] & 7 != 0) or (tcp[((tcp[12] & 0xf0) >> 2):4] = 8 and tcp[(((tcp[12] & 0xf0) >> 2) + 4):4] = 80877103) or (tcp src port 55432 and (tcp[((tcp[12] & 0xf0) >> 2)] = 0x4e or tcp[((tcp[12] & 0xf0) >> 2)] = 0x45)))'

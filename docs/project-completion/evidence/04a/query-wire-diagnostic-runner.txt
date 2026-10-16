@@ -1,0 +1,57 @@
+import asyncio
+from collections import Counter
+import json
+import os
+import sys
+
+os.chdir('/Users/keks/Developer/hausverwaltung/backend')
+sys.path.insert(0, os.getcwd())
+os.environ.pop('USER', None)
+os.environ.pop('HV_OPENAI_API_KEY', None)
+os.environ.update(
+    HV_DATABASE_URL_MIGRATOR='postgresql+asyncpg://app_migrator:migrator_secret@localhost:55432/hausverwaltung',
+    HV_DATABASE_URL='postgresql+asyncpg://app_rw:app_secret@localhost:55432/hausverwaltung',
+    HV_DATABASE_URL_SYNC='postgresql://app_migrator:migrator_secret@localhost:55432/hausverwaltung',
+)
+import asyncpg
+from asyncpg import connect_utils
+import pytest
+
+original = connect_utils.TLSUpgradeProto.data_received
+counts = Counter()
+unexpected = []
+
+def observed(self, data):
+    record = {'hex': data.hex(), 'advisory': self.ssl_is_advisory,
+              'verify_mode': int(self.ssl_context.verify_mode),
+              'check_hostname': self.ssl_context.check_hostname,
+              'host': self.host, 'port': self.port}
+    counts[json.dumps(record, sort_keys=True)] += 1
+    if data != b'S' and not (self.ssl_is_advisory and self.ssl_context.verify_mode == 0 and data == b'N'):
+        unexpected.append(record)
+        print('UNEXPECTED_SSL_NEGOTIATION', json.dumps(record), flush=True)
+    return original(self, data)
+
+connect_utils.TLSUpgradeProto.data_received = observed
+
+async def probe():
+    for i in range(600):
+        user, password = ('app_rw', 'app_secret') if i % 2 else ('app_migrator', 'migrator_secret')
+        connection = await asyncpg.connect(host='localhost', port=55432,
+                                          database='hausverwaltung', user=user, password=password,
+                                          timeout=10)
+        try:
+            if await connection.fetchval('SELECT 1') != 1:
+                raise RuntimeError('Unexpected database response')
+        finally:
+            await connection.close()
+    print('SERIAL_CONNECTION_PROBE 600 completed; TLS options unchanged', flush=True)
+
+try:
+    asyncio.run(probe())
+    result = pytest.main(['tests/test_property_knowledge_query.py', '-v', '--tb=short', '-rs'])
+finally:
+    connect_utils.TLSUpgradeProto.data_received = original
+    print('SSL_NEGOTIATION_COUNTS', json.dumps(dict(counts)), flush=True)
+    print('UNEXPECTED_SSL_NEGOTIATIONS', json.dumps(unexpected), flush=True)
+raise SystemExit(result)

@@ -1,0 +1,175 @@
+{
+  "captured_at_utc": "2026-10-16T11:43:47Z",
+  "verification_type": "crossreview-remediation-final-verification",
+  "current_sha256": {
+    "plan": "f73a824de1dc2167d72108e503b7aa024a36249b6709df3f1dda55ac213a22f2",
+    "contract": "7779970c2dbf6f47252670ddbca41a653a4c255eee149f0d5a0011c79a31e3be",
+    "state": "df3ae445683033e9ff9092a9343f6ad42810854d275686528ff339ccbf7da035",
+    "README": "b2b6e9477b9565f75cbf868c8e6ea7d725aec1e953298622a6c7d737082908d1",
+    "09-final-audit": "fe47109dff6f451ebbaf14be35af766cdcc93a74bef57f48634f7d7a7688a775",
+    "final-acceptance": "6642ed8fdb889ce71083d56173b824644ec8ebe75470d714d14f721bacb617a7",
+    "09-document-audit": "3d5d0099fc670f8c6999653edf797c09f345bb47a7ce434793fd1d52333fa807",
+    "09-audit-manifest": "78ac66bd5b06c9835b53ff285768187e38df78b76e2b77fd8fa25aafd1c12d6b",
+    "09-baseline-comparison": "b437b96e6853dd56560e344182d021dcc06f5e2956c977afbaddcdb40c6094ca",
+    "09-continuation-protection": "71c57d5b2922b2e2fd7464a1c687e823277ab252d4d611c2bf335694bb63b880",
+    "09-gap-list": "651a13fdadb4e193e3749ba796af668bc6402abba7373cdcef1d8d73b91a3063",
+    "09-acceptance-matrix": "b0957bff3aea5cf373c18b8d8592e69f9bd4fee1c2d26f11b5e0d85a72e0cbeb",
+    "09-audit.py": "bd7ad364ff3ee29f96c6cdb60710e397c1af36c7ff58c546caeec7a0ce7791bf",
+    "DEPLOY": "1f439584ee58f25250d8816e151fcb6d5e4a764cb7d78aecce5137d50e7113c8",
+    "docs-README": "7b14b7a1a5982f9b9f4a9c660d4d59b6b6bd0ad6b2255e1a84a103f141702053",
+    "docs-contract": "9e1b35a5d132e0b6c775aa421b76fd1c97316082f64f17bb015a8e4be0b75cb2",
+    "test_intake_batches": "f91ae1de8c9100f3c4ae46f5962a8a64164bbeaaf8f06470812d3f9bfa4a02d1",
+    "parity-register": "067d5b31dd1d84393bfb611650a9c75931d92d27b516eb7011fea9da4180ef99"
+  },
+  "protection_deviations": {
+    "test_intake_batches.py": {
+      "baseline_sha256": "07757ec272b10266471dfe772df6a98cf0342a5d5afab9ff5acf26acc1d25571",
+      "current_sha256": "f91ae1de8c9100f3c4ae46f5962a8a64164bbeaaf8f06470812d3f9bfa4a02d1",
+      "status": "documented_historical_delta",
+      "source": "R/evidence/08b-test-intake-batches.before.txt matches baseline 07757...",
+      "patch": "R/evidence/08b-owned-test.delta.patch",
+      "authorization": "authorized by audit script as historical_delta, NOT by this continuation",
+      "origin": "pre-existing scanner delta, not created by crossreview-remediation",
+      "note": "Hash difference proves file was modified before this continuation; audit suppresses it from errors but does not authorize it"
+    },
+    "parity-register.md": {
+      "baseline_sha256": "1f7e640aeefc00557da6d55e13b5443000a415a508ea081176d2b194da88ab42",
+      "current_sha256": "067d5b31dd1d84393bfb611650a9c75931d92d27b516eb7011fea9da4180ef99",
+      "status": "documented_document_delta",
+      "authorization": "authorized by audit script as document_delta",
+      "origin": "pre-existing document change, not created by this continuation",
+      "note": "Hash difference proves file was modified before this continuation; audit suppresses from errors"
+    },
+    "09-continuation-protection.json": {
+      "baseline_sha256": "4617deaa9119f604642e3fd4de10b770ce80bc3ade259766d3101c5bd20a1ccc",
+      "current_sha256": "71c57d5b2922b2e2fd7464a1c687e823277ab252d4d611c2bf335694bb63b880",
+      "status": "rewritten_by_audit",
+      "note": "Protection JSON itself was rewritten by a prior audit run; hash differs from snapshot"
+    }
+  },
+  "manifest_hash_inconsistencies": {
+    "09-baseline-comparison.json": {
+      "manifest_recorded": "bade7b164da2bf35ad93337b9a656f0dc75d4b668dcdae17776315974a0e1668",
+      "current_measured": "b437b96e6853dd56560e344182d021dcc06f5e2956c977afbaddcdb40c6094ca",
+      "status": "MISMATCH - manifest is stale because audit rewrites this file after computing manifest"
+    },
+    "09-repair-state-baseline.diff": {
+      "manifest_recorded": "41669cf5871cb85aca49ef003d0a25f3e2186b24190161e9e8354383e6d49b05",
+      "note": "File rewritten by audit after manifest computation; current hash not measured here"
+    }
+  },
+  "deploy_role_separation": {
+    "web_api": {
+      "role": "app_rw",
+      "env": "HV_DATABASE_URL",
+      "boundary": "No worker credential; no migrator connection",
+      "verified": true
+    },
+    "worker": {
+      "role": "app_worker",
+      "env": "HV_DATABASE_URL_WORKER",
+      "boundary": "No web URL fallback; no review credential",
+      "verified": true
+    },
+    "review": {
+      "role": "app_review",
+      "env": "HV_DATABASE_URL_REVIEW",
+      "boundary": "Separate pool, no ordinary-role fallback",
+      "verified": true
+    },
+    "migration": {
+      "role": "Privileged ops credentials only",
+      "boundary": "Never injected into app/worker runtime",
+      "verified": true
+    },
+    "fresh_installation_section": {
+      "exists": true,
+      "title": "Fresh installation: one-time preparation on Moon",
+      "key_points": [
+        "Creates environment.example from reviewed commit",
+        "Generates passwords with openssl rand",
+        "Stops if .env already exists",
+        "Does NOT run on existing volumes"
+      ]
+    },
+    "upgrade_section": {
+      "exists": true,
+      "title": "Upgrade of an existing installation",
+      "key_points": [
+        "Do NOT rerun fresh-install password-generation loop",
+        "Do NOT overwrite shared/.env",
+        "Verify existing database has app_worker and app_review logins",
+        "Fresh-volume init scripts do NOT run again on existing volumes"
+      ]
+    },
+    "no_fresh_password_regeneration": true,
+    "no_shared_env_overwrite": true,
+    "no_volume_reset": true,
+    "no_app_rw_workaround": true
+  },
+  "git_diff_check": {
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": "",
+    "status": "PASS - no trailing whitespace issues"
+  },
+  "audit_script_exception_analysis": {
+    "script_location": "R/evidence/09-audit.py",
+    "exception_logic": {
+      "line": "historical_delta = [\"backend/tests/test_intake_batches.py\"]",
+      "line": "document_delta = [\"docs/acceptance/parity-register.md\"]",
+      "line": "unexpected = sorted(set(changed) - set(historical_delta + document_delta))"
+    },
+    "finding": "Hash differences are EXCLUDED from error list, NOT authorized. Exit 0 does not authorize them.",
+    "consequence": "Files with hash differences are suppressed from errors but remain unverified against baseline."
+  },
+  "active_control_consistency": {
+    "plan": {
+      "plan_id": "crossreview-remediation-qwen36-49k",
+      "current_step": "09-final-audit",
+      "status": "active",
+      "model": "mlx/qwen3.6-35b-a3b",
+      "goal_checker": "openai/gpt-6.1-sol",
+      "reasoning": "medium",
+      "context_target": "64k / 65536",
+      "verified": true
+    },
+    "contract": {
+      "consistent_with_plan": true,
+      "verified": true
+    },
+    "state": {
+      "current_step": "09-final-audit",
+      "current_status": "done-local-docs",
+      "next_action": "Pausieren",
+      "blocker": "V01/401 only",
+      "recovery_gaps": "missing",
+      "protection_gaps": "missing",
+      "verified": true
+    },
+    "README": {
+      "consistent": true,
+      "verified": true
+    },
+    "final-acceptance": {
+      "claims_document_completion": true,
+      "claims_consistency": true,
+      "claims_verified_by_continuation": false,
+      "stale_diff_hash": "41669... (should be e7b15...)",
+      "unverified_audit_claim": "historical changes verified by later audit run",
+      "verified": false
+    }
+  },
+  "summary": {
+    "total_files_measured": 18,
+    "protected_equal_against_baseline": "52/54 (from audit report)",
+    "protected_deltas": ["test_intake_batches.py", "parity-register.md"],
+    "manifest_stale_hashes": ["09-baseline-comparison.json", "09-repair-state-baseline.diff"],
+    "deploy_roles_verified": true,
+    "fresh_vs_upgrade_separated": true,
+    "git_diff_check_pass": true,
+    "document_completion_claimed": true,
+    "document_completion_verified": false,
+    "reason": "Manifest hash mismatches, unverified historical deltas, stale audit reports, missing recovery/protection gaps in state/receipt"
+  }
+}

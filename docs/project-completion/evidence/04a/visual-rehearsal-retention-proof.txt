@@ -1,0 +1,10 @@
+bg_228 Exit0:24 passed,76.48s pytest/81s task.
+Producer:tests/test_visual_allocation_adoptions.py complete, then
+tests/test_visual_disclosures.py::test_raw_roles_migration_retention_and_manifest
+tests/test_visual_extract_artifacts.py::test_migration_empty_roundtrip_retention_manifest_and_private_roles
+After run:current_database hausverwaltung, owner app_migrator, head0123,30cost_category, no hausverwaltung_legacy_saved_* DBs.
+Retained visual allocation_set32, visual allocation_correction10.
+All 40 tracked test/harness files AST assertions unchanged outside explicitly approved Compose function; all testnames/decorators unchanged.
+No migration or tenant.py diff. git diff --check passed.
+Positive guarded No-CASCADE cleanup within rollbacking savepoint; negative existing financial graph cleanup before0121, tested visual evidence retained. No permanent data deletion.
+Full bg_227 remains FAILED:2664pass/15fail/7error/2existingSkips; no whole-suite acceptance inferred.

@@ -1,0 +1,1245 @@
+diff --git a/backend/tests/conftest.py b/backend/tests/conftest.py
+index e9fcc75..292228e 100644
+--- a/backend/tests/conftest.py
++++ b/backend/tests/conftest.py
+@@ -53,12 +53,44 @@ MIGRATOR_URL, APP_RW_URL, MIGRATOR_SYNC_URL = require_disposable_database_settin
+ # ---------------------------------------------------------------------------
+ def clear_disposable_source_context(cursor):
+     """Only for destructive migration rehearsals in the guarded disposable DB."""
++    from psycopg2 import sql
++    from sqlalchemy.engine import make_url
++
++    _, _, sync_url = require_disposable_database_settings(settings)
++    expected = make_url(sync_url)
++    connection = cursor.connection.info
++    if (connection.host, connection.port, connection.dbname, connection.user) != (
++        expected.host, expected.port, expected.database, expected.username
++    ):
++        raise RuntimeError("Migration rehearsal cursor is not the guarded disposable connection")
++    cursor.execute("SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()")
++    if cursor.fetchone() != ('app_migrator',):
++        raise RuntimeError("Migration rehearsal requires the owned disposable database")
+     cursor.execute("SELECT to_regprocedure('public.guard_property_source_context()')")
+-    if cursor.fetchone()[0]:
+-        cursor.execute("TRUNCATE public.property,public.unit,public.property_document,"
+-                       "public.declaration_import,public.declaration_import_document,"
+-                       "public.declaration_candidate,public.declaration_candidate_evidence,"
+-                       "public.declaration_candidate_issue,public.declaration_extraction_run CASCADE")
++    if not cursor.fetchone()[0]:
++        return
++
++    # Modern receipts can be independent of property/document foreign keys.
++    # No CASCADE: a new reverse FK must not silently erase the shared seeds.
++    retained = ['alembic_version', 'organization', 'user', 'membership',
++                'management_mandate', 'audit_event', 'cost_category']
++    cursor.execute("""SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
++      WHERE n.nspname='public' AND c.relkind IN ('r','p') AND c.relname<>ALL(%s)
++      AND NOT EXISTS(SELECT 1 FROM pg_depend d WHERE d.classid='pg_class'::regclass
++        AND d.objid=c.oid AND d.deptype='e') ORDER BY c.relname""", (retained,))
++    tables = [sql.Identifier('public', row[0]) for row in cursor.fetchall()]
++    if tables:
++        cursor.execute(sql.SQL('TRUNCATE {}').format(sql.SQL(',').join(tables)))
++
++
++async def fixture_has_registered_documents(session: AsyncSession, document_ids: list[uuid.UUID]) -> bool:
++    if not await session.scalar(text("SELECT to_regclass('public.document_ref')")):
++        return False
++    return bool(await session.scalar(
++        text("SELECT EXISTS(SELECT 1 FROM public.document_ref "
++             "WHERE property_document_id=ANY(CAST(:document_ids AS uuid[])))"),
++        {"document_ids": document_ids},
++    ))
+ 
+ 
+ @pytest.fixture(scope="session", autouse=True)
+@@ -625,30 +657,36 @@ async def approved_knowledge_graph(seed_data):
+         try:
+             async with async_sessionmaker(cleanup_engine, class_=AsyncSession)() as cleanup:
+                 async with cleanup.begin():
+-                    for statement in (
+-                        "DELETE FROM approved_fact_source WHERE source_import_id = :import_id",
+-                        "DELETE FROM property_rule_source WHERE property_rule_id IN (:heating, :old, :new, :repair)",
+-                        "DELETE FROM property_rule_relation WHERE source_import_id = :import_id",
+-                        "DELETE FROM property_rule WHERE source_import_id = :import_id",
+-                        "DELETE FROM property_document_relation WHERE source_import_id = :import_id",
+-                        "DELETE FROM property_assignment WHERE source_import_id = :import_id",
+-                        "DELETE FROM property_legal_reference WHERE source_import_id = :import_id",
+-                        "DELETE FROM declaration_import WHERE id = :import_id",
+-                        "DELETE FROM property_document WHERE id IN (:main, :amendment)",
+-                        "DELETE FROM unit WHERE id IN (:unit_one, :unit_two)",
+-                        "DELETE FROM property WHERE id IN (:property_id, :foreign)",
+-                    ):
+-                        await cleanup.execute(
+-                            text(statement),
+-                            {
+-                                **created,
+-                                "import_id": created["import"],
+-                                "property_id": created["property"],
+-                                "heating": created["heating"],
+-                                "old": created["elevator_old"],
+-                                "new": created["elevator_new"],
+-                                "repair": created["repair"],
+-                            },
+-                        )
++                    registered = await fixture_has_registered_documents(
++                        cleanup, [created["main"], created["amendment"]]
++                    )
++                    # Registered originals are retained until the guarded session reset.
++                    # Do not bypass their append-only protection for fixture teardown.
++                    if not registered:
++                        for statement in (
++                            "DELETE FROM approved_fact_source WHERE source_import_id = :import_id",
++                            "DELETE FROM property_rule_source WHERE property_rule_id IN (:heating, :old, :new, :repair)",
++                            "DELETE FROM property_rule_relation WHERE source_import_id = :import_id",
++                            "DELETE FROM property_rule WHERE source_import_id = :import_id",
++                            "DELETE FROM property_document_relation WHERE source_import_id = :import_id",
++                            "DELETE FROM property_assignment WHERE source_import_id = :import_id",
++                            "DELETE FROM property_legal_reference WHERE source_import_id = :import_id",
++                            "DELETE FROM declaration_import WHERE id = :import_id",
++                            "DELETE FROM property_document WHERE id IN (:main, :amendment)",
++                            "DELETE FROM unit WHERE id IN (:unit_one, :unit_two)",
++                            "DELETE FROM property WHERE id IN (:property_id, :foreign)",
++                        ):
++                            await cleanup.execute(
++                                text(statement),
++                                {
++                                    **created,
++                                    "import_id": created["import"],
++                                    "property_id": created["property"],
++                                    "heating": created["heating"],
++                                    "old": created["elevator_old"],
++                                    "new": created["elevator_new"],
++                                    "repair": created["repair"],
++                                },
++                            )
+         finally:
+             await cleanup_engine.dispose()
+diff --git a/backend/tests/test_access_coverage.py b/backend/tests/test_access_coverage.py
+index 75d89e2..f86b843 100644
+--- a/backend/tests/test_access_coverage.py
++++ b/backend/tests/test_access_coverage.py
+@@ -159,10 +159,14 @@ async def test_capture_waits_for_live_admin_and_migration_retains_snapshots(migr
+                 try:
+                     db.execute(text('TRUNCATE access_coverage_review,access_coverage_snapshot CASCADE'))
+                     db.execute(text('TRUNCATE source_security_transition,source_security_authorization,property_source_security'))
+-                    importlib.import_module('migrations.versions.0091_source_security_lifecycle').downgrade()
+-                    importlib.import_module('migrations.versions.0090_access_disposition').downgrade()
+                     proposal_migration = importlib.import_module('migrations.versions.0084_access_grant_proposals')
+                     db.execute(text('TRUNCATE runtime_budget_review,runtime_budget_attestation CASCADE'))
++                    from pathlib import Path
++                    from alembic.script import ScriptDirectory
++                    versions = ScriptDirectory(str(Path(__file__).resolve().parents[1] / 'migrations'))
++                    db.execute(text('TRUNCATE document_ref CASCADE'))
++                    for revision in versions.iterate_revisions('head', '0088'):
++                        revision.module.downgrade()
+                     importlib.import_module('migrations.versions.0088_runtime_budget_review').downgrade()
+                     importlib.import_module('migrations.versions.0087_projected_access_coverage').downgrade()
+                     proposal_migration.downgrade()
+diff --git a/backend/tests/test_allocation_adoptions.py b/backend/tests/test_allocation_adoptions.py
+index 9f69eb0..3f764d4 100644
+--- a/backend/tests/test_allocation_adoptions.py
++++ b/backend/tests/test_allocation_adoptions.py
+@@ -359,6 +359,7 @@ async def test_adoption_retained_evidence_blocks_downgrade_and_empty_roundtrip_r
+                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+diff --git a/backend/tests/test_allocation_correction_preview.py b/backend/tests/test_allocation_correction_preview.py
+index 5025918..22d53d7 100644
+--- a/backend/tests/test_allocation_correction_preview.py
++++ b/backend/tests/test_allocation_correction_preview.py
+@@ -160,6 +160,7 @@ async def test_preview_helpers_bound_before_traversal_and_migration_roundtrip(mi
+             db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
+             db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+             db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++            importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+             importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+             importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+             db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+@@ -186,6 +187,7 @@ async def test_preview_helpers_bound_before_traversal_and_migration_roundtrip(mi
+             importlib.import_module('migrations.versions.0120_allocation_source_aliases').upgrade()
+             importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
+             importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
++            importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').upgrade()
+             for signature in signatures[1:]:
+                 assert not db.scalar(text("SELECT has_function_privilege('app_rw',:signature,'EXECUTE')"),{'signature':signature})
+             for payload in ({'padding':'x'*2097152,'computation':[{'cost_entry_id':'invalid'}]}, {'inputs':{'cost_positions':[None]}}, {'result':{'lines':{}}}, {'result':{'owners':[{'cost_lines':False}]}}, {'result':{'owners':[None]}}):
+diff --git a/backend/tests/test_allocation_corrections.py b/backend/tests/test_allocation_corrections.py
+index 4e0dfb5..6cad626 100644
+--- a/backend/tests/test_allocation_corrections.py
++++ b/backend/tests/test_allocation_corrections.py
+@@ -185,6 +185,7 @@ async def test_correction_guards_runtime_writes_and_retains_evidence_on_downgrad
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 followup=importlib.import_module('migrations.versions.0116_correction_followup_completions')
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+@@ -205,6 +206,7 @@ async def test_correction_guards_runtime_writes_and_retains_evidence_on_downgrad
+                 importlib.import_module('migrations.versions.0120_allocation_source_aliases').upgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').upgrade()
+                 assert before=={f:db.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),{'signature':f}) for f in functions}
+             finally:point.rollback()
+     finally:engine.dispose()
+diff --git a/backend/tests/test_allocation_proposals.py b/backend/tests/test_allocation_proposals.py
+index 363c855..d9980fb 100644
+--- a/backend/tests/test_allocation_proposals.py
++++ b/backend/tests/test_allocation_proposals.py
+@@ -236,6 +236,7 @@ async def test_allocation_coverage_provenance_and_guarded_downgrade(migrator_ses
+                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+diff --git a/backend/tests/test_allocation_source_aliases.py b/backend/tests/test_allocation_source_aliases.py
+index 7a44fea..a631924 100644
+--- a/backend/tests/test_allocation_source_aliases.py
++++ b/backend/tests/test_allocation_source_aliases.py
+@@ -279,6 +279,7 @@ async def test_alias_migration_roundtrip_and_populated_rollback_refusal(migrator
+     engine = create_engine(MIGRATOR_SYNC_URL)
+     try:
+         with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
++            importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+             importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+             importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+             before = {signature:db.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),{'signature':signature}) for signature,_,_ in migration.PATCHES}
+@@ -292,4 +293,5 @@ async def test_alias_migration_roundtrip_and_populated_rollback_refusal(migrator
+                 point.rollback()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').upgrade()
+     finally: engine.dispose()
+diff --git a/backend/tests/test_allocation_source_claims.py b/backend/tests/test_allocation_source_claims.py
+index 7637f57..b45748b 100644
+--- a/backend/tests/test_allocation_source_claims.py
++++ b/backend/tests/test_allocation_source_claims.py
+@@ -98,6 +98,7 @@ async def test_migration_preserves_legacy_collisions_and_seals_private_claims(mi
+             point = db.begin_nested()
+             try:
+                 db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_extract_attestation CASCADE'))
+@@ -165,6 +166,7 @@ async def test_backfill_reconstructs_correction_chain_and_rejects_corrupt_ancest
+                 point = db.begin_nested()
+                 try:
+                     db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
++                    importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                     importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                     importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                     db.execute(text('TRUNCATE visual_extract_attestation CASCADE'))
+diff --git a/backend/tests/test_allocation_treatments.py b/backend/tests/test_allocation_treatments.py
+index ca5f924..c09ef16 100644
+--- a/backend/tests/test_allocation_treatments.py
++++ b/backend/tests/test_allocation_treatments.py
+@@ -220,6 +220,7 @@ async def test_treatment_sql_membership_coverage_and_guarded_downgrade(migrator_
+                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+diff --git a/backend/tests/test_assignment_proposals.py b/backend/tests/test_assignment_proposals.py
+index 5d9820c..07b9818 100644
+--- a/backend/tests/test_assignment_proposals.py
++++ b/backend/tests/test_assignment_proposals.py
+@@ -156,6 +156,7 @@ async def test_assignment_evidence_changes_coverage_and_cannot_be_downgraded(mig
+                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+diff --git a/backend/tests/test_auth_db_functions.py b/backend/tests/test_auth_db_functions.py
+index c13bdb9..3d7194e 100644
+--- a/backend/tests/test_auth_db_functions.py
++++ b/backend/tests/test_auth_db_functions.py
+@@ -6,6 +6,8 @@ from pathlib import Path
+ import uuid
+ 
+ import pytest
++
++from tests.legacy_migration_database import legacy_auth_database
+ import psycopg2
+ from alembic import command
+ from alembic.config import Config
+@@ -13,14 +15,14 @@ from sqlalchemy import text
+ from sqlalchemy.exc import IntegrityError, InternalError
+ 
+ 
+-def test_0027_accepts_a_single_legacy_email_created_under_0022():
++def test_0027_accepts_a_single_legacy_email_created_under_0022(legacy_auth_database):
+     """A 0022-valid legacy address stays usable after the full 0027 upgrade."""
+     from tests.conftest import MIGRATOR_SYNC_URL
+ 
+     backend_dir = Path(__file__).resolve().parents[1]
+     alembic_cfg = Config(str(backend_dir / "alembic.ini"))
+     alembic_cfg.set_main_option("sqlalchemy.url", MIGRATOR_SYNC_URL)
+-    alembic_cfg.set_main_option("script_location", str(backend_dir / "migrations"))
++    alembic_cfg.set_main_option("script_location", str(legacy_auth_database))
+     organization_id = uuid.uuid4()
+     user_id = uuid.uuid4()
+     canonical_email = f"legacy-upgrade-{uuid.uuid4().hex}@example.test"
+@@ -71,7 +73,7 @@ def test_0027_accepts_a_single_legacy_email_created_under_0022():
+             command.upgrade(alembic_cfg, "0027")
+ 
+ 
+-def test_0023_upgrade_reconciles_old_property_schema_and_preexisting_0027_auth_objects() -> None:
++def test_0023_upgrade_reconciles_old_property_schema_and_preexisting_0027_auth_objects(legacy_auth_database) -> None:
+     """A DB stamped at 0023 can carry the old property schema and leaked auth objects.
+ 
+     Production fully applied a separate auth migration that reused revision
+@@ -85,7 +87,7 @@ def test_0023_upgrade_reconciles_old_property_schema_and_preexisting_0027_auth_o
+     backend_dir = Path(__file__).resolve().parents[1]
+     alembic_cfg = Config(str(backend_dir / "alembic.ini"))
+     alembic_cfg.set_main_option("sqlalchemy.url", MIGRATOR_SYNC_URL)
+-    alembic_cfg.set_main_option("script_location", str(backend_dir / "migrations"))
++    alembic_cfg.set_main_option("script_location", str(legacy_auth_database))
+     migrated_to_head = False
+     organization_id = uuid.uuid4()
+     property_id = uuid.uuid4()
+@@ -267,14 +269,14 @@ def test_0023_upgrade_reconciles_old_property_schema_and_preexisting_0027_auth_o
+             command.upgrade(alembic_cfg, "head")
+ 
+ 
+-def test_0026_refuses_an_incompatible_preexisting_building_part_column() -> None:
++def test_0026_refuses_an_incompatible_preexisting_building_part_column(legacy_auth_database) -> None:
+     """Only the complete known 0022-as-0023 state is repaired automatically."""
+     from tests.conftest import MIGRATOR_SYNC_URL
+ 
+     backend_dir = Path(__file__).resolve().parents[1]
+     alembic_cfg = Config(str(backend_dir / "alembic.ini"))
+     alembic_cfg.set_main_option("sqlalchemy.url", MIGRATOR_SYNC_URL)
+-    alembic_cfg.set_main_option("script_location", str(backend_dir / "migrations"))
++    alembic_cfg.set_main_option("script_location", str(legacy_auth_database))
+     try:
+         command.downgrade(alembic_cfg, "0022")
+         command.stamp(alembic_cfg, "0023")
+@@ -291,14 +293,14 @@ def test_0026_refuses_an_incompatible_preexisting_building_part_column() -> None
+         command.upgrade(alembic_cfg, "head")
+ 
+ 
+-def test_0027_refuses_a_conflicting_canonical_email_index() -> None:
++def test_0027_refuses_a_conflicting_canonical_email_index(legacy_auth_database) -> None:
+     """A same-named index with different key semantics must stop the upgrade."""
+     from tests.conftest import MIGRATOR_SYNC_URL
+ 
+     backend_dir = Path(__file__).resolve().parents[1]
+     alembic_cfg = Config(str(backend_dir / "alembic.ini"))
+     alembic_cfg.set_main_option("sqlalchemy.url", MIGRATOR_SYNC_URL)
+-    alembic_cfg.set_main_option("script_location", str(backend_dir / "migrations"))
++    alembic_cfg.set_main_option("script_location", str(legacy_auth_database))
+     try:
+         command.downgrade(alembic_cfg, "0026")
+         with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+@@ -321,14 +323,14 @@ def test_0027_refuses_a_conflicting_canonical_email_index() -> None:
+         command.upgrade(alembic_cfg, "head")
+ 
+ 
+-def test_0027_refuses_a_canonical_email_index_on_another_table() -> None:
++def test_0027_refuses_a_canonical_email_index_on_another_table(legacy_auth_database) -> None:
+     """A matching index name and expression are insufficient on a decoy table."""
+     from tests.conftest import MIGRATOR_SYNC_URL
+ 
+     backend_dir = Path(__file__).resolve().parents[1]
+     alembic_cfg = Config(str(backend_dir / "alembic.ini"))
+     alembic_cfg.set_main_option("sqlalchemy.url", MIGRATOR_SYNC_URL)
+-    alembic_cfg.set_main_option("script_location", str(backend_dir / "migrations"))
++    alembic_cfg.set_main_option("script_location", str(legacy_auth_database))
+     try:
+         command.downgrade(alembic_cfg, "0026")
+         with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+diff --git a/backend/tests/test_context_decisions.py b/backend/tests/test_context_decisions.py
+index a0ed076..f295f83 100644
+--- a/backend/tests/test_context_decisions.py
++++ b/backend/tests/test_context_decisions.py
+@@ -209,6 +209,7 @@ async def test_context_coverage_constraints_and_guarded_downgrade(migrator_sessi
+                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+diff --git a/backend/tests/test_context_mappings.py b/backend/tests/test_context_mappings.py
+index f280949..10009f1 100644
+--- a/backend/tests/test_context_mappings.py
++++ b/backend/tests/test_context_mappings.py
+@@ -191,6 +191,7 @@ async def test_mapping_roles_pause_private_table_seal_and_guarded_downgrade(migr
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 followup=importlib.import_module('migrations.versions.0116_correction_followup_completions')
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+@@ -213,6 +214,7 @@ async def test_mapping_roles_pause_private_table_seal_and_guarded_downgrade(migr
+                 importlib.import_module('migrations.versions.0120_allocation_source_aliases').upgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').upgrade()
+                 assert before==db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
+             finally:point.rollback()
+         async with client(ids) as api:
+diff --git a/backend/tests/test_correction_followups.py b/backend/tests/test_correction_followups.py
+index f95f4ee..e820e70 100644
+--- a/backend/tests/test_correction_followups.py
++++ b/backend/tests/test_correction_followups.py
+@@ -212,6 +212,7 @@ async def test_followup_context_backfill_two_orgs_without_tenant_guc_and_guarded
+     try:
+         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
+             with pytest.raises(DBAPIError,match='Retain correction follow-up'),db.begin_nested():
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+@@ -229,6 +230,7 @@ async def test_followup_context_backfill_two_orgs_without_tenant_guc_and_guarded
+             try:
+                 db.execute(text("SELECT set_config('app.current_org_id','',true)"))
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+@@ -245,6 +247,7 @@ async def test_followup_context_backfill_two_orgs_without_tenant_guc_and_guarded
+                 importlib.import_module('migrations.versions.0120_allocation_source_aliases').upgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').upgrade()
+                 assert definition==db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
+                 assert db.scalar(text('SELECT count(*) FROM allocation_correction_context WHERE impact_id=ANY(:ids)'),{'ids':retained})==2
+                 assert db.scalar(text('SELECT count(*) FROM allocation_correction_context WHERE impact_id=ANY(:ids)'),{'ids':unproven})==0
+diff --git a/backend/tests/test_declaration_approval_existing_property.py b/backend/tests/test_declaration_approval_existing_property.py
+index c915ffb..d2bad25 100644
+--- a/backend/tests/test_declaration_approval_existing_property.py
++++ b/backend/tests/test_declaration_approval_existing_property.py
+@@ -466,25 +466,30 @@ async def reviewed_existing_property_import(seed_data: dict):
+             try:
+                 async with async_sessionmaker(cleanup_engine, class_=AsyncSession)() as cleanup:
+                     async with cleanup.begin():
+-                        for statement in (
+-                            "DELETE FROM approved_fact_source WHERE source_import_id = :id",
+-                            "DELETE FROM property_rule_source WHERE property_id = :property",
+-                            "DELETE FROM property_rule_source WHERE property_rule_id IN (SELECT id FROM property_rule WHERE source_import_id = :id)",
+-                            "DELETE FROM property_rule_relation WHERE source_import_id = :id",
+-                            "DELETE FROM property_rule WHERE source_import_id = :id",
+-                            "DELETE FROM property_document_relation WHERE source_import_id = :id",
+-                            "DELETE FROM property_assignment WHERE source_import_id = :id",
+-                            "DELETE FROM property_legal_reference WHERE source_import_id = :id",
+-                            "DELETE FROM audit_event WHERE entity_id = :id",
+-                            "DELETE FROM declaration_candidate_evidence WHERE candidate_id IN (SELECT id FROM declaration_candidate WHERE import_id = :id)",
+-                            "DELETE FROM declaration_candidate WHERE import_id = :id",
+-                            "DELETE FROM declaration_import_document WHERE import_id = :id",
+-                            "DELETE FROM declaration_import WHERE id = :id",
+-                        ):
+-                            await cleanup.execute(text(statement), {"id": item.id, "property": property_row.id})
+-                        await cleanup.execute(text("DELETE FROM property_document WHERE id IN (:main, :amendment)"), {"main": main.id, "amendment": amendment.id})
+-                        await cleanup.execute(text("DELETE FROM unit WHERE property_id = :property"), {"property": property_row.id})
+-                        await cleanup.execute(text("DELETE FROM property WHERE id = :property"), {"property": property_row.id})
++                        from tests.conftest import fixture_has_registered_documents
++
++                        registered = await fixture_has_registered_documents(cleanup, [main.id, amendment.id])
++                        # Registered originals remain until the guarded session reset.
++                        if not registered:
++                            for statement in (
++                                "DELETE FROM approved_fact_source WHERE source_import_id = :id",
++                                "DELETE FROM property_rule_source WHERE property_id = :property",
++                                "DELETE FROM property_rule_source WHERE property_rule_id IN (SELECT id FROM property_rule WHERE source_import_id = :id)",
++                                "DELETE FROM property_rule_relation WHERE source_import_id = :id",
++                                "DELETE FROM property_rule WHERE source_import_id = :id",
++                                "DELETE FROM property_document_relation WHERE source_import_id = :id",
++                                "DELETE FROM property_assignment WHERE source_import_id = :id",
++                                "DELETE FROM property_legal_reference WHERE source_import_id = :id",
++                                "DELETE FROM audit_event WHERE entity_id = :id",
++                                "DELETE FROM declaration_candidate_evidence WHERE candidate_id IN (SELECT id FROM declaration_candidate WHERE import_id = :id)",
++                                "DELETE FROM declaration_candidate WHERE import_id = :id",
++                                "DELETE FROM declaration_import_document WHERE import_id = :id",
++                                "DELETE FROM declaration_import WHERE id = :id",
++                            ):
++                                await cleanup.execute(text(statement), {"id": item.id, "property": property_row.id})
++                            await cleanup.execute(text("DELETE FROM property_document WHERE id IN (:main, :amendment)"), {"main": main.id, "amendment": amendment.id})
++                            await cleanup.execute(text("DELETE FROM unit WHERE property_id = :property"), {"property": property_row.id})
++                            await cleanup.execute(text("DELETE FROM property WHERE id = :property"), {"property": property_row.id})
+             finally:
+                 await cleanup_engine.dispose()
+ 
+diff --git a/backend/tests/test_declaration_approval_new_property.py b/backend/tests/test_declaration_approval_new_property.py
+index 18c8a01..630f79a 100644
+--- a/backend/tests/test_declaration_approval_new_property.py
++++ b/backend/tests/test_declaration_approval_new_property.py
+@@ -918,13 +918,12 @@ async def fully_reviewed_new_property_import(seed_data: dict) -> SimpleNamespace
+                 factory = async_sessionmaker(cleanup_engine, class_=AsyncSession, expire_on_commit=False)
+                 async with factory() as cleanup:
+                     async with cleanup.begin():
+-                        # Published source sets cannot be surgically deleted, even
+-                        # by the migrator. Reset only guarded disposable sources.
++                        from tests.conftest import fixture_has_registered_documents
++
++                        registered = await fixture_has_registered_documents(cleanup, [main.id, amendment.id])
+                         published = await cleanup.scalar(text("SELECT publication_domain_id FROM declaration_import WHERE id=:id"), {"id": item.id})
+-                        if published is not None:
+-                            from tests.conftest import clear_disposable_source_context
+-                            await cleanup.run_sync(lambda sync: clear_disposable_source_context(sync.connection().connection.cursor()))
+-                        else:
++                        # Published/registered originals remain until the guarded session reset.
++                        if not registered and published is None:
+                             from app.declarations.approval import deterministic_id
+                             property_id = deterministic_id(item.organization_id, item.id, "property", "new")
+                             await cleanup.execute(text("DELETE FROM approved_fact_source WHERE source_import_id = :import_id"), {"import_id": item.id})
+diff --git a/backend/tests/test_declaration_pass_ledger.py b/backend/tests/test_declaration_pass_ledger.py
+index 437ab0e..0e819c8 100644
+--- a/backend/tests/test_declaration_pass_ledger.py
++++ b/backend/tests/test_declaration_pass_ledger.py
+@@ -7,6 +7,8 @@ import json
+ import uuid
+ 
+ import pytest
++
++from tests.legacy_migration_database import legacy_auth_database as legacy_0028_database
+ from sqlalchemy import select, text
+ from sqlalchemy.exc import DBAPIError
+ 
+@@ -14,7 +16,7 @@ from app.declarations.observability import PassLedgerEntry, ProviderPassMetadata
+ from app.declarations.pipeline import DeclarationPipeline, PipelineFailure, _Ledger
+ from app.declarations.provider import ProviderFailure, ProviderReservationEstimate, ProviderUsage
+ from app.core.config import settings
+-from app.core.db import get_tenant_session
++from app.core.db import get_tenant_session, get_worker_tenant_session
+ from app.models.declaration_import import (
+     DeclarationExtractionRun,
+     DeclarationImport,
+@@ -62,7 +64,7 @@ def test_pass_ledger_model_and_repository_expose_typed_append_only_seam() -> Non
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_pass_ledger_schema_is_rls_force_and_append_only(migrator_session) -> None:
++async def test_pass_ledger_schema_is_rls_force_and_append_only(legacy_0028_database, migrator_session) -> None:
+     table = "declaration_import_pass"
+     rls = await migrator_session.execute(
+         text(
+@@ -270,7 +272,7 @@ async def _pipeline_with_running_run(seed_data):
+     pipeline = object.__new__(DeclarationPipeline)
+     pipeline._settings = settings
+     pipeline._provider = object()
+-    pipeline._tenant_session_factory = get_tenant_session
++    pipeline._tenant_session_factory = get_worker_tenant_session
+     pipeline._active_lease = lease
+     pipeline._active_run_id = await pipeline._start_run(lease)
+     ledger = _Ledger(0, 0, Decimal("0"), 0, 500_000, 60_000, Decimal("1"), settings)
+diff --git a/backend/tests/test_declaration_publication_order.py b/backend/tests/test_declaration_publication_order.py
+index 2d3ffc5..abfe478 100644
+--- a/backend/tests/test_declaration_publication_order.py
++++ b/backend/tests/test_declaration_publication_order.py
+@@ -2,13 +2,12 @@
+ import uuid
+ import pytest
+ from sqlalchemy import text
+-from app.core.db import get_tenant_session
+ from app.repositories.property_knowledge_repo import PropertyKnowledgeRepository
+ from tests.test_declaration_approval_new_property import fully_reviewed_new_property_import  # noqa: F401
+ from tests.test_declaration_approval_existing_property import reviewed_existing_property_import  # noqa: F401
+ 
+ 
+-async def assert_publication_order(client, fixture, seed, monkeypatch, method):
++async def assert_publication_order(client, fixture, seed, monkeypatch, method, observer):
+     item=fixture.item
+     original=getattr(PropertyKnowledgeRepository,method)
+     observed=[]
+@@ -22,11 +21,12 @@ async def assert_publication_order(client, fixture, seed, monkeypatch, method):
+         assert await repo._session.scalar(text('SELECT count(*) FROM property WHERE id=:id'),{'id':plan.property_id})==1
+         assert await repo._session.scalar(text('SELECT count(*) FROM property_document WHERE id=ANY(:ids) AND property_id IS NOT NULL'),
+             {'ids':list(plan.document_ids)})==0
+-        # Other transactions must still see the untouched draft until ALL effects commit.
+-        async with get_tenant_session(seed['org_a_id']) as reader:
+-            assert await reader.scalar(text('SELECT status FROM declaration_import WHERE id=:id'),{'id':item.id})=='NEEDS_REVIEW'
+-            if method=='apply':
+-                assert await reader.scalar(text('SELECT count(*) FROM property WHERE id=:id'),{'id':plan.property_id})==0
++        # Observe MVCC without the runtime advisory lock that serializes readers
++        # behind this open publication transaction; the HTTP request still uses app_rw.
++        reader=observer
++        assert await reader.scalar(text('SELECT status FROM declaration_import WHERE id=:id'),{'id':item.id})=='NEEDS_REVIEW'
++        if method=='apply':
++            assert await reader.scalar(text('SELECT count(*) FROM property WHERE id=:id'),{'id':plan.property_id})==0
+         observed.append(plan.property_id)
+         await original(repo,plan,approved_by,approved_at,documents)
+ 
+@@ -38,10 +38,10 @@ async def assert_publication_order(client, fixture, seed, monkeypatch, method):
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_new_destination_and_receipt_precede_source_binding(client_a_clerk,fully_reviewed_new_property_import,seed_data,monkeypatch):
+-    await assert_publication_order(client_a_clerk,fully_reviewed_new_property_import,seed_data,monkeypatch,'apply')
++async def test_new_destination_and_receipt_precede_source_binding(client_a_clerk,fully_reviewed_new_property_import,seed_data,monkeypatch,migrator_session):
++    await assert_publication_order(client_a_clerk,fully_reviewed_new_property_import,seed_data,monkeypatch,'apply',migrator_session)
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_existing_destination_receipt_precedes_source_binding(client_a_clerk,reviewed_existing_property_import,seed_data,monkeypatch):
+-    await assert_publication_order(client_a_clerk,reviewed_existing_property_import,seed_data,monkeypatch,'apply_existing')
++async def test_existing_destination_receipt_precedes_source_binding(client_a_clerk,reviewed_existing_property_import,seed_data,monkeypatch,migrator_session):
++    await assert_publication_order(client_a_clerk,reviewed_existing_property_import,seed_data,monkeypatch,'apply_existing',migrator_session)
+diff --git a/backend/tests/test_declaration_runtime_config.py b/backend/tests/test_declaration_runtime_config.py
+index 0165cd1..52f15ae 100644
+--- a/backend/tests/test_declaration_runtime_config.py
++++ b/backend/tests/test_declaration_runtime_config.py
+@@ -13,6 +13,7 @@ from types import SimpleNamespace
+ 
+ import pytest
+ import yaml
++from sqlalchemy.engine import make_url
+ 
+ from app.models.organization import Organization
+ from app.workers import declaration_import
+@@ -314,14 +315,14 @@ def test_compose_declares_least_privilege_worker_topology() -> None:
+     assert networks["egress"] == {"internal": False}
+ 
+     environment = _environment(worker)
+-    assert "app_rw" in environment["HV_DATABASE_URL"]
+-    assert "app_migrator" not in environment["HV_DATABASE_URL"]
++    assert make_url(environment["HV_DATABASE_URL_WORKER"]).username == "app_worker"
+     assert environment["HV_OPENAI_API_KEY"] == "${HV_OPENAI_API_KEY:-}"
+     assert environment["HV_DOCUMENT_STORAGE_ROOT"] == "/data/documents"
+     assert environment["HV_DATA_REGION"] == "${HV_DATA_REGION:-EU}"
+     assert _DECLARATION_EXTRACTION_ENVIRONMENT <= environment.keys()
+     assert _DECLARATION_QA_ENVIRONMENT.isdisjoint(environment)
+     assert {
++        "HV_DATABASE_URL",
+         "HV_DATABASE_URL_MIGRATOR",
+         "HV_DATABASE_URL_SYNC",
+         "HV_SESSION_SECRET",
+diff --git a/backend/tests/test_declaration_worker.py b/backend/tests/test_declaration_worker.py
+index ca08c4f..889d0ed 100644
+--- a/backend/tests/test_declaration_worker.py
++++ b/backend/tests/test_declaration_worker.py
+@@ -2,13 +2,15 @@
+ 
+ import asyncio
+ import uuid
+-from contextlib import asynccontextmanager
++from contextlib import asynccontextmanager, closing
+ from datetime import datetime, timedelta, timezone
+ from decimal import Decimal
+ 
+ import pytest
++import psycopg2
+ from sqlalchemy import select
+ 
++from tests.conftest import MIGRATOR_SYNC_URL
+ from tests.declaration_queue_fixture import queue_fixture
+ from app.core.config import settings
+ from app.core.db import get_worker_tenant_session as get_tenant_session
+@@ -21,6 +23,56 @@ from app.repositories.declaration_import_repo import (
+ from app.workers.declaration_import import DeclarationImportWorker
+ 
+ 
++@pytest.fixture
++def seed_data(seed_data, monkeypatch):
++    """Keep each worker scenario out of retained imports from other fixtures."""
++    isolated = {key: uuid.uuid4() for key in seed_data}
++    with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection:
++        with connection, connection.cursor() as cursor:
++            for org in ('a', 'b'):
++                org_key = f'org_{org}_id'
++                cursor.execute('INSERT INTO organization (id,name) VALUES (%s,%s)',
++                               (str(isolated[org_key]), f'Worker {org} {isolated[org_key]}'))
++                roles = ('admin', 'clerk', 'readonly') if org == 'a' else ('admin',)
++                for role in roles:
++                    user_key = f'user_{org}_{role}_id'
++                    cursor.execute(
++                        'INSERT INTO "user" (id,organization_id,email,password_hash,display_name) '
++                        'SELECT %s,%s,%s,password_hash,display_name FROM "user" WHERE id=%s',
++                        (str(isolated[user_key]), str(isolated[org_key]),
++                         f'{isolated[user_key]}@worker.example', str(seed_data[user_key])),
++                    )
++                    if cursor.rowcount != 1:
++                        raise RuntimeError('Worker namespace requires the original seed user')
++                    cursor.execute(
++                        'INSERT INTO membership (id,organization_id,user_id,role) '
++                        'SELECT %s,%s,%s,role FROM membership WHERE organization_id=%s AND user_id=%s',
++                        (str(uuid.uuid4()), str(isolated[org_key]), str(isolated[user_key]),
++                         str(seed_data[org_key]), str(seed_data[user_key])),
++                    )
++                    if cursor.rowcount != 1:
++                        raise RuntimeError('Worker namespace requires the original seed membership')
++                mandate_key = f'mandate_{org}_id'
++                cursor.execute(
++                    'INSERT INTO management_mandate (id,organization_id,mandate_type,label,start_date) '
++                    'SELECT %s,%s,mandate_type,label,start_date FROM management_mandate WHERE id=%s',
++                    (str(isolated[mandate_key]), str(isolated[org_key]), str(seed_data[mandate_key])),
++                )
++                if cursor.rowcount != 1:
++                    raise RuntimeError('Worker namespace requires the original seed mandate')
++
++    original_directory = DeclarationImportWorker._organization_ids
++    namespace = {isolated['org_a_id'], isolated['org_b_id']}
++
++    async def organization_ids(worker):
++        # Preserve the real unscoped query, including the dispatcher spy assertions.
++        found = await original_directory(worker)
++        return tuple(org_id for org_id in found if org_id in namespace)
++
++    monkeypatch.setattr(DeclarationImportWorker, '_organization_ids', organization_ids)
++    return isolated
++
++
+ @pytest.fixture(autouse=True)
+ def enable_declaration_imports(monkeypatch) -> None:
+     monkeypatch.setattr(settings, "declaration_import_enabled", True)
+diff --git a/backend/tests/test_document_registry.py b/backend/tests/test_document_registry.py
+index ad68037..b488021 100644
+--- a/backend/tests/test_document_registry.py
++++ b/backend/tests/test_document_registry.py
+@@ -125,6 +125,7 @@ async def test_registry_constraints_backfill_and_guarded_downgrade(migrator_sess
+                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+diff --git a/backend/tests/test_duplicate_comparisons.py b/backend/tests/test_duplicate_comparisons.py
+index 9080a75..6d8700a 100644
+--- a/backend/tests/test_duplicate_comparisons.py
++++ b/backend/tests/test_duplicate_comparisons.py
+@@ -271,6 +271,7 @@ async def test_duplicate_coverage_provenance_and_guarded_downgrade(migrator_sess
+                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+diff --git a/backend/tests/test_duplicate_exceptions.py b/backend/tests/test_duplicate_exceptions.py
+index a260bee..8646f62 100644
+--- a/backend/tests/test_duplicate_exceptions.py
++++ b/backend/tests/test_duplicate_exceptions.py
+@@ -168,6 +168,7 @@ async def test_duplicate_exception_backfill_constraints_coverage_and_downgrade(m
+                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+diff --git a/backend/tests/test_exception_cases.py b/backend/tests/test_exception_cases.py
+index 9f7f4db..f6ae95b 100644
+--- a/backend/tests/test_exception_cases.py
++++ b/backend/tests/test_exception_cases.py
+@@ -209,6 +209,7 @@ async def test_exception_backfill_constraints_coverage_and_downgrade_guard(migra
+                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+diff --git a/backend/tests/test_exception_completions.py b/backend/tests/test_exception_completions.py
+index 1945b04..13197ce 100644
+--- a/backend/tests/test_exception_completions.py
++++ b/backend/tests/test_exception_completions.py
+@@ -278,6 +278,7 @@ async def test_completion_sealed_membership_coverage_and_guarded_roundtrip(migra
+                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+diff --git a/backend/tests/test_extraction_revisions.py b/backend/tests/test_extraction_revisions.py
+index 8f823e0..6e5da6b 100644
+--- a/backend/tests/test_extraction_revisions.py
++++ b/backend/tests/test_extraction_revisions.py
+@@ -164,6 +164,7 @@ async def test_extraction_migration_retains_revisions_and_restores_empty_schema(
+                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+diff --git a/backend/tests/test_financial_computation_evidence.py b/backend/tests/test_financial_computation_evidence.py
+index 4502907..cdeca5e 100644
+--- a/backend/tests/test_financial_computation_evidence.py
++++ b/backend/tests/test_financial_computation_evidence.py
+@@ -267,6 +267,7 @@ async def test_computation_evidence_is_immutable_manifested_and_roundtrips(clien
+             followup=importlib.import_module('migrations.versions.0116_correction_followup_completions')
+             with pytest.raises(DBAPIError,match="Retain trusted"),db.begin_nested():
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+@@ -283,6 +284,7 @@ async def test_computation_evidence_is_immutable_manifested_and_roundtrips(clien
+             point=db.begin_nested()
+             try:
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+@@ -302,6 +304,7 @@ async def test_computation_evidence_is_immutable_manifested_and_roundtrips(clien
+                 importlib.import_module('migrations.versions.0120_allocation_source_aliases').upgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').upgrade()
+                 assert definition==db.scalar(text("SELECT pg_get_functiondef(CAST(:signature AS regprocedure))"),{"signature":signature})
+                 for role in ("app_rw","app_worker","app_review"):
+                     assert not db.scalar(text("SELECT has_function_privilege(:role,\u0027financial_computation_state(uuid,text,uuid)\u0027,\u0027EXECUTE\u0027)"),{"role":role})
+diff --git a/backend/tests/test_intake_batches.py b/backend/tests/test_intake_batches.py
+index 899c4e0..652adcc 100644
+--- a/backend/tests/test_intake_batches.py
++++ b/backend/tests/test_intake_batches.py
+@@ -274,6 +274,7 @@ async def test_intake_migration_refuses_data_and_preserves_function_identity(mig
+                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+diff --git a/backend/tests/test_intake_extraction_worker.py b/backend/tests/test_intake_extraction_worker.py
+index 65cd41d..e1326fc 100644
+--- a/backend/tests/test_intake_extraction_worker.py
++++ b/backend/tests/test_intake_extraction_worker.py
+@@ -238,6 +238,7 @@ async def test_migration_backfill_guard_and_function_identity(migrator_session,s
+                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+diff --git a/backend/tests/test_invoice_reviews.py b/backend/tests/test_invoice_reviews.py
+index eaa69bc..1cd9141 100644
+--- a/backend/tests/test_invoice_reviews.py
++++ b/backend/tests/test_invoice_reviews.py
+@@ -201,6 +201,7 @@ async def test_field_review_coverage_source_constraints_and_guarded_downgrade(mi
+                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+diff --git a/backend/tests/test_logical_documents.py b/backend/tests/test_logical_documents.py
+index e976ad6..cff04a2 100644
+--- a/backend/tests/test_logical_documents.py
++++ b/backend/tests/test_logical_documents.py
+@@ -144,6 +144,7 @@ async def test_logical_migration_preserves_evidence_and_function_identity(migrat
+                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+diff --git a/backend/tests/test_mandate_legacy_quarantine.py b/backend/tests/test_mandate_legacy_quarantine.py
+index c8fc66d..15c5e33 100644
+--- a/backend/tests/test_mandate_legacy_quarantine.py
++++ b/backend/tests/test_mandate_legacy_quarantine.py
+@@ -66,9 +66,8 @@ async def test_quarantine_migration_observes_legacy_without_rewriting_or_losing_
+             try:
+                 # Rehearse the actual 0077->0078 transition only in this guarded,
+                 # disposable transaction, then restore all current fixtures.
+-                db.execute(text('TRUNCATE mandate_document CASCADE'))
+-                disposition = importlib.import_module('migrations.versions.0079_mandate_quarantine_disposition')
+-                disposition.downgrade()
++                from tests.migration_rehearsal import prepare_historical_revision
++                prepare_historical_revision(db, '0078')
+                 migration.downgrade()
+                 db.execute(text("""INSERT INTO mandate_document(id,organization_id,management_mandate_id,doc_type,title,mime_type,
+                     content_byte_size,content_sha256,storage_uri,storage_backend,uploaded_by)
+diff --git a/backend/tests/test_outbox_delivery.py b/backend/tests/test_outbox_delivery.py
+index eab5a25..392761b 100644
+--- a/backend/tests/test_outbox_delivery.py
++++ b/backend/tests/test_outbox_delivery.py
+@@ -167,6 +167,7 @@ async def test_outbox_migration_backfills_exact_events_and_retains_delivery_hist
+                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+diff --git a/backend/tests/test_person_source_access.py b/backend/tests/test_person_source_access.py
+index e4352f6..5ccff31 100644
+--- a/backend/tests/test_person_source_access.py
++++ b/backend/tests/test_person_source_access.py
+@@ -210,7 +210,8 @@ async def test_person_migration_keeps_custody_and_roundtrips_legacy_without_back
+                 with db.begin_nested(): migration.downgrade()
+             savepoint=db.begin_nested()
+             try:
+-                db.execute(text('TRUNCATE person CASCADE'))
++                from tests.migration_rehearsal import prepare_historical_revision
++                prepare_historical_revision(db, '0069')
+                 legacy=uuid.uuid4()
+                 db.execute(text("INSERT INTO person(id,organization_id,first_name,last_name) VALUES(:id,:org,'Legacy','No inferred custody')"),{'id':legacy,'org':seed_data['org_a_id']})
+                 before=db.scalar(text("SELECT md5(first_name||last_name) FROM person WHERE id=:id"),{'id':legacy})
+diff --git a/backend/tests/test_privacy_source_completeness.py b/backend/tests/test_privacy_source_completeness.py
+index 0585d45..c9b16d9 100644
+--- a/backend/tests/test_privacy_source_completeness.py
++++ b/backend/tests/test_privacy_source_completeness.py
+@@ -5,7 +5,7 @@ from fastapi import HTTPException
+ from sqlalchemy import text
+ from app.core.db import get_tenant_session
+ from app.services.dsgvo_service import DsgvoService
+-from tests.test_m3_settlement import m3_seed, _extras_for_exit  # noqa: F401
++from tests.test_m3_settlement import m3_seed as shared_m3_seed, _extras_for_exit
+ from tests.test_m4_weg import m4_seed, _create_and_finalize_plan  # noqa: F401
+ from tests.test_financial_input_policy import draft,attest
+ from tests.test_financial_source_disclosure import bind_output,clear_disclosure_grants
+@@ -16,6 +16,12 @@ from tests.contact_source_fixtures import grant_property_contacts
+ pytestmark=pytest.mark.asyncio
+ 
+ 
++@pytest.fixture
++def m3_seed(seed_data):
++    # Retained finalized accounts must not share people with earlier ACL scenarios.
++    return shared_m3_seed.__wrapped__(seed_data)
++
++
+ async def retained_rental(api,seed,m3):
+     run=await draft(api,m3,'0.00')
+     assert (await attest(api,'settlement',run,{'advance_payments_total':'0.00','advance_payments_source':'MANUAL'})).status_code==201
+diff --git a/backend/tests/test_projected_access_coverage.py b/backend/tests/test_projected_access_coverage.py
+index 5508970..bfc8413 100644
+--- a/backend/tests/test_projected_access_coverage.py
++++ b/backend/tests/test_projected_access_coverage.py
+@@ -126,7 +126,13 @@ async def test_projection_migration_retains_v2_and_preserves_v1(migrator_session
+         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
+             savepoint = db.begin_nested()
+             try:
+-                db.execute(text('TRUNCATE runtime_budget_review,runtime_budget_attestation,access_coverage_snapshot CASCADE'))
++                from tests.conftest import clear_disposable_source_context
++                clear_disposable_source_context(db.connection.cursor())
++                from pathlib import Path
++                from alembic.script import ScriptDirectory
++                versions = ScriptDirectory(str(Path(__file__).resolve().parents[1] / 'migrations'))
++                for revision in versions.iterate_revisions('head', '0088'):
++                    revision.module.downgrade()
+                 importlib.import_module('migrations.versions.0088_runtime_budget_review').downgrade()
+                 db.execute(text("INSERT INTO access_coverage_snapshot(id,organization_id,generated_by,request_key,request_digest,manifest_digest,manifest,item_count,finding_count,checker_version) VALUES(:snapshot,:org,:actor,:request,repeat('a',64),repeat('b',64),jsonb_build_object('checker_version',2,'items','[]'::jsonb),0,0,2)"),
+                     {**ids,'snapshot':uuid.uuid4(),'request':uuid.uuid4()})
+diff --git a/backend/tests/test_property_document_content.py b/backend/tests/test_property_document_content.py
+index 1c9f127..6c92bd6 100644
+--- a/backend/tests/test_property_document_content.py
++++ b/backend/tests/test_property_document_content.py
+@@ -29,10 +29,15 @@ async def _migrator_execute(statement: str, parameters: dict) -> None:
+ 
+ 
+ async def _cleanup_content_graph(graph: "ContentGraph") -> None:
+-    """Remove committed fixture rows in FK order after each HTTP test."""
++    """Retain registered fixture graphs; otherwise remove rows in FK order."""
+     engine = create_async_engine(MIGRATOR_URL)
+     try:
+         async with engine.begin() as connection:
++            if await connection.scalar(text(
++                'SELECT EXISTS(SELECT 1 FROM document_ref WHERE property_document_id = ANY(:ids))'
++            ), {'ids': [graph.document_id, graph.other_property_document_id,
++                       graph.import_document_id, graph.archived_document_id, graph.foreign_document_id]}):
++                return
+             await connection.execute(
+                 text(
+                     "DELETE FROM declaration_import_document "
+diff --git a/backend/tests/test_property_knowledge_search.py b/backend/tests/test_property_knowledge_search.py
+index a3bdf03..9e541de 100644
+--- a/backend/tests/test_property_knowledge_search.py
++++ b/backend/tests/test_property_knowledge_search.py
+@@ -48,8 +48,11 @@ def migration_config_at_head(request, seed_data) -> Config:
+ 
+ def _delete_backfill_graph(ids: dict[str, uuid.UUID]) -> None:
+     """Remove the committed migration fixture in FK-safe order at any schema >= 0025."""
++    from tests.conftest import clear_disposable_source_context
++
+     with psycopg2.connect(os.environ["HV_DATABASE_URL_SYNC"]) as connection:
+         with connection.cursor() as cursor:
++            clear_disposable_source_context(cursor)
+             cursor.execute(
+                 "DELETE FROM approved_fact_source WHERE source_import_id = %s",
+                 (str(ids["import"]),),
+diff --git a/backend/tests/test_property_source_admission.py b/backend/tests/test_property_source_admission.py
+index 4c248a2..7b4c642 100644
+--- a/backend/tests/test_property_source_admission.py
++++ b/backend/tests/test_property_source_admission.py
+@@ -158,12 +158,8 @@ async def test_migrator_guard_and_rollback_preserve_admission_evidence(client_a_
+                         migration.downgrade()
+                 nested=connection.begin_nested()
+                 try:
+-                    connection.execute(text('TRUNCATE property_source_admission'))
+-                    connection.execute(text('TRUNCATE property_source_admission_review'))
+-                    connection.execute(text('TRUNCATE property_source_classification'))
+-                    importlib.import_module('migrations.versions.0056_property_source_classification').downgrade()
+-                    importlib.import_module('migrations.versions.0052_property_source_admission_review').downgrade()
+-                    importlib.import_module('migrations.versions.0051_declaration_publication_audience').downgrade()
++                    from tests.migration_rehearsal import prepare_historical_revision
++                    prepare_historical_revision(connection, '0050')
+                     migration.downgrade()
+                     assert connection.scalar(text("SELECT to_regclass('property_source_admission')")) is None
+                     migration.upgrade()
+diff --git a/backend/tests/test_property_source_binding.py b/backend/tests/test_property_source_binding.py
+index 5e71d0a..881f10d 100644
+--- a/backend/tests/test_property_source_binding.py
++++ b/backend/tests/test_property_source_binding.py
+@@ -131,12 +131,8 @@ async def test_binding_migration_refuses_strict_rollback_and_roundtrips_preparat
+                     with db.begin_nested(): migration.downgrade()
+                 nested=db.begin_nested()
+                 try:
+-                    db.execute(text('TRUNCATE property_source_security,property_source_classification,property_creation_receipt'))
+-                    importlib.import_module('migrations.versions.0063_original_source_access').downgrade()
+-                    importlib.import_module('migrations.versions.0062_derived_source_access').downgrade()
+-                    importlib.import_module('migrations.versions.0061_property_master_access').downgrade()
+-                    importlib.import_module('migrations.versions.0059_financial_source_input').downgrade()
+-                    importlib.import_module('migrations.versions.0056_property_source_classification').downgrade()
++                    from tests.migration_rehearsal import prepare_historical_revision
++                    prepare_historical_revision(db, '0055')
+                     migration.downgrade()
+                     assert db.scalar(text("SELECT to_regprocedure('guard_strict_property_source_binding()')")) is None
+                     migration.upgrade()
+@@ -173,6 +169,7 @@ async def test_parallel_bindings_produce_one_canonical_audit(client_a_admin,seed
+     async with synthetic_enforcement(seed_data):
+         await asyncio.wait_for(asyncio.gather(bind(seed_data,ids),bind(seed_data,ids)),5)
+         async with get_tenant_session(seed_data['org_a_id']) as db:
++            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(seed_data['user_a_admin_id'])})
+             assert await db.scalar(text("SELECT count(*) FROM audit_event WHERE entity_id=:document AND action='property_document.binding_approved'"),ids)==1
+ 
+ 
+diff --git a/backend/tests/test_property_source_links.py b/backend/tests/test_property_source_links.py
+index 165f7a7..48d5747 100644
+--- a/backend/tests/test_property_source_links.py
++++ b/backend/tests/test_property_source_links.py
+@@ -84,11 +84,9 @@ async def test_migration_proves_legacy_links_before_expanding(seed_data,legacy):
+                 with Operations.context(MigrationContext.configure(connection)):
+                     # Admission is a later dependent boundary. The outer nested
+                     # rollback retains all receipts and restores its policy.
+-                    connection.execute(text('TRUNCATE property_source_admission'))
+-                    connection.execute(text('TRUNCATE property_source_admission_review'))
+-                    importlib.import_module('migrations.versions.0052_property_source_admission_review').downgrade()
+-                    importlib.import_module('migrations.versions.0051_declaration_publication_audience').downgrade()
+-                    importlib.import_module('migrations.versions.0050_property_source_admission').downgrade()
++                    from tests.migration_rehearsal import prepare_historical_revision
++                    prepare_historical_revision(connection, '0048', graphs=(first, second),
++                                                actor=seed_data['user_a_admin_id'])
+                     with pytest.raises(DBAPIError,match='cannot remove populated source link'):
+                         with connection.begin_nested():
+                             migration.downgrade()
+diff --git a/backend/tests/test_rls_coverage.py b/backend/tests/test_rls_coverage.py
+index 2557ed2..292d16e 100644
+--- a/backend/tests/test_rls_coverage.py
++++ b/backend/tests/test_rls_coverage.py
+@@ -25,11 +25,26 @@ PRIVATE_POLICIES = {
+     "declaration_review_receipt": "review_receipt_private", "runtime_budget_attestation": "runtime_budget_private",
+     "runtime_budget_review": "runtime_budget_private", "access_disposition_acceptance": "disposition_private",
+     "source_security_authorization": "authorization_private", "source_security_transition": "transition_private",
++    "mapping_version": "mapping_private",
++    "allocation_integrity_attestation": "integrity_private",
++    "allocation_correction": "correction_private", "allocation_correction_impact": "correction_private",
++    "allocation_correction_context": "followup_private", "allocation_correction_completion": "followup_private",
++    "allocation_source_member": "allocation_source_private", "allocation_source_claim": "allocation_source_private",
++    "visual_extract_artifact": "visual_extract_private", "visual_extract_attestation": "visual_extract_private",
++    "visual_disclosure_event": "visual_disclosure_private", "visual_disclosure_attestation": "visual_disclosure_private",
++    "financial_computation_receipt": "computation_private", "financial_computation_attestation": "computation_private",
+ }
+ 
+ TENANT_TABLES = frozenset({
+     "source_partition_revision", "source_partition_member", "assignment_proposal",
+     "exception_case", "exception_dependency", "exception_case_event", "invoice_review_revision",
++    "mapping_version", "context_decision", "duplicate_comparison", "duplicate_exception_dependency",
++    "allocation_proposal", "allocation_proposal_line", "allocation_treatment_review", "allocation_treatment_line",
++    "allocation_set", "document_cost_link", "allocation_integrity_attestation",
++    "allocation_correction", "allocation_correction_impact", "allocation_correction_context", "allocation_correction_completion",
++    "allocation_source_member", "allocation_source_claim", "exception_completion", "exception_completion_member",
++    "visual_extract_artifact", "visual_extract_attestation", "visual_disclosure_event", "visual_disclosure_attestation",
++    "financial_computation_receipt", "financial_computation_attestation",
+     "intake_extraction_job", "intake_extraction_attempt", "intake_extraction_retry",
+     "document_ref", "logical_document", "extraction_revision", "field_evidence", "intake_batch", "intake_item", "intake_upload_admission", "intake_original", "workflow_job", "job_attempt", "outbox_event", "intake_retry_receipt", "outbox_delivery", "outbox_delivery_attempt",
+     "runtime_budget_attestation", "runtime_budget_review", "access_disposition_acceptance",
+diff --git a/backend/tests/test_runtime_budget_review.py b/backend/tests/test_runtime_budget_review.py
+index a5cdb09..944cbd3 100644
+--- a/backend/tests/test_runtime_budget_review.py
++++ b/backend/tests/test_runtime_budget_review.py
+@@ -220,7 +220,13 @@ async def test_budget_migration_retains_evidence_and_preserves_historical_report
+                 with db.begin_nested(): migration.downgrade()
+             point = db.begin_nested()
+             try:
+-                db.execute(text('TRUNCATE runtime_budget_attestation,runtime_budget_review,access_coverage_snapshot CASCADE'))
++                from tests.conftest import clear_disposable_source_context
++                clear_disposable_source_context(db.connection.cursor())
++                from pathlib import Path
++                from alembic.script import ScriptDirectory
++                versions = ScriptDirectory(str(Path(__file__).resolve().parents[1] / 'migrations'))
++                for revision in versions.iterate_revisions('head', '0088'):
++                    revision.module.downgrade()
+                 migration.downgrade()
+                 for version in (1,2):
+                     db.execute(text("INSERT INTO access_coverage_snapshot(organization_id,generated_by,request_key,request_digest,manifest_digest,manifest,item_count,finding_count,checker_version) VALUES(:org,:actor,:request,repeat('a',64),repeat('b',64),jsonb_build_object('checker_version',:version,'items','[]'::jsonb),0,0,:version)"),
+diff --git a/backend/tests/test_scope_control.py b/backend/tests/test_scope_control.py
+index 587c749..f064e0d 100644
+--- a/backend/tests/test_scope_control.py
++++ b/backend/tests/test_scope_control.py
+@@ -92,7 +92,14 @@ async def test_pause_preserves_export_grant_and_resume_does_not_restore_revoked_
+ @pytest.mark.parametrize('bound', [True, False])
+ async def test_pause_fences_scoped_invoice_jobs_but_retains_unclassified_compatibility(migrator_session, worker_tenant, phase, bound):
+     from app.core.db import get_worker_session_factory, set_tenant_context
+-    from app.services.invoice_processing_service import InvoiceProcessingService
++    from app.services.invoice_processing_service import InvoiceProcessingService as LiveInvoiceProcessingService
++    from app.core.extraction import ExtractionResult
++    from app.core.invoice_ocr import outcome
++
++    class InvoiceProcessingService(LiveInvoiceProcessingService):
++        async def finish(self, claim, result):
++            payload = {**ExtractionResult(**result['payload']).to_dict(), 'source_pages': []}
++            return await super().finish(claim, outcome(result['status'], payload=payload))
+     _, seed = worker_tenant
+     ids = await financial_fixture(migrator_session, {**seed, 'user_a_clerk_id': seed['user_a_admin_id']})
+     if not bound:
+@@ -199,7 +206,10 @@ async def test_migration_preserves_policy_oid_and_refuses_to_erase_recorded_cont
+                     migration.downgrade()
+             # Rehearse empty downgrade/upgrade transactionally on disposable data;
+             # rollback restores the synthetic evidence and keeps Alembic consistent.
+-            connection.execute(text('TRUNCATE scope_control_event'))
++            connection.begin_nested()
++            from tests.migration_rehearsal import prepare_historical_revision
++            with Operations.context(MigrationContext.configure(connection)):
++                prepare_historical_revision(connection, '0041')
+             with Operations.context(MigrationContext.configure(connection)):
+                 migration.downgrade()
+                 assert 'scoped_effects_enabled' not in connection.scalar(text("SELECT pg_get_functiondef('public.has_scope_capability(uuid,uuid,text)'::regprocedure)"))
+diff --git a/backend/tests/test_source_partitions.py b/backend/tests/test_source_partitions.py
+index c02e321..c206630 100644
+--- a/backend/tests/test_source_partitions.py
++++ b/backend/tests/test_source_partitions.py
+@@ -155,6 +155,7 @@ async def test_partition_changes_coverage_and_rollback_preserves_history(migrato
+                 db.execute(text('TRUNCATE exception_completion CASCADE'))
+                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
+                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+diff --git a/backend/tests/test_valid_to_convention.py b/backend/tests/test_valid_to_convention.py
+index cb95c40..2463482 100644
+--- a/backend/tests/test_valid_to_convention.py
++++ b/backend/tests/test_valid_to_convention.py
+@@ -295,6 +295,10 @@ class TestAdjacencyEndToEnd:
+             "advance_payments_total": "0.00",
+         })
+         assert resp.status_code == 201, resp.text
++        from tests.test_financial_input_policy import attest
++        coverage = await attest(client, "settlement", resp.json()["id"],
++                                {"advance_payments_total": "0.00", "advance_payments_source": "MANUAL"})
++        coverage.raise_for_status()
+         return resp.json()["id"]
+ 
+     async def _post_lease(self, client, seed, tp_key, valid_from, valid_to):
+diff --git a/backend/tests/test_visual_allocation_adoptions.py b/backend/tests/test_visual_allocation_adoptions.py
+index e05e98b..74ddd85 100644
+--- a/backend/tests/test_visual_allocation_adoptions.py
++++ b/backend/tests/test_visual_allocation_adoptions.py
+@@ -280,11 +280,13 @@ async def test_visual_private_columns_helpers_and_downgrade_are_sealed(migrator_
+             point=db.begin_nested()
+             try:
+                 db.execute(text('TRUNCATE allocation_set CASCADE'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 migration.downgrade()
+                 assert db.scalar(text("SELECT has_column_privilege('app_rw','allocation_set','content_sha256','SELECT')"))
+                 migration.upgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').upgrade()
+                 assert before=={signature:db.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),{'signature':signature}) for signature in before}
+             finally:point.rollback()
+         async with client(ids) as api:
+diff --git a/backend/tests/test_visual_disclosures.py b/backend/tests/test_visual_disclosures.py
+index 5bb003c..49ab4a6 100644
+--- a/backend/tests/test_visual_disclosures.py
++++ b/backend/tests/test_visual_disclosures.py
+@@ -252,7 +252,7 @@ async def test_raw_roles_migration_retention_and_manifest(migrator_session, scop
+     from sqlalchemy.exc import DBAPIError
+     from alembic.migration import MigrationContext
+     from alembic.operations import Operations
+-    from tests.conftest import MIGRATOR_SYNC_URL
++    from tests.conftest import MIGRATOR_SYNC_URL, clear_disposable_source_context
+     from tests.test_access_coverage import capture
+     from app.core.db import get_worker_session_factory, get_review_session_factory, set_tenant_context
+     ids = await fixture(migrator_session, scope_seed)
+@@ -263,6 +263,8 @@ async def test_raw_roles_migration_retention_and_manifest(migrator_session, scop
+             before = db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
+             point = db.begin_nested()
+             try:
++                clear_disposable_source_context(db.connection.cursor())
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+@@ -275,6 +277,7 @@ async def test_raw_roles_migration_retention_and_manifest(migrator_session, scop
+                 importlib.import_module('migrations.versions.0120_allocation_source_aliases').upgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').upgrade()
+                 assert before == db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
+             finally: point.rollback()
+             for role in ('app_rw', 'app_worker', 'app_review'):
+@@ -305,6 +308,8 @@ async def test_raw_roles_migration_retention_and_manifest(migrator_session, scop
+                     db.execute(text(f'DELETE FROM {table} WHERE organization_id=:org'), ids)
+             # Even an orphaned trusted observation must prevent evidence destruction.
+             with db.begin_nested() as point:
++                db.execute(text('TRUNCATE allocation_set,allocation_correction CASCADE'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_event'))
+diff --git a/backend/tests/test_visual_extract_artifacts.py b/backend/tests/test_visual_extract_artifacts.py
+index 909790a..220e4a9 100644
+--- a/backend/tests/test_visual_extract_artifacts.py
++++ b/backend/tests/test_visual_extract_artifacts.py
+@@ -180,7 +180,7 @@ async def test_migration_empty_roundtrip_retention_manifest_and_private_roles(mi
+     from sqlalchemy.exc import DBAPIError
+     from alembic.migration import MigrationContext
+     from alembic.operations import Operations
+-    from tests.conftest import MIGRATOR_SYNC_URL
++    from tests.conftest import MIGRATOR_SYNC_URL, clear_disposable_source_context
+     from tests.test_access_coverage import capture
+     ids = await fixture(migrator_session, scope_seed)
+     migration = importlib.import_module('migrations.versions.0117_visual_extract_artifacts')
+@@ -190,6 +190,8 @@ async def test_migration_empty_roundtrip_retention_manifest_and_private_roles(mi
+             before = db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
+             point = db.begin_nested()
+             try:
++                clear_disposable_source_context(db.connection.cursor())
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_extract_attestation CASCADE'))
+@@ -203,6 +205,7 @@ async def test_migration_empty_roundtrip_retention_manifest_and_private_roles(mi
+                 importlib.import_module('migrations.versions.0120_allocation_source_aliases').upgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').upgrade()
+                 assert before == db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
+             finally:
+                 point.rollback()
+@@ -231,11 +234,12 @@ async def test_migration_empty_roundtrip_retention_manifest_and_private_roles(mi
+                                 'target': uuid.UUID(reply.json()['id']), 'partition': uuid.UUID(body['partition_revision_id']), 'request': uuid.uuid4()})
+         with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
+             with pytest.raises(DBAPIError, match='Retain visual extract'), db.begin_nested():
++                db.execute(text('TRUNCATE allocation_set,allocation_correction CASCADE'))
++                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
+                 db.execute(text('TRUNCATE allocation_source_claim CASCADE'))
+-                db.execute(text('TRUNCATE allocation_set CASCADE'))
+                 importlib.import_module('migrations.versions.0120_allocation_source_aliases').downgrade()
+                 importlib.import_module('migrations.versions.0119_allocation_source_claims').downgrade()
+                 importlib.import_module('migrations.versions.0118_visual_disclosures').downgrade()

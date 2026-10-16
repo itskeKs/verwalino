@@ -7,6 +7,8 @@ import json
 import uuid
 
 import pytest
+
+from tests.legacy_migration_database import legacy_auth_database as legacy_0028_database
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 
@@ -14,7 +16,7 @@ from app.declarations.observability import PassLedgerEntry, ProviderPassMetadata
 from app.declarations.pipeline import DeclarationPipeline, PipelineFailure, _Ledger
 from app.declarations.provider import ProviderFailure, ProviderReservationEstimate, ProviderUsage
 from app.core.config import settings
-from app.core.db import get_tenant_session
+from app.core.db import get_tenant_session, get_worker_tenant_session
 from app.models.declaration_import import (
     DeclarationExtractionRun,
     DeclarationImport,
@@ -62,7 +64,7 @@ def test_pass_ledger_model_and_repository_expose_typed_append_only_seam() -> Non
 
 
 @pytest.mark.asyncio
-async def test_pass_ledger_schema_is_rls_force_and_append_only(migrator_session) -> None:
+async def test_pass_ledger_schema_is_rls_force_and_append_only(legacy_0028_database, migrator_session) -> None:
     table = "declaration_import_pass"
     rls = await migrator_session.execute(
         text(
@@ -270,7 +272,7 @@ async def _pipeline_with_running_run(seed_data):
     pipeline = object.__new__(DeclarationPipeline)
     pipeline._settings = settings
     pipeline._provider = object()
-    pipeline._tenant_session_factory = get_tenant_session
+    pipeline._tenant_session_factory = get_worker_tenant_session
     pipeline._active_lease = lease
     pipeline._active_run_id = await pipeline._start_run(lease)
     ledger = _Ledger(0, 0, Decimal("0"), 0, 500_000, 60_000, Decimal("1"), settings)

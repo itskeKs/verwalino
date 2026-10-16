@@ -17,7 +17,14 @@ This is an alpha with **no backups** by explicit decision. PostgreSQL and
 uploaded-document loss is permanent; do not use it for live operations or
 retention-sensitive data.
 
-## One-time preparation on Moon
+## Deployment boundary and accepted head
+
+Documentation only: these procedures require a separately authorized operator
+window; editing this runbook does not authorize SSH, secret access or deployment.
+The accepted production gate is **0122**. The local test head **0123** is not a
+production approval; do not change the helpers' exact-head gate implicitly.
+
+## Fresh installation: one-time preparation on Moon
 
 Run as `chris` without sudo. The host must have Docker, Compose, `curl`,
 `openssl`, `flock`, and the existing external `traefik` network. This check must print
@@ -28,12 +35,32 @@ settings blindly:
 docker network inspect traefik --format '{{(index .IPAM.Config 0).Subnet}}'
 ```
 
-Create only private deployment directories and a host-only environment file:
+Before the host commands below, transfer only the public placeholder template
+from the reviewed commit. The release archive deliberately excludes `.env.*`,
+including `.env.example`; therefore it cannot supply that template implicitly.
+From the operator's reviewed checkout (not a developer's populated environment):
+
+```sh
+set -eu
+reviewed_commit=REPLACE_WITH_REVIEWED_COMMIT
+template=$(mktemp "${TMPDIR:-/tmp}/hausverwaltung-template.XXXXXX")
+trap 'rm -f "$template"' EXIT HUP INT TERM
+git show "$reviewed_commit:.env.example" > "$template"
+ssh chris@moon.fogu.io 'set -eu; root=/home/chris/apps/hausverwaltung-alpha; install -d -m 700 "$root" "$root/releases" "$root/shared"; test ! -e "$root/shared/environment.example"; umask 077; cat > "$root/shared/environment.example"' < "$template"
+rm -f "$template"
+trap - EXIT HUP INT TERM
+```
+
+`environment.example` contains only reviewed public placeholders. Never transfer
+an actual `.env`, `.env.local` or `shared/.env`; do not print their contents.
+For a fresh installation only, create the host-only environment file; stop if it
+already exists rather than overwriting existing credentials:
 
 ```sh
 root=/home/chris/apps/hausverwaltung-alpha
 install -d -m 700 "$root" "$root/releases" "$root/shared"
-install -m 600 .env.example "$root/shared/.env"
+test ! -e "$root/shared/.env"
+install -m 600 "$root/shared/environment.example" "$root/shared/.env"
 ```
 
 Generate the five database/session values without entering a cleartext secret
@@ -77,6 +104,32 @@ archive or command line. If this alpha must run without declaration imports, set
 `HV_DECLARATION_IMPORT_ENABLED=false` explicitly. The API's deterministic
 browse/search features remain available in that mode, but the deployment and
 isolated verifier otherwise fail closed before starting runtime containers.
+
+## Upgrade of an existing installation
+
+Do not rerun the fresh-install password-generation loop or overwrite `shared/.env`.
+Before migration, verify in a separately authorized maintenance window that the
+existing database has the distinct `app_worker` and `app_review` logins and the
+protected `APP_WORKER_PASSWORD` and `APP_REVIEW_PASSWORD` settings. Fresh-volume
+init scripts do **not** run again on existing volumes. Follow the role prerequisites
+below using the reviewed `infra/db/prod-init.sh`; never reset populated volumes.
+
+Existing database-container environment may predate those keys. Merely editing
+`shared/.env` does not update it, and the deploy helper deliberately refuses an
+unexpected database-container replacement. Resolve missing settings/roles in that
+maintenance window before starting a release; do not use `app_rw` as a workaround.
+The provisioning script creates missing roles, but does not rotate passwords on
+existing roles. Credential rotation is a separate operation with workers paused.
+
+| Connection | Runtime role / setting | Boundary |
+| --- | --- | --- |
+| Ordinary web API | `app_rw` / `HV_DATABASE_URL` | No worker credential; no migrator connection |
+| Extraction worker | `app_worker` / `HV_DATABASE_URL_WORKER` | No web URL fallback; no review credential |
+| Dedicated human-review commands in API | `app_review` / `HV_DATABASE_URL_REVIEW` | Separate pool, no ordinary-role fallback |
+| One-shot migration/bootstrap | Privileged ops credentials only | Never injected into app/worker runtime |
+
+Production promotion still requires exactly `0122 (head)`. This runbook correction
+does not accept local migration 0123, change privileges, or authorize deployment.
 
 ## Declaration-worker network boundary
 
@@ -172,11 +225,12 @@ remain unchanged. After Docker health reports ready, it also waits until the
 unprivileged `app_rw` role can connect as an additional database completion
 gate.
 It then uses the fixed order `db → migrate → bootstrap → app → worker`, waits
-for both runtime health checks, requires exactly Alembic head `0070 (head)`,
+for both runtime health checks, requires exactly Alembic head `0122 (head)`,
 and runs each one-shot `migrate`/`bootstrap` Compose command with `--no-deps`,
 so that command cannot re-evaluate, create, or replace the already verified
 PostgreSQL service. It then verifies per-release ownership labels, Docker image IDs, closed host ports,
-app-only database credentials and the runtime `app_rw` role for both. It polls
+the separated runtime credentials: `app_rw` for ordinary API access,
+`app_worker` for extraction, and the API-only `app_review` pool. It polls
 the public Traefik/Let's Encrypt route for at most 180 seconds and, before
 atomically moving `current`, checks HTTPS/TLS,
 the public unauthenticated session boundary, security headers, secure session
@@ -207,8 +261,9 @@ database RLS controls. The app independently rejects individual files over 25
 MiB. `/tmp` is a noexec/nosuid 128 MiB tmpfs: enough for three concurrent 25
 MiB prevalidation spools and still below the 768 MiB app memory limit.
 
-The running app and declaration worker receive only `app_rw`; verify the
-runtime set and confirm no migrator URL leaked into either service:
+The ordinary API connection uses `app_rw`; the declaration worker uses only
+`app_worker`. Only the API receives the separate `app_review` pool URL. Verify
+this separation and confirm no migrator URL leaked into either service:
 
 ```sh
 root=/home/chris/apps/hausverwaltung-alpha

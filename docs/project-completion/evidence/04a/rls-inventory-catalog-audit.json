@@ -1,0 +1,418 @@
+[
+  {
+    "name": "allocation_correction",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "correction_private",
+        "cmd": "ALL",
+        "qual": "false",
+        "check": "false"
+      }
+    ]
+  },
+  {
+    "name": "allocation_correction_completion",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "followup_private",
+        "cmd": "ALL",
+        "qual": "false",
+        "check": "false"
+      }
+    ]
+  },
+  {
+    "name": "allocation_correction_context",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "followup_private",
+        "cmd": "ALL",
+        "qual": "false",
+        "check": "false"
+      }
+    ]
+  },
+  {
+    "name": "allocation_correction_impact",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "correction_private",
+        "cmd": "ALL",
+        "qual": "false",
+        "check": "false"
+      }
+    ]
+  },
+  {
+    "name": "allocation_integrity_attestation",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "integrity_private",
+        "cmd": "ALL",
+        "qual": "false",
+        "check": "false"
+      }
+    ]
+  },
+  {
+    "name": "allocation_proposal",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "allocation_no_insert",
+        "cmd": "INSERT",
+        "qual": null,
+        "check": "false"
+      },
+      {
+        "name": "allocation_read",
+        "cmd": "SELECT",
+        "qual": "allocation_proposal_access(organization_id, id)",
+        "check": null
+      }
+    ]
+  },
+  {
+    "name": "allocation_proposal_line",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "allocation_no_insert",
+        "cmd": "INSERT",
+        "qual": null,
+        "check": "false"
+      },
+      {
+        "name": "allocation_read",
+        "cmd": "SELECT",
+        "qual": "allocation_proposal_access(organization_id, allocation_proposal_id)",
+        "check": null
+      }
+    ]
+  },
+  {
+    "name": "allocation_set",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "allocation_set_no_insert",
+        "cmd": "INSERT",
+        "qual": null,
+        "check": "false"
+      },
+      {
+        "name": "allocation_set_read",
+        "cmd": "SELECT",
+        "qual": "allocation_set_access(organization_id, id)",
+        "check": null
+      }
+    ]
+  },
+  {
+    "name": "allocation_source_claim",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "allocation_source_private",
+        "cmd": "ALL",
+        "qual": "false",
+        "check": "false"
+      }
+    ]
+  },
+  {
+    "name": "allocation_source_member",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "allocation_source_private",
+        "cmd": "ALL",
+        "qual": "false",
+        "check": "false"
+      }
+    ]
+  },
+  {
+    "name": "allocation_treatment_line",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "treatment_no_insert",
+        "cmd": "INSERT",
+        "qual": null,
+        "check": "false"
+      },
+      {
+        "name": "treatment_read",
+        "cmd": "SELECT",
+        "qual": "allocation_proposal_access(organization_id, allocation_proposal_id)",
+        "check": null
+      }
+    ]
+  },
+  {
+    "name": "allocation_treatment_review",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "treatment_no_insert",
+        "cmd": "INSERT",
+        "qual": null,
+        "check": "false"
+      },
+      {
+        "name": "treatment_read",
+        "cmd": "SELECT",
+        "qual": "allocation_proposal_access(organization_id, allocation_proposal_id)",
+        "check": null
+      }
+    ]
+  },
+  {
+    "name": "context_decision",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "context_decision_no_insert",
+        "cmd": "INSERT",
+        "qual": null,
+        "check": "false"
+      },
+      {
+        "name": "context_decision_read",
+        "cmd": "SELECT",
+        "qual": "context_comparison_access(organization_id, document_ref_id, scope_id, property_id)",
+        "check": null
+      }
+    ]
+  },
+  {
+    "name": "document_cost_link",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "allocation_set_no_insert",
+        "cmd": "INSERT",
+        "qual": null,
+        "check": "false"
+      },
+      {
+        "name": "allocation_set_read",
+        "cmd": "SELECT",
+        "qual": "allocation_set_access(organization_id, allocation_set_id)",
+        "check": null
+      }
+    ]
+  },
+  {
+    "name": "duplicate_comparison",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "duplicate_no_insert",
+        "cmd": "INSERT",
+        "qual": null,
+        "check": "false"
+      },
+      {
+        "name": "duplicate_read",
+        "cmd": "SELECT",
+        "qual": "duplicate_comparison_access(organization_id, id)",
+        "check": null
+      }
+    ]
+  },
+  {
+    "name": "duplicate_exception_dependency",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "duplicate_exception_no_insert",
+        "cmd": "INSERT",
+        "qual": null,
+        "check": "false"
+      },
+      {
+        "name": "duplicate_exception_read",
+        "cmd": "SELECT",
+        "qual": "exception_case_access(organization_id, case_id)",
+        "check": null
+      }
+    ]
+  },
+  {
+    "name": "exception_completion",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "completion_no_insert",
+        "cmd": "INSERT",
+        "qual": null,
+        "check": "false"
+      },
+      {
+        "name": "completion_read",
+        "cmd": "SELECT",
+        "qual": "exception_case_access(organization_id, case_id)",
+        "check": null
+      }
+    ]
+  },
+  {
+    "name": "exception_completion_member",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "completion_no_insert",
+        "cmd": "INSERT",
+        "qual": null,
+        "check": "false"
+      },
+      {
+        "name": "completion_read",
+        "cmd": "SELECT",
+        "qual": "exception_case_access(organization_id, case_id)",
+        "check": null
+      }
+    ]
+  },
+  {
+    "name": "financial_computation_attestation",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "computation_private",
+        "cmd": "ALL",
+        "qual": "false",
+        "check": "false"
+      }
+    ]
+  },
+  {
+    "name": "financial_computation_receipt",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "computation_private",
+        "cmd": "ALL",
+        "qual": "false",
+        "check": "false"
+      }
+    ]
+  },
+  {
+    "name": "mapping_version",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "mapping_private",
+        "cmd": "ALL",
+        "qual": "false",
+        "check": "false"
+      }
+    ]
+  },
+  {
+    "name": "visual_disclosure_attestation",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "visual_disclosure_private",
+        "cmd": "ALL",
+        "qual": "false",
+        "check": "false"
+      }
+    ]
+  },
+  {
+    "name": "visual_disclosure_event",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "visual_disclosure_private",
+        "cmd": "ALL",
+        "qual": "false",
+        "check": "false"
+      }
+    ]
+  },
+  {
+    "name": "visual_extract_artifact",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "visual_extract_private",
+        "cmd": "ALL",
+        "qual": "false",
+        "check": "false"
+      }
+    ]
+  },
+  {
+    "name": "visual_extract_attestation",
+    "rls": true,
+    "forced": true,
+    "org_column": true,
+    "policies": [
+      {
+        "name": "visual_extract_private",
+        "cmd": "ALL",
+        "qual": "false",
+        "check": "false"
+      }
+    ]
+  }
+]

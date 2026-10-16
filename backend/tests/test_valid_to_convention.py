@@ -295,6 +295,10 @@ class TestAdjacencyEndToEnd:
             "advance_payments_total": "0.00",
         })
         assert resp.status_code == 201, resp.text
+        from tests.test_financial_input_policy import attest
+        coverage = await attest(client, "settlement", resp.json()["id"],
+                                {"advance_payments_total": "0.00", "advance_payments_source": "MANUAL"})
+        coverage.raise_for_status()
         return resp.json()["id"]
 
     async def _post_lease(self, client, seed, tp_key, valid_from, valid_to):

@@ -19,11 +19,11 @@ validation; classification and RF mapping are inherited unchanged from those row
 | P2.4 SEPA (R) | A10 | Planned | — | Not run | Unassigned; applicable V gates open |
 | P3.1 Meter and external allocations (R) | A11 | Planned | — | Not run | Unassigned; applicable V gates open |
 | P3.2 Readiness and executable rules | A12 | Planned | — | Not run | Unassigned; applicable V gates open |
-| P3.3 Settlement packages | A06,A13,A16 | Planned | — | Not run | Unassigned; applicable V gates open |
+| P3.3 Settlement packages | A06,A13,A14,A15,A16 | Planned | — | Not run | Unassigned; applicable V gates open |
 | P3.4 Supported internal heating/CO2 | A17 | Planned | — | Not run | Unassigned; applicable V gates open |
 | P4.1 Cases/tasks/deadlines (R) | A18 | Planned | — | Not run | Unassigned; applicable V gates open |
 | P4.2 Dunning/reminders (R) | A19 | Planned | — | Not run | Unassigned; applicable V gates open |
-| P4.3 Tenant/owner portal (R for tenant portal | A20 | Planned | — | Not run | Unassigned; applicable V gates open |
+| P4.3 Tenant/owner portal (R for tenant portal; D/V for owner scope) | A20 | Partial supporting infrastructure; portal acceptance open | — | Not run | Unassigned; applicable V gates open |
 | P4.4 Messages/announcements/email/post (R) | A21 | Planned | — | Not run | Unassigned; applicable V gates open |
 | P4.5 Meetings/resolutions | A22 | Planned | — | Not run | Unassigned; applicable V gates open |
 | P5.1 Rental lifecycle, deposits, co-tenants (R) | A23 | Planned | — | Not run | Unassigned; applicable V gates open |
@@ -97,3 +97,34 @@ release claim follows. A4 affected backend rerun: 99 passed; remaining integrate
 checks: 67 passed. Frontend: 61 passed, lint/build pass (bundle warning retained).
 Independent source-navigation/rollback review has no unresolved finding.
 M-B–M-G and all specialist/provider/product V gates remain outstanding.
+
+## Normative mapping and non-normative API orientation
+
+The former “Package 1 refresh” API-to-RF table was an unsupported mapping, not
+normative acceptance evidence. It is superseded here; route or function existence
+must not imply completed P/A fixtures or exercised RF observations.
+
+Authoritative sources:
+[implementation plan §6](../2026-10-01-property-management-implementation-plan.md#6-acceptance-and-reference-traceability),
+[design P rows](../2026-10-01-product-ux-technical-design.md), and
+[traceability](../project-completion/traceability.md).
+
+| Normative scope | Primary fixtures / reference | Evidence boundary |
+| --- | --- | --- |
+| P3.2 Readiness and executable rules | A12, shared A06; D2 | Financial input attestations support readiness and settlement computation; no API-only completeness claim. |
+| P3.3 Settlement packages | A06,A13–A16; D3 | Rental, WEG, SEV, stale revisions and frozen outputs require their own fixtures. `financial_input_coverage.py` supports these checks but is not all of P3.3. |
+| P4.3 Tenant/owner portal | A20→E3; RF05/RF21/RF24 boundary | Partial grants/coverage/source-security infrastructure is not an accepted portal. Audience, household denial, former-resident and publication/access journeys remain unqualified here. |
+| P5.5 Financial exports | A27→F5; RF25/RF26/RF31, unverified delivery | RF31 belongs to F5/P5.5, not `leases.py`, `meetings.py` or P4.3. Download/export observations are not delivery acceptance. |
+
+| API module (orientation only) | Related product area, not an RF assignment |
+| --- | --- |
+| `leases.py` | P5.1 rental lifecycle; no RF31 acceptance inferred |
+| `meetings.py` | P4.5 meetings/resolutions; no RF31 acceptance inferred |
+| `financial_input_coverage.py` | Shared P0.2/P3.2/P3.3 input completeness; not full settlement acceptance |
+| `property_data_domains.py`, `person_data_domains.py`, `access_preparation.py` | Supporting grants/coverage/source-security, not full P4.3 implementation |
+
+The A20/E3 reference comes from the normative sources even though those IDs were
+not spelled out separately in the repair plan. It is a traceability requirement,
+not an instruction to implement the product roadmap in the document-repair task.
+Missing fixture/approver evidence stays open; no new execution of A12–A16/A20/A27
+is claimed. All decision owners remain unassigned and V01–V09 remain open.

@@ -1,0 +1,55 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.13, pytest-8.4.2, pluggy-1.6.0 -- /Users/keks/Developer/hausverwaltung/backend/.venv/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/keks/Developer/hausverwaltung/backend
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-0.26.0, hypothesis-6.165.10
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 41 items
+
+tests/test_declaration_runtime_config.py::test_readme_declaration_setup_includes_all_required_extras PASSED [  2%]
+tests/test_declaration_runtime_config.py::test_runbook_states_no_live_call_without_all_gates PASSED [  4%]
+tests/test_declaration_runtime_config.py::test_live_eval_documentation_describes_two_phase_gate_ordering PASSED [  7%]
+tests/test_declaration_runtime_config.py::test_documentation_states_fixed_manager_and_retention_boundary PASSED [  9%]
+tests/test_declaration_runtime_config.py::test_declaration_runtime_defaults_use_explicit_medium_and_none_effort PASSED [ 12%]
+tests/test_declaration_runtime_config.py::test_declaration_runtime_defaults_use_verified_luna_and_mini_cached_rates PASSED [ 14%]
+tests/test_declaration_runtime_config.py::test_invalid_effort_or_cache_rate_is_rejected PASSED [ 17%]
+tests/test_declaration_runtime_config.py::test_primary_reasoning_effort_accepts_exact_luna_allowlist[none] PASSED [ 19%]
+tests/test_declaration_runtime_config.py::test_primary_reasoning_effort_accepts_exact_luna_allowlist[low] PASSED [ 21%]
+tests/test_declaration_runtime_config.py::test_primary_reasoning_effort_accepts_exact_luna_allowlist[medium] PASSED [ 24%]
+tests/test_declaration_runtime_config.py::test_primary_reasoning_effort_accepts_exact_luna_allowlist[high] PASSED [ 26%]
+tests/test_declaration_runtime_config.py::test_primary_reasoning_effort_accepts_exact_luna_allowlist[xhigh] PASSED [ 29%]
+tests/test_declaration_runtime_config.py::test_primary_reasoning_effort_accepts_exact_luna_allowlist[max] PASSED [ 31%]
+tests/test_declaration_runtime_config.py::test_escalation_reasoning_effort_accepts_exact_mini_allowlist[none] PASSED [ 34%]
+tests/test_declaration_runtime_config.py::test_escalation_reasoning_effort_accepts_exact_mini_allowlist[low] PASSED [ 36%]
+tests/test_declaration_runtime_config.py::test_escalation_reasoning_effort_accepts_exact_mini_allowlist[medium] PASSED [ 39%]
+tests/test_declaration_runtime_config.py::test_escalation_reasoning_effort_accepts_exact_mini_allowlist[high] PASSED [ 41%]
+tests/test_declaration_runtime_config.py::test_escalation_reasoning_effort_accepts_exact_mini_allowlist[xhigh] PASSED [ 43%]
+tests/test_declaration_runtime_config.py::test_declaration_reasoning_effort_rejects_minimal[declaration_primary_reasoning_effort] PASSED [ 46%]
+tests/test_declaration_runtime_config.py::test_declaration_reasoning_effort_rejects_minimal[declaration_escalation_reasoning_effort] PASSED [ 48%]
+tests/test_declaration_runtime_config.py::test_legacy_declaration_rates_must_be_positive_and_finite[declaration_primary_input_usd_per_million-value0] PASSED [ 51%]
+tests/test_declaration_runtime_config.py::test_legacy_declaration_rates_must_be_positive_and_finite[declaration_primary_output_usd_per_million-value1] PASSED [ 53%]
+tests/test_declaration_runtime_config.py::test_legacy_declaration_rates_must_be_positive_and_finite[declaration_escalation_input_usd_per_million-value2] PASSED [ 56%]
+tests/test_declaration_runtime_config.py::test_legacy_declaration_rates_must_be_positive_and_finite[declaration_escalation_output_usd_per_million-value3] PASSED [ 58%]
+tests/test_declaration_runtime_config.py::test_legacy_declaration_rates_must_be_positive_and_finite[declaration_primary_input_usd_per_million-value4] PASSED [ 60%]
+tests/test_declaration_runtime_config.py::test_compose_declares_least_privilege_worker_topology PASSED [ 63%]
+tests/test_declaration_runtime_config.py::test_runtime_example_and_entrypoint_keep_secrets_at_boundaries PASSED [ 65%]
+tests/test_declaration_runtime_config.py::test_gitlab_backend_jobs_opt_into_the_disposable_profile_and_ocr_runtime PASSED [ 68%]
+tests/test_declaration_runtime_config.py::test_healthcheck_reads_only_global_organization_id_and_cleans_tempfile PASSED [ 70%]
+tests/test_declaration_runtime_config.py::test_healthcheck_unlinks_tempfile_when_storage_check_fails PASSED [ 73%]
+tests/test_declaration_runtime_config.py::test_healthcheck_cli_never_constructs_provider PASSED [ 75%]
+tests/test_declaration_runtime_config.py::test_worker_cli_supports_standard_help_without_constructing_provider PASSED [ 78%]
+tests/test_declaration_runtime_config.py::test_image_smoke_timeout_removes_only_its_exact_container_name PASSED [ 80%]
+tests/test_declaration_runtime_config.py::test_built_runtime_image_has_ocr_capabilities_and_nonroot_user SKIPPED [ 82%]
+tests/test_rls_coverage.py::TestRLSCoverage::test_knowledge_query_run_has_no_delete_policy_or_privilege PASSED [ 85%]
+tests/test_rls_coverage.py::TestRLSCoverage::test_approval_tables_have_exact_tenant_policy_commands PASSED [ 87%]
+tests/test_rls_coverage.py::TestRLSCoverage::test_every_tenant_table_has_rls_enabled PASSED [ 90%]
+tests/test_rls_coverage.py::TestRLSCoverage::test_every_tenant_table_has_policies PASSED [ 92%]
+tests/test_rls_coverage.py::TestRLSCoverage::test_no_unknown_tables PASSED [ 95%]
+tests/test_rls_coverage.py::TestRLSCoverage::test_global_tables_have_no_rls PASSED [ 97%]
+tests/test_rls_coverage.py::TestRLSCoverage::test_audit_event_no_update_delete_for_app_rw PASSED [100%]
+
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_declaration_runtime_config.py:544: set HV_DECLARATION_RUNTIME_IMAGE after building the local runtime image
+======================== 40 passed, 1 skipped in 6.35s =========================

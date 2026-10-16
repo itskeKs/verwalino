@@ -1,0 +1,32 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.13, pytest-8.4.2, pluggy-1.6.0 -- /Users/keks/Developer/hausverwaltung/backend/.venv/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/keks/Developer/hausverwaltung/backend
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-0.26.0, hypothesis-6.165.10
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 20 items
+
+tests/test_declaration_publication_audience.py::test_publication_migration_retains_evidence_and_worker_checks_expanded_schema PASSED [  5%]
+tests/test_exception_completions.py::test_completion_exact_context_outcome_and_advisory_inheritance PASSED [ 10%]
+tests/test_exception_completions.py::test_completion_raw_receipt_invalidates_without_case_event_and_retry_is_historical PASSED [ 15%]
+tests/test_exception_completions.py::test_completion_three_document_component_requires_every_exact_outcome[True] PASSED [ 20%]
+tests/test_exception_completions.py::test_completion_three_document_component_requires_every_exact_outcome[False] PASSED [ 25%]
+tests/test_exception_completions.py::test_completion_retains_and_disposes_superseded_pair_dependencies PASSED [ 30%]
+tests/test_exception_completions.py::test_completion_atomic_event_failure_concurrent_retry_and_private_evidence PASSED [ 35%]
+tests/test_exception_completions.py::test_completion_authority_before_replay_roles_pause_and_new_head PASSED [ 40%]
+tests/test_exception_completions.py::test_completion_hidden_raw_source_changes_only_generic_current_status PASSED [ 45%]
+tests/test_exception_completions.py::test_completion_hidden_transitive_member_outside_retained_case_dependencies PASSED [ 50%]
+tests/test_exception_completions.py::test_completion_component_cap_fails_closed_before_pair_evaluation PASSED [ 55%]
+tests/test_exception_completions.py::test_completion_sealed_membership_coverage_and_guarded_roundtrip PASSED [ 60%]
+tests/test_exception_completions.py::test_completion_races_new_raw_receipt_without_leaving_false_resolution PASSED [ 65%]
+tests/test_replacement_exception_outcomes.py::test_replaced_context_and_duplicate_cases_have_exact_typed_outcomes[False] PASSED [ 70%]
+tests/test_replacement_exception_outcomes.py::test_replaced_context_and_duplicate_cases_have_exact_typed_outcomes[True] PASSED [ 75%]
+tests/test_replacement_exception_outcomes.py::test_completion_tracks_new_heads_but_keeps_historical_receipt PASSED [ 80%]
+tests/test_replacement_exception_outcomes.py::test_new_old_source_review_or_unrelated_source_never_waived PASSED [ 85%]
+tests/test_replacement_exception_outcomes.py::test_pending_raw_old_source_invalidates_completion_without_money PASSED [ 90%]
+tests/test_replacement_exception_outcomes.py::test_replacement_completion_live_audience_and_atomic_seal PASSED [ 95%]
+tests/test_replacement_exception_outcomes.py::test_ordinary_duplicate_basis_survives_upgrade_and_empty_roundtrip PASSED [100%]
+
+======================== 20 passed in 95.26s (0:01:35) =========================

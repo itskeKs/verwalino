@@ -1,0 +1,13 @@
+START 2026-10-12T14:16:36.314725+00:00 TLS options unchanged
+SQLALCHEMY_CONNECTIONS 500
+SQLALCHEMY_CONNECTIONS 1000
+SQLALCHEMY_CONNECTIONS 1500
+SQLALCHEMY_CONNECTIONS 2000
+SQLALCHEMY_CONNECTIONS 2500
+SQLALCHEMY_CONNECTIONS 3000
+UNEXPECTED_NEGOTIATION {"event": "ssl_response", "time_ns": 1791814700450805000, "phase": "asyncpg:308", "host": "localhost", "port": 55432, "hex": "0000000804d2162f", "length": 8, "future_done": false, "advisory": true, "verify_mode": 0, "check_hostname": false, "peer": ["::1", 55432, 0, 0], "local": ["::1", 55432, 0, 0]}
+DIAGNOSTIC_ERROR ConnectionError PostgreSQL server at "localhost:55432" rejected SSL upgrade
+END 2026-10-12T14:18:20.451568+00:00
+COMPLETED_CONNECTIONS {"sqlalchemy": 3000, "asyncpg": 308}
+SSL_NEGOTIATION_COUNTS {"{\"advisory\": true, \"check_hostname\": false, \"hex\": \"4e\", \"length\": 1, \"verify_mode\": 0}": 3308, "{\"advisory\": true, \"check_hostname\": false, \"hex\": \"0000000804d2162f\", \"length\": 8, \"verify_mode\": 0}": 1}
+UNEXPECTED_NEGOTIATIONS 1

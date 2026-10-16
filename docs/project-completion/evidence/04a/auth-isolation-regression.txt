@@ -1,0 +1,32 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.13, pytest-8.4.2, pluggy-1.6.0 -- /Users/keks/Developer/hausverwaltung/backend/.venv/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/keks/Developer/hausverwaltung/backend
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-0.26.0, hypothesis-6.165.10
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 20 items
+
+tests/test_auth_db_functions.py::test_0027_accepts_a_single_legacy_email_created_under_0022 PASSED [  5%]
+tests/test_auth_db_functions.py::test_0023_upgrade_reconciles_old_property_schema_and_preexisting_0027_auth_objects PASSED [ 10%]
+tests/test_auth_db_functions.py::test_0026_refuses_an_incompatible_preexisting_building_part_column PASSED [ 15%]
+tests/test_auth_db_functions.py::test_0027_refuses_a_conflicting_canonical_email_index PASSED [ 20%]
+tests/test_auth_db_functions.py::test_0027_refuses_a_canonical_email_index_on_another_table PASSED [ 25%]
+tests/test_auth_db_functions.py::test_app_rw_can_execute_login_lookup PASSED [ 30%]
+tests/test_auth_db_functions.py::test_auth_functions_have_fixed_search_path_and_no_public_execute PASSED [ 35%]
+tests/test_auth_db_functions.py::test_unscoped_app_rw_select_remains_empty PASSED [ 40%]
+tests/test_auth_db_functions.py::test_normalized_email_uniqueness_is_per_org_and_login_fails_closed_across_orgs PASSED [ 45%]
+tests/test_auth_db_functions.py::test_session_validation_requires_active_matching_membership PASSED [ 50%]
+tests/test_auth_db_functions.py::test_session_validation_rejects_inactive_user PASSED [ 55%]
+tests/test_access_coverage.py::test_capture_waits_for_live_admin_and_migration_retains_snapshots PASSED [ 60%]
+tests/test_allocation_source_aliases.py::test_real_derivative_reupload_cannot_create_second_financial_effect PASSED [ 65%]
+tests/test_allocation_source_aliases.py::test_alias_geometry_shared_ancestors_and_disconnected_provenance PASSED [ 70%]
+tests/test_allocation_source_aliases.py::test_alias_cycles_terminate_and_both_budgets_fail_closed PASSED [ 75%]
+tests/test_allocation_source_aliases.py::test_new_provenance_invalidates_preview_and_claims_find_common_ancestor PASSED [ 80%]
+tests/test_allocation_source_aliases.py::test_legacy_corrections_preserve_chain_but_unrelated_derivative_confirmation_fails[False] PASSED [ 85%]
+tests/test_allocation_source_aliases.py::test_legacy_corrections_preserve_chain_but_unrelated_derivative_confirmation_fails[True] PASSED [ 90%]
+tests/test_allocation_source_aliases.py::test_legacy_continuation_cannot_change_property_while_confirming PASSED [ 95%]
+tests/test_allocation_source_aliases.py::test_alias_migration_roundtrip_and_populated_rollback_refusal PASSED [100%]
+
+============================= 20 passed in 41.07s ==============================

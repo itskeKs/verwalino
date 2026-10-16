@@ -92,7 +92,14 @@ async def test_pause_preserves_export_grant_and_resume_does_not_restore_revoked_
 @pytest.mark.parametrize('bound', [True, False])
 async def test_pause_fences_scoped_invoice_jobs_but_retains_unclassified_compatibility(migrator_session, worker_tenant, phase, bound):
     from app.core.db import get_worker_session_factory, set_tenant_context
-    from app.services.invoice_processing_service import InvoiceProcessingService
+    from app.services.invoice_processing_service import InvoiceProcessingService as LiveInvoiceProcessingService
+    from app.core.extraction import ExtractionResult
+    from app.core.invoice_ocr import outcome
+
+    class InvoiceProcessingService(LiveInvoiceProcessingService):
+        async def finish(self, claim, result):
+            payload = {**ExtractionResult(**result['payload']).to_dict(), 'source_pages': []}
+            return await super().finish(claim, outcome(result['status'], payload=payload))
     _, seed = worker_tenant
     ids = await financial_fixture(migrator_session, {**seed, 'user_a_clerk_id': seed['user_a_admin_id']})
     if not bound:
@@ -199,7 +206,10 @@ async def test_migration_preserves_policy_oid_and_refuses_to_erase_recorded_cont
                     migration.downgrade()
             # Rehearse empty downgrade/upgrade transactionally on disposable data;
             # rollback restores the synthetic evidence and keeps Alembic consistent.
-            connection.execute(text('TRUNCATE scope_control_event'))
+            connection.begin_nested()
+            from tests.migration_rehearsal import prepare_historical_revision
+            with Operations.context(MigrationContext.configure(connection)):
+                prepare_historical_revision(connection, '0041')
             with Operations.context(MigrationContext.configure(connection)):
                 migration.downgrade()
                 assert 'scoped_effects_enabled' not in connection.scalar(text("SELECT pg_get_functiondef('public.has_scope_capability(uuid,uuid,text)'::regprocedure)"))

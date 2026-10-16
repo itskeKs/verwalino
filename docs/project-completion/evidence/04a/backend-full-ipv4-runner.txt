@@ -1,0 +1,77 @@
+"""Bounded local transport observation; delegates every native SSL callback."""
+import asyncio
+from collections import Counter
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import sys
+import time
+
+os.chdir('/Users/keks/Developer/hausverwaltung/backend')
+sys.path.insert(0, os.getcwd())
+os.environ.pop('USER', None)
+os.environ.pop('HV_OPENAI_API_KEY', None)
+os.environ.update(
+    HV_DATABASE_URL_MIGRATOR='postgresql+asyncpg://app_migrator:migrator_secret@127.0.0.1:55432/hausverwaltung',
+    HV_DATABASE_URL='postgresql+asyncpg://app_rw:app_secret@127.0.0.1:55432/hausverwaltung',
+    HV_DATABASE_URL_SYNC='postgresql://app_migrator:migrator_secret@127.0.0.1:55432/hausverwaltung',
+)
+from asyncpg import connect, connect_utils
+import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+
+trace_path = '/tmp/04a-full-ipv4-negotiations.jsonl'
+trace = os.fdopen(os.open(trace_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w')
+original_data = connect_utils.TLSUpgradeProto.data_received
+original_made = connect_utils.TLSUpgradeProto.connection_made
+counts = Counter()
+unexpected = []
+phase = 'preflight'
+completed = Counter()
+
+def emit(kind, **fields):
+    record = {'event': kind, 'time_ns': time.time_ns(), 'phase': phase, **fields}
+    trace.write(json.dumps(record) + '\n')
+    trace.flush()
+    return record
+
+def made(self, transport):
+    self._diagnostic_addresses = {'peer': transport.get_extra_info('peername'),
+                                  'local': transport.get_extra_info('sockname')}
+    return original_made(self, transport)
+
+def observed(self, data):
+    config = {'advisory': self.ssl_is_advisory,
+              'verify_mode': int(self.ssl_context.verify_mode),
+              'check_hostname': self.ssl_context.check_hostname}
+    key = json.dumps({'hex': data[:256].hex(), 'length': len(data), **config}, sort_keys=True)
+    counts[key] += 1
+    record = emit('ssl_response', host=self.host, port=self.port, hex=data[:256].hex(),
+                  length=len(data), future_done=self.on_data.done(), **config,
+                  **getattr(self, '_diagnostic_addresses', {}))
+    if data != b'N' or not self.ssl_is_advisory or self.ssl_context.verify_mode != 0:
+        unexpected.append(record)
+        print('UNEXPECTED_NEGOTIATION', json.dumps(record), flush=True)
+    return original_data(self, data)
+
+result = 1
+try:
+    phase = 'backend-full-ipv4'
+    emit('start')
+    print('START', datetime.now(timezone.utc).isoformat(), 'Full backend suite; explicit IPv4 URLs; TLS unchanged', flush=True)
+    connect_utils.TLSUpgradeProto.connection_made = made
+    connect_utils.TLSUpgradeProto.data_received = observed
+    result = pytest.main(['-v', '--tb=short', '-rs'])
+    if unexpected:
+        result = 1
+finally:
+    connect_utils.TLSUpgradeProto.connection_made = original_made
+    connect_utils.TLSUpgradeProto.data_received = original_data
+    emit('end', result=result, unexpected_count=len(unexpected))
+    trace.close()
+    print('END', datetime.now(timezone.utc).isoformat(), flush=True)
+    print('SSL_NEGOTIATION_COUNTS', json.dumps(dict(counts)), flush=True)
+    print('UNEXPECTED_NEGOTIATIONS', len(unexpected), flush=True)
+raise SystemExit(result)

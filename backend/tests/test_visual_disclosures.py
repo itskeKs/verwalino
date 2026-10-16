@@ -252,7 +252,7 @@ async def test_raw_roles_migration_retention_and_manifest(migrator_session, scop
     from sqlalchemy.exc import DBAPIError
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
-    from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.conftest import MIGRATOR_SYNC_URL, clear_disposable_source_context
     from tests.test_access_coverage import capture
     from app.core.db import get_worker_session_factory, get_review_session_factory, set_tenant_context
     ids = await fixture(migrator_session, scope_seed)
@@ -263,6 +263,8 @@ async def test_raw_roles_migration_retention_and_manifest(migrator_session, scop
             before = db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
             point = db.begin_nested()
             try:
+                clear_disposable_source_context(db.connection.cursor())
+                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
                 db.execute(text('TRUNCATE visual_disclosure_attestation CASCADE'))
@@ -275,6 +277,7 @@ async def test_raw_roles_migration_retention_and_manifest(migrator_session, scop
                 importlib.import_module('migrations.versions.0120_allocation_source_aliases').upgrade()
                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
+                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').upgrade()
                 assert before == db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
             finally: point.rollback()
             for role in ('app_rw', 'app_worker', 'app_review'):
@@ -305,6 +308,8 @@ async def test_raw_roles_migration_retention_and_manifest(migrator_session, scop
                     db.execute(text(f'DELETE FROM {table} WHERE organization_id=:org'), ids)
             # Even an orphaned trusted observation must prevent evidence destruction.
             with db.begin_nested() as point:
+                db.execute(text('TRUNCATE allocation_set,allocation_correction CASCADE'))
+                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
                 db.execute(text('TRUNCATE visual_disclosure_event'))

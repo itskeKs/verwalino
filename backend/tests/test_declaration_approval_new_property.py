@@ -918,13 +918,12 @@ async def fully_reviewed_new_property_import(seed_data: dict) -> SimpleNamespace
                 factory = async_sessionmaker(cleanup_engine, class_=AsyncSession, expire_on_commit=False)
                 async with factory() as cleanup:
                     async with cleanup.begin():
-                        # Published source sets cannot be surgically deleted, even
-                        # by the migrator. Reset only guarded disposable sources.
+                        from tests.conftest import fixture_has_registered_documents
+
+                        registered = await fixture_has_registered_documents(cleanup, [main.id, amendment.id])
                         published = await cleanup.scalar(text("SELECT publication_domain_id FROM declaration_import WHERE id=:id"), {"id": item.id})
-                        if published is not None:
-                            from tests.conftest import clear_disposable_source_context
-                            await cleanup.run_sync(lambda sync: clear_disposable_source_context(sync.connection().connection.cursor()))
-                        else:
+                        # Published/registered originals remain until the guarded session reset.
+                        if not registered and published is None:
                             from app.declarations.approval import deterministic_id
                             property_id = deterministic_id(item.organization_id, item.id, "property", "new")
                             await cleanup.execute(text("DELETE FROM approved_fact_source WHERE source_import_id = :import_id"), {"import_id": item.id})

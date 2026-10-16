@@ -6,6 +6,8 @@ from pathlib import Path
 import uuid
 
 import pytest
+
+from tests.legacy_migration_database import legacy_auth_database
 import psycopg2
 from alembic import command
 from alembic.config import Config
@@ -13,14 +15,14 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, InternalError
 
 
-def test_0027_accepts_a_single_legacy_email_created_under_0022():
+def test_0027_accepts_a_single_legacy_email_created_under_0022(legacy_auth_database):
     """A 0022-valid legacy address stays usable after the full 0027 upgrade."""
     from tests.conftest import MIGRATOR_SYNC_URL
 
     backend_dir = Path(__file__).resolve().parents[1]
     alembic_cfg = Config(str(backend_dir / "alembic.ini"))
     alembic_cfg.set_main_option("sqlalchemy.url", MIGRATOR_SYNC_URL)
-    alembic_cfg.set_main_option("script_location", str(backend_dir / "migrations"))
+    alembic_cfg.set_main_option("script_location", str(legacy_auth_database))
     organization_id = uuid.uuid4()
     user_id = uuid.uuid4()
     canonical_email = f"legacy-upgrade-{uuid.uuid4().hex}@example.test"
@@ -71,7 +73,7 @@ def test_0027_accepts_a_single_legacy_email_created_under_0022():
             command.upgrade(alembic_cfg, "0027")
 
 
-def test_0023_upgrade_reconciles_old_property_schema_and_preexisting_0027_auth_objects() -> None:
+def test_0023_upgrade_reconciles_old_property_schema_and_preexisting_0027_auth_objects(legacy_auth_database) -> None:
     """A DB stamped at 0023 can carry the old property schema and leaked auth objects.
 
     Production fully applied a separate auth migration that reused revision
@@ -85,7 +87,7 @@ def test_0023_upgrade_reconciles_old_property_schema_and_preexisting_0027_auth_o
     backend_dir = Path(__file__).resolve().parents[1]
     alembic_cfg = Config(str(backend_dir / "alembic.ini"))
     alembic_cfg.set_main_option("sqlalchemy.url", MIGRATOR_SYNC_URL)
-    alembic_cfg.set_main_option("script_location", str(backend_dir / "migrations"))
+    alembic_cfg.set_main_option("script_location", str(legacy_auth_database))
     migrated_to_head = False
     organization_id = uuid.uuid4()
     property_id = uuid.uuid4()
@@ -267,14 +269,14 @@ def test_0023_upgrade_reconciles_old_property_schema_and_preexisting_0027_auth_o
             command.upgrade(alembic_cfg, "head")
 
 
-def test_0026_refuses_an_incompatible_preexisting_building_part_column() -> None:
+def test_0026_refuses_an_incompatible_preexisting_building_part_column(legacy_auth_database) -> None:
     """Only the complete known 0022-as-0023 state is repaired automatically."""
     from tests.conftest import MIGRATOR_SYNC_URL
 
     backend_dir = Path(__file__).resolve().parents[1]
     alembic_cfg = Config(str(backend_dir / "alembic.ini"))
     alembic_cfg.set_main_option("sqlalchemy.url", MIGRATOR_SYNC_URL)
-    alembic_cfg.set_main_option("script_location", str(backend_dir / "migrations"))
+    alembic_cfg.set_main_option("script_location", str(legacy_auth_database))
     try:
         command.downgrade(alembic_cfg, "0022")
         command.stamp(alembic_cfg, "0023")
@@ -291,14 +293,14 @@ def test_0026_refuses_an_incompatible_preexisting_building_part_column() -> None
         command.upgrade(alembic_cfg, "head")
 
 
-def test_0027_refuses_a_conflicting_canonical_email_index() -> None:
+def test_0027_refuses_a_conflicting_canonical_email_index(legacy_auth_database) -> None:
     """A same-named index with different key semantics must stop the upgrade."""
     from tests.conftest import MIGRATOR_SYNC_URL
 
     backend_dir = Path(__file__).resolve().parents[1]
     alembic_cfg = Config(str(backend_dir / "alembic.ini"))
     alembic_cfg.set_main_option("sqlalchemy.url", MIGRATOR_SYNC_URL)
-    alembic_cfg.set_main_option("script_location", str(backend_dir / "migrations"))
+    alembic_cfg.set_main_option("script_location", str(legacy_auth_database))
     try:
         command.downgrade(alembic_cfg, "0026")
         with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
@@ -321,14 +323,14 @@ def test_0027_refuses_a_conflicting_canonical_email_index() -> None:
         command.upgrade(alembic_cfg, "head")
 
 
-def test_0027_refuses_a_canonical_email_index_on_another_table() -> None:
+def test_0027_refuses_a_canonical_email_index_on_another_table(legacy_auth_database) -> None:
     """A matching index name and expression are insufficient on a decoy table."""
     from tests.conftest import MIGRATOR_SYNC_URL
 
     backend_dir = Path(__file__).resolve().parents[1]
     alembic_cfg = Config(str(backend_dir / "alembic.ini"))
     alembic_cfg.set_main_option("sqlalchemy.url", MIGRATOR_SYNC_URL)
-    alembic_cfg.set_main_option("script_location", str(backend_dir / "migrations"))
+    alembic_cfg.set_main_option("script_location", str(legacy_auth_database))
     try:
         command.downgrade(alembic_cfg, "0026")
         with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:

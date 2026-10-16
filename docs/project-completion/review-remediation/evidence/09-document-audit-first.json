@@ -1,0 +1,50 @@
+{
+  "captured_at_utc": "2026-10-14T11:59:14.070357+00:00",
+  "scope": [
+    "state.md",
+    "handoff-2026-10-13.md",
+    "evidence/03-ownership-verification.md",
+    "evidence/04-skip-suppression-befund.md",
+    "evidence/05-product-04b-separation.md",
+    "evidence/06-context-budget.md",
+    "evidence/07-weg-source-qualification.md",
+    "evidence/08b-test-verification.md",
+    "evidence/08b-assertion-mapping.md",
+    "evidence/09-gap-list.md",
+    "evidence/09-acceptance-matrix.md",
+    "receipts/ownership-baseline-comparison.md",
+    "receipts/plan-contract-state-alignment.md",
+    "receipts/07-weg-reserves.md",
+    "receipts/08a-duplicate-adoption.md",
+    "receipts/08b-scanner-recovery.md",
+    "receipts/scanner-recovery-mapping.md",
+    "receipts/final-acceptance.md"
+  ],
+  "checked_local_links": 97,
+  "checked_test_name_references": 22,
+  "protected_equal": 53,
+  "protected_total": 54,
+  "own_protected_delta": [
+    "backend/tests/test_intake_batches.py"
+  ],
+  "errors": [
+    "Missing source: backend/app/workers/inspection.py",
+    "Broken local link: evidence/09-acceptance-matrix.md -> 09-audit-manifest.json",
+    "Broken local link: evidence/09-acceptance-matrix.md -> 09-document-audit.json",
+    "Broken local link: receipts/final-acceptance.md -> ../evidence/09-document-audit.json",
+    "Broken local link: receipts/final-acceptance.md -> ../evidence/09-document-audit.json",
+    "Broken local link: receipts/final-acceptance.md -> ../evidence/09-audit-manifest.json"
+  ],
+  "exit_code": 1,
+  "git_diff_check": {
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "limits": "Local link existence and scoped AST/syntax/whitespace checks, not external-link availability or a complete semantic review of upstream P/A/RF/Parity/Deployment packages. Baseline-equal historical 04b artifacts intentionally preserved; not active control."
+}

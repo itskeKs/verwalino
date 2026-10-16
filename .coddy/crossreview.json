@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "min_reviewers": 2,
+  "timeout": 2700,
+  "reviewers": [
+    {
+      "kind": "cli",
+      "agent": "claude",
+      "binary": "claude",
+      "command": "claude -p --model opus --output-format text --permission-mode plan < {brief} > {out}",
+      "model": "opus"
+    }
+  ]
+}

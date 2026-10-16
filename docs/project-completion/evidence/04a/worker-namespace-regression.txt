@@ -1,0 +1,33 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.13, pytest-8.4.2, pluggy-1.6.0 -- /Users/keks/Developer/hausverwaltung/backend/.venv/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/keks/Developer/hausverwaltung/backend
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-0.26.0, hypothesis-6.165.10
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 21 items
+
+tests/test_declaration_worker.py::test_declaration_import_worker_module_is_available PASSED [  4%]
+tests/test_declaration_worker.py::test_worker_rejects_invalid_settings_at_startup[updates0] PASSED [  9%]
+tests/test_declaration_worker.py::test_worker_rejects_invalid_settings_at_startup[updates1] PASSED [ 14%]
+tests/test_declaration_worker.py::test_worker_rejects_invalid_settings_at_startup[updates2] PASSED [ 19%]
+tests/test_declaration_worker.py::test_worker_rejects_invalid_settings_at_startup[updates3] PASSED [ 23%]
+tests/test_declaration_worker.py::test_claim_selects_due_work_and_skips_future_or_active_leases PASSED [ 28%]
+tests/test_declaration_worker.py::test_claim_excludes_terminal_statuses PASSED [ 33%]
+tests/test_declaration_worker.py::test_reclaim_closes_running_run_and_rejects_zombie_completion PASSED [ 38%]
+tests/test_declaration_worker.py::test_heartbeat_renews_immediately_for_queued_and_due_retry PASSED [ 42%]
+tests/test_declaration_worker.py::test_heartbeat_requires_current_org_token_generation_expiry_and_status PASSED [ 47%]
+tests/test_declaration_worker.py::test_concurrent_claims_never_receive_the_same_import PASSED [ 52%]
+tests/test_declaration_worker.py::test_worker_rotates_organization_start_after_a_successful_claim PASSED [ 57%]
+tests/test_declaration_worker.py::test_schema_guard_short_circuits_without_tenant_enumeration PASSED [ 61%]
+tests/test_declaration_worker.py::test_disabled_worker_does_not_probe_schema_or_claim_work PASSED [ 66%]
+tests/test_declaration_worker.py::test_dispatcher_reads_only_organization_id_unscoped_and_claims_in_tenant_context PASSED [ 71%]
+tests/test_declaration_worker.py::test_worker_retry_cap_uses_runs_not_provider_attempt_count PASSED [ 76%]
+tests/test_declaration_worker.py::test_heartbeat_fence_loss_cancels_and_awaits_blocking_pipeline PASSED [ 80%]
+tests/test_declaration_worker.py::test_heartbeat_sleep_exception_cancels_pipeline PASSED [ 85%]
+tests/test_declaration_worker.py::test_normal_pipeline_completion_cleans_up_heartbeat_task PASSED [ 90%]
+tests/test_declaration_worker.py::test_pipeline_exception_cleans_up_heartbeat_task PASSED [ 95%]
+tests/test_declaration_worker.py::test_simultaneous_pipeline_and_heartbeat_completion_prefers_pipeline PASSED [100%]
+
+============================== 21 passed in 9.44s ==============================

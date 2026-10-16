@@ -4,6 +4,7 @@ import uuid
 from fastapi import HTTPException
 from itsdangerous import BadData,URLSafeTimedSerializer
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from app.core.config import settings
 from app.services.intake_service import IntakeService
 
@@ -34,10 +35,25 @@ class ExceptionService(IntakeService):
         if row is None:raise HTTPException(404,'Completion receipt inaccessible')
         return dict(row)
 
-    async def complete(self,target,body,key,expected):
-        created=await self.call('SELECT create_exception_completion(:org,:target,:expected,:request,:preview,:reason,:ack)',
-          target=target,expected=expected,request=key,preview=body.preview_digest,reason=body.reason,ack=body.completion_reviewed)
-        return await self.completion(target,created)
+    async def complete(self, target, body, key, expected):
+        created = await self.call(
+            'SELECT create_exception_completion(:org,:target,:expected,:request,:preview,:reason,:ack)',
+            target=target, expected=expected, request=key,
+            preview=body.preview_digest, reason=body.reason, ack=body.completion_reviewed
+        )
+        # Run the deferred seal before FastAPI starts the response, without
+        # committing or losing the request's transaction-local tenant context.
+        try:
+            await self.db.execute(text('SET CONSTRAINTS seal_exception_completion IMMEDIATE'))
+            await self.db.execute(text('SET CONSTRAINTS seal_exception_completion DEFERRED'))
+        except DBAPIError as exc:
+            if getattr(exc.orig, 'sqlstate', None) == '23514':
+                raise HTTPException(
+                    422,
+                    'Completion evidence conflicts with the current replacement outcome',
+                ) from None
+            raise
+        return await self.completion(target, created)
 
     async def detail(self,target):
         row=(await self.db.execute(text(f'SELECT {CASE_FIELDS} FROM {CASE_SOURCE} WHERE c.organization_id=:org AND c.id=:target'),

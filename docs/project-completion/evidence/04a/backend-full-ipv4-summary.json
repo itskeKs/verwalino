@@ -1,0 +1,35 @@
+{
+  "task": "bg_261",
+  "exit_code": 0,
+  "passed": 2679,
+  "skipped": 2,
+  "skip_nodes": [
+    "tests/test_declaration_real_pdf_smoke.py::test_real_pdf_smoke_requires_all_explicit_live_gates",
+    "tests/test_declaration_runtime_config.py::test_built_runtime_image_has_ocr_capabilities_and_nonroot_user"
+  ],
+  "pytest_seconds": 1225.29,
+  "task_seconds": 1231,
+  "native_ssl_callbacks": 10929,
+  "unexpected_negotiations": 0,
+  "all_ssl_bytes": "4e",
+  "all_peers": [
+    "127.0.0.1",
+    55432
+  ],
+  "tls_options_unchanged": {
+    "advisory": true,
+    "verify_mode": 0,
+    "check_hostname": false
+  },
+  "database_after": {
+    "compose_project": "hausverwaltung-declaration-test",
+    "owner": "app_migrator",
+    "database": "hausverwaltung",
+    "head": "0123",
+    "cost_category_count": 30,
+    "tmpfs": "/var/lib/postgresql/data",
+    "legacy_saved_databases": 0,
+    "other_sessions": 0
+  },
+  "log_sha256": "74f90c336d5d7202d52b15788b8365a0c6f4d41b0ac22643c5a1087e54ec59ae"
+}

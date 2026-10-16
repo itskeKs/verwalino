@@ -1,0 +1,36 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.13, pytest-8.4.2, pluggy-1.6.0 -- /Users/keks/Developer/hausverwaltung/backend/.venv/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/keks/Developer/hausverwaltung/backend
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-0.26.0, hypothesis-6.165.10
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 24 items
+
+tests/test_visual_allocation_adoptions.py::test_page_adoption_releases_only_exact_derivative_and_survives_transient_withdrawal PASSED [  4%]
+tests/test_visual_allocation_adoptions.py::test_visual_correction_keeps_retained_bytes_after_withdrawal PASSED [  8%]
+tests/test_visual_allocation_adoptions.py::test_visual_adoption_atomic_failure_and_concurrent_replay[cost_entry-NEW.gross_amount=60] PASSED [ 12%]
+tests/test_visual_allocation_adoptions.py::test_visual_adoption_atomic_failure_and_concurrent_replay[invoice_document-true] PASSED [ 16%]
+tests/test_visual_allocation_adoptions.py::test_visual_adoption_atomic_failure_and_concurrent_replay[allocation_source_claim-true] PASSED [ 20%]
+tests/test_visual_allocation_adoptions.py::test_visual_adoption_atomic_failure_and_concurrent_replay[audit_event-NEW.action='document.allocation_released'] PASSED [ 25%]
+tests/test_visual_allocation_adoptions.py::test_visual_adoption_requires_exact_acknowledgments_bytes_publication_and_authority PASSED [ 29%]
+tests/test_visual_allocation_adoptions.py::test_disjoint_pages_adopt_into_separate_scopes_and_keep_independent_corrections[False] PASSED [ 33%]
+tests/test_visual_allocation_adoptions.py::test_disjoint_pages_adopt_into_separate_scopes_and_keep_independent_corrections[True] PASSED [ 37%]
+tests/test_visual_allocation_adoptions.py::test_visual_private_columns_helpers_and_downgrade_are_sealed PASSED [ 41%]
+tests/test_visual_allocation_adoptions.py::test_visual_adoption_rejects_independent_mismatched_byte_proofs[original_proof] PASSED [ 45%]
+tests/test_visual_allocation_adoptions.py::test_visual_adoption_rejects_independent_mismatched_byte_proofs[visual_proof] PASSED [ 50%]
+tests/test_visual_allocation_adoptions.py::test_visual_proofs_cannot_cross_transactions PASSED [ 54%]
+tests/test_visual_allocation_adoptions.py::test_visual_correction_atomic_failure_at_every_financial_stage[cost_entry-INSERT-true] PASSED [ 58%]
+tests/test_visual_allocation_adoptions.py::test_visual_correction_atomic_failure_at_every_financial_stage[allocation_correction-INSERT-true] PASSED [ 62%]
+tests/test_visual_allocation_adoptions.py::test_visual_correction_atomic_failure_at_every_financial_stage[allocation_correction_impact-INSERT-true] PASSED [ 66%]
+tests/test_visual_allocation_adoptions.py::test_visual_correction_atomic_failure_at_every_financial_stage[cost_entry-UPDATE-NEW.superseded_by_id IS NOT NULL] PASSED [ 70%]
+tests/test_visual_allocation_adoptions.py::test_visual_correction_atomic_failure_at_every_financial_stage[invoice_document-UPDATE-NEW.status='superseded'] PASSED [ 75%]
+tests/test_visual_allocation_adoptions.py::test_visual_correction_atomic_failure_at_every_financial_stage[invoice_document-INSERT-NEW.version=2] PASSED [ 79%]
+tests/test_visual_allocation_adoptions.py::test_visual_correction_atomic_failure_at_every_financial_stage[audit_event-INSERT-NEW.action='document.allocation_corrected'] PASSED [ 83%]
+tests/test_visual_allocation_adoptions.py::test_visual_mapping_and_actual_financial_followup_keep_source_semantics PASSED [ 87%]
+tests/test_visual_allocation_adoptions.py::test_consumed_partial_source_blocks_original_and_regenerated_derivative_reuploads PASSED [ 91%]
+tests/test_visual_disclosures.py::test_raw_roles_migration_retention_and_manifest PASSED [ 95%]
+tests/test_visual_extract_artifacts.py::test_migration_empty_roundtrip_retention_manifest_and_private_roles PASSED [100%]
+
+======================== 24 passed in 76.48s (0:01:16) =========================

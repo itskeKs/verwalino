@@ -2,13 +2,15 @@
 
 import asyncio
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
+import psycopg2
 from sqlalchemy import select
 
+from tests.conftest import MIGRATOR_SYNC_URL
 from tests.declaration_queue_fixture import queue_fixture
 from app.core.config import settings
 from app.core.db import get_worker_tenant_session as get_tenant_session
@@ -19,6 +21,56 @@ from app.repositories.declaration_import_repo import (
     WorkerLease,
 )
 from app.workers.declaration_import import DeclarationImportWorker
+
+
+@pytest.fixture
+def seed_data(seed_data, monkeypatch):
+    """Keep each worker scenario out of retained imports from other fixtures."""
+    isolated = {key: uuid.uuid4() for key in seed_data}
+    with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection:
+        with connection, connection.cursor() as cursor:
+            for org in ('a', 'b'):
+                org_key = f'org_{org}_id'
+                cursor.execute('INSERT INTO organization (id,name) VALUES (%s,%s)',
+                               (str(isolated[org_key]), f'Worker {org} {isolated[org_key]}'))
+                roles = ('admin', 'clerk', 'readonly') if org == 'a' else ('admin',)
+                for role in roles:
+                    user_key = f'user_{org}_{role}_id'
+                    cursor.execute(
+                        'INSERT INTO "user" (id,organization_id,email,password_hash,display_name) '
+                        'SELECT %s,%s,%s,password_hash,display_name FROM "user" WHERE id=%s',
+                        (str(isolated[user_key]), str(isolated[org_key]),
+                         f'{isolated[user_key]}@worker.example', str(seed_data[user_key])),
+                    )
+                    if cursor.rowcount != 1:
+                        raise RuntimeError('Worker namespace requires the original seed user')
+                    cursor.execute(
+                        'INSERT INTO membership (id,organization_id,user_id,role) '
+                        'SELECT %s,%s,%s,role FROM membership WHERE organization_id=%s AND user_id=%s',
+                        (str(uuid.uuid4()), str(isolated[org_key]), str(isolated[user_key]),
+                         str(seed_data[org_key]), str(seed_data[user_key])),
+                    )
+                    if cursor.rowcount != 1:
+                        raise RuntimeError('Worker namespace requires the original seed membership')
+                mandate_key = f'mandate_{org}_id'
+                cursor.execute(
+                    'INSERT INTO management_mandate (id,organization_id,mandate_type,label,start_date) '
+                    'SELECT %s,%s,mandate_type,label,start_date FROM management_mandate WHERE id=%s',
+                    (str(isolated[mandate_key]), str(isolated[org_key]), str(seed_data[mandate_key])),
+                )
+                if cursor.rowcount != 1:
+                    raise RuntimeError('Worker namespace requires the original seed mandate')
+
+    original_directory = DeclarationImportWorker._organization_ids
+    namespace = {isolated['org_a_id'], isolated['org_b_id']}
+
+    async def organization_ids(worker):
+        # Preserve the real unscoped query, including the dispatcher spy assertions.
+        found = await original_directory(worker)
+        return tuple(org_id for org_id in found if org_id in namespace)
+
+    monkeypatch.setattr(DeclarationImportWorker, '_organization_ids', organization_ids)
+    return isolated
 
 
 @pytest.fixture(autouse=True)

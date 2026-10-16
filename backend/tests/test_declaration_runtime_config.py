@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
+from sqlalchemy.engine import make_url
 
 from app.models.organization import Organization
 from app.workers import declaration_import
@@ -314,14 +315,14 @@ def test_compose_declares_least_privilege_worker_topology() -> None:
     assert networks["egress"] == {"internal": False}
 
     environment = _environment(worker)
-    assert "app_rw" in environment["HV_DATABASE_URL"]
-    assert "app_migrator" not in environment["HV_DATABASE_URL"]
+    assert make_url(environment["HV_DATABASE_URL_WORKER"]).username == "app_worker"
     assert environment["HV_OPENAI_API_KEY"] == "${HV_OPENAI_API_KEY:-}"
     assert environment["HV_DOCUMENT_STORAGE_ROOT"] == "/data/documents"
     assert environment["HV_DATA_REGION"] == "${HV_DATA_REGION:-EU}"
     assert _DECLARATION_EXTRACTION_ENVIRONMENT <= environment.keys()
     assert _DECLARATION_QA_ENVIRONMENT.isdisjoint(environment)
     assert {
+        "HV_DATABASE_URL",
         "HV_DATABASE_URL_MIGRATOR",
         "HV_DATABASE_URL_SYNC",
         "HV_SESSION_SECRET",

@@ -1,0 +1,35 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.13, pytest-8.4.2, pluggy-1.6.0 -- /Users/keks/Developer/hausverwaltung/backend/.venv/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/keks/Developer/hausverwaltung/backend
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-0.26.0, hypothesis-6.165.10
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 23 items
+
+tests/test_property_source_binding.py::test_parallel_bindings_produce_one_canonical_audit PASSED [  4%]
+tests/test_scope_control.py::test_pause_resume_preserves_grants_and_replay_is_not_current_state PASSED [  8%]
+tests/test_scope_control.py::test_live_admin_tenant_isolation_and_immutable_history PASSED [ 13%]
+tests/test_scope_control.py::test_pause_preserves_export_grant_and_resume_does_not_restore_revoked_rights PASSED [ 17%]
+tests/test_scope_control.py::test_pause_fences_scoped_invoice_jobs_but_retains_unclassified_compatibility[True-before_claim] PASSED [ 21%]
+tests/test_scope_control.py::test_pause_fences_scoped_invoice_jobs_but_retains_unclassified_compatibility[True-before_finish] PASSED [ 26%]
+tests/test_scope_control.py::test_pause_fences_scoped_invoice_jobs_but_retains_unclassified_compatibility[False-before_claim] PASSED [ 30%]
+tests/test_scope_control.py::test_pause_fences_scoped_invoice_jobs_but_retains_unclassified_compatibility[False-before_finish] PASSED [ 34%]
+tests/test_scope_control.py::test_concurrent_commands_have_one_successor_and_parallel_retry_one_receipt PASSED [ 39%]
+tests/test_scope_control.py::test_pause_waits_for_inflight_effect_and_preserves_capability_function_oid PASSED [ 43%]
+tests/test_scope_control.py::test_migration_preserves_policy_oid_and_refuses_to_erase_recorded_control PASSED [ 47%]
+tests/test_valid_to_convention.py::TestLeaseRoundtrip::test_inclusive_in_inclusive_out_exclusive_stored PASSED [ 52%]
+tests/test_valid_to_convention.py::TestLeaseRoundtrip::test_open_ended_lease_stays_null PASSED [ 56%]
+tests/test_valid_to_convention.py::TestLeaseRoundtrip::test_at_date_path_returns_inclusive_valid_to PASSED [ 60%]
+tests/test_valid_to_convention.py::TestOwnershipRoundtrip::test_inclusive_in_inclusive_out_exclusive_stored PASSED [ 65%]
+tests/test_valid_to_convention.py::TestAdjacencyEndToEnd::test_adjacent_leases_via_api_no_409 PASSED [ 69%]
+tests/test_valid_to_convention.py::TestAdjacencyEndToEnd::test_adjacent_split_is_day_exact_and_loses_no_cent PASSED [ 73%]
+tests/test_valid_to_convention.py::TestOffByOneGuard::test_write_and_display_conversions_are_both_required PASSED [ 78%]
+tests/test_valid_to_convention.py::TestTemporalHelpers::test_write_edge_adds_one_day PASSED [ 82%]
+tests/test_valid_to_convention.py::TestTemporalHelpers::test_display_edge_subtracts_one_day PASSED [ 86%]
+tests/test_valid_to_convention.py::TestTemporalHelpers::test_roundtrip_is_identity_on_inclusive_value PASSED [ 91%]
+tests/test_valid_to_convention.py::TestTemporalHelpers::test_engine_alias_equals_display_alias PASSED [ 95%]
+tests/test_privacy_source_completeness.py::test_retention_read_is_distinct_from_export_and_survives_pause PASSED [100%]
+
+============================= 23 passed in 15.41s ==============================

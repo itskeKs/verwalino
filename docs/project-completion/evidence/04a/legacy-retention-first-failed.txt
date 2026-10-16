@@ -1,0 +1,381 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.13, pytest-8.4.2, pluggy-1.6.0 -- /Users/keks/Developer/hausverwaltung/backend/.venv/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/keks/Developer/hausverwaltung/backend
+configfile: pyproject.toml
+plugins: anyio-4.14.2, asyncio-0.26.0, hypothesis-6.165.10
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 83 items
+
+tests/test_allocation_source_aliases.py::test_real_derivative_reupload_cannot_create_second_financial_effect PASSED [  1%]
+tests/test_allocation_source_aliases.py::test_alias_geometry_shared_ancestors_and_disconnected_provenance PASSED [  2%]
+tests/test_allocation_source_aliases.py::test_alias_cycles_terminate_and_both_budgets_fail_closed PASSED [  3%]
+tests/test_allocation_source_aliases.py::test_new_provenance_invalidates_preview_and_claims_find_common_ancestor PASSED [  4%]
+tests/test_allocation_source_aliases.py::test_legacy_corrections_preserve_chain_but_unrelated_derivative_confirmation_fails[False] PASSED [  6%]
+tests/test_allocation_source_aliases.py::test_legacy_corrections_preserve_chain_but_unrelated_derivative_confirmation_fails[True] PASSED [  7%]
+tests/test_allocation_source_aliases.py::test_legacy_continuation_cannot_change_property_while_confirming PASSED [  8%]
+tests/test_allocation_source_aliases.py::test_alias_migration_roundtrip_and_populated_rollback_refusal PASSED [  9%]
+tests/test_declaration_approval_new_property.py::test_0024_to_0025_backfills_legacy_applied_imports PASSED [ 10%]
+tests/test_property_knowledge_search.py::test_fact_search_projection_contains_label_value_and_source PASSED [ 12%]
+tests/test_property_knowledge_search.py::test_rule_search_projection_is_stable_and_includes_effect_and_sources PASSED [ 13%]
+tests/test_property_knowledge_search.py::test_search_projection_normalizes_and_bounds_source_quote PASSED [ 14%]
+tests/test_property_knowledge_search.py::test_knowledge_query_normalization_uses_nfkc_and_keeps_legal_separators PASSED [ 15%]
+tests/test_property_knowledge_search.py::test_knowledge_search_trigram_threshold_is_bounded PASSED [ 16%]
+tests/test_property_knowledge_search.py::test_unit_decimal_snapshot_revalidation_fails_closed[snapshot0] PASSED [ 18%]
+tests/test_property_knowledge_search.py::test_unit_decimal_snapshot_revalidation_fails_closed[snapshot1] PASSED [ 19%]
+tests/test_property_knowledge_search.py::test_unit_decimal_snapshot_revalidation_fails_closed[snapshot2] PASSED [ 20%]
+tests/test_property_knowledge_search.py::test_unit_decimal_snapshot_revalidation_fails_closed[snapshot3] PASSED [ 21%]
+tests/test_property_knowledge_search.py::test_unit_decimal_snapshot_revalidation_fails_closed[snapshot4] PASSED [ 22%]
+tests/test_property_knowledge_search.py::test_knowledge_search_ranks_current_rules_and_keeps_conflicts_visible PASSED [ 24%]
+tests/test_property_knowledge_search.py::test_knowledge_search_separates_history_and_revalidates_current_fingerprints PASSED [ 25%]
+tests/test_property_knowledge_search.py::test_knowledge_browse_is_tenant_first_clamps_limits_and_never_returns_foreign_data PASSED [ 26%]
+tests/test_property_knowledge_search.py::test_knowledge_search_low_limit_is_deterministic_for_equal_scores PASSED [ 27%]
+tests/test_property_knowledge_search.py::test_knowledge_search_fails_closed_for_stale_decimal_and_archived_evidence PASSED [ 28%]
+tests/test_property_knowledge_search.py::test_knowledge_search_rejects_corrupt_history_and_subject_status_mismatches PASSED [ 30%]
+tests/test_property_knowledge_search.py::test_approval_writes_searchable_fact_and_rule_projections PASSED [ 31%]
+tests/test_property_knowledge_search.py::test_approval_writes_searchable_fact_and_rule_projections ERROR [ 31%]
+tests/test_property_knowledge_search.py::test_existing_approval_refreshes_current_fact_and_superseded_rule_projections PASSED [ 32%]
+tests/test_property_knowledge_search.py::test_existing_approval_refreshes_current_fact_and_superseded_rule_projections ERROR [ 32%]
+tests/test_property_knowledge_search.py::test_app_rw_rule_source_refresh_updates_vector_but_cannot_mutate_canonical_rule PASSED [ 33%]
+tests/test_property_knowledge_search.py::test_app_rw_rule_source_refresh_updates_vector_but_cannot_mutate_canonical_rule ERROR [ 33%]
+tests/test_property_knowledge_search.py::test_search_schema_has_indexes_and_restricted_query_run_privileges PASSED [ 34%]
+tests/test_property_knowledge_search.py::test_query_run_lifecycle_rejects_rewriting_sanitized_reservation PASSED [ 36%]
+tests/test_property_knowledge_search.py::test_app_rw_query_run_reservations_require_reserved_lifecycle PASSED [ 37%]
+tests/test_property_knowledge_search.py::test_0026_downgrade_removes_only_knowledge_search_schema_and_reupgrades PASSED [ 38%]
+tests/test_property_knowledge_search.py::test_0026_backfills_every_supported_0025_fact_kind_including_rule PASSED [ 39%]
+tests/test_property_knowledge_search.py::test_property_knowledge_api_is_readable_for_all_authenticated_roles_and_hides_other_tenants PASSED [ 40%]
+tests/test_property_knowledge_search.py::test_property_knowledge_api_filters_rule_history_and_validates_search_parameters PASSED [ 42%]
+tests/test_property_knowledge_search.py::test_property_knowledge_api_never_exposes_unreviewed_candidate_data PASSED [ 43%]
+tests/test_auth_db_functions.py::test_0027_accepts_a_single_legacy_email_created_under_0022 PASSED [ 44%]
+tests/test_auth_db_functions.py::test_0023_upgrade_reconciles_old_property_schema_and_preexisting_0027_auth_objects PASSED [ 45%]
+tests/test_auth_db_functions.py::test_0026_refuses_an_incompatible_preexisting_building_part_column PASSED [ 46%]
+tests/test_auth_db_functions.py::test_0027_refuses_a_conflicting_canonical_email_index PASSED [ 48%]
+tests/test_auth_db_functions.py::test_0027_refuses_a_canonical_email_index_on_another_table PASSED [ 49%]
+tests/test_auth_db_functions.py::test_app_rw_can_execute_login_lookup PASSED [ 50%]
+tests/test_auth_db_functions.py::test_auth_functions_have_fixed_search_path_and_no_public_execute PASSED [ 51%]
+tests/test_auth_db_functions.py::test_unscoped_app_rw_select_remains_empty PASSED [ 53%]
+tests/test_auth_db_functions.py::test_normalized_email_uniqueness_is_per_org_and_login_fails_closed_across_orgs PASSED [ 54%]
+tests/test_auth_db_functions.py::test_session_validation_requires_active_matching_membership PASSED [ 55%]
+tests/test_auth_db_functions.py::test_session_validation_rejects_inactive_user PASSED [ 56%]
+tests/test_property_knowledge_query.py::test_fake_provider_is_deterministic_and_returns_sanitized_usage PASSED [ 57%]
+tests/test_property_knowledge_query.py::test_fake_provider_returns_clarification_for_conflicted_hit_and_estimates_reservation PASSED [ 59%]
+tests/test_property_knowledge_query.py::test_fake_provider_enforces_transmitted_and_configured_output_caps PASSED [ 60%]
+tests/test_property_knowledge_query.py::test_fake_provider_rejects_non_positive_output_limit PASSED [ 61%]
+tests/test_property_knowledge_query.py::test_fake_timeout_keeps_sanitized_billable_usage PASSED [ 62%]
+tests/test_property_knowledge_query.py::test_no_retrieval_hit_returns_fixed_abstention_without_calling_provider PASSED [ 63%]
+tests/test_property_knowledge_query.py::test_invalid_provider_citation_never_returns_provider_prose PASSED [ 65%]
+tests/test_property_knowledge_query.py::test_invalid_provider_output_never_returns_provider_prose PASSED [ 66%]
+tests/test_property_knowledge_query.py::test_final_validation_rejects_a_fact_that_became_stale_after_retrieval PASSED [ 67%]
+tests/test_property_knowledge_query.py::test_openai_adapter_uses_data_only_tool_free_strict_request PASSED [ 68%]
+tests/test_property_knowledge_query.py::test_openai_adapter_rejects_nonstandard_source_id_prefix_after_billed_response PASSED [ 69%]
+tests/test_property_knowledge_query.py::test_openai_adapter_rejects_output_overrun_with_attached_usage PASSED [ 71%]
+tests/test_property_knowledge_query.py::test_openai_reservation_is_public_and_answer_uses_its_exact_ceiling PASSED [ 72%]
+tests/test_property_knowledge_query.py::test_openai_structured_parse_failure_is_invalid_output_not_unavailable PASSED [ 73%]
+tests/test_property_knowledge_query.py::test_openai_pydantic_parse_failure_is_invalid_output_not_unavailable PASSED [ 74%]
+tests/test_property_knowledge_query.py::test_openai_reservation_counts_developer_prompt_and_schema_with_injected_encoder PASSED [ 75%]
+tests/test_property_knowledge_query.py::test_citation_validation_rejects_invented_ids_and_preserves_safe_text PASSED [ 77%]
+tests/test_property_knowledge_query.py::test_citation_validation_requires_ids_and_ownership_from_original_retrieval PASSED [ 78%]
+tests/test_property_knowledge_query.py::test_citation_validation_rejects_duplicate_and_detached_source PASSED [ 79%]
+tests/test_property_knowledge_query.py::test_citation_validation_requires_clarification_for_unresolved_same_topic_conflict PASSED [ 80%]
+tests/test_property_knowledge_query.py::test_citation_validation_keeps_original_conflicts_and_rejects_changed_support PASSED [ 81%]
+tests/test_property_knowledge_query.py::test_query_endpoint_uses_injected_provider_and_returns_exact_sources PASSED [ 83%]
+tests/test_property_knowledge_query.py::test_query_endpoint_allows_read_roles_and_rejects_foreign_or_invalid_requests PASSED [ 84%]
+tests/test_property_knowledge_query.py::test_query_endpoint_no_hit_short_circuits_disabled_provider PASSED [ 85%]
+tests/test_property_knowledge_query.py::test_query_endpoint_disabled_and_transport_outage_do_not_break_search PASSED [ 86%]
+tests/test_property_knowledge_query.py::test_query_endpoint_finalizes_usage_overrun_before_rate_limiting PASSED [ 87%]
+tests/test_property_knowledge_query.py::test_query_endpoint_concurrency_guard_rejects_second_provider_attempt PASSED [ 89%]
+tests/test_property_knowledge_query.py::test_query_endpoint_budget_reservation_allows_only_one_racing_call PASSED [ 90%]
+tests/test_property_knowledge_query.py::test_query_endpoint_reclaims_expired_reservation_before_budget_sum PASSED [ 91%]
+tests/test_property_knowledge_query.py::test_provider_construction_is_deferred_until_known_property_has_hits PASSED [ 92%]
+tests/test_property_knowledge_query.py::test_estimator_failure_is_sanitized_after_property_resolution PASSED [ 93%]
+tests/test_property_knowledge_query.py::test_qa_reservation_outlives_provider_timeout_and_finalization_margin PASSED [ 95%]
+tests/test_property_knowledge_query.py::test_usage_mismatch_preserves_numeric_usage_and_conservative_actual_cost PASSED [ 96%]
+tests/test_property_knowledge_query.py::test_denied_reservation_commits_expiry_transition_before_rate_limit PASSED [ 97%]
+tests/test_property_knowledge_query.py::test_advisory_lock_serializes_two_open_tenant_reservation_transactions PASSED [ 98%]
+tests/test_property_knowledge_query.py::test_live_reservation_is_not_reclaimed_during_configured_provider_timeout PASSED [100%]
+
+==================================== ERRORS ====================================
+_ ERROR at teardown of test_approval_writes_searchable_fact_and_rule_projections _
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv/lib/python3.13/site-packages/asyncpg/prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.ForeignKeyViolationError: update or delete on table "property_document" violates foreign key constraint "document_ref_organization_id_property_document_id_fkey" on table "document_ref"
+E   DETAIL:  Key (organization_id, id)=(5c7e7fab-8365-469f-b269-7d95bd2e89af, 826724c8-f5c9-401f-9525-b17f22a07034) is still referenced from table "document_ref".
+
+The above exception was the direct cause of the following exception:
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: <class 'asyncpg.exceptions.ForeignKeyViolationError'>: update or delete on table "property_document" violates foreign key constraint "document_ref_organization_id_property_document_id_fkey" on table "document_ref"
+E   DETAIL:  Key (organization_id, id)=(5c7e7fab-8365-469f-b269-7d95bd2e89af, 826724c8-f5c9-401f-9525-b17f22a07034) is still referenced from table "document_ref".
+
+The above exception was the direct cause of the following exception:
+.venv/lib/python3.13/site-packages/pytest_asyncio/plugin.py:363: in finalizer
+    event_loop.run_until_complete(task)
+../../../.local/share/uv/python/cpython-3.13.13-macos-x86_64-none/lib/python3.13/asyncio/base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/pytest_asyncio/plugin.py:354: in async_finalizer
+    await gen_obj.__anext__()  # type: ignore[union-attr]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_declaration_approval_new_property.py:943: in fully_reviewed_new_property_import
+    await cleanup.execute(text("DELETE FROM property_document WHERE id IN (:main_id, :amendment_id)"), {"main_id": main.id, "amendment_id": amendment.id})
+.venv/lib/python3.13/site-packages/sqlalchemy/ext/asyncio/session.py:448: in execute
+    result = await greenlet_spawn(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py:2373: in execute
+    return self._execute_internal(
+.venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py:2280: in _execute_internal
+    result = conn.execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1421: in execute
+    return meth(
+.venv/lib/python3.13/site-packages/sqlalchemy/sql/elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.ForeignKeyViolationError'>: update or delete on table "property_document" violates foreign key constraint "document_ref_organization_id_property_document_id_fkey" on table "document_ref"
+E   DETAIL:  Key (organization_id, id)=(5c7e7fab-8365-469f-b269-7d95bd2e89af, 826724c8-f5c9-401f-9525-b17f22a07034) is still referenced from table "document_ref".
+E   [SQL: DELETE FROM property_document WHERE id IN ($1, $2)]
+E   [parameters: (UUID('c22d6218-6c29-49bc-bf90-686c69c55e9f'), UUID('826724c8-f5c9-401f-9525-b17f22a07034'))]
+E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
+_ ERROR at teardown of test_existing_approval_refreshes_current_fact_and_superseded_rule_projections _
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv/lib/python3.13/site-packages/asyncpg/prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.ForeignKeyViolationError: update or delete on table "property_document" violates foreign key constraint "document_ref_organization_id_property_document_id_fkey" on table "document_ref"
+E   DETAIL:  Key (organization_id, id)=(5c7e7fab-8365-469f-b269-7d95bd2e89af, e00c8e02-4dd9-4381-97e0-24f84ee5dc1d) is still referenced from table "document_ref".
+
+The above exception was the direct cause of the following exception:
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: <class 'asyncpg.exceptions.ForeignKeyViolationError'>: update or delete on table "property_document" violates foreign key constraint "document_ref_organization_id_property_document_id_fkey" on table "document_ref"
+E   DETAIL:  Key (organization_id, id)=(5c7e7fab-8365-469f-b269-7d95bd2e89af, e00c8e02-4dd9-4381-97e0-24f84ee5dc1d) is still referenced from table "document_ref".
+
+The above exception was the direct cause of the following exception:
+.venv/lib/python3.13/site-packages/pytest_asyncio/plugin.py:363: in finalizer
+    event_loop.run_until_complete(task)
+../../../.local/share/uv/python/cpython-3.13.13-macos-x86_64-none/lib/python3.13/asyncio/base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/pytest_asyncio/plugin.py:354: in async_finalizer
+    await gen_obj.__anext__()  # type: ignore[union-attr]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_declaration_approval_existing_property.py:485: in reviewed_existing_property_import
+    await cleanup.execute(text("DELETE FROM property_document WHERE id IN (:main, :amendment)"), {"main": main.id, "amendment": amendment.id})
+.venv/lib/python3.13/site-packages/sqlalchemy/ext/asyncio/session.py:448: in execute
+    result = await greenlet_spawn(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py:2373: in execute
+    return self._execute_internal(
+.venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py:2280: in _execute_internal
+    result = conn.execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1421: in execute
+    return meth(
+.venv/lib/python3.13/site-packages/sqlalchemy/sql/elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.ForeignKeyViolationError'>: update or delete on table "property_document" violates foreign key constraint "document_ref_organization_id_property_document_id_fkey" on table "document_ref"
+E   DETAIL:  Key (organization_id, id)=(5c7e7fab-8365-469f-b269-7d95bd2e89af, e00c8e02-4dd9-4381-97e0-24f84ee5dc1d) is still referenced from table "document_ref".
+E   [SQL: DELETE FROM property_document WHERE id IN ($1, $2)]
+E   [parameters: (UUID('e00c8e02-4dd9-4381-97e0-24f84ee5dc1d'), UUID('954b384d-31ab-4d2c-9517-c4a3757ac36c'))]
+E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
+_ ERROR at teardown of test_app_rw_rule_source_refresh_updates_vector_but_cannot_mutate_canonical_rule _
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:550: in _prepare_and_execute
+    self._rows = deque(await prepared_stmt.fetch(*parameters))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/asyncpg/prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+.venv/lib/python3.13/site-packages/asyncpg/prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:205: in bind_execute
+    ???
+E   asyncpg.exceptions.ForeignKeyViolationError: update or delete on table "property_document" violates foreign key constraint "document_ref_organization_id_property_document_id_fkey" on table "document_ref"
+E   DETAIL:  Key (organization_id, id)=(5c7e7fab-8365-469f-b269-7d95bd2e89af, e34a4985-9367-40ef-ac24-928f0c601e6f) is still referenced from table "document_ref".
+
+The above exception was the direct cause of the following exception:
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: <class 'asyncpg.exceptions.ForeignKeyViolationError'>: update or delete on table "property_document" violates foreign key constraint "document_ref_organization_id_property_document_id_fkey" on table "document_ref"
+E   DETAIL:  Key (organization_id, id)=(5c7e7fab-8365-469f-b269-7d95bd2e89af, e34a4985-9367-40ef-ac24-928f0c601e6f) is still referenced from table "document_ref".
+
+The above exception was the direct cause of the following exception:
+.venv/lib/python3.13/site-packages/pytest_asyncio/plugin.py:363: in finalizer
+    event_loop.run_until_complete(task)
+../../../.local/share/uv/python/cpython-3.13.13-macos-x86_64-none/lib/python3.13/asyncio/base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/pytest_asyncio/plugin.py:354: in async_finalizer
+    await gen_obj.__anext__()  # type: ignore[union-attr]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_declaration_approval_existing_property.py:485: in reviewed_existing_property_import
+    await cleanup.execute(text("DELETE FROM property_document WHERE id IN (:main, :amendment)"), {"main": main.id, "amendment": amendment.id})
+.venv/lib/python3.13/site-packages/sqlalchemy/ext/asyncio/session.py:448: in execute
+    result = await greenlet_spawn(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py:2373: in execute
+    return self._execute_internal(
+.venv/lib/python3.13/site-packages/sqlalchemy/orm/session.py:2280: in _execute_internal
+    result = conn.execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1421: in execute
+    return meth(
+.venv/lib/python3.13/site-packages/sqlalchemy/sql/elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+.venv/lib/python3.13/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: in _handle_exception
+    raise translated_error from error
+E   sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.ForeignKeyViolationError'>: update or delete on table "property_document" violates foreign key constraint "document_ref_organization_id_property_document_id_fkey" on table "document_ref"
+E   DETAIL:  Key (organization_id, id)=(5c7e7fab-8365-469f-b269-7d95bd2e89af, e34a4985-9367-40ef-ac24-928f0c601e6f) is still referenced from table "document_ref".
+E   [SQL: DELETE FROM property_document WHERE id IN ($1, $2)]
+E   [parameters: (UUID('e34a4985-9367-40ef-ac24-928f0c601e6f'), UUID('00ddb419-d3cb-4d3d-9f9f-1cf2b6846278'))]
+E   (Background on this error at: https://sqlalche.me/e/20/gkpj)
+=================== 83 passed, 3 errors in 68.10s (0:01:08) ====================

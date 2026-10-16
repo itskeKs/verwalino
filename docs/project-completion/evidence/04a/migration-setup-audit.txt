@@ -1,0 +1,61 @@
+User authorized historical fixture/migration setup corrections and two explicit current-contract exceptions: Compose worker URL/role and RLS inventory/coverage.
+AST against HEAD: all assertions unchanged outside approved Compose function; all test names/decorators/parametrizations unchanged. Tracked test/harness files:49
+25 tenant tables ENABLE/FORCE RLS audited;14 deny-all PRIVATE_POLICIES, tenant predicate loops unchanged. No new pytestnodes or removed cases.
+Compose parsed worker username app_worker; API/migrator URLs forbidden; no prodconfig edits.
+Guarded source cleanup validates endpoint/DB owner; seeds,audit/version retained; no CASCADE. Historical newer revisions ordered before original target inside rollback-only savepoints.
+Link graphs restored only for concrete fixture IDs and START request rows via valid DRAFT-to-QUEUED transition; no FK/queue guard disable.
+Registered graph fixture teardowns retain whole graph; unregistered cleanup stays. Scope worker test adapter constructs versioned valid outcome and delegates native finish; native validator unchanged. Binding read gets correct actor; temporal setup attests known advance. Privacy uses same M3 dataset factory fresh per case, no deletes retained finalized accounts.
+Worker real unscoped directory query before fresh namespace filter; no original/retained import deletion.
+Production migrations and tenant.py unchanged. Main service sole23514/seal fix preserves request transaction owner.
+bg_235:114passed,64.22s,all10complete affected files. Final full bg_236 failed:2678passed/2unchanged opt-in skips/1SSLsetupError,Exit1. bg_238:600serial connects+36query tests,679native callbacks all advisory/CERT_NONE/N,zero unexpected bytes; no cause reproduced. Local acceptance/handoff blocked.
+
+backend/tests/conftest.py
+backend/tests/test_access_coverage.py
+backend/tests/test_allocation_adoptions.py
+backend/tests/test_allocation_correction_preview.py
+backend/tests/test_allocation_corrections.py
+backend/tests/test_allocation_proposals.py
+backend/tests/test_allocation_source_aliases.py
+backend/tests/test_allocation_source_claims.py
+backend/tests/test_allocation_treatments.py
+backend/tests/test_assignment_proposals.py
+backend/tests/test_auth_db_functions.py
+backend/tests/test_context_decisions.py
+backend/tests/test_context_mappings.py
+backend/tests/test_correction_followups.py
+backend/tests/test_declaration_approval_existing_property.py
+backend/tests/test_declaration_approval_new_property.py
+backend/tests/test_declaration_pass_ledger.py
+backend/tests/test_declaration_publication_order.py
+backend/tests/test_declaration_runtime_config.py
+backend/tests/test_declaration_worker.py
+backend/tests/test_document_registry.py
+backend/tests/test_duplicate_comparisons.py
+backend/tests/test_duplicate_exceptions.py
+backend/tests/test_exception_cases.py
+backend/tests/test_exception_completions.py
+backend/tests/test_extraction_revisions.py
+backend/tests/test_financial_computation_evidence.py
+backend/tests/test_intake_batches.py
+backend/tests/test_intake_extraction_worker.py
+backend/tests/test_invoice_reviews.py
+backend/tests/test_logical_documents.py
+backend/tests/test_mandate_legacy_quarantine.py
+backend/tests/test_outbox_delivery.py
+backend/tests/test_person_source_access.py
+backend/tests/test_privacy_source_completeness.py
+backend/tests/test_projected_access_coverage.py
+backend/tests/test_property_document_content.py
+backend/tests/test_property_knowledge_search.py
+backend/tests/test_property_source_admission.py
+backend/tests/test_property_source_binding.py
+backend/tests/test_property_source_links.py
+backend/tests/test_rls_coverage.py
+backend/tests/test_runtime_budget_review.py
+backend/tests/test_scope_control.py
+backend/tests/test_source_partitions.py
+backend/tests/test_valid_to_convention.py
+backend/tests/test_visual_allocation_adoptions.py
+backend/tests/test_visual_disclosures.py
+backend/tests/test_visual_extract_artifacts.py
+New test-only helpers:backend/tests/legacy_migration_database.py,backend/tests/migration_rehearsal.py

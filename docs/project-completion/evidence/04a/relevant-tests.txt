@@ -1,0 +1,356 @@
+.................F........................F.....................F....... [ 55%]
+...F................F.....................................               [100%]
+=================================== FAILURES ===================================
+_______ test_completion_sealed_membership_coverage_and_guarded_roundtrip _______
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   psycopg2.errors.DependentObjectsStillExist: cannot drop desired object(s) because other objects depend on them
+E   DETAIL:  constraint completion_replacement_receipt_fk on table exception_completion_member depends on table allocation_correction
+E   HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+
+The above exception was the direct cause of the following exception:
+tests/test_exception_completions.py:292: in test_completion_sealed_membership_coverage_and_guarded_roundtrip
+    importlib.import_module('migrations.versions.0114_allocation_corrections').downgrade()
+migrations/versions/0114_allocation_corrections.py:74: in downgrade
+    op.execute('''DROP TRIGGER seal_allocation_correction ON allocation_set;
+<string>:8: in execute
+    ???
+<string>:3: in execute
+    ???
+.venv/lib/python3.13/site-packages/alembic/operations/ops.py:2645: in execute
+    return operations.invoke(op)
+           ^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/alembic/operations/base.py:448: in invoke
+    return fn(self, operation)
+           ^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/alembic/operations/toimpl.py:259: in execute_sql
+    operations.migration_context.impl.execute(
+.venv/lib/python3.13/site-packages/alembic/ddl/impl.py:259: in execute
+    self._exec(sql, execution_options)
+.venv/lib/python3.13/site-packages/alembic/ddl/impl.py:252: in _exec
+    return conn.execute(construct, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1421: in execute
+    return meth(
+.venv/lib/python3.13/site-packages/sqlalchemy/sql/elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   sqlalchemy.exc.InternalError: (psycopg2.errors.DependentObjectsStillExist) cannot drop desired object(s) because other objects depend on them
+E   DETAIL:  constraint completion_replacement_receipt_fk on table exception_completion_member depends on table allocation_correction
+E   HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+E   
+E   [SQL: DROP TRIGGER seal_allocation_correction ON allocation_set;
+E         DROP TABLE allocation_correction_impact,allocation_correction;
+E         DROP FUNCTION correct_allocation(uuid,uuid,uuid,uuid,uuid,text,text,boolean,boolean,boolean,uuid),
+E           prepare_allocation_correction(uuid,uuid,uuid,uuid,uuid,text,text,boolean,boolean,boolean),
+E           allocation_correction_detail(uuid,uuid),allocation_correction_for_set(uuid,uuid),require_correction_authority(uuid,uuid,uuid),correction_impact_access(uuid,jsonb),
+E           correction_transaction_admission(uuid,uuid),seal_allocation_correction();
+E         DROP INDEX allocation_once_per_original_hash,allocation_initial_original,allocation_initial_logical;
+E         ALTER TABLE allocation_set DROP COLUMN predecessor_id;
+E         ALTER TABLE allocation_set ADD CONSTRAINT allocation_set_organization_id_intake_original_id_key UNIQUE(organization_id,intake_original_id),
+E           ADD CONSTRAINT allocation_set_organization_id_logical_document_id_key UNIQUE(organization_id,logical_document_id);
+E         CREATE UNIQUE INDEX allocation_once_per_original_hash ON allocation_set(organization_id,content_sha256) WHERE kind='intake_reviewed';]
+E   (Background on this error at: https://sqlalche.me/e/20/2j85)
+----------------------------- Captured stderr call -----------------------------
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+------------------------------ Captured log call -------------------------------
+INFO     alembic.runtime.migration:migration.py:205 Context impl PostgresqlImpl.
+INFO     alembic.runtime.migration:migration.py:208 Will assume transactional DDL.
+___ test_correction_guards_runtime_writes_and_retains_evidence_on_downgrade ____
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   psycopg2.errors.DependentObjectsStillExist: cannot drop desired object(s) because other objects depend on them
+E   DETAIL:  constraint completion_replacement_receipt_fk on table exception_completion_member depends on table allocation_correction
+E   HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+
+The above exception was the direct cause of the following exception:
+tests/test_allocation_corrections.py:199: in test_correction_guards_runtime_writes_and_retains_evidence_on_downgrade
+    migration.downgrade();migration.upgrade()
+    ^^^^^^^^^^^^^^^^^^^^^
+migrations/versions/0114_allocation_corrections.py:74: in downgrade
+    op.execute('''DROP TRIGGER seal_allocation_correction ON allocation_set;
+<string>:8: in execute
+    ???
+<string>:3: in execute
+    ???
+.venv/lib/python3.13/site-packages/alembic/operations/ops.py:2645: in execute
+    return operations.invoke(op)
+           ^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/alembic/operations/base.py:448: in invoke
+    return fn(self, operation)
+           ^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/alembic/operations/toimpl.py:259: in execute_sql
+    operations.migration_context.impl.execute(
+.venv/lib/python3.13/site-packages/alembic/ddl/impl.py:259: in execute
+    self._exec(sql, execution_options)
+.venv/lib/python3.13/site-packages/alembic/ddl/impl.py:252: in _exec
+    return conn.execute(construct, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1421: in execute
+    return meth(
+.venv/lib/python3.13/site-packages/sqlalchemy/sql/elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   sqlalchemy.exc.InternalError: (psycopg2.errors.DependentObjectsStillExist) cannot drop desired object(s) because other objects depend on them
+E   DETAIL:  constraint completion_replacement_receipt_fk on table exception_completion_member depends on table allocation_correction
+E   HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+E   
+E   [SQL: DROP TRIGGER seal_allocation_correction ON allocation_set;
+E         DROP TABLE allocation_correction_impact,allocation_correction;
+E         DROP FUNCTION correct_allocation(uuid,uuid,uuid,uuid,uuid,text,text,boolean,boolean,boolean,uuid),
+E           prepare_allocation_correction(uuid,uuid,uuid,uuid,uuid,text,text,boolean,boolean,boolean),
+E           allocation_correction_detail(uuid,uuid),allocation_correction_for_set(uuid,uuid),require_correction_authority(uuid,uuid,uuid),correction_impact_access(uuid,jsonb),
+E           correction_transaction_admission(uuid,uuid),seal_allocation_correction();
+E         DROP INDEX allocation_once_per_original_hash,allocation_initial_original,allocation_initial_logical;
+E         ALTER TABLE allocation_set DROP COLUMN predecessor_id;
+E         ALTER TABLE allocation_set ADD CONSTRAINT allocation_set_organization_id_intake_original_id_key UNIQUE(organization_id,intake_original_id),
+E           ADD CONSTRAINT allocation_set_organization_id_logical_document_id_key UNIQUE(organization_id,logical_document_id);
+E         CREATE UNIQUE INDEX allocation_once_per_original_hash ON allocation_set(organization_id,content_sha256) WHERE kind='intake_reviewed';]
+E   (Background on this error at: https://sqlalche.me/e/20/2j85)
+----------------------------- Captured stderr call -----------------------------
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+------------------------------ Captured log call -------------------------------
+INFO     alembic.runtime.migration:migration.py:205 Context impl PostgresqlImpl.
+INFO     alembic.runtime.migration:migration.py:208 Will assume transactional DDL.
+_ test_adoption_retained_evidence_blocks_downgrade_and_empty_roundtrip_restores_functions _
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   psycopg2.errors.DependentObjectsStillExist: cannot drop desired object(s) because other objects depend on them
+E   DETAIL:  constraint completion_replacement_receipt_fk on table exception_completion_member depends on table allocation_correction
+E   HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+
+The above exception was the direct cause of the following exception:
+tests/test_allocation_adoptions.py:373: in test_adoption_retained_evidence_blocks_downgrade_and_empty_roundtrip_restores_functions
+    importlib.import_module('migrations.versions.0114_allocation_corrections').downgrade()
+migrations/versions/0114_allocation_corrections.py:74: in downgrade
+    op.execute('''DROP TRIGGER seal_allocation_correction ON allocation_set;
+<string>:8: in execute
+    ???
+<string>:3: in execute
+    ???
+.venv/lib/python3.13/site-packages/alembic/operations/ops.py:2645: in execute
+    return operations.invoke(op)
+           ^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/alembic/operations/base.py:448: in invoke
+    return fn(self, operation)
+           ^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/alembic/operations/toimpl.py:259: in execute_sql
+    operations.migration_context.impl.execute(
+.venv/lib/python3.13/site-packages/alembic/ddl/impl.py:259: in execute
+    self._exec(sql, execution_options)
+.venv/lib/python3.13/site-packages/alembic/ddl/impl.py:252: in _exec
+    return conn.execute(construct, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1421: in execute
+    return meth(
+.venv/lib/python3.13/site-packages/sqlalchemy/sql/elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   sqlalchemy.exc.InternalError: (psycopg2.errors.DependentObjectsStillExist) cannot drop desired object(s) because other objects depend on them
+E   DETAIL:  constraint completion_replacement_receipt_fk on table exception_completion_member depends on table allocation_correction
+E   HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+E   
+E   [SQL: DROP TRIGGER seal_allocation_correction ON allocation_set;
+E         DROP TABLE allocation_correction_impact,allocation_correction;
+E         DROP FUNCTION correct_allocation(uuid,uuid,uuid,uuid,uuid,text,text,boolean,boolean,boolean,uuid),
+E           prepare_allocation_correction(uuid,uuid,uuid,uuid,uuid,text,text,boolean,boolean,boolean),
+E           allocation_correction_detail(uuid,uuid),allocation_correction_for_set(uuid,uuid),require_correction_authority(uuid,uuid,uuid),correction_impact_access(uuid,jsonb),
+E           correction_transaction_admission(uuid,uuid),seal_allocation_correction();
+E         DROP INDEX allocation_once_per_original_hash,allocation_initial_original,allocation_initial_logical;
+E         ALTER TABLE allocation_set DROP COLUMN predecessor_id;
+E         ALTER TABLE allocation_set ADD CONSTRAINT allocation_set_organization_id_intake_original_id_key UNIQUE(organization_id,intake_original_id),
+E           ADD CONSTRAINT allocation_set_organization_id_logical_document_id_key UNIQUE(organization_id,logical_document_id);
+E         CREATE UNIQUE INDEX allocation_once_per_original_hash ON allocation_set(organization_id,content_sha256) WHERE kind='intake_reviewed';]
+E   (Background on this error at: https://sqlalche.me/e/20/2j85)
+----------------------------- Captured stderr call -----------------------------
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+------------------------------ Captured log call -------------------------------
+INFO     alembic.runtime.migration:migration.py:205 Context impl PostgresqlImpl.
+INFO     alembic.runtime.migration:migration.py:208 Will assume transactional DDL.
+______ test_intake_migration_refuses_data_and_preserves_function_identity ______
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   psycopg2.errors.DependentObjectsStillExist: cannot drop desired object(s) because other objects depend on them
+E   DETAIL:  constraint completion_replacement_receipt_fk on table exception_completion_member depends on table allocation_correction
+E   HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+
+The above exception was the direct cause of the following exception:
+tests/test_intake_batches.py:288: in test_intake_migration_refuses_data_and_preserves_function_identity
+    importlib.import_module('migrations.versions.0114_allocation_corrections').downgrade()
+migrations/versions/0114_allocation_corrections.py:74: in downgrade
+    op.execute('''DROP TRIGGER seal_allocation_correction ON allocation_set;
+<string>:8: in execute
+    ???
+<string>:3: in execute
+    ???
+.venv/lib/python3.13/site-packages/alembic/operations/ops.py:2645: in execute
+    return operations.invoke(op)
+           ^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/alembic/operations/base.py:448: in invoke
+    return fn(self, operation)
+           ^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/alembic/operations/toimpl.py:259: in execute_sql
+    operations.migration_context.impl.execute(
+.venv/lib/python3.13/site-packages/alembic/ddl/impl.py:259: in execute
+    self._exec(sql, execution_options)
+.venv/lib/python3.13/site-packages/alembic/ddl/impl.py:252: in _exec
+    return conn.execute(construct, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1421: in execute
+    return meth(
+.venv/lib/python3.13/site-packages/sqlalchemy/sql/elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   sqlalchemy.exc.InternalError: (psycopg2.errors.DependentObjectsStillExist) cannot drop desired object(s) because other objects depend on them
+E   DETAIL:  constraint completion_replacement_receipt_fk on table exception_completion_member depends on table allocation_correction
+E   HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+E   
+E   [SQL: DROP TRIGGER seal_allocation_correction ON allocation_set;
+E         DROP TABLE allocation_correction_impact,allocation_correction;
+E         DROP FUNCTION correct_allocation(uuid,uuid,uuid,uuid,uuid,text,text,boolean,boolean,boolean,uuid),
+E           prepare_allocation_correction(uuid,uuid,uuid,uuid,uuid,text,text,boolean,boolean,boolean),
+E           allocation_correction_detail(uuid,uuid),allocation_correction_for_set(uuid,uuid),require_correction_authority(uuid,uuid,uuid),correction_impact_access(uuid,jsonb),
+E           correction_transaction_admission(uuid,uuid),seal_allocation_correction();
+E         DROP INDEX allocation_once_per_original_hash,allocation_initial_original,allocation_initial_logical;
+E         ALTER TABLE allocation_set DROP COLUMN predecessor_id;
+E         ALTER TABLE allocation_set ADD CONSTRAINT allocation_set_organization_id_intake_original_id_key UNIQUE(organization_id,intake_original_id),
+E           ADD CONSTRAINT allocation_set_organization_id_logical_document_id_key UNIQUE(organization_id,logical_document_id);
+E         CREATE UNIQUE INDEX allocation_once_per_original_hash ON allocation_set(organization_id,content_sha256) WHERE kind='intake_reviewed';]
+E   (Background on this error at: https://sqlalche.me/e/20/2j85)
+----------------------------- Captured stderr call -----------------------------
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+------------------------------ Captured log call -------------------------------
+INFO     alembic.runtime.migration:migration.py:205 Context impl PostgresqlImpl.
+INFO     alembic.runtime.migration:migration.py:208 Will assume transactional DDL.
+_____________ test_migration_backfill_guard_and_function_identity ______________
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   psycopg2.errors.DependentObjectsStillExist: cannot drop desired object(s) because other objects depend on them
+E   DETAIL:  constraint completion_replacement_receipt_fk on table exception_completion_member depends on table allocation_correction
+E   HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+
+The above exception was the direct cause of the following exception:
+tests/test_intake_extraction_worker.py:252: in test_migration_backfill_guard_and_function_identity
+    importlib.import_module('migrations.versions.0114_allocation_corrections').downgrade()
+migrations/versions/0114_allocation_corrections.py:74: in downgrade
+    op.execute('''DROP TRIGGER seal_allocation_correction ON allocation_set;
+<string>:8: in execute
+    ???
+<string>:3: in execute
+    ???
+.venv/lib/python3.13/site-packages/alembic/operations/ops.py:2645: in execute
+    return operations.invoke(op)
+           ^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/alembic/operations/base.py:448: in invoke
+    return fn(self, operation)
+           ^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/alembic/operations/toimpl.py:259: in execute_sql
+    operations.migration_context.impl.execute(
+.venv/lib/python3.13/site-packages/alembic/ddl/impl.py:259: in execute
+    self._exec(sql, execution_options)
+.venv/lib/python3.13/site-packages/alembic/ddl/impl.py:252: in _exec
+    return conn.execute(construct, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1421: in execute
+    return meth(
+.venv/lib/python3.13/site-packages/sqlalchemy/sql/elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1848: in _execute_context
+    return self._exec_single_context(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+E   sqlalchemy.exc.InternalError: (psycopg2.errors.DependentObjectsStillExist) cannot drop desired object(s) because other objects depend on them
+E   DETAIL:  constraint completion_replacement_receipt_fk on table exception_completion_member depends on table allocation_correction
+E   HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+E   
+E   [SQL: DROP TRIGGER seal_allocation_correction ON allocation_set;
+E         DROP TABLE allocation_correction_impact,allocation_correction;
+E         DROP FUNCTION correct_allocation(uuid,uuid,uuid,uuid,uuid,text,text,boolean,boolean,boolean,uuid),
+E           prepare_allocation_correction(uuid,uuid,uuid,uuid,uuid,text,text,boolean,boolean,boolean),
+E           allocation_correction_detail(uuid,uuid),allocation_correction_for_set(uuid,uuid),require_correction_authority(uuid,uuid,uuid),correction_impact_access(uuid,jsonb),
+E           correction_transaction_admission(uuid,uuid),seal_allocation_correction();
+E         DROP INDEX allocation_once_per_original_hash,allocation_initial_original,allocation_initial_logical;
+E         ALTER TABLE allocation_set DROP COLUMN predecessor_id;
+E         ALTER TABLE allocation_set ADD CONSTRAINT allocation_set_organization_id_intake_original_id_key UNIQUE(organization_id,intake_original_id),
+E           ADD CONSTRAINT allocation_set_organization_id_logical_document_id_key UNIQUE(organization_id,logical_document_id);
+E         CREATE UNIQUE INDEX allocation_once_per_original_hash ON allocation_set(organization_id,content_sha256) WHERE kind='intake_reviewed';]
+E   (Background on this error at: https://sqlalche.me/e/20/2j85)
+----------------------------- Captured stderr call -----------------------------
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+------------------------------ Captured log call -------------------------------
+INFO     alembic.runtime.migration:migration.py:205 Context impl PostgresqlImpl.
+INFO     alembic.runtime.migration:migration.py:208 Will assume transactional DDL.
+=========================== short test summary info ============================
+FAILED tests/test_exception_completions.py::test_completion_sealed_membership_coverage_and_guarded_roundtrip
+FAILED tests/test_allocation_corrections.py::test_correction_guards_runtime_writes_and_retains_evidence_on_downgrade
+FAILED tests/test_allocation_adoptions.py::test_adoption_retained_evidence_blocks_downgrade_and_empty_roundtrip_restores_functions
+FAILED tests/test_intake_batches.py::test_intake_migration_refuses_data_and_preserves_function_identity
+FAILED tests/test_intake_extraction_worker.py::test_migration_backfill_guard_and_function_identity
+5 failed, 125 passed in 338.82s (0:05:38)

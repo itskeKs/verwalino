@@ -2,13 +2,12 @@
 import uuid
 import pytest
 from sqlalchemy import text
-from app.core.db import get_tenant_session
 from app.repositories.property_knowledge_repo import PropertyKnowledgeRepository
 from tests.test_declaration_approval_new_property import fully_reviewed_new_property_import  # noqa: F401
 from tests.test_declaration_approval_existing_property import reviewed_existing_property_import  # noqa: F401
 
 
-async def assert_publication_order(client, fixture, seed, monkeypatch, method):
+async def assert_publication_order(client, fixture, seed, monkeypatch, method, observer):
     item=fixture.item
     original=getattr(PropertyKnowledgeRepository,method)
     observed=[]
@@ -22,11 +21,12 @@ async def assert_publication_order(client, fixture, seed, monkeypatch, method):
         assert await repo._session.scalar(text('SELECT count(*) FROM property WHERE id=:id'),{'id':plan.property_id})==1
         assert await repo._session.scalar(text('SELECT count(*) FROM property_document WHERE id=ANY(:ids) AND property_id IS NOT NULL'),
             {'ids':list(plan.document_ids)})==0
-        # Other transactions must still see the untouched draft until ALL effects commit.
-        async with get_tenant_session(seed['org_a_id']) as reader:
-            assert await reader.scalar(text('SELECT status FROM declaration_import WHERE id=:id'),{'id':item.id})=='NEEDS_REVIEW'
-            if method=='apply':
-                assert await reader.scalar(text('SELECT count(*) FROM property WHERE id=:id'),{'id':plan.property_id})==0
+        # Observe MVCC without the runtime advisory lock that serializes readers
+        # behind this open publication transaction; the HTTP request still uses app_rw.
+        reader=observer
+        assert await reader.scalar(text('SELECT status FROM declaration_import WHERE id=:id'),{'id':item.id})=='NEEDS_REVIEW'
+        if method=='apply':
+            assert await reader.scalar(text('SELECT count(*) FROM property WHERE id=:id'),{'id':plan.property_id})==0
         observed.append(plan.property_id)
         await original(repo,plan,approved_by,approved_at,documents)
 
@@ -38,10 +38,10 @@ async def assert_publication_order(client, fixture, seed, monkeypatch, method):
 
 
 @pytest.mark.asyncio
-async def test_new_destination_and_receipt_precede_source_binding(client_a_clerk,fully_reviewed_new_property_import,seed_data,monkeypatch):
-    await assert_publication_order(client_a_clerk,fully_reviewed_new_property_import,seed_data,monkeypatch,'apply')
+async def test_new_destination_and_receipt_precede_source_binding(client_a_clerk,fully_reviewed_new_property_import,seed_data,monkeypatch,migrator_session):
+    await assert_publication_order(client_a_clerk,fully_reviewed_new_property_import,seed_data,monkeypatch,'apply',migrator_session)
 
 
 @pytest.mark.asyncio
-async def test_existing_destination_receipt_precedes_source_binding(client_a_clerk,reviewed_existing_property_import,seed_data,monkeypatch):
-    await assert_publication_order(client_a_clerk,reviewed_existing_property_import,seed_data,monkeypatch,'apply_existing')
+async def test_existing_destination_receipt_precedes_source_binding(client_a_clerk,reviewed_existing_property_import,seed_data,monkeypatch,migrator_session):
+    await assert_publication_order(client_a_clerk,reviewed_existing_property_import,seed_data,monkeypatch,'apply_existing',migrator_session)

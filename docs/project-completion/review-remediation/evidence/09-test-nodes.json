@@ -1,0 +1,349 @@
+[
+  {
+    "path": "backend/tests/test_allocation_adoptions.py",
+    "functions": 12,
+    "cases": 17,
+    "nodes": [
+      {
+        "name": "test_adoption_confirms_complete_split_once_and_preserves_exact_source",
+        "line": 58,
+        "cases": 2
+      },
+      {
+        "name": "test_adoption_rejects_unsupported_retention_before_effects",
+        "line": 104,
+        "cases": 1
+      },
+      {
+        "name": "test_adoption_requires_both_acknowledgments_and_unchanged_preview",
+        "line": 115,
+        "cases": 1
+      },
+      {
+        "name": "test_adoption_integrity_failure_then_historical_retry_without_new_blob_read",
+        "line": 133,
+        "cases": 1
+      },
+      {
+        "name": "test_adoption_atomic_failure_and_exact_concurrent_retry",
+        "line": 151,
+        "cases": 3
+      },
+      {
+        "name": "test_adoption_scope_recipient_reads_all_member_sources_but_not_private_intake",
+        "line": 171,
+        "cases": 1
+      },
+      {
+        "name": "test_adoption_requires_source_export_and_current_confirmation_even_for_retry",
+        "line": 207,
+        "cases": 1
+      },
+      {
+        "name": "test_adoption_duplicate_manual_without_attachment_in_both_orders",
+        "line": 232,
+        "cases": 2
+      },
+      {
+        "name": "test_adoption_exact_pair_resolution_and_retained_duplicate_claim",
+        "line": 252,
+        "cases": 2
+      },
+      {
+        "name": "test_adoption_new_unprocessed_same_byte_receipt_invalidates_preview",
+        "line": 290,
+        "cases": 1
+      },
+      {
+        "name": "test_adoption_runtime_roles_and_transaction_bound_integrity_receipt",
+        "line": 304,
+        "cases": 1
+      },
+      {
+        "name": "test_adoption_retained_evidence_blocks_downgrade_and_empty_roundtrip_restores_functions",
+        "line": 338,
+        "cases": 1
+      }
+    ]
+  },
+  {
+    "path": "backend/tests/test_intake_inspection.py",
+    "functions": 9,
+    "cases": 27,
+    "nodes": [
+      {
+        "name": "test_scanner_outcomes_precede_parsing",
+        "line": 10,
+        "cases": 5
+      },
+      {
+        "name": "test_basic_limits_precede_scanning",
+        "line": 21,
+        "cases": 3
+      },
+      {
+        "name": "test_pdf_bounds",
+        "line": 27,
+        "cases": 3
+      },
+      {
+        "name": "test_xml_and_image_validation_without_network_or_render",
+        "line": 32,
+        "cases": 1
+      },
+      {
+        "name": "test_clamav_failure_and_limits_are_fail_closed",
+        "line": 48,
+        "cases": 1
+      },
+      {
+        "name": "test_isolated_inspection_has_explicit_missing_scanner_outcome",
+        "line": 67,
+        "cases": 1
+      },
+      {
+        "name": "test_isolated_clean_path_with_explicit_scanner_stub",
+        "line": 76,
+        "cases": 1
+      },
+      {
+        "name": "test_truncated_jpeg_cannot_be_admitted",
+        "line": 96,
+        "cases": 1
+      },
+      {
+        "name": "test_malformed_child_result_is_blocked",
+        "line": 106,
+        "cases": 11
+      }
+    ]
+  },
+  {
+    "path": "backend/tests/test_intake_batches.py",
+    "functions": 15,
+    "cases": 17,
+    "nodes": [
+      {
+        "name": "test_manifest_is_bounded_private_and_idempotent",
+        "line": 26,
+        "cases": 1
+      },
+      {
+        "name": "test_received_original_job_and_outbox_commit_once",
+        "line": 47,
+        "cases": 1
+      },
+      {
+        "name": "test_worker_inspection_releases_only_exact_private_reference",
+        "line": 69,
+        "cases": 1
+      },
+      {
+        "name": "test_blocked_inspection_retries_same_original_with_bounded_replay",
+        "line": 104,
+        "cases": 1
+      },
+      {
+        "name": "test_stale_worker_cannot_complete_reclaimed_generation",
+        "line": 135,
+        "cases": 1
+      },
+      {
+        "name": "test_scope_revocation_cancels_work_and_hides_status",
+        "line": 154,
+        "cases": 1
+      },
+      {
+        "name": "test_raw_runtime_cannot_forge_custody_or_clean_inspection",
+        "line": 173,
+        "cases": 1
+      },
+      {
+        "name": "test_intake_invalidates_coverage_and_blocks_active_work",
+        "line": 195,
+        "cases": 1
+      },
+      {
+        "name": "test_parallel_upload_and_signed_continuation_preserve_manifest",
+        "line": 221,
+        "cases": 1
+      },
+      {
+        "name": "test_pause_and_role_changes_stop_new_work",
+        "line": 239,
+        "cases": 1
+      },
+      {
+        "name": "test_intake_migration_refuses_data_and_preserves_function_identity",
+        "line": 257,
+        "cases": 1
+      },
+      {
+        "name": "test_original_export_requires_clean_status_and_live_export_scope",
+        "line": 333,
+        "cases": 1
+      },
+      {
+        "name": "test_retry_can_recover_without_restarting_completed_work",
+        "line": 357,
+        "cases": 1
+      },
+      {
+        "name": "test_coverage_projects_actual_intake_read_and_export",
+        "line": 378,
+        "cases": 3
+      },
+      {
+        "name": "test_inbox_headers_and_actions_use_current_private_authority",
+        "line": 399,
+        "cases": 1
+      }
+    ]
+  },
+  {
+    "path": "backend/tests/test_outbox_delivery.py",
+    "functions": 9,
+    "cases": 9,
+    "nodes": [
+      {
+        "name": "test_clean_event_creates_one_whole_unreviewed_source_and_effect",
+        "line": 18,
+        "cases": 1
+      },
+      {
+        "name": "test_expired_delivery_is_fenced_and_reconciled_without_duplicate_child",
+        "line": 37,
+        "cases": 1
+      },
+      {
+        "name": "test_delivery_skips_blocked_inspection_and_cancels_revoked_clean_source",
+        "line": 53,
+        "cases": 1
+      },
+      {
+        "name": "test_delivery_reuses_manual_whole_source_under_concurrent_consumers",
+        "line": 70,
+        "cases": 1
+      },
+      {
+        "name": "test_delivery_transaction_rollback_retains_pending_work_and_retry_is_atomic",
+        "line": 86,
+        "cases": 1
+      },
+      {
+        "name": "test_outbox_attempt_budget_and_raw_runtime_boundary",
+        "line": 109,
+        "cases": 1
+      },
+      {
+        "name": "test_old_blocked_event_cannot_adopt_later_clean_inspection",
+        "line": 127,
+        "cases": 1
+      },
+      {
+        "name": "test_outbox_migration_backfills_exact_events_and_retains_delivery_history",
+        "line": 142,
+        "cases": 1
+      },
+      {
+        "name": "test_automatic_delivery_obeys_the_shared_logical_source_cap",
+        "line": 211,
+        "cases": 1
+      }
+    ]
+  },
+  {
+    "path": "backend/tests/test_allocation_source_replacements.py",
+    "functions": 8,
+    "cases": 12,
+    "nodes": [
+      {
+        "name": "test_replacement_consumes_new_source_and_retains_old_claim",
+        "line": 54,
+        "cases": 2
+      },
+      {
+        "name": "test_replacement_then_same_source_correction_then_replacement_replays",
+        "line": 84,
+        "cases": 1
+      },
+      {
+        "name": "test_replacement_rechecks_authority_stale_preview_and_integrity",
+        "line": 112,
+        "cases": 1
+      },
+      {
+        "name": "test_replacement_is_atomic_and_exact_concurrent_retry",
+        "line": 141,
+        "cases": 4
+      },
+      {
+        "name": "test_replacement_exempts_only_retained_reviews_not_new_old_source_edits",
+        "line": 165,
+        "cases": 1
+      },
+      {
+        "name": "test_replacement_does_not_waive_unrelated_duplicate_or_original_kind",
+        "line": 178,
+        "cases": 1
+      },
+      {
+        "name": "test_replacement_migration_roundtrip_and_sealed_private_helpers",
+        "line": 192,
+        "cases": 1
+      },
+      {
+        "name": "test_old_followup_completes_only_against_latest_replacement_and_sources_stay_consumed",
+        "line": 224,
+        "cases": 1
+      }
+    ]
+  },
+  {
+    "path": "backend/tests/test_duplicate_comparisons.py",
+    "functions": 8,
+    "cases": 8,
+    "nodes": [
+      {
+        "name": "test_duplicate_matching_pair_chain_replay_and_no_money",
+        "line": 30,
+        "cases": 1
+      },
+      {
+        "name": "test_duplicate_changed_bytes_identity_paging_and_stale_reviews",
+        "line": 59,
+        "cases": 1
+      },
+      {
+        "name": "test_duplicate_audience_intersection_and_kind_conflict",
+        "line": 77,
+        "cases": 1
+      },
+      {
+        "name": "test_duplicate_extents_xml_and_changed_bytes_dispositions",
+        "line": 139,
+        "cases": 1
+      },
+      {
+        "name": "test_duplicate_hidden_heads_and_current_authority_replay",
+        "line": 164,
+        "cases": 1
+      },
+      {
+        "name": "test_duplicate_identity_preserves_number_case_and_explicit_values",
+        "line": 189,
+        "cases": 1
+      },
+      {
+        "name": "test_duplicate_roles_pause_rollback_and_stale_partition",
+        "line": 203,
+        "cases": 1
+      },
+      {
+        "name": "test_duplicate_coverage_provenance_and_guarded_downgrade",
+        "line": 239,
+        "cases": 1
+      }
+    ]
+  }
+]
