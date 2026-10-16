@@ -1,5 +1,4 @@
 """Protect ordinary original/import rows and retain explicit review channels."""
-import importlib
 from alembic import op
 
 revision = '0063'
@@ -9,16 +8,40 @@ depends_on = None
 
 TABLES = ('property_document','declaration_import','declaration_import_document',
           'property_source_security','property_source_admission_review','property_source_classification')
-# Preserve the exact previous resolver for rollback, including 0057's strict
-# bound-proof addition. The new context variant shares this same source logic.
-PREVIOUS_IMPORT = importlib.import_module('migrations.versions.0057_bound_source_access').PREVIOUS_IMPORT_ACCESS.replace(
-    'SET search_path=pg_catalog,pg_temp AS', 'SET search_path=pg_catalog,pg_temp SET row_security=off AS'
-).replace(
-    'OR (d.property_id IS NOT NULL AND d.property_id IS DISTINCT FROM destination)',
-    "OR (d.property_id IS NOT NULL AND (d.property_id IS DISTINCT FROM destination OR "
-    "(public.property_source_security_mode(org) IS DISTINCT FROM 'PREPARATION' "
-    "AND NOT public.property_source_bound_proven(org,d.id))))"
-)
+# Inline PREVIOUS_IMPORT_ACCESS from 0057 with modifications for context-aware access.
+PREVIOUS_IMPORT = """
+CREATE OR REPLACE FUNCTION property_import_context_actor_access(org uuid,actor uuid,job uuid,mode text,creator uuid,destination uuid,publication uuid,capability text) RETURNS boolean
+    LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+    DECLARE role text; allowed boolean;
+    BEGIN
+      IF capability IS NULL OR capability NOT IN ('read','prepare','approve','export') THEN RETURN false; END IF;
+      role:=public.property_source_actor_role(org,actor);
+      IF role IS NULL THEN RETURN false; END IF;
+      IF destination IS NULL THEN
+        allowed:=mode='NEW_PROPERTY' AND creator=actor AND capability IN ('read','prepare','export')
+          AND (capability<>'prepare' OR role IN ('OWNER_ADMIN','CLERK'));
+      ELSE
+        allowed:=public.property_data_property_actor_access(org,actor,destination,capability);
+      END IF;
+      IF NOT COALESCE(allowed,false) THEN RETURN false; END IF;
+      RETURN NOT EXISTS(SELECT 1 FROM public.declaration_import_document l
+        JOIN public.property_document d ON d.organization_id=l.organization_id AND d.id=l.document_id
+        WHERE l.organization_id=org AND l.import_id=job AND (
+          (SELECT count(*) FROM public.declaration_import_document other
+            WHERE other.organization_id=org AND other.document_id=d.id)<>1
+          OR (d.property_id IS NOT NULL AND (d.property_id IS DISTINCT FROM destination OR
+            (public.property_source_security_mode(org) IS DISTINCT FROM 'PREPARATION'
+            AND NOT public.property_source_bound_proven(org,d.id))))
+          OR (d.property_id IS NULL AND (d.uploaded_by IS NULL
+            OR (destination IS NULL AND d.uploaded_by IS DISTINCT FROM creator)
+            OR (destination IS NOT NULL AND NOT (
+              (mode='NEW_PROPERTY' AND publication IS NOT NULL AND d.uploaded_by=creator)
+              OR EXISTS(SELECT 1 FROM public.property_source_admission a
+                WHERE a.organization_id=org AND a.import_id=job AND a.document_id=d.id AND a.property_id=destination)
+              OR EXISTS(SELECT 1 FROM public.property_source_admission_review r
+                WHERE r.organization_id=org AND r.import_id=job AND r.document_id=d.id AND r.property_id=destination)))))));
+    END $$;
+"""
 IMPORT_LOOKUP = '''      SELECT COALESCE(i.applied_property_id,i.target_property_id),i.initiated_by,i.mode,i.publication_grant_id
         INTO destination,creator,mode,publication FROM public.declaration_import i WHERE i.organization_id=org AND i.id=job;
       IF NOT FOUND THEN RETURN false; END IF;
