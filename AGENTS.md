@@ -12,6 +12,8 @@ Alle Funktionen aus `docs/mvp.md` sollen in der laufenden App von Anfang bis End
   nicht als neue Datei.
 - Dokumentation heißt: `README.md`, `DEPLOY.md`, `docs/architecture.md` und die Fachseiten
   (`docs/m*.md`, `docs/adr/`, `docs/operations/`) knapp aktualisieren, wenn sich Verhalten ändert.
+- `docs/fachreferenz.md` ist die fachliche Referenz (Funktionen und Abläufe der Referenzsoftware) für
+  Umfang und Bedienablauf; gezielt mit `rg -n` lesen.
   Keine neuen Plan-, Protokoll- oder Statusdokumente.
 - `docs/archive/` ist Altbestand. Nicht lesen und nicht als Regelwerk behandeln, außer der Nutzer
   verlangt es ausdrücklich für eine konkrete Frage.
