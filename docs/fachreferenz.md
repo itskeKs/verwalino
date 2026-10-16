@@ -3,10 +3,10 @@
 Date: 2026-10-01. Repository baseline: `259ec0b`. Desktop browser, authenticated
 trial account showing ten days remaining. This is a product-reference inspection,
 not an implementation, security assessment, accounting certification or claim of
-complete parity. It supplements the [design](2026-10-01-product-ux-technical-design.md)
-and [code audit](2026-10-01-product-audit-and-parity-plan.md).
+complete parity. It supplements the [design](archive/2026-10-01-product-ux-technical-design.md)
+and [code audit](archive/2026-10-01-product-audit-and-parity-plan.md).
 
-The [implementation plan](2026-10-01-property-management-implementation-plan.md)
+The [implementation plan](archive/2026-10-01-property-management-implementation-plan.md)
 assigns these observations and acceptance deltas to executable delivery units.
 It preserves the evidence depths and does not treat reference results as product
 implementation acceptance.
