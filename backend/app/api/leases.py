@@ -106,6 +106,57 @@ async def create_lease(
     return _to_out(la)
 
 
+class LeaseUpdate(BaseModel):
+    valid_to: date | None = None
+    notes: str = ""
+    base_rent: str | None = None
+    advance_payment: str | None = None
+    deposit: str | None = None
+
+
+@router.patch("/{lease_id}", response_model=LeaseOut, status_code=200)
+async def update_lease(
+    lease_id: uuid.UUID,
+    body: LeaseUpdate,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_live_writer_db),
+):
+    """Update lease agreement: end date, notes, rent amounts.
+
+    Returns 409 if the lease has booked payments or a finalized settlement.
+    """
+    repo = LeaseAgreementRepository(db, auth.organization_id)
+    existing = await repo.get_by_id(lease_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Lease agreement not found")
+
+    # Check for booked payments or finalized settlement
+    has_booked_payment = await repo.has_booked_payments(lease_id)
+    has_finalized_settlement = await repo.has_finalized_settlement(lease_id)
+
+    if has_booked_payment or has_finalized_settlement:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot update lease: has booked payments or finalized settlement",
+        )
+
+    # Apply updates
+    if body.valid_to is not None:
+        existing.valid_to = inclusive_last_day_to_db_exclusive(body.valid_to)
+    if body.notes is not None:
+        existing.notes = body.notes
+    if body.base_rent is not None:
+        existing.base_rent = Decimal(body.base_rent)
+    if body.advance_payment is not None:
+        existing.advance_payment = Decimal(body.advance_payment)
+    if body.deposit is not None:
+        existing.deposit = Decimal(body.deposit)
+
+    await db.commit()
+    await db.refresh(existing)
+    return _to_out(existing)
+
+
 def _to_out(la: LeaseAgreement) -> LeaseOut:
     # API display edge (ADR-0006): storage holds the EXCLUSIVE upper bound
     # (first non-occupied day); return the INCLUSIVE last occupied day (bound - 1)

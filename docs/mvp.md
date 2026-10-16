@@ -150,7 +150,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 - [x] **T03 BK-Zusatzeingaben anzeigen** — `needsConsumption`, `needsPersonCount`, `needsExternalInput`, `needsManualInput` auf die DB-Schlüssel umstellen und prüfen, dass der Compute-Body die Felder sendet, die `api/settlements.py` erwartet.
   Dateien: `frontend/src/pages/SettlementDetailPage.tsx` (`rg -n "needs|unit_metrics"`), `frontend/src/lib/costVocabulary.ts`, `backend/app/api/settlements.py`, `backend/app/engine/types.py`
   Fertig, wenn: `npm test -- src/pages/SettlementDetailPage.test.tsx` (neu) und `uv run pytest tests/test_m3_settlement.py` grün UND Ablauf in der App: „Wasser nach Verbrauch, Heizung extern eingeben, berechnen, finalisieren, PDF öffnen“.
-- [ ] **T04 Mietvertrag ändern und beenden** — `PATCH /api/leases/{id}` für Ende und Notiz; Beträge nur ohne gebuchte Zahlung und finalisierte Abrechnung (sonst 409); Überlappungsprüfung bleibt; Knöpfe in der Einheit.
+- [x] **T04 Mietvertrag ändern und beenden** — `PATCH /api/leases/{id}` für Ende und Notiz; Beträge nur ohne gebuchte Zahlung und finalisierte Abrechnung (sonst 409); Überlappungsprüfung bleibt; Knöpfe in der Einheit.
   Dateien: `backend/app/api/leases.py`, `backend/app/repositories/lease_agreement_repo.py`, `frontend/src/pages/UnitDetailPage.tsx`, `frontend/src/api/endpoints.ts`
   Fertig, wenn: `uv run pytest tests/test_lease_update.py` (neu) grün UND Ablauf in der App: „Vertrag zum 31.12. beenden, Nachmieter ab 01.01. anlegen“.
 - [ ] **T05 MEA-Skala von Hand bestätigen** — Auf der Objektseite Feld „MEA-Nenner“ und Knopf für `POST /api/properties/{id}/mea-scale/confirm` (`{"denominator": n}`).

@@ -543,6 +543,14 @@ export interface LeaseCreate {
   notes?: string;
 }
 
+export interface LeaseUpdate {
+  valid_to?: string | null;
+  notes?: string;
+  base_rent?: string;
+  advance_payment?: string;
+  deposit?: string | null;
+}
+
 // --- M2 Kosten & Belege ---
 
 export type CostEntryStatus =
