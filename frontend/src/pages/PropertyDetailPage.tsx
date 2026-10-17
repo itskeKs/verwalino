@@ -5,7 +5,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
-import { getProperty, getPropertyKnowledge, listUnits, createUnit, updateUnit } from "../api/endpoints";
+import { getProperty, getPropertyKnowledge, listUnits, createUnit, updateUnit, confirmMeaScale } from "../api/endpoints";
 import type { Property, PropertyKnowledgeOverview, Unit, UnitCreate, UnitUpdate, UsageType } from "../api/types";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/useAuth";
@@ -58,6 +58,8 @@ export function PropertyDetailPage() {
   const [unitForm, setUnitForm] = useState<UnitFormData>(EMPTY_UNIT_FORM);
   const [saving, setSaving] = useState(false);
   const [knowledge, setKnowledge] = useState<PropertyKnowledgeOverview | null>(null);
+  const [meaDenominator, setMeaDenominator] = useState<string>("");
+  const [confirmingMea, setConfirmingMea] = useState(false);
 
   const reload = useCallback(() => {
     if (!propertyId) return;
@@ -84,6 +86,31 @@ export function PropertyDetailPage() {
   }, [propertyId]);
 
   useEffect(() => { void Promise.resolve().then(reload); }, [reload]);
+
+  async function handleConfirmMeaScale(e: React.FormEvent) {
+    e.preventDefault();
+    if (!propertyId || !property) return;
+    setConfirmingMea(true);
+    setError(null);
+    try {
+      const denominator = parseInt(meaDenominator, 10);
+      if (isNaN(denominator) || denominator < 1) {
+        setError("Nenner muss eine positive Zahl sein.");
+        return;
+      }
+      await confirmMeaScale(propertyId, denominator);
+      setMeaDenominator("");
+      reload();
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err.message);
+      } else {
+        setError(String(err));
+      }
+    } finally {
+      setConfirmingMea(false);
+    }
+  }
 
   function openCreateUnit() {
     setEditUnitId(null);
@@ -173,6 +200,36 @@ export function PropertyDetailPage() {
           </tbody>
         </table>
       </div>
+
+      {isWrite && property.mea_scale_status === "LEGACY_UNCONFIRMED" && (
+        <div className="card" style={{ marginBottom: "1.5rem" }}>
+          <h2>MEA-Skala bestätigen</h2>
+          <p>
+            Bisheriger Status: <span className="badge badge--warning">LEGACY_UNCONFIRMED</span>.
+            Bitte geben Sie den Nenner der MEA-Skala ein (z.B. 1000 für 1000 Gesamteinheiten).
+          </p>
+          <form onSubmit={handleConfirmMeaScale} className="form-grid" style={{ gap: "0.5rem" }}>
+            <label>
+              Nenner *
+              <input
+                type="number"
+                required
+                min="1"
+                value={meaDenominator}
+                onChange={(e) => setMeaDenominator(e.target.value)}
+                placeholder="z.B. 1000"
+              />
+            </label>
+            <button 
+              type="submit" 
+              className="btn btn--primary"
+              disabled={confirmingMea}
+            >
+              {confirmingMea ? "Bestätige..." : "MEA-Skala bestätigen"}
+            </button>
+          </form>
+        </div>
+      )}
 
       <section className="card property-knowledge-link" aria-labelledby="property-knowledge-heading" style={{ marginBottom: "1.5rem" }}>
         <h2 id="property-knowledge-heading">Dokumente &amp; Wissen</h2>
