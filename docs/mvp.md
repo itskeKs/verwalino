@@ -153,7 +153,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 - [x] **T04 Mietvertrag ändern und beenden** — `PATCH /api/leases/{id}` für Ende und Notiz; Beträge nur ohne gebuchte Zahlung und finalisierte Abrechnung (sonst 409); Überlappungsprüfung bleibt; Knöpfe in der Einheit.
   Dateien: `backend/app/api/leases.py`, `backend/app/repositories/lease_agreement_repo.py`, `frontend/src/pages/UnitDetailPage.tsx`, `frontend/src/api/endpoints.ts`
   Fertig, wenn: `uv run pytest tests/test_lease_update.py` (neu) grün UND Ablauf in der App: „Vertrag zum 31.12. beenden, Nachmieter ab 01.01. anlegen“.
-- [ ] **T05 MEA-Skala von Hand bestätigen** — Auf der Objektseite Feld „MEA-Nenner“ und Knopf für `POST /api/properties/{id}/mea-scale/confirm` (`{"denominator": n}`).
+- [x] **T05 MEA-Skala von Hand bestätigen** — Auf der Objektseite Feld „MEA-Nenner“ und Knopf für `POST /api/properties/{id}/mea-scale/confirm` (`{"denominator": n}`).
   Dateien: `frontend/src/pages/PropertyDetailPage.tsx`, `frontend/src/api/endpoints.ts`, `backend/app/api/properties.py:71,189-220`, `backend/app/api/units.py:200-221`
   Fertig, wenn: `uv run pytest tests/test_declaration_mea_scale.py` grün UND Ablauf in der App: „WEG-Objekt anlegen, Nenner 1000, Einheiten mit 300/300/400 MEA ohne 409“.
 - [ ] **T06 Benutzer in der UI anlegen** — Formular (E-Mail, Name, Rolle, Startpasswort) für `POST /api/users`, nur für Admins.
