@@ -1,30 +1,12 @@
 """A retained source replacement is a typed exception outcome, not a copy."""
+import importlib
 from alembic import op
-from sqlalchemy import text
 
 revision='0123'
 down_revision='0122'
 branch_labels=None
 depends_on=None
-
-# 0122 helper functions (inlined to avoid importlib):
-def definition(signature):
-    return op.get_bind().scalar(text('SELECT pg_get_functiondef(CAST(:s AS regprocedure))'),{'s':signature})
-
-def change(source,before,after):
-    assert source.count(before)==1,(before,source.count(before))
-    return source.replace(before,after)
-
-def clone(signature,name,changes=()):
-    source=change(definition(signature),'FUNCTION public.'+signature.split('(')[0]+'(','FUNCTION public.'+name+'(')
-    for before,after in changes:source=change(source,before,after)
-    op.execute(source)
-
-def patch(signature,changes):
-    source=definition(signature)
-    for before,after in changes:source=change(source,before,after)
-    op.execute(source)
-
+h=importlib.import_module('migrations.versions.0122_allocation_source_replacements')
 ADAPTED=['evaluate_exception_completion(uuid,uuid)','validate_exception_completion()',
     'create_exception_completion(uuid,uuid,uuid,uuid,text,text,boolean)','completion_case_audience(uuid,uuid,boolean)']
 ADDED=['replacement_source_outcome(uuid,uuid)','allocation_replacement_relation(uuid,uuid,uuid)']

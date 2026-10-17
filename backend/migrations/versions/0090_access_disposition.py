@@ -1,21 +1,12 @@
 """Assess retained legacy resources against actual strict denial conditions."""
+import importlib
 from alembic import op
 
 revision = '0090'
 down_revision = '0089'
 branch_labels = None
 depends_on = None
-# 0087 KINDS (inlined to avoid importlib):
-KINDS = (
-    'property','unit','person','owner_profile','tenant_profile','vendor','ownership_history','lease_agreement',
-    'management_mandate','accounting_scope','bank_account','payment','cost_entry','settlement_run','settlement_line',
-    'coverage_declaration','economic_plan','economic_plan_line','invoice_document','invoice_processing_attempt',
-    'mandate_document','dunning_notice','owners_meeting','agenda_item','resolution','resolution_register_entry',
-    'property_document','declaration_import','declaration_import_document','declaration_queue_request',
-    'declaration_extraction_run','declaration_import_pass','declaration_candidate','declaration_candidate_evidence',
-    'declaration_candidate_issue','property_legal_reference','property_assignment','property_document_relation',
-    'property_rule','property_rule_relation','property_rule_source','approved_fact_source','property_knowledge_query_run',
-)
+KINDS = importlib.import_module('migrations.versions.0087_projected_access_coverage').KINDS
 
 
 def upgrade():

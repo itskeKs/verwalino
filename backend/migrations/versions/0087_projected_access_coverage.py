@@ -1,5 +1,6 @@
 """Materialize strict combined audiences without changing source-security mode."""
 import hashlib
+import importlib
 import re
 from alembic import op
 from sqlalchemy import text
@@ -16,51 +17,17 @@ EXPECTED = {
     'property_meeting_row_access': ('property_meeting_row_access(uuid,text,jsonb,text)', '5d095a6ddbde6f26ce8de5b5358ab30afdbe5c93710b4f116a1c14c812622e1e'),
     'property_original_row_access': ('property_original_row_access(uuid,uuid,uuid,uuid,text)', 'ffb16d635f48fe7830c03eb5df1b65a57f1ebb926d9adc97bb970c273892e466'),
     'scope_financial_inputs_classified': ('scope_financial_inputs_classified(uuid,uuid)', 'b76a11f6e4c17641afa9b06fb7e3855b2ff8b0587e2f26efa565756452650b29'),
-    # 0086 EXPECTED (inlined to avoid importlib):
-    'dunning_contact_access': ('dunning_contact_access(uuid,uuid,uuid,text)', 'eee17f82bded621105e5c723e534a0b58b28988df58dae2b92e9063d442d8bf7'),
-    'dunning_source_access': ('dunning_source_access(uuid,uuid,text)', '95b2d013c90b427198fa9e12e80fb7eb18e7fc182034c823c5159d255e9deda3'),
-    'financial_disclosure_before_contacts': ('financial_disclosure_before_contacts(uuid,uuid,text)', '3d1f8fddadbc083dc36c96ac203fc883490e7458843f59e12bd4e4335dcc11e9'),
-    'financial_scope_access': ('financial_scope_access(uuid,text,uuid,text)', '006637c9494fed7e04bdb1edc7a5cf8f3b72cbf75a796f79d3dea4294aea5ec6'),
-    'financial_sources_before_contacts': ('financial_sources_before_contacts(uuid,uuid)', '201cb61c212734391f29cfd98131c2bcf400a160ec029e47300b30fef33bed84'),
-    'has_person_data_capability': ('has_person_data_capability(uuid,uuid,text)', '84bcee422768e1ea42705c616adc581e5a575c011f8c0a47fac2186612ce64a4'),
-    'has_scope_capability': ('has_scope_capability(uuid,uuid,text)', '8260399dcf4ee9ac01e06a18e358b8430c76bd332d6389efd80d830f1de1a6d1'),
-    'history_source_before_contacts': ('history_source_before_contacts(uuid,text,jsonb,text)', '9feed614ef3ed133c61c5f6a65f322047858cb3d0f8b50889d6644ec1d676550'),
-    'invoice_source_access': ('invoice_source_access(uuid,uuid,text)', '8f41d83fab26e4d8421ab2254bfcd1086c8e375ff0e6eda73e29b5b023d1498d'),
-    'invoice_source_row_access': ('invoice_source_row_access(invoice_document,text)', 'd333f4066220f910bb0fc9aa92fb374fa0bed0e64af93bd7b166357c716d71bf'),
-    'knowledge_query_actor_access': ('knowledge_query_actor_access(uuid,uuid,uuid)', '961ec53a4e862b894470d04556c6154cc56868c7d16f3fd6d30989504c5f449b'),
-    'mandate_source_access': ('mandate_source_access(uuid,uuid,text)', 'fd73352d6fa186d8b19a11446bb6f4e17e2d80bc2b806c8aab53c2a3ef8a6e23'),
-    'person_source_access': ('person_source_access(uuid,uuid,text)', '881ce6553db26640ced9ecd10b5b1683537bf28c60dafba5a517a53443bd761c'),
-    'person_source_row_access': ('person_source_row_access(uuid,uuid,uuid,text)', '7d570edf65de1d02916616f053f08eff024e41d8e10ff04a140421f452e23ddf'),
-    'profile_reference_access': ('profile_reference_access(uuid,text,uuid)', 'd4977c1e901d6950155fbd641f929815e997dc3f519b21160e579d539b5935c5'),
-    'profile_source_access': ('profile_source_access(uuid,text,uuid,text)', '95d68a85ed0b0c9a18cb5005fb0c774e56e3ca4ed13a0c26a1f785e2888a1841'),
-    'property_derived_row_access': ('property_derived_row_access(uuid,text,jsonb,text)', '0f014860310d87844180a8b566aa839bc49e7557a947421e6eec15edb2313d8e'),
-    'property_financial_contact_access': ('property_financial_contact_access(uuid,uuid,text)', '887f431d3df94697e67f69a79b0bbe1c931403f25a17e91157f9a2ab9af128d4'),
-    'property_financial_disclosure_access': ('property_financial_disclosure_access(uuid,uuid,text)', '248a58a3874ddd293811556d44f693d5d322e4f0112ed904a0e509efea37bbfc'),
-    'property_financial_source_access': ('property_financial_source_access(uuid,uuid)', '503ee92de34009cd02e9247c1e3e198488eaa1d69f8c6f7ca9c44da576370221'),
-    'property_history_row_access': ('property_history_row_access(uuid,text,jsonb,text)', '29773432ef8002e75c29421f99e4be90f8973ad85af3d07254900211e7d3a95a'),
-    'property_import_runtime_access': ('property_import_runtime_access(uuid,uuid,text)', '74c182027a6bbc0a66a093dd79708f13310038d4a7f753c1ece3432667138332'),
-    'property_master_access': ('property_master_access(uuid,uuid,text)', '583977aa238d8000d5704c75f414a1bd331b6c0003cdde0ecd63bff06aad601a'),
-    'property_source_permitted': ('property_source_permitted(uuid,text,uuid,text)', '9137c5b69269f0706fba0389c88c059e6b9fb149cfd6afbaae6693f80fdc5182'),
-    'report_scope_source_access': ('report_scope_source_access(uuid,uuid,text)', '42bb226f69225371f5977324b153a84634c35dc360d956d51c64cab99089b51a'),
-    # 0085 EXPECTED (inlined via 0086):
-    'property_import_context_actor_access': ('property_import_context_actor_access(uuid,uuid,uuid,text,uuid,uuid,uuid,text)', 'fdec0bf21d3536d2f23fdfed7753316508c0eb5048119636431c57ea3f851fc6'),
-    'property_source_import_actor_access': ('property_source_import_actor_access(uuid,uuid,uuid,text)', '1bb69487ce610530353a1b78d3ab4c54917b07e91a2d79cc0d5a36fc531b9b9a'),
-    'property_source_document_actor_access': ('property_source_document_actor_access(uuid,uuid,uuid,text)', '92cc0a9abdd3fea7fd8027e59d9af2fc58f3ea0f87ce005829ef82b2e6823cb8'),
-    'property_source_actor_access': ('property_source_actor_access(uuid,uuid,text,uuid,text)', '7ade366cc570c40c1eedb8b61fef9ae88aa6d7c06e1fc785a989de3876d5cbbf'),
-    'property_source_actor_permitted': ('property_source_actor_permitted(uuid,uuid,text,uuid,text)', '361fe4fb4741e25beceb62530aac37f75c97c5ccc30bf7d678551be571ab5ac3'),
-    'property_source_graph_before_history': ('property_source_graph_before_history(uuid,uuid,uuid,text,boolean)', '93514a0cc2a0667ab508d42b550c78cba9ed0a12a5e2d7b9e1eb85d2d098ad71'),
-    'property_complete_graph_actor_access': ('property_complete_graph_actor_access(uuid,uuid,uuid,text,boolean)', 'd2c6114fc987f1c03ec6961180bd9f9fea0d3c02a52999cf87c5160aa02bc7fe'),
 }
+PRIOR = importlib.import_module('migrations.versions.0086_combined_authority_projection')
 EXPLICIT_ACTOR = set()
-# 0086 constants (inlined to avoid importlib):
-ACTOR = "NULLIF(current_setting('app.current_user_id',true),'')::uuid"
-MODE = 'public.property_source_security_mode(org)'
-VALID = "org IS NOT NULL AND security_mode IN ('PREPARATION','ENFORCED','PAUSED') AND org IS NOT DISTINCT FROM NULLIF(current_setting('app.current_org_id',true),'')::uuid"
-GUARD = '\n      IF ('+VALID+') IS NOT TRUE THEN RETURN false; END IF; -- explicit-audience-boundary\n'
-SQL_PREFIX = ' SELECT CASE WHEN '+VALID+' THEN ('
-SQL_SUFFIX = ') ELSE false END '
-PROPERTY = {'property_import_context_actor_access', 'property_source_import_actor_access', 'property_source_document_actor_access', 'property_source_actor_access', 'property_source_actor_permitted', 'property_source_graph_before_history', 'property_complete_graph_actor_access'}
-ROUTED = {**EXPECTED}
+PROPERTY = PRIOR.PROPERTY
+ROUTED = {**PRIOR.EXPECTED, **EXPECTED}
+ACTOR = PRIOR.ACTOR
+MODE = PRIOR.MODE
+VALID = PRIOR.VALID
+GUARD = PRIOR.GUARD
+SQL_PREFIX = PRIOR.SQL_PREFIX
+SQL_SUFFIX = PRIOR.SQL_SUFFIX
 
 def _parts(definition):
     header,body,end = definition.split('$function$')

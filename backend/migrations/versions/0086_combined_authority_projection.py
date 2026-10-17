@@ -4,6 +4,7 @@ Only property-source mode and target actor are explicit. Tenant and selected
 financial scope remain caller boundaries; the financial effect switch stays live.
 """
 import hashlib
+import importlib
 import re
 from alembic import op
 from sqlalchemy import text
@@ -39,16 +40,9 @@ EXPECTED = {
     'property_master_access': ('property_master_access(uuid,uuid,text)', '583977aa238d8000d5704c75f414a1bd331b6c0003cdde0ecd63bff06aad601a'),
     'property_source_permitted': ('property_source_permitted(uuid,text,uuid,text)', '9137c5b69269f0706fba0389c88c059e6b9fb149cfd6afbaae6693f80fdc5182'),
     'report_scope_source_access': ('report_scope_source_access(uuid,uuid,text)', '42bb226f69225371f5977324b153a84634c35dc360d956d51c64cab99089b51a'),
-    # 0085 EXPECTED (inlined to avoid importlib):
-    'property_import_context_actor_access': ('property_import_context_actor_access(uuid,uuid,uuid,text,uuid,uuid,uuid,text)', 'fdec0bf21d3536d2f23fdfed7753316508c0eb5048119636431c57ea3f851fc6'),
-    'property_source_import_actor_access': ('property_source_import_actor_access(uuid,uuid,uuid,text)', '1bb69487ce610530353a1b78d3ab4c54917b07e91a2d79cc0d5a36fc531b9b9a'),
-    'property_source_document_actor_access': ('property_source_document_actor_access(uuid,uuid,uuid,text)', '92cc0a9abdd3fea7fd8027e59d9af2fc58f3ea0f87ce005829ef82b2e6823cb8'),
-    'property_source_actor_access': ('property_source_actor_access(uuid,uuid,text,uuid,text)', '7ade366cc570c40c1eedb8b61fef9ae88aa6d7c06e1fc785a989de3876d5cbbf'),
-    'property_source_actor_permitted': ('property_source_actor_permitted(uuid,uuid,text,uuid,text)', '361fe4fb4741e25beceb62530aac37f75c97c5ccc30bf7d678551be571ab5ac3'),
-    'property_source_graph_before_history': ('property_source_graph_before_history(uuid,uuid,uuid,text,boolean)', '93514a0cc2a0667ab508d42b550c78cba9ed0a12a5e2d7b9e1eb85d2d098ad71'),
-    'property_complete_graph_actor_access': ('property_complete_graph_actor_access(uuid,uuid,uuid,text,boolean)', 'd2c6114fc987f1c03ec6961180bd9f9fea0d3c02a52999cf87c5160aa02bc7fe'),
 }
 EXPLICIT_ACTOR = {'knowledge_query_actor_access'}
+PROPERTY = importlib.import_module('migrations.versions.0085_property_authority_projection').EXPECTED
 ACTOR = "NULLIF(current_setting('app.current_user_id',true),'')::uuid"
 MODE = 'public.property_source_security_mode(org)'
 VALID = "org IS NOT NULL AND security_mode IN ('PREPARATION','ENFORCED','PAUSED') AND org IS NOT DISTINCT FROM NULLIF(current_setting('app.current_org_id',true),'')::uuid"
