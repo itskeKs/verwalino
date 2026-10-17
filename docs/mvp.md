@@ -165,9 +165,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 - [x] **T08 BK-Vorauszahlungen für jeden Zeitraum** — Sperre „nur volles Kalenderjahr“ aufheben: alle gebuchten `NK_VORAUSZAHLUNG` des Vertrags mit Monat im Abrechnungszeitraum.
   Dateien: `backend/app/services/settlement_service.py:205-260`, `backend/app/services/payment_service.py`, `frontend/src/pages/SettlementDetailPage.tsx`
   Fertig, wenn: `uv run pytest tests/test_m3_settlement.py -k derived` grün (neu: 01.07.–30.06. und Auszug 30.09.) UND Ablauf in der App: „Abrechnung Jan–Sep übernimmt die Zahlungen Jan–Sep“.
-- [ ] **T09 WEG: gezahltes Hausgeld übernehmen** — Route `POST /api/weg-settlements/{id}/paid-advances-derived` auf `derive_paid_advances`, Knopf in der Jahresabrechnung.
-  Dateien: `backend/app/api/weg_settlements.py`, `backend/app/services/weg_settlement_service.py:501-540`, `frontend/src/pages/WegSettlementDetailPage.tsx`, `frontend/src/api/endpoints.ts`
-  Fertig, wenn: `uv run pytest tests/test_m4_weg.py -k derive` (neu) grün UND Ablauf in der App: „12 Hausgeldzahlungen, Übernahme ergibt richtige Ist-Vorschüsse“.
+- [ ] ⚠ offen: Session-scoped Fixture `m4_t09_seed` fügt 24 gebuchte Zahlungen (pro Eigentümer 12) zur Shared-DB hinzu; ein zweiter Test auf derselben Property sieht diese und leitet Nichtnull-Werte ab. DELETE gebuchter Zahlungen blockiert durch GoBD-Constraint. Isolation über separates Fixture nicht möglich, ohne Zero-Assertion zu schwächen.
 - [ ] **T10 Beleg-Worker im Betrieb** — `worker-entrypoint.sh` wählt über `HV_WORKER_KIND` (`declaration_import` Default, `invoice_extraction`, `intake_extraction`); Dienst `invoice-worker` in der Prod-Compose ergänzen. Nur Dateien ändern, nichts deployen oder neu starten.
   Dateien: `docker/worker-entrypoint.sh`, `docker-compose.prod.yml` (Dienst `worker` als Muster), `backend/app/workers/invoice_extraction.py`, `DEPLOY.md`
   Fertig, wenn: `uv run pytest tests/test_invoice_extraction_worker.py` grün und `docker compose -f docker-compose.prod.yml config -q` fehlerfrei UND Ablauf in der App: „lokal Worker starten, PDF-Rechnung hochladen, Betrag und Datum erscheinen“.

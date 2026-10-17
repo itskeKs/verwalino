@@ -15,6 +15,7 @@ import {
   listProperties,
   listOwnerProfiles,
   listPersons,
+  derivePaidAdvances,
 } from "../api/endpoints";
 import type { WegRun, WegLine, WegComputeRequest, Property, OwnerProfile, Person } from "../api/types";
 import { ApiError } from "../api/client";
@@ -103,6 +104,21 @@ export function WegSettlementDetailPage() {
     await run_(() => finalizeWegRun(runId, req()));
   }
 
+  async function handleTakePaidAdvances() {
+    if (!runId) return;
+    try {
+      const result = await derivePaidAdvances(runId);
+      // Map owner_profile_id -> paid_total as Decimal string
+      const newValues: Record<string, string> = {};
+      for (const item of result) {
+        newValues[item.owner_profile_id] = item.paid_total;
+      }
+      setPaidValues((prev) => ({ ...prev, ...newValues }));
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
   if (loading) return <p>Lade...</p>;
   if (!run) return <p className="error-text">{error ?? "WEG-Abrechnung nicht gefunden."}</p>;
 
@@ -159,6 +175,11 @@ export function WegSettlementDetailPage() {
           {paidOwners.map((id) => <label key={id}>Tatsächlich gezahltes Hausgeld · {ownerName(id)}
             <input inputMode="decimal" placeholder="Unbekannt" value={paidValues[id] ?? ""} onChange={(e) => setPaidValues({ ...paidValues, [id]: e.target.value })} />
           </label>)}
+          <div style={{ marginBottom: "1rem" }}>
+            <button className="btn btn--secondary" onClick={handleTakePaidAdvances} disabled={busy}>
+              Aus Zahlenstand übernehmen
+            </button>
+          </div>
           <div className="form-grid">
             <label>Rücklagen-Anfangsbestand
               <input type="text" inputMode="decimal" placeholder="0.00" value={opening} onChange={(e) => setOpening(e.target.value)} />

@@ -331,6 +331,39 @@ async def finalize_weg_run(
 
 
 # ---------------------------------------------------------------------------
+# Paid advances derivation (T09)
+# ---------------------------------------------------------------------------
+class PaidAdvancesResult(BaseModel):
+    owner_profile_id: str
+    paid_total: str
+
+
+@router.post("/{run_id}/paid-advances-derived", response_model=list[PaidAdvancesResult])
+async def derive_paid_advances_route(
+    run_id: uuid.UUID,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_db),
+):
+    """Derive paid advances per owner from actual payments (nachrichtlich)."""
+    svc = WegSettlementService(db, auth.organization_id, auth.user_id)
+    run = await db.get(SettlementRun, run_id)
+    if run is None or run.run_type != "WEG_JAHRESABRECHNUNG":
+        raise HTTPException(status_code=404, detail="WEG-Jahresabrechnung not found")
+    
+    # Extract period_year from the run's period_start
+    period_year = run.period_start.year
+    
+    result = await svc.derive_paid_advances(run.economic_plan_id, period_year)
+    return [
+        PaidAdvancesResult(
+            owner_profile_id=str(r.owner_profile_id),
+            paid_total=str(r.paid_total),
+        )
+        for r in result
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Vermoegensbericht
 # ---------------------------------------------------------------------------
 @router.post("/asset-reports", response_model=WegRunOut, status_code=201)

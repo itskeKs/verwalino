@@ -1003,3 +1003,8 @@ export function createUser(
 ): Promise<any> {
   return api.post<any>("/api/users", { email, password, display_name: displayName, role });
 }
+
+// T09: Paid advances derived
+export function derivePaidAdvances(runId: string): Promise<Array<{ owner_profile_id: string; paid_total: string }>> {
+  return api.post<any[]>(`/api/weg-settlements/${runId}/paid-advances-derived`);
+}
