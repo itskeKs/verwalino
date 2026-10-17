@@ -478,6 +478,20 @@ class PaymentService:
         )
         return derive_advance_total([_to_payment_input(p) for p in rows], filt)
 
+    async def derive_nk_advance_total_for_period(
+        self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date
+    ) -> Decimal:
+        """DERIVED NK-Vorauszahlung sum for a sub-period (T08)."""
+        rows = await self._repo.derived_for_nk_for_period(
+            lease_agreement_id, period_start, period_end
+        )
+        filt = AdvanceFilter(
+            types=frozenset({"NK_VORAUSZAHLUNG"}),
+            year=period_start.year,
+            lease_agreement_id=lease_agreement_id,
+        )
+        return derive_advance_total([_to_payment_input(p) for p in rows], filt)
+
     async def derive_hausgeld_total(
         self, owner_profile_id: uuid.UUID, period_year: int
     ) -> Decimal:

@@ -119,6 +119,23 @@ class PaymentRepository(TenantRepository[Payment]):
         result = await self._session.execute(stmt)
         return result.scalars().all()
 
+    async def derived_for_nk_for_period(
+        self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date
+    ) -> Sequence[Payment]:
+        """booked, active NK_VORAUSZAHLUNG payments for one lease, month within period."""
+        await self.require_computation_context(lease_id=lease_agreement_id)
+        stmt = (
+            self._booked_active()
+            .where(Payment.payment_type == "NK_VORAUSZAHLUNG")
+            .where(Payment.lease_agreement_id == lease_agreement_id)
+            .where(Payment.period_month.isnot(None))
+            .where(Payment.period_month >= period_start.month)
+            .where(Payment.period_month <= period_end.month)
+            .where(Payment.period_year == period_start.year)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
     async def derived_for_hausgeld(
         self, owner_profile_id: uuid.UUID, period_year: int
     ) -> Sequence[Payment]:

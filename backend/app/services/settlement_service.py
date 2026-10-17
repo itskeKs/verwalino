@@ -230,11 +230,11 @@ class SettlementService:
                 status_code=422,
                 detail="DERIVED advance payments require a lease addressee on the run",
             )
-        if run.period_start != date(period_year, 1, 1) or run.period_end != date(period_year, 12, 31):
-            incomplete("unsupported_derived_subperiod", "advance_payments")
         await FinancialScopeService(self._session, self._org_id, self._user_id).enter(run, computation=True)
         pay_svc = PaymentService(self._session, self._org_id, self._user_id)
-        total = await pay_svc.derive_nk_advance_total(run.lease_agreement_id, period_year)
+        total = await pay_svc.derive_nk_advance_total_for_period(
+            run.lease_agreement_id, run.period_start, run.period_end
+        )
         run.advance_payments_total = total
         run.advance_payments_source = "DERIVED"
         await self._runs.update(run)
