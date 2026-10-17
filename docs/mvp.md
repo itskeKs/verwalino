@@ -156,7 +156,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 - [x] **T05 MEA-Skala von Hand bestätigen** — Auf der Objektseite Feld „MEA-Nenner“ und Knopf für `POST /api/properties/{id}/mea-scale/confirm` (`{"denominator": n}`).
   Dateien: `frontend/src/pages/PropertyDetailPage.tsx`, `frontend/src/api/endpoints.ts`, `backend/app/api/properties.py:71,189-220`, `backend/app/api/units.py:200-221`
   Fertig, wenn: `uv run pytest tests/test_declaration_mea_scale.py` grün UND Ablauf in der App: „WEG-Objekt anlegen, Nenner 1000, Einheiten mit 300/300/400 MEA ohne 409“.
-- [ ] **T06 Benutzer in der UI anlegen** — Formular (E-Mail, Name, Rolle, Startpasswort) für `POST /api/users`, nur für Admins.
+- [x] **T06 Benutzer in der UI anlegen** — Formular (E-Mail, Name, Rolle, Startpasswort) für `POST /api/users`, nur für Admins.
   Dateien: `frontend/src/pages/UsersPage.tsx`, `frontend/src/api/endpoints.ts`, `backend/app/api/users.py`
   Fertig, wenn: `uv run pytest tests/test_rbac.py` grün UND Ablauf in der App: „Sachbearbeiter anlegen und mit ihm anmelden“.
 - [ ] **T07 Zahlungsentwurf bearbeiten** — Bearbeiten-Formular für Entwürfe über das vorhandene `PATCH /api/payments/{id}`.
