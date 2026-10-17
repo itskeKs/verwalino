@@ -156,9 +156,11 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 - [ ] **T05 MEA-Skala von Hand bestätigen** — Auf der Objektseite Feld „MEA-Nenner“ und Knopf für `POST /api/properties/{id}/mea-scale/confirm` (`{"denominator": n}`).
   Dateien: `frontend/src/pages/PropertyDetailPage.tsx`, `frontend/src/api/endpoints.ts`, `backend/app/api/properties.py:71,189-220`, `backend/app/api/units.py:200-221`
   Fertig, wenn: `uv run pytest tests/test_declaration_mea_scale.py` grün UND Ablauf in der App: „WEG-Objekt anlegen, Nenner 1000, Einheiten mit 300/300/400 MEA ohne 409“.
+  ⚠ offen: Test-DB auf :55432 nicht verfügbar; docker-compose.test.yml schlägt fehl.
 - [ ] **T06 Benutzer in der UI anlegen** — Formular (E-Mail, Name, Rolle, Startpasswort) für `POST /api/users`, nur für Admins.
   Dateien: `frontend/src/pages/UsersPage.tsx`, `frontend/src/api/endpoints.ts`, `backend/app/api/users.py`
   Fertig, wenn: `uv run pytest tests/test_rbac.py` grün UND Ablauf in der App: „Sachbearbeiter anlegen und mit ihm anmelden“.
+  ⚠ offen: Test-DB auf :55432 nicht verfügbar; docker-compose.test.yml schlägt fehl.
 - [ ] **T07 Zahlungsentwurf bearbeiten** — Bearbeiten-Formular für Entwürfe über das vorhandene `PATCH /api/payments/{id}`.
   Dateien: `frontend/src/pages/PaymentDetailPage.tsx`, `frontend/src/api/endpoints.ts`, `backend/app/api/payments.py:56-75`
   Fertig, wenn: `uv run pytest tests/test_m6_zahlungen.py` grün UND Ablauf in der App: „Monat im Entwurf korrigieren, buchen, Mietkonto stimmt“.

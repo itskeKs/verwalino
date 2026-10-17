@@ -161,6 +161,16 @@ export function updateProperty(id: string, body: PropertyUpdate): Promise<Proper
   return api.put<Property>(`/api/properties/${id}`, body);
 }
 
+export function confirmMeaScale(
+  propertyId: string,
+  denominator: number,
+): Promise<Property> {
+  return api.post<Property>(
+    `/api/properties/${propertyId}/mea-scale/confirm`,
+    { denominator, expected_scale_status: "LEGACY_UNCONFIRMED", confirm_existing_values_as_numerators: true },
+  );
+}
+
 // --- Teilungserklärungen ---
 
 export function createDeclarationImport(
@@ -984,3 +994,12 @@ export const sourceClassificationApi = {
     return api.post<SourceClassificationReceipt>(this.base, body, { headers: { "Idempotency-Key": key } });
   },
 };
+
+export function createUser(
+  email: string,
+  password: string,
+  displayName: string,
+  role: string,
+): Promise<any> {
+  return api.post<any>("/api/users", { email, password, display_name: displayName, role });
+}
