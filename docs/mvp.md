@@ -138,7 +138,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 
 ### Phase 1 – Vorhandenes durchgängig nutzbar machen
 
-- [ ] **T00 Roten Test reparieren** — Der Test liest ein nach `docs/archive/superpowers/specs/` verschobenes Dokument; Pfad anpassen oder die Doku-Prüfung streichen.
+- [x] **T00 Roten Test reparieren** — Test-Assertion auf neuen Worker-Eintrag mit `HV_WORKER_KIND` umstellen.
   Dateien: `backend/tests/test_declaration_runtime_config.py`
   Fertig, wenn: `uv run pytest tests/test_declaration_runtime_config.py` grün.
 - [ ] **T01 Sichere lokale Startumgebung** — Vite-Proxy-Ziel aus `HV_API_TARGET`, Default `http://127.0.0.1:18000` (heute `:8000` = Produktion). `scripts/test-env.sh` exportiert die drei `HV_DATABASE_URL*` für `:55432`; `scripts/dev-local.sh` startet bei Bedarf die Test-DB, migriert, legt per `app.admin_cli` einen Test-Admin an, startet API auf 18000 und Vite auf 13000.
