@@ -28,7 +28,7 @@ README_PATH = ROOT / "README.md"
 DECLARATION_RUNBOOK_PATH = ROOT / "docs" / "operations" / "declaration-imports.md"
 ARCHITECTURE_PATH = ROOT / "docs" / "architecture.md"
 DECLARATION_DESIGN_PATH = (
-    ROOT / "docs" / "superpowers" / "specs" / "2026-08-29-declaration-agentic-modernization-design.md"
+    ROOT / "docs" / "archive" / "superpowers" / "specs" / "2026-08-29-declaration-agentic-modernization-design.md"
 )
 
 _DECLARATION_EXTRACTION_ENVIRONMENT = {
@@ -377,7 +377,7 @@ def test_runtime_example_and_entrypoint_keep_secrets_at_boundaries() -> None:
         for name, default in _DECLARATION_QA_DEFAULTS.items()
     )
     assert WORKER_ENTRYPOINT_PATH.read_text(encoding="utf-8") == (
-        "#!/bin/sh\nset -eu\n\nexec python -m app.workers.declaration_import\n"
+        '#!/bin/sh\nset -eu\n\nexec python -m app.workers."${HV_WORKER_KIND:-declaration_import}"\n'
     )
     assert WORKER_ENTRYPOINT_PATH.stat().st_mode & 0o111
 

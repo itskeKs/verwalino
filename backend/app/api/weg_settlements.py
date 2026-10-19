@@ -321,13 +321,47 @@ async def finalize_weg_run(
     run_id: uuid.UUID,
     body: WegComputeRequest | None = None,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    # The PDF may be opened as soon as the success response arrives.
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
     run = await svc.finalize_weg(run_id, _weg_extras(body))
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
     return _run_out(run, list(lines))
+
+
+# ---------------------------------------------------------------------------
+# Paid advances derivation (T09)
+# ---------------------------------------------------------------------------
+class PaidAdvancesResult(BaseModel):
+    owner_profile_id: str
+    paid_total: str
+
+
+@router.post("/{run_id}/paid-advances-derived", response_model=list[PaidAdvancesResult])
+async def derive_paid_advances_route(
+    run_id: uuid.UUID,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_db),
+):
+    """Derive paid advances per owner from actual payments (nachrichtlich)."""
+    svc = WegSettlementService(db, auth.organization_id, auth.user_id)
+    run = await db.get(SettlementRun, run_id)
+    if run is None or run.run_type != "WEG_JAHRESABRECHNUNG":
+        raise HTTPException(status_code=404, detail="WEG-Jahresabrechnung not found")
+    
+    # Extract period_year from the run's period_start
+    period_year = run.period_start.year
+    
+    result = await svc.derive_paid_advances(run.economic_plan_id, period_year)
+    return [
+        PaidAdvancesResult(
+            owner_profile_id=str(r.owner_profile_id),
+            paid_total=str(r.paid_total),
+        )
+        for r in result
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -369,7 +403,8 @@ async def finalize_asset_report(
     run_id: uuid.UUID,
     body: AssetReportComputeRequest | None = None,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    # Commit before the client can request the finalized report's PDF.
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
     run = await svc.finalize_asset_report(run_id, _report_inputs(body))

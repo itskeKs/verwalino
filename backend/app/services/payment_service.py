@@ -446,8 +446,9 @@ class PaymentService:
 
         A statement over a period must align Ist to that period (the Soll already
         is). A payment belongs to the period if its erfasster period_year falls in
-        [period_start.year, period_end.year] (the period_year is the maßgebliche
-        Zuordnung, M6-A8). Payments WITHOUT a period_year fall back to value_date
+        [period_start.year, period_end.year]. If period_month is present, match
+        the exact year/month range (Zuordnung, M6-A8), not the value date.
+        Payments WITHOUT a period_year fall back to value_date
         within [period_start, period_end]. Payments tagged to other years are
         excluded so the Saldo is not polluted by a different period's Ist.
         """
@@ -455,7 +456,10 @@ class PaymentService:
         scoped = []
         for p in payments:
             if p.period_year is not None:
-                if y_lo <= p.period_year <= y_hi:
+                if p.period_month is not None:
+                    if (period_start.year, period_start.month) <= (p.period_year, p.period_month) <= (period_end.year, period_end.month):
+                        scoped.append(p)
+                elif y_lo <= p.period_year <= y_hi:
                     scoped.append(p)
             elif period_start <= p.value_date <= period_end:
                 scoped.append(p)
@@ -477,6 +481,23 @@ class PaymentService:
             lease_agreement_id=lease_agreement_id,
         )
         return derive_advance_total([_to_payment_input(p) for p in rows], filt)
+
+    async def derive_nk_advance_total_for_period(
+        self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date
+    ) -> Decimal:
+        """DERIVED NK-Vorauszahlung sum for a sub-period (T08)."""
+        rows = await self._repo.derived_for_nk_for_period(
+            lease_agreement_id, period_start, period_end
+        )
+        inputs = [_to_payment_input(p) for p in rows]
+        return sum((
+            derive_advance_total(inputs, AdvanceFilter(
+                types=frozenset({"NK_VORAUSZAHLUNG"}),
+                year=year,
+                lease_agreement_id=lease_agreement_id,
+            ))
+            for year in range(period_start.year, period_end.year + 1)
+        ), Decimal("0.00"))
 
     async def derive_hausgeld_total(
         self, owner_profile_id: uuid.UUID, period_year: int

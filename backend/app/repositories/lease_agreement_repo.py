@@ -43,3 +43,29 @@ class LeaseAgreementRepository(TenantRepository[LeaseAgreement]):
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_by_id(self, lease_id: uuid.UUID) -> LeaseAgreement | None:
+        """Get a single lease agreement by ID."""
+        stmt = self._base_query().where(LeaseAgreement.id == lease_id)
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def has_booked_payments(self, lease_id: uuid.UUID) -> bool:
+        """Check if lease has any booked payments."""
+        from app.models.payment import Payment
+        stmt = select(Payment.id).where(
+            Payment.organization_id == self._org_id,
+            Payment.lease_agreement_id == lease_id,
+            Payment.status == "booked",
+        ).limit(1)
+        return await self._session.scalar(stmt) is not None
+
+    async def has_finalized_settlement(self, lease_id: uuid.UUID) -> bool:
+        """Check if lease has a finalized settlement."""
+        from app.models.settlement_run import SettlementRun
+        stmt = select(SettlementRun.id).where(
+            SettlementRun.organization_id == self._org_id,
+            SettlementRun.lease_agreement_id == lease_id,
+            SettlementRun.status == "finalized",
+        ).limit(1)
+        return await self._session.scalar(stmt) is not None

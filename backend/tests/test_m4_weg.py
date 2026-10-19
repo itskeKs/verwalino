@@ -10,6 +10,7 @@ full create->compute->finalize->PDF path through the real service + API.
 from __future__ import annotations
 
 import os
+import psycopg2
 import uuid
 from datetime import date
 from decimal import Decimal
@@ -29,8 +30,7 @@ SYNC_URL = os.environ.get(
 # three spheres (umlagefaehig / nicht umlagefaehig / Erhaltungsruecklage).
 # Mirrors engine Golden 2/3 so the Abrechnungsspitze is hand-checkable.
 # ===========================================================================
-@pytest.fixture(scope="session")
-def m4_seed(seed_data):
+def _seed_weg(seed_data):
     import psycopg2
 
     org = str(seed_data["org_a_id"])
@@ -128,6 +128,11 @@ def m4_seed(seed_data):
         conn.close()
 
     return {**seed_data, **{k: (str(v) if isinstance(v, uuid.UUID) else v) for k, v in ids.items()}}
+
+
+@pytest.fixture(scope="session")
+def m4_seed(seed_data):
+    return _seed_weg(seed_data)
 
 
 async def _create_and_finalize_plan(client, m4_seed, reserve="6000.00"):
@@ -522,3 +527,157 @@ class TestM4Determinism:
         assert first["snapshot_sha256"] != second["snapshot_sha256"]
         reloaded = await client_a_admin.get(f"/api/weg-settlements/{first['id']}")
         assert reloaded.json()["snapshot_sha256"] == first["snapshot_sha256"]
+
+
+# ===========================================================================
+
+# ===========================================================================
+# T09: derive_paid_advances – test paid-advances-derived route
+# ===========================================================================
+from datetime import datetime, timezone as _tz
+
+_TZ_UTC = _tz.utc
+_BOOKED_AT = datetime(2025, 6, 2, 10, 0, 0, tzinfo=_TZ_UTC)
+
+
+def _insert_payment_sql() -> str:
+    return """
+        INSERT INTO payment (
+            id, organization_id, bank_account_id, property_id,
+            direction, amount, value_date, payment_type,
+            tenant_profile_id, owner_profile_id, lease_agreement_id,
+            period_year, period_month, status, booked_at, booked_by
+        ) VALUES (
+            %s, %s, %s, %s,
+            %s, %s, %s, %s,
+            %s, %s, %s,
+            %s, %s, %s, %s, %s
+        )
+    """
+
+
+@pytest.fixture(scope="session")
+def m4_t09_seed(seed_data):
+    """Keep booked payments separate from the no-payments fixture."""
+    m4_seed = _seed_weg(seed_data)
+    import psycopg2
+
+    org = str(m4_seed["org_a_id"])
+    prop = str(m4_seed["property"])
+    owner_a = str(m4_seed["owner_a"])
+    owner_b = str(m4_seed["owner_b"])
+    bank_giro = str(m4_seed["bank_giro"])
+
+    conn = psycopg2.connect(SYNC_URL)
+    conn.autocommit = False
+    try:
+        cur = conn.cursor()
+        # 12 monthly payments per owner: 600.00 for owner A, 500.00 for owner B
+        for month in range(1, 13):
+            # Owner A: 12 x 600 = 7200
+            cur.execute(
+                _insert_payment_sql(),
+                (
+                    str(uuid.uuid4()),
+                    org,
+                    bank_giro,
+                    prop,
+                    "IN",
+                    "600.00",
+                    date(2025, month, 1),
+                    "HAUSGELD_VORSCHUSS",
+                    None,
+                    owner_a,
+                    None,
+                    2025,
+                    month,
+                    "booked",
+                    _BOOKED_AT,
+                    str(m4_seed["user_a_admin_id"]),
+                ),
+            )
+            # Owner B: 12 x 500 = 6000
+            cur.execute(
+                _insert_payment_sql(),
+                (
+                    str(uuid.uuid4()),
+                    org,
+                    bank_giro,
+                    prop,
+                    "IN",
+                    "500.00",
+                    date(2025, month, 1),
+                    "HAUSGELD_VORSCHUSS",
+                    None,
+                    owner_b,
+                    None,
+                    2025,
+                    month,
+                    "booked",
+                    _BOOKED_AT,
+                    str(m4_seed["user_a_admin_id"]),
+                ),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return m4_seed
+
+
+class TestM4PaidAdvancesDerived:
+    @pytest.mark.asyncio
+    async def test_derive_paid_advances_returns_correct_totals(self, client_a_admin, m4_t09_seed):
+        """12 monthly payments per owner → correct paid totals."""
+        # Create and finalize economic plan
+        plan_id = await _create_and_finalize_plan(client_a_admin, m4_t09_seed)
+
+        # Create settlement run
+        resp = await client_a_admin.post("/api/weg-settlements", json={
+            "property_id": m4_t09_seed["property"],
+            "economic_plan_id": plan_id,
+            "period_start": "2025-01-01",
+            "period_end": "2025-12-31",
+        })
+        assert resp.status_code == 201, resp.text
+        run_id = resp.json()["id"]
+
+        # Derive paid advances
+        resp = await client_a_admin.post(f"/api/weg-settlements/{run_id}/paid-advances-derived")
+        assert resp.status_code == 200, resp.text
+        result = resp.json()
+
+        # Should return 2 owners with correct totals
+        assert len(result) == 2
+        totals = {item["owner_profile_id"]: item["paid_total"] for item in result}
+        # Owner A: 12 x 600 = 7200
+        assert totals[str(m4_t09_seed["owner_a"])] == "7200.00"
+        # Owner B: 12 x 500 = 6000
+        assert totals[str(m4_t09_seed["owner_b"])] == "6000.00"
+
+    @pytest.mark.asyncio
+    async def test_derive_paid_advances_returns_zero_totals_when_no_payments(self, client_a_admin, m4_seed):
+        """No payments → 2 owners with paid_total='0.00'."""
+        # Create and finalize economic plan (no payments added)
+        plan_id = await _create_and_finalize_plan(client_a_admin, m4_seed)
+
+        # Create settlement run
+        resp = await client_a_admin.post("/api/weg-settlements", json={
+            "property_id": m4_seed["property"],
+            "economic_plan_id": plan_id,
+            "period_start": "2025-01-01",
+            "period_end": "2025-12-31",
+        })
+        assert resp.status_code == 201, resp.text
+        run_id = resp.json()["id"]
+
+        # Derive paid advances → 2 owners with 0.00
+        resp = await client_a_admin.post(f"/api/weg-settlements/{run_id}/paid-advances-derived")
+        assert resp.status_code == 200, resp.text
+        result = resp.json()
+        assert len(result) == 2
+        totals = {item["owner_profile_id"]: item["paid_total"] for item in result}
+        assert totals[str(m4_seed["owner_a"])] == "0.00"
+        assert totals[str(m4_seed["owner_b"])] == "0.00"

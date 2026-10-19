@@ -217,24 +217,27 @@ class SettlementService:
         Minimal-additive bridge (advance_payments_source MANUAL -> DERIVED): the
         M3 engine is UNCHANGED -- it still reads run.advance_payments_total; this
         only fills that value from the booked, non-reversed NK_VORAUSZAHLUNG
-        payments of THIS lease + year (the pure derivation in payment_service,
-        which is bit-identical to the MANUAL value, I6-E). MANUAL stays the
+        payments of THIS lease + settlement period. The reference year must
+        match the period start, including for cross-year periods. The pure
+        derivation is bit-identical to the MANUAL value (I6-E). MANUAL stays the
         default/fallback; this path is opt-in. E6-8: derived fresh on demand;
         finalize then freezes whatever value is current into the snapshot.
         """
         from app.services.payment_service import PaymentService
 
         run = await self._get_draft_or_404(run_id)
+        if period_year != run.period_start.year:
+            raise HTTPException(422, "DERIVED reference year must match the period start year")
         if run.lease_agreement_id is None:
             raise HTTPException(
                 status_code=422,
                 detail="DERIVED advance payments require a lease addressee on the run",
             )
-        if run.period_start != date(period_year, 1, 1) or run.period_end != date(period_year, 12, 31):
-            incomplete("unsupported_derived_subperiod", "advance_payments")
         await FinancialScopeService(self._session, self._org_id, self._user_id).enter(run, computation=True)
         pay_svc = PaymentService(self._session, self._org_id, self._user_id)
-        total = await pay_svc.derive_nk_advance_total(run.lease_agreement_id, period_year)
+        total = await pay_svc.derive_nk_advance_total_for_period(
+            run.lease_agreement_id, run.period_start, run.period_end
+        )
         run.advance_payments_total = total
         run.advance_payments_source = "DERIVED"
         await self._runs.update(run)

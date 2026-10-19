@@ -44,6 +44,7 @@ from datetime import date
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.temporal import db_exclusive_to_api_inclusive
 from app.models.settlement_run import SettlementRun
 from app.repositories.lease_agreement_repo import LeaseAgreementRepository
 from app.repositories.person_repo import PersonRepository
@@ -172,8 +173,9 @@ async def resolve_settlement_values(
         lease = await LeaseAgreementRepository(db, org_id).get_by_id(run.lease_agreement_id)
         if lease:
             info = f"ab {lease.valid_from.strftime('%d.%m.%Y')}"
-            if lease.valid_to:
-                info += f" bis {lease.valid_to.strftime('%d.%m.%Y')}"
+            valid_to = db_exclusive_to_api_inclusive(lease.valid_to)
+            if valid_to:
+                info += f" bis {valid_to.strftime('%d.%m.%Y')}"
             else:
                 info += " (laufend)"
             values["lease_info"] = info

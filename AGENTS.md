@@ -23,4 +23,11 @@ Alle Funktionen aus `docs/mvp.md` sollen in der laufenden App von Anfang bis End
   die ganze Suite nur vor einem Merge.
 - Die produktive Instanz (`docker-compose.prod.yml`, Volumes `pgdata`, `documents`) enthält echte
   Daten: nie `docker compose down -v`, nie Volumes löschen, nie gegen diese Datenbank testen.
+- Test-Datenbank ist ausschließlich der Container `infra-postgres-1` auf `127.0.0.1:55432`
+  (`infra/docker-compose.declaration-test.yml`, Umgebung über `source scripts/test-env.sh`).
+  Keine eigene Datenbank starten, keine weitere Compose-Datei anlegen.
+- `docker compose` nur mit `-f infra/docker-compose.declaration-test.yml` aufrufen. Nie ohne `-f`,
+  nie mit `docker-compose.prod.yml` oder einer neuen Datei: Ein Dienst `db` im Projekt
+  `hausverwaltung` ersetzt sonst den produktiven Datenbank-Container.
+- Bereits committete Migrationen nicht ändern; `downgrade()` nie leeren, um Tests grün zu bekommen.
 - Commits nicht pushen, außer der Nutzer verlangt es.

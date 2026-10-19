@@ -9,6 +9,7 @@ Combined with isolation: all within the same org (org_a).
 """
 
 import pytest
+import uuid
 
 
 class TestReadOnlyRole:
@@ -143,3 +144,21 @@ class TestCrossRoleIsolation:
         resp = await client_b_admin.get("/api/organizations/me")
         assert resp.status_code == 200
         assert resp.json()["name"] == "Verwaltung Beta"
+
+
+@pytest.mark.asyncio
+async def test_created_clerk_can_login(client_a_admin, client_unauth):
+    email = f"clerk-{uuid.uuid4()}@example.test"
+    password = "T06-Strong-Test-Password"
+    resp = await client_a_admin.post("/api/users", json={
+        "email": email, "password": password, "display_name": "T06 Sachbearbeiter", "role": "CLERK",
+    })
+    assert resp.status_code == 201, resp.text
+    user_id = resp.json()["id"]
+    resp = await client_unauth.post("/api/auth/login", json={"email": email, "password": password})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["role"] == "CLERK"
+    assert resp.json()["user_id"] == user_id
+    resp = await client_unauth.get("/api/auth/session")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["role"] == "CLERK"

@@ -26,6 +26,14 @@ import type {
 import { ApiError } from "../api/client";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { SourceBadge } from "../components/SourceBadge";
+import {
+  toDbApportionability,
+  toDbDistributionKey,
+  fromDbApportionability,
+  fromDbDistributionKey,
+  DISTRIBUTION_KEY_LABELS,
+  APPORTIONABILITY_LABELS,
+} from "../lib/costVocabulary";
 
 const STATUS_OPTIONS: { value: CostEntryStatus | ""; label: string }[] = [
   { value: "", label: "Alle Status" },
@@ -51,24 +59,6 @@ const STATUS_CSS: Record<string, string> = {
   rejected: "badge--rejected",
   superseded: "badge--superseded",
 };
-
-const APPORTIONABILITY_OPTIONS = [
-  { value: "full", label: "Voll umlagefaehig" },
-  { value: "partial", label: "Teilweise umlagefaehig" },
-  { value: "none", label: "Nicht umlagefaehig" },
-];
-
-const DISTRIBUTION_KEY_OPTIONS = [
-  { value: "", label: "(kein)" },
-  { value: "MEA", label: "MEA" },
-  { value: "AREA", label: "Flaeche" },
-  { value: "HEATED_AREA", label: "Beheizte Flaeche" },
-  { value: "UNIT_COUNT", label: "Einheiten" },
-  { value: "PERSON_COUNT", label: "Personen" },
-  { value: "CONSUMPTION", label: "Verbrauch" },
-  { value: "EXTERNAL", label: "Extern" },
-  { value: "MANUAL", label: "Manuell" },
-];
 
 function makeEmptyForm(): CostEntryCreate {
   return {
@@ -167,9 +157,13 @@ export function CostEntriesPage() {
         ...form,
         cost_category_id: categoryId,
         cost_category_plan_version: cat.plan_version,
-        tenant_apportionable: cat.tenant_apportionability_default,
-        owner_distribution_key: cat.owner_distribution_key_default ?? null,
-        tenant_distribution_key: cat.tenant_distribution_key_default ?? null,
+        tenant_apportionable: fromDbApportionability(cat.tenant_apportionability_default),
+        owner_distribution_key: cat.owner_distribution_key_default
+          ? fromDbDistributionKey(cat.owner_distribution_key_default)
+          : null,
+        tenant_distribution_key: cat.tenant_distribution_key_default
+          ? fromDbDistributionKey(cat.tenant_distribution_key_default)
+          : null,
       });
     } else {
       setForm({ ...form, cost_category_id: categoryId });
@@ -186,7 +180,18 @@ export function CostEntriesPage() {
     setSaving(true);
     setError(null);
     try {
-      await createCostEntry(form);
+      // Convert UI values to DB values before sending
+      const payload: CostEntryCreate = {
+        ...form,
+        tenant_apportionable: toDbApportionability(form.tenant_apportionable),
+        owner_distribution_key: form.owner_distribution_key
+          ? toDbDistributionKey(form.owner_distribution_key)
+          : null,
+        tenant_distribution_key: form.tenant_distribution_key
+          ? toDbDistributionKey(form.tenant_distribution_key)
+          : null,
+      };
+      await createCostEntry(payload);
       setShowForm(false);
       reload();
     } catch (err) {
@@ -409,9 +414,9 @@ export function CostEntriesPage() {
                   })
                 }
               >
-                {DISTRIBUTION_KEY_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
+                {Object.entries(DISTRIBUTION_KEY_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
                   </option>
                 ))}
               </select>
@@ -427,9 +432,9 @@ export function CostEntriesPage() {
                   })
                 }
               >
-                {DISTRIBUTION_KEY_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
+                {Object.entries(DISTRIBUTION_KEY_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
                   </option>
                 ))}
               </select>
@@ -443,9 +448,9 @@ export function CostEntriesPage() {
                   setForm({ ...form, tenant_apportionable: e.target.value })
                 }
               >
-                {APPORTIONABILITY_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
+                {Object.entries(APPORTIONABILITY_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
                   </option>
                 ))}
               </select>

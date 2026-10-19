@@ -27,6 +27,10 @@ import type {
 } from "../api/types";
 import { ApiError } from "../api/client";
 import { SourceBadge } from "../components/SourceBadge";
+import {
+  DISTRIBUTION_KEY_LABELS,
+  APPORTIONABILITY_LABELS,
+} from "../lib/costVocabulary";
 
 const STATUS_LABELS: Record<string, string> = {
   draft_extracted: "Entwurf (extrahiert)",
@@ -43,24 +47,6 @@ const STATUS_CSS: Record<string, string> = {
   rejected: "badge--rejected",
   superseded: "badge--superseded",
 };
-
-const APPORTIONABILITY_OPTIONS = [
-  { value: "full", label: "Voll umlagefaehig" },
-  { value: "partial", label: "Teilweise umlagefaehig" },
-  { value: "none", label: "Nicht umlagefaehig" },
-];
-
-const DISTRIBUTION_KEY_OPTIONS = [
-  { value: "", label: "(kein)" },
-  { value: "MEA", label: "MEA" },
-  { value: "AREA", label: "Flaeche" },
-  { value: "HEATED_AREA", label: "Beheizte Flaeche" },
-  { value: "UNIT_COUNT", label: "Einheiten" },
-  { value: "PERSON_COUNT", label: "Personen" },
-  { value: "CONSUMPTION", label: "Verbrauch" },
-  { value: "EXTERNAL", label: "Extern" },
-  { value: "MANUAL", label: "Manuell" },
-];
 
 function isEditable(status: string): boolean {
   return status === "draft_extracted" || status === "needs_review";
@@ -574,9 +560,9 @@ export function CostEntryDetailPage() {
                   })
                 }
               >
-                {DISTRIBUTION_KEY_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
+                {Object.entries(DISTRIBUTION_KEY_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
                   </option>
                 ))}
               </select>
@@ -592,9 +578,9 @@ export function CostEntryDetailPage() {
                   })
                 }
               >
-                {DISTRIBUTION_KEY_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
+                {Object.entries(DISTRIBUTION_KEY_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
                   </option>
                 ))}
               </select>
@@ -610,9 +596,9 @@ export function CostEntryDetailPage() {
                   })
                 }
               >
-                {APPORTIONABILITY_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
+                {Object.entries(APPORTIONABILITY_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
                   </option>
                 ))}
               </select>
@@ -784,9 +770,9 @@ export function CostEntryDetailPage() {
                   })
                 }
               >
-                {DISTRIBUTION_KEY_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
+                {Object.entries(DISTRIBUTION_KEY_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
                   </option>
                 ))}
               </select>
@@ -802,9 +788,9 @@ export function CostEntryDetailPage() {
                   })
                 }
               >
-                {DISTRIBUTION_KEY_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
+                {Object.entries(DISTRIBUTION_KEY_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
                   </option>
                 ))}
               </select>
@@ -820,9 +806,9 @@ export function CostEntryDetailPage() {
                   })
                 }
               >
-                {APPORTIONABILITY_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
+                {Object.entries(APPORTIONABILITY_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
                   </option>
                 ))}
               </select>

@@ -543,6 +543,14 @@ export interface LeaseCreate {
   notes?: string;
 }
 
+export interface LeaseUpdate {
+  valid_to?: string | null;
+  notes?: string;
+  base_rent?: string;
+  advance_payment?: string;
+  deposit?: string | null;
+}
+
 // --- M2 Kosten & Belege ---
 
 export type CostEntryStatus =
@@ -1092,9 +1100,9 @@ export interface AssetReportComputeRequest {
 
 // --- M8 Meetings & Beschluss-Sammlung ---
 
-export type MeetingStatus = "planned" | "held";
-export type MeetingType = "ordentlich" | "ausserordentlich";
-export type ResolutionResult = "angenommen" | "abgelehnt";
+export type MeetingStatus = "PLANNED" | "HELD";
+export type MeetingType = "ORDENTLICH" | "AUSSERORDENTLICH";
+export type ResolutionResult = "ANGENOMMEN" | "ABGELEHNT";
 
 export interface Meeting {
   id: string;

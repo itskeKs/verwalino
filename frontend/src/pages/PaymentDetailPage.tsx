@@ -13,6 +13,7 @@ import {
   bookPayment,
   reversePayment,
   deletePayment,
+  updatePayment,
   listBankAccounts,
   listProperties,
   listLeases,
@@ -72,6 +73,10 @@ export function PaymentDetailPage() {
   const [loading, setLoading] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editPeriodYear, setEditPeriodYear] = useState<number | null>(null);
+  const [editPeriodMonth, setEditPeriodMonth] = useState<number | null>(null);
+  const [editNote, setEditNote] = useState<string | null>(null);
 
   const reload = useCallback(() => {
     if (!paymentId) return;
@@ -215,6 +220,48 @@ export function PaymentDetailPage() {
     } finally {
       setActionLoading(false);
     }
+  }
+
+  async function handleSaveEdit() {
+    if (!paymentId) return;
+    if (editPeriodYear === null && editPeriodMonth === null && editNote === null) {
+      setIsEditing(false);
+      return;
+    }
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      const updates: Record<string, unknown> = {};
+      if (editPeriodYear !== null) updates.period_year = editPeriodYear;
+      if (editPeriodMonth !== null) updates.period_month = editPeriodMonth;
+      if (editNote !== null) updates.note = editNote;
+      const updated = await updatePayment(paymentId, updates as any);
+      setPayment(updated);
+      setIsEditing(false);
+      setEditPeriodYear(null);
+      setEditPeriodMonth(null);
+      setEditNote(null);
+      // Reload to refresh lookups
+      await reload();
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  function handleCancelEdit() {
+    setIsEditing(false);
+    setEditPeriodYear(null);
+    setEditPeriodMonth(null);
+    setEditNote(null);
+  }
+
+  function handleStartEdit() {
+    setEditPeriodYear(payment?.period_year ?? null);
+    setEditPeriodMonth(payment?.period_month ?? null);
+    setEditNote(payment?.note ?? null);
+    setIsEditing(true);
   }
 
   // --- Render ---
@@ -439,21 +486,81 @@ export function PaymentDetailPage() {
       >
         {isDraft && (
           <>
-            <button
-              className="btn btn--primary"
-              onClick={handleBook}
-              disabled={actionLoading}
-            >
-              {actionLoading ? "Buchen..." : "Buchen"}
-            </button>
-            <button
-              className="btn"
-              onClick={handleDelete}
-              disabled={actionLoading}
-              style={{ color: "#b71c1c" }}
-            >
-              Entwurf verwerfen
-            </button>
+            {isEditing ? (
+              <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                <label style={{ fontSize: "0.875rem" }}>
+                  Monat:
+                  <input
+                    type="number"
+                    min={1}
+                    max={12}
+                    value={editPeriodMonth ?? ""}
+                    onChange={(e) => setEditPeriodMonth(e.target.value ? parseInt(e.target.value, 10) : null)}
+                    className="input"
+                    style={{ marginLeft: "4px", width: "60px" }}
+                  />
+                </label>
+                <label style={{ fontSize: "0.875rem" }}>
+                  Jahr:
+                  <input
+                    type="number"
+                    value={editPeriodYear ?? ""}
+                    onChange={(e) => setEditPeriodYear(e.target.value ? parseInt(e.target.value, 10) : null)}
+                    className="input"
+                    style={{ marginLeft: "4px", width: "80px" }}
+                  />
+                </label>
+                <label style={{ fontSize: "0.875rem" }}>
+                  Notiz:
+                  <input
+                    type="text"
+                    value={editNote ?? ""}
+                    onChange={(e) => setEditNote(e.target.value || null)}
+                    className="input"
+                    style={{ marginLeft: "4px", width: "200px" }}
+                  />
+                </label>
+                <button
+                  className="btn btn--primary"
+                  onClick={handleSaveEdit}
+                  disabled={actionLoading}
+                >
+                  {actionLoading ? "Speichern..." : "Speichern"}
+                </button>
+                <button
+                  className="btn"
+                  onClick={handleCancelEdit}
+                  disabled={actionLoading}
+                >
+                  Abbrechen
+                </button>
+              </div>
+            ) : (
+              <>
+                <button
+                  className="btn btn--primary"
+                  onClick={handleBook}
+                  disabled={actionLoading}
+                >
+                  {actionLoading ? "Buchen..." : "Buchen"}
+                </button>
+                <button
+                  className="btn"
+                  onClick={handleStartEdit}
+                  disabled={actionLoading}
+                >
+                  Bearbeiten
+                </button>
+                <button
+                  className="btn"
+                  onClick={handleDelete}
+                  disabled={actionLoading}
+                  style={{ color: "#b71c1c" }}
+                >
+                  Entwurf verwerfen
+                </button>
+              </>
+            )}
           </>
         )}
         {isBooked && !isReversed && !isStorno && (

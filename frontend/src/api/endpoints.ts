@@ -32,6 +32,7 @@ import type {
   OwnershipCreate,
   LeaseRecord,
   LeaseCreate,
+  LeaseUpdate,
   CostCategory,
   CostEntry,
   CostEntryCreate,
@@ -158,6 +159,16 @@ export function createProperty(body: PropertyCreate, key?: string): Promise<Prop
 
 export function updateProperty(id: string, body: PropertyUpdate): Promise<Property> {
   return api.put<Property>(`/api/properties/${id}`, body);
+}
+
+export function confirmMeaScale(
+  propertyId: string,
+  denominator: number,
+): Promise<Property> {
+  return api.post<Property>(
+    `/api/properties/${propertyId}/mea-scale/confirm`,
+    { denominator, expected_scale_status: "LEGACY_UNCONFIRMED", confirm_existing_values_as_numerators: true },
+  );
 }
 
 // --- Teilungserklärungen ---
@@ -448,6 +459,13 @@ export function listLeases(unitId?: string): Promise<LeaseRecord[]> {
 
 export function createLease(body: LeaseCreate): Promise<LeaseRecord> {
   return api.post<LeaseRecord>("/api/leases", body);
+}
+
+export function patchLease(
+  leaseId: string,
+  body: LeaseUpdate,
+): Promise<LeaseRecord> {
+  return api.patch<LeaseRecord>(`/api/leases/${leaseId}`, body);
 }
 
 // --- M2: Cost Categories ---
@@ -976,3 +994,17 @@ export const sourceClassificationApi = {
     return api.post<SourceClassificationReceipt>(this.base, body, { headers: { "Idempotency-Key": key } });
   },
 };
+
+export function createUser(
+  email: string,
+  password: string,
+  displayName: string,
+  role: string,
+): Promise<any> {
+  return api.post<any>("/api/users", { email, password, display_name: displayName, role });
+}
+
+// T09: Paid advances derived
+export function derivePaidAdvances(runId: string): Promise<Array<{ owner_profile_id: string; paid_total: string }>> {
+  return api.post<any[]>(`/api/weg-settlements/${runId}/paid-advances-derived`);
+}
