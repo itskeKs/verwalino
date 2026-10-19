@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, field_validator
+from sqlalchemy import select, text
 
 from app.core.auth_db import lookup_login_principal
 from app.core.config import settings
-from app.core.db import get_session_factory
+from app.core.db import get_session_factory, set_tenant_context
 from app.core.security import (
     MAX_PASSWORD_LENGTH,
     create_session_token,
     hash_password,
     normalize_email,
+    validate_new_password,
     verify_password,
 )
 from app.core.tenant import AuthContext, get_current_user
+from app.models.user import User
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 _DUMMY_PASSWORD_HASH = hash_password("runtime-auth-dummy-password")
@@ -42,6 +47,16 @@ class LoginResponse(BaseModel):
     user_id: str
     organization_id: str
     role: str
+
+
+class PasswordChangeRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def new_password_is_valid(cls, value: str) -> str:
+        return validate_new_password(value)
 
 
 def _invalid_credentials() -> HTTPException:
@@ -100,3 +115,29 @@ async def logout(response: Response):
         samesite="lax",
         path="/",
     )
+
+
+@router.post("/password", status_code=204)
+async def change_password(
+    body: PasswordChangeRequest,
+    auth: AuthContext = Depends(get_current_user),
+):
+    """Change the password of the currently authenticated user."""
+    async with get_session_factory()() as session:
+        async with session.begin():
+            await set_tenant_context(session, auth.organization_id)
+            await session.execute(
+                text("SELECT set_config('app.current_user_id', :actor, true)"),
+                {"actor": str(auth.user_id)},
+            )
+            stmt = select(User).where(
+                User.id == auth.user_id,
+                User.organization_id == auth.organization_id,
+            )
+            result = await session.execute(stmt)
+            user = result.scalar_one_or_none()
+
+            if user is None or not verify_password(body.old_password, user.password_hash):
+                raise _invalid_credentials()
+
+            user.password_hash = hash_password(body.new_password)
