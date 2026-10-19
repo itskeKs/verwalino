@@ -238,7 +238,8 @@ async def finalize_plan(
     plan_id: uuid.UUID,
     body: PlanComputeRequest | None = None,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    # Commit before the client can request the finalized plan's PDF.
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = EconomicPlanService(db, auth.organization_id, auth.user_id)
     plan = await svc.finalize(plan_id, _to_inputs(body))

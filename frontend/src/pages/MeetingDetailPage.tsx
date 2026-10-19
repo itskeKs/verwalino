@@ -39,28 +39,28 @@ import type {
 import { ApiError } from "../api/client";
 
 const STATUS_LABELS: Record<string, string> = {
-  planned: "Geplant",
-  held: "Durchgefuehrt",
+  PLANNED: "Geplant",
+  HELD: "Durchgefuehrt",
 };
 
 const STATUS_CSS: Record<string, string> = {
-  planned: "badge--draft",
-  held: "badge--confirmed",
+  PLANNED: "badge--draft",
+  HELD: "badge--confirmed",
 };
 
 const MEETING_TYPE_LABELS: Record<string, string> = {
-  ordentlich: "Ordentlich",
-  ausserordentlich: "Ausserordentlich",
+  ORDENTLICH: "Ordentlich",
+  AUSSERORDENTLICH: "Ausserordentlich",
 };
 
 const RESULT_LABELS: Record<string, string> = {
-  angenommen: "Angenommen",
-  abgelehnt: "Abgelehnt",
+  ANGENOMMEN: "Angenommen",
+  ABGELEHNT: "Abgelehnt",
 };
 
 const RESULT_CSS: Record<string, string> = {
-  angenommen: "badge--confirmed",
-  abgelehnt: "badge--rejected",
+  ANGENOMMEN: "badge--confirmed",
+  ABGELEHNT: "badge--rejected",
 };
 
 function emptyResolutionForm(meetingId: string): ResolutionCreate {
@@ -70,7 +70,7 @@ function emptyResolutionForm(meetingId: string): ResolutionCreate {
     votes_yes: 0,
     votes_no: 0,
     votes_abstain: 0,
-    result: "angenommen",
+    result: "ANGENOMMEN",
     agenda_item_id: null,
     votes_yes_mea: null,
     votes_no_mea: null,
@@ -151,8 +151,8 @@ export function MeetingDetailPage() {
     reload();
   }, [reload]);
 
-  const isPlanned = meeting?.status === "planned";
-  const isHeld = meeting?.status === "held";
+  const isPlanned = meeting?.status === "PLANNED";
+  const isHeld = meeting?.status === "HELD";
 
   function getPropertyName(propertyId: string): string {
     const prop = properties.find((p) => p.id === propertyId);
@@ -1046,8 +1046,8 @@ export function MeetingDetailPage() {
                   setResForm({ ...resForm, result: e.target.value })
                 }
               >
-                <option value="angenommen">Angenommen</option>
-                <option value="abgelehnt">Abgelehnt</option>
+                <option value="ANGENOMMEN">Angenommen</option>
+                <option value="ABGELEHNT">Abgelehnt</option>
               </select>
             </label>
             <label>

@@ -22,30 +22,30 @@ import { ApiError } from "../api/client";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "Alle Status" },
-  { value: "planned", label: "Geplant" },
-  { value: "held", label: "Durchgefuehrt" },
+  { value: "PLANNED", label: "Geplant" },
+  { value: "HELD", label: "Durchgefuehrt" },
 ];
 
 const STATUS_LABELS: Record<string, string> = {
-  planned: "Geplant",
-  held: "Durchgefuehrt",
+  PLANNED: "Geplant",
+  HELD: "Durchgefuehrt",
 };
 
 const STATUS_CSS: Record<string, string> = {
-  planned: "badge--draft",
-  held: "badge--confirmed",
+  PLANNED: "badge--draft",
+  HELD: "badge--confirmed",
 };
 
 const MEETING_TYPE_LABELS: Record<string, string> = {
-  ordentlich: "Ordentlich",
-  ausserordentlich: "Ausserordentlich",
+  ORDENTLICH: "Ordentlich",
+  AUSSERORDENTLICH: "Ausserordentlich",
 };
 
 function makeEmptyForm(): MeetingCreate {
   return {
     property_id: "",
     meeting_date: "",
-    meeting_type: "ordentlich",
+    meeting_type: "ORDENTLICH",
     location: "",
     invitation_text: null,
   };
@@ -234,8 +234,8 @@ export function MeetingsPage() {
                   setForm({ ...form, meeting_type: e.target.value })
                 }
               >
-                <option value="ordentlich">Ordentlich</option>
-                <option value="ausserordentlich">Ausserordentlich</option>
+                <option value="ORDENTLICH">Ordentlich</option>
+                <option value="AUSSERORDENTLICH">Ausserordentlich</option>
               </select>
             </label>
             <label>

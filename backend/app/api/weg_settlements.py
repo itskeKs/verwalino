@@ -321,7 +321,8 @@ async def finalize_weg_run(
     run_id: uuid.UUID,
     body: WegComputeRequest | None = None,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    # The PDF may be opened as soon as the success response arrives.
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
     run = await svc.finalize_weg(run_id, _weg_extras(body))
@@ -402,7 +403,8 @@ async def finalize_asset_report(
     run_id: uuid.UUID,
     body: AssetReportComputeRequest | None = None,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    # Commit before the client can request the finalized report's PDF.
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
     run = await svc.finalize_asset_report(run_id, _report_inputs(body))
