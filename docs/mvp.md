@@ -141,7 +141,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 - [x] **T00 Roten Test reparieren** — Test-Assertion auf neuen Worker-Eintrag mit `HV_WORKER_KIND` umstellen.
   Dateien: `backend/tests/test_declaration_runtime_config.py`
   Fertig, wenn: `uv run pytest tests/test_declaration_runtime_config.py` grün.
-- [ ] **T01 Sichere lokale Startumgebung** — Vite-Proxy-Ziel aus `HV_API_TARGET`, Default `http://127.0.0.1:18000` (heute `:8000` = Produktion). `scripts/test-env.sh` exportiert die drei `HV_DATABASE_URL*` für `:55432`; `scripts/dev-local.sh` startet bei Bedarf die Test-DB, migriert, legt per `app.admin_cli` einen Test-Admin an, startet API auf 18000 und Vite auf 13000.
+- [x] **T01 Sichere lokale Startumgebung** — Vite-Proxy-Ziel aus `HV_API_TARGET`, Default `http://127.0.0.1:18000` (heute `:8000` = Produktion). `scripts/test-env.sh` exportiert die drei `HV_DATABASE_URL*` für `:55432`; `scripts/dev-local.sh` startet bei Bedarf die Test-DB, migriert, legt per `app.admin_cli` einen Test-Admin an, startet API auf 18000 und Vite auf 13000.
   Dateien: `frontend/vite.config.ts`, `scripts/test-env.sh` (neu), `scripts/dev-local.sh` (neu), `backend/app/admin_cli.py`, `infra/docker-compose.declaration-test.yml`
   Fertig, wenn: `uv run pytest tests/test_disposable_database_guard.py` grün UND Ablauf in der App: „auf :13000 als Test-Admin anmelden, Dashboard erscheint, keine Anfrage an :8000“.
 - [x] **T02 Kostenformular mit DB-Werten** — Umlagefähigkeit und Schlüssel auf die DB-Werte (`UMLAGEFAEHIG`, `WOHNFLAECHE`, `VERBRAUCH`, `EXTERNE_ABRECHNUNG` …) mit deutschen Labels umstellen, gemeinsam in `frontend/src/lib/costVocabulary.ts`.
