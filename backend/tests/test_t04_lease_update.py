@@ -4,15 +4,14 @@ Prüft: "Vertrag zum 31.12. beenden, Nachmieter ab 01.01. anlegen".
 """
 
 import pytest
-import uuid
-from datetime import date
+from tests.test_lease_update import lease_seed
 
 
 @pytest.mark.asyncio
-async def test_patch_lease_ending(client_a_admin, seed_data):
+async def test_patch_lease_ending(client_a_admin, lease_seed):
     """T04: Beende einen Vertrag zum 31.12. und lege einen Nachmieter ab 01.01. an."""
-    unit_id = seed_data["unit"]
-    tenant_profile_id = seed_data["tenant_profile"]
+    unit_id = lease_seed["unit"]
+    tenant_profile_id = lease_seed["tenant"]
 
     # 1. Erstelle einen Vertrag (unbefristet)
     resp = await client_a_admin.post(
@@ -45,12 +44,12 @@ async def test_patch_lease_ending(client_a_admin, seed_data):
 
     assert resp.status_code == 200, f"Vertragsaktualisierung fehlgeschlagen: {resp.json()}"
     updated = resp.json()
-    # Backend konvertiert 31.12. → 01.01. des Folgejahres (halboffen)
-    assert updated["valid_to"] is not None
+    # Die API zeigt den inklusiven letzten Miettag an.
+    assert updated["valid_to"] == "2025-12-31"
     assert updated["notes"] == "Beendet zum 31.12."
 
     # 3. Lege einen Nachmieter ab 01.01. an (Überlappung prüfen)
-    new_tenant_profile_id = seed_data["tenant_profile"]  # reuse for test
+    new_tenant_profile_id = lease_seed["next_tenant"]
     resp = await client_a_admin.post(
         "/api/leases",
         json={
@@ -64,7 +63,7 @@ async def test_patch_lease_ending(client_a_admin, seed_data):
         },
     )
 
-    # 409 bei Überlappung, da der erste Vertrag noch offen ist
-    # (wir haben valid_to auf 31.12. gesetzt, also endet er vor 01.01.2026)
-    # Erwartet: 201, da keine Überlappung
+    # Der erste Vertrag endet vor dem 01.01.2026: keine Überlappung.
     assert resp.status_code == 201, f"Nachmieter-Vertrag fehlgeschlagen: {resp.json()}"
+    assert resp.json()["tenant_profile_id"] == new_tenant_profile_id
+    assert resp.json()["valid_from"] == "2026-01-01"
