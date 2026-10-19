@@ -15,6 +15,7 @@ import {
   listPersons,
   createOwnership,
   createLease,
+  patchLease,
 } from "../api/endpoints";
 import type {
   Unit,
@@ -26,6 +27,7 @@ import type {
   Person,
   OwnershipCreate,
   LeaseCreate,
+  LeaseUpdate,
 } from "../api/types";
 import { ApiError } from "../api/client";
 
@@ -76,6 +78,7 @@ export function UnitDetailPage() {
 
   // Lease form
   const [showLeaseForm, setShowLeaseForm] = useState(false);
+  const [editingLease, setEditingLease] = useState<LeaseRecord | null>(null);
   const [leaseForm, setLeaseForm] = useState<LeaseFormData>({
     tenant_profile_id: "", valid_from: "", valid_to: "",
     base_rent: "", advance_payment: "", deposit: "", notes: "",
@@ -182,14 +185,26 @@ export function UnitDetailPage() {
       if (leaseForm.valid_to) body.valid_to = leaseForm.valid_to;
       if (leaseForm.deposit) body.deposit = leaseForm.deposit;
       if (leaseForm.notes) body.notes = leaseForm.notes;
-      await createLease(body);
+      if (editingLease) {
+        const changes: LeaseUpdate = {
+          valid_to: leaseForm.valid_to || null,
+          notes: leaseForm.notes,
+        };
+        if (leaseForm.base_rent !== editingLease.base_rent) changes.base_rent = leaseForm.base_rent;
+        if (leaseForm.advance_payment !== editingLease.advance_payment) changes.advance_payment = leaseForm.advance_payment;
+        if (leaseForm.deposit && leaseForm.deposit !== editingLease.deposit) changes.deposit = leaseForm.deposit;
+        await patchLease(editingLease.id, changes);
+      } else {
+        await createLease(body);
+      }
       setShowLeaseForm(false);
       reload();
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setLeaseFormError(
-          "Ueberschneidung: Fuer diese Einheit existiert bereits ein Mietvertrag im angegebenen Zeitraum. " +
-          "Bitte waehlen Sie einen anderen Zeitraum oder beenden Sie den bestehenden Vertrag zuerst."
+          editingLease
+            ? "Änderung nicht möglich: Zeitraum überschneidet sich oder Beträge sind durch Buchungen bzw. Abrechnungen gesperrt. Ende und Notiz können separat geändert werden."
+            : "Überschneidung: Bitte beenden Sie den bestehenden Vertrag zuerst."
         );
       } else if (err instanceof ApiError) {
         setLeaseFormError(err.message);
@@ -329,6 +344,7 @@ export function UnitDetailPage() {
         <h2 style={{ margin: 0 }}>Mietvertraege</h2>
         <button className="btn btn--primary" onClick={() => {
           setLeaseFormError(null);
+          setEditingLease(null);
           setLeaseForm({
             tenant_profile_id: tenantProfiles[0]?.id ?? "",
             valid_from: "", valid_to: "",
@@ -342,13 +358,14 @@ export function UnitDetailPage() {
 
       {showLeaseForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
-          <h2>Neuen Mietvertrag anlegen</h2>
+          <h2>{editingLease ? "Mietvertrag bearbeiten / beenden" : "Neuen Mietvertrag anlegen"}</h2>
           {leaseFormError && <p className="error-text">{leaseFormError}</p>}
           <form onSubmit={handleLeaseSubmit} className="form-grid">
             <label>
               Mieter *
               <select
                 required
+                disabled={editingLease !== null}
                 value={leaseForm.tenant_profile_id}
                 onChange={(e) => setLeaseForm({ ...leaseForm, tenant_profile_id: e.target.value })}
               >
@@ -363,6 +380,7 @@ export function UnitDetailPage() {
               <input
                 type="date"
                 required
+                disabled={editingLease !== null}
                 value={leaseForm.valid_from}
                 onChange={(e) => setLeaseForm({ ...leaseForm, valid_from: e.target.value })}
               />
@@ -437,6 +455,7 @@ export function UnitDetailPage() {
                 <th>Kaltmiete</th>
                 <th>NK-Voraus.</th>
                 <th>Kaution</th>
+                <th>Aktion</th>
               </tr>
             </thead>
             <tbody>
@@ -448,6 +467,16 @@ export function UnitDetailPage() {
                   <td>{la.base_rent}</td>
                   <td>{la.advance_payment}</td>
                   <td>{la.deposit ?? "-"}</td>
+                  <td><button className="btn" onClick={() => {
+                    setEditingLease(la);
+                    setLeaseFormError(null);
+                    setLeaseForm({
+                      tenant_profile_id: la.tenant_profile_id, valid_from: la.valid_from,
+                      valid_to: la.valid_to ?? "", base_rent: la.base_rent,
+                      advance_payment: la.advance_payment, deposit: la.deposit ?? "", notes: la.notes,
+                    });
+                    setShowLeaseForm(true);
+                  }}>Bearbeiten / beenden</button></td>
                 </tr>
               ))}
             </tbody>

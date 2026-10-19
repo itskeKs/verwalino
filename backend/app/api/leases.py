@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import (
@@ -108,7 +109,7 @@ async def create_lease(
 
 class LeaseUpdate(BaseModel):
     valid_to: date | None = None
-    notes: str = ""
+    notes: str | None = None
     base_rent: str | None = None
     advance_payment: str | None = None
     deposit: str | None = None
@@ -123,37 +124,44 @@ async def update_lease(
 ):
     """Update lease agreement: end date, notes, rent amounts.
 
-    Returns 409 if the lease has booked payments or a finalized settlement.
+    Monetary changes return 409 after booking or finalization; end/notes remain editable.
     """
     repo = LeaseAgreementRepository(db, auth.organization_id)
     existing = await repo.get_by_id(lease_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Lease agreement not found")
 
-    # Check for booked payments or finalized settlement
-    has_booked_payment = await repo.has_booked_payments(lease_id)
-    has_finalized_settlement = await repo.has_finalized_settlement(lease_id)
-
-    if has_booked_payment or has_finalized_settlement:
+    await require_history_prepare(db, auth.organization_id, "lease_agreement", existing)
+    amount_fields = {"base_rent", "advance_payment", "deposit"}
+    changes_amount = any(
+        getattr(body, field) is not None
+        and Decimal(getattr(body, field)) != getattr(existing, field)
+        for field in amount_fields & body.model_fields_set
+    )
+    if changes_amount and (
+        await repo.has_booked_payments(lease_id)
+        or await repo.has_finalized_settlement(lease_id)
+    ):
         raise HTTPException(
             status_code=409,
-            detail="Cannot update lease: has booked payments or finalized settlement",
+            detail="Cannot change amounts: has booked payments or finalized settlement",
         )
-
-    # Apply updates
-    if body.valid_to is not None:
+    if "valid_to" in body.model_fields_set:
+        if body.valid_to is not None and body.valid_to < existing.valid_from:
+            raise HTTPException(422, "Lease end must not precede its start")
         existing.valid_to = inclusive_last_day_to_db_exclusive(body.valid_to)
     if body.notes is not None:
         existing.notes = body.notes
-    if body.base_rent is not None:
-        existing.base_rent = Decimal(body.base_rent)
-    if body.advance_payment is not None:
-        existing.advance_payment = Decimal(body.advance_payment)
-    if body.deposit is not None:
-        existing.deposit = Decimal(body.deposit)
-
-    await db.commit()
-    await db.refresh(existing)
+    for field in amount_fields & body.model_fields_set:
+        value = getattr(body, field)
+        if value is not None:
+            setattr(existing, field, Decimal(value))
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        if "excl_lease_no_overlap" in str(exc):
+            raise HTTPException(409, "Overlapping lease period for this unit") from exc
+        raise
     return _to_out(existing)
 
 

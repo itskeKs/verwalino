@@ -366,14 +366,19 @@ def _make_session_cookie(user_id: uuid.UUID, org_id: uuid.UUID) -> str:
     return create_session_token(user_id, org_id)
 
 
+def _api_test_client(**kwargs) -> httpx.AsyncClient:
+    """Opt-in smoke tests can only target the local development API."""
+    if os.environ.get("HV_TEST_LOCAL_API") == "1":
+        return httpx.AsyncClient(base_url="http://127.0.0.1:18000", timeout=60, **kwargs)
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test", **kwargs)
+
+
 @pytest_asyncio.fixture
 async def client_a_admin(seed_data) -> AsyncGenerator[httpx.AsyncClient, None]:
     token = _make_session_cookie(
         seed_data["user_a_admin_id"], seed_data["org_a_id"]
     )
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
+    async with _api_test_client(
         cookies={settings.session_cookie_name: token},
     ) as client:
         yield client
@@ -384,9 +389,7 @@ async def client_a_clerk(seed_data) -> AsyncGenerator[httpx.AsyncClient, None]:
     token = _make_session_cookie(
         seed_data["user_a_clerk_id"], seed_data["org_a_id"]
     )
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
+    async with _api_test_client(
         cookies={settings.session_cookie_name: token},
     ) as client:
         yield client
@@ -397,9 +400,7 @@ async def client_a_readonly(seed_data) -> AsyncGenerator[httpx.AsyncClient, None
     token = _make_session_cookie(
         seed_data["user_a_readonly_id"], seed_data["org_a_id"]
     )
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
+    async with _api_test_client(
         cookies={settings.session_cookie_name: token},
     ) as client:
         yield client
@@ -410,9 +411,7 @@ async def client_b_admin(seed_data) -> AsyncGenerator[httpx.AsyncClient, None]:
     token = _make_session_cookie(
         seed_data["user_b_admin_id"], seed_data["org_b_id"]
     )
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
+    async with _api_test_client(
         cookies={settings.session_cookie_name: token},
     ) as client:
         yield client
@@ -420,9 +419,7 @@ async def client_b_admin(seed_data) -> AsyncGenerator[httpx.AsyncClient, None]:
 
 @pytest_asyncio.fixture
 async def client_unauth() -> AsyncGenerator[httpx.AsyncClient, None]:
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
+    async with _api_test_client(
     ) as client:
         yield client
 
