@@ -813,3 +813,27 @@ class TestWegSpitzeUnberuehrtByPayments:
         assert spitze_pay == spitze_none
         # And the payment DID surface nachrichtlich (the ADVANCE_PAYMENT line).
         assert advance_pay.get(str(m6_seed["owner"])) == "6000.00"
+
+
+@pytest.mark.asyncio
+async def test_correct_draft_month_before_booking(client_a_clerk, m6_seed):
+    resp = await client_a_clerk.post("/api/payments", json={
+        "bank_account_id": str(m6_seed["acct_b"]), "direction": "IN", "amount": "150.00",
+        "value_date": "2088-06-05", "payment_type": "NK_VORAUSZAHLUNG",
+        "tenant_profile_id": str(m6_seed["tenant_d"]), "lease_agreement_id": str(m6_seed["lease_d"]),
+        "period_year": 2088, "period_month": 6,
+    })
+    assert resp.status_code == 201, resp.text
+    payment_id = resp.json()["id"]
+    resp = await client_a_clerk.patch(f"/api/payments/{payment_id}", json={"period_month": 7})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["period_month"] == 7
+    resp = await client_a_clerk.post(f"/api/payments/{payment_id}/book")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "booked"
+    for month, last, expected in ((6, 30, "0.00"), (7, 31, "150.00")):
+        resp = await client_a_clerk.get(f"/api/payments/mietkonto/lease/{m6_seed['lease_d']}", params={
+            "period_start": f"2088-{month:02d}-01", "period_end": f"2088-{month:02d}-{last}",
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["ist_total"] == expected

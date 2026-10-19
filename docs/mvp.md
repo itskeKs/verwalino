@@ -159,7 +159,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 - [x] **T06 Benutzer in der UI anlegen** — Formular (E-Mail, Name, Rolle, Startpasswort) für `POST /api/users`, nur für Admins; neue Benutzer können sich mit ihrer zugewiesenen Rolle anmelden.
   Dateien: `frontend/src/pages/UsersPage.tsx`, `frontend/src/api/endpoints.ts`, `backend/app/api/users.py`
   Fertig, wenn: `uv run pytest tests/test_rbac.py` grün UND Ablauf in der App: „Sachbearbeiter anlegen und mit ihm anmelden“.
-- [x] **T07 Zahlungsentwurf bearbeiten** — Bearbeiten-Formular für Entwürfe über das vorhandene `PATCH /api/payments/{id}`.
+- [x] **T07 Zahlungsentwurf bearbeiten** — Bearbeiten-Formular für Entwürfe über das vorhandene `PATCH /api/payments/{id}`; das Mietkonto berücksichtigt den korrigierten Zuordnungsmonat auch bei abweichender Wertstellung.
   Dateien: `frontend/src/pages/PaymentDetailPage.tsx`, `frontend/src/api/endpoints.ts`, `backend/app/api/payments.py:56-75`
   Fertig, wenn: `uv run pytest tests/test_m6_zahlungen.py` grün UND Ablauf in der App: „Monat im Entwurf korrigieren, buchen, Mietkonto stimmt“.
 - [x] **T08 BK-Vorauszahlungen für jeden Zeitraum** — Sperre „nur volles Kalenderjahr“ aufheben: alle gebuchten `NK_VORAUSZAHLUNG` des Vertrags mit Monat im Abrechnungszeitraum, auch über den Jahreswechsel.

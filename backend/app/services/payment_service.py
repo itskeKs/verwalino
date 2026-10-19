@@ -446,8 +446,9 @@ class PaymentService:
 
         A statement over a period must align Ist to that period (the Soll already
         is). A payment belongs to the period if its erfasster period_year falls in
-        [period_start.year, period_end.year] (the period_year is the maßgebliche
-        Zuordnung, M6-A8). Payments WITHOUT a period_year fall back to value_date
+        [period_start.year, period_end.year]. If period_month is present, match
+        the exact year/month range (Zuordnung, M6-A8), not the value date.
+        Payments WITHOUT a period_year fall back to value_date
         within [period_start, period_end]. Payments tagged to other years are
         excluded so the Saldo is not polluted by a different period's Ist.
         """
@@ -455,7 +456,10 @@ class PaymentService:
         scoped = []
         for p in payments:
             if p.period_year is not None:
-                if y_lo <= p.period_year <= y_hi:
+                if p.period_month is not None:
+                    if (period_start.year, period_start.month) <= (p.period_year, p.period_month) <= (period_end.year, period_end.month):
+                        scoped.append(p)
+                elif y_lo <= p.period_year <= y_hi:
                     scoped.append(p)
             elif period_start <= p.value_date <= period_end:
                 scoped.append(p)
