@@ -178,7 +178,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
   Dateien: `backend/tests/test_journey_miete.py` (neu), `backend/tests/conftest.py`, Muster `backend/tests/test_m3_settlement.py`, `backend/tests/test_m7_dunning.py`
   Fertig, wenn: `uv run pytest tests/test_journey_miete.py` grün UND Ablauf in der App: „dieselben Schritte einmal klicken“.
 ⚠ offen: Der API-Endpoint `/api/settlements/{id}/advance-payments-derived` existiert nicht oder erlaubt kein PATCH (405 Method Not Allowed); der Test scheitert nach zwei Korrekturversuchen (falscher Units-Endpoint korrigiert, advance-payments-derived nicht implementiert).
-- [ ] **T13 Durchstich WEG-Jahr (Test)** — API-Test: WEG mit MEA, zwei Eigentümer, Plan, Hausgeld, Kosten, Jahresabrechnung (T09), Vermögensbericht, Beschluss in der Sammlung, alle PDFs 200.
+- [ ] **T13 Durchstich WEG-Jahr (Test)** — API-Test: WEG mit MEA, zwei Eigentümer, Plan, Hausgeld, Kosten, Jahresabrechnung (T09), Vermögensbericht, Beschluss in der Sammlung, alle PDFs 200. ⚠ offen: ASGI-Durchstich grün; über die lokale API liefert der PDF-Abruf nach erfolgreicher Finalisierung weiterhin 409 („only available for a finalized run“), auch nach Korrektur der Review-DB-Konfiguration.
   Dateien: `backend/tests/test_journey_weg.py` (neu), `backend/tests/conftest.py`, Muster `backend/tests/test_m4_weg.py`, `backend/tests/test_m8_meetings.py`
   Fertig, wenn: `uv run pytest tests/test_journey_weg.py` grün UND Ablauf in der App: „dieselben Schritte einmal klicken“.
 
