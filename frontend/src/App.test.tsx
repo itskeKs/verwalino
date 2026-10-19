@@ -44,3 +44,21 @@ describe("declaration route authorization", () => {
     expect(await screen.findByRole("heading", { name: "Dokumente & Wissen" })).toBeVisible();
   });
 });
+
+
+describe("governance navigation", () => {
+  it("hides advanced governance links from clerks", async () => {
+    renderRoutes("/objekte", "CLERK");
+    expect(await screen.findByRole("heading", { name: "Objekte" })).toBeVisible();
+    expect(screen.queryByText("Erweitert")).toBeNull();
+    for (const name of ["Quellenfreigaben", "Altquellen", "Berechtigungen", "Freigaben vorbereiten", "Mahnquarantäne", "Mandatsquarantäne", "Seitenauszüge"]) {
+      expect(screen.queryByRole("link", { name })).toBeNull();
+    }
+  });
+
+  it("keeps advanced governance links reachable for admins", async () => {
+    renderRoutes("/objekte", "OWNER_ADMIN");
+    expect(await screen.findByRole("link", { name: "Quellenfreigaben" })).toBeVisible();
+    expect(screen.getByText("Erweitert")).toBeVisible();
+  });
+});

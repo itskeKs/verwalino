@@ -171,7 +171,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 - [ ] **T10 Beleg-Worker im Betrieb** — `worker-entrypoint.sh` wählt über `HV_WORKER_KIND` (`declaration_import` Default, `invoice_extraction`, `intake_extraction`); Dienst `invoice-worker` in der Prod-Compose ergänzen. Nur Dateien ändern, nichts deployen oder neu starten. ⚠ offen: Der verbindliche Hausverwaltung-Guard verweigert Zugriff auf die Produktions-Compose; Dienstkonfiguration und Betriebsnachweis sind daher nicht abgeschlossen.
   Dateien: `docker/worker-entrypoint.sh`, `docker-compose.prod.yml` (Dienst `worker` als Muster), `backend/app/workers/invoice_extraction.py`, `DEPLOY.md`
   Fertig, wenn: `uv run pytest tests/test_invoice_extraction_worker.py` grün und `docker compose -f docker-compose.prod.yml config -q` fehlerfrei UND Ablauf in der App: „lokal Worker starten, PDF-Rechnung hochladen, Betrag und Datum erscheinen“.
-- [ ] **T11 Menü entrümpeln** — Quellenfreigaben, Altquellen, Berechtigungen, Freigaben vorbereiten, Quarantänen und Seitenauszüge in eine Admin-Gruppe „Erweitert“.
+- [x] **T11 Menü entrümpeln** — Quellenfreigaben, Altquellen, Berechtigungen, Freigaben vorbereiten, Quarantänen und Seitenauszüge in eine Admin-Gruppe „Erweitert“.
   Dateien: `frontend/src/components/Sidebar.tsx`, `frontend/src/App.tsx` (nur lesen)
   Fertig, wenn: `npm test -- src/App.test.tsx` grün UND Ablauf in der App: „Sachbearbeiter sieht keine Governance-Einträge“.
 - [ ] ~~**T12 Durchstich Mietjahr (Test)**~~ — API-Test: Objekt, Einheiten, Mieter, Vertrag, 11 von 12 Monaten bezahlt, Kosten bestätigt, BK mit abgeleiteten Vorauszahlungen, PDF, Saldo eine Monatsmiete, Mahnung mit PDF. Gefundene Fehler hier beheben.
