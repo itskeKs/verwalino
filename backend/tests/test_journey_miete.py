@@ -13,7 +13,6 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import date, datetime, timezone as _tz
-from decimal import Decimal
 
 import pytest
 
@@ -31,8 +30,6 @@ SYNC_URL = os.environ.get(
 @pytest.fixture(scope="session")
 def t12_seed(seed_data):
     import psycopg2
-
-    from tests.financial_coverage_helpers import attest_fixture
 
     org = str(seed_data["org_a_id"])
     ids = {
@@ -160,13 +157,25 @@ class TestJourneyMiete:
 
         # 2. Verify unit exists
         resp = await client_a_admin.get(f"/api/units?property_id={t12_seed['property']}")
-        assert resp.status_code == 200
+        assert resp.status_code == 200, resp.text
         units = resp.json()
-        assert len(units) >= 1
+        unit = next((item for item in units if item["id"] == t12_seed["unit"]), None)
+        assert unit is not None
+        assert unit["property_id"] == t12_seed["property"]
+        assert unit["number"] == "1"
 
         # 3. Verify lease agreement exists
-        resp = await client_a_admin.get(f"/api/leases/{t12_seed['lease']}")
+        resp = await client_a_admin.get(
+            "/api/leases", params={"unit_id": t12_seed["unit"]}
+        )
         assert resp.status_code == 200, resp.text
+        leases = resp.json()
+        lease = next((item for item in leases if item["id"] == t12_seed["lease"]), None)
+        assert lease is not None
+        assert lease["unit_id"] == t12_seed["unit"]
+        assert lease["tenant_profile_id"] == t12_seed["tenant_profile"]
+        assert lease["base_rent"] == "500.00"
+        assert lease["advance_payment"] == "100.00"
 
         # 4. Verify payments (11 months * 2 types = 22 payments)
         resp = await client_a_admin.get(
@@ -188,57 +197,111 @@ class TestJourneyMiete:
         settlement = resp.json()
         run_id = settlement["id"]
 
-        # 6. Attest financial input coverage (required before finalize)
-        await self._attest_settlement(client_a_admin, run_id, t12_seed)
-
-        # 7. Verify settlement was created
+        # 6. Verify settlement was created
         resp = await client_a_admin.get(f"/api/settlements/{run_id}")
-        assert resp.status_code == 200
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["advance_payments_total"] == "1200.00"
+        assert resp.json()["advance_payments_source"] == "MANUAL"
 
-        # 8. Verify derived BK advances (11 months paid * 100 = 1100)
+        # 7. Derive BK advances from the 11 booked NK payments.
         resp = await client_a_admin.patch(
             f"/api/settlements/{run_id}/advance-payments-derived?period_year=2025"
         )
         assert resp.status_code == 200, resp.text
         derived = resp.json()
-        assert derived["nk_advance_total"] == "1100.00", f"Expected 1100.00, got {derived.get('nk_advance_total')}"
+        assert derived["id"] == run_id
+        assert derived["advance_payments_total"] == "1100.00"
+        assert derived["advance_payments_source"] == "DERIVED"
+
+        # 8. Coverage must attest the value/source active after derivation.
+        await self._attest_settlement(
+            client_a_admin, run_id, "1100.00", "DERIVED"
+        )
 
         # 9. Finalize settlement
-        resp = await client_a_admin.post(f"/api/settlements/{run_id}/finalize")
+        resp = await client_a_admin.post(
+            f"/api/settlements/{run_id}/finalize",
+            json={
+                "unit_metrics": [
+                    {"unit_id": t12_seed["unit"], "consumption": "600"}
+                ]
+            },
+        )
         assert resp.status_code == 200, resp.text
-
-        # 10. Get finalized settlement with PDF
-        resp = await client_a_admin.get(f"/api/settlements/{run_id}?include_pdf=true")
-        assert resp.status_code == 200
-
-        # 11. Verify balance: 1 month arrears (600 = 500 rent + 100 NK)
-        resp = await client_a_admin.get(f"/api/settlements/{run_id}")
-        assert resp.status_code == 200
         finalized = resp.json()
-        balance = Decimal(str(finalized.get("balance", "0")))
-        # Expected: 11 months paid (6600) - 12 months due (7200) = -600 (credit)
-        assert abs(balance) == Decimal("600.00"), f"Expected 600.00 balance, got {balance}"
+        assert finalized["status"] == "finalized"
+        assert finalized["total_cost"] == "3480.00"
+        assert finalized["advance_payments_total"] == "1100.00"
+        assert finalized["advance_payments_source"] == "DERIVED"
+        assert finalized["balance"] == "2380.00"
 
-        # 12. Create dunning notice for December arrears
-        resp = await client_a_admin.post(f"/api/tenants/{t12_seed['tenant_profile']}/dunning", json={
-            "lease_agreement_id": t12_seed["lease"],
-            "issue_date": "2026-01-15",
-        })
-        # May return 403 if not authorized, or 201 if created
-        if resp.status_code == 201:
-            dunning = resp.json()
-            # Verify dunning notice was created
-            resp = await client_a_admin.get(f"/api/dunning/{dunning['id']}")
-            assert resp.status_code == 200
+        # 10. Finalized settlement PDF.
+        resp = await client_a_admin.get(f"/api/settlements/{run_id}/pdf")
+        assert resp.status_code == 200, resp.text
+        assert "application/pdf" in resp.headers.get("content-type", "").lower()
+        assert resp.content[:5] == b"%PDF-"
+
+        # 11. The BK balance is the cost allocation minus derived advances.
+        resp = await client_a_admin.get(f"/api/settlements/{run_id}")
+        assert resp.status_code == 200, resp.text
+        persisted = resp.json()
+        assert persisted["status"] == "finalized"
+        assert persisted["balance"] == "2380.00"
+
+        # 12. The Mietkonto independently has exactly December's 600 arrears.
+        resp = await client_a_admin.post(
+            "/api/dunning/tenant",
+            json={
+                "tenant_profile_id": t12_seed["tenant_profile"],
+                "lease_agreement_id": t12_seed["lease"],
+                "period_start": "2025-12-01",
+                "period_end": "2025-12-31",
+                "reference_date": "2026-01-15",
+                "grace_days": 0,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        dunning = resp.json()
+        assert dunning["status"] == "draft"
+        assert dunning["principal_amount"] == "600.00"
+        assert dunning["tenant_profile_id"] == t12_seed["tenant_profile"]
+        items = sorted(dunning["included_items"], key=lambda item: item["payment_type"])
+        assert items == [
+            {
+                "period_year": 2025,
+                "period_month": 12,
+                "payment_type": "KALTMIETE",
+                "soll": "500.00",
+                "ist": "0.00",
+                "open_amount": "500.00",
+            },
+            {
+                "period_year": 2025,
+                "period_month": 12,
+                "payment_type": "NK_VORAUSZAHLUNG",
+                "soll": "100.00",
+                "ist": "0.00",
+                "open_amount": "100.00",
+            },
+        ]
+
+        resp = await client_a_admin.post(f"/api/dunning/{dunning['id']}/issue")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "issued"
+
+        resp = await client_a_admin.get(f"/api/dunning/{dunning['id']}/pdf")
+        assert resp.status_code == 200, resp.text
+        assert "application/pdf" in resp.headers.get("content-type", "").lower()
+        assert resp.content[:5] == b"%PDF-"
 
     @staticmethod
-    async def _attest_settlement(client, run_id, t12_seed):
+    async def _attest_settlement(client, run_id, amount, source):
         """Attest financial input coverage for a settlement run."""
         from tests.financial_coverage_helpers import attest_fixture
 
         await attest_fixture(client, "settlement", run_id, {
-            "advance_payments_total": "1200.00",
-            "advance_payments_source": "MANUAL",
+            "advance_payments_total": amount,
+            "advance_payments_source": source,
         })
 
     @pytest.mark.asyncio
@@ -256,14 +319,27 @@ class TestJourneyMiete:
         run_id = resp.json()["id"]
 
         # Attest financial input coverage (required before finalize)
-        await self._attest_settlement(client_a_admin, run_id, t12_seed)
+        await self._attest_settlement(client_a_admin, run_id, "1200.00", "MANUAL")
 
         # Finalize
-        resp = await client_a_admin.post(f"/api/settlements/{run_id}/finalize")
-        assert resp.status_code == 200
+        resp = await client_a_admin.post(
+            f"/api/settlements/{run_id}/finalize",
+            json={
+                "unit_metrics": [
+                    {"unit_id": t12_seed["unit"], "consumption": "600"}
+                ]
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "finalized"
+        assert resp.json()["total_cost"] == "3480.00"
+        assert resp.json()["advance_payments_total"] == "1200.00"
+        assert resp.json()["advance_payments_source"] == "MANUAL"
+        assert resp.json()["balance"] == "2280.00"
 
         # Get PDF
         resp = await client_a_admin.get(f"/api/settlements/{run_id}/pdf")
-        assert resp.status_code == 200
+        assert resp.status_code == 200, resp.text
         # Verify PDF content type
         assert "application/pdf" in resp.headers.get("content-type", "").lower()
+        assert resp.content[:5] == b"%PDF-"
