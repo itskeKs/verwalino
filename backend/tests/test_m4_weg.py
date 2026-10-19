@@ -30,8 +30,7 @@ SYNC_URL = os.environ.get(
 # three spheres (umlagefaehig / nicht umlagefaehig / Erhaltungsruecklage).
 # Mirrors engine Golden 2/3 so the Abrechnungsspitze is hand-checkable.
 # ===========================================================================
-@pytest.fixture(scope="session")
-def m4_seed(seed_data):
+def _seed_weg(seed_data):
     import psycopg2
 
     org = str(seed_data["org_a_id"])
@@ -129,6 +128,11 @@ def m4_seed(seed_data):
         conn.close()
 
     return {**seed_data, **{k: (str(v) if isinstance(v, uuid.UUID) else v) for k, v in ids.items()}}
+
+
+@pytest.fixture(scope="session")
+def m4_seed(seed_data):
+    return _seed_weg(seed_data)
 
 
 async def _create_and_finalize_plan(client, m4_seed, reserve="6000.00"):
@@ -553,8 +557,9 @@ def _insert_payment_sql() -> str:
 
 
 @pytest.fixture(scope="session")
-def m4_t09_seed(m4_seed):
-    """Add 12 monthly HAUSGELD_VORSCHUSS payments for both owners to m4_seed."""
+def m4_t09_seed(seed_data):
+    """Keep booked payments separate from the no-payments fixture."""
+    m4_seed = _seed_weg(seed_data)
     import psycopg2
 
     org = str(m4_seed["org_a_id"])
