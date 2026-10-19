@@ -73,7 +73,7 @@ echo "Backend ready on :18000."
 # ------------------------------------------------------------------
 echo "Starting Vite dev server on :13000..."
 cd "$FRONTEND"
-uv run vite --host 127.0.0.1 --port 13000 &
+npm run dev -- --host 127.0.0.1 --port 13000 &
 VITE_PID=$!
 cd "$ROOT"
 
