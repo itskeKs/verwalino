@@ -50,6 +50,7 @@ import type {
   CostCategory,
 } from "../api/types";
 import { ApiError } from "../api/client";
+import { fromDbDistributionKey } from "../lib/costVocabulary";
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Entwurf",
@@ -77,19 +78,19 @@ const DISTRIBUTION_KEY_LABELS: Record<string, string> = {
  * PERSON_COUNT, MANUAL distribution keys).
  */
 export function needsExternalInput(entry: CostEntry): boolean {
-  return entry.tenant_distribution_key === "EXTERNAL";
+  return fromDbDistributionKey(entry.tenant_distribution_key ?? "") === "EXTERNAL";
 }
 
 export function needsManualInput(entry: CostEntry): boolean {
-  return entry.tenant_distribution_key === "MANUAL";
+  return fromDbDistributionKey(entry.tenant_distribution_key ?? "") === "MANUAL";
 }
 
 export function needsConsumption(entries: CostEntry[]): boolean {
-  return entries.some((e) => e.tenant_distribution_key === "CONSUMPTION");
+  return entries.some((e) => fromDbDistributionKey(e.tenant_distribution_key ?? "") === "CONSUMPTION");
 }
 
 export function needsPersonCount(entries: CostEntry[]): boolean {
-  return entries.some((e) => e.tenant_distribution_key === "PERSON_COUNT");
+  return entries.some((e) => fromDbDistributionKey(e.tenant_distribution_key ?? "") === "PERSON_COUNT");
 }
 
 export function SettlementDetailPage() {

@@ -511,6 +511,57 @@ class TestM3ExitEndToEnd:
         assert len(pdf.content) > 1000
 
     @pytest.mark.asyncio
+    async def test_finalization_committed_before_response(
+        self, client_a_admin, m3_seed, app_rw_session
+    ):
+        """Observe the DB at response.start, before ASGITransport awaits cleanup.
+
+        A real HTTP client can request the PDF as soon as it receives the
+        response. Request-scoped dependency cleanup is too late for that read.
+        """
+        import httpx
+        from app.main import app
+
+        run_id = await _create_run(client_a_admin, m3_seed, "lease_a", "700.00")
+        extras = _extras_for_exit(m3_seed)
+        computed = await client_a_admin.post(f"/api/settlements/{run_id}/compute", json=extras)
+        assert computed.status_code == 200, computed.text
+        assert computed.json()["status"] == "draft"
+        draft_pdf = await client_a_admin.get(f"/api/settlements/{run_id}/pdf")
+        assert draft_pdf.status_code == 409
+
+        await app_rw_session.execute(
+            text("SELECT set_config('app.current_org_id', :org, true)"),
+            {"org": str(m3_seed["org_a_id"])},
+        )
+        observed = []
+
+        async def observe_response(scope, receive, send):
+            async def observe_send(message):
+                if message["type"] == "http.response.start":
+                    observed.append(await app_rw_session.scalar(
+                        text("SELECT status FROM settlement_run WHERE id=:id"),
+                        {"id": run_id},
+                    ))
+                await send(message)
+
+            await app(scope, receive, observe_send)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=observe_response),
+            base_url="http://test",
+            cookies=client_a_admin.cookies,
+        ) as client:
+            finalized = await client.post(f"/api/settlements/{run_id}/finalize", json=extras)
+        assert finalized.status_code == 200, finalized.text
+        assert finalized.json()["status"] == "finalized"
+        assert observed == ["finalized"], "Finalization must commit before sending HTTP success"
+        pdf = await client_a_admin.get(f"/api/settlements/{run_id}/pdf")
+        assert pdf.status_code == 200, pdf.text
+        assert pdf.headers["content-type"] == "application/pdf"
+        assert pdf.content.startswith(b"%PDF-")
+
+    @pytest.mark.asyncio
     async def test_two_tenants_sum_to_unit_share(self, client_a_admin, m3_seed):
         """A + B for U1 GRUNDSTEUER == full unit share 800.00 (no cent lost)."""
         extras = _extras_for_exit(m3_seed)

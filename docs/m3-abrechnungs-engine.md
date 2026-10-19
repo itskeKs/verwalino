@@ -528,6 +528,8 @@ Diese Invarianten sind die **objektive, modellunabhängige** Messlatte: Sie gelt
 
 ### 10.4 API (API-first, RBAC wie M0/M2)
 
+Implementiertes BK-Verhalten: `POST /api/settlements/{id}/finalize` beendet die DB-Transaktion durch `Depends(get_db, scope="function")` **vor** der HTTP-Erfolgsantwort. Damit sieht ein unmittelbar folgender PDF-Request bereits den finalisierten Snapshot; Entwürfe bleiben mit HTTP 409 gesperrt. Die Regression prüft den gespeicherten Status aus einer unabhängigen DB-Session bei `http.response.start`, da ASGITransport allein das spätere Request-Cleanup abwartet und diese Race Condition verdeckt.
+
 - [ ] `app/api/settlements.py`: `POST` (Lauf anlegen, `require_write_dep`), `POST /{id}/compute`, `PATCH /{id}/advance-payments`, `POST /{id}/finalize`, `POST /{id}/correction`, `GET` (Liste/Detail, alle Rollen lesen), `GET /{id}/pdf` (finalisiert → PDF-Stream). READ_ONLY: nur GET. Fremde ID → **404** (nicht 403), wie M0/M2. Router in `app/main.py` registrieren.
 
 ### 10.5 PDF (zuletzt, strikt getrennt)

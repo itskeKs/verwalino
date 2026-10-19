@@ -382,7 +382,8 @@ async def finalize_settlement(
     run_id: uuid.UUID,
     body: ComputeRequest | None = None,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    # Commit before sending success: the next HTTP request may open the PDF.
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = SettlementService(db, auth.organization_id, auth.user_id)
     run = await svc.finalize(run_id, _to_extras(body))
