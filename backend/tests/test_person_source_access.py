@@ -350,7 +350,11 @@ async def test_person_response_does_not_release_loaded_pii_after_grant_expiry(cl
     original=persons._outputs
     async def wait_after_loading(db,people):
         assert len(people)==1 and str(people[0].id)==person
-        await asyncio.sleep(max(0,(expiry-datetime.now(timezone.utc)).total_seconds())+.05)
+        # Grant expiry uses the database clock, not the host/Docker wall clock.
+        await asyncio.wait_for(db.execute(text(
+            'SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM CAST(:expiry AS timestamptz)-clock_timestamp()))+0.05)'
+        ),{'expiry':expiry}),5)
+        assert await db.scalar(text('SELECT clock_timestamp()>=CAST(:expiry AS timestamptz)'),{'expiry':expiry})
         return await original(db,people)
     monkeypatch.setattr(persons,'_outputs',wait_after_loading)
     async with synthetic_enforcement(seed_data):
