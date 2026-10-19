@@ -93,9 +93,9 @@ export function PropertyDetailPage() {
     setConfirmingMea(true);
     setError(null);
     try {
-      const denominator = parseInt(meaDenominator, 10);
-      if (isNaN(denominator) || denominator < 1) {
-        setError("Nenner muss eine positive Zahl sein.");
+      const denominator = Number(meaDenominator);
+      if (!Number.isSafeInteger(denominator) || denominator < 1) {
+        setError("Nenner muss eine positive ganze Zahl sein.");
         return;
       }
       await confirmMeaScale(propertyId, denominator);

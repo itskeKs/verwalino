@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
+from decimal import Decimal
 from types import SimpleNamespace
 from urllib.parse import urlparse
 
@@ -480,3 +481,20 @@ async def test_other_tenant_cannot_write_or_confirm_another_orgs_mea_scale(
     assert property_response.json()["mea_denominator"] == 1_000
     units = await client_a_admin.get(f"/api/units?property_id={prop.id}")
     assert [item["mea"] for item in units.json()] == ["400.000000"]
+
+
+@pytest.mark.asyncio
+async def test_manual_confirmation_accepts_300_300_400(client_a_admin, seed_data):
+    property_id = _insert_legacy_property(seed_data, suffix=str(uuid.uuid4()))
+    resp = await client_a_admin.post(f"/api/properties/{property_id}/mea-scale/confirm", json={
+        "denominator": 1000, "expected_scale_status": "LEGACY_UNCONFIRMED",
+        "confirm_existing_values_as_numerators": True,
+    })
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["mea_denominator"] == 1000
+    for number, mea in enumerate(("300", "300", "400"), start=1):
+        resp = await _create_unit(client_a_admin, property_id, mea, number=str(number))
+        assert resp.status_code == 201, resp.text
+    resp = await client_a_admin.get("/api/units", params={"property_id": str(property_id)})
+    assert resp.status_code == 200, resp.text
+    assert sorted(Decimal(str(unit["mea"])) for unit in resp.json()) == [Decimal("300"), Decimal("300"), Decimal("400")]
