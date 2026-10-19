@@ -22,6 +22,10 @@ async function go(path) { await page.goto(base + path); }
 async function click(name) { await page.getByRole('button', { name, exact: true }).click(); }
 async function fill(label, value) { await page.getByLabel(label, { exact: true }).fill(value); }
 async function select(label, value) { await page.getByLabel(label).selectOption(value); }
+function cents(value) {
+  assert.match(value, /^-?\d+\.\d{2}$/);
+  return Number(value.replace('.', ''));
+}
 async function coverage(reason) {
   await fill('Grundlage der Prüfung', reason);
   await page.getByLabel('Alle angezeigten Beträge').check();
@@ -103,10 +107,13 @@ let context;
   await coverage('T13 vollständig: 5000 EUR Plan-Kosten und 1000 EUR Rücklage, MEA 600/400, volles Jahr 2025.'); await click('Berechnen');
   const advances = page.locator('.card').filter({ has: page.getByRole('heading', { name: 'Hausgeld-Vorschüsse je Eigentümer', exact: true }) });
   await advances.waitFor();
+  let annualPlanTotal = 0;
   for (const [owner, annual, monthly] of [[ada, '3600.00', '300.00'], [bruno, '2400.00', '200.00']]) {
     const row = advances.getByRole('row').filter({ hasText: owner });
     assert.ok((await row.innerText()).includes(`${annual} EUR`)); assert.ok((await row.innerText()).includes(`${monthly} EUR`));
+    annualPlanTotal += cents((await row.getByRole('cell').nth(2).innerText()).replace(/ EUR$/, ''));
   }
+  assert.equal(annualPlanTotal, 600000);
   await click('Finalisieren'); await page.getByRole('button', { name: 'PDF herunterladen', exact: true }).waitFor();
   const planId = page.url().split('/').pop();
   await pdf('PDF herunterladen', ['Wirtschaftsplan', prefix, '3.600,00', '2.400,00']);
@@ -135,14 +142,26 @@ let context;
   await page.waitForFunction(() => [...document.querySelectorAll('input')].some(e => e.value === '3600.00'));
   assert.equal(await page.getByLabel(`Tatsächlich gezahltes Hausgeld · ${ada}`).inputValue(), '3600.00');
   assert.equal(await page.getByLabel(`Tatsächlich gezahltes Hausgeld · ${bruno}`).inputValue(), '2200.00');
+  const actualPaidTotal = cents(await page.getByLabel(`Tatsächlich gezahltes Hausgeld · ${ada}`).inputValue())
+    + cents(await page.getByLabel(`Tatsächlich gezahltes Hausgeld · ${bruno}`).inputValue());
+  assert.equal(actualPaidTotal, 580000);
+  assert.equal(annualPlanTotal - actualPaidTotal, 20000);
   await fill('Rücklagen-Anfangsbestand', '0.00'); await fill('Rücklagen-Entnahmen (Jahr)', '0.00');
   await coverage('T13 vollständig: 5800 Ist-Hausgelder, 6000 Soll, 5000 Kosten, 1000 Rücklage; Anfang und Entnahmen bestätigt 0.'); await click('Berechnen');
+  const totals = { garden: 0, admin: 0, cost: 0, plan: 0, paid: 0, balance: 0, reserve: 0 };
   for (const [owner, garden, admin, cost, plan, paid, balance, reserve] of [[ada, '1200.00', '1800.00', '3000.00', '3600.00', '3600.00', '-600.00', '600.00'], [bruno, '800.00', '1200.00', '2000.00', '2400.00', '2200.00', '-400.00', '400.00']]) {
     const card = page.locator('.card').filter({ has: page.getByRole('heading', { name: owner, exact: true }) }); await card.waitFor();
-    for (const [label, expected] of [['Gartenpflege', garden], ['WEG-Verwalterkosten', admin], ['Summe Ist-Kosten', cost], ['Soll-Vorschüsse', plan], ['geleistete Vorschuesse', paid], ['Abrechnungsspitze', balance], ['Vermoegensbildung', reserve]]) {
+    for (const [label, expected, key] of [['Gartenpflege', garden, 'garden'], ['WEG-Verwalterkosten', admin, 'admin'], ['Summe Ist-Kosten', cost, 'cost'], ['Soll-Vorschüsse', plan, 'plan'], ['geleistete Vorschuesse', paid, 'paid'], ['Abrechnungsspitze', balance, 'balance'], ['Vermoegensbildung', reserve, 'reserve']]) {
       const row = card.getByRole('row').filter({ hasText: label }); assert.ok((await row.innerText()).endsWith(`${expected} EUR`), `${owner}: ${label} ${expected}`);
+      totals[key] += cents((await row.getByRole('cell').last().innerText()).replace(/ EUR$/, ''));
     }
   }
+  assert.deepEqual(totals, { garden: 200000, admin: 300000, cost: 500000, plan: 600000, paid: 580000, balance: -100000, reserve: 100000 });
+  assert.equal(totals.cost, totals.garden + totals.admin);
+  assert.equal(totals.plan, annualPlanTotal);
+  assert.equal(totals.paid, actualPaidTotal);
+  assert.equal(totals.balance, totals.cost - totals.plan);
+  console.log('Observed UI owner totals (cents):', totals);
   const overview = page.locator('.card').filter({ has: page.getByRole('heading', { name: 'Übersicht', exact: true }) });
   assert.ok((await overview.innerText()).includes('5000.00 EUR')); assert.ok((await overview.innerText()).includes('-1000.00 EUR'));
   await click('Finalisieren'); await page.getByRole('button', { name: 'PDF herunterladen', exact: true }).waitFor();
