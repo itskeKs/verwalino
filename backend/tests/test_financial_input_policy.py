@@ -174,15 +174,21 @@ async def test_reversal_invalidates_derived_total_and_requires_rederivation(clie
 
 
 @pytest.mark.asyncio
-async def test_derived_subperiod_and_wrong_year_block_but_manual_evidence_works(client_a_admin, m6_seed):
+async def test_derived_subperiod_accepts_matching_year_and_blocks_wrong_year_but_manual_evidence_works(client_a_admin, m6_seed):
     created = await client_a_admin.post("/api/settlements", json={
         "property_id": str(m6_seed["prop_b"]), "lease_agreement_id": str(m6_seed["lease_d"]),
         "period_start": "2025-01-01", "period_end": "2025-06-30"})
     run_id = created.json()["id"]
-    for year in (2024, 2025):
+    for year in (2024, 2026):
         result = await client_a_admin.patch(f"/api/settlements/{run_id}/advance-payments-derived", params={"period_year": year})
-        assert result.status_code == 422
-    await client_a_admin.patch(f"/api/settlements/{run_id}/advance-payments", json={"advance_payments_total": "0.00"})
+        assert result.status_code == 422, result.text
+    result = await client_a_admin.patch(f"/api/settlements/{run_id}/advance-payments-derived", params={"period_year": 2025})
+    assert result.status_code == 200, result.text
+    assert result.json()["advance_payments_total"] == "0.00"
+    assert result.json()["advance_payments_source"] == "DERIVED"
+    manual = await client_a_admin.patch(f"/api/settlements/{run_id}/advance-payments", json={"advance_payments_total": "0.00"})
+    assert manual.status_code == 200, manual.text
+    assert manual.json()["advance_payments_source"] == "MANUAL"
     assert (await attest(client_a_admin, "settlement", run_id, {"advance_payments_total": "0.00", "advance_payments_source": "MANUAL"})).status_code == 201
     final = await client_a_admin.post(f"/api/settlements/{run_id}/finalize", json={})
     assert final.status_code == 200, final.text

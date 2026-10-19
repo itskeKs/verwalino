@@ -162,7 +162,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 - [x] **T07 Zahlungsentwurf bearbeiten** — Bearbeiten-Formular für Entwürfe über das vorhandene `PATCH /api/payments/{id}`; das Mietkonto berücksichtigt den korrigierten Zuordnungsmonat auch bei abweichender Wertstellung.
   Dateien: `frontend/src/pages/PaymentDetailPage.tsx`, `frontend/src/api/endpoints.ts`, `backend/app/api/payments.py:56-75`
   Fertig, wenn: `uv run pytest tests/test_m6_zahlungen.py` grün UND Ablauf in der App: „Monat im Entwurf korrigieren, buchen, Mietkonto stimmt“.
-- [x] **T08 BK-Vorauszahlungen für jeden Zeitraum** — Sperre „nur volles Kalenderjahr“ aufheben: alle gebuchten `NK_VORAUSZAHLUNG` des Vertrags mit Monat im Abrechnungszeitraum, auch über den Jahreswechsel.
+- [x] **T08 BK-Vorauszahlungen für jeden Zeitraum** — Sperre „nur volles Kalenderjahr“ aufheben: alle gebuchten `NK_VORAUSZAHLUNG` des Vertrags mit Monat im Abrechnungszeitraum, auch über den Jahreswechsel; ein abweichendes Bezugsjahr wird weiterhin mit 422 abgelehnt.
   Dateien: `backend/app/services/settlement_service.py:205-260`, `backend/app/services/payment_service.py`, `frontend/src/pages/SettlementDetailPage.tsx`
   Fertig, wenn: `uv run pytest tests/test_m3_settlement.py -k derived` grün (neu: 01.07.–30.06. und Auszug 30.09.) UND Ablauf in der App: „Abrechnung Jan–Sep übernimmt die Zahlungen Jan–Sep“.
 - [x] **T09 WEG: gezahltes Hausgeld übernehmen** — Route `POST /api/weg-settlements/{id}/paid-advances-derived` auf `derive_paid_advances`, Knopf in der Jahresabrechnung.

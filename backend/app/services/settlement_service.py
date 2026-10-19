@@ -217,14 +217,17 @@ class SettlementService:
         Minimal-additive bridge (advance_payments_source MANUAL -> DERIVED): the
         M3 engine is UNCHANGED -- it still reads run.advance_payments_total; this
         only fills that value from the booked, non-reversed NK_VORAUSZAHLUNG
-        payments of THIS lease + year (the pure derivation in payment_service,
-        which is bit-identical to the MANUAL value, I6-E). MANUAL stays the
+        payments of THIS lease + settlement period. The reference year must
+        match the period start, including for cross-year periods. The pure
+        derivation is bit-identical to the MANUAL value (I6-E). MANUAL stays the
         default/fallback; this path is opt-in. E6-8: derived fresh on demand;
         finalize then freezes whatever value is current into the snapshot.
         """
         from app.services.payment_service import PaymentService
 
         run = await self._get_draft_or_404(run_id)
+        if period_year != run.period_start.year:
+            raise HTTPException(422, "DERIVED reference year must match the period start year")
         if run.lease_agreement_id is None:
             raise HTTPException(
                 status_code=422,
