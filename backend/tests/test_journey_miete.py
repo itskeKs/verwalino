@@ -14,7 +14,9 @@ import os
 import uuid
 from datetime import date, datetime, timezone as _tz
 from decimal import Decimal
+from io import BytesIO
 
+import pdfplumber
 import pytest
 
 
@@ -71,13 +73,13 @@ def t12_seed(seed_data):
             (str(ids["tenant_profile"]), org, str(ids["person_tenant"])),
         )
 
-        # Lease: base_rent 500, NK advance 100. Full year 2025, open-ended.
+        # Annual lease: storage upper bound is exclusive (last day: 2025-12-31).
         cur.execute(
             "INSERT INTO lease_agreement (id, organization_id, unit_id, tenant_profile_id, "
             "valid_from, valid_to, base_rent, advance_payment) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
             (str(ids["lease"]), org, str(ids["unit"]), str(ids["tenant_profile"]),
-             date(2025, 1, 1), None, Decimal("500.00"), Decimal("100.00")),
+             date(2025, 1, 1), date(2026, 1, 1), Decimal("500.00"), Decimal("100.00")),
         )
 
         # Bank account
@@ -177,6 +179,7 @@ class TestJourneyMiete:
         assert lease["tenant_profile_id"] == t12_seed["tenant_profile"]
         assert lease["base_rent"] == "500.00"
         assert lease["advance_payment"] == "100.00"
+        assert lease["valid_to"] == "2025-12-31"
 
         # 4. Verify payments (11 months * 2 types = 22 payments)
         resp = await client_a_admin.get(
@@ -250,6 +253,22 @@ class TestJourneyMiete:
         assert persisted["balance"] == "2380.00"
 
         # 12. The Mietkonto independently has exactly December's 600 arrears.
+        resp = await client_a_admin.get(
+            f"/api/payments/mietkonto/lease/{t12_seed['lease']}",
+            params={"period_start": "2025-01-01", "period_end": "2025-12-31"},
+        )
+        assert resp.status_code == 200, resp.text
+        statement = resp.json()
+        assert statement["soll_total"] == "7200.00"
+        assert statement["ist_total"] == "6600.00"
+        assert statement["balance"] == "600.00"
+        assert len(statement["open_items"]) == 24
+        open_items = [item for item in statement["open_items"] if Decimal(item["open_amount"]) != 0]
+        assert sorted(
+            (item["period_year"], item["period_month"], item["payment_type"], item["open_amount"])
+            for item in open_items
+        ) == [(2025, 12, "KALTMIETE", "500.00"), (2025, 12, "NK_VORAUSZAHLUNG", "100.00")]
+
         resp = await client_a_admin.post(
             "/api/dunning/tenant",
             json={
@@ -344,3 +363,6 @@ class TestJourneyMiete:
         # Verify PDF content type
         assert "application/pdf" in resp.headers.get("content-type", "").lower()
         assert resp.content[:5] == b"%PDF-"
+        with pdfplumber.open(BytesIO(resp.content)) as pdf:
+            assert len(pdf.pages) == 1
+            assert "Mietvertrag ab 01.01.2025 bis 31.12.2025" in pdf.pages[0].extract_text()

@@ -160,8 +160,8 @@ export function MietkontoPage() {
 
   function balanceColor(balance: string): string | undefined {
     const val = parseFloat(balance);
-    if (val > 0) return "#2e7d32"; // Guthaben
-    if (val < 0) return "#b71c1c"; // Rueckstand
+    if (val > 0) return "#b71c1c"; // Soll - Ist > 0: Rueckstand
+    if (val < 0) return "#2e7d32"; // Guthaben
     return undefined;
   }
 
@@ -322,8 +322,8 @@ export function MietkontoPage() {
                   }}
                 >
                   {result.balance} EUR
-                  {parseFloat(result.balance) > 0 && " (Guthaben)"}
-                  {parseFloat(result.balance) < 0 && " (Rueckstand)"}
+                  {parseFloat(result.balance) > 0 && " (Rueckstand)"}
+                  {parseFloat(result.balance) < 0 && " (Guthaben)"}
                 </td>
               </tr>
             </tbody>
