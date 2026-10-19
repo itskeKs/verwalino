@@ -30,8 +30,7 @@ SYNC_URL = os.environ.get(
 # Seed: a full Mischobjekt for org_a (via migrator -> persists across the
 # API client's own transactions). Mirrors engine Golden 5 (the exit scenario).
 # ===========================================================================
-@pytest.fixture(scope="session")
-def m3_seed(seed_data):
+def _seed_m3(seed_data):
     import psycopg2
 
     org = str(seed_data["org_a_id"])
@@ -174,6 +173,11 @@ def m3_seed(seed_data):
         conn.close()
 
     return {**seed_data, **{k: (str(v) if isinstance(v, uuid.UUID) else v) for k, v in ids.items()}}
+
+
+@pytest.fixture(scope="session")
+def m3_seed(seed_data):
+    return _seed_m3(seed_data)
 
 
 def _extras_for_exit(m3_seed):
@@ -818,3 +822,55 @@ class TestReadEdgeConversionHelper:
         from app.services.settlement_service import db_exclusive_to_engine_inclusive
 
         assert db_exclusive_to_engine_inclusive(None) is None
+
+
+@pytest.fixture
+def derived_period_seed(seed_data):
+    import psycopg2
+    seed = _seed_m3(seed_data)
+    bank = str(uuid.uuid4())
+    with psycopg2.connect(SYNC_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO bank_account (id,organization_id,property_id,account_type,label) VALUES (%s,%s,%s,'LAUFEND','T08')",
+                        (bank, str(seed["org_a_id"]), seed["property"]))
+            for year in (2025, 2026):
+                for month in range(1, 13):
+                    for kind, amount in (("NK_VORAUSZAHLUNG", "100.00"), ("KALTMIETE", "500.00")):
+                        cur.execute("""INSERT INTO payment
+                            (id,organization_id,bank_account_id,property_id,direction,amount,value_date,
+                             payment_type,tenant_profile_id,lease_agreement_id,period_year,period_month,
+                             status,booked_at,booked_by)
+                            VALUES (%s,%s,%s,%s,'IN',%s,%s,%s,%s,%s,%s,%s,'booked',now(),%s)""",
+                            (str(uuid.uuid4()), str(seed["org_a_id"]), bank, seed["property"], amount,
+                             date(year, month, 1), kind, seed["tp_e"], seed["lease_e"], year, month,
+                             str(seed["user_a_admin_id"])))
+            cur.execute("""INSERT INTO payment
+                (id,organization_id,bank_account_id,property_id,direction,amount,value_date,
+                 payment_type,tenant_profile_id,lease_agreement_id,period_year,period_month,status)
+                VALUES (%s,%s,%s,%s,'IN',999,'2025-08-01','NK_VORAUSZAHLUNG',%s,%s,2025,8,'draft')""",
+                (str(uuid.uuid4()), str(seed["org_a_id"]), bank, seed["property"], seed["tp_e"], seed["lease_e"]))
+    return seed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("start,end,expected", [
+    ("2025-07-01", "2026-06-30", "1200.00"),
+    ("2025-01-01", "2025-09-30", "900.00"),
+])
+async def test_derived_advances_for_exact_period(client_a_admin, derived_period_seed, start, end, expected):
+    import psycopg2
+    seed = derived_period_seed
+    if end == "2025-09-30":
+        with psycopg2.connect(SYNC_URL) as conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE lease_agreement SET valid_to='2025-10-01' WHERE id=%s", (seed["lease_e"],))
+    resp = await client_a_admin.post("/api/settlements", json={
+        "property_id": seed["property"], "lease_agreement_id": seed["lease_e"],
+        "period_start": start, "period_end": end, "advance_payments_total": "0.00",
+    })
+    assert resp.status_code == 201, resp.text
+    run_id = resp.json()["id"]
+    resp = await client_a_admin.patch(f"/api/settlements/{run_id}/advance-payments-derived", params={"period_year": 2025})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["advance_payments_total"] == expected
+    assert resp.json()["advance_payments_source"] == "DERIVED"

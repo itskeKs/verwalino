@@ -10,6 +10,7 @@ only LOADS the right rows; the cent-summing is the pure engine
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from typing import Sequence
 
 from sqlalchemy import select, text
@@ -129,9 +130,8 @@ class PaymentRepository(TenantRepository[Payment]):
             .where(Payment.payment_type == "NK_VORAUSZAHLUNG")
             .where(Payment.lease_agreement_id == lease_agreement_id)
             .where(Payment.period_month.isnot(None))
-            .where(Payment.period_month >= period_start.month)
-            .where(Payment.period_month <= period_end.month)
-            .where(Payment.period_year == period_start.year)
+            .where(Payment.period_year * 12 + Payment.period_month >= period_start.year * 12 + period_start.month)
+            .where(Payment.period_year * 12 + Payment.period_month <= period_end.year * 12 + period_end.month)
         )
         result = await self._session.execute(stmt)
         return result.scalars().all()

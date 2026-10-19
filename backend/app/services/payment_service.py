@@ -485,12 +485,15 @@ class PaymentService:
         rows = await self._repo.derived_for_nk_for_period(
             lease_agreement_id, period_start, period_end
         )
-        filt = AdvanceFilter(
-            types=frozenset({"NK_VORAUSZAHLUNG"}),
-            year=period_start.year,
-            lease_agreement_id=lease_agreement_id,
-        )
-        return derive_advance_total([_to_payment_input(p) for p in rows], filt)
+        inputs = [_to_payment_input(p) for p in rows]
+        return sum((
+            derive_advance_total(inputs, AdvanceFilter(
+                types=frozenset({"NK_VORAUSZAHLUNG"}),
+                year=year,
+                lease_agreement_id=lease_agreement_id,
+            ))
+            for year in range(period_start.year, period_end.year + 1)
+        ), Decimal("0.00"))
 
     async def derive_hausgeld_total(
         self, owner_profile_id: uuid.UUID, period_year: int
