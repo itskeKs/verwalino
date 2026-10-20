@@ -18,7 +18,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Date, ForeignKey, Numeric, String
+from sqlalchemy import Date, ForeignKey, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,6 +27,7 @@ from app.models.base import Base, UUIDPrimaryKeyMixin, TimestampMixin
 
 class LeaseAgreement(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "lease_agreement"
+    __table_args__ = (UniqueConstraint("organization_id", "id", name="uq_lease_agreement_org_id"),)
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),

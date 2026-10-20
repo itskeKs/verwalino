@@ -125,6 +125,22 @@ Der echte Browserablauf `scripts/acceptance/t22_bank_assignment_browser.cjs`
 prüft Warmmiete, Teilzahlung, Ignorieren, Zweittab-Konflikt und die nach Reload
 persistierten Mietkontowerte gegen `scripts/dev-local.sh`.
 
+## Mietänderungen mit Stichtag (Phase 2)
+
+`GET /api/leases/{id}/rent-changes` liefert die chronologische Historie;
+`POST` ergänzt eine vollständige Rate aus `valid_from`, `base_rent` und
+`advance_payment` (endliche, nichtnegative, centgenaue Dezimalwerte).
+Stichtage müssen im Vertragszeitraum liegen und je Vertrag eindeutig sein;
+Konflikte liefern 409. Bestehende Vertragsbeträge werden nicht überschrieben,
+Historienzeilen sind unveränderlich. Org-/Vertrags-FK, Parent-RLS und vorhandene
+Prepare-Rechte gelten; Leser dürfen nur abrufen. Die gemeinsame Finanzsperre
+koordiniert Änderungen mit Berechnungen, vor dem Vertrag-Zeilenlock.
+Mietkonto und Bankvorschläge laden auch Änderungen vor dem Abfragebeginn.
+Bei 700 EUR Kaltmiete und 750 EUR ab 15.03.2026 ergibt März taggewichtet
+727,42 EUR, April 750 EUR; NK wird unabhängig ebenso berechnet. Je Komponente
+und Monat wird erst die gesamte Tagessumme gerundet. Gebuchte Zahlungen und
+finalisierte Snapshots bleiben unverändert. Die Bedienoberfläche folgt in T24.
+
 Weiterführende Dokumentation:
 
 - [Deployment](DEPLOY.md)

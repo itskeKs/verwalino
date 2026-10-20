@@ -134,9 +134,11 @@ Das Soll ist **abgeleitet** (ADR-0009) und wird je (Person, Periode) als reine F
 ### 2.1 Mieter-Soll (je Mietvertrag)
 
 ```
-monatliches Soll(lease, monat) = base_rent + advance_payment        (aus lease_agreement)
+monatliches Soll ohne Satzwechsel = gültige Kaltmiete + gültige Vorauszahlung
+                                   (lease_agreement + lease_rent_change)
 ```
 
+- **Stichtagsänderungen (Phase 2, T23):** `lease_rent_change` ergänzt vollständige Kaltmiete/NK-Raten, ohne die ursprünglichen Vertragsbeträge zu überschreiben. Jede Rate gilt ab ihrem Stichtag inklusive; die letzte vorherige Rate gilt auch bei später beginnender Abfrage fort. Mehrere Tagessegmente werden je Monat/Komponente exakt summiert und erst danach gerundet; konstante Raten behalten die bestehende Largest-Remainder-Anschnittlogik. Beispiel März 2026: 700 EUR bis 14.03., 750 EUR ab 15.03. ergibt 727,42 EUR Kaltmiete, NK 150 EUR unverändert. Historie append-only, Stichtage je Vertrag eindeutig; Org-/Parent-RLS und Prepare-Rechte gelten, Finanzsperre vor Vertragslock. Bestehende Buchungen/finale Snapshots bleiben unverändert.
 - **Trennung nach Komponente:** Das Soll wird getrennt nach `KALTMIETE` (= `base_rent`) und `NK_VORAUSZAHLUNG` (= `advance_payment`) geführt, denn nur die NK-Vorauszahlung fließt in die BK-Abrechnung (§6.2), die Kaltmiete nicht. Eine Vermischung würde die Abrechnungs-Anbindung verfälschen.
 - **Unterjähriger Beginn/Ende (tagegenau angeschnitten):** Beginnt/endet der Mietvertrag mitten im Monat, ist die Soll-Stellung des Anschnittsmonats **anteilig**. Maßstab: monatlich, der Anschnitt tagegenau über dieselbe `app/engine/periods.py`-Arithmetik wie M3 (tag-inklusiv, ADR-0004/0006). **[§18/fachlich F6-4]** ob ein angeschnittener Monat tagegenau (`tage_im_monat_belegt / tage_im_monat`) oder pauschal voll/halb berechnet wird — mietvertraglich/fachlich unterschiedlich gehandhabt. **Provisorische Annahme:** tagegenauer Anschnitt (konsistent zu M3); klar markiert, fachlich abzunehmen.
 - **Lese-Grenze:** `lease_agreement.valid_to` ist halboffen gespeichert; die Soll-Funktion liest über `db_exclusive_to_engine_inclusive` (ADR-0006) — **dieselbe** Lese-Grenze wie M3, **eine** Definition. So zählt der letzte Mietmonat korrekt (kein Off-by-one am Vertragsende).

@@ -14,6 +14,7 @@ from app.models.tenant_profile import TenantProfile
 from app.models.vendor import Vendor
 from app.models.ownership_history import OwnershipHistory
 from app.models.lease_agreement import LeaseAgreement
+from app.models.lease_rent_change import LeaseRentChange
 from app.models.bank_account import BankAccount
 from app.models.bank_transaction import BankTransaction
 from app.models.meter import Meter, MeterReading
@@ -84,6 +85,7 @@ __all__ = [
     "Vendor",
     "OwnershipHistory",
     "LeaseAgreement",
+    "LeaseRentChange",
     "BankAccount",
     "Meter",
     "MeterReading",

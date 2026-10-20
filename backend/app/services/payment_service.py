@@ -35,6 +35,7 @@ from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.engine.mietkonto import (
     AdvanceFilter,
     LeaseChargeInput,
+    RentChangeInput,
     MietkontoResult,
     OwnerAdvanceChargeInput,
     PaymentInput,
@@ -53,6 +54,7 @@ from app.repositories.economic_plan_repo import (
     EconomicPlanRepository,
 )
 from app.repositories.lease_agreement_repo import LeaseAgreementRepository
+from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
 from app.repositories.payment_repo import PaymentRepository
 
 # Tenant-bound vs owner-bound vocabulary (kept in sync with the DB CHECK in 0016
@@ -379,12 +381,16 @@ class PaymentService:
         if lease is None:
             raise HTTPException(status_code=404, detail="Lease agreement not found")
 
+        rent_changes = await LeaseRentChangeRepository(self._session, self._org_id).list_for_lease(lease.id)
         lc = LeaseChargeInput(
             lease_agreement_id=lease.id,
             valid_from=lease.valid_from,
             valid_to=db_exclusive_to_engine_inclusive(lease.valid_to),
             base_rent=lease.base_rent,
             advance_payment=lease.advance_payment,
+            rent_changes=tuple(RentChangeInput(
+                valid_from=row.valid_from, base_rent=row.base_rent, advance_payment=row.advance_payment,
+            ) for row in rent_changes),
         )
         charges = tenant_expected_charges(lc, period_start, period_end)
         payments = await self._repo.list_for_lease(lease_agreement_id)

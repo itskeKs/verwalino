@@ -30,11 +30,10 @@ Three responsibilities, mirroring m6 section 2/3/6:
      paid_advances. Storno Variante A (section 6.6):
        derive_advance_total(payments, filter) -> Decimal
 
-Money is ALWAYS Decimal, never float (architecture.md I4, ADR-0005). All
-summation is over already-cent-exact amounts, so it never re-rounds (m6 §3.1);
-the ONE place a partial-month Soll is rounded routes through
-app.engine.rounding.distribute_amount (Largest-Remainder, ADR-0005), so a
-split month still sums EXACTLY to the full monthly amount over the year.
+Money is ALWAYS Decimal, never float (architecture.md I4, ADR-0005). Soll/Ist
+summation uses final cent amounts (m6 §3.1). Constant-rate partial months keep
+the Largest-Remainder split (ADR-0005). Effective-dated rates accumulate exact
+rate-days per month/component before a single final cent rounding.
 """
 
 from __future__ import annotations
@@ -95,6 +94,23 @@ def _month_bounds(year: int, month: int) -> tuple[date, date]:
 # Inputs (frozen copies; the service maps ORM rows to these at the read-edge).
 # ===========================================================================
 @dataclass(frozen=True)
+class RentChangeInput:
+    """Full monthly rates effective from valid_from (inclusive), without I/O."""
+
+    valid_from: date
+    base_rent: Decimal
+    advance_payment: Decimal
+
+    def __post_init__(self) -> None:
+        for name in ("base_rent", "advance_payment"):
+            value = getattr(self, name)
+            if not isinstance(value, Decimal):
+                raise TypeError(f"{name} must be Decimal")
+            if not value.is_finite() or value < 0 or value % CENT != 0:
+                raise ValueError(f"{name} must be finite, non-negative and cent-exact")
+
+
+@dataclass(frozen=True)
 class LeaseChargeInput:
     """Frozen copy of a lease_agreement row for Soll generation (m6 section 2.1).
 
@@ -108,6 +124,7 @@ class LeaseChargeInput:
     valid_to: date | None
     base_rent: Decimal
     advance_payment: Decimal
+    rent_changes: tuple[RentChangeInput, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -200,6 +217,15 @@ def _split_partial_month(monthly_amount: Decimal, days_occupied: int, days_in_mo
     return occupied_share
 
 
+def _sum_rate_segments(segments: list[tuple[Decimal, int]], days_in_month: int) -> Decimal:
+    """Round once after summing rate-days; preserve constant-rate day splits."""
+    first_rate = segments[0][0]
+    if all(rate == first_rate for rate, _days in segments):
+        return _split_partial_month(first_rate, sum(days for _rate, days in segments), days_in_month)
+    numerator = sum((rate * days for rate, days in segments), Decimal(0))
+    return _money(numerator / Decimal(days_in_month))
+
+
 def tenant_expected_charges(
     lease: LeaseChargeInput,
     period_start: date,
@@ -213,8 +239,17 @@ def tenant_expected_charges(
     yields no charge. A month the lease only partially covers is tag-exact
     (section 2.1, provisional assumption F6-4: tagegenau, consistent with M3).
 
+    Rent changes are full rates effective on their date (inclusive), regardless
+    of input order. Base rates apply before the first change. Each component's
+    rate-days are summed before its single monthly rounding.
+
     Deterministic order: chronological months, KALTMIETE before NK per month.
     """
+    changes = sorted(lease.rent_changes, key=lambda change: change.valid_from)
+    for previous, current in zip(changes, changes[1:]):
+        if previous.valid_from == current.valid_from:
+            raise ValueError(f"Duplicate rent change date: {current.valid_from}")
+
     charges: list[ExpectedCharge] = []
     lease_end = lease.valid_to  # tag-inclusive; None = open-ended
     for year, month in _months_in_period(period_start, period_end):
@@ -227,8 +262,27 @@ def tenant_expected_charges(
         if days_occupied <= 0:
             continue
         days_in_month = day_count(m_first, m_last)
-        rent = _split_partial_month(lease.base_rent, days_occupied, days_in_month)
-        nk = _split_partial_month(lease.advance_payment, days_occupied, days_in_month)
+        rate = lease
+        segment_start = occ_start
+        rent_segments: list[tuple[Decimal, int]] = []
+        nk_segments: list[tuple[Decimal, int]] = []
+        for change in changes:
+            if change.valid_from <= occ_start:
+                rate = change
+                continue
+            if change.valid_from > occ_end:
+                break
+            # The previous rate ends immediately before the change's first day.
+            days = change.valid_from.toordinal() - segment_start.toordinal()
+            rent_segments.append((rate.base_rent, days))
+            nk_segments.append((rate.advance_payment, days))
+            segment_start = change.valid_from
+            rate = change
+        days = day_count(segment_start, occ_end)
+        rent_segments.append((rate.base_rent, days))
+        nk_segments.append((rate.advance_payment, days))
+        rent = _sum_rate_segments(rent_segments, days_in_month)
+        nk = _sum_rate_segments(nk_segments, days_in_month)
         charges.append(
             ExpectedCharge(
                 period_year=year,
