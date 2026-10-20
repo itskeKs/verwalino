@@ -15,6 +15,7 @@ from app.models.vendor import Vendor
 from app.models.ownership_history import OwnershipHistory
 from app.models.lease_agreement import LeaseAgreement
 from app.models.bank_account import BankAccount
+from app.models.bank_transaction import BankTransaction
 from app.models.meter import Meter, MeterReading
 
 # M2 Kosten & GoBD-Belegfluss

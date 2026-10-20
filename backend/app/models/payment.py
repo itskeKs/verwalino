@@ -125,6 +125,14 @@ class Payment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     # Aufbewahrungs-Anker (8 Jahre, architecture.md section 3.3 / ADR-0003 #3).
     retention_until: Mapped[date | None] = mapped_column(Date, nullable=True)
 
+    # Optional link to bank transaction for import tracking (T15).
+    bank_transaction_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("bank_transaction.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # CHECK constraints, Composite-FK + indices live in migration 0016.

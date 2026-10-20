@@ -141,3 +141,4 @@ async def change_password(
                 raise _invalid_credentials()
 
             user.password_hash = hash_password(body.new_password)
+            await session.flush()

@@ -16,6 +16,7 @@ import {
 } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { changePassword } from "../api/endpoints";
 
 interface Props {
   onToggleSidebar: () => void;
@@ -42,36 +43,36 @@ export function Topbar({ onToggleSidebar }: Props) {
 
     setLoading(true);
     try {
-      const resp = await fetch("/api/auth/password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          old_password: oldPassword,
-          new_password: newPassword,
-        }),
+      await changePassword({
+        old_password: oldPassword,
+        new_password: newPassword,
       });
-
-      if (resp.status === 204) {
-        setSuccess(true);
-        setTimeout(() => {
-          setPasswordDialogOpen(false);
-          setOldPassword("");
-          setNewPassword("");
-          setConfirmPassword("");
-          setSuccess(false);
-          logout();
-        }, 1500);
-      } else if (resp.status === 401) {
+      setSuccess(true);
+      setTimeout(() => {
+        setPasswordDialogOpen(false);
+        setOldPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+        setSuccess(false);
+        logout();
+      }, 1500);
+    } catch (err: unknown) {
+      const error = err as { response?: { status?: number; data?: { detail?: unknown } } };
+      const status = error.response?.status;
+      const detail = error.response?.data?.detail;
+      
+      if (status === 401) {
         setError("Altes Passwort ist falsch.");
-      } else if (resp.status === 422) {
-        const body = await resp.json();
-        setError(body.detail?.[0]?.msg || "Neues Passwort不符合 Anforderungen.");
+      } else if (status === 422) {
+        const msg = typeof detail === "string" 
+          ? detail 
+          : Array.isArray(detail) && detail[0] 
+            ? (typeof detail[0] === "string" ? detail[0] : JSON.stringify(detail[0]))
+            : "Neues Passwort erfüllt die Anforderungen nicht.";
+        setError(msg);
       } else {
         setError("Unbekannter Fehler.");
       }
-    } catch {
-      setError("Verbindungsfehler.");
     } finally {
       setLoading(false);
     }

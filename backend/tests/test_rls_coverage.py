@@ -68,7 +68,7 @@ TENANT_TABLES = frozenset({
     # M4 WEG-Abrechnung (Wirtschaftsplan eigene Entitaet)
     "economic_plan", "economic_plan_line",
     # M6 Zahlungen, Mietkonto & offene Posten
-    "payment",
+    "payment", "bank_transaction",
     # M7 Mahnwesen
     "dunning_notice", "dunning_scope_context",
     # M8 Eigentümerversammlung & Beschluss-Sammlung

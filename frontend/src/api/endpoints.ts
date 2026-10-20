@@ -101,6 +101,15 @@ export function logout(): Promise<void> {
   return api.post<void>("/api/auth/logout");
 }
 
+export interface ChangePasswordRequest {
+  old_password: string;
+  new_password: string;
+}
+
+export function changePassword(body: ChangePasswordRequest): Promise<void> {
+  return api.post<void>("/api/auth/password", body);
+}
+
 export function getMyOrganization(): Promise<Organization> {
   return api.get<Organization>("/api/organizations/me");
 }
