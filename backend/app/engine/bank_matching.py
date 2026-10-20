@@ -96,7 +96,8 @@ def _words(value: str | None) -> set[str]:
     return set(re.findall(r"[^\W\d_]+", _normalized(value)))
 
 
-def _period(transaction: BankImportRow) -> tuple[int, int, bool] | None:
+def matching_period(transaction: BankImportRow) -> tuple[int, int, bool] | None:
+    """Resolve year/month and whether explicit; shared by target loading and matching."""
     purpose = _normalized(transaction.purpose)
     periods: set[tuple[int, int]] = set()
     for match in re.finditer(r"(?<![0-9.])([0-9]{1,2})[./-]([12][0-9]{3})(?![0-9])", purpose):
@@ -225,7 +226,7 @@ def suggest_matches(
     hint = _component_hint(transaction.purpose)
     if hint and PT_HAUSGELD_VORSCHUSS in hint and hint & {PT_KALTMIETE, PT_NK_VORAUSZAHLUNG}:
         return ()
-    period = _period(transaction)
+    period = matching_period(transaction)
     if period is None:
         return ()
     matches = [match for target in targets if (match := _suggestion(transaction, target, period)) is not None]

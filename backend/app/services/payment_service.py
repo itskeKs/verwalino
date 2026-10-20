@@ -121,6 +121,7 @@ class PaymentService:
         period_month: int | None = None,
         settlement_run_id: uuid.UUID | None = None,
         note: str | None = None,
+        bank_transaction_id: uuid.UUID | None = None,
     ) -> Payment:
         """Create an editable draft payment (m6 section 5; ADR-0009 E6-3).
 
@@ -135,6 +136,7 @@ class PaymentService:
         payment = Payment(
             organization_id=self._org_id,
             bank_account_id=account.id,
+            bank_transaction_id=bank_transaction_id,
             property_id=account.property_id,  # mirrored (ADR-0010)
             management_mandate_id=None,  # DB derives this from the canonical account scope when bound
             direction=direction,
@@ -396,6 +398,7 @@ class PaymentService:
         period_start: date,
         period_end: date,
         accounting_scope_id: uuid.UUID | None = None,
+        *, property_id: uuid.UUID | None = None,
     ) -> MietkontoResult:
         """Hausgeld Soll/Ist/Saldo of one owner over a period (§2.2/§3.1).
 
@@ -436,7 +439,7 @@ class PaymentService:
                     advance_lines, owner_profile_id, period_start, period_end
                 )
 
-        payments = await self._repo.list_for_owner(owner_profile_id)
+        payments = await self._repo.list_for_owner(owner_profile_id, property_id=property_id)
         scoped = self._scope_payments_to_period(payments, period_start, period_end)
         return account_statement(charges, [_to_payment_input(p) for p in scoped])
 

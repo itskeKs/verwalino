@@ -45,8 +45,8 @@ nötig. CSV, CAMT-XML und ZIP sind auswählbar, Fehler und die tatsächliche Anz
 neuer Umsätze werden angezeigt. READ_ONLY kann lesen, aber nicht importieren.
 Der lokale Browserablauf einschließlich zweitem Import mit null neuen Umsätzen
 ist mit `scripts/acceptance/t19_bank_import_browser.cjs` gegen `scripts/dev-local.sh`
-wiederholbar. Die reine Vorschlagsengine ist vorhanden; API-Zuordnung und
-Buchungsoberfläche folgen erst in T21–T22.
+wiederholbar. Vorschlagsengine und API-Zuordnung sind vorhanden;
+die Buchungsoberfläche folgt in T22.
 `GET /api/bank-accounts/{id}/transactions` liefert die Liste mit optionalem
 `status`, `offset`, `limit` (Vorgabe 50, höchstens 100) und `next_offset`.
 
@@ -100,8 +100,22 @@ Die reine Zuordnungsvorschlagsengine verwendet die bestehenden offenen
 Miet-/Eigentümerkonto-Posten. Warmmiete wird in Kaltmiete/NK aufgeteilt, bekannte
 fremde IBANs verhindern einen Treffer. Konfidenz und Prüfhinweise bleiben sichtbar
 im Ergebnis; mehrdeutige Teilzahlungen erhalten keine erfundene Tilgungsfolge,
-sondern unaufgeteilte Beträge zur manuellen Prüfung. Es erfolgen noch keine
-Buchungen; die API-/Oberflächenanbindung folgt in T21/T22.
+sondern unaufgeteilte Beträge zur manuellen Prüfung. Die Engine selbst bucht nicht.
+
+`GET /api/bank-transactions` liefert kontoberechtigte Umsätze mit Vorschlägen,
+Status standardmäßig `NEU`, optional `bank_account_id`, `offset`, `limit`
+(50/maximal 100), als `{items,next_offset}`. Vorschläge nutzen tatsächliches
+Soll/Ist; Hausgeld nur aus einem passenden finalisierten Wirtschaftsplan,
+Eigentümerzahlungen anderer Objekte werden nicht eingerechnet.
+`POST /api/bank-transactions/{id}/assign` nimmt `{lines:[...]}` mit Zahlungsart,
+positivem centgenauem Betrag, Jahr/Monat und Mietvertrag oder Eigentümer.
+Die Summe muss den gesamten Umsatz decken. Konto, Objekt, Richtung und
+Wertstellung stammen ausschließlich aus dem gesperrten Bankumsatz. Zahlungen
+werden atomar gebucht und verknüpft; Fehler rollen auch Audit und Status zurück.
+`POST /api/bank-transactions/{id}/ignore` ignoriert ohne Zahlung. Beide Übergänge
+gelten nur für `NEU`, Wiederholung/Konkurrenz liefert 409. Schreibrolle sowie bei
+gebundenen Konten `prepare` und zum Buchen `confirm` sind erforderlich; keine
+zusätzliche `approve`-Berechtigung. Die Bedienoberfläche dafür folgt in T22.
 
 Weiterführende Dokumentation:
 

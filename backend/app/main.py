@@ -16,7 +16,7 @@ from app.api import financial_input_coverage, accounting_scopes, access_preparat
 from app.api import settlements
 from app.api import economic_plans, weg_settlements
 from app.api import payments
-from app.api import bank_accounts
+from app.api import bank_accounts, bank_transactions
 from app.api import dunning
 from app.api import meetings
 from app.api import fristen, dsgvo
@@ -95,6 +95,7 @@ app.include_router(weg_settlements.router)
 
 # M6 Zahlungen, Mietkonto & offene Posten
 app.include_router(bank_accounts.router)
+app.include_router(bank_transactions.router)
 app.include_router(payments.router)
 
 # M7 Mahnwesen

@@ -82,13 +82,17 @@ class PaymentRepository(TenantRepository[Payment]):
         result = await self._session.execute(stmt)
         return result.scalars().all()
 
-    async def list_for_owner(self, owner_profile_id: uuid.UUID) -> Sequence[Payment]:
+    async def list_for_owner(
+        self, owner_profile_id: uuid.UUID, *, property_id: uuid.UUID | None = None,
+    ) -> Sequence[Payment]:
         await self.require_computation_context(owner_id=owner_profile_id)
         stmt = (
             self._base_query()
             .where(Payment.owner_profile_id == owner_profile_id)
             .order_by(Payment.value_date, Payment.created_at)
         )
+        if property_id is not None:
+            stmt = stmt.where(Payment.property_id == property_id)
         result = await self._session.execute(stmt)
         return result.scalars().all()
 

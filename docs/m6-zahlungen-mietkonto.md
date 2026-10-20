@@ -309,14 +309,15 @@ alte Freigabe; Rückmeldungen nennen auch null neue Umsätze. Der echte lokale
 T19-Browserlauf prüft CSV, Reload, wiederholten Import sowie dieselben Buchungen
 als CAMT-XML/ZIP ohne Duplikate. Kontobezogene Liste über
 `GET /api/bank-accounts/{id}/transactions`, paginiert (50, maximal 100 Zeilen).
-API-Zuordnung und gebuchte Zahlungen bleiben T21–T22; diese sind noch nicht freigegeben.
+Der Import selbst bucht nicht; die separate API-Zuordnung beschreibt §6.10,
+ihre Bedienoberfläche folgt in T22.
 
 ### 6.9 Zuordnungsvorschläge (Phase 2, T20)
 
 `suggest_matches` arbeitet rein auf einem Bankumsatz und bereits aggregierten
 `OpenItem`-Werten aus `account_statement` (Soll aus Mietvertrag/Wirtschaftsplan,
 abzüglich gebuchtem Ist). Sie lädt keine Daten und schreibt keine Zahlungen.
-Der spätere Service muss die Ziele auf Organisation, Konto und Objekt begrenzen.
+Der Zuordnungsservice begrenzt die Ziele auf Organisation, Konto und Objekt.
 Bekannte abweichende IBAN verhindert einen Treffer; Namen werden nur anhand
 normalisierter vollständiger Wörter verglichen, nicht als unscharfe Teilzeichenfolge.
 Ein expliziter Monat im Zweck ist maßgeblich. Der Wertstellungsmonat ist nur ein
@@ -332,7 +333,30 @@ Aufteilung** für diesen Fall. Mehrere passende Ziele, abweichender Name oder
 unbekannter Monat senken die Konfidenz bzw. verlangen Prüfung. Kaution, Storno,
 Rückbuchung, gemischter Miet-/Hausgeldzweck, unbekannte Identität und Überzahlung
 werden nicht als sichere reguläre Soll-Zuordnung umgedeutet; manuell bleiben sie
-bearbeitbar. API-/UI-Integration und erneute Validierung sind erst T21/T22.
+bearbeitbar. Die API validiert erneut (§6.10); die Oberfläche folgt in T22.
+
+### 6.10 Atomare Umsatzzuordnung (Phase 2, T21)
+
+`GET /api/bank-transactions` liefert paginierte Umsätze mit echten Vorschlägen
+(Statusvorgabe `NEU`, Kontofilter, Limit 50/maximal 100). Auch ohne Vorschläge
+bleiben die Konto-RLS und aktuelle Kreisfreigaben maßgeblich. Jeder Listeneintrag
+verwendet seinen eigenen Berechnungskontext; Hausgeld nur aus dem passenden
+finalisierten, nicht supersedierten Wirtschaftsplan. Der Eigentümer-Istfilter
+grenzt zusätzlich das Bankobjekt ab, auch wenn die Person mehrere Objekte besitzt.
+
+`POST /{id}/assign` validiert alle Zeilen vor der ersten Zahlung. Positive,
+centgenaue Decimalbeträge müssen zusammen `abs(bank_transaction.amount)` decken;
+Ziel, Zahlungsart und Periode werden geprüft. Konto, Objekt, Richtung und
+Wertstellung sind nicht clientsetzbar. Der vorhandene Zahlungsdienst erzeugt
+Entwürfe mit Banklink **vor** dem Buchen und setzt Audit-/Aufbewahrungsdaten.
+Der Bankumsatz bleibt bis zum Transaktionsende gesperrt. Erst nach allen
+Buchungen wird er `ZUGEORDNET`; jeder Fehler rollt Zahlungen, Audit und Status
+vollständig zurück. `POST /{id}/ignore` setzt ohne Zahlung `IGNORIERT`.
+Nur `NEU` ist bearbeitbar; parallele oder wiederholte Bearbeitung liefert 409.
+Fremde/unsichtbare IDs liefern 404, READ_ONLY 403, fehlende Anmeldung 401,
+ungültige Inhalte 422. Bei Kontoscope gelten vorhandene `prepare`- und
+`confirm`-Rechte, nicht die Wirtschaftsplan-`approve`-Berechtigung. Keine Änderung
+an gebuchten Historien, finalisierten Plänen oder bestehenden Scope-Regeln.
 
 ## 7. Synthetische Golden-Tests (objektive M6-Messlatte)
 

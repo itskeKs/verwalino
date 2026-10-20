@@ -9,6 +9,9 @@ from typing import Sequence
 from sqlalchemy import select, and_, or_
 
 from app.models.lease_agreement import LeaseAgreement
+from app.models.unit import Unit
+from app.models.person import Person
+from app.models.tenant_profile import TenantProfile
 from app.repositories.base import TenantRepository
 
 
@@ -69,3 +72,18 @@ class LeaseAgreementRepository(TenantRepository[LeaseAgreement]):
             SettlementRun.status == "finalized",
         ).limit(1)
         return await self._session.scalar(stmt) is not None
+
+    async def matching_targets(self, property_id, period_start, period_end):
+        statement = select(LeaseAgreement, Person).join(Unit, and_(
+            Unit.id == LeaseAgreement.unit_id, Unit.organization_id == self._org_id,
+        )).join(TenantProfile, and_(
+            TenantProfile.id == LeaseAgreement.tenant_profile_id,
+            TenantProfile.organization_id == self._org_id,
+        )).join(Person, and_(
+            Person.id == TenantProfile.person_id, Person.organization_id == self._org_id,
+        )).where(
+            LeaseAgreement.organization_id == self._org_id, Unit.property_id == property_id,
+            LeaseAgreement.valid_from <= period_end,
+            or_(LeaseAgreement.valid_to.is_(None), LeaseAgreement.valid_to > period_start),
+        ).order_by(LeaseAgreement.id)
+        return (await self._session.execute(statement)).all()

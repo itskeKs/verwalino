@@ -9,14 +9,30 @@ from __future__ import annotations
 import uuid
 from typing import Sequence
 
+from sqlalchemy import and_
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models.bank_transaction import BankTransaction
+from app.models.bank_account import BankAccount
 from app.repositories.base import TenantRepository
 
 
 class BankTransactionRepository(TenantRepository[BankTransaction]):
     model = BankTransaction
+
+    async def list_page(self, *, bank_account_id=None, status=None, offset=0, limit=50):
+        statement = self._base_query().join(BankAccount, and_(
+            BankAccount.id == BankTransaction.bank_account_id,
+            BankAccount.organization_id == self._org_id,
+        ))
+        if bank_account_id is not None:
+            statement = statement.where(BankTransaction.bank_account_id == bank_account_id)
+        if status is not None:
+            statement = statement.where(BankTransaction.status == status)
+        statement = statement.order_by(
+            BankTransaction.booking_date.desc(), BankTransaction.id.desc(),
+        ).offset(offset).limit(limit + 1)
+        return (await self._session.scalars(statement)).all()
 
     async def list_by_account(
         self,

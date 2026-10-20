@@ -73,6 +73,7 @@ class ReverseRequest(BaseModel):
 
 
 class PaymentOut(BaseModel):
+    bank_transaction_id: str | None = None
     id: str
     organization_id: str
     bank_account_id: str
@@ -123,6 +124,7 @@ class MietkontoOut(BaseModel):
 def _to_out(p: Payment) -> PaymentOut:
     return PaymentOut(
         id=str(p.id),
+        bank_transaction_id=str(p.bank_transaction_id) if p.bank_transaction_id else None,
         organization_id=str(p.organization_id),
         bank_account_id=str(p.bank_account_id),
         property_id=str(p.property_id),

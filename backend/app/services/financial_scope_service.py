@@ -1,4 +1,6 @@
 """Exact calculation context; visibility alone must never define financial totals."""
+from contextlib import asynccontextmanager
+
 from fastapi import HTTPException
 from sqlalchemy import select, text
 
@@ -11,6 +13,20 @@ from app.services.authorization_service import AuthorizationService
 class FinancialScopeService:
     def __init__(self, session, org_id, user_id):
         self.session, self.org_id, self.user_id = session, org_id, user_id
+
+    @asynccontextmanager
+    async def using(self, subject, *, capability=ScopeCapability.READ, computation=False):
+        """Temporarily select a source context for an aggregate/list item.
+
+        On failure the ambient request rolls back; do not issue further SQL in
+        a possibly aborted transaction. Successful reads restore their context.
+        """
+        previous = await self.session.scalar(text(
+            "SELECT COALESCE(current_setting('app.current_scope_id',true),'')"))
+        scope_id = await self.enter(subject, capability=capability, computation=computation)
+        yield scope_id
+        await self.session.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
+            {'scope': previous})
 
     async def lock_inputs(self):
         # Stable order: scope ACL, financial sources, then financial row locks.
