@@ -8,6 +8,11 @@ import { AuthCtx } from "../auth/useAuth";
 import type { LeaseRecord, OwnershipRecord } from "../api/types";
 import { api } from "../api/client";
 
+vi.mock("../components/MeterPanel", () => ({
+  MeterPanel: ({ propertyId, unitId, canWrite }: { propertyId: string; unitId?: string; canWrite: boolean }) =>
+    <section aria-label="Zähler" data-property={propertyId} data-unit={unitId} data-can-write={String(canWrite)} />,
+}));
+
 vi.mock("../api/endpoints", async (importOriginal) => ({
   ...await importOriginal<typeof endpoints>(),
   getUnit: vi.fn(), getProperty: vi.fn(), listOwnership: vi.fn(), listLeases: vi.fn(),
@@ -61,6 +66,14 @@ beforeEach(() => {
   vi.mocked(endpoints.listTenantProfiles).mockResolvedValue([]);
   vi.mocked(endpoints.listPersons).mockResolvedValue([]);
   vi.mocked(endpoints.patchLease).mockResolvedValue({} as never);
+});
+
+it.each([['OWNER_ADMIN', true], ['CLERK', true], ['READ_ONLY', false], ['UNKNOWN', false]] as const)("binds the meter panel to the loaded unit and role %s", async (role, canWrite) => {
+  show(role);
+  const panel = await screen.findByRole("region", { name: "Zähler" });
+  expect(panel).toHaveAttribute("data-property", "property");
+  expect(panel).toHaveAttribute("data-unit", "unit");
+  expect(panel).toHaveAttribute("data-can-write", String(canWrite));
 });
 
 it("ends an existing lease without resending unchanged monetary fields", async () => {

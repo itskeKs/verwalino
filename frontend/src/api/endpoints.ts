@@ -3,6 +3,7 @@
  */
 
 import { api, uploadFormData } from "./client";
+import type { Meter, MeterCreate, MeterPatch, MeterReading, MeterReadingCreate } from "./types";
 import type { SourceClassificationCommand, SourceClassificationReceipt, SourceAdmissionReviewCommand, SourceAdmissionReviewReceipt } from "./types";
 import type {
   DeadlineItem,
@@ -1096,4 +1097,29 @@ export function createUser(
 // T09: Paid advances derived
 export function derivePaidAdvances(runId: string): Promise<Array<{ owner_profile_id: string; paid_total: string }>> {
   return api.post<Array<{ owner_profile_id: string; paid_total: string }>>(`/api/weg-settlements/${runId}/paid-advances-derived`);
+}
+
+export function listMeters(propertyId: string, unitId?: string): Promise<Meter[]> {
+  const query = new URLSearchParams({ property_id: propertyId });
+  if (unitId) query.set("unit_id", unitId);
+  return api.get<Meter[]>(`/api/meters?${query}`);
+}
+export function createMeter(body: MeterCreate): Promise<Meter> {
+  return api.post<Meter>("/api/meters", {
+    property_id: body.property_id, unit_id: body.unit_id ?? null,
+    meter_number: body.meter_number, meter_type: body.meter_type, location: body.location ?? "",
+  });
+}
+export function updateMeter(id: string, body: MeterPatch): Promise<Meter> {
+  return api.patch<Meter>(`/api/meters/${encodeURIComponent(id)}`, {
+    meter_number: body.meter_number, meter_type: body.meter_type, location: body.location,
+  });
+}
+export function listMeterReadings(id: string): Promise<MeterReading[]> {
+  return api.get<MeterReading[]>(`/api/meters/${encodeURIComponent(id)}/readings`);
+}
+export function createMeterReading(id: string, body: MeterReadingCreate): Promise<MeterReading> {
+  return api.post<MeterReading>(`/api/meters/${encodeURIComponent(id)}/readings`, {
+    reading_date: body.reading_date, value: body.value, period: body.period ?? null,
+  });
 }

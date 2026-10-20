@@ -234,7 +234,17 @@ Bestehende Ablesungen werden nicht überschrieben, gleiche Ablesetage sind erlau
 Org-Trennung und Objekt-Masterrechte gelten für Listen, Einzelabruf und Schreiben;
 Leserecht allein erlaubt keine Änderung, PAUSED erhält nur die zulässigen Lesewege.
 Schreibwege verwenden Live-Rollenprüfung, Finanzsperre und Commit vor HTTP-Erfolg.
-Die Oberfläche und die Verbrauchsableitung folgen separat in T30/T31.
+Das Zählerpanel in Objekt und Einheit (T30) erlaubt Anlegen, Korrigieren von
+Beschreibungsfeldern, Erfassen eines Standes und chronologischen Verlauf.
+Einheitszähler bleiben fest zugeordnet; Objektlisten umfassen auch deren Zähler.
+Deutsche Dezimaleingaben werden exakt normalisiert. „Verbrauch“ zeigt ausschließlich
+die Differenz der letzten zwei eindeutigen Ablesetage mit beiden Daten; bei Rückgang
+oder mehrdeutigen Ablesetagen ist eine Prüfung statt eines erfundenen Verbrauchs nötig.
+READ_ONLY sieht nur den Verlauf. Fehlversuche behalten Eingaben, paralleles Speichern
+ist gesperrt und verspätete Antworten wechseln nicht den aktuellen Kontext.
+`scripts/acceptance/t30_meters_browser.cjs` prüft UI-Anlage und Reload mit
+100,0000 → 250,1250 = 150,1250 sowie einem separaten Einheitszähler.
+Die periodengenaue Abrechnungsvorbelegung folgt separat in T31.
 
 Weiterführende Dokumentation:
 

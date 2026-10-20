@@ -9,6 +9,7 @@ import { getProperty, getPropertyKnowledge, listUnits, createUnit, updateUnit, c
 import type { Property, PropertyKnowledgeOverview, Unit, UnitCreate, UnitUpdate, UsageType } from "../api/types";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/useAuth";
+import { MeterPanel } from "../components/MeterPanel";
 
 const USAGE_TYPES: { value: UsageType; label: string }[] = [
   { value: "WOHNUNG", label: "Wohnung" },
@@ -236,6 +237,8 @@ export function PropertyDetailPage() {
         <p>{knowledge?.documents.length ?? 0} Dokumente · {Object.values(knowledge?.rules_by_topic ?? {}).flat().length} Regeln</p>
         <Link className="btn" to={`/objekte/${propertyId}/wissen`}>Dokumente &amp; Wissen öffnen</Link>
       </section>
+
+      <MeterPanel key={property.id} propertyId={property.id} canWrite={isWrite} />
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <h2 style={{ margin: 0 }}>Einheiten</h2>

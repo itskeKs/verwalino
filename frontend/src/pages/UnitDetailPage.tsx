@@ -37,6 +37,7 @@ import { ApiError } from "../api/client";
 import { useAuth } from "../auth/useAuth";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
+import { MeterPanel } from "../components/MeterPanel";
 
 function formatLegalMea(mea: string | null, property: Property): string {
   if (!mea) return "-";
@@ -260,6 +261,8 @@ export function UnitDetailPage() {
       </div>
 
       {/* Ownership History */}
+      <MeterPanel key={unit.id} propertyId={property.id} unitId={unit.id} canWrite={canWriteOwnership} />
+
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <h2 style={{ margin: 0 }}>Eigentuemer-Historie</h2>
         {canWriteOwnership && <button className="btn btn--primary" disabled={savingOwner} onClick={() => {

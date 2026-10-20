@@ -1467,3 +1467,37 @@ export interface AccessPreparation {
     mandate_originals_without_scope: number;
   };
 }
+
+export interface Meter {
+  id: string;
+  organization_id: string;
+  property_id: string;
+  unit_id: string | null;
+  meter_number: string;
+  meter_type: string;
+  location: string;
+}
+export interface MeterCreate {
+  property_id: string;
+  unit_id?: string | null;
+  meter_number: string;
+  meter_type: string;
+  location?: string;
+}
+export interface MeterPatch {
+  meter_number?: string;
+  meter_type?: string;
+  location?: string;
+}
+export interface MeterReading {
+  id: string;
+  meter_id: string;
+  reading_date: string;
+  value: string;
+  period: string | null;
+}
+export interface MeterReadingCreate {
+  reading_date: string;
+  value: string;
+  period?: string | null;
+}
