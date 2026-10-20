@@ -47,6 +47,7 @@ import { WegSettlementDetailPage } from "./pages/WegSettlementDetailPage";
 import { AssetReportsPage } from "./pages/AssetReportsPage";
 import { AssetReportDetailPage } from "./pages/AssetReportDetailPage";
 import { BankAccountsPage } from "./pages/BankAccountsPage";
+import { BankTransactionsPage } from "./pages/BankTransactionsPage";
 import { PaymentsPage } from "./pages/PaymentsPage";
 import { PaymentDetailPage } from "./pages/PaymentDetailPage";
 import { MietkontoPage } from "./pages/MietkontoPage";
@@ -112,6 +113,7 @@ export function AppRoutes() {
         <Route path="/vermoegensberichte" element={<AssetReportsPage />} />
         <Route path="/vermoegensberichte/:runId" element={<AssetReportDetailPage />} />
         <Route path="/bankkonten" element={<BankAccountsPage />} />
+        <Route path="/bankkonten/:id/umsaetze" element={<BankTransactionsPage />} />
         <Route path="/zahlungen" element={<PaymentsPage />} />
         <Route path="/zahlungen/:paymentId" element={<PaymentDetailPage />} />
         <Route path="/mietkonto" element={<MietkontoPage />} />

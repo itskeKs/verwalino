@@ -285,7 +285,7 @@ Die DERIVED-Summe muss bei Storni **netto** korrekt sein:
 
 ---
 
-### 6.8 Bankumsätze und Dateiimport (Phase 2, T15–T18)
+### 6.8 Bankumsätze und Dateiimport (Phase 2, T15–T19)
 
 Importierte `bank_transaction`-Zeilen sind zunächst **NEU**, keine gebuchten
 `payment`-Zeilen und deshalb noch kein Ist im Miet-/Eigentümerkonto. Sie tragen
@@ -303,8 +303,13 @@ konkurrierenden Importen. Fremde Konten liefern 404; READ_ONLY darf nicht import
 Bekannte Quell-IBANs müssen mit einer hinterlegten Ziel-IBAN übereinstimmen.
 Parser-/Formatfehler liefern 422, übergroße Uploads 413, jeweils ohne Teilübernahme.
 Formate, Limits und Grenzen bei fehlenden bankseitigen Transaktions-IDs: README.
-Die Importoberfläche und die Zuordnung zu gebuchten Zahlungen folgen erst in
-T19–T22; Parser-/API-Tests sind kein Nachweis dieser späteren Browserabläufe.
+Die Oberfläche `/bankkonten/{id}/umsaetze` bietet Statusfilter, Pagination und
+für Schreibrollen Datei → Vorschau → Übernehmen. Ein Dateiwechsel verwirft die
+alte Freigabe; Rückmeldungen nennen auch null neue Umsätze. Der echte lokale
+T19-Browserlauf prüft CSV, Reload, wiederholten Import sowie dieselben Buchungen
+als CAMT-XML/ZIP ohne Duplikate. Kontobezogene Liste über
+`GET /api/bank-accounts/{id}/transactions`, paginiert (50, maximal 100 Zeilen).
+Zuordnung und gebuchte Zahlungen bleiben T20–T22; diese sind noch nicht freigegeben.
 
 ## 7. Synthetische Golden-Tests (objektive M6-Messlatte)
 

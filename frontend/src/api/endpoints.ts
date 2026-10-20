@@ -54,6 +54,9 @@ import type {
   AssetReportComputeRequest,
   BankAccount,
   BankAccountCreate,
+  BankTransactionPage,
+  BankTransactionStatus,
+  BankImportResult,
   Payment,
   PaymentCreate,
   OpenItem,
@@ -719,6 +722,18 @@ export function createBankAccount(body: BankAccountCreate): Promise<BankAccount>
   return api.post<BankAccount>("/api/bank-accounts", body);
 }
 
+export function listBankTransactions(id: string, status?: BankTransactionStatus, offset = 0): Promise<BankTransactionPage> {
+  const params = new URLSearchParams({ offset: String(offset), limit: "50" });
+  if (status) params.set("status", status);
+  return api.get<BankTransactionPage>(`/api/bank-accounts/${encodeURIComponent(id)}/transactions?${params}`);
+}
+
+export function importBankTransactions(id: string, file: File, dryRun = true): Promise<BankImportResult> {
+  const data = new FormData();
+  data.append("file", file);
+  return uploadFormData<BankImportResult>(`/api/bank-accounts/${encodeURIComponent(id)}/imports?dry_run=${dryRun}`, data);
+}
+
 // --- M6: Payments ---
 
 export function listPayments(params?: {
@@ -1009,11 +1024,11 @@ export function createUser(
   password: string,
   displayName: string,
   role: string,
-): Promise<any> {
-  return api.post<any>("/api/users", { email, password, display_name: displayName, role });
+): Promise<unknown> {
+  return api.post<unknown>("/api/users", { email, password, display_name: displayName, role });
 }
 
 // T09: Paid advances derived
 export function derivePaidAdvances(runId: string): Promise<Array<{ owner_profile_id: string; paid_total: string }>> {
-  return api.post<any[]>(`/api/weg-settlements/${runId}/paid-advances-derived`);
+  return api.post<Array<{ owner_profile_id: string; paid_total: string }>>(`/api/weg-settlements/${runId}/paid-advances-derived`);
 }

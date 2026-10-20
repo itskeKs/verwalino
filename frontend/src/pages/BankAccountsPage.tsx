@@ -6,7 +6,8 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import { useAuth } from "../auth/useAuth";
 import {
   listBankAccounts,
   createBankAccount,
@@ -46,6 +47,8 @@ function makeEmptyForm(): BankAccountCreate {
 }
 
 export function BankAccountsPage() {
+  const { session } = useAuth();
+  const canImport = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
   const [searchParams, setSearchParams] = useSearchParams();
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -242,6 +245,7 @@ export function BankAccountsPage() {
                 <th>Kontotyp</th>
                 <th>IBAN</th>
                 <th>Bank</th>
+                <th>Aktionen</th>
               </tr>
             </thead>
             <tbody>
@@ -258,6 +262,10 @@ export function BankAccountsPage() {
                     {a.iban ?? "-"}
                   </td>
                   <td>{a.bank_name ?? "-"}</td>
+                  <td>
+                    <Link className="btn" to={`/bankkonten/${a.id}/umsaetze`}>Umsätze</Link>
+                    {canImport && <Link className="btn" to={`/bankkonten/${a.id}/umsaetze?import=1`}>Kontoauszug importieren</Link>}
+                  </td>
                 </tr>
               ))}
             </tbody>

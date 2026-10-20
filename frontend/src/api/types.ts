@@ -880,6 +880,41 @@ export interface BankAccountCreate {
   bank_name?: string | null;
 }
 
+export type BankTransactionStatus = "NEU" | "ZUGEORDNET" | "IGNORIERT";
+
+export interface BankTransaction {
+  id: string;
+  bank_account_id: string;
+  booking_date: string;
+  value_date: string;
+  amount: string;
+  counterparty_name: string | null;
+  counterparty_iban: string | null;
+  purpose: string | null;
+  status: BankTransactionStatus;
+}
+
+export interface BankTransactionPage {
+  items: BankTransaction[];
+  next_offset: number | null;
+}
+
+export interface BankImportResult {
+  count: number;
+  new_count: number;
+  duplicate_count: number;
+  imported_count: number;
+  total_amount: string;
+  new_total_amount: string;
+  date_from: string | null;
+  date_to: string | null;
+  transactions: (Omit<BankTransaction, "id" | "bank_account_id" | "status"> & {
+    import_hash: string;
+    is_duplicate: boolean;
+  })[];
+  preview_truncated: boolean;
+}
+
 // --- M6 Payments ---
 
 export type PaymentDirection = "IN" | "OUT";

@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import { AuthCtx } from "../auth/useAuth";
 import { BankAccountsPage } from "./BankAccountsPage";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -16,7 +17,7 @@ it("clears incompatible scope when switching between deposit and reserve account
     }
     throw new Error(`Unexpected URL: ${input}`);
   }));
-  render(<MemoryRouter><BankAccountsPage /></MemoryRouter>);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role: "OWNER_ADMIN" }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
   fireEvent.click(screen.getByRole("button", { name: "+ Neues Bankkonto" }));
   await screen.findAllByRole("option", { name: /Testhaus/ });
   fireEvent.change(screen.getByRole("combobox", { name: "Objekt *" }), { target: { value: "property" } });
@@ -31,4 +32,19 @@ it("clears incompatible scope when switching between deposit and reserve account
   await screen.findByRole("option", { name: /Bereich WEG/ });
   expect(screen.getByRole("combobox", { name: "Abrechnungskreis" })).toHaveValue("");
   expect(screen.queryByRole("option", { name: /Bereich MIET/ })).toBeNull();
+});
+
+it.each(["OWNER_ADMIN", "CLERK", "READ_ONLY"])("verlinkt Kontoumsätze und schützt den Importlink für %s", async role => {
+  vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+    if (input.startsWith("/api/bank-accounts")) return json([{ id: "konto", label: "Hauskonto", account_type: "LAUFEND", property_name: "Testhaus" }]);
+    if (input.startsWith("/api/properties/page")) return json({ items: [], next_cursor: null });
+    throw new Error(`Unexpected URL: ${input}`);
+  }));
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
+  expect(await screen.findByRole("link", { name: "Umsätze" })).toHaveAttribute("href", "/bankkonten/konto/umsaetze");
+  if (role === "READ_ONLY") {
+    expect(screen.queryByRole("link", { name: "Kontoauszug importieren" })).not.toBeInTheDocument();
+  } else {
+    expect(screen.getByRole("link", { name: "Kontoauszug importieren" })).toHaveAttribute("href", "/bankkonten/konto/umsaetze?import=1");
+  }
 });

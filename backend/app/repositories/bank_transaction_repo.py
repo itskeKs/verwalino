@@ -34,6 +34,17 @@ class BankTransactionRepository(TenantRepository[BankTransaction]):
         result = await self._session.execute(stmt)
         return result.scalars().all()
 
+    async def list_page_by_account(
+        self, bank_account_id: uuid.UUID, *, status: str | None, offset: int, limit: int
+    ) -> Sequence[BankTransaction]:
+        statement = self._base_query().where(BankTransaction.bank_account_id == bank_account_id)
+        if status is not None:
+            statement = statement.where(BankTransaction.status == status)
+        statement = statement.order_by(
+            BankTransaction.booking_date.desc(), BankTransaction.id.desc(),
+        ).offset(offset).limit(limit + 1)
+        return (await self._session.scalars(statement)).all()
+
     async def list_by_import_hash(
         self, bank_account_id: uuid.UUID, import_hash: str
     ) -> BankTransaction | None:

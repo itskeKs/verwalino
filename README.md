@@ -29,15 +29,25 @@ anmelden. Der lokale Browserablauf ist mit
 `scripts/acceptance/t14_password_browser.cjs` gegen `scripts/dev-local.sh`
 wiederholbar (vorhandenes Playwright über `HV_PLAYWRIGHT_PACKAGE`, Chrome).
 
-## Bankumsätze (Phase 2, Datenmodell)
+## Bankumsätze und Dateiimport (Phase 2)
 
 Bankumsätze werden getrennt von gebuchten Zahlungen geführt: Beträge sind
 signierte `Decimal`-Werte (Gutschrift positiv, Lastschrift negativ), Importzeilen
 sind je Konto über ihren Importhash eindeutig. RLS und Composite-Fremdschlüssel
 binden Umsatz, Konto und optionale Zahlungs-Verknüpfung an dieselbe Organisation
 und dasselbe Konto. Nach dem Buchen ist auch diese Verknüpfung unveränderlich;
-verknüpfte Umsätze sind nicht löschbar. Import-API und Oberfläche folgen in den
-nächsten Aufgaben.
+verknüpfte Umsätze sind nicht löschbar.
+
+Unter „Bankkonten“ öffnet „Umsätze“ die kontobezogene Liste mit Statusfilter
+und Pagination. „Kontoauszug importieren“ führt für Schreibrollen über Datei,
+Vorschau und ausdrückliches „Übernehmen“; nach Dateiwechsel ist eine neue Vorschau
+nötig. CSV, CAMT-XML und ZIP sind auswählbar, Fehler und die tatsächliche Anzahl
+neuer Umsätze werden angezeigt. READ_ONLY kann lesen, aber nicht importieren.
+Der lokale Browserablauf einschließlich zweitem Import mit null neuen Umsätzen
+ist mit `scripts/acceptance/t19_bank_import_browser.cjs` gegen `scripts/dev-local.sh`
+wiederholbar. Die Zuordnung zu gebuchten Zahlungen folgt erst in T20–T22.
+`GET /api/bank-accounts/{id}/transactions` liefert die Liste mit optionalem
+`status`, `offset`, `limit` (Vorgabe 50, höchstens 100) und `next_offset`.
 
 Der reine CSV-Parser unterstützt Semikolon-Dateien in UTF-8 (auch BOM) und CP1252
 mit deutschen Datums-/Dezimalformaten. Pflichtspalten sind

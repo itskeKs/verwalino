@@ -222,6 +222,54 @@ async def test_missing_account_not_found(client_a_admin):
 
 
 @pytest.mark.anyio
+async def test_transaction_list_pagination_preserves_all_rows(client_a_admin, import_accounts):
+    account = import_accounts["a"]
+    assert (await upload(client_a_admin, account, dry_run=False)).status_code == 200
+    items = []
+    offset = 0
+    while offset is not None:
+        response = await client_a_admin.get(
+            f"/api/bank-accounts/{account}/transactions", params={"limit": 1, "offset": offset},
+        )
+        assert response.status_code == 200, response.text
+        page = response.json()
+        assert len(page["items"]) == 1
+        items.extend(page["items"])
+        offset = page["next_offset"]
+        assert len(items) <= 3
+    assert [row["amount"] for row in items] == ["-200.01", "150.00", "700.00"]
+    assert len({row["id"] for row in items}) == 3
+    assert all(row["bank_account_id"] == account and row["status"] == "NEU" for row in items)
+
+
+@pytest.mark.anyio
+async def test_transaction_list_status_filter(client_a_admin, import_accounts):
+    account = import_accounts["a"]
+    assert (await upload(client_a_admin, account, dry_run=False)).status_code == 200
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute("UPDATE bank_transaction SET status='IGNORIERT' WHERE bank_account_id=%s AND amount=-200.01", (account,))
+    for status, amounts in [("NEU", ["150.00", "700.00"]), ("IGNORIERT", ["-200.01"]), ("ZUGEORDNET", [])]:
+        response = await client_a_admin.get(f"/api/bank-accounts/{account}/transactions", params={"status": status})
+        assert response.status_code == 200, response.text
+        assert [row["amount"] for row in response.json()["items"]] == amounts
+        assert response.json()["next_offset"] is None
+
+
+@pytest.mark.anyio
+async def test_transaction_list_read_permissions(client_a_admin, client_a_readonly, client_unauth, import_accounts):
+    for client, account, expected in [(client_a_admin, "b", 404), (client_a_readonly, "a", 200), (client_unauth, "a", 401)]:
+        response = await client.get(f"/api/bank-accounts/{import_accounts[account]}/transactions")
+        assert response.status_code == expected, response.text
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("params", [{"status": "INVALID"}, {"limit": 101}, {"offset": -1}])
+async def test_transaction_list_rejects_invalid_filters(client_a_admin, import_accounts, params):
+    response = await client_a_admin.get(f"/api/bank-accounts/{import_accounts['a']}/transactions", params=params)
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.anyio
 async def test_raw_upload_limit_protects_new_import_path():
     from app.core.uploads import RequestBodyLimitMiddleware
     assert RequestBodyLimitMiddleware._is_upload_scope({
