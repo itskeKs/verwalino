@@ -220,6 +220,22 @@ Finalisierte Snapshots, gebuchte Zahlungen und tatsächliches Ist bleiben unver�
 `scripts/acceptance/t28_advance_proposal_browser.cjs` prüft 1.200 EUR / 12 = 100 EUR
 und das Mietkonto 2027 nach ausdrücklicher Übernahme: 700/100 statt 700/150.
 
+## Zähler-API (Phase 2)
+
+`GET/POST /api/meters` verwaltet Objektzähler und optional einer Einheit
+zugeordnete Zähler. Listen können nach `property_id` und `unit_id` gefiltert
+werden; `GET/PATCH /api/meters/{id}` liest beziehungsweise korrigiert nur
+Nummer, Art und Standort. Objekt und Einheit werden nicht nachträglich umgehängt.
+`GET/POST /api/meters/{id}/readings` liefert den chronologischen Verlauf und
+fügt einen Stand aus `reading_date`, `value` und optional `period` hinzu.
+Messwerte sind nichtnegative, exakte Dezimalstrings mit höchstens zehn Ganzzahl-
+und vier Nachkommastellen; Antworten enthalten immer vier Nachkommastellen.
+Bestehende Ablesungen werden nicht überschrieben, gleiche Ablesetage sind erlaubt.
+Org-Trennung und Objekt-Masterrechte gelten für Listen, Einzelabruf und Schreiben;
+Leserecht allein erlaubt keine Änderung, PAUSED erhält nur die zulässigen Lesewege.
+Schreibwege verwenden Live-Rollenprüfung, Finanzsperre und Commit vor HTTP-Erfolg.
+Die Oberfläche und die Verbrauchsableitung folgen separat in T30/T31.
+
 Weiterführende Dokumentation:
 
 - [Deployment](DEPLOY.md)

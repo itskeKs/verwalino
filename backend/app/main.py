@@ -24,6 +24,7 @@ from app.api import declaration_imports
 from app.api import property_documents
 from app.api import property_knowledge, property_data_domains, person_data_domains
 from app.api import property_source_admission_reviews,property_source_classifications
+from app.api import meters
 from app.core import health
 from app.core.static_files import resolve_spa_file
 from app.core.uploads import RequestBodyLimitMiddleware
@@ -57,6 +58,7 @@ app.include_router(mandates.router)
 # M1 Stammdaten
 app.include_router(properties.router)
 app.include_router(units.router)
+app.include_router(meters.router)
 app.include_router(persons.router)
 app.include_router(ownership.router)
 app.include_router(leases.router)
