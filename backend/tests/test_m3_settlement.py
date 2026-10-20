@@ -16,6 +16,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
+from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
 from tests.financial_coverage_helpers import attest_fixture
 from tests.test_invoice_extraction_worker import worker_tenant  # noqa: F401
 import pytest
@@ -1258,3 +1259,350 @@ async def test_batch_clerk_uses_exact_period_not_another_year(client_a_clerk, ba
     assert all(r["period_start"] == "2038-01-01" and r["period_end"] == "2038-12-31" for r in response.json()["created"])
     assert run_id not in response.text
     assert _batch_rows(batch_seed, [run_id]) == before
+
+@pytest.mark.asyncio
+async def test_advance_proposal_finalized_tenant_cost(client_a_admin, m3_seed):
+    run_id = await _create_run(client_a_admin, m3_seed, "lease_a", "600.00")
+    finalized = await client_a_admin.post(
+        f"/api/settlements/{run_id}/finalize", json=_extras_for_exit(m3_seed)
+    )
+    assert finalized.status_code == 200, finalized.text
+    response = await client_a_admin.get(f"/api/settlements/{run_id}/advance-proposal")
+    assert response.status_code == 200, response.text
+    proposal = response.json()
+    assert proposal["lease_agreement_id"] == m3_seed["lease_a"]
+    assert proposal["tenant_cost"] == finalized.json()["total_cost"]
+    assert proposal["months"] == "6"
+    from decimal import ROUND_HALF_UP
+    assert Decimal(proposal["monthly_amount"]) == (Decimal(proposal["tenant_cost"]) / 6).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+# T28 uses the same isolated live-API contract fixtures as T23.
+
+
+async def _proposal_run(api, world, db, *, cost="1200.00", start="2026-01-01", end="2026-12-31"):
+    await db.execute(text("""INSERT INTO cost_entry
+        (id,organization_id,property_id,cost_category_id,cost_category_plan_version,
+         invoice_date,service_period_from,service_period_to,gross_amount,tenant_distribution_key,
+         tenant_apportionable,status,source,confirmed_at,confirmed_by)
+        SELECT :id,:org,:property,id,1,:start,:start,:end,:cost,'WOHNFLAECHE',
+         'UMLAGEFAEHIG','confirmed','MANUAL',now(),:actor FROM cost_category
+        WHERE code='GRUNDSTEUER' AND plan_version=1"""),
+        {"id": uuid.uuid4(), "org": world["org"], "property": world["property"],
+         "actor": world["admin"], "start": date.fromisoformat(start),
+         "end": date.fromisoformat(end), "cost": Decimal(cost)})
+    await db.commit()
+    response = await api.post("/api/settlements", json={
+        "property_id": str(world["property"]), "lease_agreement_id": str(world["lease"]),
+        "period_start": start, "period_end": end, "advance_payments_total": "999.00",
+    })
+    assert response.status_code == 201, response.text
+    run_id = response.json()["id"]
+    await attest_fixture(api, "settlement", run_id,
+        {"advance_payments_total": "999.00", "advance_payments_source": "MANUAL"})
+    response = await api.post(f"/api/settlements/{run_id}/finalize")
+    assert response.status_code == 200, response.text
+    return run_id, response.json()
+
+
+def _proposal_snapshot(cost="1200.00", start="2026-01-01", end="2026-12-31", *, tenancy_start=None, tenancy_end=None):
+    from app.models.settlement_run import SettlementRun
+    lease = uuid.uuid4()
+    return SettlementRun(
+        lease_agreement_id=lease, total_cost=Decimal(cost),
+        period_start=date.fromisoformat(start), period_end=date.fromisoformat(end),
+        snapshot_payload={"run_type": "BK_MIETER", "period": {"start": start, "end": end},
+            "inputs": {"lease_periods": [{"lease_agreement_id": str(lease),
+                "from": tenancy_start or start, "to": tenancy_end}]},
+            "result": {"total_cost": cost, "balance": "-99999.00"}},
+    )
+
+
+@pytest.mark.parametrize("cost,start,end,tenancy_start,tenancy_end,months,amount", [
+    ("1200.00", "2026-01-01", "2026-12-31", None, None, Decimal(12), "100.00"),
+    ("720.00", "2026-01-01", "2026-12-31", None, "2026-06-30", Decimal(6), "120.00"),
+    ("80.00", "2026-01-01", "2026-01-31", "2026-01-16", None, Decimal(16)/31, "155.00"),
+    ("0.08", "2026-01-01", "2026-01-31", "2026-01-16", None, Decimal(16)/31, "0.16"),
+    ("29.00", "2024-02-01", "2024-02-29", "2024-02-16", None, Decimal(14)/29, "60.07"),
+    ("0.00", "2026-01-01", "2026-12-31", None, None, Decimal(12), "0.00"),
+    ("12.06", "2026-01-01", "2026-12-31", None, None, Decimal(12), "1.01"),
+    ("63.00", "2026-01-16", "2026-02-14", "2025-01-01", None, Decimal(63)/62, "62.00"),
+    ("0.17", "2024-01-01", "2024-02-05", None, None, Decimal(34)/29, "0.15"),
+])
+def test_proposal_frozen_calendar_month_basis(cost, start, end, tenancy_start, tenancy_end, months, amount):
+    from app.services.settlement_service import SettlementService
+    run = _proposal_snapshot(cost, start, end, tenancy_start=tenancy_start, tenancy_end=tenancy_end)
+    result = SettlementService._advance_proposal(run)
+    assert abs(Decimal(result["months"]) - months) < Decimal("1e-26")
+    assert result["monthly_amount"] == amount
+    assert result["tenant_cost"] == cost
+    assert result["period_start"] == date.fromisoformat(start)
+    assert result["period_end"] == date.fromisoformat(end)
+
+
+@pytest.mark.parametrize("problem", ["missing", "lease", "end", "negative", "nan", "infinity", "overflow", "mismatch", "period", "empty"])
+def test_proposal_invalid_frozen_basis_fails_closed(problem):
+    from fastapi import HTTPException
+    from app.services.settlement_service import SettlementService
+    run = _proposal_snapshot()
+    if problem == "missing":
+        run.snapshot_payload = {}
+    elif problem == "lease":
+        run.snapshot_payload["inputs"]["lease_periods"] = []
+    elif problem == "end":
+        del run.snapshot_payload["inputs"]["lease_periods"][0]["to"]
+    elif problem in {"negative", "nan", "infinity", "overflow"}:
+        value = {"negative": "-1", "nan": "NaN", "infinity": "Infinity", "overflow": "99999999999999"}[problem]
+        run.total_cost = Decimal(value)
+        run.snapshot_payload["result"]["total_cost"] = value
+    elif problem == "mismatch":
+        run.total_cost = Decimal("1")
+    elif problem == "period":
+        run.snapshot_payload["period"]["start"] = "2027-01-01"
+    else:
+        run.snapshot_payload["inputs"]["lease_periods"][0]["from"] = "2027-01-01"
+    with pytest.raises(HTTPException) as error:
+        SettlementService._advance_proposal(run)
+    assert error.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_proposal_accept_preserves_history_and_frozen_rows(rent_world, rent_db):
+    world = rent_world
+    async with api_client(world) as api:
+        bank = uuid.uuid4()
+        await rent_db.execute(text("""INSERT INTO bank_account
+            (id,organization_id,property_id,account_type,label)
+            VALUES (:id,:org,:property,'LAUFEND','T28 booked advances')"""), {**world, "id":bank})
+        await rent_db.commit()
+        response = await api.post("/api/payments", json={
+            "bank_account_id":str(bank), "direction":"IN", "amount":"150.00",
+            "value_date":"2026-03-05", "payment_type":"NK_VORAUSZAHLUNG",
+            "tenant_profile_id":str(world["tenant"]), "lease_agreement_id":str(world["lease"]),
+            "period_year":2026, "period_month":3,
+        })
+        assert response.status_code == 201, response.text
+        assert (await api.post(f"/api/payments/{response.json()['id']}/book")).status_code == 200
+        run_id, frozen = await _proposal_run(api, world, rent_db)
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        original = (await api.get(f"/api/leases/{world['lease']}")).json()
+        history = f"/api/leases/{world['lease']}/rent-changes"
+        for valid_from, base in [("2026-02-01", "750.00"), ("2026-10-01", "900.00")]:
+            result = await api.post(history, json={"valid_from": valid_from, "base_rent": base, "advance_payment": "160.00"})
+            assert result.status_code == 201, result.text
+        proposal = (await api.get(url)).json()
+        assert proposal == {"lease_agreement_id": str(world["lease"]), "tenant_cost": "1200.00",
+            "months": "12", "monthly_amount": "100.00", "period_start": "2026-01-01", "period_end": "2026-12-31"}
+        assert frozen["balance"] == "201.00"  # Never balance / months or paid advances.
+        before = (await rent_db.execute(text("SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id"), {"id":uuid.UUID(run_id)})).one()
+        payments = (await rent_db.execute(text("SELECT to_jsonb(p) FROM payment p WHERE lease_agreement_id=:lease ORDER BY id"), {"lease":world["lease"]})).all()
+        accepted = await api.post(url, json={"valid_from": "2026-05-01"})
+        assert accepted.status_code == 201, accepted.text
+        row = accepted.json()
+        assert row["base_rent"] == "750.00" and row["advance_payment"] == "100.00"
+        assert row["lease_agreement_id"] == str(world["lease"])
+        assert (await api.post(url, json={"valid_from": "2026-05-01"})).status_code == 409
+        assert (await api.post(url, json={"valid_from": "2026-02-01"})).status_code == 409
+        assert (await api.get(f"/api/leases/{world['lease']}")).json() == original
+        assert (await api.get(f"/api/settlements/{run_id}")).json() == frozen
+        assert (await rent_db.execute(text("SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id"), {"id":uuid.UUID(run_id)})).one() == before
+        assert (await rent_db.execute(text("SELECT to_jsonb(p) FROM payment p WHERE lease_agreement_id=:lease ORDER BY id"), {"lease":world["lease"]})).all() == payments
+        events = (await rent_db.execute(text("SELECT payload_diff FROM audit_event WHERE entity_id=:lease AND action='lease.rent_change_created'"), {"lease":world["lease"]})).scalars().all()
+        assert sum(event["rent_change_id"] == row["id"] for event in events) == 1
+        assert len((await api.get(history)).json()) == 3
+
+
+@pytest.mark.asyncio
+async def test_proposal_bounds_validation_and_concurrent_acceptance(rent_world, rent_db):
+    import asyncio
+    world = rent_world
+    await rent_db.execute(text("UPDATE lease_agreement SET valid_to='2027-01-01' WHERE id=:id"), {"id":world["lease"]})
+    await rent_db.commit()
+    async with api_client(world) as api, api_client(world) as other:
+        run_id, _ = await _proposal_run(api, world, rent_db)
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        for body in [{}, {"valid_from":"invalid"}, {"valid_from":"2025-12-31"}, {"valid_from":"2027-01-01"},
+                     {"valid_from":"2026-05-01", "monthly_amount":"1.00"}, {"valid_from":"2026-05-01", "base_rent":"1.00"}]:
+            assert (await api.post(url, json=body)).status_code == 422
+        responses = await asyncio.gather(api.post(url, json={"valid_from":"2026-12-31"}),
+                                         other.post(url, json={"valid_from":"2026-12-31"}))
+        assert sorted(response.status_code for response in responses) == [201,409]
+        # Historical dates are allowed, not future-only.
+        assert (await api.post(url, json={"valid_from":"2026-01-01"})).status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_proposal_roles_org_and_lifecycle(rent_world, rent_db):
+    import httpx
+    from app.main import app
+    world = rent_world
+    async with api_client(world) as api, api_client(world, "reader") as reader, api_client(world, foreign=True) as foreign:
+        run_id, _ = await _proposal_run(api, world, rent_db)
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        assert (await reader.get(url)).status_code == 200
+        assert (await reader.post(url, json={"valid_from":"2026-05-01"})).status_code == 403
+        for client in [foreign]:
+            assert (await client.get(url)).status_code == 404
+            assert (await client.post(url, json={"valid_from":"2026-05-01"})).status_code == 404
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as anonymous:
+            assert (await anonymous.get(url)).status_code == 401
+            assert (await anonymous.post(url, json={"valid_from":"2026-05-01"})).status_code == 401
+        async with api_client(world, "clerk") as clerk:
+            result = await clerk.post(url, json={"valid_from":"2026-04-01"})
+            assert result.status_code == 201, result.text
+        correction = await api.post(f"/api/settlements/{run_id}/correction")
+        assert correction.status_code == 201, correction.text
+        for target in [url, f"/api/settlements/{correction.json()['id']}/advance-proposal"]:
+            assert (await api.get(target)).status_code == 409
+            assert (await api.post(target, json={"valid_from":"2026-05-01"})).status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_proposal_accept_audit_failure_rolls_back(rent_world, rent_db, monkeypatch):
+    from app.repositories.audit_repo import AuditRepository
+    world = rent_world
+    async with api_client(world) as api:
+        run_id, _ = await _proposal_run(api, world, rent_db)
+        original = AuditRepository.create
+        async def fail(self, event):
+            if event.action == "lease.rent_change_created":
+                raise RuntimeError("synthetic audit write failure")
+            return await original(self, event)
+        with monkeypatch.context() as patch:
+            patch.setattr(AuditRepository, "create", fail)
+            with pytest.raises(RuntimeError, match="synthetic audit"):
+                await api.post(f"/api/settlements/{run_id}/advance-proposal", json={"valid_from":"2026-05-01"})
+        assert (await api.get(f"/api/leases/{world['lease']}/rent-changes")).json() == []
+        assert (await api.post(f"/api/settlements/{run_id}/advance-proposal", json={"valid_from":"2026-05-01"})).status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_proposal_uses_frozen_not_current_dates_or_costs(rent_world, rent_db):
+    world = rent_world
+    async with api_client(world) as api:
+        run_id, _ = await _proposal_run(api, world, rent_db)
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        before = (await api.get(url)).json()
+        # A later legitimate master-data edit cannot redefine the finalized basis.
+        changed = await api.patch(f"/api/leases/{world['lease']}", json={"valid_to":"2026-06-30"})
+        assert changed.status_code == 200, changed.text
+        await rent_db.execute(text("""INSERT INTO cost_entry
+            (id,organization_id,property_id,cost_category_id,cost_category_plan_version,
+             invoice_date,service_period_from,service_period_to,gross_amount,tenant_distribution_key,
+             tenant_apportionable,status,source,confirmed_at,confirmed_by)
+            SELECT :id,:org,:property,id,1,'2026-01-01','2026-01-01','2026-12-31',9000,
+             'WOHNFLAECHE','UMLAGEFAEHIG','confirmed','MANUAL',now(),:admin
+            FROM cost_category WHERE code='GRUNDSTEUER' AND plan_version=1"""), {**world,"id":uuid.uuid4()})
+        await rent_db.commit()
+        assert (await api.get(url)).json() == before
+        assert (await api.post(url, json={"valid_from":"2026-07-01"})).status_code == 422
+        result = await api.post(url, json={"valid_from":"2026-04-01"})
+        assert result.status_code == 201 and result.json()["advance_payment"] == "100.00"
+
+
+@pytest.mark.asyncio
+async def test_proposal_financial_scope_prepare_and_revocation(rent_world, rent_db):
+    from tests.test_financial_source_disclosure import bind_output
+    world = rent_world
+    seed = {"org_a_id":world["org"], "user_a_admin_id":world["admin"]}
+    async with api_client(world) as api:
+        run_id, _ = await _proposal_run(api, world, rent_db)
+        ids = await bind_output(seed, str(world["property"]), run_id,
+            kind="settlement_run", scope_type="MIET", caps=["read"])
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        assert (await api.get(url)).status_code == 200
+        assert (await api.post(url, json={"valid_from":"2026-05-01"})).status_code == 404
+        await rent_db.execute(text("UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE scope_id=:sphere"), ids)
+        await rent_db.execute(text("""INSERT INTO scope_grant
+            (organization_id,scope_id,user_id,capabilities,granted_by,reason)
+            VALUES (:org,:sphere,:actor,ARRAY['read','prepare'],:actor,'Explicit T28 prepare')"""), ids)
+        await rent_db.commit()
+        response = await api.post(url, json={"valid_from":"2026-05-01"})
+        assert response.status_code == 201, response.text
+        await rent_db.execute(text("UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE scope_id=:sphere AND revoked_at IS NULL"), ids)
+        await rent_db.commit()
+        assert (await api.get(url)).status_code == 404
+        assert (await api.post(url, json={"valid_from":"2026-06-01"})).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_proposal_source_read_history_prepare_and_revocation(rent_world, rent_db):
+    from tests.test_source_security_lifecycle import status, transition, transition_body
+    from tests.test_property_source_access import grant
+    from tests.contact_source_fixtures import grant_property_contacts
+    from tests.test_financial_source_disclosure import bind_output
+    world = rent_world
+    seed = {"org_a_id":world["org"], "user_a_admin_id":world["admin"]}
+    async with api_client(world) as api:
+        run_id, _ = await _proposal_run(api, world, rent_db)
+        await grant_property_contacts(api, seed, str(world["property"]))
+        await grant_property_contacts(api, seed, str(world["hidden_property"]))
+        await grant(api, seed, world["hidden_property"], caps=["read"])
+        domain, receipt = await grant(api, seed, world["property"], caps=["read"])
+        ids = await bind_output(seed, str(world["property"]), run_id,
+            kind="settlement_run", scope_type="MIET", caps=["read","prepare"])
+        await rent_db.execute(text("""INSERT INTO accounting_scope_binding
+            (organization_id,property_id,scope_id,cost_entry_id,origin,reason,reviewed_by)
+            SELECT :org,:property,:sphere,id,'REVIEWED','T28 complete synthetic cost scope',:actor
+            FROM cost_entry WHERE organization_id=:org AND property_id=:property"""), ids)
+        await rent_db.commit()
+        from tests.test_access_disposition import reviewed, assessment, decisions, acceptance_body
+        report = await reviewed(api)
+        state = await assessment(api, report)
+        assert state["acceptance_available"], (state, await decisions(api, report))
+        response = await api.post(f"/api/access-preparation/snapshots/{report['id']}/disposition/accept",
+            json=acceptance_body(report, state), headers={"Idempotency-Key":str(uuid.uuid4())})
+        assert response.status_code == 201, response.text
+        decision = response.json()
+        activated = await transition(api, transition_body(await status(api), "ENFORCED", decision))
+        assert activated.status_code == 201, activated.text
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        response = await api.get(url)
+        assert response.status_code == 200, response.text
+        # Financial PREPARE alone cannot mutate a read-only relationship source.
+        assert (await api.post(url, json={"valid_from":"2026-05-01"})).status_code == 404
+        assert (await api.post(f"/api/property-data-domains/{domain}/grants/{receipt}/revoke")).status_code == 204
+        assert (await api.get(url)).status_code == 404
+        assert (await api.post(url, json={"valid_from":"2026-06-01"})).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_proposal_zero_cost_accepts_zero(rent_world, rent_db):
+    async with api_client(rent_world) as api:
+        run_id, _ = await _proposal_run(api, rent_world, rent_db, cost="0.00")
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        assert (await api.get(url)).json()["monthly_amount"] == "0.00"
+        result = await api.post(url, json={"valid_from":"2026-01-01"})
+        assert result.status_code == 201, result.text
+        assert result.json()["advance_payment"] == "0.00"
+        assert result.json()["base_rent"] == "700.00"
+
+
+@pytest.mark.asyncio
+async def test_proposal_acceptance_committed_before_response(rent_world, rent_db):
+    """Observe committed history at response.start, not after ASGI cleanup."""
+    import httpx
+    from app.main import app
+
+    async with api_client(rent_world) as api:
+        run_id, _ = await _proposal_run(api, rent_world, rent_db)
+        observed = []
+
+        async def observe_response(scope, receive, send):
+            async def observe_send(message):
+                if message["type"] == "http.response.start":
+                    observed.append(await rent_db.scalar(text("""SELECT count(*)
+                        FROM lease_rent_change WHERE lease_agreement_id=:lease
+                        AND valid_from=:valid_from"""),
+                        {"lease":rent_world["lease"], "valid_from":date(2026, 5, 1)}))
+                await send(message)
+            await app(scope, receive, observe_send)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=observe_response),
+            base_url="http://test", cookies=api.cookies,
+        ) as client:
+            result = await client.post(f"/api/settlements/{run_id}/advance-proposal",
+                json={"valid_from":"2026-05-01"})
+        assert result.status_code == 201, result.text
+        assert observed == [1], "Rent history must commit before sending HTTP 201"

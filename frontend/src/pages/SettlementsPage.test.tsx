@@ -198,3 +198,14 @@ it("retains the existing single-create payload and detail navigation", async () 
   await screen.findByText("Einzelabrechnung geöffnet");
   expect(api.post).toHaveBeenCalledExactlyOnceWith("/api/settlements", { property_id: "property-1", lease_agreement_id: "lease-1", period_start: "2025-07-01", period_end: "2026-06-30", advance_payments_total: null, management_mandate_id: null, accounting_scope_id: null });
 });
+
+it.each(["Objekt *", "Mietvertrag *"])("explicitly labels the single-create select %s", async label => {
+  show();
+  await screen.findByRole("option", { name: "Sonnenhof" });
+  fireEvent.click(screen.getByRole("button", { name: "+ Neue Abrechnung" }));
+  const heading = screen.getByRole("heading", { name: "Neue Abrechnung anlegen" });
+  const form = heading.parentElement!.querySelector("form")!;
+  const select = within(form).getByRole("combobox", { name: label });
+  expect(select).toHaveAttribute("aria-label", label);
+  expect(within(form).getByLabelText(label, { exact: true })).toBe(select);
+});

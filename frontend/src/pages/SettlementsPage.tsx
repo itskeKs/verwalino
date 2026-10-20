@@ -349,6 +349,7 @@ export function SettlementsPage() {
             <label>
               Objekt *
               <select
+                aria-label="Objekt *"
                 required
                 value={form.property_id}
                 onChange={(e) =>
@@ -366,6 +367,7 @@ export function SettlementsPage() {
             <label>
               Mietvertrag *
               <select
+                aria-label="Mietvertrag *"
                 required
                 value={form.lease_agreement_id}
                 onChange={(e) =>

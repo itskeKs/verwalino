@@ -202,6 +202,24 @@ unbekannt (`null`), bis sie über den bestehenden Ablauf bestimmt werden.
 `scripts/acceptance/t27_settlement_batch_browser.cjs` prüft drei UI-Verträge,
 drei Entwürfe und die identische Wiederholung ohne neue Läufe.
 
+## Künftige NK-Vorauszahlung vorschlagen (Phase 2)
+
+Eine aktive finalisierte BK-Abrechnung zeigt den Vorschlag aus ihrem eingefrorenen
+Mieter-Kostenanteil je abgerechneten Monat. Ganze Kalendermonate zählen als eins,
+Teilmonate nach belegten Tagen; die Kalenderquote bleibt bis zur abschließenden
+kaufmännischen Cent-Rundung exakt. Aktuelle Kosten, Guthaben/Rückstand und gezahlte
+Vorauszahlungen ersetzen diese Basis nicht. Fehlende historische Eingaben führen
+zu einem Fehler statt einer erfundenen Rate.
+`GET /api/settlements/{id}/advance-proposal` liefert Kosten, Monatsbasis und Betrag
+als Dezimalstrings. „Übernehmen ab“ und „Vorauszahlung übernehmen“ senden per POST
+an dieselbe URL ausschließlich `valid_from`. Die Übernahme verwendet den bestehenden
+T23-Pfad: volle Miethistorienzeile mit am Stichtag gültiger Kaltmiete und neuer
+Vorauszahlung, ohne Vertragsüberschreibung. Doppelte Stichtage liefern 409;
+Schreib-, Quellen- und Kreisrechte gelten, die Historie ist vor HTTP 201 gespeichert.
+Finalisierte Snapshots, gebuchte Zahlungen und tatsächliches Ist bleiben unverändert.
+`scripts/acceptance/t28_advance_proposal_browser.cjs` prüft 1.200 EUR / 12 = 100 EUR
+und das Mietkonto 2027 nach ausdrücklicher Übernahme: 700/100 statt 700/150.
+
 Weiterführende Dokumentation:
 
 - [Deployment](DEPLOY.md)

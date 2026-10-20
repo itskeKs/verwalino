@@ -21,6 +21,8 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
+from app.core.live_principal import get_live_member_db, require_live_principal
+from app.api.leases import RentChangeOut, _rent_change_out
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
 from app.repositories.settlement_repo import (
@@ -67,6 +69,21 @@ class SettlementBatchCreate(BaseModel):
         if self.period_start > self.period_end:
             raise ValueError("Settlement period must not end before it starts")
         return self
+
+
+class AdvanceProposalOut(BaseModel):
+    lease_agreement_id: str
+    tenant_cost: str
+    months: str
+    monthly_amount: str
+    period_start: date
+    period_end: date
+
+
+class AdvanceProposalAccept(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    valid_from: date
 
 
 class AdvancePaymentsUpdate(BaseModel):
@@ -306,6 +323,29 @@ async def get_settlement(
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
     return _run_out(run, list(lines))
+
+
+@router.get("/{run_id}/advance-proposal", response_model=AdvanceProposalOut)
+async def get_advance_proposal(
+    run_id: uuid.UUID,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+):
+    return await SettlementService(db, auth.organization_id, auth.user_id).advance_proposal(run_id)
+
+
+@router.post("/{run_id}/advance-proposal", response_model=RentChangeOut, status_code=201)
+async def accept_advance_proposal(
+    run_id: uuid.UUID,
+    body: AdvanceProposalAccept,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_db, scope="function"),
+):
+    await require_live_principal(db, auth, writer=True)
+    row = await SettlementService(db, auth.organization_id, auth.user_id).advance_proposal(
+        run_id, accept_from=body.valid_from,
+    )
+    return _rent_change_out(row)
 
 
 @router.post("", response_model=SettlementRunOut, status_code=201)

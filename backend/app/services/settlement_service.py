@@ -23,9 +23,11 @@ Provisional data sources (clearly marked, [OFFEN/§18]):
 from __future__ import annotations
 
 import uuid
+from calendar import monthrange
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
+from fractions import Fraction
 
 from fastapi import HTTPException
 from app.core.rbac import ScopeCapability
@@ -35,6 +37,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.engine.canonical import canonical_json, sha256_hex
 from app.engine.rounding import DistributionError
+from app.engine.mietkonto import _money
+from app.services.lease_rent_change_service import LeaseRentChangeService
 from app.engine.settlement import EngineValidationError, compute_bk_settlement
 from app.engine.snapshot import build_snapshot_payload
 from app.services.render_names import (
@@ -134,6 +138,73 @@ class SettlementService:
         self._runs = SettlementRunRepository(session, org_id)
         self._lines = SettlementLineRepository(session, org_id)
         self._audit = AuditRepository(session, org_id)
+
+    async def advance_proposal(self, run_id: uuid.UUID, *, accept_from: date | None = None):
+        scope = FinancialScopeService(self._session, self._org_id, self._user_id)
+        # Serialize with corrections, ACL/source changes and T23 writes. Re-read
+        # under the lock so a concurrent correction cannot accept a stale run.
+        await scope.lock_inputs()
+        run = await self._runs.get_by_id(run_id)
+        if run is None:
+            raise HTTPException(404, "Settlement run not found")
+        await scope.enter(run, capability=ScopeCapability.READ if accept_from is None else ScopeCapability.PREPARE)
+        if run.status != "finalized" or run.superseded_by_id is not None or run.run_type != "BK_MIETER":
+            raise HTTPException(409, "Advance proposal requires an active finalized BK settlement")
+        proposal = self._advance_proposal(run)
+        if accept_from is None:
+            return proposal
+        return await LeaseRentChangeService(self._session, self._org_id, self._user_id).create(
+            run.lease_agreement_id, accept_from, Decimal(proposal["monthly_amount"]),
+        )
+
+    @staticmethod
+    def _advance_proposal(run: SettlementRun) -> dict:
+        """Use only frozen inclusive engine dates and finalized tenant costs."""
+        try:
+            payload = run.snapshot_payload
+            if payload["run_type"] != "BK_MIETER" or run.lease_agreement_id is None:
+                raise ValueError("Not a tenant settlement")
+            period_start = date.fromisoformat(payload["period"]["start"])
+            period_end = date.fromisoformat(payload["period"]["end"])
+            if (period_start, period_end) != (run.period_start, run.period_end):
+                raise ValueError("Inconsistent frozen period")
+            leases = [lease for lease in payload["inputs"]["lease_periods"]
+                      if lease["lease_agreement_id"] == str(run.lease_agreement_id)]
+            if len(leases) != 1:
+                raise ValueError("Missing unique frozen tenancy")
+            lease = leases[0]
+            start = max(period_start, date.fromisoformat(lease["from"]))
+            end = min(period_end, date.fromisoformat(lease["to"]) if lease["to"] is not None else period_end)
+            if not isinstance(payload["result"]["total_cost"], str):
+                raise ValueError("Invalid frozen monetary representation")
+            cost = Decimal(payload["result"]["total_cost"])
+            if not cost.is_finite() or cost < 0 or cost != run.total_cost or start > end:
+                raise ValueError("Invalid finalized cost or tenancy")
+            # Calendar weights remain exact even across different partial
+            # months. Only the DTO renders a repeating fraction as a Decimal.
+            month_weight = Fraction(0)
+            year, month = start.year, start.month
+            while (year, month) <= (end.year, end.month):
+                days = monthrange(year, month)[1]
+                first = start.day if (year, month) == (start.year, start.month) else 1
+                last = end.day if (year, month) == (end.year, end.month) else days
+                month_weight += Fraction(last - first + 1, days)
+                year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+            with localcontext() as context:
+                context.prec = 28
+                context.rounding = ROUND_HALF_UP
+                months = Decimal(month_weight.numerator) / Decimal(month_weight.denominator)
+                amount = _money(cost * Decimal(month_weight.denominator) / Decimal(month_weight.numerator))
+            if amount >= Decimal("1000000000000"):
+                raise ValueError("Proposed advance exceeds rental amount storage")
+        except (KeyError, TypeError, ValueError, InvalidOperation, OverflowError) as exc:
+            raise HTTPException(409, "Frozen settlement lacks a valid advance proposal basis") from exc
+        return {
+            "lease_agreement_id": str(run.lease_agreement_id),
+            "tenant_cost": f"{cost:.2f}", "months": format(months, "f"),
+            "monthly_amount": f"{amount:.2f}",
+            "period_start": period_start, "period_end": period_end,
+        }
 
     # ------------------------------------------------------------------
     # create draft

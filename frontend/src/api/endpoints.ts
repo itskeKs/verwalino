@@ -48,6 +48,8 @@ import type {
   SettlementBatchCreate,
   SettlementBatchResult,
   AdvancePaymentsUpdate,
+  AdvanceProposal,
+  AdvanceProposalApply,
   ComputeRequest,
   EconomicPlan,
   EconomicPlanCreate,
@@ -608,6 +610,19 @@ export function listSettlements(propertyId?: string): Promise<SettlementRun[]> {
 
 export function getSettlement(id: string): Promise<SettlementRun> {
   return api.get<SettlementRun>(`/api/settlements/${id}`);
+}
+
+export function getAdvanceProposal(id: string): Promise<AdvanceProposal> {
+  return api.get<AdvanceProposal>(`/api/settlements/${id}/advance-proposal`);
+}
+
+export function applyAdvanceProposal(
+  id: string,
+  body: AdvanceProposalApply,
+): Promise<LeaseRentChange> {
+  return api.post<LeaseRentChange>(`/api/settlements/${id}/advance-proposal`, {
+    valid_from: body.valid_from,
+  });
 }
 
 export function createSettlement(body: SettlementRunCreate): Promise<SettlementRun> {

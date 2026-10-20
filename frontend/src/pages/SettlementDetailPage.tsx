@@ -7,7 +7,8 @@ import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
  *   unit metrics), compute, preview. Engine 422 errors are shown clearly
  *   so the user can supply missing values.
  * - Finalized: read-only with GoBD notice, snapshot SHA-256, PDF download.
- *   Only correction (Storno/Neu) is allowed after finalization.
+ *   Corrections use Storno/Neu; accepting an advance proposal appends rent history
+ *   without changing the lease or finalized settlement.
  * - Lines display all BGH-Pflichtangaben: total cost per category,
  *   distribution key, base share, time share, tenant amount, then
  *   sum / advance payment / balance.
@@ -15,10 +16,12 @@ import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
  * Money values are displayed as-is from the backend (string decimals, no float).
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   getSettlement,
+  getAdvanceProposal,
+  applyAdvanceProposal,
   setAdvancePayments,
   setAdvancePaymentsDerived,
   computeSettlement,
@@ -35,6 +38,8 @@ import {
   listCostCategories,
 } from "../api/endpoints";
 import type {
+  AdvanceProposal,
+  LeaseRentChange,
   SettlementRun,
   SettlementLine,
   ComputeRequest,
@@ -49,8 +54,14 @@ import type {
   CostEntry,
   CostCategory,
 } from "../api/types";
+import { useAuth } from "../auth/useAuth";
 import { ApiError } from "../api/client";
-import { fromDbDistributionKey } from "../lib/costVocabulary";
+import {
+  needsExternalInput,
+  needsManualInput,
+  needsConsumption,
+  needsPersonCount,
+} from "../lib/settlementInputNeeds";
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Entwurf",
@@ -73,24 +84,111 @@ const DISTRIBUTION_KEY_LABELS: Record<string, string> = {
   MANUAL: "Manuell",
 };
 
-/**
- * Determine which cost entries need structured input (EXTERNAL, CONSUMPTION,
- * PERSON_COUNT, MANUAL distribution keys).
- */
-export function needsExternalInput(entry: CostEntry): boolean {
-  return fromDbDistributionKey(entry.tenant_distribution_key ?? "") === "EXTERNAL";
+function formatProposalMoney(value: string): string {
+  // Group the decimal text directly: converting to Number can lose cents.
+  const match = /^(-?)(\d+)(?:\.(\d{1,2}))?$/.exec(value);
+  if (!match) return "Nicht verfügbar";
+  const integer = match[2].replace(/^0+(?=\d)/, "").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `${match[1]}${integer},${(match[3] ?? "").padEnd(2, "0")} EUR`;
 }
 
-export function needsManualInput(entry: CostEntry): boolean {
-  return fromDbDistributionKey(entry.tenant_distribution_key ?? "") === "MANUAL";
+function isProposalDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith("0000")) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
-export function needsConsumption(entries: CostEntry[]): boolean {
-  return entries.some((e) => fromDbDistributionKey(e.tenant_distribution_key ?? "") === "CONSUMPTION");
+function nextProposalDate(periodEnd: string): string {
+  if (!isProposalDate(periodEnd)) return "";
+  const next = new Date(new Date(`${periodEnd}T00:00:00Z`).getTime() + 86_400_000).toISOString().slice(0, 10);
+  return isProposalDate(next) ? next : "";
 }
 
-export function needsPersonCount(entries: CostEntry[]): boolean {
-  return entries.some((e) => fromDbDistributionKey(e.tenant_distribution_key ?? "") === "PERSON_COUNT");
+function AdvanceProposalSection({ runId }: { runId: string }) {
+  const { session } = useAuth();
+  const canApply = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
+  const [proposal, setProposal] = useState<AdvanceProposal | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  const [validFrom, setValidFrom] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const [result, setResult] = useState<LeaseRentChange | null>(null);
+  const busy = useRef(false);
+  const mounted = useRef(false);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadError(null);
+    getAdvanceProposal(runId)
+      .then((value) => {
+        if (!active) return;
+        setProposal(value);
+        setValidFrom(nextProposalDate(value.period_end));
+      })
+      .catch((err: unknown) => {
+        if (active) setLoadError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [runId, retry]);
+
+  async function handleApply(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canApply || !proposal || busy.current || result) return;
+    setApplyError(null);
+    if (!isProposalDate(validFrom)) {
+      setApplyError("Bitte ein gültiges Datum angeben.");
+      return;
+    }
+    busy.current = true;
+    setSaving(true);
+    try {
+      const change = await applyAdvanceProposal(runId, { valid_from: validFrom });
+      if (mounted.current) setResult(change);
+    } catch (err) {
+      if (mounted.current) setApplyError(err instanceof Error ? err.message : String(err));
+    } finally {
+      busy.current = false;
+      if (mounted.current) setSaving(false);
+    }
+  }
+
+  return (
+    <section className="card" aria-labelledby="advance-proposal-heading" style={{ marginBottom: "1.5rem" }}>
+      <h2 id="advance-proposal-heading">Vorauszahlungsvorschlag</h2>
+      {loading && <p role="status">Lade Vorauszahlungsvorschlag...</p>}
+      {loadError && <>
+        <p role="alert">{loadError}</p>
+        <button className="btn" onClick={() => setRetry((value) => value + 1)} disabled={loading}>Erneut versuchen</button>
+      </>}
+      {proposal && <>
+        <p>Neue Vorauszahlung: <strong>{formatProposalMoney(proposal.monthly_amount)}</strong> monatlich</p>
+        <p>Grundlage: {formatProposalMoney(proposal.tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate
+          {" "}({proposal.period_start} bis {proposal.period_end}).</p>
+        <p>Nur die Vorauszahlung wird geändert. Die Kaltmiete bleibt die am gewählten Tag gültige Rate.
+          Der ursprüngliche Mietvertrag und die finalisierte Abrechnung bleiben unverändert.</p>
+        {applyError && <p role="alert">{applyError}</p>}
+        {result && <p role="status">Miethistorie ergänzt: ab {result.valid_from}, Kaltmiete {formatProposalMoney(result.base_rent)},
+          {" "}Vorauszahlung {formatProposalMoney(result.advance_payment)} monatlich.</p>}
+        {canApply && !result && <form onSubmit={handleApply} noValidate>
+          <label>Übernehmen ab
+            <input type="date" value={validFrom} onChange={(event) => setValidFrom(event.target.value)} disabled={saving} required />
+          </label>
+          <button className="btn btn--primary" type="submit" disabled={saving || loading || !!loadError}>
+            Vorauszahlung übernehmen
+          </button>
+        </form>}
+      </>}
+    </section>
+  );
 }
 
 export function SettlementDetailPage() {
@@ -169,6 +267,7 @@ export function SettlementDetailPage() {
 
   const reload = useCallback(() => {
     if (!runId) return;
+    let active = true;
     setLoading(true);
     setError(null);
     Promise.all([
@@ -181,6 +280,7 @@ export function SettlementDetailPage() {
       listCostCategories(),
     ])
       .then(([r, p, l, u, tp, per, c]) => {
+        if (!active) return;
         setRun(r);
         setProperties(p);
         setLeases(l);
@@ -193,6 +293,7 @@ export function SettlementDetailPage() {
         if (r.property_id) {
           listCostEntries({ property_id: r.property_id, status: "confirmed" }).then(
             (entries) => {
+              if (!active) return;
               setCostEntries(entries);
               // Initialize structured inputs for entries that need them
               initStructuredInputs(entries, r);
@@ -201,17 +302,19 @@ export function SettlementDetailPage() {
         }
       })
       .catch((err) => {
+        if (!active) return;
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert.");
         } else {
           setError(String(err));
         }
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [runId]);
 
   useEffect(() => {
-    reload();
+    return reload();
   }, [reload]);
 
   function getPropertyName(id: string): string {
@@ -892,6 +995,10 @@ export function SettlementDetailPage() {
           </tbody>
         </table>
       </div>
+
+      {run.id === runId && isFinalized && !run.superseded_by_id && run.run_type === "BK_MIETER" && (
+        <AdvanceProposalSection key={run.id} runId={run.id} />
+      )}
 
       {/* Advance payment edit */}
       {editingAdvance && isDraft && (

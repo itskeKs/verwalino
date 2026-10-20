@@ -429,6 +429,29 @@ Zahlungen (M6) existieren noch nicht (Roadmap: M6 hängt an M3). Daher wird die 
 
 > **[ENTSCHEIDUNG]** Speicherort der manuellen Vorauszahlungssumme: **Feld am `settlement_run`** (empfohlen, hier festgelegt) vs. eigene kleine Tabelle. Empfehlung: Feld am Lauf — es gehört semantisch in den eingefrorenen Snapshot (was bei der Abrechnung als gezahlt zugrunde gelegt wurde, ist Teil des unveränderbaren Dokuments). Bestätigen.
 
+### 7.3 Künftige Vorauszahlung vorschlagen (Phase 2, T28)
+
+Die historische M3-Planung in §7.2 ist vom heutigen Ist-Pfad zu unterscheiden:
+M6 kann gebuchte NK-Zahlungen ableiten; T28 verändert weder dieses Ist noch einen
+finalisierten Lauf. `GET /api/settlements/{id}/advance-proposal` liefert für einen
+aktiven finalisierten BK-Lauf den eingefrorenen Mieter-Kostenanteil geteilt durch
+seine eingefrorene Mietdauer innerhalb des Abrechnungszeitraums. Ganze Kalendermonate
+zählen als eins, Teilmonate als belegte Tage/Kalendertage des Monats. Kalendergewichte
+bleiben exakt rational; Geld bleibt Decimal und wird einmal kaufmännisch auf Cent
+gerundet. Beispiel: Januar bis 05.02.2024, 0,17 EUR / (1 + 5/29) = 0,15 EUR.
+Fehlende, negative oder inkohärente historische Basis ergibt 409, keine Nullannahme.
+
+Die Detailseite zeigt Betrag und Basis; Leser sehen keine Übernahmesteuerung.
+POST an dieselbe URL nimmt nur `valid_from` und ergänzt nach Live-Rollen-, Kreis-
+und History-Prepare-Prüfung über den gemeinsamen T23-Service eine unveränderliche
+volle Rate. Die Kaltmiete wird aus der bis zum Stichtag gültigen Miethistorie erhalten.
+Vertragsgrenzen und doppelte Stichtage bleiben geschützt; gemeinsame Finanz-/Zeilensperre,
+Audit und Rollback gelten. Die neue Rate ist vor HTTP 201 committet. Originalvertrag,
+Abrechnungssnapshot/-zeilen und gebuchte Zahlungen werden nicht verändert.
+Der echte UI-Prüffall finalisiert beleggebundene Mieterkosten von 1.200 EUR, übernimmt
+100 EUR ab 01.01.2027 und prüft alle 24 Mietkontoposten: Jahres-Soll 9.600 statt
+10.200 EUR bei unverändertem Ist null.
+
 ---
 
 ## 8. Formelle Pflichtangaben (BGH) + PDF-Layout

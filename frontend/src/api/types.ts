@@ -770,6 +770,19 @@ export interface SettlementRun {
   lines: SettlementLine[];
 }
 
+export interface AdvanceProposal {
+  lease_agreement_id: string;
+  tenant_cost: string;
+  months: string;
+  monthly_amount: string;
+  period_start: string;
+  period_end: string;
+}
+
+export interface AdvanceProposalApply {
+  valid_from: string;
+}
+
 export interface SettlementRunCreate {
   accounting_scope_id?: string | null;
   property_id: string;

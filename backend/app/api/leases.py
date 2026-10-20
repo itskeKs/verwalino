@@ -19,7 +19,7 @@ from app.core.tenant import (
 )
 from app.core.live_principal import get_live_member_db, get_live_writer_db
 from app.services.history_source_access import require_history_prepare
-from app.services.financial_scope_service import FinancialScopeService
+from app.services.lease_rent_change_service import LeaseRentChangeService
 from app.core.temporal import (
     db_exclusive_to_api_inclusive,
     inclusive_last_day_to_db_exclusive,
@@ -27,9 +27,7 @@ from app.core.temporal import (
 from app.repositories.lease_agreement_repo import LeaseAgreementRepository
 from app.models.lease_agreement import LeaseAgreement
 from app.models.lease_rent_change import LeaseRentChange
-from app.models.audit_event import AuditEvent
 from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
-from app.repositories.audit_repo import AuditRepository
 
 router = APIRouter(prefix="/api/leases", tags=["leases"])
 
@@ -218,32 +216,9 @@ async def create_rent_change(
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_live_writer_db),
 ):
-    # Keep the financial-input boundary before locking an individual contract.
-    await FinancialScopeService(db, auth.organization_id, auth.user_id).lock_inputs()
-    lease = await LeaseAgreementRepository(db, auth.organization_id).get_by_id_for_update(lease_id)
-    if lease is None:
-        raise HTTPException(404, "Lease agreement not found")
-    await require_history_prepare(db, auth.organization_id, "lease_agreement", lease)
-    if body.valid_from < lease.valid_from or (lease.valid_to is not None and body.valid_from >= lease.valid_to):
-        raise HTTPException(422, "Rent change must be within the lease period")
-    row = LeaseRentChange(
-        id=uuid.uuid4(), lease_agreement_id=lease.id, valid_from=body.valid_from,
-        base_rent=body.base_rent, advance_payment=body.advance_payment,
+    row = await LeaseRentChangeService(db, auth.organization_id, auth.user_id).create(
+        lease_id, body.valid_from, body.advance_payment, base_rent=body.base_rent,
     )
-    try:
-        async with db.begin_nested():
-            await LeaseRentChangeRepository(db, auth.organization_id).create(row)
-    except IntegrityError as exc:
-        if getattr(exc.orig, "sqlstate", None) == "23505":
-            raise HTTPException(409, "A rent change already exists for this lease and date") from exc
-        raise
-    await AuditRepository(db, auth.organization_id).create(AuditEvent(
-        actor_user_id=auth.user_id, entity_type="lease_agreement", entity_id=lease.id,
-        action="lease.rent_change_created", payload_diff={
-            "rent_change_id": str(row.id), "valid_from": row.valid_from.isoformat(),
-            "base_rent": f"{row.base_rent:.2f}", "advance_payment": f"{row.advance_payment:.2f}",
-        },
-    ))
     return _rent_change_out(row)
 
 

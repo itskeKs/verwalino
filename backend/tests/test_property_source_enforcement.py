@@ -8,6 +8,7 @@ from sqlalchemy.exc import DBAPIError
 from app.core.db import get_tenant_session, get_worker_tenant_session
 from tests.test_scoped_account_statements import mutate,client
 from tests.test_financial_scope_boundary import scope_seed,worker_tenant  # noqa: F401
+from tests.test_m3_settlement import m3_seed  # noqa: F401
 from tests.test_declaration_import_api import isolated_document_store,enable_declaration_imports  # noqa: F401
 from tests.test_declaration_job_principal import new_draft,inspect_job
 from app.repositories.declaration_import_repo import DeclarationImportRepository,DeclarationPrincipalDenied
@@ -209,7 +210,7 @@ async def test_state_change_waits_for_inflight_source_authorization(scope_seed,m
             assert await db.scalar(text('SELECT property_source_security_mode(:org)'),{'org':scope_seed['org_a_id']})=='PAUSED'
 
 
-async def test_state_migration_preserves_evidence_and_roundtrips_empty(scope_seed,migrator_session):
+async def test_state_migration_preserves_evidence_and_roundtrips_empty(scope_seed,migrator_session,m3_seed):
     import importlib
     from sqlalchemy import create_engine
     from alembic.migration import MigrationContext
@@ -217,24 +218,83 @@ async def test_state_migration_preserves_evidence_and_roundtrips_empty(scope_see
     from tests.conftest import MIGRATOR_SYNC_URL
     await migrator_session.commit()
     migration=importlib.import_module('migrations.versions.0053_property_source_security')
+    knowledge_migration=importlib.import_module('migrations.versions.0054_knowledge_source_security')
+    contact_migration=importlib.import_module('migrations.versions.0069_person_source_access')
+    rent_migration=importlib.import_module('migrations.versions.0126_lease_rent_change')
     async with synthetic_enforcement(scope_seed):
         engine=create_engine(MIGRATOR_SYNC_URL)
         try:
             with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
-                with pytest.raises(DBAPIError,match='Retain populated source security'):
-                    with db.begin_nested(): migration.downgrade()
-                nested=db.begin_nested()
+                heads_before=MigrationContext.configure(db).get_current_heads()
+                assert heads_before
+                tables=db.execute(text("""SELECT schemaname,tablename FROM pg_tables
+                    WHERE schemaname NOT IN ('pg_catalog','information_schema')
+                    AND schemaname NOT LIKE 'pg_%' ORDER BY schemaname,tablename""")).all()
+                quote=db.dialect.identifier_preparer.quote
+                def runtime_rows():
+                    return {(schema,table):db.execute(text(
+                        f'SELECT to_jsonb(r) FROM {quote(schema)}.{quote(table)} r ORDER BY to_jsonb(r)::text'
+                    )).scalars().all() for schema,table in tables}
+                rows_before=runtime_rows()
+                function_acl_sql=text("""SELECT n.nspname,p.proname,p.oid,p.proacl
+                    FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+                    WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+                    AND n.nspname NOT LIKE 'pg_%' ORDER BY p.oid""")
+                function_acls=db.execute(function_acl_sql).all()
+                fixture=db.begin_nested()
                 try:
-                    db.execute(text('TRUNCATE property_source_security'))
-                    db.execute(text('TRUNCATE person CASCADE'))
-                    db.execute(text('TRUNCATE knowledge_budget_policy'))
-                    importlib.import_module('migrations.versions.0069_person_source_access').downgrade()
-                    importlib.import_module('migrations.versions.0054_knowledge_source_security').downgrade()
-                    migration.downgrade()
-                    assert db.scalar(text("SELECT to_regclass('property_source_security')")) is None
-                    migration.upgrade()
-                    assert db.scalar(text('SELECT property_source_activation_ready(:org)'),{'org':scope_seed['org_a_id']}) is False
-                finally: nested.rollback()
+                    rent_id=uuid.uuid4()
+                    db.execute(text("""INSERT INTO lease_rent_change
+                        (id,organization_id,lease_agreement_id,valid_from,base_rent,advance_payment)
+                        VALUES (:id,:org,:lease,'2098-02-01',123.45,67.89)"""),
+                        {'id':rent_id,'org':m3_seed['org_a_id'],'lease':uuid.UUID(m3_seed['lease_a'])})
+                    rent_rows_sql=text('SELECT to_jsonb(r) FROM lease_rent_change r ORDER BY id')
+                    rent_policies_sql=text("""SELECT policyname,permissive,roles,cmd,qual,with_check
+                        FROM pg_policies WHERE schemaname='public' AND tablename='lease_rent_change'
+                        ORDER BY policyname""")
+                    rent_security_sql=text("""SELECT relrowsecurity,relforcerowsecurity,
+                        has_table_privilege('app_rw','lease_rent_change','SELECT'),
+                        has_table_privilege('app_rw','lease_rent_change','INSERT'),
+                        has_table_privilege('app_rw','lease_rent_change','UPDATE'),
+                        has_table_privilege('app_rw','lease_rent_change','DELETE')
+                        FROM pg_class WHERE oid='lease_rent_change'::regclass""")
+                    rent_rows=db.execute(rent_rows_sql).scalars().all()
+                    assert any(row['id']==str(rent_id) for row in rent_rows)
+                    rent_policies=db.execute(rent_policies_sql).all()
+                    assert {row.policyname for row in rent_policies}=={'lease_rent_change_read','lease_rent_change_insert'}
+                    rent_security=db.execute(rent_security_sql).one()
+                    assert tuple(rent_security)==(True,True,True,True,False,False)
+                    fixture_rows=runtime_rows()
+                    with pytest.raises(DBAPIError,match='Retain populated source security'):
+                        with db.begin_nested(): migration.downgrade()
+                    nested=db.begin_nested()
+                    try:
+                        db.execute(text('TRUNCATE property_source_security'))
+                        db.execute(text('TRUNCATE person CASCADE'))
+                        db.execute(text('TRUNCATE knowledge_budget_policy'))
+                        # Rehearse the real T23 dependency before its 0069 predicate.
+                        rent_migration.downgrade()
+                        contact_migration.downgrade()
+                        knowledge_migration.downgrade()
+                        migration.downgrade()
+                        assert db.scalar(text("SELECT to_regclass('property_source_security')")) is None
+                        migration.upgrade()
+                        assert db.scalar(text('SELECT property_source_activation_ready(:org)'),{'org':scope_seed['org_a_id']}) is False
+                        knowledge_migration.upgrade()
+                        contact_migration.upgrade()
+                        rent_migration.upgrade()
+                        assert db.execute(rent_policies_sql).all()==rent_policies
+                        assert db.execute(rent_security_sql).one()==rent_security
+                    finally: nested.rollback()
+                    assert db.execute(rent_rows_sql).scalars().all()==rent_rows
+                    assert db.execute(rent_policies_sql).all()==rent_policies
+                    assert db.execute(rent_security_sql).one()==rent_security
+                    assert runtime_rows()==fixture_rows
+                    assert db.execute(function_acl_sql).all()==function_acls
+                finally: fixture.rollback()
+                assert runtime_rows()==rows_before
+                assert db.execute(function_acl_sql).all()==function_acls
+                assert MigrationContext.configure(db).get_current_heads()==heads_before
                 assert db.scalar(text('SELECT mode FROM property_source_security WHERE organization_id=:org'),{'org':scope_seed['org_a_id']})=='ENFORCED'
         finally: engine.dispose()
 
