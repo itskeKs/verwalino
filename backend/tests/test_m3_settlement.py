@@ -17,6 +17,7 @@ from datetime import date
 from decimal import Decimal
 
 from tests.financial_coverage_helpers import attest_fixture
+from tests.test_invoice_extraction_worker import worker_tenant  # noqa: F401
 import pytest
 from sqlalchemy import text
 
@@ -925,3 +926,335 @@ async def test_derived_advances_for_exact_period(client_a_admin, derived_period_
     assert resp.status_code == 200, resp.text
     assert resp.json()["advance_payments_total"] == expected
     assert resp.json()["advance_payments_source"] == "DERIVED"
+
+
+@pytest.mark.asyncio
+async def test_batch_creates_three_drafts_and_repeat_skips_same_ids(client_a_admin, m3_seed):
+    body = {
+        "property_id": m3_seed["property"],
+        "period_start": "2037-01-01", "period_end": "2037-12-31",
+    }
+    response = await client_a_admin.post("/api/settlements/batch", json=body)
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["skipped"] == []
+    assert {r["lease_agreement_id"] for r in result["created"]} == {
+        m3_seed["lease_b"], m3_seed["lease_d"], m3_seed["lease_e"],
+    }
+    assert len({r["unit_id"] for r in result["created"]}) == 3
+    for run in result["created"]:
+        assert run["status"] == "draft"
+        assert run["run_type"] == "BK_MIETER"
+        assert run["advance_payments_source"] == "MANUAL"
+        assert run["advance_payments_total"] is None
+        assert run["total_cost"] is None
+        assert run["balance"] is None
+        assert run["snapshot_sha256"] is None
+        assert run["lines"] == []
+    repeated = await client_a_admin.post("/api/settlements/batch", json=body)
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["created"] == []
+    assert {s["lease_agreement_id"]: s["settlement_run_id"] for s in repeated.json()["skipped"]} == {
+        r["lease_agreement_id"]: r["id"] for r in result["created"]
+    }
+
+
+@pytest.fixture
+def batch_seed(seed_data):
+    return _seed_m3(seed_data)
+
+
+def _batch_body(seed, start="2038-01-01", end="2038-12-31", **extra):
+    return {"property_id": seed["property"], "period_start": start, "period_end": end, **extra}
+
+
+def _batch_rows(seed, run_ids=None):
+    """Observe synthetic rows, including effects hidden from ordinary reads."""
+    import psycopg2
+    with psycopg2.connect(SYNC_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM settlement_run WHERE property_id=%s ORDER BY id", (seed["property"],))
+            ids = run_ids if run_ids is not None else [str(r[0]) for r in cur.fetchall()]
+            result = []
+            for table, predicate in (
+                ("settlement_run", "id=ANY(%s::uuid[])"),
+                ("settlement_line", "settlement_run_id=ANY(%s::uuid[])"),
+                ("audit_event", "entity_id=ANY(%s::uuid[])"),
+                ("accounting_scope_binding", "settlement_run_id=ANY(%s::uuid[])"),
+            ):
+                cur.execute(f"SELECT to_jsonb(t) FROM {table} t WHERE {predicate} ORDER BY id", (ids,))
+                result.append(cur.fetchall())
+            cur.execute("SELECT to_jsonb(p) FROM payment p WHERE property_id=%s ORDER BY id", (seed["property"],))
+            result.append(cur.fetchall())
+            return result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("start,end,leases", [
+    ("2025-06-30", "2025-06-30", {"lease_a", "lease_e"}),
+    ("2025-07-01", "2025-07-01", {"lease_b", "lease_e"}),
+    ("2025-03-31", "2025-04-01", {"lease_a", "lease_c", "lease_e"}),
+    ("2025-08-01", "2025-08-01", {"lease_b", "lease_d", "lease_e"}),
+    ("2024-01-01", "2024-12-31", set()),
+])
+async def test_batch_exclusive_lease_end_inclusive_period(client_a_admin, batch_seed, start, end, leases):
+    _seed_m3(batch_seed)  # Another property must not contribute its leases.
+    response = await client_a_admin.post("/api/settlements/batch", json=_batch_body(batch_seed, start, end))
+    assert response.status_code == 200, response.text
+    assert response.json()["skipped"] == []
+    assert {r["lease_agreement_id"] for r in response.json()["created"]} == {batch_seed[k] for k in leases}
+
+
+@pytest.mark.asyncio
+async def test_batch_existing_draft_and_finalized_untouched(client_a_admin, batch_seed):
+    finalized = await _create_run(client_a_admin, batch_seed, "lease_a", "600.00")
+    response = await client_a_admin.post(f"/api/settlements/{finalized}/finalize", json=_extras_for_exit(batch_seed))
+    assert response.status_code == 200, response.text
+    draft = await _create_run(client_a_admin, batch_seed, "lease_b", "700.00")
+    before = _batch_rows(batch_seed, [finalized, draft])
+    response = await client_a_admin.post("/api/settlements/batch", json=_batch_body(batch_seed, "2025-01-01", "2025-12-31"))
+    assert response.status_code == 200, response.text
+    assert len(response.json()["created"]) == 3
+    assert {s["settlement_run_id"] for s in response.json()["skipped"]} == {finalized, draft}
+    assert _batch_rows(batch_seed, [finalized, draft]) == before
+    correction = await client_a_admin.post(f"/api/settlements/{finalized}/correction")
+    assert correction.status_code == 201, correction.text
+    successor = correction.json()["id"]
+    before = _batch_rows(batch_seed)
+    repeated = await client_a_admin.post("/api/settlements/batch", json=_batch_body(batch_seed, "2025-01-01", "2025-12-31"))
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["created"] == []
+    skipped = {r["settlement_run_id"] for r in repeated.json()["skipped"]}
+    assert len(skipped) == 5 and successor in skipped and finalized not in skipped
+    assert _batch_rows(batch_seed) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("override", [
+    {"property_id": "invalid"}, {"accounting_scope_id": "invalid"},
+    {"period_start": "2025-02-30"}, {"period_end": "invalid"},
+    {"period_start": "2039-01-01", "period_end": "2038-12-31"},
+    {"advance_payments_total": "100.00"}, {"management_mandate_id": str(uuid.uuid4())},
+    {"currency": "EUR"},
+])
+async def test_batch_invalid_body_rejected(client_a_admin, batch_seed, override):
+    response = await client_a_admin.post("/api/settlements/batch", json={**_batch_body(batch_seed), **override})
+    assert response.status_code == 422, response.text
+    assert _batch_rows(batch_seed) == [[], [], [], [], []]
+
+
+@pytest.mark.asyncio
+async def test_batch_roles_foreign_ids_and_empty_property(client_a_admin, client_a_readonly, client_b_admin, batch_seed):
+    import httpx
+    from app.main import app
+    body = _batch_body(batch_seed)
+    assert (await client_a_readonly.post("/api/settlements/batch", json=body)).status_code == 403
+    assert (await client_b_admin.post("/api/settlements/batch", json=body)).status_code == 404
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as anonymous:
+        assert (await anonymous.post("/api/settlements/batch", json=body)).status_code == 401
+    assert (await client_a_admin.post("/api/settlements/batch", json={**body, "property_id": str(uuid.uuid4())})).status_code == 404
+    empty = await client_a_admin.post("/api/properties", json={"name": "Synthetic empty batch property", "management_type": "MIET"})
+    assert empty.status_code == 201, empty.text
+    body["property_id"] = empty.json()["id"]
+    response = await client_a_admin.post("/api/settlements/batch", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json() == {"created": [], "skipped": []}
+    assert (await client_b_admin.post("/api/settlements/batch", json=body)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_batch_parallel_requests_create_exactly_three(client_a_admin, batch_seed):
+    import asyncio
+    responses = await asyncio.gather(*[
+        client_a_admin.post("/api/settlements/batch", json=_batch_body(batch_seed)) for _ in range(2)
+    ])
+    for response in responses:
+        assert response.status_code == 200, response.text
+    assert sorted(len(r.json()["created"]) for r in responses) == [0, 3]
+    created = [run for response in responses for run in response.json()["created"]]
+    skipped = [run for response in responses for run in response.json()["skipped"]]
+    assert {r["id"] for r in created} == {r["settlement_run_id"] for r in skipped}
+    rows = _batch_rows(batch_seed)
+    assert len(rows[0]) == len(rows[2]) == 3
+    assert len({row[0]["lease_agreement_id"] for row in rows[0]}) == 3
+
+
+@pytest.mark.asyncio
+async def test_batch_second_create_failure_rolls_back_runs_and_audit(client_a_admin, batch_seed, monkeypatch):
+    from app.services.settlement_service import SettlementService
+    original = SettlementService.create_draft
+    created_ids = []
+
+    async def fail_after_second(self, *args, **kwargs):
+        run = await original(self, *args, **kwargs)
+        created_ids.append(str(run.id))
+        if len(created_ids) == 2:
+            raise RuntimeError("synthetic failure after second draft and audit")
+        return run
+
+    before = _batch_rows(batch_seed)
+    with monkeypatch.context() as patch:
+        patch.setattr(SettlementService, "create_draft", fail_after_second)
+        with pytest.raises(RuntimeError, match="synthetic failure after second"):
+            await client_a_admin.post("/api/settlements/batch", json=_batch_body(batch_seed))
+    assert len(created_ids) == 2
+    assert _batch_rows(batch_seed) == before
+    assert _batch_rows(batch_seed, created_ids) == before
+    retry = await client_a_admin.post("/api/settlements/batch", json=_batch_body(batch_seed))
+    assert retry.status_code == 200, retry.text
+    assert len(retry.json()["created"]) == 3 and retry.json()["skipped"] == []
+
+
+def _batch_scope(seed, *, units=None, authorized=True, scope_type="MIET"):
+    import psycopg2
+    scope_id, grant_id = str(uuid.uuid4()), str(uuid.uuid4())
+    with psycopg2.connect(SYNC_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO accounting_scope
+                (id,organization_id,property_id,scope_type,label,valid_from,whole_property,origin,created_by)
+                VALUES (%s,%s,%s,%s,'Synthetic batch scope','1900-01-01',%s,'REVIEWED',%s)""",
+                (scope_id, str(seed["org_a_id"]), seed["property"], scope_type, units is None, str(seed["user_a_admin_id"])))
+            for unit in units or []:
+                cur.execute("INSERT INTO accounting_scope_unit(organization_id,scope_id,unit_id,property_id) VALUES (%s,%s,%s,%s)",
+                    (str(seed["org_a_id"]), scope_id, unit, seed["property"]))
+            if authorized:
+                cur.execute("""INSERT INTO scope_grant
+                    (id,organization_id,scope_id,user_id,capabilities,granted_by,reason)
+                    VALUES (%s,%s,%s,%s,ARRAY['read','prepare'],%s,'Synthetic batch preparation')""",
+                    (grant_id, str(seed["org_a_id"]), scope_id, str(seed["user_a_admin_id"]), str(seed["user_a_admin_id"])))
+    return scope_id, grant_id
+
+
+@pytest.mark.asyncio
+async def test_batch_scope_selection_partial_units_and_revocation(worker_tenant):
+    from tests.strict_finance_fixture import classify_property_finance
+    client, seed = worker_tenant
+    seed = _seed_m3(seed)
+    classified = await classify_property_finance(seed, seed["property"], scope_type="MIET")
+    scope_a = str(classified["scope"])
+    body = _batch_body(seed, accounting_scope_id=scope_a)
+    first = await client.post("/api/settlements/batch", json=body)
+    assert first.status_code == 200, first.text
+    assert len(first.json()["created"]) == 3
+    original_ids = {r["id"] for r in first.json()["created"]}
+    before = _batch_rows(seed, list(original_ids))
+    hidden, _ = _batch_scope(seed, authorized=False)
+    denied = await client.post("/api/settlements/batch", json={**body, "accounting_scope_id": hidden})
+    assert denied.status_code == 404, denied.text
+    assert not any(run_id in denied.text for run_id in original_ids)
+    # Admin status must not substitute for a scope grant, even with no leases.
+    denied = await client.post("/api/settlements/batch", json=_batch_body(seed, "1901-01-01", "1901-12-31", accounting_scope_id=hidden))
+    assert denied.status_code == 404, denied.text
+    second_scope, _ = _batch_scope(seed)
+    second = await client.post("/api/settlements/batch", json={**body, "accounting_scope_id": second_scope})
+    assert second.status_code == 200, second.text
+    assert len(second.json()["created"]) == 3 and second.json()["skipped"] == []
+    second_ids = {r["id"] for r in second.json()["created"]}
+    assert original_ids.isdisjoint(second_ids)
+    repeated = await client.post("/api/settlements/batch", json=body)
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["created"] == []
+    assert {r["settlement_run_id"] for r in repeated.json()["skipped"]} == original_ids
+    assert not any(run_id in repeated.text for run_id in second_ids)
+    assert _batch_rows(seed, list(original_ids)) == before
+    partial, partial_grant = _batch_scope(seed, units=[seed["u1"]])
+    partial_body = {**body, "accounting_scope_id": partial}
+    response = await client.post("/api/settlements/batch", json=partial_body)
+    assert response.status_code == 200, response.text
+    assert [r["lease_agreement_id"] for r in response.json()["created"]] == [seed["lease_b"]]
+    run = response.json()["created"][0]
+    rows = _batch_rows(seed, [run["id"]])
+    assert rows[3][0][0]["scope_id"] == partial
+    repeated = await client.post("/api/settlements/batch", json=partial_body)
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json() == {"created": [], "skipped": [{"lease_agreement_id": seed["lease_b"], "settlement_run_id": run["id"]}]}
+    revoked = await client.post(f"/api/accounting-scopes/{partial}/grants/{partial_grant}/revoke")
+    assert revoked.status_code == 204, revoked.text
+    response = await client.post("/api/settlements/batch", json=partial_body)
+    assert response.status_code == 404, response.text
+    assert run["id"] not in response.text
+    assert _batch_rows(seed, [run["id"]]) == rows
+    assert (await client.post("/api/settlements/batch", json=_batch_body(seed))).status_code == 409
+    weg, _ = _batch_scope(seed, scope_type="WEG")
+    assert (await client.post("/api/settlements/batch", json={**body, "accounting_scope_id": weg})).status_code == 422
+    other = _seed_m3(seed)
+    wrong_property, _ = _batch_scope(other)
+    assert (await client.post("/api/settlements/batch", json={**body, "accounting_scope_id": wrong_property})).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_batch_source_revocation_never_returns_partial_leases(worker_tenant):
+    import psycopg2
+    from tests.contact_source_fixtures import grant_property_contacts
+    from tests.strict_finance_fixture import classify_property_finance
+    from tests.test_property_source_access import grant
+    from tests.test_property_source_enforcement import synthetic_enforcement, change_mode
+    from app.core.db import get_tenant_session
+    client, seed = worker_tenant
+    seed = _seed_m3(seed)
+    classified = await classify_property_finance(seed, seed["property"], scope_type="MIET")
+    await grant_property_contacts(client, seed, seed["property"])
+    domain, source_grant = await grant(client, seed, seed["property"], caps=["read", "prepare"])
+    body = _batch_body(seed, accounting_scope_id=str(classified["scope"]))
+    with psycopg2.connect(SYNC_URL) as conn, conn.cursor() as cur:
+        cur.execute("SELECT person_id FROM tenant_profile WHERE id=%s", (seed["tp_b"],))
+        person = cur.fetchone()[0]
+        cur.execute("""SELECT d.id,g.id FROM person_data_domain d JOIN person_data_grant g ON g.domain_id=d.id
+            WHERE d.person_id=%s AND g.user_id=%s AND g.revoked_at IS NULL""", (str(person), str(seed["user_a_admin_id"])))
+        contact_domain, contact_grant = cur.fetchone()
+    async with synthetic_enforcement(seed):
+        first = await client.post("/api/settlements/batch", json=body)
+        assert first.status_code == 200, first.text
+        assert len(first.json()["created"]) == 3
+        before = _batch_rows(seed)
+        revoked = await client.post(f"/api/person-data-domains/{contact_domain}/grants/{contact_grant}/revoke")
+        assert revoked.status_code == 204, revoked.text
+        # Contact RLS hides the expected source even though history remains
+        # property-readable. Counting lease rows alone cannot authorize a batch.
+        async with get_tenant_session(seed["org_a_id"]) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true),set_config('app.current_scope_id',:scope,true)"),
+                {"actor": str(seed["user_a_admin_id"]), "scope": str(classified["scope"])})
+            visible = (await db.execute(text("SELECT id FROM lease_agreement WHERE id IN (:b,:d,:e)"),
+                {k: uuid.UUID(seed[f"lease_{k}"]) for k in ("b", "d", "e")})).scalars().all()
+            assert set(map(str, visible)) == {seed["lease_b"], seed["lease_d"], seed["lease_e"]}
+            assert await db.scalar(text("SELECT count(*) FROM tenant_profile WHERE id=:id"),
+                {"id": uuid.UUID(seed["tp_b"])}) == 0
+        for start, end in (("2038-01-01", "2038-12-31"), ("2039-01-01", "2039-12-31"), ("1901-01-01", "1901-12-31")):
+            response = await client.post("/api/settlements/batch", json={**body, "period_start": start, "period_end": end})
+            assert response.status_code == 404, response.text
+        assert _batch_rows(seed) == before
+        restored = await client.post(f"/api/person-data-domains/{contact_domain}/grants",
+            headers={"Idempotency-Key": str(uuid.uuid4())},
+            json={"user_id": str(seed["user_a_admin_id"]), "capabilities": ["read", "prepare", "export"], "reason_code": "TEAM_ACCESS"})
+        assert restored.status_code == 201, restored.text
+        repeated = await client.post("/api/settlements/batch", json=body)
+        assert repeated.status_code == 200, repeated.text
+        assert len(repeated.json()["skipped"]) == 3
+        revoked = await client.post(f"/api/property-data-domains/{domain}/grants/{source_grant}/revoke")
+        assert revoked.status_code == 204, revoked.text
+        assert (await client.post("/api/settlements/batch", json=body)).status_code == 404
+        async with get_tenant_session(seed["org_a_id"]) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),
+                {"actor": str(seed["user_a_admin_id"])})
+            assert await db.scalar(text("SELECT count(*) FROM lease_agreement WHERE id=:id"),
+                {"id": uuid.UUID(seed["lease_b"])}) == 0
+        assert _batch_rows(seed) == before
+        await change_mode(seed, "PAUSED")
+        assert (await client.post("/api/settlements/batch", json=body)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_batch_clerk_uses_exact_period_not_another_year(client_a_clerk, batch_seed):
+    existing = await client_a_clerk.post("/api/settlements", json={
+        **_batch_body(batch_seed, "2037-01-01", "2037-12-31"),
+        "lease_agreement_id": batch_seed["lease_b"],
+    })
+    assert existing.status_code == 201, existing.text
+    run_id = existing.json()["id"]
+    before = _batch_rows(batch_seed, [run_id])
+    response = await client_a_clerk.post("/api/settlements/batch", json=_batch_body(batch_seed))
+    assert response.status_code == 200, response.text
+    assert len(response.json()["created"]) == 3 and response.json()["skipped"] == []
+    assert all(r["period_start"] == "2038-01-01" and r["period_end"] == "2038-12-31" for r in response.json()["created"])
+    assert run_id not in response.text
+    assert _batch_rows(batch_seed, [run_id]) == before

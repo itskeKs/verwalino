@@ -186,6 +186,22 @@ Finalisierte Ergebnisse werden nicht aus heutigen Eigentumsdaten neu berechnet.
 30.06.2026, echte beleggebundene Jahreskosten von 365 EUR, die Anteile
 181/184 EUR, Reload/Finalisierung und den geöffneten, inhaltlich validierten PDF.
 
+## BK-Sammellauf (Phase 2)
+
+Unter „Abrechnungen“ legt „BK-Sammellauf“ nach bewusster Objekt-, Zeitraum- und
+Kreiswahl die fehlenden Entwürfe für die überlappenden Mietverträge an.
+`POST /api/settlements/batch` nimmt `property_id`, `period_start`, `period_end`
+und optional `accounting_scope_id`; die Antwort enthält `created` und `skipped`
+(mit Vertrags-/Lauf-ID). Bestehende aktive BK-Läufe desselben Vertrags, Zeitraums
+und Kreises werden unverändert übersprungen, auch wenn bereits finalisiert.
+Die gemeinsame Finanzsperre verhindert doppelte parallele Sammelläufe; Fehler
+rollen sämtliche neuen Entwürfe und Auditzeilen zurück. Org-, Quellen- und
+Kreisrechte gelten auch bei leerem Ergebnis; Teilkreise begrenzen die Einheiten.
+Es wird weder gerechnet noch finalisiert: tatsächliche Vorauszahlungen bleiben
+unbekannt (`null`), bis sie über den bestehenden Ablauf bestimmt werden.
+`scripts/acceptance/t27_settlement_batch_browser.cjs` prüft drei UI-Verträge,
+drei Entwürfe und die identische Wiederholung ohne neue Läufe.
+
 Weiterführende Dokumentation:
 
 - [Deployment](DEPLOY.md)

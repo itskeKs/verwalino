@@ -780,6 +780,18 @@ export interface SettlementRunCreate {
   management_mandate_id?: string | null;
 }
 
+export interface SettlementBatchCreate {
+  property_id: string;
+  period_start: string;
+  period_end: string;
+  accounting_scope_id?: string | null;
+}
+
+export interface SettlementBatchResult {
+  created: SettlementRun[];
+  skipped: { lease_agreement_id: string; settlement_run_id: string }[];
+}
+
 export interface AdvancePaymentsUpdate {
   advance_payments_total: string;
 }

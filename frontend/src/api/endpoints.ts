@@ -45,6 +45,8 @@ import type {
   VerifyResult,
   SettlementRun,
   SettlementRunCreate,
+  SettlementBatchCreate,
+  SettlementBatchResult,
   AdvancePaymentsUpdate,
   ComputeRequest,
   EconomicPlan,
@@ -610,6 +612,10 @@ export function getSettlement(id: string): Promise<SettlementRun> {
 
 export function createSettlement(body: SettlementRunCreate): Promise<SettlementRun> {
   return api.post<SettlementRun>("/api/settlements", body);
+}
+
+export function createSettlementBatch(body: SettlementBatchCreate): Promise<SettlementBatchResult> {
+  return api.post<SettlementBatchResult>("/api/settlements/batch", body);
 }
 
 export function setAdvancePayments(

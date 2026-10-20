@@ -17,7 +17,7 @@ from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
@@ -52,6 +52,21 @@ class SettlementRunCreate(BaseModel):
     period_end: date
     advance_payments_total: str | None = None
     management_mandate_id: str | None = None
+
+
+class SettlementBatchCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    property_id: uuid.UUID
+    period_start: date
+    period_end: date
+    accounting_scope_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def valid_period(self):
+        if self.period_start > self.period_end:
+            raise ValueError("Settlement period must not end before it starts")
+        return self
 
 
 class AdvancePaymentsUpdate(BaseModel):
@@ -125,6 +140,16 @@ class SettlementRunOut(BaseModel):
     finalized_by: str | None
     superseded_by_id: str | None
     lines: list[SettlementLineOut] = []
+
+
+class SettlementBatchSkipped(BaseModel):
+    lease_agreement_id: str
+    settlement_run_id: str
+
+
+class SettlementBatchOut(BaseModel):
+    created: list[SettlementRunOut]
+    skipped: list[SettlementBatchSkipped]
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +273,24 @@ async def list_settlements(
         runs = await runs_repo.list_all()
     # List view omits lines for brevity.
     return [_run_out(r, []) for r in runs]
+
+
+@router.post("/batch", response_model=SettlementBatchOut)
+async def create_settlement_batch(
+    body: SettlementBatchCreate,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_db),
+):
+    service = SettlementService(db, auth.organization_id, auth.user_id)
+    created, skipped = await service.create_batch(
+        body.property_id, body.period_start, body.period_end, body.accounting_scope_id,
+    )
+    return SettlementBatchOut(
+        created=[_run_out(run, []) for run in created],
+        skipped=[SettlementBatchSkipped(
+            lease_agreement_id=str(run.lease_agreement_id), settlement_run_id=str(run.id),
+        ) for run in skipped],
+    )
 
 
 @router.get("/{run_id}", response_model=SettlementRunOut)

@@ -29,6 +29,7 @@ from decimal import Decimal
 
 from fastapi import HTTPException
 from app.core.rbac import ScopeCapability
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
@@ -189,6 +190,49 @@ class SettlementService:
             )
         )
         return run
+
+    async def create_batch(
+        self,
+        property_id: uuid.UUID,
+        period_start: date,
+        period_end: date,
+        accounting_scope_id: uuid.UUID | None = None,
+    ) -> tuple[list[SettlementRun], list[SettlementRun]]:
+        """Create missing lease drafts in the ambient, serialized transaction."""
+        from app.repositories.property_repo import PropertyRepository
+
+        if period_start > period_end:
+            raise HTTPException(422, "Settlement period must not end before it starts")
+        scope = FinancialScopeService(self._session, self._org_id, self._user_id)
+        await scope.lock_inputs()
+        if await PropertyRepository(self._session, self._org_id).get_by_id(property_id) is None:
+            raise HTTPException(404, "Property not found")
+        # Validate even an empty property/period before returning an empty batch.
+        context = SettlementRun(
+            property_id=property_id, run_type="BK_MIETER",
+            period_start=period_start, period_end=period_end,
+        )
+        sphere = await scope.prepare_new(context, accounting_scope_id)
+        if not await self._session.scalar(text(
+            "SELECT property_financial_source_access(:org,:property)"
+        ), {"org": self._org_id, "property": property_id}):
+            raise HTTPException(404, "Complete property sources not accessible")
+        scope_id = sphere.id if sphere is not None else None
+        leases = await self._runs.leases_for_period(property_id, period_start, period_end)
+        existing = await self._runs.active_bk_for_period(
+            property_id, period_start, period_end, scope_id,
+        )
+        by_lease = {run.lease_agreement_id: run for run in existing}
+        created, skipped = [], []
+        for lease in leases:
+            if lease.id in by_lease:
+                skipped.append(by_lease[lease.id])
+            else:
+                created.append(await self.create_draft(
+                    property_id, lease.id, period_start, period_end,
+                    accounting_scope_id=scope_id,
+                ))
+        return created, skipped
 
     async def set_advance_payments(
         self, run_id: uuid.UUID, amount: Decimal

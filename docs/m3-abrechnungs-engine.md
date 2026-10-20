@@ -528,6 +528,18 @@ Diese Invarianten sind die **objektive, modellunabhängige** Messlatte: Sie gelt
 
 ### 10.4 API (API-first, RBAC wie M0/M2)
 
+Seit Phase 2 (T27) ergänzt `POST /api/settlements/batch` die Einzelanlage um einen
+atomaren Sammellauf mit Objekt, inklusivem Zeitraum und optionalem Abrechnungskreis.
+Nur im Zeitraum überlappende Verträge der berechtigten Kreiseinheiten werden über
+`create_draft` angelegt; aktive BK-Läufe mit identischem Vertrag/Objekt/Zeitraum/Kreis
+werden unverändert übersprungen. Antwort: `created` und `skipped` mit Vertrags-/Lauf-ID.
+Die vorhandene orgweite Finanzsperre serialisiert parallele Sammelläufe; ein Fehler
+rollt auch Audit und bereits angelegte Entwürfe zurück. Source-/Kreisrechte werden
+vor einer Leerantwort geprüft. Keine Berechnung, Coverage oder Finalisierung und
+keine erfundenen Vorauszahlungen: neue Finanzwerte bleiben `null`.
+Unter `/abrechnungen` führt „BK-Sammellauf“ durch Objekt, Zeitraum und Kreis;
+Ergebniszahlen und Liste werden aktualisiert, dieselbe Periode ist wiederholbar.
+
 Implementiertes BK-Verhalten: `POST /api/settlements/{id}/finalize` beendet die DB-Transaktion durch `Depends(get_db, scope="function")` **vor** der HTTP-Erfolgsantwort. Damit sieht ein unmittelbar folgender PDF-Request bereits den finalisierten Snapshot; Entwürfe bleiben mit HTTP 409 gesperrt. Die Regression prüft den gespeicherten Status aus einer unabhängigen DB-Session bei `http.response.start`, da ASGITransport allein das spätere Request-Cleanup abwartet und diese Race Condition verdeckt.
 
 - [ ] `app/api/settlements.py`: `POST` (Lauf anlegen, `require_write_dep`), `POST /{id}/compute`, `PATCH /{id}/advance-payments`, `POST /{id}/finalize`, `POST /{id}/correction`, `GET` (Liste/Detail, alle Rollen lesen), `GET /{id}/pdf` (finalisiert → PDF-Stream). READ_ONLY: nur GET. Fremde ID → **404** (nicht 403), wie M0/M2. Router in `app/main.py` registrieren.
