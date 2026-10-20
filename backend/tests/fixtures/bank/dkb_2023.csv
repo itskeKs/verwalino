@@ -1,0 +1,7 @@
+"Girokonto";"DE02120300000000202051"
+"Zeitraum";"01.01.2026 - 31.01.2026"
+
+"Buchungsdatum";"Wertstellung";"Status";"Zahlungspflichtige*r";"Zahlungsempfänger*in";"Verwendungszweck";"Umsatztyp";"IBAN";"Betrag (€)";"Gläubiger-ID";"Mandatsreferenz";"Kundenreferenz"
+"02.01.26";"03.01.26";"Gebucht";"Müller";"Hausverwaltung Test";"Miete; Januar
+Wohnung 1";"Eingang";"DE02120300000000202051";"1.234,56 €";"";"";""
+"04.01.26";"05.01.26";"Gebucht";"Hausverwaltung Test";"Heizservice";"Heizung";"Ausgang";"DE02120300000000202051";"-200,01 €";"";"";""

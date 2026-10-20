@@ -36,8 +36,29 @@ signierte `Decimal`-Werte (Gutschrift positiv, Lastschrift negativ), Importzeile
 sind je Konto über ihren Importhash eindeutig. RLS und Composite-Fremdschlüssel
 binden Umsatz, Konto und optionale Zahlungs-Verknüpfung an dieselbe Organisation
 und dasselbe Konto. Nach dem Buchen ist auch diese Verknüpfung unveränderlich;
-verknüpfte Umsätze sind nicht löschbar. Parser, Import-API und Oberfläche folgen
-in den nächsten Aufgaben; das konkrete Bankprofil aus F2 ist noch offen.
+verknüpfte Umsätze sind nicht löschbar. Import-API und Oberfläche folgen in den
+nächsten Aufgaben.
+
+Der reine CSV-Parser unterstützt Semikolon-Dateien in UTF-8 (auch BOM) und CP1252
+mit deutschen Datums-/Dezimalformaten. Pflichtspalten sind
+`Buchungstag`/`Buchungsdatum`, `Wertstellung`/`Valutadatum` und
+`Betrag`/`Betrag (EUR)`/`Betrag (€)`; optional Name (`Name`, `Gegenkonto Name`
+oder `Auftraggeber / Begünstigter`), IBAN (`IBAN`/`Gegenkonto IBAN`),
+`Verwendungszweck` und `Währung` (nur EUR). Keine freie Mapping-Oberfläche.
+Zusätzlich geprüft sind DKB-Giro-Altexporte und das Semikolon-Schema seit 2023:
+[veröffentlichte Formatdefinition](https://github.com/siddhantgoel/beancount-dkb/blob/6b9266e54bdbf566dfba63c44aa9cc7657144b8b/beancount_dkb/extractors/ec.py).
+Das ist ein nachvollziehbares Open-Source-Formatbeispiel, keine Zusicherung für
+jede heutige DKB-Exportvariante oder eine Festlegung der tatsächlich genutzten Bank.
+Bei DKB 2023 wird die Gegenpartei nach Eingang/Ausgang gewählt; vorgemerkte oder
+widersprüchliche Umsätze werden abgewiesen, alte `Tagessaldo`-Zeilen nicht gebucht.
+Unbekannte/mehrdeutige Formate und ungültige Zeilen brechen den gesamten Import
+mit verständlicher Meldung ab; keine Rundung oder stille Feldkürzung.
+
+Importidentitäten sind unabhängig von Dateiname, Encoding und Spaltenreihenfolge.
+Mehrfach vorhandene identische Buchungen bleiben erhalten. Ohne bankseitige
+Transaktions-ID sind überlappende Auszüge mit unterschiedlicher Anzahl ansonsten
+identischer Buchungen nicht eindeutig unterscheidbar; diese Grenze darf nicht
+als sichere bankübergreifende Dublettenerkennung ausgegeben werden.
 
 Weiterführende Dokumentation:
 
