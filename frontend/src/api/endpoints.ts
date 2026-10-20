@@ -30,6 +30,7 @@ import type {
   Vendor,
   OwnershipRecord,
   OwnershipCreate,
+  OwnershipEndRequest,
   LeaseRecord,
   LeaseCreate,
   LeaseUpdate,
@@ -468,6 +469,10 @@ export function createOwnership(body: OwnershipCreate): Promise<OwnershipRecord>
   return api.post<OwnershipRecord>("/api/ownership", body);
 }
 
+export function patchOwnership(id: string, body: OwnershipEndRequest): Promise<OwnershipRecord> {
+  return api.patch<OwnershipRecord>(`/api/ownership/${id}`, body);
+}
+
 // --- Leases ---
 
 export function listLeases(unitId?: string): Promise<LeaseRecord[]> {
@@ -688,6 +693,10 @@ export function listWegRuns(runType: string, propertyId?: string): Promise<WegRu
 
 export function getWegRun(id: string): Promise<WegRun> {
   return api.get<WegRun>(`/api/weg-settlements/${id}`);
+}
+
+export function getWegInputOwners(id: string): Promise<string[]> {
+  return api.get<string[]>(`/api/weg-settlements/${id}/input-owners`);
 }
 
 export function createWegRun(body: WegRunCreate): Promise<WegRun> {

@@ -81,14 +81,14 @@ export function WegSettlementsPage() {
             <p>Der Abrechnungskreis wird aus dem gewählten Wirtschaftsplan übernommen.</p>
             <label>
               WEG-Objekt *
-              <select required value={form.property_id} onChange={(e) => setForm({ ...form, property_id: e.target.value, economic_plan_id: "" })}>
+              <select aria-label="WEG-Objekt *" required value={form.property_id} onChange={(e) => setForm({ ...form, property_id: e.target.value, economic_plan_id: "" })}>
                 <option value="">-- Objekt waehlen --</option>
                 {wegProps.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.management_type})</option>)}
               </select>
             </label>
             <label>
               Wirtschaftsplan (Soll) *
-              <select required value={form.economic_plan_id} onChange={(e) => setForm({ ...form, economic_plan_id: e.target.value })}>
+              <select aria-label="Wirtschaftsplan (Soll) *" required value={form.economic_plan_id} onChange={(e) => setForm({ ...form, economic_plan_id: e.target.value })}>
                 <option value="">-- Wirtschaftsplan waehlen --</option>
                 {(form.property_id ? plansForProperty : []).map((p) => <option key={p.id} value={p.id}>{planLabel(p)}</option>)}
               </select>

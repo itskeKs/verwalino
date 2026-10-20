@@ -5,7 +5,8 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { UnitDetailPage } from "./UnitDetailPage";
 import * as endpoints from "../api/endpoints";
 import { AuthCtx } from "../auth/useAuth";
-import type { LeaseRecord } from "../api/types";
+import type { LeaseRecord, OwnershipRecord } from "../api/types";
+import { api } from "../api/client";
 
 vi.mock("../api/endpoints", async (importOriginal) => ({
   ...await importOriginal<typeof endpoints>(),
@@ -234,4 +235,135 @@ it("keeps a pending mutation's dialog open on Escape or close button", async () 
   expect(posts()).toHaveLength(1);
   finish(new Response(JSON.stringify({ ...march, valid_from: "2026-04-01" }), { status: 201 }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+});
+
+const originalOwner: OwnershipRecord = {
+  id: "ownership-old", unit_id: "unit", owner_profile_id: "seller", valid_from: "2026-01-01", valid_to: null, mea_share: "125.0000",
+};
+let ownerRows: OwnershipRecord[];
+function ownershipSetup(rows: OwnershipRecord[] = [originalOwner]) {
+  ownerRows = rows.map(row => ({ ...row }));
+  vi.mocked(endpoints.listLeases).mockResolvedValue([]);
+  vi.mocked(endpoints.listOwnership).mockImplementation(async () => ownerRows.map(row => ({ ...row })));
+  vi.mocked(endpoints.listOwnerProfiles).mockResolvedValue([
+    { id: "seller", person_id: "person-seller", notes: "" }, { id: "buyer", person_id: "person-buyer", notes: "" },
+  ]);
+  vi.mocked(endpoints.listPersons).mockResolvedValue([
+    { id: "person-seller", first_name: "Anna", last_name: "Alt" }, { id: "person-buyer", first_name: "Berta", last_name: "Neu" },
+  ] as never);
+  vi.mocked(endpoints.createOwnership).mockImplementation(body => api.post("/api/ownership", body));
+  fetchMock.mockImplementation(async (url: string, options?: RequestInit) => {
+    if (failure === "network") throw new TypeError("Netzwerk nicht erreichbar");
+    if (failure) return new Response(JSON.stringify({ detail: "Eigentumsprüfung fehlgeschlagen" }), { status: failure });
+    if (options?.method === "PATCH") {
+      const id = url.split("/").at(-1);
+      const row = { ...ownerRows.find(row => row.id === id)!, ...JSON.parse(options.body as string) };
+      ownerRows = ownerRows.map(previous => previous.id === id ? row : previous);
+      return new Response(JSON.stringify(row), { status: 200 });
+    }
+    const row = { ...JSON.parse(options?.body as string), id: "ownership-new", valid_to: null };
+    ownerRows.push(row); return new Response(JSON.stringify(row), { status: 201 });
+  });
+}
+function ownershipPatches() { return fetchMock.mock.calls.filter(([, options]) => options?.method === "PATCH"); }
+async function openOwnershipEnd(index = 0) {
+  fireEvent.click((await screen.findAllByRole("button", { name: "Eigentum beenden" }))[index]);
+  return screen.findByRole("dialog", { name: "Eigentum beenden" });
+}
+function ownershipDate(value: string) { fireEvent.change(screen.getByLabelText("Letzter Eigentumstag", { exact: true }), { target: { value } }); }
+function endOwnership() { fireEvent.click(within(screen.getByRole("dialog", { name: "Eigentum beenden" })).getByRole("button", { name: "Eigentum beenden" })); }
+
+it("T26 exposes the exact ownership-end PATCH endpoint and inclusive date-only body", async () => {
+  ownershipSetup(); expect(endpoints.patchOwnership).toBeTypeOf("function");
+  expect(await endpoints.patchOwnership(originalOwner.id, { valid_to: "2026-06-30" })).toEqual({ ...originalOwner, valid_to: "2026-06-30" });
+  expect(fetchMock).toHaveBeenCalledWith("/api/ownership/ownership-old", expect.objectContaining({ method: "PATCH", credentials: "include", body: JSON.stringify({ valid_to: "2026-06-30" }) }));
+});
+
+it("T26 ends June 30, preserves source data, persists and requires an explicit buyer POST from July 1", async () => {
+  ownershipSetup(); const view = show(); const dialog = await openOwnershipEnd();
+  expect(within(dialog).getByText(/Anna Alt/)).toBeVisible();
+  expect(screen.getByLabelText("Letzter Eigentumstag", { exact: true })).toBeRequired();
+  expect(within(dialog).queryByRole("combobox")).not.toBeInTheDocument();
+  ownershipDate("2026-06-30"); endOwnership();
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(ownershipPatches()).toHaveLength(1); expect(JSON.parse(ownershipPatches()[0][1].body)).toEqual({ valid_to: "2026-06-30" });
+  expect(posts()).toHaveLength(0); expect(screen.getByRole("status")).toHaveTextContent(/2026-06-30/);
+  const row = screen.getByRole("row", { name: /Anna Alt/ });
+  expect(row).toHaveTextContent("2026-01-01"); expect(row).toHaveTextContent("2026-06-30"); expect(row).toHaveTextContent("125.0000");
+  expect(within(row).queryByRole("button")).not.toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "Eigentuemer *" })).toHaveValue("");
+  expect(screen.getByLabelText("Gueltig ab *", { exact: true })).toHaveValue("2026-07-01");
+  expect(screen.getByLabelText("Gueltig bis", { exact: true })).toHaveValue("");
+  expect(screen.getByLabelText("MEA-Anteil", { exact: true })).toHaveValue("125.0000");
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" })); expect(posts()).toHaveLength(0);
+  fireEvent.change(screen.getByRole("combobox", { name: "Eigentuemer *" }), { target: { value: "buyer" } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  await waitFor(() => expect(posts()).toHaveLength(1)); expect(posts()[0][0]).toBe("/api/ownership");
+  expect(JSON.parse(posts()[0][1].body)).toEqual({ unit_id: "unit", owner_profile_id: "buyer", valid_from: "2026-07-01", mea_share: "125.0000" });
+  await screen.findByRole("row", { name: /Berta Neu/ }); view.unmount(); show();
+  expect(await screen.findByRole("row", { name: /Anna Alt/ })).toHaveTextContent("2026-06-30");
+  expect(screen.getByRole("row", { name: /Berta Neu/ })).toHaveTextContent("2026-07-01");
+  expect(endpoints.patchLease).not.toHaveBeenCalled(); expect(endpoints.createLease).not.toHaveBeenCalled();
+});
+
+it.each(["READ_ONLY", "UNKNOWN", "", "OWNER"])("T26 keeps ownership read-only for role %s", async role => {
+  ownershipSetup(); show(role); expect(await screen.findByRole("row", { name: /Anna Alt/ })).toHaveTextContent("offen");
+  expect(screen.queryByRole("button", { name: "Eigentum beenden" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "+ Eigentum" })).not.toBeInTheDocument(); expect(ownershipPatches()).toHaveLength(0); expect(posts()).toHaveLength(0);
+});
+it.each(["", "2025-12-31", "2026-02-30", "9999-12-31"])("T26 rejects missing, invalid, early or overflowing end %s", async value => {
+  ownershipSetup(); show(); await openOwnershipEnd(); ownershipDate(value); endOwnership();
+  expect(await within(screen.getByRole("dialog")).findByRole("alert")).toBeVisible(); expect(ownershipPatches()).toHaveLength(0); expect(posts()).toHaveLength(0);
+});
+it.each([["2026-01-01", "2026-01-02"], ["2026-02-28", "2026-03-01"], ["2026-12-31", "2027-01-01"], ["2028-02-29", "2028-03-01"]])("T26 computes the calendar day after %s as %s without today rules", async (lastDay, nextDay) => {
+  ownershipSetup(); show("CLERK"); await openOwnershipEnd(); ownershipDate(lastDay); endOwnership();
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(JSON.parse(ownershipPatches()[0][1].body)).toEqual({ valid_to: lastDay }); expect(screen.getByLabelText("Gueltig ab *", { exact: true })).toHaveValue(nextDay); expect(posts()).toHaveLength(0);
+});
+it.each([403, 404, 409, 422, "network"] as const)("T26 preserves inputs after PATCH failure %s and retries", async status => {
+  ownershipSetup(); failure = status; show(); await openOwnershipEnd(); ownershipDate("2026-06-30"); endOwnership();
+  expect(await within(screen.getByRole("dialog")).findByRole("alert")).toBeVisible();
+  expect(screen.getByLabelText("Letzter Eigentumstag", { exact: true })).toHaveValue("2026-06-30"); expect(ownerRows).toEqual([originalOwner]); expect(posts()).toHaveLength(0);
+  expect(screen.queryByRole("heading", { name: "Neues Eigentum anlegen" })).not.toBeInTheDocument();
+  failure = null; endOwnership(); await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument()); expect(ownershipPatches()).toHaveLength(2);
+  expect(screen.getByLabelText("Gueltig ab *", { exact: true })).toHaveValue("2026-07-01");
+});
+it("T26 scopes actions and MEA to the selected open row among several owners", async () => {
+  ownershipSetup([originalOwner, { ...originalOwner, id: "ownership-second", owner_profile_id: "buyer", valid_from: "2026-03-01", mea_share: "75.0000" }, { ...originalOwner, id: "ownership-ended", valid_from: "2025-01-01", valid_to: "2025-12-31" }]);
+  show(); await screen.findByRole("row", { name: /Berta Neu/ }); expect(screen.getAllByRole("button", { name: "Eigentum beenden" })).toHaveLength(2);
+  expect(within(await openOwnershipEnd(1)).getByText(/Berta Neu/)).toBeVisible(); ownershipDate("2026-06-30"); endOwnership();
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument()); expect(ownershipPatches()[0][0]).toBe("/api/ownership/ownership-second"); expect(ownerRows[0]).toEqual(originalOwner);
+  expect(screen.getByLabelText("MEA-Anteil", { exact: true })).toHaveValue("75.0000"); expect(screen.getByRole("combobox", { name: "Eigentuemer *" })).toHaveValue("");
+});
+it("T26 leaves source-less MEA empty", async () => {
+  ownershipSetup([{ ...originalOwner, mea_share: null }]); show(); await openOwnershipEnd(); ownershipDate("2026-06-30"); endOwnership();
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument()); expect(screen.getByLabelText("MEA-Anteil", { exact: true })).toHaveValue("");
+});
+it("T26 synchronously blocks duplicate submits, inputs, cancel, Escape and close while pending", async () => {
+  ownershipSetup(); show(); await openOwnershipEnd(); ownershipDate("2026-06-30"); let finish!: (response: Response) => void;
+  fetchMock.mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; })); const dialog = screen.getByRole("dialog", { name: "Eigentum beenden" });
+  const form = within(dialog).getByRole("button", { name: "Eigentum beenden" }).closest("form")!;
+  fireEvent.submit(form); fireEvent.submit(form); expect(ownershipPatches()).toHaveLength(1);
+  expect(screen.getByLabelText("Letzter Eigentumstag", { exact: true })).toBeDisabled(); expect(within(dialog).getByRole("button", { name: "Abbrechen" })).toBeDisabled();
+  expect(within(dialog).getByRole("button", { name: "Eigentum beenden" })).toBeDisabled();
+  fireEvent.keyDown(dialog, { key: "Escape" }); fireEvent.click(within(dialog).getByRole("button", { name: "Schließen" }));
+  expect(screen.getByRole("dialog", { name: "Eigentum beenden" })).toBeVisible(); expect(posts()).toHaveLength(0);
+  finish(new Response(JSON.stringify({ ...originalOwner, valid_to: "2026-06-30" }), { status: 200 }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument()); expect(screen.getByRole("row", { name: /Anna Alt/ })).toHaveTextContent("2026-06-30");
+});
+it("T26 cancels without PATCH and starts another row with clean date/error", async () => {
+  ownershipSetup([originalOwner, { ...originalOwner, id: "ownership-second", owner_profile_id: "buyer" }]); show(); await openOwnershipEnd(); endOwnership();
+  expect(await within(screen.getByRole("dialog")).findByRole("alert")).toBeVisible(); ownershipDate("2026-06-30"); fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Abbrechen" })); expect(ownershipPatches()).toHaveLength(0);
+  await openOwnershipEnd(1); expect(screen.getByLabelText("Letzter Eigentumstag", { exact: true })).toHaveValue(""); expect(within(screen.getByRole("dialog")).queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("T26 preserves the next-day proposal through cancel and explicit + Eigentum without selecting a buyer", async () => {
+  ownershipSetup(); show(); await openOwnershipEnd(); ownershipDate("2026-06-30"); endOwnership();
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
+  fireEvent.click(screen.getByRole("button", { name: "+ Eigentum" }));
+  expect(screen.getByLabelText("Gueltig ab *", { exact: true })).toHaveValue("2026-07-01");
+  expect(screen.getByRole("combobox", { name: "Eigentuemer *" })).toHaveValue("");
+  expect(screen.getByLabelText("MEA-Anteil", { exact: true })).toHaveValue("125.0000");
+  expect(posts()).toHaveLength(0);
 });

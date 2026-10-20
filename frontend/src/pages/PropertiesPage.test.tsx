@@ -40,3 +40,19 @@ it("does not offer administrative self-grants to a clerk", async () => {
   fireEvent.click(screen.getByRole("button", { name: "+ Neues Objekt" }));
   expect(screen.queryByRole("checkbox", { name: /Datenbereich anlegen/ })).not.toBeInTheDocument();
 });
+
+it("explicitly labels the management select without including its option text", async () => {
+  vi.spyOn(api, "get").mockImplementation(async path => {
+    if (path.startsWith("/api/properties/page")) return { items: [], next_cursor: null } as never;
+    throw new Error(`Unexpected GET ${path}`);
+  });
+  render(<MemoryRouter><PropertiesPage /></MemoryRouter>);
+  await screen.findByText("Keine Objekte vorhanden.");
+  fireEvent.click(screen.getByRole("button", { name: "+ Neues Objekt" }));
+  const select = screen.getByRole("combobox", { name: "Verwaltungsart *" });
+  expect(select).toHaveAttribute("aria-label", "Verwaltungsart *");
+  expect(select).toHaveAccessibleName("Verwaltungsart *");
+  expect(select).toHaveTextContent("Mietobjekt");
+  fireEvent.change(select, { target: { value: "WEG" } });
+  expect(select).toHaveValue("WEG");
+});

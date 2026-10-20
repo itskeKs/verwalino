@@ -6,8 +6,11 @@ import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, field_validator
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.services.financial_scope_service import FinancialScopeService
 
 from app.core.tenant import (
     AuthContext,
@@ -95,6 +98,49 @@ async def create_ownership(
             )
         raise
     return _to_out(oh)
+
+
+class OwnershipEnd(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    valid_to: date
+
+    @field_validator("valid_to")
+    @classmethod
+    def require_representable_exclusive_end(cls, value: date) -> date:
+        if value == date.max:
+            raise ValueError("Ownership end must allow an exclusive next-day bound")
+        return value
+
+
+@router.patch("/{ownership_id}", response_model=OwnershipOut)
+async def end_ownership(
+    ownership_id: uuid.UUID,
+    body: OwnershipEnd,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_live_writer_db),
+):
+    # Match financial computations and T23: ACL/input locks precede parent locks.
+    await FinancialScopeService(db, auth.organization_id, auth.user_id).lock_inputs()
+    repo = OwnershipHistoryRepository(db, auth.organization_id)
+    existing = await repo.get_by_id_for_update(ownership_id)
+    if existing is None:
+        raise HTTPException(404, "Ownership history not found")
+    await require_history_prepare(db, auth.organization_id, "ownership_history", existing)
+    if body.valid_to < existing.valid_from:
+        raise HTTPException(422, "Ownership end must not precede its start")
+    exclusive_end = inclusive_last_day_to_db_exclusive(body.valid_to)
+    if existing.valid_to != exclusive_end:
+        existing.valid_to = exclusive_end
+        try:
+            await db.flush()
+        except IntegrityError as exc:
+            if "excl_ownership_no_overlap" in str(exc):
+                raise HTTPException(
+                    409, "Overlapping ownership period for this unit/owner combination"
+                ) from exc
+            raise
+    return _to_out(existing)
 
 
 def _to_out(o: OwnershipHistory) -> OwnershipOut:

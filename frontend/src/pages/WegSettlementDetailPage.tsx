@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   getWegRun,
-  getEconomicPlan,
+  getWegInputOwners,
   computeWegRun,
   finalizeWegRun,
   wegRunPdfUrl,
@@ -59,10 +59,11 @@ export function WegSettlementDetailPage() {
     setPaidOwners([]); setPaidValues({}); setOpening(''); setWithdrawals('');
     Promise.all([getWegRun(runId), listProperties(), listOwnerProfiles(), listPersons()])
       .then(async ([r, pr, op, per]) => {
-        const plan = r.economic_plan_id ? await getEconomicPlan(r.economic_plan_id) : null;
+        if (!active) return;
+        const inputOwners = r.status === "draft" ? await getWegInputOwners(runId) : [];
         if (!active) return;
         setRun(r); setProperties(pr); setOwnerProfiles(op); setPersons(per);
-        setPaidOwners([...new Set((plan?.lines ?? []).map((line) => line.owner_profile_id).filter((id): id is string => Boolean(id)))]);
+        setPaidOwners(inputOwners);
       })
       .catch((err) => { if (active) setError(err instanceof ApiError && err.status === 401 ? "Nicht authentifiziert." : String(err)); })
       .finally(() => { if (active) setLoading(false); });
@@ -120,7 +121,7 @@ export function WegSettlementDetailPage() {
   }
 
   if (loading) return <p>Lade...</p>;
-  if (!run) return <p className="error-text">{error ?? "WEG-Abrechnung nicht gefunden."}</p>;
+  if (!run) return <p role="alert" className="error-text">{error ?? "WEG-Abrechnung nicht gefunden."}</p>;
 
   // Group lines by owner.
   const ownerIds = Array.from(new Set(run.lines.map((l) => l.addressee_owner_profile_id ?? "—")));

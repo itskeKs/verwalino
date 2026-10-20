@@ -169,6 +169,23 @@ Kautionen müssen zu Kontoobjekt, Vertrag und Mieter passen. Buchungsbelege und
 finalisierte Dokumente bleiben unverändert. Der echte UI-Prüffall ist
 `scripts/acceptance/t25_deposits_browser.cjs`.
 
+## Eigentümerwechsel (Phase 2)
+
+In der Einheit beendet „Eigentum beenden“ eine offene Zuordnung mit dem
+inklusiven letzten Eigentumstag (`PATCH /api/ownership/{id}`, nur `valid_to`).
+Die Folgeanlage wird ab dem nächsten Tag vorbereitet; der neue Eigentümer muss
+bewusst ausgewählt und gespeichert werden. Eigentümer, Einheit, Beginn und MEA
+der alten Zeile bleiben erhalten. Schreibrolle und bestehende Prepare-Rechte
+sowie die gemeinsame Finanzsperre gelten; Miteigentum bleibt zulässig.
+Die Jahresabrechnung lädt ihre Zahlungseingaben über den autorisierten
+`GET /api/weg-settlements/{id}/input-owners` für alle Eigentümer im Zeitraum,
+nicht nur aus dem Wirtschaftsplan. Unbekannte Zahlungen sind keine Nullwerte:
+auch bestätigte Nullen müssen ausdrücklich eingegeben und geprüft werden.
+Finalisierte Ergebnisse werden nicht aus heutigen Eigentumsdaten neu berechnet.
+`scripts/acceptance/t26_ownership_change_browser.cjs` prüft den Verkauf zum
+30.06.2026, echte beleggebundene Jahreskosten von 365 EUR, die Anteile
+181/184 EUR, Reload/Finalisierung und den geöffneten, inhaltlich validierten PDF.
+
 Weiterführende Dokumentation:
 
 - [Deployment](DEPLOY.md)

@@ -89,7 +89,7 @@ export function EconomicPlansPage() {
           <form onSubmit={handleSubmit} className="form-grid">
             <label>
               WEG-Objekt *
-              <select required value={form.property_id} onChange={(e) => setForm({ ...form, accounting_scope_id: null, property_id: e.target.value })}>
+              <select aria-label="WEG-Objekt *" required value={form.property_id} onChange={(e) => setForm({ ...form, accounting_scope_id: null, property_id: e.target.value })}>
                 <option value="">-- Objekt waehlen --</option>
                 {wegProps.map((p) => (
                   <option key={p.id} value={p.id}>{p.name} ({p.management_type})</option>

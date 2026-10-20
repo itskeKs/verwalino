@@ -14,6 +14,7 @@ import {
   listTenantProfiles,
   listPersons,
   createOwnership,
+  patchOwnership,
   createLease,
   patchLease,
   listLeaseRentChanges,
@@ -63,6 +64,8 @@ interface LeaseFormData {
 }
 
 export function UnitDetailPage() {
+  const { session } = useAuth();
+  const canWriteOwnership = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
   const { propertyId, unitId } = useParams<{ propertyId: string; unitId: string }>();
   const [unit, setUnit] = useState<Unit | null>(null);
   const [property, setProperty] = useState<Property | null>(null);
@@ -81,6 +84,9 @@ export function UnitDetailPage() {
   });
   const [ownerFormError, setOwnerFormError] = useState<string | null>(null);
   const [savingOwner, setSavingOwner] = useState(false);
+  const ownerMutationLock = useRef(false);
+  const [ownerStatus, setOwnerStatus] = useState<string | null>(null);
+  const [ownerSuggestion, setOwnerSuggestion] = useState<{ valid_from: string; mea_share: string } | null>(null);
 
   // Lease form
   const [showLeaseForm, setShowLeaseForm] = useState(false);
@@ -145,7 +151,8 @@ export function UnitDetailPage() {
 
   async function handleOwnerSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!unitId) return;
+    if (!unitId || !canWriteOwnership || ownerMutationLock.current || !ownerForm.owner_profile_id) return;
+    ownerMutationLock.current = true;
     setSavingOwner(true);
     setOwnerFormError(null);
     try {
@@ -157,6 +164,7 @@ export function UnitDetailPage() {
       if (ownerForm.valid_to) body.valid_to = ownerForm.valid_to;
       if (ownerForm.mea_share) body.mea_share = ownerForm.mea_share;
       await createOwnership(body);
+      setOwnerSuggestion(null);
       setShowOwnerForm(false);
       reload();
     } catch (err) {
@@ -171,6 +179,7 @@ export function UnitDetailPage() {
         setOwnerFormError(String(err));
       }
     } finally {
+      ownerMutationLock.current = false;
       setSavingOwner(false);
     }
   }
@@ -253,16 +262,18 @@ export function UnitDetailPage() {
       {/* Ownership History */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <h2 style={{ margin: 0 }}>Eigentuemer-Historie</h2>
-        <button className="btn btn--primary" onClick={() => {
+        {canWriteOwnership && <button className="btn btn--primary" disabled={savingOwner} onClick={() => {
           setOwnerFormError(null);
-          setOwnerForm({ owner_profile_id: ownerProfiles[0]?.id ?? "", valid_from: "", valid_to: "", mea_share: "" });
+          setOwnerForm({ owner_profile_id: "", valid_from: ownerSuggestion?.valid_from ?? "", valid_to: "", mea_share: ownerSuggestion?.mea_share ?? "" });
           setShowOwnerForm(true);
         }}>
           + Eigentum
-        </button>
+        </button>}
       </div>
 
-      {showOwnerForm && (
+      {ownerStatus && <p role="status">{ownerStatus}</p>}
+
+      {canWriteOwnership && showOwnerForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Neues Eigentum anlegen</h2>
           {ownerFormError && <p className="error-text">{ownerFormError}</p>}
@@ -270,6 +281,7 @@ export function UnitDetailPage() {
             <label>
               Eigentuemer *
               <select
+                aria-label="Eigentuemer *"
                 required
                 value={ownerForm.owner_profile_id}
                 onChange={(e) => setOwnerForm({ ...ownerForm, owner_profile_id: e.target.value })}
@@ -329,6 +341,7 @@ export function UnitDetailPage() {
                 <th>Von</th>
                 <th>Bis</th>
                 <th>MEA-Anteil</th>
+                {canWriteOwnership && <th>Aktion</th>}
               </tr>
             </thead>
             <tbody>
@@ -338,6 +351,19 @@ export function UnitDetailPage() {
                   <td>{o.valid_from}</td>
                   <td>{o.valid_to ?? "offen"}</td>
                   <td>{o.mea_share ?? "-"}</td>
+                  {canWriteOwnership && <td>{o.valid_to === null && o.unit_id === unitId && <OwnershipEndAction
+                    ownership={o}
+                    ownerLabel={ownerProfileLabel(o.owner_profile_id)}
+                    disabled={savingOwner}
+                    onEnded={(ended, nextDay) => {
+                      setOwnerships(previous => previous.map(row => row.id === ended.id ? ended : row));
+                      setOwnerStatus(`Eigentum bis einschließlich ${ended.valid_to} beendet. Neuen Eigentümer ab ${nextDay} bewusst auswählen und speichern.`);
+                      setOwnerFormError(null);
+                      setOwnerSuggestion({ valid_from: nextDay, mea_share: o.mea_share ?? "" });
+                      setOwnerForm({ owner_profile_id: "", valid_from: nextDay, valid_to: "", mea_share: o.mea_share ?? "" });
+                      setShowOwnerForm(true);
+                    }}
+                  />}</td>}
                 </tr>
               ))}
             </tbody>
@@ -497,6 +523,93 @@ export function UnitDetailPage() {
       )}
     </div>
   );
+}
+
+// Calendar-only arithmetic: API valid_to is inclusive; never send the exclusive DB bound.
+function nextOwnershipDay(value: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  let [year, month, day] = value.split("-").map(Number);
+  if (year < 1 || month < 1 || month > 12) return null;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  if (day < 1 || day > days) return null;
+  day += 1;
+  if (day > days) { day = 1; month += 1; }
+  if (month > 12) { month = 1; year += 1; }
+  if (year > 9999) return null;
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function ownershipEndError(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 403) return "Keine Berechtigung, dieses Eigentum zu beenden.";
+    if (error.status === 404) return "Eigentum nicht gefunden oder nicht zugänglich.";
+    if (error.status === 409) return "Eigentum nicht beendet: Der Eintrag wurde inzwischen geändert oder ist gesperrt. Bitte Historie prüfen.";
+    if (error.status === 422) return `Eigentum nicht beendet: Datum prüfen. ${error.message}`;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+function OwnershipEndAction({ ownership, ownerLabel, disabled, onEnded }: {
+  ownership: OwnershipRecord;
+  ownerLabel: string;
+  disabled: boolean;
+  onEnded: (ended: OwnershipRecord, nextDay: string) => void;
+}) {
+  const { session } = useAuth();
+  const canWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
+  const [open, setOpen] = useState(false);
+  const [lastDay, setLastDay] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const mutationLock = useRef(false);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (mutationLock.current || disabled || !canWrite || ownership.valid_to !== null) return;
+    setError(null);
+    const nextDay = nextOwnershipDay(lastDay);
+    if (!nextDay || lastDay < ownership.valid_from) {
+      setError("Bitte einen gültigen letzten Eigentumstag ab Eigentumsbeginn eingeben, dessen Folgetag darstellbar ist (spätestens 9999-12-30).");
+      return;
+    }
+    mutationLock.current = true;
+    setSaving(true);
+    try {
+      const ended = await patchOwnership(ownership.id, { valid_to: lastDay });
+      setOpen(false);
+      onEnded(ended, nextDay);
+    } catch (error) {
+      setError(ownershipEndError(error));
+    } finally {
+      mutationLock.current = false;
+      setSaving(false);
+    }
+  }
+
+  return <>
+    <button type="button" className="btn" disabled={disabled || saving} onClick={() => {
+      setLastDay(""); setError(null); setOpen(true);
+    }}>Eigentum beenden</button>
+    <Dialog open={open} onOpenChange={next => { if (!mutationLock.current) setOpen(next); }}>
+      <DialogContent>
+        <DialogTitle>Eigentum beenden</DialogTitle>
+        <DialogDescription>
+          {ownerLabel} · Eigentum ab {ownership.valid_from} · MEA-Anteil {ownership.mea_share ?? "-"}.
+          Der letzte Eigentumstag gilt einschließlich. Eigentümer, Beginn und MEA bleiben unverändert.
+          Anschließend neuen Eigentümer ab Folgetag auswählen und separat speichern.
+        </DialogDescription>
+        <form onSubmit={submit} noValidate>
+          <label>Letzter Eigentumstag<Input type="date" required min={ownership.valid_from} max="9999-12-30" value={lastDay} disabled={saving} onChange={event => setLastDay(event.target.value)} /></label>
+          {error && <p role="alert" className="error-text">{error}</p>}
+          <div className="form-actions">
+            <button type="submit" className="btn btn--primary" disabled={saving}>Eigentum beenden</button>
+            <button type="button" className="btn" disabled={saving} onClick={() => { if (!mutationLock.current) setOpen(false); }}>Abbrechen</button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  </>;
 }
 
 // Validate/normalize decimal input only; rent calculations stay in the backend.

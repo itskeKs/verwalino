@@ -538,6 +538,7 @@ export function InvoiceDocumentDetailPage() {
             <label>
               Objekt *
               <select
+                aria-label="Objekt *"
                 required
                 value={costForm.property_id}
                 onChange={(e) =>
@@ -555,6 +556,7 @@ export function InvoiceDocumentDetailPage() {
             <label>
               Kategorie *
               <select
+                aria-label="Kategorie *"
                 required
                 value={costForm.cost_category_id}
                 onChange={(e) => {
@@ -675,6 +677,7 @@ export function InvoiceDocumentDetailPage() {
             <label>
               Umlagefaehigkeit *
               <select
+                aria-label="Umlagefaehigkeit *"
                 required
                 value={costForm.tenant_apportionable}
                 onChange={(e) =>
@@ -684,9 +687,9 @@ export function InvoiceDocumentDetailPage() {
                   })
                 }
               >
-                <option value="full">Voll umlagefaehig</option>
-                <option value="partial">Teilweise umlagefaehig</option>
-                <option value="none">Nicht umlagefaehig</option>
+                <option value="UMLAGEFAEHIG">Voll umlagefaehig</option>
+                <option value="TEILWEISE_PRUEFEN">Teilweise umlagefaehig</option>
+                <option value="NICHT_UMLAGEFAEHIG">Nicht umlagefaehig</option>
               </select>
             </label>
             <AccountingScopeSelector key={costForm.property_id} propertyId={costForm.property_id} value={costForm.accounting_scope_id} onChange={id => setCostForm({ ...costForm, accounting_scope_id: id })} />

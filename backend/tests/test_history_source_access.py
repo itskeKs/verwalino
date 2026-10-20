@@ -162,32 +162,69 @@ async def test_privacy_history_export_is_distinct_and_expiry_cannot_erase_active
     finally: await clear_disclosure_grants()
 
 
-async def test_history_migration_preserves_records_and_private_graph(seed_data):
+async def test_history_migration_preserves_records_and_private_graph(seed_data,m3_seed):
     import importlib
     from sqlalchemy import create_engine
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
     from tests.conftest import MIGRATOR_SYNC_URL
     migration=importlib.import_module('migrations.versions.0067_history_source_access')
+    rent_migration=importlib.import_module('migrations.versions.0126_lease_rent_change')
     engine=create_engine(MIGRATOR_SYNC_URL)
     try:
         async with synthetic_enforcement(seed_data):
             with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
-                with pytest.raises(DBAPIError,match='Retain strict history'):
-                    with db.begin_nested(): migration.downgrade()
-                savepoint=db.begin_nested()
+                heads_before=MigrationContext.configure(db).get_current_heads()
+                assert heads_before
+                fixture=db.begin_nested()
                 try:
-                    db.execute(text('TRUNCATE property_source_security'))
-                    tables=('lease_agreement','ownership_history','audit_event')
-                    snapshots={table:db.scalar(text(f"SELECT md5(string_agg(row_to_json(r)::text,'' ORDER BY id)) FROM {table} r")) for table in tables}
-                    migration.downgrade()
-                    migration.upgrade()
+                    rent_id=uuid.uuid4()
+                    db.execute(text("""INSERT INTO lease_rent_change
+                        (id,organization_id,lease_agreement_id,valid_from,base_rent,advance_payment)
+                        VALUES (:id,:org,:lease,'2098-02-01',123.45,67.89)"""),
+                        {'id':rent_id,'org':seed_data['org_a_id'],'lease':uuid.UUID(m3_seed['lease_a'])})
+                    rent_rows_sql=text('SELECT to_jsonb(r) FROM lease_rent_change r ORDER BY id')
+                    rent_policies_sql=text("""SELECT policyname,permissive,roles,cmd,qual,with_check
+                        FROM pg_policies WHERE schemaname='public' AND tablename='lease_rent_change'
+                        ORDER BY policyname""")
+                    rent_security_sql=text("""SELECT relrowsecurity,relforcerowsecurity,
+                        has_table_privilege('app_rw','lease_rent_change','SELECT'),
+                        has_table_privilege('app_rw','lease_rent_change','INSERT'),
+                        has_table_privilege('app_rw','lease_rent_change','UPDATE'),
+                        has_table_privilege('app_rw','lease_rent_change','DELETE')
+                        FROM pg_class WHERE oid='lease_rent_change'::regclass""")
+                    rent_rows=db.execute(rent_rows_sql).scalars().all()
+                    assert any(row['id']==str(rent_id) for row in rent_rows)
+                    rent_policies=db.execute(rent_policies_sql).all()
+                    assert {row.policyname for row in rent_policies}=={'lease_rent_change_read','lease_rent_change_insert'}
+                    rent_security=db.execute(rent_security_sql).one()
+                    assert tuple(rent_security)==(True,True,True,True,False,False)
+                    with pytest.raises(DBAPIError,match='Retain strict history'):
+                        with db.begin_nested(): migration.downgrade()
+                    savepoint=db.begin_nested()
+                    try:
+                        db.execute(text('TRUNCATE property_source_security'))
+                        tables=('lease_agreement','ownership_history','audit_event')
+                        snapshots={table:db.scalar(text(f"SELECT md5(string_agg(row_to_json(r)::text,'' ORDER BY id)) FROM {table} r")) for table in tables}
+                        # 0126 depends on the history predicate owned by 0067.
+                        # Rehearse its real downgrade/upgrade only inside this savepoint.
+                        rent_migration.downgrade()
+                        migration.downgrade()
+                        migration.upgrade()
+                        rent_migration.upgrade()
+                        for table,before in snapshots.items():
+                            assert db.scalar(text(f"SELECT md5(string_agg(row_to_json(r)::text,'' ORDER BY id)) FROM {table} r"))==before
+                        for signature in ['property_history_graph_valid(uuid,uuid)','property_source_graph_before_history(uuid,uuid,uuid,text,boolean)',
+                            'property_complete_graph_actor_access(uuid,uuid,uuid,text,boolean)','privacy_source_context_complete(uuid,uuid,text)','privacy_output_source_complete(uuid,uuid,text)']:
+                            assert not db.scalar(text("SELECT has_function_privilege('app_rw',:signature,'EXECUTE')"),{'signature':signature})
+                    finally: savepoint.rollback()
+                    assert db.execute(rent_rows_sql).scalars().all()==rent_rows
+                    assert db.execute(rent_policies_sql).all()==rent_policies
+                    assert db.execute(rent_security_sql).one()==rent_security
                     for table,before in snapshots.items():
                         assert db.scalar(text(f"SELECT md5(string_agg(row_to_json(r)::text,'' ORDER BY id)) FROM {table} r"))==before
-                    for signature in ['property_history_graph_valid(uuid,uuid)','property_source_graph_before_history(uuid,uuid,uuid,text,boolean)',
-                        'property_complete_graph_actor_access(uuid,uuid,uuid,text,boolean)','privacy_source_context_complete(uuid,uuid,text)','privacy_output_source_complete(uuid,uuid,text)']:
-                        assert not db.scalar(text("SELECT has_function_privilege('app_rw',:signature,'EXECUTE')"),{'signature':signature})
-                finally: savepoint.rollback()
+                finally: fixture.rollback()
+                assert MigrationContext.configure(db).get_current_heads()==heads_before
     finally: engine.dispose()
 
 

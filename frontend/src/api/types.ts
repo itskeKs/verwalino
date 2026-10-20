@@ -512,6 +512,10 @@ export interface OwnershipRecord {
   mea_share: string | null;
 }
 
+export interface OwnershipEndRequest {
+  valid_to: string;
+}
+
 export interface OwnershipCreate {
   unit_id: string;
   owner_profile_id: string;
