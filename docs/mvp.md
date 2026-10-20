@@ -192,7 +192,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 
 ### Phase 2 – Fehlende Kernfunktionen
 
-**Start auf eigener Branch `mvp/phase-2` vom nach `main` übernommenen Phase-1-Stand. Nächste Aufgabe: T18**; Aufgaben einzeln in Reihenfolge. T10 bleibt als offene Phase-1-Restaufgabe bestehen, sein Produktionsrest benötigt weiterhin gesonderte Freigabe.
+**Start auf eigener Branch `mvp/phase-2` vom nach `main` übernommenen Phase-1-Stand. Nächste Aufgabe: T19**; Aufgaben einzeln in Reihenfolge. T10 bleibt als offene Phase-1-Restaufgabe bestehen, sein Produktionsrest benötigt weiterhin gesonderte Freigabe.
 
 - [x] **T14 Passwort ändern** — `POST /api/auth/password` (alt, neu; Hash wie beim Login) und Dialog im Benutzermenü.
   Dateien: `backend/app/api/auth.py`, `backend/app/core/security.py`, `frontend/src/components/Topbar.tsx`, `frontend/src/api/endpoints.ts`
@@ -210,9 +210,10 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
   Dateien: `backend/app/engine/bank_import.py`, `backend/tests/engine/test_bank_import_camt.py` (neu)
   Fertig, wenn: `uv run pytest tests/engine/test_bank_import_camt.py` grün.
   Ergebnis 20.10.2026: 39 synthetische CAMT-Tests grün; gemeinsam mit T16 und Bankumsatz-/RLS-Tests 97 grün, 2 bestehende Alembic-Warnungen. Vor Implementierung roter Funktionsimport; zwei spätere fachlich rote Tests belegten ignorierte Detailrichtung und fehlende Mehrkontenprüfung über ZIP-Dateigrenzen, beide behoben. Beide Namespace-Versionen, exakte Sammelbuchungen (700 + 150 − 200,01 = 649,99 EUR), XML-/CSV-identische Ausgabe, Datumszeitwerte, ZIP, DTD-/Entitätenschutz auch bei UTF-16, Archivpfade, Größen-/Zeilengrenzen und Abbruch ohne Teilerfolg geprüft. Keine API-/UI-Übernahme behauptet.
-- [ ] **T18 Import-Endpoint mit Vorschau** — `POST /api/bank-accounts/{id}/imports` mit `dry_run` (Anzahl, Summe, Zeitraum, Dubletten), sonst Übernahme; gleiche Datei zweimal ergibt 0 neue.
+- [x] **T18 Import-Endpoint mit Vorschau** — `POST /api/bank-accounts/{id}/imports` mit `dry_run` (Anzahl, Summe, Zeitraum, Dubletten), sonst Übernahme; gleiche Datei zweimal ergibt 0 neue.
   Dateien: `backend/app/api/bank_accounts.py`, `backend/app/services/bank_import_service.py` (neu), `backend/app/engine/bank_import.py`, `backend/app/core/uploads.py`
   Fertig, wenn: `uv run pytest tests/test_bank_import_api.py` (neu) grün.
+  Ergebnis 20.10.2026: Vor Implementierung 12 rote API-/Uploadpfadtests; danach vorgeschriebener API-Lauf 18 grün, kombiniert mit CSV/CAMT, Bankumsätzen/RLS, Zahlungen/Bankkonten und Uploadlimits 161 grün (2 bestehende Alembic-Warnungen). Sichere Vorschau als Vorgabe ohne Persistenz; exakte Sollsumme 649,99 EUR, Zeitraum, Dubletten, zweite/gleichzeitige Übernahme, Org-/Rollenprüfung, CSV/XML/ZIP, Ziel-IBAN und Größenbegrenzung geprüft. Erzwungener Fehler nach erstem echten Insert belegt vollständigen Rollback; 1.001 Buchungen über Insert-/Hash-Batchgrenzen geprüft (10,01 EUR, zweite Übernahme null neue). Keine Dateiextraktion, keine gebuchten Zahlungen oder Änderung finalisierter Dokumente. Oberfläche und tatsächlicher Import-Browserablauf bleiben T19.
 - [ ] **T19 Import-Oberfläche und Umsatzliste** — „Kontoauszug importieren“ (Datei, Vorschau, Übernehmen) und Seite `/bankkonten/:id/umsaetze` mit Statusfilter; Vorbild `rg -n "RF11|RF12" docs/fachreferenz.md`.
   Dateien: `frontend/src/pages/BankAccountsPage.tsx`, `frontend/src/pages/BankTransactionsPage.tsx` (neu), `frontend/src/App.tsx`, `frontend/src/api/endpoints.ts`
   Fertig, wenn: `npm test -- src/pages/BankTransactionsPage.test.tsx` (neu) grün UND Ablauf in der App: „CSV importieren, Vorschau, übernehmen; zweiter Import meldet 0 neue“.

@@ -7,8 +7,10 @@ Organization-scoped via the standard tenant repo pattern.
 from __future__ import annotations
 
 import uuid
+from datetime import date
+from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +18,9 @@ from app.core.tenant import AuthContext, get_current_user, get_db, require_write
 from app.models.bank_account import BankAccount
 from app.services.financial_scope_service import FinancialScopeService
 from app.repositories.bank_account_repo import BankAccountRepository
+from app.core.uploads import read_upload_limited
+from app.engine.bank_import import BankImportError, MAX_IMPORT_BYTES
+from app.services.bank_import_service import BankImportService
 
 router = APIRouter(prefix="/api/bank-accounts", tags=["bank_accounts"])
 
@@ -45,6 +50,30 @@ class BankAccountOut(BaseModel):
     bank_name: str | None
 
     model_config = {"from_attributes": True}
+
+
+class BankImportTransactionOut(BaseModel):
+    booking_date: date
+    value_date: date
+    amount: Decimal
+    counterparty_name: str | None
+    counterparty_iban: str | None
+    purpose: str | None
+    import_hash: str
+    is_duplicate: bool
+
+
+class BankImportOut(BaseModel):
+    count: int
+    new_count: int
+    duplicate_count: int
+    imported_count: int
+    total_amount: Decimal
+    new_total_amount: Decimal
+    date_from: date | None
+    date_to: date | None
+    transactions: list[BankImportTransactionOut]
+    preview_truncated: bool
 
 
 def _to_out(a: BankAccount, property_name: str | None = None) -> BankAccountOut:
@@ -114,3 +143,22 @@ async def create_bank_account(
     await FinancialScopeService(db, auth.organization_id, auth.user_id).prepare_new(account, body.accounting_scope_id)
     account = await repo.create(account)
     return _to_out(account)
+
+
+@router.post("/{account_id}/imports", response_model=BankImportOut)
+async def import_bank_statement(
+    account_id: uuid.UUID,
+    file: UploadFile = File(...),
+    dry_run: bool = True,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        content = await read_upload_limited(file, max_bytes=MAX_IMPORT_BYTES)
+        return await BankImportService(db, auth.organization_id).import_statement(
+            account_id, content, file.filename or "", dry_run=dry_run,
+        )
+    except BankImportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        await file.close()

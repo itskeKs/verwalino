@@ -72,6 +72,19 @@ verarbeitet: höchstens 100 Einträge, zusammen höchstens 25 MiB entpackt und
 100.000 Umsätze; Auszüge verschiedener Konten dürfen nicht zusammengeführt
 werden. Ein Fehler in einer Datei verwirft den gesamten Parserlauf.
 
+`POST /api/bank-accounts/{id}/imports` akzeptiert das Multipart-Feld `file`.
+Mit `dry_run=true` (Vorgabe) wird nur geprüft: `count`, `new_count`,
+`duplicate_count`, `total_amount`, `new_total_amount`, `date_from`/`date_to`
+und höchstens 100 `transactions` (`preview_truncated` kennzeichnet den Rest).
+Geldwerte werden als exakte Dezimalstrings ausgegeben. `dry_run=false` übernimmt
+atomar und nennt die tatsächliche `imported_count`; Wiederholung und parallele
+Übernahme erzeugen keine Doppelzeilen. Nur Schreibrollen, nur Konten derselben
+Organisation; bekannte Quell-IBANs müssen zur hinterlegten Ziel-IBAN passen.
+Ohne Quell-IBAN ist kein automatischer Kontonachweis möglich; das Zielkonto wird
+bewusst gewählt. Fehlerhafte Dateien werden vollständig abgewiesen (422),
+Datei-/Requestgrößen begrenzt (413). Der Import erzeugt noch keine gebuchten
+Zahlungen und verändert deshalb weder Mietsaldo noch finalisierte Dokumente.
+
 Weiterführende Dokumentation:
 
 - [Deployment](DEPLOY.md)

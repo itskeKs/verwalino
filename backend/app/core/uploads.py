@@ -127,6 +127,8 @@ class RequestBodyLimitMiddleware:
                 and parts[3] == "items"
                 or parts[1] == "declaration-imports"
                 and parts[3] == "documents"
+                or parts[1] == "bank-accounts"
+                and parts[3] == "imports"
             )
         )
 

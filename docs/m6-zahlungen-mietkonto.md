@@ -285,6 +285,27 @@ Die DERIVED-Summe muss bei Storni **netto** korrekt sein:
 
 ---
 
+### 6.8 Bankumsätze und Dateiimport (Phase 2, T15–T18)
+
+Importierte `bank_transaction`-Zeilen sind zunächst **NEU**, keine gebuchten
+`payment`-Zeilen und deshalb noch kein Ist im Miet-/Eigentümerkonto. Sie tragen
+signed EUR-Decimal-Beträge; RLS und Composite-FKs sichern Organisation und Konto.
+Ein späterer Zahlungslink muss zum gleichen Konto gehören und ist nach Buchen
+unveränderlich. Bestehende Zahlungen und finalisierte Abrechnungen werden beim
+Import nicht verändert.
+
+`POST /api/bank-accounts/{id}/imports` nimmt eine Datei (`file`, CSV/XML/ZIP).
+`dry_run=true` ist die sichere Vorgabe: Anzahl, Gesamtsumme, neue Summe,
+Buchungszeitraum, Dubletten und maximal 100 Vorschauzeilen, **keine Persistenz**.
+Mit `dry_run=false` erfolgt die Übernahme atomar unter Kontosperre und zusätzlichem
+Unique-Conflict-Schutz; derselbe Auszug erzeugt erneut null Zeilen, auch bei
+konkurrierenden Importen. Fremde Konten liefern 404; READ_ONLY darf nicht importieren.
+Bekannte Quell-IBANs müssen mit einer hinterlegten Ziel-IBAN übereinstimmen.
+Parser-/Formatfehler liefern 422, übergroße Uploads 413, jeweils ohne Teilübernahme.
+Formate, Limits und Grenzen bei fehlenden bankseitigen Transaktions-IDs: README.
+Die Importoberfläche und die Zuordnung zu gebuchten Zahlungen folgen erst in
+T19–T22; Parser-/API-Tests sind kein Nachweis dieser späteren Browserabläufe.
+
 ## 7. Synthetische Golden-Tests (objektive M6-Messlatte)
 
 Es gibt **keine** realen Beispieldaten. Prüffälle sind **synthetisch** aus den Regeln + **handberechneten** Soll-/Ist-/Saldo-Werten (jeder Cent), exakt wie M3/M4 §9. Beide Test-Arten verbindlich für die M6-Abnahme; sie laufen gegen die **reine Engine** (höchste Testdichte) und gegen Service/DB.
@@ -410,7 +431,7 @@ Golden-Test 5 + Invariante I6-E sind zusammen der objektive Nachweis des M6-Exit
 ## 11. Was dieses Dokument bewusst NICHT entscheidet
 
 - **Mahnwesen / Mahnstufen / `DunningNotice` / Mahn-Persistenz:** M7 (§0, ADR-0009 §1/F6-1) — M6 liefert nur die *berechneten* überfälligen Posten.
-- **Bankimport (CAMT/MT940) / automatischer Zahlungsabgleich:** **dauerhaftes Nicht-Ziel** (SDD §3).
+- **Bankimport / Zahlungsabgleich:** war Nicht-Ziel des ursprünglichen M6. Die verbindliche Phase 2 in `docs/mvp.md` erweitert dies um CSV/CAMT-Import (T15–T19) und geprüfte Zuordnung (T20–T22); fertiger Parser-/API-Stand siehe §6.8. MT940 bleibt nicht unterstützt.
 - **Vollwertige Kautionsbuchhaltung** (Verzinsung, Anlageform, Rückzahlung bei Auszug): [§18/fachlich] (§3.4, F6-3).
 - **Tilgungsreihenfolge / § 366 BGB-Verrechnung:** [§18/fachlich] (§3.2, F6-6).
 - **Genaue Fälligkeitsregeln** (§ 556b BGB, Hausgeld-Fälligkeit): [§18/fachlich] (§2.1).

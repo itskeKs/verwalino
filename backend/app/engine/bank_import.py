@@ -172,7 +172,13 @@ def _with_import_hashes(rows: list[BankImportRow]) -> list[BankImportRow]:
     return result
 
 
-def parse_csv(content: bytes) -> list[BankImportRow]:
+def _validate_target_accounts(accounts: set[str], account_iban: str | None) -> None:
+    expected = re.sub(r"\s+", "", account_iban or "").upper()
+    if expected and any(iban != expected for iban in accounts):
+        raise BankImportError("IBAN im Kontoauszug stimmt nicht mit dem gewählten Bankkonto überein.")
+
+
+def parse_csv(content: bytes, *, account_iban: str | None = None) -> list[BankImportRow]:
     """Parse semicolon CSV (UTF-8/BOM or CP1252), or reject it as a whole.
 
     Required fields: Buchungstag/Buchungsdatum, Wertstellung/Valutadatum,
@@ -184,12 +190,19 @@ def parse_csv(content: bytes) -> list[BankImportRow]:
     columns = None
     width = 0
     dkb_legacy = False
+    accounts: set[str] = set()
     rows = []
     try:
         for values in reader:
             if not any(value.strip() for value in values):
                 continue
             if columns is None:
+                if len(values) >= 2 and values[0].strip().rstrip(":").casefold() in {
+                    "kontonummer", "girokonto", "girokonto u18", "tagesgeld", "dkb festgeld",
+                }:
+                    iban = re.sub(r"\s+", "", values[1].split("/", 1)[0]).upper()
+                    if re.fullmatch(r"[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}", iban):
+                        accounts.add(iban)
                 candidate = _columns(values)
                 if _REQUIRED.issubset(candidate):
                     columns = candidate
@@ -213,6 +226,7 @@ def parse_csv(content: bytes) -> list[BankImportRow]:
         raise BankImportError(f"Zeile {reader.line_num}: ungültige CSV-Struktur.") from exc
     if columns is None:
         raise BankImportError("Unbekanntes CSV-Format: Semikolon und Spalten Buchungstag/Buchungsdatum, Wertstellung/Valutadatum und Betrag erwartet.")
+    _validate_target_accounts(accounts, account_iban)
     return _with_import_hashes(rows)
 
 
@@ -385,7 +399,7 @@ def _camt_zip_documents(content: bytes) -> list[bytes]:
     return documents
 
 
-def parse_camt053(content: bytes) -> list[BankImportRow]:
+def parse_camt053(content: bytes, *, account_iban: str | None = None) -> list[BankImportRow]:
     """Parse .02/.08 XML or a bounded ZIP of statements without extracting files.
 
     Batch details must sum exactly to the entry amount. An unresolvable batch,
@@ -406,4 +420,5 @@ def parse_camt053(content: bytes) -> list[BankImportRow]:
             raise BankImportError(f"CAMT enthält mehr als {MAX_IMPORT_ROWS} Umsätze.")
     if len(accounts) > 1:
         raise BankImportError("CAMT enthält mehrere Konten; bitte je Konto getrennt importieren.")
+    _validate_target_accounts(accounts, account_iban)
     return _with_import_hashes(rows)
