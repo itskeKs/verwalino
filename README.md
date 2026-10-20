@@ -45,7 +45,8 @@ nötig. CSV, CAMT-XML und ZIP sind auswählbar, Fehler und die tatsächliche Anz
 neuer Umsätze werden angezeigt. READ_ONLY kann lesen, aber nicht importieren.
 Der lokale Browserablauf einschließlich zweitem Import mit null neuen Umsätzen
 ist mit `scripts/acceptance/t19_bank_import_browser.cjs` gegen `scripts/dev-local.sh`
-wiederholbar. Die Zuordnung zu gebuchten Zahlungen folgt erst in T20–T22.
+wiederholbar. Die reine Vorschlagsengine ist vorhanden; API-Zuordnung und
+Buchungsoberfläche folgen erst in T21–T22.
 `GET /api/bank-accounts/{id}/transactions` liefert die Liste mit optionalem
 `status`, `offset`, `limit` (Vorgabe 50, höchstens 100) und `next_offset`.
 
@@ -94,6 +95,13 @@ Ohne Quell-IBAN ist kein automatischer Kontonachweis möglich; das Zielkonto wir
 bewusst gewählt. Fehlerhafte Dateien werden vollständig abgewiesen (422),
 Datei-/Requestgrößen begrenzt (413). Der Import erzeugt noch keine gebuchten
 Zahlungen und verändert deshalb weder Mietsaldo noch finalisierte Dokumente.
+
+Die reine Zuordnungsvorschlagsengine verwendet die bestehenden offenen
+Miet-/Eigentümerkonto-Posten. Warmmiete wird in Kaltmiete/NK aufgeteilt, bekannte
+fremde IBANs verhindern einen Treffer. Konfidenz und Prüfhinweise bleiben sichtbar
+im Ergebnis; mehrdeutige Teilzahlungen erhalten keine erfundene Tilgungsfolge,
+sondern unaufgeteilte Beträge zur manuellen Prüfung. Es erfolgen noch keine
+Buchungen; die API-/Oberflächenanbindung folgt in T21/T22.
 
 Weiterführende Dokumentation:
 

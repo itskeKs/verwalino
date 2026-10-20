@@ -309,7 +309,30 @@ alte Freigabe; Rückmeldungen nennen auch null neue Umsätze. Der echte lokale
 T19-Browserlauf prüft CSV, Reload, wiederholten Import sowie dieselben Buchungen
 als CAMT-XML/ZIP ohne Duplikate. Kontobezogene Liste über
 `GET /api/bank-accounts/{id}/transactions`, paginiert (50, maximal 100 Zeilen).
-Zuordnung und gebuchte Zahlungen bleiben T20–T22; diese sind noch nicht freigegeben.
+API-Zuordnung und gebuchte Zahlungen bleiben T21–T22; diese sind noch nicht freigegeben.
+
+### 6.9 Zuordnungsvorschläge (Phase 2, T20)
+
+`suggest_matches` arbeitet rein auf einem Bankumsatz und bereits aggregierten
+`OpenItem`-Werten aus `account_statement` (Soll aus Mietvertrag/Wirtschaftsplan,
+abzüglich gebuchtem Ist). Sie lädt keine Daten und schreibt keine Zahlungen.
+Der spätere Service muss die Ziele auf Organisation, Konto und Objekt begrenzen.
+Bekannte abweichende IBAN verhindert einen Treffer; Namen werden nur anhand
+normalisierter vollständiger Wörter verglichen, nicht als unscharfe Teilzeichenfolge.
+Ein expliziter Monat im Zweck ist maßgeblich. Der Wertstellungsmonat ist nur ein
+prüfpflichtiger Fallback; mehrere widersprüchliche Monate werden nicht geraten.
+
+Warmmiete 850 EUR wird bei 700 EUR offener Kaltmiete und 150 EUR offenen NK exakt
+aufgeteilt. Bereits bezahlte Komponenten werden nicht nochmals vorgeschlagen.
+Hausgeld nutzt das vorhandene Eigentümer-Soll. Teilzahlung auf eine eindeutige
+Komponente ist centgenau; bei unklarer Warmmiet-Aufteilung bleiben die Splitbeträge
+`None`, `unallocated_amount` enthält den vollen Eingang und `requires_review` ist
+wahr. **Keine erfundene Tilgungsreihenfolge und keine automatisch buchbare
+Aufteilung** für diesen Fall. Mehrere passende Ziele, abweichender Name oder
+unbekannter Monat senken die Konfidenz bzw. verlangen Prüfung. Kaution, Storno,
+Rückbuchung, gemischter Miet-/Hausgeldzweck, unbekannte Identität und Überzahlung
+werden nicht als sichere reguläre Soll-Zuordnung umgedeutet; manuell bleiben sie
+bearbeitbar. API-/UI-Integration und erneute Validierung sind erst T21/T22.
 
 ## 7. Synthetische Golden-Tests (objektive M6-Messlatte)
 
