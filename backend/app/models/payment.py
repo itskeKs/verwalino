@@ -24,7 +24,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, SmallInteger, String
+from sqlalchemy import Date, DateTime, ForeignKey, ForeignKeyConstraint, Numeric, SmallInteger, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -128,11 +128,18 @@ class Payment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     # Optional link to bank transaction for import tracking (T15).
     bank_transaction_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("bank_transaction.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
 
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
-    # CHECK constraints, Composite-FK + indices live in migration 0016.
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "bank_account_id", "bank_transaction_id"],
+            ["bank_transaction.organization_id", "bank_transaction.bank_account_id", "bank_transaction.id"],
+            name="fk_payment_bank_transaction_coherence", ondelete="RESTRICT",
+        ),
+    )
+
+    # Further CHECK constraints, Composite-FK + indices live in migration 0016.

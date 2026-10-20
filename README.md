@@ -29,6 +29,16 @@ anmelden. Der lokale Browserablauf ist mit
 `scripts/acceptance/t14_password_browser.cjs` gegen `scripts/dev-local.sh`
 wiederholbar (vorhandenes Playwright über `HV_PLAYWRIGHT_PACKAGE`, Chrome).
 
+## Bankumsätze (Phase 2, Datenmodell)
+
+Bankumsätze werden getrennt von gebuchten Zahlungen geführt: Beträge sind
+signierte `Decimal`-Werte (Gutschrift positiv, Lastschrift negativ), Importzeilen
+sind je Konto über ihren Importhash eindeutig. RLS und Composite-Fremdschlüssel
+binden Umsatz, Konto und optionale Zahlungs-Verknüpfung an dieselbe Organisation
+und dasselbe Konto. Nach dem Buchen ist auch diese Verknüpfung unveränderlich;
+verknüpfte Umsätze sind nicht löschbar. Parser, Import-API und Oberfläche folgen
+in den nächsten Aufgaben; das konkrete Bankprofil aus F2 ist noch offen.
+
 Weiterführende Dokumentation:
 
 - [Deployment](DEPLOY.md)

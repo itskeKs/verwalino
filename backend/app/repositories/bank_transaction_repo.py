@@ -7,11 +7,7 @@ Provides CRUD and import-unique queries for bank transactions.
 from __future__ import annotations
 
 import uuid
-from datetime import date
 from typing import Sequence
-
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.bank_transaction import BankTransaction
 from app.repositories.base import TenantRepository

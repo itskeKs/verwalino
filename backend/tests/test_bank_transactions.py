@@ -1,7 +1,10 @@
-"""Tests for BankTransaction model, repository, and API endpoints.
+"""Tests for BankTransaction model, repository, and RLS.
 
 T15: Bankumsätze Tabelle.
 Abschluss: uv run pytest tests/test_rls_coverage.py tests/test_bank_transactions.py
+
+Focus: Model constraints, Repository methods, RLS tenant isolation.
+No API endpoint tests (not part of T15 scope).
 """
 
 from __future__ import annotations
@@ -10,72 +13,9 @@ import uuid
 from datetime import date, timedelta
 from decimal import Decimal
 
-import httpx
 import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app import create_app
-from app.api.auth import get_current_user, get_session_factory
-from app.core.security import hash_password
-from app.repositories.bank_transaction_repo import BankTransactionRepository
-from app.models import BankTransaction, BankAccount, Organization, User
-
-
-# =====================================================================
-# Fixtures
-# =====================================================================
-
-@pytest.fixture(scope="module")
-def event_loop():
-    """Create module-scoped event loop for async tests."""
-    import asyncio
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
-
-@pytest_asyncio.fixture
-async def db_session(seed_data):
-    """Create a database session with seed data for testing."""
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-    from sqlalchemy.orm import sessionmaker
-    
-    factory = async_sessionmaker(seed_data["engine"], class_=AsyncSession, expire_on_commit=False)
-    async with factory() as session:
-        yield session
-
-
-@pytest_asyncio.fixture
-async def client_a_admin(db_session):
-    """HTTP client authenticated as Organization A admin."""
-    from tests.conftest import org_a_id, user_a_admin_id
-    
-    async with AsyncClient(
-        transport=ASGITransport(app=create_app()),
-        base_url="http://testserver",
-    ) as client:
-        # Login as admin
-        response = await client.post("/api/auth/login", json={
-            "email": "admin@alpha.de",
-            "password": "testpass1234",
-        })
-        assert response.status_code == 200
-        
-        yield client
-
-
-@pytest_asyncio.fixture
-async def client_unauth():
-    """HTTP client without authentication."""
-    async with AsyncClient(
-        transport=ASGITransport(app=create_app()),
-        base_url="http://testserver",
-    ) as client:
-        yield client
-
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 # =====================================================================
 # Tests: BankTransaction model constraints
@@ -85,105 +25,191 @@ class TestBankTransactionModel:
     """Tests for BankTransaction model constraints and validations."""
 
     @pytest.mark.asyncio
-    async def test_bank_transaction_signed_amounts_allowed(self, db_session):
+    async def test_bank_transaction_signed_amounts_allowed(self, migrator_session, seed_data):
         """Bank transactions must allow both positive and negative amounts."""
-        org = await db_session.execute(
-            select(Organization).where(Organization.email == "alpha@test.de")
-        ).scalar_one_or_none()
-        
-        bank_account = await db_session.execute(
-            select(BankAccount).where(BankAccount.organization_id == org.id).limit(1)
-        ).scalar_one_or_none()
-        
+        from app.models import BankTransaction
+
+        # Check/create property and bank account for Org A
+        result = await migrator_session.execute(
+            text(
+                "SELECT ba.id, p.id "
+                "FROM bank_account ba "
+                "JOIN property p ON p.id = ba.property_id "
+                "WHERE ba.organization_id = :oid "
+                "LIMIT 1"
+            ),
+            {"oid": str(seed_data["org_a_id"])},
+        )
+        row = result.first()
+
+        if row:
+            property_id, bank_account_id = row[1], row[0]
+        else:
+            property_id = uuid.uuid4()
+            bank_account_id = uuid.uuid4()
+            await migrator_session.execute(
+                text(
+                    "INSERT INTO property (id, organization_id, name, management_type) "
+                    "VALUES (:pid, :oid, 'Test Property', 'WEG')"
+                ),
+                {"pid": str(property_id), "oid": str(seed_data["org_a_id"])},
+            )
+            await migrator_session.execute(
+                text(
+                    "INSERT INTO bank_account (id, organization_id, property_id, account_type, label) "
+                    "VALUES (:bid, :oid, :pid, 'LAUFEND', 'Test Giro')"
+                ),
+                {"bid": str(bank_account_id), "oid": str(seed_data["org_a_id"]), "pid": str(property_id)},
+            )
+            await migrator_session.flush()
+
         # Create a transaction with negative amount (debit)
         tx = BankTransaction(
-            organization_id=org.id,
-            bank_account_id=bank_account.id,
+            organization_id=seed_data["org_a_id"],
+            bank_account_id=bank_account_id,
             booking_date=date.today(),
             value_date=date.today(),
             amount=Decimal("-100.50"),  # Negative = debit
             import_hash="test_hash_negative",
             status="NEU",
         )
-        db_session.add(tx)
-        await db_session.commit()
-        
+        migrator_session.add(tx)
+        await migrator_session.flush()
+
         # Verify it was saved with negative amount
-        result = await db_session.execute(
-            select(BankTransaction).where(BankTransaction.import_hash == "test_hash_negative")
+        result = await migrator_session.execute(
+            text("SELECT amount FROM bank_transaction WHERE import_hash = 'test_hash_negative'")
         )
-        saved = result.scalar_one()
-        assert saved.amount == Decimal("-100.50")
+        saved_amount = result.scalar()
+        assert Decimal(saved_amount) == Decimal("-100.50")
 
     @pytest.mark.asyncio
-    async def test_bank_transaction_positive_amount(self, db_session):
+    async def test_bank_transaction_positive_amount(self, migrator_session, seed_data):
         """Bank transactions must allow positive amounts (credits)."""
-        org = await db_session.execute(
-            select(Organization).where(Organization.email == "alpha@test.de")
-        ).scalar_one_or_none()
-        
-        bank_account = await db_session.execute(
-            select(BankAccount).where(BankAccount.organization_id == org.id).limit(1)
-        ).scalar_one_or_none()
-        
+        from app.models import BankTransaction
+
+        # Check/create property and bank account for Org A
+        result = await migrator_session.execute(
+            text(
+                "SELECT ba.id, p.id "
+                "FROM bank_account ba "
+                "JOIN property p ON p.id = ba.property_id "
+                "WHERE ba.organization_id = :oid "
+                "LIMIT 1"
+            ),
+            {"oid": str(seed_data["org_a_id"])},
+        )
+        row = result.first()
+
+        if row:
+            property_id, bank_account_id = row[1], row[0]
+        else:
+            property_id = uuid.uuid4()
+            bank_account_id = uuid.uuid4()
+            await migrator_session.execute(
+                text(
+                    "INSERT INTO property (id, organization_id, name, management_type) "
+                    "VALUES (:pid, :oid, 'Test Property', 'WEG')"
+                ),
+                {"pid": str(property_id), "oid": str(seed_data["org_a_id"])},
+            )
+            await migrator_session.execute(
+                text(
+                    "INSERT INTO bank_account (id, organization_id, property_id, account_type, label) "
+                    "VALUES (:bid, :oid, :pid, 'LAUFEND', 'Test Giro')"
+                ),
+                {"bid": str(bank_account_id), "oid": str(seed_data["org_a_id"]), "pid": str(property_id)},
+            )
+            await migrator_session.flush()
+
         # Create a transaction with positive amount (credit)
         tx = BankTransaction(
-            organization_id=org.id,
-            bank_account_id=bank_account.id,
+            organization_id=seed_data["org_a_id"],
+            bank_account_id=bank_account_id,
             booking_date=date.today(),
             value_date=date.today(),
             amount=Decimal("500.00"),  # Positive = credit
             import_hash="test_hash_positive",
             status="NEU",
         )
-        db_session.add(tx)
-        await db_session.commit()
-        
+        migrator_session.add(tx)
+        await migrator_session.flush()
+
         # Verify it was saved with positive amount
-        result = await db_session.execute(
-            select(BankTransaction).where(BankTransaction.import_hash == "test_hash_positive")
+        result = await migrator_session.execute(
+            text("SELECT amount FROM bank_transaction WHERE import_hash = 'test_hash_positive'")
         )
-        saved = result.scalar_one()
-        assert saved.amount == Decimal("500.00")
+        saved_amount = result.scalar()
+        assert Decimal(saved_amount) == Decimal("500.00")
 
     @pytest.mark.asyncio
-    async def test_bank_transaction_unique_import_hash_per_account(self, db_session):
+    async def test_bank_transaction_unique_import_hash_per_account(
+        self, migrator_session, seed_data
+    ):
         """Duplicate import_hash on same bank_account must raise integrity error."""
-        org = await db_session.execute(
-            select(Organization).where(Organization.email == "alpha@test.de")
-        ).scalar_one_or_none()
-        
-        bank_account = await db_session.execute(
-            select(BankAccount).where(BankAccount.organization_id == org.id).limit(1)
-        ).scalar_one_or_none()
-        
+        from app.models import BankTransaction
+
+        # Check/create property and bank account for Org A
+        result = await migrator_session.execute(
+            text(
+                "SELECT ba.id, p.id "
+                "FROM bank_account ba "
+                "JOIN property p ON p.id = ba.property_id "
+                "WHERE ba.organization_id = :oid "
+                "LIMIT 1"
+            ),
+            {"oid": str(seed_data["org_a_id"])},
+        )
+        row = result.first()
+
+        if row:
+            property_id, bank_account_id = row[1], row[0]
+        else:
+            property_id = uuid.uuid4()
+            bank_account_id = uuid.uuid4()
+            await migrator_session.execute(
+                text(
+                    "INSERT INTO property (id, organization_id, name, management_type) "
+                    "VALUES (:pid, :oid, 'Test Property', 'WEG')"
+                ),
+                {"pid": str(property_id), "oid": str(seed_data["org_a_id"])},
+            )
+            await migrator_session.execute(
+                text(
+                    "INSERT INTO bank_account (id, organization_id, property_id, account_type, label) "
+                    "VALUES (:bid, :oid, :pid, 'LAUFEND', 'Test Giro')"
+                ),
+                {"bid": str(bank_account_id), "oid": str(seed_data["org_a_id"]), "pid": str(property_id)},
+            )
+            await migrator_session.flush()
+
         # Create first transaction
         tx1 = BankTransaction(
-            organization_id=org.id,
-            bank_account_id=bank_account.id,
+            organization_id=seed_data["org_a_id"],
+            bank_account_id=bank_account_id,
             booking_date=date.today(),
             value_date=date.today(),
             amount=Decimal("100.00"),
             import_hash="unique_hash_123",
             status="NEU",
         )
-        db_session.add(tx1)
-        await db_session.commit()
-        
+        migrator_session.add(tx1)
+        await migrator_session.flush()
+
         # Try to create duplicate on same account
         tx2 = BankTransaction(
-            organization_id=org.id,
-            bank_account_id=bank_account.id,
+            organization_id=seed_data["org_a_id"],
+            bank_account_id=bank_account_id,
             booking_date=date.today(),
             value_date=date.today(),
             amount=Decimal("200.00"),
             import_hash="unique_hash_123",  # Same hash, same account
             status="NEU",
         )
-        db_session.add(tx2)
-        
-        with pytest.raises(Exception):  # IntegrityError
-            await db_session.commit()
+        migrator_session.add(tx2)
+
+        with pytest.raises(IntegrityError):
+            await migrator_session.flush()
 
 
 # =====================================================================
@@ -194,250 +220,540 @@ class TestBankTransactionRepository:
     """Tests for BankTransactionRepository methods."""
 
     @pytest.mark.asyncio
-    async def test_list_by_account(self, db_session):
+    async def test_list_by_account(self, app_rw_session, seed_data):
         """list_by_account must return transactions for a specific bank account."""
+        from app.models import BankTransaction
         from app.repositories.bank_transaction_repo import BankTransactionRepository
-        
-        org = await db_session.execute(
-            select(Organization).where(Organization.email == "alpha@test.de")
-        ).scalar_one_or_none()
-        
-        bank_account = await db_session.execute(
-            select(BankAccount).where(BankAccount.organization_id == org.id).limit(1)
-        ).scalar_one_or_none()
-        
-        repo = BankTransactionRepository(db_session)
-        
-        # Create test transactions
+
+        # Set tenant context for RLS
+        await app_rw_session.execute(
+            text("SELECT set_config('app.current_org_id', :org, true)"),
+            {"org": str(seed_data["org_a_id"])},
+        )
+        await app_rw_session.execute(
+            text("SELECT set_config('app.current_user_id', :actor, true)"),
+            {"actor": str(seed_data["user_a_admin_id"])},
+        )
+
+        # Check/create property and bank account for Org A
+        result = await app_rw_session.execute(
+            text(
+                "SELECT ba.id, p.id "
+                "FROM bank_account ba "
+                "JOIN property p ON p.id = ba.property_id "
+                "WHERE ba.organization_id = :oid "
+                "LIMIT 1"
+            ),
+            {"oid": str(seed_data["org_a_id"])},
+        )
+        row = result.first()
+
+        if row:
+            property_id, bank_account_id = row[1], row[0]
+        else:
+            property_id = uuid.uuid4()
+            bank_account_id = uuid.uuid4()
+            await app_rw_session.execute(
+                text(
+                    "INSERT INTO property (id, organization_id, name, management_type) "
+                    "VALUES (:pid, :oid, 'Test Property', 'WEG')"
+                ),
+                {"pid": str(property_id), "oid": str(seed_data["org_a_id"])},
+            )
+            await app_rw_session.execute(
+                text(
+                    "INSERT INTO bank_account (id, organization_id, property_id, account_type, label) "
+                    "VALUES (:bid, :oid, :pid, 'LAUFEND', 'Test Giro')"
+                ),
+                {"bid": str(bank_account_id), "oid": str(seed_data["org_a_id"]), "pid": str(property_id)},
+            )
+            await app_rw_session.flush()
+
+        repo = BankTransactionRepository(app_rw_session, seed_data["org_a_id"])
+
+        # Create test transactions on a fresh account
+        fresh_account_id = uuid.uuid4()
+        fresh_property_id = uuid.uuid4()
+        await app_rw_session.execute(
+            text(
+                "INSERT INTO property (id, organization_id, name, management_type) "
+                "VALUES (:pid, :oid, 'Test Property Repo', 'WEG')"
+            ),
+            {"pid": str(fresh_property_id), "oid": str(seed_data["org_a_id"])},
+        )
+        await app_rw_session.execute(
+            text(
+                "INSERT INTO bank_account (id, organization_id, property_id, account_type, label) "
+                "VALUES (:bid, :oid, :pid, 'LAUFEND', 'Test Giro Repo')"
+            ),
+            {"bid": str(fresh_account_id), "oid": str(seed_data["org_a_id"]), "pid": str(fresh_property_id)},
+        )
+        await app_rw_session.flush()
+
         for i in range(3):
             tx = BankTransaction(
-                organization_id=org.id,
-                bank_account_id=bank_account.id,
+                organization_id=seed_data["org_a_id"],
+                bank_account_id=fresh_account_id,
                 booking_date=date.today() - timedelta(days=i),
                 value_date=date.today() - timedelta(days=i),
                 amount=Decimal(str(100 * (i + 1))),
                 import_hash=f"repo_test_{i}",
                 status="NEU",
             )
-            db_session.add(tx)
-        await db_session.commit()
-        
+            app_rw_session.add(tx)
+        await app_rw_session.flush()
+
         # Fetch transactions for this account
-        results = await repo.list_by_account(bank_account.id)
-        
+        results = await repo.list_by_account(fresh_account_id)
+
         assert len(results) == 3
-        # Should be sorted by value_date descending, then created_at
+        assert [tx.value_date for tx in results] == sorted(tx.value_date for tx in results)
+        assert [tx.amount for tx in results] == [Decimal("300.00"), Decimal("200.00"), Decimal("100.00")]
         assert all(isinstance(tx, BankTransaction) for tx in results)
 
     @pytest.mark.asyncio
-    async def test_list_by_import_hash(self, db_session):
+    async def test_list_by_import_hash(self, app_rw_session, seed_data):
         """list_by_import_hash must find transactions by account and hash."""
+        from app.models import BankTransaction
         from app.repositories.bank_transaction_repo import BankTransactionRepository
-        
-        org = await db_session.execute(
-            select(Organization).where(Organization.email == "alpha@test.de")
-        ).scalar_one_or_none()
-        
-        bank_account = await db_session.execute(
-            select(BankAccount).where(BankAccount.organization_id == org.id).limit(1)
-        ).scalar_one_or_none()
-        
-        repo = BankTransactionRepository(db_session)
-        
+
+        # Set tenant context for RLS
+        await app_rw_session.execute(
+            text("SELECT set_config('app.current_org_id', :org, true)"),
+            {"org": str(seed_data["org_a_id"])},
+        )
+        await app_rw_session.execute(
+            text("SELECT set_config('app.current_user_id', :actor, true)"),
+            {"actor": str(seed_data["user_a_admin_id"])},
+        )
+
+        # Check/create property and bank account for Org A
+        result = await app_rw_session.execute(
+            text(
+                "SELECT ba.id, p.id "
+                "FROM bank_account ba "
+                "JOIN property p ON p.id = ba.property_id "
+                "WHERE ba.organization_id = :oid "
+                "LIMIT 1"
+            ),
+            {"oid": str(seed_data["org_a_id"])},
+        )
+        row = result.first()
+
+        if row:
+            property_id, bank_account_id = row[1], row[0]
+        else:
+            property_id = uuid.uuid4()
+            bank_account_id = uuid.uuid4()
+            await app_rw_session.execute(
+                text(
+                    "INSERT INTO property (id, organization_id, name, management_type) "
+                    "VALUES (:pid, :oid, 'Test Property', 'WEG')"
+                ),
+                {"pid": str(property_id), "oid": str(seed_data["org_a_id"])},
+            )
+            await app_rw_session.execute(
+                text(
+                    "INSERT INTO bank_account (id, organization_id, property_id, account_type, label) "
+                    "VALUES (:bid, :oid, :pid, 'LAUFEND', 'Test Giro')"
+                ),
+                {"bid": str(bank_account_id), "oid": str(seed_data["org_a_id"]), "pid": str(property_id)},
+            )
+            await app_rw_session.flush()
+
+        repo = BankTransactionRepository(app_rw_session, seed_data["org_a_id"])
+
         # Create test transaction
         tx = BankTransaction(
-            organization_id=org.id,
-            bank_account_id=bank_account.id,
+            organization_id=seed_data["org_a_id"],
+            bank_account_id=bank_account_id,
             booking_date=date.today(),
             value_date=date.today(),
             amount=Decimal("150.00"),
             import_hash="lookup_hash_456",
             status="NEU",
         )
-        db_session.add(tx)
-        await db_session.commit()
-        
+        app_rw_session.add(tx)
+        await app_rw_session.flush()
+
         # Find by hash
-        result = await repo.list_by_import_hash(bank_account.id, "lookup_hash_456")
-        
+        result = await repo.list_by_import_hash(bank_account_id, "lookup_hash_456")
+
         assert result is not None
         assert result.import_hash == "lookup_hash_456"
 
     @pytest.mark.asyncio
-    async def test_list_unassigned(self, db_session):
+    async def test_list_unassigned(self, app_rw_session, seed_data):
         """list_unassigned must return only NEU status transactions."""
+        from app.models import BankTransaction
         from app.repositories.bank_transaction_repo import BankTransactionRepository
-        
-        org = await db_session.execute(
-            select(Organization).where(Organization.email == "alpha@test.de")
-        ).scalar_one_or_none()
-        
-        bank_account = await db_session.execute(
-            select(BankAccount).where(BankAccount.organization_id == org.id).limit(1)
-        ).scalar_one_or_none()
-        
-        repo = BankTransactionRepository(db_session)
-        
-        # Create transactions with different statuses
-        for status in ["NEU", "NEU", "ZUGEORDNET", "IGNORIERT"]:
+
+        # Set tenant context for RLS
+        await app_rw_session.execute(
+            text("SELECT set_config('app.current_org_id', :org, true)"),
+            {"org": str(seed_data["org_a_id"])},
+        )
+        await app_rw_session.execute(
+            text("SELECT set_config('app.current_user_id', :actor, true)"),
+            {"actor": str(seed_data["user_a_admin_id"])},
+        )
+
+        # Check/create property and bank account for Org A
+        result = await app_rw_session.execute(
+            text(
+                "SELECT ba.id, p.id "
+                "FROM bank_account ba "
+                "JOIN property p ON p.id = ba.property_id "
+                "WHERE ba.organization_id = :oid "
+                "LIMIT 1"
+            ),
+            {"oid": str(seed_data["org_a_id"])},
+        )
+        row = result.first()
+
+        if row:
+            property_id, bank_account_id = row[1], row[0]
+        else:
+            property_id = uuid.uuid4()
+            bank_account_id = uuid.uuid4()
+            await app_rw_session.execute(
+                text(
+                    "INSERT INTO property (id, organization_id, name, management_type) "
+                    "VALUES (:pid, :oid, 'Test Property', 'WEG')"
+                ),
+                {"pid": str(property_id), "oid": str(seed_data["org_a_id"])},
+            )
+            await app_rw_session.execute(
+                text(
+                    "INSERT INTO bank_account (id, organization_id, property_id, account_type, label) "
+                    "VALUES (:bid, :oid, :pid, 'LAUFEND', 'Test Giro')"
+                ),
+                {"bid": str(bank_account_id), "oid": str(seed_data["org_a_id"]), "pid": str(property_id)},
+            )
+            await app_rw_session.flush()
+
+        repo = BankTransactionRepository(app_rw_session, seed_data["org_a_id"])
+
+        # Create transactions with different statuses on a FRESH account to avoid contamination from previous tests
+        fresh_property_id = uuid.uuid4()
+        fresh_account_id = uuid.uuid4()
+        await app_rw_session.execute(
+            text(
+                "INSERT INTO property (id, organization_id, name, management_type) "
+                "VALUES (:pid, :oid, 'Test Property Unassigned', 'WEG')"
+            ),
+            {"pid": str(fresh_property_id), "oid": str(seed_data["org_a_id"])},
+        )
+        await app_rw_session.execute(
+            text(
+                "INSERT INTO bank_account (id, organization_id, property_id, account_type, label) "
+                "VALUES (:bid, :oid, :pid, 'LAUFEND', 'Test Giro Unassigned')"
+            ),
+            {"bid": str(fresh_account_id), "oid": str(seed_data["org_a_id"]), "pid": str(fresh_property_id)},
+        )
+        await app_rw_session.flush()
+
+        existing_neu_ids = set((await app_rw_session.execute(
+            text("SELECT id FROM bank_transaction WHERE status = 'NEU'")
+        )).scalars())
+        expected_new_ids = set()
+        # Create transactions with different statuses (unique hashes!)
+        for i, status in enumerate(["NEU", "NEU", "ZUGEORDNET", "IGNORIERT"]):
+            transaction_id = uuid.uuid4()
+            if status == "NEU":
+                expected_new_ids.add(transaction_id)
             tx = BankTransaction(
-                organization_id=org.id,
-                bank_account_id=bank_account.id,
+                id=transaction_id,
+                organization_id=seed_data["org_a_id"],
+                bank_account_id=fresh_account_id,
                 booking_date=date.today(),
                 value_date=date.today(),
                 amount=Decimal("100.00"),
-                import_hash=f"unassigned_{status}",
+                import_hash=f"unassigned_{status}_{i}",  # Unique per entry
                 status=status,
             )
-            db_session.add(tx)
-        await db_session.commit()
-        
+            app_rw_session.add(tx)
+        await app_rw_session.flush()
+
         # Fetch unassigned (NEU) transactions
         results = await repo.list_unassigned()
-        
+
         # Must only return NEU status transactions
         assert all(tx.status == "NEU" for tx in results)
-        assert len(results) == 2
+        
+        assert {tx.id for tx in results} == existing_neu_ids | expected_new_ids
+        assert len(results) == len(existing_neu_ids) + 2
 
 
 # =====================================================================
-# Tests: API endpoints
-# =====================================================================
-
-class TestBankTransactionAPI:
-    """Tests for BankTransaction API endpoints."""
-
-    @pytest.mark.asyncio
-    async def test_list_bank_transactions_authenticated(self, client_a_admin, db_session):
-        """Authenticated users must be able to list bank transactions."""
-        response = await client_a_admin.get("/api/bank-transactions")
-        assert response.status_code == 200
-        
-        data = response.json()
-        assert isinstance(data, list)
-
-    @pytest.mark.asyncio
-    async def test_list_bank_transactions_unauthenticated(self, client_unauth):
-        """Unauthenticated users must receive 401 for bank transactions."""
-        response = await client_unauth.get("/api/bank-transactions")
-        assert response.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_create_bank_transaction(self, client_a_admin, db_session):
-        """Authenticated users must be able to create bank transactions."""
-        from tests.conftest import org_a_id, bank_account_a_id
-        
-        response = await client_a_admin.post("/api/bank-transactions", json={
-            "bank_account_id": str(bank_account_a_id),
-            "booking_date": date.today().isoformat(),
-            "value_date": date.today().isoformat(),
-            "amount": "-50.00",
-            "import_hash": "api_create_test_789",
-            "counterparty_name": "Test Counterparty",
-            "counterparty_iban": "DE12345678901234567890",
-            "purpose": "Test transaction",
-        })
-        
-        assert response.status_code == 201
-        
-        # Verify it was persisted
-        result = await db_session.execute(
-            select(BankTransaction).where(
-                BankTransaction.import_hash == "api_create_test_789"
-            )
-        )
-        saved = result.scalar_one()
-        assert saved.amount == Decimal("-50.00")
-        assert saved.counterparty_name == "Test Counterparty"
-
-    @pytest.mark.asyncio
-    async def test_create_duplicate_import_hash_same_account(self, client_a_admin, db_session):
-        """Creating duplicate import_hash on same account must raise 409."""
-        from tests.conftest import bank_account_a_id
-        
-        # Create first transaction
-        await client_a_admin.post("/api/bank-transactions", json={
-            "bank_account_id": str(bank_account_a_id),
-            "booking_date": date.today().isoformat(),
-            "value_date": date.today().isoformat(),
-            "amount": "100.00",
-            "import_hash": "duplicate_hash_test",
-        })
-        
-        # Try to create duplicate
-        response = await client_a_admin.post("/api/bank-transactions", json={
-            "bank_account_id": str(bank_account_a_id),
-            "booking_date": date.today().isoformat(),
-            "value_date": date.today().isoformat(),
-            "amount": "200.00",
-            "import_hash": "duplicate_hash_test",  # Same hash
-        })
-        
-        assert response.status_code == 409  # Conflict
-
-
-# =====================================================================
-# Tests: Tenant isolation
+# Tests: Tenant isolation (RLS)
 # =====================================================================
 
 class TestBankTransactionTenantIsolation:
     """Tests for BankTransaction tenant isolation (RLS)."""
 
     @pytest.mark.asyncio
-    async def test_org_b_sees_only_org_b_transactions(self, db_session):
+    async def test_org_b_sees_only_org_b_transactions(self, app_rw_session, seed_data):
         """Transactions from Organization B must not appear for Organization A."""
+        from app.models import BankTransaction
         from app.repositories.bank_transaction_repo import BankTransactionRepository
-        
-        org_a = await db_session.execute(
-            select(Organization).where(Organization.email == "alpha@test.de")
-        ).scalar_one_or_none()
-        
-        org_b = await db_session.execute(
-            select(Organization).where(Organization.email == "beta@test.de")
-        ).scalar_one_or_none()
-        
-        bank_account_a = await db_session.execute(
-            select(BankAccount).where(
-                BankAccount.organization_id == org_a.id
-            ).limit(1)
-        ).scalar_one_or_none()
-        
-        bank_account_b = await db_session.execute(
-            select(BankAccount).where(
-                BankAccount.organization_id == org_b.id
-            ).limit(1)
-        ).scalar_one_or_none()
-        
-        repo = BankTransactionRepository(db_session)
-        
-        # Create transaction for Org A
+
+        # Set tenant context for Org A
+        await app_rw_session.execute(
+            text("SELECT set_config('app.current_org_id', :org, true)"),
+            {"org": str(seed_data["org_a_id"])},
+        )
+        await app_rw_session.execute(
+            text("SELECT set_config('app.current_user_id', :actor, true)"),
+            {"actor": str(seed_data["user_a_admin_id"])},
+        )
+
+        # Check/create property and bank account for Org A
+        result = await app_rw_session.execute(
+            text(
+                "SELECT ba.id, p.id "
+                "FROM bank_account ba "
+                "JOIN property p ON p.id = ba.property_id "
+                "WHERE ba.organization_id = :oid "
+                "LIMIT 1"
+            ),
+            {"oid": str(seed_data["org_a_id"])},
+        )
+        row = result.first()
+
+        if row:
+            property_a_id, bank_account_a_id = row[1], row[0]
+        else:
+            property_a_id = uuid.uuid4()
+            bank_account_a_id = uuid.uuid4()
+            await app_rw_session.execute(
+                text(
+                    "INSERT INTO property (id, organization_id, name, management_type) "
+                    "VALUES (:pid, :oid, 'Test Property A', 'WEG')"
+                ),
+                {"pid": str(property_a_id), "oid": str(seed_data["org_a_id"])},
+            )
+            await app_rw_session.execute(
+                text(
+                    "INSERT INTO bank_account (id, organization_id, property_id, account_type, label) "
+                    "VALUES (:bid, :oid, :pid, 'LAUFEND', 'Test Giro A')"
+                ),
+                {"bid": str(bank_account_a_id), "oid": str(seed_data["org_a_id"]), "pid": str(property_a_id)},
+            )
+            await app_rw_session.flush()
+
+        # Create an Org A transaction
+        repo_a = BankTransactionRepository(app_rw_session, seed_data["org_a_id"])
         tx_a = BankTransaction(
-            organization_id=org_a.id,
-            bank_account_id=bank_account_a.id,
+            organization_id=seed_data["org_a_id"],
+            bank_account_id=bank_account_a_id,
             booking_date=date.today(),
             value_date=date.today(),
             amount=Decimal("100.00"),
-            import_hash="org_a_tx",
+            import_hash="isolation_test_a",
             status="NEU",
         )
-        db_session.add(tx_a)
-        
-        # Create transaction for Org B
+        app_rw_session.add(tx_a)
+        # Flush tx_a under Org A context BEFORE switching to B
+        await app_rw_session.flush()
+
+        # Now switch tenant context to Org B
+        await app_rw_session.execute(
+            text("SELECT set_config('app.current_org_id', :org, true)"),
+            {"org": str(seed_data["org_b_id"])},
+        )
+        await app_rw_session.execute(
+            text("SELECT set_config('app.current_user_id', :actor, true)"),
+            {"actor": str(seed_data["user_b_admin_id"])},
+        )
+
+        # Check/create property and bank account for Org B
+        result = await app_rw_session.execute(
+            text(
+                "SELECT ba.id, p.id "
+                "FROM bank_account ba "
+                "JOIN property p ON p.id = ba.property_id "
+                "WHERE ba.organization_id = :oid "
+                "LIMIT 1"
+            ),
+            {"oid": str(seed_data["org_b_id"])},
+        )
+        row = result.first()
+
+        if row:
+            property_b_id, bank_account_b_id = row[1], row[0]
+        else:
+            property_b_id = uuid.uuid4()
+            bank_account_b_id = uuid.uuid4()
+            await app_rw_session.execute(
+                text(
+                    "INSERT INTO property (id, organization_id, name, management_type) "
+                    "VALUES (:pid, :oid, 'Test Property B', 'WEG')"
+                ),
+                {"pid": str(property_b_id), "oid": str(seed_data["org_b_id"])},
+            )
+            await app_rw_session.execute(
+                text(
+                    "INSERT INTO bank_account (id, organization_id, property_id, account_type, label) "
+                    "VALUES (:bid, :oid, :pid, 'LAUFEND', 'Test Giro B')"
+                ),
+                {"bid": str(bank_account_b_id), "oid": str(seed_data["org_b_id"]), "pid": str(property_b_id)},
+            )
+            await app_rw_session.flush()
+
+        # Create an Org B transaction
+        repo_b = BankTransactionRepository(app_rw_session, seed_data["org_b_id"])
         tx_b = BankTransaction(
-            organization_id=org_b.id,
-            bank_account_id=bank_account_b.id,
+            organization_id=seed_data["org_b_id"],
+            bank_account_id=bank_account_b_id,
             booking_date=date.today(),
             value_date=date.today(),
             amount=Decimal("200.00"),
-            import_hash="org_b_tx",
+            import_hash="isolation_test_b",
             status="NEU",
         )
-        db_session.add(tx_b)
-        
-        await db_session.commit()
-        
-        # Org A should only see its own transactions
-        results_a = await repo.list_by_account(bank_account_a.id)
-        org_a_hashes = {tx.import_hash for tx in results_a}
-        assert "org_a_tx" in org_a_hashes
-        assert "org_b_tx" not in org_a_hashes
+        app_rw_session.add(tx_b)
+
+        # Flush both transactions
+        await app_rw_session.flush()
+
+        # Now query as Org A - should NOT see Org B transactions
+        await app_rw_session.execute(
+            text("SELECT set_config('app.current_org_id', :org, true)"),
+            {"org": str(seed_data["org_a_id"])},
+        )
+        await app_rw_session.execute(
+            text("SELECT set_config('app.current_user_id', :actor, true)"),
+            {"actor": str(seed_data["user_a_admin_id"])},
+        )
+
+        repo_a_final = BankTransactionRepository(app_rw_session, seed_data["org_a_id"])
+        results_a = await repo_a_final.list_by_account(bank_account_a_id)
+
+        # Should only see Org A transactions, not Org B's
+        org_b_transactions = [
+            tx for tx in results_a
+            if tx.import_hash == "isolation_test_b"
+        ]
+        assert len(org_b_transactions) == 0, (
+            f"Org A should not see Org B transactions, but found "
+            f"{len(org_b_transactions)}"
+        )
+
+        # And should see its own
+        assert len(results_a) >= 1
+
+
+async def _fresh_account(session, seed_data, tenant="a"):
+    org_id = seed_data[f"org_{tenant}_id"]
+    await session.execute(text("SELECT set_config('app.current_org_id', :org, true)"), {"org": str(org_id)})
+    await session.execute(text("SELECT set_config('app.current_user_id', :actor, true)"), {"actor": str(seed_data[f"user_{tenant}_admin_id"])})
+    property_id, account_id = uuid.uuid4(), uuid.uuid4()
+    await session.execute(text(
+        "INSERT INTO property (id, organization_id, name, management_type) "
+        "VALUES (:id, :org, 'T15 synthetisch', 'WEG')"
+    ), {"id": property_id, "org": org_id})
+    await session.execute(text(
+        "INSERT INTO bank_account (id, organization_id, property_id, account_type, label) "
+        "VALUES (:id, :org, :property, 'LAUFEND', 'T15 synthetisch')"
+    ), {"id": account_id, "org": org_id, "property": property_id})
+    return property_id, account_id
+
+
+def _transaction(org_id, account_id, import_hash="same-statement-line"):
+    from app.models import BankTransaction
+    return BankTransaction(
+        organization_id=org_id, bank_account_id=account_id,
+        booking_date=date(2026, 1, 2), value_date=date(2026, 1, 3),
+        amount=Decimal("123.45"), import_hash=import_hash, status="NEU",
+    )
+
+
+@pytest.mark.asyncio
+async def test_transaction_rejects_foreign_organization_account(migrator_session, seed_data):
+    _, account_b = await _fresh_account(migrator_session, seed_data, "b")
+    with pytest.raises(IntegrityError, match="fk_bank_transaction_account_org"):
+        async with migrator_session.begin_nested():
+            migrator_session.add(_transaction(seed_data["org_a_id"], account_b))
+            await migrator_session.flush()
+
+
+@pytest.mark.asyncio
+async def test_payment_link_requires_same_account(migrator_session, seed_data):
+    from app.models import OwnerProfile, Payment, Person
+    property_a, account_a = await _fresh_account(migrator_session, seed_data)
+    _, account_other = await _fresh_account(migrator_session, seed_data)
+    tx = _transaction(seed_data["org_a_id"], account_other)
+    person = Person(organization_id=seed_data["org_a_id"], last_name="T15 synthetisch")
+    migrator_session.add_all([tx, person])
+    await migrator_session.flush()
+    owner = OwnerProfile(organization_id=seed_data["org_a_id"], person_id=person.id)
+    migrator_session.add(owner)
+    await migrator_session.flush()
+    payment = Payment(
+        organization_id=seed_data["org_a_id"], bank_account_id=account_a,
+        property_id=property_a, direction="IN", amount=Decimal("123.45"),
+        value_date=date(2026, 1, 3), payment_type="HAUSGELD_VORSCHUSS",
+        owner_profile_id=owner.id, status="draft",
+    )
+    migrator_session.add(payment)
+    await migrator_session.flush()
+    assert payment.bank_transaction_id is None
+    with pytest.raises(IntegrityError, match="fk_payment_bank_transaction_coherence"):
+        async with migrator_session.begin_nested():
+            payment.bank_transaction_id = tx.id
+            await migrator_session.flush()
+    await migrator_session.refresh(payment)
+    valid_tx = _transaction(seed_data["org_a_id"], account_a)
+    migrator_session.add(valid_tx)
+    await migrator_session.flush()
+    payment.bank_transaction_id = valid_tx.id
+    await migrator_session.flush()
+    await migrator_session.refresh(payment)
+    assert payment.bank_transaction_id == valid_tx.id
+    payment.status = "booked"
+    await migrator_session.flush()
+    with pytest.raises(DBAPIError, match="Cannot change bank_transaction_id on booked payment"):
+        async with migrator_session.begin_nested():
+            payment.bank_transaction_id = None
+            await migrator_session.flush()
+
+
+@pytest.mark.asyncio
+async def test_runtime_rls_without_repository_filter(app_rw_session, seed_data):
+    session = app_rw_session
+    tx_ids = {}
+    accounts = {}
+    for tenant in ("a", "b"):
+        _, account = await _fresh_account(session, seed_data, tenant)
+        accounts[tenant] = account
+        tx = _transaction(seed_data[f"org_{tenant}_id"], account)
+        session.add(tx)
+        await session.flush()
+        tx_ids[tenant] = tx.id
+    for tenant, other in (("a", "b"), ("b", "a")):
+        await session.execute(text("SELECT set_config('app.current_org_id', :org, true)"), {"org": str(seed_data[f"org_{tenant}_id"])})
+        await session.execute(text("SELECT set_config('app.current_user_id', :actor, true)"), {"actor": str(seed_data[f"user_{tenant}_admin_id"])})
+        rows = (await session.execute(text("SELECT id, organization_id FROM bank_transaction"))).all()
+        assert tx_ids[tenant] in {row.id for row in rows}
+        assert tx_ids[other] not in {row.id for row in rows}
+        assert all(row.organization_id == seed_data[f"org_{tenant}_id"] for row in rows)
+        updated = await session.execute(text("UPDATE bank_transaction SET status='IGNORIERT' WHERE id=:id RETURNING id"), {"id": tx_ids[other]})
+        assert updated.all() == []
+        deleted = await session.execute(text("DELETE FROM bank_transaction WHERE id=:id RETURNING id"), {"id": tx_ids[other]})
+        assert deleted.all() == []
+        with pytest.raises(DBAPIError, match="row-level security"):
+            async with session.begin_nested():
+                session.add(_transaction(seed_data[f"org_{other}_id"], accounts[other], uuid.uuid4().hex))
+                await session.flush()
+
+
+@pytest.mark.asyncio
+async def test_bank_transaction_rejects_unknown_status(app_rw_session, seed_data):
+    _, account = await _fresh_account(app_rw_session, seed_data)
+    tx = _transaction(seed_data["org_a_id"], account)
+    tx.status = "UNBEKANNT"
+    with pytest.raises(IntegrityError, match="ck_bank_transaction_status"):
+        async with app_rw_session.begin_nested():
+            app_rw_session.add(tx)
+            await app_rw_session.flush()

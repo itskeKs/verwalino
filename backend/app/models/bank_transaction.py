@@ -1,7 +1,7 @@
 """BankTransaction -- one imported bank statement line.
 
 T15: Bankumsätze Tabelle.
-Columns from F2 CSV/CAMT formats: account (FK to bank_account),
+Bank statement fields (the concrete import profile is selected separately): account (FK to bank_account),
 booking_date, value_date, amount, counterparty_name, counterparty_iban,
 purpose, import_hash (unique per account), status (NEU/ZUGEORDNET/IGNORIERT).
 Tenant-behaftet (organization_id, RLS).
@@ -15,7 +15,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Date, ForeignKey, Numeric, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, Date, ForeignKey, ForeignKeyConstraint, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -63,6 +63,12 @@ class BankTransaction(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "bank_account_id"],
+            ["bank_account.organization_id", "bank_account.id"],
+            name="fk_bank_transaction_account_org", ondelete="RESTRICT",
+        ),
+        UniqueConstraint("organization_id", "bank_account_id", "id", name="uq_bank_transaction_org_account_id"),
         # Unique import_hash per account prevents duplicate imports.
         UniqueConstraint(
             "bank_account_id",
