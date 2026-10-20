@@ -46,7 +46,9 @@ describe("Mietkonto saldo (Soll minus Ist)", () => {
     });
     const user = userEvent.setup();
     render(<MietkontoPage />);
-    await user.selectOptions(await screen.findByLabelText(/^Mietvertrag \*/), "lease-t12");
+    const lease = await screen.findByRole("combobox", { name: /^Mietvertrag \*$/ });
+    expect(lease).toHaveAccessibleName("Mietvertrag *");
+    await user.selectOptions(lease, "lease-t12");
     await user.clear(screen.getByLabelText("Zeitraum von *"));
     await user.type(screen.getByLabelText("Zeitraum von *"), "2025-01-01");
     await user.clear(screen.getByLabelText("Zeitraum bis *"));

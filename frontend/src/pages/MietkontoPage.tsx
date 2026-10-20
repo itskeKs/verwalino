@@ -201,8 +201,9 @@ export function MietkontoPage() {
 
           {viewMode === "lease" ? (
             <label>
-              Mietvertrag *
+              <span id="statement-lease-label">Mietvertrag *</span>
               <select
+                aria-labelledby="statement-lease-label"
                 required
                 value={selectedLeaseId}
                 onChange={(e) => { setSelectedLeaseId(e.target.value); setScopeId(null); }}

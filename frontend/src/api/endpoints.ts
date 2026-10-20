@@ -56,6 +56,9 @@ import type {
   BankAccountCreate,
   BankTransactionPage,
   BankTransactionStatus,
+  BankMatchingPage,
+  BankAssignmentLine,
+  BankAssignmentResult,
   BankImportResult,
   Payment,
   PaymentCreate,
@@ -726,6 +729,19 @@ export function listBankTransactions(id: string, status?: BankTransactionStatus,
   const params = new URLSearchParams({ offset: String(offset), limit: "50" });
   if (status) params.set("status", status);
   return api.get<BankTransactionPage>(`/api/bank-accounts/${encodeURIComponent(id)}/transactions?${params}`);
+}
+
+export function listBankMatchingTransactions(bankAccountId: string, status: BankTransactionStatus | "ALL" = "NEU", offset = 0): Promise<BankMatchingPage> {
+  const params = new URLSearchParams({ bank_account_id: bankAccountId, status, offset: String(offset), limit: "50" });
+  return api.get<BankMatchingPage>(`/api/bank-transactions?${params}`);
+}
+
+export function assignBankTransaction(id: string, lines: BankAssignmentLine[]): Promise<BankAssignmentResult> {
+  return api.post<BankAssignmentResult>(`/api/bank-transactions/${encodeURIComponent(id)}/assign`, { lines });
+}
+
+export function ignoreBankTransaction(id: string): Promise<{ id: string; status: "IGNORIERT" }> {
+  return api.post<{ id: string; status: "IGNORIERT" }>(`/api/bank-transactions/${encodeURIComponent(id)}/ignore`);
 }
 
 export function importBankTransactions(id: string, file: File, dryRun = true): Promise<BankImportResult> {

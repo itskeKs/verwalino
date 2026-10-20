@@ -32,6 +32,7 @@ it("ends an existing lease without resending unchanged monetary fields", async (
     <Routes><Route path="/objekte/:propertyId/einheiten/:unitId" element={<UnitDetailPage />} /></Routes>
   </MemoryRouter>);
   await user.click(await screen.findByRole("button", { name: "Bearbeiten / beenden" }));
+  expect(screen.getByRole("combobox", { name: /^Mieter \*$/ })).toHaveAccessibleName("Mieter *");
   expect(screen.getByLabelText("Vertragsbeginn *")).toBeDisabled();
   await user.type(screen.getByLabelText("Vertragsende"), "2025-12-31");
   await user.click(screen.getByRole("button", { name: "Speichern" }));

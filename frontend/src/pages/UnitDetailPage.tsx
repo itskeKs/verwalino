@@ -362,8 +362,9 @@ export function UnitDetailPage() {
           {leaseFormError && <p className="error-text">{leaseFormError}</p>}
           <form onSubmit={handleLeaseSubmit} className="form-grid">
             <label>
-              Mieter *
+              <span id="lease-tenant-label">Mieter *</span>
               <select
+                aria-labelledby="lease-tenant-label"
                 required
                 disabled={editingLease !== null}
                 value={leaseForm.tenant_profile_id}

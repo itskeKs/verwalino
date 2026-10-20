@@ -92,7 +92,7 @@ class AssignmentOut(StatusOut):
 
 @router.get("", response_model=TransactionPageOut)
 async def list_transactions(
-    status: Status | None = "NEU",
+    status: Literal["ALL", "NEU", "ZUGEORDNET", "IGNORIERT"] | None = "NEU",
     bank_account_id: uuid.UUID | None = None,
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
@@ -100,7 +100,8 @@ async def list_transactions(
     db: AsyncSession = Depends(get_db),
 ):
     return await BankImportService(db, auth.organization_id, auth.user_id).list_transactions(
-        bank_account_id=bank_account_id, status=status, limit=limit, offset=offset)
+        bank_account_id=bank_account_id, status=None if status == "ALL" else status,
+        limit=limit, offset=offset)
 
 
 @router.post("/{transaction_id}/assign", response_model=AssignmentOut)

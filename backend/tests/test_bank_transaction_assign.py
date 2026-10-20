@@ -373,3 +373,20 @@ async def test_finalized_owner_period_is_not_overwritten_by_later_plan(bank_seed
     assert suggestion['lines'][0]['period_year']==2025
     assert suggestion['lines'][0]['period_month']==6
     assert suggestion['lines'][0]['amount']=='300.00'
+
+
+async def test_explicit_all_filter_keeps_processed_rows_and_pending_default(bank_seed, bank_db):
+    api, ids = bank_seed
+    assigned_id = await transaction(bank_db, ids)
+    ignored_id = await transaction(bank_db, ids, amount='25.00', purpose='Unbekannter Eingang')
+    assert (await api.post(f'{BASE}/{assigned_id}/assign', json=split(ids))).status_code == 200
+    assert (await api.post(f'{BASE}/{ignored_id}/ignore')).status_code == 200
+    response = await listing(api, ids, status='ALL')
+    assert response.status_code == 200, response.text
+    assert {row['id']: row['status'] for row in response.json()['items']} == {
+        assigned_id: 'ZUGEORDNET', ignored_id: 'IGNORIERT',
+    }
+    assert all(row['suggestions'] == [] for row in response.json()['items'])
+    pending = await listing(api, ids)
+    assert pending.status_code == 200, pending.text
+    assert pending.json()['items'] == []

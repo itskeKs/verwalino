@@ -899,6 +899,49 @@ export interface BankTransactionPage {
   next_offset: number | null;
 }
 
+export interface BankAssignmentLine {
+  payment_type: PaymentType | "NACHZAHLUNG";
+  amount: string;
+  period_year: number;
+  period_month: number;
+  lease_agreement_id?: string;
+  tenant_profile_id?: string;
+  owner_profile_id?: string;
+  note?: string;
+}
+
+export interface BankMatchLine extends Omit<BankAssignmentLine, "amount" | "lease_agreement_id" | "tenant_profile_id" | "owner_profile_id"> {
+  amount: string | null;
+  open_amount: string;
+  lease_agreement_id?: string | null;
+  tenant_profile_id?: string | null;
+  owner_profile_id?: string | null;
+}
+
+export interface BankMatchSuggestion {
+  target_name: string;
+  confidence: "HIGH" | "MEDIUM" | "LOW";
+  lines: BankMatchLine[];
+  reasons: string[];
+  requires_review: boolean;
+  unallocated_amount: string;
+}
+
+export interface BankTransactionWithSuggestions extends BankTransaction {
+  suggestions: BankMatchSuggestion[];
+}
+
+export interface BankMatchingPage {
+  items: BankTransactionWithSuggestions[];
+  next_offset: number | null;
+}
+
+export interface BankAssignmentResult {
+  id: string;
+  status: "ZUGEORDNET";
+  payments: (Payment & { bank_transaction_id: string })[];
+}
+
 export interface BankImportResult {
   count: number;
   new_count: number;
