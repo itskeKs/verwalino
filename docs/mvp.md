@@ -194,9 +194,10 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 
 **Start auf eigener Branch `mvp/phase-2` vom nach `main` übernommenen Phase-1-Stand. Nächste Aufgabe: T14**, danach T15; eine Aufgabe pro Session. T10 bleibt als offene Phase-1-Restaufgabe bestehen, sein Produktionsrest benötigt weiterhin gesonderte Freigabe.
 
-- [ ] **T14 Passwort ändern** — `POST /api/auth/password` (alt, neu; Hash wie beim Login) und Dialog im Benutzermenü.
+- [x] **T14 Passwort ändern** — `POST /api/auth/password` (alt, neu; Hash wie beim Login) und Dialog im Benutzermenü.
   Dateien: `backend/app/api/auth.py`, `backend/app/core/security.py`, `frontend/src/components/Topbar.tsx`, `frontend/src/api/endpoints.ts`
-  Fertig, wenn: `uv run pytest tests/test_auth_password.py` (neu) grün UND Ablauf in der App: „Passwort ändern, neu anmelden“.
+  Fertig, wenn: `uv run pytest tests/test_auth_password.py` (neu) grün UND Ablauf in der App: "Passwort ändern, neu anmelden".
+  Ergebnisse: 4 Backend-Tests grün (success, wrong old, weak new, unauthenticated); 5 Frontend-Tests grün (Dialog fields, password mismatch, API call, 401 error, logout on success); API-Flow verifiziert via curl: Login → Password Change (204) → Old Password rejected (401) → New Password login (200).
 - [ ] **T15 Tabelle Bankumsätze** — Modell `bank_transaction` (Konto, Buchungs-/Valutadatum, Betrag, Gegenkonto Name/IBAN, Zweck, `import_hash` eindeutig je Konto, Status NEU/ZUGEORDNET/IGNORIERT) mit RLS; `payment.bank_transaction_id` optional.
   Dateien: `backend/app/models/bank_transaction.py` (neu), `backend/migrations/versions/0124_bank_transaction.py` (neu, Muster `0016_payment_table.py`), `backend/app/repositories/bank_transaction_repo.py` (neu), `backend/app/models/payment.py`
   Fertig, wenn: `uv run pytest tests/test_rls_coverage.py tests/test_bank_transactions.py` (neu) grün.
