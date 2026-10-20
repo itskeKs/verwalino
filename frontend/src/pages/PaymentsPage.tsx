@@ -289,6 +289,7 @@ export function PaymentsPage() {
             <label>
               Bankkonto *
               <select
+                aria-label="Bankkonto *"
                 required
                 value={form.bank_account_id}
                 onChange={(e) =>
@@ -306,6 +307,7 @@ export function PaymentsPage() {
             <label>
               Zahlungstyp *
               <select
+                aria-label="Zahlungstyp *"
                 required
                 value={form.payment_type}
                 onChange={(e) =>
@@ -329,6 +331,7 @@ export function PaymentsPage() {
             <label>
               Richtung *
               <select
+                aria-label="Richtung *"
                 required
                 value={form.direction}
                 onChange={(e) =>
@@ -367,6 +370,7 @@ export function PaymentsPage() {
               <label>
                 Mieter
                 <select
+                  aria-label="Mieter"
                   value={form.tenant_profile_id ?? ""}
                   onChange={(e) =>
                     setForm({
@@ -394,6 +398,7 @@ export function PaymentsPage() {
               <label>
                 Eigentuemer
                 <select
+                  aria-label="Eigentuemer"
                   value={form.owner_profile_id ?? ""}
                   onChange={(e) =>
                     setForm({
@@ -422,6 +427,7 @@ export function PaymentsPage() {
               <label>
                 Mietvertrag
                 <select
+                  aria-label="Mietvertrag"
                   value={form.lease_agreement_id ?? ""}
                   onChange={(e) =>
                     setForm({

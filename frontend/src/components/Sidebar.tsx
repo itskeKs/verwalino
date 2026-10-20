@@ -100,6 +100,7 @@ const GROUPS: NavGroup[] = [
       { to: "/bankkonten", label: "Bankkonten", icon: Wallet },
       { to: "/zahlungen", label: "Zahlungen", icon: ArrowLeftRight },
       { to: "/mietkonto", label: "Mietkonto", icon: BookOpenText },
+      { to: "/kautionen", label: "Kautionen", icon: Wallet },
       { to: "/offene-posten", label: "Offene Posten", icon: CircleAlert },
       { to: "/mahnungen", label: "Mahnungen", icon: BellRing },
     ],

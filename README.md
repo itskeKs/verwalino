@@ -148,6 +148,27 @@ während des Speicherns sind weitere Änderungen und Schließen gesperrt.
 `scripts/acceptance/t24_rent_change_browser.cjs` prüft den UI-Ablauf und alle
 24 Monats-/Typzeilen: 700/150 bis März, 750/150 ab April, Jahres-Soll 10.650 EUR.
 
+## Kautionen (Phase 2)
+
+`/kautionen` zeigt je Vertrag das vereinbarte Soll aus `lease.deposit`, gebuchte
+Einzahlungen, echte Rückzahlungen und den gehaltenen Bestand. Dafür liefert
+`GET /api/payments/deposits` eine vollständige berechtigte Übersicht; bei
+klassifizierten Finanzquellen ist `accounting_scope_id` ausdrücklich auszuwählen.
+Der MIET-Kreis begrenzt die Quellen, nicht Jahr oder Kontotyp. Fehlende Rechte,
+unklassifizierte oder inkohärente Quellen ergeben einen Fehler statt Teilzahlen.
+Unter „Zahlungen“ werden Raten als Typ `KAUTION`, Richtung `IN`, positiv erfasst
+und anschließend gebucht; eine echte Rückzahlung ist eine eigene `OUT`-Buchung.
+Entwürfe, stornierte Originale und Stornozeilen zählen nicht. 1.800 EUR Soll,
+zweimal 900 EUR Eingang und 300 EUR Rückzahlung ergeben 1.500 EUR Bestand.
+Kaution bleibt aus dem Mietsaldo und den NK-Ableitungen heraus. Verzinsung oder
+eine automatische Rückzahlungs-/Tilgungsregel wird nicht unterstellt; negative
+Bestände bei unvollständiger Althistorie bleiben sichtbar. Historische aktive
+Kautionen ohne vollständige Vertragszuordnung müssen korrigiert werden (409),
+der bestehende Stornopfad bleibt dafür erhalten. Neue/geänderte/zu buchende
+Kautionen müssen zu Kontoobjekt, Vertrag und Mieter passen. Buchungsbelege und
+finalisierte Dokumente bleiben unverändert. Der echte UI-Prüffall ist
+`scripts/acceptance/t25_deposits_browser.cjs`.
+
 Weiterführende Dokumentation:
 
 - [Deployment](DEPLOY.md)

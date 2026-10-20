@@ -49,6 +49,7 @@ import { AssetReportDetailPage } from "./pages/AssetReportDetailPage";
 import { BankAccountsPage } from "./pages/BankAccountsPage";
 import { BankTransactionsPage } from "./pages/BankTransactionsPage";
 import { PaymentsPage } from "./pages/PaymentsPage";
+import { DepositsPage } from "./pages/DepositsPage";
 import { PaymentDetailPage } from "./pages/PaymentDetailPage";
 import { MietkontoPage } from "./pages/MietkontoPage";
 import { OpenItemsPage } from "./pages/OpenItemsPage";
@@ -115,6 +116,7 @@ export function AppRoutes() {
         <Route path="/bankkonten" element={<BankAccountsPage />} />
         <Route path="/bankkonten/:id/umsaetze" element={<BankTransactionsPage />} />
         <Route path="/zahlungen" element={<PaymentsPage />} />
+        <Route path="/kautionen" element={<DepositsPage />} />
         <Route path="/zahlungen/:paymentId" element={<PaymentDetailPage />} />
         <Route path="/mietkonto" element={<MietkontoPage />} />
         <Route path="/offene-posten" element={<OpenItemsPage />} />

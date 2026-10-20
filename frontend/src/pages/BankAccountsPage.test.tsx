@@ -34,6 +34,26 @@ it("clears incompatible scope when switching between deposit and reserve account
   expect(screen.queryByRole("option", { name: /Bereich MIET/ })).toBeNull();
 });
 
+it("explicitly names the account type select for exact browser label lookup", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+    if (input.startsWith("/api/bank-accounts")) return json([]);
+    if (input.startsWith("/api/properties/page")) return json({ items: [], next_cursor: null });
+    throw new Error(`Unexpected URL: ${input}`);
+  }));
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role: "OWNER_ADMIN" }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
+  fireEvent.click(screen.getByRole("button", { name: "+ Neues Bankkonto" }));
+  const label = Array.from(document.querySelectorAll("label")).find(item => item.firstChild?.textContent?.trim() === "Kontotyp *");
+  const select = label?.querySelector("select");
+  expect(select).toHaveAttribute("aria-label", "Kontotyp *");
+  expect(screen.getByLabelText("Kontotyp *", { exact: true })).toBe(select);
+  expect(select).toHaveAccessibleName("Kontotyp *");
+  fireEvent.change(select!, { target: { value: "KAUTION" } });
+  expect(select).toHaveValue("KAUTION");
+  fireEvent.change(select!, { target: { value: "LAUFEND" } });
+  expect(select).toHaveValue("LAUFEND");
+  await screen.findByText("Keine Bankkonten vorhanden.");
+});
+
 it.each(["OWNER_ADMIN", "CLERK", "READ_ONLY"])("verlinkt Kontoumsätze und schützt den Importlink für %s", async role => {
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
     if (input.startsWith("/api/bank-accounts")) return json([{ id: "konto", label: "Hauskonto", account_type: "LAUFEND", property_name: "Testhaus" }]);

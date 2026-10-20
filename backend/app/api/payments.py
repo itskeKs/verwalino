@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
+from app.core.live_principal import get_live_member_db, get_live_writer_db
 from app.models.payment import Payment
 from app.repositories.payment_repo import PaymentRepository
 from app.services.payment_service import PaymentService
@@ -172,6 +173,31 @@ def _mietkonto_out(result) -> MietkontoOut:
 # Mietkonto views (read-only) -- declared BEFORE /{payment_id} so the literal
 # path segments are not captured as a UUID payment id.
 # ---------------------------------------------------------------------------
+class DepositOut(BaseModel):
+    lease_agreement_id: str
+    tenant_profile_id: str
+    unit_id: str
+    property_id: str
+    tenant_name: str
+    unit_label: str
+    property_name: str
+    expected_amount: str
+    paid_amount: str
+    refunded_amount: str
+    held_amount: str
+
+
+@router.get("/deposits", response_model=list[DepositOut])
+async def deposits(
+    accounting_scope_id: uuid.UUID | None = None,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+):
+    rows = await PaymentService(db, auth.organization_id, auth.user_id).deposits(accounting_scope_id)
+    return [DepositOut(**{key: format(value, ".2f") if isinstance(value, Decimal) else value
+                          for key, value in row.items()}) for row in rows]
+
+
 @router.get("/mietkonto/lease/{lease_agreement_id}", response_model=MietkontoOut)
 async def lease_statement(
     lease_agreement_id: uuid.UUID,
@@ -310,7 +336,7 @@ async def get_payment(
 async def create_payment(
     body: PaymentCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     payment = await svc.create_draft(
@@ -335,7 +361,7 @@ async def update_payment(
     payment_id: uuid.UUID,
     body: PaymentUpdate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     updates: dict = {}
@@ -359,7 +385,7 @@ async def update_payment(
 async def book_payment(
     payment_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     payment = await svc.book(payment_id)
@@ -371,7 +397,7 @@ async def reverse_payment(
     payment_id: uuid.UUID,
     body: ReverseRequest | None = None,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     storno = await svc.reverse_payment(payment_id, note=body.note if body else None)
@@ -382,7 +408,7 @@ async def reverse_payment(
 async def delete_payment(
     payment_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     await svc.delete_draft(payment_id)

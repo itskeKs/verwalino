@@ -192,7 +192,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 
 ### Phase 2 – Fehlende Kernfunktionen
 
-**Start auf eigener Branch `mvp/phase-2` vom nach `main` übernommenen Phase-1-Stand. Nächste Aufgabe: T25**; Aufgaben einzeln in Reihenfolge. T10 bleibt als offene Phase-1-Restaufgabe bestehen, sein Produktionsrest benötigt weiterhin gesonderte Freigabe.
+**Start auf eigener Branch `mvp/phase-2` vom nach `main` übernommenen Phase-1-Stand. Nächste Aufgabe: T26**; Aufgaben einzeln in Reihenfolge. T10 bleibt als offene Phase-1-Restaufgabe bestehen, sein Produktionsrest benötigt weiterhin gesonderte Freigabe.
 
 - [x] **T14 Passwort ändern** — `POST /api/auth/password` (alt, neu; Hash wie beim Login) und Dialog im Benutzermenü.
   Dateien: `backend/app/api/auth.py`, `backend/app/core/security.py`, `frontend/src/components/Topbar.tsx`, `frontend/src/api/endpoints.ts`
@@ -238,9 +238,10 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
   Dateien: `frontend/src/pages/UnitDetailPage.tsx`, `frontend/src/api/endpoints.ts`, `frontend/src/api/types.ts`
   Fertig, wenn: `npm test -- src/pages/UnitDetailPage.test.tsx` (neu) grün UND Ablauf in der App: „+50 € ab 01.04., Mietkonto zeigt ab April das neue Soll“.
   Ergebnis 20.10.2026: Zuerst 26 rote UI-Fälle bei erhaltenem Alt-Test; weitere rote Maximalwert-Gegenprobe belegte zu enge Betragsgrenze, an Numeric(14,2) angeglichen (zwölf Ganzzahlstellen, dreizehn abgewiesen). Root: 35 Seitentests/53 Nachbartests, Build und gezielter Lint grün. Echter Chrome-Lauf `scripts/acceptance/t24_rent_change_browser.cjs` gegen `scripts/dev-local.sh`: Objekt/Einheit/Person/Mieter/Vertrag ausschließlich per UI, Original 700/150, genau eine persistierte Änderung ab 01.04.2026 auf 750/150; Originaldaten nach Reload unverändert, kein PATCH/PUT/DELETE oder Zahlungs-POST. Alle 24 Mietkonto-Monats-/Typzeilen sichtbar und in beobachteter Response exakt geprüft: Januar–März 850, April–Dezember 900, Soll/Saldo 10.650, Ist 0 EUR. Veraltete Reload-Response im Prüfsystem gezielt ausgeschlossen; zwei erwartete anonyme Session-401 separat nach URL/Phase belegt, keine authentifizierten 401 oder unerwarteten HTTP-/Seiten-/Consolefehler. Rollen, Vertragstrennung, Fehler/Retry, Datum/Geld und Pending-Sperre geprüft; App anschließend gestoppt.
-- [ ] **T25 Kaution** — Kaution als eigenes Soll außerhalb des Mietsaldos, Zahlung/Rückzahlung Typ `KAUTION`, Seite `/kautionen` (Soll, gezahlt, zurück).
+- [x] **T25 Kaution** — Kaution als eigenes Soll außerhalb des Mietsaldos, Zahlung/Rückzahlung Typ `KAUTION`, Seite `/kautionen` (Soll, gezahlt, zurück).
   Dateien: `backend/app/engine/mietkonto.py`, `backend/app/api/payments.py`, `frontend/src/pages/DepositsPage.tsx` (neu), `frontend/src/App.tsx`, `frontend/src/components/Sidebar.tsx`
   Fertig, wenn: `uv run pytest tests/test_deposits.py` (neu) grün UND Ablauf in der App: „1.800 € in zwei Raten, Übersicht vollständig, Mietkonto unverändert“.
+  Ergebnis 20.10.2026: Zuerst 2 rote API-/Mietsaldo-Gegenproben (alter UUID-Catchall: 422), weitere 6 Kohärenz- und eine Legacy-Stornogegenprobe; 9 zusätzliche Labeltests rot vor sieben gezielten Select-Namensfixes. Root: 31 Pflicht-/175 Nachbar-Backendtests grün (je 2 bestehende Alembic-Warnungen), 117 Frontendtests, Build/gezielter Lint grün; Backend-Agent zusätzlich 224 Regressionen grün. Reine getrennte Decimal-Bestandsführung; aktive gebuchte KAUTION, keine Drafts/Stornos, vollständiger MIET-Scope mit Rollen-/Org-/Objekt-/Quellenprüfung und Widerruf, keine Jahres-/Kontotypbeschneidung. Fremde/inkohärente Neuzuordnung abgewiesen; Altzuordnung 409 statt falschem Nullbericht, bestehende Stornokorrektur erhalten. Snapshot-/Dokumentmetadaten unverändert; keine Migration. Echter Chrome-PASS `scripts/acceptance/t25_deposits_browser.cjs`: Stammdaten, MIET-Kreis, explizite Teamrechte und KAUTION-Konto per UI; 1.800 Soll, zwei separat erfasste/gebuchte 900-IN, echte 300-OUT, nach Reload 1.800 gezahlt/300 zurück/1.500 Bestand. Alle 24 KALT-/NK-Posten vorher/nachher unverändert (Soll/Saldo 10.200, Ist 0); fünf exakt belegte fehlende-Kreis-409 vor Auswahl und zwei anonyme Session-Probes separat erfasst, keine unerwarteten Fehler im Objekt-/Kautionsablauf. App gestoppt; separater Dashboardbefund bei T42 vermerkt.
 - [ ] **T26 Eigentümerwechsel** — `PATCH /api/ownership/{id}` setzt das Ende; in der Einheit „Eigentum beenden“ und neuer Eigentümer ab Folgetag.
   Dateien: `backend/app/api/ownership.py`, `backend/app/repositories/ownership_history_repo.py`, `frontend/src/pages/UnitDetailPage.tsx`
   Fertig, wenn: `uv run pytest tests/test_ownership_change.py` (neu, Abrechnung tagegenau) grün UND Ablauf in der App: „Verkauf zum 30.06., Jahresabrechnung zeigt beide anteilig“.
@@ -292,6 +293,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 - [ ] **T42 Aufgaben (UI)** — Seite `/aufgaben`, Anlegen aus Objekt und Einheit, fällige im Dashboard; Vorbild `rg -n "RF17" docs/fachreferenz.md`.
   Dateien: `frontend/src/pages/TasksPage.tsx` (neu), `frontend/src/pages/DashboardPage.tsx`, `frontend/src/App.tsx`, `frontend/src/components/Sidebar.tsx`
   Fertig, wenn: `npm test -- src/pages/TasksPage.test.tsx` (neu) grün UND Ablauf in der App: „Aufgabe fällig morgen erscheint im Dashboard, abhaken“.
+  Bei T25-Vorlauf beobachtet: Nach gebundener Kontoanlage liefert der Dashboard-Abruf `/api/fristen?reference_date=2026-10-20` ohne Kreis 409; bei der Dashboardintegration und vor Gesamtabschluss mitprüfen, Herkunft bisher nicht als Ausgangsfehler/Regression belegt.
 
 ### Phase 3 – Parität und Komfort
 

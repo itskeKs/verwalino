@@ -64,6 +64,7 @@ import type {
   BankImportResult,
   Payment,
   PaymentCreate,
+  DepositAccount,
   OpenItem,
   MietkontoResult,
   DunningNotice,
@@ -764,6 +765,11 @@ export function importBankTransactions(id: string, file: File, dryRun = true): P
 }
 
 // --- M6: Payments ---
+
+export function listDeposits(scopeId?: string): Promise<DepositAccount[]> {
+  const query = scopeId ? `?accounting_scope_id=${encodeURIComponent(scopeId)}` : "";
+  return api.get<DepositAccount[]>(`/api/payments/deposits${query}`);
+}
 
 export function listPayments(params?: {
   bank_account_id?: string;

@@ -973,6 +973,20 @@ export interface BankImportResult {
   preview_truncated: boolean;
 }
 
+export interface DepositAccount {
+  lease_agreement_id: string;
+  tenant_profile_id: string;
+  unit_id: string;
+  property_id: string;
+  tenant_name: string;
+  unit_label: string;
+  property_name: string;
+  expected_amount: string;
+  paid_amount: string;
+  refunded_amount: string;
+  held_amount: string;
+}
+
 // --- M6 Payments ---
 
 export type PaymentDirection = "IN" | "OUT";

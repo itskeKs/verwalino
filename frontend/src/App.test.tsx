@@ -46,6 +46,17 @@ describe("declaration route authorization", () => {
 });
 
 
+describe("deposit navigation", () => {
+  it.each(["READ_ONLY", "CLERK"])("opens deposits via its sidebar route for %s", async role => {
+    vi.spyOn(endpoints, "listLeases").mockResolvedValue([]);
+    vi.spyOn(endpoints, "listDeposits").mockResolvedValue([]);
+    vi.spyOn(endpoints, "listFristen").mockResolvedValue([]);
+    renderRoutes("/kautionen", role);
+    expect(await screen.findByRole("heading", { name: "Kautionen" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Kautionen" })).toHaveAttribute("href", "/kautionen");
+  });
+});
+
 describe("governance navigation", () => {
   it("hides advanced governance links from clerks", async () => {
     renderRoutes("/objekte", "CLERK");

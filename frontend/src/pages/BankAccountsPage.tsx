@@ -152,6 +152,7 @@ export function BankAccountsPage() {
             <label>
               Kontotyp *
               <select
+                aria-label="Kontotyp *"
                 required
                 value={form.account_type}
                 onChange={(e) =>

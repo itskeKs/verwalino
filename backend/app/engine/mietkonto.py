@@ -169,6 +169,25 @@ class PaymentInput:
         return self.amount if self.direction == "IN" else -self.amount
 
 
+@dataclass(frozen=True)
+class DepositResult:
+    """Contractual deposit and active lifetime receipts/refunds, separate from rent."""
+
+    expected_amount: Decimal
+    paid_amount: Decimal
+    refunded_amount: Decimal
+    held_amount: Decimal
+
+
+def deposit_statement(expected_amount: Decimal, payments: list[PaymentInput]) -> DepositResult:
+    """Summarize one lease's deposit without interest or repayment assumptions."""
+    active = [p for p in payments if p.payment_type == PT_KAUTION
+              and p.is_booked and not p.is_reversed and not p.is_reversal]
+    paid = sum((p.amount for p in active if p.direction == "IN"), Decimal("0.00"))
+    refunded = sum((p.amount for p in active if p.direction == "OUT"), Decimal("0.00"))
+    return DepositResult(_money(expected_amount), _money(paid), _money(refunded), _money(paid - refunded))
+
+
 # ===========================================================================
 # Soll (expected charges) -- DERIVED, monthly scale, tag-exact partial months.
 # ===========================================================================
