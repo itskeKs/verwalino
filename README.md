@@ -60,6 +60,18 @@ Transaktions-ID sind überlappende Auszüge mit unterschiedlicher Anzahl ansonst
 identischer Buchungen nicht eindeutig unterscheidbar; diese Grenze darf nicht
 als sichere bankübergreifende Dublettenerkennung ausgegeben werden.
 
+CAMT.053 wird für `camt.053.001.02` und `.08` als XML oder ZIP unterstützt,
+mit derselben Ausgabe wie CSV. Nur gebuchte EUR-Umsätze; `CRDT` ist positiv,
+`DBIT` negativ. Bei Sammelbuchungen müssen die Einzelbeträge exakt die
+Gesamtbuchung ergeben, sonst erfolgt keine Übernahme. Datum und Zeitstempel
+werden als bankseitiges Buchungs-/Valutadatum übernommen, Gegenparteien und
+mehrere unstrukturierte Verwendungszweckzeilen bleiben erhalten. XML-DTDs und
+Entitäten, unbekannte Versionen sowie ZIP-Pfadtraversal, Symlinks, verschlüsselte
+oder verschachtelte Archive werden abgewiesen. ZIPs werden nur im Speicher
+verarbeitet: höchstens 100 Einträge, zusammen höchstens 25 MiB entpackt und
+100.000 Umsätze; Auszüge verschiedener Konten dürfen nicht zusammengeführt
+werden. Ein Fehler in einer Datei verwirft den gesamten Parserlauf.
+
 Weiterführende Dokumentation:
 
 - [Deployment](DEPLOY.md)

@@ -9,6 +9,10 @@ from __future__ import annotations
 import csv
 import io
 import re
+import stat
+import xml.etree.ElementTree as ET
+import zlib
+from zipfile import BadZipFile, ZIP_DEFLATED, ZIP_STORED, ZipFile
 from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import date, datetime
@@ -209,4 +213,197 @@ def parse_csv(content: bytes) -> list[BankImportRow]:
         raise BankImportError(f"Zeile {reader.line_num}: ungültige CSV-Struktur.") from exc
     if columns is None:
         raise BankImportError("Unbekanntes CSV-Format: Semikolon und Spalten Buchungstag/Buchungsdatum, Wertstellung/Valutadatum und Betrag erwartet.")
+    return _with_import_hashes(rows)
+
+
+_CAMT_NAMESPACES = {
+    f"urn:iso:std:iso:20022:tech:xsd:camt.053.001.{version}"
+    for version in ("02", "08")
+}
+MAX_ZIP_MEMBERS = 100
+
+
+class _StatementTreeBuilder(ET.TreeBuilder):
+    def doctype(self, name, pubid, system):
+        # Parser callback, not a byte search: also protects UTF-16 XML.
+        raise BankImportError("XML-DTD/DOCTYPE und Entitäten sind nicht erlaubt.")
+
+
+def _xml_path(path: str, namespace: str) -> str:
+    return "/".join(f"{{{namespace}}}{part}" for part in path.split("/"))
+
+
+def _xml_node(parent: ET.Element, path: str, namespace: str, *, required: bool = True) -> ET.Element | None:
+    nodes = parent.findall(_xml_path(path, namespace))
+    if len(nodes) > 1 or (required and not nodes):
+        raise BankImportError(f"CAMT: fehlendes oder mehrdeutiges Feld {path}.")
+    return nodes[0] if nodes else None
+
+
+def _xml_text(parent: ET.Element, path: str, namespace: str, *, required: bool = True) -> str:
+    node = _xml_node(parent, path, namespace, required=required)
+    value = node.text.strip() if node is not None and node.text else ""
+    if required and not value:
+        raise BankImportError(f"CAMT: leeres Pflichtfeld {path}.")
+    return value
+
+
+def _camt_amount(node: ET.Element, label: str) -> Decimal:
+    value = (node.text or "").strip()
+    if node.get("Ccy") != "EUR":
+        raise BankImportError(f"CAMT {label}: nur EUR-Beträge werden unterstützt.")
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]{1,2})?", value):
+        raise BankImportError(f"CAMT {label}: ungültiger Betrag (positiver XML-Dezimalwert erwartet).")
+    amount = Decimal(value)
+    if amount >= Decimal("1000000000000"):
+        raise BankImportError(f"CAMT {label}: Betrag überschreitet den Wertebereich.")
+    return amount.quantize(Decimal("0.01"))
+
+
+def _camt_date(entry: ET.Element, field: str, namespace: str) -> date:
+    day = _xml_text(entry, f"{field}/Dt", namespace, required=False)
+    timestamp = _xml_text(entry, f"{field}/DtTm", namespace, required=False)
+    try:
+        if bool(day) == bool(timestamp):
+            raise ValueError("exactly one date required")
+        if day and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", day):
+            return date.fromisoformat(day)
+        if timestamp and "T" in timestamp:
+            return datetime.fromisoformat(timestamp).date()
+        raise ValueError("invalid date format")
+    except ValueError as exc:
+        raise BankImportError(f"CAMT: fehlendes oder ungültiges Datum {field}.") from exc
+
+
+def _camt_signed(amount: Decimal, direction: str) -> Decimal:
+    if direction not in {"CRDT", "DBIT"}:
+        raise BankImportError("CAMT: CdtDbtInd muss CRDT oder DBIT sein.")
+    return amount if direction == "CRDT" else -amount
+
+
+def _camt_entry(entry: ET.Element, namespace: str) -> list[BankImportRow]:
+    status = _xml_text(entry, "Sts" if namespace.endswith(".02") else "Sts/Cd", namespace)
+    if status != "BOOK":
+        raise BankImportError("CAMT: nur Status BOOK (gebucht) ist importierbar.")
+    amount_node = _xml_node(entry, "Amt", namespace)
+    total = _camt_signed(_camt_amount(amount_node, "Buchung"), _xml_text(entry, "CdtDbtInd", namespace))
+    booking_date = _camt_date(entry, "BookgDt", namespace)
+    value_date = _camt_date(entry, "ValDt", namespace)
+    details = entry.findall(_xml_path("NtryDtls/TxDtls", namespace))
+    if not details:
+        return [BankImportRow(
+            booking_date, value_date, total,
+            purpose=_text(_xml_text(entry, "AddtlNtryInf", namespace, required=False), "Verwendungszweck", 500, 0),
+        )]
+    result = []
+    for detail in details:
+        amount_nodes = detail.findall(_xml_path("AmtDtls/TxAmt/Amt", namespace)) + detail.findall(_xml_path("Amt", namespace))
+        if len(amount_nodes) > 1:
+            raise BankImportError("CAMT: mehrdeutiger Einzelbetrag der Sammelbuchung.")
+        if not amount_nodes and len(details) > 1:
+            raise BankImportError("CAMT: Sammelbuchung ohne eindeutige Einzelbeträge.")
+        direction = _xml_text(detail, "CdtDbtInd", namespace, required=False) or _xml_text(entry, "CdtDbtInd", namespace)
+        unsigned_amount = _camt_amount(amount_nodes[0], "Einzelbuchung") if amount_nodes else abs(total)
+        amount = _camt_signed(unsigned_amount, direction)
+        role = "Dbtr" if amount >= 0 else "Cdtr"
+        party_path = f"RltdPties/{role}" + ("/Pty" if namespace.endswith(".08") else "")
+        name = _xml_text(detail, f"{party_path}/Nm", namespace, required=False)
+        iban = _xml_text(detail, f"RltdPties/{role}Acct/Id/IBAN", namespace, required=False)
+        remittance = detail.findall(_xml_path("RmtInf/Ustrd", namespace))
+        purpose = "\n".join((node.text or "").strip() for node in remittance)
+        result.append(BankImportRow(
+            booking_date=booking_date, value_date=value_date, amount=amount,
+            counterparty_name=_text(name, "Name", 255, 0),
+            counterparty_iban=_text(re.sub(r"\s+", "", iban).upper(), "IBAN", 34, 0),
+            purpose=_text(purpose, "Verwendungszweck", 500, 0),
+        ))
+    if sum((row.amount for row in result), Decimal(0)) != total:
+        raise BankImportError("CAMT: Summe der Einzelbeträge stimmt nicht mit der Buchung überein.")
+    return result
+
+
+def _parse_camt_xml(content: bytes) -> tuple[list[BankImportRow], set[str]]:
+    try:
+        root = ET.fromstring(content, parser=ET.XMLParser(target=_StatementTreeBuilder()))
+    except ET.ParseError as exc:
+        raise BankImportError("Ungültige CAMT-XML-Datei.") from exc
+    namespace = root.tag[1:].split("}", 1)[0] if root.tag.startswith("{") else ""
+    if namespace not in _CAMT_NAMESPACES or root.tag != f"{{{namespace}}}Document":
+        raise BankImportError("Unbekanntes CAMT-Format: camt.053.001.02 oder .08 erwartet.")
+    container = _xml_node(root, "BkToCstmrStmt", namespace)
+    statements = container.findall(_xml_path("Stmt", namespace))
+    if not statements:
+        raise BankImportError("CAMT enthält keinen Kontoauszug (Stmt).")
+    rows = []
+    accounts = set()
+    for statement in statements:
+        iban = _xml_text(statement, "Acct/Id/IBAN", namespace, required=False)
+        if iban:
+            accounts.add(re.sub(r"\s+", "", iban).upper())
+        currency = _xml_text(statement, "Acct/Ccy", namespace, required=False)
+        if currency and currency != "EUR":
+            raise BankImportError("CAMT: nur EUR-Konten sind unterstützt.")
+        for entry in statement.findall(_xml_path("Ntry", namespace)):
+            rows.extend(_camt_entry(entry, namespace))
+            if len(rows) > MAX_IMPORT_ROWS:
+                raise BankImportError(f"CAMT enthält mehr als {MAX_IMPORT_ROWS} Umsätze.")
+    if len(accounts) > 1:
+        raise BankImportError("CAMT enthält mehrere Konten; bitte je Konto getrennt importieren.")
+    return rows, accounts
+
+
+def _camt_zip_documents(content: bytes) -> list[bytes]:
+    documents = []
+    total = 0
+    try:
+        with ZipFile(io.BytesIO(content)) as archive:
+            members = archive.infolist()
+            if len(members) > MAX_ZIP_MEMBERS:
+                raise BankImportError(f"ZIP enthält mehr als {MAX_ZIP_MEMBERS} Einträge.")
+            names = set()
+            for member in members:
+                name = member.filename
+                if name in names or name.startswith("/") or "\\" in name or ":" in name or ".." in name.split("/") or stat.S_ISLNK(member.external_attr >> 16):
+                    raise BankImportError("ZIP enthält doppelte oder unsichere Dateipfade.")
+                names.add(name)
+                if member.is_dir():
+                    continue
+                if not name.lower().endswith(".xml") or member.flag_bits & 1 or member.compress_type not in {ZIP_STORED, ZIP_DEFLATED}:
+                    raise BankImportError("ZIP darf nur unverschlüsselte XML-Dateien enthalten.")
+                if total + member.file_size > MAX_IMPORT_BYTES:
+                    raise BankImportError("ZIP entpackt zu groß (Grenze 25 MiB).")
+                with archive.open(member) as source:
+                    data = source.read(MAX_IMPORT_BYTES - total + 1)
+                total += len(data)
+                if total > MAX_IMPORT_BYTES:
+                    raise BankImportError("ZIP entpackt zu groß (Grenze 25 MiB).")
+                documents.append(data)
+    except (BadZipFile, RuntimeError, EOFError, zlib.error, NotImplementedError) as exc:
+        raise BankImportError("Ungültiges oder nicht unterstütztes ZIP-Archiv.") from exc
+    if not documents:
+        raise BankImportError("ZIP enthält keine XML-Kontoauszüge.")
+    return documents
+
+
+def parse_camt053(content: bytes) -> list[BankImportRow]:
+    """Parse .02/.08 XML or a bounded ZIP of statements without extracting files.
+
+    Batch details must sum exactly to the entry amount. An unresolvable batch,
+    unsafe archive or any invalid document rejects the entire input.
+    """
+    if not content.strip():
+        raise BankImportError("Leere CAMT-Datei.")
+    if len(content) > MAX_IMPORT_BYTES:
+        raise BankImportError("CAMT-Datei zu groß (maximal 25 MiB).")
+    documents = _camt_zip_documents(content) if content.startswith(b"PK") else [content]
+    rows = []
+    accounts = set()
+    for document in documents:
+        document_rows, document_accounts = _parse_camt_xml(document)
+        rows.extend(document_rows)
+        accounts.update(document_accounts)
+        if len(rows) > MAX_IMPORT_ROWS:
+            raise BankImportError(f"CAMT enthält mehr als {MAX_IMPORT_ROWS} Umsätze.")
+    if len(accounts) > 1:
+        raise BankImportError("CAMT enthält mehrere Konten; bitte je Konto getrennt importieren.")
     return _with_import_hashes(rows)

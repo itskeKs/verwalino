@@ -192,7 +192,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 
 ### Phase 2 – Fehlende Kernfunktionen
 
-**Start auf eigener Branch `mvp/phase-2` vom nach `main` übernommenen Phase-1-Stand. Nächste Aufgabe: T17**; Aufgaben einzeln in Reihenfolge. T10 bleibt als offene Phase-1-Restaufgabe bestehen, sein Produktionsrest benötigt weiterhin gesonderte Freigabe.
+**Start auf eigener Branch `mvp/phase-2` vom nach `main` übernommenen Phase-1-Stand. Nächste Aufgabe: T18**; Aufgaben einzeln in Reihenfolge. T10 bleibt als offene Phase-1-Restaufgabe bestehen, sein Produktionsrest benötigt weiterhin gesonderte Freigabe.
 
 - [x] **T14 Passwort ändern** — `POST /api/auth/password` (alt, neu; Hash wie beim Login) und Dialog im Benutzermenü.
   Dateien: `backend/app/api/auth.py`, `backend/app/core/security.py`, `frontend/src/components/Topbar.tsx`, `frontend/src/api/endpoints.ts`
@@ -206,9 +206,10 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
   Dateien: `backend/app/engine/bank_import.py` (neu), `backend/tests/fixtures/bank/` (neu, synthetisch), `backend/tests/engine/test_bank_import_csv.py` (neu)
   Fertig, wenn: `uv run pytest tests/engine/test_bank_import_csv.py` grün.
   Ergebnis 20.10.2026: Auf Nutzerwunsch allgemeines Spaltenschema plus online belegte DKB-Giro-Alt-/2023-Semikolonprofile statt Blockade durch F2; feste Quellenverknüpfung und Grenzen in README. Tatsächliche Nutzerbank bleibt unbekannt, keine freie Mapping-UI und keine pauschale Bankkompatibilität behauptet. Vor Implementierung roter Importtest; zusätzlicher fachlich roter Test zeigte fälschlich importierte DKB-Tagessaldozeile (3 statt 2), gezielt behoben. 40 synthetische CSV-Tests grün (Soll netto 1.034,55 EUR, UTF-8/BOM/CP1252, Gegenparteien, Mehrfachbuchungen, Encoding-/Spaltenunabhängigkeit, Formate/Fehler/Größenbegrenzung); kombiniert mit vorgeschriebenen T15-/RLS-Tests 58 grün, 2 bestehende Alembic-Warnungen. Kein API-/Browserabschluss für T18/T19 vorweggenommen.
-- [ ] **T17 CAMT.053 parsen** — `parse_camt053(bytes)` für XML und ZIP (`camt.053.001.02` und `.08`), Ausgabe wie T16.
+- [x] **T17 CAMT.053 parsen** — `parse_camt053(bytes)` für XML und ZIP (`camt.053.001.02` und `.08`), Ausgabe wie T16.
   Dateien: `backend/app/engine/bank_import.py`, `backend/tests/engine/test_bank_import_camt.py` (neu)
   Fertig, wenn: `uv run pytest tests/engine/test_bank_import_camt.py` grün.
+  Ergebnis 20.10.2026: 39 synthetische CAMT-Tests grün; gemeinsam mit T16 und Bankumsatz-/RLS-Tests 97 grün, 2 bestehende Alembic-Warnungen. Vor Implementierung roter Funktionsimport; zwei spätere fachlich rote Tests belegten ignorierte Detailrichtung und fehlende Mehrkontenprüfung über ZIP-Dateigrenzen, beide behoben. Beide Namespace-Versionen, exakte Sammelbuchungen (700 + 150 − 200,01 = 649,99 EUR), XML-/CSV-identische Ausgabe, Datumszeitwerte, ZIP, DTD-/Entitätenschutz auch bei UTF-16, Archivpfade, Größen-/Zeilengrenzen und Abbruch ohne Teilerfolg geprüft. Keine API-/UI-Übernahme behauptet.
 - [ ] **T18 Import-Endpoint mit Vorschau** — `POST /api/bank-accounts/{id}/imports` mit `dry_run` (Anzahl, Summe, Zeitraum, Dubletten), sonst Übernahme; gleiche Datei zweimal ergibt 0 neue.
   Dateien: `backend/app/api/bank_accounts.py`, `backend/app/services/bank_import_service.py` (neu), `backend/app/engine/bank_import.py`, `backend/app/core/uploads.py`
   Fertig, wenn: `uv run pytest tests/test_bank_import_api.py` (neu) grün.
