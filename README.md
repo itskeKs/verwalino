@@ -45,8 +45,9 @@ nötig. CSV, CAMT-XML und ZIP sind auswählbar, Fehler und die tatsächliche Anz
 neuer Umsätze werden angezeigt. READ_ONLY kann lesen, aber nicht importieren.
 Der lokale Browserablauf einschließlich zweitem Import mit null neuen Umsätzen
 ist mit `scripts/acceptance/t19_bank_import_browser.cjs` gegen `scripts/dev-local.sh`
-wiederholbar. Vorschlagsengine und API-Zuordnung sind vorhanden;
-die Buchungsoberfläche folgt in T22.
+wiederholbar. Die Umsatzseite bietet für Schreibrollen „Vorschlag übernehmen“,
+„Aufteilen“ und „Ignorieren“. Prüfpflichtige Vorschläge öffnen den Splitdialog;
+unklare Beträge müssen dort ausdrücklich vollständig aufgeteilt werden.
 `GET /api/bank-accounts/{id}/transactions` liefert die Liste mit optionalem
 `status`, `offset`, `limit` (Vorgabe 50, höchstens 100) und `next_offset`.
 
@@ -103,7 +104,8 @@ im Ergebnis; mehrdeutige Teilzahlungen erhalten keine erfundene Tilgungsfolge,
 sondern unaufgeteilte Beträge zur manuellen Prüfung. Die Engine selbst bucht nicht.
 
 `GET /api/bank-transactions` liefert kontoberechtigte Umsätze mit Vorschlägen,
-Status standardmäßig `NEU`, optional `bank_account_id`, `offset`, `limit`
+Status standardmäßig `NEU`, ausdrücklich `ALL` für alle Zustände,
+optional `bank_account_id`, `offset`, `limit`
 (50/maximal 100), als `{items,next_offset}`. Vorschläge nutzen tatsächliches
 Soll/Ist; Hausgeld nur aus einem passenden finalisierten Wirtschaftsplan,
 Eigentümerzahlungen anderer Objekte werden nicht eingerechnet.
@@ -115,7 +117,13 @@ werden atomar gebucht und verknüpft; Fehler rollen auch Audit und Status zurüc
 `POST /api/bank-transactions/{id}/ignore` ignoriert ohne Zahlung. Beide Übergänge
 gelten nur für `NEU`, Wiederholung/Konkurrenz liefert 409. Schreibrolle sowie bei
 gebundenen Konten `prepare` und zum Buchen `confirm` sind erforderlich; keine
-zusätzliche `approve`-Berechtigung. Die Bedienoberfläche dafür folgt in T22.
+zusätzliche `approve`-Berechtigung. Der Splitdialog wählt Mietvertrag oder
+Eigentümer des Bankobjekts, Zahlungsart und Periode; Summen werden centgenau
+ohne Floatarithmetik geprüft. API-Fehler bleiben sichtbar, doppelte Klicks
+erzeugen keine zweite Buchung. „Alle“ zeigt auch zugeordnete/ignorierte Umsätze.
+Der echte Browserablauf `scripts/acceptance/t22_bank_assignment_browser.cjs`
+prüft Warmmiete, Teilzahlung, Ignorieren, Zweittab-Konflikt und die nach Reload
+persistierten Mietkontowerte gegen `scripts/dev-local.sh`.
 
 Weiterführende Dokumentation:
 

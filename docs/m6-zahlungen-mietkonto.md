@@ -338,7 +338,8 @@ bearbeitbar. Die API validiert erneut (§6.10); die Oberfläche folgt in T22.
 ### 6.10 Atomare Umsatzzuordnung (Phase 2, T21)
 
 `GET /api/bank-transactions` liefert paginierte Umsätze mit echten Vorschlägen
-(Statusvorgabe `NEU`, Kontofilter, Limit 50/maximal 100). Auch ohne Vorschläge
+(Statusvorgabe `NEU`, ausdrücklich `ALL` für alle Zustände, Kontofilter,
+Limit 50/maximal 100). Auch ohne Vorschläge
 bleiben die Konto-RLS und aktuelle Kreisfreigaben maßgeblich. Jeder Listeneintrag
 verwendet seinen eigenen Berechnungskontext; Hausgeld nur aus dem passenden
 finalisierten, nicht supersedierten Wirtschaftsplan. Der Eigentümer-Istfilter
@@ -357,6 +358,20 @@ Fremde/unsichtbare IDs liefern 404, READ_ONLY 403, fehlende Anmeldung 401,
 ungültige Inhalte 422. Bei Kontoscope gelten vorhandene `prepare`- und
 `confirm`-Rechte, nicht die Wirtschaftsplan-`approve`-Berechtigung. Keine Änderung
 an gebuchten Historien, finalisierten Plänen oder bestehenden Scope-Regeln.
+
+### 6.11 Umsatzzuordnung in der Oberfläche (Phase 2, T22)
+
+Schreibrollen können vollständige eindeutige Vorschläge ausdrücklich übernehmen,
+im Dialog manuell auf Mietvertrag/Eigentümer, Zahlungsart und Monat aufteilen
+oder einen Eingang ohne Zahlung ignorieren. Prüfpflichtige oder unvollständige
+Vorschläge werden nicht automatisch gebucht. Die positiven Splitbeträge müssen
+den absoluten Bankbetrag centgenau decken; deutsche Dezimaleingaben werden ohne
+Floatarithmetik geprüft. Fehler behalten die Eingaben, 409 wird sichtbar, Reload
+folgt erst auf Erfolg. READ_ONLY erhält keine Mutationsaktionen. „Alle“ behält
+auch verarbeitete Zeilen; Kontofilter und Pagination bleiben serverseitig.
+Der lokale Browserprüflauf legt alle Stammdaten per UI an und belegt 850=700+150
+im Januar vollständig bezahlt, 600=500+100 im Februar mit 250 Rest sowie 25
+ignoriert ohne Zahlung; Jahres-Soll 10.200, Ist 1.450, Saldo 8.750 EUR.
 
 ## 7. Synthetische Golden-Tests (objektive M6-Messlatte)
 

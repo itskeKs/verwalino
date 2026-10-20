@@ -192,7 +192,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 
 ### Phase 2 – Fehlende Kernfunktionen
 
-**Start auf eigener Branch `mvp/phase-2` vom nach `main` übernommenen Phase-1-Stand. Nächste Aufgabe: T22**; Aufgaben einzeln in Reihenfolge. T10 bleibt als offene Phase-1-Restaufgabe bestehen, sein Produktionsrest benötigt weiterhin gesonderte Freigabe.
+**Start auf eigener Branch `mvp/phase-2` vom nach `main` übernommenen Phase-1-Stand. Nächste Aufgabe: T23**; Aufgaben einzeln in Reihenfolge. T10 bleibt als offene Phase-1-Restaufgabe bestehen, sein Produktionsrest benötigt weiterhin gesonderte Freigabe.
 
 - [x] **T14 Passwort ändern** — `POST /api/auth/password` (alt, neu; Hash wie beim Login) und Dialog im Benutzermenü.
   Dateien: `backend/app/api/auth.py`, `backend/app/core/security.py`, `frontend/src/components/Topbar.tsx`, `frontend/src/api/endpoints.ts`
@@ -226,9 +226,10 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
   Dateien: `backend/app/api/bank_transactions.py` (neu), `backend/app/main.py`, `backend/app/services/bank_import_service.py`, `backend/app/services/payment_service.py`
   Fertig, wenn: `uv run pytest tests/test_bank_transaction_assign.py` (neu) grün.
   Ergebnis 20.10.2026: Vor Implementierung drei rote Endpoint-Prüfungen (404); zusätzliche rote Mehr-Objekt-Eigentümer-Gegenprobe behoben. Vorgeschriebener Lauf 37 grün, eigener abschließender Scope-/Nachbarschaftslauf 132 grün (je 2 bestehende Alembic-Warnungen). Warmmiete 850=700 KALT+150 NK, tatsächliches Soll/Ist, Teilzahlung, explizite Vorperiode, finalisiertes Hausgeld-Soll, negative Umsätze als OUT, Audit/Retention und unveränderliche Zahlungslinks geprüft. RLS-/Org-/Objekt-/Profil-/Periodenprüfung, widerrufene Kreisrechte, prepare+confirm ohne approve, assign/assign- und assign/ignore-Konkurrenz sowie vollständiger Rollback nach erster tatsächlicher Buchung nachgewiesen. Tenantgesperrter Bankumsatz, vorhandener Zahlungsdienst und ambient Transaktion wiederverwendet; keine Migration oder Lockerung bestehender Schutzprüfungen. API/README/Fachseite dokumentiert; Browserintegration bleibt ausdrücklich T22.
-- [ ] **T22 Umsatz zuordnen (UI)** — Je Umsatz „Vorschlag übernehmen“, Dialog zum Aufteilen, „Ignorieren“.
+- [x] **T22 Umsatz zuordnen (UI)** — Je Umsatz „Vorschlag übernehmen“, Dialog zum Aufteilen, „Ignorieren“.
   Dateien: `frontend/src/pages/BankTransactionsPage.tsx`, `frontend/src/api/endpoints.ts`, `frontend/src/api/types.ts`
   Fertig, wenn: `npm test -- src/pages/BankTransactionsPage.test.tsx` grün UND Ablauf in der App: „Warmmiete übernehmen, Mietkonto zeigt Kaltmiete und NK bezahlt“.
+  Ergebnis 20.10.2026: Rote Funktions-/Alle-Filter-/Beschriftungsgegenproben gezielt behoben; 45 Seitentests und 20 benachbarte Tests, Build und gezielter Lint grün. API-All-Filter und Zuordnung 38 Tests, Kreisrechte weitere 4 grün; erneute getrennte Parserläufe CSV 40/CAMT 39 grün. Vollständiger echter Chrome-Lauf `scripts/acceptance/t22_bank_assignment_browser.cjs` gegen `scripts/dev-local.sh`: Objekt, Einheit, Person/Mieter, Vertrag 700/150 und Konto ausschließlich per UI; CSV 850+600+25=1.475 EUR, Warmmiete exakt 700/150 gebucht und Januar-Mietkonto nach Reload offen 0, stale Zweittab sichtbar 409 ohne Doppelzahlung, ungültige Splitbeträge ohne POST, explizit 500/100 im Februar mit 250 Rest gebucht, 25 ignoriert ohne Zahlung. Reload: Zugeordnet 2/Ignoriert 1/Alle 3/Neu 0; Jahres-Soll 10.200/Ist 1.450/Saldo 8.750 EUR. Bestehende T19-Prüfungen erhalten; exakte Geldarithmetik und Fehlereingaben geprüft, im Browser gefundene Select-Beschriftungen korrigiert. App anschließend gestoppt; T23 noch nicht begonnen.
 - [ ] **T23 Mietänderung mit Stichtag (Backend)** — Tabelle `lease_rent_change` (gültig ab, Kaltmiete, Vorauszahlung) mit RLS, `GET/POST /api/leases/{id}/rent-changes`; `tenant_expected_charges` nimmt je Tag den gültigen Betrag.
   Dateien: `backend/app/models/lease_rent_change.py` (neu), `backend/migrations/versions/0125_lease_rent_change.py` (neu), `backend/app/api/leases.py`, `backend/app/engine/mietkonto.py:203-256`
   Fertig, wenn: `uv run pytest tests/engine/test_golden_mietkonto.py tests/test_rent_changes.py` (neu: Erhöhung zum 15.03.) grün.
@@ -341,7 +342,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 ## 4. Offene fachliche Fragen
 
 - F1 Welche Verwaltungsarten laufen produktiv (eigene Mietobjekte, WEG für Dritte, SEV)? Bestimmt, ob WEG-Aufgaben oder Anlage V zuerst kommen.
-- F2 Welche Bank(en) und welches Format (CSV-Profil oder CAMT.053) sollen importiert werden?
+- F2 Welche Bank(en) und welches Format (CSV-Profil oder CAMT.053) sollen importiert werden? Für Phase 2 nach Nutzerklärung festgelegt: allgemeines deutsches Semikolon-CSV plus belegte DKB-Giro-Alt-/2023-Semikolonprofile (T16, feste Quelle/Grenzen im README), CAMT.053 .001.02/.08 als XML/ZIP (T17), keine freie Mapping-UI. Tatsächliche Nutzerbank und weitere Exportvarianten bleiben offen; keine pauschale Kompatibilität zugesichert, unbekannte Formate werden ausdrücklich abgewiesen.
 - F3 Heizkosten über Messdienst (dann reicht „Externe Abrechnung“) oder eigene Verteilung nach HeizkostenV (T45/T46 vorziehen)?
 - F4 Eine NK-Vorauszahlung inklusive Heizung oder getrennte BK- und HK-Vorauszahlung im Vertrag?
 - F5 BK-Abrechnungszeitraum Kalenderjahr oder abweichend je Objekt?
