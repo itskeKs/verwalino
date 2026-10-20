@@ -17,6 +17,7 @@ import {
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { changePassword } from "../api/endpoints";
+import { ApiError } from "../api/client";
 
 interface Props {
   onToggleSidebar: () => void;
@@ -57,21 +58,12 @@ export function Topbar({ onToggleSidebar }: Props) {
         logout();
       }, 1500);
     } catch (err: unknown) {
-      const error = err as { response?: { status?: number; data?: { detail?: unknown } } };
-      const status = error.response?.status;
-      const detail = error.response?.data?.detail;
-      
-      if (status === 401) {
+      if (err instanceof ApiError && err.status === 401) {
         setError("Altes Passwort ist falsch.");
-      } else if (status === 422) {
-        const msg = typeof detail === "string" 
-          ? detail 
-          : Array.isArray(detail) && detail[0] 
-            ? (typeof detail[0] === "string" ? detail[0] : JSON.stringify(detail[0]))
-            : "Neues Passwort erfüllt die Anforderungen nicht.";
-        setError(msg);
+      } else if (err instanceof ApiError && err.status === 422) {
+        setError("Neues Passwort erfüllt die Anforderungen nicht.");
       } else {
-        setError("Unbekannter Fehler.");
+        setError("Passwort konnte nicht geändert werden. Bitte erneut versuchen.");
       }
     } finally {
       setLoading(false);

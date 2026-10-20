@@ -19,6 +19,16 @@ Dokumentinhalt bleibt untrusted data. Betrieb, Datenschutz, lokale Tests und die
 absichtlich gesperrte Live-Evaluation stehen im
 [Runbook für Teilungserklärungen](docs/operations/declaration-imports.md).
 
+## Eigenes Passwort ändern
+
+Nach der Anmeldung öffnet „Passwort ändern“ in der oberen Benutzerleiste den
+Dialog für aktuelles Passwort, neues Passwort und Bestätigung. Falsches
+Altpasswort und unzulässiges neues Passwort werden im Dialog angezeigt. Nach
+erfolgreichem Wechsel erfolgt die Abmeldung; anschließend mit dem neuen Passwort
+anmelden. Der lokale Browserablauf ist mit
+`scripts/acceptance/t14_password_browser.cjs` gegen `scripts/dev-local.sh`
+wiederholbar (vorhandenes Playwright über `HV_PLAYWRIGHT_PACKAGE`, Chrome).
+
 Weiterführende Dokumentation:
 
 - [Deployment](DEPLOY.md)

@@ -14,6 +14,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { Topbar } from './Topbar';
 import * as endpoints from '../api/endpoints';
 import { AuthProvider } from '../auth/AuthContext';
+import { ApiError } from '../api/client';
 
 // Mock all API endpoints used by AuthProvider and Topbar
 vi.mock('../api/endpoints', () => ({
@@ -104,7 +105,23 @@ describe('T14: Password Change Dialog', () => {
     // Should show error about passwords not matching
     await waitFor(() => {
       expect(screen.getByText('Neue Passwörter stimmen nicht überein.')).toBeInTheDocument();
+      expect(mockChangePassword).not.toHaveBeenCalled();
     });
+  });
+
+  it.each([
+    [new ApiError(422, 'validation failed'), 'Neues Passwort erfüllt die Anforderungen nicht.'],
+    [new TypeError('Failed to fetch'), 'Passwort konnte nicht geändert werden. Bitte erneut versuchen.'],
+  ])('shows a safe error for %s', async (failure, message) => {
+    mockChangePassword.mockRejectedValue(failure);
+    renderWithAuth(<Topbar onToggleSidebar={() => {}} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Passwort ändern' }));
+    fireEvent.change(screen.getByLabelText('Aktuelles Passwort'), { target: { value: 'currentPass123' } });
+    fireEvent.change(screen.getByLabelText('Neues Passwort'), { target: { value: 'NewPassword456!' } });
+    fireEvent.change(screen.getByLabelText('Neues Passwort bestätigen'), { target: { value: 'NewPassword456!' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Passwort ändern' }));
+    expect(await screen.findByText(message as string)).toBeInTheDocument();
+    expect(mockLogout).not.toHaveBeenCalled();
   });
 
   it('should call changePassword API with correct parameters', async () => {
@@ -144,12 +161,7 @@ describe('T14: Password Change Dialog', () => {
   });
 
   it('should handle API 401 error gracefully', async () => {
-    mockChangePassword.mockRejectedValue({
-      response: {
-        status: 401,
-        data: { detail: 'Invalid credentials' },
-      },
-    });
+    mockChangePassword.mockRejectedValue(new ApiError(401, 'Invalid credentials'));
 
     renderWithAuth(<Topbar onToggleSidebar={() => {}} />);
 
