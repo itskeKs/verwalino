@@ -33,6 +33,8 @@ import type {
   LeaseRecord,
   LeaseCreate,
   LeaseUpdate,
+  LeaseRentChange,
+  LeaseRentChangeCreate,
   CostCategory,
   CostEntry,
   CostEntryCreate,
@@ -481,6 +483,17 @@ export function patchLease(
   body: LeaseUpdate,
 ): Promise<LeaseRecord> {
   return api.patch<LeaseRecord>(`/api/leases/${leaseId}`, body);
+}
+
+export function listLeaseRentChanges(leaseId: string): Promise<LeaseRentChange[]> {
+  return api.get<LeaseRentChange[]>(`/api/leases/${leaseId}/rent-changes`);
+}
+
+export function createLeaseRentChange(
+  leaseId: string,
+  body: LeaseRentChangeCreate,
+): Promise<LeaseRentChange> {
+  return api.post<LeaseRentChange>(`/api/leases/${leaseId}/rent-changes`, body);
 }
 
 // --- M2: Cost Categories ---

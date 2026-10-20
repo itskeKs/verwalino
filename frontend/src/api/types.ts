@@ -532,6 +532,21 @@ export interface LeaseRecord {
   notes: string;
 }
 
+export interface LeaseRentChange {
+  id: string;
+  lease_agreement_id: string;
+  valid_from: string;
+  base_rent: string;
+  advance_payment: string;
+  created_at: string;
+}
+
+export interface LeaseRentChangeCreate {
+  valid_from: string;
+  base_rent: string;
+  advance_payment: string;
+}
+
 export interface LeaseCreate {
   unit_id: string;
   tenant_profile_id: string;

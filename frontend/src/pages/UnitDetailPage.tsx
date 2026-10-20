@@ -3,7 +3,7 @@
  * Overlap errors from DB EXCLUDE constraints are displayed as user-friendly messages.
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { Fragment, useEffect, useState, useCallback, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   getUnit,
@@ -16,6 +16,8 @@ import {
   createOwnership,
   createLease,
   patchLease,
+  listLeaseRentChanges,
+  createLeaseRentChange,
 } from "../api/endpoints";
 import type {
   Unit,
@@ -28,8 +30,12 @@ import type {
   OwnershipCreate,
   LeaseCreate,
   LeaseUpdate,
+  LeaseRentChange,
 } from "../api/types";
 import { ApiError } from "../api/client";
+import { useAuth } from "../auth/useAuth";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
+import { Input } from "../components/ui/input";
 
 function formatLegalMea(mea: string | null, property: Property): string {
   if (!mea) return "-";
@@ -461,24 +467,29 @@ export function UnitDetailPage() {
             </thead>
             <tbody>
               {leases.map((la) => (
-                <tr key={la.id}>
-                  <td>{tenantProfileLabel(la.tenant_profile_id)}</td>
-                  <td>{la.valid_from}</td>
-                  <td>{la.valid_to ?? "offen"}</td>
-                  <td>{la.base_rent}</td>
-                  <td>{la.advance_payment}</td>
-                  <td>{la.deposit ?? "-"}</td>
-                  <td><button className="btn" onClick={() => {
-                    setEditingLease(la);
-                    setLeaseFormError(null);
-                    setLeaseForm({
-                      tenant_profile_id: la.tenant_profile_id, valid_from: la.valid_from,
-                      valid_to: la.valid_to ?? "", base_rent: la.base_rent,
-                      advance_payment: la.advance_payment, deposit: la.deposit ?? "", notes: la.notes,
-                    });
-                    setShowLeaseForm(true);
-                  }}>Bearbeiten / beenden</button></td>
-                </tr>
+                <Fragment key={la.id}>
+                  <tr>
+                    <td>{tenantProfileLabel(la.tenant_profile_id)}</td>
+                    <td>{la.valid_from}</td>
+                    <td>{la.valid_to ?? "offen"}</td>
+                    <td>{la.base_rent}</td>
+                    <td>{la.advance_payment}</td>
+                    <td>{la.deposit ?? "-"}</td>
+                    <td><button className="btn" onClick={() => {
+                      setEditingLease(la);
+                      setLeaseFormError(null);
+                      setLeaseForm({
+                        tenant_profile_id: la.tenant_profile_id, valid_from: la.valid_from,
+                        valid_to: la.valid_to ?? "", base_rent: la.base_rent,
+                        advance_payment: la.advance_payment, deposit: la.deposit ?? "", notes: la.notes,
+                      });
+                      setShowLeaseForm(true);
+                    }}>Bearbeiten / beenden</button></td>
+                  </tr>
+                  <tr><td colSpan={7}>
+                    <LeaseRentHistory lease={la} tenantLabel={tenantProfileLabel(la.tenant_profile_id)} />
+                  </td></tr>
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -486,4 +497,144 @@ export function UnitDetailPage() {
       )}
     </div>
   );
+}
+
+// Validate/normalize decimal input only; rent calculations stay in the backend.
+function rentAmount(value: string): string | null {
+  const match = /^(\d+)(?:[.,](\d{1,2}))?$/.exec(value.trim());
+  if (!match) return null;
+  const integer = match[1].replace(/^0+(?=\d)/, "");
+  if (integer.length > 12) return null;
+  return `${integer}.${(match[2] ?? "").padEnd(2, "0")}`;
+}
+
+function rentDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith("0000")) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function rentChangeError(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 409) return "Mietänderung nicht gespeichert: Für dieses Datum besteht bereits eine Änderung oder der Vertrag ist inzwischen gesperrt. Bitte den Verlauf prüfen.";
+    if (error.status === 422) return `Mietänderung nicht gespeichert: Datum und Beträge prüfen. ${error.message}`;
+    if (error.status === 403) return "Keine Berechtigung, diese Mietänderung zu speichern.";
+    if (error.status === 404) return "Mietvertrag nicht gefunden oder nicht zugänglich.";
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLabel: string }) {
+  const { session } = useAuth();
+  const canWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
+  const [rows, setRows] = useState<LeaseRentChange[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+  const [open, setOpen] = useState(false);
+  const [validFrom, setValidFrom] = useState("");
+  const [baseRent, setBaseRent] = useState(lease.base_rent);
+  const [advance, setAdvance] = useState(lease.advance_payment);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const mutationLock = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadError(null);
+    listLeaseRentChanges(lease.id)
+      .then(result => { if (active) setRows(result); })
+      .catch(error => { if (active) setLoadError(rentChangeError(error)); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [lease.id, revision]);
+
+  function rateAt(date: string) {
+    return rows.filter(row => row.valid_from <= date).at(-1) ?? lease;
+  }
+
+  function selectDate(date: string) {
+    setValidFrom(date);
+    const rate = rateAt(date);
+    setBaseRent(rate.base_rent);
+    setAdvance(rate.advance_payment);
+    setFormError(null);
+  }
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (mutationLock.current || !canWrite || loading || loadError) return;
+    setFormError(null);
+    // API lease.valid_to is the inclusive display date, not the exclusive DB boundary.
+    if (!rentDate(validFrom) || validFrom < lease.valid_from || (lease.valid_to && validFrom > lease.valid_to)) {
+      setFormError("Bitte ein gültiges Datum innerhalb des Mietvertrags angeben (Vertragsende einschließlich).");
+      return;
+    }
+    if (rows.some(row => row.valid_from === validFrom)) {
+      setFormError("Für dieses Datum besteht bereits eine Mietänderung.");
+      return;
+    }
+    const base_rent = rentAmount(baseRent);
+    const advance_payment = rentAmount(advance);
+    if (base_rent === null || advance_payment === null) {
+      setFormError("Bitte Kaltmiete und Vorauszahlung als nicht negative EUR-Beträge mit höchstens zwei Nachkommastellen eingeben (maximal 999.999.999.999,99).");
+      return;
+    }
+    mutationLock.current = true;
+    setSaving(true);
+    try {
+      const row = await createLeaseRentChange(lease.id, { valid_from: validFrom, base_rent, advance_payment });
+      setRows(previous => [...previous, row].sort((a, b) => a.valid_from.localeCompare(b.valid_from)));
+      setOpen(false);
+      setRevision(previous => previous + 1);
+    } catch (error) {
+      setFormError(rentChangeError(error));
+    } finally {
+      mutationLock.current = false;
+      setSaving(false);
+    }
+  }
+
+  const source = rateAt(validFrom);
+  const contractLabel = `${tenantLabel} · ${lease.valid_from} bis ${lease.valid_to ?? "offen"}`;
+  return <section aria-label={`Mietänderungen: ${contractLabel}`}>
+    <h3>Mietänderungen · {contractLabel}</h3>
+    <p>Historische volle Monatsraten (KALT / NK). Die Beträge im Mietvertrag oben sind die Originalbeträge.</p>
+    <table className="data-table" aria-label={`Miethistorie: ${contractLabel}`}>
+      <thead><tr><th>Gültig ab</th><th>Kaltmiete (EUR)</th><th>Vorauszahlung (EUR)</th><th>Quelle</th></tr></thead>
+      <tbody>
+        <tr><td>{lease.valid_from}</td><td>{lease.base_rent}</td><td>{lease.advance_payment}</td><td>Originalvertrag</td></tr>
+        {rows.map(row => <tr key={row.id}><td>{row.valid_from}</td><td>{row.base_rent}</td><td>{row.advance_payment}</td><td>Mietänderung</td></tr>)}
+      </tbody>
+    </table>
+    {loading && <p role="status">Lade Mietänderungen…</p>}
+    {loadError && <div><p role="alert" className="error-text">{loadError}</p>
+      <button type="button" className="btn" onClick={() => setRevision(previous => previous + 1)}>Mietänderungen erneut laden</button>
+    </div>}
+    {!loading && !loadError && rows.length === 0 && <p>Noch keine Mietänderungen.</p>}
+    {canWrite && <button type="button" className="btn" disabled={loading || Boolean(loadError)} onClick={() => {
+      selectDate("");
+      setOpen(true);
+    }}>Miete ändern ab …</button>}
+    <Dialog open={open} onOpenChange={next => { if (!mutationLock.current) setOpen(next); }}>
+      <DialogContent>
+        <DialogTitle>Miete ändern</DialogTitle>
+        <DialogDescription>
+          {contractLabel}. Neue volle Monatsrate ab Stichtag. Originalvertrag, Buchungen und finalisierte Dokumente werden nicht geändert; keine Neuberechnung wird ausgelöst.
+        </DialogDescription>
+        <form onSubmit={submit} noValidate>
+          <label>Gültig ab<Input type="date" value={validFrom} min={lease.valid_from} max={lease.valid_to ?? undefined} disabled={saving} onChange={event => selectDate(event.target.value)} /></label>
+          <p>Vorbelegung: {source === lease ? "Originalvertrag" : `Mietänderung ab ${source.valid_from}`} · KALT {source.base_rent} EUR / NK {source.advance_payment} EUR. Bei Datumswechsel werden beide Beträge neu vorbelegt.</p>
+          <label>Kaltmiete (EUR)<Input inputMode="decimal" value={baseRent} disabled={saving} onChange={event => setBaseRent(event.target.value)} /></label>
+          <label>Vorauszahlung (EUR)<Input inputMode="decimal" value={advance} disabled={saving} onChange={event => setAdvance(event.target.value)} /></label>
+          {formError && <p role="alert" className="error-text">{formError}</p>}
+          <div className="form-actions">
+            <button type="submit" className="btn btn--primary" disabled={saving}>Mietänderung speichern</button>
+            <button type="button" className="btn" disabled={saving} onClick={() => setOpen(false)}>Abbrechen</button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  </section>;
 }

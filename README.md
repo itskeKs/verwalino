@@ -139,7 +139,14 @@ Mietkonto und Bankvorschläge laden auch Änderungen vor dem Abfragebeginn.
 Bei 700 EUR Kaltmiete und 750 EUR ab 15.03.2026 ergibt März taggewichtet
 727,42 EUR, April 750 EUR; NK wird unabhängig ebenso berechnet. Je Komponente
 und Monat wird erst die gesamte Tagessumme gerundet. Gebuchte Zahlungen und
-finalisierte Snapshots bleiben unverändert. Die Bedienoberfläche folgt in T24.
+finalisierte Snapshots bleiben unverändert.
+In der Einheit zeigt jeder Vertrag Originalbeträge und Miethistorie. „Miete ändern
+ab …“ öffnet den Dialog mit Datum, Kaltmiete und Vorauszahlung; die am gewählten
+Datum gültige volle Rate wird vorbelegt. Leser sehen nur den Verlauf. Ungültige
+Werte werden vor dem POST abgewiesen, Serverfehler behalten die Eingaben;
+während des Speicherns sind weitere Änderungen und Schließen gesperrt.
+`scripts/acceptance/t24_rent_change_browser.cjs` prüft den UI-Ablauf und alle
+24 Monats-/Typzeilen: 700/150 bis März, 750/150 ab April, Jahres-Soll 10.650 EUR.
 
 Weiterführende Dokumentation:
 
