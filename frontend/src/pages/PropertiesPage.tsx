@@ -10,6 +10,7 @@ import { usePagedList } from "../hooks/usePagedList";
 import { ListSearch, MoreResults } from "../components/ListSearch";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/useAuth";
+import { MasterImport } from "../components/MasterImport";
 
 const MANAGEMENT_TYPES: { value: ManagementType; label: string }[] = [
   { value: "MIET", label: "Mietobjekt" },
@@ -36,6 +37,8 @@ export function PropertiesPage() {
   const loading = page.loading;
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [showMasterImport, setShowMasterImport] = useState(false);
+  const [masterImportOpened, setMasterImportOpened] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<PropertyCreate>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
@@ -98,6 +101,9 @@ export function PropertiesPage() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <h1 style={{ margin: 0 }}>Objekte</h1>
         {isWrite && <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+          <button className="btn" aria-expanded={showMasterImport} aria-controls="master-import-panel" onClick={() => { setMasterImportOpened(true); setShowMasterImport(value => !value); }}>
+            CSV-Stammdaten importieren
+          </button>
           <Link className="btn" to="/teilungserklaerung/import">
             Teilungserklärung importieren
           </Link>
@@ -107,6 +113,7 @@ export function PropertiesPage() {
         </div>}
       </div>
 
+      {isWrite && masterImportOpened && <div id="master-import-panel" hidden={!showMasterImport}><MasterImport onImported={reload} /></div>}
       <ListSearch label="Objekte suchen" onSearch={page.setQuery} />
       {(error || page.error) && <p className="error-text">{error || page.error}</p>}
 

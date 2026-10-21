@@ -151,6 +151,23 @@ validates two actual browser downloads with original ISO and EPC schemas, and
 never submits a file. It permits only the launcher's local Vite HMR WebSocket;
 other sockets/external targets are blocked. Stop the launcher afterward.
 
+## CSV master-data import (T51; local head 0134)
+
+Revision **0134** adds immutable, actor/org-scoped `master_import_batch` metadata
+with FORCE RLS and SELECT/INSERT-only application grants. Populated downgrade
+refuses removal; never erase import history to force rollback. The actual
+0134→0133→0134 rollback-transaction test compares existing data, relation rights,
+policies, triggers/functions and an unchanged issued letter PDF. This is not
+permission to promote **0123–0134**, deploy or change the accepted **0122** gate.
+
+No new credentials or storage service. CSV inputs are UTF-8, semicolon-delimited,
+limited to 256 KiB/500 rows with a bounded JSON envelope. Preview never publishes
+source grants or writes records. Application is an atomic live-writer operation;
+explicit audiences use the existing publication lock and canonical source checks.
+Only result identities/counts, not raw CSV/contact fields, are retained per batch.
+For synthetic UI/download acceptance use `scripts/dev-local.sh` with fresh `/tmp`
+storage, run `node scripts/acceptance/t51_master_import_browser.cjs`, then stop it.
+
 ## Fresh installation: one-time preparation on Moon
 
 Run as `chris` without sudo. The host must have Docker, Compose, `curl`,

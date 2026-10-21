@@ -3,24 +3,19 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
 from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
 from app.core.live_principal import get_live_member_db, get_live_writer_db, get_live_publication_db
-from app.declarations.review_schemas import NewPropertyAudience
-from app.services.property_data_domain_service import PropertyDataDomainService
-from app.services.idempotency_service import IdempotencyService
-from app.repositories.property_creation_repo import PropertyCreationRepository
 from app.services.property_master_service import require_property_master
 
 from app.core.tenant import (
     AuthContext,
     get_current_user,
+    get_db,
     require_write_dep,
 )
 from app.repositories.property_repo import PropertyRepository
@@ -31,7 +26,50 @@ from app.models.audit_event import AuditEvent
 
 from app.repositories.pagination import Page, PageQuery, page_query, page_rows
 
+from app.services.master_creation_service import (
+    PropertyCreate, create_property as create_property_record, _validate_management_type,
+)
+
+from fastapi.responses import Response
+from app.services.master_import_service import (
+    MasterImportRequest, MasterImportApplyRequest, MasterImportService, template_csv,
+)
+
 router = APIRouter(prefix="/api/properties", tags=["properties"])
+
+
+@router.get('/import/template.csv')
+async def master_import_template(
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_live_writer_db),
+):
+    return Response(template_csv(), media_type='text/csv; charset=utf-8',
+        headers={'Content-Disposition': 'attachment; filename="master-import-template.csv"'})
+
+
+@router.post('/import/preview')
+async def preview_master_import(
+    body: MasterImportRequest,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_live_writer_db),
+):
+    return await MasterImportService(db, auth).preview(body)
+
+
+async def master_import_publication_db(
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_db, scope='function'),
+):
+    return await get_live_publication_db(auth=auth, db=db)
+
+
+@router.post('/import/apply', status_code=201)
+async def apply_master_import(
+    body: MasterImportApplyRequest,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(master_import_publication_db),
+):
+    return await MasterImportService(db, auth).apply(body)
 
 
 class PropertyOut(BaseModel):
@@ -46,17 +84,6 @@ class PropertyOut(BaseModel):
     mea_scale_status: str
 
     model_config = {"from_attributes": True}
-
-
-class PropertyCreate(BaseModel):
-    name: str
-    street: str = ""
-    zip_code: str = ""
-    city: str = ""
-    management_type: str
-    fiscal_year_start_month: int = 1
-    mea_denominator: int | None = Field(default=None, ge=1, le=1_000_000_000_000)
-    data_audience: NewPropertyAudience | None = None
 
 
 class PropertyUpdate(BaseModel):
@@ -114,51 +141,7 @@ async def create_property(
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_live_publication_db),
 ):
-    _validate_management_type(body.management_type)
-    repo = PropertyRepository(db, auth.organization_id)
-    mode = await db.scalar(text('SELECT property_source_security_mode(:org)'), {'org':auth.organization_id})
-    if mode == 'PAUSED':
-        raise HTTPException(404, 'Property creation is paused')
-    if mode != 'PREPARATION' and body.data_audience is None:
-        raise HTTPException(422, 'Explicit property data audience required')
-    if body.data_audience is not None and idempotency_key is None:
-        raise HTTPException(422, 'Idempotency-Key required for audience creation')
-    payload = body.model_dump(mode='json')
-    if body.data_audience is not None:
-        for grant in payload['data_audience']['grants']:
-            grant['capabilities'] = sorted(grant['capabilities'])
-        payload['data_audience']['grants'].sort(key=lambda grant: grant['user_id'])
-    receipts = PropertyCreationRepository(db, auth.organization_id, auth.user_id)
-    digest = IdempotencyService.digest(payload)
-    if idempotency_key is not None:
-        receipt = await receipts.get(idempotency_key)
-        if receipt and receipt['request_digest'] != digest:
-            raise HTTPException(409, 'Idempotency-Key already used with a different request')
-        prior = receipt['property_id'] if receipt else None
-        if prior:
-            await require_property_master(db, auth.organization_id, prior)
-            saved = await repo.get_by_id(prior)
-            if saved is None:
-                raise HTTPException(404, 'Property not accessible')
-            return _to_out(saved)
-    property_id = uuid.uuid4()
-    if body.data_audience is not None:
-        await PropertyDataDomainService(db, auth).prepare_new_audience(property_id, body.data_audience)
-    prop = Property(
-        id=property_id,
-        name=body.name,
-        street=body.street,
-        zip_code=body.zip_code,
-        city=body.city,
-        management_type=body.management_type,
-        fiscal_year_start_month=body.fiscal_year_start_month,
-        mea_denominator=body.mea_denominator,
-        mea_scale_status=("CONFIRMED" if body.mea_denominator is not None else "LEGACY_UNCONFIRMED"),
-    )
-    prop = await repo.create(prop)
-    if idempotency_key is not None:
-        await receipts.record(idempotency_key, digest, prop.id)
-    return _to_out(prop)
+    return _to_out(await create_property_record(db, auth, body, idempotency_key))
 
 
 @router.put("/{property_id}", response_model=PropertyOut)
@@ -261,8 +244,3 @@ def _to_out(p: Property) -> PropertyOut:
         mea_denominator=p.mea_denominator,
         mea_scale_status=p.mea_scale_status,
     )
-
-
-def _validate_management_type(mt: str) -> None:
-    if mt not in ("MIET", "WEG", "SEV", "MISCH"):
-        raise HTTPException(status_code=422, detail="Invalid management_type")

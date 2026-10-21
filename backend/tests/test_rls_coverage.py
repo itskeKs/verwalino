@@ -50,7 +50,7 @@ TENANT_TABLES = frozenset({
     "runtime_budget_attestation", "runtime_budget_review", "access_disposition_acceptance",
     "source_security_authorization", "source_security_transition",
     "access_grant_proposal", "access_grant_acceptance", "access_coverage_snapshot", "access_coverage_review", "invoice_upload_admission", "dunning_quarantine_disposition", "mandate_quarantine_disposition", "mandate_legacy_observation", "declaration_review_receipt", "declaration_review_context", "declaration_worker_context", "person_data_domain", "person_data_grant",
-    "property_creation_receipt", "property_source_classification", "knowledge_budget_policy", "property_source_security", "property_data_domain", "property_data_grant", "property_source_admission", "property_source_admission_review",
+    "master_import_batch", "property_creation_receipt", "property_source_classification", "knowledge_budget_policy", "property_source_security", "property_data_domain", "property_data_grant", "property_source_admission", "property_source_admission_review",
     # B1 accounting scope foundation
     "accounting_scope", "accounting_scope_unit", "accounting_scope_binding",
     "scope_grant", "scope_migration_exception", "scope_control_event",

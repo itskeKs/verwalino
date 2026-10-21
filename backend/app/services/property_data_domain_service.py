@@ -37,12 +37,26 @@ class PropertyDataDomainService(AuthorizationService):
         await self.session.flush()
         return row
 
-    async def prepare_new_audience(self, property_id, audience):
-        """Explicit authority precedes a new parent in the same deferred-FK transaction."""
-        await self._require_administration()
+    async def validate_new_audience(self, audience):
+        """Read-only preflight; never publish a domain or grant during preview."""
+        role = await self.session.scalar(text('SELECT scope_actor_role(:org)'),
+            {'org': self.auth.organization_id})
+        if role != 'OWNER_ADMIN':
+            raise HTTPException(403, 'Scope administration requires an active administrator')
         if not any(grant.user_id == self.auth.user_id and {'read','prepare'} <= grant.capabilities
                    for grant in audience.grants):
             raise HTTPException(422, 'Explicit creator read and prepare grant required')
+        for grant in audience.grants:
+            if grant.expires_at is not None and grant.expires_at <= datetime.now(timezone.utc):
+                raise HTTPException(422, 'Grant expiry must be in the future')
+            if not await self.session.scalar(text('SELECT EXISTS(SELECT 1 FROM membership m JOIN "user" u ON u.organization_id=m.organization_id AND u.id=m.user_id WHERE m.organization_id=:org AND m.user_id=:user AND u.is_active)'),
+                {'org': self.auth.organization_id, 'user': grant.user_id}):
+                raise HTTPException(404, 'Active team member not found')
+
+    async def prepare_new_audience(self, property_id, audience):
+        """Explicit authority precedes a new parent in the same deferred-FK transaction."""
+        await self._require_administration()
+        await self.validate_new_audience(audience)
         domain = await self.create(DomainCreate(property_id=property_id, label=audience.label, reason=audience.reason),
             uuid.uuid5(property_id, 'creation-domain'), new_property=True)
         publisher_grant = None

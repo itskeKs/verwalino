@@ -643,6 +643,26 @@ Mandatsidentitäten und verweigert einen Downgrade mit gespeicherten SEPA-Daten.
 Tests: `uv run pytest tests/test_sepa_export.py`; UI-only-Abnahme mit isoliertem
 Launcher: `HV_PYTHON="$PWD/backend/.venv/bin/python" node scripts/acceptance/t50_sepa_browser.cjs`.
 
+### CSV-Stammdatenimport (T51)
+
+Unter **Objekte → CSV-Stammdaten importieren** die CSV-Vorlage tatsächlich herunterladen
+und als UTF-8-Datei (BOM erlaubt), mit Semikolon und unveränderten Spalten befüllen.
+`property`, `unit` und `person` erzeugen neue Objekte, Einheiten und Kontakte;
+`property_key` verweist auf einen lokalen Objektschlüssel oder eine berechtigte
+bestehende Objekt-UUID. Flächen bleiben exakte Dezimalwerte, auch `60,25`.
+Maximal 500 Zeilen bzw. 256 KiB; unbekannte Spalten, ungültige Werte und Dubletten
+werden mit Zeile/Feld gemeldet. Keine automatisch angelegten Profile oder Verträge.
+
+Die Vorschau schreibt nichts. Erst nach Prüfung, ausdrücklicher Freigabe des
+Datenbereichs (falls erforderlich) und Bestätigung wird der gesamte Import atomar
+angelegt. Es gibt keine stillen Selbstfreigaben. Änderungen verlangen eine neue
+Vorschau; Wiederholung derselben Anfrage liefert dieselben IDs, nach Rechteentzug
+keine Teilantwort. Unklare Netzwerkfehler mit **Import erneut versuchen** fortsetzen,
+nicht durch neue Anfragen duplizieren. Revision 0134 hält nur unveränderliche,
+benutzergebundene Ergebnis-IDs, nicht die CSV oder Kontaktdaten im Batch.
+Tests: `uv run pytest tests/test_master_import.py`; echter UI-/Downloadablauf:
+`node scripts/acceptance/t51_master_import_browser.cjs`.
+
 Weiterführende Dokumentation:
 
 - [Deployment](DEPLOY.md)

@@ -10,7 +10,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.live_principal import get_live_member_db, get_live_writer_db
-from app.services.person_source_access import require_person_prepare, require_contact_creation
+from app.services.person_source_access import require_person_prepare
 from app.core.tenant import (
     AuthContext,
     get_current_user,
@@ -20,6 +20,8 @@ from app.repositories.person_repo import PersonRepository
 from app.models.person import Person
 
 from app.repositories.pagination import Page, PageQuery, page_query, page_rows
+
+from app.services.master_creation_service import PersonCreate, create_person as create_person_record
 
 router = APIRouter(prefix="/api/persons", tags=["persons"])
 
@@ -41,20 +43,6 @@ class PersonOut(BaseModel):
     bank_name: str | None
 
     model_config = {"from_attributes": True}
-
-
-class PersonCreate(BaseModel):
-    first_name: str = ""
-    last_name: str
-    company_name: str | None = None
-    email: str | None = None
-    phone: str | None = None
-    street: str = ""
-    zip_code: str = ""
-    city: str = ""
-    iban: str | None = None
-    bic: str | None = None
-    bank_name: str | None = None
 
 
 class PersonUpdate(BaseModel):
@@ -110,26 +98,7 @@ async def create_person(
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_live_writer_db),
 ):
-    repo = PersonRepository(db, auth.organization_id)
-    await require_contact_creation(db, auth.organization_id)
-    person = Person(
-        first_name=body.first_name,
-        last_name=body.last_name,
-        company_name=body.company_name,
-        email=body.email,
-        phone=body.phone,
-        street=body.street,
-        zip_code=body.zip_code,
-        city=body.city,
-    )
-    if body.iban is not None:
-        person.iban = body.iban
-    if body.bic is not None:
-        person.bic = body.bic
-    if body.bank_name is not None:
-        person.bank_name = body.bank_name
-
-    person = await repo.create(person)
+    person = await create_person_record(db, auth, body)
     return (await _outputs(db, [person]))[0]
 
 

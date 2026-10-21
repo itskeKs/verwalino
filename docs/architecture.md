@@ -406,6 +406,16 @@ Dieser Abschnitt verfeinert die SDD-Entitäten (§11/§13) um (a) Tenant-Scoping
    └─ vendor          (Dienstleister/Lieferant; eigene Entität oder person-Spezialisierung)
 ```
 
+T51 ergänzt `/api/properties/import/template.csv`, `/preview` und `/apply`.
+`MasterImportService` validiert begrenztes UTF-8-Semikolon-CSV und verwendet dieselben
+kanonischen Anlagefunktionen wie die Einzelendpunkte (`master_creation_service`).
+Die Vorschau prüft Freigaben ohne Domain-/Grant-Publikation. Apply erhält zuerst die
+exklusive Publikations-ACL, erzeugt alle Objekte/Einheiten/Kontakte in einer
+funktionsgebundenen Transaktion und hält nur Ergebnis-IDs im unveränderlichen,
+actor-/org-gebundenen `master_import_batch` (0134, FORCE RLS). Payload-Digest und
+Request-UUID verhindern doppelte Wiederholungen; Replay prüft sämtliche ursprünglichen
+Quellen erneut. Keine impliziten Kontaktprofile, Mietverträge oder Selbstfreigaben.
+
 **`property`** (Objekt, SDD §6.1): `organization_id` FK, `name`, Adresse, **`management_type`** (`MIET`|`WEG`|`SEV`|`MISCH`), Abrechnungszeitraum-Konvention. RLS aktiv.
 
 **`unit`** (Einheit, SDD §6.1): `organization_id`, `property_id` FK, `number`, `location`, **`area NUMERIC(10,2)`** (Wohn-/Nutzfläche), **`heated_area NUMERIC(10,2)`** (beheizte Fläche), `usage_type` (Wohnung|Gewerbe|Stellplatz|Sonstige), **`mea NUMERIC(12,6)`** (Miteigentumsanteil — exakt, nicht Float). Optionale Verteilungsbesonderheiten. RLS aktiv.
