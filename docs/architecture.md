@@ -417,6 +417,14 @@ Dieser Abschnitt verfeinert die SDD-Entitäten (§11/§13) um (a) Tenant-Scoping
 
 **`lease_agreement`** (SDD §6.2, §14): `organization_id`, `unit_id` FK, `tenant_profile_id` FK, **`valid_from`/`valid_to`** (Vertragsbeginn/-ende), **`base_rent NUMERIC(14,2)`** (Kaltmiete), **`advance_payment NUMERIC(14,2)`** (NK-Vorauszahlung), optional **`deposit NUMERIC(14,2)`** (Kaution), Notizen. RLS aktiv. Gleiche **EXCLUDE-Constraint**-Logik gegen überlappende Mietzeiträume je Einheit (mit Blick auf Leerstand: Lücken sind *erlaubt* — Leerstand —, Überlappungen nicht).
 
+T43 ergänzt `POST /api/leases/{id}/rent-changes/staffel` als atomaren Generator
+über `LeaseRentChangeService`, ohne zusätzliche Vertragsfelder. Live-ACL-,
+Finanz- und Vertragszeilensperren schützen die Basisrate vor Paralleländerungen;
+alle Termine/Beträge werden vor den T23-Inserts validiert. Eurobeträge werden
+je Stufe mit Decimal auf Cent gerundet; Kalenderdaten bleiben am ersten
+Erhöhungstag verankert. Vorhandene künftige Historie wird nicht überschrieben.
+Gebuchte Zahlungen, ausgestellte Dokumente und finale Snapshots bleiben erhalten.
+
 **`bank_account`** (SDD §6.3 — Vermögenstrennung): `organization_id`, Bezug auf `management_mandate`/`property`, `account_type` (laufend|Rücklage|Kaution), IBAN/Bank-Stammdaten. RLS aktiv. *(Implementierung erst ab M6; Modell-Anker in M1 vorbereiten, damit Mandat/Objekt-Bezug konsistent ist.)*
 
 **`meter` / `meter_reading`** (SDD §6.2.1): optionale Objekt-/Einheitszähler mit Ablesungen (`reading_date`, `value NUMERIC(14,4)`, `period`). RLS und explizite Org-Filter aktiv. Seit T29 bietet `/api/meters` GET/POST, `/{id}` GET/PATCH für Beschreibungsfelder und `/{id}/readings` GET/POST für unverändert erhaltene Ablesungen. Repository und API prüfen sichtbares Elternobjekt, Einheitskohärenz und bestehende Master-Lese-/Prepare-Rechte; keine nachträgliche Umhängung. Schreiboperationen halten Live-ACL-/Finanz-/Zeilensperren in dieser Reihenfolge und committen vor der Erfolgsantwort. Messwerte werden ohne Float oder Rundung validiert und als vierstellige Dezimalstrings ausgegeben. Seit T30 verwenden Objekt- und Einheitsdetail dasselbe `MeterPanel` mit festem Kontext und Rollenflag; String-/BigInt-Rechnung zeigt die Differenz der letzten zwei eindeutigen Tage, nicht bereits eine T31-Abrechnungsvorbelegung. Kontextwechsel entkoppeln verspätete Antworten, Schreibvorgänge sind synchron gegen Mehrfachauslösung gesperrt; Fehler behalten die Eingaben.

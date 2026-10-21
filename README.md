@@ -148,6 +148,32 @@ während des Speicherns sind weitere Änderungen und Schließen gesperrt.
 `scripts/acceptance/t24_rent_change_browser.cjs` prüft den UI-Ablauf und alle
 24 Monats-/Typzeilen: 700/150 bis März, 750/150 ab April, Jahres-Soll 10.650 EUR.
 
+## Staffelmiete (T43)
+
+In der Miethistorie der Einheit erzeugt „Staffelmiete anlegen“ 1–50 volle
+Monatsraten ab dem gewählten ersten Erhöhungsdatum. Ein positiver EUR-Betrag
+oder Prozentsatz wird je Stufe auf die vorherige Kaltmiete angewendet und mit
+Decimal/ROUND_HALF_UP auf Cent gerundet; die Vorauszahlung bleibt unverändert.
+Beispiel: 700 EUR + 30 EUR jährlich ab 01.01.2027 ergibt fünf Stufen
+730/760/790/820/850 EUR bis 01.01.2031. Kalendertermine bleiben am Starttag
+verankert; kurze Monate werden auf ihren letzten Tag begrenzt, ohne Folgedrift.
+
+`POST /api/leases/{id}/rent-changes/staffel` erwartet `staffel_start_date`,
+`staffel_interval_months` (12–120), `staffel_steps` (1–50) und genau eines von
+`staffel_increase_amount` (EUR-Dezimalstring) oder `staffel_increase_percent`
+(Dezimalbruch, `"0.05"` = 5 %). Grundlage ist die letzte Miethistorienzeile vor
+Start, sonst der Originalvertrag. Mindestens ein Jahr Abstand ist erforderlich.
+Bereits vorhandene Änderungen ab Start liefern 409; ungültige Werte, Betrags-
+oder Datumsüberlauf und Stufen nach Vertragsende liefern 422. Die Transaktion
+legt entweder alle Stufen an oder keine. Live-Schreib-/Quellenrechte, gemeinsame
+Finanzsperre, Audit und unveränderliche Historie gelten wie bei T23.
+
+[§ 557a BGB](https://www.gesetze-im-internet.de/bgb/__557a.html) verlangt
+Schriftform und Geldbeträge sowie mindestens ein Jahr unveränderte Miete.
+Prozent ist hier nur eine Rechenhilfe; die App ersetzt weder Vereinbarung noch
+Prüfung der zulässigen Miethöhe/Mietpreisbremse. Keine neue Datenbankrevision.
+`scripts/acceptance/t43_staffelmiete_browser.cjs` prüft den echten UI-Durchstich.
+
 ## Kautionen (Phase 2)
 
 `/kautionen` zeigt je Vertrag das vereinbarte Soll aus `lease.deposit`, gebuchte

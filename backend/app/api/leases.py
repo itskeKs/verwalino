@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +30,25 @@ from app.models.lease_rent_change import LeaseRentChange
 from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
 
 router = APIRouter(prefix="/api/leases", tags=["leases"])
+
+
+class StaffelmieteCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    staffel_start_date: date
+    staffel_increase_amount: Annotated[Decimal, Field(
+        gt=0, max_digits=14, decimal_places=2, allow_inf_nan=False)] | None = None
+    # Fraction: 0.05 means five percent. The generated EUR amounts are rounded per step.
+    staffel_increase_percent: Annotated[Decimal, Field(
+        gt=0, le=1, max_digits=7, decimal_places=6, allow_inf_nan=False)] | None = None
+    staffel_interval_months: int = Field(ge=12, le=120, strict=True)
+    staffel_steps: int = Field(ge=1, le=50, strict=True)
+
+    @model_validator(mode="after")
+    def exactly_one_increase(self):
+        if (self.staffel_increase_amount is None) == (self.staffel_increase_percent is None):
+            raise ValueError("Provide exactly one fixed or percentage increase")
+        return self
 
 
 class LeaseOut(BaseModel):
@@ -220,6 +239,21 @@ async def create_rent_change(
         lease_id, body.valid_from, body.advance_payment, base_rent=body.base_rent,
     )
     return _rent_change_out(row)
+
+
+@router.post("/{lease_id}/rent-changes/staffel", response_model=list[RentChangeOut], status_code=201)
+async def create_staffelmiete_rent_changes(
+    lease_id: uuid.UUID,
+    body: StaffelmieteCreate,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_live_writer_db),
+):
+    rows = await LeaseRentChangeService(db, auth.organization_id, auth.user_id).create_staffel(
+        lease_id, body.staffel_start_date, body.staffel_interval_months, body.staffel_steps,
+        increase_amount=body.staffel_increase_amount,
+        increase_percent=body.staffel_increase_percent,
+    )
+    return [_rent_change_out(row) for row in rows]
 
 
 def _to_out(la: LeaseAgreement) -> LeaseOut:

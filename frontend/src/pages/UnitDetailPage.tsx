@@ -19,6 +19,7 @@ import {
   patchLease,
   listLeaseRentChanges,
   createLeaseRentChange,
+  createStaffelmieteRentChanges,
 } from "../api/endpoints";
 import type {
   Unit,
@@ -641,6 +642,15 @@ function rentDate(value: string): boolean {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
+function staffelPercentFraction(value: string): string | null {
+  const match = /^(\d+)(?:[.,](\d+))?$/.exec(value.trim());
+  if (!match || !/[1-9]/.test(value)) return null;
+  // Divide by 100 as text, retaining even sub-cent percentage precision.
+  const integer = match[1].replace(/^0+(?=\d)/, "").padStart(3, "0");
+  const fraction = `${integer.slice(-2)}${match[2] ?? ""}`.replace(/0+$/, "");
+  return `${integer.slice(0, -2)}.${fraction || "0"}`;
+}
+
 function rentChangeError(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 409) return "Mietänderung nicht gespeichert: Für dieses Datum besteht bereits eine Änderung oder der Vertrag ist inzwischen gesperrt. Bitte den Verlauf prüfen.";
@@ -665,6 +675,13 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const mutationLock = useRef(false);
+  const [staffelOpen, setStaffelOpen] = useState(false);
+  const [staffelStart, setStaffelStart] = useState("");
+  const [staffelMode, setStaffelMode] = useState<"amount" | "percent">("amount");
+  const [staffelAmount, setStaffelAmount] = useState("");
+  const [staffelPercent, setStaffelPercent] = useState("");
+  const [staffelInterval, setStaffelInterval] = useState("12");
+  const [staffelSteps, setStaffelSteps] = useState("3");
 
   useEffect(() => {
     let active = true;
@@ -723,6 +740,47 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
     }
   }
 
+  async function submitStaffel(event: React.FormEvent) {
+    event.preventDefault();
+    if (mutationLock.current || !canWrite || loading || loadError) return;
+    setFormError(null);
+    if (!rentDate(staffelStart) || staffelStart < lease.valid_from || (lease.valid_to && staffelStart > lease.valid_to)) {
+      setFormError("Bitte ein gültiges Startdatum innerhalb des Mietvertrags angeben (Vertragsende einschließlich).");
+      return;
+    }
+    if (!/^\d+$/.test(staffelInterval) || Number(staffelInterval) < 12 || Number(staffelInterval) > 120
+      || !/^\d+$/.test(staffelSteps) || Number(staffelSteps) < 1 || Number(staffelSteps) > 50) {
+      setFormError("Bitte ein Intervall von 12 bis 120 Monaten und 1 bis 50 Erhöhungen als ganze Zahlen eingeben.");
+      return;
+    }
+    const amount = rentAmount(staffelAmount);
+    const percent = staffelPercentFraction(staffelPercent);
+    if (staffelMode === "amount" ? amount === null || amount === "0.00" : percent === null) {
+      setFormError(staffelMode === "amount"
+        ? "Bitte eine positive Erhöhung in EUR mit höchstens zwei Nachkommastellen eingeben (maximal 999.999.999.999,99)."
+        : "Bitte eine positive Erhöhung in Prozent als Dezimalzahl eingeben (z. B. 5 oder 2,75).");
+      return;
+    }
+    mutationLock.current = true;
+    setSaving(true);
+    try {
+      const changes = await createStaffelmieteRentChanges(lease.id, {
+        staffel_start_date: staffelStart,
+        staffel_interval_months: Number(staffelInterval),
+        staffel_steps: Number(staffelSteps),
+        ...(staffelMode === "amount" ? { staffel_increase_amount: amount! } : { staffel_increase_percent: percent! }),
+      });
+      setRows(previous => [...previous, ...changes].sort((a, b) => a.valid_from.localeCompare(b.valid_from)));
+      setStaffelOpen(false);
+      setRevision(previous => previous + 1);
+    } catch (error) {
+      setFormError(rentChangeError(error));
+    } finally {
+      mutationLock.current = false;
+      setSaving(false);
+    }
+  }
+
   const source = rateAt(validFrom);
   const contractLabel = `${tenantLabel} · ${lease.valid_from} bis ${lease.valid_to ?? "offen"}`;
   return <section aria-label={`Mietänderungen: ${contractLabel}`}>
@@ -740,10 +798,14 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
       <button type="button" className="btn" onClick={() => setRevision(previous => previous + 1)}>Mietänderungen erneut laden</button>
     </div>}
     {!loading && !loadError && rows.length === 0 && <p>Noch keine Mietänderungen.</p>}
-    {canWrite && <button type="button" className="btn" disabled={loading || Boolean(loadError)} onClick={() => {
+    {canWrite && <button type="button" className="btn" disabled={saving || loading || Boolean(loadError)} onClick={() => {
       selectDate("");
       setOpen(true);
     }}>Miete ändern ab …</button>}
+    {canWrite && <button type="button" className="btn" disabled={saving || loading || Boolean(loadError)} onClick={() => {
+      setStaffelStart(""); setStaffelMode("amount"); setStaffelAmount(""); setStaffelPercent("");
+      setStaffelInterval("12"); setStaffelSteps("3"); setFormError(null); setStaffelOpen(true);
+    }}>Staffelmiete anlegen</button>}
     <Dialog open={open} onOpenChange={next => { if (!mutationLock.current) setOpen(next); }}>
       <DialogContent>
         <DialogTitle>Miete ändern</DialogTitle>
@@ -759,6 +821,34 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
           <div className="form-actions">
             <button type="submit" className="btn btn--primary" disabled={saving}>Mietänderung speichern</button>
             <button type="button" className="btn" disabled={saving} onClick={() => setOpen(false)}>Abbrechen</button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={staffelOpen} onOpenChange={next => { if (!mutationLock.current) setStaffelOpen(next); }}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
+        <DialogTitle>Staffelmiete anlegen</DialogTitle>
+        <DialogDescription>
+          {contractLabel}. Die erste Erhöhung gilt am Startdatum, weitere folgen im gewählten Monatsintervall, kalendarisch am Startdatum verankert.
+          Grundlage ist die am Startdatum geltende Kaltmiete aus dem Verlauf; die Vorauszahlung bleibt unverändert.
+          Mindestens zwölf Monate seit der letzten Mietänderung und zwischen den Stufen (§ 557a BGB).
+          Prozent ist nur eine Rechenhilfe: Die schriftliche Vereinbarung muss Mieten oder Erhöhungen in Geldbeträgen ausweisen; eine rechtliche Prüfung der Miethöhe erfolgt hier nicht.
+          Jede Stufe wird als unveränderliche historische Monatsrate gespeichert. Originalvertrag, Buchungen und finalisierte Dokumente bleiben unverändert; keine Neuberechnung wird ausgelöst.
+        </DialogDescription>
+        <form onSubmit={submitStaffel} noValidate>
+          <label>Erste Erhöhung ab<Input type="date" value={staffelStart} min={lease.valid_from} max={lease.valid_to ?? undefined} disabled={saving} onChange={event => setStaffelStart(event.target.value)} /></label>
+          <label>Erhöhungsart<select value={staffelMode} disabled={saving} onChange={event => setStaffelMode(event.target.value as "amount" | "percent")}>
+            <option value="amount">Fester EUR-Betrag</option><option value="percent">Prozent</option>
+          </select></label>
+          {staffelMode === "amount"
+            ? <label>Erhöhung (EUR)<Input inputMode="decimal" value={staffelAmount} disabled={saving} onChange={event => setStaffelAmount(event.target.value)} /></label>
+            : <label>Erhöhung (%)<Input inputMode="decimal" value={staffelPercent} disabled={saving} onChange={event => setStaffelPercent(event.target.value)} /></label>}
+          <label>Intervall (Monate)<Input type="number" min="12" max="120" step="1" value={staffelInterval} disabled={saving} onChange={event => setStaffelInterval(event.target.value)} /></label>
+          <label>Anzahl Erhöhungen<Input type="number" min="1" max="50" step="1" value={staffelSteps} disabled={saving} onChange={event => setStaffelSteps(event.target.value)} /></label>
+          {formError && <p role="alert" className="error-text">{formError}</p>}
+          <div className="form-actions">
+            <button type="submit" className="btn btn--primary" disabled={saving}>Staffelmiete speichern</button>
+            <button type="button" className="btn" disabled={saving} onClick={() => { if (!mutationLock.current) setStaffelOpen(false); }}>Abbrechen</button>
           </div>
         </form>
       </DialogContent>

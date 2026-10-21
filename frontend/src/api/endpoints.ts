@@ -526,6 +526,22 @@ export function createLeaseRentChange(
   return api.post<LeaseRentChange>(`/api/leases/${leaseId}/rent-changes`, body);
 }
 
+export type StaffelmieteCreate = {
+  staffel_start_date: string;
+  staffel_interval_months: number;
+  staffel_steps: number;
+} & (
+  | { staffel_increase_amount: string; staffel_increase_percent?: never }
+  | { staffel_increase_amount?: never; staffel_increase_percent: string }
+);
+
+export function createStaffelmieteRentChanges(
+  leaseId: string,
+  body: StaffelmieteCreate,
+): Promise<LeaseRentChange[]> {
+  return api.post<LeaseRentChange[]>(`/api/leases/${leaseId}/rent-changes/staffel`, body);
+}
+
 // --- M2: Cost Categories ---
 
 export function listCostCategories(): Promise<CostCategory[]> {

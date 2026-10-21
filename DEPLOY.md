@@ -31,6 +31,11 @@ Retained attachments and financial provenance can deliberately prevent a
 lossy downgrade; do not delete originals or disable guards to force rollback.
 Any later promotion requires its own reviewed compatibility and backup plan.
 
+T43 adds a staffel generator using the existing append-only rent history; no
+migration or new environment setting is required. Local validation does not
+change any production gate or authorize deployment. The UI is a calculation aid,
+not execution or legal approval of a rent agreement.
+
 `HV_DUNNING_BASE_INTEREST_RATE` is an optional decimal basis-rate default for
 new dunning notices, not an automatically maintained official rate. An explicit
 request can override or disable it; the notice freezes its rate, reference date,

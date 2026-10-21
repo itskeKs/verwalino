@@ -316,11 +316,12 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 
 ### Phase 3 – Parität und Komfort
 
-**Nächster Abschnitt: T43 auf eigener Branch `mvp/phase-3`; nicht begonnen.** Der aktuelle Abschluss bleibt auf `mvp/phase-2`; hier keine Phase-3-Implementierung.
+**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43 abgeschlossen; nächste Aufgabe T44.** T10 bleibt offen.
 
-- [ ] **T43 Staffelmiete** — Aus Start, Betrag oder Prozent, Intervall und Stufenzahl mehrere Mietänderungen (T23) anlegen.
+- [x] **T43 Staffelmiete** — Aus Start, Betrag oder Prozent, Intervall und Stufenzahl mehrere Mietänderungen (T23) anlegen.
   Dateien: `frontend/src/pages/UnitDetailPage.tsx`, `backend/app/api/leases.py`
   Fertig, wenn: `uv run pytest tests/test_rent_changes.py -k staffel` grün UND Ablauf in der App: „+30 € jährlich, fünf Stufen sichtbar“.
+  Umgesetzt: Startdatum, EUR/Prozent, 12–120 Monate, 1–50 Stufen; T23 atomar mit Live-/Quellenrechten und Finanzsperre. 72 Backendtests und 110 UI-Tests grün; echte UI-Abnahme mit 730/760/790/820/850 EUR, Reload, Fehlerfall und Smartphone-Dialog. § 557a BGB: Jahresabstand, Prozent nur Rechenhilfe; keine Migration (unbenutzte experimentelle 0132 nach daten-/sicherheitsgleichem Rundlauf entfernt). Verfahrensvorbehalt: erste experimentelle Produktionsänderungen vor belastbarem Rotlauf; danach fachliche Rot-/Grünprüfungen und vollständige UI-Abnahme, keine rückwirkende Red-first-Behauptung.
 - [ ] **T44 Indexmiete** — VPI alt/neu eingeben, neue Miete berechnen, 12 Monate Abstand prüfen (§ 557b BGB), als Mietänderung übernehmen.
   Dateien: `backend/app/engine/index_rent.py` (neu), `backend/app/api/leases.py`, `frontend/src/pages/UnitDetailPage.tsx`
   Fertig, wenn: `uv run pytest tests/engine/test_index_rent.py` (neu) grün UND Ablauf in der App: „VPI 110→115 bei 600 € ergibt 627,27 €“.
