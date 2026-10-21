@@ -436,6 +436,15 @@ Hier nur die Felder, die das Unveränderbarkeits-/Snapshot-Konzept im Modell ver
 
 ---
 
+**`task`** (Phase 2, T41): operative, löschbare Aufgaben mit Titel, Notiz,
+optionalem Fälligkeitsdatum, Erledigt-Flag und organisationsgleichem Zuständigen.
+Objekt-/Einheits-/Vertragsbezüge sind optional und werden kohärent abgeleitet.
+FORCE RLS prüft Live-Rolle sowie alte und neue Elternrechte; ein eigener
+Invoker-Adapter und feste Funktionssuchpfade verhindern Rechteabkürzungen und
+temporäre Parent-Tabellenüberlagerung. Schreibpfade halten ACL- vor Zeilensperren
+und committen vor der Erfolgsantwort. Globale Aufgaben sind kein Finanzkreisfall;
+vorhandene Aufgaben bleiben bei später deaktiviertem Zuständigen bearbeitbar.
+
 ## 6. Stack-Empfehlung *(Empfehlung — der Mensch muss bestätigen, noch nichts committen)*
 
 Die SDD (§16) lässt das Backend offen: **Python/FastAPI** vs. **Node.js/NestJS**. Bewertung entlang der Anforderungen genau dieser Domäne:

@@ -239,6 +239,25 @@ Zahlungstypen bleiben mit ihrem ursprünglichen Code unterscheidbar.
 `scripts/acceptance/t39_property_year_report_browser.cjs` prüft echte UI-Buchungen,
 bestätigte Belege und den tatsächlichen Download: 800 − 125 = 675 EUR.
 
+## Aufgaben-API (Phase 2)
+
+`/api/tasks` bietet organisationsgebundenes Anlegen, Lesen, partielles Ändern und
+Löschen operativer Aufgaben. Titel ist erforderlich (max. 255 Zeichen), Notiz
+maximal 10.000 Zeichen; Fälligkeit ist optional, Erledigen und Wiederöffnen sind
+zulässig. Ohne `assigned_user_id` wird die Aufgabe dem aktuellen Benutzer
+zugeordnet; neue Zuweisungen benötigen ein aktives Mitglied derselben Organisation.
+Später inaktive Zuständige lassen bestehende Aufgaben nicht verschwinden.
+
+Die paginierte Liste liefert `{items,next_offset}` (Standard 50, maximal 100) und
+kombiniert Objekt-, Einheits-, Vertrags-, Benutzer-, Erledigt- und `due_until`-Filter.
+Die Datumsgrenze ist einschließlich und schließt undatierte Aufgaben aus. Einheit
+bzw. Vertrag leiten ihre Eltern serverseitig ab. Zum vollständigen Lösen werden
+alle drei Parent-IDs ausdrücklich auf `null` gesetzt. Änderungen benötigen
+Prepare-Rechte an alten und neuen Quellen; globale Aufgaben benötigen keinen
+Finanzkreis. OwnerAdmin/Clerk schreiben, Readonly liest, unbekannte Live-Rollen
+werden abgewiesen. Erfolgsantworten folgen erst nach dem Commit. Diese Aufgaben
+sind löschbare operative Daten, keine unveränderlichen Finanzoriginale.
+
 ## Zahlungs- und Kostenlisten als CSV (Phase 2)
 
 Beide Listen bieten **CSV herunterladen** mit denselben aktiven Filtern wie die
