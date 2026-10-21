@@ -549,6 +549,15 @@ Die PDF-Erzeugung nutzt die in M0 angelegte, swappable Pipeline (`app/core/pdf.p
 - Die PDF-Schicht ist **strikt getrennt** von der Engine (SDD §16): Sie liest nur das fertige Ergebnis, rechnet **nichts** neu. Test: PDF-Werte == `settlement_line`-Werte (keine Drift zwischen Berechnung und Darstellung).
 - WeasyPrint ist deterministisch (gleicher Input → gleiches PDF), passend zur Snapshot-Philosophie.
 
+Seit T47 kann eine finalisierte BK-Abrechnung ausdrücklich an den berechtigten
+Mieterkontakt per SMTP gesendet werden. Quellen-/Kontaktexport und die getrennte
+Finanzkreisfähigkeit `send` werden live geprüft. Der Versand ändert weder Lauf
+noch Zeilen/Snapshot; der tatsächlich versendete PDF-Anhang wird im bestehenden
+Dokumentenspeicher mit Hash und append-only Versandversuch unter der Lauf-ID
+aufbewahrt. Die Historie öffnet diese exakten Bytes statt neu zu rendern und prüft
+auch die ursprünglichen Kontaktexportrechte. SMTP-Annahme ist kein Zustellnachweis;
+unklare/offene Versuche werden nicht automatisch wiederholt.
+
 ---
 
 ## 9. Synthetische Golden-Tests (objektive M3-Messlatte)

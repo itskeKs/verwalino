@@ -61,6 +61,7 @@ import type {
 } from "../api/types";
 import { useAuth } from "../auth/useAuth";
 import { ApiError } from "../api/client";
+import { MailDispatch } from "../components/MailDispatch";
 import { fromDbDistributionKey } from "../lib/costVocabulary";
 import {
   needsExternalInput,
@@ -903,6 +904,8 @@ export function SettlementDetailPage() {
           ) : null}
         </div>
       )}
+
+      {isFinalized && run.id === runId && <MailDispatch kind="settlement" documentId={run.id} />}
 
       {/* GoBD notice for finalized runs */}
       {isFinalized && (

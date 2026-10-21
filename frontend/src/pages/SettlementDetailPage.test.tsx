@@ -29,6 +29,7 @@ vi.mock("../api/endpoints", async (importOriginal) => ({
   computeSettlement: vi.fn(),
   finalizeSettlement: vi.fn(),
 }));
+vi.mock("../api/mail", () => ({ getMailDispatch: vi.fn().mockResolvedValue({ recipients: [], attempts: [] }), sendMailDispatch: vi.fn() }));
 vi.mock("../components/FinancialCoverageReview", () => ({
   FinancialCoverageReview: () => null,
 }));

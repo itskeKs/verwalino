@@ -57,6 +57,41 @@ day counts and interest amounts. Existing issued notices are not recalculated
 when configuration changes. The UI permits a deliberate rate entry when no
 default is configured. This documentation does not change any runtime setting.
 
+## Optional document SMTP (T47; no deployment authorization)
+
+Outbound mail is disabled unless `HV_SMTP_HOST` and `HV_SMTP_FROM` are supplied.
+Set `HV_SMTP_PORT` explicitly for the chosen service (default 587) and
+`HV_SMTP_SECURITY=starttls` or `tls`; certificate verification remains enabled.
+Authentication requires both `HV_SMTP_USERNAME` and secret `HV_SMTP_PASSWORD`.
+`HV_SMTP_TIMEOUT_SECONDS` defaults to 15 (1–60). No real credentials, sender domain
+or delivery authority are assumed by the application or this document. Keep
+credentials in operator-managed secrets, not the repository.
+
+For a **local synthetic test only**, run:
+
+```sh
+HV_DOCUMENT_STORAGE_ROOT="$(mktemp -d /tmp/hv-t47-documents.XXXXXX)" \
+HV_SMTP_HOST=127.0.0.1 HV_SMTP_PORT=11025 \
+HV_SMTP_FROM=verwaltung@example.invalid HV_SMTP_SECURITY=plain \
+scripts/dev-local.sh
+```
+
+Then run `node scripts/acceptance/t47_mail_browser.cjs` in a second terminal with
+the local Playwright package available. That script owns a loopback-only SMTP
+receiver, accepts only `tenant@example.invalid`, never forwards mail, and closes
+SMTP/browser resources in `finally`. Stop the launcher afterward. Unencrypted
+SMTP is refused outside loopback or with credentials.
+
+SMTP and database commits are not atomic: the application commits an append-only
+prepared attempt and exact PDF storage reference **before** contacting SMTP, then
+records acceptance/failure/unknown separately. A crash may leave `prepared` even
+if SMTP accepted DATA. Never automatically resend unknown/open attempts. Check the
+operator's SMTP logs before deliberately creating a new attempt; Message-ID and
+request key aid investigation but do not guarantee recipient-side deduplication.
+SMTP acceptance is not delivery or legal receipt. Retained PDFs require the same
+storage retention as other originals; do not delete them. No migration or change
+to the production gate is introduced.
+
 ## Fresh installation: one-time preparation on Moon
 
 Run as `chris` without sudo. The host must have Docker, Compose, `curl`,

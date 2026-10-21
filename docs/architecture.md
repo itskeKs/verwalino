@@ -449,6 +449,23 @@ frisch. Gefrorene Heizteilbeträge und konkrete Messquellen werden vor dem Hash 
 der PDF-Renderer liest sie ohne Datenbank-Neuberechnung. Bestehende Fremdabrechnungen,
 allgemeine Verbrauchsmetriken, RLS und unveränderliche Originale bleiben erhalten.
 
+T47 ergänzt `/api/mail/{dunning|settlement|invitation}/{id}` über
+`DocumentMailService` und den separaten SMTP-Transport `mail_service.py`.
+Die vorhandenen PDF-Renderer, Finanz-/Quellen-/Kontaktprüfungen werden wiederverwendet;
+bei Finanzbindung ist `send` zusätzlich zu `export` nötig. Live-ACL-/Finanz-/Quellen-
+und Kontaktzeilensperren schützen die Freigabe bis zum SMTP-Aufruf. Pro Anfrage
+serialisiert ein organisationsgebundener Schlüssel parallele Wiederholungen.
+Eine eigene tenantgebundene Transaktion schreibt vor dem Netzaufruf `mail_prepared`
+als append-only `AuditEvent` unter der echten Fachobjekt-ID; `mail_completed` folgt
+mit `accepted`, `failed` oder `unknown`. Ein offener Versuch nach Prozess-/Commitfehler
+bleibt dauerhaft erkennbar, niemals automatische Wiederholung oder Zustellbehauptung.
+Der exakte PDF-Anhang liegt content-addressiert im vorhandenen Dokumentenspeicher;
+Auditreferenz, Hash, Kontakt-ID und Message-ID bleiben erhalten. Der geschützte
+Historien-PDF-Endpunkt prüft zusätzlich die **ursprüngliche** Kontaktexportfreigabe,
+auch wenn sich später die Einladungs-Empfängerliste ändert. Kein Schemawechsel,
+kein Update ausgestellter Briefe oder finaler Snapshots; TLS bleibt verifiziert,
+SMTP-Zugänge ausschließlich aus der Umgebung und `plain` nur für Loopback ohne Login.
+
 **`bank_account`** (SDD §6.3 — Vermögenstrennung): `organization_id`, Bezug auf `management_mandate`/`property`, `account_type` (laufend|Rücklage|Kaution), IBAN/Bank-Stammdaten. RLS aktiv. *(Implementierung erst ab M6; Modell-Anker in M1 vorbereiten, damit Mandat/Objekt-Bezug konsistent ist.)*
 
 **`meter` / `meter_reading`** (SDD §6.2.1): optionale Objekt-/Einheitszähler mit Ablesungen (`reading_date`, `value NUMERIC(14,4)`, `period`). RLS und explizite Org-Filter aktiv. Seit T29 bietet `/api/meters` GET/POST, `/{id}` GET/PATCH für Beschreibungsfelder und `/{id}/readings` GET/POST für unverändert erhaltene Ablesungen. Repository und API prüfen sichtbares Elternobjekt, Einheitskohärenz und bestehende Master-Lese-/Prepare-Rechte; keine nachträgliche Umhängung. Schreiboperationen halten Live-ACL-/Finanz-/Zeilensperren in dieser Reihenfolge und committen vor der Erfolgsantwort. Messwerte werden ohne Float oder Rundung validiert und als vierstellige Dezimalstrings ausgegeben. Seit T30 verwenden Objekt- und Einheitsdetail dasselbe `MeterPanel` mit festem Kontext und Rollenflag; String-/BigInt-Rechnung zeigt die Differenz der letzten zwei eindeutigen Tage, nicht bereits eine T31-Abrechnungsvorbelegung. Kontextwechsel entkoppeln verspätete Antworten, Schreibvorgänge sind synchron gegen Mehrfachauslösung gesperrt; Fehler behalten die Eingaben.

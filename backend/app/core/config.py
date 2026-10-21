@@ -52,6 +52,15 @@ class Settings(BaseSettings):
             raise ValueError("Dunning base interest rate must be an exact decimal")
         return value
 
+    # --- Outbound SMTP (disabled until explicitly configured) ---
+    smtp_host: str | None = None
+    smtp_port: int = Field(587, ge=1, le=65535)
+    smtp_from: str | None = None
+    smtp_security: str = "starttls"
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_timeout_seconds: int = Field(15, ge=1, le=60)
+
     # --- Document Storage ---
     document_storage_root: str = "/tmp/hv-documents"
 

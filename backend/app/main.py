@@ -18,7 +18,7 @@ from app.api import economic_plans, weg_settlements
 from app.api import special_levies
 from app.api import payments
 from app.api import bank_accounts, bank_transactions
-from app.api import dunning
+from app.api import dunning, mail
 from app.api import meetings
 from app.api import fristen, dsgvo
 from app.api import declaration_imports
@@ -104,6 +104,7 @@ app.include_router(special_levies.router)
 
 # M7 Mahnwesen
 app.include_router(dunning.router)
+app.include_router(mail.router)
 
 # M8 Eigentümerversammlung & Beschluss-Sammlung
 app.include_router(meetings.router)

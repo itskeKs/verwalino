@@ -541,6 +541,36 @@ nicht neu. Migration 0129 schützt diese Provenienz und verweigert deren Verlust
 beim Downgrade. Ausstellung allein bestätigt keinen Zugang. Der echte UI-/PDFablauf
 ist mit `scripts/acceptance/t35_dunning_interest_browser.cjs` wiederholbar.
 
+### E-Mail-Versand (T47)
+
+Ausgestellte Mahnungen, finalisierte BK-Abrechnungen und personengenau adressierte
+Versammlungseinladungen bieten einen ausdrücklichen E-Mail-Versand. Die Adresse
+kommt ausschließlich vom berechtigten Kontakt; keine frei eingegebenen Empfänger.
+Zusätzlich zu Live-Schreib-, Quellen- und Kontaktexportrechten ist bei gebundenen
+Finanzdokumenten die eigene Kreisfähigkeit `send` erforderlich (PDF-Export reicht
+nicht). Lesende Rollen können keine Sendung auslösen.
+
+SMTP ist ohne `HV_SMTP_HOST` und `HV_SMTP_FROM` deaktiviert. Weitere Optionen:
+`HV_SMTP_PORT` (587), `HV_SMTP_SECURITY` (`starttls`, alternativ `tls`), gemeinsam
+`HV_SMTP_USERNAME`/`HV_SMTP_PASSWORD` sowie `HV_SMTP_TIMEOUT_SECONDS` (15).
+`plain` ist ausschließlich ohne Anmeldung auf Loopback für lokale Tests zulässig.
+Es werden keine Zugangsdaten oder echten Empfänger vorausgesetzt.
+
+Vor SMTP wird ein Versandversuch dauerhaft im bestehenden append-only Audit am
+Dokument gespeichert, einschließlich Empfänger, Message-ID und Referenz auf das
+exakte PDF im Dokumentenspeicher. Ein Wiederholungsschlüssel verhindert doppelte
+Übermittlung derselben Anfrage. Die Historie unterscheidet SMTP-Annahme, Fehler
+und unklaren Ausgang; auch ein nach Absturz offen gebliebener Versuch ist **kein**
+Nachweis unterbliebenen Versands. Keine automatische Wiederholung bei unklarem
+Ausgang. SMTP-Annahme ist **kein Zustell-/Zugangsnachweis**; Fristen und Empfang
+bleiben gesondert zu prüfen. „Versand-PDF öffnen“ liest die gespeicherten Bytes mit
+Hashprüfung und aktuellen Quellen-/ursprünglichen Kontaktexportrechten, ohne
+finalisierte Dokumente neu zu berechnen. Keine Schemaänderung.
+
+`uv run pytest tests/test_mail_service.py` prüft Fake-SMTP und Fach-/Rechtepfade.
+`scripts/acceptance/t47_mail_browser.cjs` betreibt nur einen lokalen SMTP-Empfänger
+auf `127.0.0.1:11025` ohne Weiterleitung und prüft den tatsächlichen UI-/PDF-Ablauf.
+
 Weiterführende Dokumentation:
 
 - [Deployment](DEPLOY.md)
