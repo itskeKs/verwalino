@@ -55,6 +55,7 @@ const GROUPS: NavGroup[] = [
     label: "Übersicht",
     items: [
       { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+      { to: "/aufgaben", label: "Aufgaben", icon: ClipboardList },
       { to: "/fristen", label: "Fristenmonitor", icon: CalendarClock },
       { to: "/berichte", label: "Berichte", icon: FileSpreadsheet },
       { to: "/mandate", label: "Mandate", icon: Briefcase },

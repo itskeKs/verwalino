@@ -137,3 +137,26 @@ it("ignores late owner IDs from a previous run after route navigation", async ()
   expect(screen.queryByRole("textbox", { name: paymentLabel("Clara Fremd") })).not.toBeInTheDocument();
   expect(screen.getByRole("textbox", { name: paymentLabel("Berta Neu") })).toHaveValue("");
 });
+
+it.each([
+  ["object", { id: runId, lines: [] }],
+  ["null", null],
+  ["string", seller],
+  ["non-string owner", [seller, 42]],
+])("rejects malformed input-owner roster %s without financial fallbacks and retries explicitly", async (_label, body) => {
+  let malformed = true;
+  const fetchMock = install([draft()], () => json(malformed ? body : [seller, buyer]));
+  show();
+  expect(await screen.findByRole("alert")).toHaveTextContent("Eigentümerliste hat ein ungültiges Format. Bitte erneut laden.");
+  expect(screen.queryByRole("button", { name: "Berechnen" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Datengrundlage speichern" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: paymentLabel("Anna Alt") })).not.toBeInTheDocument();
+  expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+  malformed = false;
+  fireEvent.click(screen.getByRole("button", { name: "Erneut laden" }));
+  expect(await screen.findByRole("textbox", { name: paymentLabel("Anna Alt") })).toHaveValue("");
+  expect(screen.getByRole("textbox", { name: paymentLabel("Berta Neu") })).toHaveValue("");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(fetchMock.mock.calls.filter(([url]) => url.endsWith("/input-owners"))).toHaveLength(2);
+  expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+});

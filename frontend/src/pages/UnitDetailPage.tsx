@@ -250,6 +250,7 @@ export function UnitDetailPage() {
         <Link to={`/objekte/${propertyId}`} className="link">&larr; {property.name}</Link>
       </p>
       <h1>Einheit {unit.number}</h1>
+      {(session?.role === "OWNER_ADMIN" || session?.role === "CLERK") && <Link className="btn btn-primary" to={`/aufgaben?${new URLSearchParams({ property_id: property.id, unit_id: unit.id, create: "1" })}`}>Aufgabe anlegen</Link>}
 
       {error && <p className="error-text">{error}</p>}
 

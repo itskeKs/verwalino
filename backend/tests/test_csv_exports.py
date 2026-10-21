@@ -244,6 +244,11 @@ async def test_source_read_export_and_revocation(migrator_session, scope_seed, p
 async def test_live_roles_revocation_and_org(migrator_session, scope_seed, seed_data, path, change, expected):
     from tests.test_scoped_dunning import grant
     from tests.test_scoped_account_statements import mutate
+    foreign = {'org': seed_data['org_b_id'], 'clerk': seed_data['user_b_admin_id']}
+    # Org B can retain legitimate costs from earlier tests; preserve its entire export.
+    async with client(foreign) as api:
+        before = rows(await api.get(f'/api/{path}/export.csv'))
+    assert before[0] == (PAYMENT_HEADER if path == 'payments' else COST_HEADER)
     ids = await fixture(migrator_session, scope_seed)
     await payment(migrator_session, ids, '1')
     await cost(migrator_session, ids, '1')
@@ -260,10 +265,12 @@ async def test_live_roles_revocation_and_org(migrator_session, scope_seed, seed_
         if change == 'revoked':
             # Revoked READ rows are absent from both list and export, not a partial EXPORT filter.
             assert rows(result) == [PAYMENT_HEADER if path == 'payments' else COST_HEADER]
-    foreign = {'org': seed_data['org_b_id'], 'clerk': seed_data['user_b_admin_id']}
     async with client(foreign) as api:
         result = await api.get(f'/api/{path}/export.csv')
-        assert rows(result) == [PAYMENT_HEADER if path == 'payments' else COST_HEADER]
+        assert rows(result) == before
+        own_ids = {str(value) for value in ids.values() if isinstance(value, uuid.UUID)}
+        own_ids.update(str(value) for key in ('payments', 'costs') for value in ids[key])
+        assert all(source_id not in result.text for source_id in own_ids)
         parent = {'bank_account_id': str(ids['bank'])} if path == 'payments' else {'property_id': str(ids['property'])}
         assert (await api.get(f'/api/{path}/export.csv', params=parent)).status_code == 404
 

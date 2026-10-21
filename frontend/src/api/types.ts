@@ -1629,3 +1629,45 @@ export interface AttachmentUpload {
   lease_agreement_id?: string;
   person_id?: string;
 }
+
+// --- Aufgaben ---
+export interface Task {
+  id: string;
+  organization_id: string;
+  created_by: string;
+  assigned_user_id: string;
+  property_id: string | null;
+  unit_id: string | null;
+  lease_agreement_id: string | null;
+  title: string;
+  note: string;
+  due_date: string | null;
+  completed: boolean;
+  created_at: string;
+  updated_at: string;
+  property_name: string | null;
+  unit_number: string | null;
+  lease_label: string | null;
+  assigned_user_name: string | null;
+}
+export interface TaskInput {
+  title: string;
+  note?: string;
+  due_date?: string | null;
+  completed?: boolean;
+  assigned_user_id?: string;
+  property_id?: string | null;
+  unit_id?: string | null;
+  lease_agreement_id?: string | null;
+}
+export interface TaskFilters {
+  property_id?: string;
+  unit_id?: string;
+  lease_agreement_id?: string;
+  assigned_user_id?: string;
+  completed?: boolean;
+  due_until?: string;
+  offset?: number;
+  limit?: number;
+}
+export interface TaskPage { items: Task[]; next_offset: number | null }

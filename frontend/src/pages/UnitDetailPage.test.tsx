@@ -403,3 +403,13 @@ it("T37 ignores a late unit response after changing the route", async () => {
   await act(async () => resolveOld({ id: "unit", number: "1" } as never));
   expect(screen.getByRole("region", { name: "Dokumente" })).toHaveAttribute("data-unit", "new-unit");
 });
+
+it.each(["CLERK", "OWNER_ADMIN", "READ_ONLY", "UNKNOWN"])("T42 offers task context creation only to writers (%s), with loaded IDs", async role => {
+  vi.mocked(endpoints.getUnit).mockResolvedValue({ id: "loaded/u&1", property_id: "loaded/p&1", number: "42" } as never);
+  vi.mocked(endpoints.getProperty).mockResolvedValue({ id: "loaded/p&1", name: "Loaded" } as never);
+  show(role); await screen.findByRole("heading", { name: "Einheit 42" });
+  const link = screen.queryByRole("link", { name: "Aufgabe anlegen" });
+  if (role === "CLERK" || role === "OWNER_ADMIN") {
+    expect(link).toHaveAttribute("href", "/aufgaben?property_id=loaded%2Fp%261&unit_id=loaded%2Fu%261&create=1");
+  } else expect(link).toBeNull();
+});

@@ -60,8 +60,11 @@ export function WegSettlementDetailPage() {
     Promise.all([getWegRun(runId), listProperties(), listOwnerProfiles(), listPersons()])
       .then(async ([r, pr, op, per]) => {
         if (!active) return;
-        const inputOwners = r.status === "draft" ? await getWegInputOwners(runId) : [];
+        const inputOwners: unknown = r.status === "draft" ? await getWegInputOwners(runId) : [];
         if (!active) return;
+        if (!Array.isArray(inputOwners) || !inputOwners.every((id: unknown) => typeof id === "string")) {
+          throw new Error("Eigentümerliste hat ein ungültiges Format. Bitte erneut laden.");
+        }
         setRun(r); setProperties(pr); setOwnerProfiles(op); setPersons(per);
         setPaidOwners(inputOwners);
       })
@@ -121,7 +124,10 @@ export function WegSettlementDetailPage() {
   }
 
   if (loading) return <p>Lade...</p>;
-  if (!run) return <p role="alert" className="error-text">{error ?? "WEG-Abrechnung nicht gefunden."}</p>;
+  if (!run) return <div>
+    <p role="alert" className="error-text">{error ?? "WEG-Abrechnung nicht gefunden."}</p>
+    <button className="btn btn--secondary" onClick={() => setGeneration(value => value + 1)}>Erneut laden</button>
+  </div>;
 
   // Group lines by owner.
   const ownerIds = Array.from(new Set(run.lines.map((l) => l.addressee_owner_profile_id ?? "—")));

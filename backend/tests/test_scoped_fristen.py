@@ -119,3 +119,153 @@ async def test_unlinked_document_retention_remains_unknown_in_scoped_monitor(mig
         assert 'nicht verfügbar' in retention['detail']
         assert '0 Beleg' not in retention['detail']
         assert retention['due_date'] is None
+
+
+@pytest.mark.parametrize('unclassified', [False, True])
+async def test_context_reports_only_missing_selection_without_calculating(migrator_session, scope_seed, monkeypatch, unclassified):
+    ids = await statement_fixture(migrator_session, scope_seed, 'lease')
+    if unclassified:
+        await mutate(text("INSERT INTO bank_account(organization_id,property_id,account_type,label) VALUES (:org,:property,'LAUFEND','Unclassified')"), ids)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Context must not load money or calculate deadlines')
+    monkeypatch.setattr('app.services.fristen_service.FristenService._collect_property', forbidden)
+    monkeypatch.setattr('app.services.fristen_service.FristenService._overdue_count', forbidden)
+    async with client(ids) as api:
+        response = await api.get('/api/fristen/context')
+        assert response.status_code == 200, response.text
+        assert response.json() == {'requires_accounting_scope': True}
+        assert (await api.get('/api/fristen')).status_code == 409
+
+
+async def test_context_and_monitor_keep_authorized_legacy_read(worker_tenant, monkeypatch):
+    from app.services.fristen_service import FristenService
+    api, seed = worker_tenant
+    await mutate(text("UPDATE membership SET role='READ_ONLY' WHERE organization_id=:org AND user_id=:actor"),
+                 {'org': seed['org_a_id'], 'actor': seed['user_a_admin_id']})
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Context must not build the monitor')
+    with monkeypatch.context() as patch:
+        patch.setattr(FristenService, 'build_monitor', forbidden)
+        response = await api.get('/api/fristen/context')
+    assert response.status_code == 200, response.text
+    assert response.json() == {'requires_accounting_scope': False}
+    assert (await api.get('/api/fristen')).status_code == 200
+
+
+@pytest.mark.parametrize('path', ['/api/fristen/context', '/api/fristen'])
+async def test_fristen_anonymous_reads_denied(client_unauth, path):
+    assert (await client_unauth.get(path)).status_code == 401
+
+
+@pytest.mark.parametrize('path', ['/api/fristen/context', '/api/fristen'])
+@pytest.mark.parametrize('live_role,expected', [(None, 401), ('UNKNOWN', 403), ('READ_ONLY', 200)])
+async def test_fristen_reads_use_current_transaction_principal(worker_tenant, path, live_role, expected):
+    from app.core.tenant import AuthContext, get_current_user
+    from app.main import app
+    # Authentication has already returned a stale administrator; the data
+    # transaction must independently validate membership and the current role.
+    _, seed = worker_tenant
+    ids = {'org': seed['org_a_id'], 'actor': seed['user_a_admin_id']}
+    async def stale_auth():
+        return AuthContext(ids['actor'], ids['org'], 'OWNER_ADMIN')
+    await mutate(text('UPDATE membership SET role=:role WHERE organization_id=:org AND user_id=:actor')
+                 if live_role else text('DELETE FROM membership WHERE organization_id=:org AND user_id=:actor'),
+                 {**ids, 'role': live_role})
+    app.dependency_overrides[get_current_user] = stale_auth
+    try:
+        async with client(ids, 'actor') as api:
+            response = await api.get(path)
+        assert response.status_code == expected, response.text
+        if live_role == 'READ_ONLY':
+            if path.endswith('context'):
+                assert response.json() == {'requires_accounting_scope': False}
+            else:
+                assert isinstance(response.json(), list)
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        if live_role is None:
+            await mutate(text("INSERT INTO membership(organization_id,user_id,role) VALUES(:org,:actor,'OWNER_ADMIN')"), ids)
+        else:
+            await mutate(text("UPDATE membership SET role='OWNER_ADMIN' WHERE organization_id=:org AND user_id=:actor"), ids)
+
+
+async def test_context_and_selected_monitor_are_readonly_without_write_capabilities(migrator_session, scope_seed):
+    from sqlalchemy import event
+    from sqlalchemy.engine import Engine
+    ids = await statement_fixture(migrator_session, scope_seed, 'lease')
+    await mutate(text("UPDATE membership SET role='READ_ONLY' WHERE organization_id=:org AND user_id=:clerk"), ids)
+    statements = []
+    def prohibit_mutation(connection, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+        assert statement.lstrip().split()[0].upper() not in {'INSERT','UPDATE','DELETE','TRUNCATE','ALTER','CREATE','DROP'}
+    event.listen(Engine, 'before_cursor_execute', prohibit_mutation)
+    try:
+        async with client(ids) as api:
+            context = await api.get('/api/fristen/context')
+            assert context.status_code == 200 and context.json() == {'requires_accounting_scope': True}
+            selected = await api.get('/api/fristen', params={'accounting_scope_id': str(ids['scope']), 'reference_date': '2025-12-31'})
+            assert selected.status_code == 200, selected.text
+        assert statements
+    finally:
+        event.remove(Engine, 'before_cursor_execute', prohibit_mutation)
+
+
+async def test_context_does_not_bypass_hidden_property_sources(migrator_session, scope_seed):
+    from tests.test_property_source_enforcement import synthetic_enforcement
+    ids = await statement_fixture(migrator_session, scope_seed, 'lease')
+    async with synthetic_enforcement(scope_seed), client(ids) as api:
+        context = await api.get('/api/fristen/context')
+        monitor = await api.get('/api/fristen')
+        assert context.status_code == monitor.status_code == 404
+        assert context.json() == monitor.json() == {'detail': 'Complete report sources not accessible'}
+
+
+async def test_foreign_scope_and_revoked_grants_do_not_gain_overview_access(migrator_session, scope_seed, seed_data):
+    ids = await statement_fixture(migrator_session, scope_seed, 'lease')
+    foreign = {**ids, 'org': seed_data['org_b_id'], 'actor': seed_data['user_b_admin_id']}
+    async with client(foreign, 'actor') as api:
+        assert (await api.get('/api/fristen/context')).json() == {'requires_accounting_scope': False}
+        assert (await api.get('/api/fristen', params={'accounting_scope_id': str(ids['scope'])})).status_code == 404
+    await mutate(text('UPDATE scope_grant SET revoked_at=clock_timestamp(),revoked_by=:actor WHERE scope_id=:scope AND user_id=:clerk AND revoked_at IS NULL'), ids)
+    async with client(ids) as api:
+        assert (await api.get('/api/fristen/context')).json() == {'requires_accounting_scope': True}
+        assert (await api.get('/api/fristen')).status_code == 409
+        assert (await api.get('/api/fristen', params={'accounting_scope_id': str(ids['scope'])})).status_code == 404
+
+
+@pytest.mark.parametrize('inherited', ['valid', 'hidden', 'unclassified'])
+async def test_context_never_turns_inherited_database_scope_into_legacy(migrator_session, scope_seed, inherited):
+    from app.core.db import get_tenant_session
+    from app.services.fristen_service import FristenService
+    from fastapi import HTTPException
+    ids = await statement_fixture(migrator_session, scope_seed, 'lease')
+    if inherited == 'unclassified':
+        await mutate(text("INSERT INTO bank_account(organization_id,property_id,account_type,label) VALUES (:org,:property,'LAUFEND','Unclassified')"), ids)
+    async with get_tenant_session(ids['org']) as db:
+        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true),set_config('app.current_scope_id',:scope,true)"),
+                         {'actor':str(ids['clerk']), 'scope':str(uuid.uuid4() if inherited == 'hidden' else ids['scope'])})
+        service = FristenService(db, ids['org'], ids['clerk'])
+        if inherited == 'valid':
+            assert await service.requires_accounting_scope() is True
+        else:
+            with pytest.raises(HTTPException) as denied:
+                await service.requires_accounting_scope()
+            assert denied.value.status_code == (404 if inherited == 'hidden' else 409)
+
+
+@pytest.mark.parametrize('status', [401, 403, 404, 409, 422, 500])
+async def test_context_propagates_other_overview_errors(status, monkeypatch):
+    from fastapi import HTTPException
+    from app.services.fristen_service import FristenService
+    from app.services.financial_scope_service import FinancialScopeService
+    from app.repositories.fristen_repo import FristenRepository
+    async def legacy(*args):
+        return None
+    async def denied(*args):
+        raise HTTPException(status, 'Different admission failure')
+    monkeypatch.setattr(FinancialScopeService, 'select_read_scope', legacy)
+    monkeypatch.setattr(FristenRepository, 'require_complete_overview', denied)
+    with pytest.raises(HTTPException) as failure:
+        await FristenService(None, uuid.uuid4(), uuid.uuid4()).requires_accounting_scope()
+    assert failure.value.status_code == status
+    assert failure.value.detail == 'Different admission failure'

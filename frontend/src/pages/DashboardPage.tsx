@@ -3,7 +3,7 @@
  * Status-Kacheln, Handlungsbedarf (dringende Fristen) und Schnellzugriff.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertTriangle,
@@ -22,11 +22,14 @@ import {
 } from "lucide-react";
 import {
   getMyOrganization,
+  getFristenContext,
+  listTasks,
+  updateTask,
   listFristen,
   listProperties,
   listPersons,
 } from "../api/endpoints";
-import type { Organization, DeadlineItem, DeadlineStatus } from "../api/types";
+import type { Organization, DeadlineItem, DeadlineStatus, Task } from "../api/types";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { useAuth } from "../auth/useAuth";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
@@ -66,7 +69,7 @@ const QUICK_ACTIONS: QuickAction[] = [
 ];
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return calendarIso(new Date());
 }
 
 function greeting(): string {
@@ -78,37 +81,59 @@ function greeting(): string {
 
 export function DashboardPage() {
   const { session } = useAuth();
+  return <DashboardContent key={`${session?.organization_id}:${session?.user_id}:${session?.role}`} />;
+}
+
+function DashboardContent() {
+  const { session } = useAuth();
   const [org, setOrg] = useState<Organization | null>(null);
   const [fristen, setFristen] = useState<DeadlineItem[] | null>(null);
   const [propertyCount, setPropertyCount] = useState<number | null>(null);
   const [personCount, setPersonCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [masterError, setMasterError] = useState<string | null>(null);
+  const [masterLoading, setMasterLoading] = useState(true);
+  const [scopeRequired, setScopeRequired] = useState(false);
+  const [revision, setRevision] = useState(0);
   const [scopeId, setScopeId] = useState<string | null>(null);
   const [resultScope, setResultScope] = useState<string | null | undefined>(undefined);
   const loading = resultScope !== scopeId;
 
   useEffect(() => {
     let cancelled = false;
-    Promise.allSettled([
-      getMyOrganization(),
-      listFristen(todayIso(), scopeId || undefined),
-      listProperties(),
-      listPersons(),
-    ])
-      .then(([o, f, props, persons]) => {
+    Promise.allSettled([getMyOrganization(), listProperties(), listPersons()])
+      .then(([o, props, persons]) => {
         if (cancelled) return;
         setOrg(o.status === "fulfilled" ? o.value : null);
-        setFristen(f.status === "fulfilled" ? f.value : null);
         setPropertyCount(props.status === "fulfilled" ? props.value.length : null);
         setPersonCount(persons.status === "fulfilled" ? persons.value.length : null);
-        const failures = [o, f, props, persons].filter(result => result.status === "rejected");
-        setError(failures.length ? failures.map(result => String(result.reason)).join(" · ") : null);
-        setResultScope(scopeId);
+        const failures = [o, props, persons].filter(result => result.status === "rejected");
+        setMasterError(failures.length ? failures.map(result => String(result.reason)).join(" · ") : null);
+        setMasterLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [scopeId]);
+    return () => { cancelled = true; };
+  }, [session?.organization_id, session?.user_id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const context = await getFristenContext();
+        if (cancelled) return;
+        if (typeof context.requires_accounting_scope !== "boolean") throw new Error("Fristenkontext nicht verfügbar");
+        setScopeRequired(context.requires_accounting_scope);
+        if (context.requires_accounting_scope && !scopeId) {
+          setFristen(null); setError(null); setResultScope(scopeId);
+          return;
+        }
+        const rows = await listFristen(todayIso(), scopeId || undefined);
+        if (!cancelled) { setFristen(rows); setError(null); setResultScope(scopeId); }
+      } catch (reason) {
+        if (!cancelled) { setFristen(null); setError(String(reason)); setResultScope(scopeId); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [scopeId, revision, session?.organization_id, session?.user_id]);
 
   const financeAvailable = !loading && fristen !== null;
   const overdue = (fristen ?? []).filter((f) => f.status === "OVERDUE");
@@ -141,11 +166,14 @@ export function DashboardPage() {
       <div className="form-grid max-w-xl">
         <AccountingScopeSelector capability="read" value={scopeId} onChange={id => { if (id !== scopeId) { setResultScope(undefined); setScopeId(id); } }} />
       </div>
+      {scopeRequired && !scopeId && <p>Finanzielle Fristen: Abrechnungskreis auswählen</p>}
       {error && !loading && (
         <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
+          {error} <button onClick={() => { setResultScope(undefined); setRevision(n => n + 1); }}>Fristen erneut laden</button>
         </div>
       )}
+
+      {masterError && <div role="alert">{masterError}</div>}
 
       {/* Stat tiles */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -159,14 +187,14 @@ export function DashboardPage() {
         />
         <StatCard
           label="Objekte"
-          value={loading ? "…" : (propertyCount ?? "—")}
+          value={masterLoading ? "…" : (propertyCount ?? "—")}
           icon={Building2}
           tone="primary"
           to="/objekte"
         />
         <StatCard
           label="Personen"
-          value={loading ? "…" : (personCount ?? "—")}
+          value={masterLoading ? "…" : (personCount ?? "—")}
           icon={Users}
           tone="default"
           to="/personen"
@@ -180,6 +208,8 @@ export function DashboardPage() {
           to="/offene-posten"
         />
       </div>
+
+      <DueTasks key={`${session?.organization_id}:${session?.user_id}:${session?.role}`} canWrite={session?.role === "OWNER_ADMIN" || session?.role === "CLERK"} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Handlungsbedarf */}
@@ -269,4 +299,60 @@ export function DashboardPage() {
 function formatDate(iso: string): string {
   const [y, m, d] = iso.split("-");
   return `${d}.${m}.${y}`;
+}
+
+function calendarIso(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function DueTasks({ canWrite }: { canWrite: boolean }) {
+  const [tasks, setTasks] = useState<Task[] | null>(null);
+  const [nextOffset, setNextOffset] = useState<number | null>(null);
+  const [offset, setOffset] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [revision, setRevision] = useState(0);
+  const locked = useRef(false);
+  const alive = useRef(false);
+  const generation = useRef(0);
+  const end = new Date(); end.setDate(end.getDate() + 7);
+  const dueUntil = calendarIso(end);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => {
+    const request = ++generation.current;
+    let current = true;
+    void Promise.resolve().then(async () => {
+      if (!current) return;
+      setLoading(true);
+      try {
+        const page = await listTasks({ completed: false, due_until: dueUntil, offset, limit: 50 });
+        if (current && request === generation.current) {
+          setTasks(page.items.filter(task => !task.completed && !!task.due_date && task.due_date <= dueUntil));
+          setNextOffset(page.next_offset); setError(null);
+        }
+      } catch (reason) { if (current && request === generation.current) setError(String(reason)); }
+      finally { if (current && request === generation.current) setLoading(false); }
+    });
+    return () => { current = false; };
+  }, [dueUntil, offset, revision]);
+  async function complete(task: Task) {
+    if (!canWrite || locked.current) return;
+    locked.current = true; setPending(true); setError(null);
+    const request = ++generation.current;
+    try {
+      await updateTask(task.id, { completed: true });
+      if (alive.current && request === generation.current) setTasks(rows => rows?.filter(row => row.id !== task.id) ?? null);
+    } catch (reason) { if (alive.current && request === generation.current) setError(String(reason)); }
+    finally { locked.current = false; if (alive.current) { setPending(false); setLoading(false); } }
+  }
+  return <Card role="region" aria-label="Fällige Aufgaben"><CardHeader className="flex-row items-center justify-between"><CardTitle>Fällige Aufgaben</CardTitle><Link to="/aufgaben">Alle Aufgaben</Link></CardHeader><CardContent>
+    <p className="text-sm text-muted-foreground">Offene Aufgaben bis einschließlich {formatDate(dueUntil)} · alle zugänglichen Zuständigkeiten</p>
+    {loading && <p role="status">Aufgaben werden geladen…</p>}
+    {error && <p role="alert">Aufgaben: {error}</p>}
+    <button disabled={pending || loading} onClick={() => setRevision(n => n + 1)}>Aufgaben erneut laden</button>
+    {tasks && <ul>{tasks.map(task => <li key={task.id} className="flex items-center gap-3 py-3"><div className="flex-1"><p>{task.title}</p><p className="text-sm">Fällig am {task.due_date ? formatDate(task.due_date) : "—"}{task.property_name ? ` · ${task.property_name}` : ""}</p></div>{canWrite && <button disabled={pending || loading} onClick={() => void complete(task)}>Erledigen</button>}</li>)}</ul>}
+    {tasks?.length === 0 && !loading && !error && <p>Keine fälligen Aufgaben in diesem Zeitraum.</p>}
+    <div className="flex gap-3"><button disabled={pending || loading || offset === 0} onClick={() => { setTasks(null); setOffset(Math.max(0, offset - 50)); }}>Vorherige Aufgaben</button><button disabled={pending || loading || nextOffset === null} onClick={() => { if (nextOffset !== null) { setTasks(null); setOffset(nextOffset); } }}>Weitere Aufgaben</button></div>
+  </CardContent></Card>;
 }

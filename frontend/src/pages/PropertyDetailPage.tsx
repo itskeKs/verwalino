@@ -194,6 +194,7 @@ export function PropertyDetailPage() {
         <Link to="/objekte" className="link">&larr; Alle Objekte</Link>
       </p>
       <h1>{property.name}</h1>
+      {isWrite && <Link className="btn btn-primary" to={`/aufgaben?${new URLSearchParams({ property_id: property.id, create: "1" })}`}>Aufgabe anlegen</Link>}
 
       {error && <p className="error-text">{error}</p>}
 

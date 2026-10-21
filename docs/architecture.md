@@ -445,6 +445,16 @@ temporäre Parent-Tabellenüberlagerung. Schreibpfade halten ACL- vor Zeilensper
 und committen vor der Erfolgsantwort. Globale Aufgaben sind kein Finanzkreisfall;
 vorhandene Aufgaben bleiben bei später deaktiviertem Zuständigen bearbeitbar.
 
+Die Aufgabenoberfläche übernimmt Objekt-/Einheitskontexte ohne automatisches
+Speichern; das Dashboard liest offene Aufgaben mit einer lokalen, inklusiven
+Sieben-Tage-Grenze. Diese operativen Daten werden nicht von der Auswahl eines
+Finanzkreises abhängig gemacht. Der getrennte Readpfad `/api/fristen/context`
+prüft unter Live-/ACL- und bestehenden Quellenregeln die Zulässigkeit des
+organisationsweiten Fristenmonitors, ohne finanzielle Reportzeilen zu laden.
+Nur der konkrete fehlende-Auswahl-Konflikt wird als erforderliche Kreiswahl
+ausgegeben; andere Fehler bleiben Fehler. Erst nach bewusster Auswahl liest
+das Dashboard die finanziellen Fristen im gewählten Kontext.
+
 ## 6. Stack-Empfehlung *(Empfehlung — der Mensch muss bestätigen, noch nichts committen)*
 
 Die SDD (§16) lässt das Backend offen: **Python/FastAPI** vs. **Node.js/NestJS**. Bewertung entlang der Anforderungen genau dieser Domäne:

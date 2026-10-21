@@ -6,6 +6,7 @@ from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noq
 from tests.test_scope_grants import scope_fixture
 from tests.test_scoped_account_statements import client, mutate
 from tests.test_scope_payment_reconciliation import read_value
+from tests.test_special_levy import levy_db, levy_fixture  # noqa: F401
 
 pytestmark = pytest.mark.asyncio
 
@@ -166,7 +167,7 @@ async def test_expiry_during_storage_cannot_commit_scoped_metadata(migrator_sess
         set_store(None)
 
 
-async def test_database_context_key_original_storage_and_populated_downgrade(migrator_session, scope_seed, tmp_path):
+async def test_database_context_key_original_storage_and_populated_downgrade(levy_db, scope_seed, tmp_path, levy_fixture):
     import importlib.util
     from pathlib import Path
     from sqlalchemy import create_engine
@@ -175,13 +176,27 @@ async def test_database_context_key_original_storage_and_populated_downgrade(mig
     from alembic.operations import Operations
     from tests.conftest import MIGRATOR_SYNC_URL
     from app.core.storage import LocalFsDocumentStore, set_store
+    from app.core.pdf import render_pdf
+    from tests.migration_rehearsal import historical_financial_scope_lookup
+    from tests.test_special_levy import create as create_levy
     set_store(LocalFsDocumentStore(tmp_path))
-    ids = await document_fixture(migrator_session, scope_seed)
+    ids = await document_fixture(levy_db, scope_seed)
     try:
         async with client(ids) as api:
             response = await api.post(f"/api/mandates/{ids['mandate']}/documents", **upload(ids))
             assert response.status_code == 201, response.text
             ids['document'] = uuid.UUID(response.json()['id'])
+            original = await api.get(f"/api/mandates/{ids['mandate']}/documents/{ids['document']}/download")
+            assert original.status_code == 404  # read/prepare is deliberately not export
+            pdf = render_pdf('<p>Retained attachment during historical mandate rehearsal</p>')
+            attachment = await api.post('/api/attachments',
+                data={'property_id': str(ids['property']), 'title': 'Retained rehearsal original'},
+                files={'file': ('rehearsal.pdf', pdf, 'application/pdf')})
+            assert attachment.status_code == 201, attachment.text
+            ids['attachment'] = uuid.UUID(attachment.json()['id'])
+        async with client(levy_fixture) as api:
+            levy = await create_levy(api, levy_fixture)
+            assert levy['allocations']
         # A direct app writer cannot claim a different mandate or storage tenant.
         ids['wrong_mandate'] = uuid.uuid4()
         await mutate(text("INSERT INTO management_mandate(id,organization_id,mandate_type,label,start_date) VALUES(:wrong_mandate,:org,'WEG','Other','2024-01-01')"), ids)
@@ -197,15 +212,57 @@ async def test_database_context_key_original_storage_and_populated_downgrade(mig
         spec.loader.exec_module(migration)
         engine = create_engine(MIGRATOR_SYNC_URL)
         try:
-            with engine.connect() as connection, connection.begin() as transaction:
+            with engine.begin() as connection:
+                heads = MigrationContext.configure(connection).get_current_heads()
+                tables = connection.scalars(text("""SELECT tablename FROM pg_tables
+                    WHERE schemaname='public' ORDER BY tablename""")).all()
+                def rows():
+                    return {table: connection.scalars(text(
+                        f'SELECT to_jsonb(r)::text FROM public."{table}" r ORDER BY to_jsonb(r)::text'
+                    )).all() for table in tables}
+                def security():
+                    return {
+                        'functions': connection.execute(text("""SELECT p.oid::regprocedure::text,
+                            pg_get_functiondef(p.oid),p.proacl::text,p.proconfig,p.proowner,p.prosecdef
+                            FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+                            WHERE n.nspname='public' AND p.prokind IN ('f','p') ORDER BY 1""")).all(),
+                        'policies': connection.execute(text("""SELECT * FROM pg_policies
+                            WHERE schemaname='public' ORDER BY tablename,policyname""")).all(),
+                        'tables': connection.execute(text("""SELECT c.relname,c.relrowsecurity,c.relforcerowsecurity,
+                            c.relacl::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+                            WHERE n.nspname='public' AND c.relkind IN ('r','p') ORDER BY c.relname""")).all(),
+                    }
+                before_rows, before_security = rows(), security()
+                assert any(str(ids['document']) in row for row in before_rows['mandate_document'])
+                assert any(str(ids['attachment']) in row for row in before_rows['attachment'])
+                assert any(levy['id'] in row for row in before_rows['special_levy'])
+                assert before_rows['special_levy_allocation']
+                storage_keys = connection.scalars(text('SELECT storage_uri FROM mandate_document UNION SELECT storage_uri FROM attachment')).all()
+                originals = {key: (tmp_path / key).read_bytes() for key in storage_keys if (tmp_path / key).is_file()}
+                assert b'%PDF-1.4 synthetic scoped mandate' in originals.values()
+                assert pdf in originals.values()
                 with pytest.raises(DBAPIError, match='Preserve classified mandate originals'):
                     with connection.begin_nested(), Operations.context(MigrationContext.configure(connection)):
                         migration.downgrade()
-                connection.execute(text('TRUNCATE mandate_document CASCADE'))
-                with Operations.context(MigrationContext.configure(connection)):
-                    migration.downgrade()
-                    migration.upgrade()
-                transaction.rollback()
+                assert rows() == before_rows
+                rehearsal = connection.begin_nested()
+                try:
+                    # Only this historical document family needs an empty
+                    # counterpart. Current attachments, levy rows and wrappers
+                    # stay populated throughout; never downgrade the tail.
+                    connection.execute(text('TRUNCATE mandate_document CASCADE'))
+                    with historical_financial_scope_lookup(connection), Operations.context(MigrationContext.configure(connection)):
+                        migration.downgrade()
+                        assert connection.scalar(text("SELECT count(*) FROM information_schema.columns WHERE table_name='mandate_document' AND column_name='accounting_scope_id'")) == 0
+                        migration.upgrade()
+                    for table in ('attachment', 'special_levy', 'special_levy_allocation'):
+                        assert rows()[table] == before_rows[table]
+                finally:
+                    rehearsal.rollback()
+                assert rows() == before_rows
+                assert security() == before_security
+                assert MigrationContext.configure(connection).get_current_heads() == heads
+                assert {key: (tmp_path / key).read_bytes() for key in originals} == originals
             assert await read_value('SELECT count(*) FROM mandate_document WHERE id=:document', ids) == 1
         finally:
             engine.dispose()

@@ -155,6 +155,24 @@ async def test_line_count_limit(bank_seed, bank_db, size):
 
 async def test_target_coherence_and_foreign_ids(bank_seed, bank_db, client_b_admin):
     api, ids = bank_seed
+
+    async def foreign_pages():
+        # Org B is session-scoped and can retain legitimate imports from other tests.
+        pages = []
+        for status in ('NEU', 'ALL'):
+            offset = 0
+            while True:
+                response = await client_b_admin.get(BASE, params={'status': status, 'offset': offset})
+                assert response.status_code == 200, response.text
+                page = response.json()
+                pages.append((status, page))
+                if page['next_offset'] is None:
+                    break
+                assert page['next_offset'] > offset
+                offset = page['next_offset']
+        return pages
+
+    before = await foreign_pages()
     tid = await transaction(bank_db, ids)
     for field in ('lease_agreement_id', 'tenant_profile_id'):
         body = split(ids)
@@ -166,7 +184,10 @@ async def test_target_coherence_and_foreign_ids(bank_seed, bank_db, client_b_adm
     assert (await client_b_admin.post(f'{BASE}/{tid}/assign', json=split(ids))).status_code == 404
     assert (await client_b_admin.post(f'{BASE}/{tid}/ignore')).status_code == 404
     assert (await listing(client_b_admin, ids)).status_code == 404
-    assert (await client_b_admin.get(BASE)).json()['items'] == []
+    after = await foreign_pages()
+    assert after == before
+    own_ids = {str(value) for value in ids.values() if isinstance(value, uuid.UUID)} | {str(tid)}
+    assert all(source_id not in str(after) for source_id in own_ids)
 
 
 async def test_reader_unauth_and_ignore(bank_seed, bank_db):

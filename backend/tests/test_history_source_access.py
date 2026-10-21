@@ -259,7 +259,8 @@ async def test_relationship_profile_cannot_reassign_its_person(seed_data,m3_seed
                 await db.execute(text(f'UPDATE {table} SET person_id=:person WHERE id=:id'),{'person':replacement,'id':profile})
 
 
-async def test_waiting_history_insert_cannot_activate_an_anonymized_person(client_a_admin,seed_data,m3_seed,monkeypatch):
+@pytest.mark.parametrize('first_gate', ['financial', 'acl'])
+async def test_waiting_history_insert_cannot_activate_an_anonymized_person(client_a_admin,seed_data,m3_seed,monkeypatch,first_gate):
     import asyncio
     from app.models.unit import Unit
     from app.services.dsgvo_service import DsgvoService
@@ -275,7 +276,10 @@ async def test_waiting_history_insert_cannot_activate_an_anonymized_person(clien
         db.add(unit)
         await db.flush()
         unit_id=unit.id
-    checked=asyncio.Event(); release=asyncio.Event(); history=uuid.uuid4()
+        assert await db.scalar(text('SELECT anonymized_at FROM person WHERE id=:id'),{'id':person}) is None
+    checked=asyncio.Event(); release=asyncio.Event(); acl_held=asyncio.Event(); release_acl=asyncio.Event()
+    history=uuid.uuid4()
+    pids={name:asyncio.get_running_loop().create_future() for name in ('eraser','writer','acl')}
     original=DsgvoService._gather_bindings
     async def hold_after_final_check(service,person_id,**kwargs):
         result=await original(service,person_id,**kwargs)
@@ -286,47 +290,90 @@ async def test_waiting_history_insert_cannot_activate_an_anonymized_person(clien
     async def erase():
         async with get_tenant_session(seed_data['org_a_id']) as db:
             await actor_session(db,seed_data['user_a_admin_id'])
+            pids['eraser'].set_result(await db.scalar(text('SELECT pg_backend_pid()')))
             await DsgvoService(db,seed_data['org_a_id'],seed_data['user_a_admin_id']).anonymize(person)
+    async def queue_acl_change():
+        async with get_tenant_session(seed_data['org_a_id']) as db:
+            pids['acl'].set_result(await db.scalar(text('SELECT pg_backend_pid()')))
+            await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
+                {'key':f"scope-acl:{seed_data['org_a_id']}"})
+            acl_held.set()
+            await release_acl.wait()
     async def activate():
         async with get_tenant_session(seed_data['org_a_id']) as db:
             await actor_session(db,seed_data['user_a_admin_id'])
             await db.execute(text("SET LOCAL application_name='hv-history-privacy-race'"))
             await db.execute(text("SET LOCAL lock_timeout='5s'"))
-            assert await db.scalar(text("SELECT property_financial_disclosure_access(:org,:property,'read')"),
-                {'org':seed_data['org_a_id'],'property':uuid.UUID(m3_seed['property'])})
-            assert await db.scalar(text('SELECT anonymized_at FROM person WHERE id=:id'),{'id':person}) is None
+            pids['writer'].set_result(await db.scalar(text('SELECT pg_backend_pid()')))
             await db.execute(text("INSERT INTO lease_agreement(id,organization_id,unit_id,tenant_profile_id,valid_from,base_rent,advance_payment,notes) VALUES(:id,:org,:unit,:profile,'2027-01-01',1,1,'Synthetic race')"),
                 {'id':history,'org':seed_data['org_a_id'],'unit':unit_id,'profile':profile})
-    eraser=None; writer=None
+    async def lock_present(db, pid, key, *, granted, mode='ExclusiveLock'):
+        return await db.scalar(text("""SELECT EXISTS(SELECT 1 FROM pg_locks
+            WHERE locktype='advisory' AND pid=:pid AND granted=:granted AND mode=:mode
+            AND classid=((hashtextextended(:key,0)>>32)&4294967295)::oid
+            AND objid=(hashtextextended(:key,0)&4294967295)::oid AND objsubid=1)"""),
+            {'pid':pid,'key':f"{key}:{seed_data['org_a_id']}",'granted':granted,'mode':mode})
+    async def wait_for_lock(db, pid, key, *, mode='ExclusiveLock'):
+        # pg_locks is live, unlike pg_stat_activity's transaction-cached snapshot.
+        # SQL awaits yield to the actual writer; no sleeps or timing assumptions.
+        async def observed():
+            while not await lock_present(db,pid,key,granted=False,mode=mode):
+                pass
+        await asyncio.wait_for(observed(),3)
+    tasks=[]
     try:
         await grant_property_contacts(client_a_admin,seed_data,m3_seed['property'])
         await grant(client_a_admin,seed_data,m3_seed['property'],caps=['read','prepare'])
         async with synthetic_enforcement(seed_data):
             try:
-                eraser=asyncio.create_task(erase())
+                eraser=asyncio.create_task(erase()); tasks.append(eraser)
                 await asyncio.wait_for(checked.wait(),3)
-                writer=asyncio.create_task(activate())
+                async with get_tenant_session(seed_data['org_a_id']) as observer:
+                    eraser_pid=await pids['eraser']
+                    assert await lock_present(observer,eraser_pid,'scope-acl',granted=True,mode='ShareLock')
+                    assert await lock_present(observer,eraser_pid,'financial-inputs',granted=True)
+                    if first_gate=='acl':
+                        tasks.append(asyncio.create_task(queue_acl_change()))
+                        acl_pid=await asyncio.wait_for(pids['acl'],3)
+                        await wait_for_lock(observer,acl_pid,'scope-acl')
+                    # Reproduce the old observer schedule before starting writer.
+                    await observer.execute(text('SELECT pid FROM pg_stat_activity'))
+                    writer=asyncio.create_task(activate()); tasks.append(writer)
+                    writer_pid=await asyncio.wait_for(pids['writer'],3)
+                    if first_gate=='financial':
+                        await wait_for_lock(observer,writer_pid,'financial-inputs')
+                        assert await lock_present(observer,writer_pid,'scope-acl',granted=True,mode='ShareLock')
+                        assert eraser_pid in await observer.scalar(text('SELECT pg_blocking_pids(:pid)'),{'pid':writer_pid})
+                        # The old polling assertion deterministically missed this
+                        # real wait after its first, too-early activity snapshot.
+                        assert not await observer.scalar(text("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='hv-history-privacy-race' AND wait_event='advisory')"))
+                        await observer.execute(text('SELECT pg_stat_clear_snapshot()'))
+                        assert await observer.scalar(text("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='hv-history-privacy-race' AND wait_event='advisory')"))
+                    else:
+                        await wait_for_lock(observer,writer_pid,'scope-acl',mode='ShareLock')
+                        assert not await lock_present(observer,writer_pid,'financial-inputs',granted=False)
+                        assert not await lock_present(observer,writer_pid,'financial-inputs',granted=True)
+                        assert acl_pid in await observer.scalar(text('SELECT pg_blocking_pids(:pid)'),{'pid':writer_pid})
+                    release.set()
+                    await asyncio.wait_for(eraser,3)
+                    if first_gate=='acl':
+                        await asyncio.wait_for(acl_held.wait(),3)
+                        assert await lock_present(observer,acl_pid,'scope-acl',granted=True)
+                        assert await lock_present(observer,writer_pid,'scope-acl',granted=False,mode='ShareLock')
+                        release_acl.set()
+                    with pytest.raises(DBAPIError) as denied:
+                        await asyncio.wait_for(writer,3)
+                    assert denied.value.orig.sqlstate=='42501'
                 async with get_tenant_session(seed_data['org_a_id']) as db:
-                    blocked=False
-                    for _ in range(60):
-                        blocked=await db.scalar(text("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='hv-history-privacy-race' AND wait_event='advisory')"))
-                        if blocked: break
-                        await asyncio.sleep(.02)
-                    assert blocked,'History writer must share the existing financial-inputs serialization'
-                release.set()
-                await asyncio.wait_for(eraser,3)
-                with pytest.raises(DBAPIError) as denied:
-                    await asyncio.wait_for(writer,3)
-                assert denied.value.orig.sqlstate=='42501'
+                    await actor_session(db,seed_data['user_a_admin_id'])
+                    assert await db.scalar(text('SELECT anonymized_at FROM person WHERE id=:id'),{'id':person}) is not None
+                from tests.test_scope_payment_reconciliation import read_value
+                assert await read_value('SELECT count(*) FROM lease_agreement WHERE id=:id',{'id':history})==0
             finally:
-                release.set()
-                pending=[task for task in (eraser,writer) if task is not None]
-                for task in pending:
+                release.set(); release_acl.set()
+                for task in tasks:
                     if not task.done(): task.cancel()
-                await asyncio.gather(*pending,return_exceptions=True)
+                await asyncio.gather(*tasks,return_exceptions=True)
     finally:
-        release.set()
-        if eraser is not None: await asyncio.gather(eraser,return_exceptions=True)
-        if writer is not None: await asyncio.gather(writer,return_exceptions=True)
         await mutate(text('DELETE FROM lease_agreement WHERE id=:id'),{'id':history})
         await clear_disclosure_grants()

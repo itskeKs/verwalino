@@ -14,3 +14,11 @@ it.each(["READ_ONLY", "CLERK", "OWNER_ADMIN"])("shows the active Berichte naviga
   expect(link).toHaveAttribute("href", "/berichte"); expect(link).toHaveAttribute("aria-current", "page");
   fireEvent.click(link); expect(onClose).toHaveBeenCalledTimes(1);
 });
+
+it.each(["READ_ONLY", "CLERK", "OWNER_ADMIN"])("shows active Aufgaben navigation for %s", role => {
+  const onClose = vi.fn();
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/aufgaben"]}><Sidebar open onClose={onClose} /></MemoryRouter></AuthCtx.Provider>);
+  const link = screen.getByRole("link", { name: "Aufgaben" });
+  expect(link).toHaveAttribute("href", "/aufgaben"); expect(link).toHaveAttribute("aria-current", "page");
+  fireEvent.click(link); expect(onClose).toHaveBeenCalledOnce();
+});

@@ -11,14 +11,40 @@ from __future__ import annotations
 from datetime import date
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.live_principal import require_live_principal
 from app.core.tenant import AuthContext, get_current_user, get_db
 from app.services.fristen_service import FristenService
 
 router = APIRouter(prefix="/api/fristen", tags=["fristen"])
+
+
+async def fristen_reader_db(
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db, scope='function'),
+):
+    await require_live_principal(db, auth, writer=False)
+    role = await db.scalar(text('SELECT scope_actor_role(:org)'), {'org': auth.organization_id})
+    if role not in {'OWNER_ADMIN', 'CLERK', 'READ_ONLY'}:
+        raise HTTPException(403, 'Organization member role required')
+    return db
+
+
+class FristenContextOut(BaseModel):
+    requires_accounting_scope: bool
+
+
+@router.get('/context', response_model=FristenContextOut)
+async def fristen_context(
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(fristen_reader_db),
+):
+    svc = FristenService(db, auth.organization_id, auth.user_id)
+    return FristenContextOut(requires_accounting_scope=await svc.requires_accounting_scope())
 
 
 class DeadlineItemOut(BaseModel):
@@ -37,7 +63,7 @@ async def list_fristen(
     reference_date: date | None = None,
     accounting_scope_id: uuid.UUID | None = None,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(fristen_reader_db),
 ):
     ref = reference_date or date.today()
     svc = FristenService(db, auth.organization_id, auth.user_id)

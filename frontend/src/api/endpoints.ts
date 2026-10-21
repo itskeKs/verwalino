@@ -3,7 +3,7 @@
  */
 
 import { api, uploadFormData } from "./client";
-import type { PropertyYearReport, PropertyYearReportQuery } from "./types";
+import type { Task, TaskInput, TaskFilters, TaskPage, User, PropertyYearReport, PropertyYearReportQuery } from "./types";
 
 import type { Attachment, AttachmentFilters, AttachmentPage, AttachmentUpload } from "./types";
 import type { SpecialLevy, SpecialLevyCreate } from "./types";
@@ -1209,4 +1209,45 @@ export function archiveAttachment(id: string, reason: string): Promise<Attachmen
 }
 export function attachmentDownloadUrl(id: string, inline = false): string {
   return `/api/attachments/${encodeURIComponent(id)}/download${inline ? "?inline=true" : ""}`;
+}
+
+// --- Aufgaben: explicit allowlists keep server-owned metadata out of writes. ---
+export function listTasks(filters: TaskFilters = {}): Promise<TaskPage> {
+  const query = new URLSearchParams();
+  for (const key of ["property_id", "unit_id", "lease_agreement_id", "assigned_user_id", "completed", "due_until", "offset", "limit"] as const) {
+    const value = filters[key];
+    if (value !== undefined) query.set(key, String(value));
+  }
+  return api.get(`/api/tasks${query.size ? `?${query}` : ""}`);
+}
+function taskBody(body: Partial<TaskInput>) {
+  return Object.fromEntries((["title", "note", "due_date", "completed", "assigned_user_id", "property_id", "unit_id", "lease_agreement_id"] as const)
+    .filter(key => body[key] !== undefined).map(key => [key, body[key]]));
+}
+export function getTask(id: string): Promise<Task> {
+  return api.get(`/api/tasks/${encodeURIComponent(id)}`);
+}
+export function createTask(body: TaskInput): Promise<Task> {
+  return api.post("/api/tasks", taskBody(body));
+}
+export function updateTask(id: string, body: Partial<TaskInput>): Promise<Task> {
+  return api.patch(`/api/tasks/${encodeURIComponent(id)}`, taskBody(body));
+}
+export function deleteTask(id: string): Promise<void> {
+  return api.delete(`/api/tasks/${encodeURIComponent(id)}`);
+}
+export async function listTaskAssignees(): Promise<User[]> {
+  const users: User[] = [];
+  let cursor: string | null = null;
+  do {
+    const query = new URLSearchParams({ eligible_for_scope: "true" });
+    if (cursor) query.set("cursor", cursor);
+    const page: { items: User[]; next_cursor: string | null } = await api.get(`/api/users/page?${query}`);
+    users.push(...page.items);
+    cursor = page.next_cursor;
+  } while (cursor);
+  return users;
+}
+export function getFristenContext(): Promise<{ requires_accounting_scope: boolean }> {
+  return api.get("/api/fristen/context");
 }

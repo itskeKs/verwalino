@@ -25,12 +25,7 @@ function CreateUserForm({ onSuccess }: { onSuccess: () => void }) {
       setEmail(""); setPassword(""); setDisplayName(""); setRole("CLERK");
       onSuccess();
     } catch (err: unknown) {
-      if (err instanceof Error && "response" in err) {
-        const body = (err as any).response?.data;
-        setError(typeof body?.detail === "string" ? body.detail : "Erstellung fehlgeschlagen");
-      } else {
-        setError(String(err));
-      }
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setCreating(false);
     }

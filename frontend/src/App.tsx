@@ -11,6 +11,7 @@ import { AuthProvider } from "./auth/AuthContext";
 import { useAuth } from "./auth/useAuth";
 import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
+import { TasksPage } from "./pages/TasksPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { MandatePage } from "./pages/MandatePage";
 import { DunningQuarantinePage } from "./pages/DunningQuarantinePage";
@@ -85,6 +86,7 @@ export function AppRoutes() {
     <AppShell>
       <Routes>
         <Route path="/" element={<DashboardPage />} />
+        <Route path="/aufgaben" element={<TasksPage />} />
         <Route path="/mandate" element={<MandatePage />} />
         <Route path="/mandate/:mandateId" element={<MandateDetailPage />} />
         <Route path="/objekte" element={<PropertiesPage />} />

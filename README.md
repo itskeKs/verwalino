@@ -258,6 +258,24 @@ Finanzkreis. OwnerAdmin/Clerk schreiben, Readonly liest, unbekannte Live-Rollen
 werden abgewiesen. Erfolgsantworten folgen erst nach dem Commit. Diese Aufgaben
 sind löschbare operative Daten, keine unveränderlichen Finanzoriginale.
 
+Unter **Aufgaben** (`/aufgaben`) lassen sich Aufgaben filtern, bearbeiten,
+erledigen, wieder öffnen und löschen. **Aufgabe anlegen** in Objekt und Einheit
+übernimmt den geladenen Kontext, speichert aber erst nach bewusster Bestätigung.
+Die Zuständigkeit wird aus tatsächlichen Organisationsmitgliedern ausgewählt;
+Readonly-Mitglieder sehen keine Schreibaktionen.
+
+Das Dashboard zeigt offene, datierte Aufgaben bis einschließlich sieben lokaler
+Kalendertage in die Zukunft, unabhängig von ihrer Zuständigkeit. Undatierte und
+später fällige Aufgaben bleiben in der Aufgabenliste verfügbar. **Erledigen**
+entfernt die Aufgabe erst nach erfolgreicher API-Antwort aus dem Widget.
+Aufgaben und Stammdaten bleiben unabhängig von finanziellen Fristen sichtbar.
+`GET /api/fristen/context` prüft nur, ob eine bewusste Abrechnungskreiswahl nötig
+ist; gebundene Finanzdaten werden davor weder als organisationsweite Fristen
+abgerufen noch als leere Übersicht dargestellt. Zugriffsfehler bleiben sichtbar.
+`scripts/acceptance/t42_tasks_browser.cjs` prüft echte Objekt-/Einheitsaufgaben,
+die morgen fällige Aufgabe samt Erledigen und Reload sowie die ausdrückliche
+Kreiswahl nach einer echten Kontoanlage.
+
 ## Zahlungs- und Kostenlisten als CSV (Phase 2)
 
 Beide Listen bieten **CSV herunterladen** mit denselben aktiven Filtern wie die

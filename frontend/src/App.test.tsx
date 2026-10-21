@@ -97,3 +97,17 @@ describe("special levy navigation", () => {
     expect(screen.getByRole("link", { name: "Sonderumlagen" })).toHaveAttribute("href", "/sonderumlagen");
   });
 });
+
+
+describe("task navigation", () => {
+  it.each(["READ_ONLY", "CLERK", "OWNER_ADMIN"])("opens Aufgaben for %s without finance scope", async role => {
+    vi.spyOn(endpoints, "listTasks").mockResolvedValue({ items: [], next_offset: null });
+    vi.spyOn(endpoints, "listProperties").mockResolvedValue([]);
+    vi.spyOn(endpoints, "listUnits").mockResolvedValue([]);
+    vi.spyOn(endpoints, "listLeases").mockResolvedValue([]);
+    vi.spyOn(endpoints, "listTaskAssignees").mockResolvedValue([]);
+    renderRoutes("/aufgaben", role);
+    expect(await screen.findByRole("heading", { name: "Aufgaben" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Aufgaben" })).toHaveAttribute("href", "/aufgaben");
+  });
+});

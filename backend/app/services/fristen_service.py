@@ -80,6 +80,24 @@ class FristenService:
         self._repo = FristenRepository(session, org_id)
         self._payments = PaymentRepository(session, org_id)
 
+    async def requires_accounting_scope(self) -> bool:
+        """Check monitor admission only, without loading financial report rows."""
+        sphere = await FinancialScopeService(
+            self._session, self._org_id, self._user_id
+        ).select_read_scope(None)
+        # An inherited database context is never an organization-wide legacy view.
+        if sphere is not None:
+            return True
+        try:
+            await self._repo.require_complete_overview()
+        except HTTPException as exc:
+            if exc.status_code != 409 or exc.detail != (
+                'The organization-wide deadline monitor is unavailable for classified financial data; a scoped view is required'
+            ):
+                raise
+            return True
+        return False
+
     async def build_monitor(self, reference_date: date, accounting_scope_id=None) -> list[DeadlineItem]:
         sphere = await FinancialScopeService(self._session, self._org_id, self._user_id).select_read_scope(accounting_scope_id)
         if sphere is None:

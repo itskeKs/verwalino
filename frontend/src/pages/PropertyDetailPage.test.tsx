@@ -65,3 +65,13 @@ it("T37 ignores a late property response after changing the route", async () => 
   expect(screen.getByRole("region", { name: "Dokumente" })).toHaveAttribute("data-property", "new-property");
   expect(screen.queryByRole("heading", { name: "Altes Haus" })).not.toBeInTheDocument();
 });
+
+it.each(["CLERK", "OWNER_ADMIN", "READ_ONLY", "UNKNOWN"])("T42 offers context task creation only to writers (%s), with loaded IDs", async role => {
+  vi.mocked(endpoints.getProperty).mockResolvedValue({ id: "loaded/p&1", name: "Loaded", management_type: "MIET", fiscal_year_start_month: 1 } as never);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/objekte/route-id"]}><Routes><Route path="/objekte/:propertyId" element={<PropertyDetailPage />} /></Routes></MemoryRouter></AuthCtx.Provider>);
+  await screen.findByRole("heading", { name: "Loaded" });
+  const link = screen.queryByRole("link", { name: "Aufgabe anlegen" });
+  if (role === "CLERK" || role === "OWNER_ADMIN") {
+    expect(link).toHaveAttribute("href", "/aufgaben?property_id=loaded%2Fp%261&create=1");
+  } else expect(link).toBeNull();
+});
