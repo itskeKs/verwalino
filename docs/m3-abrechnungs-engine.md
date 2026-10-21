@@ -383,6 +383,22 @@ Die **Gesamt-Nachzahlung** des Mieters ist `Σ(gerundete Mieteranteile aller Kos
 
 Phase 1 erstellt Heiz-/Warmwasser- und CO2-Werte **nicht** selbst (SDD §6.9, §7.1/§7.2): Der Messdienst liefert HeizkostenV-konforme per-Einheit-Werte; die CO2-Aufteilung (CO2KostAufG, 10-Stufen-Modell nach kg CO₂/m²·a) wird entweder **aus der externen Heizkostenabrechnung übernommen** oder aus eingegebenen Kennwerten berechnet. **Nur der Mieteranteil ist umlagefähig** (SDD §6.9). M2 hält dafür bereit: `tenant_apportionable = TEILWEISE_PRUEFEN` (CO2) bzw. `UMLAGEFAEHIG_EXTERN_PRUEFEN` (Heizung/Wasser), `tenant_distribution_key = EXTERNE_ABRECHNUNG`, und das Feld **`apportionable_tenant_amount`** (der explizit als Mieteranteil bestimmte Betrag).
 
+**Ergänzung T45 (reine Engine, BK-Anschluss erst T46):** `heizkosten.py` verteilt
+vorgegebene, nach §9 getrennte Heiz-/Warmwasserpools mit 50–70 % Verbrauchsanteil
+und 30–50 % Grundanteil. Für Heizung wird Fläche/beheizte Fläche/Rauminhalt
+explizit gewählt, Warmwasser nutzt Wohn-/Nutzfläche (§§7/8 HeizkostenV). Der
+bestätigte §7-Sondergebäudefall erzwingt 70 %. Kosten und Einheiten werden mit
+der vorhandenen Largest-Remainder-Funktion in stabiler UUID-Reihenfolge verteilt.
+Bei ausdrücklich nicht verbrauchsabhängiger Abrechnung (`consumption_recorded=False`)
+weist der TENANT-Kontext 15 % des jeweiligen betroffenen Nutzeranteils als
+Kürzung nach §12(1) aus (HALF_UP je Nutzer); Kürzung + Zahlbetrag = Bruttoanteil.
+Der Kürzungsbetrag wird nicht umgelegt. WEG_OWNER erhält diese Kürzung nicht.
+Einzelne fehlende Ablesungen, gemischte unvollständige Messdaten oder Nullnenner
+führen weiterhin zur Eskalation, nicht zu stiller Schätzung oder Nullverbrauch.
+Die Engine beurteilt keine §11-Ausnahmen, erfindet keine §9-Kostentrennung und
+berechnet keine zusätzlichen 3-%-Kürzungen. Bestehende Fremdabrechnungen und
+CO2-Abgrenzungen bleiben unverändert; T45 schaltet keinen UI-/PDF-Weg um.
+
 ### 5.2 Externe Heiz-/Wasserabrechnung (`EXTERNE_ABRECHNUNG`)
 
 Die Engine **verteilt nicht**, sondern übernimmt den **per-Einheit-Mieteranteil** direkt als Position der betreffenden Einheit (§2.5). Bei Mieterwechsel: pro Nutzzeitraum getrennte externe Werte (Zwischenablesung). In der BK-Zeile wird `note = "extern abgerechnet (Messdienst)"` und `distribution_key = EXTERNE_ABRECHNUNG` ausgewiesen (BGH: Hinweis auf externe Werte, SDD §11).

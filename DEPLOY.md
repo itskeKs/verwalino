@@ -41,6 +41,10 @@ external VPI service or new credentials. Entered receipt dates are operator data
 not delivery evidence; the calculation aid neither generates nor sends notices.
 The production gate and authorization boundary remain unchanged.
 
+T45 is a pure heating-cost allocation engine with separate heating/hot-water
+pools and explicit tenant/WEG-owner context. It adds no runtime configuration,
+schema migration or enabled BK/PDF integration; that connection is T46.
+
 `HV_DUNNING_BASE_INTEREST_RATE` is an optional decimal basis-rate default for
 new dunning notices, not an automatically maintained official rate. An explicit
 request can override or disable it; the notice freezes its rate, reference date,

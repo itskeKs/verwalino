@@ -579,3 +579,65 @@ class AssetReportResult:
     bank_balance_total: Decimal
     receivables_total: Decimal
     payables_total: Decimal
+
+
+# T45: already separated heating/hot-water pools; no meter estimation or ORM.
+@dataclass(frozen=True)
+class HeatingUnitInput:
+    unit_id: uuid.UUID
+    base_quantity: Decimal
+    consumption: Decimal | None
+
+
+@dataclass(frozen=True)
+class HeatingCostPoolInput:
+    """A §7 heating or §8 hot-water pool, delimited upstream under §9.
+
+    base_key describes the supplied quantities (AREA, HEATED_AREA, VOLUME).
+    consumption_recorded=False explicitly selects a non-consumption bill, not
+    an assumed estimate when just one reading is missing. Building conditions
+    for §7's mandatory 70% rule must be assessed upstream, not inferred here.
+    """
+    kind: str  # HEATING | HOT_WATER
+    total_amount: Decimal
+    consumption_fraction: Decimal
+    base_key: str
+    consumption_recorded: bool
+    mandatory_seventy_percent: bool
+    units: tuple[HeatingUnitInput, ...]
+
+
+@dataclass(frozen=True)
+class HeatingUnitResult:
+    unit_id: uuid.UUID
+    base_quantity: Decimal
+    consumption: Decimal | None
+    base_amount: Decimal
+    consumption_amount: Decimal
+    gross_amount: Decimal
+    reduction_amount: Decimal
+    amount_due: Decimal
+    reduction_reason: str | None
+
+
+@dataclass(frozen=True)
+class HeatingPoolResult:
+    kind: str
+    base_key: str
+    consumption_fraction: Decimal
+    consumption_recorded: bool
+    method: str  # CONSUMPTION | NON_CONSUMPTION
+    total_amount: Decimal
+    base_cost_total: Decimal
+    consumption_cost_total: Decimal
+    reduction_total: Decimal
+    amount_due: Decimal
+    rows: tuple[HeatingUnitResult, ...]
+
+
+@dataclass(frozen=True)
+class HeatingCostResult:
+    pools: tuple[HeatingPoolResult, ...]
+    gross_total: Decimal
+    reduction_total: Decimal
+    amount_due: Decimal

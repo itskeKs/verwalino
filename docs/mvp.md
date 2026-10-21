@@ -316,7 +316,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 
 ### Phase 3 – Parität und Komfort
 
-**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43–T44 abgeschlossen; nächste Aufgabe T45.** T10 bleibt offen.
+**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43–T45 abgeschlossen; nächste Aufgabe T46.** T10 bleibt offen.
 
 - [x] **T43 Staffelmiete** — Aus Start, Betrag oder Prozent, Intervall und Stufenzahl mehrere Mietänderungen (T23) anlegen.
   Dateien: `frontend/src/pages/UnitDetailPage.tsx`, `backend/app/api/leases.py`
@@ -326,9 +326,10 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
   Dateien: `backend/app/engine/index_rent.py` (neu), `backend/app/api/leases.py`, `frontend/src/pages/UnitDetailPage.tsx`
   Fertig, wenn: `uv run pytest tests/engine/test_index_rent.py` (neu) grün UND Ablauf in der App: „VPI 110→115 bei 600 € ergibt 627,27 €“.
   Umgesetzt: reine Decimal-Engine (18 Tests), Vorschau/Übernahme mit T23-Sperren und Live-/Quellenrechten (90 Mietänderungstests), 137 UI-Tests, Build und Gesamtlint grün. Echte UI-Abnahme: 600/150 EUR, VPI 110→115, 627,27 EUR ab 01.01.2027; Jahresgrenze 422, Vorschau schreibfrei, Eingabewechsel verwirft Vorschau, explizite Übernahme, Reload, Konflikt 409 und Smartphone-Dialog geprüft. § 557b BGB aus Primärquelle: Zugangsdatum nur Betreibereingabe, übernächster Monatsbeginn, keine Versand-/Zustellbehauptung; keine Migration.
-- [ ] **T45 HeizkostenV-Engine** — Grund-/Verbrauchsanteil 30–50/50–70 %, Warmwasser getrennt, 15 % Kürzung ohne Verbrauchserfassung (§ 12).
+- [x] **T45 HeizkostenV-Engine** — Grund-/Verbrauchsanteil 30–50/50–70 %, Warmwasser getrennt, 15 % Kürzung ohne Verbrauchserfassung (§ 12).
   Dateien: `backend/app/engine/heizkosten.py` (neu), `backend/app/engine/types.py`, `backend/tests/engine/test_heizkosten.py` (neu)
   Fertig, wenn: `uv run pytest tests/engine/test_heizkosten.py` grün.
+  Umgesetzt: getrennte Heiz-/Warmwasserpools, Decimal, 30–50/50–70 %, §7-Sonderfall 70 %, zentrale Centverteilung und explizite 15-%-Kürzung nur für betroffene nicht verbrauchsabhängige Mieterkosten (nicht WEG_OWNER). 40 Heizkostenfälle rot→grün, zusätzlich 30 bestehende Rundungs-/Golden-/Invariantenfälle grün. §§7/8/9/12 aus Primärquellen geprüft; keine stille Messwertschätzung oder erfundene Kostentrennung. Reine Engine ohne UI-/Downloadanforderung oder Migration; BK/PDF erst T46.
 - [ ] **T46 Heizkosten in der BK** — Schlüssel für Heizung nutzt T45 mit Zählerständen (T31), Eingaben in der Abrechnung.
   Dateien: `backend/app/services/settlement_service.py`, `backend/app/engine/settlement.py`, `frontend/src/pages/SettlementDetailPage.tsx`
   Fertig, wenn: `uv run pytest tests/test_m3_settlement.py -k heiz` grün UND Ablauf in der App: „PDF zeigt Grund- und Verbrauchsanteil“.

@@ -204,6 +204,35 @@ und korrekte VPI-Basis prüft der Betreiber. Das eingegebene Datum belegt keine
 Zustellung; die Funktion erstellt/versendet keine Erklärung. Keine Migration.
 `scripts/acceptance/t44_indexmiete_browser.cjs` prüft den echten UI-Ablauf.
 
+## HeizkostenV-Rechenengine (T45)
+
+`app.engine.heizkosten.calculate_heating_costs(pools, context=...)` verteilt
+getrennt festgelegte Heizungs- und Warmwasserkostenpools. Eingaben/Ergebnisse sind
+frozen Dataclasses aus `engine/types.py`; alle Beträge, Anteile und Messmengen
+sind Decimal. Verbrauchsquote 50–70 %, Grundquote 30–50 %; bei ausdrücklich
+angegebenem §7-Sondergebäudefall sind 70 % Verbrauch Pflicht. Heizungsgrundkosten
+nutzen die angegebene Fläche/beheizte Fläche/den Rauminhalt, Warmwassergrundkosten
+nur Wohn-/Nutzfläche. Die bestehende Largest-Remainder-Funktion teilt zunächst
+Grund-/Verbrauchskosten und danach jede Teilsumme centtreu auf stabile UUIDs auf.
+
+`consumption_recorded=False` kennzeichnet ausdrücklich eine nicht
+verbrauchsabhängige Abrechnung: der Pool wird nach der angegebenen Grundbasis
+verteilt, im Kontext `TENANT` wird je Nutzer der volle betroffene Kostenanteil
+um 15 % gekürzt (Cent-Rundung HALF_UP). Kürzung und Restbetrag werden getrennt
+ausgewiesen; kein Kürzungsbetrag wird auf andere Nutzer oder Warmwasserpools
+umverteilt. Im expliziten Kontext `WEG_OWNER` erfolgt diese Mieterkürzung nicht.
+Fehlende einzelne Werte, NaN/Infinity/Floats, negative Kosten/Mengen, doppelte
+Einheiten/Pools oder nicht tragfähige Nullbasen werden laut abgewiesen.
+
+Primärquellen: [§7](https://www.gesetze-im-internet.de/heizkostenv/__7.html),
+[§8](https://www.gesetze-im-internet.de/heizkostenv/__8.html),
+[§9](https://www.gesetze-im-internet.de/heizkostenv/__9.html) und
+[§12 HeizkostenV](https://www.gesetze-im-internet.de/heizkostenv/__12.html).
+Die Kostenabgrenzung verbundener Anlagen und Ausnahmevoraussetzungen werden
+vorgegeben, nicht aus angenommenen Brennstoffen/Temperaturen hergeleitet;
+keine §9a-Schätzung und keine zusätzlichen 3-%-Tatbestände. T45 ist die reine
+Engine; Einbindung in BK, Zählerdaten und PDF folgt separat unter T46.
+
 ## Kautionen (Phase 2)
 
 `/kautionen` zeigt je Vertrag das vereinbarte Soll aus `lease.deposit`, gebuchte

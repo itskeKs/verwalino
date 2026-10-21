@@ -433,6 +433,13 @@ der Basisrate. Die Übernahme rechnet erneut und vergleicht die Vorschau; veralt
 Werte liefern 409. Der T23-Schreibpfad und ein zusätzlicher Index-Audit erhalten
 Historie und Berechnungsgrundlagen, ohne neues Schema oder Versandbehauptung.
 
+T45 ergänzt `heizkosten.py` mit unveränderlichen Heiz-/Warmwasser-Ein-/Ausgaben
+in `engine/types.py`. Getrennte Kostenpools und explizite Grundbasen werden über
+zentrale Largest-Remainder-Rundung verteilt; Grund-, Verbrauchs-, Kürzungs- und
+Zahlbetrag bleiben separat nachvollziehbar. Der reine TENANT-/WEG_OWNER-Kontext
+verhindert die pauschale Anwendung des §12-Mieterkürzungsrechts auf WEG-Eigentümer.
+Keine ORM-/Schemaänderung; BK-/Zähler-/PDF-Anschluss folgt erst in T46.
+
 **`bank_account`** (SDD §6.3 — Vermögenstrennung): `organization_id`, Bezug auf `management_mandate`/`property`, `account_type` (laufend|Rücklage|Kaution), IBAN/Bank-Stammdaten. RLS aktiv. *(Implementierung erst ab M6; Modell-Anker in M1 vorbereiten, damit Mandat/Objekt-Bezug konsistent ist.)*
 
 **`meter` / `meter_reading`** (SDD §6.2.1): optionale Objekt-/Einheitszähler mit Ablesungen (`reading_date`, `value NUMERIC(14,4)`, `period`). RLS und explizite Org-Filter aktiv. Seit T29 bietet `/api/meters` GET/POST, `/{id}` GET/PATCH für Beschreibungsfelder und `/{id}/readings` GET/POST für unverändert erhaltene Ablesungen. Repository und API prüfen sichtbares Elternobjekt, Einheitskohärenz und bestehende Master-Lese-/Prepare-Rechte; keine nachträgliche Umhängung. Schreiboperationen halten Live-ACL-/Finanz-/Zeilensperren in dieser Reihenfolge und committen vor der Erfolgsantwort. Messwerte werden ohne Float oder Rundung validiert und als vierstellige Dezimalstrings ausgegeben. Seit T30 verwenden Objekt- und Einheitsdetail dasselbe `MeterPanel` mit festem Kontext und Rollenflag; String-/BigInt-Rechnung zeigt die Differenz der letzten zwei eindeutigen Tage, nicht bereits eine T31-Abrechnungsvorbelegung. Kontextwechsel entkoppeln verspätete Antworten, Schreibvorgänge sind synchron gegen Mehrfachauslösung gesperrt; Fehler behalten die Eingaben.
