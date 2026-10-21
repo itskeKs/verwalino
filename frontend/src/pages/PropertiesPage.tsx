@@ -126,6 +126,7 @@ export function PropertiesPage() {
             <label>
               Verwaltungsart *
               <select
+                aria-label="Verwaltungsart *"
                 value={form.management_type}
                 onChange={(e) => setForm({ ...form, management_type: e.target.value as ManagementType })}
               >

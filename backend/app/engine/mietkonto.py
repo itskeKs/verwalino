@@ -30,11 +30,10 @@ Three responsibilities, mirroring m6 section 2/3/6:
      paid_advances. Storno Variante A (section 6.6):
        derive_advance_total(payments, filter) -> Decimal
 
-Money is ALWAYS Decimal, never float (architecture.md I4, ADR-0005). All
-summation is over already-cent-exact amounts, so it never re-rounds (m6 §3.1);
-the ONE place a partial-month Soll is rounded routes through
-app.engine.rounding.distribute_amount (Largest-Remainder, ADR-0005), so a
-split month still sums EXACTLY to the full monthly amount over the year.
+Money is ALWAYS Decimal, never float (architecture.md I4, ADR-0005). Soll/Ist
+summation uses final cent amounts (m6 §3.1). Constant-rate partial months keep
+the Largest-Remainder split (ADR-0005). Effective-dated rates accumulate exact
+rate-days per month/component before a single final cent rounding.
 """
 
 from __future__ import annotations
@@ -95,6 +94,23 @@ def _month_bounds(year: int, month: int) -> tuple[date, date]:
 # Inputs (frozen copies; the service maps ORM rows to these at the read-edge).
 # ===========================================================================
 @dataclass(frozen=True)
+class RentChangeInput:
+    """Full monthly rates effective from valid_from (inclusive), without I/O."""
+
+    valid_from: date
+    base_rent: Decimal
+    advance_payment: Decimal
+
+    def __post_init__(self) -> None:
+        for name in ("base_rent", "advance_payment"):
+            value = getattr(self, name)
+            if not isinstance(value, Decimal):
+                raise TypeError(f"{name} must be Decimal")
+            if not value.is_finite() or value < 0 or value % CENT != 0:
+                raise ValueError(f"{name} must be finite, non-negative and cent-exact")
+
+
+@dataclass(frozen=True)
 class LeaseChargeInput:
     """Frozen copy of a lease_agreement row for Soll generation (m6 section 2.1).
 
@@ -108,6 +124,7 @@ class LeaseChargeInput:
     valid_to: date | None
     base_rent: Decimal
     advance_payment: Decimal
+    rent_changes: tuple[RentChangeInput, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -152,6 +169,25 @@ class PaymentInput:
         return self.amount if self.direction == "IN" else -self.amount
 
 
+@dataclass(frozen=True)
+class DepositResult:
+    """Contractual deposit and active lifetime receipts/refunds, separate from rent."""
+
+    expected_amount: Decimal
+    paid_amount: Decimal
+    refunded_amount: Decimal
+    held_amount: Decimal
+
+
+def deposit_statement(expected_amount: Decimal, payments: list[PaymentInput]) -> DepositResult:
+    """Summarize one lease's deposit without interest or repayment assumptions."""
+    active = [p for p in payments if p.payment_type == PT_KAUTION
+              and p.is_booked and not p.is_reversed and not p.is_reversal]
+    paid = sum((p.amount for p in active if p.direction == "IN"), Decimal("0.00"))
+    refunded = sum((p.amount for p in active if p.direction == "OUT"), Decimal("0.00"))
+    return DepositResult(_money(expected_amount), _money(paid), _money(refunded), _money(paid - refunded))
+
+
 # ===========================================================================
 # Soll (expected charges) -- DERIVED, monthly scale, tag-exact partial months.
 # ===========================================================================
@@ -174,6 +210,17 @@ class ExpectedCharge:
     owner_profile_id: uuid.UUID | None = None
     days_occupied: int | None = None
     days_in_month: int | None = None
+    due_date: date | None = None
+
+
+def special_levy_expected_charges(
+    allocations: list[tuple[date, Decimal]], owner_profile_id: uuid.UUID,
+    period_start: date, period_end: date,
+) -> list[ExpectedCharge]:
+    """Frozen one-off obligations, in their due month, without daily proration."""
+    return [ExpectedCharge(period_year=due.year, period_month=due.month,
+        payment_type="SONDERZAHLUNG", amount=amount, owner_profile_id=owner_profile_id, due_date=due)
+        for due, amount in allocations if period_start <= due <= period_end]
 
 
 def _split_partial_month(monthly_amount: Decimal, days_occupied: int, days_in_month: int) -> Decimal:
@@ -200,6 +247,15 @@ def _split_partial_month(monthly_amount: Decimal, days_occupied: int, days_in_mo
     return occupied_share
 
 
+def _sum_rate_segments(segments: list[tuple[Decimal, int]], days_in_month: int) -> Decimal:
+    """Round once after summing rate-days; preserve constant-rate day splits."""
+    first_rate = segments[0][0]
+    if all(rate == first_rate for rate, _days in segments):
+        return _split_partial_month(first_rate, sum(days for _rate, days in segments), days_in_month)
+    numerator = sum((rate * days for rate, days in segments), Decimal(0))
+    return _money(numerator / Decimal(days_in_month))
+
+
 def tenant_expected_charges(
     lease: LeaseChargeInput,
     period_start: date,
@@ -213,8 +269,17 @@ def tenant_expected_charges(
     yields no charge. A month the lease only partially covers is tag-exact
     (section 2.1, provisional assumption F6-4: tagegenau, consistent with M3).
 
+    Rent changes are full rates effective on their date (inclusive), regardless
+    of input order. Base rates apply before the first change. Each component's
+    rate-days are summed before its single monthly rounding.
+
     Deterministic order: chronological months, KALTMIETE before NK per month.
     """
+    changes = sorted(lease.rent_changes, key=lambda change: change.valid_from)
+    for previous, current in zip(changes, changes[1:]):
+        if previous.valid_from == current.valid_from:
+            raise ValueError(f"Duplicate rent change date: {current.valid_from}")
+
     charges: list[ExpectedCharge] = []
     lease_end = lease.valid_to  # tag-inclusive; None = open-ended
     for year, month in _months_in_period(period_start, period_end):
@@ -227,8 +292,27 @@ def tenant_expected_charges(
         if days_occupied <= 0:
             continue
         days_in_month = day_count(m_first, m_last)
-        rent = _split_partial_month(lease.base_rent, days_occupied, days_in_month)
-        nk = _split_partial_month(lease.advance_payment, days_occupied, days_in_month)
+        rate = lease
+        segment_start = occ_start
+        rent_segments: list[tuple[Decimal, int]] = []
+        nk_segments: list[tuple[Decimal, int]] = []
+        for change in changes:
+            if change.valid_from <= occ_start:
+                rate = change
+                continue
+            if change.valid_from > occ_end:
+                break
+            # The previous rate ends immediately before the change's first day.
+            days = change.valid_from.toordinal() - segment_start.toordinal()
+            rent_segments.append((rate.base_rent, days))
+            nk_segments.append((rate.advance_payment, days))
+            segment_start = change.valid_from
+            rate = change
+        days = day_count(segment_start, occ_end)
+        rent_segments.append((rate.base_rent, days))
+        nk_segments.append((rate.advance_payment, days))
+        rent = _sum_rate_segments(rent_segments, days_in_month)
+        nk = _sum_rate_segments(nk_segments, days_in_month)
         charges.append(
             ExpectedCharge(
                 period_year=year,
@@ -302,7 +386,7 @@ def owner_expected_charges(
 # ===========================================================================
 @dataclass(frozen=True)
 class OpenItem:
-    """The DERIVED saldo view per (period, type) -- m6 section 1.4 / 3.
+    """The DERIVED saldo per (period, type, optional due date) -- m6 section 1.4 / 3.
 
     open = Soll - zugeordnetes Ist.
       open > 0 -> Rueckstand (owes); open < 0 -> Guthaben; 0 -> ausgeglichen.
@@ -315,6 +399,7 @@ class OpenItem:
     soll: Decimal
     ist: Decimal
     open_amount: Decimal  # soll - ist
+    due_date: date | None = None
 
     @property
     def is_arrears(self) -> bool:
@@ -329,8 +414,9 @@ class OpenItem:
 class MietkontoResult:
     """Soll/Ist/Saldo over a period (m6 section 3.1).
 
-    `open_items` is one row per (period_year, period_month, payment_type) for
-    which there is a Soll or an Ist. Totals are cent-exact sums (no re-round).
+    `open_items` is one row per (period_year, period_month, payment_type), with
+    separate due dates for frozen one-off obligations. Totals are cent-exact
+    sums (no re-round).
     `balance` = soll_total - ist_total (>0 = owes; <0 = overpaid/credit).
     """
 
@@ -356,13 +442,19 @@ def account_statement(
     payment_type). A payment with period_month=None groups under that type for
     the (year, None) bucket (a Pauschalzahlung for the whole period).
 
-    Deterministic order: by (year, month-or-0, payment_type).
+    Dated one-off charges retain their due dates; each monthly payment bucket
+    is applied once, oldest due first. Recurring monthly charges are unchanged.
+    Deterministic order: by (year, month-or-0, payment_type, due_date).
     """
     # Aggregate Soll per key.
     soll_by_key: dict[tuple[int | None, int | None, str], Decimal] = {}
+    dated_soll: dict[tuple[int | None, int | None, str], dict[date, Decimal]] = {}
     for c in expected_charges:
         key = (c.period_year, c.period_month, c.payment_type)
         soll_by_key[key] = soll_by_key.get(key, Decimal("0.00")) + _money(c.amount)
+        if c.due_date is not None:
+            dates = dated_soll.setdefault(key, {})
+            dates[c.due_date] = dates.get(c.due_date, Decimal("0.00")) + _money(c.amount)
 
     # Aggregate Ist per key (booked, not reversed, not a reversal-of -> net).
     ist_by_key: dict[tuple[int | None, int | None, str], Decimal] = {}
@@ -381,16 +473,26 @@ def account_statement(
         ist = _money(ist_by_key.get(key, Decimal("0.00")))
         soll_total += soll
         ist_total += ist
-        items.append(
-            OpenItem(
-                period_year=key[0],
-                period_month=key[1],
-                payment_type=key[2],
-                soll=soll,
-                ist=ist,
-                open_amount=_money(soll - ist),
-            )
-        )
+        dates = dated_soll.get(key)
+        if dates:
+            # Payments have a month, not a levy ID: consume that month's money
+            # oldest due first, exactly once. Future levies must not accelerate
+            # arrears, and surplus credit remains on the last dated position.
+            remaining = ist
+            dated_amounts = sorted(dates.items())
+            undated = soll - sum(dates.values(), Decimal("0.00"))
+            if undated:
+                fallback = date(key[0], key[1] or 1, 1)
+                dates = {**dates, fallback: dates.get(fallback, Decimal("0.00")) + undated}
+                dated_amounts = sorted(dates.items())
+            for index, (due, amount) in enumerate(dated_amounts):
+                paid = remaining if index == len(dated_amounts) - 1 else min(remaining, amount)
+                remaining -= paid
+                items.append(OpenItem(period_year=key[0], period_month=key[1], payment_type=key[2],
+                    soll=amount, ist=paid, open_amount=_money(amount - paid), due_date=due))
+        else:
+            items.append(OpenItem(period_year=key[0], period_month=key[1], payment_type=key[2],
+                soll=soll, ist=ist, open_amount=_money(soll - ist)))
     return MietkontoResult(
         open_items=tuple(items),
         soll_total=_money(soll_total),

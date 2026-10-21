@@ -512,6 +512,10 @@ export interface OwnershipRecord {
   mea_share: string | null;
 }
 
+export interface OwnershipEndRequest {
+  valid_to: string;
+}
+
 export interface OwnershipCreate {
   unit_id: string;
   owner_profile_id: string;
@@ -530,6 +534,21 @@ export interface LeaseRecord {
   advance_payment: string;
   deposit: string | null;
   notes: string;
+}
+
+export interface LeaseRentChange {
+  id: string;
+  lease_agreement_id: string;
+  valid_from: string;
+  base_rent: string;
+  advance_payment: string;
+  created_at: string;
+}
+
+export interface LeaseRentChangeCreate {
+  valid_from: string;
+  base_rent: string;
+  advance_payment: string;
 }
 
 export interface LeaseCreate {
@@ -751,6 +770,19 @@ export interface SettlementRun {
   lines: SettlementLine[];
 }
 
+export interface AdvanceProposal {
+  lease_agreement_id: string;
+  tenant_cost: string;
+  months: string;
+  monthly_amount: string;
+  period_start: string;
+  period_end: string;
+}
+
+export interface AdvanceProposalApply {
+  valid_from: string;
+}
+
 export interface SettlementRunCreate {
   accounting_scope_id?: string | null;
   property_id: string;
@@ -759,6 +791,18 @@ export interface SettlementRunCreate {
   period_end: string;
   advance_payments_total?: string | null;
   management_mandate_id?: string | null;
+}
+
+export interface SettlementBatchCreate {
+  property_id: string;
+  period_start: string;
+  period_end: string;
+  accounting_scope_id?: string | null;
+}
+
+export interface SettlementBatchResult {
+  created: SettlementRun[];
+  skipped: { lease_agreement_id: string; settlement_run_id: string }[];
 }
 
 export interface AdvancePaymentsUpdate {
@@ -880,6 +924,98 @@ export interface BankAccountCreate {
   bank_name?: string | null;
 }
 
+export type BankTransactionStatus = "NEU" | "ZUGEORDNET" | "IGNORIERT";
+
+export interface BankTransaction {
+  id: string;
+  bank_account_id: string;
+  booking_date: string;
+  value_date: string;
+  amount: string;
+  counterparty_name: string | null;
+  counterparty_iban: string | null;
+  purpose: string | null;
+  status: BankTransactionStatus;
+}
+
+export interface BankTransactionPage {
+  items: BankTransaction[];
+  next_offset: number | null;
+}
+
+export interface BankAssignmentLine {
+  payment_type: PaymentType | "NACHZAHLUNG";
+  amount: string;
+  period_year: number;
+  period_month: number;
+  lease_agreement_id?: string;
+  tenant_profile_id?: string;
+  owner_profile_id?: string;
+  note?: string;
+}
+
+export interface BankMatchLine extends Omit<BankAssignmentLine, "amount" | "lease_agreement_id" | "tenant_profile_id" | "owner_profile_id"> {
+  amount: string | null;
+  open_amount: string;
+  lease_agreement_id?: string | null;
+  tenant_profile_id?: string | null;
+  owner_profile_id?: string | null;
+}
+
+export interface BankMatchSuggestion {
+  target_name: string;
+  confidence: "HIGH" | "MEDIUM" | "LOW";
+  lines: BankMatchLine[];
+  reasons: string[];
+  requires_review: boolean;
+  unallocated_amount: string;
+}
+
+export interface BankTransactionWithSuggestions extends BankTransaction {
+  suggestions: BankMatchSuggestion[];
+}
+
+export interface BankMatchingPage {
+  items: BankTransactionWithSuggestions[];
+  next_offset: number | null;
+}
+
+export interface BankAssignmentResult {
+  id: string;
+  status: "ZUGEORDNET";
+  payments: (Payment & { bank_transaction_id: string })[];
+}
+
+export interface BankImportResult {
+  count: number;
+  new_count: number;
+  duplicate_count: number;
+  imported_count: number;
+  total_amount: string;
+  new_total_amount: string;
+  date_from: string | null;
+  date_to: string | null;
+  transactions: (Omit<BankTransaction, "id" | "bank_account_id" | "status"> & {
+    import_hash: string;
+    is_duplicate: boolean;
+  })[];
+  preview_truncated: boolean;
+}
+
+export interface DepositAccount {
+  lease_agreement_id: string;
+  tenant_profile_id: string;
+  unit_id: string;
+  property_id: string;
+  tenant_name: string;
+  unit_label: string;
+  property_name: string;
+  expected_amount: string;
+  paid_amount: string;
+  refunded_amount: string;
+  held_amount: string;
+}
+
 // --- M6 Payments ---
 
 export type PaymentDirection = "IN" | "OUT";
@@ -980,12 +1116,33 @@ export interface DunningNotice {
   due_date: string;
   principal_amount: string;
   fee_amount: string;
+  interest_amount: string;
+  interest_snapshot: DunningInterestSnapshot | null;
   total_amount: string;
   included_items: DunningIncludedItem[] | null;
   status: DunningStatus;
   issued_at: string | null;
   issued_by: string | null;
   note: string | null;
+}
+
+export interface DunningSettings {
+  base_interest_rate: string | null;
+}
+
+export interface DunningInterestSnapshot {
+  base_interest_rate: string;
+  annual_rate: string;
+  reference_date: string;
+  items: {
+    payment_type: string;
+    period_year: number | null;
+    period_month: number | null;
+    due_date: string;
+    days: number;
+    principal: string;
+    interest: string;
+  }[];
 }
 
 export interface DunningIncludedItem {
@@ -998,6 +1155,7 @@ export interface DunningIncludedItem {
 }
 
 export interface DunningCreateTenant {
+  base_interest_rate?: string | null;
   accounting_scope_id?: string | null;
   tenant_profile_id: string;
   lease_agreement_id: string;
@@ -1009,6 +1167,7 @@ export interface DunningCreateTenant {
 }
 
 export interface DunningCreateOwner {
+  base_interest_rate?: string | null;
   accounting_scope_id?: string | null;
   owner_profile_id: string;
   period_start: string;
@@ -1114,6 +1273,7 @@ export interface Meeting {
   status: MeetingStatus;
   invitation_text: string | null;
   protocol_text: string | null;
+  invitation_short_notice?: boolean;
 }
 
 export interface MeetingCreate {
@@ -1331,3 +1491,183 @@ export interface AccessPreparation {
     mandate_originals_without_scope: number;
   };
 }
+
+export interface Meter {
+  id: string;
+  organization_id: string;
+  property_id: string;
+  unit_id: string | null;
+  meter_number: string;
+  meter_type: string;
+  location: string;
+}
+export interface MeterCreate {
+  property_id: string;
+  unit_id?: string | null;
+  meter_number: string;
+  meter_type: string;
+  location?: string;
+}
+export interface MeterPatch {
+  meter_number?: string;
+  meter_type?: string;
+  location?: string;
+}
+export interface MeterReading {
+  id: string;
+  meter_id: string;
+  reading_date: string;
+  value: string;
+  period: string | null;
+}
+export interface MeterReadingCreate {
+  reading_date: string;
+  value: string;
+  period?: string | null;
+}
+
+export interface ConsumptionReading {
+  id: string;
+  reading_date: string;
+  value: string;
+}
+export interface ConsumptionSuggestion {
+  unit_id: string;
+  unit_label: string;
+  consumption: string | null;
+  meter_id: string | null;
+  start_reading: ConsumptionReading | null;
+  end_reading: ConsumptionReading | null;
+  reason: string | null;
+}
+
+export interface PropertyYearReportQuery {
+  property_id: string;
+  year: number;
+  accounting_scope_id?: string;
+}
+
+export interface PropertyYearReport {
+  property_id: string;
+  property_name: string;
+  year: number;
+  period_start: string;
+  period_end: string;
+  accounting_scope_id: string | null;
+  income_date_basis: "value_date";
+  expense_date_basis: "invoice_date";
+  income: { payment_type: string; amount: string }[];
+  expenses: {
+    category_id: string;
+    category_code: string;
+    category_name: string;
+    tenant_apportionability: string;
+    amount: string;
+  }[];
+  income_total: string;
+  expense_total: string;
+  balance: string;
+  footnote: string;
+}
+
+export interface SpecialLevyAllocation {
+  owner_profile_id: string;
+  unit_id: string;
+  mea: string;
+  amount: string;
+}
+
+export interface SpecialLevyCreate {
+  property_id: string;
+  accounting_scope_id: string;
+  amount: string;
+  due_date: string;
+  resolution_id?: string | null;
+}
+
+export interface SpecialLevy extends SpecialLevyCreate {
+  id: string;
+  resolution_id: string | null;
+  allocations: SpecialLevyAllocation[];
+}
+
+// Retained originals; no storage locations are exposed by this API.
+export interface Attachment {
+  id: string;
+  property_id: string;
+  unit_id: string | null;
+  lease_agreement_id: string | null;
+  person_id: string | null;
+  title: string;
+  original_filename: string;
+  mime_type: string;
+  content_byte_size: number;
+  content_sha256: string;
+  uploaded_by: string;
+  created_at: string;
+  archived_at: string | null;
+  archived_by: string | null;
+  archive_reason: string | null;
+}
+export interface AttachmentPage {
+  items: Attachment[];
+  next_offset: number | null;
+}
+export interface AttachmentFilters {
+  property_id?: string;
+  unit_id?: string;
+  lease_agreement_id?: string;
+  person_id?: string;
+  include_archived?: boolean;
+  offset?: number;
+  limit?: number;
+}
+export interface AttachmentUpload {
+  property_id: string;
+  title?: string;
+  unit_id?: string;
+  lease_agreement_id?: string;
+  person_id?: string;
+}
+
+// --- Aufgaben ---
+export interface Task {
+  id: string;
+  organization_id: string;
+  created_by: string;
+  assigned_user_id: string;
+  property_id: string | null;
+  unit_id: string | null;
+  lease_agreement_id: string | null;
+  title: string;
+  note: string;
+  due_date: string | null;
+  completed: boolean;
+  created_at: string;
+  updated_at: string;
+  property_name: string | null;
+  unit_number: string | null;
+  lease_label: string | null;
+  assigned_user_name: string | null;
+}
+export interface TaskInput {
+  title: string;
+  note?: string;
+  due_date?: string | null;
+  completed?: boolean;
+  assigned_user_id?: string;
+  property_id?: string | null;
+  unit_id?: string | null;
+  lease_agreement_id?: string | null;
+}
+export interface TaskFilters {
+  property_id?: string;
+  unit_id?: string;
+  lease_agreement_id?: string;
+  assigned_user_id?: string;
+  completed?: boolean;
+  due_until?: string;
+  offset?: number;
+  limit?: number;
+}
+export interface TaskPage { items: Task[]; next_offset: number | null }

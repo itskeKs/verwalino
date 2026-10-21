@@ -94,7 +94,9 @@ export function InvoiceDocumentsPage() {
           Felder für einen Entwurf. Sie prüfen und speichern die Kostenposition anschließend.
         </p>
         <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+          <label htmlFor="invoice-document-file">Belegdatei</label>
           <input
+            id="invoice-document-file"
             ref={fileRef}
             type="file"
             accept="application/pdf,application/xml,text/xml"

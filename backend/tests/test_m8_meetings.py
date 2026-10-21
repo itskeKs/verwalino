@@ -794,3 +794,282 @@ class TestRegisterEntryGrants:
         assert "SELECT" in privileges
         assert "INSERT" in privileges
         assert "UPDATE" in privileges
+
+
+@pytest.mark.asyncio
+async def test_invitation_empty_roster(client_a_admin, m8_seed):
+    created = await client_a_admin.post('/api/meetings', json={
+        'property_id': str(m8_seed['prop_m8']), 'meeting_date': '2026-12-01',
+        'meeting_type': 'ORDENTLICH', 'location': 'Berlin',
+    })
+    assert created.status_code == 201
+    response = await client_a_admin.get(f"/api/meetings/{created.json()['id']}/invitation.pdf")
+    assert response.status_code == 422, response.text
+
+
+@pytest.fixture
+async def invitation_data(client_a_admin, m8_seed):
+    from datetime import timedelta
+
+    async def create(path, body):
+        result = await client_a_admin.post(path, json=body)
+        assert result.status_code == 201, result.text
+        return result.json()
+
+    prop = await create('/api/properties', {'name': 'Einladungs-WEG', 'management_type': 'WEG',
+                        'street': 'Objektweg 1', 'zip_code': '10115', 'city': 'Berlin'})
+    units = [await create('/api/units', {'property_id': prop['id'], 'number': str(i),
+                                       'usage_type': 'WOHNUNG'}) for i in (1, 2)]
+    meeting_day = date.today() + timedelta(days=20)
+    people = [await create('/api/persons', {'first_name': first, 'last_name': last,
+              'street': street, 'zip_code': '10115', 'city': 'Berlin'})
+              for first, last, street in [('Anna', 'Eigentümer', 'Annaweg 4'),
+                                         ('Berta', 'Miteigentümer', 'Bertastr. 7'),
+                                         ('Alt', 'Ausgeschieden', 'Altweg 1'),
+                                         ('Neu', 'Zukünftig', 'Neuweg 2')]]
+    owners = [await create('/api/owner-profiles', {'person_id': person['id']}) for person in people]
+    for unit, owner, start, end in [
+        (units[0], owners[0], date(2020, 1, 1), None),
+        (units[1], owners[0], date(2020, 1, 1), None),
+        (units[0], owners[1], meeting_day, None),
+        (units[1], owners[2], date(2020, 1, 1), meeting_day - timedelta(days=1)),
+        (units[1], owners[3], meeting_day + timedelta(days=2), None),
+    ]:
+        await create('/api/ownership', {'unit_id': unit['id'], 'owner_profile_id': owner['id'],
+                    'valid_from': start.isoformat(), 'valid_to': end.isoformat() if end else None})
+    meeting = await create('/api/meetings', {'property_id': prop['id'],
+                'meeting_date': meeting_day.isoformat(), 'meeting_type': 'ORDENTLICH',
+                'location': 'Sitzungssaal Berlin', 'invitation_text': 'Sehr geehrte Eigentümer,\nwir laden Sie herzlich ein.'})
+    for title in ('Eröffnung', 'Jahresabrechnung', 'Verschiedenes'):
+        await create(f"/api/meetings/{meeting['id']}/agenda", {'meeting_id': meeting['id'],
+                    'title': title, 'description': 'Beratung und Beschlussfassung'})
+    return {'meeting': meeting, 'property': prop, 'people': people, 'owners': owners, 'units': units}
+
+
+def invitation_pages(response):
+    from io import BytesIO
+    import pdfplumber
+
+    assert response.status_code == 200, response.text if response.status_code != 200 else ''
+    assert response.headers['content-type'] == 'application/pdf'
+    assert response.content.startswith(b'%PDF')
+    with pdfplumber.open(BytesIO(response.content)) as document:
+        return [page.extract_text() for page in document.pages]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('days, warning', [(20, True), (21, False)])
+async def test_invitation_real_pdf_roster_dates_agenda_and_no_mutation(client_a_admin, invitation_data, days, warning):
+    from datetime import timedelta
+    data = invitation_data
+    mid = data['meeting']['id']
+    day = date.today() + timedelta(days=days)
+    assert (await client_a_admin.put(f'/api/meetings/{mid}', json={'meeting_date': day.isoformat()})).status_code == 200
+    paths = [f'/api/meetings/{mid}', f'/api/meetings/{mid}/agenda', f'/api/meetings/{mid}/resolutions',
+             *[f"/api/ownership?unit_id={unit['id']}" for unit in data['units']],
+             *[f"/api/persons/{person['id']}" for person in data['people']]]
+    before = [(await client_a_admin.get(path)).json() for path in paths]
+    pages = invitation_pages(await client_a_admin.get(f'/api/meetings/{mid}/invitation.pdf'))
+    assert len(pages) == 2  # duplicate units deduplicated; co-owners separate
+    assert sum('Anna Eigentümer' in page for page in pages) == 1
+    assert sum('Berta Miteigentümer' in page for page in pages) == 1
+    for page in pages:
+        assert ('Annaweg 4' in page) != ('Bertastr. 7' in page)
+        assert '10115 Berlin' in page
+        assert day.strftime('%d.%m.%Y') in page
+        assert 'Sitzungssaal Berlin' in page
+        assert 'wir laden Sie herzlich ein.' in page
+        assert page.index('TOP 1: Eröffnung') < page.index('TOP 2: Jahresabrechnung') < page.index('TOP 3: Verschiedenes')
+        assert ('§ 24 Abs. 4 WEG' in page) == warning
+        assert 'Ausgeschieden' not in page and 'Zukünftig' not in page
+        assert mid not in page
+    assert [(await client_a_admin.get(path)).json() for path in paths] == before
+
+
+@pytest.mark.asyncio
+async def test_invitation_missing_postal_data_fails_clearly(client_a_admin, invitation_data):
+    data = invitation_data
+    assert (await client_a_admin.put(f"/api/persons/{data['people'][1]['id']}", json={'street': ''})).status_code == 200
+    result = await client_a_admin.get(f"/api/meetings/{data['meeting']['id']}/invitation.pdf")
+    assert result.status_code == 422
+    assert 'Postanschrift' in result.json()['detail']
+
+
+@pytest.mark.asyncio
+async def test_invitation_overflow_fails_without_truncation(client_a_admin, invitation_data):
+    mid = invitation_data['meeting']['id']
+    assert (await client_a_admin.put(f'/api/meetings/{mid}', json={'invitation_text': 'Vollständiger Inhalt\n' * 200})).status_code == 200
+    result = await client_a_admin.get(f'/api/meetings/{mid}/invitation.pdf')
+    assert result.status_code == 422
+    assert 'eine Seite' in result.json()['detail']
+
+
+@pytest.mark.asyncio
+async def test_invitation_foreign_missing_and_unauthenticated(client_b_admin, client_a_admin, client_unauth, invitation_data):
+    path = f"/api/meetings/{invitation_data['meeting']['id']}/invitation.pdf"
+    assert (await client_b_admin.get(path)).status_code == 404
+    assert (await client_a_admin.get(f'/api/meetings/{uuid.uuid4()}/invitation.pdf')).status_code == 404
+    assert (await client_unauth.get(path)).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_invitation_escapes_all_untrusted_content_and_no_image_fetch(client_a_admin, invitation_data, monkeypatch):
+    import app.services.meeting_pdf as module
+    original = module.render_pdf
+    captured = []
+    malicious = '<img src="https://untrusted.invalid/image"><script>alert(1)</script>'
+    mid = invitation_data['meeting']['id']
+    assert (await client_a_admin.put(f'/api/meetings/{mid}', json={'invitation_text': malicious, 'location': malicious})).status_code == 200
+    assert (await client_a_admin.put(f"/api/persons/{invitation_data['people'][0]['id']}", json={'street': malicious})).status_code == 200
+    agenda = (await client_a_admin.get(f'/api/meetings/{mid}/agenda')).json()[0]
+    assert (await client_a_admin.put(f"/api/meetings/agenda/{agenda['id']}", json={'title': malicious, 'description': malicious})).status_code == 200
+
+    def render(markup):
+        captured.append(markup)
+        assert '<img' not in markup and '<script' not in markup
+        assert '&lt;img' in markup and '&lt;script&gt;' in markup
+        return original(markup)
+
+    monkeypatch.setattr(module, 'render_pdf', render)
+    pages = invitation_pages(await client_a_admin.get(f'/api/meetings/{mid}/invitation.pdf'))
+    assert len(pages) == 2 and len(captured) == 1
+    assert all('alert(1)' in page for page in pages)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('property_caps,contact_caps,actor,expected', [
+    (['read'], ['read', 'export'], 'admin', 404),
+    (['read', 'export'], ['read'], 'admin', 404),
+    (['read', 'export'], ['read', 'export'], 'readonly', 200),
+    (None, None, 'admin', 404),
+])
+async def test_invitation_source_and_contact_acl_fail_closed(client_a_admin, client_a_readonly, m8_seed,
+        invitation_data, monkeypatch, property_caps, contact_caps, actor, expected):
+    from tests.test_property_source_access import grant
+    from tests.test_person_source_access import audience
+    from tests.test_property_source_enforcement import synthetic_enforcement
+    from tests.test_financial_source_disclosure import clear_disclosure_grants
+    data = invitation_data
+    actor_id = m8_seed['user_a_readonly_id'] if actor == 'readonly' else m8_seed['user_a_admin_id']
+    try:
+        if property_caps:
+            await grant(client_a_admin, m8_seed, uuid.UUID(data['property']['id']), actor=actor_id, caps=property_caps)
+        if contact_caps:
+            for person in data['people']:
+                await audience(client_a_admin, person['id'], actor_id, contact_caps)
+        if expected != 200:
+            def forbidden(*args, **kwargs):
+                raise AssertionError('Denied source reached invitation renderer')
+            monkeypatch.setattr('app.api.meetings.render_invitation_pdf', forbidden)
+        async with synthetic_enforcement(m8_seed):
+            api = client_a_readonly if actor == 'readonly' else client_a_admin
+            response = await api.get(f"/api/meetings/{data['meeting']['id']}/invitation.pdf")
+            assert response.status_code == expected, response.text if expected != 200 else ''
+            if expected == 200:
+                assert len(invitation_pages(response)) == 2
+    finally:
+        await clear_disclosure_grants()
+
+
+@pytest.mark.asyncio
+async def test_invitation_one_denied_contact_never_yields_partial_pdf(client_a_admin, m8_seed, invitation_data, monkeypatch):
+    from tests.test_property_source_access import grant
+    from tests.test_person_source_access import audience
+    from tests.test_property_source_enforcement import synthetic_enforcement
+    from tests.test_financial_source_disclosure import clear_disclosure_grants
+    data = invitation_data
+    try:
+        await grant(client_a_admin, m8_seed, uuid.UUID(data['property']['id']), caps=['read', 'export'])
+        await audience(client_a_admin, data['people'][0]['id'], m8_seed['user_a_admin_id'], ['read', 'export'])
+        await audience(client_a_admin, data['people'][1]['id'], m8_seed['user_a_readonly_id'], ['read', 'export'])
+        def forbidden(*args, **kwargs):
+            raise AssertionError('Partial recipient set reached renderer')
+        monkeypatch.setattr('app.api.meetings.render_invitation_pdf', forbidden)
+        async with synthetic_enforcement(m8_seed):
+            response = await client_a_admin.get(f"/api/meetings/{data['meeting']['id']}/invitation.pdf")
+            assert response.status_code == 404
+    finally:
+        await clear_disclosure_grants()
+
+
+@pytest.mark.asyncio
+async def test_invitation_rechecks_source_after_render(client_a_admin, invitation_data, monkeypatch):
+    from fastapi import HTTPException
+    from app.services.meeting_service import MeetingService
+    import app.api.meetings as module
+    real_render = module.render_invitation_pdf
+    rendered = False
+    real_check = MeetingService.require_source_access
+
+    def render(*args):
+        nonlocal rendered
+        result = real_render(*args)
+        rendered = True
+        return result
+
+    async def check(self, *args):
+        if rendered:
+            raise HTTPException(404, 'Revoked during rendering')
+        return await real_check(self, *args)
+
+    monkeypatch.setattr(module, 'render_invitation_pdf', render)
+    monkeypatch.setattr(MeetingService, 'require_source_access', check)
+    response = await client_a_admin.get(f"/api/meetings/{invitation_data['meeting']['id']}/invitation.pdf")
+    assert response.status_code == 404 and rendered
+
+
+@pytest.mark.asyncio
+async def test_invitation_rechecks_contact_export_after_render(client_a_admin, invitation_data, monkeypatch):
+    from fastapi import HTTPException
+    from app.services.meeting_service import MeetingService
+    import app.api.meetings as module
+    real_render = module.render_invitation_pdf
+    real_recipients = MeetingService.invitation_recipients
+    rendered = False
+
+    def render(*args):
+        nonlocal rendered
+        result = real_render(*args)
+        rendered = True
+        return result
+
+    async def recipients(self, meeting):
+        if rendered:
+            raise HTTPException(404, 'Contact export revoked during rendering')
+        return await real_recipients(self, meeting)
+
+    monkeypatch.setattr(module, 'render_invitation_pdf', render)
+    monkeypatch.setattr(MeetingService, 'invitation_recipients', recipients)
+    result = await client_a_admin.get(f"/api/meetings/{invitation_data['meeting']['id']}/invitation.pdf")
+    assert rendered and result.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_invitation_keeps_held_protocol_resolutions_register_and_audit_unchanged(client_a_admin, invitation_data):
+    import psycopg2
+    data = invitation_data
+    mid = data['meeting']['id']
+    result = await client_a_admin.post('/api/meetings/resolutions', json={
+        'meeting_id': mid, 'wording': 'Alter unveränderter Beschluss',
+        'votes_yes': 2, 'votes_no': 0, 'votes_abstain': 0, 'result': 'ANGENOMMEN',
+    })
+    assert result.status_code == 201, result.text
+    resolution = result.json()['id']
+    assert (await client_a_admin.post(f'/api/meetings/{mid}/hold')).status_code == 200
+    assert (await client_a_admin.put(f'/api/meetings/{mid}', json={'protocol_text': 'Alte unveränderte Niederschrift'})).status_code == 200
+    result = await client_a_admin.post(f'/api/meetings/resolutions/{resolution}/register')
+    assert result.status_code == 201, result.text
+    tables = ('owners_meeting', 'agenda_item', 'resolution', 'resolution_register_entry',
+              'ownership_history', 'owner_profile', 'person', 'audit_event')
+
+    def stored_rows():
+        with psycopg2.connect(SYNC_URL) as connection, connection.cursor() as cursor:
+            rows = {}
+            for table in tables:
+                cursor.execute(f'SELECT row_to_json(t)::text FROM {table} t ORDER BY id')
+                rows[table] = cursor.fetchall()
+            return rows
+
+    before = stored_rows()
+    assert len(invitation_pages(await client_a_admin.get(f'/api/meetings/{mid}/invitation.pdf'))) == 2
+    assert stored_rows() == before

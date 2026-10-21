@@ -28,6 +28,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
+from app.core.rbac import ScopeCapability
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,17 +36,21 @@ from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.engine.mietkonto import (
     AdvanceFilter,
     LeaseChargeInput,
+    RentChangeInput,
     MietkontoResult,
     OwnerAdvanceChargeInput,
     PaymentInput,
     account_statement,
     derive_advance_total,
+    deposit_statement,
     owner_expected_charges,
+    special_levy_expected_charges,
     tenant_expected_charges,
 )
 from app.models.audit_event import AuditEvent
 from app.services.financial_scope_service import FinancialScopeService
 from app.models.payment import Payment
+from app.services.special_levy_service import SpecialLevyService
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.bank_account_repo import BankAccountRepository
 from app.repositories.economic_plan_repo import (
@@ -53,7 +58,12 @@ from app.repositories.economic_plan_repo import (
     EconomicPlanRepository,
 )
 from app.repositories.lease_agreement_repo import LeaseAgreementRepository
+from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
 from app.repositories.payment_repo import PaymentRepository
+from app.repositories.person_repo import PersonRepository
+from app.repositories.property_repo import PropertyRepository
+from app.repositories.tenant_profile_repo import TenantProfileRepository
+from app.repositories.unit_repo import UnitRepository
 
 # Tenant-bound vs owner-bound vocabulary (kept in sync with the DB CHECK in 0016
 # and the engine vocabulary). The service uses it for the OUT-direction of a
@@ -103,6 +113,28 @@ class PaymentService:
         self._plan_lines = EconomicPlanLineRepository(session, org_id)
         self._audit = AuditRepository(session, org_id)
 
+    async def _require_deposit_sources(self, payment: Payment) -> None:
+        """A deposit must be attributable to its visible contract, tenant and account."""
+        if payment.payment_type != "KAUTION":
+            return
+        if payment.lease_agreement_id is None:
+            raise HTTPException(422, "Deposit payments require a lease agreement")
+        with self._session.no_autoflush:
+            account = await self._accounts.get_by_id(payment.bank_account_id)
+            if account is None:
+                raise HTTPException(404, "Bank account not found")
+            await FinancialScopeService(self._session, self._org_id, self._user_id).enter(
+                account, capability=ScopeCapability.READ)
+            lease = await self._leases.get_by_id(payment.lease_agreement_id)
+            tenant = await TenantProfileRepository(self._session, self._org_id).get_by_id(payment.tenant_profile_id)
+            if lease is None or tenant is None:
+                raise HTTPException(404, "Deposit sources not accessible")
+            unit = await UnitRepository(self._session, self._org_id).get_by_id(lease.unit_id)
+            if unit is None:
+                raise HTTPException(404, "Deposit sources not accessible")
+            if unit.property_id != account.property_id or lease.tenant_profile_id != tenant.id:
+                raise HTTPException(422, "Deposit lease, tenant and account must belong together")
+
     # ------------------------------------------------------------------
     # create / update draft
     # ------------------------------------------------------------------
@@ -121,6 +153,7 @@ class PaymentService:
         period_month: int | None = None,
         settlement_run_id: uuid.UUID | None = None,
         note: str | None = None,
+        bank_transaction_id: uuid.UUID | None = None,
     ) -> Payment:
         """Create an editable draft payment (m6 section 5; ADR-0009 E6-3).
 
@@ -128,6 +161,7 @@ class PaymentService:
         (ADR-0010) -- never client-chosen. A draft is freely editable; the
         bewusste `book` step freezes it.
         """
+        await FinancialScopeService(self._session, self._org_id, self._user_id).lock_inputs()
         account = await self._accounts.get_by_id(bank_account_id)
         if account is None:
             raise HTTPException(status_code=404, detail="Bank account not found")
@@ -135,6 +169,7 @@ class PaymentService:
         payment = Payment(
             organization_id=self._org_id,
             bank_account_id=account.id,
+            bank_transaction_id=bank_transaction_id,
             property_id=account.property_id,  # mirrored (ADR-0010)
             management_mandate_id=None,  # DB derives this from the canonical account scope when bound
             direction=direction,
@@ -150,6 +185,7 @@ class PaymentService:
             status="draft",
             note=note,
         )
+        await self._require_deposit_sources(payment)
         payment = await self._repo.create(payment)
         await self._session.refresh(payment, ["management_mandate_id"])
         await self._audit.create(
@@ -171,6 +207,7 @@ class PaymentService:
 
     async def update_draft(self, payment_id: uuid.UUID, updates: dict) -> Payment:
         """Update a draft payment. Booked payments cannot be edited (ADR-0009)."""
+        await FinancialScopeService(self._session, self._org_id, self._user_id).lock_inputs()
         payment = await self._repo.get_by_id(payment_id)
         if payment is None:
             raise HTTPException(status_code=404, detail="Payment not found")
@@ -199,6 +236,7 @@ class PaymentService:
                 setattr(payment, field_name, value)
                 changed[field_name] = {"old": str(old_val), "new": str(value)}
 
+        await self._require_deposit_sources(payment)
         payment = await self._repo.update(payment)
         if changed:
             await self._audit.create(
@@ -214,6 +252,7 @@ class PaymentService:
 
     async def delete_draft(self, payment_id: uuid.UUID) -> None:
         """Discard a scope-bound draft; preserve its canonical evidence. Legacy drafts may be deleted."""
+        await FinancialScopeService(self._session, self._org_id, self._user_id).lock_inputs()
         payment = await self._repo.get_by_id(payment_id)
         if payment is None:
             raise HTTPException(status_code=404, detail="Payment not found")
@@ -249,6 +288,7 @@ class PaymentService:
         Sets status='booked', booked_at/by, retention_until + audit, all in the
         active transaction. The ADR-0003 trigger (0018) freezes it from commit.
         """
+        await FinancialScopeService(self._session, self._org_id, self._user_id).lock_inputs()
         payment = await self._repo.get_by_id(payment_id)
         if payment is None:
             raise HTTPException(status_code=404, detail="Payment not found")
@@ -263,6 +303,7 @@ class PaymentService:
         payment.booked_at = now
         payment.booked_by = self._user_id
         payment.retention_until = _compute_retention_until(payment.value_date)
+        await self._require_deposit_sources(payment)
         payment = await self._repo.update(payment)
 
         await self._audit.create(
@@ -292,6 +333,7 @@ class PaymentService:
         mutation of a booked row, analogous to create_correction_run). The
         corrected Neubuchung, if any, is a separate create_draft + book.
         """
+        await FinancialScopeService(self._session, self._org_id, self._user_id).lock_inputs()
         original = await self._repo.get_by_id(payment_id)
         if original is None:
             raise HTTPException(status_code=404, detail="Payment not found")
@@ -366,6 +408,49 @@ class PaymentService:
     # ------------------------------------------------------------------
     # Mietkonto views (read-only, pure-engine-backed)
     # ------------------------------------------------------------------
+    async def deposits(self, accounting_scope_id: uuid.UUID | None = None) -> list[dict]:
+        """Complete deposit view in one rental source context, without date/account filters."""
+        sphere = await FinancialScopeService(self._session, self._org_id, self._user_id).select_read_scope(accounting_scope_id)
+        if sphere is not None and sphere.scope_type != "MIET":
+            raise HTTPException(422, "Accounting scope does not support this report type")
+        leases = await self._leases.list_all()
+        lease_ids = {lease.id for lease in leases}
+        deposit_rows = await self._repo.list_by_filters(payment_type="KAUTION", status="booked")
+        if any(p.reversed_by_id is None and p.reverses_id is None
+               and p.lease_agreement_id not in lease_ids for p in deposit_rows):
+            raise HTTPException(409, "Deposit payments require complete coherent lease sources")
+        rows = []
+        for lease in sorted(leases, key=lambda item: str(item.id)):
+            payments = await self._repo.list_for_lease(lease.id)
+            result = deposit_statement(lease.deposit or Decimal("0.00"),
+                                       [_to_payment_input(p) for p in payments])
+            if result.expected_amount == 0 and result.paid_amount == 0 and result.refunded_amount == 0:
+                continue
+            unit = await UnitRepository(self._session, self._org_id).get_by_id(lease.unit_id)
+            profile = await TenantProfileRepository(self._session, self._org_id).get_by_id(lease.tenant_profile_id)
+            if unit is None or profile is None:
+                raise HTTPException(404, "Complete deposit sources not accessible")
+            if any(p.payment_type == "KAUTION" and p.status == "booked"
+                   and p.reversed_by_id is None and p.reverses_id is None
+                   and (p.property_id != unit.property_id or p.tenant_profile_id != lease.tenant_profile_id)
+                   for p in payments):
+                raise HTTPException(409, "Deposit payments require complete coherent lease sources")
+            prop = await PropertyRepository(self._session, self._org_id).get_by_id(unit.property_id)
+            person = await PersonRepository(self._session, self._org_id).get_by_id(profile.person_id)
+            if prop is None or person is None:
+                raise HTTPException(404, "Complete deposit sources not accessible")
+            rows.append({
+                "lease_agreement_id": str(lease.id),
+                "tenant_profile_id": str(lease.tenant_profile_id),
+                "unit_id": str(unit.id), "property_id": str(prop.id),
+                "tenant_name": person.company_name or " ".join(
+                    part for part in (person.first_name, person.last_name) if part),
+                "unit_label": unit.number, "property_name": prop.name,
+                "expected_amount": result.expected_amount, "paid_amount": result.paid_amount,
+                "refunded_amount": result.refunded_amount, "held_amount": result.held_amount,
+            })
+        return rows
+
     async def account_statement_for_lease(
         self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date,
         accounting_scope_id: uuid.UUID | None = None,
@@ -377,17 +462,22 @@ class PaymentService:
         if lease is None:
             raise HTTPException(status_code=404, detail="Lease agreement not found")
 
+        rent_changes = await LeaseRentChangeRepository(self._session, self._org_id).list_for_lease(lease.id)
         lc = LeaseChargeInput(
             lease_agreement_id=lease.id,
             valid_from=lease.valid_from,
             valid_to=db_exclusive_to_engine_inclusive(lease.valid_to),
             base_rent=lease.base_rent,
             advance_payment=lease.advance_payment,
+            rent_changes=tuple(RentChangeInput(
+                valid_from=row.valid_from, base_rent=row.base_rent, advance_payment=row.advance_payment,
+            ) for row in rent_changes),
         )
         charges = tenant_expected_charges(lc, period_start, period_end)
         payments = await self._repo.list_for_lease(lease_agreement_id)
         scoped = self._scope_payments_to_period(payments, period_start, period_end)
-        return account_statement(charges, [_to_payment_input(p) for p in scoped])
+        return account_statement(charges, [_to_payment_input(p) for p in scoped
+                                           if p.payment_type != "KAUTION"])
 
     async def account_statement_for_owner(
         self,
@@ -396,14 +486,20 @@ class PaymentService:
         period_start: date,
         period_end: date,
         accounting_scope_id: uuid.UUID | None = None,
+        *, property_id: uuid.UUID | None = None,
     ) -> MietkontoResult:
         """Hausgeld Soll/Ist/Saldo of one owner over a period (§2.2/§3.1).
 
         [F6-5] Soll only from a FINALIZED plan (a draft plan is no beschlossenes
-        Soll). Without a finalized plan the statement shows only Ist (no Soll
-        abgleich) -- the engine does not invent a Soll.
+        Soll). Frozen special levies add one-off SONDERZAHLUNG obligations in
+        their due month, independently of whether an economic plan exists.
         """
         context = FinancialScopeService(self._session, self._org_id, self._user_id)
+        if economic_plan_id is not None and accounting_scope_id is None:
+            inherited_plan = await self._plans.get_by_id(economic_plan_id)
+            if inherited_plan is None:
+                raise HTTPException(404, 'Economic plan not found')
+            await context.enter(inherited_plan, computation=True)
         sphere = await context.select_report_scope(accounting_scope_id,
             scope_type='WEG', period_start=period_start, period_end=period_end)
         if not await self._session.scalar(text("SELECT property_source_security_mode(:org)='PREPARATION' OR profile_source_access(:org,'owner_profile',:profile,'read')"),
@@ -436,7 +532,14 @@ class PaymentService:
                     advance_lines, owner_profile_id, period_start, period_end
                 )
 
-        payments = await self._repo.list_for_owner(owner_profile_id)
+        if sphere is not None and property_id is not None and sphere.property_id != property_id:
+            raise HTTPException(422, 'Property differs from accounting scope')
+        allocations = await SpecialLevyService(self._session, self._org_id, self._user_id).owner_allocations(
+            owner_profile_id, period_start, period_end, sphere.id if sphere is not None else None, property_id)
+        charges.extend(special_levy_expected_charges(
+            [(due, allocation.amount) for allocation, due in allocations], owner_profile_id, period_start, period_end))
+
+        payments = await self._repo.list_for_owner(owner_profile_id, property_id=property_id)
         scoped = self._scope_payments_to_period(payments, period_start, period_end)
         return account_statement(charges, [_to_payment_input(p) for p in scoped])
 

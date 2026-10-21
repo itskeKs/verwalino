@@ -11,6 +11,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import {
   listDunningNotices,
+  getDunningSettings,
   createDunningForTenant,
   createDunningForOwner,
   listTenantProfiles,
@@ -18,6 +19,7 @@ import {
   listPersons,
   listLeases,
   listUnits,
+  listProperties,
   listEconomicPlans,
 } from "../api/endpoints";
 import type {
@@ -29,10 +31,12 @@ import type {
   Person,
   LeaseRecord,
   Unit,
+  Property,
   EconomicPlan,
 } from "../api/types";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { ApiError } from "../api/client";
+import { useAuth } from "../auth/useAuth";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "Alle Status" },
@@ -67,6 +71,13 @@ const LEVEL_LABELS: Record<number, string> = {
 
 type RecipientType = "tenant" | "owner";
 
+// Keep percentage precision in decimal text, never via binary floating point.
+function exactRate(value: string): string | null {
+  const normalized = value.trim().replace(",", ".");
+  return /^[+-]?(?:\d+(?:\.\d{1,4})?|\.\d{1,4})$/.test(normalized)
+    ? normalized : null;
+}
+
 function makeEmptyTenantForm(): DunningCreateTenant {
   const currentYear = new Date().getFullYear();
   return {
@@ -94,6 +105,11 @@ function makeEmptyOwnerForm(): DunningCreateOwner {
 }
 
 export function DunningNoticesPage() {
+  const { session } = useAuth();
+  const canWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
+  const sessionKey = `${session?.organization_id}:${session?.user_id}:${session?.role}`;
+  const activeSession = useRef(sessionKey);
+  useEffect(() => { activeSession.current = sessionKey; }, [sessionKey]);
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const [notices, setNotices] = useState<DunningNotice[]>([]);
@@ -102,6 +118,8 @@ export function DunningNoticesPage() {
   const [persons, setPersons] = useState<Person[]>([]);
   const [leases, setLeases] = useState<LeaseRecord[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
+  const [properties, setProperties] = useState<Property[]>([]);
+  const [ownerPropertyId, setOwnerPropertyId] = useState("");
   const requestId = useRef(0);
   const [listError, setListError] = useState<string | null>(null);
   const [economicPlans, setEconomicPlans] = useState<EconomicPlan[]>([]);
@@ -113,6 +131,17 @@ export function DunningNoticesPage() {
   const [ownerForm, setOwnerForm] = useState<DunningCreateOwner>(makeEmptyOwnerForm());
   const [scopeValid, setScopeValid] = useState(false);
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const mounted = useRef(false);
+  const [rates, setRates] = useState({ tenant: "", owner: "" });
+  const editedRates = useRef({ tenant: false, owner: false });
+  const [settingsState, setSettingsState] = useState<"loading" | "configured" | "empty" | "error">("loading");
+  const [settingsError, setSettingsError] = useState("");
+  const [settingsRevision, setSettingsRevision] = useState(0);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   const statusFilter = searchParams.get("status") ?? "";
   const levelFilter = searchParams.get("level") ?? "";
@@ -120,7 +149,7 @@ export function DunningNoticesPage() {
   // Handle pre-fill from OpenItemsPage shortcut
   useEffect(() => {
     const createType = searchParams.get("create");
-    if (createType === "tenant") {
+    if (createType === "tenant" && canWrite) {
       const prefillTenant = searchParams.get("tenant_profile_id") ?? "";
       const prefillLease = searchParams.get("lease_agreement_id") ?? "";
       const prefillStart = searchParams.get("period_start") ?? makeEmptyTenantForm().period_start;
@@ -165,10 +194,12 @@ export function DunningNoticesPage() {
       listLeases(),
       listEconomicPlans(),
       listUnits(),
+      listProperties(),
     ])
-      .then(([dn, tp, op, per, l, ep, u]) => {
+      .then(([dn, tp, op, per, l, ep, u, props]) => {
         if (current !== requestId.current) return;
         setUnits(u);
+        setProperties(props);
         setNotices(dn);
         setTenantProfiles(tp);
         setOwnerProfiles(op);
@@ -236,11 +267,57 @@ export function DunningNoticesPage() {
   const selectedPlan = economicPlans.find(item => item.id === ownerForm.economic_plan_id);
   const creationProperty = recipientType === "tenant"
     ? units.find(item => item.id === selectedLease?.unit_id)?.property_id
-    : selectedPlan?.property_id;
+    : selectedPlan?.property_id || ownerPropertyId || undefined;
+
+  useEffect(() => {
+    if (!showForm || !canWrite) return;
+    let active = true;
+    setSettingsState("loading");
+    setSettingsError("");
+    getDunningSettings().then(settings => {
+      if (!active) return;
+      const configured = settings.base_interest_rate;
+      if (configured !== null && exactRate(configured) === null) {
+        throw new Error("Ungültiger konfigurierter Basiszinssatz.");
+      }
+      setSettingsState(configured === null ? "empty" : "configured");
+      if (!editedRates.current[recipientType]) {
+        setRates(previous => ({ ...previous, [recipientType]: configured ?? "" }));
+      }
+    }).catch(err => {
+      if (!active) return;
+      setSettingsState("error");
+      setSettingsError(err instanceof Error ? err.message : String(err));
+    });
+    return () => { active = false; };
+  }, [showForm, canWrite, recipientType, creationProperty, tenantForm.lease_agreement_id,
+    ownerForm.owner_profile_id, ownerForm.economic_plan_id, sessionKey, settingsRevision]);
+
+  const rate = exactRate(rates[recipientType]);
+  const rateField = <div>
+    <label>
+      Basiszinssatz (%)
+      <input type="text" inputMode="decimal" required value={rates[recipientType]}
+        aria-invalid={rates[recipientType] !== "" && rate === null}
+        onChange={e => {
+          editedRates.current[recipientType] = true;
+          setRates({ ...rates, [recipientType]: e.target.value });
+        }} />
+    </label>
+    <p className="form-hint">Basiszinssatz ausdrücklich prüfen und eingeben (höchstens vier Nachkommastellen). Der Jahreszinssatz ergibt sich aus Basiszinssatz + 5 Prozentpunkten. Keine Zusicherung eines amtlich aktuellen Zinssatzes oder rechtlicher Zustellwirkung.</p>
+    {settingsState === "loading" && <p role="status">Lade Basiszinssatz-Konfiguration…</p>}
+    {settingsState === "empty" && <p>Kein Basiszinssatz konfiguriert. Bitte den zutreffenden Basiszinssatz manuell eingeben.</p>}
+    {settingsState === "error" && <p role="alert">Basiszinssatz-Konfiguration nicht verfügbar: {settingsError} Bitte manuell eingeben oder <button type="button" className="btn" onClick={() => setSettingsRevision(value => value + 1)}>Konfiguration erneut laden</button></p>}
+    {rates[recipientType] !== "" && rate === null && <p role="alert">Bitte einen endlichen Basiszinssatz mit höchstens vier Nachkommastellen eingeben.</p>}
+  </div>;
 
   function openCreate() {
+    if (!canWrite || savingRef.current) return;
+    editedRates.current = { tenant: false, owner: false };
+    setRates({ tenant: "", owner: "" });
     setTenantForm(makeEmptyTenantForm());
     setOwnerForm(makeEmptyOwnerForm());
+    setOwnerPropertyId("");
     setRecipientType("tenant");
     setShowForm(true);
     setError(null);
@@ -248,19 +325,23 @@ export function DunningNoticesPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!scopeValid) return;
+    if (!canWrite || savingRef.current || rate === null || settingsState === "loading" || !scopeValid || (recipientType === "owner" && !ownerForm.economic_plan_id && (!ownerPropertyId || !ownerForm.accounting_scope_id))) return;
+    savingRef.current = true;
+    const submittedSession = sessionKey;
     setSaving(true);
     setError(null);
     try {
       let created: DunningNotice;
       if (recipientType === "tenant") {
-        created = await createDunningForTenant(tenantForm);
+        created = await createDunningForTenant({ ...tenantForm, base_interest_rate: rate });
       } else {
-        created = await createDunningForOwner(ownerForm);
+        created = await createDunningForOwner({ ...ownerForm, base_interest_rate: rate });
       }
+      if (!mounted.current || activeSession.current !== submittedSession) return;
       setShowForm(false);
       navigate(`/mahnungen/${created.id}`);
     } catch (err) {
+      if (!mounted.current || activeSession.current !== submittedSession) return;
       if (err instanceof ApiError) {
         // Handle "no overdue items" or other business errors gracefully
         if (err.status === 409 || err.status === 422 || err.status === 400) {
@@ -272,7 +353,8 @@ export function DunningNoticesPage() {
         setError(String(err));
       }
     } finally {
-      setSaving(false);
+      savingRef.current = false;
+      if (mounted.current) setSaving(false);
     }
   }
 
@@ -289,9 +371,9 @@ export function DunningNoticesPage() {
         }}
       >
         <h1 style={{ margin: 0 }}>Mahnungen</h1>
-        <button className="btn btn--primary" onClick={openCreate}>
+        {canWrite && <button className="btn btn--primary" disabled={saving} onClick={openCreate}>
           + Neue Mahnung
-        </button>
+        </button>}
       </div>
 
       {/* Filters */}
@@ -329,7 +411,7 @@ export function DunningNoticesPage() {
 
       {error && <p className="error-text">{error}</p>}
 
-      {showForm && (
+      {showForm && canWrite && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Neue Mahnung anlegen</h2>
           <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
@@ -344,9 +426,11 @@ export function DunningNoticesPage() {
               Empfaengertyp *
               <select
                 required
+                aria-label="Empfaengertyp *"
                 value={recipientType}
                 onChange={(e) => {
                   setRecipientType(e.target.value as RecipientType);
+                  setOwnerPropertyId("");
                   setTenantForm(makeEmptyTenantForm());
                   setOwnerForm(makeEmptyOwnerForm());
                 }}
@@ -476,6 +560,7 @@ export function DunningNoticesPage() {
                   Eigentuemer *
                   <select
                     required
+                    aria-label="Eigentuemer *"
                     value={ownerForm.owner_profile_id}
                     onChange={(e) =>
                       setOwnerForm({ ...ownerForm, owner_profile_id: e.target.value, economic_plan_id: null, accounting_scope_id: null })
@@ -512,6 +597,18 @@ export function DunningNoticesPage() {
                   />
                 </label>
                 <label>
+                  WEG-Objekt *
+                  <select aria-label="WEG-Objekt *" value={selectedPlan?.property_id || ownerPropertyId}
+                    onChange={e => {
+                      setOwnerPropertyId(e.target.value);
+                      setOwnerForm({ ...ownerForm, economic_plan_id: null, accounting_scope_id: null });
+                      setScopeValid(false);
+                    }}>
+                    <option value="">-- WEG-Objekt wählen --</option>
+                    {properties.filter(p => p.management_type === "WEG" || p.management_type === "MISCH").map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </label>
+                <label>
                   Wirtschaftsplan
                   <select
                     value={ownerForm.economic_plan_id ?? ""}
@@ -523,8 +620,8 @@ export function DunningNoticesPage() {
                       })
                     }
                   >
-                    <option value="">Ohne Wirtschaftsplan (Altbestand)</option>
-                    {economicPlans.map((ep) => (
+                    <option value="">Ohne Wirtschaftsplan (Sonderumlagen)</option>
+                    {economicPlans.filter(ep => !ownerPropertyId || ep.property_id === ownerPropertyId).map((ep) => (
                       <option key={ep.id} value={ep.id}>
                         {ep.plan_year} ({ep.period_start} - {ep.period_end})
                       </option>
@@ -576,17 +673,18 @@ export function DunningNoticesPage() {
               </>
             )}
 
-            <AccountingScopeSelector key={`${recipientType}-${tenantForm.lease_agreement_id}-${ownerForm.owner_profile_id}-${ownerForm.economic_plan_id}`}
+            {rateField}
+            <AccountingScopeSelector key={`${recipientType}-${tenantForm.lease_agreement_id}-${ownerForm.owner_profile_id}-${ownerForm.economic_plan_id}-${ownerPropertyId}`}
               onValidityChange={setScopeValid} propertyId={creationProperty} kind={recipientType === "tenant" ? "MIET" : "WEG"}
               value={recipientType === "tenant" ? tenantForm.accounting_scope_id : ownerForm.accounting_scope_id}
               onChange={accounting_scope_id => recipientType === "tenant"
                 ? setTenantForm({ ...tenantForm, accounting_scope_id }) : setOwnerForm({ ...ownerForm, accounting_scope_id })} />
-            <p className="form-hint">Für bereits zugeordnete Zahlungen einen Abrechnungskreis wählen. Eigentümermahnungen in einem Abrechnungskreis benötigen einen zugeordneten, finalisierten Wirtschaftsplan.</p>
+            <p className="form-hint">Für bereits zugeordnete Zahlungen einen Abrechnungskreis wählen. Fällige Sonderumlagen können im WEG-Abrechnungskreis auch ohne Wirtschaftsplan gemahnt werden.</p>
             <div className="form-actions">
               <button
                 type="submit"
                 className="btn btn--primary"
-                disabled={saving || !scopeValid}
+                disabled={saving || rate === null || settingsState === "loading" || !scopeValid || (recipientType === "owner" && !ownerForm.economic_plan_id && (!ownerPropertyId || !ownerForm.accounting_scope_id))}
               >
                 {saving ? "Erstellen..." : "Mahnung erstellen"}
               </button>

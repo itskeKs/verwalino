@@ -23,7 +23,7 @@ Money is ALWAYS Decimal, never float.
     confirmed by a legal expert before productive use.
   - Due date for the dunning notice: issue_date + 14 days (provisional).
   - Dunning fee defaults: Level 1: 0.00, Level 2: 5.00, Level 3: 10.00 EUR.
-  - Late payment interest (Verzugszinsen): NOT in MVP [section 18/fachlich].
+  - Interest uses an explicitly supplied base percentage; no market rate is assumed.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP, localcontext
 
 from app.engine.mietkonto import OpenItem
 
@@ -62,7 +62,16 @@ CENT = Decimal("0.01")
 
 
 def _money(value: Decimal) -> Decimal:
-    return value.quantize(CENT)
+    if not isinstance(value, Decimal) or not value.is_finite():
+        raise ValueError("Money must be a finite Decimal")
+    if value.copy_abs() >= Decimal("1000000000000"):
+        raise ValueError("Dunning amount exceeds Numeric(14,2)")
+    with localcontext() as ctx:
+        ctx.prec = max(50, len(value.as_tuple().digits) + 5)
+        result = value.quantize(CENT, rounding=ROUND_HALF_UP)
+    if result.copy_abs() > Decimal("999999999999.99"):
+        raise ValueError("Dunning amount exceeds Numeric(14,2)")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +87,7 @@ class OverdueItem:
     soll: Decimal
     ist: Decimal
     open_amount: Decimal  # > 0 (arrears)
+    due_date: date | None = None
 
 
 @dataclass(frozen=True)
@@ -88,8 +98,11 @@ class DunningInput:
     due_date: date
     principal_amount: Decimal  # Sum of overdue arrears
     fee_amount: Decimal        # Dunning fee for this level
-    total_amount: Decimal      # principal + fee
+    total_amount: Decimal      # principal + fee + interest
     overdue_items: tuple[OverdueItem, ...]
+
+    interest_amount: Decimal = Decimal("0.00")
+    interest_snapshot: dict | None = None
 
     # Serializable snapshot for the JSONB column.
     def items_snapshot(self) -> list[dict]:
@@ -101,6 +114,7 @@ class DunningInput:
                 "soll": str(it.soll),
                 "ist": str(it.ist),
                 "open_amount": str(it.open_amount),
+                **({"due_date": it.due_date.isoformat()} if it.due_date is not None else {}),
             }
             for it in self.overdue_items
         ]
@@ -113,10 +127,12 @@ class DunningInput:
 def _item_due_date(item: OpenItem) -> date:
     """Compute the due date for an open item.
 
-    [section 18/fachlich] Provisional: the item is due on the 1st of its
-    period month (or Jan 1 if period_month is None). The correct due date
-    depends on lease terms (e.g. 3rd working day per section 556b BGB).
+    Frozen one-off charges carry their actual due date. For recurring items,
+    [section 18/fachlich] provisionally use the 1st of the period month (or
+    Jan 1 if period_month is None), pending lease-specific due terms.
     """
+    if item.due_date is not None:
+        return item.due_date
     year = item.period_year if item.period_year else date.today().year
     month = item.period_month if item.period_month else 1
     return date(year, month, 1)
@@ -149,6 +165,7 @@ def find_overdue_items(
                 soll=_money(item.soll),
                 ist=_money(item.ist),
                 open_amount=_money(item.open_amount),
+                due_date=item.due_date,
             ))
     overdue.sort(key=lambda x: (x.period_year, x.period_month or 0, x.payment_type))
     return overdue
@@ -194,6 +211,7 @@ def assemble_dunning(
     custom_fees: dict[int, Decimal] | None = None,
     override_level: int | None = None,
     override_fee: Decimal | None = None,
+    base_interest_rate: Decimal | None = None,
 ) -> DunningInput | None:
     """Assemble a dunning notice from overdue items.
 
@@ -207,9 +225,38 @@ def assemble_dunning(
         return None
 
     level = override_level if override_level is not None else next_dunning_level(existing_notice_count)
-    fee = override_fee if override_fee is not None else dunning_fee(level, custom_fees)
-    principal = _money(sum(it.open_amount for it in overdue_items))
-    total = _money(principal + fee)
+    fee = _money(override_fee) if override_fee is not None else dunning_fee(level, custom_fees)
+    # Do not depend on the caller's Decimal context or round a percentage first.
+    if base_interest_rate is not None:
+        if not isinstance(base_interest_rate, Decimal) or not base_interest_rate.is_finite():
+            raise ValueError("Base interest rate must be a finite Decimal")
+        if len(base_interest_rate.as_tuple().digits) > 100 or abs(base_interest_rate.as_tuple().exponent) > 100:
+            raise ValueError("Base interest rate exceeds supported precision")
+    with localcontext() as ctx:
+        ctx.prec = 250
+        principal = _money(sum((_money(it.open_amount) for it in overdue_items), Decimal("0")))
+        interest = Decimal("0.00")
+        snapshot = None
+        if base_interest_rate is not None:
+            annual_rate = base_interest_rate + Decimal("5")
+            rows = []
+            for item in overdue_items:
+                due = item.due_date or date(item.period_year, item.period_month or 1, 1)
+                days = max(0, (issue_date - due).days)
+                item_principal = _money(item.open_amount)
+                amount = _money(item_principal * annual_rate / Decimal("100") * Decimal(days) / Decimal("365"))
+                interest += amount
+                rows.append({
+                    "payment_type": item.payment_type,
+                    "period_year": item.period_year, "period_month": item.period_month,
+                    "due_date": due.isoformat(), "days": days,
+                    "principal": str(item_principal), "interest": str(amount),
+                })
+            interest = _money(interest)
+            snapshot = {"base_interest_rate": str(base_interest_rate),
+                        "annual_rate": str(annual_rate),
+                        "reference_date": issue_date.isoformat(), "items": rows}
+        total = _money(principal + fee + interest)
     due_date = issue_date + timedelta(days=due_days)
 
     return DunningInput(
@@ -220,4 +267,6 @@ def assemble_dunning(
         fee_amount=fee,
         total_amount=total,
         overdue_items=tuple(overdue_items),
+        interest_amount=interest,
+        interest_snapshot=snapshot,
     )

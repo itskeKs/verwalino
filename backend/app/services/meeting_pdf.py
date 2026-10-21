@@ -1,8 +1,9 @@
 """Owners-meeting PDF rendering (M8).
 
-Two documents:
+Three documents:
   1. Niederschrift (minutes/protocol): TOPs + Beschlüsse + Ergebnisse.
   2. Beschluss-Sammlung (resolution register extract): per WEG property.
+  3. Einladung: one addressed page per authorized owner profile.
 
 STRICTLY separated from the service (SDD section 16): this layer READS
 the provided data and renders it; it computes NOTHING.
@@ -277,3 +278,55 @@ def render_register_pdf(
     """Render the Beschluss-Sammlung to PDF bytes (WeasyPrint)."""
     html_str = build_register_html(entries, names)
     return render_pdf(html_str)
+
+
+# Invitation data is resolved and authorized by MeetingService, never here.
+def build_invitation_html(
+    meeting: OwnersMeeting, agenda_items: list[AgendaItem],
+    recipients: list[tuple[str, str, str]], names: MeetingDisplayNames, short_notice: bool,
+) -> str:
+    agenda = "".join(
+        f"<li><strong>TOP {item.item_number}: {_esc(item.title)}</strong>"
+        f"<div class='text'>{_esc(item.description)}</div></li>"
+        for item in sorted(agenda_items, key=lambda item: item.item_number)
+    )
+    warning = (
+        "<p class='warning'>Hinweis: Weniger als drei Wochen bis zur Versammlung "
+        "(§ 24 Abs. 4 WEG). Zugang und Einhaltung der Einladungsfrist sind gesondert zu prüfen.</p>"
+        if short_notice else ""
+    )
+    pages = "".join(
+        f"<section><div class='address'>{_esc(name)}<br>{_esc(street)}<br>{_esc(city)}</div>"
+        f"<h1>Einladung zur Eigentümerversammlung</h1>"
+        f"<p>{_esc(names.property_name)}<br>{_esc(names.property_address)}</p>"
+        f"<p><strong>Termin:</strong> {meeting.meeting_date.strftime('%d.%m.%Y')}<br>"
+        f"<strong>Ort:</strong> {_esc(meeting.location)}</p>"
+        f"<div class='text'>{_esc(meeting.invitation_text)}</div>"
+        f"<h2>Tagesordnung</h2><ol>{agenda}</ol>{warning}</section>"
+        for name, street, city in recipients
+    )
+    return """<!doctype html><html lang="de"><meta charset="utf-8"><style>
+    @page { size: A4; margin: 20mm; }
+    body { font: 11pt sans-serif; line-height: 1.35; overflow-wrap: anywhere; }
+    section + section { break-before: page; }
+    .address { margin: 15mm 0 12mm; }
+    h1 { font-size: 18pt; } h2 { font-size: 14pt; }
+    ol { list-style: none; padding: 0; } li { margin-bottom: 3mm; }
+    .text { white-space: pre-wrap; } .warning { border: 1px solid #555; padding: 3mm; }
+    </style><body>""" + pages + "</body></html>"
+
+
+def render_invitation_pdf(
+    meeting: OwnersMeeting, agenda_items: list[AgendaItem],
+    recipients: list[tuple[str, str, str]], names: MeetingDisplayNames, short_notice: bool,
+) -> bytes:
+    """Reject overflow rather than truncate or issue extra unaddressed pages."""
+    from io import BytesIO
+
+    import pdfplumber
+
+    pdf = render_pdf(build_invitation_html(meeting, agenda_items, recipients, names, short_notice))
+    with pdfplumber.open(BytesIO(pdf)) as document:
+        if len(document.pages) != len(recipients):
+            raise ValueError("Einladung passt nicht auf eine Seite je Eigentümer; bitte Inhalt kürzen")
+    return pdf

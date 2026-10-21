@@ -419,7 +419,7 @@ Dieser Abschnitt verfeinert die SDD-Entitäten (§11/§13) um (a) Tenant-Scoping
 
 **`bank_account`** (SDD §6.3 — Vermögenstrennung): `organization_id`, Bezug auf `management_mandate`/`property`, `account_type` (laufend|Rücklage|Kaution), IBAN/Bank-Stammdaten. RLS aktiv. *(Implementierung erst ab M6; Modell-Anker in M1 vorbereiten, damit Mandat/Objekt-Bezug konsistent ist.)*
 
-**`meter` / `meter_reading`** (SDD §6.2.1): optionale Zähler mit Ablesungen (`reading_date`, `value NUMERIC`, `period`). RLS aktiv.
+**`meter` / `meter_reading`** (SDD §6.2.1): optionale Objekt-/Einheitszähler mit Ablesungen (`reading_date`, `value NUMERIC(14,4)`, `period`). RLS und explizite Org-Filter aktiv. Seit T29 bietet `/api/meters` GET/POST, `/{id}` GET/PATCH für Beschreibungsfelder und `/{id}/readings` GET/POST für unverändert erhaltene Ablesungen. Repository und API prüfen sichtbares Elternobjekt, Einheitskohärenz und bestehende Master-Lese-/Prepare-Rechte; keine nachträgliche Umhängung. Schreiboperationen halten Live-ACL-/Finanz-/Zeilensperren in dieser Reihenfolge und committen vor der Erfolgsantwort. Messwerte werden ohne Float oder Rundung validiert und als vierstellige Dezimalstrings ausgegeben. Seit T30 verwenden Objekt- und Einheitsdetail dasselbe `MeterPanel` mit festem Kontext und Rollenflag; String-/BigInt-Rechnung zeigt die Differenz der letzten zwei eindeutigen Tage, nicht bereits eine T31-Abrechnungsvorbelegung. Kontextwechsel entkoppeln verspätete Antworten, Schreibvorgänge sind synchron gegen Mehrfachauslösung gesperrt; Fehler behalten die Eingaben.
 
 ### 5.4 Vorausschau auf I2-tragende Entitäten (Detail in M2/M3/M4)
 
@@ -435,6 +435,25 @@ Hier nur die Felder, die das Unveränderbarkeits-/Snapshot-Konzept im Modell ver
 > Diese Vorausschau ist **nicht** Teil der M0-Implementierung. Sie steht hier, damit die M0-Strukturentscheidungen (UUID-PKs, `organization_id`, `NUMERIC`, Status-/Versionsfelder, RLS-Tabellenliste) konsistent zur späteren Modellfamilie sind und `bulk-impl` nicht in M2 umbauen muss.
 
 ---
+
+**`task`** (Phase 2, T41): operative, löschbare Aufgaben mit Titel, Notiz,
+optionalem Fälligkeitsdatum, Erledigt-Flag und organisationsgleichem Zuständigen.
+Objekt-/Einheits-/Vertragsbezüge sind optional und werden kohärent abgeleitet.
+FORCE RLS prüft Live-Rolle sowie alte und neue Elternrechte; ein eigener
+Invoker-Adapter und feste Funktionssuchpfade verhindern Rechteabkürzungen und
+temporäre Parent-Tabellenüberlagerung. Schreibpfade halten ACL- vor Zeilensperren
+und committen vor der Erfolgsantwort. Globale Aufgaben sind kein Finanzkreisfall;
+vorhandene Aufgaben bleiben bei später deaktiviertem Zuständigen bearbeitbar.
+
+Die Aufgabenoberfläche übernimmt Objekt-/Einheitskontexte ohne automatisches
+Speichern; das Dashboard liest offene Aufgaben mit einer lokalen, inklusiven
+Sieben-Tage-Grenze. Diese operativen Daten werden nicht von der Auswahl eines
+Finanzkreises abhängig gemacht. Der getrennte Readpfad `/api/fristen/context`
+prüft unter Live-/ACL- und bestehenden Quellenregeln die Zulässigkeit des
+organisationsweiten Fristenmonitors, ohne finanzielle Reportzeilen zu laden.
+Nur der konkrete fehlende-Auswahl-Konflikt wird als erforderliche Kreiswahl
+ausgegeben; andere Fehler bleiben Fehler. Erst nach bewusster Auswahl liest
+das Dashboard die finanziellen Fristen im gewählten Kontext.
 
 ## 6. Stack-Empfehlung *(Empfehlung — der Mensch muss bestätigen, noch nichts committen)*
 

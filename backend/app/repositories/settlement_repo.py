@@ -14,8 +14,9 @@ import uuid
 from datetime import date
 from typing import Sequence
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, or_, select
 
+from app.models.accounting_scope import AccountingScopeBinding
 from app.models.cost_category import CostCategory
 from app.models.cost_entry import CostEntry
 from app.models.lease_agreement import LeaseAgreement
@@ -110,6 +111,43 @@ class SettlementRunRepository(TenantRepository[SettlementRun]):
             .where(LeaseAgreement.organization_id == self._org_id)
             .where(Unit.property_id == property_id)
             .order_by(LeaseAgreement.valid_from)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def leases_for_period(
+        self, property_id: uuid.UUID, period_start: date, period_end: date,
+    ) -> Sequence[LeaseAgreement]:
+        """DB [valid_from, valid_to) overlaps an inclusive settlement period."""
+        stmt = (
+            select(LeaseAgreement)
+            .join(Unit, Unit.id == LeaseAgreement.unit_id)
+            .where(LeaseAgreement.organization_id == self._org_id)
+            .where(Unit.organization_id == self._org_id, Unit.property_id == property_id)
+            .where(LeaseAgreement.valid_from <= period_end)
+            .where(or_(LeaseAgreement.valid_to.is_(None), LeaseAgreement.valid_to > period_start))
+            .where(func.unit_in_financial_context(self._org_id, Unit.id))
+            .order_by(LeaseAgreement.valid_from, LeaseAgreement.id)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
+    async def active_bk_for_period(
+        self, property_id: uuid.UUID, period_start: date, period_end: date,
+        scope_id: uuid.UUID | None,
+    ) -> Sequence[SettlementRun]:
+        binding = select(AccountingScopeBinding.id).where(
+            AccountingScopeBinding.organization_id == self._org_id,
+            AccountingScopeBinding.settlement_run_id == SettlementRun.id,
+        )
+        context = (~binding.exists() if scope_id is None else
+            binding.where(AccountingScopeBinding.scope_id == scope_id).exists())
+        stmt = (
+            self._base_query()
+            .where(SettlementRun.property_id == property_id, SettlementRun.run_type == "BK_MIETER")
+            .where(SettlementRun.period_start == period_start, SettlementRun.period_end == period_end)
+            .where(SettlementRun.superseded_by_id.is_(None), context)
+            .order_by(SettlementRun.created_at, SettlementRun.id)
         )
         result = await self._session.execute(stmt)
         return result.scalars().all()

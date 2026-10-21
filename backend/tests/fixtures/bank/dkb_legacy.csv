@@ -1,0 +1,7 @@
+"Kontonummer:";"DE02120300000000202051 / Girokonto";
+"Von:";"01.01.2026";
+"Bis:";"31.01.2026";
+
+"Buchungstag";"Wertstellung";"Buchungstext";"Auftraggeber / Begünstigter";"Verwendungszweck";"Kontonummer";"BLZ";"Betrag (EUR)";"Gläubiger-ID";"Mandatsreferenz";"Kundenreferenz";
+"02.01.2026";"03.01.2026";"Gutschrift";"Müller";"Miete Januar";"123456789";"12030000";"1.234,56";"";"";"";
+"04.01.2026";"05.01.2026";"Lastschrift";"Heizservice";"Heizung";"987654321";"12030000";"-200,01";"";"";"";

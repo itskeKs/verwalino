@@ -11,6 +11,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it('keeps one stable plan selector when its parent blocks financial actions', async () => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     if (url.endsWith('/economic-plan-successor')) return json({ run_id: 'draft', current_plan_id: 'plan', successor_id: 'new-plan', plan_year: 2026 });
+    if (/^\/api\/weg-settlements\/[^/]+\/input-owners$/.test(url)) return json([]);
     if (url.includes('/api/weg-settlements/')) return json(run);
     if (url.includes('/api/economic-plans/')) return json({ lines: [] });
     return json([]);
@@ -24,6 +25,7 @@ it('keeps one stable plan selector when its parent blocks financial actions', as
 
 it.each(['weg', 'asset'])('clears manual inputs when navigating to a different %s draft', async family => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (/^\/api\/weg-settlements\/[^/]+\/input-owners$/.test(url)) return json([]);
     if (url.includes('/api/weg-settlements/')) return json({ ...run, id: url.split('/').at(-1), economic_plan_id: family === 'weg' ? 'plan' : null, run_type: family === 'weg' ? 'WEG_JAHRESABRECHNUNG' : 'VERMOEGENSBERICHT' });
     if (url.includes('/api/economic-plans/')) return json({ lines: [] });
     return json([]);
@@ -39,6 +41,7 @@ it.each(['weg', 'asset'])('ignores a late financial command from the previous %s
   let finish: ((value: Response) => void) | undefined;
   vi.stubGlobal('fetch', vi.fn(async (url: string, options: RequestInit) => {
     if (options.method === 'POST') return new Promise<Response>(resolve => { finish = resolve; });
+    if (/^\/api\/weg-settlements\/[^/]+\/input-owners$/.test(url)) return json([]);
     if (url.includes('/api/weg-settlements/')) return json({ ...run, id: url.split('/').at(-1), economic_plan_id: family === 'weg' ? 'plan' : null });
     if (url.includes('/api/economic-plans/')) return json({ lines: [] });
     return json([]);

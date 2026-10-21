@@ -14,11 +14,14 @@ Pure-function tests -- no DB, no server.
 from __future__ import annotations
 
 import uuid
+from dataclasses import FrozenInstanceError, replace
 from datetime import date
 from decimal import Decimal
+from itertools import permutations
 
 import pytest
 
+from app.engine import mietkonto
 from app.engine.mietkonto import (
     AdvanceFilter,
     ExpectedCharge,
@@ -360,3 +363,152 @@ class TestDraftNotCounted:
         charges = [ExpectedCharge(2025, 6, PT_NK_VORAUSZAHLUNG, Decimal("150.00"), lease_agreement_id=lease)]
         result = account_statement(charges, [booked, draft])
         assert result.ist_total == Decimal("150.00")
+
+
+# T23: effective-dated full rates; round each monthly component only once.
+class TestGoldenRentChanges:
+    @staticmethod
+    def change(day, rent="750.00", nk="150.00"):
+        return mietkonto.RentChangeInput(day, Decimal(rent), Decimal(nk))
+
+    @staticmethod
+    def lease(changes=(), start=date(2026, 1, 1), end=None):
+        return LeaseChargeInput(
+            _U(21), start, end, Decimal("700.00"), Decimal("150.00"), changes
+        )
+
+    def test_march_fifteenth_is_day_exact(self):
+        lc = self.lease((self.change(date(2026, 3, 15)),))
+        charges = tenant_expected_charges(lc, date(2026, 1, 1), date(2026, 4, 30))
+        assert [(c.period_month, c.payment_type, c.amount) for c in charges] == [
+            (month, kind, Decimal(amount))
+            for month, rent in [(1, "700.00"), (2, "700.00"), (3, "727.42"), (4, "750.00")]
+            for kind, amount in [(PT_KALTMIETE, rent), (PT_NK_VORAUSZAHLUNG, "150.00")]
+        ]
+        assert all(c.lease_agreement_id == lc.lease_agreement_id for c in charges)
+        assert all(c.period_year == 2026 and c.days_occupied == c.days_in_month for c in charges)
+        assert lc.base_rent == Decimal("700.00")
+        assert lc.advance_payment == Decimal("150.00")
+
+    def test_unsorted_history_is_deterministic_and_not_mutated(self):
+        changes = (
+            self.change(date(2027, 1, 1), "999.00", "999.00"),
+            self.change(date(2026, 3, 20), "0.00", "0.00"),
+            self.change(date(2025, 12, 1), "600.00", "120.00"),
+            self.change(date(2026, 3, 10), "900.00", "180.00"),
+        )
+        # March: 9*600 + 10*900 + 12*0 = 14400; NK numerator = 2880.
+        for history in permutations(changes):
+            lc = self.lease(history)
+            charges = tenant_expected_charges(lc, date(2026, 3, 1), date(2026, 3, 31))
+            assert [c.amount for c in charges] == [Decimal("464.52"), Decimal("92.90")]
+            assert lc.rent_changes is history
+            assert lc.rent_changes == history
+        with pytest.raises(FrozenInstanceError):
+            changes[0].base_rent = Decimal("1.00")
+        with pytest.raises(FrozenInstanceError):
+            lc.rent_changes = ()
+
+    @pytest.mark.parametrize("day", [date(2025, 1, 1), date(2026, 3, 15), date(2027, 1, 1)])
+    def test_duplicate_dates_are_rejected_even_outside_period(self, day):
+        lc = self.lease((self.change(day), self.change(day, "800.00")))
+        with pytest.raises(ValueError, match="[Dd]uplicate|[Dd]oppelt"):
+            tenant_expected_charges(lc, date(2026, 3, 1), date(2026, 3, 31))
+
+    @pytest.mark.parametrize(
+        "start,end,period_start,period_end,rent,nk,days",
+        [
+            (date(2026, 3, 10), date(2026, 3, 20), date(2026, 1, 1), date(2026, 12, 31), "258.06", "53.23", 11),
+            (date(2026, 1, 1), None, date(2026, 3, 12), date(2026, 3, 18), "164.52", "33.87", 7),
+            (date(2026, 3, 15), date(2026, 3, 15), date(2026, 3, 1), date(2026, 3, 31), "24.19", "4.84", 1),
+        ],
+    )
+    def test_lease_and_period_bounds(self, start, end, period_start, period_end, rent, nk, days):
+        lc = self.lease((self.change(date(2026, 3, 15)),), start, end)
+        charges = tenant_expected_charges(lc, period_start, period_end)
+        assert [c.amount for c in charges] == [Decimal(rent), Decimal(nk)]
+        assert all(c.days_occupied == days and c.days_in_month == 31 for c in charges)
+
+    @pytest.mark.parametrize(
+        "start,end,expected",
+        [
+            (date(2026, 2, 1), date(2026, 2, 28), ["700.00", "150.00"]),
+            (date(2026, 3, 1), date(2026, 3, 1), ["24.19", "5.81"]),
+            (date(2026, 3, 31), date(2026, 3, 31), ["25.81", "6.45"]),
+            (date(2026, 4, 1), date(2026, 4, 30), ["900.00", "210.00"]),
+        ],
+    )
+    def test_first_and_last_day_and_next_month(self, start, end, expected):
+        lc = self.lease((
+            self.change(date(2026, 3, 1), "750.00", "180.00"),
+            self.change(date(2026, 3, 31), "800.00", "200.00"),
+            self.change(date(2026, 4, 1), "900.00", "210.00"),
+        ))
+        assert [c.amount for c in tenant_expected_charges(lc, start, end)] == [Decimal(a) for a in expected]
+
+    def test_leap_february_change_on_twenty_ninth(self):
+        lc = self.lease((
+            self.change(date(2024, 2, 15), "750.00", "180.00"),
+            self.change(date(2024, 2, 29), "800.00", "200.00"),
+        ), start=date(2024, 1, 1))
+        charges = tenant_expected_charges(lc, date(2024, 2, 1), date(2024, 2, 29))
+        assert [c.amount for c in charges] == [Decimal("727.59"), Decimal("166.21")]
+        assert all(c.days_occupied == c.days_in_month == 29 for c in charges)
+
+    def test_outside_lease_and_reversed_period(self):
+        lc = self.lease((self.change(date(2026, 3, 15)),), date(2026, 3, 10), date(2026, 3, 20))
+        for start, end in [
+            (date(2026, 1, 1), date(2026, 3, 9)),
+            (date(2026, 3, 21), date(2026, 12, 31)),
+            (date(2026, 3, 20), date(2026, 3, 10)),
+        ]:
+            assert tenant_expected_charges(lc, start, end) == []
+
+    def test_empty_history_keeps_old_positional_constructor(self):
+        old = LeaseChargeInput(_U(21), YEAR_START, None, Decimal("700.00"), Decimal("150.00"))
+        assert old.rent_changes == ()
+        explicit = replace(old, rent_changes=())
+        assert tenant_expected_charges(old, YEAR_START, YEAR_END) == tenant_expected_charges(explicit, YEAR_START, YEAR_END)
+
+    def test_redundant_changes_preserve_constant_rate_half_cent_split(self):
+        lc = replace(self.lease(), base_rent=Decimal("0.01"), advance_payment=Decimal("0.03"))
+        changed = replace(lc, rent_changes=(
+            self.change(date(2026, 2, 7), "0.01", "0.03"),
+            self.change(date(2026, 2, 10), "0.01", "0.03"),
+        ))
+        start, end = date(2026, 2, 1), date(2026, 2, 14)
+        original = tenant_expected_charges(lc, start, end)
+        assert [c.amount for c in original] == [Decimal("0.01"), Decimal("0.02")]
+        assert tenant_expected_charges(changed, start, end) == original
+
+    def test_cent_fragments_sum_before_rounding_and_match_daily_oracle(self):
+        changes = (
+            self.change(date(2026, 3, 11), "0.05", "0.01"),
+            self.change(date(2026, 3, 21), "0.02", "0.01"),
+        )
+        lc = replace(self.lease(changes), base_rent=Decimal("0.02"), advance_payment=Decimal("0.01"))
+        charges = tenant_expected_charges(lc, date(2026, 3, 1), date(2026, 3, 31))
+        # Segment rounding gives rent 0.04 and NK 0.00, instead of 0.03 / 0.01.
+        assert [c.amount for c in charges] == [Decimal("0.03"), Decimal("0.01")]
+        for day in range(2, 31):
+            if day in (11, 21):
+                continue
+            varied = replace(lc, rent_changes=changes + (self.change(date(2026, 3, day), "0.01", "0.01"),))
+            numerators = [Decimal(0), Decimal(0)]
+            for occupied_day in range(1, 32):
+                rate = lc
+                for change in sorted(varied.rent_changes, key=lambda c: c.valid_from):
+                    if change.valid_from <= date(2026, 3, occupied_day):
+                        rate = change
+                numerators[0] += rate.base_rent
+                numerators[1] += rate.advance_payment
+            actual = tenant_expected_charges(varied, date(2026, 3, 1), date(2026, 3, 31))
+            assert [c.amount for c in actual] == [(n / 31).quantize(Decimal("0.01")) for n in numerators]
+
+    @pytest.mark.parametrize("field", ["base_rent", "advance_payment"])
+    @pytest.mark.parametrize("invalid", [1.5, "1.00", Decimal("-0.01"), Decimal("NaN"), Decimal("Infinity"), Decimal("0.001")])
+    def test_rate_validation(self, field, invalid):
+        values = dict(valid_from=date(2026, 3, 15), base_rent=Decimal("750.00"), advance_payment=Decimal("150.00"))
+        values[field] = invalid
+        with pytest.raises((TypeError, ValueError)):
+            mietkonto.RentChangeInput(**values)

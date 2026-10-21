@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import CheckConstraint, ForeignKey, String
+from sqlalchemy import CheckConstraint, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -43,6 +43,7 @@ class BankAccount(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     bank_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_bank_account_org_id"),
         CheckConstraint(
             "account_type IN ('LAUFEND', 'RUECKLAGE', 'KAUTION')",
             name="ck_bank_account_type",

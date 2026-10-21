@@ -17,6 +17,7 @@ import {
 import type { Person, OwnerProfile, TenantProfile, Vendor } from "../api/types";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/useAuth";
+import { AttachmentsPanel } from "../components/AttachmentsPanel";
 import { DsgvoPanel } from "../components/DsgvoPanel";
 
 export function PersonDetailPage() {
@@ -226,6 +227,8 @@ export function PersonDetailPage() {
           </form>
         )}
       </div>
+
+      <AttachmentsPanel personId={person.id} canWrite={(session?.role === "OWNER_ADMIN" || session?.role === "CLERK") && person.can_prepare} />
 
       {isAdmin && personId && (
         <DsgvoPanel key={personId} personId={personId} canPrepare={person.can_prepare} canExport={person.can_export} onChanged={reload} />

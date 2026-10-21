@@ -252,6 +252,27 @@ Die WEG kann **per Beschluss/Teilungserklärung** für einzelne Kostenarten eine
 
 > **[§18/fachlich F4-7] `mea_share`-Summe.** Das Modell erzwingt **nicht** hart, dass `Σ mea_share` je Einheit/Zeitpunkt == Einheit-MEA (Soft-Validierung, real-world-Daten). M4-Engine prüft **defensiv** und eskaliert bei grober Inkonsistenz (z. B. Σ `mea_share` = 0 bei vorhandenem Co-Eigentum), rechnet aber bei plausibler, leicht abweichender Summe normalisiert weiter (dokumentiert). Welche Toleranz fachlich zulässig ist, ist abzunehmen.
 
+### 4.3.1 Bedienablauf seit Phase 2 (T26)
+
+In der Einheit beendet „Eigentum beenden“ die ausgewählte offene Historienzeile.
+`PATCH /api/ownership/{id}` nimmt ausschließlich `valid_to` als inklusiven letzten
+Tag an; intern bleibt die obere Grenze exklusiv. Die Folgeanlage erhält den
+nächsten Tag und den bisherigen MEA-Anteil, aber keinen automatisch ausgewählten
+Eigentümer. Erst dessen bewusste Auswahl und Speichern erzeugt eine neue Zeile.
+Schreibrolle, bestehende Prepare-/Source-Rechte und Finanzinput-Sperre gelten;
+Miteigentum wird nicht pauschal verboten. Historische Stammdaten und gebuchte
+Zahlungen werden nicht überschrieben, finalisierte Abrechnungen bleiben eingefroren.
+
+Für Entwürfe liefert `GET /api/weg-settlements/{id}/input-owners` die vollständige
+berechtigte Eigentümermenge der Abrechnungsperiode, mit READ-Kreis- und
+Disclosure-Prüfung. Die UI verwendet dieselbe Menge wie die Coverage-Validierung,
+nicht bloß die Vorschusszeilen des Plans. Zahlungsangaben beginnen unbekannt;
+Nullbeträge benötigen eine ausdrückliche Eingabe und Vollständigkeitsbestätigung.
+Ein Verkäufer bis 30.06.2026 und Käufer ab 01.07. erhalten bei 365 EUR tatsächlichen
+Jahreskosten 181/184 EUR. Dieser Ablauf wird einschließlich Belegfreigabe,
+Finalisierung, Reload und geöffnetem PDF im Browser geprüft; der Plan wird dabei
+nicht nachträglich verändert.
+
 ### 4.4 Adressatenmodell für die Eigentümer-Verteilung (Engine-Spiegelung von M3)
 
 Die zentrale Erkenntnis: `distribute_position` erzeugt **bereits heute** für jede Position alle (unit, time-slice)-Zellen über das ganze Objekt und kennt **Eigentümerzellen** (Leerstand → `vacancy_attribution` mit `owner_profile_id`). Für M4 verschiebt sich der **Adressatenfokus**:

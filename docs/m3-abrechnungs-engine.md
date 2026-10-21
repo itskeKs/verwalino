@@ -246,6 +246,30 @@ Gewicht = gemessener Verbrauch der Einheit im Abrechnungszeitraum, ermittelt aus
 - **Zählertausch / fehlende Ablesung** im Zeitraum: **[OFFEN/§18]** — Schätzung/Ersatzverfahren ist fachlich (HeizkostenV-/Messdienst-Logik) und in M3 **nicht** automatisch. Provisorisch: Die Engine verlangt für `VERBRAUCH` vollständige, plausible Anfangs-/Endablesungen je teilnehmender Einheit; fehlt etwas → Eskalation, keine stille Schätzung.
 - **Heizung/Warmwasser** laufen in Phase 1 **nicht** über den `VERBRAUCH`-Schlüssel, sondern über `EXTERNE_ABRECHNUNG` (extern HeizkostenV-konform erstellt, SDD §6.9/§7.1, §5 dieses Dokuments). `VERBRAUCH` ist für eigene Zähler (z. B. Kaltwasser) gedacht, die das System selbst führt (SDD §6.2.1).
 
+#### Periodische Zählervorbelegung seit Phase 2 (T31)
+
+Ohne expliziten Handwert wird je Einheit der eindeutig nächste Anfangs- und
+Endstand innerhalb jeweils ±31 Tagen verwendet. Die Differenz bleibt exakt auf
+vier Dezimalstellen; es gibt weder Interpolation noch Rundung auf ganze Einheiten.
+Gleichabstand, doppelte nächste Ablesungen, identische/verkehrte Ablesetage oder
+Rückgänge verlangen Handeingabe. Automatik erfordert genau einen passenden
+Einheitszähler (`meter_type`, getrimmt/großgeschrieben, gleich Kostenkategoriecode)
+und eine einzige relevante Verbrauchsart. Mehrere mögliche Austauschzähler,
+Gemeinschaftszähler und verschiedene Verbrauchskategorien werden nicht still
+kombiniert. Eine fehlende Einheit darf nicht aus dem Verteilungsnenner verschwinden.
+
+Der Entwurfsabruf `GET /api/settlements/{id}/consumption-suggestions` verwendet
+READ-Kreisrechte mit vollständiger Quellen-/Klassifikationsprüfung. Die Oberfläche
+zeigt die tatsächlichen Stand-IDs, Daten und Werte; automatische Vorbelegungen
+werden nicht als manuelle Overrides zurückgesendet. Explizite Handwerte, auch 0,
+haben Vorrang. Compute und Finalize bestimmen die Basis unter der bestehenden
+Finanzsperre frisch. Nur tatsächlich automatisch verwendete Werte ergänzen
+`inputs.meter_consumption_sources` im Snapshot; reine Handwertsnapshots und alte
+finalisierte Abrechnungen bleiben unverändert. Finale Ansichten fragen keine
+aktuellen Vorschläge ab. Die vorhandenen Kosteneditoren konvertieren ihre
+UI-Auswahl über `costVocabulary` in kanonische DB-Schlüssel; Ergebniszeilen zeigen
+deren menschliche Bezeichnungen.
+
 ### 2.5 `EXTERNE_ABRECHNUNG` und `MANUELLER_BETRAG` (direkte per-Einheit-Beträge)
 
 Diese beiden Schlüssel **verteilen nicht** — sie übernehmen einen **bereits feststehenden Betrag je Einheit/Adressat**:
@@ -429,6 +453,29 @@ Zahlungen (M6) existieren noch nicht (Roadmap: M6 hängt an M3). Daher wird die 
 
 > **[ENTSCHEIDUNG]** Speicherort der manuellen Vorauszahlungssumme: **Feld am `settlement_run`** (empfohlen, hier festgelegt) vs. eigene kleine Tabelle. Empfehlung: Feld am Lauf — es gehört semantisch in den eingefrorenen Snapshot (was bei der Abrechnung als gezahlt zugrunde gelegt wurde, ist Teil des unveränderbaren Dokuments). Bestätigen.
 
+### 7.3 Künftige Vorauszahlung vorschlagen (Phase 2, T28)
+
+Die historische M3-Planung in §7.2 ist vom heutigen Ist-Pfad zu unterscheiden:
+M6 kann gebuchte NK-Zahlungen ableiten; T28 verändert weder dieses Ist noch einen
+finalisierten Lauf. `GET /api/settlements/{id}/advance-proposal` liefert für einen
+aktiven finalisierten BK-Lauf den eingefrorenen Mieter-Kostenanteil geteilt durch
+seine eingefrorene Mietdauer innerhalb des Abrechnungszeitraums. Ganze Kalendermonate
+zählen als eins, Teilmonate als belegte Tage/Kalendertage des Monats. Kalendergewichte
+bleiben exakt rational; Geld bleibt Decimal und wird einmal kaufmännisch auf Cent
+gerundet. Beispiel: Januar bis 05.02.2024, 0,17 EUR / (1 + 5/29) = 0,15 EUR.
+Fehlende, negative oder inkohärente historische Basis ergibt 409, keine Nullannahme.
+
+Die Detailseite zeigt Betrag und Basis; Leser sehen keine Übernahmesteuerung.
+POST an dieselbe URL nimmt nur `valid_from` und ergänzt nach Live-Rollen-, Kreis-
+und History-Prepare-Prüfung über den gemeinsamen T23-Service eine unveränderliche
+volle Rate. Die Kaltmiete wird aus der bis zum Stichtag gültigen Miethistorie erhalten.
+Vertragsgrenzen und doppelte Stichtage bleiben geschützt; gemeinsame Finanz-/Zeilensperre,
+Audit und Rollback gelten. Die neue Rate ist vor HTTP 201 committet. Originalvertrag,
+Abrechnungssnapshot/-zeilen und gebuchte Zahlungen werden nicht verändert.
+Der echte UI-Prüffall finalisiert beleggebundene Mieterkosten von 1.200 EUR, übernimmt
+100 EUR ab 01.01.2027 und prüft alle 24 Mietkontoposten: Jahres-Soll 9.600 statt
+10.200 EUR bei unverändertem Ist null.
+
 ---
 
 ## 8. Formelle Pflichtangaben (BGH) + PDF-Layout
@@ -527,6 +574,18 @@ Diese Invarianten sind die **objektive, modellunabhängige** Messlatte: Sie gelt
 - [ ] `audit_event`-Actions: `settlement.created`, `settlement.computed`, `settlement.finalized`, `settlement.superseded` (über vorhandenes `AuditRepository`).
 
 ### 10.4 API (API-first, RBAC wie M0/M2)
+
+Seit Phase 2 (T27) ergänzt `POST /api/settlements/batch` die Einzelanlage um einen
+atomaren Sammellauf mit Objekt, inklusivem Zeitraum und optionalem Abrechnungskreis.
+Nur im Zeitraum überlappende Verträge der berechtigten Kreiseinheiten werden über
+`create_draft` angelegt; aktive BK-Läufe mit identischem Vertrag/Objekt/Zeitraum/Kreis
+werden unverändert übersprungen. Antwort: `created` und `skipped` mit Vertrags-/Lauf-ID.
+Die vorhandene orgweite Finanzsperre serialisiert parallele Sammelläufe; ein Fehler
+rollt auch Audit und bereits angelegte Entwürfe zurück. Source-/Kreisrechte werden
+vor einer Leerantwort geprüft. Keine Berechnung, Coverage oder Finalisierung und
+keine erfundenen Vorauszahlungen: neue Finanzwerte bleiben `null`.
+Unter `/abrechnungen` führt „BK-Sammellauf“ durch Objekt, Zeitraum und Kreis;
+Ergebniszahlen und Liste werden aktualisiert, dieselbe Periode ist wiederholbar.
 
 Implementiertes BK-Verhalten: `POST /api/settlements/{id}/finalize` beendet die DB-Transaktion durch `Depends(get_db, scope="function")` **vor** der HTTP-Erfolgsantwort. Damit sieht ein unmittelbar folgender PDF-Request bereits den finalisierten Snapshot; Entwürfe bleiben mit HTTP 409 gesperrt. Die Regression prüft den gespeicherten Status aus einer unabhängigen DB-Session bei `http.response.start`, da ASGITransport allein das spätere Request-Cleanup abwartet und diese Race Condition verdeckt.
 

@@ -14,7 +14,9 @@ from app.models.tenant_profile import TenantProfile
 from app.models.vendor import Vendor
 from app.models.ownership_history import OwnershipHistory
 from app.models.lease_agreement import LeaseAgreement
+from app.models.lease_rent_change import LeaseRentChange
 from app.models.bank_account import BankAccount
+from app.models.bank_transaction import BankTransaction
 from app.models.meter import Meter, MeterReading
 
 # M2 Kosten & GoBD-Belegfluss
@@ -46,6 +48,8 @@ from app.models.resolution_register_entry import ResolutionRegisterEntry
 
 # Mandate documents (Verträge & Unterlagen am Mandat)
 from app.models.mandate_document import MandateDocument
+from app.models.attachment import Attachment
+from app.models.task import Task
 
 # Declaration import legal source and review graph
 from app.models.property_document import PropertyDocument
@@ -83,6 +87,7 @@ __all__ = [
     "Vendor",
     "OwnershipHistory",
     "LeaseAgreement",
+    "LeaseRentChange",
     "BankAccount",
     "Meter",
     "MeterReading",
@@ -107,6 +112,8 @@ __all__ = [
     "Resolution",
     "ResolutionRegisterEntry",
     "MandateDocument",
+    "Attachment",
+    "Task",
     "PropertyDocument",
     "DeclarationImport",
     "DeclarationImportDocument",
@@ -147,3 +154,5 @@ from app.models.property_source_classification import PropertySourceClassificati
 from app.models.property_creation_receipt import PropertyCreationReceipt
 
 from app.models.intake_original import IntakeOriginal
+
+from app.models.special_levy import SpecialLevy, SpecialLevyAllocation

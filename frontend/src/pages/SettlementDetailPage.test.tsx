@@ -6,16 +6,19 @@
  * T03: "Wasser nach Verbrauch, Heizung extern eingeben, berechnen, finalisieren, PDF öffnen".
  */
 
-import { afterEach, describe, it, expect, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { AuthCtx } from "../auth/useAuth";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import * as api from "../api/endpoints";
-import type { CostEntry, SettlementRun } from "../api/types";
+import type { ConsumptionSuggestion, CostEntry, SettlementRun } from "../api/types";
+import { ApiError } from "../api/client";
 
 vi.mock("../api/endpoints", async (importOriginal) => ({
   ...await importOriginal<typeof import("../api/endpoints")>(),
   getSettlement: vi.fn(),
+  getConsumptionSuggestions: vi.fn().mockResolvedValue([{ unit_id: "unit-1", unit_label: "1", consumption: null, meter_id: null, start_reading: null, end_reading: null, reason: "Handeingabe erforderlich." }]),
   listProperties: vi.fn().mockResolvedValue([]),
   listLeases: vi.fn().mockResolvedValue([]),
   listUnits: vi.fn().mockResolvedValue([]),
@@ -33,14 +36,15 @@ vi.mock("../components/FinancialCoverageReview", () => ({
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
+import { SettlementDetailPage } from "./SettlementDetailPage";
 import {
-  SettlementDetailPage,
   needsConsumption,
   needsPersonCount,
   needsExternalInput,
   needsManualInput,
-} from "./SettlementDetailPage";
+} from "../lib/settlementInputNeeds";
 
 // Helper to create a minimal CostEntry for testing
 function createCostEntry(overrides: Partial<CostEntry> = {}): CostEntry {
@@ -94,9 +98,9 @@ describe("SettlementDetailPage with database distribution keys", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const openPdf = vi.spyOn(window, "open").mockReturnValue(null);
     const user = userEvent.setup();
-    render(<MemoryRouter initialEntries={["/abrechnungen/run-1"]}>
+    render(<AuthCtx.Provider value={auth("OWNER_ADMIN")}><MemoryRouter initialEntries={["/abrechnungen/run-1"]}>
       <Routes><Route path="/abrechnungen/:runId" element={<SettlementDetailPage />} /></Routes>
-    </MemoryRouter>);
+    </MemoryRouter></AuthCtx.Provider>);
 
     await user.click(await screen.findByRole("button", { name: "Strukturierte Eingaben anzeigen" }));
     await user.type(await screen.findByLabelText(/^Verbrauch \(/), "30");
@@ -173,6 +177,350 @@ describe("SettlementDetailPage needs* functions", () => {
     it("returns false when entry does not have MANUAL distribution key", () => {
       const entry = createCostEntry({ tenant_distribution_key: "MEA" });
       expect(needsManualInput(entry)).toBe(false);
+    });
+  });
+});
+
+const finalized: SettlementRun = {
+  id: "run-1", organization_id: "org", property_id: "property-1", unit_id: "unit-1",
+  management_mandate_id: null, lease_agreement_id: "lease-1", tenant_profile_id: "tenant-1",
+  run_type: "BK_MIETER", period_start: "2026-01-01", period_end: "2026-12-31",
+  status: "finalized", advance_payments_total: "1800.00", advance_payments_source: "MANUAL",
+  total_cost: "1200.00", balance: "-600.00", snapshot_sha256: "original-snapshot",
+  engine_version: "m3.1.0", finalized_at: "2027-01-01", finalized_by: "user",
+  superseded_by_id: null, lines: [],
+};
+const proposal = {
+  lease_agreement_id: "lease-1", tenant_cost: "1200.00", months: "12",
+  monthly_amount: "100.00", period_start: "2026-01-01", period_end: "2026-12-31",
+};
+const originalLease = {
+  id: "lease-1", unit_id: "unit-1", tenant_profile_id: "tenant-1", valid_from: "2025-01-01",
+  valid_to: null, base_rent: "700.00", advance_payment: "150.00", deposit: null, notes: "Original",
+};
+const applied = {
+  id: "change-1", lease_agreement_id: "lease-1", valid_from: "2027-01-01",
+  base_rent: "725.00", advance_payment: "100.00", created_at: "2026-10-20T12:00:00Z",
+};
+function auth(role: string) {
+  return { loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() };
+}
+function showProposal(role = "OWNER_ADMIN") {
+  return render(<AuthCtx.Provider value={auth(role)}><MemoryRouter initialEntries={["/abrechnungen/run-1"]}>
+    <Link to="/abrechnungen/run-2">Andere Abrechnung</Link>
+    <Routes><Route path="/abrechnungen/:runId" element={<SettlementDetailPage />} /></Routes>
+  </MemoryRouter></AuthCtx.Provider>);
+}
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+let fetchProposal: ReturnType<typeof vi.fn>;
+function posts() { return fetchProposal.mock.calls.filter(([, options]) => options?.method === "POST"); }
+function date(value: string) { fireEvent.change(screen.getByLabelText("Übernehmen ab", { exact: true }), { target: { value } }); }
+function accept() { fireEvent.click(screen.getByRole("button", { name: "Vorauszahlung übernehmen" })); }
+
+describe("T28 monthly advance proposal", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.getSettlement).mockReset().mockResolvedValue(structuredClone(finalized));
+    vi.mocked(api.listCostEntries).mockResolvedValue([]);
+    vi.mocked(api.listLeases).mockResolvedValue([originalLease]);
+    fetchProposal = vi.fn(async (_url: string, options?: RequestInit) => new Response(
+      JSON.stringify(options?.method === "POST" ? applied : proposal), { status: options?.method === "POST" ? 201 : 200 },
+    ));
+    vi.stubGlobal("fetch", fetchProposal);
+  });
+
+  it("provides helpers with exact URL and date-only payload", async () => {
+    expect(await api.getAdvanceProposal("run-1")).toEqual(proposal);
+    const dateOnly = { valid_from: "2027-01-01", base_rent: "1.00", advance_payment: "999.00" };
+    expect(await api.applyAdvanceProposal("run-1", dateOnly)).toEqual(applied);
+    expect(fetchProposal.mock.calls.map(([url]) => url)).toEqual([
+      "/api/settlements/run-1/advance-proposal", "/api/settlements/run-1/advance-proposal",
+    ]);
+    expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2027-01-01" });
+  });
+
+  it.each(["OWNER_ADMIN", "CLERK"])("offers basis, date and acceptance to %s without changing lease or snapshot", async (role) => {
+    const leaseBefore = structuredClone(originalLease);
+    showProposal(role);
+    const region = await screen.findByRole("region", { name: "Vorauszahlungsvorschlag" });
+    expect(await within(region).findByText("100,00 EUR")).toBeVisible();
+    expect(region).toHaveTextContent("Neue Vorauszahlung");
+    expect(region).toHaveTextContent("1.200,00 EUR");
+    expect(region).toHaveTextContent("12 Monate");
+    expect(region).toHaveTextContent(/Kaltmiete.*gewählten Tag/);
+    expect(screen.getByLabelText("Übernehmen ab", { exact: true })).toHaveValue("2027-01-01");
+    accept();
+    expect(await screen.findByText(/Miethistorie ergänzt/)).toBeVisible();
+    expect(region).toHaveTextContent("725,00 EUR");
+    expect(region).toHaveTextContent("2027-01-01");
+    expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2027-01-01" });
+    expect(screen.getByRole("button", { name: "PDF herunterladen" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Korrekturabrechnung erstellen" })).toBeEnabled();
+    expect(screen.getByText("original-snapshot")).toBeVisible();
+    expect(screen.getByText("1800.00 EUR")).toBeVisible();
+    expect(api.getSettlement).toHaveBeenCalledTimes(1);
+    expect(api.computeSettlement).not.toHaveBeenCalled();
+    expect(api.finalizeSettlement).not.toHaveBeenCalled();
+    expect(originalLease).toEqual(leaseBefore);
+  });
+
+  it.each(["READ_ONLY", "UNKNOWN"])("shows proposal without acceptance controls for %s", async (role) => {
+    showProposal(role); expect(await screen.findByText("100,00 EUR")).toBeVisible();
+    expect(screen.queryByLabelText("Übernehmen ab", { exact: true })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Vorauszahlung übernehmen" })).toBeNull();
+    expect(posts()).toHaveLength(0);
+  });
+
+  it.each([{ status: "draft" as const }, { superseded_by_id: "correction" }, { run_type: "OTHER" }])("never fetches/offers an ineligible run: %j", async (overrides) => {
+    vi.mocked(api.getSettlement).mockResolvedValue({ ...finalized, ...overrides });
+    showProposal(); await screen.findByRole("heading", { level: 1 });
+    expect(screen.queryByRole("region", { name: "Vorauszahlungsvorschlag" })).toBeNull();
+    expect(fetchProposal).not.toHaveBeenCalled();
+  });
+
+  it("shows GET loading, visible failure and retry, not a zero proposal", async () => {
+    const pending = deferred<Response>(); fetchProposal.mockReturnValueOnce(pending.promise);
+    showProposal(); const region = await screen.findByRole("region", { name: "Vorauszahlungsvorschlag" });
+    expect(region).toHaveTextContent(/Lade.*Vorauszahlung/);
+    await act(async () => pending.resolve(new Response(JSON.stringify({ detail: "Vorschlag nicht verfügbar" }), { status: 409 })));
+    expect(await within(region).findByRole("alert")).toHaveTextContent("Vorschlag nicht verfügbar");
+    expect(region).not.toHaveTextContent("0,00 EUR");
+    fireEvent.click(within(region).getByRole("button", { name: "Erneut versuchen" }));
+    expect(await within(region).findByText("100,00 EUR")).toBeVisible();
+  });
+
+  it.each([403, 404, 409, 422, "network"])("retains proposal/date after POST %s and allows retry", async (failure) => {
+    showProposal(); await screen.findByText("100,00 EUR"); date("2026-03-15");
+    if (failure === "network") fetchProposal.mockRejectedValueOnce(new TypeError("Netzwerk nicht erreichbar"));
+    else fetchProposal.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Serverprüfung fehlgeschlagen" }), { status: Number(failure) }));
+    accept();
+    expect(await screen.findByRole("alert")).toHaveTextContent(failure === "network" ? "Netzwerk nicht erreichbar" : "Serverprüfung fehlgeschlagen");
+    expect(screen.getByLabelText("Übernehmen ab", { exact: true })).toHaveValue("2026-03-15");
+    expect(screen.getByText("100,00 EUR")).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Vorauszahlung übernehmen" })).toBeEnabled());
+    accept(); await screen.findByText(/Miethistorie ergänzt/);
+    expect(JSON.parse(posts()[1][1].body)).toEqual({ valid_from: "2026-03-15" });
+  });
+
+  it("rejects empty dates locally but permits historical dates", async () => {
+    showProposal(); await screen.findByText("100,00 EUR"); date(""); accept();
+    expect(await screen.findByRole("alert")).toHaveTextContent(/gültiges Datum/);
+    expect(posts()).toHaveLength(0);
+    date("2025-02-28"); accept(); await screen.findByText(/Miethistorie ergänzt/);
+    expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2025-02-28" });
+  });
+
+  it.each(["2026-02-30", "0000-01-01", "10000-01-01"])("rejects an invalid or unrepresentable acceptance date %s", async (value) => {
+    showProposal(); await screen.findByText("100,00 EUR"); date(value); accept();
+    expect(await screen.findByRole("alert")).toHaveTextContent(/gültiges Datum/);
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("shows network GET errors and retries without inventing amounts", async () => {
+    fetchProposal.mockRejectedValueOnce(new TypeError("Verbindung unterbrochen"));
+    showProposal();
+    const region = await screen.findByRole("region", { name: "Vorauszahlungsvorschlag" });
+    expect(await within(region).findByRole("alert")).toHaveTextContent("Verbindung unterbrochen");
+    expect(region).not.toHaveTextContent("0,00 EUR");
+    expect(screen.queryByLabelText("Übernehmen ab")).toBeNull();
+    fireEvent.click(within(region).getByRole("button", { name: "Erneut versuchen" }));
+    expect(await within(region).findByText("100,00 EUR")).toBeVisible();
+  });
+
+  it("does not turn an unknown financial amount into zero", async () => {
+    fetchProposal.mockResolvedValueOnce(new Response(JSON.stringify({ ...proposal, monthly_amount: "", tenant_cost: "" })));
+    showProposal();
+    const region = await screen.findByRole("region", { name: "Vorauszahlungsvorschlag" });
+    expect(await within(region).findByText("Nicht verfügbar")).toBeVisible();
+    expect(region).not.toHaveTextContent("0,00 EUR");
+  });
+
+  it("disables date/submit and synchronously prevents double submissions", async () => {
+    const pending = deferred<Response>();
+    showProposal(); await screen.findByText("100,00 EUR"); fetchProposal.mockReturnValueOnce(pending.promise);
+    const button = screen.getByRole("button", { name: "Vorauszahlung übernehmen" });
+    const form = button.closest("form")!;
+    act(() => { fireEvent.submit(form); fireEvent.submit(form); });
+    expect(posts()).toHaveLength(1); expect(button).toBeDisabled();
+    expect(screen.getByLabelText("Übernehmen ab", { exact: true })).toBeDisabled();
+    await act(async () => pending.resolve(new Response(JSON.stringify(applied), { status: 201 })));
+    expect(await screen.findByText(/Miethistorie ergänzt/)).toBeVisible();
+  });
+
+  it("formats large decimal strings without losing cents", async () => {
+    fetchProposal.mockResolvedValueOnce(new Response(JSON.stringify({ ...proposal, monthly_amount: "9007199254740993.01" })));
+    showProposal(); expect(await screen.findByText("9.007.199.254.740.993,01 EUR")).toBeVisible();
+  });
+
+  it.each([["2026-02-28", "2026-03-01"], ["2024-02-28", "2024-02-29"], ["9999-12-31", ""]])("defaults next day after %s when representable", async (end, expected) => {
+    fetchProposal.mockResolvedValueOnce(new Response(JSON.stringify({ ...proposal, period_end: end })));
+    showProposal(); await screen.findByText("100,00 EUR");
+    expect(screen.getByLabelText("Übernehmen ab", { exact: true })).toHaveValue(expected);
+  });
+
+  it("ignores late GET after navigation to a draft", async () => {
+    const pending = deferred<Response>(); fetchProposal.mockReturnValueOnce(pending.promise);
+    vi.mocked(api.getSettlement).mockResolvedValueOnce(finalized).mockResolvedValueOnce({ ...finalized, id: "run-2", status: "draft" });
+    showProposal(); await screen.findByRole("region", { name: "Vorauszahlungsvorschlag" });
+    fireEvent.click(screen.getByRole("link", { name: "Andere Abrechnung" }));
+    await screen.findByRole("button", { name: "Finalisieren" });
+    await act(async () => pending.resolve(new Response(JSON.stringify(proposal))));
+    expect(screen.queryByRole("region", { name: "Vorauszahlungsvorschlag" })).toBeNull();
+  });
+
+  it("ignores late POST on another finalized run", async () => {
+    const pending = deferred<Response>();
+    vi.mocked(api.getSettlement).mockResolvedValueOnce(finalized).mockResolvedValueOnce({ ...finalized, id: "run-2" });
+    showProposal(); await screen.findByText("100,00 EUR"); fetchProposal.mockReturnValueOnce(pending.promise); accept();
+    fireEvent.click(screen.getByRole("link", { name: "Andere Abrechnung" }));
+    await waitFor(() => expect(fetchProposal).toHaveBeenCalledWith("/api/settlements/run-2/advance-proposal", expect.anything()));
+    await screen.findByText("100,00 EUR");
+    await act(async () => pending.resolve(new Response(JSON.stringify(applied), { status: 201 })));
+    expect(screen.queryByText(/Miethistorie ergänzt/)).toBeNull();
+    expect(screen.getByLabelText("Übernehmen ab", { exact: true })).toBeEnabled();
+  });
+
+  it("ignores an obsolete initial settlement response before fetching proposals", async () => {
+    const pending = deferred<SettlementRun>();
+    vi.mocked(api.getSettlement).mockReturnValueOnce(pending.promise).mockResolvedValueOnce({ ...finalized, id: "run-2", status: "draft" });
+    showProposal();
+    fireEvent.click(screen.getByRole("link", { name: "Andere Abrechnung" }));
+    await screen.findByRole("button", { name: "Finalisieren" });
+    await act(async () => pending.resolve(finalized));
+    expect(screen.queryByRole("region", { name: "Vorauszahlungsvorschlag" })).toBeNull();
+    expect(fetchProposal).not.toHaveBeenCalled();
+  });
+
+  it("ignores GET completion after unmount", async () => {
+    const pending = deferred<Response>(); fetchProposal.mockReturnValueOnce(pending.promise);
+    showProposal(); await screen.findByRole("region", { name: "Vorauszahlungsvorschlag" }); cleanup();
+    await act(async () => pending.reject(new TypeError("Late GET failure")));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("ignores completion after unmount", async () => {
+    const pending = deferred<Response>(); showProposal(); await screen.findByText("100,00 EUR");
+    fetchProposal.mockReturnValueOnce(pending.promise); accept(); cleanup();
+    await act(async () => pending.reject(new TypeError("Late network failure")));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+const consumptionRows: ConsumptionSuggestion[] = [
+  ["unit-1", "1", "30.0000", "130.0000"], ["unit-2", "2", "70.0000", "170.0000"],
+].map(([unit_id, unit_label, consumption, end]) => ({
+  unit_id, unit_label, consumption, meter_id: `meter-${unit_id}`, reason: null,
+  start_reading: { id: `start-${unit_id}`, reading_date: "2025-01-01", value: "100.0000" },
+  end_reading: { id: `end-${unit_id}`, reading_date: "2025-12-31", value: end },
+}));
+const consumptionDraft: SettlementRun = { ...finalized, status: "draft", snapshot_sha256: null,
+  total_cost: null, balance: null, advance_payments_total: "0.00", finalized_at: null, finalized_by: null,
+  period_start: "2025-01-01", period_end: "2025-12-31" };
+async function showConsumption() {
+  showProposal();
+  fireEvent.click(await screen.findByRole("button", { name: "Strukturierte Eingaben anzeigen" }));
+  return screen.findByLabelText(/^Verbrauch \(1/);
+}
+describe("T31 meter consumption prefill", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.getSettlement).mockReset().mockResolvedValue(structuredClone(consumptionDraft));
+    vi.mocked(api.listCostEntries).mockResolvedValue([createCostEntry({ tenant_distribution_key: "VERBRAUCH" })]);
+    vi.mocked(api.listUnits).mockResolvedValue([
+      { id: "unit-1", number: "1", location: "EG" }, { id: "unit-2", number: "2", location: "OG" },
+    ] as never);
+    vi.mocked(api.getConsumptionSuggestions).mockReset().mockResolvedValue(structuredClone(consumptionRows));
+    vi.mocked(api.computeSettlement).mockResolvedValue(structuredClone(consumptionDraft));
+  });
+  it.each([["VERBRAUCH", "Verbrauch"], ["WOHNFLAECHE", "Flaeche"], ["BEHEIZTE_FLAECHE", "Beheizte Flaeche"], ["EINHEIT", "Einheiten"], ["PERSONENZAHL", "Personen"], ["EXTERNE_ABRECHNUNG", "Extern"], ["MANUELLER_BETRAG", "Manuell"]])("renders canonical key %s as %s", async (key, label) => {
+    vi.mocked(api.getSettlement).mockResolvedValue({ ...consumptionDraft, total_cost: "30.00", balance: "30.00", lines: [{
+      id: "line", cost_entry_id: "water", line_type: "COST", cost_category_code: "KALTWASSER", label: "Kaltwasser",
+      distribution_key: key, total_amount: "100.00", distribution_base_total: "100.000000", distribution_base_share: "30.000000",
+      time_share_days: 365, time_share_total_days: 365, amount: "30.00", sort_order: 0, note: "",
+    }] });
+    showProposal();
+    expect(await screen.findByRole("cell", { name: label })).toBeVisible();
+  });
+  it("prefills every authorized unit and explains the actual reading basis", async () => {
+    const first = await showConsumption();
+    await waitFor(() => expect(first).toHaveValue("30.0000"));
+    expect(screen.getByLabelText(/^Verbrauch \(2/)).toHaveValue("70.0000");
+    expect(screen.getAllByText(/Zählerbasis:/)).toHaveLength(2);
+    expect(api.getConsumptionSuggestions).toHaveBeenCalledWith("run-1");
+  });
+  it("does not echo automatic prefill as manual input", async () => {
+    const first = await showConsumption();
+    await waitFor(() => expect(first).toHaveValue("30.0000"));
+    fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
+    await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledWith("run-1", {
+      external_amounts: [], manual_amounts: [], unit_metrics: [],
+    }));
+  });
+  it("sends an explicitly entered manual zero and no automatic peer value", async () => {
+    const first = await showConsumption();
+    await waitFor(() => expect(first).toHaveValue("30.0000"));
+    fireEvent.change(first, { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
+    await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledWith("run-1", {
+      external_amounts: [], manual_amounts: [], unit_metrics: [{ unit_id: "unit-1", consumption: "0", person_count: null }],
+    }));
+  });
+  it("keeps a cleared consumption field visible", async () => {
+    const first = await showConsumption();
+    fireEvent.change(first, { target: { value: "9" } });
+    fireEvent.change(first, { target: { value: "" } });
+    expect(screen.getByLabelText(/^Verbrauch \(1/)).toBeVisible();
+    expect(screen.getByLabelText(/^Verbrauch \(1/)).toHaveValue("");
+  });
+  it("shows source loading failures and retries without inventing zero", async () => {
+    vi.mocked(api.getConsumptionSuggestions).mockRejectedValueOnce(new ApiError(403, "Zählerbasis gesperrt"));
+    await showConsumption();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Zählerbasis gesperrt");
+    expect(screen.getByRole("button", { name: "Berechnen" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Zählerbasis erneut laden" }));
+    await waitFor(() => expect(screen.getByLabelText(/^Verbrauch \(1/)).toHaveValue("30.0000"));
+    expect(screen.getByRole("button", { name: "Berechnen" })).toBeEnabled();
+  });
+  it("ignores an obsolete meter response after switching settlement", async () => {
+    const pending = deferred<ConsumptionSuggestion[]>();
+    vi.mocked(api.getSettlement).mockResolvedValueOnce(structuredClone(consumptionDraft))
+      .mockResolvedValueOnce({ ...consumptionDraft, id: "run-2" });
+    vi.mocked(api.getConsumptionSuggestions).mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce(consumptionRows.map(row => ({ ...row, consumption: "5.0000" })));
+    showProposal();
+    await waitFor(() => expect(api.getConsumptionSuggestions).toHaveBeenCalledWith("run-1"));
+    fireEvent.click(screen.getByRole("link", { name: "Andere Abrechnung" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Strukturierte Eingaben anzeigen" }));
+    await waitFor(() => expect(screen.getByLabelText(/^Verbrauch \(1/)).toHaveValue("5.0000"));
+    await act(async () => pending.resolve(structuredClone(consumptionRows)));
+    expect(screen.getByLabelText(/^Verbrauch \(1/)).toHaveValue("5.0000");
+    expect(api.getConsumptionSuggestions).toHaveBeenLastCalledWith("run-2");
+  });
+  it("does not set meter source errors after unmount", async () => {
+    const pending = deferred<ConsumptionSuggestion[]>();
+    vi.mocked(api.getConsumptionSuggestions).mockReturnValueOnce(pending.promise);
+    showProposal();
+    await waitFor(() => expect(api.getConsumptionSuggestions).toHaveBeenCalledWith("run-1"));
+    cleanup();
+    await act(async () => pending.reject(new ApiError(403, "Late source failure")));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+  it("retains an explicit manual zero after a failed calculation and retries it", async () => {
+    vi.mocked(api.computeSettlement).mockRejectedValueOnce(new ApiError(422, "Ablesungen prüfen"));
+    const first = await showConsumption();
+    fireEvent.change(first, { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Ablesungen prüfen");
+    expect(first).toHaveValue("0");
+    fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
+    await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledTimes(2));
+    expect(api.computeSettlement).toHaveBeenLastCalledWith("run-1", {
+      external_amounts: [], manual_amounts: [], unit_metrics: [{ unit_id: "unit-1", consumption: "0", person_count: null }],
     });
   });
 });

@@ -59,16 +59,16 @@ TENANT_TABLES = frozenset({
     "user", "membership", "management_mandate", "audit_event",
     # M1 Stammdaten
     "property", "unit", "person", "owner_profile", "tenant_profile",
-    "vendor", "ownership_history", "lease_agreement", "bank_account",
+    "vendor", "ownership_history", "lease_agreement", "lease_rent_change", "bank_account",
     "meter", "meter_reading",
     # M2 Kosten & GoBD-Belegfluss
     "cost_entry", "invoice_document", "operation_receipt", "invoice_processing_attempt",
     # M3 Verteilungs-/Abrechnungs-Engine
     "settlement_run", "settlement_line", "coverage_declaration",
     # M4 WEG-Abrechnung (Wirtschaftsplan eigene Entitaet)
-    "economic_plan", "economic_plan_line",
+    "economic_plan", "economic_plan_line", "special_levy", "special_levy_allocation",
     # M6 Zahlungen, Mietkonto & offene Posten
-    "payment",
+    "payment", "bank_transaction",
     # M7 Mahnwesen
     "dunning_notice", "dunning_scope_context",
     # M8 Eigentümerversammlung & Beschluss-Sammlung
@@ -78,6 +78,7 @@ TENANT_TABLES = frozenset({
     "resolution_register_entry",
     # Mandate documents (Verträge & Unterlagen am Mandat)
     "mandate_document",
+    "attachment", "task",
     # Declaration import legal source and review graph
     "property_document",
     "declaration_import", "declaration_queue_request",

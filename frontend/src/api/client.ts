@@ -27,6 +27,7 @@ function financialInputMessage(detail: { blockers?: { code: string }[] }): strin
 async function request<T>(
   url: string,
   options: RequestInit = {},
+  responseType: "json" | "blob" = "json",
 ): Promise<T> {
   const res = await fetch(url, {
     ...options,
@@ -54,12 +55,15 @@ async function request<T>(
   }
 
   // 204 No Content has no body
-  if (res.status === 204) return undefined as T;
+  if (res.status === 204 && responseType === "json") return undefined as T;
 
-  return res.json() as Promise<T>;
+  return (responseType === "blob" ? res.blob() : res.json()) as Promise<T>;
 }
 
 export const api = {
+  getBlob(url: string, options?: RequestInit): Promise<Blob> {
+    return request<Blob>(url, options, "blob");
+  },
   get<T>(url: string, options?: RequestInit): Promise<T> {
     return request<T>(url, options);
   },

@@ -7,9 +7,10 @@
  * Storno chain visible in the list (reversed-by / reverses links).
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import {
+  exportPaymentsCsv,
   listPayments,
   listBankAccounts,
   listProperties,
@@ -30,6 +31,7 @@ import type {
   OwnerProfile,
   Person,
 } from "../api/types";
+import type { PaymentListQuery } from "../api/endpoints";
 import { ApiError } from "../api/client";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
@@ -93,6 +95,18 @@ function makeEmptyForm(): PaymentCreate {
   };
 }
 
+// API amounts are decimal strings; never round list aggregates through Number.
+function amountCents(value: string): bigint {
+  const [whole, fraction = ""] = value.split(".");
+  return BigInt(`${whole}${fraction.padEnd(2, "0")}`);
+}
+
+function formatCents(value: bigint): string {
+  const absolute = value < 0n ? -value : value;
+  const whole = (absolute / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `${value < 0n ? "-" : ""}${whole},${(absolute % 100n).toString().padStart(2, "0")} EUR`;
+}
+
 export function PaymentsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -108,21 +122,37 @@ export function PaymentsPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<PaymentCreate>(makeEmptyForm());
   const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState<{ query: PaymentListQuery; key: string } | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const lifecycle = useRef({ mounted: false, generation: 0, downloading: false });
+
+  useEffect(() => {
+    const state = lifecycle.current;
+    state.mounted = true;
+    return () => { state.mounted = false; state.generation++; };
+  }, []);
 
   const statusFilter = searchParams.get("status") ?? "";
   const accountFilter = searchParams.get("bank_account_id") ?? "";
   const typeFilter = searchParams.get("payment_type") ?? "";
+  const queryKey = JSON.stringify([statusFilter, accountFilter, typeFilter]);
 
   const reload = useCallback(() => {
+    const generation = ++lifecycle.current.generation;
+    const current = () => lifecycle.current.mounted && lifecycle.current.generation === generation;
+    lifecycle.current.downloading = false;
+    setDownloading(false);
+    setDownloadError(null);
+    setLoaded(null);
     setLoading(true);
     setError(null);
-    const params: Record<string, string | number | undefined> = {};
+    const params: PaymentListQuery = {};
     if (statusFilter) params.status = statusFilter;
     if (accountFilter) params.bank_account_id = accountFilter;
     if (typeFilter) params.payment_type = typeFilter;
-
     Promise.all([
-      listPayments(params as Parameters<typeof listPayments>[0]),
+      listPayments(params),
       listBankAccounts(),
       listProperties(),
       listLeases(),
@@ -131,6 +161,8 @@ export function PaymentsPage() {
       listPersons(),
     ])
       .then(([pay, ba, prop, lease, tp, op, per]) => {
+        if (!current()) return;
+        setLoaded({ query: params, key: queryKey });
         setPayments(pay);
         setBankAccounts(ba);
         setProperties(prop);
@@ -140,20 +172,30 @@ export function PaymentsPage() {
         setPersons(per);
       })
       .catch((err) => {
+        if (!current()) return;
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert. Bitte erneut anmelden.");
         } else {
           setError(String(err));
         }
       })
-      .finally(() => setLoading(false));
-  }, [statusFilter, accountFilter, typeFilter]);
+      .finally(() => { if (current()) setLoading(false); });
+  }, [statusFilter, accountFilter, typeFilter, queryKey]);
 
   useEffect(() => {
     reload();
   }, [reload]);
 
   function setFilter(key: string, value: string) {
+    if ((searchParams.get(key) ?? "") === value) return;
+    // Invalidate synchronously, before the URL update's next effect can run.
+    lifecycle.current.generation++;
+    lifecycle.current.downloading = false;
+    setLoaded(null);
+    setLoading(true);
+    setDownloading(false);
+    setDownloadError(null);
+    setError(null);
     const next = new URLSearchParams(searchParams);
     if (value) {
       next.set(key, value);
@@ -161,6 +203,36 @@ export function PaymentsPage() {
       next.delete(key);
     }
     setSearchParams(next, { replace: true });
+  }
+
+  const currentDataset = loaded !== null && loaded.key === queryKey && !loading && !error;
+
+  async function downloadCsv() {
+    if (!currentDataset || !loaded || !lifecycle.current.mounted || lifecycle.current.downloading) return;
+    const generation = lifecycle.current.generation;
+    const current = () => lifecycle.current.mounted && lifecycle.current.generation === generation;
+    lifecycle.current.downloading = true;
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      const blob = await exportPaymentsCsv(loaded.query);
+      if (!current()) return;
+      const anchor = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      try {
+        anchor.href = url;
+        anchor.download = "zahlungen.csv";
+        document.body.append(anchor);
+        anchor.click();
+      } finally {
+        anchor.remove();
+        URL.revokeObjectURL(url);
+      }
+    } catch (reason) {
+      if (current()) setDownloadError(reason instanceof Error ? reason.message : "CSV konnte nicht geladen werden.");
+    } finally {
+      if (current()) { lifecycle.current.downloading = false; setDownloading(false); }
+    }
   }
 
   function getAccountLabel(id: string): string {
@@ -244,6 +316,7 @@ export function PaymentsPage() {
         }}
       >
         <select
+          aria-label="Statusfilter"
           value={statusFilter}
           onChange={(e) => setFilter("status", e.target.value)}
           style={{ padding: "0.4rem 0.5rem", fontSize: "0.85rem" }}
@@ -255,6 +328,7 @@ export function PaymentsPage() {
           ))}
         </select>
         <select
+          aria-label="Bankkontofilter"
           value={accountFilter}
           onChange={(e) => setFilter("bank_account_id", e.target.value)}
           style={{ padding: "0.4rem 0.5rem", fontSize: "0.85rem" }}
@@ -267,6 +341,7 @@ export function PaymentsPage() {
           ))}
         </select>
         <select
+          aria-label="Zahlungstypfilter"
           value={typeFilter}
           onChange={(e) => setFilter("payment_type", e.target.value)}
           style={{ padding: "0.4rem 0.5rem", fontSize: "0.85rem" }}
@@ -280,7 +355,14 @@ export function PaymentsPage() {
         </select>
       </div>
 
-      {error && <p className="error-text">{error}</p>}
+      <button type="button" className="btn" disabled={!currentDataset || downloading} onClick={() => void downloadCsv()}>CSV herunterladen</button>
+      {downloading && <p>CSV wird geladen…</p>}
+      {downloadError && <p role="alert" className="error-text">{downloadError} Bitte CSV herunterladen erneut versuchen.</p>}
+      {error && <p className="error-text">{error} <button type="button" onClick={reload}>Liste erneut laden</button></p>}
+      {currentDataset && <div>
+        <p>Listensaldo: <output aria-label="Listensaldo">{formatCents(payments.reduce((total, payment) => total + (payment.direction === "OUT" ? -amountCents(payment.amount) : amountCents(payment.amount)), 0n))}</output></p>
+        <p>Eingänge minus Ausgänge aller angezeigten Zeilen, einschließlich Entwürfen, verworfenen Zahlungen und Stornos je Filter. Kein tatsächlicher Kontostand.</p>
+      </div>}
 
       {showForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
@@ -289,6 +371,7 @@ export function PaymentsPage() {
             <label>
               Bankkonto *
               <select
+                aria-label="Bankkonto *"
                 required
                 value={form.bank_account_id}
                 onChange={(e) =>
@@ -306,6 +389,7 @@ export function PaymentsPage() {
             <label>
               Zahlungstyp *
               <select
+                aria-label="Zahlungstyp *"
                 required
                 value={form.payment_type}
                 onChange={(e) =>
@@ -329,6 +413,7 @@ export function PaymentsPage() {
             <label>
               Richtung *
               <select
+                aria-label="Richtung *"
                 required
                 value={form.direction}
                 onChange={(e) =>
@@ -367,6 +452,7 @@ export function PaymentsPage() {
               <label>
                 Mieter
                 <select
+                  aria-label="Mieter"
                   value={form.tenant_profile_id ?? ""}
                   onChange={(e) =>
                     setForm({
@@ -394,6 +480,7 @@ export function PaymentsPage() {
               <label>
                 Eigentuemer
                 <select
+                  aria-label="Eigentuemer"
                   value={form.owner_profile_id ?? ""}
                   onChange={(e) =>
                     setForm({
@@ -422,6 +509,7 @@ export function PaymentsPage() {
               <label>
                 Mietvertrag
                 <select
+                  aria-label="Mietvertrag"
                   value={form.lease_agreement_id ?? ""}
                   onChange={(e) =>
                     setForm({
@@ -512,8 +600,8 @@ export function PaymentsPage() {
         </div>
       )}
 
-      {loading ? (
-        <p>Lade...</p>
+      {loading || loaded?.key !== queryKey ? (
+        <p>{error ? "Liste nicht verfügbar." : "Lade..."}</p>
       ) : payments.length === 0 ? (
         <p className="empty-hint">Keine Zahlungen vorhanden.</p>
       ) : (

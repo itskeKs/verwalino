@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,12 +19,15 @@ from app.core.tenant import (
 )
 from app.core.live_principal import get_live_member_db, get_live_writer_db
 from app.services.history_source_access import require_history_prepare
+from app.services.lease_rent_change_service import LeaseRentChangeService
 from app.core.temporal import (
     db_exclusive_to_api_inclusive,
     inclusive_last_day_to_db_exclusive,
 )
 from app.repositories.lease_agreement_repo import LeaseAgreementRepository
 from app.models.lease_agreement import LeaseAgreement
+from app.models.lease_rent_change import LeaseRentChange
+from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
 
 router = APIRouter(prefix="/api/leases", tags=["leases"])
 
@@ -163,6 +167,59 @@ async def update_lease(
             raise HTTPException(409, "Overlapping lease period for this unit") from exc
         raise
     return _to_out(existing)
+
+
+RentAmount = Annotated[Decimal, Field(ge=0, max_digits=14, decimal_places=2, allow_inf_nan=False)]
+
+
+class RentChangeCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    valid_from: date
+    base_rent: RentAmount
+    advance_payment: RentAmount
+
+
+class RentChangeOut(BaseModel):
+    id: str
+    lease_agreement_id: str
+    valid_from: date
+    base_rent: str
+    advance_payment: str
+    created_at: datetime
+
+
+def _rent_change_out(row: LeaseRentChange) -> RentChangeOut:
+    return RentChangeOut(
+        id=str(row.id), lease_agreement_id=str(row.lease_agreement_id),
+        valid_from=row.valid_from, base_rent=f"{row.base_rent:.2f}",
+        advance_payment=f"{row.advance_payment:.2f}", created_at=row.created_at,
+    )
+
+
+@router.get("/{lease_id}/rent-changes", response_model=list[RentChangeOut])
+async def list_rent_changes(
+    lease_id: uuid.UUID,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+):
+    if await LeaseAgreementRepository(db, auth.organization_id).get_by_id(lease_id) is None:
+        raise HTTPException(404, "Lease agreement not found")
+    rows = await LeaseRentChangeRepository(db, auth.organization_id).list_for_lease(lease_id)
+    return [_rent_change_out(row) for row in rows]
+
+
+@router.post("/{lease_id}/rent-changes", response_model=RentChangeOut, status_code=201)
+async def create_rent_change(
+    lease_id: uuid.UUID,
+    body: RentChangeCreate,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_live_writer_db),
+):
+    row = await LeaseRentChangeService(db, auth.organization_id, auth.user_id).create(
+        lease_id, body.valid_from, body.advance_payment, base_rent=body.base_rent,
+    )
+    return _rent_change_out(row)
 
 
 def _to_out(la: LeaseAgreement) -> LeaseOut:

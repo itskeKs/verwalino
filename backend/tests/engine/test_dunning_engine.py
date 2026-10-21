@@ -191,3 +191,101 @@ class TestAssembleDunning:
         assert isinstance(result.principal_amount, Decimal)
         assert isinstance(result.fee_amount, Decimal)
         assert isinstance(result.total_amount, Decimal)
+
+
+def test_t35_interest_700_sixty_calendar_days():
+    item = OverdueItem(
+        period_year=2026, period_month=1, payment_type="RENT",
+        soll=Decimal("700.00"), ist=Decimal("0.00"),
+        open_amount=Decimal("700.00"), due_date=date(2026, 1, 1),
+    )
+    result = assemble_dunning(
+        [item], 0, date(2026, 3, 2), base_interest_rate=Decimal("2.50"),
+    )
+    assert result.interest_amount == Decimal("8.63")
+    assert result.total_amount == Decimal("708.63")
+    assert result.interest_snapshot == {
+        "base_interest_rate": "2.50", "annual_rate": "7.50",
+        "reference_date": "2026-03-02", "items": [{
+            "payment_type": "RENT", "period_year": 2026, "period_month": 1,
+            "due_date": "2026-01-01", "days": 60,
+            "principal": "700.00", "interest": "8.63",
+        }],
+    }
+
+
+def _t35_item(amount="700.00", due=date(2026, 1, 1)):
+    return OverdueItem(2026, 1, "SONDERZAHLUNG", Decimal(amount), Decimal("0"), Decimal(amount), due)
+
+
+@pytest.mark.parametrize("base,expected", [("-0.88", "4.74"), ("2.50123456789", "8.63"), ("-5.00", "0.00")])
+def test_t35_exact_rates_without_intermediate_rounding(base, expected):
+    result = assemble_dunning([_t35_item()], 0, date(2026, 3, 2), base_interest_rate=Decimal(base))
+    assert result.interest_amount == Decimal(expected)
+    assert result.interest_snapshot["base_interest_rate"] == base
+    assert Decimal(result.interest_snapshot["annual_rate"]) == Decimal(base) + Decimal("5")
+
+
+def test_t35_calendar_days_independent_of_grace_and_separate_dues():
+    items = [_t35_item(due=date(2026, 1, 15)), _t35_item(due=date(2026, 2, 25)), _t35_item(due=date(2026, 3, 3))]
+    result = assemble_dunning(items, 2, date(2026, 3, 2), base_interest_rate=Decimal("2.50"))
+    assert [i["days"] for i in result.interest_snapshot["items"]] == [46, 5, 0]
+    assert result.interest_amount == Decimal("7.34")
+    assert result.total_amount == Decimal("2117.34")
+    assert sum(Decimal(i["interest"]) for i in result.interest_snapshot["items"]) == result.interest_amount
+
+
+def test_t35_half_up_and_sum_of_rounded_positions():
+    # 36.50 * 5% / 365 = 0.005 per day: each item rounds UP, never bankers' rounding.
+    result = assemble_dunning([_t35_item("36.50"), _t35_item("36.50")], 0, date(2026, 1, 2), base_interest_rate=Decimal("0"))
+    assert result.interest_amount == Decimal("0.02")
+    assert result.total_amount == Decimal("73.02")
+
+
+def test_t35_does_not_round_percentage_before_calculation():
+    result = assemble_dunning([_t35_item("1000000.00")], 0, date(2026, 1, 2), base_interest_rate=Decimal("2.50123456789"))
+    assert result.interest_snapshot["annual_rate"] == "7.50123456789"
+    assert result.interest_amount == Decimal("205.51")
+
+
+@pytest.mark.parametrize("rate", [2.5, "2.50", Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity"), Decimal("1e101")])
+def test_t35_engine_rejects_inexact_nonfinite_and_unbounded_rates(rate):
+    with pytest.raises(ValueError):
+        assemble_dunning([_t35_item()], 0, date(2026, 3, 2), base_interest_rate=rate)
+
+
+@pytest.mark.parametrize("amount,fee,base", [
+    ("1000000000000", "0", None), ("999999999999.99", "0.01", None),
+    ("999999999999.99", "0", Decimal("2.50")),
+    ("700", "NaN", None), ("700", "Infinity", None),
+])
+def test_t35_money_overflow_or_nonfinite_rejected(amount, fee, base):
+    with pytest.raises(ValueError):
+        assemble_dunning([_t35_item(amount)], 0, date(2026, 3, 2), override_fee=Decimal(fee), base_interest_rate=base)
+
+
+def test_t35_legacy_and_zero_rate_are_distinct():
+    legacy = assemble_dunning([_t35_item()], 0, date(2026, 3, 2))
+    assert legacy.interest_amount == Decimal("0.00")
+    assert legacy.interest_snapshot is None
+    with_rate = assemble_dunning([_t35_item()], 0, date(2026, 3, 2), base_interest_rate=Decimal("0"))
+    assert with_rate.interest_amount == Decimal("5.75")
+
+
+def test_t35_is_independent_of_callers_decimal_precision_and_rounding():
+    from decimal import ROUND_DOWN, localcontext
+    with localcontext() as ctx:
+        ctx.prec = 6
+        ctx.rounding = ROUND_DOWN
+        result = assemble_dunning([_t35_item()], 0, date(2026, 3, 2), base_interest_rate=Decimal("2.50"))
+        assert result.interest_amount == Decimal("8.63")
+        assert result.total_amount == Decimal("708.63")
+        assert dunning_fee(1, {1: Decimal("999999999999.99")}) == Decimal("999999999999.99")
+
+
+def test_t35_grace_only_filters_and_does_not_subtract_interest_days():
+    item = OpenItem(2026, 1, 'KALTMIETE', Decimal('700.00'), Decimal('0.00'), Decimal('700.00'), due_date=date(2026, 1, 1))
+    overdue = find_overdue_items([item], date(2026, 3, 2), grace_days=30)
+    result = assemble_dunning(overdue, 0, date(2026, 3, 2), base_interest_rate=Decimal('2.50'))
+    assert result.interest_snapshot['items'][0]['days'] == 60
+    assert result.interest_amount == Decimal('8.63')

@@ -24,6 +24,20 @@ window; editing this runbook does not authorize SSH, secret access or deployment
 The accepted production gate is **0122**. The local test head **0123** is not a
 production approval; do not change the helpers' exact-head gate implicitly.
 
+Phase 2 is verified locally on the disposable test database through migration
+**0131**. This does **not** authorize promotion of migrations 0123–0131, change
+the accepted 0122 production gate, or authorize a production schema operation.
+Retained attachments and financial provenance can deliberately prevent a
+lossy downgrade; do not delete originals or disable guards to force rollback.
+Any later promotion requires its own reviewed compatibility and backup plan.
+
+`HV_DUNNING_BASE_INTEREST_RATE` is an optional decimal basis-rate default for
+new dunning notices, not an automatically maintained official rate. An explicit
+request can override or disable it; the notice freezes its rate, reference date,
+day counts and interest amounts. Existing issued notices are not recalculated
+when configuration changes. The UI permits a deliberate rate entry when no
+default is configured. This documentation does not change any runtime setting.
+
 ## Fresh installation: one-time preparation on Moon
 
 Run as `chris` without sudo. The host must have Docker, Compose, `curl`,

@@ -9,16 +9,27 @@ write role. Foreign ID -> 404 (not 403). A booked payment is never hard-deleted
 
 from __future__ import annotations
 
+import csv
+import io
 import uuid
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
+from app.core.live_principal import get_live_member_db, get_live_writer_db
+from app.core.csv_exports import csv_text, csv_money
+from app.core.rbac import ScopeCapability
+from app.core.storage import attachment_content_disposition
+from app.repositories.bank_account_repo import BankAccountRepository
+from app.repositories.tenant_profile_repo import TenantProfileRepository
+from app.repositories.owner_profile_repo import OwnerProfileRepository
+from app.services.property_master_service import require_property_master
 from app.models.payment import Payment
 from app.repositories.payment_repo import PaymentRepository
 from app.services.payment_service import PaymentService
@@ -73,6 +84,7 @@ class ReverseRequest(BaseModel):
 
 
 class PaymentOut(BaseModel):
+    bank_transaction_id: str | None = None
     id: str
     organization_id: str
     bank_account_id: str
@@ -123,6 +135,7 @@ class MietkontoOut(BaseModel):
 def _to_out(p: Payment) -> PaymentOut:
     return PaymentOut(
         id=str(p.id),
+        bank_transaction_id=str(p.bank_transaction_id) if p.bank_transaction_id else None,
         organization_id=str(p.organization_id),
         bank_account_id=str(p.bank_account_id),
         property_id=str(p.property_id),
@@ -170,6 +183,31 @@ def _mietkonto_out(result) -> MietkontoOut:
 # Mietkonto views (read-only) -- declared BEFORE /{payment_id} so the literal
 # path segments are not captured as a UUID payment id.
 # ---------------------------------------------------------------------------
+class DepositOut(BaseModel):
+    lease_agreement_id: str
+    tenant_profile_id: str
+    unit_id: str
+    property_id: str
+    tenant_name: str
+    unit_label: str
+    property_name: str
+    expected_amount: str
+    paid_amount: str
+    refunded_amount: str
+    held_amount: str
+
+
+@router.get("/deposits", response_model=list[DepositOut])
+async def deposits(
+    accounting_scope_id: uuid.UUID | None = None,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+):
+    rows = await PaymentService(db, auth.organization_id, auth.user_id).deposits(accounting_scope_id)
+    return [DepositOut(**{key: format(value, ".2f") if isinstance(value, Decimal) else value
+                          for key, value in row.items()}) for row in rows]
+
+
 @router.get("/mietkonto/lease/{lease_agreement_id}", response_model=MietkontoOut)
 async def lease_statement(
     lease_agreement_id: uuid.UUID,
@@ -291,6 +329,106 @@ async def list_payments(
     return [_to_out(p) for p in items]
 
 
+def _render_payments_csv(items: list[Payment]) -> bytes:
+    output = io.StringIO(newline='')
+    writer = csv.writer(output, delimiter=';', lineterminator='\r\n')
+    writer.writerow(['ID', 'Objekt-ID', 'Konto-ID', 'Wertstellung', 'Richtung', 'Zahlungsart',
+                     'Betrag (EUR)', 'Saldo-Betrag (EUR)', 'Status', 'Periodenjahr', 'Periodenmonat',
+                     'Mieter-ID', 'Eigentümer-ID', 'Vertrag-ID', 'Notiz'])
+    for item in items:
+        fields = [item.id, item.property_id, item.bank_account_id, item.value_date,
+                  item.direction, item.payment_type, _to_out(item).status, item.period_year,
+                  item.period_month, item.tenant_profile_id, item.owner_profile_id,
+                  item.lease_agreement_id, item.note]
+        fields = [csv_text(str(value)) if value is not None else '' for value in fields]
+        amount = csv_money(str(item.amount))
+        # copy_negate is exact even under a caller's low Decimal precision.
+        balance = csv_money(str(item.amount.copy_negate() if item.direction == 'OUT' else item.amount))
+        fields[6:6] = [amount, balance]
+        writer.writerow(fields)
+    return output.getvalue().encode('utf-8-sig')
+
+
+async def _require_payment_exports(db, auth, items, *, bank_account_id=None,
+                                   lease_agreement_id=None, tenant_profile_id=None, owner_profile_id=None):
+    scopes = FinancialScopeService(db, auth.organization_id, auth.user_id)
+
+    async def profile(kind, profile_id, repository):
+        if profile_id is None:
+            return
+        if await repository(db, auth.organization_id).get_by_id(profile_id) is None or not await db.scalar(text(
+            "SELECT profile_source_access(:org,:kind,:profile,'export')"),
+            {'org': auth.organization_id, 'kind': kind, 'profile': profile_id}):
+            raise HTTPException(404, 'Payment contact not exportable')
+
+    async def lease(lease_id):
+        if lease_id is None:
+            return
+        if not await db.scalar(text(
+            "SELECT property_history_row_access(l.organization_id,'lease_agreement',to_jsonb(l),'export') "
+            "FROM lease_agreement l WHERE l.organization_id=:org AND l.id=:lease"),
+            {'org': auth.organization_id, 'lease': lease_id}):
+            raise HTTPException(404, 'Payment lease not exportable')
+
+    if bank_account_id is not None:
+        bank = await BankAccountRepository(db, auth.organization_id).get_by_id(bank_account_id)
+        if bank is None:
+            raise HTTPException(404, 'Payment account not accessible')
+        if not await db.scalar(text(
+            "SELECT financial_scope_access(:org,'bank_account',:id,'export')"),
+            {'org': auth.organization_id, 'id': bank.id}):
+            raise HTTPException(404, 'Payment account not exportable')
+        async with scopes.using(bank, capability=ScopeCapability.EXPORT) as scope_id:
+            if scope_id is None:
+                await scopes.require_export(bank)
+            await require_property_master(db, auth.organization_id, bank.property_id, 'export')
+    await lease(lease_agreement_id)
+    await profile('tenant_profile', tenant_profile_id, TenantProfileRepository)
+    await profile('owner_profile', owner_profile_id, OwnerProfileRepository)
+    for item in items:
+        # Binding rows may disappear under RLS when a grant expires. The canonical
+        # predicate must deny that case rather than treating it as legacy data.
+        if not await db.scalar(text(
+            "SELECT financial_scope_access(:org,'payment',:id,'export')"),
+            {'org': auth.organization_id, 'id': item.id}):
+            raise HTTPException(404, 'Financial row not exportable')
+        async with scopes.using(item, capability=ScopeCapability.EXPORT) as scope_id:
+            if scope_id is None:
+                await scopes.require_export(item)
+            await require_property_master(db, auth.organization_id, item.property_id, 'export')
+            await lease(item.lease_agreement_id)
+            await profile('tenant_profile', item.tenant_profile_id, TenantProfileRepository)
+            await profile('owner_profile', item.owner_profile_id, OwnerProfileRepository)
+
+
+@router.get('/export.csv')
+async def export_payments_csv(
+    bank_account_id: uuid.UUID | None = None,
+    lease_agreement_id: uuid.UUID | None = None,
+    tenant_profile_id: uuid.UUID | None = None,
+    owner_profile_id: uuid.UUID | None = None,
+    payment_type: str | None = None,
+    period_year: int | None = None,
+    status: str | None = None,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+) -> Response:
+    await FinancialScopeService(db, auth.organization_id, auth.user_id).lock_inputs()
+    items = await PaymentRepository(db, auth.organization_id).list_by_filters(
+        bank_account_id=bank_account_id, lease_agreement_id=lease_agreement_id,
+        tenant_profile_id=tenant_profile_id, owner_profile_id=owner_profile_id,
+        payment_type=payment_type, period_year=period_year, status=status)
+    parents = dict(bank_account_id=bank_account_id, lease_agreement_id=lease_agreement_id,
+                   tenant_profile_id=tenant_profile_id, owner_profile_id=owner_profile_id)
+    await _require_payment_exports(db, auth, items, **parents)
+    content = _render_payments_csv(items)
+    await _require_payment_exports(db, auth, items, **parents)
+    return Response(content, media_type='text/csv; charset=utf-8', headers={
+        'Content-Disposition': attachment_content_disposition('zahlungen.csv'),
+        'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, no-store',
+    })
+
+
 @router.get("/{payment_id}", response_model=PaymentOut)
 async def get_payment(
     payment_id: uuid.UUID,
@@ -308,7 +446,7 @@ async def get_payment(
 async def create_payment(
     body: PaymentCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     payment = await svc.create_draft(
@@ -333,7 +471,7 @@ async def update_payment(
     payment_id: uuid.UUID,
     body: PaymentUpdate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     updates: dict = {}
@@ -357,7 +495,7 @@ async def update_payment(
 async def book_payment(
     payment_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     payment = await svc.book(payment_id)
@@ -369,7 +507,7 @@ async def reverse_payment(
     payment_id: uuid.UUID,
     body: ReverseRequest | None = None,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     storno = await svc.reverse_payment(payment_id, note=body.note if body else None)
@@ -380,7 +518,7 @@ async def reverse_payment(
 async def delete_payment(
     payment_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     await svc.delete_draft(payment_id)

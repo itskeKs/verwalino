@@ -13,7 +13,7 @@ import uuid
 from datetime import date
 from typing import Sequence
 
-from sqlalchemy import select, text
+from sqlalchemy import case, func, select, text
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -82,13 +82,17 @@ class PaymentRepository(TenantRepository[Payment]):
         result = await self._session.execute(stmt)
         return result.scalars().all()
 
-    async def list_for_owner(self, owner_profile_id: uuid.UUID) -> Sequence[Payment]:
+    async def list_for_owner(
+        self, owner_profile_id: uuid.UUID, *, property_id: uuid.UUID | None = None,
+    ) -> Sequence[Payment]:
         await self.require_computation_context(owner_id=owner_profile_id)
         stmt = (
             self._base_query()
             .where(Payment.owner_profile_id == owner_profile_id)
             .order_by(Payment.value_date, Payment.created_at)
         )
+        if property_id is not None:
+            stmt = stmt.where(Payment.property_id == property_id)
         result = await self._session.execute(stmt)
         return result.scalars().all()
 
@@ -105,6 +109,17 @@ class PaymentRepository(TenantRepository[Payment]):
             .where(Payment.reversed_by_id.is_(None))
             .where(Payment.reverses_id.is_(None))
         )
+
+    async def property_year_totals(self, property_id: uuid.UUID, start: date, end: date):
+        """Actual active bookings by value date; refunds reduce their original type."""
+        amount = func.sum(case((Payment.direction == 'IN', Payment.amount),
+                               else_=-Payment.amount)).label('amount')
+        stmt = (self._booked_active()
+            .where(Payment.cancelled_at.is_(None), Payment.property_id == property_id,
+                   Payment.value_date >= start, Payment.value_date <= end)
+            .with_only_columns(Payment.payment_type, amount)
+            .group_by(Payment.payment_type).order_by(Payment.payment_type))
+        return (await self._session.execute(stmt)).all()
 
     async def derived_for_nk(
         self, lease_agreement_id: uuid.UUID, period_year: int

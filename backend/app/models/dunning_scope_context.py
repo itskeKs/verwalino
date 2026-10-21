@@ -3,7 +3,7 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import Date, DateTime, ForeignKeyConstraint, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 
@@ -15,6 +15,7 @@ class DunningScopeContext(Base):
     scope_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     lease_agreement_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     economic_plan_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    special_levy_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), nullable=False, server_default="{}")
     period_start: Mapped[date] = mapped_column(Date, nullable=False)
     period_end: Mapped[date] = mapped_column(Date, nullable=False)
     origin: Mapped[str] = mapped_column(Text, nullable=False, server_default="PREPARED")

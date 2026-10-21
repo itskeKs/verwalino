@@ -134,9 +134,12 @@ Das Soll ist **abgeleitet** (ADR-0009) und wird je (Person, Periode) als reine F
 ### 2.1 Mieter-Soll (je Mietvertrag)
 
 ```
-monatliches Soll(lease, monat) = base_rent + advance_payment        (aus lease_agreement)
+monatliches Soll ohne Satzwechsel = gültige Kaltmiete + gültige Vorauszahlung
+                                   (lease_agreement + lease_rent_change)
 ```
 
+- **Stichtagsänderungen (Phase 2, T23):** `lease_rent_change` ergänzt vollständige Kaltmiete/NK-Raten, ohne die ursprünglichen Vertragsbeträge zu überschreiben. Jede Rate gilt ab ihrem Stichtag inklusive; die letzte vorherige Rate gilt auch bei später beginnender Abfrage fort. Mehrere Tagessegmente werden je Monat/Komponente exakt summiert und erst danach gerundet; konstante Raten behalten die bestehende Largest-Remainder-Anschnittlogik. Beispiel März 2026: 700 EUR bis 14.03., 750 EUR ab 15.03. ergibt 727,42 EUR Kaltmiete, NK 150 EUR unverändert. Historie append-only, Stichtage je Vertrag eindeutig; Org-/Parent-RLS und Prepare-Rechte gelten, Finanzsperre vor Vertragslock. Bestehende Buchungen/finale Snapshots bleiben unverändert.
+- **Bedienung (Phase 2, T24):** Jede Vertragshistorie in der Einheit zeigt Originalraten und Änderungen mit Quelle; „Miete ändern ab …“ erfasst die volle gültige KALT-/NK-Rate. Datum innerhalb der inklusiv angezeigten Vertragsgrenzen, centgenaue Strings bis `Numeric(14,2)`, keine Floatarithmetik. Schreibrollen können ergänzen, READ_ONLY nur lesen; Lade-/Serverfehler sind sichtbar, Eingaben bleiben erhalten und der Dialog ist während des POST gegen Doppelaktionen/Schließen gesperrt. Der Browserprüflauf belegt unveränderte Originaldaten nach Reload und 24 Mietkontoposten mit 10.650 EUR Jahressoll für +50 EUR ab 01.04.2026.
 - **Trennung nach Komponente:** Das Soll wird getrennt nach `KALTMIETE` (= `base_rent`) und `NK_VORAUSZAHLUNG` (= `advance_payment`) geführt, denn nur die NK-Vorauszahlung fließt in die BK-Abrechnung (§6.2), die Kaltmiete nicht. Eine Vermischung würde die Abrechnungs-Anbindung verfälschen.
 - **Unterjähriger Beginn/Ende (tagegenau angeschnitten):** Beginnt/endet der Mietvertrag mitten im Monat, ist die Soll-Stellung des Anschnittsmonats **anteilig**. Maßstab: monatlich, der Anschnitt tagegenau über dieselbe `app/engine/periods.py`-Arithmetik wie M3 (tag-inklusiv, ADR-0004/0006). **[§18/fachlich F6-4]** ob ein angeschnittener Monat tagegenau (`tage_im_monat_belegt / tage_im_monat`) oder pauschal voll/halb berechnet wird — mietvertraglich/fachlich unterschiedlich gehandhabt. **Provisorische Annahme:** tagegenauer Anschnitt (konsistent zu M3); klar markiert, fachlich abzunehmen.
 - **Lese-Grenze:** `lease_agreement.valid_to` ist halboffen gespeichert; die Soll-Funktion liest über `db_exclusive_to_engine_inclusive` (ADR-0006) — **dieselbe** Lese-Grenze wie M3, **eine** Definition. So zählt der letzte Mietmonat korrekt (kein Off-by-one am Vertragsende).
@@ -150,8 +153,58 @@ monatliches Soll(owner, monat) = economic_plan_line(OWNER_ADVANCE, owner).monthl
 ```
 
 - Die Quelle ist die in M4 bereits berechnete und **monatsbasiert** (ADR-0007 E4-3b) gerundete `OWNER_ADVANCE.monthly_amount` je Eigentümer. M6 erfindet hier **nichts** — es liest den finalisierten Plan.
-- **Nur finalisierte Pläne** liefern ein verbindliches Soll (ein `draft`-Plan ist kein beschlossenes Soll). **[§18/fachlich F6-5]** Verhalten ohne finalisierten Plan (analog M4 F4-1): provisorisch — kein Eigentümer-Soll ohne finalisierten Plan; das Hausgeld-Konto zeigt dann nur die Ist-Zahlungen ohne Soll-Abgleich. Fachlich abzunehmen.
+- **Nur finalisierte Pläne** liefern verbindliches monatliches Hausgeld-Soll (ein `draft`-Plan ist kein beschlossenes Soll). Ohne finalisierten Plan wird kein Hausgeld-Vorschuss erfunden. Seit Phase 2 (T32) können unabhängig davon ausdrücklich angelegte, eingefrorene Sonderumlagen als einmaliges Eigentümer-Soll hinzukommen.
 - **Mehrere Einheiten je Eigentümer:** Der Plan hat eine `OWNER_ADVANCE`-Zeile je (Eigentümer, Einheit); das Eigentümer-Soll je Monat ist die **Summe** der `monthly_amount` über seine Einheiten (exakt, kein erneutes Runden — Cent + Cent = Cent, m3 §4.3).
+
+#### Sonderumlagen seit Phase 2 (T32)
+
+`GET/POST /api/special-levies` ergänzt das bestehende Konto um ausdrücklich
+angelegte Sonderumlagen. Erforderlich sind Objekt, vollständiger WEG-Kreis,
+positiver centgenauer Gesamtbetrag und Fälligkeit; ein Beschluss kann optional
+referenziert werden und muss zum selben Objekt und derselben Organisation gehören.
+Teilkreise werden nicht als vollständige Objektumlage behandelt. Alle Einheiten
+benötigen positive MEA und am Fälligkeitstag gültige Eigentümer; mehrere Eigentümer
+benötigen positive Anteile, die innerhalb ihrer Einheit normalisiert werden.
+Die bestehende Restverteilung erhält die Gesamtsumme centgenau.
+
+Die Anlage friert Eigentümer, Einheit, Historienzeile, wirksame MEA und Betrag je
+Anteil ein. Kopf und Anteile sind append-only; spätere MEA-/Historienänderungen
+ändern diese Verpflichtung nicht. Das Eigentümerkonto übernimmt sie genau einmal
+als `SONDERZAHLUNG` im Fälligkeitsmonat, nur wenn die Fälligkeit im gewählten
+Berichtszeitraum liegt. Ein Wirtschaftsplan ist dafür nicht erforderlich. Bestehende
+gebuchte `SONDERZAHLUNG`-Eingänge werden über denselben Soll-/Ist-Pfad angerechnet;
+Zahlungen, Storni und alte Abrechnungssnapshots werden dabei nicht geändert.
+READ-, Prepare-, Quellen- und Organisationsgrenzen gelten auch für die neue Quelle.
+Seit T33 zeigt `/sonderumlagen` die eingefrorenen Anteile mit Namen und getrennten
+READ-/Prepare-Kreiswahlen. Die vorhandenen Konto- und Mahnungsformulare unterstützen
+Sonderumlagen ohne erfundenen Wirtschaftsplan; für eine solche Mahnung wird das
+WEG-Objekt ausdrücklich ausgewählt. Die Mahnungsberechnung erhält das wirkliche
+Fälligkeitsdatum: 15. Juni ist am 14./15. Juni noch nicht überfällig. Bei mehreren
+Fälligkeiten im selben Monat wird die gemeinsame Monatszahlung genau einmal,
+älteste Fälligkeit zuerst, angerechnet; Hausgeld und andere Zahlungstypen bleiben
+getrennt. Bisherige undatierte Monatsposten behalten ihre bisherigen Regeln.
+
+Der unveränderliche Mahnungskontext hält die verwendeten Umlagen-IDs sowie Kreis,
+Eigentümer und Berichtszeitraum fest. Migration 0128 erweitert dafür die bestehende
+Provenienzprüfung; sie verweigert einen Downgrade, sobald sonst bereits verwendete
+Umlagen-Provenienz verloren ginge. Rück-/Hochlauf ohne solche Kontexte und die
+Verweigerung mit bereits belegter Provenienz sind getestet. Ausgestellte Briefe,
+Snapshots und Anteile werden nicht nachträglich geändert.
+
+Seit Phase 2 (T35) kann M7 für diese offenen Posten Verzugszinsen aus einer
+expliziten Basiszinseingabe mit optionaler Konfigurationsvorgabe berechnen:
+`offen × (Basis + 5) / 100 × Kalendertage ab Fälligkeit / 365`. Je Posten wird
+nur einmal auf Cent (`ROUND_HALF_UP`) gerundet, anschließend werden die gespeicherten
+Zinszeilen summiert. Gebühren und Zinsen werden nicht mitverzinst. Beispiel:
+700 EUR bei Basis 2,50 % über 60 Tage → 8,63 EUR Zinsen. Der Zinssnapshot hält
+Fälligkeit, Stichtag, Tage, Basis-/Jahreszins und Beträge fest; eine ausgestellte
+Mahnung einschließlich PDF verwendet ausschließlich diese gespeicherten Werte.
+Der Soll-/Ist-Saldo des Kontos wird dadurch nicht um weitere Kontobuchungen ergänzt.
+Ohne konfigurierte Vorgabe fordert die neue Oberfläche eine ausdrückliche Eingabe;
+alte API-Aufrufe ohne Zinsbasis und bestehende Briefe behalten ihre zinsfreie
+Semantik. Es wird kein amtlicher Zinssatz erfunden und keine Zustellung behauptet.
+Migration 0129 schützt die neuen Beträge und Provenienz auch beim direkten SQL-Update
+und verweigert einen Downgrade, der vorhandene Zinsgrundlagen verlieren würde.
 
 ### 2.3 Soll-Engine als reine Funktion
 
@@ -186,7 +239,7 @@ Zahlt die Person mehr als das Soll (z. B. Soll 850,00 €, Zahlung 1000,00 €),
 
 ### 3.4 Kaution / Kautionskonto [§18/fachlich]
 
-`bank_account.account_type='KAUTION'` existiert. Kautionszahlungen (`payment_type='KAUTION'`, falls geführt, F6-3) erhöhen den **Kautionskonto-Bestand** (abgeleitet), sind aber **abrechnungsneutral** (keine BK-/WEG-Größe). Verzinsung, Anlageform, Rückzahlung bei Auszug sind **[§18/fachlich]** (SDD §18 nennt Kautionsbehandlung offen) — nicht eigenmächtig; provisorisch nur Bestandsführung, keine Verzinsung im MVP.
+`bank_account.account_type='KAUTION'` existiert. Kautionszahlungen (`payment_type='KAUTION'`) sind **abrechnungsneutral** und bleiben außerhalb des Mietsaldos. **Phase 2, T25:** `lease.deposit` liefert das eigene vereinbarte Soll; die reine `deposit_statement` summiert gebuchte aktive Eingänge und echte Ausgänge getrennt, Bestand = Eingang − Rückzahlung. Entwürfe, stornierte Originale und Stornozeilen zählen nicht. `/kautionen` bzw. `GET /api/payments/deposits` zeigen die vollständige berechtigte Vertragssicht mit Labels, auch vor erster Zahlung und für vergangene Verträge; innerhalb eines ausdrücklich gewählten MIET-Kreises ohne Jahres-/Kontotypfilter. Ohne Kreis ist nur der vollständige Legacy-Kontext zulässig; fehlende Rechte/Quellen, unklassifizierte Inputs oder inkohärente Altkautionen werden statt eines Teil-/Nullberichts abgewiesen. Neue/geänderte/zu buchende Kautionen prüfen Kontoobjekt, Mietvertrag und Mieter, der bestehende Stornopfad für Altdaten bleibt erhalten. Beispiel: Soll 1.800, zwei IN-Raten à 900, echte OUT-Rückzahlung 300 → gezahlt 1.800, zurück 300, Bestand 1.500 EUR; KALT/NK-Mietkonto unverändert. Erfassung/Buchen/Rückzahlung erfolgen über die bestehende Zahlungsoberfläche, READ_ONLY liest nur. Keine neue Migration oder Änderung finalisierter Snapshots. Verzinsung, Anlageform und rechtliche Rückzahlungsbedingungen bleiben **[§18/fachlich]** — keine automatische Zins-/Tilgungsregel, keine erfundene Bestandsobergrenze; negative Bestände bei unvollständiger Historie bleiben transparent.
 
 ---
 
@@ -284,6 +337,138 @@ Die DERIVED-Summe muss bei Storni **netto** korrekt sein:
 > **[ENTSCHEIDUNG E6-8] Zeitpunkt der Ableitung.** DERIVED-Wert **bei jedem `compute`** frisch ziehen (immer aktuell, bis `finalize` einfriert) — empfohlen — vs. einmal beim Anlegen fixieren. Empfehlung: bei jedem `compute` frisch (der `draft` spiegelt den aktuellen Zahlungsstand); `finalize` friert den dann gültigen Wert ein. Bestätigen.
 
 ---
+
+### 6.8 Bankumsätze und Dateiimport (Phase 2, T15–T19)
+
+Importierte `bank_transaction`-Zeilen sind zunächst **NEU**, keine gebuchten
+`payment`-Zeilen und deshalb noch kein Ist im Miet-/Eigentümerkonto. Sie tragen
+signed EUR-Decimal-Beträge; RLS und Composite-FKs sichern Organisation und Konto.
+Ein späterer Zahlungslink muss zum gleichen Konto gehören und ist nach Buchen
+unveränderlich. Bestehende Zahlungen und finalisierte Abrechnungen werden beim
+Import nicht verändert.
+
+`POST /api/bank-accounts/{id}/imports` nimmt eine Datei (`file`, CSV/XML/ZIP).
+`dry_run=true` ist die sichere Vorgabe: Anzahl, Gesamtsumme, neue Summe,
+Buchungszeitraum, Dubletten und maximal 100 Vorschauzeilen, **keine Persistenz**.
+Mit `dry_run=false` erfolgt die Übernahme atomar unter Kontosperre und zusätzlichem
+Unique-Conflict-Schutz; derselbe Auszug erzeugt erneut null Zeilen, auch bei
+konkurrierenden Importen. Fremde Konten liefern 404; READ_ONLY darf nicht importieren.
+Bekannte Quell-IBANs müssen mit einer hinterlegten Ziel-IBAN übereinstimmen.
+Parser-/Formatfehler liefern 422, übergroße Uploads 413, jeweils ohne Teilübernahme.
+Formate, Limits und Grenzen bei fehlenden bankseitigen Transaktions-IDs: README.
+Die Oberfläche `/bankkonten/{id}/umsaetze` bietet Statusfilter, Pagination und
+für Schreibrollen Datei → Vorschau → Übernehmen. Ein Dateiwechsel verwirft die
+alte Freigabe; Rückmeldungen nennen auch null neue Umsätze. Der echte lokale
+T19-Browserlauf prüft CSV, Reload, wiederholten Import sowie dieselben Buchungen
+als CAMT-XML/ZIP ohne Duplikate. Kontobezogene Liste über
+`GET /api/bank-accounts/{id}/transactions`, paginiert (50, maximal 100 Zeilen).
+Der Import selbst bucht nicht; die separate API-Zuordnung beschreibt §6.10,
+ihre Bedienoberfläche folgt in T22.
+
+### 6.9 Zuordnungsvorschläge (Phase 2, T20)
+
+`suggest_matches` arbeitet rein auf einem Bankumsatz und bereits aggregierten
+`OpenItem`-Werten aus `account_statement` (Soll aus Mietvertrag/Wirtschaftsplan,
+abzüglich gebuchtem Ist). Sie lädt keine Daten und schreibt keine Zahlungen.
+Der Zuordnungsservice begrenzt die Ziele auf Organisation, Konto und Objekt.
+Bekannte abweichende IBAN verhindert einen Treffer; Namen werden nur anhand
+normalisierter vollständiger Wörter verglichen, nicht als unscharfe Teilzeichenfolge.
+Ein expliziter Monat im Zweck ist maßgeblich. Der Wertstellungsmonat ist nur ein
+prüfpflichtiger Fallback; mehrere widersprüchliche Monate werden nicht geraten.
+
+Warmmiete 850 EUR wird bei 700 EUR offener Kaltmiete und 150 EUR offenen NK exakt
+aufgeteilt. Bereits bezahlte Komponenten werden nicht nochmals vorgeschlagen.
+Hausgeld nutzt das vorhandene Eigentümer-Soll. Teilzahlung auf eine eindeutige
+Komponente ist centgenau; bei unklarer Warmmiet-Aufteilung bleiben die Splitbeträge
+`None`, `unallocated_amount` enthält den vollen Eingang und `requires_review` ist
+wahr. **Keine erfundene Tilgungsreihenfolge und keine automatisch buchbare
+Aufteilung** für diesen Fall. Mehrere passende Ziele, abweichender Name oder
+unbekannter Monat senken die Konfidenz bzw. verlangen Prüfung. Kaution, Storno,
+Rückbuchung, gemischter Miet-/Hausgeldzweck, unbekannte Identität und Überzahlung
+werden nicht als sichere reguläre Soll-Zuordnung umgedeutet; manuell bleiben sie
+bearbeitbar. Die API validiert erneut (§6.10); die Oberfläche folgt in T22.
+
+### 6.10 Atomare Umsatzzuordnung (Phase 2, T21)
+
+`GET /api/bank-transactions` liefert paginierte Umsätze mit echten Vorschlägen
+(Statusvorgabe `NEU`, ausdrücklich `ALL` für alle Zustände, Kontofilter,
+Limit 50/maximal 100). Auch ohne Vorschläge
+bleiben die Konto-RLS und aktuelle Kreisfreigaben maßgeblich. Jeder Listeneintrag
+verwendet seinen eigenen Berechnungskontext; Hausgeld nur aus dem passenden
+finalisierten, nicht supersedierten Wirtschaftsplan. Der Eigentümer-Istfilter
+grenzt zusätzlich das Bankobjekt ab, auch wenn die Person mehrere Objekte besitzt.
+
+`POST /{id}/assign` validiert alle Zeilen vor der ersten Zahlung. Positive,
+centgenaue Decimalbeträge müssen zusammen `abs(bank_transaction.amount)` decken;
+Ziel, Zahlungsart und Periode werden geprüft. Konto, Objekt, Richtung und
+Wertstellung sind nicht clientsetzbar. Der vorhandene Zahlungsdienst erzeugt
+Entwürfe mit Banklink **vor** dem Buchen und setzt Audit-/Aufbewahrungsdaten.
+Der Bankumsatz bleibt bis zum Transaktionsende gesperrt. Erst nach allen
+Buchungen wird er `ZUGEORDNET`; jeder Fehler rollt Zahlungen, Audit und Status
+vollständig zurück. `POST /{id}/ignore` setzt ohne Zahlung `IGNORIERT`.
+Nur `NEU` ist bearbeitbar; parallele oder wiederholte Bearbeitung liefert 409.
+Fremde/unsichtbare IDs liefern 404, READ_ONLY 403, fehlende Anmeldung 401,
+ungültige Inhalte 422. Bei Kontoscope gelten vorhandene `prepare`- und
+`confirm`-Rechte, nicht die Wirtschaftsplan-`approve`-Berechtigung. Keine Änderung
+an gebuchten Historien, finalisierten Plänen oder bestehenden Scope-Regeln.
+
+### 6.11 Umsatzzuordnung in der Oberfläche (Phase 2, T22)
+
+Schreibrollen können vollständige eindeutige Vorschläge ausdrücklich übernehmen,
+im Dialog manuell auf Mietvertrag/Eigentümer, Zahlungsart und Monat aufteilen
+oder einen Eingang ohne Zahlung ignorieren. Prüfpflichtige oder unvollständige
+Vorschläge werden nicht automatisch gebucht. Die positiven Splitbeträge müssen
+den absoluten Bankbetrag centgenau decken; deutsche Dezimaleingaben werden ohne
+Floatarithmetik geprüft. Fehler behalten die Eingaben, 409 wird sichtbar, Reload
+folgt erst auf Erfolg. READ_ONLY erhält keine Mutationsaktionen. „Alle“ behält
+auch verarbeitete Zeilen; Kontofilter und Pagination bleiben serverseitig.
+Der lokale Browserprüflauf legt alle Stammdaten per UI an und belegt 850=700+150
+im Januar vollständig bezahlt, 600=500+100 im Februar mit 250 Rest sowie 25
+ignoriert ohne Zahlung; Jahres-Soll 10.200, Ist 1.450, Saldo 8.750 EUR.
+
+### 6.12 Objekt-Jahresübersicht (Phase 2, T38)
+
+`GET /api/reports/property-year` summiert aktive gebuchte Zahlungen nach
+`value_date` und Typ (`IN` positiv, `OUT` negativ); stornierte Originale,
+Stornozeilen, abgebrochene Entwürfe und Rohbankumsätze bleiben ausgeschlossen.
+Bestätigte, nicht ersetzte Kosten zählen mit ihrem Bruttobetrag nach
+`invoice_date`, gruppiert nach Kategorie und unverändertem Umlagekennzeichen.
+Teilweise zu prüfende Umlage wird nicht automatisch als voll umlagefähig behandelt.
+Saldo = Einnahmensumme − Kostensumme; alle Beträge bleiben Decimal-exakt,
+auch bei großen Summen und niedrigem äußerem Präzisionskontext.
+
+Die ausgegebene Datumsbasis weicht bewusst vom Sollperioden-/Leistungszeitraum
+ab. Kautionen bleiben separat ausgewiesen und werden nicht steuerlich umgedeutet.
+Die Übersicht ersetzt keine vollständige Anlage V oder EÜR. Vollständige
+Quell-Leserechte und ein gegebenenfalls expliziter Ganzobjekt-/Ganzjahreskreis
+sind erforderlich; Teilzugriff oder ungeklärte Klassifikation liefert keine
+scheinbar vollständigen Summen. Bestehende Buchungen und Snapshots bleiben unverändert.
+
+Die Oberfläche `/berichte` (T39) fragt Objekt/Jahr/Kreis ausdrücklich ab; ein
+Auswahlwechsel entfernt alte Ergebnisse. Der CSV-Download unter
+`/api/reports/property-year.csv` berechnet dieselbe Basis frisch und verlangt
+zusätzlich Kreis-/Quell-Exportrechte, erneut vor Ausgabe geprüft. UTF-8-BOM,
+Semikolon, CRLF und Dezimalkomma sind für Tabellenprogramme festgelegt.
+Formelanfällige Texte erhalten ein Apostrophpräfix, echte negative Beträge
+bleiben unverändert numerisch. CSV und Anzeige verändern keine Buchungen,
+Kosten oder Historien; sie ersetzen keine steuerliche Prüfung.
+
+### 6.13 Listenexport (Phase 2, T40)
+
+Zahlungs- und Kostenliste exportieren ihre vollständige gefilterte READ-Zeilenmenge
+über `/api/payments/export.csv` bzw. `/api/cost-entries/export.csv`. Alle sieben
+Zahlungsfilter gelten unverändert; Status und Objekt der Kostenliste werden
+kombiniert. Jeder ausgewählte Datensatz benötigt zusätzlich seine Quellen- und
+Kreis-Exportrechte. Vor der vollständig gepufferten Ausgabe wird erneut geprüft;
+eine inzwischen unsichtbare abgelaufene Bindung ist kein Legacy-Fallback.
+
+CSV enthält IDs, Status und Originalcodes, UTF-8-BOM, Semikolon, CRLF und exakte
+Dezimalkommawerte mit Text-Formelschutz. Der separate Saldo-Betrag ist bei IN
+positiv, bei OUT negativ. Listensaldo und Kosten-Bruttosumme umfassen genau die
+angezeigten Status, auch Entwürfe oder Storno-/Korrekturzeilen je Filter; sie sind
+weder automatisches Ist noch Kontostand. Identische Filterwahl ist ein No-op;
+Lade-/Fehler-/Kontextwechsel sperren veraltete Downloads. Export ändert keine
+Finanz-, Beleg-, Audit- oder Historiendaten.
 
 ## 7. Synthetische Golden-Tests (objektive M6-Messlatte)
 
@@ -410,7 +595,7 @@ Golden-Test 5 + Invariante I6-E sind zusammen der objektive Nachweis des M6-Exit
 ## 11. Was dieses Dokument bewusst NICHT entscheidet
 
 - **Mahnwesen / Mahnstufen / `DunningNotice` / Mahn-Persistenz:** M7 (§0, ADR-0009 §1/F6-1) — M6 liefert nur die *berechneten* überfälligen Posten.
-- **Bankimport (CAMT/MT940) / automatischer Zahlungsabgleich:** **dauerhaftes Nicht-Ziel** (SDD §3).
+- **Bankimport / Zahlungsabgleich:** war Nicht-Ziel des ursprünglichen M6. Die verbindliche Phase 2 in `docs/mvp.md` erweitert dies um CSV/CAMT-Import (T15–T19) und geprüfte Zuordnung (T20–T22); fertiger Parser-/API-Stand siehe §6.8. MT940 bleibt nicht unterstützt.
 - **Vollwertige Kautionsbuchhaltung** (Verzinsung, Anlageform, Rückzahlung bei Auszug): [§18/fachlich] (§3.4, F6-3).
 - **Tilgungsreihenfolge / § 366 BGB-Verrechnung:** [§18/fachlich] (§3.2, F6-6).
 - **Genaue Fälligkeitsregeln** (§ 556b BGB, Hausgeld-Fälligkeit): [§18/fachlich] (§2.1).

@@ -17,8 +17,11 @@ from decimal import Decimal, InvalidOperation
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.rbac import ScopeCapability
+from app.repositories.coverage_declaration_repo import CoverageDeclarationRepository
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
@@ -267,6 +270,25 @@ async def get_weg_run(
 # ---------------------------------------------------------------------------
 # WEG-Jahresabrechnung
 # ---------------------------------------------------------------------------
+@router.get('/{run_id}/input-owners', response_model=list[uuid.UUID])
+async def input_owners(
+    run_id: uuid.UUID,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    run = await SettlementRunRepository(db, auth.organization_id).get_by_id(run_id)
+    if run is None or run.run_type != 'WEG_JAHRESABRECHNUNG':
+        raise HTTPException(404, 'WEG settlement run not found')
+    await FinancialScopeService(db, auth.organization_id, auth.user_id).enter(
+        run, capability=ScopeCapability.READ)
+    # Draft visibility alone does not authorize disclosure of its complete sources.
+    if not await db.scalar(text(
+        "SELECT property_financial_disclosure_access(:org,:property,'read')"),
+        {'org': auth.organization_id, 'property': run.property_id}):
+        raise HTTPException(404, 'Complete property sources not accessible')
+    return sorted(await CoverageDeclarationRepository(db, auth.organization_id).owner_ids(run))
+
+
 @router.get('/{run_id}/economic-plan-successor')
 async def plan_successor_preview(run_id: uuid.UUID, auth: AuthContext = Depends(require_write_dep),
                                  db: AsyncSession = Depends(get_db)):

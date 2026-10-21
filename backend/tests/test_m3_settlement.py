@@ -16,7 +16,9 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
+from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
 from tests.financial_coverage_helpers import attest_fixture
+from tests.test_invoice_extraction_worker import worker_tenant  # noqa: F401
 import pytest
 from sqlalchemy import text
 
@@ -925,3 +927,894 @@ async def test_derived_advances_for_exact_period(client_a_admin, derived_period_
     assert resp.status_code == 200, resp.text
     assert resp.json()["advance_payments_total"] == expected
     assert resp.json()["advance_payments_source"] == "DERIVED"
+
+
+@pytest.mark.asyncio
+async def test_batch_creates_three_drafts_and_repeat_skips_same_ids(client_a_admin, m3_seed):
+    body = {
+        "property_id": m3_seed["property"],
+        "period_start": "2037-01-01", "period_end": "2037-12-31",
+    }
+    response = await client_a_admin.post("/api/settlements/batch", json=body)
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["skipped"] == []
+    assert {r["lease_agreement_id"] for r in result["created"]} == {
+        m3_seed["lease_b"], m3_seed["lease_d"], m3_seed["lease_e"],
+    }
+    assert len({r["unit_id"] for r in result["created"]}) == 3
+    for run in result["created"]:
+        assert run["status"] == "draft"
+        assert run["run_type"] == "BK_MIETER"
+        assert run["advance_payments_source"] == "MANUAL"
+        assert run["advance_payments_total"] is None
+        assert run["total_cost"] is None
+        assert run["balance"] is None
+        assert run["snapshot_sha256"] is None
+        assert run["lines"] == []
+    repeated = await client_a_admin.post("/api/settlements/batch", json=body)
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["created"] == []
+    assert {s["lease_agreement_id"]: s["settlement_run_id"] for s in repeated.json()["skipped"]} == {
+        r["lease_agreement_id"]: r["id"] for r in result["created"]
+    }
+
+
+@pytest.fixture
+def batch_seed(seed_data):
+    return _seed_m3(seed_data)
+
+
+def _batch_body(seed, start="2038-01-01", end="2038-12-31", **extra):
+    return {"property_id": seed["property"], "period_start": start, "period_end": end, **extra}
+
+
+def _batch_rows(seed, run_ids=None):
+    """Observe synthetic rows, including effects hidden from ordinary reads."""
+    import psycopg2
+    with psycopg2.connect(SYNC_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM settlement_run WHERE property_id=%s ORDER BY id", (seed["property"],))
+            ids = run_ids if run_ids is not None else [str(r[0]) for r in cur.fetchall()]
+            result = []
+            for table, predicate in (
+                ("settlement_run", "id=ANY(%s::uuid[])"),
+                ("settlement_line", "settlement_run_id=ANY(%s::uuid[])"),
+                ("audit_event", "entity_id=ANY(%s::uuid[])"),
+                ("accounting_scope_binding", "settlement_run_id=ANY(%s::uuid[])"),
+            ):
+                cur.execute(f"SELECT to_jsonb(t) FROM {table} t WHERE {predicate} ORDER BY id", (ids,))
+                result.append(cur.fetchall())
+            cur.execute("SELECT to_jsonb(p) FROM payment p WHERE property_id=%s ORDER BY id", (seed["property"],))
+            result.append(cur.fetchall())
+            return result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("start,end,leases", [
+    ("2025-06-30", "2025-06-30", {"lease_a", "lease_e"}),
+    ("2025-07-01", "2025-07-01", {"lease_b", "lease_e"}),
+    ("2025-03-31", "2025-04-01", {"lease_a", "lease_c", "lease_e"}),
+    ("2025-08-01", "2025-08-01", {"lease_b", "lease_d", "lease_e"}),
+    ("2024-01-01", "2024-12-31", set()),
+])
+async def test_batch_exclusive_lease_end_inclusive_period(client_a_admin, batch_seed, start, end, leases):
+    _seed_m3(batch_seed)  # Another property must not contribute its leases.
+    response = await client_a_admin.post("/api/settlements/batch", json=_batch_body(batch_seed, start, end))
+    assert response.status_code == 200, response.text
+    assert response.json()["skipped"] == []
+    assert {r["lease_agreement_id"] for r in response.json()["created"]} == {batch_seed[k] for k in leases}
+
+
+@pytest.mark.asyncio
+async def test_batch_existing_draft_and_finalized_untouched(client_a_admin, batch_seed):
+    finalized = await _create_run(client_a_admin, batch_seed, "lease_a", "600.00")
+    response = await client_a_admin.post(f"/api/settlements/{finalized}/finalize", json=_extras_for_exit(batch_seed))
+    assert response.status_code == 200, response.text
+    draft = await _create_run(client_a_admin, batch_seed, "lease_b", "700.00")
+    before = _batch_rows(batch_seed, [finalized, draft])
+    response = await client_a_admin.post("/api/settlements/batch", json=_batch_body(batch_seed, "2025-01-01", "2025-12-31"))
+    assert response.status_code == 200, response.text
+    assert len(response.json()["created"]) == 3
+    assert {s["settlement_run_id"] for s in response.json()["skipped"]} == {finalized, draft}
+    assert _batch_rows(batch_seed, [finalized, draft]) == before
+    correction = await client_a_admin.post(f"/api/settlements/{finalized}/correction")
+    assert correction.status_code == 201, correction.text
+    successor = correction.json()["id"]
+    before = _batch_rows(batch_seed)
+    repeated = await client_a_admin.post("/api/settlements/batch", json=_batch_body(batch_seed, "2025-01-01", "2025-12-31"))
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["created"] == []
+    skipped = {r["settlement_run_id"] for r in repeated.json()["skipped"]}
+    assert len(skipped) == 5 and successor in skipped and finalized not in skipped
+    assert _batch_rows(batch_seed) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("override", [
+    {"property_id": "invalid"}, {"accounting_scope_id": "invalid"},
+    {"period_start": "2025-02-30"}, {"period_end": "invalid"},
+    {"period_start": "2039-01-01", "period_end": "2038-12-31"},
+    {"advance_payments_total": "100.00"}, {"management_mandate_id": str(uuid.uuid4())},
+    {"currency": "EUR"},
+])
+async def test_batch_invalid_body_rejected(client_a_admin, batch_seed, override):
+    response = await client_a_admin.post("/api/settlements/batch", json={**_batch_body(batch_seed), **override})
+    assert response.status_code == 422, response.text
+    assert _batch_rows(batch_seed) == [[], [], [], [], []]
+
+
+@pytest.mark.asyncio
+async def test_batch_roles_foreign_ids_and_empty_property(client_a_admin, client_a_readonly, client_b_admin, batch_seed):
+    import httpx
+    from app.main import app
+    body = _batch_body(batch_seed)
+    assert (await client_a_readonly.post("/api/settlements/batch", json=body)).status_code == 403
+    assert (await client_b_admin.post("/api/settlements/batch", json=body)).status_code == 404
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as anonymous:
+        assert (await anonymous.post("/api/settlements/batch", json=body)).status_code == 401
+    assert (await client_a_admin.post("/api/settlements/batch", json={**body, "property_id": str(uuid.uuid4())})).status_code == 404
+    empty = await client_a_admin.post("/api/properties", json={"name": "Synthetic empty batch property", "management_type": "MIET"})
+    assert empty.status_code == 201, empty.text
+    body["property_id"] = empty.json()["id"]
+    response = await client_a_admin.post("/api/settlements/batch", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json() == {"created": [], "skipped": []}
+    assert (await client_b_admin.post("/api/settlements/batch", json=body)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_batch_parallel_requests_create_exactly_three(client_a_admin, batch_seed):
+    import asyncio
+    responses = await asyncio.gather(*[
+        client_a_admin.post("/api/settlements/batch", json=_batch_body(batch_seed)) for _ in range(2)
+    ])
+    for response in responses:
+        assert response.status_code == 200, response.text
+    assert sorted(len(r.json()["created"]) for r in responses) == [0, 3]
+    created = [run for response in responses for run in response.json()["created"]]
+    skipped = [run for response in responses for run in response.json()["skipped"]]
+    assert {r["id"] for r in created} == {r["settlement_run_id"] for r in skipped}
+    rows = _batch_rows(batch_seed)
+    assert len(rows[0]) == len(rows[2]) == 3
+    assert len({row[0]["lease_agreement_id"] for row in rows[0]}) == 3
+
+
+@pytest.mark.asyncio
+async def test_batch_second_create_failure_rolls_back_runs_and_audit(client_a_admin, batch_seed, monkeypatch):
+    from app.services.settlement_service import SettlementService
+    original = SettlementService.create_draft
+    created_ids = []
+
+    async def fail_after_second(self, *args, **kwargs):
+        run = await original(self, *args, **kwargs)
+        created_ids.append(str(run.id))
+        if len(created_ids) == 2:
+            raise RuntimeError("synthetic failure after second draft and audit")
+        return run
+
+    before = _batch_rows(batch_seed)
+    with monkeypatch.context() as patch:
+        patch.setattr(SettlementService, "create_draft", fail_after_second)
+        with pytest.raises(RuntimeError, match="synthetic failure after second"):
+            await client_a_admin.post("/api/settlements/batch", json=_batch_body(batch_seed))
+    assert len(created_ids) == 2
+    assert _batch_rows(batch_seed) == before
+    assert _batch_rows(batch_seed, created_ids) == before
+    retry = await client_a_admin.post("/api/settlements/batch", json=_batch_body(batch_seed))
+    assert retry.status_code == 200, retry.text
+    assert len(retry.json()["created"]) == 3 and retry.json()["skipped"] == []
+
+
+def _batch_scope(seed, *, units=None, authorized=True, scope_type="MIET"):
+    import psycopg2
+    scope_id, grant_id = str(uuid.uuid4()), str(uuid.uuid4())
+    with psycopg2.connect(SYNC_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO accounting_scope
+                (id,organization_id,property_id,scope_type,label,valid_from,whole_property,origin,created_by)
+                VALUES (%s,%s,%s,%s,'Synthetic batch scope','1900-01-01',%s,'REVIEWED',%s)""",
+                (scope_id, str(seed["org_a_id"]), seed["property"], scope_type, units is None, str(seed["user_a_admin_id"])))
+            for unit in units or []:
+                cur.execute("INSERT INTO accounting_scope_unit(organization_id,scope_id,unit_id,property_id) VALUES (%s,%s,%s,%s)",
+                    (str(seed["org_a_id"]), scope_id, unit, seed["property"]))
+            if authorized:
+                cur.execute("""INSERT INTO scope_grant
+                    (id,organization_id,scope_id,user_id,capabilities,granted_by,reason)
+                    VALUES (%s,%s,%s,%s,ARRAY['read','prepare'],%s,'Synthetic batch preparation')""",
+                    (grant_id, str(seed["org_a_id"]), scope_id, str(seed["user_a_admin_id"]), str(seed["user_a_admin_id"])))
+    return scope_id, grant_id
+
+
+@pytest.mark.asyncio
+async def test_batch_scope_selection_partial_units_and_revocation(worker_tenant):
+    from tests.strict_finance_fixture import classify_property_finance
+    client, seed = worker_tenant
+    seed = _seed_m3(seed)
+    classified = await classify_property_finance(seed, seed["property"], scope_type="MIET")
+    scope_a = str(classified["scope"])
+    body = _batch_body(seed, accounting_scope_id=scope_a)
+    first = await client.post("/api/settlements/batch", json=body)
+    assert first.status_code == 200, first.text
+    assert len(first.json()["created"]) == 3
+    original_ids = {r["id"] for r in first.json()["created"]}
+    before = _batch_rows(seed, list(original_ids))
+    hidden, _ = _batch_scope(seed, authorized=False)
+    denied = await client.post("/api/settlements/batch", json={**body, "accounting_scope_id": hidden})
+    assert denied.status_code == 404, denied.text
+    assert not any(run_id in denied.text for run_id in original_ids)
+    # Admin status must not substitute for a scope grant, even with no leases.
+    denied = await client.post("/api/settlements/batch", json=_batch_body(seed, "1901-01-01", "1901-12-31", accounting_scope_id=hidden))
+    assert denied.status_code == 404, denied.text
+    second_scope, _ = _batch_scope(seed)
+    second = await client.post("/api/settlements/batch", json={**body, "accounting_scope_id": second_scope})
+    assert second.status_code == 200, second.text
+    assert len(second.json()["created"]) == 3 and second.json()["skipped"] == []
+    second_ids = {r["id"] for r in second.json()["created"]}
+    assert original_ids.isdisjoint(second_ids)
+    repeated = await client.post("/api/settlements/batch", json=body)
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["created"] == []
+    assert {r["settlement_run_id"] for r in repeated.json()["skipped"]} == original_ids
+    assert not any(run_id in repeated.text for run_id in second_ids)
+    assert _batch_rows(seed, list(original_ids)) == before
+    partial, partial_grant = _batch_scope(seed, units=[seed["u1"]])
+    partial_body = {**body, "accounting_scope_id": partial}
+    response = await client.post("/api/settlements/batch", json=partial_body)
+    assert response.status_code == 200, response.text
+    assert [r["lease_agreement_id"] for r in response.json()["created"]] == [seed["lease_b"]]
+    run = response.json()["created"][0]
+    rows = _batch_rows(seed, [run["id"]])
+    assert rows[3][0][0]["scope_id"] == partial
+    repeated = await client.post("/api/settlements/batch", json=partial_body)
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json() == {"created": [], "skipped": [{"lease_agreement_id": seed["lease_b"], "settlement_run_id": run["id"]}]}
+    revoked = await client.post(f"/api/accounting-scopes/{partial}/grants/{partial_grant}/revoke")
+    assert revoked.status_code == 204, revoked.text
+    response = await client.post("/api/settlements/batch", json=partial_body)
+    assert response.status_code == 404, response.text
+    assert run["id"] not in response.text
+    assert _batch_rows(seed, [run["id"]]) == rows
+    assert (await client.post("/api/settlements/batch", json=_batch_body(seed))).status_code == 409
+    weg, _ = _batch_scope(seed, scope_type="WEG")
+    assert (await client.post("/api/settlements/batch", json={**body, "accounting_scope_id": weg})).status_code == 422
+    other = _seed_m3(seed)
+    wrong_property, _ = _batch_scope(other)
+    assert (await client.post("/api/settlements/batch", json={**body, "accounting_scope_id": wrong_property})).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_batch_source_revocation_never_returns_partial_leases(worker_tenant):
+    import psycopg2
+    from tests.contact_source_fixtures import grant_property_contacts
+    from tests.strict_finance_fixture import classify_property_finance
+    from tests.test_property_source_access import grant
+    from tests.test_property_source_enforcement import synthetic_enforcement, change_mode
+    from app.core.db import get_tenant_session
+    client, seed = worker_tenant
+    seed = _seed_m3(seed)
+    classified = await classify_property_finance(seed, seed["property"], scope_type="MIET")
+    await grant_property_contacts(client, seed, seed["property"])
+    domain, source_grant = await grant(client, seed, seed["property"], caps=["read", "prepare"])
+    body = _batch_body(seed, accounting_scope_id=str(classified["scope"]))
+    with psycopg2.connect(SYNC_URL) as conn, conn.cursor() as cur:
+        cur.execute("SELECT person_id FROM tenant_profile WHERE id=%s", (seed["tp_b"],))
+        person = cur.fetchone()[0]
+        cur.execute("""SELECT d.id,g.id FROM person_data_domain d JOIN person_data_grant g ON g.domain_id=d.id
+            WHERE d.person_id=%s AND g.user_id=%s AND g.revoked_at IS NULL""", (str(person), str(seed["user_a_admin_id"])))
+        contact_domain, contact_grant = cur.fetchone()
+    async with synthetic_enforcement(seed):
+        first = await client.post("/api/settlements/batch", json=body)
+        assert first.status_code == 200, first.text
+        assert len(first.json()["created"]) == 3
+        before = _batch_rows(seed)
+        revoked = await client.post(f"/api/person-data-domains/{contact_domain}/grants/{contact_grant}/revoke")
+        assert revoked.status_code == 204, revoked.text
+        # Contact RLS hides the expected source even though history remains
+        # property-readable. Counting lease rows alone cannot authorize a batch.
+        async with get_tenant_session(seed["org_a_id"]) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true),set_config('app.current_scope_id',:scope,true)"),
+                {"actor": str(seed["user_a_admin_id"]), "scope": str(classified["scope"])})
+            visible = (await db.execute(text("SELECT id FROM lease_agreement WHERE id IN (:b,:d,:e)"),
+                {k: uuid.UUID(seed[f"lease_{k}"]) for k in ("b", "d", "e")})).scalars().all()
+            assert set(map(str, visible)) == {seed["lease_b"], seed["lease_d"], seed["lease_e"]}
+            assert await db.scalar(text("SELECT count(*) FROM tenant_profile WHERE id=:id"),
+                {"id": uuid.UUID(seed["tp_b"])}) == 0
+        for start, end in (("2038-01-01", "2038-12-31"), ("2039-01-01", "2039-12-31"), ("1901-01-01", "1901-12-31")):
+            response = await client.post("/api/settlements/batch", json={**body, "period_start": start, "period_end": end})
+            assert response.status_code == 404, response.text
+        assert _batch_rows(seed) == before
+        restored = await client.post(f"/api/person-data-domains/{contact_domain}/grants",
+            headers={"Idempotency-Key": str(uuid.uuid4())},
+            json={"user_id": str(seed["user_a_admin_id"]), "capabilities": ["read", "prepare", "export"], "reason_code": "TEAM_ACCESS"})
+        assert restored.status_code == 201, restored.text
+        repeated = await client.post("/api/settlements/batch", json=body)
+        assert repeated.status_code == 200, repeated.text
+        assert len(repeated.json()["skipped"]) == 3
+        revoked = await client.post(f"/api/property-data-domains/{domain}/grants/{source_grant}/revoke")
+        assert revoked.status_code == 204, revoked.text
+        assert (await client.post("/api/settlements/batch", json=body)).status_code == 404
+        async with get_tenant_session(seed["org_a_id"]) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),
+                {"actor": str(seed["user_a_admin_id"])})
+            assert await db.scalar(text("SELECT count(*) FROM lease_agreement WHERE id=:id"),
+                {"id": uuid.UUID(seed["lease_b"])}) == 0
+        assert _batch_rows(seed) == before
+        await change_mode(seed, "PAUSED")
+        assert (await client.post("/api/settlements/batch", json=body)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_batch_clerk_uses_exact_period_not_another_year(client_a_clerk, batch_seed):
+    existing = await client_a_clerk.post("/api/settlements", json={
+        **_batch_body(batch_seed, "2037-01-01", "2037-12-31"),
+        "lease_agreement_id": batch_seed["lease_b"],
+    })
+    assert existing.status_code == 201, existing.text
+    run_id = existing.json()["id"]
+    before = _batch_rows(batch_seed, [run_id])
+    response = await client_a_clerk.post("/api/settlements/batch", json=_batch_body(batch_seed))
+    assert response.status_code == 200, response.text
+    assert len(response.json()["created"]) == 3 and response.json()["skipped"] == []
+    assert all(r["period_start"] == "2038-01-01" and r["period_end"] == "2038-12-31" for r in response.json()["created"])
+    assert run_id not in response.text
+    assert _batch_rows(batch_seed, [run_id]) == before
+
+@pytest.mark.asyncio
+async def test_advance_proposal_finalized_tenant_cost(client_a_admin, m3_seed):
+    run_id = await _create_run(client_a_admin, m3_seed, "lease_a", "600.00")
+    finalized = await client_a_admin.post(
+        f"/api/settlements/{run_id}/finalize", json=_extras_for_exit(m3_seed)
+    )
+    assert finalized.status_code == 200, finalized.text
+    response = await client_a_admin.get(f"/api/settlements/{run_id}/advance-proposal")
+    assert response.status_code == 200, response.text
+    proposal = response.json()
+    assert proposal["lease_agreement_id"] == m3_seed["lease_a"]
+    assert proposal["tenant_cost"] == finalized.json()["total_cost"]
+    assert proposal["months"] == "6"
+    from decimal import ROUND_HALF_UP
+    assert Decimal(proposal["monthly_amount"]) == (Decimal(proposal["tenant_cost"]) / 6).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+# T28 uses the same isolated live-API contract fixtures as T23.
+
+
+async def _proposal_run(api, world, db, *, cost="1200.00", start="2026-01-01", end="2026-12-31"):
+    await db.execute(text("""INSERT INTO cost_entry
+        (id,organization_id,property_id,cost_category_id,cost_category_plan_version,
+         invoice_date,service_period_from,service_period_to,gross_amount,tenant_distribution_key,
+         tenant_apportionable,status,source,confirmed_at,confirmed_by)
+        SELECT :id,:org,:property,id,1,:start,:start,:end,:cost,'WOHNFLAECHE',
+         'UMLAGEFAEHIG','confirmed','MANUAL',now(),:actor FROM cost_category
+        WHERE code='GRUNDSTEUER' AND plan_version=1"""),
+        {"id": uuid.uuid4(), "org": world["org"], "property": world["property"],
+         "actor": world["admin"], "start": date.fromisoformat(start),
+         "end": date.fromisoformat(end), "cost": Decimal(cost)})
+    await db.commit()
+    response = await api.post("/api/settlements", json={
+        "property_id": str(world["property"]), "lease_agreement_id": str(world["lease"]),
+        "period_start": start, "period_end": end, "advance_payments_total": "999.00",
+    })
+    assert response.status_code == 201, response.text
+    run_id = response.json()["id"]
+    await attest_fixture(api, "settlement", run_id,
+        {"advance_payments_total": "999.00", "advance_payments_source": "MANUAL"})
+    response = await api.post(f"/api/settlements/{run_id}/finalize")
+    assert response.status_code == 200, response.text
+    return run_id, response.json()
+
+
+def _proposal_snapshot(cost="1200.00", start="2026-01-01", end="2026-12-31", *, tenancy_start=None, tenancy_end=None):
+    from app.models.settlement_run import SettlementRun
+    lease = uuid.uuid4()
+    return SettlementRun(
+        lease_agreement_id=lease, total_cost=Decimal(cost),
+        period_start=date.fromisoformat(start), period_end=date.fromisoformat(end),
+        snapshot_payload={"run_type": "BK_MIETER", "period": {"start": start, "end": end},
+            "inputs": {"lease_periods": [{"lease_agreement_id": str(lease),
+                "from": tenancy_start or start, "to": tenancy_end}]},
+            "result": {"total_cost": cost, "balance": "-99999.00"}},
+    )
+
+
+@pytest.mark.parametrize("cost,start,end,tenancy_start,tenancy_end,months,amount", [
+    ("1200.00", "2026-01-01", "2026-12-31", None, None, Decimal(12), "100.00"),
+    ("720.00", "2026-01-01", "2026-12-31", None, "2026-06-30", Decimal(6), "120.00"),
+    ("80.00", "2026-01-01", "2026-01-31", "2026-01-16", None, Decimal(16)/31, "155.00"),
+    ("0.08", "2026-01-01", "2026-01-31", "2026-01-16", None, Decimal(16)/31, "0.16"),
+    ("29.00", "2024-02-01", "2024-02-29", "2024-02-16", None, Decimal(14)/29, "60.07"),
+    ("0.00", "2026-01-01", "2026-12-31", None, None, Decimal(12), "0.00"),
+    ("12.06", "2026-01-01", "2026-12-31", None, None, Decimal(12), "1.01"),
+    ("63.00", "2026-01-16", "2026-02-14", "2025-01-01", None, Decimal(63)/62, "62.00"),
+    ("0.17", "2024-01-01", "2024-02-05", None, None, Decimal(34)/29, "0.15"),
+])
+def test_proposal_frozen_calendar_month_basis(cost, start, end, tenancy_start, tenancy_end, months, amount):
+    from app.services.settlement_service import SettlementService
+    run = _proposal_snapshot(cost, start, end, tenancy_start=tenancy_start, tenancy_end=tenancy_end)
+    result = SettlementService._advance_proposal(run)
+    assert abs(Decimal(result["months"]) - months) < Decimal("1e-26")
+    assert result["monthly_amount"] == amount
+    assert result["tenant_cost"] == cost
+    assert result["period_start"] == date.fromisoformat(start)
+    assert result["period_end"] == date.fromisoformat(end)
+
+
+@pytest.mark.parametrize("problem", ["missing", "lease", "end", "negative", "nan", "infinity", "overflow", "mismatch", "period", "empty"])
+def test_proposal_invalid_frozen_basis_fails_closed(problem):
+    from fastapi import HTTPException
+    from app.services.settlement_service import SettlementService
+    run = _proposal_snapshot()
+    if problem == "missing":
+        run.snapshot_payload = {}
+    elif problem == "lease":
+        run.snapshot_payload["inputs"]["lease_periods"] = []
+    elif problem == "end":
+        del run.snapshot_payload["inputs"]["lease_periods"][0]["to"]
+    elif problem in {"negative", "nan", "infinity", "overflow"}:
+        value = {"negative": "-1", "nan": "NaN", "infinity": "Infinity", "overflow": "99999999999999"}[problem]
+        run.total_cost = Decimal(value)
+        run.snapshot_payload["result"]["total_cost"] = value
+    elif problem == "mismatch":
+        run.total_cost = Decimal("1")
+    elif problem == "period":
+        run.snapshot_payload["period"]["start"] = "2027-01-01"
+    else:
+        run.snapshot_payload["inputs"]["lease_periods"][0]["from"] = "2027-01-01"
+    with pytest.raises(HTTPException) as error:
+        SettlementService._advance_proposal(run)
+    assert error.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_proposal_accept_preserves_history_and_frozen_rows(rent_world, rent_db):
+    world = rent_world
+    async with api_client(world) as api:
+        bank = uuid.uuid4()
+        await rent_db.execute(text("""INSERT INTO bank_account
+            (id,organization_id,property_id,account_type,label)
+            VALUES (:id,:org,:property,'LAUFEND','T28 booked advances')"""), {**world, "id":bank})
+        await rent_db.commit()
+        response = await api.post("/api/payments", json={
+            "bank_account_id":str(bank), "direction":"IN", "amount":"150.00",
+            "value_date":"2026-03-05", "payment_type":"NK_VORAUSZAHLUNG",
+            "tenant_profile_id":str(world["tenant"]), "lease_agreement_id":str(world["lease"]),
+            "period_year":2026, "period_month":3,
+        })
+        assert response.status_code == 201, response.text
+        assert (await api.post(f"/api/payments/{response.json()['id']}/book")).status_code == 200
+        run_id, frozen = await _proposal_run(api, world, rent_db)
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        original = (await api.get(f"/api/leases/{world['lease']}")).json()
+        history = f"/api/leases/{world['lease']}/rent-changes"
+        for valid_from, base in [("2026-02-01", "750.00"), ("2026-10-01", "900.00")]:
+            result = await api.post(history, json={"valid_from": valid_from, "base_rent": base, "advance_payment": "160.00"})
+            assert result.status_code == 201, result.text
+        proposal = (await api.get(url)).json()
+        assert proposal == {"lease_agreement_id": str(world["lease"]), "tenant_cost": "1200.00",
+            "months": "12", "monthly_amount": "100.00", "period_start": "2026-01-01", "period_end": "2026-12-31"}
+        assert frozen["balance"] == "201.00"  # Never balance / months or paid advances.
+        before = (await rent_db.execute(text("SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id"), {"id":uuid.UUID(run_id)})).one()
+        payments = (await rent_db.execute(text("SELECT to_jsonb(p) FROM payment p WHERE lease_agreement_id=:lease ORDER BY id"), {"lease":world["lease"]})).all()
+        accepted = await api.post(url, json={"valid_from": "2026-05-01"})
+        assert accepted.status_code == 201, accepted.text
+        row = accepted.json()
+        assert row["base_rent"] == "750.00" and row["advance_payment"] == "100.00"
+        assert row["lease_agreement_id"] == str(world["lease"])
+        assert (await api.post(url, json={"valid_from": "2026-05-01"})).status_code == 409
+        assert (await api.post(url, json={"valid_from": "2026-02-01"})).status_code == 409
+        assert (await api.get(f"/api/leases/{world['lease']}")).json() == original
+        assert (await api.get(f"/api/settlements/{run_id}")).json() == frozen
+        assert (await rent_db.execute(text("SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id"), {"id":uuid.UUID(run_id)})).one() == before
+        assert (await rent_db.execute(text("SELECT to_jsonb(p) FROM payment p WHERE lease_agreement_id=:lease ORDER BY id"), {"lease":world["lease"]})).all() == payments
+        events = (await rent_db.execute(text("SELECT payload_diff FROM audit_event WHERE entity_id=:lease AND action='lease.rent_change_created'"), {"lease":world["lease"]})).scalars().all()
+        assert sum(event["rent_change_id"] == row["id"] for event in events) == 1
+        assert len((await api.get(history)).json()) == 3
+
+
+@pytest.mark.asyncio
+async def test_proposal_bounds_validation_and_concurrent_acceptance(rent_world, rent_db):
+    import asyncio
+    world = rent_world
+    await rent_db.execute(text("UPDATE lease_agreement SET valid_to='2027-01-01' WHERE id=:id"), {"id":world["lease"]})
+    await rent_db.commit()
+    async with api_client(world) as api, api_client(world) as other:
+        run_id, _ = await _proposal_run(api, world, rent_db)
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        for body in [{}, {"valid_from":"invalid"}, {"valid_from":"2025-12-31"}, {"valid_from":"2027-01-01"},
+                     {"valid_from":"2026-05-01", "monthly_amount":"1.00"}, {"valid_from":"2026-05-01", "base_rent":"1.00"}]:
+            assert (await api.post(url, json=body)).status_code == 422
+        responses = await asyncio.gather(api.post(url, json={"valid_from":"2026-12-31"}),
+                                         other.post(url, json={"valid_from":"2026-12-31"}))
+        assert sorted(response.status_code for response in responses) == [201,409]
+        # Historical dates are allowed, not future-only.
+        assert (await api.post(url, json={"valid_from":"2026-01-01"})).status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_proposal_roles_org_and_lifecycle(rent_world, rent_db):
+    import httpx
+    from app.main import app
+    world = rent_world
+    async with api_client(world) as api, api_client(world, "reader") as reader, api_client(world, foreign=True) as foreign:
+        run_id, _ = await _proposal_run(api, world, rent_db)
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        assert (await reader.get(url)).status_code == 200
+        assert (await reader.post(url, json={"valid_from":"2026-05-01"})).status_code == 403
+        for client in [foreign]:
+            assert (await client.get(url)).status_code == 404
+            assert (await client.post(url, json={"valid_from":"2026-05-01"})).status_code == 404
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as anonymous:
+            assert (await anonymous.get(url)).status_code == 401
+            assert (await anonymous.post(url, json={"valid_from":"2026-05-01"})).status_code == 401
+        async with api_client(world, "clerk") as clerk:
+            result = await clerk.post(url, json={"valid_from":"2026-04-01"})
+            assert result.status_code == 201, result.text
+        correction = await api.post(f"/api/settlements/{run_id}/correction")
+        assert correction.status_code == 201, correction.text
+        for target in [url, f"/api/settlements/{correction.json()['id']}/advance-proposal"]:
+            assert (await api.get(target)).status_code == 409
+            assert (await api.post(target, json={"valid_from":"2026-05-01"})).status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_proposal_accept_audit_failure_rolls_back(rent_world, rent_db, monkeypatch):
+    from app.repositories.audit_repo import AuditRepository
+    world = rent_world
+    async with api_client(world) as api:
+        run_id, _ = await _proposal_run(api, world, rent_db)
+        original = AuditRepository.create
+        async def fail(self, event):
+            if event.action == "lease.rent_change_created":
+                raise RuntimeError("synthetic audit write failure")
+            return await original(self, event)
+        with monkeypatch.context() as patch:
+            patch.setattr(AuditRepository, "create", fail)
+            with pytest.raises(RuntimeError, match="synthetic audit"):
+                await api.post(f"/api/settlements/{run_id}/advance-proposal", json={"valid_from":"2026-05-01"})
+        assert (await api.get(f"/api/leases/{world['lease']}/rent-changes")).json() == []
+        assert (await api.post(f"/api/settlements/{run_id}/advance-proposal", json={"valid_from":"2026-05-01"})).status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_proposal_uses_frozen_not_current_dates_or_costs(rent_world, rent_db):
+    world = rent_world
+    async with api_client(world) as api:
+        run_id, _ = await _proposal_run(api, world, rent_db)
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        before = (await api.get(url)).json()
+        # A later legitimate master-data edit cannot redefine the finalized basis.
+        changed = await api.patch(f"/api/leases/{world['lease']}", json={"valid_to":"2026-06-30"})
+        assert changed.status_code == 200, changed.text
+        await rent_db.execute(text("""INSERT INTO cost_entry
+            (id,organization_id,property_id,cost_category_id,cost_category_plan_version,
+             invoice_date,service_period_from,service_period_to,gross_amount,tenant_distribution_key,
+             tenant_apportionable,status,source,confirmed_at,confirmed_by)
+            SELECT :id,:org,:property,id,1,'2026-01-01','2026-01-01','2026-12-31',9000,
+             'WOHNFLAECHE','UMLAGEFAEHIG','confirmed','MANUAL',now(),:admin
+            FROM cost_category WHERE code='GRUNDSTEUER' AND plan_version=1"""), {**world,"id":uuid.uuid4()})
+        await rent_db.commit()
+        assert (await api.get(url)).json() == before
+        assert (await api.post(url, json={"valid_from":"2026-07-01"})).status_code == 422
+        result = await api.post(url, json={"valid_from":"2026-04-01"})
+        assert result.status_code == 201 and result.json()["advance_payment"] == "100.00"
+
+
+@pytest.mark.asyncio
+async def test_proposal_financial_scope_prepare_and_revocation(rent_world, rent_db):
+    from tests.test_financial_source_disclosure import bind_output
+    world = rent_world
+    seed = {"org_a_id":world["org"], "user_a_admin_id":world["admin"]}
+    async with api_client(world) as api:
+        run_id, _ = await _proposal_run(api, world, rent_db)
+        ids = await bind_output(seed, str(world["property"]), run_id,
+            kind="settlement_run", scope_type="MIET", caps=["read"])
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        assert (await api.get(url)).status_code == 200
+        assert (await api.post(url, json={"valid_from":"2026-05-01"})).status_code == 404
+        await rent_db.execute(text("UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE scope_id=:sphere"), ids)
+        await rent_db.execute(text("""INSERT INTO scope_grant
+            (organization_id,scope_id,user_id,capabilities,granted_by,reason)
+            VALUES (:org,:sphere,:actor,ARRAY['read','prepare'],:actor,'Explicit T28 prepare')"""), ids)
+        await rent_db.commit()
+        response = await api.post(url, json={"valid_from":"2026-05-01"})
+        assert response.status_code == 201, response.text
+        await rent_db.execute(text("UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE scope_id=:sphere AND revoked_at IS NULL"), ids)
+        await rent_db.commit()
+        assert (await api.get(url)).status_code == 404
+        assert (await api.post(url, json={"valid_from":"2026-06-01"})).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_proposal_source_read_history_prepare_and_revocation(rent_world, rent_db):
+    from tests.test_source_security_lifecycle import status, transition, transition_body
+    from tests.test_property_source_access import grant
+    from tests.contact_source_fixtures import grant_property_contacts
+    from tests.test_financial_source_disclosure import bind_output
+    world = rent_world
+    seed = {"org_a_id":world["org"], "user_a_admin_id":world["admin"]}
+    async with api_client(world) as api:
+        run_id, _ = await _proposal_run(api, world, rent_db)
+        await grant_property_contacts(api, seed, str(world["property"]))
+        await grant_property_contacts(api, seed, str(world["hidden_property"]))
+        await grant(api, seed, world["hidden_property"], caps=["read"])
+        domain, receipt = await grant(api, seed, world["property"], caps=["read"])
+        ids = await bind_output(seed, str(world["property"]), run_id,
+            kind="settlement_run", scope_type="MIET", caps=["read","prepare"])
+        await rent_db.execute(text("""INSERT INTO accounting_scope_binding
+            (organization_id,property_id,scope_id,cost_entry_id,origin,reason,reviewed_by)
+            SELECT :org,:property,:sphere,id,'REVIEWED','T28 complete synthetic cost scope',:actor
+            FROM cost_entry WHERE organization_id=:org AND property_id=:property"""), ids)
+        await rent_db.commit()
+        from tests.test_access_disposition import reviewed, assessment, decisions, acceptance_body
+        report = await reviewed(api)
+        state = await assessment(api, report)
+        assert state["acceptance_available"], (state, await decisions(api, report))
+        response = await api.post(f"/api/access-preparation/snapshots/{report['id']}/disposition/accept",
+            json=acceptance_body(report, state), headers={"Idempotency-Key":str(uuid.uuid4())})
+        assert response.status_code == 201, response.text
+        decision = response.json()
+        activated = await transition(api, transition_body(await status(api), "ENFORCED", decision))
+        assert activated.status_code == 201, activated.text
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        response = await api.get(url)
+        assert response.status_code == 200, response.text
+        # Financial PREPARE alone cannot mutate a read-only relationship source.
+        assert (await api.post(url, json={"valid_from":"2026-05-01"})).status_code == 404
+        assert (await api.post(f"/api/property-data-domains/{domain}/grants/{receipt}/revoke")).status_code == 204
+        assert (await api.get(url)).status_code == 404
+        assert (await api.post(url, json={"valid_from":"2026-06-01"})).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_proposal_zero_cost_accepts_zero(rent_world, rent_db):
+    async with api_client(rent_world) as api:
+        run_id, _ = await _proposal_run(api, rent_world, rent_db, cost="0.00")
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        assert (await api.get(url)).json()["monthly_amount"] == "0.00"
+        result = await api.post(url, json={"valid_from":"2026-01-01"})
+        assert result.status_code == 201, result.text
+        assert result.json()["advance_payment"] == "0.00"
+        assert result.json()["base_rent"] == "700.00"
+
+
+@pytest.mark.asyncio
+async def test_proposal_acceptance_committed_before_response(rent_world, rent_db):
+    """Observe committed history at response.start, not after ASGI cleanup."""
+    import httpx
+    from app.main import app
+
+    async with api_client(rent_world) as api:
+        run_id, _ = await _proposal_run(api, rent_world, rent_db)
+        observed = []
+
+        async def observe_response(scope, receive, send):
+            async def observe_send(message):
+                if message["type"] == "http.response.start":
+                    observed.append(await rent_db.scalar(text("""SELECT count(*)
+                        FROM lease_rent_change WHERE lease_agreement_id=:lease
+                        AND valid_from=:valid_from"""),
+                        {"lease":rent_world["lease"], "valid_from":date(2026, 5, 1)}))
+                await send(message)
+            await app(scope, receive, observe_send)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=observe_response),
+            base_url="http://test", cookies=api.cookies,
+        ) as client:
+            result = await client.post(f"/api/settlements/{run_id}/advance-proposal",
+                json={"valid_from":"2026-05-01"})
+        assert result.status_code == 201, result.text
+        assert observed == [1], "Rent history must commit before sending HTTP 201"
+
+
+@pytest.fixture
+def metered_m3(seed_data):
+    """Independent four-unit annual water scenario; synthetic test DB only."""
+    from urllib.parse import urlparse
+    import psycopg2
+
+    target = urlparse(SYNC_URL)
+    assert target.hostname == "127.0.0.1" and target.port == 55432
+    world = _seed_m3(seed_data)
+    conn = psycopg2.connect(SYNC_URL)
+    try:
+        with conn, conn.cursor() as cur:
+            for key, quantity in [("u1", "30"), ("u2", "20"), ("u3", "10"), ("u4", "40")]:
+                meter_id = str(uuid.uuid4())
+                cur.execute("""INSERT INTO meter
+                    (id,organization_id,property_id,unit_id,meter_number,meter_type,location)
+                    VALUES (%s,%s,%s,%s,%s,'KALTWASSER','synthetisch')""",
+                    (meter_id, str(world["org_a_id"]), world["property"], world[key], key))
+                for day, value in [(date(2025, 1, 1), Decimal("100.0000")),
+                                   (date(2025, 12, 31), Decimal("100.0000") + Decimal(quantity))]:
+                    cur.execute("""INSERT INTO meter_reading
+                        (id,organization_id,meter_id,reading_date,value,period)
+                        VALUES (%s,%s,%s,%s,%s,'2025')""",
+                        (str(uuid.uuid4()), str(world["org_a_id"]), meter_id, day, value))
+    finally:
+        conn.close()
+    return world
+
+
+def _water_line(body):
+    return next(row for row in body["lines"]
+                if row["line_type"] == "COST" and row["cost_category_code"] == "KALTWASSER")
+
+
+@pytest.mark.asyncio
+async def test_meter_consumption_automatically_supplies_all_unit_weights(client_a_admin, metered_m3):
+    run_id = await _create_run(client_a_admin, metered_m3, "lease_e", "0.00")
+    extras = _extras_for_exit(metered_m3)
+    extras["unit_metrics"] = []
+    result = await client_a_admin.post(f"/api/settlements/{run_id}/compute", json=extras)
+    assert result.status_code == 200, result.text
+    water = _water_line(result.json())
+    assert Decimal(water["total_amount"]) == Decimal("600.00")
+    assert Decimal(water["amount"]) == Decimal("240.00")
+    assert Decimal(water["distribution_base_total"]) == Decimal("100")
+
+
+@pytest.mark.asyncio
+async def test_meter_consumption_explicit_manual_zero_takes_precedence(client_a_admin, metered_m3):
+    run_id = await _create_run(client_a_admin, metered_m3, "lease_e", "0.00")
+    extras = _extras_for_exit(metered_m3)
+    extras["unit_metrics"] = [{"unit_id": metered_m3["u1"], "consumption": "0"}]
+    result = await client_a_admin.post(f"/api/settlements/{run_id}/compute", json=extras)
+    assert result.status_code == 200, result.text
+    assert Decimal(_water_line(result.json())["amount"]) == Decimal("342.86")
+    assert Decimal(_water_line(result.json())["distribution_base_total"]) == Decimal("70")
+
+
+@pytest.mark.asyncio
+async def test_meter_consumption_missing_one_unit_never_silently_redistributes(client_a_admin, seed_data):
+    from urllib.parse import urlparse
+    assert urlparse(SYNC_URL).hostname == "127.0.0.1" and urlparse(SYNC_URL).port == 55432
+    world = _seed_m3(seed_data)
+    run_id = await _create_run(client_a_admin, world, "lease_e", "0.00")
+    extras = _extras_for_exit(world)
+    extras["unit_metrics"] = extras["unit_metrics"][:-1]
+    result = await client_a_admin.post(f"/api/settlements/{run_id}/compute", json=extras)
+    assert result.status_code == 422, result.text
+    assert "Handeingabe" in result.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_meter_consumption_suggestions_show_all_units_and_actual_readings(client_a_admin, client_a_readonly, client_b_admin, metered_m3):
+    run_id = await _create_run(client_a_admin, metered_m3, "lease_e", "0.00")
+    url = f"/api/settlements/{run_id}/consumption-suggestions"
+    response = await client_a_readonly.get(url)
+    assert response.status_code == 200, response.text
+    rows = {row["unit_id"]: row for row in response.json()}
+    assert set(rows) == {metered_m3[key] for key in ("u1", "u2", "u3", "u4")}
+    for key, quantity, finish in [("u1", "30.0000", "130.0000"), ("u2", "20.0000", "120.0000"),
+                                   ("u3", "10.0000", "110.0000"), ("u4", "40.0000", "140.0000")]:
+        row = rows[metered_m3[key]]
+        assert row["consumption"] == quantity
+        assert row["reason"] is None
+        assert row["meter_id"]
+        assert row["unit_label"] == key[-1]
+        assert row["start_reading"]["reading_date"] == "2025-01-01"
+        assert row["start_reading"]["value"] == "100.0000"
+        assert row["end_reading"]["reading_date"] == "2025-12-31"
+        assert row["end_reading"]["value"] == finish
+        assert row["start_reading"]["id"] != row["end_reading"]["id"]
+    assert (await client_b_admin.get(url)).status_code == 404
+    unchanged = (await client_a_admin.get(f"/api/settlements/{run_id}")).json()
+    assert unchanged["lines"] == []
+    assert unchanged["total_cost"] is None
+    assert unchanged["snapshot_sha256"] is None
+
+
+@pytest.mark.asyncio
+async def test_meter_consumption_suggestions_explain_missing_values_without_invented_zero(client_a_admin, seed_data):
+    from urllib.parse import urlparse
+    assert urlparse(SYNC_URL).hostname == "127.0.0.1" and urlparse(SYNC_URL).port == 55432
+    world = _seed_m3(seed_data)
+    run_id = await _create_run(client_a_admin, world, "lease_e", "0.00")
+    response = await client_a_admin.get(f"/api/settlements/{run_id}/consumption-suggestions")
+    assert response.status_code == 200, response.text
+    assert len(response.json()) == 4
+    for row in response.json():
+        assert row["consumption"] is None
+        assert row["meter_id"] is None
+        assert row["start_reading"] is None and row["end_reading"] is None
+        assert "Handeingabe" in row["reason"]
+
+
+@pytest.mark.asyncio
+async def test_meter_consumption_common_meter_is_ignored_and_multiple_unit_meters_require_manual(client_a_admin, metered_m3):
+    run_id = await _create_run(client_a_admin, metered_m3, "lease_e", "0.00")
+    url = f"/api/settlements/{run_id}/consumption-suggestions"
+    common = await client_a_admin.post("/api/meters", json={
+        "property_id": metered_m3["property"], "meter_number": "COMMON", "meter_type": "KALTWASSER"})
+    assert common.status_code == 201, common.text
+    for day, value in [("2025-01-01", "0.0000"), ("2025-12-31", "9999999.0000")]:
+        added = await client_a_admin.post(f"/api/meters/{common.json()['id']}/readings", json={"reading_date": day, "value": value})
+        assert added.status_code == 201, added.text
+    rows = {row["unit_id"]: row for row in (await client_a_admin.get(url)).json()}
+    assert rows[metered_m3["u1"]]["consumption"] == "30.0000"
+    duplicate = await client_a_admin.post("/api/meters", json={
+        "property_id": metered_m3["property"], "unit_id": metered_m3["u1"],
+        "meter_number": "UNCLASSIFIED-REPLACEMENT", "meter_type": "KALTWASSER"})
+    assert duplicate.status_code == 201, duplicate.text
+    rows = {row["unit_id"]: row for row in (await client_a_admin.get(url)).json()}
+    assert rows[metered_m3["u1"]]["consumption"] is None
+    assert "Handeingabe" in rows[metered_m3["u1"]]["reason"]
+    assert rows[metered_m3["u4"]]["consumption"] == "40.0000"
+    extras = _extras_for_exit(metered_m3)
+    extras["unit_metrics"] = []
+    rejected = await client_a_admin.post(f"/api/settlements/{run_id}/compute", json=extras)
+    assert rejected.status_code == 422, rejected.text
+
+
+@pytest.mark.asyncio
+async def test_meter_consumption_final_snapshot_keeps_actual_reading_basis_unchanged(client_a_admin, metered_m3):
+    import psycopg2
+    from urllib.parse import urlparse
+    assert urlparse(SYNC_URL).hostname == "127.0.0.1" and urlparse(SYNC_URL).port == 55432
+    run_id = await _create_run(client_a_admin, metered_m3, "lease_e", "0.00")
+    extras = _extras_for_exit(metered_m3)
+    extras["unit_metrics"] = []
+    finalized = await client_a_admin.post(f"/api/settlements/{run_id}/finalize", json=extras)
+    assert finalized.status_code == 200, finalized.text
+    frozen = finalized.json()
+    assert frozen["status"] == "finalized" and frozen["snapshot_sha256"]
+    assert Decimal(_water_line(frozen)["amount"]) == Decimal("240.00")
+
+    def stored():
+        conn = psycopg2.connect(SYNC_URL)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=%s", (run_id,))
+                return cur.fetchone()
+        finally:
+            conn.close()
+    before = stored()
+    sources = before[0]["inputs"]["meter_consumption_sources"]
+    assert len(sources) == 4
+    target = next(row for row in sources if row["unit_id"] == metered_m3["u4"])
+    assert target["consumption"] == "40.0000"
+    assert target["start_reading"]["value"] == "100.0000"
+    assert target["end_reading"]["value"] == "140.0000"
+    added = await client_a_admin.post(f"/api/meters/{target['meter_id']}/readings", json={
+        "reading_date": "2025-12-31", "value": "999.0000"})
+    assert added.status_code == 201, added.text
+    blocked = await client_a_admin.get(f"/api/settlements/{run_id}/consumption-suggestions")
+    assert blocked.status_code == 409, blocked.text
+    assert (await client_a_admin.get(f"/api/settlements/{run_id}")).json() == frozen
+    assert stored() == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("partial", [False, True])
+async def test_meter_consumption_scope_classification_unit_boundary_and_revocation(client_a_admin, metered_m3, partial):
+    import psycopg2
+    world = metered_m3
+    scope, grant_id = _batch_scope(world, units=[world["u4"]] if partial else None)
+    created = await client_a_admin.post("/api/settlements", json={
+        "property_id": world["property"], "lease_agreement_id": world["lease_e"],
+        "period_start": "2025-01-01", "period_end": "2025-12-31",
+        "advance_payments_total": "0.00", "accounting_scope_id": scope})
+    assert created.status_code == 201, created.text
+    url = f"/api/settlements/{created.json()['id']}/consumption-suggestions"
+    unclassified = await client_a_admin.get(url)
+    assert unclassified.status_code == 409, unclassified.text
+    conn = psycopg2.connect(SYNC_URL)
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("""INSERT INTO accounting_scope_binding
+                (organization_id,property_id,scope_id,cost_entry_id,origin,reason,reviewed_by)
+                SELECT organization_id,property_id,%s,id,'REVIEWED','Synthetic reviewed water scope',%s
+                FROM cost_entry WHERE organization_id=%s AND property_id=%s""",
+                (scope, str(world["user_a_admin_id"]), str(world["org_a_id"]), world["property"]))
+    finally:
+        conn.close()
+    response = await client_a_admin.get(url)
+    assert response.status_code == 200, response.text
+    expected = {world["u4"]} if partial else {world[key] for key in ("u1", "u2", "u3", "u4")}
+    assert {row["unit_id"] for row in response.json()} == expected
+    assert all(row["consumption"] is not None for row in response.json())
+    revoked = await client_a_admin.post(f"/api/accounting-scopes/{scope}/grants/{grant_id}/revoke")
+    assert revoked.status_code == 204, revoked.text
+    assert (await client_a_admin.get(url)).status_code == 404

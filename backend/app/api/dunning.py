@@ -13,9 +13,11 @@ from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictStr, field_validator
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
 from app.models.dunning_notice import DunningNotice
@@ -31,7 +33,25 @@ router = APIRouter(prefix="/api/dunning", tags=["dunning"])
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
-class DunningCreateTenant(BaseModel):
+class DunningInterestInput(BaseModel):
+    base_interest_rate: StrictStr | None = None
+
+    @field_validator("base_interest_rate")
+    @classmethod
+    def validate_base_rate(cls, value):
+        if value is not None:
+            rate = _dec(value, "base_interest_rate")
+            if len(rate.as_tuple().digits) > 100 or abs(rate.as_tuple().exponent) > 100:
+                raise ValueError("Base interest rate exceeds supported precision")
+        return value
+
+    def resolved_base_rate(self) -> Decimal | None:
+        if "base_interest_rate" in self.model_fields_set:
+            return _dec(self.base_interest_rate, "base_interest_rate") if self.base_interest_rate is not None else None
+        return settings.dunning_base_interest_rate
+
+
+class DunningCreateTenant(DunningInterestInput):
     accounting_scope_id: uuid.UUID | None = None
     tenant_profile_id: str
     lease_agreement_id: str
@@ -42,7 +62,7 @@ class DunningCreateTenant(BaseModel):
     override_fee: str | None = None
 
 
-class DunningCreateOwner(BaseModel):
+class DunningCreateOwner(DunningInterestInput):
     accounting_scope_id: uuid.UUID | None = None
     owner_profile_id: str
     period_start: date
@@ -65,6 +85,8 @@ class DunningOut(BaseModel):
     principal_amount: str
     fee_amount: str
     total_amount: str
+    interest_amount: str
+    interest_snapshot: dict | None
     included_items: list[dict] | None
     status: str
     issued_at: str | None
@@ -87,6 +109,8 @@ def _to_out(n: DunningNotice) -> DunningOut:
         principal_amount=str(n.principal_amount),
         fee_amount=str(n.fee_amount),
         total_amount=str(n.total_amount),
+        interest_amount=str(n.interest_amount),
+        interest_snapshot=n.interest_snapshot,
         included_items=n.included_items,
         status="cancelled" if n.cancelled_at else n.status,
         issued_at=str(n.issued_at) if n.issued_at else None,
@@ -97,7 +121,10 @@ def _to_out(n: DunningNotice) -> DunningOut:
 
 def _dec(value: str, field: str) -> Decimal:
     try:
-        return Decimal(value)
+        result = Decimal(value)
+        if not result.is_finite():
+            raise InvalidOperation
+        return result
     except (InvalidOperation, TypeError):
         raise HTTPException(status_code=422, detail=f"{field} is not a valid decimal: {value!r}")
 
@@ -131,6 +158,12 @@ async def list_dunning_notices(
     return [_to_out(n) for n in items]
 
 
+@router.get("/settings")
+async def dunning_settings(auth: AuthContext = Depends(get_current_user)):
+    rate = settings.dunning_base_interest_rate
+    return {"base_interest_rate": str(rate) if rate is not None else None}
+
+
 @router.get("/{dunning_id}", response_model=DunningOut)
 async def get_dunning_notice(
     dunning_id: uuid.UUID,
@@ -162,6 +195,7 @@ async def create_dunning_for_tenant(
         period_end=body.period_end,
         reference_date=body.reference_date,
         grace_days=body.grace_days,
+        base_interest_rate=body.resolved_base_rate(),
         override_fee=_dec(body.override_fee, "override_fee") if body.override_fee else None,
     )
     return _to_out(notice)
@@ -182,6 +216,7 @@ async def create_dunning_for_owner(
         economic_plan_id=uuid.UUID(body.economic_plan_id) if body.economic_plan_id else None,
         reference_date=body.reference_date,
         grace_days=body.grace_days,
+        base_interest_rate=body.resolved_base_rate(),
         override_fee=_dec(body.override_fee, "override_fee") if body.override_fee else None,
     )
     return _to_out(notice)

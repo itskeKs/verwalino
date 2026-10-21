@@ -23,19 +23,26 @@ Provisional data sources (clearly marked, [OFFEN/§18]):
 from __future__ import annotations
 
 import uuid
+from calendar import monthrange
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
+from fractions import Fraction
 
 from fastapi import HTTPException
 from app.core.rbac import ScopeCapability
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.engine.canonical import canonical_json, sha256_hex
 from app.engine.rounding import DistributionError
+from app.engine.mietkonto import _money
+from app.services.lease_rent_change_service import LeaseRentChangeService
 from app.engine.settlement import EngineValidationError, compute_bk_settlement
 from app.engine.snapshot import build_snapshot_payload
+from app.engine.meter_consumption import MeterReadingInput, MeterConsumptionError, derive_consumption
+from app.repositories.meter_repo import MeterRepository, MeterReadingRepository
 from app.services.render_names import (
     DISPLAY_NAMES_KEY,
     freeze_block,
@@ -133,6 +140,74 @@ class SettlementService:
         self._runs = SettlementRunRepository(session, org_id)
         self._lines = SettlementLineRepository(session, org_id)
         self._audit = AuditRepository(session, org_id)
+        self._meter_sources: list[dict] = []
+
+    async def advance_proposal(self, run_id: uuid.UUID, *, accept_from: date | None = None):
+        scope = FinancialScopeService(self._session, self._org_id, self._user_id)
+        # Serialize with corrections, ACL/source changes and T23 writes. Re-read
+        # under the lock so a concurrent correction cannot accept a stale run.
+        await scope.lock_inputs()
+        run = await self._runs.get_by_id(run_id)
+        if run is None:
+            raise HTTPException(404, "Settlement run not found")
+        await scope.enter(run, capability=ScopeCapability.READ if accept_from is None else ScopeCapability.PREPARE)
+        if run.status != "finalized" or run.superseded_by_id is not None or run.run_type != "BK_MIETER":
+            raise HTTPException(409, "Advance proposal requires an active finalized BK settlement")
+        proposal = self._advance_proposal(run)
+        if accept_from is None:
+            return proposal
+        return await LeaseRentChangeService(self._session, self._org_id, self._user_id).create(
+            run.lease_agreement_id, accept_from, Decimal(proposal["monthly_amount"]),
+        )
+
+    @staticmethod
+    def _advance_proposal(run: SettlementRun) -> dict:
+        """Use only frozen inclusive engine dates and finalized tenant costs."""
+        try:
+            payload = run.snapshot_payload
+            if payload["run_type"] != "BK_MIETER" or run.lease_agreement_id is None:
+                raise ValueError("Not a tenant settlement")
+            period_start = date.fromisoformat(payload["period"]["start"])
+            period_end = date.fromisoformat(payload["period"]["end"])
+            if (period_start, period_end) != (run.period_start, run.period_end):
+                raise ValueError("Inconsistent frozen period")
+            leases = [lease for lease in payload["inputs"]["lease_periods"]
+                      if lease["lease_agreement_id"] == str(run.lease_agreement_id)]
+            if len(leases) != 1:
+                raise ValueError("Missing unique frozen tenancy")
+            lease = leases[0]
+            start = max(period_start, date.fromisoformat(lease["from"]))
+            end = min(period_end, date.fromisoformat(lease["to"]) if lease["to"] is not None else period_end)
+            if not isinstance(payload["result"]["total_cost"], str):
+                raise ValueError("Invalid frozen monetary representation")
+            cost = Decimal(payload["result"]["total_cost"])
+            if not cost.is_finite() or cost < 0 or cost != run.total_cost or start > end:
+                raise ValueError("Invalid finalized cost or tenancy")
+            # Calendar weights remain exact even across different partial
+            # months. Only the DTO renders a repeating fraction as a Decimal.
+            month_weight = Fraction(0)
+            year, month = start.year, start.month
+            while (year, month) <= (end.year, end.month):
+                days = monthrange(year, month)[1]
+                first = start.day if (year, month) == (start.year, start.month) else 1
+                last = end.day if (year, month) == (end.year, end.month) else days
+                month_weight += Fraction(last - first + 1, days)
+                year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+            with localcontext() as context:
+                context.prec = 28
+                context.rounding = ROUND_HALF_UP
+                months = Decimal(month_weight.numerator) / Decimal(month_weight.denominator)
+                amount = _money(cost * Decimal(month_weight.denominator) / Decimal(month_weight.numerator))
+            if amount >= Decimal("1000000000000"):
+                raise ValueError("Proposed advance exceeds rental amount storage")
+        except (KeyError, TypeError, ValueError, InvalidOperation, OverflowError) as exc:
+            raise HTTPException(409, "Frozen settlement lacks a valid advance proposal basis") from exc
+        return {
+            "lease_agreement_id": str(run.lease_agreement_id),
+            "tenant_cost": f"{cost:.2f}", "months": format(months, "f"),
+            "monthly_amount": f"{amount:.2f}",
+            "period_start": period_start, "period_end": period_end,
+        }
 
     # ------------------------------------------------------------------
     # create draft
@@ -189,6 +264,49 @@ class SettlementService:
             )
         )
         return run
+
+    async def create_batch(
+        self,
+        property_id: uuid.UUID,
+        period_start: date,
+        period_end: date,
+        accounting_scope_id: uuid.UUID | None = None,
+    ) -> tuple[list[SettlementRun], list[SettlementRun]]:
+        """Create missing lease drafts in the ambient, serialized transaction."""
+        from app.repositories.property_repo import PropertyRepository
+
+        if period_start > period_end:
+            raise HTTPException(422, "Settlement period must not end before it starts")
+        scope = FinancialScopeService(self._session, self._org_id, self._user_id)
+        await scope.lock_inputs()
+        if await PropertyRepository(self._session, self._org_id).get_by_id(property_id) is None:
+            raise HTTPException(404, "Property not found")
+        # Validate even an empty property/period before returning an empty batch.
+        context = SettlementRun(
+            property_id=property_id, run_type="BK_MIETER",
+            period_start=period_start, period_end=period_end,
+        )
+        sphere = await scope.prepare_new(context, accounting_scope_id)
+        if not await self._session.scalar(text(
+            "SELECT property_financial_source_access(:org,:property)"
+        ), {"org": self._org_id, "property": property_id}):
+            raise HTTPException(404, "Complete property sources not accessible")
+        scope_id = sphere.id if sphere is not None else None
+        leases = await self._runs.leases_for_period(property_id, period_start, period_end)
+        existing = await self._runs.active_bk_for_period(
+            property_id, period_start, period_end, scope_id,
+        )
+        by_lease = {run.lease_agreement_id: run for run in existing}
+        created, skipped = [], []
+        for lease in leases:
+            if lease.id in by_lease:
+                skipped.append(by_lease[lease.id])
+            else:
+                created.append(await self.create_draft(
+                    property_id, lease.id, period_start, period_end,
+                    accounting_scope_id=scope_id,
+                ))
+        return created, skipped
 
     async def set_advance_payments(
         self, run_id: uuid.UUID, amount: Decimal
@@ -279,7 +397,7 @@ class SettlementService:
         await self._lines.delete_for_run(run.id)
         await self._write_lines(run, result)
 
-        run.snapshot_payload = {**build_snapshot_payload(inp, result), "financial_input_coverage": self._coverage}
+        run.snapshot_payload = {**self._snapshot_with_meter_sources(inp, result), "financial_input_coverage": self._coverage}
         run.total_cost = result.total_cost
         run.balance = result.balance
         await self._runs.update(run)
@@ -329,7 +447,7 @@ class SettlementService:
         computation_basis = await begin_computation(self._session, self._org_id, run, 'finalize')
         inp, result = await self._compute_engine(run, extras)
 
-        payload = build_snapshot_payload(inp, result)
+        payload = self._snapshot_with_meter_sources(inp, result)
         payload["financial_input_coverage"] = self._coverage
         # Anzeige-Namen einfrieren (ADR-0012): noch als Entwurf (OLD.status =
         # 'draft', der ADR-0003-Trigger lässt das Schreiben zu) werden die für
@@ -462,6 +580,68 @@ class SettlementService:
             )
         return run
 
+    async def consumption_suggestions(self, run_id: uuid.UUID):
+        scope = FinancialScopeService(self._session, self._org_id, self._user_id)
+        await scope.lock_inputs()
+        run = await self._runs.get_by_id(run_id)
+        if run is None or run.run_type != "BK_MIETER":
+            raise HTTPException(404, "Settlement run not found")
+        await scope.enter(run, capability=ScopeCapability.READ, computation=True)
+        if run.status != "draft":
+            raise HTTPException(409, "Zähler-Vorbelegung ist nur für Entwürfe verfügbar; finalisierte Eingaben bleiben eingefroren.")
+        units = await self._runs.units_for_property(run.property_id)
+        entries = await self._runs.active_cost_entries_for_period(run.property_id, run.period_start, run.period_end)
+        return await self._consumption_candidates(run, units, entries)
+
+    def _snapshot_with_meter_sources(self, inp, result):
+        payload = build_snapshot_payload(inp, result)
+        if self._meter_sources:
+            payload["inputs"]["meter_consumption_sources"] = self._meter_sources
+        return payload
+
+    async def _consumption_candidates(self, run, units, entries):
+        kinds = {category.code for entry, category in entries
+                 if entry.tenant_distribution_key == "VERBRAUCH"
+                 and entry.tenant_apportionable != "NICHT_UMLAGEFAEHIG" and category is not None}
+        if not kinds:
+            return []
+        meters = await MeterRepository(self._session, self._org_id).list_by_property(run.property_id)
+        kind = next(iter(kinds)) if len(kinds) == 1 else None
+        by_unit = {unit.id: [meter for meter in meters
+                   if meter.unit_id == unit.id and meter.meter_type.strip().upper() == kind]
+                   for unit in units}
+        meter_ids = [rows[0].id for rows in by_unit.values() if len(rows) == 1]
+        readings = await MeterReadingRepository(self._session, self._org_id).list_boundary_readings(
+            meter_ids, run.period_start, run.period_end)
+        by_meter = {}
+        for row in readings:
+            by_meter.setdefault(row.meter_id, []).append(MeterReadingInput(row.id, row.reading_date, row.value))
+
+        def boundary(row):
+            return {"id": str(row.id), "reading_date": row.reading_date.isoformat(), "value": f"{row.value:.4f}"}
+
+        candidates = []
+        for unit in units:
+            item = {"unit_id": str(unit.id), "unit_label": unit.number,
+                    "consumption": None, "meter_id": None, "start_reading": None,
+                    "end_reading": None, "reason": None}
+            matches = by_unit[unit.id]
+            if kind is None:
+                item["reason"] = "Handeingabe erforderlich: Unterschiedliche Verbrauchsarten sind nicht automatisch kombinierbar."
+            elif len(matches) != 1:
+                item["reason"] = "Handeingabe erforderlich: Kein eindeutig passender Einheitszähler; Zuordnung oder Zählerwechsel prüfen."
+            else:
+                meter = matches[0]
+                try:
+                    measured = derive_consumption(by_meter.get(meter.id, ()), run.period_start, run.period_end)
+                except MeterConsumptionError as exc:
+                    item["reason"] = str(exc)
+                else:
+                    item.update(consumption=f"{measured.consumption:.4f}", meter_id=str(meter.id),
+                                start_reading=boundary(measured.start_reading), end_reading=boundary(measured.end_reading))
+            candidates.append(item)
+        return candidates
+
     async def _compute_engine(
         self, run: SettlementRun, extras: ComputeExtras | None
     ) -> tuple[SettlementInput, EngineResult]:
@@ -500,6 +680,30 @@ class SettlementService:
 
         # Per-unit metric overrides (consumption / person count).
         metric_by_unit = {m.unit_id: m for m in extras.unit_metrics}
+        self._meter_sources = []
+        needs_consumption = any(entry.tenant_distribution_key == "VERBRAUCH"
+                                and entry.tenant_apportionable != "NICHT_UMLAGEFAEHIG"
+                                for entry, _category in entries)
+        consumptions = {}
+        if needs_consumption:
+            missing = [unit for unit in units if metric_by_unit.get(unit.id) is None
+                       or metric_by_unit[unit.id].consumption is None]
+            suggestions = {row["unit_id"]: row for row in
+                           await self._consumption_candidates(run, missing, entries)} if missing else {}
+            for unit in units:
+                metric = metric_by_unit.get(unit.id)
+                if metric is not None and metric.consumption is not None:
+                    value = metric.consumption
+                    if not value.is_finite() or value < 0:
+                        raise HTTPException(422, f"Handeingabe VERBRAUCH für Einheit {unit.number} muss endlich und nichtnegativ sein.")
+                else:
+                    source = suggestions.get(str(unit.id))
+                    if source is None or source["consumption"] is None:
+                        reason = source["reason"] if source else "Handeingabe erforderlich: Verbrauchsbasis fehlt."
+                        raise HTTPException(422, f"VERBRAUCH für Einheit {unit.number}: {reason}")
+                    value = Decimal(source["consumption"])
+                    self._meter_sources.append(source)
+                consumptions[unit.id] = value
 
         def unit_input(u) -> UnitInput:
             m = metric_by_unit.get(u.id)
@@ -511,7 +715,7 @@ class SettlementService:
                 heated_area=u.heated_area,
                 mea=u.mea,
                 person_count=m.person_count if m else None,
-                consumption=m.consumption if m else None,
+                consumption=consumptions.get(u.id, m.consumption if m else None),
             )
 
         unit_inputs = tuple(unit_input(u) for u in units)

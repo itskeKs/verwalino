@@ -55,7 +55,9 @@ const GROUPS: NavGroup[] = [
     label: "Übersicht",
     items: [
       { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+      { to: "/aufgaben", label: "Aufgaben", icon: ClipboardList },
       { to: "/fristen", label: "Fristenmonitor", icon: CalendarClock },
+      { to: "/berichte", label: "Berichte", icon: FileSpreadsheet },
       { to: "/mandate", label: "Mandate", icon: Briefcase },
     ],
   },
@@ -82,6 +84,7 @@ const GROUPS: NavGroup[] = [
   {
     label: "WEG",
     items: [
+      { to: "/sonderumlagen", label: "Sonderumlagen", icon: Landmark },
       { to: "/wirtschaftsplaene", label: "Wirtschaftspläne", icon: ClipboardList },
       { to: "/weg-abrechnungen", label: "WEG-Abrechnungen", icon: FileSpreadsheet },
       { to: "/vermoegensberichte", label: "Vermögensberichte", icon: Landmark },
@@ -100,6 +103,7 @@ const GROUPS: NavGroup[] = [
       { to: "/bankkonten", label: "Bankkonten", icon: Wallet },
       { to: "/zahlungen", label: "Zahlungen", icon: ArrowLeftRight },
       { to: "/mietkonto", label: "Mietkonto", icon: BookOpenText },
+      { to: "/kautionen", label: "Kautionen", icon: Wallet },
       { to: "/offene-posten", label: "Offene Posten", icon: CircleAlert },
       { to: "/mahnungen", label: "Mahnungen", icon: BellRing },
     ],

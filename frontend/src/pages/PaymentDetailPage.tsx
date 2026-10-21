@@ -231,11 +231,11 @@ export function PaymentDetailPage() {
     setActionLoading(true);
     setActionError(null);
     try {
-      const updates: Record<string, unknown> = {};
+      const updates: Pick<Parameters<typeof updatePayment>[1], "period_year" | "period_month" | "note"> = {};
       if (editPeriodYear !== null) updates.period_year = editPeriodYear;
       if (editPeriodMonth !== null) updates.period_month = editPeriodMonth;
       if (editNote !== null) updates.note = editNote;
-      const updated = await updatePayment(paymentId, updates as any);
+      const updated = await updatePayment(paymentId, updates);
       setPayment(updated);
       setIsEditing(false);
       setEditPeriodYear(null);

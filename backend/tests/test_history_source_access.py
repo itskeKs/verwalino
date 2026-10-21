@@ -162,32 +162,69 @@ async def test_privacy_history_export_is_distinct_and_expiry_cannot_erase_active
     finally: await clear_disclosure_grants()
 
 
-async def test_history_migration_preserves_records_and_private_graph(seed_data):
+async def test_history_migration_preserves_records_and_private_graph(seed_data,m3_seed):
     import importlib
     from sqlalchemy import create_engine
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
     from tests.conftest import MIGRATOR_SYNC_URL
     migration=importlib.import_module('migrations.versions.0067_history_source_access')
+    rent_migration=importlib.import_module('migrations.versions.0126_lease_rent_change')
     engine=create_engine(MIGRATOR_SYNC_URL)
     try:
         async with synthetic_enforcement(seed_data):
             with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
-                with pytest.raises(DBAPIError,match='Retain strict history'):
-                    with db.begin_nested(): migration.downgrade()
-                savepoint=db.begin_nested()
+                heads_before=MigrationContext.configure(db).get_current_heads()
+                assert heads_before
+                fixture=db.begin_nested()
                 try:
-                    db.execute(text('TRUNCATE property_source_security'))
-                    tables=('lease_agreement','ownership_history','audit_event')
-                    snapshots={table:db.scalar(text(f"SELECT md5(string_agg(row_to_json(r)::text,'' ORDER BY id)) FROM {table} r")) for table in tables}
-                    migration.downgrade()
-                    migration.upgrade()
+                    rent_id=uuid.uuid4()
+                    db.execute(text("""INSERT INTO lease_rent_change
+                        (id,organization_id,lease_agreement_id,valid_from,base_rent,advance_payment)
+                        VALUES (:id,:org,:lease,'2098-02-01',123.45,67.89)"""),
+                        {'id':rent_id,'org':seed_data['org_a_id'],'lease':uuid.UUID(m3_seed['lease_a'])})
+                    rent_rows_sql=text('SELECT to_jsonb(r) FROM lease_rent_change r ORDER BY id')
+                    rent_policies_sql=text("""SELECT policyname,permissive,roles,cmd,qual,with_check
+                        FROM pg_policies WHERE schemaname='public' AND tablename='lease_rent_change'
+                        ORDER BY policyname""")
+                    rent_security_sql=text("""SELECT relrowsecurity,relforcerowsecurity,
+                        has_table_privilege('app_rw','lease_rent_change','SELECT'),
+                        has_table_privilege('app_rw','lease_rent_change','INSERT'),
+                        has_table_privilege('app_rw','lease_rent_change','UPDATE'),
+                        has_table_privilege('app_rw','lease_rent_change','DELETE')
+                        FROM pg_class WHERE oid='lease_rent_change'::regclass""")
+                    rent_rows=db.execute(rent_rows_sql).scalars().all()
+                    assert any(row['id']==str(rent_id) for row in rent_rows)
+                    rent_policies=db.execute(rent_policies_sql).all()
+                    assert {row.policyname for row in rent_policies}=={'lease_rent_change_read','lease_rent_change_insert'}
+                    rent_security=db.execute(rent_security_sql).one()
+                    assert tuple(rent_security)==(True,True,True,True,False,False)
+                    with pytest.raises(DBAPIError,match='Retain strict history'):
+                        with db.begin_nested(): migration.downgrade()
+                    savepoint=db.begin_nested()
+                    try:
+                        db.execute(text('TRUNCATE property_source_security'))
+                        tables=('lease_agreement','ownership_history','audit_event')
+                        snapshots={table:db.scalar(text(f"SELECT md5(string_agg(row_to_json(r)::text,'' ORDER BY id)) FROM {table} r")) for table in tables}
+                        # 0126 depends on the history predicate owned by 0067.
+                        # Rehearse its real downgrade/upgrade only inside this savepoint.
+                        rent_migration.downgrade()
+                        migration.downgrade()
+                        migration.upgrade()
+                        rent_migration.upgrade()
+                        for table,before in snapshots.items():
+                            assert db.scalar(text(f"SELECT md5(string_agg(row_to_json(r)::text,'' ORDER BY id)) FROM {table} r"))==before
+                        for signature in ['property_history_graph_valid(uuid,uuid)','property_source_graph_before_history(uuid,uuid,uuid,text,boolean)',
+                            'property_complete_graph_actor_access(uuid,uuid,uuid,text,boolean)','privacy_source_context_complete(uuid,uuid,text)','privacy_output_source_complete(uuid,uuid,text)']:
+                            assert not db.scalar(text("SELECT has_function_privilege('app_rw',:signature,'EXECUTE')"),{'signature':signature})
+                    finally: savepoint.rollback()
+                    assert db.execute(rent_rows_sql).scalars().all()==rent_rows
+                    assert db.execute(rent_policies_sql).all()==rent_policies
+                    assert db.execute(rent_security_sql).one()==rent_security
                     for table,before in snapshots.items():
                         assert db.scalar(text(f"SELECT md5(string_agg(row_to_json(r)::text,'' ORDER BY id)) FROM {table} r"))==before
-                    for signature in ['property_history_graph_valid(uuid,uuid)','property_source_graph_before_history(uuid,uuid,uuid,text,boolean)',
-                        'property_complete_graph_actor_access(uuid,uuid,uuid,text,boolean)','privacy_source_context_complete(uuid,uuid,text)','privacy_output_source_complete(uuid,uuid,text)']:
-                        assert not db.scalar(text("SELECT has_function_privilege('app_rw',:signature,'EXECUTE')"),{'signature':signature})
-                finally: savepoint.rollback()
+                finally: fixture.rollback()
+                assert MigrationContext.configure(db).get_current_heads()==heads_before
     finally: engine.dispose()
 
 
@@ -222,7 +259,8 @@ async def test_relationship_profile_cannot_reassign_its_person(seed_data,m3_seed
                 await db.execute(text(f'UPDATE {table} SET person_id=:person WHERE id=:id'),{'person':replacement,'id':profile})
 
 
-async def test_waiting_history_insert_cannot_activate_an_anonymized_person(client_a_admin,seed_data,m3_seed,monkeypatch):
+@pytest.mark.parametrize('first_gate', ['financial', 'acl'])
+async def test_waiting_history_insert_cannot_activate_an_anonymized_person(client_a_admin,seed_data,m3_seed,monkeypatch,first_gate):
     import asyncio
     from app.models.unit import Unit
     from app.services.dsgvo_service import DsgvoService
@@ -238,7 +276,10 @@ async def test_waiting_history_insert_cannot_activate_an_anonymized_person(clien
         db.add(unit)
         await db.flush()
         unit_id=unit.id
-    checked=asyncio.Event(); release=asyncio.Event(); history=uuid.uuid4()
+        assert await db.scalar(text('SELECT anonymized_at FROM person WHERE id=:id'),{'id':person}) is None
+    checked=asyncio.Event(); release=asyncio.Event(); acl_held=asyncio.Event(); release_acl=asyncio.Event()
+    history=uuid.uuid4()
+    pids={name:asyncio.get_running_loop().create_future() for name in ('eraser','writer','acl')}
     original=DsgvoService._gather_bindings
     async def hold_after_final_check(service,person_id,**kwargs):
         result=await original(service,person_id,**kwargs)
@@ -249,47 +290,90 @@ async def test_waiting_history_insert_cannot_activate_an_anonymized_person(clien
     async def erase():
         async with get_tenant_session(seed_data['org_a_id']) as db:
             await actor_session(db,seed_data['user_a_admin_id'])
+            pids['eraser'].set_result(await db.scalar(text('SELECT pg_backend_pid()')))
             await DsgvoService(db,seed_data['org_a_id'],seed_data['user_a_admin_id']).anonymize(person)
+    async def queue_acl_change():
+        async with get_tenant_session(seed_data['org_a_id']) as db:
+            pids['acl'].set_result(await db.scalar(text('SELECT pg_backend_pid()')))
+            await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
+                {'key':f"scope-acl:{seed_data['org_a_id']}"})
+            acl_held.set()
+            await release_acl.wait()
     async def activate():
         async with get_tenant_session(seed_data['org_a_id']) as db:
             await actor_session(db,seed_data['user_a_admin_id'])
             await db.execute(text("SET LOCAL application_name='hv-history-privacy-race'"))
             await db.execute(text("SET LOCAL lock_timeout='5s'"))
-            assert await db.scalar(text("SELECT property_financial_disclosure_access(:org,:property,'read')"),
-                {'org':seed_data['org_a_id'],'property':uuid.UUID(m3_seed['property'])})
-            assert await db.scalar(text('SELECT anonymized_at FROM person WHERE id=:id'),{'id':person}) is None
+            pids['writer'].set_result(await db.scalar(text('SELECT pg_backend_pid()')))
             await db.execute(text("INSERT INTO lease_agreement(id,organization_id,unit_id,tenant_profile_id,valid_from,base_rent,advance_payment,notes) VALUES(:id,:org,:unit,:profile,'2027-01-01',1,1,'Synthetic race')"),
                 {'id':history,'org':seed_data['org_a_id'],'unit':unit_id,'profile':profile})
-    eraser=None; writer=None
+    async def lock_present(db, pid, key, *, granted, mode='ExclusiveLock'):
+        return await db.scalar(text("""SELECT EXISTS(SELECT 1 FROM pg_locks
+            WHERE locktype='advisory' AND pid=:pid AND granted=:granted AND mode=:mode
+            AND classid=((hashtextextended(:key,0)>>32)&4294967295)::oid
+            AND objid=(hashtextextended(:key,0)&4294967295)::oid AND objsubid=1)"""),
+            {'pid':pid,'key':f"{key}:{seed_data['org_a_id']}",'granted':granted,'mode':mode})
+    async def wait_for_lock(db, pid, key, *, mode='ExclusiveLock'):
+        # pg_locks is live, unlike pg_stat_activity's transaction-cached snapshot.
+        # SQL awaits yield to the actual writer; no sleeps or timing assumptions.
+        async def observed():
+            while not await lock_present(db,pid,key,granted=False,mode=mode):
+                pass
+        await asyncio.wait_for(observed(),3)
+    tasks=[]
     try:
         await grant_property_contacts(client_a_admin,seed_data,m3_seed['property'])
         await grant(client_a_admin,seed_data,m3_seed['property'],caps=['read','prepare'])
         async with synthetic_enforcement(seed_data):
             try:
-                eraser=asyncio.create_task(erase())
+                eraser=asyncio.create_task(erase()); tasks.append(eraser)
                 await asyncio.wait_for(checked.wait(),3)
-                writer=asyncio.create_task(activate())
+                async with get_tenant_session(seed_data['org_a_id']) as observer:
+                    eraser_pid=await pids['eraser']
+                    assert await lock_present(observer,eraser_pid,'scope-acl',granted=True,mode='ShareLock')
+                    assert await lock_present(observer,eraser_pid,'financial-inputs',granted=True)
+                    if first_gate=='acl':
+                        tasks.append(asyncio.create_task(queue_acl_change()))
+                        acl_pid=await asyncio.wait_for(pids['acl'],3)
+                        await wait_for_lock(observer,acl_pid,'scope-acl')
+                    # Reproduce the old observer schedule before starting writer.
+                    await observer.execute(text('SELECT pid FROM pg_stat_activity'))
+                    writer=asyncio.create_task(activate()); tasks.append(writer)
+                    writer_pid=await asyncio.wait_for(pids['writer'],3)
+                    if first_gate=='financial':
+                        await wait_for_lock(observer,writer_pid,'financial-inputs')
+                        assert await lock_present(observer,writer_pid,'scope-acl',granted=True,mode='ShareLock')
+                        assert eraser_pid in await observer.scalar(text('SELECT pg_blocking_pids(:pid)'),{'pid':writer_pid})
+                        # The old polling assertion deterministically missed this
+                        # real wait after its first, too-early activity snapshot.
+                        assert not await observer.scalar(text("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='hv-history-privacy-race' AND wait_event='advisory')"))
+                        await observer.execute(text('SELECT pg_stat_clear_snapshot()'))
+                        assert await observer.scalar(text("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='hv-history-privacy-race' AND wait_event='advisory')"))
+                    else:
+                        await wait_for_lock(observer,writer_pid,'scope-acl',mode='ShareLock')
+                        assert not await lock_present(observer,writer_pid,'financial-inputs',granted=False)
+                        assert not await lock_present(observer,writer_pid,'financial-inputs',granted=True)
+                        assert acl_pid in await observer.scalar(text('SELECT pg_blocking_pids(:pid)'),{'pid':writer_pid})
+                    release.set()
+                    await asyncio.wait_for(eraser,3)
+                    if first_gate=='acl':
+                        await asyncio.wait_for(acl_held.wait(),3)
+                        assert await lock_present(observer,acl_pid,'scope-acl',granted=True)
+                        assert await lock_present(observer,writer_pid,'scope-acl',granted=False,mode='ShareLock')
+                        release_acl.set()
+                    with pytest.raises(DBAPIError) as denied:
+                        await asyncio.wait_for(writer,3)
+                    assert denied.value.orig.sqlstate=='42501'
                 async with get_tenant_session(seed_data['org_a_id']) as db:
-                    blocked=False
-                    for _ in range(60):
-                        blocked=await db.scalar(text("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='hv-history-privacy-race' AND wait_event='advisory')"))
-                        if blocked: break
-                        await asyncio.sleep(.02)
-                    assert blocked,'History writer must share the existing financial-inputs serialization'
-                release.set()
-                await asyncio.wait_for(eraser,3)
-                with pytest.raises(DBAPIError) as denied:
-                    await asyncio.wait_for(writer,3)
-                assert denied.value.orig.sqlstate=='42501'
+                    await actor_session(db,seed_data['user_a_admin_id'])
+                    assert await db.scalar(text('SELECT anonymized_at FROM person WHERE id=:id'),{'id':person}) is not None
+                from tests.test_scope_payment_reconciliation import read_value
+                assert await read_value('SELECT count(*) FROM lease_agreement WHERE id=:id',{'id':history})==0
             finally:
-                release.set()
-                pending=[task for task in (eraser,writer) if task is not None]
-                for task in pending:
+                release.set(); release_acl.set()
+                for task in tasks:
                     if not task.done(): task.cancel()
-                await asyncio.gather(*pending,return_exceptions=True)
+                await asyncio.gather(*tasks,return_exceptions=True)
     finally:
-        release.set()
-        if eraser is not None: await asyncio.gather(eraser,return_exceptions=True)
-        if writer is not None: await asyncio.gather(writer,return_exceptions=True)
         await mutate(text('DELETE FROM lease_agreement WHERE id=:id'),{'id':history})
         await clear_disclosure_grants()

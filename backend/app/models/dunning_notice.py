@@ -20,8 +20,7 @@ Dunning fee per level [section 18/fachlich -- provisional defaults]:
   Level 2: 5.00 EUR
   Level 3: 10.00 EUR
   Fees must be appropriate / contractually agreed; provisionally hardcoded,
-  overridable at creation time. Late payment interest (Verzugszinsen) is
-  NOT in the MVP [section 18/fachlich].
+  overridable at creation time. Interest is frozen only when a base rate is supplied.
 """
 
 from __future__ import annotations
@@ -78,7 +77,12 @@ class DunningNotice(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )  # Dunning fee [section 18/fachlich: provisional]
     total_amount: Mapped[Decimal] = mapped_column(
         Numeric(14, 2), nullable=False
-    )  # principal + fee
+    )  # principal + fee + interest
+
+    interest_amount: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False, default=Decimal("0.00"), server_default="0"
+    )
+    interest_snapshot: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
 
     # Frozen snapshot of included overdue open items (list of dicts).
     # Each item: {period_year, period_month, payment_type, soll, ist, open_amount}

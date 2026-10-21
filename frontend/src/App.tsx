@@ -11,6 +11,7 @@ import { AuthProvider } from "./auth/AuthContext";
 import { useAuth } from "./auth/useAuth";
 import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
+import { TasksPage } from "./pages/TasksPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { MandatePage } from "./pages/MandatePage";
 import { DunningQuarantinePage } from "./pages/DunningQuarantinePage";
@@ -40,6 +41,7 @@ import { InvoiceDocumentsPage } from "./pages/InvoiceDocumentsPage";
 import { InvoiceDocumentDetailPage } from "./pages/InvoiceDocumentDetailPage";
 import { SettlementsPage } from "./pages/SettlementsPage";
 import { SettlementDetailPage } from "./pages/SettlementDetailPage";
+import SpecialLeviesPage from "./pages/SpecialLeviesPage";
 import { EconomicPlansPage } from "./pages/EconomicPlansPage";
 import { EconomicPlanDetailPage } from "./pages/EconomicPlanDetailPage";
 import { WegSettlementsPage } from "./pages/WegSettlementsPage";
@@ -47,9 +49,12 @@ import { WegSettlementDetailPage } from "./pages/WegSettlementDetailPage";
 import { AssetReportsPage } from "./pages/AssetReportsPage";
 import { AssetReportDetailPage } from "./pages/AssetReportDetailPage";
 import { BankAccountsPage } from "./pages/BankAccountsPage";
+import { BankTransactionsPage } from "./pages/BankTransactionsPage";
 import { PaymentsPage } from "./pages/PaymentsPage";
+import { DepositsPage } from "./pages/DepositsPage";
 import { PaymentDetailPage } from "./pages/PaymentDetailPage";
 import { MietkontoPage } from "./pages/MietkontoPage";
+import { ReportsPage } from "./pages/ReportsPage";
 import { OpenItemsPage } from "./pages/OpenItemsPage";
 import { DunningNoticesPage } from "./pages/DunningNoticesPage";
 import { DunningNoticeDetailPage } from "./pages/DunningNoticeDetailPage";
@@ -81,6 +86,7 @@ export function AppRoutes() {
     <AppShell>
       <Routes>
         <Route path="/" element={<DashboardPage />} />
+        <Route path="/aufgaben" element={<TasksPage />} />
         <Route path="/mandate" element={<MandatePage />} />
         <Route path="/mandate/:mandateId" element={<MandateDetailPage />} />
         <Route path="/objekte" element={<PropertiesPage />} />
@@ -105,6 +111,7 @@ export function AppRoutes() {
         <Route path="/belege/:docId" element={<InvoiceDocumentDetailPage />} />
         <Route path="/abrechnungen" element={<SettlementsPage />} />
         <Route path="/abrechnungen/:runId" element={<SettlementDetailPage />} />
+        <Route path="/sonderumlagen" element={<SpecialLeviesPage />} />
         <Route path="/wirtschaftsplaene" element={<EconomicPlansPage />} />
         <Route path="/wirtschaftsplaene/:planId" element={<EconomicPlanDetailPage />} />
         <Route path="/weg-abrechnungen" element={<WegSettlementsPage />} />
@@ -112,9 +119,12 @@ export function AppRoutes() {
         <Route path="/vermoegensberichte" element={<AssetReportsPage />} />
         <Route path="/vermoegensberichte/:runId" element={<AssetReportDetailPage />} />
         <Route path="/bankkonten" element={<BankAccountsPage />} />
+        <Route path="/bankkonten/:id/umsaetze" element={<BankTransactionsPage />} />
         <Route path="/zahlungen" element={<PaymentsPage />} />
+        <Route path="/kautionen" element={<DepositsPage />} />
         <Route path="/zahlungen/:paymentId" element={<PaymentDetailPage />} />
         <Route path="/mietkonto" element={<MietkontoPage />} />
+        <Route path="/berichte" element={<ReportsPage />} />
         <Route path="/offene-posten" element={<OpenItemsPage />} />
         <Route path="/mahnungen" element={<DunningNoticesPage />} />
         <Route path="/mahnungen/:dunningId" element={<DunningNoticeDetailPage />} />

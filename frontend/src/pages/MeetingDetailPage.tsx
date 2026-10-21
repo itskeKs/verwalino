@@ -27,6 +27,7 @@ import {
   deleteResolution,
   enterIntoRegister,
   meetingProtocolPdfUrl,
+  meetingInvitationPdfUrl,
   listProperties,
 } from "../api/endpoints";
 import type {
@@ -490,6 +491,13 @@ export function MeetingDetailPage() {
         >
           <strong>Fehler:</strong> {actionError}
         </div>
+      )}
+
+      {meeting.invitation_short_notice && (
+        <p role="note" className="card">
+          Hinweis: Weniger als drei Wochen bis zur Versammlung (§ 24 Abs. 4 WEG).
+          Zugang und Einhaltung der Einladungsfrist sind gesondert zu prüfen.
+        </p>
       )}
 
       {/* Held notice */}
@@ -1204,6 +1212,11 @@ export function MeetingDetailPage() {
             </button>
           </>
         )}
+        <button className="btn" onClick={() => {
+          if (meetingId) window.open(meetingInvitationPdfUrl(meetingId), "_blank", "noopener,noreferrer");
+        }}>
+          Einladung als PDF
+        </button>
         <button className="btn" onClick={handleDownloadPdf}>
           Niederschrift-PDF
         </button>

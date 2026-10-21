@@ -112,6 +112,8 @@ class RequestBodyLimitMiddleware:
         if scope.get("type") != "http" or scope.get("method", "").upper() != "POST":
             return False
         parts = scope.get("path", "").rstrip("/").strip("/").split("/")
+        if parts == ["api", "attachments"]:
+            return True
         if parts == ["api", "invoice-documents", "upload"]:
             return True
         return (
@@ -127,6 +129,8 @@ class RequestBodyLimitMiddleware:
                 and parts[3] == "items"
                 or parts[1] == "declaration-imports"
                 and parts[3] == "documents"
+                or parts[1] == "bank-accounts"
+                and parts[3] == "imports"
             )
         )
 

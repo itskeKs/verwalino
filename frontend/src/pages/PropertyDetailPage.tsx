@@ -3,12 +3,14 @@
  * Units can be created/edited inline.
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { getProperty, getPropertyKnowledge, listUnits, createUnit, updateUnit, confirmMeaScale } from "../api/endpoints";
 import type { Property, PropertyKnowledgeOverview, Unit, UnitCreate, UnitUpdate, UsageType } from "../api/types";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/useAuth";
+import { AttachmentsPanel } from "../components/AttachmentsPanel";
+import { MeterPanel } from "../components/MeterPanel";
 
 const USAGE_TYPES: { value: UsageType; label: string }[] = [
   { value: "WOHNUNG", label: "Wohnung" },
@@ -49,6 +51,7 @@ export function PropertyDetailPage() {
   const { propertyId } = useParams<{ propertyId: string }>();
   const { session } = useAuth();
   const isWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
+  const requestVersion = useRef(0);
   const [property, setProperty] = useState<Property | null>(null);
   const [units, setUnits] = useState<Unit[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +66,8 @@ export function PropertyDetailPage() {
 
   const reload = useCallback(() => {
     if (!propertyId) return;
+    const version = ++requestVersion.current;
+    setProperty(null);
     setLoading(true);
     setError(null);
     Promise.all([
@@ -71,21 +76,24 @@ export function PropertyDetailPage() {
       getPropertyKnowledge(propertyId).catch(() => null),
     ])
       .then(([p, u, overview]) => {
+        if (version !== requestVersion.current) return;
         setProperty(p);
         setUnits(u);
         setKnowledge(overview);
       })
       .catch((err) => {
+        if (version !== requestVersion.current) return;
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert.");
         } else {
           setError(String(err));
         }
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (version === requestVersion.current) setLoading(false); });
   }, [propertyId]);
 
-  useEffect(() => { void Promise.resolve().then(reload); }, [reload]);
+  const invalidateRequests = useCallback(() => { requestVersion.current++; }, []);
+  useEffect(() => { reload(); return invalidateRequests; }, [reload, invalidateRequests]);
 
   async function handleConfirmMeaScale(e: React.FormEvent) {
     e.preventDefault();
@@ -186,6 +194,7 @@ export function PropertyDetailPage() {
         <Link to="/objekte" className="link">&larr; Alle Objekte</Link>
       </p>
       <h1>{property.name}</h1>
+      {isWrite && <Link className="btn btn-primary" to={`/aufgaben?${new URLSearchParams({ property_id: property.id, create: "1" })}`}>Aufgabe anlegen</Link>}
 
       {error && <p className="error-text">{error}</p>}
 
@@ -236,6 +245,10 @@ export function PropertyDetailPage() {
         <p>{knowledge?.documents.length ?? 0} Dokumente · {Object.values(knowledge?.rules_by_topic ?? {}).flat().length} Regeln</p>
         <Link className="btn" to={`/objekte/${propertyId}/wissen`}>Dokumente &amp; Wissen öffnen</Link>
       </section>
+
+      <AttachmentsPanel propertyId={property.id} canWrite={isWrite} />
+
+      <MeterPanel key={property.id} propertyId={property.id} canWrite={isWrite} />
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <h2 style={{ margin: 0 }}>Einheiten</h2>

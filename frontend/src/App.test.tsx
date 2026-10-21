@@ -46,6 +46,17 @@ describe("declaration route authorization", () => {
 });
 
 
+describe("deposit navigation", () => {
+  it.each(["READ_ONLY", "CLERK"])("opens deposits via its sidebar route for %s", async role => {
+    vi.spyOn(endpoints, "listLeases").mockResolvedValue([]);
+    vi.spyOn(endpoints, "listDeposits").mockResolvedValue([]);
+    vi.spyOn(endpoints, "listFristen").mockResolvedValue([]);
+    renderRoutes("/kautionen", role);
+    expect(await screen.findByRole("heading", { name: "Kautionen" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Kautionen" })).toHaveAttribute("href", "/kautionen");
+  });
+});
+
 describe("governance navigation", () => {
   it("hides advanced governance links from clerks", async () => {
     renderRoutes("/objekte", "CLERK");
@@ -60,5 +71,43 @@ describe("governance navigation", () => {
     renderRoutes("/objekte", "OWNER_ADMIN");
     expect(await screen.findByRole("link", { name: "Quellenfreigaben" })).toBeVisible();
     expect(screen.getByText("Erweitert")).toBeVisible();
+  });
+});
+
+
+describe("report navigation", () => {
+  it.each(["READ_ONLY", "CLERK"])("opens reports and the Berichte sidebar link for %s", async role => {
+    vi.spyOn(endpoints, "listProperties").mockResolvedValue([]);
+    renderRoutes("/berichte", role);
+    expect(await screen.findByRole("heading", { name: "Berichte" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Berichte" })).toHaveAttribute("href", "/berichte");
+    expect(screen.getByLabelText("Objekt *")).toBeVisible();
+  });
+});
+
+describe("special levy navigation", () => {
+  it.each(["READ_ONLY", "CLERK"])("opens Sonderumlagen in WEG navigation for %s", async role => {
+    vi.spyOn(endpoints, "listProperties").mockResolvedValue([]);
+    vi.spyOn(endpoints, "listUnits").mockResolvedValue([]);
+    vi.spyOn(endpoints, "listOwnerProfiles").mockResolvedValue([]);
+    vi.spyOn(endpoints, "listPersons").mockResolvedValue([]);
+    vi.spyOn(endpoints, "listFristen").mockResolvedValue([]);
+    renderRoutes("/sonderumlagen", role);
+    expect(await screen.findByRole("heading", { name: "Sonderumlagen" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Sonderumlagen" })).toHaveAttribute("href", "/sonderumlagen");
+  });
+});
+
+
+describe("task navigation", () => {
+  it.each(["READ_ONLY", "CLERK", "OWNER_ADMIN"])("opens Aufgaben for %s without finance scope", async role => {
+    vi.spyOn(endpoints, "listTasks").mockResolvedValue({ items: [], next_offset: null });
+    vi.spyOn(endpoints, "listProperties").mockResolvedValue([]);
+    vi.spyOn(endpoints, "listUnits").mockResolvedValue([]);
+    vi.spyOn(endpoints, "listLeases").mockResolvedValue([]);
+    vi.spyOn(endpoints, "listTaskAssignees").mockResolvedValue([]);
+    renderRoutes("/aufgaben", role);
+    expect(await screen.findByRole("heading", { name: "Aufgaben" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Aufgaben" })).toHaveAttribute("href", "/aufgaben");
   });
 });

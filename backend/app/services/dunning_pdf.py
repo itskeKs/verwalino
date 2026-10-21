@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import html
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
@@ -130,6 +131,35 @@ def build_dunning_html(
             f"<td class='num'>{_eur(notice.fee_amount)}</td>"
             f"</tr>"
         )
+    interest_section = ""
+    snapshot = notice.interest_snapshot
+    if snapshot is not None:
+        summary_rows.append(
+            f"<tr class='summary'><td colspan='4'>Verzugszinsen</td>"
+            f"<td class='num'>{_eur(notice.interest_amount)}</td></tr>"
+        )
+        interest_rows = []
+        for item in snapshot["items"]:
+            label = _TYPE_LABELS.get(item["payment_type"], item["payment_type"])
+            due = date.fromisoformat(item["due_date"]).strftime("%d.%m.%Y")
+            interest_rows.append(
+                f"<tr><td>{_esc(_period_label(item['period_year'], item['period_month']))}<br/>{_esc(label)}</td>"
+                f"<td>{due}</td><td class='num'>{item['days']}</td>"
+                f"<td class='num'>{_eur(item['principal'])}</td>"
+                f"<td class='num'>{_eur(item['interest'])}</td></tr>"
+            )
+        base = _esc(snapshot["base_interest_rate"].replace(".", ","))
+        annual = _esc(snapshot["annual_rate"].replace(".", ","))
+        reference = date.fromisoformat(snapshot["reference_date"]).strftime("%d.%m.%Y")
+        interest_section = (
+            f"<h2>Verzugszinsen</h2><p>Basiszinssatz: {base} %; "
+            f"effektiver Jahreszinssatz: {annual} % (Basis + 5 Prozentpunkte). "
+            f"Stichtag: {reference}. Berechnung: Hauptforderung × Jahreszinssatz / 100 × Tage / 365. "
+            "Keine Verzinsung von Gebühren oder Zinsen.</p>"
+            "<table class='lines'><thead><tr><th>Position</th><th>Fälligkeit</th>"
+            "<th>Tage</th><th>Hauptforderung</th><th>Zinsen</th></tr></thead>"
+            f"<tbody>{''.join(interest_rows)}</tbody></table>"
+        )
     summary_rows.append(
         f"<tr class='total'>"
         f"<td colspan='4'>Gesamtbetrag</td>"
@@ -142,6 +172,10 @@ def build_dunning_html(
     if dn.person_address:
         addressee += f"<br/><span class='meta-sub'>{_esc(dn.person_address)}</span>"
 
+    interest_hint = (
+        "Verzugszinsen werden anhand des angegebenen Basiszinssatzes ausgewiesen."
+        if snapshot is not None else "Verzugszinsen\n    sind im MVP nicht enthalten."
+    )
     return f"""<!DOCTYPE html>
 <html lang="de">
 <head>
@@ -184,11 +218,12 @@ def build_dunning_html(
     </tbody>
   </table>
 
+  {interest_section}
+
   <div class="hint">
     <em>[section 18/fachlich] Der genaue Wortlaut, rechtliche Hinweise
     (z. B. Verzugszinsen, Kuendigungsandrohung bei Stufe 3) und das
-    endgueltige Layout sind fachlich/juristisch abzustimmen. Verzugszinsen
-    sind im MVP nicht enthalten. Mahngebuehren sind provisorisch und muessen
+    endgueltige Layout sind fachlich/juristisch abzustimmen. {interest_hint} Mahngebuehren sind provisorisch und muessen
     angemessen/vertraglich vereinbart sein.</em>
   </div>
 </body>

@@ -3,6 +3,11 @@
  */
 
 import { api, uploadFormData } from "./client";
+import type { Task, TaskInput, TaskFilters, TaskPage, User, PropertyYearReport, PropertyYearReportQuery } from "./types";
+
+import type { Attachment, AttachmentFilters, AttachmentPage, AttachmentUpload } from "./types";
+import type { SpecialLevy, SpecialLevyCreate } from "./types";
+import type { ConsumptionSuggestion, Meter, MeterCreate, MeterPatch, MeterReading, MeterReadingCreate } from "./types";
 import type { SourceClassificationCommand, SourceClassificationReceipt, SourceAdmissionReviewCommand, SourceAdmissionReviewReceipt } from "./types";
 import type {
   DeadlineItem,
@@ -30,9 +35,12 @@ import type {
   Vendor,
   OwnershipRecord,
   OwnershipCreate,
+  OwnershipEndRequest,
   LeaseRecord,
   LeaseCreate,
   LeaseUpdate,
+  LeaseRentChange,
+  LeaseRentChangeCreate,
   CostCategory,
   CostEntry,
   CostEntryCreate,
@@ -42,7 +50,11 @@ import type {
   VerifyResult,
   SettlementRun,
   SettlementRunCreate,
+  SettlementBatchCreate,
+  SettlementBatchResult,
   AdvancePaymentsUpdate,
+  AdvanceProposal,
+  AdvanceProposalApply,
   ComputeRequest,
   EconomicPlan,
   EconomicPlanCreate,
@@ -54,11 +66,19 @@ import type {
   AssetReportComputeRequest,
   BankAccount,
   BankAccountCreate,
+  BankTransactionPage,
+  BankTransactionStatus,
+  BankMatchingPage,
+  BankAssignmentLine,
+  BankAssignmentResult,
+  BankImportResult,
   Payment,
   PaymentCreate,
+  DepositAccount,
   OpenItem,
   MietkontoResult,
   DunningNotice,
+  DunningSettings,
   DunningCreateTenant,
   DunningCreateOwner,
   Meeting,
@@ -89,6 +109,20 @@ import type {
   KnowledgeAnswerOut,
 } from "./types";
 
+function propertyYearReportQuery(query: PropertyYearReportQuery): string {
+  const params = new URLSearchParams({ property_id: query.property_id, year: String(query.year) });
+  if (query.accounting_scope_id) params.set("accounting_scope_id", query.accounting_scope_id);
+  return params.toString();
+}
+
+export function getPropertyYearReport(query: PropertyYearReportQuery): Promise<PropertyYearReport> {
+  return api.get<PropertyYearReport>(`/api/reports/property-year?${propertyYearReportQuery(query)}`);
+}
+
+export function getPropertyYearReportCsv(query: PropertyYearReportQuery): Promise<Blob> {
+  return api.getBlob(`/api/reports/property-year.csv?${propertyYearReportQuery(query)}`);
+}
+
 export function login(body: LoginRequest): Promise<LoginResponse> {
   return api.post<LoginResponse>("/api/auth/login", body);
 }
@@ -99,6 +133,15 @@ export function getCurrentSession(): Promise<LoginResponse> {
 
 export function logout(): Promise<void> {
   return api.post<void>("/api/auth/logout");
+}
+
+export interface ChangePasswordRequest {
+  old_password: string;
+  new_password: string;
+}
+
+export function changePassword(body: ChangePasswordRequest): Promise<void> {
+  return api.post<void>("/api/auth/password", body);
 }
 
 export function getMyOrganization(): Promise<Organization> {
@@ -450,6 +493,10 @@ export function createOwnership(body: OwnershipCreate): Promise<OwnershipRecord>
   return api.post<OwnershipRecord>("/api/ownership", body);
 }
 
+export function patchOwnership(id: string, body: OwnershipEndRequest): Promise<OwnershipRecord> {
+  return api.patch<OwnershipRecord>(`/api/ownership/${id}`, body);
+}
+
 // --- Leases ---
 
 export function listLeases(unitId?: string): Promise<LeaseRecord[]> {
@@ -468,6 +515,17 @@ export function patchLease(
   return api.patch<LeaseRecord>(`/api/leases/${leaseId}`, body);
 }
 
+export function listLeaseRentChanges(leaseId: string): Promise<LeaseRentChange[]> {
+  return api.get<LeaseRentChange[]>(`/api/leases/${leaseId}/rent-changes`);
+}
+
+export function createLeaseRentChange(
+  leaseId: string,
+  body: LeaseRentChangeCreate,
+): Promise<LeaseRentChange> {
+  return api.post<LeaseRentChange>(`/api/leases/${leaseId}/rent-changes`, body);
+}
+
 // --- M2: Cost Categories ---
 
 export function listCostCategories(): Promise<CostCategory[]> {
@@ -476,15 +534,30 @@ export function listCostCategories(): Promise<CostCategory[]> {
 
 // --- M2: Cost Entries ---
 
-export function listCostEntries(params?: {
+export interface CostEntryListQuery {
   status?: string;
   property_id?: string;
-}): Promise<CostEntry[]> {
+}
+
+function knownQuery<T extends object>(query: T | undefined, keys: readonly (keyof T)[]): string {
   const parts: string[] = [];
-  if (params?.status) parts.push(`status=${encodeURIComponent(params.status)}`);
-  if (params?.property_id) parts.push(`property_id=${encodeURIComponent(params.property_id)}`);
-  const qs = parts.length > 0 ? `?${parts.join("&")}` : "";
-  return api.get<CostEntry[]>(`/api/cost-entries${qs}`);
+  for (const key of keys) {
+    const value = query?.[key];
+    if (value !== undefined && value !== null && value !== "") {
+      parts.push(`${String(key)}=${encodeURIComponent(String(value))}`);
+    }
+  }
+  return parts.length ? `?${parts.join("&")}` : "";
+}
+
+const COST_ENTRY_FILTERS = ["status", "property_id"] as const;
+
+export function listCostEntries(params?: CostEntryListQuery): Promise<CostEntry[]> {
+  return api.get<CostEntry[]>(`/api/cost-entries${knownQuery(params, COST_ENTRY_FILTERS)}`);
+}
+
+export function exportCostEntriesCsv(params?: CostEntryListQuery): Promise<Blob> {
+  return api.getBlob(`/api/cost-entries/export.csv${knownQuery(params, COST_ENTRY_FILTERS)}`);
 }
 
 export function getCostEntry(id: string): Promise<CostEntry> {
@@ -574,8 +647,25 @@ export function getSettlement(id: string): Promise<SettlementRun> {
   return api.get<SettlementRun>(`/api/settlements/${id}`);
 }
 
+export function getAdvanceProposal(id: string): Promise<AdvanceProposal> {
+  return api.get<AdvanceProposal>(`/api/settlements/${id}/advance-proposal`);
+}
+
+export function applyAdvanceProposal(
+  id: string,
+  body: AdvanceProposalApply,
+): Promise<LeaseRentChange> {
+  return api.post<LeaseRentChange>(`/api/settlements/${id}/advance-proposal`, {
+    valid_from: body.valid_from,
+  });
+}
+
 export function createSettlement(body: SettlementRunCreate): Promise<SettlementRun> {
   return api.post<SettlementRun>("/api/settlements", body);
+}
+
+export function createSettlementBatch(body: SettlementBatchCreate): Promise<SettlementBatchResult> {
+  return api.post<SettlementBatchResult>("/api/settlements/batch", body);
 }
 
 export function setAdvancePayments(
@@ -661,6 +751,10 @@ export function getWegRun(id: string): Promise<WegRun> {
   return api.get<WegRun>(`/api/weg-settlements/${id}`);
 }
 
+export function getWegInputOwners(id: string): Promise<string[]> {
+  return api.get<string[]>(`/api/weg-settlements/${id}/input-owners`);
+}
+
 export function createWegRun(body: WegRunCreate): Promise<WegRun> {
   return api.post<WegRun>("/api/weg-settlements", body);
 }
@@ -710,9 +804,39 @@ export function createBankAccount(body: BankAccountCreate): Promise<BankAccount>
   return api.post<BankAccount>("/api/bank-accounts", body);
 }
 
+export function listBankTransactions(id: string, status?: BankTransactionStatus, offset = 0): Promise<BankTransactionPage> {
+  const params = new URLSearchParams({ offset: String(offset), limit: "50" });
+  if (status) params.set("status", status);
+  return api.get<BankTransactionPage>(`/api/bank-accounts/${encodeURIComponent(id)}/transactions?${params}`);
+}
+
+export function listBankMatchingTransactions(bankAccountId: string, status: BankTransactionStatus | "ALL" = "NEU", offset = 0): Promise<BankMatchingPage> {
+  const params = new URLSearchParams({ bank_account_id: bankAccountId, status, offset: String(offset), limit: "50" });
+  return api.get<BankMatchingPage>(`/api/bank-transactions?${params}`);
+}
+
+export function assignBankTransaction(id: string, lines: BankAssignmentLine[]): Promise<BankAssignmentResult> {
+  return api.post<BankAssignmentResult>(`/api/bank-transactions/${encodeURIComponent(id)}/assign`, { lines });
+}
+
+export function ignoreBankTransaction(id: string): Promise<{ id: string; status: "IGNORIERT" }> {
+  return api.post<{ id: string; status: "IGNORIERT" }>(`/api/bank-transactions/${encodeURIComponent(id)}/ignore`);
+}
+
+export function importBankTransactions(id: string, file: File, dryRun = true): Promise<BankImportResult> {
+  const data = new FormData();
+  data.append("file", file);
+  return uploadFormData<BankImportResult>(`/api/bank-accounts/${encodeURIComponent(id)}/imports?dry_run=${dryRun}`, data);
+}
+
 // --- M6: Payments ---
 
-export function listPayments(params?: {
+export function listDeposits(scopeId?: string): Promise<DepositAccount[]> {
+  const query = scopeId ? `?accounting_scope_id=${encodeURIComponent(scopeId)}` : "";
+  return api.get<DepositAccount[]>(`/api/payments/deposits${query}`);
+}
+
+export interface PaymentListQuery {
   bank_account_id?: string;
   lease_agreement_id?: string;
   tenant_profile_id?: string;
@@ -720,17 +844,16 @@ export function listPayments(params?: {
   payment_type?: string;
   period_year?: number;
   status?: string;
-}): Promise<Payment[]> {
-  const parts: string[] = [];
-  if (params?.bank_account_id) parts.push(`bank_account_id=${encodeURIComponent(params.bank_account_id)}`);
-  if (params?.lease_agreement_id) parts.push(`lease_agreement_id=${encodeURIComponent(params.lease_agreement_id)}`);
-  if (params?.tenant_profile_id) parts.push(`tenant_profile_id=${encodeURIComponent(params.tenant_profile_id)}`);
-  if (params?.owner_profile_id) parts.push(`owner_profile_id=${encodeURIComponent(params.owner_profile_id)}`);
-  if (params?.payment_type) parts.push(`payment_type=${encodeURIComponent(params.payment_type)}`);
-  if (params?.period_year) parts.push(`period_year=${params.period_year}`);
-  if (params?.status) parts.push(`status=${encodeURIComponent(params.status)}`);
-  const qs = parts.length > 0 ? `?${parts.join("&")}` : "";
-  return api.get<Payment[]>(`/api/payments${qs}`);
+}
+
+const PAYMENT_FILTERS = ["bank_account_id", "lease_agreement_id", "tenant_profile_id", "owner_profile_id", "payment_type", "period_year", "status"] as const;
+
+export function listPayments(params?: PaymentListQuery): Promise<Payment[]> {
+  return api.get<Payment[]>(`/api/payments${knownQuery(params, PAYMENT_FILTERS)}`);
+}
+
+export function exportPaymentsCsv(params?: PaymentListQuery): Promise<Blob> {
+  return api.getBlob(`/api/payments/export.csv${knownQuery(params, PAYMENT_FILTERS)}`);
 }
 
 export function getPayment(id: string): Promise<Payment> {
@@ -812,6 +935,10 @@ export function setAdvancePaymentsDerived(
 }
 
 // --- M7: Dunning (Mahnwesen) ---
+
+export function getDunningSettings(): Promise<DunningSettings> {
+  return api.get<DunningSettings>("/api/dunning/settings");
+}
 
 export function listDunningNotices(params?: {
   tenant_profile_id?: string;
@@ -941,6 +1068,10 @@ export function annotateChallenge(
 
 // --- M8: PDFs ---
 
+export function meetingInvitationPdfUrl(meetingId: string): string {
+  return `/api/meetings/${meetingId}/invitation.pdf`;
+}
+
 export function meetingProtocolPdfUrl(meetingId: string): string {
   return `/api/meetings/${meetingId}/pdf`;
 }
@@ -1000,11 +1131,123 @@ export function createUser(
   password: string,
   displayName: string,
   role: string,
-): Promise<any> {
-  return api.post<any>("/api/users", { email, password, display_name: displayName, role });
+): Promise<unknown> {
+  return api.post<unknown>("/api/users", { email, password, display_name: displayName, role });
 }
 
 // T09: Paid advances derived
 export function derivePaidAdvances(runId: string): Promise<Array<{ owner_profile_id: string; paid_total: string }>> {
-  return api.post<any[]>(`/api/weg-settlements/${runId}/paid-advances-derived`);
+  return api.post<Array<{ owner_profile_id: string; paid_total: string }>>(`/api/weg-settlements/${runId}/paid-advances-derived`);
+}
+
+export function getConsumptionSuggestions(runId: string): Promise<ConsumptionSuggestion[]> {
+  return api.get<ConsumptionSuggestion[]>(`/api/settlements/${encodeURIComponent(runId)}/consumption-suggestions`);
+}
+
+export function listMeters(propertyId: string, unitId?: string): Promise<Meter[]> {
+  const query = new URLSearchParams({ property_id: propertyId });
+  if (unitId) query.set("unit_id", unitId);
+  return api.get<Meter[]>(`/api/meters?${query}`);
+}
+export function createMeter(body: MeterCreate): Promise<Meter> {
+  return api.post<Meter>("/api/meters", {
+    property_id: body.property_id, unit_id: body.unit_id ?? null,
+    meter_number: body.meter_number, meter_type: body.meter_type, location: body.location ?? "",
+  });
+}
+export function updateMeter(id: string, body: MeterPatch): Promise<Meter> {
+  return api.patch<Meter>(`/api/meters/${encodeURIComponent(id)}`, {
+    meter_number: body.meter_number, meter_type: body.meter_type, location: body.location,
+  });
+}
+export function listMeterReadings(id: string): Promise<MeterReading[]> {
+  return api.get<MeterReading[]>(`/api/meters/${encodeURIComponent(id)}/readings`);
+}
+export function createMeterReading(id: string, body: MeterReadingCreate): Promise<MeterReading> {
+  return api.post<MeterReading>(`/api/meters/${encodeURIComponent(id)}/readings`, {
+    reading_date: body.reading_date, value: body.value, period: body.period ?? null,
+  });
+}
+
+// Sonderumlagen: frozen allocations are always computed by the server.
+export function listSpecialLevies(accountingScopeId: string, propertyId: string): Promise<SpecialLevy[]> {
+  return api.get<SpecialLevy[]>(`/api/special-levies?accounting_scope_id=${encodeURIComponent(accountingScopeId)}&property_id=${encodeURIComponent(propertyId)}`);
+}
+
+export function createSpecialLevy(body: SpecialLevyCreate): Promise<SpecialLevy> {
+  return api.post<SpecialLevy>("/api/special-levies", {
+    property_id: body.property_id,
+    accounting_scope_id: body.accounting_scope_id,
+    amount: body.amount,
+    due_date: body.due_date,
+    ...(body.resolution_id !== undefined ? { resolution_id: body.resolution_id } : {}),
+  });
+}
+
+// General document filing: retain originals, archive metadata only.
+export function listAttachments(filters: AttachmentFilters): Promise<AttachmentPage> {
+  const query = new URLSearchParams();
+  for (const key of ["property_id", "unit_id", "lease_agreement_id", "person_id", "include_archived", "offset", "limit"] as const) {
+    if (filters[key] !== undefined) query.set(key, String(filters[key]));
+  }
+  return api.get<AttachmentPage>(`/api/attachments?${query}`);
+}
+export function getAttachment(id: string): Promise<Attachment> {
+  return api.get<Attachment>(`/api/attachments/${encodeURIComponent(id)}`);
+}
+export function uploadAttachment(file: File, body: AttachmentUpload): Promise<Attachment> {
+  const data = new FormData();
+  data.append("file", file);
+  data.append("property_id", body.property_id);
+  for (const key of ["title", "unit_id", "lease_agreement_id", "person_id"] as const) {
+    if (body[key] !== undefined) data.append(key, body[key]);
+  }
+  return uploadFormData<Attachment>("/api/attachments", data);
+}
+export function archiveAttachment(id: string, reason: string): Promise<Attachment> {
+  return api.post<Attachment>(`/api/attachments/${encodeURIComponent(id)}/archive`, { reason });
+}
+export function attachmentDownloadUrl(id: string, inline = false): string {
+  return `/api/attachments/${encodeURIComponent(id)}/download${inline ? "?inline=true" : ""}`;
+}
+
+// --- Aufgaben: explicit allowlists keep server-owned metadata out of writes. ---
+export function listTasks(filters: TaskFilters = {}): Promise<TaskPage> {
+  const query = new URLSearchParams();
+  for (const key of ["property_id", "unit_id", "lease_agreement_id", "assigned_user_id", "completed", "due_until", "offset", "limit"] as const) {
+    const value = filters[key];
+    if (value !== undefined) query.set(key, String(value));
+  }
+  return api.get(`/api/tasks${query.size ? `?${query}` : ""}`);
+}
+function taskBody(body: Partial<TaskInput>) {
+  return Object.fromEntries((["title", "note", "due_date", "completed", "assigned_user_id", "property_id", "unit_id", "lease_agreement_id"] as const)
+    .filter(key => body[key] !== undefined).map(key => [key, body[key]]));
+}
+export function getTask(id: string): Promise<Task> {
+  return api.get(`/api/tasks/${encodeURIComponent(id)}`);
+}
+export function createTask(body: TaskInput): Promise<Task> {
+  return api.post("/api/tasks", taskBody(body));
+}
+export function updateTask(id: string, body: Partial<TaskInput>): Promise<Task> {
+  return api.patch(`/api/tasks/${encodeURIComponent(id)}`, taskBody(body));
+}
+export function deleteTask(id: string): Promise<void> {
+  return api.delete(`/api/tasks/${encodeURIComponent(id)}`);
+}
+export async function listTaskAssignees(): Promise<User[]> {
+  const users: User[] = [];
+  let cursor: string | null = null;
+  do {
+    const query = new URLSearchParams({ eligible_for_scope: "true" });
+    if (cursor) query.set("cursor", cursor);
+    const page: { items: User[]; next_cursor: string | null } = await api.get(`/api/users/page?${query}`);
+    users.push(...page.items);
+    cursor = page.next_cursor;
+  } while (cursor);
+  return users;
+}
+export function getFristenContext(): Promise<{ requires_accounting_scope: boolean }> {
+  return api.get("/api/fristen/context");
 }

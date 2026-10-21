@@ -33,9 +33,17 @@ from app.repositories.agenda_item_repo import AgendaItemRepository
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.owners_meeting_repo import OwnersMeetingRepository
 from app.repositories.person_repo import PersonRepository
+from app.repositories.owner_profile_repo import OwnerProfileRepository
+from app.repositories.ownership_history_repo import OwnershipHistoryRepository
+from app.repositories.unit_repo import UnitRepository
 from app.repositories.property_repo import PropertyRepository
 from app.repositories.register_entry_repo import RegisterEntryRepository
 from app.repositories.resolution_repo import ResolutionRepository
+
+
+def invitation_short_notice(meeting_date: date) -> bool:
+    """Calendar days from export/read date, not a claim about legal delivery."""
+    return (meeting_date - date.today()).days < 21
 
 
 class MeetingService:
@@ -459,6 +467,37 @@ class MeetingService:
     # ------------------------------------------------------------------
     # Name resolution for PDF
     # ------------------------------------------------------------------
+    async def invitation_recipients(self, meeting: OwnersMeeting) -> list[tuple[str, str, str]]:
+        """One profile per recipient at meeting date, using existing [from, to) history.
+
+        Check the complete source graph before enumeration. Resolve contacts
+        individually so RLS-hidden profiles cannot produce a partial mailing.
+        """
+        await self.require_source_access("owners_meeting", meeting.id, "export")
+        units = await UnitRepository(self._session, self._org_id).list_by_property(meeting.property_id)
+        histories = OwnershipHistoryRepository(self._session, self._org_id)
+        profiles = OwnerProfileRepository(self._session, self._org_id)
+        owner_ids: set[uuid.UUID] = set()
+        for unit in units:
+            owner_ids.update(h.owner_profile_id for h in await histories.owners_at_date(
+                unit.id, meeting.meeting_date))
+        recipients = []
+        for owner_id in sorted(owner_ids):
+            allowed = await self._session.scalar(text(
+                "SELECT profile_source_access(:org,'owner_profile',:owner,'export')"),
+                {"org": self._org_id, "owner": owner_id})
+            profile = await profiles.get_by_id(owner_id) if allowed else None
+            person = await self._persons.get_by_id(profile.person_id) if profile else None
+            if person is None:
+                raise HTTPException(status_code=404, detail="Meeting contact export access unavailable")
+            name = person.company_name or " ".join(filter(None, [person.first_name, person.last_name]))
+            if not all(value and value.strip() for value in (name, person.street, person.zip_code, person.city)):
+                raise HTTPException(status_code=422, detail="Einladung benötigt vollständigen Namen und Postanschrift aller Eigentümer")
+            recipients.append((name, person.street, f"{person.zip_code} {person.city}"))
+        if not recipients:
+            raise HTTPException(status_code=422, detail="Keine Eigentümer am Versammlungstermin vorhanden")
+        return recipients
+
     async def resolve_property_display(self, property_id: uuid.UUID) -> tuple[str, str]:
         """Return (name, address) for a property."""
         prop = await self._properties.get_by_id(property_id)

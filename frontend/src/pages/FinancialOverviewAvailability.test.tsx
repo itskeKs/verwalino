@@ -3,15 +3,17 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { MemoryRouter } from "react-router-dom";
 import { DashboardPage } from "./DashboardPage";
 import { FristenmonitorPage } from "./FristenmonitorPage";
-import { getMyOrganization, listFristen, listPersons, listProperties } from "../api/endpoints";
+import { getMyOrganization, getFristenContext, listTasks, listFristen, listPersons, listProperties } from "../api/endpoints";
 import type { DeadlineItem } from "../api/types";
 
-vi.mock("../api/endpoints", () => ({ getMyOrganization: vi.fn(), listFristen: vi.fn(), listPersons: vi.fn(), listProperties: vi.fn() }));
+vi.mock("../api/endpoints", () => ({ getMyOrganization: vi.fn(), getFristenContext: vi.fn(), listTasks: vi.fn(), listFristen: vi.fn(), listPersons: vi.fn(), listProperties: vi.fn() }));
 vi.mock("../components/AccountingScopeSelector", () => ({ AccountingScopeSelector: () => null }));
 vi.mock("../auth/useAuth", () => ({ useAuth: () => ({ session: null }) }));
 afterEach(cleanup);
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(getFristenContext).mockResolvedValue({ requires_accounting_scope: false });
+  vi.mocked(listTasks).mockResolvedValue({ items: [], next_offset: null });
   vi.mocked(getMyOrganization).mockResolvedValue({ name: "Testverwaltung" } as Awaited<ReturnType<typeof getMyOrganization>>);
   vi.mocked(listProperties).mockResolvedValue([{}, {}] as Awaited<ReturnType<typeof listProperties>>);
   vi.mocked(listPersons).mockResolvedValue([{}] as Awaited<ReturnType<typeof listPersons>>);

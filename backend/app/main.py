@@ -15,15 +15,17 @@ from app.api import cost_categories, cost_entries, invoice_documents, document_r
 from app.api import financial_input_coverage, accounting_scopes, access_preparation, mandate_quarantine, dunning_quarantine
 from app.api import settlements
 from app.api import economic_plans, weg_settlements
+from app.api import special_levies
 from app.api import payments
-from app.api import bank_accounts
+from app.api import bank_accounts, bank_transactions
 from app.api import dunning
 from app.api import meetings
 from app.api import fristen, dsgvo
 from app.api import declaration_imports
-from app.api import property_documents
+from app.api import property_documents, attachments, reports, tasks
 from app.api import property_knowledge, property_data_domains, person_data_domains
 from app.api import property_source_admission_reviews,property_source_classifications
+from app.api import meters
 from app.core import health
 from app.core.static_files import resolve_spa_file
 from app.core.uploads import RequestBodyLimitMiddleware
@@ -57,6 +59,7 @@ app.include_router(mandates.router)
 # M1 Stammdaten
 app.include_router(properties.router)
 app.include_router(units.router)
+app.include_router(meters.router)
 app.include_router(persons.router)
 app.include_router(ownership.router)
 app.include_router(leases.router)
@@ -95,7 +98,9 @@ app.include_router(weg_settlements.router)
 
 # M6 Zahlungen, Mietkonto & offene Posten
 app.include_router(bank_accounts.router)
+app.include_router(bank_transactions.router)
 app.include_router(payments.router)
+app.include_router(special_levies.router)
 
 # M7 Mahnwesen
 app.include_router(dunning.router)
@@ -110,6 +115,9 @@ app.include_router(dsgvo.router)
 # Declaration imports must be registered before the production SPA fallback.
 app.include_router(declaration_imports.router)
 app.include_router(property_documents.router)
+app.include_router(attachments.router)
+app.include_router(tasks.router)
+app.include_router(reports.router)
 app.include_router(property_knowledge.router)
 
 

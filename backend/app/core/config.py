@@ -41,6 +41,17 @@ class Settings(BaseSettings):
     allowed_hosts: str = "localhost,127.0.0.1,test"
     enable_api_docs: bool = True
 
+    # Operator-supplied percentage, not an assumed official market rate.
+    # None retains legacy zero-interest behavior.
+    dunning_base_interest_rate: Decimal | None = Field(None, allow_inf_nan=False)
+
+    @field_validator("dunning_base_interest_rate", mode="before")
+    @classmethod
+    def validate_dunning_rate(cls, value):
+        if isinstance(value, (float, bool)):
+            raise ValueError("Dunning base interest rate must be an exact decimal")
+        return value
+
     # --- Document Storage ---
     document_storage_root: str = "/tmp/hv-documents"
 

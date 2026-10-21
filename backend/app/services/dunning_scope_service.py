@@ -32,12 +32,13 @@ class DunningScopeService:
                 {'org': self.org_id, 'tenant': tenant_id, 'owner': owner_id}):
             raise HTTPException(409, 'Review unclassified dunning history before calculating an escalation level')
 
-    async def attach(self, notice, sphere, period_start, period_end, *, lease_id=None, plan_id=None):
+    async def attach(self, notice, sphere, period_start, period_end, *, lease_id=None, plan_id=None, levy_ids=()):
         if sphere is None:
             return
         notice.id = uuid.uuid4()
         context = DunningScopeContext(organization_id=self.org_id, dunning_notice_id=notice.id,
             scope_id=sphere.id, lease_agreement_id=lease_id, economic_plan_id=plan_id,
+            special_levy_ids=list(levy_ids),
             period_start=period_start, period_end=period_end, created_by=self.user_id,
             reason='Prepared from exact scoped financial statement')
         self.session.add(context)

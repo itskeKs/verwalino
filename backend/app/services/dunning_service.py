@@ -36,6 +36,7 @@ from app.engine.mietkonto import (
     PaymentInput,
     account_statement,
     owner_expected_charges,
+    special_levy_expected_charges,
     tenant_expected_charges,
 )
 from app.models.audit_event import AuditEvent
@@ -43,6 +44,7 @@ from app.models.dunning_notice import DunningNotice
 from app.repositories.audit_repo import AuditRepository
 from app.core.rbac import ScopeCapability
 from app.services.dunning_scope_service import DunningScopeService
+from app.services.special_levy_service import SpecialLevyService
 from app.repositories.dunning_notice_repo import DunningNoticeRepository
 from app.repositories.economic_plan_repo import (
     EconomicPlanLineRepository,
@@ -104,6 +106,7 @@ class DunningService:
         grace_days: int = 0,
         override_fee: Decimal | None = None,
         accounting_scope_id: uuid.UUID | None = None,
+        base_interest_rate: Decimal | None = None,
     ) -> DunningNotice:
         """Create a draft dunning notice for a tenant based on overdue open items.
 
@@ -142,8 +145,8 @@ class DunningService:
         result = account_statement(charges, [_to_payment_input(p) for p in scoped])
 
         # Detect overdue items
-        overdue = find_overdue_items(
-            list(result.open_items), ref_date, grace_days=grace_days
+        overdue = self._engine_result(
+            find_overdue_items, list(result.open_items), ref_date, grace_days=grace_days
         )
         if not overdue:
             raise HTTPException(
@@ -156,11 +159,13 @@ class DunningService:
         issued_count = await self._repo.count_issued_for_tenant(tenant_profile_id)
 
         # Assemble
-        dunning = assemble_dunning(
+        dunning = self._engine_result(
+            assemble_dunning,
             overdue_items=overdue,
             existing_notice_count=issued_count,
             issue_date=ref_date,
             override_fee=override_fee,
+            base_interest_rate=base_interest_rate,
         )
         if dunning is None:
             raise HTTPException(status_code=422, detail="Could not assemble dunning notice")
@@ -176,6 +181,8 @@ class DunningService:
             principal_amount=dunning.principal_amount,
             fee_amount=dunning.fee_amount,
             total_amount=dunning.total_amount,
+            interest_amount=dunning.interest_amount,
+            interest_snapshot=dunning.interest_snapshot,
             included_items=dunning.items_snapshot(),
             status="draft",
         )
@@ -194,6 +201,7 @@ class DunningService:
                     "level": dunning.level,
                     "principal_amount": str(dunning.principal_amount),
                     "fee_amount": str(dunning.fee_amount),
+                    "interest_amount": str(dunning.interest_amount),
                     "total_amount": str(dunning.total_amount),
                     "status": "draft",
                 },
@@ -214,13 +222,12 @@ class DunningService:
         grace_days: int = 0,
         override_fee: Decimal | None = None,
         accounting_scope_id: uuid.UUID | None = None,
+        base_interest_rate: Decimal | None = None,
     ) -> DunningNotice:
         """Create a draft dunning notice for an owner based on overdue open items."""
         ref_date = reference_date or date.today()
         context = DunningScopeService(self._session, self._org_id, self._user_id)
         sphere = await context.prepare(accounting_scope_id, 'WEG', period_start, period_end)
-        if sphere is not None and economic_plan_id is None:
-            raise HTTPException(422, 'Scoped owner dunning requires a finalized economic plan')
 
         owner = await self._owners.get_by_id(owner_profile_id)
         if owner is None:
@@ -255,12 +262,19 @@ class DunningService:
                     advance_lines, owner_profile_id, period_start, period_end
                 )
 
+        allocations = await SpecialLevyService(self._session, self._org_id, self._user_id).owner_allocations(
+            owner_profile_id, period_start, period_end, sphere.id if sphere is not None else None)
+        if sphere is not None and economic_plan_id is None and not allocations:
+            raise HTTPException(422, 'Scoped owner dunning requires a finalized economic plan or frozen special levies')
+        charges.extend(special_levy_expected_charges(
+            [(due, allocation.amount) for allocation, due in allocations],
+            owner_profile_id, period_start, period_end))
         payments = await self._payments.list_for_owner(owner_profile_id)
         scoped = self._scope_payments_to_period(payments, period_start, period_end)
         result = account_statement(charges, [_to_payment_input(p) for p in scoped])
 
-        overdue = find_overdue_items(
-            list(result.open_items), ref_date, grace_days=grace_days
+        overdue = self._engine_result(
+            find_overdue_items, list(result.open_items), ref_date, grace_days=grace_days
         )
         if not overdue:
             raise HTTPException(
@@ -270,11 +284,13 @@ class DunningService:
 
         await context.history(owner_id=owner_profile_id)
         issued_count = await self._repo.count_issued_for_owner(owner_profile_id)
-        dunning = assemble_dunning(
+        dunning = self._engine_result(
+            assemble_dunning,
             overdue_items=overdue,
             existing_notice_count=issued_count,
             issue_date=ref_date,
             override_fee=override_fee,
+            base_interest_rate=base_interest_rate,
         )
         if dunning is None:
             raise HTTPException(status_code=422, detail="Could not assemble dunning notice")
@@ -289,10 +305,13 @@ class DunningService:
             principal_amount=dunning.principal_amount,
             fee_amount=dunning.fee_amount,
             total_amount=dunning.total_amount,
+            interest_amount=dunning.interest_amount,
+            interest_snapshot=dunning.interest_snapshot,
             included_items=dunning.items_snapshot(),
             status="draft",
         )
-        await context.attach(notice, sphere, period_start, period_end, plan_id=economic_plan_id)
+        await context.attach(notice, sphere, period_start, period_end, plan_id=economic_plan_id,
+            levy_ids=sorted({allocation.special_levy_id for allocation, _ in allocations}, key=str))
         notice = await self._repo.create(notice)
         await self._session.refresh(notice)
 
@@ -307,6 +326,7 @@ class DunningService:
                     "level": dunning.level,
                     "principal_amount": str(dunning.principal_amount),
                     "fee_amount": str(dunning.fee_amount),
+                    "interest_amount": str(dunning.interest_amount),
                     "total_amount": str(dunning.total_amount),
                     "status": "draft",
                 },
@@ -470,6 +490,13 @@ class DunningService:
         values = frozen if frozen is not None else await self._display_values(notice)
         allowed = {"person_name", "person_address", "organization_name"}
         return DunningDisplayNames(**{k: v for k, v in values.items() if k in allowed})
+
+    @staticmethod
+    def _engine_result(compute, *args, **kwargs):
+        try:
+            return compute(*args, **kwargs)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     # ------------------------------------------------------------------
     # Helpers

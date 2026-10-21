@@ -17,10 +17,12 @@ from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
+from app.core.live_principal import get_live_member_db, require_live_principal
+from app.api.leases import RentChangeOut, _rent_change_out
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
 from app.repositories.settlement_repo import (
@@ -52,6 +54,52 @@ class SettlementRunCreate(BaseModel):
     period_end: date
     advance_payments_total: str | None = None
     management_mandate_id: str | None = None
+
+
+class SettlementBatchCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    property_id: uuid.UUID
+    period_start: date
+    period_end: date
+    accounting_scope_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def valid_period(self):
+        if self.period_start > self.period_end:
+            raise ValueError("Settlement period must not end before it starts")
+        return self
+
+
+class ConsumptionReadingOut(BaseModel):
+    id: str
+    reading_date: date
+    value: str
+
+
+class ConsumptionSuggestionOut(BaseModel):
+    unit_id: str
+    unit_label: str
+    consumption: str | None
+    meter_id: str | None
+    start_reading: ConsumptionReadingOut | None
+    end_reading: ConsumptionReadingOut | None
+    reason: str | None
+
+
+class AdvanceProposalOut(BaseModel):
+    lease_agreement_id: str
+    tenant_cost: str
+    months: str
+    monthly_amount: str
+    period_start: date
+    period_end: date
+
+
+class AdvanceProposalAccept(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    valid_from: date
 
 
 class AdvancePaymentsUpdate(BaseModel):
@@ -125,6 +173,16 @@ class SettlementRunOut(BaseModel):
     finalized_by: str | None
     superseded_by_id: str | None
     lines: list[SettlementLineOut] = []
+
+
+class SettlementBatchSkipped(BaseModel):
+    lease_agreement_id: str
+    settlement_run_id: str
+
+
+class SettlementBatchOut(BaseModel):
+    created: list[SettlementRunOut]
+    skipped: list[SettlementBatchSkipped]
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +308,24 @@ async def list_settlements(
     return [_run_out(r, []) for r in runs]
 
 
+@router.post("/batch", response_model=SettlementBatchOut)
+async def create_settlement_batch(
+    body: SettlementBatchCreate,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_db),
+):
+    service = SettlementService(db, auth.organization_id, auth.user_id)
+    created, skipped = await service.create_batch(
+        body.property_id, body.period_start, body.period_end, body.accounting_scope_id,
+    )
+    return SettlementBatchOut(
+        created=[_run_out(run, []) for run in created],
+        skipped=[SettlementBatchSkipped(
+            lease_agreement_id=str(run.lease_agreement_id), settlement_run_id=str(run.id),
+        ) for run in skipped],
+    )
+
+
 @router.get("/{run_id}", response_model=SettlementRunOut)
 async def get_settlement(
     run_id: uuid.UUID,
@@ -263,6 +339,38 @@ async def get_settlement(
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
     return _run_out(run, list(lines))
+
+
+@router.get("/{run_id}/consumption-suggestions", response_model=list[ConsumptionSuggestionOut])
+async def get_consumption_suggestions(
+    run_id: uuid.UUID,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+):
+    return await SettlementService(db, auth.organization_id, auth.user_id).consumption_suggestions(run_id)
+
+
+@router.get("/{run_id}/advance-proposal", response_model=AdvanceProposalOut)
+async def get_advance_proposal(
+    run_id: uuid.UUID,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+):
+    return await SettlementService(db, auth.organization_id, auth.user_id).advance_proposal(run_id)
+
+
+@router.post("/{run_id}/advance-proposal", response_model=RentChangeOut, status_code=201)
+async def accept_advance_proposal(
+    run_id: uuid.UUID,
+    body: AdvanceProposalAccept,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_db, scope="function"),
+):
+    await require_live_principal(db, auth, writer=True)
+    row = await SettlementService(db, auth.organization_id, auth.user_id).advance_proposal(
+        run_id, accept_from=body.valid_from,
+    )
+    return _rent_change_out(row)
 
 
 @router.post("", response_model=SettlementRunOut, status_code=201)
