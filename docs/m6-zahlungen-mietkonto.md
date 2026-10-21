@@ -470,6 +470,33 @@ weder automatisches Ist noch Kontostand. Identische Filterwahl ist ein No-op;
 Lade-/Fehler-/Kontextwechsel sperren veraltete Downloads. Export ändert keine
 Finanz-, Beleg-, Audit- oder Historiendaten.
 
+### 6.14 DATEV-Bestandsausgabe (Phase 3, T49)
+
+`GET /api/reports/datev/sources`, `POST /preview` unter demselben DATEV-Präfix
+und `POST /api/reports/datev.csv` nutzen vollständige Objekt-/Finanzkreis- und
+Quellenexportrechte einschließlich Kontakte. Finanzsperre und Liveprüfung bleiben
+bis zur abschließenden Exportprüfung wirksam. Zeitbasis: Wertstellung aktiver
+gebuchter Zahlungen und Rechnungsdatum aktueller bestätigter Kosten. Keine
+zusätzlichen Rohbankumsätze, Stornopaare, ersetzten Revisionen oder Nullbuchungen.
+
+SKR03/SKR04 und alle realen Konten werden ausdrücklich pro Datei konfiguriert;
+keine Default-Konten oder globale Änderung des Kategorienplans. Konto/Soll bei
+Bank-IN, Konto/Haben bei Bank-OUT; Kosten positiv im Soll, Gutschrift im Haben.
+Bankgegenkonten sind explizit je Zahlungstyp, Kostenkonten und Verrechnungskonten
+je Kategorie festzulegen. Kaution/Rücklage werden nicht als Erlös umgedeutet;
+Rechnungszahlung und Kostenquelle dürfen durch falsche Kontierung nicht doppelt
+als Aufwand erscheinen. Unterstützt sind bewusst geprüfte Bruttokonten **ohne
+Steuerautomatik**, keine VAT-Aufteilung oder BU-Schlüssel.
+
+Primärformat: [DATEV-Format](https://developer.datev.de/de/file-format/details/datev-format/getting-started),
+öffentlich ausgelieferte offizielle Formatbeschreibung mit Header 700,
+Buchungsstapel 13, 125 Feldern, DDMM, positivem Umsatz/Soll-Haben und UTF-8-BOM.
+Die Vorschau bindet Quellenzeilen und Konfiguration per Fingerabdruck; Abweichung
+vor Download führt zu 409. Kein Senden an DATEV und kein nachgewiesener Import.
+**Keine Delta-/Journalhistorie:** Ausgabe ist ein kompletter aktueller Bestand;
+Wiederholung/Überlappung und nachträgliche Korrekturen im Zielsystem abstimmen,
+nicht mehrfach importieren. Bestehende Buchungen/Snapshots bleiben unverändert.
+
 ## 7. Synthetische Golden-Tests (objektive M6-Messlatte)
 
 Es gibt **keine** realen Beispieldaten. Prüffälle sind **synthetisch** aus den Regeln + **handberechneten** Soll-/Ist-/Saldo-Werten (jeder Cent), exakt wie M3/M4 §9. Beide Test-Arten verbindlich für die M6-Abnahme; sie laufen gegen die **reine Engine** (höchste Testdichte) und gegen Service/DB.

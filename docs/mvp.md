@@ -125,7 +125,7 @@ Kurzpfade: `api/ services/ engine/ models/ workers/` liegen unter `backend/app/`
 | Briefvorlagen, Versand per E-Mail/Brief | ja | ✅ Vorlagen/Original-PDFs; explizite Dokument-E-Mail | `api/letters.py`, `api/mail.py` |
 | Mieterportal | ja | ❌ (F10) | – |
 | Jahresübersicht je Objekt (Anlage V) | ja | ❌ | – |
-| CSV-/DATEV-Export | ja | ❌ | – |
+| CSV-/DATEV-Export | ja | ✅ CSV und explizit konfigurierter EXTF-Bestandsstapel | T39/T40/T49 |
 | DSGVO Auskunft/Löschung | – | ✅ (Auskunft nur am Bildschirm) | `api/dsgvo.py` |
 
 ## 3. Aufgaben
@@ -316,7 +316,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 
 ### Phase 3 – Parität und Komfort
 
-**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43–T48 abgeschlossen; nächste Aufgabe T49.** T10 bleibt offen.
+**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43–T49 abgeschlossen; nächste Aufgabe T50.** T10 bleibt offen.
 
 - [x] **T43 Staffelmiete** — Aus Start, Betrag oder Prozent, Intervall und Stufenzahl mehrere Mietänderungen (T23) anlegen.
   Dateien: `frontend/src/pages/UnitDetailPage.tsx`, `backend/app/api/leases.py`
@@ -342,9 +342,10 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
   Dateien: `backend/app/api/letters.py` (neu), `backend/migrations/versions/0132_letter_template.py` (neu; 0129 ist bereits belegt und unverändert), `frontend/src/pages/LettersPage.tsx` (neu)
   Fertig, wenn: `uv run pytest tests/test_letters.py` (neu) grün UND Ablauf in der App: „Rundschreiben an alle Mieter eines Objekts als PDF“.
   Umgesetzt: sichere Klartextplatzhalter, gespeicherte/editierbare Vorlagen, Stichtagsausstellung je aktueller Person mit Deduplizierung, unveränderliche Original-PDFs im bestehenden Speicher und Live-Quellen-/Kontaktexport. 13 Brief-/Migrationsfälle sowie 106 Mail-/Aufgaben-/Kontaktregressionen und 39 Frontendfälle grün; Build/Gesamtlint grün. Zusätzliche globale RLS-Prüfung erkannte die zunächst fehlende Tenant-Tabellenregistrierung; beide Tabellen aufgenommen, anschließend 20 kombinierte Brief-/Migrations-/RLS-Fälle grün. Fehlender API-Pfad und später partieller Replay nach Kontaktexportwiderruf fachlich rot nachgewiesen und behoben; parallele Wiederholung, Rollen/Orggrenzen, exklusives Mietende, Renderer-Rollback und SQL-Unveränderlichkeit geprüft. Echte transaktionale DDL-Rundreise 0132→0131→0132 vergleicht Bestandsdaten, RLS/ACLs, Policies, Trigger/Funktionen unverändert und belegt Schutzverweigerung bei befüllten Tabellen. Vollständiger UI-only-PASS `t48_letters_browser.cjs`: zwei aktuelle Mieter, ungültiger Platzhalter 422, ausdrückliche Bestätigung, je Person tatsächlich UI-geöffnetes PDF mit Name/Objekt/Datum/Klartext ohne anderen Empfänger; Vorlagenänderung und Reload erhalten exakte Originalbytes, Smartphone-Dialog. Frühere Textarea-Label-/Popup-Response-Selektoren anhand Browser-Accessibility/HTTP-200 korrigiert; nur abschließender Gesamtlauf PASS. Kein Versand; App/Browser beendet. Bekannte Alembic-/Vite-Bundlewarnungen bleiben; Gesamtprüfungen offen.
-- [ ] **T49 DATEV-Export** — Buchungsstapel (EXTF) für Zahlungen und Kosten mit Konto je Kategorie (Kontenrahmen aus F8).
+- [x] **T49 DATEV-Export** — Buchungsstapel (EXTF) für Zahlungen und Kosten mit Konto je Kategorie (Kontenrahmen aus F8).
   Dateien: `backend/app/services/datev_export.py` (neu), `backend/app/api/reports.py`
   Fertig, wenn: `uv run pytest tests/test_datev_export.py` (neu) grün UND Ablauf in der App: „Export Q1 laden, Summen stimmen“.
+  Umgesetzt: offizielles DATEV-Format 700/Buchungsstapel 13, 125 Felder, UTF-8-BOM/CRLF, Decimal und ausdrücklich konfigurierte SKR03-/SKR04-/Bank-/Zahlungstyp-/Kategorie-/Verrechnungskonten ohne Standardkonten. 25 DATEV-Fälle und 83 bestehende Report-/CSV-Fälle gemeinsam grün (108), 83 Frontendfälle sowie Build/Gesamtlint grün. Fachlich rot: fehlende API/Renderer, elfstelliger Umsatz und Präzisionsverlust bei Gutschrift; danach behoben. Vollständige Quellen-/Kontaktexporte, Livewiderruf bis nach Rendering, Finanzsperre, parallele Wiederholung, Storno-/Korrektur-/Nullkosten und sieben Zahlungstypen geprüft; bestehende Bestände unverändert. Echter UI-only-PASS `t49_datev_browser.cjs`: Q1 2026, 700+150−50=800 EUR Zahlungsnetto, 100+25=125 EUR Kosten; für beide ausdrücklich gewählten Kontenrahmen tatsächliche Browserdownloads unabhängig mit csv/Decimal auf Header/125 Spalten/fünf exakte Zeilen geprüft, Kontenwechsel verwirft Vorschau, Smartphone und vollständige Quell-DTO-Gleichheit. Kein DATEV-Upload/Importnachweis, keine Steuerautomatik/VAT-Aufteilung; volle aktuelle Bestandsausgabe statt Delta, Reimporte/Korrekturen im Zielsystem fachlich abzustimmen. Offizielle Primärbeschreibung über aktuelle Portal-Inhalts-API verifiziert (alte Such-/Hilferouten gestört bzw. sitzungspflichtig). Keine Migration; Head 0132. Bekannte Alembic-/Vite-Warnungen bleiben, Gesamtprüfungen offen.
 - [ ] **T50 SEPA-Lastschrift** — Gläubiger-ID, Mandat je Mieter, `pain.008` für die Monatsmiete.
   Dateien: `backend/app/services/sepa_export.py` (neu), `backend/app/api/payments.py`, `frontend/src/pages/PaymentsPage.tsx`
   Fertig, wenn: `uv run pytest tests/test_sepa_export.py` (neu, XSD) grün UND Ablauf in der App: „Lastschriftdatei Oktober erzeugen“.
@@ -379,6 +380,6 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 - F5 BK-Abrechnungszeitraum Kalenderjahr oder abweichend je Objekt?
 - F6 Mahnstufen und Gebühren 0/5/10 € (heute vorläufig) beibehalten, Verzugszinsen ja oder nein?
 - F7 Kaution in Raten (§ 551 BGB) und Zinsgutschrift des Kautionskontos abbilden?
-- F8 Reicht die Jahresübersicht (T38) oder braucht der Steuerberater DATEV, mit SKR03 oder SKR04?
+- F8 Für T49 vom Nutzer festgelegt: DATEV mit ausdrücklich auswählbarem SKR03 oder SKR04, ohne stille Standardauswahl oder vorbelegte reale Kontozuordnungen. Berater-/Mandanten- und konkrete Kontozuordnungen werden ausdrücklich konfiguriert, nicht erfunden.
 - F9 Gewerbeeinheiten mit Umsatzsteueroption (§ 9 UStG), also USt-Ausweis in der Abrechnung?
 - F10 Bleibt der Quellen-Zugriffsschutz dauerhaft im Modus PREPARATION, und ist ein Mieterportal ausgeschlossen? Dann kann die Governance-Oberfläche weiter zurückgebaut werden.

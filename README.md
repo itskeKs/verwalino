@@ -589,6 +589,33 @@ Versand und kein Zustellnachweis. Migration **0132** verweigert einen Downgrade
 mit gespeicherten Vorlagen oder Briefen. Tests: `uv run pytest tests/test_letters.py`;
 echte UI-/PDF-Abnahme: `scripts/acceptance/t48_letters_browser.cjs`.
 
+### DATEV-Buchungsstapel (T49)
+
+Unter **Berichte → DATEV-Export öffnen** Objekt, Zeitraum und gegebenenfalls
+Ganzobjekt-Finanzkreis auswählen. SKR03 oder SKR04, Berater-/Mandantennummer,
+Wirtschaftsjahresbeginn, Sachkontenlänge und alle Kontenzuordnungen ausdrücklich
+angeben; es gibt keine vorbelegten realen Konten. Kosten werden je Kategorie
+gegen ein eigenes Verrechnungskonto gebucht, Bankbewegungen gegen den gewählten
+Zahlungstyp-Gegenposten. So darf die Bezahlung einer Rechnung nicht nochmals
+unmittelbar als Aufwand zugeordnet werden. Die fachlich geprüften Konten müssen
+**ohne Steuerautomatik** arbeiten; keine Umsatzsteueraufteilung oder BU-Schlüssel.
+
+Die Vorschau zeigt Einzelposten und exakte Summen. Der echte EXTF-Download
+(Header 700, Buchungsstapel 13, UTF-8-BOM, Semikolon/CRLF) prüft Quellen und
+Exportrechte erneut. Konten- oder Quellenwechsel verlangt eine neue Vorschau.
+Gebuchte aktive Zahlungen zählen nach Wertstellung, bestätigte aktuelle Kosten
+nach Rechnungsdatum; Stornopaare, ersetzte Kosten und Rohbankumsätze werden nicht
+zusätzlich exportiert. Nullkosten erzeugen keine verbotene Nullbuchung.
+
+**Vollständige aktuelle Bestandsausgabe, kein Differenzexport:** Dateien nicht
+wiederholt oder überlappend importieren; nach Korrekturen ist die Abstimmung im
+Zielsystem erforderlich. Eine heruntergeladene Datei ist kein erfolgreicher
+DATEV-Import. Kein Upload, keine Änderung von Originalbuchungen und keine neue
+Migration. Kontenkonfiguration wird pro Ausgabe ausdrücklich eingegeben, nicht
+als globale Kategoriezuordnung gespeichert. Tests:
+`uv run pytest tests/test_datev_export.py`, reale Q1-Abnahme:
+`scripts/acceptance/t49_datev_browser.cjs`.
+
 Weiterführende Dokumentation:
 
 - [Deployment](DEPLOY.md)

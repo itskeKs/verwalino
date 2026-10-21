@@ -108,6 +108,22 @@ No email is sent by that script. This does not change the accepted **0122**
 production gate or authorize promoting **0123–0132**, deploying or operating on
 production data.
 
+## DATEV file export (T49)
+
+No DATEV credentials, network transmission, environment defaults or schema changes
+are introduced. Local Alembic head remains **0132**. Configure SKR03/SKR04,
+adviser/client identifiers, fiscal year, account length and every bank/payment/
+category counterpart explicitly in the UI for each export. Only reviewed gross
+accounts **without tax automation** are supported; no automatic VAT split/BU keys.
+UTF-8 with BOM follows the official DATEV manual-import/EXTF specification; the
+legacy KrStaPv route does not support Unicode. Target-importer acceptance was
+not exercised and is not claimed. Files are full current-state projections, not
+incremental/deduplicated imports; repeated or overlapping imports require manual
+reconciliation. Never treat file download as successful DATEV processing.
+For synthetic Q1 acceptance use the existing local launcher with fresh `/tmp`
+storage and `node scripts/acceptance/t49_datev_browser.cjs`, then stop it. No
+production access, promotion, deployment or change to the **0122** gate is implied.
+
 ## Fresh installation: one-time preparation on Moon
 
 Run as `chris` without sudo. The host must have Docker, Compose, `curl`,

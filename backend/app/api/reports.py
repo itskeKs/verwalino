@@ -1,6 +1,7 @@
 """Read-only financial object reports."""
 import csv
 import io
+from datetime import date
 from typing import Annotated
 from uuid import UUID
 
@@ -15,6 +16,7 @@ from app.core.storage import attachment_content_disposition
 from app.core.tenant import AuthContext, get_current_user
 from app.services.authorization_service import AuthorizationService
 from app.services.report_service import PropertyYearReport, ReportService
+from app.services.datev_export import DatevExportService, DatevRequest, render_datev
 
 router = APIRouter(prefix='/api/reports', tags=['reports'])
 
@@ -79,4 +81,46 @@ async def property_year_csv(
         'Content-Disposition': attachment_content_disposition(f'objekt-jahresuebersicht-{year}.csv'),
         'X-Content-Type-Options': 'nosniff',
         'Cache-Control': 'private, no-store',
+    })
+
+
+@router.get('/datev/sources')
+async def datev_sources(
+    property_id: UUID, period_start: date, period_end: date,
+    accounting_scope_id: UUID | None = None,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+):
+    return await DatevExportService(db, auth).sources(
+        property_id, period_start, period_end, accounting_scope_id)
+
+
+@router.post('/datev/preview')
+async def datev_preview(
+    body: DatevRequest,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+):
+    preview, _, _ = await DatevExportService(db, auth).preview(body)
+    return preview
+
+
+@router.post('/datev.csv')
+async def datev_csv(
+    body: DatevRequest,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+) -> Response:
+    if body.expected_source_digest is None:
+        raise HTTPException(422, 'Preview and confirm the complete batch before downloading')
+    service = DatevExportService(db, auth)
+    preview, rows, scope = await service.preview(body)
+    if preview['source_digest'] != body.expected_source_digest:
+        raise HTTPException(409, 'Financial sources or account configuration changed; preview again')
+    content = render_datev(body, rows)
+    await service.require_export(body.property_id, scope)
+    return Response(content, media_type='text/csv; charset=utf-8', headers={
+        'Content-Disposition': attachment_content_disposition(
+            f'EXTF_Buchungsstapel_{body.period_start}_{body.period_end}.csv'),
+        'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, no-store',
     })

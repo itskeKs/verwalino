@@ -10,7 +10,7 @@ interface ScopeChoice {
 export function AccountingScopeSelector({ propertyId, value, onChange, kind, capability = "prepare", onValidityChange }: {
   propertyId?: string; value?: string | null; onChange: (id: string | null) => void;
   onValidityChange?: (valid: boolean) => void;
-  kind?: "WEG" | "MIET"; capability?: "prepare" | "read";
+  kind?: "WEG" | "MIET"; capability?: "prepare" | "read" | "export";
 }) {
   const [selected, setSelected] = useState<ScopeChoice | null>(null);
   const [error, setError] = useState<string | null>(null);
