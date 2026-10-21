@@ -41,9 +41,14 @@ external VPI service or new credentials. Entered receipt dates are operator data
 not delivery evidence; the calculation aid neither generates nor sends notices.
 The production gate and authorization boundary remain unchanged.
 
-T45 is a pure heating-cost allocation engine with separate heating/hot-water
-pools and explicit tenant/WEG-owner context. It adds no runtime configuration,
-schema migration or enabled BK/PDF integration; that connection is T46.
+T45 provides separate heating/hot-water pools and explicit tenant/WEG-owner
+context. T46 adds an opt-in internal BK calculation using unit-meter boundaries
+or explicit manual slice quantities; external statements remain the default.
+No new environment setting or migration is required (Alembic head remains 0131).
+Saved draft intent, actual meter provenance and the PDF calculation are retained
+in the existing snapshot path; finalized originals are never recomputed.
+Missing/ambiguous readings fail closed rather than selecting an estimate.
+This local validation does not change the production gate or authorize deployment.
 
 `HV_DUNNING_BASE_INTEREST_RATE` is an optional decimal basis-rate default for
 new dunning notices, not an automatically maintained official rate. An explicit

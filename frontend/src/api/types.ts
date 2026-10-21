@@ -768,6 +768,7 @@ export interface SettlementRun {
   finalized_by: string | null;
   superseded_by_id: string | null;
   lines: SettlementLine[];
+  extra_inputs?: ComputeRequest | null;
 }
 
 export interface AdvanceProposal {
@@ -829,10 +830,43 @@ export interface UnitMetricIn {
   person_count?: number | null;
 }
 
+export type HeatingBaseKey = "AREA" | "HEATED_AREA" | "VOLUME";
+
+export interface HeatingSlice {
+  unit_id: string;
+  period_from: string;
+  period_to: string;
+  consumption?: string;
+  base_quantity?: string;
+}
+
+export interface HeatingConfig {
+  cost_entry_id: string;
+  kind: "HEATING" | "HOT_WATER";
+  consumption_fraction: string;
+  base_key: HeatingBaseKey;
+  consumption_recorded: boolean;
+  mandatory_seventy_percent: boolean;
+  meter_type: string;
+  slices: HeatingSlice[];
+}
+
+export interface HeatingConsumptionCandidate {
+  unit_id: string;
+  unit_label: string;
+  period_from: string;
+  period_to: string;
+  base_quantity: string | null;
+  consumption: string | null;
+  meter_id: string | null;
+  reason: string | null;
+}
+
 export interface ComputeRequest {
   external_amounts: ExternalAmountIn[];
   manual_amounts: ManualAmountIn[];
   unit_metrics: UnitMetricIn[];
+  heating_inputs?: HeatingConfig[];
 }
 
 // --- M4 WEG: Wirtschaftsplan (Economic Plan) ---

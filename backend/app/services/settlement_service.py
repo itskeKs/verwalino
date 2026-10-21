@@ -23,8 +23,9 @@ Provisional data sources (clearly marked, [OFFEN/§18]):
 from __future__ import annotations
 
 import uuid
+import json
 from calendar import monthrange
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 from fractions import Fraction
@@ -39,6 +40,7 @@ from app.engine.canonical import canonical_json, sha256_hex
 from app.engine.rounding import DistributionError
 from app.engine.mietkonto import _money
 from app.services.lease_rent_change_service import LeaseRentChangeService
+from app.services.heating_input_service import HeatingConfig, HeatingSliceOverride, HeatingInputService
 from app.engine.settlement import EngineValidationError, compute_bk_settlement
 from app.engine.snapshot import build_snapshot_payload
 from app.engine.meter_consumption import MeterReadingInput, MeterConsumptionError, derive_consumption
@@ -110,6 +112,29 @@ class ComputeExtras:
     external_amounts: list[ExternalAmountEntry] = field(default_factory=list)
     manual_amounts: list[ManualAmountEntry] = field(default_factory=list)
     unit_metrics: list[UnitMetric] = field(default_factory=list)
+    heating_inputs: list[HeatingConfig] = field(default_factory=list)
+
+
+def decode_compute_extras(payload: dict) -> ComputeExtras:
+    """Restore typed user intent; automatic meter values are never cached here."""
+    def day(value):
+        return date.fromisoformat(value) if value is not None else None
+
+    return ComputeExtras(
+        external_amounts=[ExternalAmountEntry(uuid.UUID(e['cost_entry_id']),uuid.UUID(e['unit_id']),
+            Decimal(e['tenant_amount']),day(e.get('period_from')),day(e.get('period_to')))
+            for e in payload.get('external_amounts',[])],
+        manual_amounts=[ManualAmountEntry(uuid.UUID(e['cost_entry_id']),uuid.UUID(e['unit_id']),Decimal(e['amount']))
+            for e in payload.get('manual_amounts',[])],
+        unit_metrics=[UnitMetric(uuid.UUID(e['unit_id']),Decimal(e['consumption']) if e.get('consumption') is not None else None,e.get('person_count'))
+            for e in payload.get('unit_metrics',[])],
+        heating_inputs=[HeatingConfig(uuid.UUID(e['cost_entry_id']),e['kind'],Decimal(e['consumption_fraction']),
+            e['base_key'],e['consumption_recorded'],e['mandatory_seventy_percent'],e['meter_type'],
+            [HeatingSliceOverride(uuid.UUID(r['unit_id']),day(r['period_from']),day(r['period_to']),
+                Decimal(r['consumption']) if r.get('consumption') is not None else None,
+                Decimal(r['base_quantity']) if r.get('base_quantity') is not None else None) for r in e.get('slices',[])])
+            for e in payload.get('heating_inputs',[])],
+    )
 
 
 # `db_exclusive_to_engine_inclusive` is imported at the top from the canonical
@@ -597,7 +622,28 @@ class SettlementService:
         payload = build_snapshot_payload(inp, result)
         if self._meter_sources:
             payload["inputs"]["meter_consumption_sources"] = self._meter_sources
+        payload['extra_inputs'] = self._extra_payload
+        if result.heating_costs:
+            for allocation in payload['heating_costs']:
+                for row in allocation['rows']:
+                    row['meter_source'] = self._heating_sources[row['slice_id']]
         return payload
+
+    async def heating_suggestions(self, run_id, cost_entry_id, meter_type, base_key):
+        scope = FinancialScopeService(self._session,self._org_id,self._user_id)
+        await scope.lock_inputs()
+        run = await self._runs.get_by_id(run_id)
+        if run is None or run.run_type != 'BK_MIETER':
+            raise HTTPException(404,'Settlement run not found')
+        await scope.enter(run,capability=ScopeCapability.READ,computation=True)
+        if run.status != 'draft':
+            raise HTTPException(409,'Heizkosten-Vorbelegung nur für Entwürfe')
+        entries = await self._runs.active_cost_entries_for_period(run.property_id,run.period_start,run.period_end)
+        found = next(((entry,category) for entry,category in entries if entry.id==cost_entry_id),None)
+        if found is None or found[1] is None or found[1].code not in {'HEIZUNG_ZENTRAL','WARMWASSER_ZENTRAL'}:
+            raise HTTPException(404,'Heating cost source not found')
+        units = await self._runs.units_for_property(run.property_id)
+        return await HeatingInputService(self._session,self._org_id,self._runs).candidates(run,found[0],units,meter_type,base_key)
 
     async def _consumption_candidates(self, run, units, entries):
         kinds = {category.code for entry, category in entries
@@ -646,7 +692,11 @@ class SettlementService:
         self, run: SettlementRun, extras: ComputeExtras | None
     ) -> tuple[SettlementInput, EngineResult]:
         self._coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", rental_values(run))
-        inp = await self._load_engine_input(run, extras or ComputeExtras())
+        if extras is None:
+            extras = decode_compute_extras((run.snapshot_payload or {}).get('extra_inputs',{}))
+        self._extra_payload = json.loads(json.dumps(asdict(extras),default=str))
+        self._heating_sources = {}
+        inp = await self._load_engine_input(run, extras)
         try:
             result = compute_bk_settlement(inp)
         except (EngineValidationError, DistributionError, PeriodOverlapError) as exc:
@@ -678,18 +728,23 @@ class SettlementService:
             run.property_id, run.period_start, run.period_end
         )
 
+        heating_configs = {c.cost_entry_id:c for c in extras.heating_inputs}
+        if len(heating_configs)!=len(extras.heating_inputs) or not set(heating_configs)<= {e.id for e,_ in entries}:
+            raise HTTPException(422,'Heizkosten: doppelte oder unbekannte aktive Kostenquelle')
+        generic_entries = [(e,c) for e,c in entries if e.id not in heating_configs]
+
         # Per-unit metric overrides (consumption / person count).
         metric_by_unit = {m.unit_id: m for m in extras.unit_metrics}
         self._meter_sources = []
         needs_consumption = any(entry.tenant_distribution_key == "VERBRAUCH"
                                 and entry.tenant_apportionable != "NICHT_UMLAGEFAEHIG"
-                                for entry, _category in entries)
+                                for entry, _category in generic_entries)
         consumptions = {}
         if needs_consumption:
             missing = [unit for unit in units if metric_by_unit.get(unit.id) is None
                        or metric_by_unit[unit.id].consumption is None]
             suggestions = {row["unit_id"]: row for row in
-                           await self._consumption_candidates(run, missing, entries)} if missing else {}
+                           await self._consumption_candidates(run, missing, generic_entries)} if missing else {}
             for unit in units:
                 metric = metric_by_unit.get(unit.id)
                 if metric is not None and metric.consumption is not None:
@@ -772,6 +827,13 @@ class SettlementService:
                 ManualAmountInput(unit_id=m.unit_id, amount=m.amount)
                 for m in man_by_entry.get(entry.id, [])
             )
+            heating = None
+            if entry.id in heating_configs:
+                if ext or man:
+                    raise HTTPException(422,'Heizkosten intern und externe/manuelle Geldbeträge dürfen nicht kombiniert werden')
+                heating, sources = await HeatingInputService(self._session,self._org_id,self._runs).resolve(
+                    run,entry,category,units,heating_configs[entry.id])
+                self._heating_sources.update(sources)
             position_inputs.append(
                 CostPositionInput(
                     cost_entry_id=entry.id,
@@ -786,6 +848,7 @@ class SettlementService:
                     apportionable_tenant_amount=entry.apportionable_tenant_amount,
                     external_amounts=ext,
                     manual_amounts=man,
+                    heating=heating,
                 )
             )
 

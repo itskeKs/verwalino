@@ -91,7 +91,7 @@ Kurzpfade: `api/ services/ engine/ models/ workers/` liegen unter `backend/app/`
 | Vorauszahlungen aus Zahlungen | ja | 🟡 nur volles Kalenderjahr | `services/settlement_service.py:229` |
 | Sammellauf je Objekt | ja | ❌ | `pages/SettlementsPage.tsx` |
 | Vorschlag neue Vorauszahlung | ja | ❌ | – |
-| Heizkosten nach HeizkostenV | ja | ❌ nur Fremdabrechnung je Einheit | – |
+| Heizkosten nach HeizkostenV | ja | ✅ intern getrennte Grund-/Verbrauchsanteile oder Fremdabrechnung | T45/T46 |
 | Verbrauch aus Zählern | ja | ❌ | – |
 
 ### 2.7 WEG
@@ -316,7 +316,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 
 ### Phase 3 – Parität und Komfort
 
-**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43–T45 abgeschlossen; nächste Aufgabe T46.** T10 bleibt offen.
+**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43–T46 abgeschlossen; nächste Aufgabe T47.** T10 bleibt offen.
 
 - [x] **T43 Staffelmiete** — Aus Start, Betrag oder Prozent, Intervall und Stufenzahl mehrere Mietänderungen (T23) anlegen.
   Dateien: `frontend/src/pages/UnitDetailPage.tsx`, `backend/app/api/leases.py`
@@ -330,9 +330,10 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
   Dateien: `backend/app/engine/heizkosten.py` (neu), `backend/app/engine/types.py`, `backend/tests/engine/test_heizkosten.py` (neu)
   Fertig, wenn: `uv run pytest tests/engine/test_heizkosten.py` grün.
   Umgesetzt: getrennte Heiz-/Warmwasserpools, Decimal, 30–50/50–70 %, §7-Sonderfall 70 %, zentrale Centverteilung und explizite 15-%-Kürzung nur für betroffene nicht verbrauchsabhängige Mieterkosten (nicht WEG_OWNER). 40 Heizkostenfälle rot→grün, zusätzlich 30 bestehende Rundungs-/Golden-/Invariantenfälle grün. §§7/8/9/12 aus Primärquellen geprüft; keine stille Messwertschätzung oder erfundene Kostentrennung. Reine Engine ohne UI-/Downloadanforderung oder Migration; BK/PDF erst T46.
-- [ ] **T46 Heizkosten in der BK** — Schlüssel für Heizung nutzt T45 mit Zählerständen (T31), Eingaben in der Abrechnung.
+- [x] **T46 Heizkosten in der BK** — Schlüssel für Heizung nutzt T45 mit Zählerständen (T31), Eingaben in der Abrechnung.
   Dateien: `backend/app/services/settlement_service.py`, `backend/app/engine/settlement.py`, `frontend/src/pages/SettlementDetailPage.tsx`
   Fertig, wenn: `uv run pytest tests/test_m3_settlement.py -k heiz` grün UND Ablauf in der App: „PDF zeigt Grund- und Verbrauchsanteil“.
+  Umgesetzt: interne T45-Verteilung je bestätigter Heiz-/Warmwasserquelle, getrennte exakte Zähler-/Zwischenablesungen oder explizite Handwerte, Grundmenge × Tage (§9b), unveränderter Messdienstpfad. 27 Heizfälle rot→grün, 119 BK-Tests, 70 Engine-Regressionen, 75 Frontendtests sowie Build/Gesamtlint grün. Echte UI-only-Abnahme: zwei Jahresverträge, Fläche 40/60, Heizung 1000 EUR und Warmwasser 400 EUR → 295/230 EUR, Gesamt 525 EUR; Vorschau schreibfrei, Eingabeabsicht/Quellen nach Reload, Finalisierung und Smartphone-Ansicht geprüft. Über UI geöffnetes echtes PDF enthält Grund-/Verbrauchsanteil 120/175 EUR sowie Warmwasser 80/150 EUR. Rechte/Entzug, Finanzsperre, Fehleratomarität, Nutzerwechsel 40/60 statt Zeitschätzung und Brutto-Leerstand geprüft; Konfiguration/Messquellen/Teilbeträge vor Hash eingefroren, keine Migration. Browseradapter-Selektionen/CDP-Frame korrigiert, danach vollständiger Lauf bestanden.
 - [ ] **T47 E-Mail-Versand** — SMTP aus der Umgebung, Abrechnung, Mahnung und Einladung an die Person senden, Versand am Dokument vermerken.
   Dateien: `backend/app/core/config.py`, `backend/app/services/mail_service.py` (neu), `backend/app/api/dunning.py`
   Fertig, wenn: `uv run pytest tests/test_mail_service.py` (neu, Fake-SMTP) grün UND Ablauf in der App: „Mahnung an lokalen Test-SMTP senden“.

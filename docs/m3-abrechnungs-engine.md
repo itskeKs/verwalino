@@ -397,7 +397,33 @@ Einzelne fehlende Ablesungen, gemischte unvollständige Messdaten oder Nullnenne
 führen weiterhin zur Eskalation, nicht zu stiller Schätzung oder Nullverbrauch.
 Die Engine beurteilt keine §11-Ausnahmen, erfindet keine §9-Kostentrennung und
 berechnet keine zusätzlichen 3-%-Kürzungen. Bestehende Fremdabrechnungen und
-CO2-Abgrenzungen bleiben unverändert; T45 schaltet keinen UI-/PDF-Weg um.
+CO2-Abgrenzungen bleiben unverändert; T45 selbst schaltet keinen UI-/PDF-Weg um.
+
+**T46 – interne BK-Verteilung:** `heating_inputs` aktiviert je bestätigter
+`HEIZUNG_ZENTRAL`-/`WARMWASSER_ZENTRAL`-Kostenquelle genau einen getrennten Pool.
+Gleichzeitige externe/manuelle Geldbeträge für diese Quelle sind unzulässig.
+Die Engine nutzt deren Bruttobetrag bzw. den ausdrücklich abgegrenzten Teilumlagebetrag;
+ein übergreifender Leistungszeitraum wird mit zentraler Centverteilung abgegrenzt.
+Der bestehende DB-Schlüssel bleibt erhalten; UI und PDF kennzeichnen intern
+berechnete Zeilen ausdrücklich als „HeizkostenV intern“.
+
+Alle sichtbaren Einheiten und lückenlosen Mieter-/Leerstandsabschnitte nehmen teil.
+Grundbasis ist Fläche/beheizte Fläche bzw. explizites Volumen × Tage; nach
+[§9b HeizkostenV](https://www.gesetze-im-internet.de/heizkostenv/__9b.html) werden
+Verbrauchskosten nicht nach Mietdauer geschätzt, sondern aus exakten Grenz- und
+Zwischenablesungen gewonnen. Die Endablesung des Vornutzers ist der Anfangszählerstand
+des Nachnutzers. Einzelne fehlende oder mehrdeutige Ablesungen erfordern transparente
+Handwerte, nicht Nullwerte oder eine automatische §9a-/§9b(3)-Ersatzverteilung.
+Leerstand behält den Brutto-Eigentümeranteil; nur Mietern wird im ausdrücklich
+gewählten nicht verbrauchsabhängigen Modus der §12-Abzug ausgewiesen.
+
+Compute speichert `extra_inputs` im Entwurf, Preview nicht. Fehlender Requestbody
+verwendet gespeicherte Absicht, explizite leere Arrays entfernen sie. Automatische
+Quellen werden jedes Mal frisch gelesen; Finalize friert Absicht, Messwerte/-IDs,
+Grund-/Verbrauchstöpfe, Basen, Brutto/Kürzung/Zahlbetrag vor dem Hash ein. Der Renderer
+liest nur diese Daten. GET `/{run_id}/heating-consumption` ist live-/quellen- und
+finanzkreisgeschützt und für finale Läufe gesperrt. Kein neues Schema, kein impliziter
+kombinierter Anlagenpool und keine Änderung bestehender Messdienst-/CO2-Snapshots.
 
 ### 5.2 Externe Heiz-/Wasserabrechnung (`EXTERNE_ABRECHNUNG`)
 

@@ -438,7 +438,16 @@ in `engine/types.py`. Getrennte Kostenpools und explizite Grundbasen werden übe
 zentrale Largest-Remainder-Rundung verteilt; Grund-, Verbrauchs-, Kürzungs- und
 Zahlbetrag bleiben separat nachvollziehbar. Der reine TENANT-/WEG_OWNER-Kontext
 verhindert die pauschale Anwendung des §12-Mieterkürzungsrechts auf WEG-Eigentümer.
-Keine ORM-/Schemaänderung; BK-/Zähler-/PDF-Anschluss folgt erst in T46.
+Keine ORM-/Schemaänderung. T46 verbindet `heating_settlement.py` mit dem bestehenden
+BK-Orchestrator; `HeatingInputService` löst je aktivierter bestätigter Kostenquelle
+sichtbare Einheiten/Nutzungsabschnitte und exakte Zählergrenzen auf. Physische
+Grundmenge × Tage und tatsächliche Verbrauchsmenge bleiben getrennte Basen; die
+T45-Rundung bleibt zentral. Leerstandszeilen behalten den Bruttoanteil ohne §12-Abzug.
+`ComputeExtras.heating_inputs` speichert nur Benutzerabsicht in `snapshot_payload.extra_inputs`;
+Compute/Finalize prüfen unter den bestehenden Live-/Quellen-/Finanz-/Zeilensperren
+frisch. Gefrorene Heizteilbeträge und konkrete Messquellen werden vor dem Hash ergänzt;
+der PDF-Renderer liest sie ohne Datenbank-Neuberechnung. Bestehende Fremdabrechnungen,
+allgemeine Verbrauchsmetriken, RLS und unveränderliche Originale bleiben erhalten.
 
 **`bank_account`** (SDD §6.3 — Vermögenstrennung): `organization_id`, Bezug auf `management_mandate`/`property`, `account_type` (laufend|Rücklage|Kaution), IBAN/Bank-Stammdaten. RLS aktiv. *(Implementierung erst ab M6; Modell-Anker in M1 vorbereiten, damit Mandat/Objekt-Bezug konsistent ist.)*
 

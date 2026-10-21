@@ -231,7 +231,30 @@ Primärquellen: [§7](https://www.gesetze-im-internet.de/heizkostenv/__7.html),
 Die Kostenabgrenzung verbundener Anlagen und Ausnahmevoraussetzungen werden
 vorgegeben, nicht aus angenommenen Brennstoffen/Temperaturen hergeleitet;
 keine §9a-Schätzung und keine zusätzlichen 3-%-Tatbestände. T45 ist die reine
-Engine; Einbindung in BK, Zählerdaten und PDF folgt separat unter T46.
+Engine; T46 verbindet sie nun mit BK, getrennten Zählerquellen und dem PDF.
+
+In der BK-Abrechnung lässt sich je bestätigter Heiz-/Warmwasserposition bewusst
+„Intern nach HeizkostenV abrechnen“ aktivieren. Ohne Aktivierung bleibt die externe
+Messdienstabrechnung unverändert. Verbrauchsquote, §7-Sonderfall, Grundbasis und
+Zählertyp werden ausdrücklich eingegeben; automatische und manuelle Mengen bleiben
+von Kaltwasser/anderen Verbrauchsschlüsseln getrennt. Alle teilnehmenden Einheiten,
+Mieterwechsel und Leerstandsabschnitte sind sichtbar. Grundkosten werden mit
+Fläche/Volumen × Tagen verteilt; Verbrauchskosten nutzen exakte Grenz-/Zwischenablesungen
+([§9b](https://www.gesetze-im-internet.de/heizkostenv/__9b.html)) oder ausgewiesene
+Handwerte (maximal sechs Nachkommastellen), niemals eine stille Tagesschätzung.
+Der Zeitraumanteil einer übergreifenden Kostenquelle wird centtreu vorab abgegrenzt;
+bei Teilumlage bleibt der bestätigte Mieterbetrag maßgeblich. Leerstand trägt den
+Brutto-Eigentümeranteil ohne Mieterkürzung. Fehlende/mehrdeutige Werte liefern 422.
+
+Berechnen speichert die Eingabeabsicht im vorhandenen Entwurfssnapshot; Reload
+stellt sie wieder her. Ohne Requestbody werden gespeicherte Eingaben wiederverwendet,
+ein expliziter leerer Request löscht sie. Vorschau speichert nichts. Automatische
+Ablesungen werden bis zur Finalisierung frisch aufgelöst; danach stehen Konfiguration,
+Messbelege und getrennte Grund-/Verbrauchs-/Kürzungsbeträge unveränderlich im Snapshot.
+Das UI-geöffnete PDF liest nur diesen eingefrorenen Rechenweg. Keine neue Migration,
+keine behauptete §9-Kostentrennung, §9a-Schätzung oder rechtliche Zertifizierung.
+`uv run pytest tests/test_m3_settlement.py -k heiz` prüft den Backendpfad;
+`scripts/acceptance/t46_heizkosten_browser.cjs` prüft die reale UI und PDF-Inhalte.
 
 ## Kautionen (Phase 2)
 

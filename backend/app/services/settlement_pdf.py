@@ -83,6 +83,44 @@ def _esc(text: str | None) -> str:
     return html.escape(text or "")
 
 
+def _heating_html(run: SettlementRun) -> str:
+    """Render only retained calculations and reading provenance, never live data."""
+    blocks = []
+    for pool in (run.snapshot_payload or {}).get('heating_costs',[]):
+        own = [r for r in pool['rows'] if r['lease_agreement_id']==str(run.lease_agreement_id)]
+        if not own:
+            continue
+        kind = 'Heizung' if pool['kind']=='HEATING' else 'Warmwasser'
+        fraction = Decimal(pool['consumption_fraction']) * 100
+        method = ('Nicht verbrauchsabhängig; 15-%-Kürzung (§12 HeizkostenV)'
+                  if pool['method']=='NON_CONSUMPTION' else
+                  f'{_quota(100-fraction)} % Grundanteil / {_quota(fraction)} % Verbrauchsanteil')
+        rows = []
+        for r in own:
+            consumption_basis = (f"{r['consumption']} / {pool['consumption_total_quantity']}"
+                                 if r['consumption'] is not None else 'ohne Verbrauchserfassung')
+            source = r.get('meter_source',{})
+            provenance = ('Handeingabe' if source.get('source')=='MANUAL' else
+                          'Keine Verbrauchserfassung' if source.get('source')=='NON_CONSUMPTION' else
+                          'Zähler: ' + ' → '.join(f"{source[k]['reading_date']}: {source[k]['value']}"
+                                                 for k in ('start_reading','end_reading') if k in source))
+            rows.append(f"""<tr><td>{_esc(r['period_from'])} – {_esc(r['period_to'])}</td>
+                <td>{_esc(r['weighted_base_quantity'])} / {_esc(pool['base_total_quantity'])}<br/>
+                Grundanteil: {_eur(Decimal(r['base_amount']))}</td>
+                <td>{_esc(consumption_basis)}<br/>Verbrauchsanteil: {_eur(Decimal(r['consumption_amount']))}<br/>{_esc(provenance)}</td>
+                <td>Vor Kürzung: {_eur(Decimal(r['gross_amount']))}<br/>
+                Kürzung: {_eur(Decimal(r['reduction_amount']))}<br/>
+                Ihr Betrag: {_eur(Decimal(r['amount_due']))}</td></tr>""")
+        blocks.append(f"""<section><h2>{kind} – HeizkostenV intern</h2>
+            <p>{_esc(method)}. Grundbasis: {_esc(pool['base_key'])} × Tage (§9b, zeitanteilig).
+            Gesamtkosten: {_eur(Decimal(pool['total_amount']))};
+            Grundkostentopf: {_eur(Decimal(pool['base_cost_total']))};
+            Verbrauchskostentopf: {_eur(Decimal(pool['consumption_cost_total']))}.</p>
+            <table class="lines"><thead><tr><th>Nutzungszeitraum</th><th>Grundanteil / Basis × Tage</th>
+            <th>Verbrauchsanteil / Messmenge</th><th>Ihr Ergebnis</th></tr></thead><tbody>{''.join(rows)}</tbody></table></section>""")
+    return ''.join(blocks)
+
+
 def build_settlement_html(
     run: SettlementRun,
     lines: list[SettlementLine],
@@ -102,6 +140,8 @@ def build_settlement_html(
         if ln.line_type != "COST":
             continue
         key_label = _KEY_LABELS.get(ln.distribution_key or "", ln.distribution_key or "")
+        if ln.note and ln.note.startswith("HeizkostenV intern:"):
+            key_label = "HeizkostenV intern"
         # Anteil-Basis (Rechenweg): key base share/total + time share.
         basis = ""
         if ln.distribution_base_share is not None and ln.distribution_base_total is not None:
@@ -190,6 +230,7 @@ def build_settlement_html(
     </tbody>
   </table>
 
+  {_heating_html(run)}
   <div class="hint">
     Die Gesamtkosten je Kostenart, der jeweils angewandte Umlageschluessel, die
     Berechnung Ihres Anteils (Anteilsbasis und Zeitanteil), der Abzug der

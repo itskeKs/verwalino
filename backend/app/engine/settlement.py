@@ -33,6 +33,7 @@ from app.engine.periods import (
     build_unit_cover,
     day_count,
 )
+from app.engine.heating_settlement import distribute_heating_position
 from app.engine.rounding import CENT
 from app.engine.types import (
     ALL_KEYS,
@@ -122,6 +123,7 @@ def compute_bk_settlement(inp: SettlementInput) -> EngineResult:
     computation: list[ComputationStep] = []
     vacancy_attr: list[VacancyShare] = []
     total_cost = Decimal("0.00")
+    heating_costs = []
 
     # Process positions in a deterministic order (by category_code then id) so
     # the snapshot and sort_order are reproducible.
@@ -135,11 +137,15 @@ def compute_bk_settlement(inp: SettlementInput) -> EngineResult:
             # NICHT_UMLAGEFAEHIG never appears in a Mieter-BK (invariant I-F).
             continue
 
-        cells = distribute_position(pos, units, covers_by_unit)
+        if pos.heating is not None:
+            cells, heating_result = distribute_heating_position(pos)
+            heating_costs.append(heating_result)
+        else:
+            cells = distribute_position(pos, units, covers_by_unit)
         if not cells:
             continue
 
-        eff_total = effective_total(pos)
+        eff_total = heating_result.pool.total_amount if pos.heating is not None else effective_total(pos)
 
         # Tenant's own cells (target lease) -> the COST line for this position.
         target_cells = [
@@ -250,11 +256,14 @@ def compute_bk_settlement(inp: SettlementInput) -> EngineResult:
         advance_payments_total=advance,
         balance=balance,
         vacancy_attribution=tuple(vacancy_attr),
+        heating_costs=tuple(heating_costs),
     )
 
 
 def _position_note(pos: CostPositionInput) -> str:
     """A short, prueffest note for a position's line (section 5/8)."""
+    if pos.heating is not None:
+        return "HeizkostenV intern: Grund-/Verbrauchsanteil; Grundkosten zeitanteilig (§9b), keine Verbrauchsschätzung"
     if pos.tenant_distribution_key == "EXTERNE_ABRECHNUNG":
         return "extern abgerechnet (Messdienst)"
     if pos.tenant_apportionable == "TEILWEISE_PRUEFEN":

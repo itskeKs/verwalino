@@ -149,6 +149,7 @@ class CostPositionInput:
     # Per-unit direct amounts for EXTERNE_ABRECHNUNG / MANUELLER_BETRAG.
     external_amounts: tuple[ExternalAmountInput, ...] = ()
     manual_amounts: tuple[ManualAmountInput, ...] = ()
+    heating: HeatingPositionInput | None = None
 
 
 @dataclass(frozen=True)
@@ -234,6 +235,7 @@ class EngineResult:
     # Vacancy attribution per position (so "no cent lost via vacancy" is
     # demonstrable; section 3.3). Maps cost_entry_id -> list of (owner, amount).
     vacancy_attribution: tuple["VacancyShare", ...] = ()
+    heating_costs: tuple[HeatingAllocationResult, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -641,3 +643,32 @@ class HeatingCostResult:
     gross_total: Decimal
     reduction_total: Decimal
     amount_due: Decimal
+
+
+@dataclass(frozen=True)
+class HeatingSliceInput:
+    id: uuid.UUID
+    unit_id: uuid.UUID
+    period_from: date
+    period_to: date
+    lease_agreement_id: uuid.UUID | None
+    owner_profile_id: uuid.UUID | None
+    base_quantity: Decimal
+    consumption: Decimal | None
+
+
+@dataclass(frozen=True)
+class HeatingPositionInput:
+    kind: str
+    consumption_fraction: Decimal
+    base_key: str
+    consumption_recorded: bool
+    mandatory_seventy_percent: bool
+    slices: tuple[HeatingSliceInput, ...]
+
+
+@dataclass(frozen=True)
+class HeatingAllocationResult:
+    cost_entry_id: uuid.UUID
+    pool: HeatingPoolResult
+    slices: tuple[HeatingSliceInput, ...]

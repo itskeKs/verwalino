@@ -56,6 +56,8 @@ import type {
   AdvanceProposal,
   AdvanceProposalApply,
   ComputeRequest,
+  HeatingBaseKey,
+  HeatingConsumptionCandidate,
   EconomicPlan,
   EconomicPlanCreate,
   PlanComputeRequest,
@@ -723,6 +725,16 @@ export function setAdvancePayments(
   body: AdvancePaymentsUpdate,
 ): Promise<SettlementRun> {
   return api.patch<SettlementRun>(`/api/settlements/${id}/advance-payments`, body);
+}
+
+export function getHeatingConsumption(
+  runId: string,
+  costEntryId: string,
+  meterType: string,
+  baseKey: HeatingBaseKey,
+): Promise<HeatingConsumptionCandidate[]> {
+  const query = new URLSearchParams({ cost_entry_id: costEntryId, meter_type: meterType, base_key: baseKey });
+  return api.get<HeatingConsumptionCandidate[]>(`/api/settlements/${encodeURIComponent(runId)}/heating-consumption?${query}`);
 }
 
 export function computeSettlement(
