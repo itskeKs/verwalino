@@ -1032,6 +1032,10 @@ export function annotateChallenge(
 
 // --- M8: PDFs ---
 
+export function meetingInvitationPdfUrl(meetingId: string): string {
+  return `/api/meetings/${meetingId}/invitation.pdf`;
+}
+
 export function meetingProtocolPdfUrl(meetingId: string): string {
   return `/api/meetings/${meetingId}/pdf`;
 }

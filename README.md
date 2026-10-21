@@ -246,6 +246,24 @@ Sonderumlagen werden erst nach ihrem wirklichen Fälligkeitstag (zuzüglich Kare
 angerechnet. `scripts/acceptance/t33_special_levies_browser.cjs` prüft die UI-Anlage,
 3.000 EUR offen und eine echte planlose Eigentümermahnung samt Reload.
 
+### Einladung zur Eigentümerversammlung (Phase 2)
+
+„Einladung als PDF“ im Versammlungsdetail öffnet
+`GET /api/meetings/{id}/invitation.pdf` im Browser. Jede zum Versammlungstermin
+berechtigte Eigentümerprofil-Identität erhält eine eigene Seite mit Namen,
+Postanschrift, Datum/Ort, vorhandenem Einladungstext und sortierter Tagesordnung.
+Mehrere Einheiten desselben Profils erzeugen keine doppelten Briefe; Miteigentümer
+mit getrennten Profilen erhalten getrennte Seiten. Objekt- und Kontakt-Exportrechte
+werden vor und nach dem Rendern geprüft; ein gesperrter Kontakt erzeugt keine
+scheinbar vollständige Teilausgabe. Fehlende Anschriften, leere Empfängerlisten
+oder Seitenüberlauf werden mit 422 abgewiesen, nicht erfunden oder abgeschnitten.
+
+Bei weniger als 21 Kalendertagen ab Export-/Lesedatum erscheint der gemeinsame
+Backend-Hinweis in UI und PDF (§ 24 Abs. 4 WEG). Er bestätigt weder Versand noch
+rechtzeitigen Zugang. Der Export verändert keine Versammlung, Tagesordnung,
+Eigentumshistorie oder bestehende Protokolle. Der echte Chromeablauf ist mit
+`scripts/acceptance/t34_meeting_invitation_browser.cjs` wiederholbar.
+
 ## Zähler-API (Phase 2)
 
 `GET/POST /api/meters` verwaltet Objektzähler und optional einer Einheit

@@ -26,8 +26,9 @@ from app.services.meeting_pdf import (
     MeetingDisplayNames,
     render_niederschrift_pdf,
     render_register_pdf,
+    render_invitation_pdf,
 )
-from app.services.meeting_service import MeetingService
+from app.services.meeting_service import MeetingService, invitation_short_notice
 
 router = APIRouter(prefix="/api/meetings", tags=["meetings"])
 
@@ -61,6 +62,7 @@ class MeetingOut(BaseModel):
     status: str
     invitation_text: str | None
     protocol_text: str | None
+    invitation_short_notice: bool
 
     model_config = {"from_attributes": True}
 
@@ -151,6 +153,7 @@ def _meeting_out(m) -> MeetingOut:
         status=m.status,
         invitation_text=m.invitation_text,
         protocol_text=m.protocol_text,
+        invitation_short_notice=invitation_short_notice(m.meeting_date),
     )
 
 
@@ -432,6 +435,36 @@ async def annotate_challenge(
 # ===========================================================================
 # PDFs
 # ===========================================================================
+@router.get("/{meeting_id}/invitation.pdf")
+async def meeting_invitation_pdf(
+    meeting_id: uuid.UUID,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+):
+    svc = MeetingService(db, auth.organization_id, auth.user_id)
+    await svc.require_source_access("owners_meeting", meeting_id, "export")
+    meeting = await OwnersMeetingRepository(db, auth.organization_id).get_by_id(meeting_id)
+    if meeting is None:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    recipients = await svc.invitation_recipients(meeting)
+    agenda = list(await AgendaItemRepository(db, auth.organization_id).list_for_meeting(meeting_id))
+    prop_name, prop_address = await svc.resolve_property_display(meeting.property_id)
+    names = MeetingDisplayNames(property_name=prop_name, property_address=prop_address)
+    await svc.require_source_access("owners_meeting", meeting_id, "export")
+    try:
+        pdf = render_invitation_pdf(
+            meeting, agenda, recipients, names, invitation_short_notice(meeting.meeting_date),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await svc.require_source_access("owners_meeting", meeting_id, "export")
+    # Contact export rights can be revoked while the PDF is being rendered too.
+    await svc.invitation_recipients(meeting)
+    return Response(content=pdf, media_type="application/pdf", headers={
+        "Content-Disposition": f'inline; filename="einladung_{meeting_id}.pdf"',
+    })
+
+
 @router.get("/{meeting_id}/pdf")
 async def meeting_protocol_pdf(
     meeting_id: uuid.UUID,

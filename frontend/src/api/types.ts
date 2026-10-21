@@ -1250,6 +1250,7 @@ export interface Meeting {
   status: MeetingStatus;
   invitation_text: string | null;
   protocol_text: string | null;
+  invitation_short_notice?: boolean;
 }
 
 export interface MeetingCreate {
