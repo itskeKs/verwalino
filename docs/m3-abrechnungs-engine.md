@@ -246,6 +246,30 @@ Gewicht = gemessener Verbrauch der Einheit im Abrechnungszeitraum, ermittelt aus
 - **Zählertausch / fehlende Ablesung** im Zeitraum: **[OFFEN/§18]** — Schätzung/Ersatzverfahren ist fachlich (HeizkostenV-/Messdienst-Logik) und in M3 **nicht** automatisch. Provisorisch: Die Engine verlangt für `VERBRAUCH` vollständige, plausible Anfangs-/Endablesungen je teilnehmender Einheit; fehlt etwas → Eskalation, keine stille Schätzung.
 - **Heizung/Warmwasser** laufen in Phase 1 **nicht** über den `VERBRAUCH`-Schlüssel, sondern über `EXTERNE_ABRECHNUNG` (extern HeizkostenV-konform erstellt, SDD §6.9/§7.1, §5 dieses Dokuments). `VERBRAUCH` ist für eigene Zähler (z. B. Kaltwasser) gedacht, die das System selbst führt (SDD §6.2.1).
 
+#### Periodische Zählervorbelegung seit Phase 2 (T31)
+
+Ohne expliziten Handwert wird je Einheit der eindeutig nächste Anfangs- und
+Endstand innerhalb jeweils ±31 Tagen verwendet. Die Differenz bleibt exakt auf
+vier Dezimalstellen; es gibt weder Interpolation noch Rundung auf ganze Einheiten.
+Gleichabstand, doppelte nächste Ablesungen, identische/verkehrte Ablesetage oder
+Rückgänge verlangen Handeingabe. Automatik erfordert genau einen passenden
+Einheitszähler (`meter_type`, getrimmt/großgeschrieben, gleich Kostenkategoriecode)
+und eine einzige relevante Verbrauchsart. Mehrere mögliche Austauschzähler,
+Gemeinschaftszähler und verschiedene Verbrauchskategorien werden nicht still
+kombiniert. Eine fehlende Einheit darf nicht aus dem Verteilungsnenner verschwinden.
+
+Der Entwurfsabruf `GET /api/settlements/{id}/consumption-suggestions` verwendet
+READ-Kreisrechte mit vollständiger Quellen-/Klassifikationsprüfung. Die Oberfläche
+zeigt die tatsächlichen Stand-IDs, Daten und Werte; automatische Vorbelegungen
+werden nicht als manuelle Overrides zurückgesendet. Explizite Handwerte, auch 0,
+haben Vorrang. Compute und Finalize bestimmen die Basis unter der bestehenden
+Finanzsperre frisch. Nur tatsächlich automatisch verwendete Werte ergänzen
+`inputs.meter_consumption_sources` im Snapshot; reine Handwertsnapshots und alte
+finalisierte Abrechnungen bleiben unverändert. Finale Ansichten fragen keine
+aktuellen Vorschläge ab. Die vorhandenen Kosteneditoren konvertieren ihre
+UI-Auswahl über `costVocabulary` in kanonische DB-Schlüssel; Ergebniszeilen zeigen
+deren menschliche Bezeichnungen.
+
 ### 2.5 `EXTERNE_ABRECHNUNG` und `MANUELLER_BETRAG` (direkte per-Einheit-Beträge)
 
 Diese beiden Schlüssel **verteilen nicht** — sie übernehmen einen **bereits feststehenden Betrag je Einheit/Adressat**:

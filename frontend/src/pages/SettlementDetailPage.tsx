@@ -20,6 +20,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   getSettlement,
+  getConsumptionSuggestions,
   getAdvanceProposal,
   applyAdvanceProposal,
   setAdvancePayments,
@@ -39,6 +40,7 @@ import {
 } from "../api/endpoints";
 import type {
   AdvanceProposal,
+  ConsumptionSuggestion,
   LeaseRentChange,
   SettlementRun,
   SettlementLine,
@@ -56,6 +58,7 @@ import type {
 } from "../api/types";
 import { useAuth } from "../auth/useAuth";
 import { ApiError } from "../api/client";
+import { fromDbDistributionKey } from "../lib/costVocabulary";
 import {
   needsExternalInput,
   needsManualInput,
@@ -217,6 +220,12 @@ export function SettlementDetailPage() {
   const [manualAmounts, setManualAmounts] = useState<ManualAmountIn[]>([]);
   const [unitMetrics, setUnitMetrics] = useState<UnitMetricIn[]>([]);
   const [showInputs, setShowInputs] = useState(false);
+  const [consumptionSuggestions, setConsumptionSuggestions] = useState<ConsumptionSuggestion[]>([]);
+  const [manualConsumptionIds, setManualConsumptionIds] = useState<Set<string>>(new Set());
+  const [consumptionLoading, setConsumptionLoading] = useState(false);
+  const [consumptionError, setConsumptionError] = useState<string | null>(null);
+  const loadGeneration = useRef(0);
+  const consumptionBlocked = consumptionLoading || Boolean(consumptionError);
 
   // Preview lines (not persisted)
   const [previewRun, setPreviewRun] = useState<SettlementRun | null>(null);
@@ -226,6 +235,10 @@ export function SettlementDetailPage() {
   const isFinalized = run?.status === "finalized";
 
   function initStructuredInputs(entries: CostEntry[], r: SettlementRun) {
+    setManualConsumptionIds(new Set());
+    setConsumptionSuggestions([]);
+    setConsumptionError(null);
+    setConsumptionLoading(false);
     const unitId = r.unit_id;
     if (!unitId) return;
 
@@ -265,8 +278,30 @@ export function SettlementDetailPage() {
     }
   }
 
+  const loadConsumption = useCallback(async (r: SettlementRun, entries: CostEntry[], generation: number) => {
+    if (r.status !== "draft" || !needsConsumption(entries)) return;
+    setConsumptionLoading(true);
+    setConsumptionError(null);
+    try {
+      const sources = await getConsumptionSuggestions(r.id);
+      if (generation !== loadGeneration.current) return;
+      setConsumptionSuggestions(sources);
+      setManualConsumptionIds(new Set());
+      setUnitMetrics(previous => sources.length ? sources.map(source => ({
+        unit_id: source.unit_id, consumption: source.consumption ?? "",
+        person_count: needsPersonCount(entries)
+          ? previous.find(row => row.unit_id === source.unit_id)?.person_count ?? undefined : null,
+      })) : previous);
+    } catch (err) {
+      if (generation === loadGeneration.current) setConsumptionError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      if (generation === loadGeneration.current) setConsumptionLoading(false);
+    }
+  }, []);
+
   const reload = useCallback(() => {
     if (!runId) return;
+    const generation = ++loadGeneration.current;
     let active = true;
     setLoading(true);
     setError(null);
@@ -279,8 +314,8 @@ export function SettlementDetailPage() {
       listPersons(),
       listCostCategories(),
     ])
-      .then(([r, p, l, u, tp, per, c]) => {
-        if (!active) return;
+      .then(async ([r, p, l, u, tp, per, c]) => {
+        if (!active || generation !== loadGeneration.current) return;
         setRun(r);
         setProperties(p);
         setLeases(l);
@@ -291,27 +326,24 @@ export function SettlementDetailPage() {
         setAdvanceValue(r.advance_payments_total ?? "");
         // Load cost entries for the property
         if (r.property_id) {
-          listCostEntries({ property_id: r.property_id, status: "confirmed" }).then(
-            (entries) => {
-              if (!active) return;
-              setCostEntries(entries);
-              // Initialize structured inputs for entries that need them
-              initStructuredInputs(entries, r);
-            },
-          );
+          const entries = await listCostEntries({ property_id: r.property_id, status: "confirmed" });
+          if (!active || generation !== loadGeneration.current) return;
+          setCostEntries(entries);
+          initStructuredInputs(entries, r);
+          await loadConsumption(r, entries, generation);
         }
       })
       .catch((err) => {
-        if (!active) return;
+        if (!active || generation !== loadGeneration.current) return;
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert.");
         } else {
           setError(String(err));
         }
       })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [runId]);
+      .finally(() => { if (active && generation === loadGeneration.current) setLoading(false); });
+    return () => { active = false; if (generation === loadGeneration.current) loadGeneration.current++; };
+  }, [runId, loadConsumption]);
 
   useEffect(() => {
     return reload();
@@ -324,7 +356,8 @@ export function SettlementDetailPage() {
 
   function getUnitLabel(id: string): string {
     const unit = units.find((u) => u.id === id);
-    return unit ? `${unit.number} (${unit.location})` : id.slice(0, 8);
+    if (unit) return unit.location ? `${unit.number} (${unit.location})` : unit.number;
+    return consumptionSuggestions.find(source => source.unit_id === id)?.unit_label ?? id.slice(0, 8);
   }
 
   function getTenantName(tenantProfileId: string | null): string {
@@ -362,10 +395,10 @@ export function SettlementDetailPage() {
       external_amounts: externalAmounts.filter((e) => e.tenant_amount !== ""),
       manual_amounts: manualAmounts.filter((m) => m.amount !== ""),
       unit_metrics: unitMetrics
-        .filter((u) => u.consumption || u.person_count != null)
+        .filter((u) => (manualConsumptionIds.has(u.unit_id) && u.consumption) || u.person_count != null)
         .map((u) => ({
           ...u,
-          consumption: u.consumption || null,
+          consumption: manualConsumptionIds.has(u.unit_id) ? u.consumption?.replace(",", ".") || null : null,
           person_count: u.person_count ?? null,
         })),
     };
@@ -411,8 +444,12 @@ export function SettlementDetailPage() {
     }
   }
 
+  function handleConsumptionRetry() {
+    if (run) void loadConsumption(run, costEntries, loadGeneration.current);
+  }
+
   async function handleCompute() {
-    if (!runId) return;
+    if (!runId || consumptionBlocked) return;
     setActionLoading(true);
     setActionError(null);
     setShowPreview(false);
@@ -431,7 +468,7 @@ export function SettlementDetailPage() {
   }
 
   async function handlePreview() {
-    if (!runId) return;
+    if (!runId || consumptionBlocked) return;
     setActionLoading(true);
     setActionError(null);
     try {
@@ -450,7 +487,7 @@ export function SettlementDetailPage() {
   }
 
   async function handleFinalize() {
-    if (!runId) return;
+    if (!runId || consumptionBlocked) return;
     const confirmed = window.confirm(
       "Abrechnung finalisieren? Nach der Finalisierung ist die Abrechnung " +
         "unveraenderbar (GoBD). Aenderungen sind nur als Korrekturabrechnung moeglich.",
@@ -562,7 +599,7 @@ export function SettlementDetailPage() {
                     </td>
                     <td>
                       {ln.distribution_key
-                        ? DISTRIBUTION_KEY_LABELS[ln.distribution_key] ??
+                        ? DISTRIBUTION_KEY_LABELS[fromDbDistributionKey(ln.distribution_key)] ??
                           ln.distribution_key
                         : "-"}
                     </td>
@@ -637,6 +674,9 @@ export function SettlementDetailPage() {
     return (
       <div className="card" style={{ marginBottom: "1rem" }}>
         <h2>Strukturierte Eingaben</h2>
+        {consumptionLoading && <p>Zählerbasis wird geladen …</p>}
+        {consumptionError && <p role="alert">{consumptionError} <button type="button" className="btn"
+          onClick={handleConsumptionRetry}>Zählerbasis erneut laden</button></p>}
         <p
           style={{
             fontSize: "0.85rem",
@@ -709,23 +749,37 @@ export function SettlementDetailPage() {
             <div className="form-grid">
               {unitMetrics.map((m, idx) => (
                 <div key={`metric-${idx}`} style={{ display: "contents" }}>
-                  {m.consumption !== null && (
+                  {needsConsumption(costEntries) && (
                     <label>
                       Verbrauch ({getUnitLabel(m.unit_id)})
                       <input
                         type="text"
                         inputMode="decimal"
                         placeholder="0.000"
+                        aria-label={`Verbrauch (${getUnitLabel(m.unit_id)})`}
+                        disabled={consumptionLoading || actionLoading}
                         value={m.consumption ?? ""}
                         onChange={(e) => {
+                          const value = e.target.value;
                           const next = [...unitMetrics];
                           next[idx] = {
                             ...m,
-                            consumption: e.target.value || null,
+                            consumption: value,
                           };
                           setUnitMetrics(next);
+                          setManualConsumptionIds(previous => {
+                            const updated = new Set(previous);
+                            if (value) updated.add(m.unit_id); else updated.delete(m.unit_id);
+                            return updated;
+                          });
                         }}
                       />
+                      {consumptionSuggestions.filter(source => source.unit_id === m.unit_id).map(source =>
+                        <small key={source.unit_id} style={{ display: "block" }}>
+                          {source.start_reading && source.end_reading
+                            ? `Zählerbasis: ${source.start_reading.value} (${source.start_reading.reading_date}) → ${source.end_reading.value} (${source.end_reading.reading_date}), jeweils ±31 Tage. ${manualConsumptionIds.has(m.unit_id) ? "Handwert wird verwendet." : "Wird bei Berechnung frisch geprüft."}`
+                            : source.reason}
+                        </small>)}
                     </label>
                   )}
                   {m.person_count !== null && (
@@ -796,6 +850,7 @@ export function SettlementDetailPage() {
 
       {actionError && (
         <div
+          role="alert"
           className="card"
           style={{
             marginBottom: "1rem",
@@ -1066,21 +1121,21 @@ export function SettlementDetailPage() {
             <button
               className="btn btn--primary"
               onClick={handleCompute}
-              disabled={actionLoading}
+              disabled={actionLoading || consumptionBlocked}
             >
               {actionLoading ? "Berechnen..." : "Berechnen"}
             </button>
             <button
               className="btn"
               onClick={handlePreview}
-              disabled={actionLoading}
+              disabled={actionLoading || consumptionBlocked}
             >
               Vorschau
             </button>
             <button
               className="btn btn--primary"
               onClick={handleFinalize}
-              disabled={actionLoading}
+              disabled={actionLoading || consumptionBlocked}
               style={{ background: "#2e7d32", borderColor: "#2e7d32" }}
             >
               Finalisieren

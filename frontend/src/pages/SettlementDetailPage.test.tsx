@@ -12,11 +12,13 @@ import { AuthCtx } from "../auth/useAuth";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import * as api from "../api/endpoints";
-import type { CostEntry, SettlementRun } from "../api/types";
+import type { ConsumptionSuggestion, CostEntry, SettlementRun } from "../api/types";
+import { ApiError } from "../api/client";
 
 vi.mock("../api/endpoints", async (importOriginal) => ({
   ...await importOriginal<typeof import("../api/endpoints")>(),
   getSettlement: vi.fn(),
+  getConsumptionSuggestions: vi.fn().mockResolvedValue([{ unit_id: "unit-1", unit_label: "1", consumption: null, meter_id: null, start_reading: null, end_reading: null, reason: "Handeingabe erforderlich." }]),
   listProperties: vi.fn().mockResolvedValue([]),
   listLeases: vi.fn().mockResolvedValue([]),
   listUnits: vi.fn().mockResolvedValue([]),
@@ -406,5 +408,119 @@ describe("T28 monthly advance proposal", () => {
     fetchProposal.mockReturnValueOnce(pending.promise); accept(); cleanup();
     await act(async () => pending.reject(new TypeError("Late network failure")));
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+const consumptionRows: ConsumptionSuggestion[] = [
+  ["unit-1", "1", "30.0000", "130.0000"], ["unit-2", "2", "70.0000", "170.0000"],
+].map(([unit_id, unit_label, consumption, end]) => ({
+  unit_id, unit_label, consumption, meter_id: `meter-${unit_id}`, reason: null,
+  start_reading: { id: `start-${unit_id}`, reading_date: "2025-01-01", value: "100.0000" },
+  end_reading: { id: `end-${unit_id}`, reading_date: "2025-12-31", value: end },
+}));
+const consumptionDraft: SettlementRun = { ...finalized, status: "draft", snapshot_sha256: null,
+  total_cost: null, balance: null, advance_payments_total: "0.00", finalized_at: null, finalized_by: null,
+  period_start: "2025-01-01", period_end: "2025-12-31" };
+async function showConsumption() {
+  showProposal();
+  fireEvent.click(await screen.findByRole("button", { name: "Strukturierte Eingaben anzeigen" }));
+  return screen.findByLabelText(/^Verbrauch \(1/);
+}
+describe("T31 meter consumption prefill", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.getSettlement).mockReset().mockResolvedValue(structuredClone(consumptionDraft));
+    vi.mocked(api.listCostEntries).mockResolvedValue([createCostEntry({ tenant_distribution_key: "VERBRAUCH" })]);
+    vi.mocked(api.listUnits).mockResolvedValue([
+      { id: "unit-1", number: "1", location: "EG" }, { id: "unit-2", number: "2", location: "OG" },
+    ] as never);
+    vi.mocked(api.getConsumptionSuggestions).mockReset().mockResolvedValue(structuredClone(consumptionRows));
+    vi.mocked(api.computeSettlement).mockResolvedValue(structuredClone(consumptionDraft));
+  });
+  it.each([["VERBRAUCH", "Verbrauch"], ["WOHNFLAECHE", "Flaeche"], ["BEHEIZTE_FLAECHE", "Beheizte Flaeche"], ["EINHEIT", "Einheiten"], ["PERSONENZAHL", "Personen"], ["EXTERNE_ABRECHNUNG", "Extern"], ["MANUELLER_BETRAG", "Manuell"]])("renders canonical key %s as %s", async (key, label) => {
+    vi.mocked(api.getSettlement).mockResolvedValue({ ...consumptionDraft, total_cost: "30.00", balance: "30.00", lines: [{
+      id: "line", cost_entry_id: "water", line_type: "COST", cost_category_code: "KALTWASSER", label: "Kaltwasser",
+      distribution_key: key, total_amount: "100.00", distribution_base_total: "100.000000", distribution_base_share: "30.000000",
+      time_share_days: 365, time_share_total_days: 365, amount: "30.00", sort_order: 0, note: "",
+    }] });
+    showProposal();
+    expect(await screen.findByRole("cell", { name: label })).toBeVisible();
+  });
+  it("prefills every authorized unit and explains the actual reading basis", async () => {
+    const first = await showConsumption();
+    await waitFor(() => expect(first).toHaveValue("30.0000"));
+    expect(screen.getByLabelText(/^Verbrauch \(2/)).toHaveValue("70.0000");
+    expect(screen.getAllByText(/Zählerbasis:/)).toHaveLength(2);
+    expect(api.getConsumptionSuggestions).toHaveBeenCalledWith("run-1");
+  });
+  it("does not echo automatic prefill as manual input", async () => {
+    const first = await showConsumption();
+    await waitFor(() => expect(first).toHaveValue("30.0000"));
+    fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
+    await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledWith("run-1", {
+      external_amounts: [], manual_amounts: [], unit_metrics: [],
+    }));
+  });
+  it("sends an explicitly entered manual zero and no automatic peer value", async () => {
+    const first = await showConsumption();
+    await waitFor(() => expect(first).toHaveValue("30.0000"));
+    fireEvent.change(first, { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
+    await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledWith("run-1", {
+      external_amounts: [], manual_amounts: [], unit_metrics: [{ unit_id: "unit-1", consumption: "0", person_count: null }],
+    }));
+  });
+  it("keeps a cleared consumption field visible", async () => {
+    const first = await showConsumption();
+    fireEvent.change(first, { target: { value: "9" } });
+    fireEvent.change(first, { target: { value: "" } });
+    expect(screen.getByLabelText(/^Verbrauch \(1/)).toBeVisible();
+    expect(screen.getByLabelText(/^Verbrauch \(1/)).toHaveValue("");
+  });
+  it("shows source loading failures and retries without inventing zero", async () => {
+    vi.mocked(api.getConsumptionSuggestions).mockRejectedValueOnce(new ApiError(403, "Zählerbasis gesperrt"));
+    await showConsumption();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Zählerbasis gesperrt");
+    expect(screen.getByRole("button", { name: "Berechnen" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Zählerbasis erneut laden" }));
+    await waitFor(() => expect(screen.getByLabelText(/^Verbrauch \(1/)).toHaveValue("30.0000"));
+    expect(screen.getByRole("button", { name: "Berechnen" })).toBeEnabled();
+  });
+  it("ignores an obsolete meter response after switching settlement", async () => {
+    const pending = deferred<ConsumptionSuggestion[]>();
+    vi.mocked(api.getSettlement).mockResolvedValueOnce(structuredClone(consumptionDraft))
+      .mockResolvedValueOnce({ ...consumptionDraft, id: "run-2" });
+    vi.mocked(api.getConsumptionSuggestions).mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce(consumptionRows.map(row => ({ ...row, consumption: "5.0000" })));
+    showProposal();
+    await waitFor(() => expect(api.getConsumptionSuggestions).toHaveBeenCalledWith("run-1"));
+    fireEvent.click(screen.getByRole("link", { name: "Andere Abrechnung" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Strukturierte Eingaben anzeigen" }));
+    await waitFor(() => expect(screen.getByLabelText(/^Verbrauch \(1/)).toHaveValue("5.0000"));
+    await act(async () => pending.resolve(structuredClone(consumptionRows)));
+    expect(screen.getByLabelText(/^Verbrauch \(1/)).toHaveValue("5.0000");
+    expect(api.getConsumptionSuggestions).toHaveBeenLastCalledWith("run-2");
+  });
+  it("does not set meter source errors after unmount", async () => {
+    const pending = deferred<ConsumptionSuggestion[]>();
+    vi.mocked(api.getConsumptionSuggestions).mockReturnValueOnce(pending.promise);
+    showProposal();
+    await waitFor(() => expect(api.getConsumptionSuggestions).toHaveBeenCalledWith("run-1"));
+    cleanup();
+    await act(async () => pending.reject(new ApiError(403, "Late source failure")));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+  it("retains an explicit manual zero after a failed calculation and retries it", async () => {
+    vi.mocked(api.computeSettlement).mockRejectedValueOnce(new ApiError(422, "Ablesungen prüfen"));
+    const first = await showConsumption();
+    fireEvent.change(first, { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Ablesungen prüfen");
+    expect(first).toHaveValue("0");
+    fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
+    await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledTimes(2));
+    expect(api.computeSettlement).toHaveBeenLastCalledWith("run-1", {
+      external_amounts: [], manual_amounts: [], unit_metrics: [{ unit_id: "unit-1", consumption: "0", person_count: null }],
+    });
   });
 });

@@ -3,7 +3,7 @@
  */
 
 import { api, uploadFormData } from "./client";
-import type { Meter, MeterCreate, MeterPatch, MeterReading, MeterReadingCreate } from "./types";
+import type { ConsumptionSuggestion, Meter, MeterCreate, MeterPatch, MeterReading, MeterReadingCreate } from "./types";
 import type { SourceClassificationCommand, SourceClassificationReceipt, SourceAdmissionReviewCommand, SourceAdmissionReviewReceipt } from "./types";
 import type {
   DeadlineItem,
@@ -1097,6 +1097,10 @@ export function createUser(
 // T09: Paid advances derived
 export function derivePaidAdvances(runId: string): Promise<Array<{ owner_profile_id: string; paid_total: string }>> {
   return api.post<Array<{ owner_profile_id: string; paid_total: string }>>(`/api/weg-settlements/${runId}/paid-advances-derived`);
+}
+
+export function getConsumptionSuggestions(runId: string): Promise<ConsumptionSuggestion[]> {
+  return api.get<ConsumptionSuggestion[]>(`/api/settlements/${encodeURIComponent(runId)}/consumption-suggestions`);
 }
 
 export function listMeters(propertyId: string, unitId?: string): Promise<Meter[]> {

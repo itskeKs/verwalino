@@ -30,6 +30,10 @@ import { SourceBadge } from "../components/SourceBadge";
 import {
   DISTRIBUTION_KEY_LABELS,
   APPORTIONABILITY_LABELS,
+  fromDbDistributionKey,
+  toDbDistributionKey,
+  fromDbApportionability,
+  toDbApportionability,
 } from "../lib/costVocabulary";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -552,11 +556,12 @@ export function CostEntryDetailPage() {
             <label>
               Verteilerschl. Eigentuemer
               <select
-                value={editForm.owner_distribution_key ?? ""}
+                aria-label="Verteilerschl. Eigentuemer"
+                value={fromDbDistributionKey(editForm.owner_distribution_key ?? "")}
                 onChange={(e) =>
                   setEditForm({
                     ...editForm,
-                    owner_distribution_key: e.target.value || null,
+                    owner_distribution_key: e.target.value ? toDbDistributionKey(e.target.value) : null,
                   })
                 }
               >
@@ -570,11 +575,12 @@ export function CostEntryDetailPage() {
             <label>
               Verteilerschl. Mieter
               <select
-                value={editForm.tenant_distribution_key ?? ""}
+                aria-label="Verteilerschl. Mieter"
+                value={fromDbDistributionKey(editForm.tenant_distribution_key ?? "")}
                 onChange={(e) =>
                   setEditForm({
                     ...editForm,
-                    tenant_distribution_key: e.target.value || null,
+                    tenant_distribution_key: e.target.value ? toDbDistributionKey(e.target.value) : null,
                   })
                 }
               >
@@ -588,11 +594,12 @@ export function CostEntryDetailPage() {
             <label>
               Umlagefaehigkeit
               <select
-                value={editForm.tenant_apportionable ?? "full"}
+                aria-label="Umlagefaehigkeit"
+                value={fromDbApportionability(editForm.tenant_apportionable ?? "UMLAGEFAEHIG")}
                 onChange={(e) =>
                   setEditForm({
                     ...editForm,
-                    tenant_apportionable: e.target.value || null,
+                    tenant_apportionable: e.target.value ? toDbApportionability(e.target.value) : null,
                   })
                 }
               >
@@ -762,11 +769,12 @@ export function CostEntryDetailPage() {
             <label>
               Verteilerschl. Eigentuemer
               <select
-                value={correctionForm.owner_distribution_key ?? ""}
+                aria-label="Verteilerschl. Eigentuemer"
+                value={fromDbDistributionKey(correctionForm.owner_distribution_key ?? "")}
                 onChange={(e) =>
                   setCorrectionForm({
                     ...correctionForm,
-                    owner_distribution_key: e.target.value || null,
+                    owner_distribution_key: e.target.value ? toDbDistributionKey(e.target.value) : null,
                   })
                 }
               >
@@ -780,11 +788,12 @@ export function CostEntryDetailPage() {
             <label>
               Verteilerschl. Mieter
               <select
-                value={correctionForm.tenant_distribution_key ?? ""}
+                aria-label="Verteilerschl. Mieter"
+                value={fromDbDistributionKey(correctionForm.tenant_distribution_key ?? "")}
                 onChange={(e) =>
                   setCorrectionForm({
                     ...correctionForm,
-                    tenant_distribution_key: e.target.value || null,
+                    tenant_distribution_key: e.target.value ? toDbDistributionKey(e.target.value) : null,
                   })
                 }
               >
@@ -798,11 +807,12 @@ export function CostEntryDetailPage() {
             <label>
               Umlagefaehigkeit
               <select
-                value={correctionForm.tenant_apportionable ?? "full"}
+                aria-label="Umlagefaehigkeit"
+                value={fromDbApportionability(correctionForm.tenant_apportionable ?? "UMLAGEFAEHIG")}
                 onChange={(e) =>
                   setCorrectionForm({
                     ...correctionForm,
-                    tenant_apportionable: e.target.value || null,
+                    tenant_apportionable: e.target.value ? toDbApportionability(e.target.value) : null,
                   })
                 }
               >

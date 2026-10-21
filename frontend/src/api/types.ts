@@ -1501,3 +1501,18 @@ export interface MeterReadingCreate {
   value: string;
   period?: string | null;
 }
+
+export interface ConsumptionReading {
+  id: string;
+  reading_date: string;
+  value: string;
+}
+export interface ConsumptionSuggestion {
+  unit_id: string;
+  unit_label: string;
+  consumption: string | null;
+  meter_id: string | null;
+  start_reading: ConsumptionReading | null;
+  end_reading: ConsumptionReading | null;
+  reason: string | null;
+}

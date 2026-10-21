@@ -71,6 +71,22 @@ class SettlementBatchCreate(BaseModel):
         return self
 
 
+class ConsumptionReadingOut(BaseModel):
+    id: str
+    reading_date: date
+    value: str
+
+
+class ConsumptionSuggestionOut(BaseModel):
+    unit_id: str
+    unit_label: str
+    consumption: str | None
+    meter_id: str | None
+    start_reading: ConsumptionReadingOut | None
+    end_reading: ConsumptionReadingOut | None
+    reason: str | None
+
+
 class AdvanceProposalOut(BaseModel):
     lease_agreement_id: str
     tenant_cost: str
@@ -323,6 +339,15 @@ async def get_settlement(
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
     return _run_out(run, list(lines))
+
+
+@router.get("/{run_id}/consumption-suggestions", response_model=list[ConsumptionSuggestionOut])
+async def get_consumption_suggestions(
+    run_id: uuid.UUID,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+):
+    return await SettlementService(db, auth.organization_id, auth.user_id).consumption_suggestions(run_id)
 
 
 @router.get("/{run_id}/advance-proposal", response_model=AdvanceProposalOut)

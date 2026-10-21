@@ -1606,3 +1606,215 @@ async def test_proposal_acceptance_committed_before_response(rent_world, rent_db
                 json={"valid_from":"2026-05-01"})
         assert result.status_code == 201, result.text
         assert observed == [1], "Rent history must commit before sending HTTP 201"
+
+
+@pytest.fixture
+def metered_m3(seed_data):
+    """Independent four-unit annual water scenario; synthetic test DB only."""
+    from urllib.parse import urlparse
+    import psycopg2
+
+    target = urlparse(SYNC_URL)
+    assert target.hostname == "127.0.0.1" and target.port == 55432
+    world = _seed_m3(seed_data)
+    conn = psycopg2.connect(SYNC_URL)
+    try:
+        with conn, conn.cursor() as cur:
+            for key, quantity in [("u1", "30"), ("u2", "20"), ("u3", "10"), ("u4", "40")]:
+                meter_id = str(uuid.uuid4())
+                cur.execute("""INSERT INTO meter
+                    (id,organization_id,property_id,unit_id,meter_number,meter_type,location)
+                    VALUES (%s,%s,%s,%s,%s,'KALTWASSER','synthetisch')""",
+                    (meter_id, str(world["org_a_id"]), world["property"], world[key], key))
+                for day, value in [(date(2025, 1, 1), Decimal("100.0000")),
+                                   (date(2025, 12, 31), Decimal("100.0000") + Decimal(quantity))]:
+                    cur.execute("""INSERT INTO meter_reading
+                        (id,organization_id,meter_id,reading_date,value,period)
+                        VALUES (%s,%s,%s,%s,%s,'2025')""",
+                        (str(uuid.uuid4()), str(world["org_a_id"]), meter_id, day, value))
+    finally:
+        conn.close()
+    return world
+
+
+def _water_line(body):
+    return next(row for row in body["lines"]
+                if row["line_type"] == "COST" and row["cost_category_code"] == "KALTWASSER")
+
+
+@pytest.mark.asyncio
+async def test_meter_consumption_automatically_supplies_all_unit_weights(client_a_admin, metered_m3):
+    run_id = await _create_run(client_a_admin, metered_m3, "lease_e", "0.00")
+    extras = _extras_for_exit(metered_m3)
+    extras["unit_metrics"] = []
+    result = await client_a_admin.post(f"/api/settlements/{run_id}/compute", json=extras)
+    assert result.status_code == 200, result.text
+    water = _water_line(result.json())
+    assert Decimal(water["total_amount"]) == Decimal("600.00")
+    assert Decimal(water["amount"]) == Decimal("240.00")
+    assert Decimal(water["distribution_base_total"]) == Decimal("100")
+
+
+@pytest.mark.asyncio
+async def test_meter_consumption_explicit_manual_zero_takes_precedence(client_a_admin, metered_m3):
+    run_id = await _create_run(client_a_admin, metered_m3, "lease_e", "0.00")
+    extras = _extras_for_exit(metered_m3)
+    extras["unit_metrics"] = [{"unit_id": metered_m3["u1"], "consumption": "0"}]
+    result = await client_a_admin.post(f"/api/settlements/{run_id}/compute", json=extras)
+    assert result.status_code == 200, result.text
+    assert Decimal(_water_line(result.json())["amount"]) == Decimal("342.86")
+    assert Decimal(_water_line(result.json())["distribution_base_total"]) == Decimal("70")
+
+
+@pytest.mark.asyncio
+async def test_meter_consumption_missing_one_unit_never_silently_redistributes(client_a_admin, seed_data):
+    from urllib.parse import urlparse
+    assert urlparse(SYNC_URL).hostname == "127.0.0.1" and urlparse(SYNC_URL).port == 55432
+    world = _seed_m3(seed_data)
+    run_id = await _create_run(client_a_admin, world, "lease_e", "0.00")
+    extras = _extras_for_exit(world)
+    extras["unit_metrics"] = extras["unit_metrics"][:-1]
+    result = await client_a_admin.post(f"/api/settlements/{run_id}/compute", json=extras)
+    assert result.status_code == 422, result.text
+    assert "Handeingabe" in result.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_meter_consumption_suggestions_show_all_units_and_actual_readings(client_a_admin, client_a_readonly, client_b_admin, metered_m3):
+    run_id = await _create_run(client_a_admin, metered_m3, "lease_e", "0.00")
+    url = f"/api/settlements/{run_id}/consumption-suggestions"
+    response = await client_a_readonly.get(url)
+    assert response.status_code == 200, response.text
+    rows = {row["unit_id"]: row for row in response.json()}
+    assert set(rows) == {metered_m3[key] for key in ("u1", "u2", "u3", "u4")}
+    for key, quantity, finish in [("u1", "30.0000", "130.0000"), ("u2", "20.0000", "120.0000"),
+                                   ("u3", "10.0000", "110.0000"), ("u4", "40.0000", "140.0000")]:
+        row = rows[metered_m3[key]]
+        assert row["consumption"] == quantity
+        assert row["reason"] is None
+        assert row["meter_id"]
+        assert row["unit_label"] == key[-1]
+        assert row["start_reading"]["reading_date"] == "2025-01-01"
+        assert row["start_reading"]["value"] == "100.0000"
+        assert row["end_reading"]["reading_date"] == "2025-12-31"
+        assert row["end_reading"]["value"] == finish
+        assert row["start_reading"]["id"] != row["end_reading"]["id"]
+    assert (await client_b_admin.get(url)).status_code == 404
+    unchanged = (await client_a_admin.get(f"/api/settlements/{run_id}")).json()
+    assert unchanged["lines"] == []
+    assert unchanged["total_cost"] is None
+    assert unchanged["snapshot_sha256"] is None
+
+
+@pytest.mark.asyncio
+async def test_meter_consumption_suggestions_explain_missing_values_without_invented_zero(client_a_admin, seed_data):
+    from urllib.parse import urlparse
+    assert urlparse(SYNC_URL).hostname == "127.0.0.1" and urlparse(SYNC_URL).port == 55432
+    world = _seed_m3(seed_data)
+    run_id = await _create_run(client_a_admin, world, "lease_e", "0.00")
+    response = await client_a_admin.get(f"/api/settlements/{run_id}/consumption-suggestions")
+    assert response.status_code == 200, response.text
+    assert len(response.json()) == 4
+    for row in response.json():
+        assert row["consumption"] is None
+        assert row["meter_id"] is None
+        assert row["start_reading"] is None and row["end_reading"] is None
+        assert "Handeingabe" in row["reason"]
+
+
+@pytest.mark.asyncio
+async def test_meter_consumption_common_meter_is_ignored_and_multiple_unit_meters_require_manual(client_a_admin, metered_m3):
+    run_id = await _create_run(client_a_admin, metered_m3, "lease_e", "0.00")
+    url = f"/api/settlements/{run_id}/consumption-suggestions"
+    common = await client_a_admin.post("/api/meters", json={
+        "property_id": metered_m3["property"], "meter_number": "COMMON", "meter_type": "KALTWASSER"})
+    assert common.status_code == 201, common.text
+    for day, value in [("2025-01-01", "0.0000"), ("2025-12-31", "9999999.0000")]:
+        added = await client_a_admin.post(f"/api/meters/{common.json()['id']}/readings", json={"reading_date": day, "value": value})
+        assert added.status_code == 201, added.text
+    rows = {row["unit_id"]: row for row in (await client_a_admin.get(url)).json()}
+    assert rows[metered_m3["u1"]]["consumption"] == "30.0000"
+    duplicate = await client_a_admin.post("/api/meters", json={
+        "property_id": metered_m3["property"], "unit_id": metered_m3["u1"],
+        "meter_number": "UNCLASSIFIED-REPLACEMENT", "meter_type": "KALTWASSER"})
+    assert duplicate.status_code == 201, duplicate.text
+    rows = {row["unit_id"]: row for row in (await client_a_admin.get(url)).json()}
+    assert rows[metered_m3["u1"]]["consumption"] is None
+    assert "Handeingabe" in rows[metered_m3["u1"]]["reason"]
+    assert rows[metered_m3["u4"]]["consumption"] == "40.0000"
+    extras = _extras_for_exit(metered_m3)
+    extras["unit_metrics"] = []
+    rejected = await client_a_admin.post(f"/api/settlements/{run_id}/compute", json=extras)
+    assert rejected.status_code == 422, rejected.text
+
+
+@pytest.mark.asyncio
+async def test_meter_consumption_final_snapshot_keeps_actual_reading_basis_unchanged(client_a_admin, metered_m3):
+    import psycopg2
+    from urllib.parse import urlparse
+    assert urlparse(SYNC_URL).hostname == "127.0.0.1" and urlparse(SYNC_URL).port == 55432
+    run_id = await _create_run(client_a_admin, metered_m3, "lease_e", "0.00")
+    extras = _extras_for_exit(metered_m3)
+    extras["unit_metrics"] = []
+    finalized = await client_a_admin.post(f"/api/settlements/{run_id}/finalize", json=extras)
+    assert finalized.status_code == 200, finalized.text
+    frozen = finalized.json()
+    assert frozen["status"] == "finalized" and frozen["snapshot_sha256"]
+    assert Decimal(_water_line(frozen)["amount"]) == Decimal("240.00")
+
+    def stored():
+        conn = psycopg2.connect(SYNC_URL)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=%s", (run_id,))
+                return cur.fetchone()
+        finally:
+            conn.close()
+    before = stored()
+    sources = before[0]["inputs"]["meter_consumption_sources"]
+    assert len(sources) == 4
+    target = next(row for row in sources if row["unit_id"] == metered_m3["u4"])
+    assert target["consumption"] == "40.0000"
+    assert target["start_reading"]["value"] == "100.0000"
+    assert target["end_reading"]["value"] == "140.0000"
+    added = await client_a_admin.post(f"/api/meters/{target['meter_id']}/readings", json={
+        "reading_date": "2025-12-31", "value": "999.0000"})
+    assert added.status_code == 201, added.text
+    blocked = await client_a_admin.get(f"/api/settlements/{run_id}/consumption-suggestions")
+    assert blocked.status_code == 409, blocked.text
+    assert (await client_a_admin.get(f"/api/settlements/{run_id}")).json() == frozen
+    assert stored() == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("partial", [False, True])
+async def test_meter_consumption_scope_classification_unit_boundary_and_revocation(client_a_admin, metered_m3, partial):
+    import psycopg2
+    world = metered_m3
+    scope, grant_id = _batch_scope(world, units=[world["u4"]] if partial else None)
+    created = await client_a_admin.post("/api/settlements", json={
+        "property_id": world["property"], "lease_agreement_id": world["lease_e"],
+        "period_start": "2025-01-01", "period_end": "2025-12-31",
+        "advance_payments_total": "0.00", "accounting_scope_id": scope})
+    assert created.status_code == 201, created.text
+    url = f"/api/settlements/{created.json()['id']}/consumption-suggestions"
+    unclassified = await client_a_admin.get(url)
+    assert unclassified.status_code == 409, unclassified.text
+    conn = psycopg2.connect(SYNC_URL)
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("""INSERT INTO accounting_scope_binding
+                (organization_id,property_id,scope_id,cost_entry_id,origin,reason,reviewed_by)
+                SELECT organization_id,property_id,%s,id,'REVIEWED','Synthetic reviewed water scope',%s
+                FROM cost_entry WHERE organization_id=%s AND property_id=%s""",
+                (scope, str(world["user_a_admin_id"]), str(world["org_a_id"]), world["property"]))
+    finally:
+        conn.close()
+    response = await client_a_admin.get(url)
+    assert response.status_code == 200, response.text
+    expected = {world["u4"]} if partial else {world[key] for key in ("u1", "u2", "u3", "u4")}
+    assert {row["unit_id"] for row in response.json()} == expected
+    assert all(row["consumption"] is not None for row in response.json())
+    revoked = await client_a_admin.post(f"/api/accounting-scopes/{scope}/grants/{grant_id}/revoke")
+    assert revoked.status_code == 204, revoked.text
+    assert (await client_a_admin.get(url)).status_code == 404

@@ -244,7 +244,20 @@ READ_ONLY sieht nur den Verlauf. Fehlversuche behalten Eingaben, paralleles Spei
 ist gesperrt und verspätete Antworten wechseln nicht den aktuellen Kontext.
 `scripts/acceptance/t30_meters_browser.cjs` prüft UI-Anlage und Reload mit
 100,0000 → 250,1250 = 150,1250 sowie einem separaten Einheitszähler.
-Die periodengenaue Abrechnungsvorbelegung folgt separat in T31.
+Die BK-Abrechnung (T31) übernimmt ohne Handwert den exakten Verbrauch aus dem
+jeweils eindeutig nächsten Stand innerhalb ±31 Tagen um Anfang und Ende der Periode.
+Voraussetzung ist genau ein Einheitszähler mit zur Kostenkategorie passender Art,
+z. B. `KALTWASSER`. Fehlende/mehrdeutige Stände, Rückgänge, mehrere Zähler oder
+verschiedene Verbrauchsarten verlangen Handeingaben statt Schätzung; Gemeinschafts-
+zähler werden nicht als Einheitszähler verwendet. Bewusste Handwerte einschließlich
+0 haben Vorrang. Alle teilnehmenden Einheiten brauchen eine vollständige Basis.
+`GET /api/settlements/{id}/consumption-suggestions` liefert für Entwürfe autorisierte
+Vorschläge mit Stand-IDs, Datum und Wert; die Oberfläche zeigt diese Basis, ohne sie
+als Handwert zurückzusenden. Berechnung und Finalisierung lesen unter Finanzsperre
+neu; verwendete Messdaten werden im unveränderlichen Snapshot eingefroren.
+`scripts/acceptance/t31_meter_consumption_browser.cjs` prüft ausschließlich über die
+Oberfläche zwei Einheiten mit 30/70 Verbrauch und 100 EUR Wasserkosten: zwei reale
+Abrechnungen ergeben 30/70 EUR einschließlich Reload und Finalisierung.
 
 Weiterführende Dokumentation:
 
