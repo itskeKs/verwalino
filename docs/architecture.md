@@ -494,6 +494,22 @@ Steuerautomatik; keine VAT-/BU-/Beleglink-Erfindung. Das Ergebnis ist eine aktue
 Bestandsausgabe, kein differenzieller Buchungsjournalersatz und keine Bestätigung
 eines Imports im Zielsystem. Korrekturen/Reimporte sind dort fachlich abzustimmen.
 
+T50 ergänzt `/api/payments/sepa`: explizite Gläubigerkonfiguration je laufendem
+Konto und getrennte `sepa_mandate`-Zustimmung (nicht `management_mandate`), Revision
+0133 mit FORCE RLS, kanonischen Quellenprüfungen und unveränderlicher Identität.
+Mandate enthalten nur einen Fingerabdruck von aktuellem Namen/IBAN statt einer
+zweiten Rohdatenkopie; Bank-/Kontaktänderungen und Datenschutzsperren blockieren.
+ACL-/Finanz-/Quellzeilensperren schützen Konfiguration und Monatsprojektion.
+`tenant_expected_charges` liefert das bestehende Decimal-Soll aus Miethistorie und
+Teilmonaten. Vollständige Finanzkreis-/Quellen-/Kontaktexportzulassung verhindert
+stilles Auslassen unzugänglicher oder unmandatierter Mieter. Vorschaufingerabdruck
+und erneute Rechteprüfung binden den Download; der reine XML-Renderer validiert
+lokal gegen das unveränderte EPC-CORE-pain.008.001.08-XSD (als Paketressource).
+Kein Übertragungsdienst, keine Zahlungsanlage und keine Fortschreibung einer
+Einzugshistorie aus einem Download. Befüllte neue Tabellen verhindern Downgrade;
+der transaktionale Rundlauftest vergleicht alle bisherigen Daten/Sicherheitsobjekte
+und die unveränderten Bytes eines bereits ausgestellten Briefs.
+
 **`bank_account`** (SDD §6.3 — Vermögenstrennung): `organization_id`, Bezug auf `management_mandate`/`property`, `account_type` (laufend|Rücklage|Kaution), IBAN/Bank-Stammdaten. RLS aktiv. *(Implementierung erst ab M6; Modell-Anker in M1 vorbereiten, damit Mandat/Objekt-Bezug konsistent ist.)*
 
 **`meter` / `meter_reading`** (SDD §6.2.1): optionale Objekt-/Einheitszähler mit Ablesungen (`reading_date`, `value NUMERIC(14,4)`, `period`). RLS und explizite Org-Filter aktiv. Seit T29 bietet `/api/meters` GET/POST, `/{id}` GET/PATCH für Beschreibungsfelder und `/{id}/readings` GET/POST für unverändert erhaltene Ablesungen. Repository und API prüfen sichtbares Elternobjekt, Einheitskohärenz und bestehende Master-Lese-/Prepare-Rechte; keine nachträgliche Umhängung. Schreiboperationen halten Live-ACL-/Finanz-/Zeilensperren in dieser Reihenfolge und committen vor der Erfolgsantwort. Messwerte werden ohne Float oder Rundung validiert und als vierstellige Dezimalstrings ausgegeben. Seit T30 verwenden Objekt- und Einheitsdetail dasselbe `MeterPanel` mit festem Kontext und Rollenflag; String-/BigInt-Rechnung zeigt die Differenz der letzten zwei eindeutigen Tage, nicht bereits eine T31-Abrechnungsvorbelegung. Kontextwechsel entkoppeln verspätete Antworten, Schreibvorgänge sind synchron gegen Mehrfachauslösung gesperrt; Fehler behalten die Eingaben.

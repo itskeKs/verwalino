@@ -51,6 +51,7 @@ from app.models.mandate_document import MandateDocument
 from app.models.attachment import Attachment
 from app.models.task import Task
 from app.models.letter import LetterTemplate, LetterDocument
+from app.models.sepa import SepaCreditor, SepaMandate
 
 # Declaration import legal source and review graph
 from app.models.property_document import PropertyDocument
@@ -117,6 +118,8 @@ __all__ = [
     "Task",
     "LetterTemplate",
     "LetterDocument",
+    "SepaCreditor",
+    "SepaMandate",
     "PropertyDocument",
     "DeclarationImport",
     "DeclarationImportDocument",

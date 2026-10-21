@@ -616,6 +616,33 @@ als globale Kategoriezuordnung gespeichert. Tests:
 `uv run pytest tests/test_datev_export.py`, reale Q1-Abnahme:
 `scripts/acceptance/t49_datev_browser.cjs`.
 
+### SEPA-Monatsmiete (T50)
+
+Unter **Zahlungen → SEPA-Lastschrift öffnen** ein laufendes Objektkonto und den
+berechtigten MIET-Finanzkreis ausdrücklich auswählen. Gläubiger-ID, Name, Ort/Land
+und die bestehende Bankvereinbarung erfassen; dann je Mieter ein tatsächlich
+unterschriebenes, extern aufbewahrtes CORE-Mandat registrieren. Kontakt-IBAN,
+Unterschriftsdatum, eindeutige Referenz, FRST/RCUR und gegebenenfalls letzte
+**bei der Bank vorgelegte** Nutzung ausdrücklich bestätigen. Ein Download zählt
+nicht als Nutzung; auch zurückgewiesene/zurückgegebene Einzüge gehören zur Historie.
+Namens-/IBAN-Wechsel und Verarbeitungssperren blockieren die Verwendung.
+
+Monat, Einzugsdatum, eindeutige Nachrichten-ID und tatsächlich erfolgte
+Vorabankündigung angeben (14 Tage oder ausdrücklich vereinbarte kürzere Frist).
+Die Vorschau verwendet das vorhandene Monats-Soll einschließlich Miethistorie,
+NK-Vorauszahlung und tagegenauer Teilmonate. Ohne gültiges Mandat wird kein Mieter
+stillschweigend ausgelassen. Der Download prüft Quellen/Exportrechte erneut und
+validiert **pain.008.001.08** gegen das unveränderte EPC-CORE-XSD. Nicht-EWR-Banken
+benötigen ausdrücklich eingegebene BICs; Bankprofil und Annahmefähigkeit extern prüfen.
+
+**Nur Datei, keine Übertragung:** keine Zahlung/Buchung, kein automatischer Wechsel
+FRST→RCUR und kein Bankannahme-Nachweis. Wiederholte Downloads/Uploads können
+Doppeleinzüge auslösen; IDs und Einzugsverarbeitung außerhalb der App abstimmen.
+Keine vorgegebenen echten Bankdaten oder Mandate. Migration **0133** schützt
+Mandatsidentitäten und verweigert einen Downgrade mit gespeicherten SEPA-Daten.
+Tests: `uv run pytest tests/test_sepa_export.py`; UI-only-Abnahme mit isoliertem
+Launcher: `HV_PYTHON="$PWD/backend/.venv/bin/python" node scripts/acceptance/t50_sepa_browser.cjs`.
+
 Weiterführende Dokumentation:
 
 - [Deployment](DEPLOY.md)

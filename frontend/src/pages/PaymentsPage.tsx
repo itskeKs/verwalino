@@ -33,6 +33,7 @@ import type {
 } from "../api/types";
 import type { PaymentListQuery } from "../api/endpoints";
 import { ApiError } from "../api/client";
+import { SepaExport } from "../components/SepaExport";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "Alle Status" },
@@ -108,6 +109,7 @@ function formatCents(value: bigint): string {
 }
 
 export function PaymentsPage() {
+  const [showSepa, setShowSepa] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -305,6 +307,11 @@ export function PaymentsPage() {
           + Neue Zahlung
         </button>
       </div>
+
+      <button type="button" className="btn" aria-expanded={showSepa} aria-controls="payments-sepa" onClick={() => setShowSepa(value => !value)}>
+        {showSepa ? "SEPA-Lastschrift schließen" : "SEPA-Lastschrift öffnen"}
+      </button>
+      {showSepa && <div id="payments-sepa"><SepaExport bankAccounts={bankAccounts} properties={properties} /></div>}
 
       {/* Filters */}
       <div

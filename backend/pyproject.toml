@@ -16,6 +16,7 @@ dependencies = [
     "python-multipart>=0.0.18",
     "weasyprint>=69,<70",
     "pdfplumber>=0.11,<1",
+    "lxml>=5,<7",
     "openai>=3,<4",
     "tiktoken>=0.9,<1",
 ]
@@ -49,3 +50,6 @@ include = ["app*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+app = ["resources/sepa/*.xsd"]

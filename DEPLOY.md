@@ -111,7 +111,7 @@ production data.
 ## DATEV file export (T49)
 
 No DATEV credentials, network transmission, environment defaults or schema changes
-are introduced. Local Alembic head remains **0132**. Configure SKR03/SKR04,
+are introduced by T49 (implementation head **0132**; T50 adds **0133** below). Configure SKR03/SKR04,
 adviser/client identifiers, fiscal year, account length and every bank/payment/
 category counterpart explicitly in the UI for each export. Only reviewed gross
 accounts **without tax automation** are supported; no automatic VAT split/BU keys.
@@ -123,6 +123,33 @@ reconciliation. Never treat file download as successful DATEV processing.
 For synthetic Q1 acceptance use the existing local launcher with fresh `/tmp`
 storage and `node scripts/acceptance/t49_datev_browser.cjs`, then stop it. No
 production access, promotion, deployment or change to the **0122** gate is implied.
+
+## Offline SEPA rent file (T50; local head 0133)
+
+Migration **0133** adds source-protected `sepa_creditor` and `sepa_mandate` with
+FORCE RLS, financial/ACL input locks and immutable consent identity. Downgrade
+refuses populated SEPA tables; never delete consent/history to force rollback.
+The actual rollback-transaction test checks 0133→0132→0133 against existing rows,
+RLS/ACLs, policies, triggers/functions and an unchanged issued letter PDF.
+This does not authorize promoting **0123–0133**, deployment or changing the
+accepted **0122** production gate.
+
+No bank credentials, transmission process or payment booking is introduced.
+Configure actual creditor ID, bank agreement and externally retained signed tenant
+mandates explicitly; do not infer consent from an IBAN. Source identities and
+bank changes require renewed checks. Download is not execution and must not
+advance FRST/RCUR or actual collection history. Repeated bank uploads can duplicate
+collections. Confirm bank acceptance/profile and actual prenotification externally.
+The runtime ships the unchanged EPC CORE pain.008.001.08 XSD and uses `lxml` locally;
+no schema/network lookup or bank connection is performed by export.
+
+Synthetic acceptance only: start `scripts/dev-local.sh` with fresh `/tmp`
+`HV_DOCUMENT_STORAGE_ROOT`, then from repository root run
+`HV_PYTHON="$PWD/backend/.venv/bin/python" node scripts/acceptance/t50_sepa_browser.cjs`.
+The script uses only public synthetic IBAN/creditor vectors, no real consent/funds,
+validates two actual browser downloads with original ISO and EPC schemas, and
+never submits a file. It permits only the launcher's local Vite HMR WebSocket;
+other sockets/external targets are blocked. Stop the launcher afterward.
 
 ## Fresh installation: one-time preparation on Moon
 

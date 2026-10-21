@@ -497,6 +497,40 @@ vor Download führt zu 409. Kein Senden an DATEV und kein nachgewiesener Import.
 Wiederholung/Überlappung und nachträgliche Korrekturen im Zielsystem abstimmen,
 nicht mehrfach importieren. Bestehende Buchungen/Snapshots bleiben unverändert.
 
+### 6.15 SEPA-CORE-Monatsdatei (Phase 3, T50)
+
+Explizite Gläubiger-/Bankvereinbarung und extern unterschriebenes Mietermandat
+sind Voraussetzungen, keine aus Kontakt-IBAN abgeleitete Zustimmung. Persistente
+Referenz, Unterschrift, FRST/RCUR, letzte tatsächliche Bankvorlage und Originalreferenz
+werden manuell erfasst; Referenzen sind je Gläubiger eindeutig. Name/IBAN-Wechsel,
+Widerruf, Datenschutzsperre oder veraltete Zustimmung blockieren. Die konservative
+36-Monats-Prüfung zählt ab letzter Vorlage, bei unbenutzten Mandaten ab Unterschrift;
+bei Unsicherheit neue Zustimmung einholen. Zurückgewiesene, zurückgegebene und
+erstattete Vorlagen sind ebenfalls als tatsächliche Nutzung zu berücksichtigen.
+
+Monatsbetrag = bestehendes `tenant_expected_charges` über alle überlappenden
+Mietverträge: Kaltmiete plus NK, Miethistorie und getrennte Cent-Rundung je
+Teilmonatskomponente; mehrere Verträge eines Mieters werden zusammengefasst.
+Kein Abzug bereits gebuchter Zahlungen und keine automatische Rückstandsvereinnahmung.
+Vollständige Objekt-/Finanzkreis-/Kontaktexportrechte und Finanzsperren gelten auch
+für Nur-Lesen-Exporte. Fehlendes Mandat ist ein Fehler, keine gefilterte Teilmenge.
+Vorschau und digestgebundener Download buchen nichts und ändern keine Historie.
+
+Profil: CORE, EUR, pain.008.001.08, FRST/RCUR, SLEV; Original-EPC-XSD im Runtimepaket,
+zusätzliche unabhängige ISO-XSD-Prüfung in Tests und Browserdownload. Bankannahme,
+Mandatsoriginal und tatsächliche Vorabankündigung (14 Tage, sofern keine kürzere
+Vereinbarung) bleiben extern zu prüfen. Keine Übertragung, OOFF/FNAL-Automatik,
+Mandatsänderungsnachricht oder Bank-/Clearingkalenderzusage. Gleiche Datei nicht
+ungeprüft mehrfach bei der Bank einreichen; eine Vorschau ist kein Ausführungsbeleg.
+
+Primärquellen: [EPC CORE C2PSP Guidelines](https://www.europeanpaymentscouncil.eu/document-library/implementation-guidelines/sepa-direct-debit-core-customer-psp-implementation-1),
+[EPC CORE Rulebook 2025 v1.2](https://www.europeanpaymentscouncil.eu/document-library/rulebooks/2025-sepa-direct-debit-core-rulebook-version-1-2),
+[Bundesbank Gläubiger-ID](https://www.bundesbank.de/de/aufgaben/unbarer-zahlungsverkehr/serviceangebot/sepa/glaeubiger-identifikationsnummer).
+Die EPC-Mitteilung vom 30.09.2026 verschiebt die zuvor angekündigte feste
+Unstructured-Address-Abschaltung auf einen noch unbestimmten Termin; keine alte
+Novemberfrist als fortgeltende Zusicherung. Gläubiger-ID-Zuteilung allein verleiht
+keine Einzugserlaubnis. Bankprofil ausdrücklich bestätigen.
+
 ## 7. Synthetische Golden-Tests (objektive M6-Messlatte)
 
 Es gibt **keine** realen Beispieldaten. Prüffälle sind **synthetisch** aus den Regeln + **handberechneten** Soll-/Ist-/Saldo-Werten (jeder Cent), exakt wie M3/M4 §9. Beide Test-Arten verbindlich für die M6-Abnahme; sie laufen gegen die **reine Engine** (höchste Testdichte) und gegen Service/DB.

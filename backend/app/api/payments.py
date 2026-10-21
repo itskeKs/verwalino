@@ -36,7 +36,10 @@ from app.services.payment_service import PaymentService
 from app.services.financial_scope_service import FinancialScopeService
 from app.repositories.lease_agreement_repo import LeaseAgreementRepository
 
+from app.api.sepa import router as sepa_router
+
 router = APIRouter(prefix="/api/payments", tags=["payments"])
+router.include_router(sepa_router)
 
 
 def _dec(value: str, field: str) -> Decimal:
