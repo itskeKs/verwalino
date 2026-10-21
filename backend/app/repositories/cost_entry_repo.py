@@ -6,11 +6,13 @@ Extends TenantRepository with active-chain query and status-filtered queries.
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from typing import Sequence
 
-from sqlalchemy import select, Select
+from sqlalchemy import func, select, Select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.cost_category import CostCategory
 from app.models.cost_entry import CostEntry
 from app.repositories.base import TenantRepository
 
@@ -46,6 +48,22 @@ class CostEntryRepository(TenantRepository[CostEntry]):
         )
         result = await self._session.execute(stmt)
         return result.scalars().all()
+
+    async def property_year_totals(self, property_id: uuid.UUID, start: date, end: date):
+        """Each current confirmed invoice contributes its gross amount exactly once."""
+        stmt = (self._base_query()
+            .join(CostCategory, (CostCategory.id == CostEntry.cost_category_id)
+                  & (CostCategory.plan_version == CostEntry.cost_category_plan_version))
+            .where(CostEntry.property_id == property_id, CostEntry.status == 'confirmed',
+                   CostEntry.superseded_by_id.is_(None),
+                   CostEntry.invoice_date >= start, CostEntry.invoice_date <= end)
+            .with_only_columns(CostCategory.id.label('category_id'),
+                CostCategory.code.label('category_code'), CostCategory.label.label('category_name'),
+                CostEntry.tenant_apportionable.label('tenant_apportionability'),
+                func.sum(CostEntry.gross_amount).label('amount'))
+            .group_by(CostCategory.id, CostCategory.code, CostCategory.label, CostEntry.tenant_apportionable)
+            .order_by(CostCategory.code, CostCategory.id, CostEntry.tenant_apportionable))
+        return (await self._session.execute(stmt)).all()
 
     async def update(self, entity: CostEntry) -> CostEntry:
         """Flush changes on an already-tracked entity."""

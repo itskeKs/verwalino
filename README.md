@@ -211,6 +211,23 @@ die Personenliste bleibt objektübergreifend. „Öffnen“ lädt das autorisier
 weiterhin sichtbar und lesbar. Read-only-Benutzer erhalten keine Schreibaktionen.
 Der echte UI-/PDF-Prüffall ist `scripts/acceptance/t37_attachments_browser.cjs`.
 
+## Objekt-Jahresübersicht (Phase 2)
+
+`GET /api/reports/property-year?property_id=…&year=2026&accounting_scope_id=…`
+liefert Einnahmen je Zahlungstyp, Ausgaben je Kategorie/Umlagekennzeichen und
+Saldo als exakte zweistellige Geldstrings. Grundlage sind aktive gebuchte
+Zahlungen nach Wertstellung (`IN` positiv, `OUT` negativ im selben Typ) sowie
+aktive bestätigte Bruttokosten nach Rechnungsdatum. Entwürfe, Stornoketten,
+überholte Kosten und bloß importierte Bankumsätze zählen nicht.
+
+Datumsbasis und fachlicher Hinweis stehen in der Antwort. Kaution und andere
+Zahlungstypen bleiben getrennt sichtbar; eine steuerliche Behandlung wird nicht
+unterstellt. `TEILWEISE_PRUEFEN` bleibt ein eigenes Kennzeichen. Dies ist eine
+nachprüfbare Grundlage, keine vollständige Anlage V oder Steuererklärung.
+Der Bericht benötigt vollständige Read-/Source-Rechte und gegebenenfalls einen
+expliziten, das ganze Objekt und Jahr abdeckenden WEG-/MIET-Kreis. Fehlende
+Klassifikation oder Teilzugriff wird nicht als vollständiger Nullbericht ausgegeben.
+
 ## BK-Sammellauf (Phase 2)
 
 Unter „Abrechnungen“ legt „BK-Sammellauf“ nach bewusster Objekt-, Zeitraum- und

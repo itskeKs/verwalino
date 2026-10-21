@@ -426,6 +426,24 @@ Der lokale Browserprüflauf legt alle Stammdaten per UI an und belegt 850=700+15
 im Januar vollständig bezahlt, 600=500+100 im Februar mit 250 Rest sowie 25
 ignoriert ohne Zahlung; Jahres-Soll 10.200, Ist 1.450, Saldo 8.750 EUR.
 
+### 6.12 Objekt-Jahresübersicht (Phase 2, T38)
+
+`GET /api/reports/property-year` summiert aktive gebuchte Zahlungen nach
+`value_date` und Typ (`IN` positiv, `OUT` negativ); stornierte Originale,
+Stornozeilen, abgebrochene Entwürfe und Rohbankumsätze bleiben ausgeschlossen.
+Bestätigte, nicht ersetzte Kosten zählen mit ihrem Bruttobetrag nach
+`invoice_date`, gruppiert nach Kategorie und unverändertem Umlagekennzeichen.
+Teilweise zu prüfende Umlage wird nicht automatisch als voll umlagefähig behandelt.
+Saldo = Einnahmensumme − Kostensumme; alle Beträge bleiben Decimal-exakt,
+auch bei großen Summen und niedrigem äußerem Präzisionskontext.
+
+Die ausgegebene Datumsbasis weicht bewusst vom Sollperioden-/Leistungszeitraum
+ab. Kautionen bleiben separat ausgewiesen und werden nicht steuerlich umgedeutet.
+Die Übersicht ersetzt keine vollständige Anlage V oder EÜR. Vollständige
+Quell-Leserechte und ein gegebenenfalls expliziter Ganzobjekt-/Ganzjahreskreis
+sind erforderlich; Teilzugriff oder ungeklärte Klassifikation liefert keine
+scheinbar vollständigen Summen. Bestehende Buchungen und Snapshots bleiben unverändert.
+
 ## 7. Synthetische Golden-Tests (objektive M6-Messlatte)
 
 Es gibt **keine** realen Beispieldaten. Prüffälle sind **synthetisch** aus den Regeln + **handberechneten** Soll-/Ist-/Saldo-Werten (jeder Cent), exakt wie M3/M4 §9. Beide Test-Arten verbindlich für die M6-Abnahme; sie laufen gegen die **reine Engine** (höchste Testdichte) und gegen Service/DB.
