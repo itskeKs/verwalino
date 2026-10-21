@@ -6,15 +6,25 @@ Foreign ID -> 404 (not 403), consistent with M0/M1.
 
 from __future__ import annotations
 
+import csv
+import io
 import uuid
 from datetime import date
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Response
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
+from app.core.csv_exports import csv_text, csv_money
+from app.core.live_principal import get_live_member_db
+from app.core.rbac import ScopeCapability
+from app.core.storage import attachment_content_disposition
+from app.repositories.property_repo import PropertyRepository
+from app.services.financial_scope_service import FinancialScopeService
+from app.services.property_master_service import require_property_master
 from app.models.cost_entry import CostEntry
 from app.repositories.cost_entry_repo import CostEntryRepository
 from app.services.cost_entry_service import CostEntryService
@@ -115,13 +125,66 @@ async def list_cost_entries(
     db: AsyncSession = Depends(get_db),
 ):
     repo = CostEntryRepository(db, auth.organization_id)
-    if status:
-        items = await repo.list_by_status(status)
-    elif property_id:
-        items = await repo.list_by_property(property_id)
-    else:
-        items = await repo.list_all()
+    items = await repo.list_by_filters(status=status, property_id=property_id)
     return [_to_out(e) for e in items]
+
+
+def _render_cost_entries_csv(items: list[CostEntry]) -> bytes:
+    output = io.StringIO(newline='')
+    writer = csv.writer(output, delimiter=';', lineterminator='\r\n')
+    writer.writerow(['ID', 'Objekt-ID', 'Rechnungsdatum', 'Kategorie-ID', 'Kategorieversion',
+                     'Brutto (EUR)', 'Umlagefähigkeit', 'Status', 'Belegnummer', 'Ersetzt durch-ID'])
+    for item in items:
+        fields = [item.id, item.property_id, item.invoice_date, item.cost_category_id,
+                  item.cost_category_plan_version, item.tenant_apportionable, item.status,
+                  item.document_number, item.superseded_by_id]
+        fields = [csv_text(str(value)) if value is not None else '' for value in fields]
+        fields.insert(5, csv_money(str(item.gross_amount)))
+        writer.writerow(fields)
+    return output.getvalue().encode('utf-8-sig')
+
+
+async def _require_cost_exports(db, auth, items, property_id):
+    if property_id is not None:
+        if await PropertyRepository(db, auth.organization_id).get_by_id(property_id) is None:
+            raise HTTPException(404, 'Property not accessible')
+        await require_property_master(db, auth.organization_id, property_id, 'export')
+    scopes = FinancialScopeService(db, auth.organization_id, auth.user_id)
+    for item in items:
+        # Binding rows may disappear under RLS when a grant expires. The canonical
+        # predicate must deny that case rather than treating it as legacy data.
+        if not await db.scalar(text(
+            "SELECT financial_scope_access(:org,'cost_entry',:id,'export')"),
+            {'org': auth.organization_id, 'id': item.id}):
+            raise HTTPException(404, 'Financial row not exportable')
+        async with scopes.using(item, capability=ScopeCapability.EXPORT) as scope_id:
+            if scope_id is None:
+                await scopes.require_export(item)
+            await require_property_master(db, auth.organization_id, item.property_id, 'export')
+            if item.vendor_id is not None and not await db.scalar(text(
+                "SELECT profile_source_access(:org,'vendor',:profile,'read') "
+                "AND profile_source_access(:org,'vendor',:profile,'export')"),
+                {'org': auth.organization_id, 'profile': item.vendor_id}):
+                raise HTTPException(404, 'Financial contact not exportable')
+
+
+@router.get('/export.csv')
+async def export_cost_entries_csv(
+    status: str | None = None,
+    property_id: uuid.UUID | None = None,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+) -> Response:
+    await FinancialScopeService(db, auth.organization_id, auth.user_id).lock_inputs()
+    items = await CostEntryRepository(db, auth.organization_id).list_by_filters(
+        status=status, property_id=property_id)
+    await _require_cost_exports(db, auth, items, property_id)
+    content = _render_cost_entries_csv(items)
+    await _require_cost_exports(db, auth, items, property_id)
+    return Response(content, media_type='text/csv; charset=utf-8', headers={
+        'Content-Disposition': attachment_content_disposition('kosten.csv'),
+        'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, no-store',
+    })
 
 
 @router.get("/{entry_id}", response_model=CostEntryOut)

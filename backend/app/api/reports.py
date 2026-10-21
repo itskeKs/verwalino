@@ -1,7 +1,6 @@
 """Read-only financial object reports."""
 import csv
 import io
-import re
 from typing import Annotated
 from uuid import UUID
 
@@ -9,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.csv_exports import csv_text as _csv_text, csv_money as _csv_money
 from app.core.live_principal import get_live_member_db
 from app.core.rbac import ScopeCapability
 from app.core.storage import attachment_content_disposition
@@ -42,19 +42,6 @@ async def _require_year_export(db: AsyncSession, auth: AuthContext, report: Prop
         "SELECT report_scope_source_access(:org,:scope,'export')"
     ), {'org': auth.organization_id, 'scope': report.accounting_scope_id}):
         raise HTTPException(404, 'Complete report sources not exportable')
-
-
-def _csv_text(value: str) -> str:
-    # Quoting alone does not stop spreadsheet formulas, including whitespace-prefixed ones.
-    if value.startswith(('\t', '\r', '\n')) or value.lstrip().startswith(('=', '+', '-', '@')):
-        return "'" + value
-    return value
-
-
-def _csv_money(value: str) -> str:
-    if not isinstance(value, str) or re.fullmatch(r'-?(?:0|[1-9][0-9]*)\.[0-9]{2}', value) is None:
-        raise ValueError('Report money must be a canonical decimal string')
-    return value.replace('.', ',')
 
 
 def _render_property_year_csv(report: PropertyYearReport) -> bytes:

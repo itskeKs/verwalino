@@ -239,6 +239,26 @@ Zahlungstypen bleiben mit ihrem ursprünglichen Code unterscheidbar.
 `scripts/acceptance/t39_property_year_report_browser.cjs` prüft echte UI-Buchungen,
 bestätigte Belege und den tatsächlichen Download: 800 − 125 = 675 EUR.
 
+## Zahlungs- und Kostenlisten als CSV (Phase 2)
+
+Beide Listen bieten **CSV herunterladen** mit denselben aktiven Filtern wie die
+Anzeige. Zahlungen unterstützen serverseitig Konto, Vertrag, Mieter, Eigentümer,
+Zahlungsart, Periodenjahr und Status; Kosten kombinieren Status **und** Objekt.
+`/api/payments/export.csv` und `/api/cost-entries/export.csv` prüfen zusätzlich
+Exportrechte an allen ausgewählten Quellen und Kreisen, auch nochmals vor der
+Ausgabe. Eine nicht exportierbare Zeile verhindert die gesamte Datei; erlaubte
+Teilkreise benötigen keinen künstlichen Ganzobjektzugriff.
+
+UTF-8-BOM, Semikolon, CRLF, Dezimalkomma und Text-Formelschutz gelten wie beim
+Jahresbericht. Zahlungsdateien enthalten Originalbetrag und einen getrennten
+vorzeichenbehafteten Saldo-Betrag. **Listensaldo** bzw. **Listensumme Brutto**
+beziehen sich ausschließlich auf die angezeigten Zeilen; je Filter können das
+auch Entwürfe, Stornozeilen oder ersetzte Kosten sein, kein gebuchter Kontostand.
+Die Summierung bleibt centgenau ohne JavaScript-Floatarithmetik. Laden,
+Filterwechsel und verspätete Antworten können keine veraltete Datei auslösen.
+`scripts/acceptance/t40_csv_exports_browser.cjs` prüft echte Downloads mit
+650 EUR Zahlungs-Listensaldo und 125 EUR Kosten-Bruttosumme samt Ausschlussfällen.
+
 ## BK-Sammellauf (Phase 2)
 
 Unter „Abrechnungen“ legt „BK-Sammellauf“ nach bewusster Objekt-, Zeitraum- und

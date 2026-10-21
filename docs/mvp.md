@@ -192,7 +192,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 
 ### Phase 2 – Fehlende Kernfunktionen
 
-**Start auf eigener Branch `mvp/phase-2` vom nach `main` übernommenen Phase-1-Stand. Nächste Aufgabe: T40**; Aufgaben einzeln in Reihenfolge. T10 bleibt als offene Phase-1-Restaufgabe bestehen, sein Produktionsrest benötigt weiterhin gesonderte Freigabe.
+**Start auf eigener Branch `mvp/phase-2` vom nach `main` übernommenen Phase-1-Stand. Nächste Aufgabe: T41**; Aufgaben einzeln in Reihenfolge. T10 bleibt als offene Phase-1-Restaufgabe bestehen, sein Produktionsrest benötigt weiterhin gesonderte Freigabe.
 
 - [x] **T14 Passwort ändern** — `POST /api/auth/password` (alt, neu; Hash wie beim Login) und Dialog im Benutzermenü.
   Dateien: `backend/app/api/auth.py`, `backend/app/core/security.py`, `frontend/src/components/Topbar.tsx`, `frontend/src/api/endpoints.ts`
@@ -298,9 +298,10 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
   Dateien: `frontend/src/pages/ReportsPage.tsx` (neu), `frontend/src/App.tsx`, `frontend/src/components/Sidebar.tsx`, `backend/app/api/reports.py`
   Fertig, wenn: `npm test -- src/pages/ReportsPage.test.tsx` (neu) grün UND Ablauf in der App: „Übersicht 2026 öffnen, CSV öffnet sich korrekt“.
   Ergebnis 21.10.2026: Eigener Backendlauf 83 bestanden (52 CSV/31 JSON), Writer-Nachbarn 118 ohne Ausschlüsse; eigener Frontendlauf 84 einschließlich 40 Seitentests, Build/gezielter Lint/Diffcheck grün. Historische Typen nach zusätzlichem roten Darstellungsfall unterscheidbar; GET-/Downloadfehler, Stale-/Doppelklickschutz und Read≠Export geprüft. Echter Chrome: ausschließlich UI-Anlage, gebuchte 700+150−50, bestätigte Kosten 100+25, Übersicht 2026 mit 800/125/675; echte heruntergeladene CSV vollständig mit CSV-/Decimal-Reader geprüft (UTF-8-BOM, Semikolon, CRLF, Dezimalkomma, Formelschutz), Original-DTOs unverändert. Zwei frühe Skriptfehler (Multipart als JSON, globale doppelte Zelle) eng korrigiert; nur finaler Vollpass zählt. Keine Migration/Finanzmutation durch Berichte; App danach gestoppt. Gesamtprüfungen offen.
-- [ ] **T40 CSV-Export Zahlungen und Kosten** — `GET /api/payments/export.csv` und `/api/cost-entries/export.csv` mit den Listenfiltern, Knopf auf beiden Listen.
+- [x] **T40 CSV-Export Zahlungen und Kosten** — `GET /api/payments/export.csv` und `/api/cost-entries/export.csv` mit den Listenfiltern, Knopf auf beiden Listen.
   Dateien: `backend/app/api/payments.py`, `backend/app/api/cost_entries.py`, `frontend/src/pages/PaymentsPage.tsx`, `frontend/src/pages/CostEntriesPage.tsx`
   Fertig, wenn: `uv run pytest tests/test_csv_exports.py` (neu) grün UND Ablauf in der App: „Export-Summe stimmt mit der Liste“.
+  Ergebnis 21.10.2026: Fehlende Routen, Kosten-AND-Filter sowie echte Ablauf-Races vor/nach Exportprüfung rot nachgewiesen; kanonische Finanz-/Quellenprädikate ohne Legacy-Ausweichpfad wiederverwendet. Eigener Backendlauf 122 bestanden (39 T40/83 T39), Writer-Nachbarn 144 ohne Ausschlüsse und zwei verschärfte Teilkreisfälle grün. Vier zusätzliche rote Gleichfilterfälle durch minimale No-op-Guards behoben; eigener Frontendlauf 177 einschließlich 40 Zahlungs-/60 Kostenfälle, Build/gezielter Lint/Diffcheck grün. Vollständiger echter Chrome-PASS: Konto/Typ/Status schließen NK, Entwurf und Zweitkonto aus, Listensaldo 650; Status+Objekt schließen unbestätigte/fremde Objektkosten aus, Brutto 125. Zwei tatsächliche CSV-Dateien vollständig mit DTOs/CSV/Decimal geprüft, Formelschutz/Vorzeichen und unveränderte Geschäfts-DTOs/Historien. Vier frühere Skriptannahmen zu PDF-Entwurfsstatus, Decimal-Skala, Ladeende und CDP-Diagnosebody korrigiert; erst finaler Vollpass zählt. App danach gestoppt, keine Migration; Gesamtprüfungen offen.
 - [ ] **T41 Aufgaben (Backend)** — Tabelle `task` (Titel, Notiz, fällig, erledigt, optional Objekt/Einheit/Vertrag, Benutzer) mit RLS, CRUD `/api/tasks`.
   Dateien: `backend/app/models/task.py` (neu), `backend/migrations/versions/0128_task.py` (neu), `backend/app/api/tasks.py` (neu), `backend/app/main.py`
   Fertig, wenn: `uv run pytest tests/test_tasks_api.py tests/test_rls_coverage.py` grün.

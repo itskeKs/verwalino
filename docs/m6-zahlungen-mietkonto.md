@@ -453,6 +453,23 @@ Formelanfällige Texte erhalten ein Apostrophpräfix, echte negative Beträge
 bleiben unverändert numerisch. CSV und Anzeige verändern keine Buchungen,
 Kosten oder Historien; sie ersetzen keine steuerliche Prüfung.
 
+### 6.13 Listenexport (Phase 2, T40)
+
+Zahlungs- und Kostenliste exportieren ihre vollständige gefilterte READ-Zeilenmenge
+über `/api/payments/export.csv` bzw. `/api/cost-entries/export.csv`. Alle sieben
+Zahlungsfilter gelten unverändert; Status und Objekt der Kostenliste werden
+kombiniert. Jeder ausgewählte Datensatz benötigt zusätzlich seine Quellen- und
+Kreis-Exportrechte. Vor der vollständig gepufferten Ausgabe wird erneut geprüft;
+eine inzwischen unsichtbare abgelaufene Bindung ist kein Legacy-Fallback.
+
+CSV enthält IDs, Status und Originalcodes, UTF-8-BOM, Semikolon, CRLF und exakte
+Dezimalkommawerte mit Text-Formelschutz. Der separate Saldo-Betrag ist bei IN
+positiv, bei OUT negativ. Listensaldo und Kosten-Bruttosumme umfassen genau die
+angezeigten Status, auch Entwürfe oder Storno-/Korrekturzeilen je Filter; sie sind
+weder automatisches Ist noch Kontostand. Identische Filterwahl ist ein No-op;
+Lade-/Fehler-/Kontextwechsel sperren veraltete Downloads. Export ändert keine
+Finanz-, Beleg-, Audit- oder Historiendaten.
+
 ## 7. Synthetische Golden-Tests (objektive M6-Messlatte)
 
 Es gibt **keine** realen Beispieldaten. Prüffälle sind **synthetisch** aus den Regeln + **handberechneten** Soll-/Ist-/Saldo-Werten (jeder Cent), exakt wie M3/M4 §9. Beide Test-Arten verbindlich für die M6-Abnahme; sie laufen gegen die **reine Engine** (höchste Testdichte) und gegen Service/DB.

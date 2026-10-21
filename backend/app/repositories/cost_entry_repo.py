@@ -20,6 +20,20 @@ from app.repositories.base import TenantRepository
 class CostEntryRepository(TenantRepository[CostEntry]):
     model = CostEntry
 
+    async def list_by_filters(self, *, status: str | None = None,
+                              property_id: uuid.UUID | None = None) -> Sequence[CostEntry]:
+        stmt = self._base_query()
+        if status is not None:
+            stmt = stmt.where(CostEntry.status == status)
+        if property_id is not None:
+            stmt = stmt.where(CostEntry.property_id == property_id)
+        if status is not None:
+            stmt = stmt.order_by(CostEntry.created_at.desc())
+        elif property_id is not None:
+            stmt = stmt.order_by(CostEntry.invoice_date.desc())
+        result = await self._session.execute(stmt)
+        return result.scalars().all()
+
     async def list_active(self) -> Sequence[CostEntry]:
         """List only active (non-superseded) confirmed entries."""
         stmt = (

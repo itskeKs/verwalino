@@ -534,15 +534,30 @@ export function listCostCategories(): Promise<CostCategory[]> {
 
 // --- M2: Cost Entries ---
 
-export function listCostEntries(params?: {
+export interface CostEntryListQuery {
   status?: string;
   property_id?: string;
-}): Promise<CostEntry[]> {
+}
+
+function knownQuery<T extends object>(query: T | undefined, keys: readonly (keyof T)[]): string {
   const parts: string[] = [];
-  if (params?.status) parts.push(`status=${encodeURIComponent(params.status)}`);
-  if (params?.property_id) parts.push(`property_id=${encodeURIComponent(params.property_id)}`);
-  const qs = parts.length > 0 ? `?${parts.join("&")}` : "";
-  return api.get<CostEntry[]>(`/api/cost-entries${qs}`);
+  for (const key of keys) {
+    const value = query?.[key];
+    if (value !== undefined && value !== null && value !== "") {
+      parts.push(`${String(key)}=${encodeURIComponent(String(value))}`);
+    }
+  }
+  return parts.length ? `?${parts.join("&")}` : "";
+}
+
+const COST_ENTRY_FILTERS = ["status", "property_id"] as const;
+
+export function listCostEntries(params?: CostEntryListQuery): Promise<CostEntry[]> {
+  return api.get<CostEntry[]>(`/api/cost-entries${knownQuery(params, COST_ENTRY_FILTERS)}`);
+}
+
+export function exportCostEntriesCsv(params?: CostEntryListQuery): Promise<Blob> {
+  return api.getBlob(`/api/cost-entries/export.csv${knownQuery(params, COST_ENTRY_FILTERS)}`);
 }
 
 export function getCostEntry(id: string): Promise<CostEntry> {
@@ -821,7 +836,7 @@ export function listDeposits(scopeId?: string): Promise<DepositAccount[]> {
   return api.get<DepositAccount[]>(`/api/payments/deposits${query}`);
 }
 
-export function listPayments(params?: {
+export interface PaymentListQuery {
   bank_account_id?: string;
   lease_agreement_id?: string;
   tenant_profile_id?: string;
@@ -829,17 +844,16 @@ export function listPayments(params?: {
   payment_type?: string;
   period_year?: number;
   status?: string;
-}): Promise<Payment[]> {
-  const parts: string[] = [];
-  if (params?.bank_account_id) parts.push(`bank_account_id=${encodeURIComponent(params.bank_account_id)}`);
-  if (params?.lease_agreement_id) parts.push(`lease_agreement_id=${encodeURIComponent(params.lease_agreement_id)}`);
-  if (params?.tenant_profile_id) parts.push(`tenant_profile_id=${encodeURIComponent(params.tenant_profile_id)}`);
-  if (params?.owner_profile_id) parts.push(`owner_profile_id=${encodeURIComponent(params.owner_profile_id)}`);
-  if (params?.payment_type) parts.push(`payment_type=${encodeURIComponent(params.payment_type)}`);
-  if (params?.period_year) parts.push(`period_year=${params.period_year}`);
-  if (params?.status) parts.push(`status=${encodeURIComponent(params.status)}`);
-  const qs = parts.length > 0 ? `?${parts.join("&")}` : "";
-  return api.get<Payment[]>(`/api/payments${qs}`);
+}
+
+const PAYMENT_FILTERS = ["bank_account_id", "lease_agreement_id", "tenant_profile_id", "owner_profile_id", "payment_type", "period_year", "status"] as const;
+
+export function listPayments(params?: PaymentListQuery): Promise<Payment[]> {
+  return api.get<Payment[]>(`/api/payments${knownQuery(params, PAYMENT_FILTERS)}`);
+}
+
+export function exportPaymentsCsv(params?: PaymentListQuery): Promise<Blob> {
+  return api.getBlob(`/api/payments/export.csv${knownQuery(params, PAYMENT_FILTERS)}`);
 }
 
 export function getPayment(id: string): Promise<Payment> {

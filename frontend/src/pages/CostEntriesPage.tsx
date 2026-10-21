@@ -6,9 +6,10 @@
  * Inline creation with category defaults pre-populated.
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
+  exportCostEntriesCsv,
   listCostEntries,
   listCostCategories,
   listProperties,
@@ -23,6 +24,7 @@ import type {
   Property,
   Vendor,
 } from "../api/types";
+import type { CostEntryListQuery } from "../api/endpoints";
 import { ApiError } from "../api/client";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { SourceBadge } from "../components/SourceBadge";
@@ -82,6 +84,18 @@ function makeEmptyForm(): CostEntryCreate {
   };
 }
 
+// API amounts are decimal strings; never round list aggregates through Number.
+function amountCents(value: string): bigint {
+  const [whole, fraction = ""] = value.split(".");
+  return BigInt(`${whole}${fraction.padEnd(2, "0")}`);
+}
+
+function formatCents(value: bigint): string {
+  const absolute = value < 0n ? -value : value;
+  const whole = (absolute / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `${value < 0n ? "-" : ""}${whole},${(absolute % 100n).toString().padStart(2, "0")} EUR`;
+}
+
 export function CostEntriesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [entries, setEntries] = useState<CostEntry[]>([]);
@@ -93,17 +107,33 @@ export function CostEntriesPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<CostEntryCreate>(makeEmptyForm());
   const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState<{ query: CostEntryListQuery; key: string } | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const lifecycle = useRef({ mounted: false, generation: 0, downloading: false });
+
+  useEffect(() => {
+    const state = lifecycle.current;
+    state.mounted = true;
+    return () => { state.mounted = false; state.generation++; };
+  }, []);
 
   const statusFilter = searchParams.get("status") ?? "";
   const propertyFilter = searchParams.get("property_id") ?? "";
+  const queryKey = JSON.stringify([statusFilter, propertyFilter]);
 
   const reload = useCallback(() => {
+    const generation = ++lifecycle.current.generation;
+    const current = () => lifecycle.current.mounted && lifecycle.current.generation === generation;
+    lifecycle.current.downloading = false;
+    setDownloading(false);
+    setDownloadError(null);
+    setLoaded(null);
     setLoading(true);
     setError(null);
-    const params: { status?: string; property_id?: string } = {};
+    const params: CostEntryListQuery = {};
     if (statusFilter) params.status = statusFilter;
     if (propertyFilter) params.property_id = propertyFilter;
-
     Promise.all([
       listCostEntries(params),
       listCostCategories(),
@@ -111,26 +141,38 @@ export function CostEntriesPage() {
       listVendors(),
     ])
       .then(([e, c, p, v]) => {
+        if (!current()) return;
+        setLoaded({ query: params, key: queryKey });
         setEntries(e);
         setCategories(c);
         setProperties(p);
         setVendors(v);
       })
       .catch((err) => {
+        if (!current()) return;
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert. Bitte erneut anmelden.");
         } else {
           setError(String(err));
         }
       })
-      .finally(() => setLoading(false));
-  }, [statusFilter, propertyFilter]);
+      .finally(() => { if (current()) setLoading(false); });
+  }, [statusFilter, propertyFilter, queryKey]);
 
   useEffect(() => {
     reload();
   }, [reload]);
 
   function setFilter(key: string, value: string) {
+    if ((searchParams.get(key) ?? "") === value) return;
+    // Invalidate synchronously, before the URL update's next effect can run.
+    lifecycle.current.generation++;
+    lifecycle.current.downloading = false;
+    setLoaded(null);
+    setLoading(true);
+    setDownloading(false);
+    setDownloadError(null);
+    setError(null);
     const next = new URLSearchParams(searchParams);
     if (value) {
       next.set(key, value);
@@ -138,6 +180,36 @@ export function CostEntriesPage() {
       next.delete(key);
     }
     setSearchParams(next, { replace: true });
+  }
+
+  const currentDataset = loaded !== null && loaded.key === queryKey && !loading && !error;
+
+  async function downloadCsv() {
+    if (!currentDataset || !loaded || !lifecycle.current.mounted || lifecycle.current.downloading) return;
+    const generation = lifecycle.current.generation;
+    const current = () => lifecycle.current.mounted && lifecycle.current.generation === generation;
+    lifecycle.current.downloading = true;
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      const blob = await exportCostEntriesCsv(loaded.query);
+      if (!current()) return;
+      const anchor = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      try {
+        anchor.href = url;
+        anchor.download = "kosten.csv";
+        document.body.append(anchor);
+        anchor.click();
+      } finally {
+        anchor.remove();
+        URL.revokeObjectURL(url);
+      }
+    } catch (reason) {
+      if (current()) setDownloadError(reason instanceof Error ? reason.message : "CSV konnte nicht geladen werden.");
+    } finally {
+      if (current()) { lifecycle.current.downloading = false; setDownloading(false); }
+    }
   }
 
   function getCategoryLabel(id: string): string {
@@ -233,6 +305,7 @@ export function CostEntriesPage() {
         }}
       >
         <select
+          aria-label="Statusfilter"
           value={statusFilter}
           onChange={(e) => setFilter("status", e.target.value)}
           style={{ padding: "0.4rem 0.5rem", fontSize: "0.85rem" }}
@@ -244,6 +317,7 @@ export function CostEntriesPage() {
           ))}
         </select>
         <select
+          aria-label="Objektfilter"
           value={propertyFilter}
           onChange={(e) => setFilter("property_id", e.target.value)}
           style={{ padding: "0.4rem 0.5rem", fontSize: "0.85rem" }}
@@ -257,7 +331,14 @@ export function CostEntriesPage() {
         </select>
       </div>
 
-      {error && <p className="error-text">{error}</p>}
+      <button type="button" className="btn" disabled={!currentDataset || downloading} onClick={() => void downloadCsv()}>CSV herunterladen</button>
+      {downloading && <p>CSV wird geladen…</p>}
+      {downloadError && <p role="alert" className="error-text">{downloadError} Bitte CSV herunterladen erneut versuchen.</p>}
+      {error && <p className="error-text">{error} <button type="button" onClick={reload}>Liste erneut laden</button></p>}
+      {currentDataset && <div>
+        <p>Listensumme Brutto: <output aria-label="Listensumme Brutto">{formatCents(entries.reduce((total, entry) => total + amountCents(entry.gross_amount), 0n))}</output></p>
+        <p>Bruttosumme aller angezeigten Zeilen, einschließlich Entwürfen, verworfenen und ersetzten Kosten sowie negativen Korrekturen je Filter.</p>
+      </div>}
 
       {showForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
@@ -491,8 +572,8 @@ export function CostEntriesPage() {
         </div>
       )}
 
-      {loading ? (
-        <p>Lade...</p>
+      {loading || loaded?.key !== queryKey ? (
+        <p>{error ? "Liste nicht verfügbar." : "Lade..."}</p>
       ) : entries.length === 0 ? (
         <p className="empty-hint">Keine Kostenpositionen vorhanden.</p>
       ) : (
