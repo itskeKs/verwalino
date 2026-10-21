@@ -316,15 +316,16 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 
 ### Phase 3 – Parität und Komfort
 
-**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43 abgeschlossen; nächste Aufgabe T44.** T10 bleibt offen.
+**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43–T44 abgeschlossen; nächste Aufgabe T45.** T10 bleibt offen.
 
 - [x] **T43 Staffelmiete** — Aus Start, Betrag oder Prozent, Intervall und Stufenzahl mehrere Mietänderungen (T23) anlegen.
   Dateien: `frontend/src/pages/UnitDetailPage.tsx`, `backend/app/api/leases.py`
   Fertig, wenn: `uv run pytest tests/test_rent_changes.py -k staffel` grün UND Ablauf in der App: „+30 € jährlich, fünf Stufen sichtbar“.
   Umgesetzt: Startdatum, EUR/Prozent, 12–120 Monate, 1–50 Stufen; T23 atomar mit Live-/Quellenrechten und Finanzsperre. 72 Backendtests und 110 UI-Tests grün; echte UI-Abnahme mit 730/760/790/820/850 EUR, Reload, Fehlerfall und Smartphone-Dialog. § 557a BGB: Jahresabstand, Prozent nur Rechenhilfe; keine Migration (unbenutzte experimentelle 0132 nach daten-/sicherheitsgleichem Rundlauf entfernt). Verfahrensvorbehalt: erste experimentelle Produktionsänderungen vor belastbarem Rotlauf; danach fachliche Rot-/Grünprüfungen und vollständige UI-Abnahme, keine rückwirkende Red-first-Behauptung.
-- [ ] **T44 Indexmiete** — VPI alt/neu eingeben, neue Miete berechnen, 12 Monate Abstand prüfen (§ 557b BGB), als Mietänderung übernehmen.
+- [x] **T44 Indexmiete** — VPI alt/neu eingeben, neue Miete berechnen, 12 Monate Abstand prüfen (§ 557b BGB), als Mietänderung übernehmen.
   Dateien: `backend/app/engine/index_rent.py` (neu), `backend/app/api/leases.py`, `frontend/src/pages/UnitDetailPage.tsx`
   Fertig, wenn: `uv run pytest tests/engine/test_index_rent.py` (neu) grün UND Ablauf in der App: „VPI 110→115 bei 600 € ergibt 627,27 €“.
+  Umgesetzt: reine Decimal-Engine (18 Tests), Vorschau/Übernahme mit T23-Sperren und Live-/Quellenrechten (90 Mietänderungstests), 137 UI-Tests, Build und Gesamtlint grün. Echte UI-Abnahme: 600/150 EUR, VPI 110→115, 627,27 EUR ab 01.01.2027; Jahresgrenze 422, Vorschau schreibfrei, Eingabewechsel verwirft Vorschau, explizite Übernahme, Reload, Konflikt 409 und Smartphone-Dialog geprüft. § 557b BGB aus Primärquelle: Zugangsdatum nur Betreibereingabe, übernächster Monatsbeginn, keine Versand-/Zustellbehauptung; keine Migration.
 - [ ] **T45 HeizkostenV-Engine** — Grund-/Verbrauchsanteil 30–50/50–70 %, Warmwasser getrennt, 15 % Kürzung ohne Verbrauchserfassung (§ 12).
   Dateien: `backend/app/engine/heizkosten.py` (neu), `backend/app/engine/types.py`, `backend/tests/engine/test_heizkosten.py` (neu)
   Fertig, wenn: `uv run pytest tests/engine/test_heizkosten.py` grün.

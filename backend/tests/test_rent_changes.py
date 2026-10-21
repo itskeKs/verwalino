@@ -430,6 +430,7 @@ async def test_property_scope_follows_parent_lease_without_enforcement_bypass(re
         assert (await clerk.get(history_url(w, "hidden_lease"))).status_code == 404
         assert (await clerk.post(history_url(w, "hidden_lease"), json=change(valid_from="2026-04-01"))).status_code == 404
         assert (await clerk.post(history_url(w, "hidden_lease") + "/staffel", json=staffel_body())).status_code == 404
+        assert (await clerk.post(history_url(w, "hidden_lease") + "/index/preview", json=index_body())).status_code == 404
         clerk_row = await post_change(clerk, w, valid_from="2026-04-01", base_rent="760.00")
     rw = app_rw_session
     await rw.execute(text("""SELECT set_config('app.current_org_id',:org,true),
@@ -507,6 +508,11 @@ async def test_rent_change_leaves_booked_payments_and_finalized_snapshot_untouch
         assert duplicate.status_code == 409, duplicate.text
         staffel = await api.post(history_url(w) + "/staffel", json=staffel_body(staffel_start_date="2027-03-15"))
         assert staffel.status_code == 201, staffel.text
+        index_inputs = index_body(declaration_received_on="2032-02-15")
+        preview = await api.post(history_url(w) + "/index/preview", json=index_inputs)
+        assert preview.status_code == 200, preview.text
+        index_row = await api.post(history_url(w) + "/index", json=index_adopt(preview.json(), **index_inputs))
+        assert index_row.status_code == 201, index_row.text
         response = await api.get(f"/api/settlements/{run_id}")
         assert response.status_code == 200, response.text
         assert response.json() == finalized
@@ -614,7 +620,7 @@ async def test_bank_matching_and_booking_use_effective_march_soll(rent_world, re
         assert result["balance"] == "0.00"
 
 
-@pytest.mark.parametrize("batch", [False, True], ids=["single", "staffel"])
+@pytest.mark.parametrize("batch", [False, True, "index"], ids=["single", "staffel", "index"])
 async def test_rent_change_waits_for_financial_input_lock(rent_world, rent_db, batch):
     w = rent_world
     await rent_db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
@@ -622,8 +628,8 @@ async def test_rent_change_waits_for_financial_input_lock(rent_world, rent_db, b
     blocker = await rent_db.scalar(text("SELECT pg_backend_pid()"))
     async with api_client(w) as api:
         request = asyncio.create_task(api.post(
-            history_url(w) + ("/staffel" if batch else ""),
-            json=staffel_body() if batch else change()))
+            history_url(w) + ("/index/preview" if batch == "index" else "/staffel" if batch else ""),
+            json=index_body() if batch == "index" else staffel_body() if batch else change()))
         waiting = False
         try:
             for _ in range(200):
@@ -637,7 +643,7 @@ async def test_rent_change_waits_for_financial_input_lock(rent_world, rent_db, b
         finally:
             await rent_db.rollback()
             response = await asyncio.wait_for(request, timeout=15)
-        assert response.status_code == 201, response.text
+        assert response.status_code == (200 if batch == "index" else 201), response.text
         assert waiting, "Rent changes must wait for the shared financial-input boundary"
 
 
@@ -800,3 +806,120 @@ async def test_staffelmiete_mietkonto_uses_generated_rates(rent_world):
         body = await statement(api, rent_world, "2027-01-01", "2027-12-31")
         assert body["soll_total"] == "10560.00"  # 12 * (730 + 150)
         assert body["ist_total"] == "0.00"
+
+
+# T44: receipt dates are user inputs, not a delivery assertion.
+def index_body(**overrides):
+    return {"old_index": "110", "new_index": "115", "declaration_received_on": "2026-11-15", **overrides}
+
+
+def index_adopt(preview, **overrides):
+    return {**index_body(), "expected_base_rent": preview["base_rent"],
+            "expected_advance_payment": preview["advance_payment"],
+            "expected_previous_valid_from": preview["previous_valid_from"], **overrides}
+
+
+async def test_index_preview_and_adopt_preserve_history_and_advance(rent_world):
+    async with api_client(rent_world) as api:
+        url = history_url(rent_world) + "/index"
+        response = await api.post(url + "/preview", json=index_body())
+        assert response.status_code == 200, response.text
+        preview = response.json()
+        assert preview == {"previous_valid_from": "2026-01-01", "previous_base_rent": "700.00",
+                           "valid_from": "2027-01-01", "base_rent": "731.82", "advance_payment": "150.00"}
+        assert (await api.get(history_url(rent_world))).json() == []
+        created = await api.post(url, json=index_adopt(preview))
+        assert created.status_code == 201, created.text
+        assert created.json()["base_rent"] == "731.82"
+        assert created.json()["valid_from"] == "2027-01-01"
+        assert created.json()["advance_payment"] == "150.00"
+        assert (await api.get(history_url(rent_world))).json() == [created.json()]
+        original = (await api.get("/api/leases", params={"unit_id": str(rent_world["unit"])})).json()[0]
+        assert original["base_rent"] == "700.00"
+        account = await statement(api, rent_world, "2027-01-01", "2027-01-31")
+        assert account["soll_total"] == "881.82"
+
+
+@pytest.mark.parametrize("overrides", [
+    {"old_index": "0"}, {"new_index": "NaN"}, {"new_index": "Infinity"},
+    {"new_index": "110"}, {"new_index": "-1"}, {"old_index": "110.0000001"},
+    {"declaration_received_on": "2026-10-31"}, {"declaration_received_on": "bad-date"},
+])
+async def test_index_invalid_input_does_not_write(rent_world, overrides):
+    async with api_client(rent_world) as api:
+        response = await api.post(history_url(rent_world) + "/index/preview", json=index_body(**overrides))
+        assert response.status_code == 422, response.text
+        assert (await api.get(history_url(rent_world))).json() == []
+
+
+async def test_index_rejects_stale_preview_without_partial_write(rent_world):
+    async with api_client(rent_world) as api:
+        url = history_url(rent_world) + "/index"
+        preview_response = await api.post(url + "/preview", json=index_body())
+        assert preview_response.status_code == 200, preview_response.text
+        old = await post_change(api, rent_world, valid_from="2026-01-01", base_rent="800.00")
+        response = await api.post(url, json=index_adopt(preview_response.json()))
+        assert response.status_code == 409, response.text
+        assert (await api.get(history_url(rent_world))).json() == [old]
+
+
+async def test_index_lease_end_and_future_history_are_protected(rent_world):
+    async with api_client(rent_world) as api:
+        ended = await api.patch(f"/api/leases/{rent_world['lease']}", json={"valid_to": "2026-12-31"})
+        assert ended.status_code == 200, ended.text
+        response = await api.post(history_url(rent_world) + "/index/preview", json=index_body())
+        assert response.status_code == 422, response.text
+        old = await post_change(api, rent_world, lease="hidden_lease", valid_from="2028-01-01")
+        response = await api.post(history_url(rent_world, "hidden_lease") + "/index/preview", json=index_body())
+        assert response.status_code == 409, response.text
+        assert (await api.get(history_url(rent_world, "hidden_lease"))).json() == [old]
+
+
+@pytest.mark.parametrize("actor,foreign,status", [("reader", False, 403), ("admin", True, 404)])
+async def test_index_permissions(rent_world, actor, foreign, status):
+    async with api_client(rent_world, actor, foreign=foreign) as api:
+        for suffix, body in [("/preview", index_body()), ("", index_adopt({"base_rent": "731.82", "advance_payment": "150.00", "previous_valid_from": "2026-01-01"}))]:
+            response = await api.post(history_url(rent_world) + "/index" + suffix, json=body)
+            assert response.status_code == status, response.text
+
+
+async def test_index_concurrent_adoption_creates_one_row(rent_world):
+    async with api_client(rent_world) as first, api_client(rent_world) as second:
+        url = history_url(rent_world) + "/index"
+        preview = await first.post(url + "/preview", json=index_body())
+        assert preview.status_code == 200, preview.text
+        responses = await asyncio.gather(first.post(url, json=index_adopt(preview.json())),
+                                         second.post(url, json=index_adopt(preview.json())))
+        assert sorted(r.status_code for r in responses) == [201, 409]
+        assert len((await first.get(history_url(rent_world))).json()) == 1
+
+
+@pytest.mark.parametrize("deactivate,expected", [(False, 403), (True, 401)])
+async def test_index_rechecks_live_actor(rent_world, rent_db, deactivate, expected):
+    async with api_client(rent_world, "clerk") as api:
+        response = await api.post(history_url(rent_world) + "/index/preview", json=index_body())
+        assert response.status_code == 200, response.text
+        if deactivate:
+            await rent_db.execute(text('UPDATE "user" SET is_active=false WHERE id=:clerk'), rent_world)
+        else:
+            await rent_db.execute(text("UPDATE membership SET role='READ_ONLY' WHERE user_id=:clerk AND organization_id=:org"), rent_world)
+        await rent_db.commit()
+        response = await api.post(history_url(rent_world) + "/index", json=index_adopt(response.json()))
+        assert response.status_code == expected, response.text
+    async with api_client(rent_world) as admin:
+        assert (await admin.get(history_url(rent_world))).json() == []
+
+
+async def test_index_advance_only_change_does_not_restart_base_rent_year(rent_world):
+    async with api_client(rent_world) as api:
+        old = await post_change(api, rent_world, valid_from="2026-06-01", base_rent="700.00", advance_payment="175.00")
+        preview = await api.post(history_url(rent_world) + "/index/preview", json=index_body())
+        assert preview.status_code == 200, preview.text
+        assert preview.json()["previous_valid_from"] == "2026-01-01"
+        assert preview.json()["base_rent"] == "731.82"
+        assert preview.json()["advance_payment"] == "175.00"
+        response = await api.post(history_url(rent_world) + "/index", json=index_adopt(preview.json()))
+        assert response.status_code == 201, response.text
+        history = (await api.get(history_url(rent_world))).json()
+        assert history[0] == old
+        assert history[1]["advance_payment"] == "175.00"

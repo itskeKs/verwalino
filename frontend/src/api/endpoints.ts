@@ -542,6 +542,40 @@ export function createStaffelmieteRentChanges(
   return api.post<LeaseRentChange[]>(`/api/leases/${leaseId}/rent-changes/staffel`, body);
 }
 
+export interface IndexmieteInput {
+  old_index: string;
+  new_index: string;
+  declaration_received_on: string;
+}
+
+export interface IndexmietePreview {
+  valid_from: string;
+  previous_valid_from: string;
+  previous_base_rent: string;
+  base_rent: string;
+  advance_payment: string;
+}
+
+export interface IndexmieteCreate extends IndexmieteInput {
+  expected_base_rent: string;
+  expected_advance_payment: string;
+  expected_previous_valid_from: string;
+}
+
+export function previewIndexmieteRentChange(
+  leaseId: string,
+  body: IndexmieteInput,
+): Promise<IndexmietePreview> {
+  return api.post<IndexmietePreview>(`/api/leases/${leaseId}/rent-changes/index/preview`, body);
+}
+
+export function createIndexmieteRentChange(
+  leaseId: string,
+  body: IndexmieteCreate,
+): Promise<LeaseRentChange> {
+  return api.post<LeaseRentChange>(`/api/leases/${leaseId}/rent-changes/index`, body);
+}
+
 // --- M2: Cost Categories ---
 
 export function listCostCategories(): Promise<CostCategory[]> {

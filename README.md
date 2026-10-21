@@ -174,6 +174,36 @@ Prozent ist hier nur eine Rechenhilfe; die App ersetzt weder Vereinbarung noch
 Prüfung der zulässigen Miethöhe/Mietpreisbremse. Keine neue Datenbankrevision.
 `scripts/acceptance/t43_staffelmiete_browser.cjs` prüft den echten UI-Durchstich.
 
+## Indexmiete (T44)
+
+„Indexmiete berechnen“ in der Miethistorie erwartet VPI alt/neu mit gleicher
+Destatis-Basis (manuelle Eingabe, kein Abruf) und das Zugangsdatum der Erklärung.
+Die schreibfreie Vorschau zeigt `bisherige Kaltmiete × VPI neu / VPI alt`, mit
+Decimal/ROUND_HALF_UP auf Cent gerundet; 600 EUR bei 110 → 115 ergeben 627,27 EUR.
+Auch Indexsenkungen sind möglich. Die Vorauszahlung wird nicht indexiert.
+
+`POST /api/leases/{id}/rent-changes/index/preview` erwartet `old_index`,
+`new_index` (positive endliche Dezimalstrings, höchstens sechs Nachkommastellen)
+und `declaration_received_on`. Wirksamkeitsbeginn ist der erste Tag des
+übernächsten Monats; mindestens ein Kalenderjahr seit der letzten Änderung der
+Kaltmiete ist erforderlich. Eine reine Vorauszahlungsänderung startet diese
+Frist nicht neu. Künftige Historienzeilen werden nicht ersetzt (409), Daten
+außerhalb des Vertrags und ungültige Berechnungswerte werden abgewiesen (422).
+
+Erst „Als Mietänderung übernehmen“ sendet an `/rent-changes/index` zusätzlich
+`expected_base_rent`, `expected_advance_payment` und
+`expected_previous_valid_from` aus der Vorschau. Unter der gemeinsamen
+Finanz-/Vertragssperre wird neu gerechnet; eine veraltete Vorschau liefert 409.
+Die Übernahme nutzt den unveränderlichen T23-Pfad und protokolliert VPI und
+angegebenen Zugang im Audit. Live-/Quellenrechte gelten auch für die Vorschau.
+Vertragsoriginal, gebuchte Zahlungen und finale Snapshots bleiben unverändert.
+
+[§ 557b BGB](https://www.gesetze-im-internet.de/bgb/__557b.html) verlangt eine
+schriftliche Indexvereinbarung und eine Erklärung in Textform. Voraussetzungen
+und korrekte VPI-Basis prüft der Betreiber. Das eingegebene Datum belegt keine
+Zustellung; die Funktion erstellt/versendet keine Erklärung. Keine Migration.
+`scripts/acceptance/t44_indexmiete_browser.cjs` prüft den echten UI-Ablauf.
+
 ## Kautionen (Phase 2)
 
 `/kautionen` zeigt je Vertrag das vereinbarte Soll aus `lease.deposit`, gebuchte

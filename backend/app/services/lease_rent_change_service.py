@@ -9,6 +9,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 
+from app.engine.index_rent import calculate_index_rent, index_effective_date
 from app.models.audit_event import AuditEvent
 from app.models.lease_rent_change import LeaseRentChange
 from app.repositories.audit_repo import AuditRepository
@@ -100,3 +101,56 @@ class LeaseRentChangeService:
         for effective, rent in planned:
             rows.append(await self.create(lease_id, effective, advance, base_rent=rent))
         return rows
+
+    async def calculate_index(self, lease_id: uuid.UUID, *, old_index: Decimal, new_index: Decimal,
+                              declaration_received_on: date):
+        await FinancialScopeService(self.session, self.org_id, self.user_id).lock_inputs()
+        lease = await LeaseAgreementRepository(self.session, self.org_id).get_by_id_for_update(lease_id)
+        if lease is None:
+            raise HTTPException(404, "Lease agreement not found")
+        await require_history_prepare(self.session, self.org_id, "lease_agreement", lease)
+        try:
+            effective = index_effective_date(declaration_received_on)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if effective < lease.valid_from or (lease.valid_to is not None and effective >= lease.valid_to):
+            raise HTTPException(422, "Rent change must be within the lease period")
+        history = await LeaseRentChangeRepository(self.session, self.org_id).list_for_lease(lease_id)
+        if any(row.valid_from >= effective for row in history):
+            raise HTTPException(409, "Rent history already exists at or after the index rent date")
+        source = next((row for row in reversed(history) if row.valid_from < effective), lease)
+        # §557b(2) excludes §560 advance-payment changes from the base-rent year.
+        base_from, previous_base = lease.valid_from, lease.base_rent
+        for change in history:
+            if change.valid_from >= effective:
+                break
+            if change.base_rent != previous_base:
+                base_from = change.valid_from
+                previous_base = change.base_rent
+        try:
+            return calculate_index_rent(base_rent=source.base_rent, advance_payment=source.advance_payment,
+                                        previous_valid_from=base_from, old_index=old_index,
+                                        new_index=new_index, declaration_received_on=declaration_received_on)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    async def adopt_index(self, lease_id: uuid.UUID, *, old_index: Decimal, new_index: Decimal,
+                          declaration_received_on: date, expected_base_rent: Decimal,
+                          expected_advance_payment: Decimal, expected_previous_valid_from: date):
+        preview = await self.calculate_index(lease_id, old_index=old_index, new_index=new_index,
+                                              declaration_received_on=declaration_received_on)
+        if (preview.base_rent, preview.advance_payment, preview.previous_valid_from) != (
+                expected_base_rent, expected_advance_payment, expected_previous_valid_from):
+            raise HTTPException(409, "Index rent preview is stale; calculate again")
+        row = await self.create(lease_id, preview.valid_from, preview.advance_payment, base_rent=preview.base_rent)
+        await AuditRepository(self.session, self.org_id).create(AuditEvent(
+            actor_user_id=self.user_id, entity_type="lease_agreement", entity_id=lease_id,
+            action="lease.index_rent_created", payload_diff={
+                "rent_change_id": str(row.id), "old_index": str(old_index), "new_index": str(new_index),
+                "declaration_received_on": declaration_received_on.isoformat(),
+                "previous_valid_from": preview.previous_valid_from.isoformat(),
+                "previous_base_rent": f"{preview.previous_base_rent:.2f}",
+                "base_rent": f"{preview.base_rent:.2f}", "valid_from": preview.valid_from.isoformat(),
+            },
+        ))
+        return row

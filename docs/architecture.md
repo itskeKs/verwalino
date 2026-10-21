@@ -425,6 +425,14 @@ je Stufe mit Decimal auf Cent gerundet; Kalenderdaten bleiben am ersten
 Erhöhungstag verankert. Vorhandene künftige Historie wird nicht überschrieben.
 Gebuchte Zahlungen, ausgestellte Dokumente und finale Snapshots bleiben erhalten.
 
+T44 verwendet die reine Decimal-Engine `index_rent.py` für VPI-Verhältnisrechnung,
+Cent-Rundung, Jahresfrist und den übernächsten Monatsbeginn nach angegebenem Zugang.
+Nur der letzte Kaltmietwechsel bestimmt die Jahresfrist, nicht eine reine NK-Änderung.
+Vorschau und Übernahme prüfen dieselben Live-/Quellenrechte und sperren vor dem Lesen
+der Basisrate. Die Übernahme rechnet erneut und vergleicht die Vorschau; veraltete
+Werte liefern 409. Der T23-Schreibpfad und ein zusätzlicher Index-Audit erhalten
+Historie und Berechnungsgrundlagen, ohne neues Schema oder Versandbehauptung.
+
 **`bank_account`** (SDD §6.3 — Vermögenstrennung): `organization_id`, Bezug auf `management_mandate`/`property`, `account_type` (laufend|Rücklage|Kaution), IBAN/Bank-Stammdaten. RLS aktiv. *(Implementierung erst ab M6; Modell-Anker in M1 vorbereiten, damit Mandat/Objekt-Bezug konsistent ist.)*
 
 **`meter` / `meter_reading`** (SDD §6.2.1): optionale Objekt-/Einheitszähler mit Ablesungen (`reading_date`, `value NUMERIC(14,4)`, `period`). RLS und explizite Org-Filter aktiv. Seit T29 bietet `/api/meters` GET/POST, `/{id}` GET/PATCH für Beschreibungsfelder und `/{id}/readings` GET/POST für unverändert erhaltene Ablesungen. Repository und API prüfen sichtbares Elternobjekt, Einheitskohärenz und bestehende Master-Lese-/Prepare-Rechte; keine nachträgliche Umhängung. Schreiboperationen halten Live-ACL-/Finanz-/Zeilensperren in dieser Reihenfolge und committen vor der Erfolgsantwort. Messwerte werden ohne Float oder Rundung validiert und als vierstellige Dezimalstrings ausgegeben. Seit T30 verwenden Objekt- und Einheitsdetail dasselbe `MeterPanel` mit festem Kontext und Rollenflag; String-/BigInt-Rechnung zeigt die Differenz der letzten zwei eindeutigen Tage, nicht bereits eine T31-Abrechnungsvorbelegung. Kontextwechsel entkoppeln verspätete Antworten, Schreibvorgänge sind synchron gegen Mehrfachauslösung gesperrt; Fehler behalten die Eingaben.

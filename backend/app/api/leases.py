@@ -199,6 +199,31 @@ class RentChangeCreate(BaseModel):
     advance_payment: RentAmount
 
 
+IndexValue = Annotated[Decimal, Field(gt=0, lt=Decimal("1000000000000"),
+                                      max_digits=18, decimal_places=6, allow_inf_nan=False)]
+
+
+class IndexRentCalculate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    old_index: IndexValue
+    new_index: IndexValue
+    declaration_received_on: date
+
+
+class IndexRentAdopt(IndexRentCalculate):
+    expected_base_rent: RentAmount
+    expected_advance_payment: RentAmount
+    expected_previous_valid_from: date
+
+
+class IndexRentPreview(BaseModel):
+    valid_from: date
+    previous_valid_from: date
+    previous_base_rent: str
+    base_rent: str
+    advance_payment: str
+
+
 class RentChangeOut(BaseModel):
     id: str
     lease_agreement_id: str
@@ -254,6 +279,34 @@ async def create_staffelmiete_rent_changes(
         increase_percent=body.staffel_increase_percent,
     )
     return [_rent_change_out(row) for row in rows]
+
+
+@router.post("/{lease_id}/rent-changes/index/preview", response_model=IndexRentPreview)
+async def preview_index_rent(
+    lease_id: uuid.UUID,
+    body: IndexRentCalculate,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_live_writer_db),
+):
+    result = await LeaseRentChangeService(db, auth.organization_id, auth.user_id).calculate_index(
+        lease_id, **body.model_dump(),
+    )
+    return IndexRentPreview(valid_from=result.valid_from, previous_valid_from=result.previous_valid_from,
+                            previous_base_rent=f"{result.previous_base_rent:.2f}",
+                            base_rent=f"{result.base_rent:.2f}", advance_payment=f"{result.advance_payment:.2f}")
+
+
+@router.post("/{lease_id}/rent-changes/index", response_model=RentChangeOut, status_code=201)
+async def adopt_index_rent(
+    lease_id: uuid.UUID,
+    body: IndexRentAdopt,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_live_writer_db),
+):
+    row = await LeaseRentChangeService(db, auth.organization_id, auth.user_id).adopt_index(
+        lease_id, **body.model_dump(),
+    )
+    return _rent_change_out(row)
 
 
 def _to_out(la: LeaseAgreement) -> LeaseOut:
