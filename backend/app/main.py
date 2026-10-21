@@ -15,6 +15,7 @@ from app.api import cost_categories, cost_entries, invoice_documents, document_r
 from app.api import financial_input_coverage, accounting_scopes, access_preparation, mandate_quarantine, dunning_quarantine
 from app.api import settlements
 from app.api import economic_plans, weg_settlements
+from app.api import special_levies
 from app.api import payments
 from app.api import bank_accounts, bank_transactions
 from app.api import dunning
@@ -99,6 +100,7 @@ app.include_router(weg_settlements.router)
 app.include_router(bank_accounts.router)
 app.include_router(bank_transactions.router)
 app.include_router(payments.router)
+app.include_router(special_levies.router)
 
 # M7 Mahnwesen
 app.include_router(dunning.router)

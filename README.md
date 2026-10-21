@@ -220,6 +220,24 @@ Finalisierte Snapshots, gebuchte Zahlungen und tatsächliches Ist bleiben unver�
 `scripts/acceptance/t28_advance_proposal_browser.cjs` prüft 1.200 EUR / 12 = 100 EUR
 und das Mietkonto 2027 nach ausdrücklicher Übernahme: 700/100 statt 700/150.
 
+## Sonderumlagen-Backend (Phase 2)
+
+`POST /api/special-levies` legt eine einmalige Sonderumlage mit `property_id`,
+explizitem `accounting_scope_id`, positivem centgenauem `amount`, `due_date` und
+optionalem `resolution_id` an. Unterstützt werden vollständige WEG-Objektkreise;
+unvollständige MEA-/Eigentumsgrundlagen und Teilkreise werden ausdrücklich abgewiesen.
+Die Verteilung verwendet die Eigentümer am Fälligkeitstag, bei Miteigentum deren
+positive Anteile innerhalb der Einheit, und die bestehende centgenaue Restverteilung.
+10.000 EUR auf MEA 300/300/400 ergeben 3.000/3.000/4.000 EUR.
+
+Kopf und Anteile bleiben nach Anlage unveränderlich. Spätere MEA-/Eigentumsänderungen
+berechnen alte Umlagen nicht neu. `GET /api/special-levies` liest mit optionalem
+Objekt-/Kreisfilter unter tatsächlichen Kreis- und Quellenrechten; unvollständiger
+Zugriff wird nicht als vollständige leere Liste ausgegeben. Das bestehende
+Eigentümerkonto berücksichtigt den Anteil einmalig als `SONDERZAHLUNG` im
+Fälligkeitsmonat, auch ohne Wirtschaftsplan; regulär gebuchte Sonderzahlungen
+reduzieren den offenen Betrag. UI-Anlage und Mahnungsdurchstich folgen in T33.
+
 ## Zähler-API (Phase 2)
 
 `GET/POST /api/meters` verwaltet Objektzähler und optional einer Einheit

@@ -66,7 +66,7 @@ TENANT_TABLES = frozenset({
     # M3 Verteilungs-/Abrechnungs-Engine
     "settlement_run", "settlement_line", "coverage_declaration",
     # M4 WEG-Abrechnung (Wirtschaftsplan eigene Entitaet)
-    "economic_plan", "economic_plan_line",
+    "economic_plan", "economic_plan_line", "special_levy", "special_levy_allocation",
     # M6 Zahlungen, Mietkonto & offene Posten
     "payment", "bank_transaction",
     # M7 Mahnwesen

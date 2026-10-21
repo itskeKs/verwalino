@@ -212,6 +212,16 @@ class ExpectedCharge:
     days_in_month: int | None = None
 
 
+def special_levy_expected_charges(
+    allocations: list[tuple[date, Decimal]], owner_profile_id: uuid.UUID,
+    period_start: date, period_end: date,
+) -> list[ExpectedCharge]:
+    """Frozen one-off obligations, in their due month, without daily proration."""
+    return [ExpectedCharge(period_year=due.year, period_month=due.month,
+        payment_type="SONDERZAHLUNG", amount=amount, owner_profile_id=owner_profile_id)
+        for due, amount in allocations if period_start <= due <= period_end]
+
+
 def _split_partial_month(monthly_amount: Decimal, days_occupied: int, days_in_month: int) -> Decimal:
     """Tag-exact partial-month share of `monthly_amount` (m6 section 2.1).
 

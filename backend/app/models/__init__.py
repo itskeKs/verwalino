@@ -150,3 +150,5 @@ from app.models.property_source_classification import PropertySourceClassificati
 from app.models.property_creation_receipt import PropertyCreationReceipt
 
 from app.models.intake_original import IntakeOriginal
+
+from app.models.special_levy import SpecialLevy, SpecialLevyAllocation

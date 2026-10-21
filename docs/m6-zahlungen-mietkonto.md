@@ -153,8 +153,29 @@ monatliches Soll(owner, monat) = economic_plan_line(OWNER_ADVANCE, owner).monthl
 ```
 
 - Die Quelle ist die in M4 bereits berechnete und **monatsbasiert** (ADR-0007 E4-3b) gerundete `OWNER_ADVANCE.monthly_amount` je Eigentümer. M6 erfindet hier **nichts** — es liest den finalisierten Plan.
-- **Nur finalisierte Pläne** liefern ein verbindliches Soll (ein `draft`-Plan ist kein beschlossenes Soll). **[§18/fachlich F6-5]** Verhalten ohne finalisierten Plan (analog M4 F4-1): provisorisch — kein Eigentümer-Soll ohne finalisierten Plan; das Hausgeld-Konto zeigt dann nur die Ist-Zahlungen ohne Soll-Abgleich. Fachlich abzunehmen.
+- **Nur finalisierte Pläne** liefern verbindliches monatliches Hausgeld-Soll (ein `draft`-Plan ist kein beschlossenes Soll). Ohne finalisierten Plan wird kein Hausgeld-Vorschuss erfunden. Seit Phase 2 (T32) können unabhängig davon ausdrücklich angelegte, eingefrorene Sonderumlagen als einmaliges Eigentümer-Soll hinzukommen.
 - **Mehrere Einheiten je Eigentümer:** Der Plan hat eine `OWNER_ADVANCE`-Zeile je (Eigentümer, Einheit); das Eigentümer-Soll je Monat ist die **Summe** der `monthly_amount` über seine Einheiten (exakt, kein erneutes Runden — Cent + Cent = Cent, m3 §4.3).
+
+#### Sonderumlagen seit Phase 2 (T32)
+
+`GET/POST /api/special-levies` ergänzt das bestehende Konto um ausdrücklich
+angelegte Sonderumlagen. Erforderlich sind Objekt, vollständiger WEG-Kreis,
+positiver centgenauer Gesamtbetrag und Fälligkeit; ein Beschluss kann optional
+referenziert werden und muss zum selben Objekt und derselben Organisation gehören.
+Teilkreise werden nicht als vollständige Objektumlage behandelt. Alle Einheiten
+benötigen positive MEA und am Fälligkeitstag gültige Eigentümer; mehrere Eigentümer
+benötigen positive Anteile, die innerhalb ihrer Einheit normalisiert werden.
+Die bestehende Restverteilung erhält die Gesamtsumme centgenau.
+
+Die Anlage friert Eigentümer, Einheit, Historienzeile, wirksame MEA und Betrag je
+Anteil ein. Kopf und Anteile sind append-only; spätere MEA-/Historienänderungen
+ändern diese Verpflichtung nicht. Das Eigentümerkonto übernimmt sie genau einmal
+als `SONDERZAHLUNG` im Fälligkeitsmonat, nur wenn die Fälligkeit im gewählten
+Berichtszeitraum liegt. Ein Wirtschaftsplan ist dafür nicht erforderlich. Bestehende
+gebuchte `SONDERZAHLUNG`-Eingänge werden über denselben Soll-/Ist-Pfad angerechnet;
+Zahlungen, Storni und alte Abrechnungssnapshots werden dabei nicht geändert.
+READ-, Prepare-, Quellen- und Organisationsgrenzen gelten auch für die neue Quelle.
+Die Oberfläche und der Mahnungsdurchstich werden in T33 integriert.
 
 ### 2.3 Soll-Engine als reine Funktion
 
