@@ -75,6 +75,7 @@ import type {
   OpenItem,
   MietkontoResult,
   DunningNotice,
+  DunningSettings,
   DunningCreateTenant,
   DunningCreateOwner,
   Meeting,
@@ -903,6 +904,10 @@ export function setAdvancePaymentsDerived(
 }
 
 // --- M7: Dunning (Mahnwesen) ---
+
+export function getDunningSettings(): Promise<DunningSettings> {
+  return api.get<DunningSettings>("/api/dunning/settings");
+}
 
 export function listDunningNotices(params?: {
   tenant_profile_id?: string;

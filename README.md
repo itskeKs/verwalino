@@ -303,6 +303,26 @@ neu; verwendete Messdaten werden im unveränderlichen Snapshot eingefroren.
 Oberfläche zwei Einheiten mit 30/70 Verbrauch und 100 EUR Wasserkosten: zwei reale
 Abrechnungen ergeben 30/70 EUR einschließlich Reload und Finalisierung.
 
+### Verzugszinsen auf Mahnungen (Phase 2)
+
+Beide Mahnungsformulare verlangen einen ausdrücklich geprüften „Basiszinssatz (%)“.
+`HV_DUNNING_BASE_INTEREST_RATE` liefert optional die Vorgabe; ohne Konfiguration
+bleibt das Feld leer. Die App behauptet keinen amtlichen oder automatisch aktuellen
+Zinssatz. `GET /api/dunning/settings` liefert die Vorgabe für angemeldete Mitglieder.
+Eine explizite dezimale Zeichenkette `base_interest_rate` überschreibt sie; alte
+API-Aufrufe ohne Angabe und ohne Konfiguration bleiben zinsfrei, explizites `null`
+deaktiviert die Berechnung. Bestehende Briefe/PDFs werden dadurch nicht umgerechnet.
+
+Berechnet wird je offenem Posten `Betrag × (Basis + 5) / 100 × Kalendertage / 365`,
+ab tatsächlicher Fälligkeit, mit einmaliger `ROUND_HALF_UP`-Cent-Rundung. Gebühren
+und Zinsen werden nicht verzinst. Beispiel: 700 EUR, Basis 2,50 %, 60 Tage →
+8,63 EUR Zinsen und 708,63 EUR Gesamtbetrag bei Gebühr 0. Fälligkeit, Stichtag,
+Tage, Basis-/Jahreszins und Beträge werden gespeichert und in Detail/PDF angezeigt;
+spätere Konfigurations- oder Zahlungsänderungen berechnen die ausgestellte Mahnung
+nicht neu. Migration 0129 schützt diese Provenienz und verweigert deren Verlust
+beim Downgrade. Ausstellung allein bestätigt keinen Zugang. Der echte UI-/PDFablauf
+ist mit `scripts/acceptance/t35_dunning_interest_browser.cjs` wiederholbar.
+
 Weiterführende Dokumentation:
 
 - [Deployment](DEPLOY.md)

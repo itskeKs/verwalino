@@ -6,7 +6,9 @@ import { DunningNoticeDetailPage } from "./DunningNoticeDetailPage";
 import * as endpoints from "../api/endpoints";
 import { ApiError } from "../api/client";
 
+vi.mock("../auth/useAuth", () => ({ useAuth: () => ({ session: { role: "CLERK", organization_id: "org" } }) }));
 vi.mock("../api/endpoints", () => ({
+  getDunningSettings: vi.fn(),
   listDunningNotices: vi.fn(), createDunningForTenant: vi.fn(), createDunningForOwner: vi.fn(),
   listTenantProfiles: vi.fn(), listOwnerProfiles: vi.fn(), listPersons: vi.fn(), listLeases: vi.fn(),
   listProperties: vi.fn(), listUnits: vi.fn(), listEconomicPlans: vi.fn(), getDunningNotice: vi.fn(), issueDunningNotice: vi.fn(),
@@ -17,6 +19,7 @@ const notice = { id: "notice", accounting_scope_id: "scope", tenant_profile_id: 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(endpoints.getDunningSettings).mockResolvedValue({ base_interest_rate: "2.50" });
   vi.mocked(endpoints.listProperties).mockResolvedValue([{ id: "property", name: "Sonnenhof", management_type: "WEG" }] as never);
   const resolved = (name: "listLeases" | "listTenantProfiles" | "listOwnerProfiles" | "listPersons" | "listUnits" | "listEconomicPlans" | "listDunningNotices", value: unknown) => vi.mocked(endpoints[name]).mockResolvedValue(value as never);
   resolved("listLeases", [{ id: "lease", unit_id: "unit", tenant_profile_id: "tenant", valid_from: "2025-01-01" }, { id: "other", unit_id: "unit", tenant_profile_id: "tenant", valid_from: "2025-02-01" }]);

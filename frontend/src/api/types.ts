@@ -1116,12 +1116,33 @@ export interface DunningNotice {
   due_date: string;
   principal_amount: string;
   fee_amount: string;
+  interest_amount: string;
+  interest_snapshot: DunningInterestSnapshot | null;
   total_amount: string;
   included_items: DunningIncludedItem[] | null;
   status: DunningStatus;
   issued_at: string | null;
   issued_by: string | null;
   note: string | null;
+}
+
+export interface DunningSettings {
+  base_interest_rate: string | null;
+}
+
+export interface DunningInterestSnapshot {
+  base_interest_rate: string;
+  annual_rate: string;
+  reference_date: string;
+  items: {
+    payment_type: string;
+    period_year: number | null;
+    period_month: number | null;
+    due_date: string;
+    days: number;
+    principal: string;
+    interest: string;
+  }[];
 }
 
 export interface DunningIncludedItem {
@@ -1134,6 +1155,7 @@ export interface DunningIncludedItem {
 }
 
 export interface DunningCreateTenant {
+  base_interest_rate?: string | null;
   accounting_scope_id?: string | null;
   tenant_profile_id: string;
   lease_agreement_id: string;
@@ -1145,6 +1167,7 @@ export interface DunningCreateTenant {
 }
 
 export interface DunningCreateOwner {
+  base_interest_rate?: string | null;
   accounting_scope_id?: string | null;
   owner_profile_id: string;
   period_start: string;

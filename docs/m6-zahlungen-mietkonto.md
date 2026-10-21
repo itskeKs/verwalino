@@ -191,6 +191,21 @@ Umlagen-Provenienz verloren ginge. Rück-/Hochlauf ohne solche Kontexte und die
 Verweigerung mit bereits belegter Provenienz sind getestet. Ausgestellte Briefe,
 Snapshots und Anteile werden nicht nachträglich geändert.
 
+Seit Phase 2 (T35) kann M7 für diese offenen Posten Verzugszinsen aus einer
+expliziten Basiszinseingabe mit optionaler Konfigurationsvorgabe berechnen:
+`offen × (Basis + 5) / 100 × Kalendertage ab Fälligkeit / 365`. Je Posten wird
+nur einmal auf Cent (`ROUND_HALF_UP`) gerundet, anschließend werden die gespeicherten
+Zinszeilen summiert. Gebühren und Zinsen werden nicht mitverzinst. Beispiel:
+700 EUR bei Basis 2,50 % über 60 Tage → 8,63 EUR Zinsen. Der Zinssnapshot hält
+Fälligkeit, Stichtag, Tage, Basis-/Jahreszins und Beträge fest; eine ausgestellte
+Mahnung einschließlich PDF verwendet ausschließlich diese gespeicherten Werte.
+Der Soll-/Ist-Saldo des Kontos wird dadurch nicht um weitere Kontobuchungen ergänzt.
+Ohne konfigurierte Vorgabe fordert die neue Oberfläche eine ausdrückliche Eingabe;
+alte API-Aufrufe ohne Zinsbasis und bestehende Briefe behalten ihre zinsfreie
+Semantik. Es wird kein amtlicher Zinssatz erfunden und keine Zustellung behauptet.
+Migration 0129 schützt die neuen Beträge und Provenienz auch beim direkten SQL-Update
+und verweigert einen Downgrade, der vorhandene Zinsgrundlagen verlieren würde.
+
 ### 2.3 Soll-Engine als reine Funktion
 
 `app/engine/mietkonto.py`:

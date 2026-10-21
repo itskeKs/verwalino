@@ -130,7 +130,7 @@ export function DunningNoticeDetailPage() {
     if (!dunningId) return;
     const confirmed = window.confirm(
       "Mahnung ausgeben? Nach der Ausgabe ist die Mahnung unveraenderbar (GoBD). " +
-        "Der Entwurf wird endgueltig zum rechtlich bindenden Dokument.",
+        "Der Entwurf wird endgültig als Mahnung gespeichert. Die Ausstellung weist keine Zustellung nach.",
     );
     if (!confirmed) return;
     setActionLoading(true);
@@ -254,7 +254,7 @@ export function DunningNoticeDetailPage() {
           }}
         >
           <strong>GoBD:</strong> Diese Mahnung ist ausgestellt und unveraenderbar.
-          Der Inhalt ist rechtlich bindend und darf nicht nachtraeglich geaendert werden.
+          Die gespeicherten Inhalte dürfen nicht nachträglich geändert werden. Die Ausstellung allein ist kein Zustellnachweis.
           {notice.issued_at && (
             <div style={{ marginTop: "0.25rem", fontSize: "0.82rem" }}>
               Ausgestellt am: {notice.issued_at}
@@ -333,6 +333,10 @@ export function DunningNoticeDetailPage() {
                 {notice.fee_amount} EUR
               </td>
             </tr>
+            {(notice.interest_snapshot || notice.interest_amount !== undefined) && <tr>
+              <td>Verzugszinsen</td>
+              <td style={{ fontFamily: "var(--mono)" }}>{notice.interest_amount} EUR</td>
+            </tr>}
             <tr>
               <td>
                 <strong>Gesamtsumme</strong>
@@ -352,6 +356,23 @@ export function DunningNoticeDetailPage() {
         </table>
       </div>
 
+      {notice.interest_snapshot && <section className="card" style={{ marginBottom: "1.5rem" }}>
+        <h2>Eingefrorene Zinsberechnung</h2>
+        <p>Basiszinssatz: {notice.interest_snapshot.base_interest_rate} %</p>
+        <p>Jahreszinssatz: {notice.interest_snapshot.annual_rate} % (Basiszinssatz + 5 Prozentpunkte)</p>
+        <p>Stichtag: <span>{notice.interest_snapshot.reference_date}</span></p>
+        <p className="form-hint">Gespeicherte Werte dieser Mahnung; keine Neuberechnung mit heutigen Zinssätzen.</p>
+        <div style={{ overflowX: "auto" }}><table className="data-table">
+          <thead><tr><th>Typ</th><th>Periode</th><th>Fälligkeit</th><th>Tage</th><th>Hauptforderung</th><th>Zinsen</th></tr></thead>
+          <tbody>{notice.interest_snapshot.items.map((item, index) => <tr key={index}>
+            <td>{PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}</td>
+            <td>{item.period_year === null ? "-" : `${item.period_year}${item.period_month === null ? "" : `/${String(item.period_month).padStart(2, "0")}`}`}</td>
+            <td>{item.due_date}</td><td>{item.days}</td>
+            <td>{item.principal} EUR</td><td>{item.interest} EUR</td>
+          </tr>)}</tbody>
+        </table></div>
+      </section>}
+
       {/* Included items (Rueckstandsaufstellung) */}
       {includedItems.length > 0 && (
         <div className="card" style={{ marginBottom: "1.5rem" }}>
@@ -369,7 +390,7 @@ export function DunningNoticeDetailPage() {
               </thead>
               <tbody>
                 {includedItems.map((item, idx) => {
-                  const openVal = parseFloat(item.open_amount);
+                  const hasOpenAmount = /[1-9]/.test(item.open_amount);
                   return (
                     <tr key={idx}>
                       <td>
@@ -401,7 +422,7 @@ export function DunningNoticeDetailPage() {
                           textAlign: "right",
                           fontFamily: "var(--mono)",
                           fontWeight: 600,
-                          color: openVal > 0 ? "#b71c1c" : openVal < 0 ? "#2e7d32" : undefined,
+                          color: !hasOpenAmount ? undefined : item.open_amount.startsWith("-") ? "#2e7d32" : "#b71c1c",
                         }}
                       >
                         {item.open_amount} EUR
