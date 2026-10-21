@@ -186,6 +186,24 @@ Finalisierte Ergebnisse werden nicht aus heutigen Eigentumsdaten neu berechnet.
 30.06.2026, echte beleggebundene Jahreskosten von 365 EUR, die Anteile
 181/184 EUR, Reload/Finalisierung und den geöffneten, inhaltlich validierten PDF.
 
+## Allgemeine Dokumentenablage (Phase 2)
+
+`/api/attachments` verwaltet Originaldateien zu einem Objekt, optional zusätzlich
+zu Einheit, Mietvertrag oder Person. Upload und Archivierung benötigen Prepare-,
+Metadaten Read- und Downloads Exportrechte an allen verknüpften Quellen.
+Listen sind paginiert und blenden archivierte Einträge standardmäßig aus.
+Archivierung mit Begründung ist endgültig und löscht weder Original noch Metadaten;
+Ersetzen, Umhängen und Löschen sind nicht vorgesehen.
+
+Dateien bis 25 MiB werden im vorhandenen mandantengetrennten, inhaltsadressierten
+DocumentStore aufbewahrt. Downloads prüfen Schlüssel, SHA-256 und Länge und liefern
+exakt die geprüften Bytes mit sicheren Dateinamen und `nosniff`. Inline ist nur für
+anhand der Signatur erkannte PDF-, PNG- und JPEG-Dateien möglich; andere Inhalte
+werden als Download angeboten. Ein fehlgeschlagener Datenbankvorgang rollt
+Metadaten und Audit zurück, löscht aber keine möglicherweise gemeinsam referenzierten
+Originalbytes. Migration 0130 verweigert einen verlustbehafteten Downgrade bei
+vorhandenen Dokumenten. Die Oberflächenintegration folgt mit T37.
+
 ## BK-Sammellauf (Phase 2)
 
 Unter „Abrechnungen“ legt „BK-Sammellauf“ nach bewusster Objekt-, Zeitraum- und

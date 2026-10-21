@@ -48,6 +48,7 @@ from app.models.resolution_register_entry import ResolutionRegisterEntry
 
 # Mandate documents (Verträge & Unterlagen am Mandat)
 from app.models.mandate_document import MandateDocument
+from app.models.attachment import Attachment
 
 # Declaration import legal source and review graph
 from app.models.property_document import PropertyDocument
@@ -110,6 +111,7 @@ __all__ = [
     "Resolution",
     "ResolutionRegisterEntry",
     "MandateDocument",
+    "Attachment",
     "PropertyDocument",
     "DeclarationImport",
     "DeclarationImportDocument",

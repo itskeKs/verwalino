@@ -22,7 +22,7 @@ from app.api import dunning
 from app.api import meetings
 from app.api import fristen, dsgvo
 from app.api import declaration_imports
-from app.api import property_documents
+from app.api import property_documents, attachments
 from app.api import property_knowledge, property_data_domains, person_data_domains
 from app.api import property_source_admission_reviews,property_source_classifications
 from app.api import meters
@@ -115,6 +115,7 @@ app.include_router(dsgvo.router)
 # Declaration imports must be registered before the production SPA fallback.
 app.include_router(declaration_imports.router)
 app.include_router(property_documents.router)
+app.include_router(attachments.router)
 app.include_router(property_knowledge.router)
 
 
