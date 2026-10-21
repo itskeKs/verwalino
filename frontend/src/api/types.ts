@@ -1541,6 +1541,35 @@ export interface ConsumptionSuggestion {
   reason: string | null;
 }
 
+export interface PropertyYearReportQuery {
+  property_id: string;
+  year: number;
+  accounting_scope_id?: string;
+}
+
+export interface PropertyYearReport {
+  property_id: string;
+  property_name: string;
+  year: number;
+  period_start: string;
+  period_end: string;
+  accounting_scope_id: string | null;
+  income_date_basis: "value_date";
+  expense_date_basis: "invoice_date";
+  income: { payment_type: string; amount: string }[];
+  expenses: {
+    category_id: string;
+    category_code: string;
+    category_name: string;
+    tenant_apportionability: string;
+    amount: string;
+  }[];
+  income_total: string;
+  expense_total: string;
+  balance: string;
+  footnote: string;
+}
+
 export interface SpecialLevyAllocation {
   owner_profile_id: string;
   unit_id: string;

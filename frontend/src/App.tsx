@@ -53,6 +53,7 @@ import { PaymentsPage } from "./pages/PaymentsPage";
 import { DepositsPage } from "./pages/DepositsPage";
 import { PaymentDetailPage } from "./pages/PaymentDetailPage";
 import { MietkontoPage } from "./pages/MietkontoPage";
+import { ReportsPage } from "./pages/ReportsPage";
 import { OpenItemsPage } from "./pages/OpenItemsPage";
 import { DunningNoticesPage } from "./pages/DunningNoticesPage";
 import { DunningNoticeDetailPage } from "./pages/DunningNoticeDetailPage";
@@ -121,6 +122,7 @@ export function AppRoutes() {
         <Route path="/kautionen" element={<DepositsPage />} />
         <Route path="/zahlungen/:paymentId" element={<PaymentDetailPage />} />
         <Route path="/mietkonto" element={<MietkontoPage />} />
+        <Route path="/berichte" element={<ReportsPage />} />
         <Route path="/offene-posten" element={<OpenItemsPage />} />
         <Route path="/mahnungen" element={<DunningNoticesPage />} />
         <Route path="/mahnungen/:dunningId" element={<DunningNoticeDetailPage />} />

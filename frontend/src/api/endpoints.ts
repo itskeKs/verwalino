@@ -3,6 +3,8 @@
  */
 
 import { api, uploadFormData } from "./client";
+import type { PropertyYearReport, PropertyYearReportQuery } from "./types";
+
 import type { Attachment, AttachmentFilters, AttachmentPage, AttachmentUpload } from "./types";
 import type { SpecialLevy, SpecialLevyCreate } from "./types";
 import type { ConsumptionSuggestion, Meter, MeterCreate, MeterPatch, MeterReading, MeterReadingCreate } from "./types";
@@ -106,6 +108,20 @@ import type {
   KnowledgeSearchResponse,
   KnowledgeAnswerOut,
 } from "./types";
+
+function propertyYearReportQuery(query: PropertyYearReportQuery): string {
+  const params = new URLSearchParams({ property_id: query.property_id, year: String(query.year) });
+  if (query.accounting_scope_id) params.set("accounting_scope_id", query.accounting_scope_id);
+  return params.toString();
+}
+
+export function getPropertyYearReport(query: PropertyYearReportQuery): Promise<PropertyYearReport> {
+  return api.get<PropertyYearReport>(`/api/reports/property-year?${propertyYearReportQuery(query)}`);
+}
+
+export function getPropertyYearReportCsv(query: PropertyYearReportQuery): Promise<Blob> {
+  return api.getBlob(`/api/reports/property-year.csv?${propertyYearReportQuery(query)}`);
+}
 
 export function login(body: LoginRequest): Promise<LoginResponse> {
   return api.post<LoginResponse>("/api/auth/login", body);

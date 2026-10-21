@@ -75,6 +75,16 @@ describe("governance navigation", () => {
 });
 
 
+describe("report navigation", () => {
+  it.each(["READ_ONLY", "CLERK"])("opens reports and the Berichte sidebar link for %s", async role => {
+    vi.spyOn(endpoints, "listProperties").mockResolvedValue([]);
+    renderRoutes("/berichte", role);
+    expect(await screen.findByRole("heading", { name: "Berichte" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Berichte" })).toHaveAttribute("href", "/berichte");
+    expect(screen.getByLabelText("Objekt *")).toBeVisible();
+  });
+});
+
 describe("special levy navigation", () => {
   it.each(["READ_ONLY", "CLERK"])("opens Sonderumlagen in WEG navigation for %s", async role => {
     vi.spyOn(endpoints, "listProperties").mockResolvedValue([]);

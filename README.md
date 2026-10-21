@@ -228,6 +228,17 @@ Der Bericht benötigt vollständige Read-/Source-Rechte und gegebenenfalls einen
 expliziten, das ganze Objekt und Jahr abdeckenden WEG-/MIET-Kreis. Fehlende
 Klassifikation oder Teilzugriff wird nicht als vollständiger Nullbericht ausgegeben.
 
+Unter **Berichte** (`/berichte`) werden Objekt, Kalenderjahr und gegebenenfalls
+Kreis bewusst gewählt. „Übersicht anzeigen“ zeigt die Originalgruppen und
+Server-Summen; Auswahlwechsel verwirft alte Ergebnisse. „CSV herunterladen“
+verwendet dieselben Filter, benötigt zusätzlich Exportrechte an Kreis und Quellen
+und liefert UTF-8 mit BOM, Semikolon, CRLF und Dezimalkomma. Formelverdächtige
+Texte werden entschärft, negative Geldwerte bleiben numerisch. Fehler lassen
+Eingaben bzw. den bestehenden Bericht erhalten. Historische unbekannte
+Zahlungstypen bleiben mit ihrem ursprünglichen Code unterscheidbar.
+`scripts/acceptance/t39_property_year_report_browser.cjs` prüft echte UI-Buchungen,
+bestätigte Belege und den tatsächlichen Download: 800 − 125 = 675 EUR.
+
 ## BK-Sammellauf (Phase 2)
 
 Unter „Abrechnungen“ legt „BK-Sammellauf“ nach bewusster Objekt-, Zeitraum- und

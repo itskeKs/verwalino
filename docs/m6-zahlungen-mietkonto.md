@@ -444,6 +444,15 @@ Quell-Leserechte und ein gegebenenfalls expliziter Ganzobjekt-/Ganzjahreskreis
 sind erforderlich; Teilzugriff oder ungeklärte Klassifikation liefert keine
 scheinbar vollständigen Summen. Bestehende Buchungen und Snapshots bleiben unverändert.
 
+Die Oberfläche `/berichte` (T39) fragt Objekt/Jahr/Kreis ausdrücklich ab; ein
+Auswahlwechsel entfernt alte Ergebnisse. Der CSV-Download unter
+`/api/reports/property-year.csv` berechnet dieselbe Basis frisch und verlangt
+zusätzlich Kreis-/Quell-Exportrechte, erneut vor Ausgabe geprüft. UTF-8-BOM,
+Semikolon, CRLF und Dezimalkomma sind für Tabellenprogramme festgelegt.
+Formelanfällige Texte erhalten ein Apostrophpräfix, echte negative Beträge
+bleiben unverändert numerisch. CSV und Anzeige verändern keine Buchungen,
+Kosten oder Historien; sie ersetzen keine steuerliche Prüfung.
+
 ## 7. Synthetische Golden-Tests (objektive M6-Messlatte)
 
 Es gibt **keine** realen Beispieldaten. Prüffälle sind **synthetisch** aus den Regeln + **handberechneten** Soll-/Ist-/Saldo-Werten (jeder Cent), exakt wie M3/M4 §9. Beide Test-Arten verbindlich für die M6-Abnahme; sie laufen gegen die **reine Engine** (höchste Testdichte) und gegen Service/DB.

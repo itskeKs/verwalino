@@ -192,7 +192,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 
 ### Phase 2 – Fehlende Kernfunktionen
 
-**Start auf eigener Branch `mvp/phase-2` vom nach `main` übernommenen Phase-1-Stand. Nächste Aufgabe: T39**; Aufgaben einzeln in Reihenfolge. T10 bleibt als offene Phase-1-Restaufgabe bestehen, sein Produktionsrest benötigt weiterhin gesonderte Freigabe.
+**Start auf eigener Branch `mvp/phase-2` vom nach `main` übernommenen Phase-1-Stand. Nächste Aufgabe: T40**; Aufgaben einzeln in Reihenfolge. T10 bleibt als offene Phase-1-Restaufgabe bestehen, sein Produktionsrest benötigt weiterhin gesonderte Freigabe.
 
 - [x] **T14 Passwort ändern** — `POST /api/auth/password` (alt, neu; Hash wie beim Login) und Dialog im Benutzermenü.
   Dateien: `backend/app/api/auth.py`, `backend/app/core/security.py`, `frontend/src/components/Topbar.tsx`, `frontend/src/api/endpoints.ts`
@@ -294,9 +294,10 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
   Dateien: `backend/app/api/reports.py` (neu), `backend/app/services/report_service.py` (neu), `backend/app/repositories/payment_repo.py`, `backend/app/repositories/cost_entry_repo.py`
   Fertig, wenn: `uv run pytest tests/test_property_year_report.py` (neu) grün.
   Ergebnis 21.10.2026: Fehlende Route und gebundenes Objekt ohne expliziten Kreis zunächst fachlich rot; zusätzlicher eigener Cent-Gegenfall bei niedriger äußerer Decimal-Präzision rot (1.234.570 statt 1.234.567,91), durch lokale exakte Summierung behoben. Final eigener Pflichtlauf 31 bestanden, anschließend 107 Zahlungs-/Kosten-/RLS-/Kreis-/Source-Nachbarn ohne Ausschlüsse grün, Diffcheck sauber. Aktive gebuchte IN/OUT nach Wertstellung, aktive bestätigte Bruttokosten nach Rechnungsdatum/Kategorie/ursprünglichem Umlagekennzeichen, vollständige Storno-/Korrekturketten, Jahresgrenzen 1–9999, große Summen, getrennte Zahlungstypen/Teilumlage, 800−125=675, Org/Objekt/Live-/Read-Rechte, vollständige Quellen und Ganzobjekt-/Jahreskreis geprüft; bestehende Daten/Audit/Snapshots unverändert. Datumsbasis und Hinweis gegen automatische steuerliche Einordnung in der Antwort. Keine Migration oder Schreiboperation; UI/CSV folgt T39. Bestehende Alembic-Warnungen bleiben, Gesamtprüfungen offen.
-- [ ] **T39 Jahresübersicht (UI, CSV)** — Seite `/berichte` mit Objekt/Jahr, Tabelle und CSV (Semikolon, Dezimalkomma).
+- [x] **T39 Jahresübersicht (UI, CSV)** — Seite `/berichte` mit Objekt/Jahr, Tabelle und CSV (Semikolon, Dezimalkomma).
   Dateien: `frontend/src/pages/ReportsPage.tsx` (neu), `frontend/src/App.tsx`, `frontend/src/components/Sidebar.tsx`, `backend/app/api/reports.py`
   Fertig, wenn: `npm test -- src/pages/ReportsPage.test.tsx` (neu) grün UND Ablauf in der App: „Übersicht 2026 öffnen, CSV öffnet sich korrekt“.
+  Ergebnis 21.10.2026: Eigener Backendlauf 83 bestanden (52 CSV/31 JSON), Writer-Nachbarn 118 ohne Ausschlüsse; eigener Frontendlauf 84 einschließlich 40 Seitentests, Build/gezielter Lint/Diffcheck grün. Historische Typen nach zusätzlichem roten Darstellungsfall unterscheidbar; GET-/Downloadfehler, Stale-/Doppelklickschutz und Read≠Export geprüft. Echter Chrome: ausschließlich UI-Anlage, gebuchte 700+150−50, bestätigte Kosten 100+25, Übersicht 2026 mit 800/125/675; echte heruntergeladene CSV vollständig mit CSV-/Decimal-Reader geprüft (UTF-8-BOM, Semikolon, CRLF, Dezimalkomma, Formelschutz), Original-DTOs unverändert. Zwei frühe Skriptfehler (Multipart als JSON, globale doppelte Zelle) eng korrigiert; nur finaler Vollpass zählt. Keine Migration/Finanzmutation durch Berichte; App danach gestoppt. Gesamtprüfungen offen.
 - [ ] **T40 CSV-Export Zahlungen und Kosten** — `GET /api/payments/export.csv` und `/api/cost-entries/export.csv` mit den Listenfiltern, Knopf auf beiden Listen.
   Dateien: `backend/app/api/payments.py`, `backend/app/api/cost_entries.py`, `frontend/src/pages/PaymentsPage.tsx`, `frontend/src/pages/CostEntriesPage.tsx`
   Fertig, wenn: `uv run pytest tests/test_csv_exports.py` (neu) grün UND Ablauf in der App: „Export-Summe stimmt mit der Liste“.
