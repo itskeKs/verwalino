@@ -489,6 +489,20 @@ Im Stil von `tests/test_tenant_isolation.py`/`test_rls_coverage.py`, mit den vor
 
 ---
 
+### 8.8 Gespeicherte Brief-Originale (T48)
+
+Briefvorlagen sind editierbarer Klartext mit festem Platzhaltervokabular. Die
+Ausstellung friert pro aktuellem Mieterkontakt Betreff, Text, Quellenbezug und
+PDF-Referenz in `letter_document` ein. RLS sowie fehlende UPDATE-/DELETE-Rechte
+und ein Unveränderbarkeitstrigger schützen Originale. Der bestehende
+content-addressierte Dokumentenspeicher und SHA-256-Prüfung werden wiederverwendet;
+Vorlagenänderungen oder neue Stammdaten rendern ausgestellte PDFs nicht neu.
+Vollständige Empfängerzulassung vor Enumeration verhindert unbemerkte Teilmengen;
+Downloads prüfen weiterhin die ursprünglichen Kontakt-/Quellenexportrechte.
+Ein Rendererfehler rollt sämtliche Briefzeilen der Anfrage zurück. Das ist keine
+neue Entscheidung über gesetzliche Aufbewahrungsdauer oder Zustellungsnachweis.
+Migration 0132 verweigert das Entfernen befüllter Vorlagen-/Brieftabellen.
+
 ## 9. Was dieses Dokument bewusst NICHT entscheidet
 
 - **Verteilungs-/Abrechnungslogik (M3):** *wie* ein Verteilerschlüssel rechnet, anteilige Zeiträume aus dem Leistungszeitraum, CO2-/Hausmeister-Aufteilung. M2 speichert nur Auswahl/Beträge/Anteilsfelder; die Engine ist M3 (`engine-correctness`).

@@ -79,6 +79,7 @@ TENANT_TABLES = frozenset({
     # Mandate documents (Verträge & Unterlagen am Mandat)
     "mandate_document",
     "attachment", "task",
+    "letter_template", "letter_document",
     # Declaration import legal source and review graph
     "property_document",
     "declaration_import", "declaration_queue_request",

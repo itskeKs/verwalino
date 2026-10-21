@@ -466,6 +466,20 @@ auch wenn sich später die Einladungs-Empfängerliste ändert. Kein Schemawechse
 kein Update ausgestellter Briefe oder finaler Snapshots; TLS bleibt verifiziert,
 SMTP-Zugänge ausschließlich aus der Umgebung und `plain` nur für Loopback ohne Login.
 
+T48 ergänzt `/api/letters` mit editierbaren Klartextvorlagen und unveränderlichen
+`letter_document`-Originalen (Migration 0132). Nur feste Platzhalter werden ersetzt;
+HTML-Escaping erfolgt danach, ohne ausführbare Template-Engine oder fremde Ressourcen.
+Die vollständige Stichtagsmenge wird unter eng begrenzter SQL-Zulassung vor der
+RLS-gefilterten Enumeration geprüft; fehlende Quellen-/Kontaktexportrechte führen
+nicht zu einem teilweisen Rundschreiben. Pro Person ein PDF; Enddaten bleiben exklusiv.
+Live-ACL-/Finanz-/Objekt-/Vorlagen-/Kontaktsperren und organisationsgebundene
+Anfrage-IDs schützen Ausstellung und parallele Wiederholung. Auch Replay prüft
+alle ursprünglichen Empfänger, nicht nur noch sichtbare Zeilen. Text/Betreff,
+ursprüngliche Quellen und content-addressierte Speicherreferenz bleiben erhalten;
+Download prüft aktuelle Originalquellen-/Kontaktrechte und Hash, ohne Neuberechnung.
+Vorlagenänderung verändert keine Briefe. Befüllte Tabellen verhindern verlustbehaftete
+Rückmigration; Versand ist kein Bestandteil der Rundschreibenausstellung.
+
 **`bank_account`** (SDD §6.3 — Vermögenstrennung): `organization_id`, Bezug auf `management_mandate`/`property`, `account_type` (laufend|Rücklage|Kaution), IBAN/Bank-Stammdaten. RLS aktiv. *(Implementierung erst ab M6; Modell-Anker in M1 vorbereiten, damit Mandat/Objekt-Bezug konsistent ist.)*
 
 **`meter` / `meter_reading`** (SDD §6.2.1): optionale Objekt-/Einheitszähler mit Ablesungen (`reading_date`, `value NUMERIC(14,4)`, `period`). RLS und explizite Org-Filter aktiv. Seit T29 bietet `/api/meters` GET/POST, `/{id}` GET/PATCH für Beschreibungsfelder und `/{id}/readings` GET/POST für unverändert erhaltene Ablesungen. Repository und API prüfen sichtbares Elternobjekt, Einheitskohärenz und bestehende Master-Lese-/Prepare-Rechte; keine nachträgliche Umhängung. Schreiboperationen halten Live-ACL-/Finanz-/Zeilensperren in dieser Reihenfolge und committen vor der Erfolgsantwort. Messwerte werden ohne Float oder Rundung validiert und als vierstellige Dezimalstrings ausgegeben. Seit T30 verwenden Objekt- und Einheitsdetail dasselbe `MeterPanel` mit festem Kontext und Rollenflag; String-/BigInt-Rechnung zeigt die Differenz der letzten zwei eindeutigen Tage, nicht bereits eine T31-Abrechnungsvorbelegung. Kontextwechsel entkoppeln verspätete Antworten, Schreibvorgänge sind synchron gegen Mehrfachauslösung gesperrt; Fehler behalten die Eingaben.

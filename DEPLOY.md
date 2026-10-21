@@ -92,6 +92,22 @@ SMTP acceptance is not delivery or legal receipt. Retained PDFs require the same
 storage retention as other originals; do not delete them. No migration or change
 to the production gate is introduced.
 
+## Saved letter originals (T48; local head 0132 only)
+
+Migration **0132** adds tenant-protected `letter_template` and immutable
+`letter_document` rows. It refuses downgrade while either table is populated;
+never erase templates/originals or disable guards to force rollback. The
+transactional migration test exercises real down/up operations with existing
+rows and compares old data, RLS/ACLs, policies, triggers and function definitions.
+The existing document storage must retain issued PDFs; downloads read those
+bytes with SHA-256 validation, not a rerendered template. No new credentials or
+environment settings. For synthetic UI acceptance use `scripts/dev-local.sh`
+with a fresh `/tmp` `HV_DOCUMENT_STORAGE_ROOT`, then
+`node scripts/acceptance/t48_letters_browser.cjs`; stop the launcher afterward.
+No email is sent by that script. This does not change the accepted **0122**
+production gate or authorize promoting **0123–0132**, deploying or operating on
+production data.
+
 ## Fresh installation: one-time preparation on Moon
 
 Run as `chris` without sudo. The host must have Docker, Compose, `curl`,

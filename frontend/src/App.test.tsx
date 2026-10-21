@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthContext";
 import { AppRoutes } from "./App";
 import * as endpoints from "./api/endpoints";
+import * as letters from "./api/letters";
 
 function renderRoutes(path: string, role?: string) {
   if (role) {
@@ -109,5 +110,15 @@ describe("task navigation", () => {
     renderRoutes("/aufgaben", role);
     expect(await screen.findByRole("heading", { name: "Aufgaben" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Aufgaben" })).toHaveAttribute("href", "/aufgaben");
+  });
+});
+
+describe("letter navigation", () => {
+  it.each(["READ_ONLY", "CLERK", "OWNER_ADMIN"])("opens Briefe for %s", async role => {
+    vi.spyOn(endpoints, "listProperties").mockResolvedValue([]);
+    vi.spyOn(letters, "listLetterTemplates").mockResolvedValue([]);
+    renderRoutes("/briefe", role);
+    expect(await screen.findByRole("heading", { name: "Briefe" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Briefe" })).toHaveAttribute("href", "/briefe");
   });
 });

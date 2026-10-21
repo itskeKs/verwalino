@@ -12,6 +12,7 @@ import { useAuth } from "./auth/useAuth";
 import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
 import { TasksPage } from "./pages/TasksPage";
+import { LettersPage } from "./pages/LettersPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { MandatePage } from "./pages/MandatePage";
 import { DunningQuarantinePage } from "./pages/DunningQuarantinePage";
@@ -87,6 +88,7 @@ export function AppRoutes() {
       <Routes>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/aufgaben" element={<TasksPage />} />
+        <Route path="/briefe" element={<LettersPage />} />
         <Route path="/mandate" element={<MandatePage />} />
         <Route path="/mandate/:mandateId" element={<MandateDetailPage />} />
         <Route path="/objekte" element={<PropertiesPage />} />

@@ -50,6 +50,7 @@ from app.models.resolution_register_entry import ResolutionRegisterEntry
 from app.models.mandate_document import MandateDocument
 from app.models.attachment import Attachment
 from app.models.task import Task
+from app.models.letter import LetterTemplate, LetterDocument
 
 # Declaration import legal source and review graph
 from app.models.property_document import PropertyDocument
@@ -114,6 +115,8 @@ __all__ = [
     "MandateDocument",
     "Attachment",
     "Task",
+    "LetterTemplate",
+    "LetterDocument",
     "PropertyDocument",
     "DeclarationImport",
     "DeclarationImportDocument",

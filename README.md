@@ -571,6 +571,24 @@ finalisierte Dokumente neu zu berechnen. Keine Schemaänderung.
 `scripts/acceptance/t47_mail_browser.cjs` betreibt nur einen lokalen SMTP-Empfänger
 auf `127.0.0.1:11025` ohne Weiterleitung und prüft den tatsächlichen UI-/PDF-Ablauf.
 
+### Briefvorlagen und Rundschreiben (T48)
+
+Unter **Briefe** lassen sich Klartextvorlagen mit `{{mieter.name}}`,
+`{{mieter.adresse}}`, `{{objekt.name}}`, `{{objekt.adresse}}` und `{{datum}}`
+speichern und bearbeiten. Objekt, Vorlage und Stichtag ausdrücklich wählen und
+„Jetzt erstellen“ bestätigen: Alle an diesem Tag aktuellen Mieter erhalten je
+Person ein eigenes PDF, auch bei mehreren Verträgen nur einmal. Unbekannte
+Platzhalter werden abgelehnt; HTML und Skripte bleiben gedruckter Klartext.
+
+Vollständige Objekt-/Historien- und Kontaktexportrechte sind erforderlich;
+ein verdeckter Empfänger blockiert die gesamte Ausstellung. Leser können keine
+Vorlage ändern oder Briefe erstellen. Wiederholung derselben Anfrage erzeugt
+keine Duplikate. Die Historie öffnet gespeicherte, hashgeprüfte Originalbytes;
+spätere Vorlagen- oder Namensänderungen verändern diese nicht. Kein automatischer
+Versand und kein Zustellnachweis. Migration **0132** verweigert einen Downgrade
+mit gespeicherten Vorlagen oder Briefen. Tests: `uv run pytest tests/test_letters.py`;
+echte UI-/PDF-Abnahme: `scripts/acceptance/t48_letters_browser.cjs`.
+
 Weiterführende Dokumentation:
 
 - [Deployment](DEPLOY.md)
