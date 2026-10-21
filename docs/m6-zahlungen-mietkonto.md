@@ -175,7 +175,21 @@ Berichtszeitraum liegt. Ein Wirtschaftsplan ist dafür nicht erforderlich. Beste
 gebuchte `SONDERZAHLUNG`-Eingänge werden über denselben Soll-/Ist-Pfad angerechnet;
 Zahlungen, Storni und alte Abrechnungssnapshots werden dabei nicht geändert.
 READ-, Prepare-, Quellen- und Organisationsgrenzen gelten auch für die neue Quelle.
-Die Oberfläche und der Mahnungsdurchstich werden in T33 integriert.
+Seit T33 zeigt `/sonderumlagen` die eingefrorenen Anteile mit Namen und getrennten
+READ-/Prepare-Kreiswahlen. Die vorhandenen Konto- und Mahnungsformulare unterstützen
+Sonderumlagen ohne erfundenen Wirtschaftsplan; für eine solche Mahnung wird das
+WEG-Objekt ausdrücklich ausgewählt. Die Mahnungsberechnung erhält das wirkliche
+Fälligkeitsdatum: 15. Juni ist am 14./15. Juni noch nicht überfällig. Bei mehreren
+Fälligkeiten im selben Monat wird die gemeinsame Monatszahlung genau einmal,
+älteste Fälligkeit zuerst, angerechnet; Hausgeld und andere Zahlungstypen bleiben
+getrennt. Bisherige undatierte Monatsposten behalten ihre bisherigen Regeln.
+
+Der unveränderliche Mahnungskontext hält die verwendeten Umlagen-IDs sowie Kreis,
+Eigentümer und Berichtszeitraum fest. Migration 0128 erweitert dafür die bestehende
+Provenienzprüfung; sie verweigert einen Downgrade, sobald sonst bereits verwendete
+Umlagen-Provenienz verloren ginge. Rück-/Hochlauf ohne solche Kontexte und die
+Verweigerung mit bereits belegter Provenienz sind getestet. Ausgestellte Briefe,
+Snapshots und Anteile werden nicht nachträglich geändert.
 
 ### 2.3 Soll-Engine als reine Funktion
 

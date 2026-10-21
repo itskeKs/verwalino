@@ -73,3 +73,17 @@ describe("governance navigation", () => {
     expect(screen.getByText("Erweitert")).toBeVisible();
   });
 });
+
+
+describe("special levy navigation", () => {
+  it.each(["READ_ONLY", "CLERK"])("opens Sonderumlagen in WEG navigation for %s", async role => {
+    vi.spyOn(endpoints, "listProperties").mockResolvedValue([]);
+    vi.spyOn(endpoints, "listUnits").mockResolvedValue([]);
+    vi.spyOn(endpoints, "listOwnerProfiles").mockResolvedValue([]);
+    vi.spyOn(endpoints, "listPersons").mockResolvedValue([]);
+    vi.spyOn(endpoints, "listFristen").mockResolvedValue([]);
+    renderRoutes("/sonderumlagen", role);
+    expect(await screen.findByRole("heading", { name: "Sonderumlagen" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Sonderumlagen" })).toHaveAttribute("href", "/sonderumlagen");
+  });
+});

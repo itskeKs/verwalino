@@ -40,6 +40,7 @@ import { InvoiceDocumentsPage } from "./pages/InvoiceDocumentsPage";
 import { InvoiceDocumentDetailPage } from "./pages/InvoiceDocumentDetailPage";
 import { SettlementsPage } from "./pages/SettlementsPage";
 import { SettlementDetailPage } from "./pages/SettlementDetailPage";
+import SpecialLeviesPage from "./pages/SpecialLeviesPage";
 import { EconomicPlansPage } from "./pages/EconomicPlansPage";
 import { EconomicPlanDetailPage } from "./pages/EconomicPlanDetailPage";
 import { WegSettlementsPage } from "./pages/WegSettlementsPage";
@@ -107,6 +108,7 @@ export function AppRoutes() {
         <Route path="/belege/:docId" element={<InvoiceDocumentDetailPage />} />
         <Route path="/abrechnungen" element={<SettlementsPage />} />
         <Route path="/abrechnungen/:runId" element={<SettlementDetailPage />} />
+        <Route path="/sonderumlagen" element={<SpecialLeviesPage />} />
         <Route path="/wirtschaftsplaene" element={<EconomicPlansPage />} />
         <Route path="/wirtschaftsplaene/:planId" element={<EconomicPlanDetailPage />} />
         <Route path="/weg-abrechnungen" element={<WegSettlementsPage />} />

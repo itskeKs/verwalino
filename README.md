@@ -236,7 +236,15 @@ Objekt-/Kreisfilter unter tatsächlichen Kreis- und Quellenrechten; unvollständ
 Zugriff wird nicht als vollständige leere Liste ausgegeben. Das bestehende
 Eigentümerkonto berücksichtigt den Anteil einmalig als `SONDERZAHLUNG` im
 Fälligkeitsmonat, auch ohne Wirtschaftsplan; regulär gebuchte Sonderzahlungen
-reduzieren den offenen Betrag. UI-Anlage und Mahnungsdurchstich folgen in T33.
+reduzieren den offenen Betrag. Unter `/sonderumlagen` werden Objekt und Lesekreis
+gewählt; Schreibrollen wählen zum Anlegen ausdrücklich den Anlagekreis sowie Betrag
+und Fälligkeit. Die Seite zeigt die festgeschriebenen Anteile mit Eigentümer- und
+Einheitsnamen und verwendet die vorhandenen Konto-/Mahnungsseiten. Ohne
+Wirtschaftsplan kann dort ein WEG-Objekt und dessen Kreis ausdrücklich gewählt werden.
+Sonderumlagen werden erst nach ihrem wirklichen Fälligkeitstag (zuzüglich Karenz)
+überfällig; Zahlungen desselben Monats werden einmalig auf die älteste Fälligkeit
+angerechnet. `scripts/acceptance/t33_special_levies_browser.cjs` prüft die UI-Anlage,
+3.000 EUR offen und eine echte planlose Eigentümermahnung samt Reload.
 
 ## Zähler-API (Phase 2)
 

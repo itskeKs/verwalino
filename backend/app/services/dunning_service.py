@@ -36,6 +36,7 @@ from app.engine.mietkonto import (
     PaymentInput,
     account_statement,
     owner_expected_charges,
+    special_levy_expected_charges,
     tenant_expected_charges,
 )
 from app.models.audit_event import AuditEvent
@@ -43,6 +44,7 @@ from app.models.dunning_notice import DunningNotice
 from app.repositories.audit_repo import AuditRepository
 from app.core.rbac import ScopeCapability
 from app.services.dunning_scope_service import DunningScopeService
+from app.services.special_levy_service import SpecialLevyService
 from app.repositories.dunning_notice_repo import DunningNoticeRepository
 from app.repositories.economic_plan_repo import (
     EconomicPlanLineRepository,
@@ -219,8 +221,6 @@ class DunningService:
         ref_date = reference_date or date.today()
         context = DunningScopeService(self._session, self._org_id, self._user_id)
         sphere = await context.prepare(accounting_scope_id, 'WEG', period_start, period_end)
-        if sphere is not None and economic_plan_id is None:
-            raise HTTPException(422, 'Scoped owner dunning requires a finalized economic plan')
 
         owner = await self._owners.get_by_id(owner_profile_id)
         if owner is None:
@@ -255,6 +255,13 @@ class DunningService:
                     advance_lines, owner_profile_id, period_start, period_end
                 )
 
+        allocations = await SpecialLevyService(self._session, self._org_id, self._user_id).owner_allocations(
+            owner_profile_id, period_start, period_end, sphere.id if sphere is not None else None)
+        if sphere is not None and economic_plan_id is None and not allocations:
+            raise HTTPException(422, 'Scoped owner dunning requires a finalized economic plan or frozen special levies')
+        charges.extend(special_levy_expected_charges(
+            [(due, allocation.amount) for allocation, due in allocations],
+            owner_profile_id, period_start, period_end))
         payments = await self._payments.list_for_owner(owner_profile_id)
         scoped = self._scope_payments_to_period(payments, period_start, period_end)
         result = account_statement(charges, [_to_payment_input(p) for p in scoped])
@@ -292,7 +299,8 @@ class DunningService:
             included_items=dunning.items_snapshot(),
             status="draft",
         )
-        await context.attach(notice, sphere, period_start, period_end, plan_id=economic_plan_id)
+        await context.attach(notice, sphere, period_start, period_end, plan_id=economic_plan_id,
+            levy_ids=sorted({allocation.special_levy_id for allocation, _ in allocations}, key=str))
         notice = await self._repo.create(notice)
         await self._session.refresh(notice)
 

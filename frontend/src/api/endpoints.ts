@@ -3,6 +3,7 @@
  */
 
 import { api, uploadFormData } from "./client";
+import type { SpecialLevy, SpecialLevyCreate } from "./types";
 import type { ConsumptionSuggestion, Meter, MeterCreate, MeterPatch, MeterReading, MeterReadingCreate } from "./types";
 import type { SourceClassificationCommand, SourceClassificationReceipt, SourceAdmissionReviewCommand, SourceAdmissionReviewReceipt } from "./types";
 import type {
@@ -1125,5 +1126,20 @@ export function listMeterReadings(id: string): Promise<MeterReading[]> {
 export function createMeterReading(id: string, body: MeterReadingCreate): Promise<MeterReading> {
   return api.post<MeterReading>(`/api/meters/${encodeURIComponent(id)}/readings`, {
     reading_date: body.reading_date, value: body.value, period: body.period ?? null,
+  });
+}
+
+// Sonderumlagen: frozen allocations are always computed by the server.
+export function listSpecialLevies(accountingScopeId: string, propertyId: string): Promise<SpecialLevy[]> {
+  return api.get<SpecialLevy[]>(`/api/special-levies?accounting_scope_id=${encodeURIComponent(accountingScopeId)}&property_id=${encodeURIComponent(propertyId)}`);
+}
+
+export function createSpecialLevy(body: SpecialLevyCreate): Promise<SpecialLevy> {
+  return api.post<SpecialLevy>("/api/special-levies", {
+    property_id: body.property_id,
+    accounting_scope_id: body.accounting_scope_id,
+    amount: body.amount,
+    due_date: body.due_date,
+    ...(body.resolution_id !== undefined ? { resolution_id: body.resolution_id } : {}),
   });
 }

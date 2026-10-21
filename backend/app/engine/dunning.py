@@ -78,6 +78,7 @@ class OverdueItem:
     soll: Decimal
     ist: Decimal
     open_amount: Decimal  # > 0 (arrears)
+    due_date: date | None = None
 
 
 @dataclass(frozen=True)
@@ -101,6 +102,7 @@ class DunningInput:
                 "soll": str(it.soll),
                 "ist": str(it.ist),
                 "open_amount": str(it.open_amount),
+                **({"due_date": it.due_date.isoformat()} if it.due_date is not None else {}),
             }
             for it in self.overdue_items
         ]
@@ -113,10 +115,12 @@ class DunningInput:
 def _item_due_date(item: OpenItem) -> date:
     """Compute the due date for an open item.
 
-    [section 18/fachlich] Provisional: the item is due on the 1st of its
-    period month (or Jan 1 if period_month is None). The correct due date
-    depends on lease terms (e.g. 3rd working day per section 556b BGB).
+    Frozen one-off charges carry their actual due date. For recurring items,
+    [section 18/fachlich] provisionally use the 1st of the period month (or
+    Jan 1 if period_month is None), pending lease-specific due terms.
     """
+    if item.due_date is not None:
+        return item.due_date
     year = item.period_year if item.period_year else date.today().year
     month = item.period_month if item.period_month else 1
     return date(year, month, 1)
@@ -149,6 +153,7 @@ def find_overdue_items(
                 soll=_money(item.soll),
                 ist=_money(item.ist),
                 open_amount=_money(item.open_amount),
+                due_date=item.due_date,
             ))
     overdue.sort(key=lambda x: (x.period_year, x.period_month or 0, x.payment_type))
     return overdue

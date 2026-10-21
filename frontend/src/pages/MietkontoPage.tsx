@@ -187,6 +187,7 @@ export function MietkontoPage() {
           <label>
             Ansicht
             <select
+              aria-label="Ansicht"
               value={viewMode}
               onChange={(e) => {
                 setViewMode(e.target.value as ViewMode);
@@ -222,6 +223,7 @@ export function MietkontoPage() {
                 Eigentuemer *
                 <select
                   required
+                  aria-label="Eigentuemer *"
                   value={selectedOwnerId}
                   onChange={(e) => { setSelectedOwnerId(e.target.value); setScopeId(null); }}
                 >
@@ -239,7 +241,7 @@ export function MietkontoPage() {
                   value={selectedPlanId}
                   onChange={(e) => { setSelectedPlanId(e.target.value); setScopeId(null); }}
                 >
-                  <option value="">(kein -- nur Ist)</option>
+                  <option value="">(kein -- Sonderumlagen und Ist)</option>
                   {economicPlans
                     .filter((ep) => ep.status === "finalized")
                     .map((ep) => {

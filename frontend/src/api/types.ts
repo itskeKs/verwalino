@@ -1516,3 +1516,24 @@ export interface ConsumptionSuggestion {
   end_reading: ConsumptionReading | null;
   reason: string | null;
 }
+
+export interface SpecialLevyAllocation {
+  owner_profile_id: string;
+  unit_id: string;
+  mea: string;
+  amount: string;
+}
+
+export interface SpecialLevyCreate {
+  property_id: string;
+  accounting_scope_id: string;
+  amount: string;
+  due_date: string;
+  resolution_id?: string | null;
+}
+
+export interface SpecialLevy extends SpecialLevyCreate {
+  id: string;
+  resolution_id: string | null;
+  allocations: SpecialLevyAllocation[];
+}

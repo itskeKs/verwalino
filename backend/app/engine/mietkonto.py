@@ -210,6 +210,7 @@ class ExpectedCharge:
     owner_profile_id: uuid.UUID | None = None
     days_occupied: int | None = None
     days_in_month: int | None = None
+    due_date: date | None = None
 
 
 def special_levy_expected_charges(
@@ -218,7 +219,7 @@ def special_levy_expected_charges(
 ) -> list[ExpectedCharge]:
     """Frozen one-off obligations, in their due month, without daily proration."""
     return [ExpectedCharge(period_year=due.year, period_month=due.month,
-        payment_type="SONDERZAHLUNG", amount=amount, owner_profile_id=owner_profile_id)
+        payment_type="SONDERZAHLUNG", amount=amount, owner_profile_id=owner_profile_id, due_date=due)
         for due, amount in allocations if period_start <= due <= period_end]
 
 
@@ -385,7 +386,7 @@ def owner_expected_charges(
 # ===========================================================================
 @dataclass(frozen=True)
 class OpenItem:
-    """The DERIVED saldo view per (period, type) -- m6 section 1.4 / 3.
+    """The DERIVED saldo per (period, type, optional due date) -- m6 section 1.4 / 3.
 
     open = Soll - zugeordnetes Ist.
       open > 0 -> Rueckstand (owes); open < 0 -> Guthaben; 0 -> ausgeglichen.
@@ -398,6 +399,7 @@ class OpenItem:
     soll: Decimal
     ist: Decimal
     open_amount: Decimal  # soll - ist
+    due_date: date | None = None
 
     @property
     def is_arrears(self) -> bool:
@@ -412,8 +414,9 @@ class OpenItem:
 class MietkontoResult:
     """Soll/Ist/Saldo over a period (m6 section 3.1).
 
-    `open_items` is one row per (period_year, period_month, payment_type) for
-    which there is a Soll or an Ist. Totals are cent-exact sums (no re-round).
+    `open_items` is one row per (period_year, period_month, payment_type), with
+    separate due dates for frozen one-off obligations. Totals are cent-exact
+    sums (no re-round).
     `balance` = soll_total - ist_total (>0 = owes; <0 = overpaid/credit).
     """
 
@@ -439,13 +442,19 @@ def account_statement(
     payment_type). A payment with period_month=None groups under that type for
     the (year, None) bucket (a Pauschalzahlung for the whole period).
 
-    Deterministic order: by (year, month-or-0, payment_type).
+    Dated one-off charges retain their due dates; each monthly payment bucket
+    is applied once, oldest due first. Recurring monthly charges are unchanged.
+    Deterministic order: by (year, month-or-0, payment_type, due_date).
     """
     # Aggregate Soll per key.
     soll_by_key: dict[tuple[int | None, int | None, str], Decimal] = {}
+    dated_soll: dict[tuple[int | None, int | None, str], dict[date, Decimal]] = {}
     for c in expected_charges:
         key = (c.period_year, c.period_month, c.payment_type)
         soll_by_key[key] = soll_by_key.get(key, Decimal("0.00")) + _money(c.amount)
+        if c.due_date is not None:
+            dates = dated_soll.setdefault(key, {})
+            dates[c.due_date] = dates.get(c.due_date, Decimal("0.00")) + _money(c.amount)
 
     # Aggregate Ist per key (booked, not reversed, not a reversal-of -> net).
     ist_by_key: dict[tuple[int | None, int | None, str], Decimal] = {}
@@ -464,16 +473,26 @@ def account_statement(
         ist = _money(ist_by_key.get(key, Decimal("0.00")))
         soll_total += soll
         ist_total += ist
-        items.append(
-            OpenItem(
-                period_year=key[0],
-                period_month=key[1],
-                payment_type=key[2],
-                soll=soll,
-                ist=ist,
-                open_amount=_money(soll - ist),
-            )
-        )
+        dates = dated_soll.get(key)
+        if dates:
+            # Payments have a month, not a levy ID: consume that month's money
+            # oldest due first, exactly once. Future levies must not accelerate
+            # arrears, and surplus credit remains on the last dated position.
+            remaining = ist
+            dated_amounts = sorted(dates.items())
+            undated = soll - sum(dates.values(), Decimal("0.00"))
+            if undated:
+                fallback = date(key[0], key[1] or 1, 1)
+                dates = {**dates, fallback: dates.get(fallback, Decimal("0.00")) + undated}
+                dated_amounts = sorted(dates.items())
+            for index, (due, amount) in enumerate(dated_amounts):
+                paid = remaining if index == len(dated_amounts) - 1 else min(remaining, amount)
+                remaining -= paid
+                items.append(OpenItem(period_year=key[0], period_month=key[1], payment_type=key[2],
+                    soll=amount, ist=paid, open_amount=_money(amount - paid), due_date=due))
+        else:
+            items.append(OpenItem(period_year=key[0], period_month=key[1], payment_type=key[2],
+                soll=soll, ist=ist, open_amount=_money(soll - ist)))
     return MietkontoResult(
         open_items=tuple(items),
         soll_total=_money(soll_total),

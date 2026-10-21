@@ -18,6 +18,7 @@ import {
   listPersons,
   listLeases,
   listUnits,
+  listProperties,
   listEconomicPlans,
 } from "../api/endpoints";
 import type {
@@ -29,6 +30,7 @@ import type {
   Person,
   LeaseRecord,
   Unit,
+  Property,
   EconomicPlan,
 } from "../api/types";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
@@ -102,6 +104,8 @@ export function DunningNoticesPage() {
   const [persons, setPersons] = useState<Person[]>([]);
   const [leases, setLeases] = useState<LeaseRecord[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
+  const [properties, setProperties] = useState<Property[]>([]);
+  const [ownerPropertyId, setOwnerPropertyId] = useState("");
   const requestId = useRef(0);
   const [listError, setListError] = useState<string | null>(null);
   const [economicPlans, setEconomicPlans] = useState<EconomicPlan[]>([]);
@@ -165,10 +169,12 @@ export function DunningNoticesPage() {
       listLeases(),
       listEconomicPlans(),
       listUnits(),
+      listProperties(),
     ])
-      .then(([dn, tp, op, per, l, ep, u]) => {
+      .then(([dn, tp, op, per, l, ep, u, props]) => {
         if (current !== requestId.current) return;
         setUnits(u);
+        setProperties(props);
         setNotices(dn);
         setTenantProfiles(tp);
         setOwnerProfiles(op);
@@ -236,11 +242,12 @@ export function DunningNoticesPage() {
   const selectedPlan = economicPlans.find(item => item.id === ownerForm.economic_plan_id);
   const creationProperty = recipientType === "tenant"
     ? units.find(item => item.id === selectedLease?.unit_id)?.property_id
-    : selectedPlan?.property_id;
+    : selectedPlan?.property_id || ownerPropertyId || undefined;
 
   function openCreate() {
     setTenantForm(makeEmptyTenantForm());
     setOwnerForm(makeEmptyOwnerForm());
+    setOwnerPropertyId("");
     setRecipientType("tenant");
     setShowForm(true);
     setError(null);
@@ -248,7 +255,7 @@ export function DunningNoticesPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!scopeValid) return;
+    if (!scopeValid || (recipientType === "owner" && !ownerForm.economic_plan_id && (!ownerPropertyId || !ownerForm.accounting_scope_id))) return;
     setSaving(true);
     setError(null);
     try {
@@ -344,9 +351,11 @@ export function DunningNoticesPage() {
               Empfaengertyp *
               <select
                 required
+                aria-label="Empfaengertyp *"
                 value={recipientType}
                 onChange={(e) => {
                   setRecipientType(e.target.value as RecipientType);
+                  setOwnerPropertyId("");
                   setTenantForm(makeEmptyTenantForm());
                   setOwnerForm(makeEmptyOwnerForm());
                 }}
@@ -476,6 +485,7 @@ export function DunningNoticesPage() {
                   Eigentuemer *
                   <select
                     required
+                    aria-label="Eigentuemer *"
                     value={ownerForm.owner_profile_id}
                     onChange={(e) =>
                       setOwnerForm({ ...ownerForm, owner_profile_id: e.target.value, economic_plan_id: null, accounting_scope_id: null })
@@ -512,6 +522,18 @@ export function DunningNoticesPage() {
                   />
                 </label>
                 <label>
+                  WEG-Objekt *
+                  <select aria-label="WEG-Objekt *" value={selectedPlan?.property_id || ownerPropertyId}
+                    onChange={e => {
+                      setOwnerPropertyId(e.target.value);
+                      setOwnerForm({ ...ownerForm, economic_plan_id: null, accounting_scope_id: null });
+                      setScopeValid(false);
+                    }}>
+                    <option value="">-- WEG-Objekt wählen --</option>
+                    {properties.filter(p => p.management_type === "WEG" || p.management_type === "MISCH").map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </label>
+                <label>
                   Wirtschaftsplan
                   <select
                     value={ownerForm.economic_plan_id ?? ""}
@@ -523,8 +545,8 @@ export function DunningNoticesPage() {
                       })
                     }
                   >
-                    <option value="">Ohne Wirtschaftsplan (Altbestand)</option>
-                    {economicPlans.map((ep) => (
+                    <option value="">Ohne Wirtschaftsplan (Sonderumlagen)</option>
+                    {economicPlans.filter(ep => !ownerPropertyId || ep.property_id === ownerPropertyId).map((ep) => (
                       <option key={ep.id} value={ep.id}>
                         {ep.plan_year} ({ep.period_start} - {ep.period_end})
                       </option>
@@ -576,17 +598,17 @@ export function DunningNoticesPage() {
               </>
             )}
 
-            <AccountingScopeSelector key={`${recipientType}-${tenantForm.lease_agreement_id}-${ownerForm.owner_profile_id}-${ownerForm.economic_plan_id}`}
+            <AccountingScopeSelector key={`${recipientType}-${tenantForm.lease_agreement_id}-${ownerForm.owner_profile_id}-${ownerForm.economic_plan_id}-${ownerPropertyId}`}
               onValidityChange={setScopeValid} propertyId={creationProperty} kind={recipientType === "tenant" ? "MIET" : "WEG"}
               value={recipientType === "tenant" ? tenantForm.accounting_scope_id : ownerForm.accounting_scope_id}
               onChange={accounting_scope_id => recipientType === "tenant"
                 ? setTenantForm({ ...tenantForm, accounting_scope_id }) : setOwnerForm({ ...ownerForm, accounting_scope_id })} />
-            <p className="form-hint">Für bereits zugeordnete Zahlungen einen Abrechnungskreis wählen. Eigentümermahnungen in einem Abrechnungskreis benötigen einen zugeordneten, finalisierten Wirtschaftsplan.</p>
+            <p className="form-hint">Für bereits zugeordnete Zahlungen einen Abrechnungskreis wählen. Fällige Sonderumlagen können im WEG-Abrechnungskreis auch ohne Wirtschaftsplan gemahnt werden.</p>
             <div className="form-actions">
               <button
                 type="submit"
                 className="btn btn--primary"
-                disabled={saving || !scopeValid}
+                disabled={saving || !scopeValid || (recipientType === "owner" && !ownerForm.economic_plan_id && (!ownerPropertyId || !ownerForm.accounting_scope_id))}
               >
                 {saving ? "Erstellen..." : "Mahnung erstellen"}
               </button>

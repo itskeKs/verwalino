@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import * as api from "../api/endpoints";
 import { MietkontoPage } from "./MietkontoPage";
@@ -20,7 +20,8 @@ vi.mock("../api/endpoints", () => ({
   ownerStatement: vi.fn(),
 }));
 vi.mock("../components/AccountingScopeSelector", () => ({
-  AccountingScopeSelector: () => null,
+  AccountingScopeSelector: ({ kind, capability, value, onChange }: { kind: string; capability: string; value: string | null; onChange: (value: string) => void }) => kind === "WEG"
+    ? <select aria-label={`Abrechnungskreis ${capability}`} value={value || ""} onChange={e => onChange(e.target.value)}><option value="">Kreis wählen</option><option value="weg-scope">Sonnenhof WEG</option></select> : null,
 }));
 
 afterEach(() => {
@@ -60,4 +61,29 @@ describe("Mietkonto saldo (Soll minus Ist)", () => {
     expect(amount.style.color).toBe(color);
     expect(api.leaseStatement).toHaveBeenCalledWith("lease-t12", "2025-01-01", "2025-12-31", undefined);
   });
+});
+
+
+it("gives native owner account selectors exact accessible names", async () => {
+  const user = userEvent.setup();
+  render(<MietkontoPage />);
+  const view = await screen.findByRole("combobox", { name: "Ansicht" });
+  await user.selectOptions(view, "owner");
+  expect(screen.getByRole("combobox", { name: "Eigentuemer *" })).toBeVisible();
+  expect(screen.getByRole("option", { name: /Sonderumlagen/ })).toBeVisible();
+});
+
+
+it("loads frozen levy dues for an owner without an economic plan using an explicit READ scope", async () => {
+  vi.mocked(api.listOwnerProfiles).mockResolvedValueOnce([{ id: "owner-levy", person_id: "person-levy", notes: "" }]);
+  vi.mocked(api.listPersons).mockResolvedValueOnce([{ id: "person-levy", first_name: "Ada", last_name: "Besitzer" }] as never);
+  vi.mocked(api.ownerStatement).mockResolvedValueOnce({ soll_total: "3000.00", ist_total: "0.00", balance: "3000.00", open_items: [] });
+  const user = userEvent.setup(); render(<MietkontoPage />);
+  await user.selectOptions(await screen.findByRole("combobox", { name: "Ansicht" }), "owner");
+  await screen.findByRole("option", { name: "Ada Besitzer" });
+  await user.selectOptions(screen.getByRole("combobox", { name: "Eigentuemer *" }), "owner-levy");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Abrechnungskreis read" }), "weg-scope");
+  await user.click(screen.getByRole("button", { name: "Abrufen" }));
+  await waitFor(() => expect(api.ownerStatement).toHaveBeenCalledWith("owner-levy", expect.any(String), expect.any(String), undefined, "weg-scope"));
+  expect(await screen.findByText("3000.00 EUR (Rueckstand)")).toBeVisible();
 });

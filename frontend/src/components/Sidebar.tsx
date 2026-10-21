@@ -82,6 +82,7 @@ const GROUPS: NavGroup[] = [
   {
     label: "WEG",
     items: [
+      { to: "/sonderumlagen", label: "Sonderumlagen", icon: Landmark },
       { to: "/wirtschaftsplaene", label: "Wirtschaftspläne", icon: ClipboardList },
       { to: "/weg-abrechnungen", label: "WEG-Abrechnungen", icon: FileSpreadsheet },
       { to: "/vermoegensberichte", label: "Vermögensberichte", icon: Landmark },
