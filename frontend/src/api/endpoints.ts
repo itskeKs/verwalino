@@ -3,6 +3,7 @@
  */
 
 import { api, uploadFormData } from "./client";
+import type { Attachment, AttachmentFilters, AttachmentPage, AttachmentUpload } from "./types";
 import type { SpecialLevy, SpecialLevyCreate } from "./types";
 import type { ConsumptionSuggestion, Meter, MeterCreate, MeterPatch, MeterReading, MeterReadingCreate } from "./types";
 import type { SourceClassificationCommand, SourceClassificationReceipt, SourceAdmissionReviewCommand, SourceAdmissionReviewReceipt } from "./types";
@@ -1151,4 +1152,31 @@ export function createSpecialLevy(body: SpecialLevyCreate): Promise<SpecialLevy>
     due_date: body.due_date,
     ...(body.resolution_id !== undefined ? { resolution_id: body.resolution_id } : {}),
   });
+}
+
+// General document filing: retain originals, archive metadata only.
+export function listAttachments(filters: AttachmentFilters): Promise<AttachmentPage> {
+  const query = new URLSearchParams();
+  for (const key of ["property_id", "unit_id", "lease_agreement_id", "person_id", "include_archived", "offset", "limit"] as const) {
+    if (filters[key] !== undefined) query.set(key, String(filters[key]));
+  }
+  return api.get<AttachmentPage>(`/api/attachments?${query}`);
+}
+export function getAttachment(id: string): Promise<Attachment> {
+  return api.get<Attachment>(`/api/attachments/${encodeURIComponent(id)}`);
+}
+export function uploadAttachment(file: File, body: AttachmentUpload): Promise<Attachment> {
+  const data = new FormData();
+  data.append("file", file);
+  data.append("property_id", body.property_id);
+  for (const key of ["title", "unit_id", "lease_agreement_id", "person_id"] as const) {
+    if (body[key] !== undefined) data.append(key, body[key]);
+  }
+  return uploadFormData<Attachment>("/api/attachments", data);
+}
+export function archiveAttachment(id: string, reason: string): Promise<Attachment> {
+  return api.post<Attachment>(`/api/attachments/${encodeURIComponent(id)}/archive`, { reason });
+}
+export function attachmentDownloadUrl(id: string, inline = false): string {
+  return `/api/attachments/${encodeURIComponent(id)}/download${inline ? "?inline=true" : ""}`;
 }

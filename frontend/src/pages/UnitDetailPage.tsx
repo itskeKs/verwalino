@@ -35,6 +35,7 @@ import type {
 } from "../api/types";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/useAuth";
+import { AttachmentsPanel } from "../components/AttachmentsPanel";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { MeterPanel } from "../components/MeterPanel";
@@ -68,6 +69,7 @@ export function UnitDetailPage() {
   const { session } = useAuth();
   const canWriteOwnership = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
   const { propertyId, unitId } = useParams<{ propertyId: string; unitId: string }>();
+  const requestVersion = useRef(0);
   const [unit, setUnit] = useState<Unit | null>(null);
   const [property, setProperty] = useState<Property | null>(null);
   const [ownerships, setOwnerships] = useState<OwnershipRecord[]>([]);
@@ -118,6 +120,9 @@ export function UnitDetailPage() {
 
   const reload = useCallback(() => {
     if (!unitId || !propertyId) return;
+    const version = ++requestVersion.current;
+    setUnit(null);
+    setProperty(null);
     setLoading(true);
     setError(null);
     Promise.all([
@@ -130,6 +135,7 @@ export function UnitDetailPage() {
       listPersons(),
     ])
       .then(([u, p, oh, la, op, tp, pe]) => {
+        if (version !== requestVersion.current) return;
         setUnit(u);
         setProperty(p);
         setOwnerships(oh);
@@ -139,16 +145,18 @@ export function UnitDetailPage() {
         setPersons(pe);
       })
       .catch((err) => {
+        if (version !== requestVersion.current) return;
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert.");
         } else {
           setError(String(err));
         }
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (version === requestVersion.current) setLoading(false); });
   }, [unitId, propertyId]);
 
-  useEffect(() => { reload(); }, [reload]);
+  const invalidateRequests = useCallback(() => { requestVersion.current++; }, []);
+  useEffect(() => { reload(); return invalidateRequests; }, [reload, invalidateRequests]);
 
   async function handleOwnerSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -259,6 +267,8 @@ export function UnitDetailPage() {
           </tbody>
         </table>
       </div>
+
+      <AttachmentsPanel propertyId={property.id} unitId={unit.id} canWrite={canWriteOwnership} />
 
       {/* Ownership History */}
       <MeterPanel key={unit.id} propertyId={property.id} unitId={unit.id} canWrite={canWriteOwnership} />

@@ -202,7 +202,14 @@ anhand der Signatur erkannte PDF-, PNG- und JPEG-Dateien möglich; andere Inhalt
 werden als Download angeboten. Ein fehlgeschlagener Datenbankvorgang rollt
 Metadaten und Audit zurück, löscht aber keine möglicherweise gemeinsam referenzierten
 Originalbytes. Migration 0130 verweigert einen verlustbehafteten Downgrade bei
-vorhandenen Dokumenten. Die Oberflächenintegration folgt mit T37.
+vorhandenen Dokumenten.
+
+Der Bereich „Dokumente“ steht in Objekt, Einheit und Person zur Verfügung.
+Bei Personen wird für einen Upload ein zugängliches Objekt bewusst ausgewählt;
+die Personenliste bleibt objektübergreifend. „Öffnen“ lädt das autorisierte Original,
+„Archivieren“ verlangt einen Grund. „Archivierte anzeigen“ macht aufbewahrte Dateien
+weiterhin sichtbar und lesbar. Read-only-Benutzer erhalten keine Schreibaktionen.
+Der echte UI-/PDF-Prüffall ist `scripts/acceptance/t37_attachments_browser.cjs`.
 
 ## BK-Sammellauf (Phase 2)
 

@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { UnitDetailPage } from "./UnitDetailPage";
 import * as endpoints from "../api/endpoints";
 import { AuthCtx } from "../auth/useAuth";
 import type { LeaseRecord, OwnershipRecord } from "../api/types";
 import { api } from "../api/client";
+
+vi.mock("../components/AttachmentsPanel", () => ({
+  AttachmentsPanel: ({ propertyId, unitId, personId, canWrite }: { propertyId?: string; unitId?: string; personId?: string; canWrite: boolean }) =>
+    <section aria-label="Dokumente" data-property={propertyId} data-unit={unitId} data-person={personId} data-can-write={String(canWrite)} />,
+}));
 
 vi.mock("../components/MeterPanel", () => ({
   MeterPanel: ({ propertyId, unitId, canWrite }: { propertyId: string; unitId?: string; canWrite: boolean }) =>
@@ -379,4 +384,22 @@ it("T26 preserves the next-day proposal through cancel and explicit + Eigentum w
   expect(screen.getByRole("combobox", { name: "Eigentuemer *" })).toHaveValue("");
   expect(screen.getByLabelText("MEA-Anteil", { exact: true })).toHaveValue("125.0000");
   expect(posts()).toHaveLength(0);
+});
+
+it.each([["OWNER_ADMIN", true], ["CLERK", true], ["READ_ONLY", false], ["UNKNOWN", false]] as const)("T37 binds loaded unit document IDs for %s", async (role, canWrite) => {
+  vi.mocked(endpoints.getUnit).mockResolvedValue({ id: "loaded-unit", property_id: "property", number: "1" } as never);
+  show(role); const panel = await screen.findByRole("region", { name: "Dokumente" });
+  expect(panel).toHaveAttribute("data-property", "property"); expect(panel).toHaveAttribute("data-unit", "loaded-unit"); expect(panel).toHaveAttribute("data-can-write", String(canWrite));
+});
+
+it("T37 ignores a late unit response after changing the route", async () => {
+  let resolveOld!: (value: Awaited<ReturnType<typeof endpoints.getUnit>>) => void;
+  vi.mocked(endpoints.getUnit).mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve; })).mockResolvedValue({ id: "new-unit", number: "2" } as never);
+  render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/objekte/property/einheiten/unit"]}>
+    <Link to="/objekte/property/einheiten/new-unit">Andere Einheit</Link><Routes><Route path="/objekte/:propertyId/einheiten/:unitId" element={<UnitDetailPage />} /></Routes>
+  </MemoryRouter></AuthCtx.Provider>);
+  fireEvent.click(screen.getByRole("link", { name: "Andere Einheit" }));
+  const panel = await screen.findByRole("region", { name: "Dokumente" }); expect(panel).toHaveAttribute("data-unit", "new-unit");
+  await act(async () => resolveOld({ id: "unit", number: "1" } as never));
+  expect(screen.getByRole("region", { name: "Dokumente" })).toHaveAttribute("data-unit", "new-unit");
 });

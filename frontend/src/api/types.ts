@@ -1561,3 +1561,42 @@ export interface SpecialLevy extends SpecialLevyCreate {
   resolution_id: string | null;
   allocations: SpecialLevyAllocation[];
 }
+
+// Retained originals; no storage locations are exposed by this API.
+export interface Attachment {
+  id: string;
+  property_id: string;
+  unit_id: string | null;
+  lease_agreement_id: string | null;
+  person_id: string | null;
+  title: string;
+  original_filename: string;
+  mime_type: string;
+  content_byte_size: number;
+  content_sha256: string;
+  uploaded_by: string;
+  created_at: string;
+  archived_at: string | null;
+  archived_by: string | null;
+  archive_reason: string | null;
+}
+export interface AttachmentPage {
+  items: Attachment[];
+  next_offset: number | null;
+}
+export interface AttachmentFilters {
+  property_id?: string;
+  unit_id?: string;
+  lease_agreement_id?: string;
+  person_id?: string;
+  include_archived?: boolean;
+  offset?: number;
+  limit?: number;
+}
+export interface AttachmentUpload {
+  property_id: string;
+  title?: string;
+  unit_id?: string;
+  lease_agreement_id?: string;
+  person_id?: string;
+}
