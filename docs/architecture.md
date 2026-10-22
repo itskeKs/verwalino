@@ -751,6 +751,25 @@ Ausgestellte Mahnungen und ihre PDFs bleiben unverändert. Befüllte Downgrades
 verweigern Datenverlust; der echte Test-Rundlauf vergleicht alte Daten und sämtliche
 Sicherheitsobjekte innerhalb einer zurückgerollten Transaktion.
 
+### Vorjahres-Ist als editierbare Planvorlage (T54)
+
+`POST /api/economic-plans/previous/preview` liest erst nach vollständiger
+Vorjahres-Read- und Zieljahres-Prepare-Zulassung aktuelle bestätigte Kosten samt
+Kategorie-ID/Version. Lokale explizite Kontextwechsel lassen die allgemeinen
+Scope-Mismatch-Guards unverändert. Leistungszeitraum-Anteile (inklusive Tage,
+HALF_UP je Kostenposition) und signierte Gutschriften werden je Kategorie saldiert;
+Rücklagen bleiben separat. Unvollständige Rechte, negative Nettobeträge und ungültige
+Kategorien liefern Fehler statt Teilvorschläge. Der Digest umfasst Quellen und
+Metadaten, nicht nur Summen.
+
+`POST /previous` bestätigt ausschließlich editierte Beträge gleicher Kategorien,
+prüft den Digest erneut unter der Finanzsperre und legt atomar einen unberechneten
+Entwurf an. Bestehendes JSON hält `draft_inputs` und `previous_actuals`; GET stellt
+die editierbaren Eingaben nach Reload wieder her. Die normale Compute-/Finalize-
+Pipeline behält ihre Attestierungs-/Snapshotregeln und die Vorjahresprovenienz.
+Keine Migration oder Änderung alter Kosten/finalisierter Pläne, kein automatischer
+WEG-Beschluss. Ein unklarer Create-Ausgang wird nicht automatisch wiederholt.
+
 ## 10. Was dieses Dokument bewusst NICHT entscheidet
 
 - Konkrete Abrechnungs-/Verteilungslogik (M3/M4) — eigener `engine-correctness`-Schritt.

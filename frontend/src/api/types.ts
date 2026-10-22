@@ -905,6 +905,10 @@ export interface EconomicPlan {
   finalized_by: string | null;
   superseded_by_id: string | null;
   lines: EconomicPlanLine[];
+  draft_inputs?: {
+    planned_costs: PlannedCostIn[];
+    reserve_contribution_total: string;
+  } | null;
 }
 
 export interface EconomicPlanCreate {

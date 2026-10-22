@@ -541,6 +541,26 @@ nicht neu. Migration 0129 schützt diese Provenienz und verweigert deren Verlust
 beim Downgrade. Ausstellung allein bestätigt keinen Zugang. Der echte UI-/PDFablauf
 ist mit `scripts/acceptance/t35_dunning_interest_browser.cjs` wiederholbar.
 
+### Wirtschaftsplan aus Vorjahres-Ist (T54)
+
+Unter **Wirtschaftspläne → Plan aus Vorjahres-Ist** Objekt, Zieljahr und – bei
+klassifizierten Quellen – den Vorjahres-Lesekreis und neuen WEG-Prepare-Kreis
+getrennt auswählen. Die nichtschreibende Vorschau verwendet aktuelle bestätigte
+Bruttokosten nach Leistungszeitraum; überjährige Positionen werden nach inklusiven
+Tagen je Position auf Cent gerundet, Gutschriften saldiert. Ersetzte/unbestätigte
+Kosten zählen nicht; negative Nettokategorien, inaktive oder uneindeutige
+Kategorien verlangen Prüfung statt stiller Auslassung. Rücklagen sind separat.
+
+Planbeträge und Rücklagenvorschlag ausdrücklich bearbeiten/bestätigen. Es entsteht
+nur ein unberechneter Entwurf mit nach Reload erhaltenen Beträgen und Kategorie-IDs;
+Quellenänderungen verlangen eine neue Vorschau (409). Keine automatische
+Datengrundlagen-Attestierung oder Finalisierung. Bestehende Kosten und alte Pläne
+bleiben unverändert. Bei unklarer Anlageantwort zuerst die Planliste prüfen, nicht
+automatisch erneut anlegen. Der UI-only-Ablauf
+`scripts/acceptance/t54_previous_plan_browser.cjs` prüft Plan 2027 aus Ist 2026,
+7.000 EUR Kosten + 6.000 EUR separate Rücklage sowie bearbeitete 7.100,25 + 6.500 EUR
+und Desktop-/Smartphone-Reload.
+
 ### Mahnlauf mit ausgewählten Entwürfen (T53)
 
 Unter **Offene Posten → Mahnlauf öffnen** Zeitraum, Stichtag, Mindestrückstand

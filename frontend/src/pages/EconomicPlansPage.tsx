@@ -6,6 +6,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { listEconomicPlans, listProperties, createEconomicPlan } from "../api/endpoints";
 import type { EconomicPlan, EconomicPlanCreate, Property } from "../api/types";
 import { ApiError } from "../api/client";
+import { PreviousPlan } from "../components/PreviousPlan";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
@@ -80,6 +81,8 @@ export function EconomicPlansPage() {
           + Neuer Wirtschaftsplan
         </button>
       </div>
+
+      <PreviousPlan properties={wegProps} />
 
       {error && <p className="error-text">{error}</p>}
 

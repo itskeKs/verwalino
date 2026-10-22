@@ -306,6 +306,19 @@ Für umlagefähige/gemischte Kostenarten verteilt die **Eigentümer**abrechnung 
 - **Geplante Rücklagenzuführung** (`economic_plan.reserve_contribution_total`) — getrennt, keine Kostenumlage (§3).
 - **Verteilerschlüssel je Kostenart** (i. d. R. MEA; kategorie-spezifisch möglich, §4.2).
 
+T54 konkretisiert die Vorjahresvorlage: aktuelles bestätigtes volles WEG-Brutto
+nach Leistungszeitraum, überjährige Positionen nach inklusiven Tagen je Position
+HALF_UP-centgenau; Gutschriften saldiert, ersetzte/unbestätigte Positionen ausgeschlossen.
+Rücklagenrelevante Kategorien ergeben nur einen getrennt bestätigbaren
+Rücklagenvorschlag. Negative Nettokategorien, inaktive oder uneindeutige Versionen
+werden nicht still weggelassen. Bestehende M4-Pläne verteilen ausschließlich nach
+MEA; historische Kosten-Verteilerschlüssel werden nicht automatisch übernommen.
+Vorjahres-Read und Zieljahres-Prepare sind getrennte vollständige Rechteprüfungen.
+Die bestätigte Vorbelegung wird im unberechneten Entwurf persistiert und bleibt
+nach Reload editierbar; Quellen-Digest und Original-IDs bleiben als Provenienz in
+der späteren normalen Berechnung erhalten. Keine automatische Datengrundlagen-
+Attestierung, Kostenänderung, Finalisierung oder Beschlussfassung.
+
 ### 5.2 Ausgaben (SDD §10)
 
 - **Planbetrag je Kategorie** (`PLANNED_COST`-Zeilen, + Subtotals umlagefähig/nicht/Rücklage).

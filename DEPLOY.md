@@ -195,6 +195,25 @@ not a new batch. Only selected drafts are created, never issued or sent. Synthet
 UI acceptance uses the isolated local launcher and
 `node scripts/acceptance/t53_dunning_batch_browser.cjs`; stop it afterward.
 
+## Previous-year plan proposals (T54; no new migration)
+
+Local head remains **0135**; this feature does not authorize any production
+promotion or change the accepted **0122** gate. Existing draft JSON retains
+`draft_inputs` and retained source identifiers/digest in `previous_actuals`;
+normal computation/finalization preserves that provenance and the existing
+coverage checks. No OCR worker, bank operation, mail or automatic finalization.
+
+Prior-year READ and destination-year PREPARE are checked independently before a
+local explicit context switch; complete source disclosure precedes enumeration.
+Current confirmed signed gross costs use inclusive service-period day proration,
+not the invoice-date year used by the separate accounting report. Reserve proposals
+remain separate. Existing sources and finalized originals are untouched; no schema
+or new environment credential is required. Repeat the synthetic UI flow with the
+isolated launcher and `node scripts/acceptance/t54_previous_plan_browser.cjs`, then
+stop app/browser. The manual invoice path does not require the intentionally open
+T10 OCR worker. Unknown create outcomes require checking the plan list, not retrying
+creation automatically.
+
 ## Fresh installation: one-time preparation on Moon
 
 Run as `chris` without sudo. The host must have Docker, Compose, `curl`,
