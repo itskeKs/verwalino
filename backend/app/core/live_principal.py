@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep, require_admin_dep
 from app.core.db import get_review_tenant_session
+from app.core.auth_db import validate_session_principal
 
 
 async def require_live_principal(db: AsyncSession, auth: AuthContext, *, writer: bool, exclusive: bool = False, administrator: bool = False) -> None:
@@ -15,7 +16,9 @@ async def require_live_principal(db: AsyncSession, auth: AuthContext, *, writer:
     await db.execute(text(f"SELECT {lock}(hashtextextended(:key,0))"),
                      {"key": f"scope-acl:{auth.organization_id}"})
     role = await db.scalar(text("SELECT scope_actor_role(:org)"), {"org": auth.organization_id})
-    if role is None:
+    if role is None or await validate_session_principal(
+        db, auth.user_id, auth.organization_id, auth.session_version
+    ) is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
     if administrator and role != 'OWNER_ADMIN':
         raise HTTPException(status_code=403, detail="Administrator required")

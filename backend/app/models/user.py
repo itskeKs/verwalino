@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,7 +30,10 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     display_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
 
+    session_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
     __table_args__ = (
+        CheckConstraint("session_version >= 0", name="ck_user_session_version_nonnegative"),
         UniqueConstraint("organization_id", "id", name="uq_user_organization_id_id"),
         UniqueConstraint("organization_id", "email", name="uq_user_org_email"),
     )

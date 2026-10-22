@@ -58,11 +58,14 @@ export interface MandateDocument {
   archive_reason: string | null;
 }
 
+export type UserRole = "OWNER_ADMIN" | "CLERK" | "READ_ONLY";
+
 export interface User {
   id: string;
   email: string;
   display_name: string;
   is_active: boolean;
+  role?: string | null;
 }
 
 // --- M1 Stammdaten ---

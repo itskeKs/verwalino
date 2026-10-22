@@ -29,6 +29,20 @@ anmelden. Der lokale Browserablauf ist mit
 `scripts/acceptance/t14_password_browser.cjs` gegen `scripts/dev-local.sh`
 wiederholbar (vorhandenes Playwright über `HV_PLAYWRIGHT_PACKAGE`, Chrome).
 
+## Benutzerverwaltung (T57)
+
+Admins bearbeiten unter „Benutzer“ Rolle und Aktivstatus oder setzen ein neues
+Passwort (12–128 Zeichen). Deaktivierung verlangt eine Bestätigung; eigene
+Deaktivierung/Herabstufung ist gesperrt. Ein Reset übermittelt keine E-Mail und
+zeigt niemals vorhandene Passwörter. Rollen wirken bei der nächsten Anfrage;
+Nur-Lesen blendet geschäftliche Schreibaktionen aus, eigene Passwortpflege bleibt.
+
+Reset, eigener Passwortwechsel und Deaktivierung widerrufen bestehende Cookies
+über eine dauerhafte Session-Generation. Reaktivierung belebt alte Cookies nicht
+wieder. Die Live-Prüfung erfolgt erneut unter der ACL-Sperre; Rollen-/Aktivänderung
+und nicht-sensitive Auditdaten werden atomar gespeichert. Der tatsächliche lokale
+Desktop-/Smartphone-Ablauf ist `scripts/acceptance/t57_users_browser.cjs`.
+
 ## Bankumsätze und Dateiimport (Phase 2)
 
 Bankumsätze werden getrennt von gebuchten Zahlungen geführt: Beträge sind

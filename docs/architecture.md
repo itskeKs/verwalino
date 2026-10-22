@@ -321,6 +321,19 @@ Die Rollendurchsetzung erfolgt im Authorization-Layer (Policy-Check pro Endpunkt
 - **MFA:** für M0 nicht zwingend; als Härtungsoption für M9 vormerken (Backoffice mit personenbezogenen + finanzrelevanten Daten).
 - **Audit:** Login, Logout, fehlgeschlagene Logins, Rollenänderungen → `audit_event`.
 
+**Implementierter T57-Pfad:** Signierte Cookies tragen Benutzer/Organisation und
+bei positiver Generation `sv`. Die Runtime prüft aktive Mitgliedschaft und aktuelle
+DB-Generation bei jeder Anfrage sowie erneut an Live-Transaktionsgrenzen unter
+ACL-Sperre. Additive Revision 0138 inkrementiert bei Passwortänderung oder
+Deaktivierung; Reaktivierung setzt nicht zurück. Alte Cookies ohne `sv` gelten nur
+für Generation null. Alte Auth-Definerfunktionen und RLS bleiben unverändert;
+neue eng gewährte Wrapper ergänzen die Generation. Admin-Anlage/-Änderung/-Reset
+nehmen die exklusive ACL-Sperre vor Zeilensperren, prüfen frisch, verhindern
+Selbstentzug und committen zusammen mit nicht-sensitiven Auditdaten. Dies ist
+API-Adminautorisierung, kein behaupteter Ersatz sämtlicher bestehender SQL-RLS-
+Verantwortlichkeiten. Nur-Lesen verbirgt Fachschreibaktionen, nicht eigene
+Passwortpflege. Downmigration verweigert den Verlust positiver Generationen.
+
 > **[ENTSCHEIDUNG]:** Server-Session (empfohlen) vs. JWT. Und: Self-Hosting-Auth vs. externer Identity-Provider (z. B. Keycloak/Authentik). Für das MVP empfehle ich **eigene, schlanke Server-Session-Auth** (volle Kontrolle, keine externe Abhängigkeit), die Schnittstelle aber so kapseln, dass ein späterer IdP-Wechsel möglich bleibt.
 
 > **Offener Punkt (out-of-scope M0):** User in mehreren Organizations (n:m). In Phase 1 bewusst ausgeschlossen (A-2). Falls Verwaltungs-Verbünde oder geteilte Dienstleister-Accounts gebraucht werden, vor M-Entscheidung neu bewerten.

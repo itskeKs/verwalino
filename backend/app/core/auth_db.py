@@ -16,13 +16,14 @@ class LoginPrincipal:
     password_hash: str
     is_active: bool
     role: str
+    session_version: int
 
 
 async def lookup_login_principal(
     session: AsyncSession, email: str
 ) -> LoginPrincipal | None:
     result = await session.execute(
-        text("SELECT * FROM public.app_auth_lookup(:email)"), {"email": email}
+        text("SELECT * FROM public.app_auth_lookup_versioned(:email)"), {"email": email}
     )
     row = result.mappings().one_or_none()
     if row is None:
@@ -33,14 +34,15 @@ async def lookup_login_principal(
         password_hash=row["password_hash"],
         is_active=row["is_active"],
         role=row["role"],
+        session_version=row["session_version"],
     )
 
 
 async def validate_session_principal(
-    session: AsyncSession, user_id: uuid.UUID, organization_id: uuid.UUID
+    session: AsyncSession, user_id: uuid.UUID, organization_id: uuid.UUID, session_version: int = 0
 ) -> str | None:
     result = await session.execute(
-        text("SELECT * FROM public.app_validate_session(:user_id, :organization_id)"),
-        {"user_id": user_id, "organization_id": organization_id},
+        text("SELECT * FROM public.app_validate_session_versioned(:user_id, :organization_id, :session_version)"),
+        {"user_id": user_id, "organization_id": organization_id, "session_version": session_version},
     )
     return result.scalar_one_or_none()

@@ -8,7 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select, text
 
-from app.core.auth_db import lookup_login_principal
+from app.core.auth_db import lookup_login_principal, validate_session_principal
+from app.core.live_principal import require_live_principal
 from app.core.config import settings
 from app.core.db import get_session_factory, set_tenant_context
 from app.core.security import (
@@ -88,7 +89,7 @@ async def login(body: LoginRequest, response: Response):
     if principal is None or not password_matches or not principal.is_active:
         raise _invalid_credentials()
 
-    token = create_session_token(principal.user_id, principal.organization_id)
+    token = create_session_token(principal.user_id, principal.organization_id, principal.session_version)
     _set_session_cookie(response, token)
     return LoginResponse(
         user_id=str(principal.user_id),
@@ -130,10 +131,16 @@ async def change_password(
                 text("SELECT set_config('app.current_user_id', :actor, true)"),
                 {"actor": str(auth.user_id)},
             )
+            await require_live_principal(session, auth, writer=False, exclusive=True)
+            role = await validate_session_principal(
+                session, auth.user_id, auth.organization_id, auth.session_version
+            )
+            if role is None:
+                raise _invalid_credentials()
             stmt = select(User).where(
                 User.id == auth.user_id,
                 User.organization_id == auth.organization_id,
-            )
+            ).with_for_update()
             result = await session.execute(stmt)
             user = result.scalar_one_or_none()
 

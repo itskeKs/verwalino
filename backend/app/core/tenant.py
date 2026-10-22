@@ -36,37 +36,44 @@ class AuthContext:
     user_id: uuid.UUID
     organization_id: uuid.UUID
     role: str
+    session_version: int = 0
 
 
-def _get_session_identities(request: Request) -> tuple[uuid.UUID, uuid.UUID] | None:
-    """Extract auth context from the session cookie.  Returns None if absent/invalid."""
+def _get_versioned_session(request: Request) -> tuple[uuid.UUID, uuid.UUID, int] | None:
+    """Decode once; legacy cookies represent generation zero, never a wildcard."""
     token = request.cookies.get(settings.session_cookie_name)
     if not token:
         return None
     data = decode_session_token(token)
     if not data:
         return None
-    return uuid.UUID(data["uid"]), uuid.UUID(data["oid"])
+    return uuid.UUID(data["uid"]), uuid.UUID(data["oid"]), data.get("sv", 0)
+
+
+def _get_session_identities(request: Request) -> tuple[uuid.UUID, uuid.UUID] | None:
+    """Compatibility helper for callers that only need cookie identities."""
+    identities = _get_versioned_session(request)
+    return identities[:2] if identities is not None else None
 
 
 async def get_current_user(request: Request) -> AuthContext:
     """FastAPI dependency -- returns AuthContext or raises 401."""
-    identities = _get_session_identities(request)
+    identities = _get_versioned_session(request)
     if identities is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    user_id, organization_id = identities
+    user_id, organization_id, session_version = identities
     async with get_session_factory()() as session:
         async with session.begin():
-            role = await validate_session_principal(session, user_id, organization_id)
+            role = await validate_session_principal(session, user_id, organization_id, session_version)
     if role is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    return AuthContext(user_id=user_id, organization_id=organization_id, role=role)
+    return AuthContext(user_id=user_id, organization_id=organization_id, role=role, session_version=session_version)
 
 
 async def get_db(

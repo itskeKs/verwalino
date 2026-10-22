@@ -22,9 +22,9 @@ Kurzpfade: `api/ services/ engine/ models/ workers/` liegen unter `backend/app/`
 | Funktion | Referenz | Status im Code | Fundstelle |
 | --- | --- | --- | --- |
 | Login/Logout | ja | ✅ | `api/auth.py`, `pages/LoginPage.tsx` |
-| Benutzer anlegen | ja | 🟡 Backend da, UI nur Liste | `api/users.py:102`, `pages/UsersPage.tsx` |
-| Rollen Admin/Sachbearbeiter/Nur-Lesen | ja | 🟡 fest, nicht änderbar | `core/rbac.py` |
-| Passwort ändern | ja | ❌ | `api/auth.py` |
+| Benutzer anlegen | ja | ✅ Admin-Anlage und Verwaltung (T57) | `api/users.py:102`, `pages/UsersPage.tsx` |
+| Rollen Admin/Sachbearbeiter/Nur-Lesen | ja | ✅ Admin-Änderung mit Live-Prüfung (T57) | `core/rbac.py` |
+| Passwort ändern | ja | ✅ eigener Wechsel und Admin-Reset, Sessionwiderruf | `api/auth.py` |
 | Mandate mit Dokumenten | nein | ✅ Bearbeiten/Beenden, gebundene Definition geschützt | `api/mandates.py`, T55 |
 | Quellen-Governance (Bereiche, Freigaben, Quarantänen) | nein | ✅ im Default-Modus PREPARATION nicht blockierend, überlädt das Menü | `services/financial_scope_service.py:59-72` |
 | Dashboard | ja | ✅ Fristen, Aufgaben und monatliche Miet-/Leerstandskennzahlen | `pages/DashboardPage.tsx` |
@@ -317,7 +317,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 
 ### Phase 3 – Parität und Komfort
 
-**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43–T56 abgeschlossen; nächste Aufgabe T57.** T10 bleibt offen.
+**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43–T57 einzeln abgenommen; finale Gesamtprüfung läuft noch.** T10 bleibt offen.
 
 - [x] **T43 Staffelmiete** — Aus Start, Betrag oder Prozent, Intervall und Stufenzahl mehrere Mietänderungen (T23) anlegen.
   Dateien: `frontend/src/pages/UnitDetailPage.tsx`, `backend/app/api/leases.py`
@@ -375,9 +375,10 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
   Dateien: `backend/app/api/properties.py`, `backend/app/api/units.py`, `backend/app/api/persons.py`, `backend/app/api/leases.py`
   Fertig, wenn: `uv run pytest tests/test_master_delete.py` (neu) grün UND Ablauf in der App: „leere Einheit löschen, Einheit mit Vertrag nennt Grund“.
   Umgesetzt: vier Live-/Prepare-berechtigte DELETE-Routen, normale unveränderte RLS, Eltern-/Finanzsperren und tatsächliches RETURNING vor 204; vollständige physische und exakte logische Referenzprüfung, niemals Kaskadenbereinigung. Zunächst 18 fehlende DELETE-Fälle rot (405), final 26 Pflichtfälle sowie 185 Stammdaten-/Quellen-/Historien-/Import-/Briefregressionen grün; unabhängig 198 Frontendfälle, Build und Gesamtlint grün. Geprüft: Rollen/Organisation/Live-Herabstufung, Read ohne Prepare auch für Admin, parallele Löschung, echte Finanzsperre, Miethistorie, append-only Audit, unveränderliche Import-Replays, reine Snapshot-UUID ohne FK und kein falscher Textteiltreffer. Tatsächlicher 0137→0136→0137-Rundlauf bewahrt alle alten Daten/Sicherheitsobjekte und ein bytegleiches ausgestelltes Brief-PDF; nur lesende neue Funktionen, alte Migrationen unverändert. Vollständiger UI-only-PASS `t56_master_delete_browser.cjs`: Abbrechen ohne DELETE, leere Einheit tatsächlich 204/anschließend 404, verwendete Einheit tatsächlich 409 mit exakt sichtbarer Vertragsbegründung, Originalvertrag 700/150 und alle übrigen DTOs/Freigaben unverändert, 390×844-Reload. Drei technische Vorläufe scheiterten an Playwright-APIResponse-Diagnostik, unterschiedlicher Decimal-Darstellung im Setup und leerem 204-Body; Adapter/Eingabedarstellung eng korrigiert, sämtliche Status-/Originaldatenprüfungen erhalten, erst danach Vollpass. App/Browser beendet; bekannte Alembic-/Vite-Warnungen, T57 und finale Gesamtprüfungen bleiben offen.
-- [ ] **T57 Benutzerverwaltung** — Rolle ändern, deaktivieren, Passwort zurücksetzen durch Admin; Schreibknöpfe für Nur-Lesen ausblenden.
+- [x] **T57 Benutzerverwaltung** — Rolle ändern, deaktivieren, Passwort zurücksetzen durch Admin; Schreibknöpfe für Nur-Lesen ausblenden.
   Dateien: `backend/app/api/users.py`, `frontend/src/pages/UsersPage.tsx`, `frontend/src/pages/UnitDetailPage.tsx`
   Fertig, wenn: `uv run pytest tests/test_rbac.py` grün UND Ablauf in der App: „deaktivierter Benutzer kann sich nicht anmelden“.
+  Umgesetzt: strikte Admin-Rollen-/Aktivänderung und Passwortreset mit exklusiver Live-ACL-Prüfung vor Zeilensperren, Selbstentzugsschutz, atomarem nicht-sensitivem Audit und dauerhaftem Cookie-Widerruf einschließlich eigenem Passwortwechsel. Zunächst 14 fehlende API-Fälle rot; Pflichtlauf 41 grün einschließlich paralleler Adminänderung, echter ACL-Wartezeit, spätem Audit-Rollback, alter Snapshot-Generation und geschütztem 0138→0137→0138-Rundlauf mit alten Daten/Sicherheitsobjekten und bytegleichem ausgestelltem Brief-PDF. Runtime kann den Zähler nicht zurücksetzen, positive Generationen sperren den Downgrade; alte Authfunktionen/Policies und 0124–0131 unverändert. 250 Auth-/RBAC-/Quellen-/Aufgaben-/Einladungs-/Mailregressionen nach belegter Testisolation grün; 242 unabhängige betroffene Frontendtests sowie vollständige 1336 Tests/115 Dateien, Build/Gesamtlint grün. Tatsächlicher UI-only-PASS `t57_users_browser.cjs`: eigener CLERK, ausdrücklicher READ-Quellenzugriff, Adminwechsel zu READ_ONLY und schreibfreie Fachansicht nach Desktop-/390×844-Reload; Reset 204 verwirft beide alten Cookies und Altpasswort, neues Passwort funktioniert, anschließende bestätigte Deaktivierung bleibt gespeichert und verweigert beide Cookies sowie neue Logins mit 401. Andere Benutzer, Objekte/Einheiten/Domains/Freigaben unverändert; kein Versand. Vorläufe scheiterten an Select-Locator, StrictMode-Ersatz-GET, fälschlich global mitgezählter eigener Passwortpflege und Chromes körperloser 204-Abbruchmeldung; eng nachweisgebundene Adapterkorrekturen, keine Fach-/Rechteassertion entfernt. Vollständiger Backend-Vorherlauf 637 fehlgeschlagen/3231 bestanden/2 übersprungen/16 Setupfehler belegt Session-Seed-Folgeschäden; dauerhafte Sicherheit unverändert, eigene temporäre Testidentitäten/Savepoint-Rücknahme und aktuelle Generation nur für neu erzeugte Test-Clients, alte Cookies bleiben alt. Vollständiger Backend-Nachherlauf und Gesamtabschluss noch offen; bekannte Alembic-/Vite-Warnungen bleiben. T10 bleibt offen.
 
 ## 4. Offene fachliche Fragen
 

@@ -204,7 +204,7 @@ export function UnitDetailPage() {
 
   async function handleLeaseSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!unitId) return;
+    if (!unitId || !canWriteOwnership) return;
     setSavingLease(true);
     setLeaseFormError(null);
     try {
@@ -398,7 +398,7 @@ export function UnitDetailPage() {
       {/* Lease Agreements */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <h2 style={{ margin: 0 }}>Mietvertraege</h2>
-        <button className="btn btn--primary" onClick={() => {
+        {canWriteOwnership && <button className="btn btn--primary" onClick={() => {
           setLeaseFormError(null);
           setEditingLease(null);
           setLeaseForm({
@@ -409,10 +409,10 @@ export function UnitDetailPage() {
           setShowLeaseForm(true);
         }}>
           + Mietvertrag
-        </button>
+        </button>}
       </div>
 
-      {showLeaseForm && (
+      {canWriteOwnership && showLeaseForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>{editingLease ? "Mietvertrag bearbeiten / beenden" : "Neuen Mietvertrag anlegen"}</h2>
           {leaseFormError && <p className="error-text">{leaseFormError}</p>}
@@ -525,7 +525,7 @@ export function UnitDetailPage() {
                     <td>{la.base_rent}</td>
                     <td>{la.advance_payment}</td>
                     <td>{la.deposit ?? "-"}</td>
-                    <td><button className="btn" onClick={() => {
+                    <td>{canWriteOwnership && <button className="btn" onClick={() => {
                       setEditingLease(la);
                       setLeaseFormError(null);
                       setLeaseForm({
@@ -534,7 +534,7 @@ export function UnitDetailPage() {
                         advance_payment: la.advance_payment, deposit: la.deposit ?? "", notes: la.notes,
                       });
                       setShowLeaseForm(true);
-                    }}>Bearbeiten / beenden</button>
+                    }}>Bearbeiten / beenden</button>}
                       {canWriteOwnership && <MasterDataDelete entityId={la.id} title="Mietvertrag löschen" entityName={`Mietvertrag ${la.id} · Einheit ${unit.number} · ${tenantProfileLabel(la.tenant_profile_id)} · ${la.valid_from} bis ${la.valid_to ?? "offen"}`} remove={deleteLease} onDeleted={reload} />}
                     </td>
                   </tr>

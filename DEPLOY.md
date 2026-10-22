@@ -231,6 +231,24 @@ storage and `node scripts/acceptance/t55_master_data_browser.cjs`; stop app/brow
 afterward. This does **not** authorize production deployment/promotion of
 **0123–0136** or change the accepted **0122** gate.
 
+## User administration and session invalidation (T57; local head 0138)
+
+Revision **0138** adds a nonnegative session generation, its own invalidation/ACL
+triggers and narrow versioned auth wrappers; existing auth functions and policies
+are unchanged. Password hash changes and deactivation invalidate existing cookies;
+reactivation cannot restore them. Legacy cookies mean generation zero, not a
+wildcard. Admin API writes revalidate under an exclusive tenant ACL lock before
+row locks. Audit events contain no passwords, hashes or session generations.
+
+Downgrade refuses positive generations rather than resurrecting revoked sessions.
+The real rollback-only 0138→0137→0138 test compares old rows/security objects and
+issued PDF bytes. Only the DDL-owning migrator can prepare the new counter for a
+rollback-only rehearsal; app_rw cannot alter it. Disposable-test cleanup is
+explicitly database/role-guarded, not a production downgrade bypass.
+
+This is **not** authorization to promote **0123–0138** to production or change the
+accepted production **0122** gate. No deployment was performed.
+
 ## Unused master deletion (T56; local head 0137)
 
 Revision **0137** adds only an authorized read-only reference inventory and an

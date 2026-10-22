@@ -684,3 +684,13 @@ it("T44 disables index action on history load errors until retry", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Mietänderungen erneut laden" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Indexmiete berechnen" })).toBeEnabled());
 });
+
+it("T57 hides lease creation and edit/end for READ_ONLY while keeping dated history readable", async () => {
+  history = [march]; show("READ_ONLY");
+  expect(await screen.findByText("2026-03-15")).toBeVisible();
+  expect(screen.getByText("Originalvertrag")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /^\+ Mietvertrag$/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Bearbeiten / beenden" })).not.toBeInTheDocument();
+  expect(endpoints.createLease).not.toHaveBeenCalled();
+  expect(endpoints.patchLease).not.toHaveBeenCalled();
+});

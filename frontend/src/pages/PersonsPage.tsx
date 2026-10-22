@@ -9,6 +9,7 @@ import type { Person, PersonCreate } from "../api/types";
 import { usePagedList } from "../hooks/usePagedList";
 import { ListSearch, MoreResults } from "../components/ListSearch";
 import { ApiError } from "../api/client";
+import { useAuth } from "../auth/useAuth";
 
 interface PersonFormData {
   first_name: string;
@@ -39,6 +40,8 @@ const EMPTY_FORM: PersonFormData = {
 };
 
 export function PersonsPage() {
+  const { session } = useAuth();
+  const canWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
   const page = usePagedList<Person>("/api/persons/page");
   const persons = page.items;
   const reload = page.reload;
@@ -50,12 +53,14 @@ export function PersonsPage() {
   const [saving, setSaving] = useState(false);
 
   function openCreate() {
+    if (!canWrite) return;
     setEditId(null);
     setForm(EMPTY_FORM);
     setShowForm(true);
   }
 
   function openEdit(p: Person) {
+    if (!canWrite || !p.can_prepare) return;
     setEditId(p.id);
     setForm({
       first_name: p.first_name,
@@ -75,6 +80,7 @@ export function PersonsPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!canWrite) return;
     setSaving(true);
     setError(null);
     try {
@@ -114,15 +120,15 @@ export function PersonsPage() {
     <div className="paged-list">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <h1 style={{ margin: 0 }}>Personen</h1>
-        <button className="btn btn--primary" onClick={openCreate}>
+        {canWrite && <button className="btn btn--primary" onClick={openCreate}>
           + Neue Person
-        </button>
+        </button>}
       </div>
 
       <ListSearch label="Personen suchen" onSearch={page.setQuery} />
       {(error || page.error) && <p className="error-text">{error || page.error}</p>}
 
-      {showForm && (
+      {canWrite && showForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>{editId ? "Person bearbeiten" : "Neue Person anlegen"}</h2>
           <form onSubmit={handleSubmit} className="form-grid">
@@ -262,9 +268,9 @@ export function PersonsPage() {
                   <td>{p.phone ?? "-"}</td>
                   <td>{[p.zip_code, p.city].filter(Boolean).join(" ") || "-"}</td>
                   <td>
-                    <button className="btn btn--small" disabled={!p.can_prepare} onClick={() => openEdit(p)}>
+                    {canWrite && <button className="btn btn--small" disabled={!p.can_prepare} onClick={() => openEdit(p)}>
                       Bearbeiten
-                    </button>
+                    </button>}
                   </td>
                 </tr>
               ))}

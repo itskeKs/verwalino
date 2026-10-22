@@ -3,7 +3,7 @@
  */
 
 import { api, uploadFormData } from "./client";
-import type { Task, TaskInput, TaskFilters, TaskPage, User, PropertyYearReport, PropertyYearReportQuery } from "./types";
+import type { Task, TaskInput, TaskFilters, TaskPage, User, UserRole, PropertyYearReport, PropertyYearReportQuery } from "./types";
 
 import type { Attachment, AttachmentFilters, AttachmentPage, AttachmentUpload } from "./types";
 import type { SpecialLevy, SpecialLevyCreate } from "./types";
@@ -1226,6 +1226,14 @@ export function createUser(
   role: string,
 ): Promise<unknown> {
   return api.post<unknown>("/api/users", { email, password, display_name: displayName, role });
+}
+
+export function updateUser(id: string, body: { role?: UserRole; is_active?: boolean }): Promise<User> {
+  return api.patch<User>(`/api/users/${encodeURIComponent(id)}`, body);
+}
+
+export function resetUserPassword(id: string, password: string): Promise<void> {
+  return api.post<void>(`/api/users/${encodeURIComponent(id)}/reset-password`, { password });
 }
 
 // T09: Paid advances derived
