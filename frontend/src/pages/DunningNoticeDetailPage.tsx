@@ -25,6 +25,7 @@ import type {
   Person,
 } from "../api/types";
 import { ApiError } from "../api/client";
+import { MailDispatch } from "../components/MailDispatch";
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Entwurf",
@@ -435,6 +436,8 @@ export function DunningNoticeDetailPage() {
           </div>
         </div>
       )}
+
+      {isIssued && notice.id === dunningId && <MailDispatch kind="dunning" documentId={notice.id} />}
 
       {/* Action buttons */}
       <div

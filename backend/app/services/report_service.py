@@ -59,6 +59,14 @@ class ReportService:
         if not 1 <= year <= 9999:
             raise HTTPException(422, 'Year must be between 1 and 9999')
         start, end = date(year, 1, 1), date(year, 12, 31)
+        prop, sphere = await self.property_period(property_id, start, end, accounting_scope_id)
+        return await self._year_totals(prop, sphere, year, start, end)
+
+    async def property_period(self, property_id: UUID, start: date, end: date,
+                              accounting_scope_id: UUID | None = None):
+        """Admit a complete property universe before any financial row enumeration."""
+        if start > end:
+            raise HTTPException(422, 'Report period must not end before it starts')
         context = FinancialScopeService(self._session, self._org_id, self._user_id)
         await context.lock_inputs()
         prop = await PropertyRepository(self._session, self._org_id).get_by_id(property_id)
@@ -87,6 +95,10 @@ class ReportService:
         ), {'org': self._org_id, 'property': property_id}):
             raise HTTPException(404, 'Complete property sources not accessible')
 
+        return prop, sphere
+
+    async def _year_totals(self, prop, sphere, year: int, start: date, end: date) -> PropertyYearReport:
+        property_id = prop.id
         income_rows = await PaymentRepository(self._session, self._org_id).property_year_totals(property_id, start, end)
         expense_rows = await CostEntryRepository(self._session, self._org_id).property_year_totals(property_id, start, end)
         amounts = [row.amount for row in [*income_rows, *expense_rows]]

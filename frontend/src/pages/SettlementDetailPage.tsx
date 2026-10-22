@@ -1,3 +1,5 @@
+import { HeatingInputs } from "../components/HeatingInputs";
+import { heatingPayload, useHeatingCandidates } from "../lib/heatingInputs";
 import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
 /**
  * Settlement detail page -- view, compute, preview, finalize, PDF download, correction.
@@ -45,6 +47,7 @@ import type {
   SettlementRun,
   SettlementLine,
   ComputeRequest,
+  HeatingConfig,
   ExternalAmountIn,
   ManualAmountIn,
   UnitMetricIn,
@@ -58,6 +61,7 @@ import type {
 } from "../api/types";
 import { useAuth } from "../auth/useAuth";
 import { ApiError } from "../api/client";
+import { MailDispatch } from "../components/MailDispatch";
 import { fromDbDistributionKey } from "../lib/costVocabulary";
 import {
   needsExternalInput,
@@ -197,6 +201,8 @@ function AdvanceProposalSection({ runId }: { runId: string }) {
 export function SettlementDetailPage() {
   const { runId } = useParams<{ runId: string }>();
   const navigate = useNavigate();
+  const { session } = useAuth();
+  const canEditHeating = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
 
   const [run, setRun] = useState<SettlementRun | null>(null);
   const [properties, setProperties] = useState<Property[]>([]);
@@ -219,13 +225,13 @@ export function SettlementDetailPage() {
   const [externalAmounts, setExternalAmounts] = useState<ExternalAmountIn[]>([]);
   const [manualAmounts, setManualAmounts] = useState<ManualAmountIn[]>([]);
   const [unitMetrics, setUnitMetrics] = useState<UnitMetricIn[]>([]);
+  const [heatingConfigs, setHeatingConfigs] = useState<HeatingConfig[]>([]);
   const [showInputs, setShowInputs] = useState(false);
   const [consumptionSuggestions, setConsumptionSuggestions] = useState<ConsumptionSuggestion[]>([]);
   const [manualConsumptionIds, setManualConsumptionIds] = useState<Set<string>>(new Set());
   const [consumptionLoading, setConsumptionLoading] = useState(false);
   const [consumptionError, setConsumptionError] = useState<string | null>(null);
   const loadGeneration = useRef(0);
-  const consumptionBlocked = consumptionLoading || Boolean(consumptionError);
 
   // Preview lines (not persisted)
   const [previewRun, setPreviewRun] = useState<SettlementRun | null>(null);
@@ -234,7 +240,18 @@ export function SettlementDetailPage() {
   const isDraft = run?.status === "draft";
   const isFinalized = run?.status === "finalized";
 
+  const heatingCandidates = useHeatingCandidates(runId ?? "", heatingConfigs, canEditHeating && isDraft && run?.id === runId);
+  const heatingBlocked = heatingConfigs.length > 0 && heatingCandidates.blocked;
+  const genericEntries = costEntries.filter(entry => !heatingConfigs.some(config => config.cost_entry_id === entry.id));
+  const consumptionBlocked = needsConsumption(genericEntries) && (consumptionLoading || Boolean(consumptionError));
+  const heatingOptions = costEntries.flatMap(entry => {
+    const category = categories.find(category => category.id === entry.cost_category_id);
+    if (category?.code !== "HEIZUNG_ZENTRAL" && category?.code !== "WARMWASSER_ZENTRAL") return [];
+    return [{ id: entry.id, label: category.label, kind: category.code === "HEIZUNG_ZENTRAL" ? "HEATING" as const : "HOT_WATER" as const }];
+  });
+
   function initStructuredInputs(entries: CostEntry[], r: SettlementRun) {
+    setHeatingConfigs(r.extra_inputs?.heating_inputs ?? []);
     setManualConsumptionIds(new Set());
     setConsumptionSuggestions([]);
     setConsumptionError(null);
@@ -250,7 +267,7 @@ export function SettlementDetailPage() {
         unit_id: unitId,
         tenant_amount: "",
       }));
-    setExternalAmounts(externals);
+    setExternalAmounts(externals.map(row => r.extra_inputs?.external_amounts?.find(saved => saved.cost_entry_id === row.cost_entry_id && saved.unit_id === row.unit_id) ?? row));
 
     // Manual amounts: one entry per cost_entry that uses MANUAL key
     const manuals: ManualAmountIn[] = entries
@@ -260,13 +277,13 @@ export function SettlementDetailPage() {
         unit_id: unitId,
         amount: "",
       }));
-    setManualAmounts(manuals);
+    setManualAmounts(manuals.map(row => r.extra_inputs?.manual_amounts?.find(saved => saved.cost_entry_id === row.cost_entry_id && saved.unit_id === row.unit_id) ?? row));
 
     // Unit metrics: if any entry needs consumption or person count
     const hasConsumption = needsConsumption(entries);
     const hasPersons = needsPersonCount(entries);
     if (hasConsumption || hasPersons) {
-      setUnitMetrics([
+      setUnitMetrics(r.extra_inputs?.unit_metrics?.length ? r.extra_inputs.unit_metrics : [
         {
           unit_id: unitId,
           consumption: hasConsumption ? "" : null,
@@ -279,16 +296,22 @@ export function SettlementDetailPage() {
   }
 
   const loadConsumption = useCallback(async (r: SettlementRun, entries: CostEntry[], generation: number) => {
-    if (r.status !== "draft" || !needsConsumption(entries)) return;
+    entries = entries.filter(entry => !r.extra_inputs?.heating_inputs?.some(config => config.cost_entry_id === entry.id));
+    if (r.status !== "draft" || !needsConsumption(entries)) {
+      const saved = r.extra_inputs?.unit_metrics ?? [];
+      setManualConsumptionIds(new Set(saved.filter(row => row.consumption != null).map(row => row.unit_id)));
+      return;
+    }
     setConsumptionLoading(true);
     setConsumptionError(null);
     try {
       const sources = await getConsumptionSuggestions(r.id);
       if (generation !== loadGeneration.current) return;
       setConsumptionSuggestions(sources);
-      setManualConsumptionIds(new Set());
+      const saved = r.extra_inputs?.unit_metrics ?? [];
+      setManualConsumptionIds(new Set(saved.filter(row => row.consumption != null).map(row => row.unit_id)));
       setUnitMetrics(previous => sources.length ? sources.map(source => ({
-        unit_id: source.unit_id, consumption: source.consumption ?? "",
+        unit_id: source.unit_id, consumption: saved.find(row => row.unit_id === source.unit_id)?.consumption ?? source.consumption ?? "",
         person_count: needsPersonCount(entries)
           ? previous.find(row => row.unit_id === source.unit_id)?.person_count ?? undefined : null,
       })) : previous);
@@ -392,13 +415,14 @@ export function SettlementDetailPage() {
 
   function buildComputeRequest(): ComputeRequest {
     return {
-      external_amounts: externalAmounts.filter((e) => e.tenant_amount !== ""),
-      manual_amounts: manualAmounts.filter((m) => m.amount !== ""),
+      heating_inputs: heatingPayload(heatingConfigs),
+      external_amounts: externalAmounts.filter((e) => e.tenant_amount !== "" && !heatingConfigs.some(config => config.cost_entry_id === e.cost_entry_id)),
+      manual_amounts: manualAmounts.filter((m) => m.amount !== "" && !heatingConfigs.some(config => config.cost_entry_id === m.cost_entry_id)),
       unit_metrics: unitMetrics
-        .filter((u) => (manualConsumptionIds.has(u.unit_id) && u.consumption) || u.person_count != null)
+        .filter((u) => (needsConsumption(genericEntries) && manualConsumptionIds.has(u.unit_id) && u.consumption) || u.person_count != null)
         .map((u) => ({
           ...u,
-          consumption: manualConsumptionIds.has(u.unit_id) ? u.consumption?.replace(",", ".") || null : null,
+          consumption: needsConsumption(genericEntries) && manualConsumptionIds.has(u.unit_id) ? u.consumption?.replace(",", ".") || null : null,
           person_count: u.person_count ?? null,
         })),
     };
@@ -449,7 +473,7 @@ export function SettlementDetailPage() {
   }
 
   async function handleCompute() {
-    if (!runId || consumptionBlocked) return;
+    if (!runId || consumptionBlocked || heatingBlocked) return;
     setActionLoading(true);
     setActionError(null);
     setShowPreview(false);
@@ -468,7 +492,7 @@ export function SettlementDetailPage() {
   }
 
   async function handlePreview() {
-    if (!runId || consumptionBlocked) return;
+    if (!runId || consumptionBlocked || heatingBlocked) return;
     setActionLoading(true);
     setActionError(null);
     try {
@@ -487,7 +511,7 @@ export function SettlementDetailPage() {
   }
 
   async function handleFinalize() {
-    if (!runId || consumptionBlocked) return;
+    if (!runId || consumptionBlocked || heatingBlocked) return;
     const confirmed = window.confirm(
       "Abrechnung finalisieren? Nach der Finalisierung ist die Abrechnung " +
         "unveraenderbar (GoBD). Aenderungen sind nur als Korrekturabrechnung moeglich.",
@@ -598,7 +622,9 @@ export function SettlementDetailPage() {
                       {ln.total_amount != null ? `${ln.total_amount} EUR` : "-"}
                     </td>
                     <td>
-                      {ln.distribution_key
+                      {ln.note?.startsWith("HeizkostenV intern:")
+                        ? "HeizkostenV intern"
+                        : ln.distribution_key
                         ? DISTRIBUTION_KEY_LABELS[fromDbDistributionKey(ln.distribution_key)] ??
                           ln.distribution_key
                         : "-"}
@@ -665,7 +691,8 @@ export function SettlementDetailPage() {
   }
 
   function renderStructuredInputs() {
-    const hasExternals = externalAmounts.length > 0;
+    const visibleExternals = externalAmounts.filter(row => !heatingConfigs.some(config => config.cost_entry_id === row.cost_entry_id));
+    const hasExternals = visibleExternals.length > 0;
     const hasManuals = manualAmounts.length > 0;
     const hasMetrics = unitMetrics.length > 0;
 
@@ -674,8 +701,8 @@ export function SettlementDetailPage() {
     return (
       <div className="card" style={{ marginBottom: "1rem" }}>
         <h2>Strukturierte Eingaben</h2>
-        {consumptionLoading && <p>Zählerbasis wird geladen …</p>}
-        {consumptionError && <p role="alert">{consumptionError} <button type="button" className="btn"
+        {needsConsumption(genericEntries) && consumptionLoading && <p>Zählerbasis wird geladen …</p>}
+        {needsConsumption(genericEntries) && consumptionError && <p role="alert">{consumptionError} <button type="button" className="btn"
           onClick={handleConsumptionRetry}>Zählerbasis erneut laden</button></p>}
         <p
           style={{
@@ -695,7 +722,7 @@ export function SettlementDetailPage() {
               Externe Heizkosten (je Einheit)
             </h3>
             <div className="form-grid">
-              {externalAmounts.map((ext, idx) => (
+              {visibleExternals.map((ext, idx) => (
                 <label key={`ext-${idx}`}>
                   {getCostEntryLabel(ext.cost_entry_id)}
                   <input
@@ -704,9 +731,7 @@ export function SettlementDetailPage() {
                     placeholder="0.00"
                     value={ext.tenant_amount}
                     onChange={(e) => {
-                      const next = [...externalAmounts];
-                      next[idx] = { ...ext, tenant_amount: e.target.value };
-                      setExternalAmounts(next);
+                      setExternalAmounts(previous => previous.map(row => row === ext ? { ...row, tenant_amount: e.target.value } : row));
                     }}
                   />
                 </label>
@@ -749,7 +774,7 @@ export function SettlementDetailPage() {
             <div className="form-grid">
               {unitMetrics.map((m, idx) => (
                 <div key={`metric-${idx}`} style={{ display: "contents" }}>
-                  {needsConsumption(costEntries) && (
+                  {needsConsumption(genericEntries) && (
                     <label>
                       Verbrauch ({getUnitLabel(m.unit_id)})
                       <input
@@ -879,6 +904,8 @@ export function SettlementDetailPage() {
           ) : null}
         </div>
       )}
+
+      {isFinalized && run.id === runId && <MailDispatch kind="settlement" documentId={run.id} />}
 
       {/* GoBD notice for finalized runs */}
       {isFinalized && (
@@ -1089,6 +1116,10 @@ export function SettlementDetailPage() {
         </div>
       )}
 
+      {isDraft && canEditHeating && heatingOptions.length > 0 && <HeatingInputs options={heatingOptions} configs={heatingConfigs}
+        onChange={setHeatingConfigs} candidates={heatingCandidates} disabled={actionLoading} />}
+      {isDraft && canEditHeating && heatingBlocked && <p>Interne Heizkosten: gültige Angaben und passende, vollständig geladene Zeiträume sind vor Berechnen, Vorschau und Finalisieren erforderlich.</p>}
+
       {/* Structured inputs (draft only) */}
       {isDraft && (
         <>
@@ -1121,21 +1152,21 @@ export function SettlementDetailPage() {
             <button
               className="btn btn--primary"
               onClick={handleCompute}
-              disabled={actionLoading || consumptionBlocked}
+              disabled={actionLoading || consumptionBlocked || heatingBlocked}
             >
               {actionLoading ? "Berechnen..." : "Berechnen"}
             </button>
             <button
               className="btn"
               onClick={handlePreview}
-              disabled={actionLoading || consumptionBlocked}
+              disabled={actionLoading || consumptionBlocked || heatingBlocked}
             >
               Vorschau
             </button>
             <button
               className="btn btn--primary"
               onClick={handleFinalize}
-              disabled={actionLoading || consumptionBlocked}
+              disabled={actionLoading || consumptionBlocked || heatingBlocked}
               style={{ background: "#2e7d32", borderColor: "#2e7d32" }}
             >
               Finalisieren

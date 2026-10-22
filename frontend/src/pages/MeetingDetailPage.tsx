@@ -38,6 +38,7 @@ import type {
   Property,
 } from "../api/types";
 import { ApiError } from "../api/client";
+import { MailDispatch } from "../components/MailDispatch";
 
 const STATUS_LABELS: Record<string, string> = {
   PLANNED: "Geplant",
@@ -605,6 +606,8 @@ export function MeetingDetailPage() {
           </p>
         )}
       </div>
+
+      {meeting.id === meetingId && <MailDispatch kind="invitation" documentId={meeting.id} />}
 
       {/* Protocol text */}
       <div className="card" style={{ marginBottom: "1.5rem" }}>

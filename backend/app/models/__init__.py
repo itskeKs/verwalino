@@ -39,6 +39,7 @@ from app.models.payment import Payment
 
 # M7 Mahnwesen
 from app.models.dunning_notice import DunningNotice
+from app.models.dunning_batch import DunningBatch
 
 # M8 Eigentümerversammlung & Beschluss-Sammlung
 from app.models.owners_meeting import OwnersMeeting
@@ -50,6 +51,8 @@ from app.models.resolution_register_entry import ResolutionRegisterEntry
 from app.models.mandate_document import MandateDocument
 from app.models.attachment import Attachment
 from app.models.task import Task
+from app.models.letter import LetterTemplate, LetterDocument
+from app.models.sepa import SepaCreditor, SepaMandate
 
 # Declaration import legal source and review graph
 from app.models.property_document import PropertyDocument
@@ -82,6 +85,7 @@ __all__ = [
     "Property",
     "Unit",
     "Person",
+    "MasterImportBatch",
     "OwnerProfile",
     "TenantProfile",
     "Vendor",
@@ -106,6 +110,7 @@ __all__ = [
     "Payment",
     # M7
     "DunningNotice",
+    "DunningBatch",
     # M8
     "OwnersMeeting",
     "AgendaItem",
@@ -114,6 +119,10 @@ __all__ = [
     "MandateDocument",
     "Attachment",
     "Task",
+    "LetterTemplate",
+    "LetterDocument",
+    "SepaCreditor",
+    "SepaMandate",
     "PropertyDocument",
     "DeclarationImport",
     "DeclarationImportDocument",
@@ -152,6 +161,7 @@ from app.models.property_source_admission_review import PropertySourceAdmissionR
 from app.models.property_source_classification import PropertySourceClassification
 
 from app.models.property_creation_receipt import PropertyCreationReceipt
+from app.models.master_import_batch import MasterImportBatch
 
 from app.models.intake_original import IntakeOriginal
 

@@ -159,6 +159,414 @@ async def _create_and_finalize_plan(client, m4_seed, reserve="6000.00"):
     return plan_id
 
 
+# T54: prior-year actuals are a proposal, never a computation or finalization.
+@pytest.fixture
+def previous_world(seed_data):
+    return _seed_weg(seed_data)
+
+
+def previous_request(world, **changes):
+    return {"property_id": world["property"], "plan_year": 2026, **changes}
+
+
+async def previous_preview(api, world, **changes):
+    response = await api.post("/api/economic-plans/previous/preview", json=previous_request(world, **changes))
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def previous_adoption(world, preview, **changes):
+    return {**previous_request(world), "expected_source_digest": preview["source_digest"],
+            "planned_costs": preview["planned_costs"],
+            "reserve_contribution_total": preview["reserve_contribution_total"], **changes}
+
+
+@pytest.mark.asyncio
+async def test_previous_preview_exact_categories_reserve_and_no_writes(client_a_admin, previous_world):
+    api, w = client_a_admin, previous_world
+    before = (await api.get("/api/economic-plans")).json()
+    sources = (await api.get("/api/cost-entries")).json()
+    preview = await previous_preview(api, w)
+    assert preview["source_year"] == 2025 and preview["plan_year"] == 2026
+    assert preview["period_start"] == "2025-01-01" and preview["period_end"] == "2025-12-31"
+    rows = {r["category_code"]: r for r in preview["planned_costs"]}
+    assert set(rows) == {"GARTENPFLEGE", "WEG_VERWALTERKOSTEN"}
+    assert Decimal(rows["GARTENPFLEGE"]["planned_amount"]) == Decimal("4000.00")
+    assert rows["GARTENPFLEGE"]["cost_group"] == "UMLAGEFAEHIG"
+    assert Decimal(rows["WEG_VERWALTERKOSTEN"]["planned_amount"]) == Decimal("3000.00")
+    assert rows["WEG_VERWALTERKOSTEN"]["cost_group"] == "NICHT_UMLAGEFAEHIG"
+    assert all(r["category_id"] and r["distribution_key"] == "MEA" for r in rows.values())
+    assert Decimal(preview["reserve_contribution_total"]) == Decimal("6000.00")
+    assert len(preview["source_digest"]) == 64
+    assert (await api.get("/api/economic-plans")).json() == before
+    assert (await api.get("/api/cost-entries")).json() == sources
+
+
+@pytest.mark.asyncio
+async def test_previous_create_retains_editable_draft_inputs_and_reload(client_a_admin, previous_world):
+    api, w = client_a_admin, previous_world
+    preview = await previous_preview(api, w)
+    body = previous_adoption(w, preview)
+    body["planned_costs"][0]["planned_amount"] = "4123.45"
+    body["reserve_contribution_total"] = "6500.00"
+    created = await api.post("/api/economic-plans/previous", json=body)
+    assert created.status_code == 201, created.text
+    draft = created.json()
+    assert draft["status"] == "draft" and draft["snapshot_sha256"] is None
+    assert draft["plan_year"] == 2026 and draft["period_start"] == "2026-01-01"
+    assert draft["period_end"] == "2026-12-31" and not draft["lines"]
+    assert draft["draft_inputs"]["planned_costs"] == body["planned_costs"]
+    assert Decimal(draft["draft_inputs"]["reserve_contribution_total"]) == Decimal("6500.00")
+    assert (await api.get(f"/api/economic-plans/{draft['id']}")).json() == draft
+    assert (await api.get(f"/api/economic-plans/{draft['id']}/pdf")).status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_previous_stale_basis_creates_no_draft(client_a_admin, previous_world):
+    api, w = client_a_admin, previous_world
+    preview = await previous_preview(api, w)
+    before = (await api.get("/api/economic-plans")).json()
+    response = await api.post("/api/economic-plans/previous", json=previous_adoption(
+        w, preview, expected_source_digest="0" * 64))
+    assert response.status_code == 409, response.text
+    assert (await api.get("/api/economic-plans")).json() == before
+
+
+@pytest.mark.asyncio
+async def test_previous_foreign_property_is_not_disclosed(client_b_admin, previous_world):
+    response = await client_b_admin.post("/api/economic-plans/previous/preview", json=previous_request(previous_world))
+    assert response.status_code == 404, response.text
+
+
+@pytest.mark.asyncio
+async def test_previous_readonly_cannot_prepare_or_adopt(client_a_readonly, previous_world):
+    body = previous_request(previous_world)
+    assert (await client_a_readonly.post("/api/economic-plans/previous/preview", json=body)).status_code == 403
+    body.update(expected_source_digest="0" * 64, planned_costs=[], reserve_contribution_total="0.00")
+    assert (await client_a_readonly.post("/api/economic-plans/previous", json=body)).status_code == 403
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("year", [0, 1, 10000, 2026.5, "2026"])
+async def test_previous_invalid_target_year_rejected(client_a_admin, previous_world, year):
+    response = await client_a_admin.post("/api/economic-plans/previous/preview", json=previous_request(previous_world, plan_year=year))
+    assert response.status_code == 422, response.text
+
+
+def previous_cost(world, amount, *, status="confirmed", start="2025-01-01", end="2025-12-31", invoice="2025-06-01", category=None):
+    import psycopg2
+    key = uuid.uuid4()
+    with psycopg2.connect(SYNC_URL) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("""INSERT INTO cost_entry(id,organization_id,property_id,cost_category_id,
+                cost_category_plan_version,invoice_date,service_period_from,service_period_to,gross_amount,
+                owner_distribution_key,tenant_distribution_key,tenant_apportionable,status,source,confirmed_at,confirmed_by)
+                SELECT %s,organization_id,property_id,COALESCE(%s::uuid,cost_category_id),cost_category_plan_version,%s,%s,%s,%s,
+                'MEA','MEA','NICHT_UMLAGEFAEHIG',%s,'MANUAL',
+                CASE WHEN %s='confirmed' THEN now() END,CASE WHEN %s='confirmed' THEN confirmed_by END
+                FROM cost_entry WHERE id=%s""", (str(key), str(category) if category else None, invoice, start, end, Decimal(amount), status, status, status, world["ce_garten"]))
+    return key
+
+
+@pytest.mark.asyncio
+async def test_previous_current_signed_and_period_prorated_sources(client_a_admin, previous_world):
+    import psycopg2
+    w = previous_world
+    previous_cost(w, "-20.05")
+    previous_cost(w, "365.00", start="2024-07-01", end="2025-06-30", invoice="2026-06-01")
+    old = previous_cost(w, "111.11")
+    replacement = previous_cost(w, "222.22")
+    previous_cost(w, "999.00", status="needs_review")
+    previous_cost(w, "777.00", start="2024-01-01", end="2024-12-31")
+    previous_cost(w, "888.00", start="2026-01-01", end="2026-12-31")
+    with psycopg2.connect(SYNC_URL) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("UPDATE cost_entry SET superseded_by_id=%s WHERE id=%s", (str(replacement), str(old)))
+    preview = await previous_preview(client_a_admin, w)
+    rows = {r["category_code"]: r for r in preview["planned_costs"]}
+    assert Decimal(rows["GARTENPFLEGE"]["planned_amount"]) == Decimal("4383.17")
+    assert Decimal(rows["WEG_VERWALTERKOSTEN"]["planned_amount"]) == Decimal("3000.00")
+    assert Decimal(preview["reserve_contribution_total"]) == Decimal("6000.00")
+
+
+@pytest.mark.asyncio
+async def test_previous_actual_source_change_invalidates_digest(client_a_admin, previous_world):
+    api, w = client_a_admin, previous_world
+    old = await previous_preview(api, w)
+    before = (await api.get("/api/economic-plans")).json()
+    previous_cost(w, "1.00")
+    response = await api.post("/api/economic-plans/previous", json=previous_adoption(w, old))
+    assert response.status_code == 409, response.text
+    assert (await api.get("/api/economic-plans")).json() == before
+    fresh = await previous_preview(api, w)
+    assert fresh["source_digest"] != old["source_digest"]
+    assert Decimal(next(r for r in fresh["planned_costs"] if r["category_code"] == "GARTENPFLEGE")["planned_amount"]) == Decimal("4001.00")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("amount,expected", [("-4000.00", 200), ("-5000.00", 422)])
+async def test_previous_zero_is_preserved_negative_net_is_not_clipped(client_a_admin, previous_world, amount, expected):
+    previous_cost(previous_world, amount)
+    response = await client_a_admin.post("/api/economic-plans/previous/preview", json=previous_request(previous_world))
+    assert response.status_code == expected, response.text
+    if expected == 200:
+        row = next(row for row in response.json()["planned_costs"] if row["category_code"] == "GARTENPFLEGE")
+        assert Decimal(row["planned_amount"]) == Decimal("0.00")
+
+
+@pytest.mark.asyncio
+async def test_previous_empty_source_does_not_manufacture_zero_plan(client_a_admin, previous_world):
+    before = (await client_a_admin.get("/api/economic-plans")).json()
+    response = await client_a_admin.post("/api/economic-plans/previous/preview", json=previous_request(previous_world, plan_year=2028))
+    assert response.status_code == 422, response.text
+    assert (await client_a_admin.get("/api/economic-plans")).json() == before
+
+
+@pytest.mark.asyncio
+async def test_previous_late_failure_rolls_back_new_draft(client_a_admin, previous_world, monkeypatch):
+    from fastapi import HTTPException
+    from app.repositories.audit_repo import AuditRepository
+    api, w = client_a_admin, previous_world
+    preview = await previous_preview(api, w)
+    before = (await api.get("/api/economic-plans")).json()
+    original = AuditRepository.create
+    calls = []
+
+    async def fail_after_insert(self, event):
+        if event.entity_type == "economic_plan":
+            calls.append(event.entity_id)
+            raise HTTPException(422, "Synthetic late plan audit failure")
+        return await original(self, event)
+
+    monkeypatch.setattr(AuditRepository, "create", fail_after_insert)
+    response = await api.post("/api/economic-plans/previous", json=previous_adoption(w, preview))
+    assert response.status_code == 422 and len(calls) == 1, response.text
+    assert (await api.get("/api/economic-plans")).json() == before
+
+
+@pytest.mark.asyncio
+async def test_previous_edited_values_compute_without_changing_final_original(client_a_admin, previous_world):
+    api, w = client_a_admin, previous_world
+    old_id = await _create_and_finalize_plan(api, w)
+    original = (await api.get(f"/api/economic-plans/{old_id}")).json()
+    original_pdf = await api.get(f"/api/economic-plans/{old_id}/pdf")
+    assert original_pdf.status_code == 200 and original_pdf.content.startswith(b"%PDF")
+    preview = await previous_preview(api, w)
+    adopted = previous_adoption(w, preview)
+    next(row for row in adopted["planned_costs"] if row["category_code"] == "GARTENPFLEGE")["planned_amount"] = "4100.25"
+    adopted["reserve_contribution_total"] = "6500.00"
+    response = await api.post("/api/economic-plans/previous", json=adopted)
+    assert response.status_code == 201, response.text
+    draft = response.json()
+    inputs = draft["draft_inputs"]
+    assert (await api.post(f"/api/economic-plans/{draft['id']}/compute", json=inputs)).status_code == 422
+    await attest_fixture(api, "economic_plan", draft["id"], inputs)
+    computed = await api.post(f"/api/economic-plans/{draft['id']}/compute", json=inputs)
+    assert computed.status_code == 200, computed.text
+    owner_lines = [line for line in computed.json()["lines"] if line["line_type"] == "OWNER_ADVANCE"]
+    assert sorted(Decimal(line["planned_amount"]) for line in owner_lines) == [Decimal("5440.10"), Decimal("8160.15")]
+    assert (await api.get(f"/api/economic-plans/{old_id}")).json() == original
+    assert (await api.get(f"/api/economic-plans/{old_id}/pdf")).content == original_pdf.content
+
+
+from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noqa: E402,F401
+
+
+def previous_plan_count(ids):
+    import psycopg2
+    with psycopg2.connect(SYNC_URL) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM economic_plan WHERE organization_id=%s AND property_id=%s",
+                           (str(ids["org"]), str(ids["property"])))
+            return cursor.fetchone()[0]
+
+
+async def previous_scoped_fixture(session, seed):
+    from sqlalchemy import text
+    from tests.test_property_year_report import fixture, cost, ready
+    from tests.test_scoped_account_statements import mutate
+    ids = await fixture(session, seed, management_type="WEG", scope_type="WEG",
+                        start="2025-01-01", end="2025-12-31")
+    await cost(session, ids, "100.00")
+    await cost(session, ids, "25.00")
+    await ready(session, ids)
+    ids["target"] = uuid.uuid4()
+    await mutate(text("""INSERT INTO accounting_scope(id,organization_id,property_id,scope_type,
+        label,valid_from,valid_to,whole_property,origin,created_by)
+        VALUES (:target,:org,:property,'WEG','Next year plan','2026-01-01','2026-12-31',true,'REVIEWED',:actor)"""), ids)
+    await mutate(text("""INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason)
+        VALUES (:org,:target,:clerk,ARRAY['read','prepare'],:actor,'Explicit next-year plan preparation')"""), ids)
+    return ids
+
+
+def previous_scoped_request(ids):
+    return {"property_id": str(ids["property"]), "plan_year": 2026,
+            "source_accounting_scope_id": str(ids["scope"]), "accounting_scope_id": str(ids["target"])}
+
+
+@pytest.mark.asyncio
+async def test_previous_independent_read_and_prepare_year_scopes(migrator_session, scope_seed):
+    from tests.test_property_year_report import client
+    ids = await previous_scoped_fixture(migrator_session, scope_seed)
+    body = previous_scoped_request(ids)
+    async with client(ids) as api:
+        response = await api.post("/api/economic-plans/previous/preview", json=body)
+        assert response.status_code == 200, response.text
+        preview = response.json()
+        assert len(preview["planned_costs"]) == 1
+        assert Decimal(preview["planned_costs"][0]["planned_amount"]) == Decimal("125.00")
+        response = await api.post("/api/economic-plans/previous", json={**body,
+            "expected_source_digest": preview["source_digest"], "planned_costs": preview["planned_costs"],
+            "reserve_contribution_total": "0.00"})
+        assert response.status_code == 201, response.text
+        assert response.json()["accounting_scope_id"] == str(ids["target"])
+        assert (await api.get(f"/api/economic-plans/{response.json()['id']}")).json() == response.json()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("revoked", ["scope", "target"])
+async def test_previous_revoked_year_authority_creates_nothing(migrator_session, scope_seed, revoked):
+    from sqlalchemy import text
+    from tests.test_property_year_report import client
+    from tests.test_scoped_account_statements import mutate
+    ids = await previous_scoped_fixture(migrator_session, scope_seed)
+    body = previous_scoped_request(ids)
+    async with client(ids) as api:
+        projected = await api.post("/api/economic-plans/previous/preview", json=body)
+        assert projected.status_code == 200, projected.text
+        preview = projected.json()
+    await mutate(text("""UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor
+        WHERE organization_id=:org AND scope_id=:revoked AND user_id=:clerk AND revoked_at IS NULL"""),
+        {**ids, "revoked": ids[revoked]})
+    async with client(ids) as api:
+        response = await api.post("/api/economic-plans/previous", json={**body,
+            "expected_source_digest": preview["source_digest"], "planned_costs": preview["planned_costs"],
+            "reserve_contribution_total": "0.00"})
+        assert response.status_code == 404, response.text
+    async with client(ids, "actor") as api:
+        # Admin has no implicit source grant either; use the actual table only in the test fixture below.
+        assert (await api.post("/api/economic-plans/previous/preview", json=body)).status_code == 404
+    assert previous_plan_count(ids) == 0
+
+
+@pytest.mark.asyncio
+async def test_previous_waits_for_financial_lock(client_a_admin, previous_world, migrator_session):
+    import asyncio
+    from sqlalchemy import text
+    session, w = migrator_session, previous_world
+    await session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
+                          {"key": f"financial-inputs:{w['org_a_id']}"})
+    blocker = await session.scalar(text("SELECT pg_backend_pid()"))
+    task = asyncio.create_task(client_a_admin.post("/api/economic-plans/previous/preview", json=previous_request(w)))
+    waiting = False
+    try:
+        for _ in range(200):
+            waiting = await session.scalar(text("""SELECT EXISTS(SELECT 1 FROM pg_locks l
+                WHERE l.locktype='advisory' AND NOT l.granted
+                AND :blocker=ANY(pg_blocking_pids(l.pid)))"""), {"blocker": blocker})
+            if waiting or task.done():
+                break
+            await asyncio.sleep(0.01)
+    finally:
+        await session.rollback()
+    response = await asyncio.wait_for(task, timeout=15)
+    assert waiting, "Prior-year proposal must wait for the existing financial-input boundary"
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.asyncio
+async def test_previous_parallel_previews_are_equal_and_nonwriting(client_a_admin, previous_world):
+    import asyncio
+    before = (await client_a_admin.get("/api/economic-plans")).json()
+    responses = await asyncio.gather(*(client_a_admin.post("/api/economic-plans/previous/preview",
+        json=previous_request(previous_world)) for _ in range(2)))
+    assert [r.status_code for r in responses] == [200, 200], [r.text for r in responses]
+    assert responses[0].json() == responses[1].json()
+    assert (await client_a_admin.get("/api/economic-plans")).json() == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("amount", ["-1.00", "NaN", "1.001", "1000000000000.00"])
+async def test_previous_invalid_edited_amount_rolls_back(client_a_admin, previous_world, amount):
+    api, w = client_a_admin, previous_world
+    preview = await previous_preview(api, w)
+    body = previous_adoption(w, preview)
+    body["planned_costs"][0]["planned_amount"] = amount
+    before = (await api.get("/api/economic-plans")).json()
+    response = await api.post("/api/economic-plans/previous", json=body)
+    assert response.status_code == 422, response.text
+    assert (await api.get("/api/economic-plans")).json() == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,value", [("category_id", "00000000-0000-0000-0000-000000000001"),
+    ("category_code", "GRUNDSTEUER"), ("cost_group", "NICHT_UMLAGEFAEHIG"), ("distribution_key", "AREA")])
+async def test_previous_forged_category_metadata_cannot_be_adopted(client_a_admin, previous_world, field, value):
+    api, w = client_a_admin, previous_world
+    projected = await previous_preview(api, w)
+    body = previous_adoption(w, projected)
+    garden = next(row for row in body["planned_costs"] if row["category_code"] == "GARTENPFLEGE")
+    garden[field] = value
+    before = (await api.get("/api/economic-plans")).json()
+    response = await api.post("/api/economic-plans/previous", json=body)
+    assert response.status_code == 422, response.text
+    assert (await api.get("/api/economic-plans")).json() == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["drop", "duplicate"])
+async def test_previous_incomplete_or_duplicate_categories_not_silently_changed(client_a_admin, previous_world, change):
+    api, w = client_a_admin, previous_world
+    projected = await previous_preview(api, w)
+    body = previous_adoption(w, projected)
+    if change == "drop":
+        body["planned_costs"].pop()
+    else:
+        body["planned_costs"].append(dict(body["planned_costs"][0]))
+    before = (await api.get("/api/economic-plans")).json()
+    response = await api.post("/api/economic-plans/previous", json=body)
+    assert response.status_code == 422, response.text
+    assert (await api.get("/api/economic-plans")).json() == before
+
+
+@pytest.mark.asyncio
+async def test_previous_live_role_downgrade_blocks_stored_preview(migrator_session, scope_seed):
+    from sqlalchemy import text
+    from tests.test_property_year_report import client
+    from tests.test_scoped_account_statements import mutate
+    ids = await previous_scoped_fixture(migrator_session, scope_seed)
+    body = previous_scoped_request(ids)
+    async with client(ids) as api:
+        response = await api.post("/api/economic-plans/previous/preview", json=body)
+        assert response.status_code == 200, response.text
+        projected = response.json()
+        await mutate(text("UPDATE membership SET role='READ_ONLY' WHERE organization_id=:org AND user_id=:clerk"), ids)
+        assert (await api.post("/api/economic-plans/previous/preview", json=body)).status_code == 403
+        response = await api.post("/api/economic-plans/previous", json={**body,
+            "expected_source_digest": projected["source_digest"], "planned_costs": projected["planned_costs"],
+            "reserve_contribution_total": "0.00"})
+        assert response.status_code == 403, response.text
+    assert previous_plan_count(ids) == 0
+
+
+@pytest.mark.asyncio
+async def test_previous_inactive_category_fails_whole_proposal(client_a_admin, previous_world):
+    import psycopg2
+    category = uuid.uuid4()
+    with psycopg2.connect(SYNC_URL) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("""INSERT INTO cost_category(id,plan_version,code,label,cost_group,
+                tenant_apportionability_default,owner_billing_relevant_default,
+                owner_distribution_key_default,tenant_distribution_key_default,reserve_relevant,is_active)
+                VALUES (%s,1,%s,'T54 inactive category','UMLAGEFAEHIG','UMLAGEFAEHIG',true,'MEA','MEA',false,false)""",
+                (str(category), "T54_INACTIVE_" + uuid.uuid4().hex[:12]))
+    previous_cost(previous_world, "100.00", category=category)
+    before = (await client_a_admin.get("/api/economic-plans")).json()
+    response = await client_a_admin.post("/api/economic-plans/previous/preview", json=previous_request(previous_world))
+    assert response.status_code == 422, response.text
+    assert (await client_a_admin.get("/api/economic-plans")).json() == before
+
+
 # ===========================================================================
 # RLS fail-closed + cross-org isolation for economic_plan / economic_plan_line
 # ===========================================================================

@@ -14,7 +14,7 @@ import uuid
 from datetime import date
 from typing import Sequence
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import select
 
 from app.models.cost_category import CostCategory
 from app.models.cost_entry import CostEntry
@@ -54,36 +54,27 @@ class EconomicPlanRepository(TenantRepository[EconomicPlan]):
         await self._session.delete(entity)
         await self._session.flush()
 
-    async def prior_year_actuals_by_category(
-        self,
-        property_id: uuid.UUID,
-        period_start: date,
-        period_end: date,
-    ) -> Sequence[tuple[str, str, object]]:
-        """Sum of active+confirmed cost_entry gross per category in a period.
+    async def prior_year_sources(
+        self, property_id: uuid.UUID, period_start: date, period_end: date,
+    ) -> Sequence[tuple[CostEntry, CostCategory | None]]:
+        """Complete current confirmed sources; admission must precede this query.
 
-        A plan PROPOSAL helper (m4 section 5.1): the prior year's Ist per
-        category. Returns (category_code, category_label, sum_gross). The clerk
-        confirms/overrides the planned value; this is only a starting point.
+        Keep missing categories visible for fail-closed validation. Proration and
+        reserve separation belong to the service, not an SQL gross sum.
         """
-        stmt = (
-            select(
-                CostCategory.code,
-                CostCategory.label,
-                func.coalesce(func.sum(CostEntry.gross_amount), 0),
-            )
-            .join(CostCategory, CostCategory.id == CostEntry.cost_category_id)
+        result = await self._session.execute(
+            select(CostEntry, CostCategory)
+            .outerjoin(CostCategory, CostCategory.id == CostEntry.cost_category_id)
             .where(CostEntry.organization_id == self._org_id)
             .where(CostEntry.property_id == property_id)
             .where(CostEntry.status == "confirmed")
             .where(CostEntry.superseded_by_id.is_(None))
             .where(CostEntry.service_period_from <= period_end)
             .where(CostEntry.service_period_to >= period_start)
-            .group_by(CostCategory.code, CostCategory.label, CostCategory.sort_order)
-            .order_by(CostCategory.sort_order)
+            .order_by(CostEntry.id)
+            .execution_options(populate_existing=True)
         )
-        result = await self._session.execute(stmt)
-        return [(row[0], row[1], row[2]) for row in result.all()]
+        return [(row[0], row[1]) for row in result.all()]
 
 
 class EconomicPlanLineRepository(TenantRepository[EconomicPlanLine]):

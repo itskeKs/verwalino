@@ -5,7 +5,7 @@
  * Rueckstand (debt) highlighted in red, Guthaben in green.
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useContext } from "react";
 import { Link } from "react-router-dom";
 import {
   listLeases,
@@ -25,6 +25,8 @@ import type {
 } from "../api/types";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { ApiError } from "../api/client";
+import { AuthCtx } from "../auth/useAuth";
+import { DunningBatch } from "../components/DunningBatch";
 
 const PAYMENT_TYPE_LABELS: Record<string, string> = {
   KALTMIETE: "Kaltmiete",
@@ -42,6 +44,7 @@ interface LeaseOpenItems {
 }
 
 export function OpenItemsPage() {
+  const auth = useContext(AuthCtx);
   const [leases, setLeases] = useState<LeaseRecord[]>([]);
   const [tenantProfiles, setTenantProfiles] = useState<TenantProfile[]>([]);
   const [persons, setPersons] = useState<Person[]>([]);
@@ -181,6 +184,8 @@ export function OpenItemsPage() {
           </div>
         </fieldset>
       </div>
+
+      {auth && <DunningBatch periodStart={periodStart} periodEnd={periodEnd} properties={properties} />}
 
       {/* Results */}
       {results !== null && results.length === 0 && !querying && !error && (

@@ -50,7 +50,7 @@ TENANT_TABLES = frozenset({
     "runtime_budget_attestation", "runtime_budget_review", "access_disposition_acceptance",
     "source_security_authorization", "source_security_transition",
     "access_grant_proposal", "access_grant_acceptance", "access_coverage_snapshot", "access_coverage_review", "invoice_upload_admission", "dunning_quarantine_disposition", "mandate_quarantine_disposition", "mandate_legacy_observation", "declaration_review_receipt", "declaration_review_context", "declaration_worker_context", "person_data_domain", "person_data_grant",
-    "property_creation_receipt", "property_source_classification", "knowledge_budget_policy", "property_source_security", "property_data_domain", "property_data_grant", "property_source_admission", "property_source_admission_review",
+    "master_import_batch", "property_creation_receipt", "property_source_classification", "knowledge_budget_policy", "property_source_security", "property_data_domain", "property_data_grant", "property_source_admission", "property_source_admission_review",
     # B1 accounting scope foundation
     "accounting_scope", "accounting_scope_unit", "accounting_scope_binding",
     "scope_grant", "scope_migration_exception", "scope_control_event",
@@ -68,9 +68,9 @@ TENANT_TABLES = frozenset({
     # M4 WEG-Abrechnung (Wirtschaftsplan eigene Entitaet)
     "economic_plan", "economic_plan_line", "special_levy", "special_levy_allocation",
     # M6 Zahlungen, Mietkonto & offene Posten
-    "payment", "bank_transaction",
+    "payment", "bank_transaction", "sepa_creditor", "sepa_mandate",
     # M7 Mahnwesen
-    "dunning_notice", "dunning_scope_context",
+    "dunning_notice", "dunning_scope_context", "dunning_batch",
     # M8 Eigentümerversammlung & Beschluss-Sammlung
     "owners_meeting",
     "agenda_item",
@@ -79,6 +79,7 @@ TENANT_TABLES = frozenset({
     # Mandate documents (Verträge & Unterlagen am Mandat)
     "mandate_document",
     "attachment", "task",
+    "letter_template", "letter_document",
     # Declaration import legal source and review graph
     "property_document",
     "declaration_import", "declaration_queue_request",

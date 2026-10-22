@@ -14,13 +14,15 @@ from __future__ import annotations
 import uuid
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
+from app.core.live_principal import get_live_writer_db
 from app.models.economic_plan import EconomicPlan
 from app.models.economic_plan_line import EconomicPlanLine
 from app.repositories.economic_plan_repo import (
@@ -62,6 +64,35 @@ class PlannedCostIn(BaseModel):
     cost_group: str = "UMLAGEFAEHIG"
 
 
+PreviousMoney = Annotated[StrictStr, Field(pattern=r"^[0-9]{1,12}(?:\.[0-9]{1,2})?$")]
+
+
+class PreviousPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    property_id: uuid.UUID
+    plan_year: Annotated[StrictInt, Field(ge=2, le=9998)]
+    source_accounting_scope_id: uuid.UUID | None = None
+    accounting_scope_id: uuid.UUID | None = None
+
+
+class PreviousPlannedCostIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    category_id: StrictStr
+    category_code: StrictStr
+    label: StrictStr
+    planned_amount: PreviousMoney
+    distribution_key: StrictStr
+    cost_group: StrictStr
+
+
+class PreviousPlanCreate(PreviousPlanRequest):
+    expected_source_digest: Annotated[StrictStr, Field(pattern=r"^[0-9a-f]{64}$")]
+    planned_costs: list[PreviousPlannedCostIn]
+    reserve_contribution_total: PreviousMoney
+
+
 class PlanComputeRequest(BaseModel):
     planned_costs: list[PlannedCostIn]
     reserve_contribution_total: str
@@ -101,6 +132,8 @@ class EconomicPlanOut(BaseModel):
     finalized_by: str | None
     superseded_by_id: str | None
     lines: list[PlanLineOut] = []
+    draft_inputs: dict | None = None
+    accounting_scope_id: str | None = None
 
 
 def _dec(value: str, field: str) -> Decimal:
@@ -166,6 +199,8 @@ def _plan_out(plan: EconomicPlan, lines: list[EconomicPlanLine]) -> EconomicPlan
         finalized_by=str(plan.finalized_by) if plan.finalized_by else None,
         superseded_by_id=str(plan.superseded_by_id) if plan.superseded_by_id else None,
         lines=[_line_out(ln) for ln in lines],
+        draft_inputs=(plan.snapshot_payload or {}).get("draft_inputs"),
+        accounting_scope_id=(plan.snapshot_payload or {}).get("previous_actuals", {}).get("accounting_scope_id"),
     )
 
 
@@ -181,6 +216,32 @@ async def list_plans(
     repo = EconomicPlanRepository(db, auth.organization_id)
     plans = await (repo.list_by_property(property_id) if property_id else repo.list_active())
     return [_plan_out(p, []) for p in plans]
+
+
+@router.post("/previous/preview")
+async def preview_previous_plan(
+    body: PreviousPlanRequest,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_live_writer_db, scope="function"),
+):
+    return await EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version).previous_preview(
+        body.property_id, body.plan_year, body.source_accounting_scope_id, body.accounting_scope_id)
+
+
+@router.post("/previous", response_model=EconomicPlanOut, status_code=201)
+async def create_previous_plan(
+    body: PreviousPlanCreate,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_live_writer_db, scope="function"),
+):
+    plan = await EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version).create_from_previous(
+        property_id=body.property_id, plan_year=body.plan_year,
+        source_accounting_scope_id=body.source_accounting_scope_id,
+        accounting_scope_id=body.accounting_scope_id,
+        expected_source_digest=body.expected_source_digest,
+        planned_costs=[row.model_dump() for row in body.planned_costs],
+        reserve_contribution_total=body.reserve_contribution_total)
+    return _plan_out(plan, [])
 
 
 @router.get("/{plan_id}", response_model=EconomicPlanOut)
@@ -204,7 +265,7 @@ async def create_plan(
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_db),
 ):
-    svc = EconomicPlanService(db, auth.organization_id, auth.user_id)
+    svc = EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version)
     plan = await svc.create_draft(
         accounting_scope_id=body.accounting_scope_id,
         property_id=uuid.UUID(body.property_id),
@@ -226,7 +287,7 @@ async def compute_plan(
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_db),
 ):
-    svc = EconomicPlanService(db, auth.organization_id, auth.user_id)
+    svc = EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version)
     plan, _result = await svc.compute(plan_id, _to_inputs(body))
     line_repo = EconomicPlanLineRepository(db, auth.organization_id)
     lines = await line_repo.list_for_plan(plan_id)
@@ -241,7 +302,7 @@ async def finalize_plan(
     # Commit before the client can request the finalized plan's PDF.
     db: AsyncSession = Depends(get_db, scope="function"),
 ):
-    svc = EconomicPlanService(db, auth.organization_id, auth.user_id)
+    svc = EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version)
     plan = await svc.finalize(plan_id, _to_inputs(body))
     line_repo = EconomicPlanLineRepository(db, auth.organization_id)
     lines = await line_repo.list_for_plan(plan_id)
@@ -254,7 +315,7 @@ async def create_plan_correction(
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_db),
 ):
-    svc = EconomicPlanService(db, auth.organization_id, auth.user_id)
+    svc = EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version)
     plan = await svc.create_correction_run(plan_id)
     return _plan_out(plan, [])
 

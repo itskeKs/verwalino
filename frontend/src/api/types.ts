@@ -33,6 +33,8 @@ export interface MandateCreate {
   end_date: string | null;
 }
 
+export type MandateUpdate = Partial<Pick<Mandate, "label" | "mandate_type" | "start_date" | "end_date">>;
+
 export type MandateDocType =
   | "VERWALTERVERTRAG"
   | "BANKKONTO"
@@ -56,11 +58,14 @@ export interface MandateDocument {
   archive_reason: string | null;
 }
 
+export type UserRole = "OWNER_ADMIN" | "CLERK" | "READ_ONLY";
+
 export interface User {
   id: string;
   email: string;
   display_name: string;
   is_active: boolean;
+  role?: string | null;
 }
 
 // --- M1 Stammdaten ---
@@ -68,6 +73,8 @@ export interface User {
 export type ManagementType = "MIET" | "WEG" | "SEV" | "MISCH";
 
 export interface Property {
+  construction_year?: number | null;
+  total_area?: string | null;
   id: string;
   name: string;
   street: string;
@@ -82,6 +89,8 @@ export interface Property {
 export type MeaScaleStatus = "LEGACY_UNCONFIRMED" | "CONFIRMED";
 
 export interface PropertyCreate {
+  construction_year?: number | null;
+  total_area?: string | null;
   data_audience?: DeclarationApprovalRequest["new_property_audience"];
   name: string;
   street?: string;
@@ -92,6 +101,8 @@ export interface PropertyCreate {
 }
 
 export interface PropertyUpdate {
+  construction_year?: number | null;
+  total_area?: string | null;
   name?: string;
   street?: string;
   zip_code?: string;
@@ -496,12 +507,15 @@ export interface TenantProfile {
 }
 
 export interface Vendor {
+  is_active?: boolean;
   id: string;
   person_id: string;
   tax_id: string | null;
   vat_id: string | null;
   notes: string;
 }
+
+export type VendorUpdate = Partial<Pick<Vendor, "tax_id" | "vat_id" | "notes" | "is_active">>;
 
 export interface OwnershipRecord {
   id: string;
@@ -768,6 +782,7 @@ export interface SettlementRun {
   finalized_by: string | null;
   superseded_by_id: string | null;
   lines: SettlementLine[];
+  extra_inputs?: ComputeRequest | null;
 }
 
 export interface AdvanceProposal {
@@ -829,10 +844,43 @@ export interface UnitMetricIn {
   person_count?: number | null;
 }
 
+export type HeatingBaseKey = "AREA" | "HEATED_AREA" | "VOLUME";
+
+export interface HeatingSlice {
+  unit_id: string;
+  period_from: string;
+  period_to: string;
+  consumption?: string;
+  base_quantity?: string;
+}
+
+export interface HeatingConfig {
+  cost_entry_id: string;
+  kind: "HEATING" | "HOT_WATER";
+  consumption_fraction: string;
+  base_key: HeatingBaseKey;
+  consumption_recorded: boolean;
+  mandatory_seventy_percent: boolean;
+  meter_type: string;
+  slices: HeatingSlice[];
+}
+
+export interface HeatingConsumptionCandidate {
+  unit_id: string;
+  unit_label: string;
+  period_from: string;
+  period_to: string;
+  base_quantity: string | null;
+  consumption: string | null;
+  meter_id: string | null;
+  reason: string | null;
+}
+
 export interface ComputeRequest {
   external_amounts: ExternalAmountIn[];
   manual_amounts: ManualAmountIn[];
   unit_metrics: UnitMetricIn[];
+  heating_inputs?: HeatingConfig[];
 }
 
 // --- M4 WEG: Wirtschaftsplan (Economic Plan) ---
@@ -871,6 +919,10 @@ export interface EconomicPlan {
   finalized_by: string | null;
   superseded_by_id: string | null;
   lines: EconomicPlanLine[];
+  draft_inputs?: {
+    planned_costs: PlannedCostIn[];
+    reserve_contribution_total: string;
+  } | null;
 }
 
 export interface EconomicPlanCreate {
@@ -903,6 +955,7 @@ export interface PlanComputeRequest {
 export type BankAccountType = "LAUFEND" | "RUECKLAGE" | "KAUTION";
 
 export interface BankAccount {
+  is_active?: boolean;
   property_name?: string | null;
   id: string;
   organization_id: string;
@@ -913,6 +966,8 @@ export interface BankAccount {
   bic: string | null;
   bank_name: string | null;
 }
+
+export type BankAccountUpdate = Partial<Pick<BankAccount, "label" | "iban" | "bic" | "bank_name" | "is_active">>;
 
 export interface BankAccountCreate {
   accounting_scope_id?: string | null;

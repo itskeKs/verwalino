@@ -4,13 +4,15 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useParams, Link } from "react-router-dom";
-import { getProperty, getPropertyKnowledge, listUnits, createUnit, updateUnit, confirmMeaScale } from "../api/endpoints";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { getProperty, getPropertyKnowledge, listUnits, createUnit, updateUnit, confirmMeaScale, deleteProperty } from "../api/endpoints";
 import type { Property, PropertyKnowledgeOverview, Unit, UnitCreate, UnitUpdate, UsageType } from "../api/types";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/useAuth";
 import { AttachmentsPanel } from "../components/AttachmentsPanel";
 import { MeterPanel } from "../components/MeterPanel";
+
+import { MasterDataDelete } from "../components/MasterDataDelete";
 
 const USAGE_TYPES: { value: UsageType; label: string }[] = [
   { value: "WOHNUNG", label: "Wohnung" },
@@ -48,6 +50,7 @@ function formatLegalMea(mea: string | null, property: Property): string {
 }
 
 export function PropertyDetailPage() {
+  const navigate = useNavigate();
   const { propertyId } = useParams<{ propertyId: string }>();
   const { session } = useAuth();
   const isWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
@@ -194,6 +197,7 @@ export function PropertyDetailPage() {
         <Link to="/objekte" className="link">&larr; Alle Objekte</Link>
       </p>
       <h1>{property.name}</h1>
+      {isWrite && <MasterDataDelete entityId={property.id} title="Objekt löschen" entityName={property.name} remove={deleteProperty} onDeleted={() => navigate("/objekte", { replace: true })} />}
       {isWrite && <Link className="btn btn-primary" to={`/aufgaben?${new URLSearchParams({ property_id: property.id, create: "1" })}`}>Aufgabe anlegen</Link>}
 
       {error && <p className="error-text">{error}</p>}
@@ -205,6 +209,8 @@ export function PropertyDetailPage() {
             <tr><td>Verwaltungsart</td><td><span className={`badge badge--${property.management_type.toLowerCase()}`}>{property.management_type}</span></td></tr>
             <tr><td>Strasse</td><td>{property.street || "-"}</td></tr>
             <tr><td>PLZ / Stadt</td><td>{[property.zip_code, property.city].filter(Boolean).join(" ") || "-"}</td></tr>
+            <tr><td>Baujahr</td><td>{property.construction_year ?? "—"}</td></tr>
+            <tr><td>Gesamtfläche (m²)</td><td>{property.total_area ?? "—"}</td></tr>
             <tr><td>GJ-Startmonat</td><td>{property.fiscal_year_start_month}</td></tr>
           </tbody>
         </table>

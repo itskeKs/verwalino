@@ -31,12 +31,246 @@ Retained attachments and financial provenance can deliberately prevent a
 lossy downgrade; do not delete originals or disable guards to force rollback.
 Any later promotion requires its own reviewed compatibility and backup plan.
 
+T43 adds a staffel generator using the existing append-only rent history; no
+migration or new environment setting is required. Local validation does not
+change any production gate or authorize deployment. The UI is a calculation aid,
+not execution or legal approval of a rent agreement.
+
+T44 adds index-rent preview/adoption over the same history, without a migration,
+external VPI service or new credentials. Entered receipt dates are operator data,
+not delivery evidence; the calculation aid neither generates nor sends notices.
+The production gate and authorization boundary remain unchanged.
+
+T45 provides separate heating/hot-water pools and explicit tenant/WEG-owner
+context. T46 adds an opt-in internal BK calculation using unit-meter boundaries
+or explicit manual slice quantities; external statements remain the default.
+No new environment setting or migration is required (Alembic head remains 0131).
+Saved draft intent, actual meter provenance and the PDF calculation are retained
+in the existing snapshot path; finalized originals are never recomputed.
+Missing/ambiguous readings fail closed rather than selecting an estimate.
+This local validation does not change the production gate or authorize deployment.
+
 `HV_DUNNING_BASE_INTEREST_RATE` is an optional decimal basis-rate default for
 new dunning notices, not an automatically maintained official rate. An explicit
 request can override or disable it; the notice freezes its rate, reference date,
 day counts and interest amounts. Existing issued notices are not recalculated
 when configuration changes. The UI permits a deliberate rate entry when no
 default is configured. This documentation does not change any runtime setting.
+
+## Optional document SMTP (T47; no deployment authorization)
+
+Outbound mail is disabled unless `HV_SMTP_HOST` and `HV_SMTP_FROM` are supplied.
+Set `HV_SMTP_PORT` explicitly for the chosen service (default 587) and
+`HV_SMTP_SECURITY=starttls` or `tls`; certificate verification remains enabled.
+Authentication requires both `HV_SMTP_USERNAME` and secret `HV_SMTP_PASSWORD`.
+`HV_SMTP_TIMEOUT_SECONDS` defaults to 15 (1–60). No real credentials, sender domain
+or delivery authority are assumed by the application or this document. Keep
+credentials in operator-managed secrets, not the repository.
+
+For a **local synthetic test only**, run:
+
+```sh
+HV_DOCUMENT_STORAGE_ROOT="$(mktemp -d /tmp/hv-t47-documents.XXXXXX)" \
+HV_SMTP_HOST=127.0.0.1 HV_SMTP_PORT=11025 \
+HV_SMTP_FROM=verwaltung@example.invalid HV_SMTP_SECURITY=plain \
+scripts/dev-local.sh
+```
+
+Then run `node scripts/acceptance/t47_mail_browser.cjs` in a second terminal with
+the local Playwright package available. That script owns a loopback-only SMTP
+receiver, accepts only `tenant@example.invalid`, never forwards mail, and closes
+SMTP/browser resources in `finally`. Stop the launcher afterward. Unencrypted
+SMTP is refused outside loopback or with credentials.
+
+SMTP and database commits are not atomic: the application commits an append-only
+prepared attempt and exact PDF storage reference **before** contacting SMTP, then
+records acceptance/failure/unknown separately. A crash may leave `prepared` even
+if SMTP accepted DATA. Never automatically resend unknown/open attempts. Check the
+operator's SMTP logs before deliberately creating a new attempt; Message-ID and
+request key aid investigation but do not guarantee recipient-side deduplication.
+SMTP acceptance is not delivery or legal receipt. Retained PDFs require the same
+storage retention as other originals; do not delete them. No migration or change
+to the production gate is introduced.
+
+## Saved letter originals (T48; local head 0132 only)
+
+Migration **0132** adds tenant-protected `letter_template` and immutable
+`letter_document` rows. It refuses downgrade while either table is populated;
+never erase templates/originals or disable guards to force rollback. The
+transactional migration test exercises real down/up operations with existing
+rows and compares old data, RLS/ACLs, policies, triggers and function definitions.
+The existing document storage must retain issued PDFs; downloads read those
+bytes with SHA-256 validation, not a rerendered template. No new credentials or
+environment settings. For synthetic UI acceptance use `scripts/dev-local.sh`
+with a fresh `/tmp` `HV_DOCUMENT_STORAGE_ROOT`, then
+`node scripts/acceptance/t48_letters_browser.cjs`; stop the launcher afterward.
+No email is sent by that script. This does not change the accepted **0122**
+production gate or authorize promoting **0123–0132**, deploying or operating on
+production data.
+
+## DATEV file export (T49)
+
+No DATEV credentials, network transmission, environment defaults or schema changes
+are introduced by T49 (implementation head **0132**; T50 adds **0133** below). Configure SKR03/SKR04,
+adviser/client identifiers, fiscal year, account length and every bank/payment/
+category counterpart explicitly in the UI for each export. Only reviewed gross
+accounts **without tax automation** are supported; no automatic VAT split/BU keys.
+UTF-8 with BOM follows the official DATEV manual-import/EXTF specification; the
+legacy KrStaPv route does not support Unicode. Target-importer acceptance was
+not exercised and is not claimed. Files are full current-state projections, not
+incremental/deduplicated imports; repeated or overlapping imports require manual
+reconciliation. Never treat file download as successful DATEV processing.
+For synthetic Q1 acceptance use the existing local launcher with fresh `/tmp`
+storage and `node scripts/acceptance/t49_datev_browser.cjs`, then stop it. No
+production access, promotion, deployment or change to the **0122** gate is implied.
+
+## Offline SEPA rent file (T50; local head 0133)
+
+Migration **0133** adds source-protected `sepa_creditor` and `sepa_mandate` with
+FORCE RLS, financial/ACL input locks and immutable consent identity. Downgrade
+refuses populated SEPA tables; never delete consent/history to force rollback.
+The actual rollback-transaction test checks 0133→0132→0133 against existing rows,
+RLS/ACLs, policies, triggers/functions and an unchanged issued letter PDF.
+This does not authorize promoting **0123–0133**, deployment or changing the
+accepted **0122** production gate.
+
+No bank credentials, transmission process or payment booking is introduced.
+Configure actual creditor ID, bank agreement and externally retained signed tenant
+mandates explicitly; do not infer consent from an IBAN. Source identities and
+bank changes require renewed checks. Download is not execution and must not
+advance FRST/RCUR or actual collection history. Repeated bank uploads can duplicate
+collections. Confirm bank acceptance/profile and actual prenotification externally.
+The runtime ships the unchanged EPC CORE pain.008.001.08 XSD and uses `lxml` locally;
+no schema/network lookup or bank connection is performed by export.
+
+Synthetic acceptance only: start `scripts/dev-local.sh` with fresh `/tmp`
+`HV_DOCUMENT_STORAGE_ROOT`, then from repository root run
+`HV_PYTHON="$PWD/backend/.venv/bin/python" node scripts/acceptance/t50_sepa_browser.cjs`.
+The script uses only public synthetic IBAN/creditor vectors, no real consent/funds,
+validates two actual browser downloads with original ISO and EPC schemas, and
+never submits a file. It permits only the launcher's local Vite HMR WebSocket;
+other sockets/external targets are blocked. Stop the launcher afterward.
+
+## CSV master-data import (T51; local head 0134)
+
+Revision **0134** adds immutable, actor/org-scoped `master_import_batch` metadata
+with FORCE RLS and SELECT/INSERT-only application grants. Populated downgrade
+refuses removal; never erase import history to force rollback. The actual
+0134→0133→0134 rollback-transaction test compares existing data, relation rights,
+policies, triggers/functions and an unchanged issued letter PDF. This is not
+permission to promote **0123–0134**, deploy or change the accepted **0122** gate.
+
+No new credentials or storage service. CSV inputs are UTF-8, semicolon-delimited,
+limited to 256 KiB/500 rows with a bounded JSON envelope. Preview never publishes
+source grants or writes records. Application is an atomic live-writer operation;
+explicit audiences use the existing publication lock and canonical source checks.
+Only result identities/counts, not raw CSV/contact fields, are retained per batch.
+For synthetic UI/download acceptance use `scripts/dev-local.sh` with fresh `/tmp`
+storage, run `node scripts/acceptance/t51_master_import_browser.cjs`, then stop it.
+
+## Monthly dashboard rent KPIs (T52)
+
+No migration, credentials or background job. The read-only dashboard endpoint uses
+the existing complete property/source/contact and MIET accounting-scope admission,
+financial-input lock and booked-payment computation context. A selected scope must
+cover the relevant complete lease history; incomplete coverage is not clipped.
+Synthetic UI acceptance uses the isolated local launcher and
+`node scripts/acceptance/t52_dashboard_kpis_browser.cjs`; stop it afterward.
+This does not authorize any production promotion or change the accepted 0122 gate.
+
+## Selected dunning batches (T53; local head 0135)
+
+Revision **0135**, after unchanged 0134, retains immutable actor/org/request-scoped
+`dunning_batch` result identities. FORCE RLS and SELECT/INSERT-only grants prevent
+rewriting or deleting completed batches; a populated downgrade refuses removal.
+The protected 0135→0134→0135 test compares all existing rows, relation rights,
+policies, triggers/functions and an issued letter PDF inside an outer rollback.
+Do not erase history to force rollback. This does **not** authorize deployment or
+promotion of **0123–0135**, or change the accepted **0122** production gate.
+
+No new credentials or sending service. Preview/apply reuse live source/contact and
+MIET preparation rights, ACL → financial → request locks, and one HTTP transaction.
+Source changes require a fresh preview; uncertain responses retry the same request,
+not a new batch. Only selected drafts are created, never issued or sent. Synthetic
+UI acceptance uses the isolated local launcher and
+`node scripts/acceptance/t53_dunning_batch_browser.cjs`; stop it afterward.
+
+## Previous-year plan proposals (T54; no new migration)
+
+Local head remains **0135**; this feature does not authorize any production
+promotion or change the accepted **0122** gate. Existing draft JSON retains
+`draft_inputs` and retained source identifiers/digest in `previous_actuals`;
+normal computation/finalization preserves that provenance and the existing
+coverage checks. No OCR worker, bank operation, mail or automatic finalization.
+
+Prior-year READ and destination-year PREPARE are checked independently before a
+local explicit context switch; complete source disclosure precedes enumeration.
+Current confirmed signed gross costs use inclusive service-period day proration,
+not the invoice-date year used by the separate accounting report. Reserve proposals
+remain separate. Existing sources and finalized originals are untouched; no schema
+or new environment credential is required. Repeat the synthetic UI flow with the
+isolated launcher and `node scripts/acceptance/t54_previous_plan_browser.cjs`, then
+stop app/browser. The manual invoice path does not require the intentionally open
+T10 OCR worker. Unknown create outcomes require checking the plan list, not retrying
+creation automatically.
+
+## Editable master metadata (T55; local head 0136)
+
+Revision **0136** adds bank/vendor `is_active` and nullable property construction
+ year/Decimal total area. Existing accounts/vendors remain usable; no balance or
+invented building facts are added. Own additive SQL triggers serialize source
+changes, prevent rewriting used IBAN/BIC and reject new inactive references.
+Exact historical Storno pairs remain possible; old RLS policies/functions stay
+unchanged. Populated lifecycle/building facts block downgrade rather than vanish.
+The actual rollback-protected 0136→0135→0136 test compares old-column data,
+relation rights, policies, triggers/functions and an issued PDF. Deferred
+constraints are executed, not disabled. No new credentials or external operation.
+
+The synthetic UI-only acceptance uses `scripts/dev-local.sh` with isolated `/tmp`
+storage and `node scripts/acceptance/t55_master_data_browser.cjs`; stop app/browser
+afterward. This does **not** authorize production deployment/promotion of
+**0123–0136** or change the accepted **0122** gate.
+
+## User administration and session invalidation (T57; local head 0139)
+
+Revision **0138** adds a nonnegative session generation, its own invalidation/ACL
+triggers and narrow versioned auth wrappers; existing auth functions and policies
+are unchanged. Password hash changes and deactivation invalidate existing cookies;
+reactivation cannot restore them. Legacy cookies mean generation zero, not a
+wildcard. Admin API writes revalidate under an exclusive tenant ACL lock before
+row locks. Audit events contain no passwords, hashes or session generations.
+
+Downgrade refuses positive generations rather than resurrecting revoked sessions.
+The real rollback-only 0138→0137→0138 test compares old rows/security objects and
+issued PDF bytes. Only the DDL-owning migrator can prepare the new counter for a
+rollback-only rehearsal; app_rw cannot alter it. Disposable-test cleanup is
+explicitly database/role-guarded, not a production downgrade bypass.
+
+Revision **0139** grants only `app_validate_session_versioned(uuid,uuid,integer)`
+execution to the isolated `app_review` role, not either password lookup. The real
+0139→0138→0139 round trip retains all data, RLS/policies/triggers, function
+definitions and other ACLs, including issued PDF bytes; the normal Alembic CLI
+round trip also passed. Authenticated generation is carried unchanged through
+short knowledge-query transactions and prior-year plan admission.
+
+This is **not** authorization to promote **0123–0139** to production or change the
+accepted production **0122** gate. No deployment was performed.
+
+## Unused master deletion (T56; local head 0137)
+
+Revision **0137** adds only an authorized read-only reference inventory and an
+internal exact-UUID JSON matcher. No table data, old RLS policy or DELETE grant
+is changed. Actual deletion remains invoker/RLS-bound, requires a returned row
+and executes deferred constraints before HTTP 204. Physical references including
+CASCADE edges, immutable receipts, source evidence, audit and snapshot references
+prevent deletion. The real rollback-protected 0137→0136→0137 test compares all
+existing rows/security objects and an issued letter's exact PDF bytes.
+
+Run `uv run pytest tests/test_master_delete.py` on the disposable test database.
+The UI acceptance uses the prescribed isolated launcher and
+`node scripts/acceptance/t56_master_delete_browser.cjs`; stop app/browser afterward.
+This does **not** authorize production promotion of **0123–0137** or change the
+accepted **0122** gate.
 
 ## Fresh installation: one-time preparation on Moon
 

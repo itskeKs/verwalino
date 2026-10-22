@@ -27,6 +27,13 @@ vi.mock("../api/endpoints", async (importOriginal) => ({
 
 const original: LeaseRecord = { id: "lease", unit_id: "unit", tenant_profile_id: "tenant", valid_from: "2025-01-01", valid_to: null, base_rent: "700.00", advance_payment: "150.00", deposit: null, notes: "Notiz" };
 const march = { id: "change", lease_agreement_id: "lease", valid_from: "2026-03-15", base_rent: "725.00", advance_payment: "175.00", created_at: "2026-01-01T12:00:00Z" };
+const staffelRows = [
+  { ...march, id: "staffel-1", valid_from: "2027-01-31", base_rent: "750.00" },
+  { ...march, id: "staffel-2", valid_from: "2028-01-31", base_rent: "775.00" },
+  { ...march, id: "staffel-3", valid_from: "2029-01-31", base_rent: "800.00" },
+];
+const indexPreview = { valid_from: "2027-01-01", previous_valid_from: "2026-01-01", previous_base_rent: "600.00", base_rent: "627.27", advance_payment: "150.00" };
+const indexInput = { old_index: "110", new_index: "115", declaration_received_on: "2026-11-15" };
 let history: typeof march[];
 let failure: number | "network" | null;
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -54,6 +61,18 @@ beforeEach(() => {
     if (options?.method === "POST") {
       if (failure === "network") throw new TypeError("Netzwerk nicht erreichbar");
       if (failure) return new Response(JSON.stringify({ detail: "Serverprüfung fehlgeschlagen" }), { status: failure });
+      if (url.endsWith("/rent-changes/index/preview")) {
+        return new Response(JSON.stringify(indexPreview), { status: 200 });
+      }
+      if (url.endsWith("/rent-changes/index")) {
+        const row = { ...march, id: "index-change", valid_from: indexPreview.valid_from, base_rent: indexPreview.base_rent, advance_payment: indexPreview.advance_payment };
+        history.push(row);
+        return new Response(JSON.stringify(row), { status: 201 });
+      }
+      if (url.endsWith("/rent-changes/staffel")) {
+        history.push(...staffelRows);
+        return new Response(JSON.stringify(staffelRows), { status: 201 });
+      }
       const row = { ...march, ...JSON.parse(options.body as string), id: "new-change", lease_agreement_id: url.split("/")[3] };
       history.push(row); return new Response(JSON.stringify(row), { status: 201 });
     }
@@ -412,4 +431,266 @@ it.each(["CLERK", "OWNER_ADMIN", "READ_ONLY", "UNKNOWN"])("T42 offers task conte
   if (role === "CLERK" || role === "OWNER_ADMIN") {
     expect(link).toHaveAttribute("href", "/aufgaben?property_id=loaded%2Fp%261&unit_id=loaded%2Fu%261&create=1");
   } else expect(link).toBeNull();
+});
+
+async function openStaffel() {
+  const button = await screen.findByRole("button", { name: "Staffelmiete anlegen" });
+  await waitFor(() => expect(button).toBeEnabled());
+  fireEvent.click(button);
+  return screen.findByRole("dialog", { name: "Staffelmiete anlegen" });
+}
+function fillStaffel() {
+  money("Erste Erhöhung ab", "2027-01-31");
+  money("Erhöhung (EUR)", "25,00");
+  money("Intervall (Monate)", "12");
+  money("Anzahl Erhöhungen", "3");
+}
+function saveStaffel() { fireEvent.click(screen.getByRole("button", { name: "Staffelmiete speichern" })); }
+
+it.each(["OWNER_ADMIN", "CLERK"])("T43 posts fixed EUR staffel without start-rent metadata and preserves history (%s)", async role => {
+  vi.mocked(endpoints.listLeases).mockResolvedValue([original]);
+  history = [march];
+  const view = show(role); await openStaffel(); fillStaffel(); saveStaffel();
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(posts()).toHaveLength(1);
+  expect(posts()[0][0]).toBe("/api/leases/lease/rent-changes/staffel");
+  expect(JSON.parse(posts()[0][1].body)).toEqual({
+    staffel_start_date: "2027-01-31", staffel_increase_amount: "25.00", staffel_interval_months: 12, staffel_steps: 3,
+  });
+  const table = screen.getByRole("table", { name: /^Miethistorie:/ });
+  expect(within(table).getByText("700.00")).toBeVisible();
+  expect(within(table).getByText("725.00")).toBeVisible();
+  for (const row of staffelRows) {
+    const rendered = within(table).getByText(row.valid_from).closest("tr")!;
+    expect(within(rendered).getByText(row.base_rent)).toBeVisible();
+    expect(within(rendered).getByText("175.00")).toBeVisible();
+    expect(within(rendered).queryByRole("button")).toBeNull();
+  }
+  expect(endpoints.patchLease).not.toHaveBeenCalled(); expect(endpoints.createLease).not.toHaveBeenCalled();
+  view.unmount(); show(role); expect(await screen.findByText("2029-01-31")).toBeVisible();
+});
+
+it.each([["5", "0.05"], ["2,75", "0.0275"], ["0.00000000000000000001", "0.0000000000000000000001"]])("T43 sends percentage %s as an exact decimal fraction", async (input, fraction) => {
+  show(); await openStaffel(); fillStaffel();
+  fireEvent.change(screen.getByLabelText("Erhöhungsart"), { target: { value: "percent" } });
+  money("Erhöhung (%)", input); saveStaffel();
+  await waitFor(() => expect(posts()).toHaveLength(1));
+  expect(JSON.parse(posts()[0][1].body)).toEqual({
+    staffel_start_date: "2027-01-31", staffel_increase_percent: fraction, staffel_interval_months: 12, staffel_steps: 3,
+  });
+});
+
+it.each(["READ_ONLY", "UNKNOWN"])("T43 does not offer staffel mutation to %s", async role => {
+  show(role); await screen.findByText("Originalvertrag");
+  expect(screen.queryByRole("button", { name: "Staffelmiete anlegen" })).toBeNull();
+});
+
+it.each([
+  ["Erste Erhöhung ab", ""], ["Erste Erhöhung ab", "2024-12-31"],
+  ["Erhöhung (EUR)", "0"], ["Erhöhung (EUR)", "-1"], ["Erhöhung (EUR)", "1.001"],
+  ["Intervall (Monate)", "0"], ["Intervall (Monate)", "11"], ["Intervall (Monate)", "121"], ["Intervall (Monate)", "1.5"],
+  ["Anzahl Erhöhungen", "0"], ["Anzahl Erhöhungen", "51"], ["Anzahl Erhöhungen", "2.5"],
+])("T43 validates %s=%s without posting", async (label, value) => {
+  show(); const dialog = await openStaffel(); fillStaffel(); money(label, value); saveStaffel();
+  expect(await within(dialog).findByRole("alert")).toBeVisible(); expect(posts()).toHaveLength(0);
+});
+
+it("T43 respects inclusive lease end and rejects dates after it", async () => {
+  vi.mocked(endpoints.listLeases).mockResolvedValue([{ ...original, valid_to: "2027-01-31" }]);
+  show(); const dialog = await openStaffel(); fillStaffel();
+  money("Erste Erhöhung ab", "2027-02-01"); saveStaffel();
+  expect(await within(dialog).findByRole("alert")).toBeVisible(); expect(posts()).toHaveLength(0);
+  money("Erste Erhöhung ab", "2027-01-31"); money("Anzahl Erhöhungen", "1"); saveStaffel();
+  await waitFor(() => expect(posts()).toHaveLength(1));
+});
+
+it.each([409, 422, 403, 404, "network"] as const)("T43 retains inputs and permits retry after %s", async status => {
+  failure = status; show(); const dialog = await openStaffel(); fillStaffel(); saveStaffel();
+  expect(await within(dialog).findByRole("alert")).toBeVisible();
+  expect(screen.getByLabelText("Erhöhung (EUR)")).toHaveValue("25,00");
+  expect(screen.getByLabelText("Erste Erhöhung ab")).toHaveValue("2027-01-31");
+  failure = null; saveStaffel();
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument()); expect(posts()).toHaveLength(2);
+});
+
+it("T43 prevents repeated submits and closing while staffel is saving", async () => {
+  show(); const dialog = await openStaffel(); fillStaffel();
+  let resolvePost!: (value: Response) => void;
+  fetchMock.mockImplementationOnce(() => new Promise<Response>(resolve => { resolvePost = resolve; }));
+  const form = dialog.querySelector("form")!;
+  fireEvent.submit(form); fireEvent.submit(form); expect(posts()).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "Staffelmiete speichern" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Abbrechen" })).toBeDisabled();
+  fireEvent.keyDown(dialog, { key: "Escape" }); expect(dialog).toBeVisible();
+  await act(async () => resolvePost(new Response(JSON.stringify(staffelRows), { status: 201 })));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+});
+
+it("T43 disables staffel when history failed to load and enables it after retry", async () => {
+  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Historie nicht verfügbar" }), { status: 500 }));
+  show(); await screen.findByRole("alert");
+  expect(screen.getByRole("button", { name: "Staffelmiete anlegen" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Mietänderungen erneut laden" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Staffelmiete anlegen" })).toBeEnabled());
+});
+
+it.each(["", "0", "0,000", "-5", "1e2", "Infinity", "NaN", "1,2.3"])("T43 rejects invalid percentage %s", async value => {
+  show(); const dialog = await openStaffel(); fillStaffel();
+  fireEvent.change(screen.getByLabelText("Erhöhungsart"), { target: { value: "percent" } });
+  money("Erhöhung (%)", value); saveStaffel();
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("positive Erhöhung in Prozent");
+  expect(posts()).toHaveLength(0);
+});
+
+it("T43 switches back to EUR without sending the hidden percentage and accepts upper integer bounds", async () => {
+  show(); await openStaffel(); fillStaffel();
+  fireEvent.change(screen.getByLabelText("Erhöhungsart"), { target: { value: "percent" } });
+  money("Erhöhung (%)", "5");
+  fireEvent.change(screen.getByLabelText("Erhöhungsart"), { target: { value: "amount" } });
+  money("Erhöhung (EUR)", "00025,29"); money("Intervall (Monate)", "120"); money("Anzahl Erhöhungen", "50");
+  saveStaffel(); await waitFor(() => expect(posts()).toHaveLength(1));
+  expect(JSON.parse(posts()[0][1].body)).toEqual({
+    staffel_start_date: "2027-01-31", staffel_increase_amount: "25.29", staffel_interval_months: 120, staffel_steps: 50,
+  });
+});
+
+it("T43 disables staffel until history has loaded and cancels without a mutation", async () => {
+  let finish!: (response: Response) => void;
+  fetchMock.mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
+  show(); await screen.findByText("Lade Mietänderungen…");
+  expect(screen.getByRole("button", { name: "Staffelmiete anlegen" })).toBeDisabled();
+  await act(async () => finish(new Response(JSON.stringify([]), { status: 200 })));
+  await openStaffel(); fillStaffel(); fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
+  expect(screen.queryByRole("dialog")).toBeNull(); expect(posts()).toHaveLength(0);
+});
+
+it("T43 checks current role again when an already-open dialog is submitted", async () => {
+  function App({ role }: { role: string }) {
+    return <AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() }}>
+      <MemoryRouter initialEntries={["/objekte/property/einheiten/unit"]}><Routes>
+        <Route path="/objekte/:propertyId/einheiten/:unitId" element={<UnitDetailPage />} />
+      </Routes></MemoryRouter>
+    </AuthCtx.Provider>;
+  }
+  const view = render(<App role="CLERK" />); await openStaffel(); fillStaffel();
+  view.rerender(<App role="READ_ONLY" />); saveStaffel();
+  expect(posts()).toHaveLength(0);
+});
+
+async function openIndex() {
+  const button = await screen.findByRole("button", { name: "Indexmiete berechnen" });
+  await waitFor(() => expect(button).toBeEnabled()); fireEvent.click(button);
+  return screen.findByRole("dialog", { name: "Indexmiete berechnen" });
+}
+function fillIndex() {
+  money("VPI alt", "110"); money("VPI neu", "115"); money("Zugang der Erklärung", "2026-11-15");
+}
+function calculateIndex() { fireEvent.click(screen.getByRole("button", { name: "Berechnen" })); }
+async function previewIndex() {
+  calculateIndex(); return screen.findByRole("button", { name: "Als Mietänderung übernehmen" });
+}
+
+it.each(["OWNER_ADMIN", "CLERK"])("T44 previews nonmutating and explicitly adopts exact server amounts (%s)", async role => {
+  const lease = { ...original, valid_from: "2026-01-01", base_rent: "600.00" };
+  vi.mocked(endpoints.listLeases).mockResolvedValue([lease]);
+  const view = show(role); const dialog = await openIndex(); fillIndex();
+  expect(within(dialog).getByText(/Destatis/)).toHaveTextContent(/gleiche.*Basis/);
+  expect(within(dialog).getByText(/schriftliche Indexmietvereinbarung/)).toHaveTextContent(/Textform/);
+  expect(within(dialog).getByText(/kein.*Nachweis/)).toBeVisible();
+  const adopt = await previewIndex();
+  expect(posts()).toHaveLength(1); expect(posts()[0][0]).toBe("/api/leases/lease/rent-changes/index/preview");
+  expect(JSON.parse(posts()[0][1].body)).toEqual(indexInput); expect(history).toEqual([]);
+  expect(within(dialog).getByText(/600.00/)).toBeVisible(); expect(within(dialog).getByText(/627.27/)).toBeVisible();
+  expect(within(dialog).getByText(/2027-01-01/)).toBeVisible(); fireEvent.click(adopt);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(posts()).toHaveLength(2); expect(posts()[1][0]).toBe("/api/leases/lease/rent-changes/index");
+  expect(JSON.parse(posts()[1][1].body)).toEqual({ ...indexInput, expected_base_rent: "627.27", expected_advance_payment: "150.00", expected_previous_valid_from: "2026-01-01" });
+  const table = screen.getByRole("table", { name: /^Miethistorie:/ });
+  expect(within(table).getByText("600.00")).toBeVisible(); expect(within(table).getByText("627.27")).toBeVisible();
+  expect(within(table).getAllByText("150.00")).toHaveLength(2); expect(lease.base_rent).toBe("600.00");
+  expect(endpoints.patchLease).not.toHaveBeenCalled(); expect(endpoints.createLease).not.toHaveBeenCalled();
+  view.unmount(); show(role); expect(await screen.findByText("2027-01-01")).toBeVisible();
+});
+
+it.each(["VPI alt", "VPI neu", "Zugang der Erklärung"])("T44 invalidates preview when %s changes", async label => {
+  show(); await openIndex(); fillIndex(); await previewIndex(); money(label, label === "Zugang der Erklärung" ? "2026-12-01" : "116");
+  expect(screen.queryByRole("button", { name: "Als Mietänderung übernehmen" })).toBeNull(); expect(posts()).toHaveLength(1);
+});
+
+it.each(["", "0", "0,000000", "-110", "NaN", "Infinity", "1e2", "110.1234567", "1,2.3"])("T44 rejects invalid index %s without requests", async value => {
+  show(); const dialog = await openIndex(); fillIndex(); money("VPI alt", value); calculateIndex();
+  expect(await within(dialog).findByRole("alert")).toBeVisible(); expect(posts()).toHaveLength(0);
+});
+
+it("T44 rejects equal normalized indices and missing receipt date", async () => {
+  show(); const dialog = await openIndex(); fillIndex(); money("VPI alt", "00115,000000"); calculateIndex();
+  expect(await within(dialog).findByRole("alert")).toBeVisible(); expect(posts()).toHaveLength(0);
+  money("VPI alt", "110"); money("Zugang der Erklärung", ""); calculateIndex();
+  expect(within(dialog).getByRole("alert")).toBeVisible(); expect(posts()).toHaveLength(0);
+});
+
+it("T44 allows decreases and sends six decimal indices without monetary arithmetic", async () => {
+  show(); await openIndex(); fillIndex(); money("VPI alt", "00115,123456"); money("VPI neu", "110,123456"); await previewIndex();
+  expect(JSON.parse(posts()[0][1].body)).toEqual({ ...indexInput, old_index: "115.123456", new_index: "110.123456" });
+});
+
+it.each(["READ_ONLY", "UNKNOWN"])("T44 hides index mutation from %s", async role => {
+  show(role); await screen.findByText("Originalvertrag"); expect(screen.queryByRole("button", { name: "Indexmiete berechnen" })).toBeNull();
+});
+
+it.each([409, 422, 403, 404, "network"] as const)("T44 preserves inputs after preview error %s and allows recalculation", async status => {
+  show(); const dialog = await openIndex(); fillIndex(); failure = status; calculateIndex();
+  expect(await within(dialog).findByRole("alert")).toBeVisible(); expect(screen.getByLabelText("VPI alt")).toHaveValue("110");
+  expect(screen.queryByRole("button", { name: "Als Mietänderung übernehmen" })).toBeNull();
+  failure = null; await previewIndex(); expect(posts()).toHaveLength(2);
+});
+
+it("T44 discards stale preview on adoption conflict and requires recalculation", async () => {
+  show(); const dialog = await openIndex(); fillIndex(); const adopt = await previewIndex(); failure = 409; fireEvent.click(adopt);
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(/erneut berechnen/);
+  expect(screen.queryByRole("button", { name: "Als Mietänderung übernehmen" })).toBeNull(); expect(history).toEqual([]);
+  failure = null; fireEvent.click(await previewIndex());
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull()); expect(posts()).toHaveLength(4);
+});
+
+it("T44 locks preview and adoption against duplicate submits and closing", async () => {
+  show(); const dialog = await openIndex(); fillIndex(); let finish!: (response: Response) => void;
+  fetchMock.mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
+  fireEvent.submit(dialog.querySelector("form")!); fireEvent.submit(dialog.querySelector("form")!); expect(posts()).toHaveLength(1);
+  expect(screen.getByLabelText("VPI alt")).toBeDisabled(); expect(screen.getByRole("button", { name: "Abbrechen" })).toBeDisabled();
+  fireEvent.keyDown(dialog, { key: "Escape" }); expect(dialog).toBeVisible();
+  await act(async () => finish(new Response(JSON.stringify(indexPreview), { status: 200 })));
+  const adopt = await screen.findByRole("button", { name: "Als Mietänderung übernehmen" });
+  fetchMock.mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
+  fireEvent.click(adopt); fireEvent.click(adopt); expect(posts()).toHaveLength(2);
+  expect(screen.getByRole("button", { name: "Berechnen" })).toBeDisabled(); expect(screen.getByRole("button", { name: "Abbrechen" })).toBeDisabled();
+  await act(async () => finish(new Response(JSON.stringify({ ...march, id: "index-change", ...indexPreview }), { status: 201 })));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
+
+it("T44 disables index action until history loads, supports cancellation and resets reopening", async () => {
+  let finish!: (response: Response) => void;
+  fetchMock.mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
+  show(); await screen.findByText("Lade Mietänderungen…"); expect(screen.getByRole("button", { name: "Indexmiete berechnen" })).toBeDisabled();
+  await act(async () => finish(new Response(JSON.stringify([]), { status: 200 })));
+  await openIndex(); fillIndex(); await previewIndex(); fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
+  expect(history).toEqual([]); await openIndex(); expect(screen.getByLabelText("VPI alt")).toHaveValue("");
+  expect(screen.queryByRole("button", { name: "Als Mietänderung übernehmen" })).toBeNull();
+});
+
+it("T44 disables index action on history load errors until retry", async () => {
+  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Historie nicht verfügbar" }), { status: 500 }));
+  show(); await screen.findByRole("alert"); expect(screen.getByRole("button", { name: "Indexmiete berechnen" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Mietänderungen erneut laden" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Indexmiete berechnen" })).toBeEnabled());
+});
+
+it("T57 hides lease creation and edit/end for READ_ONLY while keeping dated history readable", async () => {
+  history = [march]; show("READ_ONLY");
+  expect(await screen.findByText("2026-03-15")).toBeVisible();
+  expect(screen.getByText("Originalvertrag")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /^\+ Mietvertrag$/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Bearbeiten / beenden" })).not.toBeInTheDocument();
+  expect(endpoints.createLease).not.toHaveBeenCalled();
+  expect(endpoints.patchLease).not.toHaveBeenCalled();
 });

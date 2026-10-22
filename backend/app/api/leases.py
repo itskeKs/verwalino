@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +17,8 @@ from app.core.tenant import (
     get_current_user,
     require_write_dep,
 )
+from fastapi.responses import Response
+from app.services.master_delete_service import MasterDeleteService, master_delete_writer_db
 from app.core.live_principal import get_live_member_db, get_live_writer_db
 from app.services.history_source_access import require_history_prepare
 from app.services.lease_rent_change_service import LeaseRentChangeService
@@ -30,6 +32,25 @@ from app.models.lease_rent_change import LeaseRentChange
 from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
 
 router = APIRouter(prefix="/api/leases", tags=["leases"])
+
+
+class StaffelmieteCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    staffel_start_date: date
+    staffel_increase_amount: Annotated[Decimal, Field(
+        gt=0, max_digits=14, decimal_places=2, allow_inf_nan=False)] | None = None
+    # Fraction: 0.05 means five percent. The generated EUR amounts are rounded per step.
+    staffel_increase_percent: Annotated[Decimal, Field(
+        gt=0, le=1, max_digits=7, decimal_places=6, allow_inf_nan=False)] | None = None
+    staffel_interval_months: int = Field(ge=12, le=120, strict=True)
+    staffel_steps: int = Field(ge=1, le=50, strict=True)
+
+    @model_validator(mode="after")
+    def exactly_one_increase(self):
+        if (self.staffel_increase_amount is None) == (self.staffel_increase_percent is None):
+            raise ValueError("Provide exactly one fixed or percentage increase")
+        return self
 
 
 class LeaseOut(BaseModel):
@@ -180,6 +201,31 @@ class RentChangeCreate(BaseModel):
     advance_payment: RentAmount
 
 
+IndexValue = Annotated[Decimal, Field(gt=0, lt=Decimal("1000000000000"),
+                                      max_digits=18, decimal_places=6, allow_inf_nan=False)]
+
+
+class IndexRentCalculate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    old_index: IndexValue
+    new_index: IndexValue
+    declaration_received_on: date
+
+
+class IndexRentAdopt(IndexRentCalculate):
+    expected_base_rent: RentAmount
+    expected_advance_payment: RentAmount
+    expected_previous_valid_from: date
+
+
+class IndexRentPreview(BaseModel):
+    valid_from: date
+    previous_valid_from: date
+    previous_base_rent: str
+    base_rent: str
+    advance_payment: str
+
+
 class RentChangeOut(BaseModel):
     id: str
     lease_agreement_id: str
@@ -222,6 +268,49 @@ async def create_rent_change(
     return _rent_change_out(row)
 
 
+@router.post("/{lease_id}/rent-changes/staffel", response_model=list[RentChangeOut], status_code=201)
+async def create_staffelmiete_rent_changes(
+    lease_id: uuid.UUID,
+    body: StaffelmieteCreate,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_live_writer_db),
+):
+    rows = await LeaseRentChangeService(db, auth.organization_id, auth.user_id).create_staffel(
+        lease_id, body.staffel_start_date, body.staffel_interval_months, body.staffel_steps,
+        increase_amount=body.staffel_increase_amount,
+        increase_percent=body.staffel_increase_percent,
+    )
+    return [_rent_change_out(row) for row in rows]
+
+
+@router.post("/{lease_id}/rent-changes/index/preview", response_model=IndexRentPreview)
+async def preview_index_rent(
+    lease_id: uuid.UUID,
+    body: IndexRentCalculate,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_live_writer_db),
+):
+    result = await LeaseRentChangeService(db, auth.organization_id, auth.user_id).calculate_index(
+        lease_id, **body.model_dump(),
+    )
+    return IndexRentPreview(valid_from=result.valid_from, previous_valid_from=result.previous_valid_from,
+                            previous_base_rent=f"{result.previous_base_rent:.2f}",
+                            base_rent=f"{result.base_rent:.2f}", advance_payment=f"{result.advance_payment:.2f}")
+
+
+@router.post("/{lease_id}/rent-changes/index", response_model=RentChangeOut, status_code=201)
+async def adopt_index_rent(
+    lease_id: uuid.UUID,
+    body: IndexRentAdopt,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_live_writer_db),
+):
+    row = await LeaseRentChangeService(db, auth.organization_id, auth.user_id).adopt_index(
+        lease_id, **body.model_dump(),
+    )
+    return _rent_change_out(row)
+
+
 def _to_out(la: LeaseAgreement) -> LeaseOut:
     # API display edge (ADR-0006): storage holds the EXCLUSIVE upper bound
     # (first non-occupied day); return the INCLUSIVE last occupied day (bound - 1)
@@ -238,3 +327,13 @@ def _to_out(la: LeaseAgreement) -> LeaseOut:
         deposit=str(la.deposit) if la.deposit is not None else None,
         notes=la.notes,
     )
+
+
+@router.delete("/{lease_id}", status_code=204, response_class=Response)
+async def delete_lease_agreement(
+    lease_id: uuid.UUID,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(master_delete_writer_db),
+):
+    await MasterDeleteService(db, auth).delete("lease_agreement", lease_id)
+    return Response(status_code=204)

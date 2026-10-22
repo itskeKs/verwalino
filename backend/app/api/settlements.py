@@ -14,10 +14,11 @@ from __future__ import annotations
 import uuid
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
@@ -34,10 +35,8 @@ from app.services.render_names import settlement_render_names
 from app.services.settlement_pdf import render_settlement_pdf
 from app.services.settlement_service import (
     ComputeExtras,
-    ExternalAmountEntry,
-    ManualAmountEntry,
     SettlementService,
-    UnitMetric,
+    decode_compute_extras,
 )
 
 router = APIRouter(prefix="/api/settlements", tags=["settlements"])
@@ -126,9 +125,57 @@ class UnitMetricIn(BaseModel):
     person_count: int | None = None
 
 
+class HeatingSliceIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    unit_id: uuid.UUID
+    period_from: date
+    period_to: date
+    consumption: str | None = None
+    base_quantity: str | None = None
+
+    @field_validator('consumption','base_quantity')
+    @classmethod
+    def valid_quantity(cls, value):
+        if value is None:
+            return value
+        try:
+            number = Decimal(value)
+            if (not number.is_finite() or not Decimal(0)<=number<Decimal('1000000000000000000')
+                    or number != number.quantize(Decimal('0.000001'))):
+                raise ValueError('Menge muss endlich, nichtnegativ und auf höchstens sechs Nachkommastellen exakt sein')
+        except InvalidOperation as exc:
+            raise ValueError('Ungültige Menge') from exc
+        return value
+
+
+class HeatingConfigIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    cost_entry_id: uuid.UUID
+    kind: Literal['HEATING','HOT_WATER']
+    consumption_fraction: str
+    base_key: Literal['AREA','HEATED_AREA','VOLUME']
+    consumption_recorded: StrictBool
+    mandatory_seventy_percent: StrictBool
+    meter_type: str = Field(min_length=1,max_length=100)
+    slices: list[HeatingSliceIn] = Field(default_factory=list,max_length=10000)
+
+    @field_validator('consumption_fraction')
+    @classmethod
+    def valid_fraction(cls, value):
+        try:
+            number = Decimal(value)
+            if not number.is_finite() or not Decimal('0.50')<=number<=Decimal('0.70'):
+                raise ValueError('Verbrauchsanteil muss 50–70 % betragen')
+        except InvalidOperation as exc:
+            raise ValueError('Ungültiger Verbrauchsanteil') from exc
+        return value
+
+
 class ComputeRequest(BaseModel):
     """Structured extra inputs for the engine (provisional source O3-1/O3-5)."""
 
+    model_config = ConfigDict(extra="forbid")
+    heating_inputs: list[HeatingConfigIn] = Field(default_factory=list,max_length=1000)
     external_amounts: list[ExternalAmountIn] = []
     manual_amounts: list[ManualAmountIn] = []
     unit_metrics: list[UnitMetricIn] = []
@@ -173,6 +220,7 @@ class SettlementRunOut(BaseModel):
     finalized_by: str | None
     superseded_by_id: str | None
     lines: list[SettlementLineOut] = []
+    extra_inputs: dict | None = None
 
 
 class SettlementBatchSkipped(BaseModel):
@@ -195,37 +243,14 @@ def _dec(value: str, field: str) -> Decimal:
         raise HTTPException(status_code=422, detail=f"Invalid decimal for {field}: {value}")
 
 
-def _to_extras(body: ComputeRequest | None) -> ComputeExtras:
+def _to_extras(body: ComputeRequest | None) -> ComputeExtras | None:
     if body is None:
-        return ComputeExtras()
-    return ComputeExtras(
-        external_amounts=[
-            ExternalAmountEntry(
-                cost_entry_id=uuid.UUID(e.cost_entry_id),
-                unit_id=uuid.UUID(e.unit_id),
-                tenant_amount=_dec(e.tenant_amount, "tenant_amount"),
-                period_from=e.period_from,
-                period_to=e.period_to,
-            )
-            for e in body.external_amounts
-        ],
-        manual_amounts=[
-            ManualAmountEntry(
-                cost_entry_id=uuid.UUID(m.cost_entry_id),
-                unit_id=uuid.UUID(m.unit_id),
-                amount=_dec(m.amount, "amount"),
-            )
-            for m in body.manual_amounts
-        ],
-        unit_metrics=[
-            UnitMetric(
-                unit_id=uuid.UUID(u.unit_id),
-                consumption=_dec(u.consumption, "consumption") if u.consumption else None,
-                person_count=u.person_count,
-            )
-            for u in body.unit_metrics
-        ],
-    )
+        return None
+    try:
+        extras = decode_compute_extras(body.model_dump(mode='json'))
+    except (ValueError, InvalidOperation) as exc:
+        raise HTTPException(422,'Ungültige UUID, Menge oder Datumsangabe') from exc
+    return extras
 
 
 def _line_out(ln: SettlementLine, cost_entry_id: str | None = None) -> SettlementLineOut:
@@ -286,6 +311,7 @@ def _run_out(run: SettlementRun, lines: list[SettlementLine]) -> SettlementRunOu
         finalized_at=str(run.finalized_at) if run.finalized_at else None,
         finalized_by=str(run.finalized_by) if run.finalized_by else None,
         superseded_by_id=str(run.superseded_by_id) if run.superseded_by_id else None,
+        extra_inputs=(run.snapshot_payload or {}).get("extra_inputs"),
         lines=[_line_out(ln, sources.get((ln.sort_order, ln.line_type, ln.label, ln.cost_category_code, str(ln.amount)))) for ln in lines],
     )
 
@@ -348,6 +374,19 @@ async def get_consumption_suggestions(
     db: AsyncSession = Depends(get_live_member_db),
 ):
     return await SettlementService(db, auth.organization_id, auth.user_id).consumption_suggestions(run_id)
+
+
+@router.get("/{run_id}/heating-consumption")
+async def get_heating_consumption(
+    run_id: uuid.UUID,
+    cost_entry_id: uuid.UUID,
+    meter_type: Annotated[str, Query(min_length=1,max_length=100)],
+    base_key: Literal['AREA','HEATED_AREA','VOLUME'],
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+):
+    return await SettlementService(db,auth.organization_id,auth.user_id).heating_suggestions(
+        run_id,cost_entry_id,meter_type,base_key)
 
 
 @router.get("/{run_id}/advance-proposal", response_model=AdvanceProposalOut)
@@ -434,6 +473,7 @@ async def compute_settlement(
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_db),
 ):
+    await require_live_principal(db, auth, writer=True)
     svc = SettlementService(db, auth.organization_id, auth.user_id)
     run, _result = await svc.compute(run_id, _to_extras(body))
     lines_repo = SettlementLineRepository(db, auth.organization_id)
@@ -449,6 +489,7 @@ async def preview_settlement(
     db: AsyncSession = Depends(get_db),
 ):
     """Compute without persisting -- returns the would-be lines (read-only)."""
+    await require_live_principal(db, auth, writer=True)
     svc = SettlementService(db, auth.organization_id, auth.user_id)
     runs_repo = SettlementRunRepository(db, auth.organization_id)
     run = await runs_repo.get_by_id(run_id)
@@ -493,6 +534,7 @@ async def finalize_settlement(
     # Commit before sending success: the next HTTP request may open the PDF.
     db: AsyncSession = Depends(get_db, scope="function"),
 ):
+    await require_live_principal(db, auth, writer=True)
     svc = SettlementService(db, auth.organization_id, auth.user_id)
     run = await svc.finalize(run_id, _to_extras(body))
     lines_repo = SettlementLineRepository(db, auth.organization_id)

@@ -541,21 +541,25 @@ async def test_membership_role_change_is_visible_on_next_request(
 
 
 @pytest.mark.asyncio
-async def test_session_is_invalid_immediately_after_user_deactivation(client_a_admin, seed_data):
-    from tests.conftest import MIGRATOR_SYNC_URL
+async def test_session_is_invalid_immediately_after_user_deactivation(seed_data):
+    from tests.conftest import MIGRATOR_SYNC_URL, _api_test_client
 
-    connection = psycopg2.connect(MIGRATOR_SYNC_URL)
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute('UPDATE public."user" SET is_active = false WHERE id = %s', (str(seed_data["user_a_admin_id"]),))
-        connection.commit()
-        response = await client_a_admin.get("/api/auth/session")
-        assert response.status_code == 401
-    finally:
-        with connection.cursor() as cursor:
-            cursor.execute('UPDATE public."user" SET is_active = true WHERE id = %s', (str(seed_data["user_a_admin_id"]),))
-        connection.commit()
-        connection.close()
+    # A durable invalidation must not revoke the shared seed's later test cookies.
+    rows = [{"email": f"deactivation-{uuid.uuid4()}@example.test", "role": "OWNER_ADMIN"}]
+    with temporary_auth_rows(rows):
+        user = rows[0]
+        token = create_session_token(user["user_id"], user["organization_id"])
+        async with _api_test_client(cookies={settings.session_cookie_name: token}) as client:
+            with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute('UPDATE public."user" SET is_active = false WHERE id = %s', (str(user["user_id"]),))
+            response = await client.get("/api/auth/session")
+            assert response.status_code == 401
+            with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute('UPDATE public."user" SET is_active = true WHERE id = %s', (str(user["user_id"]),))
+            # Reactivation must not resurrect the old cookie either.
+            assert (await client.get("/api/auth/session")).status_code == 401
 
 
 @pytest.mark.asyncio

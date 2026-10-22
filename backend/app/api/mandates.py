@@ -7,7 +7,9 @@ from datetime import date
 
 from fastapi import Response, APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import Literal
+from app.core.live_principal import get_live_admin_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import DBAPIError
 
@@ -45,6 +47,21 @@ class MandateCreate(BaseModel):
     label: str = ""
     start_date: date
     end_date: date | None = None
+
+
+class MandateUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    label: str | None = Field(default=None, max_length=255)
+    mandate_type: Literal["WEG", "MIET", "SEV"] | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+
+    @field_validator("label", "mandate_type", "start_date")
+    @classmethod
+    def reject_null(cls, value):
+        if value is None:
+            raise ValueError("Field cannot be null")
+        return value
 
 
 @router.get("", response_model=list[MandateOut])
@@ -120,6 +137,35 @@ async def create_mandate(
         start_date=mandate.start_date,
         end_date=mandate.end_date,
     )
+
+
+@router.patch("/{mandate_id}", response_model=MandateOut)
+async def update_mandate(
+    mandate_id: uuid.UUID,
+    body: MandateUpdate,
+    auth: AuthContext = Depends(require_admin_dep),
+    db: AsyncSession = Depends(get_live_admin_db),
+):
+    from app.services.financial_scope_service import FinancialScopeService
+    await FinancialScopeService(db, auth.organization_id, auth.user_id).lock_inputs()
+    mandate = await MandateRepository(db, auth.organization_id).get_by_id_for_update(mandate_id)
+    if mandate is None:
+        raise HTTPException(404, "Mandate not found")
+    updates = body.model_dump(exclude_unset=True)
+    start = updates.get("start_date", mandate.start_date)
+    end = updates.get("end_date", mandate.end_date)
+    if end is not None and end < start:
+        raise HTTPException(422, "end_date must not precede start_date")
+    for key, value in updates.items():
+        setattr(mandate, key, value)
+    try:
+        await db.flush()
+    except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) == "23514":
+            raise HTTPException(409, "A scoped mandate definition cannot be changed; create a reviewed successor mandate") from exc
+        raise
+    return MandateOut(id=str(mandate.id), mandate_type=mandate.mandate_type,
+        label=mandate.label, start_date=mandate.start_date, end_date=mandate.end_date)
 
 
 # ===========================================================================

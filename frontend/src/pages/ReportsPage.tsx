@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { getPropertyYearReport, getPropertyYearReportCsv, listProperties } from "../api/endpoints";
 import type { Property, PropertyYearReport, PropertyYearReportQuery } from "../api/types";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
+import { DatevExport } from "../components/DatevExport";
 import { APPORTIONABILITY_LABELS, fromDbApportionability } from "../lib/costVocabulary";
 
 const PAYMENT_TYPE_LABELS: Record<string, string> = {
@@ -24,6 +25,7 @@ function message(error: unknown): string {
 
 export function ReportsPage() {
   const [properties, setProperties] = useState<Property[]>([]);
+  const [datevOpen, setDatevOpen] = useState(false);
   const [lookupLoading, setLookupLoading] = useState(true);
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [lookupAttempt, setLookupAttempt] = useState(0);
@@ -156,5 +158,9 @@ export function ReportsPage() {
       <button type="button" disabled={downloading} onClick={() => void downloadCsv()}>{downloading ? "CSV wird geladen…" : "CSV herunterladen"}</button>
       {downloadError && <p role="alert" className="error-text">{downloadError}</p>}
     </section>}
+    <section className="mt-8">
+      <button type="button" aria-expanded={datevOpen} onClick={() => setDatevOpen(open => !open)}>{datevOpen ? "DATEV-Export schließen" : "DATEV-Export öffnen"}</button>
+      {datevOpen && <DatevExport properties={properties} />}
+    </section>
   </div>;
 }

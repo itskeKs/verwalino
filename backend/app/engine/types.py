@@ -149,6 +149,7 @@ class CostPositionInput:
     # Per-unit direct amounts for EXTERNE_ABRECHNUNG / MANUELLER_BETRAG.
     external_amounts: tuple[ExternalAmountInput, ...] = ()
     manual_amounts: tuple[ManualAmountInput, ...] = ()
+    heating: HeatingPositionInput | None = None
 
 
 @dataclass(frozen=True)
@@ -234,6 +235,7 @@ class EngineResult:
     # Vacancy attribution per position (so "no cent lost via vacancy" is
     # demonstrable; section 3.3). Maps cost_entry_id -> list of (owner, amount).
     vacancy_attribution: tuple["VacancyShare", ...] = ()
+    heating_costs: tuple[HeatingAllocationResult, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -579,3 +581,94 @@ class AssetReportResult:
     bank_balance_total: Decimal
     receivables_total: Decimal
     payables_total: Decimal
+
+
+# T45: already separated heating/hot-water pools; no meter estimation or ORM.
+@dataclass(frozen=True)
+class HeatingUnitInput:
+    unit_id: uuid.UUID
+    base_quantity: Decimal
+    consumption: Decimal | None
+
+
+@dataclass(frozen=True)
+class HeatingCostPoolInput:
+    """A §7 heating or §8 hot-water pool, delimited upstream under §9.
+
+    base_key describes the supplied quantities (AREA, HEATED_AREA, VOLUME).
+    consumption_recorded=False explicitly selects a non-consumption bill, not
+    an assumed estimate when just one reading is missing. Building conditions
+    for §7's mandatory 70% rule must be assessed upstream, not inferred here.
+    """
+    kind: str  # HEATING | HOT_WATER
+    total_amount: Decimal
+    consumption_fraction: Decimal
+    base_key: str
+    consumption_recorded: bool
+    mandatory_seventy_percent: bool
+    units: tuple[HeatingUnitInput, ...]
+
+
+@dataclass(frozen=True)
+class HeatingUnitResult:
+    unit_id: uuid.UUID
+    base_quantity: Decimal
+    consumption: Decimal | None
+    base_amount: Decimal
+    consumption_amount: Decimal
+    gross_amount: Decimal
+    reduction_amount: Decimal
+    amount_due: Decimal
+    reduction_reason: str | None
+
+
+@dataclass(frozen=True)
+class HeatingPoolResult:
+    kind: str
+    base_key: str
+    consumption_fraction: Decimal
+    consumption_recorded: bool
+    method: str  # CONSUMPTION | NON_CONSUMPTION
+    total_amount: Decimal
+    base_cost_total: Decimal
+    consumption_cost_total: Decimal
+    reduction_total: Decimal
+    amount_due: Decimal
+    rows: tuple[HeatingUnitResult, ...]
+
+
+@dataclass(frozen=True)
+class HeatingCostResult:
+    pools: tuple[HeatingPoolResult, ...]
+    gross_total: Decimal
+    reduction_total: Decimal
+    amount_due: Decimal
+
+
+@dataclass(frozen=True)
+class HeatingSliceInput:
+    id: uuid.UUID
+    unit_id: uuid.UUID
+    period_from: date
+    period_to: date
+    lease_agreement_id: uuid.UUID | None
+    owner_profile_id: uuid.UUID | None
+    base_quantity: Decimal
+    consumption: Decimal | None
+
+
+@dataclass(frozen=True)
+class HeatingPositionInput:
+    kind: str
+    consumption_fraction: Decimal
+    base_key: str
+    consumption_recorded: bool
+    mandatory_seventy_percent: bool
+    slices: tuple[HeatingSliceInput, ...]
+
+
+@dataclass(frozen=True)
+class HeatingAllocationResult:
+    cost_entry_id: uuid.UUID
+    pool: HeatingPoolResult
+    slices: tuple[HeatingSliceInput, ...]

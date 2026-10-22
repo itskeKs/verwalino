@@ -5,16 +5,18 @@
  * Account types: LAUFEND (laufendes Konto), RUECKLAGE, KAUTION.
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
 import {
   listBankAccounts,
   createBankAccount,
+  updateBankAccount,
 } from "../api/endpoints";
 import type { BankAccount, BankAccountCreate, BankAccountType } from "../api/types";
 import { PropertySelector } from "../components/PropertySelector";
 import { ApiError } from "../api/client";
+import { MasterDataEditor } from "../components/MasterDataEditor";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 
 const ACCOUNT_TYPE_LABELS: Record<string, string> = {
@@ -57,26 +59,33 @@ export function BankAccountsPage() {
   const [form, setForm] = useState<BankAccountCreate>(makeEmptyForm());
   const [saving, setSaving] = useState(false);
 
+  const requestVersion = useRef(0);
+  const busyRef = useRef(false);
+
   const propertyFilter = searchParams.get("property_id") ?? "";
 
   const reload = useCallback(() => {
+    const version = ++requestVersion.current;
     setLoading(true);
     setError(null);
     listBankAccounts(propertyFilter || undefined)
-      .then(setAccounts)
+      .then(items => { if (version === requestVersion.current) setAccounts(items); })
       .catch((err) => {
+        if (version !== requestVersion.current) return;
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert. Bitte erneut anmelden.");
         } else {
           setError(String(err));
         }
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (version === requestVersion.current) setLoading(false); });
   }, [propertyFilter]);
 
+  const invalidateRequests = useCallback(() => { requestVersion.current++; }, []);
   useEffect(() => {
     reload();
-  }, [reload]);
+    return invalidateRequests;
+  }, [reload, invalidateRequests]);
 
   function setFilter(key: string, value: string) {
     const next = new URLSearchParams(searchParams);
@@ -89,25 +98,33 @@ export function BankAccountsPage() {
   }
 
   function openCreate() {
+    if (busyRef.current) return;
+    setError(null);
     setForm(makeEmptyForm());
     setShowForm(true);
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!canImport || busyRef.current) return;
+    busyRef.current = true;
+    const version = requestVersion.current;
     setSaving(true);
     setError(null);
     try {
       await createBankAccount(form);
+      if (version !== requestVersion.current) return;
       setShowForm(false);
       reload();
     } catch (err) {
+      if (version !== requestVersion.current) return;
       if (err instanceof ApiError) {
         setError(err.message);
       } else {
         setError(String(err));
       }
     } finally {
+      busyRef.current = false;
       setSaving(false);
     }
   }
@@ -125,9 +142,9 @@ export function BankAccountsPage() {
         }}
       >
         <h1 style={{ margin: 0 }}>Bankkonten</h1>
-        <button className="btn btn--primary" onClick={openCreate}>
+        {canImport && <button className="btn btn--primary" onClick={openCreate}>
           + Neues Bankkonto
-        </button>
+        </button>}
       </div>
 
       {/* Filters */}
@@ -142,9 +159,9 @@ export function BankAccountsPage() {
         <PropertySelector label="Nach Objekt filtern" value={propertyFilter} onChange={value => setFilter("property_id", value)} />
       </div>
 
-      {error && <p className="error-text">{error}</p>}
+      {error && <p role="alert" className="error-text">{error} <button className="btn" onClick={reload}>Neu laden</button></p>}
 
-      {showForm && (
+      {canImport && showForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Neues Bankkonto anlegen</h2>
           <form onSubmit={handleSubmit} className="form-grid">
@@ -223,6 +240,7 @@ export function BankAccountsPage() {
               <button
                 type="button"
                 className="btn"
+                disabled={saving}
                 onClick={() => setShowForm(false)}
               >
                 Abbrechen
@@ -252,7 +270,7 @@ export function BankAccountsPage() {
             <tbody>
               {accounts.map((a) => (
                 <tr key={a.id}>
-                  <td><strong>{a.label}</strong></td>
+                  <td><strong>{a.label}</strong>{a.is_active === false && <span className="badge">Beendet</span>}</td>
                   <td>{a.property_name ?? "Objekt nicht verfügbar"}</td>
                   <td>
                     <span className={`badge ${ACCOUNT_TYPE_CSS[a.account_type] ?? ""}`}>
@@ -265,7 +283,14 @@ export function BankAccountsPage() {
                   <td>{a.bank_name ?? "-"}</td>
                   <td>
                     <Link className="btn" to={`/bankkonten/${a.id}/umsaetze`}>Umsätze</Link>
-                    {canImport && <Link className="btn" to={`/bankkonten/${a.id}/umsaetze?import=1`}>Kontoauszug importieren</Link>}
+                    {canImport && <MasterDataEditor key={`${propertyFilter}:${a.id}`} title="Bankkonto bearbeiten"
+                      initial={{ label: a.label, iban: a.iban, bic: a.bic, bank_name: a.bank_name }}
+                      fields={[{ key: "label", label: "Bezeichnung", maxLength: 255 }, { key: "iban", label: "IBAN", maxLength: 34, nullable: true }, { key: "bic", label: "BIC", maxLength: 11, nullable: true }, { key: "bank_name", label: "Bank", maxLength: 255, nullable: true }]}
+                      save={changes => updateBankAccount(a.id, changes)} onSaved={reload}
+                      active={a.is_active !== false} endLabel="Bankkonto beenden" setActive={is_active => updateBankAccount(a.id, { is_active })}
+                      description="Bezeichnung und Bankdaten bearbeiten. Bereits verwendete IBAN/BIC können nicht geändert werden; eine Umbenennung ändert keine SEPA-Daten." />}
+
+                    {canImport && a.is_active !== false && <Link className="btn" to={`/bankkonten/${a.id}/umsaetze?import=1`}>Kontoauszug importieren</Link>}
                   </td>
                 </tr>
               ))}

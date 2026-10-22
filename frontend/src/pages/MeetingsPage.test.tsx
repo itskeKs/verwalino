@@ -4,6 +4,9 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { MeetingsPage } from "./MeetingsPage";
 import { MeetingDetailPage } from "./MeetingDetailPage";
 
+vi.mock("../auth/useAuth", () => ({ useAuth: () => ({ session: { user_id: "user", organization_id: "org", role: "CLERK" }, loading: false }) }));
+vi.mock("../api/mail", () => ({ getMailDispatch: vi.fn().mockResolvedValue({ recipients: [], attempts: [] }), sendMailDispatch: vi.fn() }));
+
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
 const meeting = { id: "meeting-1", property_id: "property-1", meeting_date: "2026-01-15", meeting_type: "ORDENTLICH", status: "PLANNED", location: "Testsaal", invitation_text: null, protocol_text: null };
 const property = { id: "property-1", name: "T13 WEG", management_type: "WEG" };

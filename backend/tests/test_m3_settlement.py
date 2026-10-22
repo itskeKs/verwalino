@@ -1818,3 +1818,312 @@ async def test_meter_consumption_scope_classification_unit_boundary_and_revocati
     revoked = await client_a_admin.post(f"/api/accounting-scopes/{scope}/grants/{grant_id}/revoke")
     assert revoked.status_code == 204, revoked.text
     assert (await client_a_admin.get(url)).status_code == 404
+
+# T46: independent, fixed-oracle heating integration (all amounts in EUR).
+import pytest_asyncio
+
+
+@pytest_asyncio.fixture
+async def heiz_world(rent_world, rent_db):
+    w = dict(rent_world)
+    w['second_unit'] = uuid.uuid4()
+    await rent_db.execute(text("UPDATE unit SET area=40,heated_area=40 WHERE id=:unit"), w)
+    await rent_db.execute(text("""INSERT INTO unit
+        (id,organization_id,property_id,number,usage_type,area,heated_area,mea)
+        VALUES (:second_unit,:org,:property,'2','WOHNUNG',60,60,600)"""), w)
+    for code, amount, key in [('HEIZUNG_ZENTRAL','1000.00','heat'),
+                              ('WARMWASSER_ZENTRAL','400.00','water')]:
+        w[key] = uuid.uuid4()
+        await rent_db.execute(text("""INSERT INTO cost_entry
+            (id,organization_id,property_id,cost_category_id,cost_category_plan_version,
+             invoice_date,service_period_from,service_period_to,gross_amount,tenant_distribution_key,
+             tenant_apportionable,status,source,confirmed_at,confirmed_by)
+            SELECT :id,:org,:property,id,1,'2026-12-31','2026-01-01','2026-12-31',:amount,
+             'EXTERNE_ABRECHNUNG','UMLAGEFAEHIG_EXTERN_PRUEFEN','confirmed','MANUAL',now(),:admin
+            FROM cost_category WHERE code=:code AND plan_version=1"""),
+            {**w, 'id':w[key], 'code':code, 'amount':Decimal(amount)})
+    w['meters'] = []
+    for kind, quantities in [('HEIZUNG',('100','300')), ('WARMWASSER',('3','1'))]:
+        for unit, quantity in zip((w['unit'],w['second_unit']), quantities):
+            meter = uuid.uuid4()
+            w['meters'].append(meter)
+            await rent_db.execute(text("""INSERT INTO meter
+                (id,organization_id,property_id,unit_id,meter_number,meter_type)
+                VALUES (:id,:org,:property,:unit,:number,:kind)"""),
+                {**w,'id':meter,'unit':unit,'number':str(meter),'kind':kind})
+            for day, value in [(date(2026,1,1),Decimal('100')),
+                               (date(2026,12,31),Decimal('100')+Decimal(quantity))]:
+                await rent_db.execute(text("""INSERT INTO meter_reading
+                    (id,organization_id,meter_id,reading_date,value,period)
+                    VALUES (:id,:org,:meter,:day,:value,'2026')"""),
+                    {**w,'id':uuid.uuid4(),'meter':meter,'day':day,'value':value})
+    await rent_db.commit()
+    async with api_client(w) as api:
+        lease = await api.post('/api/leases',json={'unit_id':str(w['second_unit']),
+            'tenant_profile_id':str(w['tenant']),'valid_from':'2026-01-01',
+            'base_rent':'600.00','advance_payment':'0.00'})
+        assert lease.status_code == 201, lease.text
+        w['second_lease'] = uuid.UUID(lease.json()['id'])
+        run = await api.post('/api/settlements',json={'property_id':str(w['property']),
+            'lease_agreement_id':str(w['lease']),'period_start':'2026-01-01',
+            'period_end':'2026-12-31','advance_payments_total':'0.00'})
+        assert run.status_code == 201, run.text
+        w['run'] = run.json()['id']
+        await attest_fixture(api,'settlement',w['run'],
+            {'advance_payments_total':'0.00','advance_payments_source':'MANUAL'})
+    return w
+
+
+def _heiz_body(w):
+    return {'heating_inputs':[
+        {'cost_entry_id':str(w[key]),'kind':kind,'consumption_fraction':fraction,
+         'base_key':'AREA','consumption_recorded':True,'mandatory_seventy_percent':False,
+         'meter_type':meter_type,'slices':[]}
+        for key,kind,fraction,meter_type in [('heat','HEATING','0.70','HEIZUNG'),
+                                             ('water','HOT_WATER','0.50','WARMWASSER')]]}
+
+
+def _heiz_line(response, code='HEIZUNG_ZENTRAL'):
+    return next(row for row in response['lines'] if row['cost_category_code']==code)
+
+
+@pytest.mark.asyncio
+async def test_heiz_meter_split_persists_intent_finalize_and_frozen_pdf(heiz_world, rent_db):
+    w = heiz_world
+    url = f"/api/settlements/{w['run']}"
+    async with api_client(w) as api:
+        preview = await api.post(url+'/preview',json=_heiz_body(w))
+        assert preview.status_code == 200, preview.text
+        assert _heiz_line(preview.json())['amount'] == '295.00'
+        assert _heiz_line(preview.json(),'WARMWASSER_ZENTRAL')['amount'] == '230.00'
+        assert (await api.get(url)).json()['total_cost'] is None
+        result = await api.post(url+'/compute',json=_heiz_body(w))
+        assert result.status_code == 200, result.text
+        assert result.json()['total_cost'] == '525.00'
+        assert (await api.get(url)).json()['extra_inputs']['heating_inputs'] == _heiz_body(w)['heating_inputs']
+        # Omitting body reuses saved intent, but derives actual readings again.
+        final = await api.post(url+'/finalize')
+        assert final.status_code == 200, final.text
+        frozen = final.json()
+        assert frozen['total_cost'] == '525.00' and frozen['snapshot_sha256']
+        payload = await rent_db.scalar(text('SELECT snapshot_payload FROM settlement_run WHERE id=:id'),{'id':uuid.UUID(w['run'])})
+        breakdown = payload['heating_costs']
+        heat = next(row for row in breakdown if row['cost_entry_id']==str(w['heat']))
+        target = next(row for row in heat['rows'] if row['lease_agreement_id']==str(w['lease']))
+        assert target['base_amount']=='120.00' and target['consumption_amount']=='175.00'
+        assert target['gross_amount']=='295.00' and target['reduction_amount']=='0.00'
+        assert target['meter_source']['start_reading']['value']=='100.0000'
+        pdf = await api.get(url+'/pdf')
+        assert pdf.status_code==200 and pdf.content.startswith(b'%PDF')
+        import subprocess
+        content = subprocess.run(['pdftotext','-','-'],input=pdf.content,capture_output=True,check=True).stdout.decode()
+        assert 'Grundanteil' in content and 'Verbrauchsanteil' in content
+        assert 'externe Abrechnung' not in content
+        assert '120,00' in content and '175,00' in content and '295,00' in content
+        changed = await api.post(f"/api/meters/{w['meters'][0]}/readings",json={'reading_date':'2026-12-31','value':'999'})
+        assert changed.status_code==201,changed.text
+        assert (await api.get(url)).json()==frozen
+        assert (await api.get(url+'/pdf')).content==pdf.content
+        assert (await api.post(url+'/compute',json=_heiz_body(w))).status_code==409
+
+
+@pytest.mark.asyncio
+async def test_heiz_sources_separate_manual_zero_and_live_rights(heiz_world):
+    w=heiz_world
+    url=f"/api/settlements/{w['run']}"
+    params={'cost_entry_id':str(w['heat']),'meter_type':'HEIZUNG','base_key':'AREA'}
+    async with api_client(w) as api,api_client(w,'reader') as reader,api_client(w,foreign=True) as foreign:
+        candidates=await api.get(url+'/heating-consumption',params=params)
+        assert candidates.status_code==200,candidates.text
+        assert {r['consumption'] for r in candidates.json()}=={'100.0000','300.0000'}
+        assert (await reader.get(url+'/heating-consumption',params=params)).status_code==200
+        assert (await foreign.get(url+'/heating-consumption',params=params)).status_code==404
+        assert (await reader.post(url+'/compute',json=_heiz_body(w))).status_code==403
+        body=_heiz_body(w)
+        body['unit_metrics']=[{'unit_id':str(w['unit']),'consumption':'999999'}]
+        body['heating_inputs'][0]['slices']=[{'unit_id':str(w['unit']),
+            'period_from':'2026-01-01','period_to':'2026-12-31','consumption':'0'}]
+        result=await api.post(url+'/compute',json=body)
+        assert result.status_code==200,result.text
+        assert _heiz_line(result.json())['amount']=='120.00'
+        assert _heiz_line(result.json(),'WARMWASSER_ZENTRAL')['amount']=='230.00'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('problem',['unknown','duplicate','kind','fraction','nan','negative',
+    'special70','external','slice','duplicate_slice','volume','hot_base','unrecorded_reading','missing','ambiguous','precision','infinite_quantity','boolean'])
+async def test_heiz_invalid_inputs_atomic(heiz_world,rent_db,problem):
+    w=heiz_world
+    url=f"/api/settlements/{w['run']}"
+    async with api_client(w) as api:
+        baseline=await api.post(url+'/compute',json=_heiz_body(w))
+        assert baseline.status_code==200,baseline.text
+        before=(await api.get(url)).json()
+    body=_heiz_body(w)
+    heat=body['heating_inputs'][0]
+    if problem=='unknown': heat['cost_entry_id']=str(uuid.uuid4())
+    elif problem=='duplicate': body['heating_inputs'].append(dict(heat))
+    elif problem=='kind': heat['kind']='HOT_WATER'
+    elif problem=='fraction': heat['consumption_fraction']='0.71'
+    elif problem=='nan': heat['consumption_fraction']='NaN'
+    elif problem=='negative': heat['slices']=[{'unit_id':str(w['unit']),'period_from':'2026-01-01','period_to':'2026-12-31','consumption':'-1'}]
+    elif problem=='special70': heat.update(mandatory_seventy_percent=True,consumption_fraction='0.50')
+    elif problem=='external': body['external_amounts']=[{'cost_entry_id':str(w['heat']),'unit_id':str(w['unit']),'tenant_amount':'20'}]
+    elif problem in {'slice','duplicate_slice'}:
+        row={'unit_id':str(w['unit']),'period_from':'2026-01-01','period_to':'2026-12-31','consumption':'1'}
+        heat['slices']=[row,row] if problem=='duplicate_slice' else [{**row,'unit_id':str(w['foreign_unit'])}]
+    elif problem=='volume': heat['base_key']='VOLUME'
+    elif problem=='hot_base': body['heating_inputs'][1]['base_key']='HEATED_AREA'
+    elif problem=='unrecorded_reading':
+        heat['consumption_recorded']=False
+        heat['slices']=[{'unit_id':str(w['unit']),'period_from':'2026-01-01','period_to':'2026-12-31','consumption':'1'}]
+    elif problem in {'precision','infinite_quantity'}:
+        heat['slices']=[{'unit_id':str(w['unit']),'period_from':'2026-01-01','period_to':'2026-12-31',
+            'consumption':'0.0000001' if problem=='precision' else 'Infinity'}]
+    elif problem=='boolean': heat['consumption_recorded']=1
+    elif problem=='missing': heat['meter_type']='ABSENT'
+    else:
+        await rent_db.execute(text('''INSERT INTO meter(id,organization_id,property_id,unit_id,meter_number,meter_type)
+            VALUES (:id,:org,:property,:unit,'duplicate-heiz','HEIZUNG')'''),{**w,'id':uuid.uuid4()})
+        await rent_db.commit()
+    url=f"/api/settlements/{w['run']}"
+    async with api_client(w) as api:
+        failed=await api.post(url+'/finalize',json=body)
+        assert failed.status_code==422,failed.text
+        unchanged=(await api.get(url)).json()
+        assert unchanged==before
+        assert unchanged['snapshot_sha256'] is None and unchanged['total_cost']=='525.00'
+
+
+@pytest.mark.asyncio
+async def test_heiz_explicit_noncapture_deducts_only_heating(heiz_world):
+    w=heiz_world
+    body=_heiz_body(w)
+    body['heating_inputs'][0]['consumption_recorded']=False
+    async with api_client(w) as api:
+        result=await api.post(f"/api/settlements/{w['run']}/compute",json=body)
+        assert result.status_code==200,result.text
+        assert _heiz_line(result.json())['amount']=='340.00'
+        assert _heiz_line(result.json(),'WARMWASSER_ZENTRAL')['amount']=='230.00'
+        assert result.json()['total_cost']=='570.00'
+
+
+@pytest.mark.asyncio
+async def test_heiz_nutzerwechsel_uses_intermediate_reading_not_day_estimate(heiz_world,rent_db):
+    w=heiz_world
+    await rent_db.execute(text("UPDATE lease_agreement SET valid_to='2026-07-01' WHERE id=:lease"),w)
+    for meter,value in [(w['meters'][0],'140'),(w['meters'][2],'101')]:
+        await rent_db.execute(text("""INSERT INTO meter_reading
+            (id,organization_id,meter_id,reading_date,value,period)
+            VALUES (:id,:org,:meter,'2026-06-30',:value,'2026')"""),
+            {**w,'id':uuid.uuid4(),'meter':meter,'value':Decimal(value)})
+    await rent_db.commit()
+    async with api_client(w) as api:
+        incoming=await api.post('/api/leases',json={'unit_id':str(w['unit']),
+            'tenant_profile_id':str(w['tenant']),'valid_from':'2026-07-01',
+            'base_rent':'700.00','advance_payment':'150.00'})
+        assert incoming.status_code==201,incoming.text
+        stale=await api.post(f"/api/settlements/{w['run']}/compute",json=_heiz_body(w))
+        assert stale.status_code==422 and 'coverage_stale' in stale.text
+        await attest_fixture(api,'settlement',w['run'],
+            {'advance_payments_total':'0.00','advance_payments_source':'MANUAL'})
+        result=await api.post(f"/api/settlements/{w['run']}/compute",json=_heiz_body(w))
+        assert result.status_code==200,result.text
+        # 120 × 181/365 = 59.51 base; 700 × 40/400 = 70 consumption.
+        assert _heiz_line(result.json())['amount']=='129.51'
+        assert _heiz_line(result.json(),'WARMWASSER_ZENTRAL')['amount']=='89.67'
+        payload=await rent_db.scalar(text('SELECT snapshot_payload FROM settlement_run WHERE id=:id'),{'id':uuid.UUID(w['run'])})
+        pool=next(p for p in payload['heating_costs'] if p['kind']=='HEATING')
+        own=[r for r in pool['rows'] if r['unit_id']==str(w['unit'])]
+        assert {r['consumption'] for r in own}=={'40.000000','60.000000'}
+        assert sum(Decimal(r['gross_amount']) for r in own)==Decimal('295.00')
+
+
+@pytest.mark.asyncio
+async def test_heiz_vacancy_keeps_gross_owner_share(heiz_world,rent_db):
+    w=heiz_world
+    await rent_db.execute(text("UPDATE lease_agreement SET valid_to='2026-07-01' WHERE id=:second_lease"),w)
+    await rent_db.commit()
+    body=_heiz_body(w)
+    for config in body['heating_inputs']: config['consumption_recorded']=False
+    async with api_client(w) as api:
+        stale=await api.post(f"/api/settlements/{w['run']}/compute",json=_heiz_body(w))
+        assert stale.status_code==422 and 'coverage_stale' in stale.text
+        await attest_fixture(api,'settlement',w['run'],
+            {'advance_payments_total':'0.00','advance_payments_source':'MANUAL'})
+        result=await api.post(f"/api/settlements/{w['run']}/compute",json=body)
+        assert result.status_code==200,result.text
+        assert result.json()['total_cost']=='476.00'
+        payload=await rent_db.scalar(text('SELECT snapshot_payload FROM settlement_run WHERE id=:id'),{'id':uuid.UUID(w['run'])})
+        pool=next(p for p in payload['heating_costs'] if p['kind']=='HEATING')
+        vacant=next(r for r in pool['rows'] if r['lease_agreement_id'] is None)
+        assert vacant['gross_amount']==vacant['amount_due']=='302.47'
+        assert vacant['reduction_amount']=='0.00'
+        owner=next(r for r in payload['vacancy_attribution'] if r['cost_entry_id']==str(w['heat']))
+        assert owner['amount']=='302.47'
+        assert sum(Decimal(r['amount_due'])+Decimal(r['reduction_amount']) for r in pool['rows'])==Decimal('1000.00')
+
+
+@pytest.mark.asyncio
+async def test_heiz_compute_waits_for_financial_lock(heiz_world,rent_db):
+    import asyncio
+    w=heiz_world
+    async with api_client(w) as api:
+        await rent_db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
+            {'key':f"financial-inputs:{w['org']}"})
+        request=asyncio.create_task(api.post(f"/api/settlements/{w['run']}/compute",json=_heiz_body(w)))
+        waiting=False
+        try:
+            for _ in range(200):
+                waiting=bool(await rent_db.scalar(text("""SELECT EXISTS(
+                    SELECT 1 FROM pg_stat_activity WHERE pid<>pg_backend_pid()
+                    AND pg_backend_pid()=ANY(pg_blocking_pids(pid)))""")))
+                if waiting: break
+                await asyncio.sleep(.01)
+        finally:
+            await rent_db.rollback()
+        result=await asyncio.wait_for(request,15)
+        assert result.status_code==200,result.text
+        assert waiting,'Heating compute must share the financial-input lock'
+
+
+@pytest.mark.asyncio
+async def test_heiz_live_role_downgrade_blocks_existing_session(heiz_world,rent_db):
+    w=heiz_world
+    async with api_client(w) as api:
+        await rent_db.execute(text("UPDATE membership SET role='READ_ONLY' WHERE organization_id=:org AND user_id=:admin"),w)
+        await rent_db.commit()
+        response=await api.post(f"/api/settlements/{w['run']}/compute",json=_heiz_body(w))
+        assert response.status_code==403,response.text
+        unchanged=(await api.get(f"/api/settlements/{w['run']}")).json()
+        assert unchanged['total_cost'] is None and unchanged['lines']==[]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('partial',[False,True])
+async def test_heiz_scoped_sources_and_revocation(client_a_admin,metered_m3,partial):
+    import psycopg2
+    w=metered_m3
+    scope,grant_id=_batch_scope(w,units=[w['u4']] if partial else None)
+    run=await client_a_admin.post('/api/settlements',json={
+        'property_id':w['property'],'lease_agreement_id':w['lease_e'],
+        'period_start':'2025-01-01','period_end':'2025-12-31',
+        'advance_payments_total':'0.00','accounting_scope_id':scope})
+    assert run.status_code==201,run.text
+    url=f"/api/settlements/{run.json()['id']}/heating-consumption"
+    params={'cost_entry_id':w['ce_heizung'],'meter_type':'HEIZUNG','base_key':'AREA'}
+    assert (await client_a_admin.get(url,params=params)).status_code==409
+    with psycopg2.connect(SYNC_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO accounting_scope_binding
+                (organization_id,property_id,scope_id,cost_entry_id,origin,reason,reviewed_by)
+                SELECT organization_id,property_id,%s,id,'REVIEWED','Synthetic T46 classified heating',%s
+                FROM cost_entry WHERE organization_id=%s AND property_id=%s""",
+                (scope,str(w['user_a_admin_id']),str(w['org_a_id']),w['property']))
+    candidates=await client_a_admin.get(url,params=params)
+    assert candidates.status_code==200,candidates.text
+    assert {r['unit_id'] for r in candidates.json()}==({w['u4']} if partial else {w[k] for k in ('u1','u2','u3','u4')})
+    assert all(r['consumption'] is None and r['reason'] for r in candidates.json())
+    revoked=await client_a_admin.post(f'/api/accounting-scopes/{scope}/grants/{grant_id}/revoke')
+    assert revoked.status_code==204,revoked.text
+    assert (await client_a_admin.get(url,params=params)).status_code==404

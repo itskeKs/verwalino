@@ -53,6 +53,16 @@ Der Anker hat heute `organization_id`, `property_id`, `account_type` (`LAUFEND`/
 
 **Optionale, additive Felder (nicht zwingend M6):** `opening_balance NUMERIC(14,2)` + `opening_balance_date DATE` als **Eröffnungssaldo-Anker** (Kontostand zu einem Stichtag, ab dem `payment`-Bewegungen fortgeschrieben werden). Begründung: ohne Eröffnungssaldo ist der abgeleitete Kontostand nur relativ zu den *im System erfassten* Zahlungen, nicht der reale Banksaldo (Zahlungen vor Systemeinführung fehlen). **[ENTSCHEIDUNG E6-6]** ob M6 diesen Eröffnungssaldo-Anker einführt (empfohlen: ja, klein und additiv) oder ihn nach M9 verschiebt. Er ist **kein** Buchungssatz, sondern eine Verwalter-Stichtagsangabe (wie der Vermögensbericht-Stichtagssaldo, ADR-0008).
 
+**T55 – Lebenszyklus ohne neue Salden:** `is_active=false` beendet die Nutzung
+für neue Zahlungen, Bankimporte und SEPA-Vorschläge; historische Referenzen bleiben
+erhalten und lesbar. Reaktivierung ist ausdrücklich möglich. Metadaten werden unter
+Live-/Quellen-Prepare-Recht und der Finanzsperre geändert. Eine Umbenennung belässt
+SEPA-Mandate/Fingerprints unverändert; verwendete IBAN/BIC werden auch SQL-seitig
+gegen Umschreiben geschützt. Ein exakt zum Original passendes gebuchtes Storno darf
+weiterhin entstehen, nicht aber eine beliebige neue Zahlung auf dem inaktiven Konto.
+Dienstleister nutzen denselben Aktivstatus für neue Kostenreferenzen. Verwaltungs-
+mandate sind davon getrennt und behalten ihren vorhandenen gebundenen Zeitraumsschutz.
+
 ### 1.2 `payment` (neue Tabelle, tenant-behaftet, RLS, ab `booked` unveränderbar)
 
 Eine `payment`-Zeile ist **eine erfasste Geldbewegung** (Eingang oder Ausgang) gegen ein Konto, einer Gegenpartei und einem Zweck/Typ zugeordnet. Sie ist ein **Buchungsbeleg** (GoBD, ADR-0009): ab Status `booked` unveränderbar; Korrektur = Storno + Neubuchung.
@@ -205,6 +215,14 @@ alte API-Aufrufe ohne Zinsbasis und bestehende Briefe behalten ihre zinsfreie
 Semantik. Es wird kein amtlicher Zinssatz erfunden und keine Zustellung behauptet.
 Migration 0129 schützt die neuen Beträge und Provenienz auch beim direkten SQL-Update
 und verweigert einen Downgrade, der vorhandene Zinsgrundlagen verlieren würde.
+
+Seit T53 verwenden Einzel- und ausgewählte Mietermahnungen denselben
+historiesensitiven Mietkonto-Pfad. Die nichtschreibende Mahnlauf-Vorschau filtert
+Hauptforderungen strikt größer als die ausdrücklich gewählte Schwelle. Bestätigung
+legt die gewählten Entwürfe atomar an; Quellen-/Eskalationsänderungen machen eine
+neue Vorschau erforderlich. Wiederholung eines unklaren Requests gibt nach erneuter
+Prepare-/Quellenzulassung dieselben Originalentwürfe zurück. M6-Zahlungen werden
+nicht ergänzt, alte ausgestellte Briefe/PDFs nicht verändert und nichts versendet.
 
 ### 2.3 Soll-Engine als reine Funktion
 
@@ -470,6 +488,67 @@ weder automatisches Ist noch Kontostand. Identische Filterwahl ist ein No-op;
 Lade-/Fehler-/Kontextwechsel sperren veraltete Downloads. Export ändert keine
 Finanz-, Beleg-, Audit- oder Historiendaten.
 
+### 6.14 DATEV-Bestandsausgabe (Phase 3, T49)
+
+`GET /api/reports/datev/sources`, `POST /preview` unter demselben DATEV-Präfix
+und `POST /api/reports/datev.csv` nutzen vollständige Objekt-/Finanzkreis- und
+Quellenexportrechte einschließlich Kontakte. Finanzsperre und Liveprüfung bleiben
+bis zur abschließenden Exportprüfung wirksam. Zeitbasis: Wertstellung aktiver
+gebuchter Zahlungen und Rechnungsdatum aktueller bestätigter Kosten. Keine
+zusätzlichen Rohbankumsätze, Stornopaare, ersetzten Revisionen oder Nullbuchungen.
+
+SKR03/SKR04 und alle realen Konten werden ausdrücklich pro Datei konfiguriert;
+keine Default-Konten oder globale Änderung des Kategorienplans. Konto/Soll bei
+Bank-IN, Konto/Haben bei Bank-OUT; Kosten positiv im Soll, Gutschrift im Haben.
+Bankgegenkonten sind explizit je Zahlungstyp, Kostenkonten und Verrechnungskonten
+je Kategorie festzulegen. Kaution/Rücklage werden nicht als Erlös umgedeutet;
+Rechnungszahlung und Kostenquelle dürfen durch falsche Kontierung nicht doppelt
+als Aufwand erscheinen. Unterstützt sind bewusst geprüfte Bruttokonten **ohne
+Steuerautomatik**, keine VAT-Aufteilung oder BU-Schlüssel.
+
+Primärformat: [DATEV-Format](https://developer.datev.de/de/file-format/details/datev-format/getting-started),
+öffentlich ausgelieferte offizielle Formatbeschreibung mit Header 700,
+Buchungsstapel 13, 125 Feldern, DDMM, positivem Umsatz/Soll-Haben und UTF-8-BOM.
+Die Vorschau bindet Quellenzeilen und Konfiguration per Fingerabdruck; Abweichung
+vor Download führt zu 409. Kein Senden an DATEV und kein nachgewiesener Import.
+**Keine Delta-/Journalhistorie:** Ausgabe ist ein kompletter aktueller Bestand;
+Wiederholung/Überlappung und nachträgliche Korrekturen im Zielsystem abstimmen,
+nicht mehrfach importieren. Bestehende Buchungen/Snapshots bleiben unverändert.
+
+### 6.15 SEPA-CORE-Monatsdatei (Phase 3, T50)
+
+Explizite Gläubiger-/Bankvereinbarung und extern unterschriebenes Mietermandat
+sind Voraussetzungen, keine aus Kontakt-IBAN abgeleitete Zustimmung. Persistente
+Referenz, Unterschrift, FRST/RCUR, letzte tatsächliche Bankvorlage und Originalreferenz
+werden manuell erfasst; Referenzen sind je Gläubiger eindeutig. Name/IBAN-Wechsel,
+Widerruf, Datenschutzsperre oder veraltete Zustimmung blockieren. Die konservative
+36-Monats-Prüfung zählt ab letzter Vorlage, bei unbenutzten Mandaten ab Unterschrift;
+bei Unsicherheit neue Zustimmung einholen. Zurückgewiesene, zurückgegebene und
+erstattete Vorlagen sind ebenfalls als tatsächliche Nutzung zu berücksichtigen.
+
+Monatsbetrag = bestehendes `tenant_expected_charges` über alle überlappenden
+Mietverträge: Kaltmiete plus NK, Miethistorie und getrennte Cent-Rundung je
+Teilmonatskomponente; mehrere Verträge eines Mieters werden zusammengefasst.
+Kein Abzug bereits gebuchter Zahlungen und keine automatische Rückstandsvereinnahmung.
+Vollständige Objekt-/Finanzkreis-/Kontaktexportrechte und Finanzsperren gelten auch
+für Nur-Lesen-Exporte. Fehlendes Mandat ist ein Fehler, keine gefilterte Teilmenge.
+Vorschau und digestgebundener Download buchen nichts und ändern keine Historie.
+
+Profil: CORE, EUR, pain.008.001.08, FRST/RCUR, SLEV; Original-EPC-XSD im Runtimepaket,
+zusätzliche unabhängige ISO-XSD-Prüfung in Tests und Browserdownload. Bankannahme,
+Mandatsoriginal und tatsächliche Vorabankündigung (14 Tage, sofern keine kürzere
+Vereinbarung) bleiben extern zu prüfen. Keine Übertragung, OOFF/FNAL-Automatik,
+Mandatsänderungsnachricht oder Bank-/Clearingkalenderzusage. Gleiche Datei nicht
+ungeprüft mehrfach bei der Bank einreichen; eine Vorschau ist kein Ausführungsbeleg.
+
+Primärquellen: [EPC CORE C2PSP Guidelines](https://www.europeanpaymentscouncil.eu/document-library/implementation-guidelines/sepa-direct-debit-core-customer-psp-implementation-1),
+[EPC CORE Rulebook 2025 v1.2](https://www.europeanpaymentscouncil.eu/document-library/rulebooks/2025-sepa-direct-debit-core-rulebook-version-1-2),
+[Bundesbank Gläubiger-ID](https://www.bundesbank.de/de/aufgaben/unbarer-zahlungsverkehr/serviceangebot/sepa/glaeubiger-identifikationsnummer).
+Die EPC-Mitteilung vom 30.09.2026 verschiebt die zuvor angekündigte feste
+Unstructured-Address-Abschaltung auf einen noch unbestimmten Termin; keine alte
+Novemberfrist als fortgeltende Zusicherung. Gläubiger-ID-Zuteilung allein verleiht
+keine Einzugserlaubnis. Bankprofil ausdrücklich bestätigen.
+
 ## 7. Synthetische Golden-Tests (objektive M6-Messlatte)
 
 Es gibt **keine** realen Beispieldaten. Prüffälle sind **synthetisch** aus den Regeln + **handberechneten** Soll-/Ist-/Saldo-Werten (jeder Cent), exakt wie M3/M4 §9. Beide Test-Arten verbindlich für die M6-Abnahme; sie laufen gegen die **reine Engine** (höchste Testdichte) und gegen Service/DB.
@@ -591,6 +670,16 @@ Golden-Test 5 + Invariante I6-E sind zusammen der objektive Nachweis des M6-Exit
 > **Keine Selbst-Zertifizierung (Haltung):** Dieses Design macht Soll, Ist, offene Posten, die Vermögenstrennung und die Abrechnungs-Anbindung **transparent, deterministisch und nachrechenbar** (Golden-Tests + Property-based Invarianten als objektive Messlatte, insb. „Spitze unabhängig von Zahlungen" und „DERIVED == MANUAL"). Es kann **nicht** garantieren, dass das Mietkonto/Hausgeldkonto im Einzelfall buchhalterisch/prüfungsfest ist (M6 ist keine Finanzbuchhaltung). Die fachliche Richtigkeit (Mietkonto-Tiefe, Kaution, GoBD-Belegqualität manueller Zahlungen, Treuhand-/Fremdgeldtrennung, Verrechnungsregeln) ist vor produktivem Einsatz durch **Steuerberater/Fachanwalt** abzunehmen.
 
 ---
+
+### Fehleingaben und Finanzhistorie (T56)
+
+Ein unreferenziertes Objekt, eine Einheit, Person oder ein Mietvertrag kann nach
+expliziter Bestätigung und aktuellem Quellen-Prepare gelöscht werden. Schon ein
+Profil, eine Miethistorie, Zahlung, ein Beleg, eine Quellfreigabe, Importquittung,
+Auditidentität oder gespeicherte Snapshotreferenz verhindert dies mit 409 und
+Grund. Auch Entwürfe und RLS-verdeckte Referenzen zählen; keine Verknüpfung wird
+zum Zweck der Löschung entfernt. Ausgestellte Briefe und Finanzoriginale bleiben
+bytegleich. Das ist keine DSGVO-Anonymisierung und keine Storno-/Korrekturfunktion.
 
 ## 11. Was dieses Dokument bewusst NICHT entscheidet
 

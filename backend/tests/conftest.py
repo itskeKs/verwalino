@@ -66,6 +66,11 @@ def clear_disposable_source_context(cursor):
     cursor.execute("SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()")
     if cursor.fetchone() != ('app_migrator',):
         raise RuntimeError("Migration rehearsal requires the owned disposable database")
+    # Reset only synthetic session invalidations in this owned disposable DB.
+    # The production downgrade still refuses any positive generation.
+    cursor.execute("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='user' AND column_name='session_version')")
+    if cursor.fetchone()[0]:
+        cursor.execute('UPDATE public."user" SET session_version=0 WHERE session_version<>0')
     cursor.execute("SELECT to_regprocedure('public.guard_property_source_context()')")
     if not cursor.fetchone()[0]:
         return
@@ -363,7 +368,18 @@ def seed_data(run_migrations):
 # Authenticated test clients
 # ---------------------------------------------------------------------------
 def _make_session_cookie(user_id: uuid.UUID, org_id: uuid.UUID) -> str:
-    return create_session_token(user_id, org_id)
+    """A newly authenticated test client uses the current durable generation.
+
+    Existing client cookies remain untouched so revocation tests stay meaningful.
+    """
+    import psycopg2
+
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT session_version FROM public."user" WHERE id=%s AND organization_id=%s',
+                           (str(user_id), str(org_id)))
+            row = cursor.fetchone()
+    return create_session_token(user_id, org_id, row[0] if row else 0)
 
 
 def _api_test_client(**kwargs) -> httpx.AsyncClient:

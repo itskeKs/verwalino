@@ -518,18 +518,18 @@ async def test_session_validation_requires_active_matching_membership(
 
 @pytest.mark.asyncio
 async def test_session_validation_rejects_inactive_user(migrator_session, seed_data):
-    await migrator_session.execute(
-        text('UPDATE public."user" SET is_active = false WHERE id = :user_id'),
-        {"user_id": seed_data["user_a_admin_id"]},
-    )
+    # Roll back the whole security mutation, not only is_active: reactivation
+    # deliberately does not undo durable session invalidation in production.
+    savepoint = await migrator_session.begin_nested()
     try:
+        await migrator_session.execute(
+            text('UPDATE public."user" SET is_active = false WHERE id = :user_id'),
+            {"user_id": seed_data["user_a_admin_id"]},
+        )
         result = await migrator_session.execute(
             text("SELECT * FROM public.app_validate_session(:user_id, :organization_id)"),
             {"user_id": seed_data["user_a_admin_id"], "organization_id": seed_data["org_a_id"]},
         )
         assert result.all() == []
     finally:
-        await migrator_session.execute(
-            text('UPDATE public."user" SET is_active = true WHERE id = :user_id'),
-            {"user_id": seed_data["user_a_admin_id"]},
-        )
+        await savepoint.rollback()

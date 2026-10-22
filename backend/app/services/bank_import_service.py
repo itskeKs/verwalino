@@ -40,6 +40,8 @@ class BankImportService:
     async def import_statement(
         self, account_id: uuid.UUID, content: bytes, filename: str, *, dry_run: bool
     ) -> dict:
+        # Follow the same lock order as account edits before taking row locks.
+        await FinancialScopeService(self._session, self._org_id, self._user_id).lock_inputs()
         # Serialize imports on the same account. RLS + explicit org filter apply
         # to this lock too; another tenant's account is never a writable target.
         account = await (
@@ -48,6 +50,8 @@ class BankImportService:
         )
         if account is None:
             raise HTTPException(status_code=404, detail="Bank account not found")
+        if not account.is_active:
+            raise HTTPException(409, "Bank account is inactive; use an active account for new imports")
         extension = filename.rsplit(".", 1)[-1].lower()
         if extension == "csv":
             parser = parse_csv

@@ -43,13 +43,19 @@ class RequestBodyLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
+        import_path = scope.get('path', '').rstrip('/') in {
+            '/api/properties/import/preview', '/api/properties/import/apply',
+        }
+        # JSON escaping can expand each CSV byte to six characters. Bound the
+        # envelope before JSON parsing, then enforce the exact CSV byte limit.
+        body_limit = min(self.max_body_bytes, 6 * 256 * 1024 + 256 * 1024) if import_path else self.max_body_bytes
         content_length = next(
             (value for name, value in scope.get("headers", []) if name.lower() == b"content-length"),
             None,
         )
         if content_length is not None:
             try:
-                if int(content_length) > self.max_body_bytes:
+                if int(content_length) > body_limit:
                     await self._send_too_large(send)
                     return
             except ValueError:
@@ -68,7 +74,7 @@ class RequestBodyLimitMiddleware:
                     continue
                 body = message.get("body", b"")
                 total += len(body)
-                if total > self.max_body_bytes:
+                if total > body_limit:
                     await self._send_too_large(send)
                     return
                 spool.write(body)
@@ -112,6 +118,8 @@ class RequestBodyLimitMiddleware:
         if scope.get("type") != "http" or scope.get("method", "").upper() != "POST":
             return False
         parts = scope.get("path", "").rstrip("/").strip("/").split("/")
+        if len(parts) == 4 and parts[:3] == ['api', 'properties', 'import'] and parts[3] in {'preview', 'apply'}:
+            return True
         if parts == ["api", "attachments"]:
             return True
         if parts == ["api", "invoice-documents", "upload"]:

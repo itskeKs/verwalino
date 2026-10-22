@@ -12,10 +12,14 @@ from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
+from app.core.live_principal import get_live_member_db, get_live_writer_db
+from app.core.rbac import ScopeCapability
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
+from app.core.tenant import AuthContext, get_current_user, require_write_dep
 from app.models.bank_account import BankAccount
 from app.services.financial_scope_service import FinancialScopeService
 from app.repositories.bank_account_repo import BankAccountRepository
@@ -40,7 +44,24 @@ class BankAccountCreate(BaseModel):
     bank_name: str | None = None
 
 
+class BankAccountUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    label: str | None = Field(default=None, max_length=255)
+    bank_name: str | None = Field(default=None, max_length=255)
+    iban: str | None = Field(default=None, max_length=34)
+    bic: str | None = Field(default=None, max_length=11)
+    is_active: StrictBool | None = None
+
+    @field_validator("label", "is_active")
+    @classmethod
+    def reject_null(cls, value):
+        if value is None:
+            raise ValueError("Field cannot be null")
+        return value
+
+
 class BankAccountOut(BaseModel):
+    is_active: bool
     property_name: str | None = None
     id: str
     organization_id: str
@@ -99,6 +120,7 @@ class BankTransactionPageOut(BaseModel):
 
 def _to_out(a: BankAccount, property_name: str | None = None) -> BankAccountOut:
     return BankAccountOut(
+        is_active=a.is_active,
         property_name=property_name,
         id=str(a.id),
         organization_id=str(a.organization_id),
@@ -118,7 +140,7 @@ def _to_out(a: BankAccount, property_name: str | None = None) -> BankAccountOut:
 async def list_bank_accounts(
     property_id: uuid.UUID | None = None,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     repo = BankAccountRepository(db, auth.organization_id)
     items = await repo.list_with_property_names(property_id)
@@ -129,7 +151,7 @@ async def list_bank_accounts(
 async def get_bank_account(
     account_id: uuid.UUID,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     repo = BankAccountRepository(db, auth.organization_id)
     account = await repo.get_by_id(account_id)
@@ -142,7 +164,7 @@ async def get_bank_account(
 async def create_bank_account(
     body: BankAccountCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     valid_types = {"LAUFEND", "RUECKLAGE", "KAUTION"}
     if body.account_type not in valid_types:
@@ -166,6 +188,35 @@ async def create_bank_account(
     return _to_out(account)
 
 
+@router.patch("/{account_id}", response_model=BankAccountOut)
+async def update_bank_account(
+    account_id: uuid.UUID,
+    body: BankAccountUpdate,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_live_writer_db),
+):
+    context = FinancialScopeService(db, auth.organization_id, auth.user_id)
+    await context.lock_inputs()
+    repo = BankAccountRepository(db, auth.organization_id)
+    account = await repo.get_by_id_for_update(account_id)
+    if account is None:
+        raise HTTPException(404, "Bank account not found")
+    await context.enter(account, capability=ScopeCapability.PREPARE)
+    if not await db.scalar(text("SELECT property_source_permitted(:org,'property',:property,'prepare')"),
+            {"org": auth.organization_id, "property": account.property_id}):
+        raise HTTPException(404, "Bank source preparation access unavailable")
+    updates = body.model_dump(exclude_unset=True)
+    for key, value in updates.items():
+        setattr(account, key, value)
+    try:
+        await db.flush()
+    except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) == "23514":
+            raise HTTPException(409, "Used bank account details cannot be rewritten; create a new account instead") from exc
+        raise
+    return _to_out(account)
+
+
 @router.get("/{account_id}/transactions", response_model=BankTransactionPageOut)
 async def list_bank_transactions(
     account_id: uuid.UUID,
@@ -173,7 +224,7 @@ async def list_bank_transactions(
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_member_db),
 ):
     if await BankAccountRepository(db, auth.organization_id).get_by_id(account_id) is None:
         raise HTTPException(status_code=404, detail="Bank account not found")
@@ -189,7 +240,7 @@ async def import_bank_statement(
     file: UploadFile = File(...),
     dry_run: bool = True,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_live_writer_db),
 ):
     try:
         content = await read_upload_limited(file, max_bytes=MAX_IMPORT_BYTES)

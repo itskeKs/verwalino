@@ -3,7 +3,7 @@ import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
  * Wirtschaftsplan detail (M4): planned-cost editor, compute (per-owner monthly
  * Hausgeld), finalize, PDF, correction.
  */
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useContext } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   getEconomicPlan,
@@ -25,6 +25,7 @@ import type {
   OwnerProfile,
   Person,
 } from "../api/types";
+import { AuthCtx } from "../auth/useAuth";
 import { ApiError } from "../api/client";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
@@ -42,6 +43,8 @@ interface CostRow {
 export function EconomicPlanDetailPage() {
   const { planId } = useParams<{ planId: string }>();
   const navigate = useNavigate();
+  const auth = useContext(AuthCtx);
+  const canWrite = !!auth && !auth.loading && (auth.session?.role === "OWNER_ADMIN" || auth.session?.role === "CLERK");
   const [plan, setPlan] = useState<EconomicPlan | null>(null);
   const [properties, setProperties] = useState<Property[]>([]);
   const [categories, setCategories] = useState<CostCategory[]>([]);
@@ -59,18 +62,29 @@ export function EconomicPlanDetailPage() {
 
   const reload = useCallback(() => {
     if (!planId) return;
+    let current = true;
     setLoading(true);
+    setError(null);
     Promise.all([getEconomicPlan(planId), listProperties(), listCostCategories(), listOwnerProfiles(), listPersons()])
       .then(([pl, pr, c, op, per]) => {
+        if (!current) return;
         setPlan(pl);
         setProperties(pr);
         setCategories(c);
         setOwnerProfiles(op);
         setPersons(per);
-        setReserve(pl.status === "finalized" ? pl.reserve_contribution_total : "");
+        // Hydrate only on route load, never from compute/finalize action responses.
+        const stored = pl.status === "draft" ? pl.draft_inputs : null;
+        setRows(stored ? stored.planned_costs.map(row => ({
+          category_code: row.category_code, label: row.label, planned_amount: row.planned_amount,
+          distribution_key: row.distribution_key ?? "MEA", cost_group: row.cost_group ?? "UMLAGEFAEHIG",
+          category_id: row.category_id ?? null,
+        })) : []);
+        setReserve(stored ? stored.reserve_contribution_total : pl.status === "finalized" ? pl.reserve_contribution_total : "");
       })
-      .catch((err) => setError(err instanceof ApiError && err.status === 401 ? "Nicht authentifiziert." : String(err)))
-      .finally(() => setLoading(false));
+      .catch((err) => { if (current) setError(err instanceof ApiError && err.status === 401 ? "Nicht authentifiziert." : String(err)); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
   }, [planId]);
 
   useEffect(() => reload(), [reload]);
@@ -125,6 +139,7 @@ export function EconomicPlanDetailPage() {
   }
 
   async function run(fn: () => Promise<EconomicPlan>) {
+    if (!canWrite || busy) return;
     setBusy(true);
     setActionError(null);
     try {
@@ -205,7 +220,7 @@ export function EconomicPlanDetailPage() {
         </tbody></table>
       </div>
 
-      {isDraft && (
+      {isDraft && canWrite && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Geplante Kosten</h2>
           <div style={{ overflowX: "auto" }}>
@@ -215,14 +230,18 @@ export function EconomicPlanDetailPage() {
                 {rows.map((r, idx) => (
                   <tr key={idx}>
                     <td>
-                      <select value={r.category_code} onChange={(e) => setRow(idx, e.target.value)}>
+                      <select aria-label={`Kategorie ${idx + 1}`} value={r.category_code} onChange={(e) => setRow(idx, e.target.value)}>
                         <option value="">-- Kategorie --</option>
-                        {categories.map((c) => <option key={c.id} value={c.code}>{c.code} {c.label}</option>)}
+                        {r.category_code && !categories.some(c => c.code === r.category_code && (!r.category_id || c.id === r.category_id)) && (
+                          <option value={r.category_code} disabled>{r.category_code} {r.label} (historische Kategorie · {r.category_id})</option>
+                        )}
+                        {categories.filter(c => c.code !== r.category_code || !r.category_id || c.id === r.category_id).map((c) => <option key={c.id} value={c.code}>{c.code} {c.label}</option>)}
                       </select>
+                      {r.category_id && <div>{r.label} · Kategorie-ID: {r.category_id}</div>}
                     </td>
                     <td>{r.distribution_key}</td>
                     <td>
-                      <input type="text" inputMode="decimal" placeholder="0.00" value={r.planned_amount}
+                      <input aria-label={`${r.label || "Position"} – Jahresbetrag`} type="text" inputMode="decimal" placeholder="0.00" value={r.planned_amount}
                         onChange={(e) => setRowAmount(idx, e.target.value)} />
                     </td>
                     <td><button className="btn btn--small" onClick={() => removeRow(idx)}>×</button></td>

@@ -3,7 +3,7 @@
  */
 
 import { api, uploadFormData } from "./client";
-import type { Task, TaskInput, TaskFilters, TaskPage, User, PropertyYearReport, PropertyYearReportQuery } from "./types";
+import type { Task, TaskInput, TaskFilters, TaskPage, User, UserRole, PropertyYearReport, PropertyYearReportQuery } from "./types";
 
 import type { Attachment, AttachmentFilters, AttachmentPage, AttachmentUpload } from "./types";
 import type { SpecialLevy, SpecialLevyCreate } from "./types";
@@ -21,6 +21,7 @@ import type {
   Organization,
   Mandate,
   MandateCreate,
+  MandateUpdate,
   Property,
   PropertyCreate,
   PropertyUpdate,
@@ -33,6 +34,7 @@ import type {
   OwnerProfile,
   TenantProfile,
   Vendor,
+  VendorUpdate,
   OwnershipRecord,
   OwnershipCreate,
   OwnershipEndRequest,
@@ -56,6 +58,8 @@ import type {
   AdvanceProposal,
   AdvanceProposalApply,
   ComputeRequest,
+  HeatingBaseKey,
+  HeatingConsumptionCandidate,
   EconomicPlan,
   EconomicPlanCreate,
   PlanComputeRequest,
@@ -66,6 +70,7 @@ import type {
   AssetReportComputeRequest,
   BankAccount,
   BankAccountCreate,
+  BankAccountUpdate,
   BankTransactionPage,
   BankTransactionStatus,
   BankMatchingPage,
@@ -150,6 +155,10 @@ export function getMyOrganization(): Promise<Organization> {
 
 export function createMandate(body: MandateCreate): Promise<Mandate> {
   return api.post<Mandate>("/api/mandates", body);
+}
+
+export function updateMandate(id: string, body: MandateUpdate): Promise<Mandate> {
+  return api.patch<Mandate>(`/api/mandates/${encodeURIComponent(id)}`, body);
 }
 
 export function getMandate(id: string): Promise<Mandate> {
@@ -412,6 +421,10 @@ export function pollDeclarationImport(
   };
 }
 
+export function deleteProperty(id: string, signal?: AbortSignal): Promise<void> {
+  return api.delete<void>(`/api/properties/${encodeURIComponent(id)}`, { signal });
+}
+
 // --- Units ---
 
 export function listUnits(propertyId?: string): Promise<Unit[]> {
@@ -431,6 +444,10 @@ export function updateUnit(id: string, body: UnitUpdate): Promise<Unit> {
   return api.put<Unit>(`/api/units/${id}`, body);
 }
 
+export function deleteUnit(id: string, signal?: AbortSignal): Promise<void> {
+  return api.delete<void>(`/api/units/${encodeURIComponent(id)}`, { signal });
+}
+
 // --- Persons ---
 
 export function listPersons(): Promise<Person[]> {
@@ -447,6 +464,10 @@ export function createPerson(body: PersonCreate): Promise<Person> {
 
 export function updatePerson(id: string, body: PersonUpdate): Promise<Person> {
   return api.put<Person>(`/api/persons/${id}`, body);
+}
+
+export function deletePerson(id: string, signal?: AbortSignal): Promise<void> {
+  return api.delete<void>(`/api/persons/${encodeURIComponent(id)}`, { signal });
 }
 
 // --- Owner Profiles ---
@@ -482,6 +503,10 @@ export function createVendor(body: { person_id: string; tax_id?: string; vat_id?
   return api.post<Vendor>("/api/vendors", body);
 }
 
+export function updateVendor(id: string, body: VendorUpdate): Promise<Vendor> {
+  return api.put<Vendor>(`/api/vendors/${encodeURIComponent(id)}`, body);
+}
+
 // --- Ownership History ---
 
 export function listOwnership(unitId?: string): Promise<OwnershipRecord[]> {
@@ -515,6 +540,10 @@ export function patchLease(
   return api.patch<LeaseRecord>(`/api/leases/${leaseId}`, body);
 }
 
+export function deleteLease(id: string, signal?: AbortSignal): Promise<void> {
+  return api.delete<void>(`/api/leases/${encodeURIComponent(id)}`, { signal });
+}
+
 export function listLeaseRentChanges(leaseId: string): Promise<LeaseRentChange[]> {
   return api.get<LeaseRentChange[]>(`/api/leases/${leaseId}/rent-changes`);
 }
@@ -524,6 +553,56 @@ export function createLeaseRentChange(
   body: LeaseRentChangeCreate,
 ): Promise<LeaseRentChange> {
   return api.post<LeaseRentChange>(`/api/leases/${leaseId}/rent-changes`, body);
+}
+
+export type StaffelmieteCreate = {
+  staffel_start_date: string;
+  staffel_interval_months: number;
+  staffel_steps: number;
+} & (
+  | { staffel_increase_amount: string; staffel_increase_percent?: never }
+  | { staffel_increase_amount?: never; staffel_increase_percent: string }
+);
+
+export function createStaffelmieteRentChanges(
+  leaseId: string,
+  body: StaffelmieteCreate,
+): Promise<LeaseRentChange[]> {
+  return api.post<LeaseRentChange[]>(`/api/leases/${leaseId}/rent-changes/staffel`, body);
+}
+
+export interface IndexmieteInput {
+  old_index: string;
+  new_index: string;
+  declaration_received_on: string;
+}
+
+export interface IndexmietePreview {
+  valid_from: string;
+  previous_valid_from: string;
+  previous_base_rent: string;
+  base_rent: string;
+  advance_payment: string;
+}
+
+export interface IndexmieteCreate extends IndexmieteInput {
+  expected_base_rent: string;
+  expected_advance_payment: string;
+  expected_previous_valid_from: string;
+}
+
+export function previewIndexmieteRentChange(
+  leaseId: string,
+  body: IndexmieteInput,
+): Promise<IndexmietePreview> {
+  return api.post<IndexmietePreview>(`/api/leases/${leaseId}/rent-changes/index/preview`, body);
+}
+
+export function createIndexmieteRentChange(
+  leaseId: string,
+  body: IndexmieteCreate,
+): Promise<LeaseRentChange> {
+  return api.post<LeaseRentChange>(`/api/leases/${leaseId}/rent-changes/index`, body);
 }
 
 // --- M2: Cost Categories ---
@@ -675,6 +754,16 @@ export function setAdvancePayments(
   return api.patch<SettlementRun>(`/api/settlements/${id}/advance-payments`, body);
 }
 
+export function getHeatingConsumption(
+  runId: string,
+  costEntryId: string,
+  meterType: string,
+  baseKey: HeatingBaseKey,
+): Promise<HeatingConsumptionCandidate[]> {
+  const query = new URLSearchParams({ cost_entry_id: costEntryId, meter_type: meterType, base_key: baseKey });
+  return api.get<HeatingConsumptionCandidate[]>(`/api/settlements/${encodeURIComponent(runId)}/heating-consumption?${query}`);
+}
+
 export function computeSettlement(
   id: string,
   body?: ComputeRequest,
@@ -802,6 +891,10 @@ export function getBankAccount(id: string): Promise<BankAccount> {
 
 export function createBankAccount(body: BankAccountCreate): Promise<BankAccount> {
   return api.post<BankAccount>("/api/bank-accounts", body);
+}
+
+export function updateBankAccount(id: string, body: BankAccountUpdate): Promise<BankAccount> {
+  return api.patch<BankAccount>(`/api/bank-accounts/${encodeURIComponent(id)}`, body);
 }
 
 export function listBankTransactions(id: string, status?: BankTransactionStatus, offset = 0): Promise<BankTransactionPage> {
@@ -1133,6 +1226,14 @@ export function createUser(
   role: string,
 ): Promise<unknown> {
   return api.post<unknown>("/api/users", { email, password, display_name: displayName, role });
+}
+
+export function updateUser(id: string, body: { role?: UserRole; is_active?: boolean }): Promise<User> {
+  return api.patch<User>(`/api/users/${encodeURIComponent(id)}`, body);
+}
+
+export function resetUserPassword(id: string, password: string): Promise<void> {
+  return api.post<void>(`/api/users/${encodeURIComponent(id)}/reset-password`, { password });
 }
 
 // T09: Paid advances derived

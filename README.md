@@ -29,6 +29,24 @@ anmelden. Der lokale Browserablauf ist mit
 `scripts/acceptance/t14_password_browser.cjs` gegen `scripts/dev-local.sh`
 wiederholbar (vorhandenes Playwright über `HV_PLAYWRIGHT_PACKAGE`, Chrome).
 
+## Benutzerverwaltung (T57)
+
+Admins bearbeiten unter „Benutzer“ Rolle und Aktivstatus oder setzen ein neues
+Passwort (12–128 Zeichen). Deaktivierung verlangt eine Bestätigung; eigene
+Deaktivierung/Herabstufung ist gesperrt. Ein Reset übermittelt keine E-Mail und
+zeigt niemals vorhandene Passwörter. Rollen wirken bei der nächsten Anfrage;
+Nur-Lesen blendet geschäftliche Schreibaktionen aus, eigene Passwortpflege bleibt.
+
+Reset, eigener Passwortwechsel und Deaktivierung widerrufen bestehende Cookies
+über eine dauerhafte Session-Generation. Reaktivierung belebt alte Cookies nicht
+wieder. Die Live-Prüfung erfolgt erneut unter der ACL-Sperre; Rollen-/Aktivänderung
+und nicht-sensitive Auditdaten werden atomar gespeichert. Der tatsächliche lokale
+Desktop-/Smartphone-Ablauf ist `scripts/acceptance/t57_users_browser.cjs`.
+Die authentifizierte Generation bleibt auch in späteren Wissens-/Plantransaktionen
+erhalten; die isolierte Review-Runtime darf nur Sessions prüfen, keine Passwörter
+nachschlagen. Unbekannte Altrollen werden als ungültig angezeigt und beim Login
+abgewiesen, nicht still in eine gültige Rolle umgewandelt.
+
 ## Bankumsätze und Dateiimport (Phase 2)
 
 Bankumsätze werden getrennt von gebuchten Zahlungen geführt: Beträge sind
@@ -147,6 +165,114 @@ Werte werden vor dem POST abgewiesen, Serverfehler behalten die Eingaben;
 während des Speicherns sind weitere Änderungen und Schließen gesperrt.
 `scripts/acceptance/t24_rent_change_browser.cjs` prüft den UI-Ablauf und alle
 24 Monats-/Typzeilen: 700/150 bis März, 750/150 ab April, Jahres-Soll 10.650 EUR.
+
+## Staffelmiete (T43)
+
+In der Miethistorie der Einheit erzeugt „Staffelmiete anlegen“ 1–50 volle
+Monatsraten ab dem gewählten ersten Erhöhungsdatum. Ein positiver EUR-Betrag
+oder Prozentsatz wird je Stufe auf die vorherige Kaltmiete angewendet und mit
+Decimal/ROUND_HALF_UP auf Cent gerundet; die Vorauszahlung bleibt unverändert.
+Beispiel: 700 EUR + 30 EUR jährlich ab 01.01.2027 ergibt fünf Stufen
+730/760/790/820/850 EUR bis 01.01.2031. Kalendertermine bleiben am Starttag
+verankert; kurze Monate werden auf ihren letzten Tag begrenzt, ohne Folgedrift.
+
+`POST /api/leases/{id}/rent-changes/staffel` erwartet `staffel_start_date`,
+`staffel_interval_months` (12–120), `staffel_steps` (1–50) und genau eines von
+`staffel_increase_amount` (EUR-Dezimalstring) oder `staffel_increase_percent`
+(Dezimalbruch, `"0.05"` = 5 %). Grundlage ist die letzte Miethistorienzeile vor
+Start, sonst der Originalvertrag. Mindestens ein Jahr Abstand ist erforderlich.
+Bereits vorhandene Änderungen ab Start liefern 409; ungültige Werte, Betrags-
+oder Datumsüberlauf und Stufen nach Vertragsende liefern 422. Die Transaktion
+legt entweder alle Stufen an oder keine. Live-Schreib-/Quellenrechte, gemeinsame
+Finanzsperre, Audit und unveränderliche Historie gelten wie bei T23.
+
+[§ 557a BGB](https://www.gesetze-im-internet.de/bgb/__557a.html) verlangt
+Schriftform und Geldbeträge sowie mindestens ein Jahr unveränderte Miete.
+Prozent ist hier nur eine Rechenhilfe; die App ersetzt weder Vereinbarung noch
+Prüfung der zulässigen Miethöhe/Mietpreisbremse. Keine neue Datenbankrevision.
+`scripts/acceptance/t43_staffelmiete_browser.cjs` prüft den echten UI-Durchstich.
+
+## Indexmiete (T44)
+
+„Indexmiete berechnen“ in der Miethistorie erwartet VPI alt/neu mit gleicher
+Destatis-Basis (manuelle Eingabe, kein Abruf) und das Zugangsdatum der Erklärung.
+Die schreibfreie Vorschau zeigt `bisherige Kaltmiete × VPI neu / VPI alt`, mit
+Decimal/ROUND_HALF_UP auf Cent gerundet; 600 EUR bei 110 → 115 ergeben 627,27 EUR.
+Auch Indexsenkungen sind möglich. Die Vorauszahlung wird nicht indexiert.
+
+`POST /api/leases/{id}/rent-changes/index/preview` erwartet `old_index`,
+`new_index` (positive endliche Dezimalstrings, höchstens sechs Nachkommastellen)
+und `declaration_received_on`. Wirksamkeitsbeginn ist der erste Tag des
+übernächsten Monats; mindestens ein Kalenderjahr seit der letzten Änderung der
+Kaltmiete ist erforderlich. Eine reine Vorauszahlungsänderung startet diese
+Frist nicht neu. Künftige Historienzeilen werden nicht ersetzt (409), Daten
+außerhalb des Vertrags und ungültige Berechnungswerte werden abgewiesen (422).
+
+Erst „Als Mietänderung übernehmen“ sendet an `/rent-changes/index` zusätzlich
+`expected_base_rent`, `expected_advance_payment` und
+`expected_previous_valid_from` aus der Vorschau. Unter der gemeinsamen
+Finanz-/Vertragssperre wird neu gerechnet; eine veraltete Vorschau liefert 409.
+Die Übernahme nutzt den unveränderlichen T23-Pfad und protokolliert VPI und
+angegebenen Zugang im Audit. Live-/Quellenrechte gelten auch für die Vorschau.
+Vertragsoriginal, gebuchte Zahlungen und finale Snapshots bleiben unverändert.
+
+[§ 557b BGB](https://www.gesetze-im-internet.de/bgb/__557b.html) verlangt eine
+schriftliche Indexvereinbarung und eine Erklärung in Textform. Voraussetzungen
+und korrekte VPI-Basis prüft der Betreiber. Das eingegebene Datum belegt keine
+Zustellung; die Funktion erstellt/versendet keine Erklärung. Keine Migration.
+`scripts/acceptance/t44_indexmiete_browser.cjs` prüft den echten UI-Ablauf.
+
+## HeizkostenV-Rechenengine (T45)
+
+`app.engine.heizkosten.calculate_heating_costs(pools, context=...)` verteilt
+getrennt festgelegte Heizungs- und Warmwasserkostenpools. Eingaben/Ergebnisse sind
+frozen Dataclasses aus `engine/types.py`; alle Beträge, Anteile und Messmengen
+sind Decimal. Verbrauchsquote 50–70 %, Grundquote 30–50 %; bei ausdrücklich
+angegebenem §7-Sondergebäudefall sind 70 % Verbrauch Pflicht. Heizungsgrundkosten
+nutzen die angegebene Fläche/beheizte Fläche/den Rauminhalt, Warmwassergrundkosten
+nur Wohn-/Nutzfläche. Die bestehende Largest-Remainder-Funktion teilt zunächst
+Grund-/Verbrauchskosten und danach jede Teilsumme centtreu auf stabile UUIDs auf.
+
+`consumption_recorded=False` kennzeichnet ausdrücklich eine nicht
+verbrauchsabhängige Abrechnung: der Pool wird nach der angegebenen Grundbasis
+verteilt, im Kontext `TENANT` wird je Nutzer der volle betroffene Kostenanteil
+um 15 % gekürzt (Cent-Rundung HALF_UP). Kürzung und Restbetrag werden getrennt
+ausgewiesen; kein Kürzungsbetrag wird auf andere Nutzer oder Warmwasserpools
+umverteilt. Im expliziten Kontext `WEG_OWNER` erfolgt diese Mieterkürzung nicht.
+Fehlende einzelne Werte, NaN/Infinity/Floats, negative Kosten/Mengen, doppelte
+Einheiten/Pools oder nicht tragfähige Nullbasen werden laut abgewiesen.
+
+Primärquellen: [§7](https://www.gesetze-im-internet.de/heizkostenv/__7.html),
+[§8](https://www.gesetze-im-internet.de/heizkostenv/__8.html),
+[§9](https://www.gesetze-im-internet.de/heizkostenv/__9.html) und
+[§12 HeizkostenV](https://www.gesetze-im-internet.de/heizkostenv/__12.html).
+Die Kostenabgrenzung verbundener Anlagen und Ausnahmevoraussetzungen werden
+vorgegeben, nicht aus angenommenen Brennstoffen/Temperaturen hergeleitet;
+keine §9a-Schätzung und keine zusätzlichen 3-%-Tatbestände. T45 ist die reine
+Engine; T46 verbindet sie nun mit BK, getrennten Zählerquellen und dem PDF.
+
+In der BK-Abrechnung lässt sich je bestätigter Heiz-/Warmwasserposition bewusst
+„Intern nach HeizkostenV abrechnen“ aktivieren. Ohne Aktivierung bleibt die externe
+Messdienstabrechnung unverändert. Verbrauchsquote, §7-Sonderfall, Grundbasis und
+Zählertyp werden ausdrücklich eingegeben; automatische und manuelle Mengen bleiben
+von Kaltwasser/anderen Verbrauchsschlüsseln getrennt. Alle teilnehmenden Einheiten,
+Mieterwechsel und Leerstandsabschnitte sind sichtbar. Grundkosten werden mit
+Fläche/Volumen × Tagen verteilt; Verbrauchskosten nutzen exakte Grenz-/Zwischenablesungen
+([§9b](https://www.gesetze-im-internet.de/heizkostenv/__9b.html)) oder ausgewiesene
+Handwerte (maximal sechs Nachkommastellen), niemals eine stille Tagesschätzung.
+Der Zeitraumanteil einer übergreifenden Kostenquelle wird centtreu vorab abgegrenzt;
+bei Teilumlage bleibt der bestätigte Mieterbetrag maßgeblich. Leerstand trägt den
+Brutto-Eigentümeranteil ohne Mieterkürzung. Fehlende/mehrdeutige Werte liefern 422.
+
+Berechnen speichert die Eingabeabsicht im vorhandenen Entwurfssnapshot; Reload
+stellt sie wieder her. Ohne Requestbody werden gespeicherte Eingaben wiederverwendet,
+ein expliziter leerer Request löscht sie. Vorschau speichert nichts. Automatische
+Ablesungen werden bis zur Finalisierung frisch aufgelöst; danach stehen Konfiguration,
+Messbelege und getrennte Grund-/Verbrauchs-/Kürzungsbeträge unveränderlich im Snapshot.
+Das UI-geöffnete PDF liest nur diesen eingefrorenen Rechenweg. Keine neue Migration,
+keine behauptete §9-Kostentrennung, §9a-Schätzung oder rechtliche Zertifizierung.
+`uv run pytest tests/test_m3_settlement.py -k heiz` prüft den Backendpfad;
+`scripts/acceptance/t46_heizkosten_browser.cjs` prüft die reale UI und PDF-Inhalte.
 
 ## Kautionen (Phase 2)
 
@@ -432,6 +558,215 @@ spätere Konfigurations- oder Zahlungsänderungen berechnen die ausgestellte Mah
 nicht neu. Migration 0129 schützt diese Provenienz und verweigert deren Verlust
 beim Downgrade. Ausstellung allein bestätigt keinen Zugang. Der echte UI-/PDFablauf
 ist mit `scripts/acceptance/t35_dunning_interest_browser.cjs` wiederholbar.
+
+### Unverwendete Fehleingaben löschen (T56)
+
+In Objekt-, Einheits- und Personendetails sowie an einem Mietvertrag gibt es für
+Schreibberechtigte einen ausdrücklichen Löschdialog. Ohne eingehende Referenzen
+und bei aktuellem Quellen-Vorbereitungsrecht wird genau der gewählte Datensatz
+entfernt; verknüpfte Daten werden niemals mitgelöscht. Bei Referenzen nennt 409
+den Grund, beispielsweise einen Mietvertrag oder eine Miethistorie. Auch
+Quellenfreigaben, Anlage-/Importquittungen, Audit und gespeicherte Finanzsnapshots
+sind geschützte Referenzen. Bestehende RLS-/Datenschutzsperren bleiben maßgeblich.
+Eine Person mit Mieter-/Eigentümer-/Dienstleisterprofil ist bereits referenziert.
+Der UI-only-Test `scripts/acceptance/t56_master_delete_browser.cjs` prüft Abbrechen,
+echte Löschung einer leeren Einheit und den sichtbaren Vertragsgrund einer
+verwendeten Einheit nach Desktop-/Telefon-Reload; Originalverträge bleiben gleich.
+
+### Stammdaten bearbeiten und beenden (T55)
+
+Bankkonten lassen sich unter **Bankkonten → Bankkonto bearbeiten** umbenennen und
+nach ausdrücklicher Bestätigung beenden oder reaktivieren. Historische Umsätze
+bleiben sichtbar; inaktive Konten sind keine Quelle für neue Zahlungen, Importe
+oder SEPA-Vorschläge. Eine reine Umbenennung verändert keine SEPA-Mandate.
+Bereits verwendete IBAN/BIC sind geschützt: stattdessen ein neues Konto anlegen.
+Exakte Stornokorrekturen gebuchter Originale bleiben auch nach Beendigung möglich.
+
+Dienstleisterdetails können mit Kontakt-Vorbereitungsrecht bearbeitet und beendet
+werden; neue Kosten dürfen keine inaktiven Dienstleister auswählen. Ein Admin kann
+Verwaltungsmandate bearbeiten/beenden, jedoch keine bereits durch Finanzkreise
+gebundene Definition umschreiben (409). Das betrifft nicht SEPA-Mandate.
+Objekte besitzen optional **Baujahr** und **Gesamtfläche (m²)**; die Fläche wird als
+Decimal gespeichert, nicht aus Einheiten erfunden. Leere Angaben bleiben unbekannt.
+Der UI-only-Test `scripts/acceptance/t55_master_data_browser.cjs` prüft die echte
+Umbenennung, 1984 / 1.234,56 m² und unveränderte Quellen nach Desktop-/Telefon-Reload.
+
+### Wirtschaftsplan aus Vorjahres-Ist (T54)
+
+Unter **Wirtschaftspläne → Plan aus Vorjahres-Ist** Objekt, Zieljahr und – bei
+klassifizierten Quellen – den Vorjahres-Lesekreis und neuen WEG-Prepare-Kreis
+getrennt auswählen. Die nichtschreibende Vorschau verwendet aktuelle bestätigte
+Bruttokosten nach Leistungszeitraum; überjährige Positionen werden nach inklusiven
+Tagen je Position auf Cent gerundet, Gutschriften saldiert. Ersetzte/unbestätigte
+Kosten zählen nicht; negative Nettokategorien, inaktive oder uneindeutige
+Kategorien verlangen Prüfung statt stiller Auslassung. Rücklagen sind separat.
+
+Planbeträge und Rücklagenvorschlag ausdrücklich bearbeiten/bestätigen. Es entsteht
+nur ein unberechneter Entwurf mit nach Reload erhaltenen Beträgen und Kategorie-IDs;
+Quellenänderungen verlangen eine neue Vorschau (409). Keine automatische
+Datengrundlagen-Attestierung oder Finalisierung. Bestehende Kosten und alte Pläne
+bleiben unverändert. Bei unklarer Anlageantwort zuerst die Planliste prüfen, nicht
+automatisch erneut anlegen. Der UI-only-Ablauf
+`scripts/acceptance/t54_previous_plan_browser.cjs` prüft Plan 2027 aus Ist 2026,
+7.000 EUR Kosten + 6.000 EUR separate Rücklage sowie bearbeitete 7.100,25 + 6.500 EUR
+und Desktop-/Smartphone-Reload.
+
+### Mahnlauf mit ausgewählten Entwürfen (T53)
+
+Unter **Offene Posten → Mahnlauf öffnen** Zeitraum, Stichtag, Mindestrückstand
+und gegebenenfalls den MIET-Vorbereitungskreis ausdrücklich wählen. Die Vorschau
+schreibt nichts und enthält Verträge mit Hauptforderung **größer** als die Schwelle.
+Miethistorie, gebuchte Zahlungen und Mahnstufen kommen aus demselben Mietkonto-/
+Mahnpfad wie bei Einzelentwürfen. Auswahl und angezeigte Gesamtsumme müssen bestätigt
+werden; es entstehen nur Entwürfe, keine Ausstellung, PDFs oder E-Mails.
+
+Zwischenzeitlich geänderte Quellen verlangen eine neue Vorschau (409). Bei unklarer
+Netzwerkantwort bleibt derselbe Auftrag für eine manuelle Wiederholung erhalten;
+dessen Original-IDs werden unter erneuter vollständiger Prepare-/Quellenprüfung
+zurückgegeben, nicht neu berechnet oder dupliziert. Alte ausgestellte Briefe bleiben
+unverändert. `scripts/acceptance/t53_dunning_batch_browser.cjs` prüft tatsächlich drei
+Rückstände à 850 EUR und genau drei Entwürfe über zusammen 2.550 EUR einschließlich
+Mobil-Abbruch, Reload und unveränderter Quelldaten.
+
+### E-Mail-Versand (T47)
+
+Ausgestellte Mahnungen, finalisierte BK-Abrechnungen und personengenau adressierte
+Versammlungseinladungen bieten einen ausdrücklichen E-Mail-Versand. Die Adresse
+kommt ausschließlich vom berechtigten Kontakt; keine frei eingegebenen Empfänger.
+Zusätzlich zu Live-Schreib-, Quellen- und Kontaktexportrechten ist bei gebundenen
+Finanzdokumenten die eigene Kreisfähigkeit `send` erforderlich (PDF-Export reicht
+nicht). Lesende Rollen können keine Sendung auslösen.
+
+SMTP ist ohne `HV_SMTP_HOST` und `HV_SMTP_FROM` deaktiviert. Weitere Optionen:
+`HV_SMTP_PORT` (587), `HV_SMTP_SECURITY` (`starttls`, alternativ `tls`), gemeinsam
+`HV_SMTP_USERNAME`/`HV_SMTP_PASSWORD` sowie `HV_SMTP_TIMEOUT_SECONDS` (15).
+`plain` ist ausschließlich ohne Anmeldung auf Loopback für lokale Tests zulässig.
+Es werden keine Zugangsdaten oder echten Empfänger vorausgesetzt.
+
+Vor SMTP wird ein Versandversuch dauerhaft im bestehenden append-only Audit am
+Dokument gespeichert, einschließlich Empfänger, Message-ID und Referenz auf das
+exakte PDF im Dokumentenspeicher. Ein Wiederholungsschlüssel verhindert doppelte
+Übermittlung derselben Anfrage. Die Historie unterscheidet SMTP-Annahme, Fehler
+und unklaren Ausgang; auch ein nach Absturz offen gebliebener Versuch ist **kein**
+Nachweis unterbliebenen Versands. Keine automatische Wiederholung bei unklarem
+Ausgang. SMTP-Annahme ist **kein Zustell-/Zugangsnachweis**; Fristen und Empfang
+bleiben gesondert zu prüfen. „Versand-PDF öffnen“ liest die gespeicherten Bytes mit
+Hashprüfung und aktuellen Quellen-/ursprünglichen Kontaktexportrechten, ohne
+finalisierte Dokumente neu zu berechnen. Keine Schemaänderung.
+
+`uv run pytest tests/test_mail_service.py` prüft Fake-SMTP und Fach-/Rechtepfade.
+`scripts/acceptance/t47_mail_browser.cjs` betreibt nur einen lokalen SMTP-Empfänger
+auf `127.0.0.1:11025` ohne Weiterleitung und prüft den tatsächlichen UI-/PDF-Ablauf.
+
+### Briefvorlagen und Rundschreiben (T48)
+
+Unter **Briefe** lassen sich Klartextvorlagen mit `{{mieter.name}}`,
+`{{mieter.adresse}}`, `{{objekt.name}}`, `{{objekt.adresse}}` und `{{datum}}`
+speichern und bearbeiten. Objekt, Vorlage und Stichtag ausdrücklich wählen und
+„Jetzt erstellen“ bestätigen: Alle an diesem Tag aktuellen Mieter erhalten je
+Person ein eigenes PDF, auch bei mehreren Verträgen nur einmal. Unbekannte
+Platzhalter werden abgelehnt; HTML und Skripte bleiben gedruckter Klartext.
+
+Vollständige Objekt-/Historien- und Kontaktexportrechte sind erforderlich;
+ein verdeckter Empfänger blockiert die gesamte Ausstellung. Leser können keine
+Vorlage ändern oder Briefe erstellen. Wiederholung derselben Anfrage erzeugt
+keine Duplikate. Die Historie öffnet gespeicherte, hashgeprüfte Originalbytes;
+spätere Vorlagen- oder Namensänderungen verändern diese nicht. Kein automatischer
+Versand und kein Zustellnachweis. Migration **0132** verweigert einen Downgrade
+mit gespeicherten Vorlagen oder Briefen. Tests: `uv run pytest tests/test_letters.py`;
+echte UI-/PDF-Abnahme: `scripts/acceptance/t48_letters_browser.cjs`.
+
+### DATEV-Buchungsstapel (T49)
+
+Unter **Berichte → DATEV-Export öffnen** Objekt, Zeitraum und gegebenenfalls
+Ganzobjekt-Finanzkreis auswählen. SKR03 oder SKR04, Berater-/Mandantennummer,
+Wirtschaftsjahresbeginn, Sachkontenlänge und alle Kontenzuordnungen ausdrücklich
+angeben; es gibt keine vorbelegten realen Konten. Kosten werden je Kategorie
+gegen ein eigenes Verrechnungskonto gebucht, Bankbewegungen gegen den gewählten
+Zahlungstyp-Gegenposten. So darf die Bezahlung einer Rechnung nicht nochmals
+unmittelbar als Aufwand zugeordnet werden. Die fachlich geprüften Konten müssen
+**ohne Steuerautomatik** arbeiten; keine Umsatzsteueraufteilung oder BU-Schlüssel.
+
+Die Vorschau zeigt Einzelposten und exakte Summen. Der echte EXTF-Download
+(Header 700, Buchungsstapel 13, UTF-8-BOM, Semikolon/CRLF) prüft Quellen und
+Exportrechte erneut. Konten- oder Quellenwechsel verlangt eine neue Vorschau.
+Gebuchte aktive Zahlungen zählen nach Wertstellung, bestätigte aktuelle Kosten
+nach Rechnungsdatum; Stornopaare, ersetzte Kosten und Rohbankumsätze werden nicht
+zusätzlich exportiert. Nullkosten erzeugen keine verbotene Nullbuchung.
+
+**Vollständige aktuelle Bestandsausgabe, kein Differenzexport:** Dateien nicht
+wiederholt oder überlappend importieren; nach Korrekturen ist die Abstimmung im
+Zielsystem erforderlich. Eine heruntergeladene Datei ist kein erfolgreicher
+DATEV-Import. Kein Upload, keine Änderung von Originalbuchungen und keine neue
+Migration. Kontenkonfiguration wird pro Ausgabe ausdrücklich eingegeben, nicht
+als globale Kategoriezuordnung gespeichert. Tests:
+`uv run pytest tests/test_datev_export.py`, reale Q1-Abnahme:
+`scripts/acceptance/t49_datev_browser.cjs`.
+
+### SEPA-Monatsmiete (T50)
+
+Unter **Zahlungen → SEPA-Lastschrift öffnen** ein laufendes Objektkonto und den
+berechtigten MIET-Finanzkreis ausdrücklich auswählen. Gläubiger-ID, Name, Ort/Land
+und die bestehende Bankvereinbarung erfassen; dann je Mieter ein tatsächlich
+unterschriebenes, extern aufbewahrtes CORE-Mandat registrieren. Kontakt-IBAN,
+Unterschriftsdatum, eindeutige Referenz, FRST/RCUR und gegebenenfalls letzte
+**bei der Bank vorgelegte** Nutzung ausdrücklich bestätigen. Ein Download zählt
+nicht als Nutzung; auch zurückgewiesene/zurückgegebene Einzüge gehören zur Historie.
+Namens-/IBAN-Wechsel und Verarbeitungssperren blockieren die Verwendung.
+
+Monat, Einzugsdatum, eindeutige Nachrichten-ID und tatsächlich erfolgte
+Vorabankündigung angeben (14 Tage oder ausdrücklich vereinbarte kürzere Frist).
+Die Vorschau verwendet das vorhandene Monats-Soll einschließlich Miethistorie,
+NK-Vorauszahlung und tagegenauer Teilmonate. Ohne gültiges Mandat wird kein Mieter
+stillschweigend ausgelassen. Der Download prüft Quellen/Exportrechte erneut und
+validiert **pain.008.001.08** gegen das unveränderte EPC-CORE-XSD. Nicht-EWR-Banken
+benötigen ausdrücklich eingegebene BICs; Bankprofil und Annahmefähigkeit extern prüfen.
+
+**Nur Datei, keine Übertragung:** keine Zahlung/Buchung, kein automatischer Wechsel
+FRST→RCUR und kein Bankannahme-Nachweis. Wiederholte Downloads/Uploads können
+Doppeleinzüge auslösen; IDs und Einzugsverarbeitung außerhalb der App abstimmen.
+Keine vorgegebenen echten Bankdaten oder Mandate. Migration **0133** schützt
+Mandatsidentitäten und verweigert einen Downgrade mit gespeicherten SEPA-Daten.
+Tests: `uv run pytest tests/test_sepa_export.py`; UI-only-Abnahme mit isoliertem
+Launcher: `HV_PYTHON="$PWD/backend/.venv/bin/python" node scripts/acceptance/t50_sepa_browser.cjs`.
+
+### CSV-Stammdatenimport (T51)
+
+Unter **Objekte → CSV-Stammdaten importieren** die CSV-Vorlage tatsächlich herunterladen
+und als UTF-8-Datei (BOM erlaubt), mit Semikolon und unveränderten Spalten befüllen.
+`property`, `unit` und `person` erzeugen neue Objekte, Einheiten und Kontakte;
+`property_key` verweist auf einen lokalen Objektschlüssel oder eine berechtigte
+bestehende Objekt-UUID. Flächen bleiben exakte Dezimalwerte, auch `60,25`.
+Maximal 500 Zeilen bzw. 256 KiB; unbekannte Spalten, ungültige Werte und Dubletten
+werden mit Zeile/Feld gemeldet. Keine automatisch angelegten Profile oder Verträge.
+
+Die Vorschau schreibt nichts. Erst nach Prüfung, ausdrücklicher Freigabe des
+Datenbereichs (falls erforderlich) und Bestätigung wird der gesamte Import atomar
+angelegt. Es gibt keine stillen Selbstfreigaben. Änderungen verlangen eine neue
+Vorschau; Wiederholung derselben Anfrage liefert dieselben IDs, nach Rechteentzug
+keine Teilantwort. Unklare Netzwerkfehler mit **Import erneut versuchen** fortsetzen,
+nicht durch neue Anfragen duplizieren. Revision 0134 hält nur unveränderliche,
+benutzergebundene Ergebnis-IDs, nicht die CSV oder Kontaktdaten im Batch.
+Tests: `uv run pytest tests/test_master_import.py`; echter UI-/Downloadablauf:
+`node scripts/acceptance/t51_master_import_browser.cjs`.
+
+### Monatliche Mietkennzahlen (T52)
+
+Im Dashboard unter **Mietkennzahlen** Objekt, Mietmonat/Jahr und gegebenenfalls den
+vollständigen MIET-Abrechnungskreis auswählen. Soll umfasst Kaltmiete und
+Nebenkostenvorauszahlung einschließlich Miethistorie und Teilmonaten. Ist zählt
+aktive gebuchte KALTMIETE-/NK-Zahlungen nach zugeordnetem Mietmonat, nicht nach
+Wertstellung; Auszahlungen werden abgezogen. Nicht zugeordnete Zahlungen werden
+separat gemeldet, nicht still einem Monat zugeschlagen.
+
+Rückstände sind positive Nettosalden je Vertrag seit Vertragsbeginn bis zum
+gewählten Monatsende; Guthaben eines anderen Vertrags gleichen sie nicht aus.
+Leerstand bewertet den heutigen Einheitsbestand zum gewählten Monatsende, nicht
+einen versionierten historischen Objektbestand. Fehlende Rechte, unvollständige
+Historienabdeckung oder inkohärente Buchungen ergeben Fehler statt falscher Nullen.
+Die Übersicht verändert keine Buchungen oder Verträge. Pflichtprüfung:
+`uv run pytest tests/test_dashboard_kpis.py`; echte UI-Abnahme:
+`node scripts/acceptance/t52_dashboard_kpis_browser.cjs`.
 
 Weiterführende Dokumentation:
 

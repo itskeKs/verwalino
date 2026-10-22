@@ -383,6 +383,48 @@ Die **Gesamt-Nachzahlung** des Mieters ist `Σ(gerundete Mieteranteile aller Kos
 
 Phase 1 erstellt Heiz-/Warmwasser- und CO2-Werte **nicht** selbst (SDD §6.9, §7.1/§7.2): Der Messdienst liefert HeizkostenV-konforme per-Einheit-Werte; die CO2-Aufteilung (CO2KostAufG, 10-Stufen-Modell nach kg CO₂/m²·a) wird entweder **aus der externen Heizkostenabrechnung übernommen** oder aus eingegebenen Kennwerten berechnet. **Nur der Mieteranteil ist umlagefähig** (SDD §6.9). M2 hält dafür bereit: `tenant_apportionable = TEILWEISE_PRUEFEN` (CO2) bzw. `UMLAGEFAEHIG_EXTERN_PRUEFEN` (Heizung/Wasser), `tenant_distribution_key = EXTERNE_ABRECHNUNG`, und das Feld **`apportionable_tenant_amount`** (der explizit als Mieteranteil bestimmte Betrag).
 
+**Ergänzung T45 (reine Engine, BK-Anschluss erst T46):** `heizkosten.py` verteilt
+vorgegebene, nach §9 getrennte Heiz-/Warmwasserpools mit 50–70 % Verbrauchsanteil
+und 30–50 % Grundanteil. Für Heizung wird Fläche/beheizte Fläche/Rauminhalt
+explizit gewählt, Warmwasser nutzt Wohn-/Nutzfläche (§§7/8 HeizkostenV). Der
+bestätigte §7-Sondergebäudefall erzwingt 70 %. Kosten und Einheiten werden mit
+der vorhandenen Largest-Remainder-Funktion in stabiler UUID-Reihenfolge verteilt.
+Bei ausdrücklich nicht verbrauchsabhängiger Abrechnung (`consumption_recorded=False`)
+weist der TENANT-Kontext 15 % des jeweiligen betroffenen Nutzeranteils als
+Kürzung nach §12(1) aus (HALF_UP je Nutzer); Kürzung + Zahlbetrag = Bruttoanteil.
+Der Kürzungsbetrag wird nicht umgelegt. WEG_OWNER erhält diese Kürzung nicht.
+Einzelne fehlende Ablesungen, gemischte unvollständige Messdaten oder Nullnenner
+führen weiterhin zur Eskalation, nicht zu stiller Schätzung oder Nullverbrauch.
+Die Engine beurteilt keine §11-Ausnahmen, erfindet keine §9-Kostentrennung und
+berechnet keine zusätzlichen 3-%-Kürzungen. Bestehende Fremdabrechnungen und
+CO2-Abgrenzungen bleiben unverändert; T45 selbst schaltet keinen UI-/PDF-Weg um.
+
+**T46 – interne BK-Verteilung:** `heating_inputs` aktiviert je bestätigter
+`HEIZUNG_ZENTRAL`-/`WARMWASSER_ZENTRAL`-Kostenquelle genau einen getrennten Pool.
+Gleichzeitige externe/manuelle Geldbeträge für diese Quelle sind unzulässig.
+Die Engine nutzt deren Bruttobetrag bzw. den ausdrücklich abgegrenzten Teilumlagebetrag;
+ein übergreifender Leistungszeitraum wird mit zentraler Centverteilung abgegrenzt.
+Der bestehende DB-Schlüssel bleibt erhalten; UI und PDF kennzeichnen intern
+berechnete Zeilen ausdrücklich als „HeizkostenV intern“.
+
+Alle sichtbaren Einheiten und lückenlosen Mieter-/Leerstandsabschnitte nehmen teil.
+Grundbasis ist Fläche/beheizte Fläche bzw. explizites Volumen × Tage; nach
+[§9b HeizkostenV](https://www.gesetze-im-internet.de/heizkostenv/__9b.html) werden
+Verbrauchskosten nicht nach Mietdauer geschätzt, sondern aus exakten Grenz- und
+Zwischenablesungen gewonnen. Die Endablesung des Vornutzers ist der Anfangszählerstand
+des Nachnutzers. Einzelne fehlende oder mehrdeutige Ablesungen erfordern transparente
+Handwerte, nicht Nullwerte oder eine automatische §9a-/§9b(3)-Ersatzverteilung.
+Leerstand behält den Brutto-Eigentümeranteil; nur Mietern wird im ausdrücklich
+gewählten nicht verbrauchsabhängigen Modus der §12-Abzug ausgewiesen.
+
+Compute speichert `extra_inputs` im Entwurf, Preview nicht. Fehlender Requestbody
+verwendet gespeicherte Absicht, explizite leere Arrays entfernen sie. Automatische
+Quellen werden jedes Mal frisch gelesen; Finalize friert Absicht, Messwerte/-IDs,
+Grund-/Verbrauchstöpfe, Basen, Brutto/Kürzung/Zahlbetrag vor dem Hash ein. Der Renderer
+liest nur diese Daten. GET `/{run_id}/heating-consumption` ist live-/quellen- und
+finanzkreisgeschützt und für finale Läufe gesperrt. Kein neues Schema, kein impliziter
+kombinierter Anlagenpool und keine Änderung bestehender Messdienst-/CO2-Snapshots.
+
 ### 5.2 Externe Heiz-/Wasserabrechnung (`EXTERNE_ABRECHNUNG`)
 
 Die Engine **verteilt nicht**, sondern übernimmt den **per-Einheit-Mieteranteil** direkt als Position der betreffenden Einheit (§2.5). Bei Mieterwechsel: pro Nutzzeitraum getrennte externe Werte (Zwischenablesung). In der BK-Zeile wird `note = "extern abgerechnet (Messdienst)"` und `distribution_key = EXTERNE_ABRECHNUNG` ausgewiesen (BGH: Hinweis auf externe Werte, SDD §11).
@@ -506,6 +548,15 @@ Die PDF-Erzeugung nutzt die in M0 angelegte, swappable Pipeline (`app/core/pdf.p
 - erzeugt **HTML** aus dem **finalisierten** `settlement_run`/`settlement_line` (nie aus `draft` — das versendete Dokument muss dem eingefrorenen Snapshot entsprechen) via Template (z. B. `app/templates/bk_abrechnung.html`), dann `render_pdf(html)`.
 - Die PDF-Schicht ist **strikt getrennt** von der Engine (SDD §16): Sie liest nur das fertige Ergebnis, rechnet **nichts** neu. Test: PDF-Werte == `settlement_line`-Werte (keine Drift zwischen Berechnung und Darstellung).
 - WeasyPrint ist deterministisch (gleicher Input → gleiches PDF), passend zur Snapshot-Philosophie.
+
+Seit T47 kann eine finalisierte BK-Abrechnung ausdrücklich an den berechtigten
+Mieterkontakt per SMTP gesendet werden. Quellen-/Kontaktexport und die getrennte
+Finanzkreisfähigkeit `send` werden live geprüft. Der Versand ändert weder Lauf
+noch Zeilen/Snapshot; der tatsächlich versendete PDF-Anhang wird im bestehenden
+Dokumentenspeicher mit Hash und append-only Versandversuch unter der Lauf-ID
+aufbewahrt. Die Historie öffnet diese exakten Bytes statt neu zu rendern und prüft
+auch die ursprünglichen Kontaktexportrechte. SMTP-Annahme ist kein Zustellnachweis;
+unklare/offene Versuche werden nicht automatisch wiederholt.
 
 ---
 

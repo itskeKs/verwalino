@@ -321,6 +321,24 @@ Die Rollendurchsetzung erfolgt im Authorization-Layer (Policy-Check pro Endpunkt
 - **MFA:** für M0 nicht zwingend; als Härtungsoption für M9 vormerken (Backoffice mit personenbezogenen + finanzrelevanten Daten).
 - **Audit:** Login, Logout, fehlgeschlagene Logins, Rollenänderungen → `audit_event`.
 
+**Implementierter T57-Pfad:** Signierte Cookies tragen Benutzer/Organisation und
+bei positiver Generation `sv`. Die Runtime prüft aktive Mitgliedschaft und aktuelle
+DB-Generation bei jeder Anfrage sowie erneut an Live-Transaktionsgrenzen unter
+ACL-Sperre. Additive Revision 0138 inkrementiert bei Passwortänderung oder
+Deaktivierung; Reaktivierung setzt nicht zurück. Alte Cookies ohne `sv` gelten nur
+für Generation null. Alte Auth-Definerfunktionen und RLS bleiben unverändert;
+neue eng gewährte Wrapper ergänzen die Generation. Admin-Anlage/-Änderung/-Reset
+nehmen die exklusive ACL-Sperre vor Zeilensperren, prüfen frisch, verhindern
+Selbstentzug und committen zusammen mit nicht-sensitiven Auditdaten. Dies ist
+API-Adminautorisierung, kein behaupteter Ersatz sämtlicher bestehender SQL-RLS-
+Verantwortlichkeiten. Nur-Lesen verbirgt Fachschreibaktionen, nicht eigene
+Passwortpflege. Downmigration verweigert den Verlust positiver Generationen.
+Die ursprüngliche authentifizierte Generation wird durch alle kurzen Wissensphasen
+und die Vorjahresplan-Zulassung weitergereicht, niemals dort frisch übernommen.
+Revision 0139 gewährt der isolierten Review-Runtime ausschließlich Ausführung der
+versionierten Sessionprüfung, nicht des Passwort-Lookups. Unbekannte Altrollen
+bleiben nicht autorisierend (`null` im Verwaltungs-DTO, Login 401).
+
 > **[ENTSCHEIDUNG]:** Server-Session (empfohlen) vs. JWT. Und: Self-Hosting-Auth vs. externer Identity-Provider (z. B. Keycloak/Authentik). Für das MVP empfehle ich **eigene, schlanke Server-Session-Auth** (volle Kontrolle, keine externe Abhängigkeit), die Schnittstelle aber so kapseln, dass ein späterer IdP-Wechsel möglich bleibt.
 
 > **Offener Punkt (out-of-scope M0):** User in mehreren Organizations (n:m). In Phase 1 bewusst ausgeschlossen (A-2). Falls Verwaltungs-Verbünde oder geteilte Dienstleister-Accounts gebraucht werden, vor M-Entscheidung neu bewerten.
@@ -406,6 +424,16 @@ Dieser Abschnitt verfeinert die SDD-Entitäten (§11/§13) um (a) Tenant-Scoping
    └─ vendor          (Dienstleister/Lieferant; eigene Entität oder person-Spezialisierung)
 ```
 
+T51 ergänzt `/api/properties/import/template.csv`, `/preview` und `/apply`.
+`MasterImportService` validiert begrenztes UTF-8-Semikolon-CSV und verwendet dieselben
+kanonischen Anlagefunktionen wie die Einzelendpunkte (`master_creation_service`).
+Die Vorschau prüft Freigaben ohne Domain-/Grant-Publikation. Apply erhält zuerst die
+exklusive Publikations-ACL, erzeugt alle Objekte/Einheiten/Kontakte in einer
+funktionsgebundenen Transaktion und hält nur Ergebnis-IDs im unveränderlichen,
+actor-/org-gebundenen `master_import_batch` (0134, FORCE RLS). Payload-Digest und
+Request-UUID verhindern doppelte Wiederholungen; Replay prüft sämtliche ursprünglichen
+Quellen erneut. Keine impliziten Kontaktprofile, Mietverträge oder Selbstfreigaben.
+
 **`property`** (Objekt, SDD §6.1): `organization_id` FK, `name`, Adresse, **`management_type`** (`MIET`|`WEG`|`SEV`|`MISCH`), Abrechnungszeitraum-Konvention. RLS aktiv.
 
 **`unit`** (Einheit, SDD §6.1): `organization_id`, `property_id` FK, `number`, `location`, **`area NUMERIC(10,2)`** (Wohn-/Nutzfläche), **`heated_area NUMERIC(10,2)`** (beheizte Fläche), `usage_type` (Wohnung|Gewerbe|Stellplatz|Sonstige), **`mea NUMERIC(12,6)`** (Miteigentumsanteil — exakt, nicht Float). Optionale Verteilungsbesonderheiten. RLS aktiv.
@@ -416,6 +444,99 @@ Dieser Abschnitt verfeinert die SDD-Entitäten (§11/§13) um (a) Tenant-Scoping
 - **Constraint für Überschneidungsfreiheit:** Pro `unit_id` dürfen sich die `[valid_from, valid_to)`-Intervalle eines Eigentumsstrangs **nicht überlappen**. Empfohlen über eine PostgreSQL **EXCLUDE-Constraint** mit `daterange` und `&&`-Operator (btree_gist), die Org- und Unit-Bezug einschließt. Das ist die DB-seitige Garantie für das M1-Exit-Kriterium („lückenlos und überschneidungsfrei"). *(Genaue Form — ob pro Einheit ein einziger Eigentümer-Strang oder mehrere Bruchteilseigentümer mit Summenbedingung der Anteile — ist eine M1-Detailfrage; die EXCLUDE-Mechanik wird hier als Mittel festgehalten.)*
 
 **`lease_agreement`** (SDD §6.2, §14): `organization_id`, `unit_id` FK, `tenant_profile_id` FK, **`valid_from`/`valid_to`** (Vertragsbeginn/-ende), **`base_rent NUMERIC(14,2)`** (Kaltmiete), **`advance_payment NUMERIC(14,2)`** (NK-Vorauszahlung), optional **`deposit NUMERIC(14,2)`** (Kaution), Notizen. RLS aktiv. Gleiche **EXCLUDE-Constraint**-Logik gegen überlappende Mietzeiträume je Einheit (mit Blick auf Leerstand: Lücken sind *erlaubt* — Leerstand —, Überlappungen nicht).
+
+T43 ergänzt `POST /api/leases/{id}/rent-changes/staffel` als atomaren Generator
+über `LeaseRentChangeService`, ohne zusätzliche Vertragsfelder. Live-ACL-,
+Finanz- und Vertragszeilensperren schützen die Basisrate vor Paralleländerungen;
+alle Termine/Beträge werden vor den T23-Inserts validiert. Eurobeträge werden
+je Stufe mit Decimal auf Cent gerundet; Kalenderdaten bleiben am ersten
+Erhöhungstag verankert. Vorhandene künftige Historie wird nicht überschrieben.
+Gebuchte Zahlungen, ausgestellte Dokumente und finale Snapshots bleiben erhalten.
+
+T44 verwendet die reine Decimal-Engine `index_rent.py` für VPI-Verhältnisrechnung,
+Cent-Rundung, Jahresfrist und den übernächsten Monatsbeginn nach angegebenem Zugang.
+Nur der letzte Kaltmietwechsel bestimmt die Jahresfrist, nicht eine reine NK-Änderung.
+Vorschau und Übernahme prüfen dieselben Live-/Quellenrechte und sperren vor dem Lesen
+der Basisrate. Die Übernahme rechnet erneut und vergleicht die Vorschau; veraltete
+Werte liefern 409. Der T23-Schreibpfad und ein zusätzlicher Index-Audit erhalten
+Historie und Berechnungsgrundlagen, ohne neues Schema oder Versandbehauptung.
+
+T45 ergänzt `heizkosten.py` mit unveränderlichen Heiz-/Warmwasser-Ein-/Ausgaben
+in `engine/types.py`. Getrennte Kostenpools und explizite Grundbasen werden über
+zentrale Largest-Remainder-Rundung verteilt; Grund-, Verbrauchs-, Kürzungs- und
+Zahlbetrag bleiben separat nachvollziehbar. Der reine TENANT-/WEG_OWNER-Kontext
+verhindert die pauschale Anwendung des §12-Mieterkürzungsrechts auf WEG-Eigentümer.
+Keine ORM-/Schemaänderung. T46 verbindet `heating_settlement.py` mit dem bestehenden
+BK-Orchestrator; `HeatingInputService` löst je aktivierter bestätigter Kostenquelle
+sichtbare Einheiten/Nutzungsabschnitte und exakte Zählergrenzen auf. Physische
+Grundmenge × Tage und tatsächliche Verbrauchsmenge bleiben getrennte Basen; die
+T45-Rundung bleibt zentral. Leerstandszeilen behalten den Bruttoanteil ohne §12-Abzug.
+`ComputeExtras.heating_inputs` speichert nur Benutzerabsicht in `snapshot_payload.extra_inputs`;
+Compute/Finalize prüfen unter den bestehenden Live-/Quellen-/Finanz-/Zeilensperren
+frisch. Gefrorene Heizteilbeträge und konkrete Messquellen werden vor dem Hash ergänzt;
+der PDF-Renderer liest sie ohne Datenbank-Neuberechnung. Bestehende Fremdabrechnungen,
+allgemeine Verbrauchsmetriken, RLS und unveränderliche Originale bleiben erhalten.
+
+T47 ergänzt `/api/mail/{dunning|settlement|invitation}/{id}` über
+`DocumentMailService` und den separaten SMTP-Transport `mail_service.py`.
+Die vorhandenen PDF-Renderer, Finanz-/Quellen-/Kontaktprüfungen werden wiederverwendet;
+bei Finanzbindung ist `send` zusätzlich zu `export` nötig. Live-ACL-/Finanz-/Quellen-
+und Kontaktzeilensperren schützen die Freigabe bis zum SMTP-Aufruf. Pro Anfrage
+serialisiert ein organisationsgebundener Schlüssel parallele Wiederholungen.
+Eine eigene tenantgebundene Transaktion schreibt vor dem Netzaufruf `mail_prepared`
+als append-only `AuditEvent` unter der echten Fachobjekt-ID; `mail_completed` folgt
+mit `accepted`, `failed` oder `unknown`. Ein offener Versuch nach Prozess-/Commitfehler
+bleibt dauerhaft erkennbar, niemals automatische Wiederholung oder Zustellbehauptung.
+Der exakte PDF-Anhang liegt content-addressiert im vorhandenen Dokumentenspeicher;
+Auditreferenz, Hash, Kontakt-ID und Message-ID bleiben erhalten. Der geschützte
+Historien-PDF-Endpunkt prüft zusätzlich die **ursprüngliche** Kontaktexportfreigabe,
+auch wenn sich später die Einladungs-Empfängerliste ändert. Kein Schemawechsel,
+kein Update ausgestellter Briefe oder finaler Snapshots; TLS bleibt verifiziert,
+SMTP-Zugänge ausschließlich aus der Umgebung und `plain` nur für Loopback ohne Login.
+
+T48 ergänzt `/api/letters` mit editierbaren Klartextvorlagen und unveränderlichen
+`letter_document`-Originalen (Migration 0132). Nur feste Platzhalter werden ersetzt;
+HTML-Escaping erfolgt danach, ohne ausführbare Template-Engine oder fremde Ressourcen.
+Die vollständige Stichtagsmenge wird unter eng begrenzter SQL-Zulassung vor der
+RLS-gefilterten Enumeration geprüft; fehlende Quellen-/Kontaktexportrechte führen
+nicht zu einem teilweisen Rundschreiben. Pro Person ein PDF; Enddaten bleiben exklusiv.
+Live-ACL-/Finanz-/Objekt-/Vorlagen-/Kontaktsperren und organisationsgebundene
+Anfrage-IDs schützen Ausstellung und parallele Wiederholung. Auch Replay prüft
+alle ursprünglichen Empfänger, nicht nur noch sichtbare Zeilen. Text/Betreff,
+ursprüngliche Quellen und content-addressierte Speicherreferenz bleiben erhalten;
+Download prüft aktuelle Originalquellen-/Kontaktrechte und Hash, ohne Neuberechnung.
+Vorlagenänderung verändert keine Briefe. Befüllte Tabellen verhindern verlustbehaftete
+Rückmigration; Versand ist kein Bestandteil der Rundschreibenausstellung.
+
+T49 ergänzt den lesenden `/api/reports/datev/{sources|preview}`-Pfad und
+`POST /api/reports/datev.csv`. `ReportService.property_period` teilt die bestehende
+vollständige Objekt-/Finanzkreiszulassung mit Jahresreports; ein eigenes Repository
+liest aktuelle gebuchte Zahlungen und bestätigte Kosten. Live-ACL-/Finanzsperren,
+vollständige Quellen-/Kontaktexportrechte und erneute Exportprüfung nach Rendering
+verhindern Teilbestände. Vorschaufingerabdruck bindet konkrete Quellenzeilen und
+explizite SKR03-/SKR04-/Kontenkonfiguration an den Download. Keine Mutation oder
+Migration; globale Kategorien bleiben ohne organisationsfremde Kontenzuordnungen.
+Der reine Renderer verwendet DATEV-Header 700/Buchungsstapel 13 mit 125 Feldern,
+Decimal, UTF-8-BOM und CRLF. Nur ausdrücklich geprüfte Bruttokonten ohne
+Steuerautomatik; keine VAT-/BU-/Beleglink-Erfindung. Das Ergebnis ist eine aktuelle
+Bestandsausgabe, kein differenzieller Buchungsjournalersatz und keine Bestätigung
+eines Imports im Zielsystem. Korrekturen/Reimporte sind dort fachlich abzustimmen.
+
+T50 ergänzt `/api/payments/sepa`: explizite Gläubigerkonfiguration je laufendem
+Konto und getrennte `sepa_mandate`-Zustimmung (nicht `management_mandate`), Revision
+0133 mit FORCE RLS, kanonischen Quellenprüfungen und unveränderlicher Identität.
+Mandate enthalten nur einen Fingerabdruck von aktuellem Namen/IBAN statt einer
+zweiten Rohdatenkopie; Bank-/Kontaktänderungen und Datenschutzsperren blockieren.
+ACL-/Finanz-/Quellzeilensperren schützen Konfiguration und Monatsprojektion.
+`tenant_expected_charges` liefert das bestehende Decimal-Soll aus Miethistorie und
+Teilmonaten. Vollständige Finanzkreis-/Quellen-/Kontaktexportzulassung verhindert
+stilles Auslassen unzugänglicher oder unmandatierter Mieter. Vorschaufingerabdruck
+und erneute Rechteprüfung binden den Download; der reine XML-Renderer validiert
+lokal gegen das unveränderte EPC-CORE-pain.008.001.08-XSD (als Paketressource).
+Kein Übertragungsdienst, keine Zahlungsanlage und keine Fortschreibung einer
+Einzugshistorie aus einem Download. Befüllte neue Tabellen verhindern Downgrade;
+der transaktionale Rundlauftest vergleicht alle bisherigen Daten/Sicherheitsobjekte
+und die unveränderten Bytes eines bereits ausgestellten Briefs.
 
 **`bank_account`** (SDD §6.3 — Vermögenstrennung): `organization_id`, Bezug auf `management_mandate`/`property`, `account_type` (laufend|Rücklage|Kaution), IBAN/Bank-Stammdaten. RLS aktiv. *(Implementierung erst ab M6; Modell-Anker in M1 vorbereiten, damit Mandat/Objekt-Bezug konsistent ist.)*
 
@@ -617,6 +738,90 @@ Mindest-Assertions:
 > **Keine Selbst-Zertifizierung (Haltung):** Dieses Design macht Mandantentrennung, Unveränderbarkeit und Aufbewahrung *transparent und auditierbar* und legt die getroffenen Annahmen offen. Es kann **nicht** garantieren, dass eine spätere Abrechnung oder die Belegablage im konkreten Fall gerichts-/prüfungsfest ist. Vor Produktivsetzung der GoBD-/DSGVO-relevanten Teile (spätestens M9) ist eine fachliche Abnahme durch Steuerberater/Fachanwalt vorgesehen.
 
 ---
+
+### Monatliche Mietkennzahlen (T52)
+
+`GET /api/reports/dashboard-kpis` verwendet die vollständige Report-Zulassung,
+Live-/Quellen-/Kontaktrechte und die bestehende Finanzsperre. Das bestehende reine
+Mietkonto berechnet Soll und Nettosaldo getrennt je Vertrag mit Miethistorie und
+exklusiven Datenbank-Enddaten. Ist folgt ausschließlich dem zugeordneten Mietmonat
+aktiver gebuchter KALTMIETE/NK (IN minus OUT); unzugeordnete Beträge werden separat
+ausgewiesen. Fremdvertragsguthaben werden nicht verrechnet. Der Scope muss die ganze
+relevante Historie abdecken, inkohärente Quellen führen zu 409 statt Teilzahlen.
+Leerstand nutzt aktuelle Einheiten und die Belegung am Monatsende. Keine neue
+Persistenz, Migration, Umbuchung oder Rekonstruktion historischer Einheitsversionen.
+
+### Ausgewählte Mahnentwürfe (T53)
+
+`POST /api/dunning/batch/preview` ist nichtschreibend; der gemeinsame
+`DunningService.tenant_basis` verwendet das historiesensitive kanonische Mietkonto
+auch für Einzelentwürfe. Vollständige Prepare-/Quellen-/Kontaktzulassung steht vor
+der RLS-gefilterten Aufzählung. Der Digest umfasst Quellen, Einstellungen und
+Eskalationshistorie, nicht nur die Hauptforderung. `POST /batch` erstellt die
+bestätigte Teilmenge atomar unter ACL → Finanz- → Request-Sperre; spätere Fehler
+rollen Entwürfe und Provenienz gemeinsam zurück. Kein Ausstellen oder Senden.
+
+0135 hält nur unveränderliche Original-IDs im actor-/org-gebundenen `dunning_batch`
+(FORCE RLS, SELECT/INSERT). Ein gleicher Request nach Quellenänderung liefert nach
+erneuter Zulassung aller Originale dieselben IDs, keinen neu berechneten Mahnlauf;
+geänderte Requests mit gleichem Schlüssel und veraltete neue Vorschauen sind 409.
+Ausgestellte Mahnungen und ihre PDFs bleiben unverändert. Befüllte Downgrades
+verweigern Datenverlust; der echte Test-Rundlauf vergleicht alte Daten und sämtliche
+Sicherheitsobjekte innerhalb einer zurückgerollten Transaktion.
+
+### Vorjahres-Ist als editierbare Planvorlage (T54)
+
+`POST /api/economic-plans/previous/preview` liest erst nach vollständiger
+Vorjahres-Read- und Zieljahres-Prepare-Zulassung aktuelle bestätigte Kosten samt
+Kategorie-ID/Version. Lokale explizite Kontextwechsel lassen die allgemeinen
+Scope-Mismatch-Guards unverändert. Leistungszeitraum-Anteile (inklusive Tage,
+HALF_UP je Kostenposition) und signierte Gutschriften werden je Kategorie saldiert;
+Rücklagen bleiben separat. Unvollständige Rechte, negative Nettobeträge und ungültige
+Kategorien liefern Fehler statt Teilvorschläge. Der Digest umfasst Quellen und
+Metadaten, nicht nur Summen.
+
+`POST /previous` bestätigt ausschließlich editierte Beträge gleicher Kategorien,
+prüft den Digest erneut unter der Finanzsperre und legt atomar einen unberechneten
+Entwurf an. Bestehendes JSON hält `draft_inputs` und `previous_actuals`; GET stellt
+die editierbaren Eingaben nach Reload wieder her. Die normale Compute-/Finalize-
+Pipeline behält ihre Attestierungs-/Snapshotregeln und die Vorjahresprovenienz.
+Keine Migration oder Änderung alter Kosten/finalisierter Pläne, kein automatischer
+WEG-Beschluss. Ein unklarer Create-Ausgang wird nicht automatisch wiederholt.
+
+### Bearbeitbare Stammdaten mit Bestandsschutz (T55)
+
+Bank-PATCH verlangt Live-Writer, Finanzsperre vor Zeilensperre, exaktes Prepare-
+und kanonisches Objekt-Quellenrecht. Dienstleister-PUT verlangt zusätzlich das
+aktuelle Kontakt-Prepare-/Verarbeitungsrecht; Verwaltungsmandats-PATCH bleibt
+Live-Admin vorbehalten. Bereits gebundene Mandatszeiträume/-arten bleiben durch
+den vorhandenen SQL-Guard unveränderbar (409), Bezeichnungen sind bearbeitbar.
+
+Revision 0136 ergänzt ausschließlich bank/vendor `is_active`, nullable Baujahr
+und `Numeric(14,2)`-Gesamtfläche sowie eigene additive Trigger. Inaktive Quellen
+bleiben historisch lesbar, sind für neue Finanzreferenzen gesperrt. Der SQL-
+Bankidentitätsschutz prüft auch durch RLS verborgene bestehende Referenzen;
+Umbenennungen verändern weder Bankfingerprint noch SEPA-Zustimmung. Eine eng
+geprüfte exakte Gegenbuchung eines gebuchten Originals bleibt als Storno möglich.
+Die alten Policies/Funktionen und Originalbelege bleiben unverändert. Befüllte
+neue Felder verhindern ein verlustbehaftetes Downgrade; der echte Rundlauf
+vergleicht alte Spalten und Sicherheitsobjekte in einer zurückgerollten Transaktion.
+
+### Referenzgeschützte Fehleingaben-Löschung (T56)
+
+Vier feste DELETE-Routen verwenden Live-Writer, ACL-/Finanzsperre, Eltern- vor
+Kindzeilensperren und die vorhandenen kanonischen Prepare-Prüfungen. Eine rein
+lesende, eng autorisierte Definerfunktion der additiven Revision 0137 inventarisiert
+sämtliche eingehenden Fremdschlüssel einschließlich verborgener/CASCADE-Kanten
+sowie logische Quellen-, Audit-, Import-/Batch- und Snapshotreferenzen. Sie liefert
+nur eine begrenzte Referenzklasse, keine fremden IDs oder Inhalte. Der interne
+JSON-Matcher vergleicht vollständige UUID-Werte/-Schlüssel, nicht Teiltexte.
+
+DELETE selbst bleibt unter unveränderter RLS, mit expliziter Organisation und
+RETURNING-Prüfung; null betroffene Zeilen sind niemals Erfolg. Deferred Constraints
+werden vor 204 ausgeführt. Referenzen oder bestehender Quellschutz ergeben 409,
+fehlende Autorität 404/403. Keine Kaskaden, Profilbereinigung, Auditlöschung oder
+Umgehung der bestehenden ENFORCED-Kontaktlöschpolicy. Der reale Down-/Up-Test
+vergleicht alle alten Daten/Sicherheitsobjekte und bytegleiche ausgestellte PDFs.
 
 ## 10. Was dieses Dokument bewusst NICHT entscheidet
 

@@ -203,7 +203,39 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
             "balance": _m(result.balance),
         },
     }
+    if result.heating_costs:
+        payload['heating_costs'] = [_heating_payload(h) for h in result.heating_costs]
     return payload
+
+
+def _heating_payload(allocation):
+    pool = allocation.pool
+    slices = {s.id:s for s in allocation.slices}
+    rows = []
+    for row in pool.rows:
+        s = slices[row.unit_id]
+        tenant = s.lease_agreement_id is not None
+        rows.append({
+            'slice_id':str(s.id),'unit_id':str(s.unit_id),
+            'lease_agreement_id':str(s.lease_agreement_id) if tenant else None,
+            'owner_profile_id':str(s.owner_profile_id) if s.owner_profile_id else None,
+            'period_from':s.period_from.isoformat(),'period_to':s.period_to.isoformat(),
+            'base_quantity':_q(s.base_quantity),'weighted_base_quantity':_q(row.base_quantity),
+            'consumption':_q(row.consumption),'base_amount':_m(row.base_amount),
+            'consumption_amount':_m(row.consumption_amount),'gross_amount':_m(row.gross_amount),
+            'reduction_amount':_m(row.reduction_amount) if tenant else '0.00',
+            'amount_due':_m(row.amount_due if tenant else row.gross_amount),
+            'reduction_reason':row.reduction_reason if tenant else None,
+        })
+    return {
+        'cost_entry_id':str(allocation.cost_entry_id),'kind':pool.kind,'base_key':pool.base_key,
+        'consumption_fraction':str(pool.consumption_fraction),'method':pool.method,
+        'total_amount':_m(pool.total_amount),'base_cost_total':_m(pool.base_cost_total),
+        'consumption_cost_total':_m(pool.consumption_cost_total),
+        'base_total_quantity':_q(sum((r.base_quantity for r in pool.rows),Decimal(0))),
+        'consumption_total_quantity':_q(sum((r.consumption for r in pool.rows),Decimal(0))) if pool.consumption_recorded else None,
+        'rows':rows,
+    }
 
 
 # ===========================================================================

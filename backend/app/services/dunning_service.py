@@ -19,9 +19,9 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.engine.dunning import (
     DEFAULT_DUE_DAYS,
     OverdueItem,
@@ -31,13 +31,11 @@ from app.engine.dunning import (
     next_dunning_level,
 )
 from app.engine.mietkonto import (
-    LeaseChargeInput,
     OwnerAdvanceChargeInput,
     PaymentInput,
     account_statement,
     owner_expected_charges,
     special_levy_expected_charges,
-    tenant_expected_charges,
 )
 from app.models.audit_event import AuditEvent
 from app.models.dunning_notice import DunningNotice
@@ -45,6 +43,8 @@ from app.repositories.audit_repo import AuditRepository
 from app.core.rbac import ScopeCapability
 from app.services.dunning_scope_service import DunningScopeService
 from app.services.special_levy_service import SpecialLevyService
+from app.services.payment_service import PaymentService
+from app.repositories.unit_repo import UnitRepository
 from app.repositories.dunning_notice_repo import DunningNoticeRepository
 from app.repositories.economic_plan_repo import (
     EconomicPlanLineRepository,
@@ -116,59 +116,12 @@ class DunningService:
         context = DunningScopeService(self._session, self._org_id, self._user_id)
         sphere = await context.prepare(accounting_scope_id, 'MIET', period_start, period_end)
 
-        # Resolve lease
-        lease = await self._leases.get_by_id(lease_agreement_id)
-        if lease is None:
-            raise HTTPException(status_code=404, detail="Lease agreement not found")
-
-        # Verify tenant exists
-        tenant = await self._tenants.get_by_id(tenant_profile_id)
-        if tenant is None:
-            raise HTTPException(status_code=404, detail="Tenant profile not found")
-
-        if lease.tenant_profile_id != tenant_profile_id:
-            raise HTTPException(422, 'Lease and dunning recipient must match')
-        if lease.valid_from > period_end or (lease.valid_to is not None and lease.valid_to <= period_start):
-            raise HTTPException(422, 'Lease must overlap the dunning period')
-
-        # Compute Soll/Ist via M6 engine
-        lc = LeaseChargeInput(
-            lease_agreement_id=lease.id,
-            valid_from=lease.valid_from,
-            valid_to=db_exclusive_to_engine_inclusive(lease.valid_to),
-            base_rent=lease.base_rent,
-            advance_payment=lease.advance_payment,
-        )
-        charges = tenant_expected_charges(lc, period_start, period_end)
-        payments = await self._payments.list_for_lease(lease_agreement_id)
-        scoped = self._scope_payments_to_period(payments, period_start, period_end)
-        result = account_statement(charges, [_to_payment_input(p) for p in scoped])
-
-        # Detect overdue items
-        overdue = self._engine_result(
-            find_overdue_items, list(result.open_items), ref_date, grace_days=grace_days
-        )
-        if not overdue:
-            raise HTTPException(
-                status_code=422,
-                detail="No overdue items found for this tenant in the given period",
-            )
-
-        # Escalation level
-        await context.history(tenant_id=tenant_profile_id)
-        issued_count = await self._repo.count_issued_for_tenant(tenant_profile_id)
-
-        # Assemble
-        dunning = self._engine_result(
-            assemble_dunning,
-            overdue_items=overdue,
-            existing_notice_count=issued_count,
-            issue_date=ref_date,
-            override_fee=override_fee,
-            base_interest_rate=base_interest_rate,
+        lease, tenant, result, dunning = await self.tenant_basis(
+            tenant_profile_id, lease_agreement_id, period_start, period_end,
+            ref_date, grace_days, override_fee, accounting_scope_id, base_interest_rate,
         )
         if dunning is None:
-            raise HTTPException(status_code=422, detail="Could not assemble dunning notice")
+            raise HTTPException(422, "No overdue items found for this tenant in the given period")
 
         # Persist as draft
         notice = DunningNotice(
@@ -208,6 +161,58 @@ class DunningService:
             )
         )
         return notice
+
+    async def require_tenant_sources(self, lease_id, tenant_id, sphere):
+        """Check the complete contract and active recipient, including legacy mode."""
+        lease = await self._leases.get_by_id(lease_id)
+        tenant = await self._tenants.get_by_id(tenant_id)
+        if lease is None or tenant is None:
+            raise HTTPException(404, "Complete dunning sources not accessible")
+        if lease.tenant_profile_id != tenant_id:
+            raise HTTPException(422, "Lease and dunning recipient must match")
+        if sphere is not None and not await self._session.scalar(text(
+                "SELECT unit_in_financial_context(:org,:unit)"),
+                {'org': self._org_id, 'unit': lease.unit_id}):
+            raise HTTPException(404, "Lease is outside the accounting scope")
+        if not await self._session.scalar(text(
+                "SELECT dunning_contact_access(:org,:tenant,NULL,'prepare')"),
+                {'org': self._org_id, 'tenant': tenant.id}):
+            raise HTTPException(404, "Dunning recipient source not accessible")
+        unit = await UnitRepository(self._session, self._org_id).get_by_id(lease.unit_id)
+        person = await self._persons.get_by_id(tenant.person_id)
+        if unit is None or person is None:
+            raise HTTPException(404, "Complete dunning sources not accessible")
+        if person.processing_restricted or person.anonymized_at is not None:
+            raise HTTPException(409, "Dunning recipient is restricted or anonymized")
+        prop = await self._properties.get_by_id(unit.property_id)
+        if prop is None:
+            raise HTTPException(404, "Dunning property source not accessible")
+        return lease, tenant, person, unit, prop
+
+    async def tenant_basis(
+        self, tenant_profile_id, lease_agreement_id, period_start, period_end,
+        reference_date, grace_days=0, override_fee=None, accounting_scope_id=None,
+        base_interest_rate=None,
+    ):
+        """One history-aware canonical statement and engine assembly, without writes."""
+        context = DunningScopeService(self._session, self._org_id, self._user_id)
+        sphere = await context.prepare(accounting_scope_id, 'MIET', period_start, period_end)
+        lease, tenant, _, _, _ = await self.require_tenant_sources(
+            lease_agreement_id, tenant_profile_id, sphere)
+        if lease.valid_from > period_end or (lease.valid_to is not None and lease.valid_to <= period_start):
+            raise HTTPException(422, "Lease must overlap the dunning period")
+        result = await PaymentService(self._session, self._org_id, self._user_id).account_statement_for_lease(
+            lease.id, period_start, period_end, accounting_scope_id)
+        overdue = self._engine_result(find_overdue_items, list(result.open_items),
+            reference_date, grace_days=grace_days)
+        if not overdue:
+            return lease, tenant, result, None
+        await context.history(tenant_id=tenant.id)
+        issued_count = await self._repo.count_issued_for_tenant(tenant.id)
+        dunning = self._engine_result(assemble_dunning, overdue_items=overdue,
+            existing_notice_count=issued_count, issue_date=reference_date,
+            override_fee=override_fee, base_interest_rate=base_interest_rate)
+        return lease, tenant, result, dunning
 
     # ------------------------------------------------------------------
     # Create dunning for owner

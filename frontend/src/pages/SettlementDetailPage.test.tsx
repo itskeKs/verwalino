@@ -29,6 +29,7 @@ vi.mock("../api/endpoints", async (importOriginal) => ({
   computeSettlement: vi.fn(),
   finalizeSettlement: vi.fn(),
 }));
+vi.mock("../api/mail", () => ({ getMailDispatch: vi.fn().mockResolvedValue({ recipients: [], attempts: [] }), sendMailDispatch: vi.fn() }));
 vi.mock("../components/FinancialCoverageReview", () => ({
   FinancialCoverageReview: () => null,
 }));
@@ -108,6 +109,7 @@ describe("SettlementDetailPage with database distribution keys", () => {
     await user.type(screen.getByLabelText("heating"), "210.00");
     await user.type(screen.getByLabelText("manual"), "12.34");
     const expected = {
+      heating_inputs: [],
       external_amounts: [{ cost_entry_id: "heating", unit_id: "unit-1", tenant_amount: "210.00" }],
       manual_amounts: [{ cost_entry_id: "manual", unit_id: "unit-1", amount: "12.34" }],
       unit_metrics: [{ unit_id: "unit-1", consumption: "30", person_count: 2 }],
@@ -458,7 +460,7 @@ describe("T31 meter consumption prefill", () => {
     await waitFor(() => expect(first).toHaveValue("30.0000"));
     fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
     await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledWith("run-1", {
-      external_amounts: [], manual_amounts: [], unit_metrics: [],
+      heating_inputs: [], external_amounts: [], manual_amounts: [], unit_metrics: [],
     }));
   });
   it("sends an explicitly entered manual zero and no automatic peer value", async () => {
@@ -467,7 +469,7 @@ describe("T31 meter consumption prefill", () => {
     fireEvent.change(first, { target: { value: "0" } });
     fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
     await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledWith("run-1", {
-      external_amounts: [], manual_amounts: [], unit_metrics: [{ unit_id: "unit-1", consumption: "0", person_count: null }],
+      heating_inputs: [], external_amounts: [], manual_amounts: [], unit_metrics: [{ unit_id: "unit-1", consumption: "0", person_count: null }],
     }));
   });
   it("keeps a cleared consumption field visible", async () => {
@@ -520,7 +522,7 @@ describe("T31 meter consumption prefill", () => {
     fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
     await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledTimes(2));
     expect(api.computeSettlement).toHaveBeenLastCalledWith("run-1", {
-      external_amounts: [], manual_amounts: [], unit_metrics: [{ unit_id: "unit-1", consumption: "0", person_count: null }],
+      heating_inputs: [], external_amounts: [], manual_amounts: [], unit_metrics: [{ unit_id: "unit-1", consumption: "0", person_count: null }],
     });
   });
 });

@@ -13,19 +13,23 @@ finalize() is ONE atomic transaction (analogous to settlement_service.finalize):
   freezes the plan from commit.
 
 The plan's planned cost values are supplied as STRUCTURED INPUT at compute time
-(the clerk's confirmed Planwerte; the repo's prior_year_actuals is only a
+(the clerk's confirmed Planwerte; prior-year actuals are only a
 proposal helper). They are then frozen into the immutable snapshot.
 """
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP, localcontext
 
 from fastapi import HTTPException
 from app.core.rbac import ScopeCapability
+from app.core.tenant import AuthContext
+from app.core.live_principal import require_live_principal
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.engine.canonical import canonical_json, sha256_hex
@@ -49,6 +53,9 @@ from app.engine.wirtschaftsplan import PlanResult, compute_wirtschaftsplan
 from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.models.audit_event import AuditEvent
 from app.services.financial_scope_service import FinancialScopeService
+from app.services.authorization_service import AuthorizationService
+from app.services.report_service import ReportService
+from app.repositories.property_repo import PropertyRepository
 from app.services.financial_computation_service import begin_computation, record_computation
 from app.services.financial_input_policy import FinancialInputPolicy
 from app.models.economic_plan import EconomicPlan
@@ -84,14 +91,211 @@ class PlanInputs:
 
 
 class EconomicPlanService:
-    def __init__(self, session: AsyncSession, org_id: uuid.UUID, user_id: uuid.UUID):
+    def __init__(self, session: AsyncSession, org_id: uuid.UUID, user_id: uuid.UUID, *, session_version: int = 0):
         self._session = session
         self._org_id = org_id
         self._user_id = user_id
+        self._session_version = session_version
         self._plans = EconomicPlanRepository(session, org_id)
         self._lines = EconomicPlanLineRepository(session, org_id)
         self._runs = SettlementRunRepository(session, org_id)  # property aggregation
         self._audit = AuditRepository(session, org_id)
+
+    async def _previous_switch(self, authorized_scopes: set[uuid.UUID]) -> None:
+        selected = await self._session.scalar(text(
+            "SELECT NULLIF(current_setting('app.current_scope_id',true),'')::uuid"))
+        if selected is not None:
+            if selected not in authorized_scopes:
+                raise HTTPException(409, "Unexpected selected accounting scope")
+            # Deliberately local to this two-role, cross-year workflow. The
+            # ordinary FinancialScopeService mismatch checks remain unchanged.
+            await self._session.execute(text(
+                "SELECT set_config('app.current_scope_id','',true)"))
+
+    @staticmethod
+    def _previous_scope(sphere, property_id, start, end) -> None:
+        if sphere.property_id != property_id:
+            raise HTTPException(422, "Accounting scope belongs to another property")
+        if sphere.scope_type != "WEG" or not sphere.whole_property:
+            raise HTTPException(422, "Previous actuals require a whole-property WEG scope")
+        if start < sphere.valid_from or sphere.valid_to is not None and end > sphere.valid_to:
+            raise HTTPException(422, "Calendar year is outside accounting scope")
+
+    async def _previous_admit(self, property_id, plan_year, source_scope_id, target_scope_id):
+        if type(plan_year) is not int or not 2 <= plan_year <= 9998:
+            raise HTTPException(422, "Plan year must be an integer between 2 and 9998")
+        auth = AuthContext(self._user_id, self._org_id, "live database role required", session_version=self._session_version)
+        await require_live_principal(self._session, auth, writer=True)
+        context = FinancialScopeService(self._session, self._org_id, self._user_id)
+        await context.lock_inputs()
+        selected = await self._session.scalar(text(
+            "SELECT NULLIF(current_setting('app.current_scope_id',true),'')::uuid"))
+        if selected is not None and selected not in {source_scope_id, target_scope_id}:
+            raise HTTPException(409, "Unexpected selected accounting scope")
+        prop = await PropertyRepository(self._session, self._org_id).get_by_id(property_id)
+        if prop is None:
+            raise HTTPException(404, "Property not found")
+        if prop.management_type not in {"WEG", "MISCH"}:
+            raise HTTPException(422, "Previous actuals require a WEG or mixed property")
+        start, end = date(plan_year - 1, 1, 1), date(plan_year - 1, 12, 31)
+        target_start, target_end = date(plan_year, 1, 1), date(plan_year, 12, 31)
+        authorization = AuthorizationService(self._session, auth)
+        authorized = set()
+        for scope_id, capability, first, last in (
+            (source_scope_id, ScopeCapability.READ, start, end),
+            (target_scope_id, ScopeCapability.PREPARE, target_start, target_end),
+        ):
+            if scope_id is not None:
+                sphere = await authorization.require(scope_id, capability)
+                self._previous_scope(sphere, property_id, first, last)
+                authorized.add(scope_id)
+        await self._previous_switch(authorized)
+        # A transient subject validates PREPARE without inserting or flushing a
+        # plan, binding, audit event or computation during preview.
+        target = EconomicPlan(organization_id=self._org_id, property_id=property_id,
+            plan_year=plan_year, period_start=target_start, period_end=target_end,
+            management_mandate_id=None, status="draft", engine_version=ENGINE_VERSION)
+        target_sphere = await context.prepare_new(target, target_scope_id)
+        if target_sphere is not None:
+            self._previous_scope(target_sphere, property_id, target_start, target_end)
+        await self._previous_switch(authorized)
+        _, source_sphere = await ReportService(self._session, self._org_id, self._user_id).property_period(
+            property_id, start, end, source_scope_id)
+        if source_sphere is not None:
+            self._previous_scope(source_sphere, property_id, start, end)
+        return prop, source_sphere, target_sphere, authorized
+
+    @staticmethod
+    def _previous_money(value: str) -> str:
+        if not isinstance(value, str) or re.fullmatch(r"[0-9]{1,12}(?:\.[0-9]{1,2})?", value) is None:
+            raise HTTPException(422, "Amounts must be finite nonnegative NUMERIC(14,2) strings without subcents")
+        with localcontext() as arithmetic:
+            arithmetic.prec = 42
+            return format(Decimal(value), ".2f")
+
+    @staticmethod
+    def _previous_row_payload(row) -> dict:
+        # Bind the digest to complete persisted source metadata, not just sums.
+        return {column.name: (str(value) if isinstance(value, (uuid.UUID, date, Decimal)) else value)
+            for column in row.__table__.columns
+            for value in [getattr(row, column.name)]}
+
+    async def _previous_proposal(self, property_id, plan_year, source_scope_id=None, target_scope_id=None):
+        prop, source, target, authorized = await self._previous_admit(
+            property_id, plan_year, source_scope_id, target_scope_id)
+        start, end = date(plan_year - 1, 1, 1), date(plan_year - 1, 12, 31)
+        rows = await self._plans.prior_year_sources(property_id, start, end)
+        if not rows:
+            raise HTTPException(422, "No current confirmed prior-year cost sources")
+        categories, totals, codes, sources = {}, {}, {}, []
+        with localcontext() as arithmetic:
+            arithmetic.prec = max(42, 28 + len(str(len(rows) + 1)))
+            for cost, category in rows:
+                if category is None or not category.is_active:
+                    raise HTTPException(422, "Prior-year category is unmapped or inactive")
+                if cost.cost_category_plan_version != category.plan_version:
+                    raise HTTPException(422, "Prior-year category version is ambiguous")
+                key = (category.id, category.plan_version)
+                if category.code in codes and codes[category.code] != key:
+                    raise HTTPException(422, "Multiple category versions share a prior-year code")
+                codes[category.code] = key
+                if category.cost_group not in {"UMLAGEFAEHIG", "NICHT_UMLAGEFAEHIG"}:
+                    raise HTTPException(422, "Unsupported prior-year cost group")
+                days = (cost.service_period_to - cost.service_period_from).days + 1
+                if days <= 0 or not cost.gross_amount.is_finite():
+                    raise HTTPException(422, "Invalid prior-year service period or gross amount")
+                overlap = (min(end, cost.service_period_to) - max(start, cost.service_period_from)).days + 1
+                amount = (cost.gross_amount * Decimal(overlap) / Decimal(days)).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP)
+                totals[key] = totals.get(key, Decimal("0.00")) + amount
+                categories[key] = category
+                sources.append({"cost": self._previous_row_payload(cost),
+                    "category": self._previous_row_payload(category), "prorated_gross": format(amount, ".2f")})
+            planned, reserve = [], Decimal("0.00")
+            for key in sorted(categories, key=lambda k: (categories[k].sort_order, categories[k].code, str(k[0]), k[1])):
+                category, amount = categories[key], totals[key]
+                if amount < 0:
+                    raise HTTPException(422, "Negative net prior-year category or reserve proposal")
+                if category.reserve_relevant:
+                    reserve += amount
+                else:
+                    planned.append({"category_id": str(category.id), "category_code": category.code,
+                        "label": category.label, "planned_amount": self._previous_money(format(amount, ".2f")),
+                        "distribution_key": "MEA", "cost_group": category.cost_group})
+            reserve_value = self._previous_money(format(reserve, ".2f"))
+        basis = {"basis": "confirmed_current_service_period_gross_inclusive_days_half_up_cents",
+            "organization_id": str(self._org_id), "property_id": str(property_id),
+            "management_type": prop.management_type, "source_year": plan_year - 1, "plan_year": plan_year,
+            "source_accounting_scope_id": str(source.id) if source else None,
+            "accounting_scope_id": str(target.id) if target else None,
+            "source_scope": self._previous_row_payload(source) if source else None,
+            "target_scope": self._previous_row_payload(target) if target else None,
+            "period_start": start.isoformat(), "period_end": end.isoformat(),
+            "sources": sources, "planned_costs": planned, "reserve_contribution_total": reserve_value}
+        digest = sha256_hex(canonical_json(basis))
+        preview = {"source_year": plan_year - 1, "plan_year": plan_year,
+            "period_start": start.isoformat(), "period_end": end.isoformat(),
+            "planned_costs": planned, "reserve_contribution_total": reserve_value, "source_digest": digest,
+            "footnote": "Vorschlag aus aktuellen bestätigten Vorjahreskosten (volles WEG-Brutto), "
+                "nach Leistungszeitraum tageanteilig (inklusive Tage, je Kostenposition HALF_UP auf Cent). "
+                "Rücklagen separat; nur Planwerte zur ausdrücklichen Bestätigung. MEA ist der Planverteilerschlüssel; "
+                "historische Verteilerschlüssel werden nicht übernommen. Keine Vollständigkeitsattestierung, "
+                "keine Berechnung, keine Festschreibung und kein Beschluss."}
+        provenance = {"source_year": plan_year - 1, "source_digest": digest,
+            "source_cost_entry_ids": [str(cost.id) for cost, _ in rows],
+            "source_accounting_scope_id": basis["source_accounting_scope_id"],
+            "accounting_scope_id": basis["accounting_scope_id"], "basis": basis["basis"],
+            "period_start": start.isoformat(), "period_end": end.isoformat()}
+        return preview, provenance, authorized
+
+    async def previous_preview(self, property_id, plan_year, source_accounting_scope_id=None, accounting_scope_id=None):
+        preview, _, _ = await self._previous_proposal(
+            property_id, plan_year, source_accounting_scope_id, accounting_scope_id)
+        return preview
+
+    async def create_from_previous(self, property_id, plan_year, expected_source_digest,
+            planned_costs, reserve_contribution_total, source_accounting_scope_id=None, accounting_scope_id=None):
+        preview, provenance, authorized = await self._previous_proposal(
+            property_id, plan_year, source_accounting_scope_id, accounting_scope_id)
+        if expected_source_digest != preview["source_digest"]:
+            raise HTTPException(409, "Prior-year source basis changed; preview again before adopting")
+        proposals = preview["planned_costs"]
+        if len(planned_costs) != len(proposals):
+            raise HTTPException(422, "Adoption must retain every proposed category exactly once and in order")
+        normalized = []
+        for supplied, proposal in zip(planned_costs, proposals):
+            if {k: v for k, v in supplied.items() if k != "planned_amount"} != {
+                k: v for k, v in proposal.items() if k != "planned_amount"
+            }:
+                raise HTTPException(422, "Only proposed amounts may be edited; category metadata must match")
+            normalized.append({**proposal, "planned_amount": self._previous_money(supplied.get("planned_amount"))})
+        reserve = self._previous_money(reserve_contribution_total)
+        await self._previous_switch(authorized)
+        plan = await self.create_draft(property_id, plan_year, date(plan_year, 1, 1), date(plan_year, 12, 31),
+            reserve_contribution_total=Decimal(reserve), accounting_scope_id=accounting_scope_id)
+        plan.snapshot_payload = {"draft_inputs": {"planned_costs": normalized,
+            "reserve_contribution_total": reserve}, "previous_actuals": provenance}
+        await self._plans.update(plan)
+        # Re-admit live target preparation and complete source disclosure before
+        # the function-scoped request transaction can commit; any denial rolls
+        # back the whole draft, never a partial adoption.
+        await self._previous_admit(property_id, plan_year, source_accounting_scope_id, accounting_scope_id)
+        await self._previous_switch(authorized)
+        await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(plan, accounting_scope_id)
+        return plan
+
+    @staticmethod
+    def _adopted_snapshot_inputs(plan, inputs: PlanInputs) -> dict:
+        previous = (plan.snapshot_payload or {}).get("previous_actuals")
+        if previous is None:
+            return {}
+        return {"previous_actuals": previous, "draft_inputs": {
+            "planned_costs": [{"category_id": str(pc.category_id) if pc.category_id else None,
+                "category_code": pc.category_code, "label": pc.label,
+                "planned_amount": format(pc.planned_amount, ".2f"),
+                "distribution_key": pc.distribution_key, "cost_group": pc.cost_group}
+                for pc in inputs.planned_costs],
+            "reserve_contribution_total": format(inputs.reserve_contribution_total, ".2f")}}
 
     # ------------------------------------------------------------------
     # create draft
@@ -145,7 +349,8 @@ class EconomicPlanService:
         await self._lines.delete_for_plan(plan.id)
         await self._write_lines(plan, result)
 
-        plan.snapshot_payload = {**build_plan_snapshot_payload(inp, result), "financial_input_coverage": self._coverage}
+        plan.snapshot_payload = {**build_plan_snapshot_payload(inp, result),
+            **self._adopted_snapshot_inputs(plan, inputs), "financial_input_coverage": self._coverage}
         plan.reserve_contribution_total = inputs.reserve_contribution_total
         await self._plans.update(plan)
 
@@ -171,7 +376,7 @@ class EconomicPlanService:
         computation_basis = await begin_computation(self._session, self._org_id, plan, 'finalize')
         inp, result = await self._compute_engine(plan, inputs)
 
-        payload = build_plan_snapshot_payload(inp, result)
+        payload = {**build_plan_snapshot_payload(inp, result), **self._adopted_snapshot_inputs(plan, inputs)}
         payload["financial_input_coverage"] = self._coverage
         # Eigentümer-/Objekt-Anzeige-Namen einfrieren (ADR-0012), vor dem Hash --
         # s. settlement_service.finalize. Noch OLD.status='draft', Schreiben erlaubt.

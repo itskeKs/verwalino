@@ -70,12 +70,17 @@ _SALT = "hv-session"
 def create_session_token(
     user_id: uuid.UUID,
     organization_id: uuid.UUID,
+    session_version: int = 0,
 ) -> str:
     """Return a signed session token (cookie value)."""
     payload: dict[str, Any] = {
         "uid": str(user_id),
         "oid": str(organization_id),
     }
+    if type(session_version) is not int or session_version < 0:
+        raise ValueError("Invalid session generation")
+    if session_version:
+        payload["sv"] = session_version
     return _serializer.dumps(payload, salt=_SALT)
 
 
@@ -88,7 +93,10 @@ def decode_session_token(token: str) -> dict[str, Any] | None:
             max_age=settings.session_max_age_seconds,
         )
         # Validate expected keys
-        if not isinstance(data, dict) or set(data) != {"uid", "oid"}:
+        if not isinstance(data, dict) or set(data) not in ({"uid", "oid"}, {"uid", "oid", "sv"}):
+            return None
+        generation = data.get("sv", 0)
+        if type(generation) is not int or generation < 0:
             return None
         user_id = data["uid"]
         organization_id = data["oid"]
