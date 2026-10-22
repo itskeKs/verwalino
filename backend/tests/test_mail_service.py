@@ -17,6 +17,20 @@ from tests.test_scoped_account_statements import statement_fixture, client as sc
 from tests.test_scoped_dunning import grant, tenant_body
 
 
+@pytest.fixture(autouse=True)
+def isolate_smtp_configuration(monkeypatch):
+    for name, field in Settings.model_fields.items():
+        if name.startswith("smtp_"):
+            monkeypatch.delenv(f"HV_{name.upper()}", raising=False)
+            monkeypatch.setattr(settings, name, field.default)
+
+    def forbid_transport(*args, **kwargs):
+        raise AssertionError("SMTP tests must install an explicit fake transport")
+
+    monkeypatch.setattr("smtplib.SMTP", forbid_transport)
+    monkeypatch.setattr("smtplib.SMTP_SSL", forbid_transport)
+
+
 class FakeSMTP:
     messages = []
     calls = []
@@ -41,6 +55,7 @@ class FakeSMTP:
         self.calls.append(("login", username, password))
 
     def send_message(self, message, *, from_addr, to_addrs):
+        self.calls.append(("send",))
         if self.error:
             raise self.error
         self.messages.append((message.as_bytes(), from_addr, to_addrs))
@@ -83,7 +98,7 @@ def test_mail_transport_exact_pdf_tls_auth_and_no_delivery_claim(smtp):
     assert attachment.get_content_type() == "application/pdf"
     assert attachment.get_payload(decode=True) == pdf
     assert attachment.get_filename() == "mahnung.pdf"
-    assert ("starttls",) in smtp.calls
+    assert [call[0] for call in smtp.calls] == ["connect", "ehlo", "starttls", "ehlo", "login", "send"]
     assert ("login", "synthetic", "fake-only") in smtp.calls
 
 
@@ -209,9 +224,32 @@ async def test_mail_finalized_settlement_uses_original_snapshot(client_a_admin, 
     recipient, = info.json()["recipients"]
     assert recipient["person_id"]
     assert (await client_a_admin.put(f"/api/persons/{recipient['person_id']}", json={"email": "settlement@example.invalid"})).status_code == 200
-    sent = await client_a_admin.post(url, json={"person_id": recipient["person_id"], "request_id": str(uuid.uuid4())})
-    assert sent.status_code == 200 and sent.json()["status"] == "accepted", sent.text
-    message = BytesParser(policy=policy.default).parsebytes(smtp.messages[0][0])
+    original_pdf = await client_a_admin.get(f"/api/settlements/{run_id}/pdf")
+    assert original_pdf.status_code == 200 and original_pdf.content.startswith(b"%PDF")
+    import psycopg2
+    from tests.conftest import MIGRATOR_SYNC_URL
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT u.id,u.area FROM unit u JOIN lease_agreement l ON l.unit_id=u.id WHERE l.id=%s', (str(m3_seed["lease_a"]),))
+            unit_id, original_area = cursor.fetchone()
+    assert original_area is not None
+    request_id = str(uuid.uuid4())
+    try:
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute('UPDATE unit SET area=area+100 WHERE id=%s RETURNING area', (str(unit_id),))
+                assert cursor.fetchone()[0] != original_area
+        sent = await client_a_admin.post(url, json={"person_id": recipient["person_id"], "request_id": request_id})
+        assert sent.status_code == 200 and sent.json()["status"] == "accepted", sent.text
+        message = BytesParser(policy=policy.default).parsebytes(smtp.messages[0][0])
+        attachment = list(message.iter_attachments())[0].get_payload(decode=True)
+        assert attachment == original_pdf.content
+        retained = await client_a_admin.get(f"{url}/{sent.json()['id']}/pdf")
+        assert retained.status_code == 200 and retained.content == attachment
+    finally:
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute('UPDATE unit SET area=%s WHERE id=%s', (original_area, str(unit_id)))
     assert message["To"] == "settlement@example.invalid"
     from io import BytesIO
     import pdfplumber

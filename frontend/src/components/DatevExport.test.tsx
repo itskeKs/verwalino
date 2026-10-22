@@ -107,13 +107,30 @@ describe("DATEV export", () => {
     await user.click(screen.getByRole("button", { name: "DATEV-Quellen laden" }));
     await screen.findByLabelText("Bankkonto Objektbank *");
   });
-  it("retries preview and download failures without claiming import success; cleans failed browser download", async () => {
-    vi.mocked(datev.previewDatev).mockRejectedValueOnce(new Error("Vorschaufehler"));
+  it("discards stale preview after 409 and requires a newly reviewed digest before download", async () => {
+    vi.mocked(datev.previewDatev).mockResolvedValueOnce(preview).mockResolvedValueOnce({ ...preview, source_digest: "fresh-digest" });
     vi.mocked(datev.downloadDatevCsv).mockRejectedValueOnce(new ApiError(409, "Bestand geändert"));
+    render(<DatevExport properties={properties} />); const user = await ready();
+    await user.click(screen.getByRole("button", { name: "DATEV-Datei herunterladen" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Bestand geändert");
+    expect(screen.queryByRole("table", { name: "DATEV-Vorschau" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "DATEV-Datei herunterladen" })).toBeNull();
+    expect(click).not.toHaveBeenCalled();
+    expect(datev.downloadDatevCsv).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "DATEV-Vorschau erstellen" }));
+    await screen.findByRole("table", { name: "DATEV-Vorschau" });
+    await user.click(screen.getByRole("button", { name: "DATEV-Datei herunterladen" }));
+    expect(datev.previewDatev).toHaveBeenCalledTimes(2);
+    expect(datev.downloadDatevCsv).toHaveBeenLastCalledWith({ ...vi.mocked(datev.previewDatev).mock.calls[1][0], expected_source_digest: "fresh-digest" });
+    expect(click).toHaveBeenCalledTimes(1);
+  });
+  it("retries temporary preview and download failures without claiming import success; cleans failed browser download", async () => {
+    vi.mocked(datev.previewDatev).mockRejectedValueOnce(new Error("Vorschaufehler"));
+    vi.mocked(datev.downloadDatevCsv).mockRejectedValueOnce(new ApiError(503, "Vorübergehend nicht verfügbar"));
     render(<DatevExport properties={properties} />); const user = await configure();
     await user.click(screen.getByRole("button", { name: "DATEV-Vorschau erstellen" })); expect(await screen.findByRole("alert")).toHaveTextContent("Vorschaufehler");
     await user.click(screen.getByRole("button", { name: "DATEV-Vorschau erstellen" })); await screen.findByRole("table");
-    await user.click(screen.getByRole("button", { name: "DATEV-Datei herunterladen" })); expect(await screen.findByRole("alert")).toHaveTextContent("Bestand geändert");
+    await user.click(screen.getByRole("button", { name: "DATEV-Datei herunterladen" })); expect(await screen.findByRole("alert")).toHaveTextContent("Vorübergehend nicht verfügbar");
     click.mockImplementationOnce(() => { throw new Error("Browserfehler"); });
     await user.click(screen.getByRole("button", { name: "DATEV-Datei herunterladen" })); expect(await screen.findByRole("alert")).toHaveTextContent("Browserfehler");
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:datev"); expect(document.querySelector("a[download]")).toBeNull();

@@ -654,6 +654,9 @@ def staffel_body(**overrides):
 
 
 async def test_staffelmiete_endpoint_exists(rent_world):
+    from app.main import app
+
+    assert "post" in app.openapi()["paths"]["/api/leases/{lease_id}/rent-changes/staffel"]
     async with api_client(rent_world) as api:
         response = await api.post(f"/api/leases/{uuid.uuid4()}/rent-changes/staffel",
                                   json=staffel_body())

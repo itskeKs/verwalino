@@ -20,5 +20,7 @@ it("sends only contract fields and preserves literal plaintext", async () => {
 });
 it.each([403, 404, 409, 422, 500])("preserves API errors %s", async status => {
   fetchMock.mockResolvedValue(new Response(JSON.stringify({ detail: "Nicht erstellt" }), { status }));
-  await expect(issueLetters({ request_id: "r", template_id: "t", property_id: "p", as_of: "2026-10-21" })).rejects.toBeInstanceOf(ApiError);
+  const result = issueLetters({ request_id: "r", template_id: "t", property_id: "p", as_of: "2026-10-21" });
+  await expect(result).rejects.toBeInstanceOf(ApiError);
+  await expect(result).rejects.toMatchObject({ status, message: "Nicht erstellt" });
 });

@@ -73,12 +73,22 @@ it.each([403, 404, 409])("keeps unit and canonical detail after %s, with no retr
   expect(screen.getByText("2025-12-31")).toBeInTheDocument(); expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 it("deletes an empty unit then navigates to its property and remains deleted on reload", async () => {
+  let exists = true;
+  vi.mocked(endpoints.listUnits).mockImplementation(async () => exists ? [unit as never] : []);
+  vi.mocked(endpoints.getUnit).mockImplementation(async () => {
+    if (!exists) throw new Error("Einheit wurde gelöscht.");
+    return unit as never;
+  });
+  fetchMock.mockImplementation(async () => { exists = false; return new Response(null, { status: 204 }); });
   const view = show(); await open(); confirm();
   expect(await screen.findByRole("heading", { name: "Testhaus" })).toBeVisible();
   expect(fetchMock.mock.calls[0][0]).toBe("/api/units/unit");
   expect(screen.queryByRole("heading", { name: "Einheit 42" })).not.toBeInTheDocument();
-  view.unmount(); show("/objekte/property"); expect(await screen.findByRole("heading", { name: "Testhaus" })).toBeVisible();
+  view.unmount(); const reloaded = show("/objekte/property"); expect(await screen.findByRole("heading", { name: "Testhaus" })).toBeVisible();
   expect(screen.queryByText("Einheit 42")).not.toBeInTheDocument();
+  reloaded.unmount(); show();
+  expect(await screen.findByText("Error: Einheit wurde gelöscht.")).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Einheit 42" })).not.toBeInTheDocument();
 });
 it.each([['/objekte/property', 'Objekt löschen', 'Objektübersicht', '/api/properties/property'], ['/personen/person', 'Person löschen', 'Personenübersicht', '/api/persons/person']])("deletes %s and navigates to overview", async (path, label, destination, url) => {
   show(path); await open(label); confirm(); expect(await screen.findByText(destination)).toBeVisible(); expect(fetchMock.mock.calls[0][0]).toBe(url);

@@ -8,7 +8,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.security import create_session_token
-from app.main import app
+from tests.conftest import _api_test_client
 from tests.test_auth_hardening import temporary_auth_rows
 
 
@@ -19,9 +19,19 @@ async def password_identity():
     with temporary_auth_rows(rows):
         identity = rows[0]
         token = create_session_token(identity["user_id"], identity["organization_id"])
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test",
-                                    cookies={settings.session_cookie_name: token}) as client:
+        async with _api_test_client(cookies={settings.session_cookie_name: token}) as client:
             yield client, identity["email"]
+
+
+@pytest.mark.anyio
+async def test_password_identity_preserves_local_api_routing(monkeypatch):
+    from contextlib import aclosing
+
+    monkeypatch.setenv("HV_TEST_LOCAL_API", "1")
+    async with aclosing(password_identity.__wrapped__()) as identities:
+        client, _ = await anext(identities)
+        assert str(client.base_url) == "http://127.0.0.1:18000"
+        assert isinstance(client._transport, httpx.AsyncHTTPTransport)
 
 
 @pytest.mark.anyio

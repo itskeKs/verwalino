@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { downloadDatevCsv, getDatevSources, previewDatev, type DatevConfig, type DatevPreview, type DatevSources } from "../api/datev";
 import type { Property } from "../api/types";
+import { ApiError } from "../api/client";
 import { AccountingScopeSelector } from "./AccountingScopeSelector";
 
 function message(error: unknown): string {
@@ -107,7 +108,12 @@ export function DatevExport({ properties }: { properties: Property[] }) {
         anchor.href = url; anchor.download = "EXTF_Buchungsstapel.csv";
         document.body.append(anchor); anchor.click();
       } finally { anchor.remove(); URL.revokeObjectURL(url); }
-    } catch (reason) { if (current(generation)) setError(message(reason)); }
+    } catch (reason) {
+      if (current(generation)) {
+        if (reason instanceof ApiError && reason.status === 409) setResult(null);
+        setError(message(reason));
+      }
+    }
     finally { finish(generation); }
   }
 

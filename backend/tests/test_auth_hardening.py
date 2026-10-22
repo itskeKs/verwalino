@@ -542,16 +542,14 @@ async def test_membership_role_change_is_visible_on_next_request(
 
 @pytest.mark.asyncio
 async def test_session_is_invalid_immediately_after_user_deactivation(seed_data):
-    from app.main import app
-    from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.conftest import MIGRATOR_SYNC_URL, _api_test_client
 
     # A durable invalidation must not revoke the shared seed's later test cookies.
     rows = [{"email": f"deactivation-{uuid.uuid4()}@example.test", "role": "OWNER_ADMIN"}]
     with temporary_auth_rows(rows):
         user = rows[0]
         token = create_session_token(user["user_id"], user["organization_id"])
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test",
-                                    cookies={settings.session_cookie_name: token}) as client:
+        async with _api_test_client(cookies={settings.session_cookie_name: token}) as client:
             with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
                 with connection.cursor() as cursor:
                     cursor.execute('UPDATE public."user" SET is_active = false WHERE id = %s', (str(user["user_id"]),))

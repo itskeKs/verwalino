@@ -29,8 +29,8 @@ const original: LeaseRecord = { id: "lease", unit_id: "unit", tenant_profile_id:
 const march = { id: "change", lease_agreement_id: "lease", valid_from: "2026-03-15", base_rent: "725.00", advance_payment: "175.00", created_at: "2026-01-01T12:00:00Z" };
 const staffelRows = [
   { ...march, id: "staffel-1", valid_from: "2027-01-31", base_rent: "750.00" },
-  { ...march, id: "staffel-2", valid_from: "2027-02-28", base_rent: "775.00" },
-  { ...march, id: "staffel-3", valid_from: "2027-03-31", base_rent: "800.00" },
+  { ...march, id: "staffel-2", valid_from: "2028-01-31", base_rent: "775.00" },
+  { ...march, id: "staffel-3", valid_from: "2029-01-31", base_rent: "800.00" },
 ];
 const indexPreview = { valid_from: "2027-01-01", previous_valid_from: "2026-01-01", previous_base_rent: "600.00", base_rent: "627.27", advance_payment: "150.00" };
 const indexInput = { old_index: "110", new_index: "115", declaration_received_on: "2026-11-15" };
@@ -467,7 +467,7 @@ it.each(["OWNER_ADMIN", "CLERK"])("T43 posts fixed EUR staffel without start-ren
     expect(within(rendered).queryByRole("button")).toBeNull();
   }
   expect(endpoints.patchLease).not.toHaveBeenCalled(); expect(endpoints.createLease).not.toHaveBeenCalled();
-  view.unmount(); show(role); expect(await screen.findByText("2027-03-31")).toBeVisible();
+  view.unmount(); show(role); expect(await screen.findByText("2029-01-31")).toBeVisible();
 });
 
 it.each([["5", "0.05"], ["2,75", "0.0275"], ["0.00000000000000000001", "0.0000000000000000000001"]])("T43 sends percentage %s as an exact decimal fraction", async (input, fraction) => {
