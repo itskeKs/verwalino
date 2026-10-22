@@ -53,6 +53,16 @@ Der Anker hat heute `organization_id`, `property_id`, `account_type` (`LAUFEND`/
 
 **Optionale, additive Felder (nicht zwingend M6):** `opening_balance NUMERIC(14,2)` + `opening_balance_date DATE` als **Eröffnungssaldo-Anker** (Kontostand zu einem Stichtag, ab dem `payment`-Bewegungen fortgeschrieben werden). Begründung: ohne Eröffnungssaldo ist der abgeleitete Kontostand nur relativ zu den *im System erfassten* Zahlungen, nicht der reale Banksaldo (Zahlungen vor Systemeinführung fehlen). **[ENTSCHEIDUNG E6-6]** ob M6 diesen Eröffnungssaldo-Anker einführt (empfohlen: ja, klein und additiv) oder ihn nach M9 verschiebt. Er ist **kein** Buchungssatz, sondern eine Verwalter-Stichtagsangabe (wie der Vermögensbericht-Stichtagssaldo, ADR-0008).
 
+**T55 – Lebenszyklus ohne neue Salden:** `is_active=false` beendet die Nutzung
+für neue Zahlungen, Bankimporte und SEPA-Vorschläge; historische Referenzen bleiben
+erhalten und lesbar. Reaktivierung ist ausdrücklich möglich. Metadaten werden unter
+Live-/Quellen-Prepare-Recht und der Finanzsperre geändert. Eine Umbenennung belässt
+SEPA-Mandate/Fingerprints unverändert; verwendete IBAN/BIC werden auch SQL-seitig
+gegen Umschreiben geschützt. Ein exakt zum Original passendes gebuchtes Storno darf
+weiterhin entstehen, nicht aber eine beliebige neue Zahlung auf dem inaktiven Konto.
+Dienstleister nutzen denselben Aktivstatus für neue Kostenreferenzen. Verwaltungs-
+mandate sind davon getrennt und behalten ihren vorhandenen gebundenen Zeitraumsschutz.
+
 ### 1.2 `payment` (neue Tabelle, tenant-behaftet, RLS, ab `booked` unveränderbar)
 
 Eine `payment`-Zeile ist **eine erfasste Geldbewegung** (Eingang oder Ausgang) gegen ein Konto, einer Gegenpartei und einem Zweck/Typ zugeordnet. Sie ist ein **Buchungsbeleg** (GoBD, ADR-0009): ab Status `booked` unveränderbar; Korrektur = Storno + Neubuchung.

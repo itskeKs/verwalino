@@ -70,12 +70,16 @@ class CostEntryService:
         self._doc_repo = InvoiceDocumentRepository(session, org_id)
         self._audit = AuditRepository(session, org_id)
 
-    async def _validate_scope(self, entry: CostEntry) -> None:
+    async def _validate_scope(self, entry: CostEntry, *, selecting_vendor: bool = False) -> None:
         prop = await PropertyRepository(self._session, self._org_id).get_by_id(entry.property_id)
         if prop is None:
             raise HTTPException(404, "Property not found")
-        if entry.vendor_id and await VendorRepository(self._session, self._org_id).get_by_id(entry.vendor_id) is None:
-            raise HTTPException(404, "Vendor not found")
+        if entry.vendor_id:
+            vendor = await VendorRepository(self._session, self._org_id).get_by_id(entry.vendor_id)
+            if vendor is None:
+                raise HTTPException(404, "Vendor not found")
+            if selecting_vendor and not vendor.is_active:
+                raise HTTPException(409, "Vendor is inactive; select an active vendor for new costs")
         if entry.vendor_id and not await self._session.scalar(text(
             "SELECT profile_reference_access(:org,'vendor',:vendor)"),
             {'org': self._org_id, 'vendor': entry.vendor_id}):
@@ -102,7 +106,7 @@ class CostEntryService:
         if entry.source != "MANUAL" and source_document_id is None:
             raise HTTPException(422, "Imported costs require source_document_id")
         await FinancialScopeService(self._session, self._org_id, self._user_id).lock_inputs()
-        await self._validate_scope(entry)
+        await self._validate_scope(entry, selecting_vendor=True)
         idem = IdempotencyService(self._session, self._org_id, self._user_id)
         if idempotency_key is not None:
             if request_digest is None:
@@ -164,6 +168,7 @@ class CostEntryService:
         self, entry_id: uuid.UUID, updates: dict
     ) -> CostEntry:
         """Update a draft/needs_review entry. Confirmed entries cannot be updated."""
+        await FinancialScopeService(self._session, self._org_id, self._user_id).lock_inputs()
         entry = await self._repo.get_by_id_for_update(entry_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="Cost entry not found")
@@ -174,6 +179,7 @@ class CostEntryService:
                 detail="Cannot edit a confirmed cost entry; create a correction version instead",
             )
 
+        selecting_vendor = "vendor_id" in updates and updates["vendor_id"] != entry.vendor_id
         changed = {}
         for field_name, value in updates.items():
             if hasattr(entry, field_name):
@@ -181,7 +187,7 @@ class CostEntryService:
                 setattr(entry, field_name, value)
                 changed[field_name] = {"old": str(old_val), "new": str(value)}
 
-        await self._validate_scope(entry)
+        await self._validate_scope(entry, selecting_vendor=selecting_vendor)
         entry = await self._repo.update(entry)
 
         if changed:
@@ -424,6 +430,7 @@ class CostEntryService:
             status="needs_review",
             source="MANUAL",
         )
+        await self._validate_scope(new_entry, selecting_vendor=True)
         await scope.prepare_new(new_entry)
         new_entry = await self._repo.create(new_entry)
 

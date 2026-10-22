@@ -541,6 +541,24 @@ nicht neu. Migration 0129 schützt diese Provenienz und verweigert deren Verlust
 beim Downgrade. Ausstellung allein bestätigt keinen Zugang. Der echte UI-/PDFablauf
 ist mit `scripts/acceptance/t35_dunning_interest_browser.cjs` wiederholbar.
 
+### Stammdaten bearbeiten und beenden (T55)
+
+Bankkonten lassen sich unter **Bankkonten → Bankkonto bearbeiten** umbenennen und
+nach ausdrücklicher Bestätigung beenden oder reaktivieren. Historische Umsätze
+bleiben sichtbar; inaktive Konten sind keine Quelle für neue Zahlungen, Importe
+oder SEPA-Vorschläge. Eine reine Umbenennung verändert keine SEPA-Mandate.
+Bereits verwendete IBAN/BIC sind geschützt: stattdessen ein neues Konto anlegen.
+Exakte Stornokorrekturen gebuchter Originale bleiben auch nach Beendigung möglich.
+
+Dienstleisterdetails können mit Kontakt-Vorbereitungsrecht bearbeitet und beendet
+werden; neue Kosten dürfen keine inaktiven Dienstleister auswählen. Ein Admin kann
+Verwaltungsmandate bearbeiten/beenden, jedoch keine bereits durch Finanzkreise
+gebundene Definition umschreiben (409). Das betrifft nicht SEPA-Mandate.
+Objekte besitzen optional **Baujahr** und **Gesamtfläche (m²)**; die Fläche wird als
+Decimal gespeichert, nicht aus Einheiten erfunden. Leere Angaben bleiben unbekannt.
+Der UI-only-Test `scripts/acceptance/t55_master_data_browser.cjs` prüft die echte
+Umbenennung, 1984 / 1.234,56 m² und unveränderte Quellen nach Desktop-/Telefon-Reload.
+
 ### Wirtschaftsplan aus Vorjahres-Ist (T54)
 
 Unter **Wirtschaftspläne → Plan aus Vorjahres-Ist** Objekt, Zieljahr und – bei

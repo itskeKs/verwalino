@@ -25,7 +25,7 @@ Kurzpfade: `api/ services/ engine/ models/ workers/` liegen unter `backend/app/`
 | Benutzer anlegen | ja | 🟡 Backend da, UI nur Liste | `api/users.py:102`, `pages/UsersPage.tsx` |
 | Rollen Admin/Sachbearbeiter/Nur-Lesen | ja | 🟡 fest, nicht änderbar | `core/rbac.py` |
 | Passwort ändern | ja | ❌ | `api/auth.py` |
-| Mandate mit Dokumenten | nein | 🟡 kein Bearbeiten/Beenden | `api/mandates.py` |
+| Mandate mit Dokumenten | nein | ✅ Bearbeiten/Beenden, gebundene Definition geschützt | `api/mandates.py`, T55 |
 | Quellen-Governance (Bereiche, Freigaben, Quarantänen) | nein | ✅ im Default-Modus PREPARATION nicht blockierend, überlädt das Menü | `services/financial_scope_service.py:59-72` |
 | Dashboard | ja | ✅ Fristen, Aufgaben und monatliche Miet-/Leerstandskennzahlen | `pages/DashboardPage.tsx` |
 
@@ -34,7 +34,8 @@ Kurzpfade: `api/ services/ engine/ models/ workers/` liegen unter `backend/app/`
 | Funktion | Referenz | Status im Code | Fundstelle |
 | --- | --- | --- | --- |
 | Objekt anlegen/bearbeiten (Miete/WEG/SEV/Misch) | ja | ✅ (kein Löschen) | `api/properties.py`, `pages/PropertiesPage.tsx` |
-| Baujahr, Gesamtfläche, Fotos | ja | ❌ | `models/property.py` |
+| Baujahr, Gesamtfläche | ja | ✅ optional, ausdrücklich gespeichert | `models/property.py`, T55 |
+| Fotos | ja | ❌ | – |
 | Einheiten (Typ, Fläche, beheizte Fläche) | ja | ✅ | `api/units.py`, `pages/PropertyDetailPage.tsx` |
 | MEA erfassen | ja | 🟡 Skala nur per Teilungserklärung, sonst 409; Endpoint ohne UI | `api/units.py:208-221`, `api/properties.py:189` |
 | Teilungserklärung-Import (KI, Prüfung) | nein | ✅ (Flag + OpenAI-Key) | `api/declaration_imports.py` |
@@ -47,7 +48,7 @@ Kurzpfade: `api/ services/ engine/ models/ workers/` liegen unter `backend/app/`
 | Funktion | Referenz | Status im Code | Fundstelle |
 | --- | --- | --- | --- |
 | Kontakte, Mieter-/Eigentümerprofil | ja | ✅ | `api/persons.py`, `pages/PersonDetailPage.tsx` |
-| Dienstleister | ja | 🟡 kein Bearbeiten | `api/vendors.py` |
+| Dienstleister | ja | ✅ Bearbeiten/Beenden mit Kontakt-Quellenrecht | `api/vendors.py`, T55 |
 | Eigentum mit Anteil | ja | 🟡 kein Beenden, kein Eigentümerwechsel | `api/ownership.py` |
 | Mietvertrag anlegen (Kaltmiete, NK, Kaution) | ja | ✅ | `api/leases.py`, `pages/UnitDetailPage.tsx` |
 | Vertrag ändern/beenden, Mieterwechsel | ja | 🟡 nur Anlegen, Ende nicht nachtragbar | `api/leases.py` |
@@ -60,7 +61,7 @@ Kurzpfade: `api/ services/ engine/ models/ workers/` liegen unter `backend/app/`
 
 | Funktion | Referenz | Status im Code | Fundstelle |
 | --- | --- | --- | --- |
-| Bankkonten | ja | ✅ (kein Bearbeiten) | `api/bank_accounts.py` |
+| Bankkonten | ja | ✅ Bearbeiten/Beenden, historische Referenzen bleiben | `api/bank_accounts.py`, T55 |
 | Sollstellung Miete/NK tagegenau | ja | ✅ live abgeleitet | `engine/mietkonto.py:203` |
 | Zahlung erfassen, buchen, stornieren | ja | 🟡 Entwurf im UI nicht änderbar | `api/payments.py`, `pages/PaymentDetailPage.tsx` |
 | Mietkonto je Mieter/Eigentümer, Offene Posten | ja | ✅ | `pages/MietkontoPage.tsx`, `pages/OpenItemsPage.tsx` |
@@ -316,7 +317,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 
 ### Phase 3 – Parität und Komfort
 
-**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43–T54 abgeschlossen; nächste Aufgabe T55.** T10 bleibt offen.
+**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43–T55 abgeschlossen; nächste Aufgabe T56.** T10 bleibt offen.
 
 - [x] **T43 Staffelmiete** — Aus Start, Betrag oder Prozent, Intervall und Stufenzahl mehrere Mietänderungen (T23) anlegen.
   Dateien: `frontend/src/pages/UnitDetailPage.tsx`, `backend/app/api/leases.py`
@@ -366,9 +367,10 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
   Dateien: `backend/app/services/economic_plan_service.py`, `backend/app/api/economic_plans.py`, `frontend/src/pages/EconomicPlansPage.tsx`
   Fertig, wenn: `uv run pytest tests/test_m4_weg.py -k previous` (neu) grün UND Ablauf in der App: „Plan 2027 aus Ist 2026“.
   Umgesetzt: ausdrückliche nichtschreibende Vorjahresvorschau, unabhängige ganze WEG-Lese-/Prepare-Jahreskreise, bestätigte aktuelle signierte Bruttokosten nach inklusiv tageanteiligem Leistungszeitraum (HALF_UP je Position), separate Rücklagen und editierbare persistierte Entwurfseingaben mit Quellen-Digest/-Provenienz. Zunächst neun fehlende API-Fälle rot; final 34 Pflichtfälle und 131 Plan-/Kreis-/Korrektur-/Reportregressionen grün. Drei spätere Fehler betrafen ausschließlich eine bereits committete Fixture-Nachzählung; frische Migrator-Leseverbindung, dieselben 404/403-/Nullplan-Erwartungen, danach vollständiger Grünlauf. 62 unabhängige Frontendfälle, Build und Gesamtlint grün. Feste Gegenproben: 4.383,17 EUR aus Gutschrift/Korrektur/überjähriger 181-EUR-Zuordnung, Null-/Negativkategorien, Metadatenmanipulation, Stale-Quellen, Live-Rechte, echte Finanzsperre, Parallelvorschau, später Rollback und unverändertes finalisiertes Plan-PDF. Vollständiger UI-only-PASS `t54_previous_plan_browser.cjs`: echte bestätigte Belege 2026 (4.000/3.000, Rücklage getrennt 6.000 EUR), getrennte 2026-/2027-Kreise, nichtschreibende Vorschau/Invalidierung, bestätigte Bearbeitung auf 4.100,25/3.000 und Rücklage 6.500 EUR, genau ein unberechneter Plan 2027, persistierte Kategorien/Beträge nach Desktop-/390×844-Reload und unveränderte Originalquellen/Altpläne. Keine automatische Attestierung/Berechnung/Finalisierung. Erstlauf wartete sachfremd auf den bewusst offenen T10-OCR-Worker; manuellen freigegebenen Belegpfad stattdessen mit seinem tatsächlichen Status eingefroren. Zweiter Lauf scheiterte an einem doppelt relativierten Tabellen-Locator; tatsächliche Vorfahrenzeile verwendet, unveränderte MEA-/Betragschecks, erst danach Vollpass. Keine Migration (Head 0135), alte Revisionen unverändert; App/Browser beendet, Ports geschlossen. Bekannte Alembic-path_separator-/Vite-Chunkwarnungen und finale Gesamtprüfungen bleiben offen.
-- [ ] **T55 Stammdaten-Lücken** — Bankkonto, Dienstleister und Mandat bearbeiten bzw. beenden; Objekt um Baujahr und Gesamtfläche ergänzen.
+- [x] **T55 Stammdaten-Lücken** — Bankkonto, Dienstleister und Mandat bearbeiten bzw. beenden; Objekt um Baujahr und Gesamtfläche ergänzen.
   Dateien: `backend/app/api/bank_accounts.py`, `backend/app/api/vendors.py`, `backend/app/api/mandates.py`, `backend/app/models/property.py`
   Fertig, wenn: `uv run pytest tests/test_m6_bank_accounts.py tests/test_m1_profiles_api.py` grün UND Ablauf in der App: „Bankkonto umbenennen“.
+  Umgesetzt: Live-/Quellen-berechtigte Bank- und Dienstleisterpflege mit ausdrücklichem Aktivstatus, Admin-Verwaltungsmandatseditor mit bestehendem gebundenem Zeitraumsschutz sowie nullable Baujahr/Decimal-Gesamtfläche. 17 neue Fälle zunächst rot, final 39 Pflichtfälle und 143 Zahlungs-/SEPA-/Import-/Quellen-/RLS-Regressionen grün; unabhängig 49 Frontendfälle, Build und Gesamtlint grün. Geprüft: echte Finanzsperre, entzogene Prepare-Rechte trotz Lesen, Rollenherabstufung, Mandatskonflikt, unveränderte SEPA-Zustimmung und 850-EUR-Vorschau nach Umbenennen, SQL-Schutz verwendeter Bankdetails und inaktiver neuer Quellen. Zusätzlicher roter Storno-Gegenfall behoben durch enges exaktes Original-Gegenbuchungspaar; keine beliebige Zahlungsausnahme. Tatsächlicher verlustgeschützter 0136→0135→0136-Rundlauf mit befüllter Downgrade-Verweigerung, alten Datenspalten/Sicherheitsobjekten und bytegleichem ausgestelltem Brief-PDF grün; Deferred Constraints ausgeführt, nicht deaktiviert, Alembic-Namenskonvention ausdrücklich festgelegt. Vollständiger UI-only-PASS `t55_master_data_browser.cjs`: Objekt 1984 / 1.234,56 m², Konto anlegen, genau eine Umbenennung und unveränderte übrige Quellen nach Desktop-/390×844-Reload. App/Browser beendet und Ports geschlossen; Head 0136, alte Revisionen unverändert. Fotos, T10, T56/T57 und finale Gesamtprüfungen bleiben offen; bekannte Alembic-path_separator-/Vite-Chunkwarnungen bestehen.
 - [ ] **T56 Fehleingaben löschen** — Objekt, Einheit, Person, Vertrag löschbar, solange nichts darauf verweist (sonst 409 mit Grund).
   Dateien: `backend/app/api/properties.py`, `backend/app/api/units.py`, `backend/app/api/persons.py`, `backend/app/api/leases.py`
   Fertig, wenn: `uv run pytest tests/test_master_delete.py` (neu) grün UND Ablauf in der App: „leere Einheit löschen, Einheit mit Vertrag nennt Grund“.

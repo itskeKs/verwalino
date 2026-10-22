@@ -13,16 +13,19 @@ import {
   createOwnerProfile,
   createTenantProfile,
   createVendor,
+  updateVendor,
 } from "../api/endpoints";
 import type { Person, OwnerProfile, TenantProfile, Vendor } from "../api/types";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/useAuth";
 import { AttachmentsPanel } from "../components/AttachmentsPanel";
+import { MasterDataEditor } from "../components/MasterDataEditor";
 import { DsgvoPanel } from "../components/DsgvoPanel";
 
 export function PersonDetailPage() {
   const { personId } = useParams<{ personId: string }>();
   const { session } = useAuth();
+  const isWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
   const requestVersion = useRef(0);
   const [person, setPerson] = useState<Person | null>(null);
   const [ownerProfiles, setOwnerProfiles] = useState<OwnerProfile[]>([]);
@@ -191,14 +194,14 @@ export function PersonDetailPage() {
               Als Mieter kennzeichnen
             </button>
           )}
-          {person.can_prepare && !hasVendor && !showVendorForm && (
+          {isWrite && person.can_prepare && !hasVendor && !showVendorForm && (
             <button className="btn btn--small" onClick={() => setShowVendorForm(true)} disabled={actionLoading}>
               Als Dienstleister kennzeichnen
             </button>
           )}
         </div>
 
-        {person.can_prepare && showVendorForm && (
+        {isWrite && person.can_prepare && showVendorForm && (
           <form onSubmit={handleVendorSubmit} style={{ marginTop: "1rem" }} className="form-grid">
             <label>
               Steuer-Nr.
@@ -238,13 +241,21 @@ export function PersonDetailPage() {
         <div className="card">
           <h2>Dienstleister-Details</h2>
           {vendors.map((v) => (
-            <table className="info-table" key={v.id}>
+            <section key={v.id}>
+            {v.is_active === false && <p>Beendet</p>}
+            {isWrite && person.can_prepare && <MasterDataEditor title="Dienstleister bearbeiten"
+              initial={{ tax_id: v.tax_id, vat_id: v.vat_id, notes: v.notes }}
+              fields={[{ key: "tax_id", label: "Steuer-Nr.", maxLength: 20, nullable: true }, { key: "vat_id", label: "USt-IdNr.", maxLength: 20, nullable: true }, { key: "notes", label: "Notizen", maxLength: 1000 }]}
+              save={changes => updateVendor(v.id, changes)} onSaved={reload}
+              active={v.is_active !== false} endLabel="Dienstleister beenden" setActive={is_active => updateVendor(v.id, { is_active })} />}
+            <table className="info-table">
               <tbody>
                 <tr><td>Steuer-Nr.</td><td>{v.tax_id ?? "-"}</td></tr>
                 <tr><td>USt-IdNr.</td><td>{v.vat_id ?? "-"}</td></tr>
                 {v.notes && <tr><td>Notizen</td><td>{v.notes}</td></tr>}
               </tbody>
             </table>
+            </section>
           ))}
         </div>
       )}

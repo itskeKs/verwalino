@@ -166,6 +166,9 @@ class PaymentService:
         if account is None:
             raise HTTPException(status_code=404, detail="Bank account not found")
 
+        if not account.is_active:
+            raise HTTPException(409, "Bank account is inactive; use an active account for new payments")
+
         payment = Payment(
             organization_id=self._org_id,
             bank_account_id=account.id,
@@ -224,6 +227,8 @@ class PaymentService:
             account = await self._accounts.get_by_id(updates["bank_account_id"])
             if account is None:
                 raise HTTPException(status_code=404, detail="Bank account not found")
+            if account.id != payment.bank_account_id and not account.is_active:
+                raise HTTPException(409, "Bank account is inactive; use an active account")
             payment.bank_account_id = account.id
             payment.property_id = account.property_id
 

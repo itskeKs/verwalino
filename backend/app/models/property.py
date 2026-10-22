@@ -8,9 +8,12 @@ Tenant-behaftet: carries organization_id, RLS active.
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
+    Integer,
+    Numeric,
     CheckConstraint,
     ForeignKey,
     SmallInteger,
@@ -49,12 +52,17 @@ class Property(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         SmallInteger, nullable=False, server_default="1"
     )
 
+    construction_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_area: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+
     mea_denominator: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     mea_scale_status: Mapped[str] = mapped_column(
         String(24), nullable=False, server_default="LEGACY_UNCONFIRMED"
     )
 
     __table_args__ = (
+        CheckConstraint("construction_year BETWEEN 1 AND 9999", name="ck_property_construction_year"),
+        CheckConstraint("total_area >= 0 AND total_area < 1000000000000", name="ck_property_total_area"),
         UniqueConstraint(
             "organization_id", "id", name="uq_property_organization_id_id"
         ),

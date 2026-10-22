@@ -21,6 +21,7 @@ import type {
   Organization,
   Mandate,
   MandateCreate,
+  MandateUpdate,
   Property,
   PropertyCreate,
   PropertyUpdate,
@@ -33,6 +34,7 @@ import type {
   OwnerProfile,
   TenantProfile,
   Vendor,
+  VendorUpdate,
   OwnershipRecord,
   OwnershipCreate,
   OwnershipEndRequest,
@@ -68,6 +70,7 @@ import type {
   AssetReportComputeRequest,
   BankAccount,
   BankAccountCreate,
+  BankAccountUpdate,
   BankTransactionPage,
   BankTransactionStatus,
   BankMatchingPage,
@@ -152,6 +155,10 @@ export function getMyOrganization(): Promise<Organization> {
 
 export function createMandate(body: MandateCreate): Promise<Mandate> {
   return api.post<Mandate>("/api/mandates", body);
+}
+
+export function updateMandate(id: string, body: MandateUpdate): Promise<Mandate> {
+  return api.patch<Mandate>(`/api/mandates/${encodeURIComponent(id)}`, body);
 }
 
 export function getMandate(id: string): Promise<Mandate> {
@@ -482,6 +489,10 @@ export function listVendors(personId?: string): Promise<Vendor[]> {
 
 export function createVendor(body: { person_id: string; tax_id?: string; vat_id?: string; notes?: string }): Promise<Vendor> {
   return api.post<Vendor>("/api/vendors", body);
+}
+
+export function updateVendor(id: string, body: VendorUpdate): Promise<Vendor> {
+  return api.put<Vendor>(`/api/vendors/${encodeURIComponent(id)}`, body);
 }
 
 // --- Ownership History ---
@@ -864,6 +875,10 @@ export function getBankAccount(id: string): Promise<BankAccount> {
 
 export function createBankAccount(body: BankAccountCreate): Promise<BankAccount> {
   return api.post<BankAccount>("/api/bank-accounts", body);
+}
+
+export function updateBankAccount(id: string, body: BankAccountUpdate): Promise<BankAccount> {
+  return api.patch<BankAccount>(`/api/bank-accounts/${encodeURIComponent(id)}`, body);
 }
 
 export function listBankTransactions(id: string, status?: BankTransactionStatus, offset = 0): Promise<BankTransactionPage> {

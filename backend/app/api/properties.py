@@ -27,7 +27,7 @@ from app.models.audit_event import AuditEvent
 from app.repositories.pagination import Page, PageQuery, page_query, page_rows
 
 from app.services.master_creation_service import (
-    PropertyCreate, create_property as create_property_record, _validate_management_type,
+    PropertyCreate, PropertyFacts, create_property as create_property_record, _validate_management_type,
 )
 
 from fastapi.responses import Response
@@ -80,13 +80,15 @@ class PropertyOut(BaseModel):
     city: str
     management_type: str
     fiscal_year_start_month: int
+    construction_year: int | None
+    total_area: str | None
     mea_denominator: int | None
     mea_scale_status: str
 
     model_config = {"from_attributes": True}
 
 
-class PropertyUpdate(BaseModel):
+class PropertyUpdate(PropertyFacts):
     name: str | None = None
     street: str | None = None
     zip_code: str | None = None
@@ -165,6 +167,11 @@ async def update_property(
         if val is not None:
             setattr(prop, field, val)
 
+    if "construction_year" in body.model_fields_set:
+        prop.construction_year = body.construction_year
+    if "total_area" in body.model_fields_set:
+        prop.total_area = Decimal(body.total_area) if body.total_area is not None else None
+
     await db.flush()
     return _to_out(prop)
 
@@ -241,6 +248,8 @@ def _to_out(p: Property) -> PropertyOut:
         city=p.city,
         management_type=p.management_type,
         fiscal_year_start_month=p.fiscal_year_start_month,
+        construction_year=p.construction_year,
+        total_area=format(p.total_area, ".2f") if p.total_area is not None else None,
         mea_denominator=p.mea_denominator,
         mea_scale_status=p.mea_scale_status,
     )

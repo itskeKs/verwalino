@@ -70,6 +70,8 @@ class SepaService:
         if bank is None:
             raise HTTPException(404,'Bank account not accessible')
         await self.context.enter(bank,capability=capability)
+        if capability == ScopeCapability.PREPARE and not bank.is_active:
+            raise HTTPException(409, 'Bank account is inactive; no new SEPA configuration permitted')
         if bank.account_type!='LAUFEND':
             raise HTTPException(422,'Monthly rent collections require an operating account')
         if not await self.db.scalar(text('SELECT sepa_bank_access(:org,:bank,:cap)'),
@@ -199,6 +201,8 @@ class SepaService:
 
     async def prepare(self, body):
         bank=await self._bank(body.bank_account_id)
+        if not bank.is_active:
+            raise HTTPException(409, 'Bank account is inactive; no new SEPA collection permitted')
         prop,scope=await ReportService(self.db,self.org,self.auth.user_id).property_period(
             bank.property_id,body.period_start,body.period_end,body.accounting_scope_id)
         if prop.management_type not in ('MIET','MISCH') or (scope is not None and scope.scope_type!='MIET'):

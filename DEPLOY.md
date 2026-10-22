@@ -214,6 +214,23 @@ stop app/browser. The manual invoice path does not require the intentionally ope
 T10 OCR worker. Unknown create outcomes require checking the plan list, not retrying
 creation automatically.
 
+## Editable master metadata (T55; local head 0136)
+
+Revision **0136** adds bank/vendor `is_active` and nullable property construction
+ year/Decimal total area. Existing accounts/vendors remain usable; no balance or
+invented building facts are added. Own additive SQL triggers serialize source
+changes, prevent rewriting used IBAN/BIC and reject new inactive references.
+Exact historical Storno pairs remain possible; old RLS policies/functions stay
+unchanged. Populated lifecycle/building facts block downgrade rather than vanish.
+The actual rollback-protected 0136→0135→0136 test compares old-column data,
+relation rights, policies, triggers/functions and an issued PDF. Deferred
+constraints are executed, not disabled. No new credentials or external operation.
+
+The synthetic UI-only acceptance uses `scripts/dev-local.sh` with isolated `/tmp`
+storage and `node scripts/acceptance/t55_master_data_browser.cjs`; stop app/browser
+afterward. This does **not** authorize production deployment/promotion of
+**0123–0136** or change the accepted **0122** gate.
+
 ## Fresh installation: one-time preparation on Moon
 
 Run as `chris` without sudo. The host must have Docker, Compose, `curl`,

@@ -33,6 +33,8 @@ export interface MandateCreate {
   end_date: string | null;
 }
 
+export type MandateUpdate = Partial<Pick<Mandate, "label" | "mandate_type" | "start_date" | "end_date">>;
+
 export type MandateDocType =
   | "VERWALTERVERTRAG"
   | "BANKKONTO"
@@ -68,6 +70,8 @@ export interface User {
 export type ManagementType = "MIET" | "WEG" | "SEV" | "MISCH";
 
 export interface Property {
+  construction_year?: number | null;
+  total_area?: string | null;
   id: string;
   name: string;
   street: string;
@@ -82,6 +86,8 @@ export interface Property {
 export type MeaScaleStatus = "LEGACY_UNCONFIRMED" | "CONFIRMED";
 
 export interface PropertyCreate {
+  construction_year?: number | null;
+  total_area?: string | null;
   data_audience?: DeclarationApprovalRequest["new_property_audience"];
   name: string;
   street?: string;
@@ -92,6 +98,8 @@ export interface PropertyCreate {
 }
 
 export interface PropertyUpdate {
+  construction_year?: number | null;
+  total_area?: string | null;
   name?: string;
   street?: string;
   zip_code?: string;
@@ -496,12 +504,15 @@ export interface TenantProfile {
 }
 
 export interface Vendor {
+  is_active?: boolean;
   id: string;
   person_id: string;
   tax_id: string | null;
   vat_id: string | null;
   notes: string;
 }
+
+export type VendorUpdate = Partial<Pick<Vendor, "tax_id" | "vat_id" | "notes" | "is_active">>;
 
 export interface OwnershipRecord {
   id: string;
@@ -941,6 +952,7 @@ export interface PlanComputeRequest {
 export type BankAccountType = "LAUFEND" | "RUECKLAGE" | "KAUTION";
 
 export interface BankAccount {
+  is_active?: boolean;
   property_name?: string | null;
   id: string;
   organization_id: string;
@@ -951,6 +963,8 @@ export interface BankAccount {
   bic: string | null;
   bank_name: string | null;
 }
+
+export type BankAccountUpdate = Partial<Pick<BankAccount, "label" | "iban" | "bic" | "bank_name" | "is_active">>;
 
 export interface BankAccountCreate {
   accounting_scope_id?: string | null;

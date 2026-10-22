@@ -205,6 +205,8 @@ export function PropertyDetailPage() {
             <tr><td>Verwaltungsart</td><td><span className={`badge badge--${property.management_type.toLowerCase()}`}>{property.management_type}</span></td></tr>
             <tr><td>Strasse</td><td>{property.street || "-"}</td></tr>
             <tr><td>PLZ / Stadt</td><td>{[property.zip_code, property.city].filter(Boolean).join(" ") || "-"}</td></tr>
+            <tr><td>Baujahr</td><td>{property.construction_year ?? "—"}</td></tr>
+            <tr><td>Gesamtfläche (m²)</td><td>{property.total_area ?? "—"}</td></tr>
             <tr><td>GJ-Startmonat</td><td>{property.fiscal_year_start_month}</td></tr>
           </tbody>
         </table>

@@ -10,6 +10,7 @@ import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, Upload, Download, Trash2, FileText } from "lucide-react";
 import {
   getMandate,
+  updateMandate,
   listMandateDocuments,
   uploadMandateDocument,
   mandateDocumentDownloadUrl,
@@ -17,6 +18,7 @@ import {
   archiveMandateDocument,
 } from "../api/endpoints";
 import type { Mandate, MandateDocument, MandateDocType } from "../api/types";
+import { MasterDataEditor } from "../components/MasterDataEditor";
 import { SearchChoice } from "../components/SearchChoice";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/useAuth";
@@ -187,6 +189,12 @@ function MandateDetail({ mandateId }: { mandateId: string }) {
           <CardTitle>Stammdaten</CardTitle>
         </CardHeader>
         <CardContent>
+          {session?.role === "OWNER_ADMIN" && <MasterDataEditor title="Mandat bearbeiten"
+            initial={{ label: mandate.label, mandate_type: mandate.mandate_type, start_date: mandate.start_date, end_date: mandate.end_date }}
+            fields={[{ key: "label", label: "Bezeichnung", maxLength: 255 }, { key: "mandate_type", label: "Verwaltungsart", options: Object.entries(MANDATE_TYPE_LABELS).map(([value, label]) => ({ value, label })) }, { key: "start_date", label: "Beginn", type: "date" }, { key: "end_date", label: "Ende", type: "date", nullable: true }]}
+            save={changes => updateMandate(mandate.id, changes)} onSaved={reload}
+            confirmChanges={changes => changes.end_date ? "Mandat zum angegebenen Datum beenden? Historische Daten bleiben erhalten." : null}
+            description="Mandatsstammdaten ändern. Gebundene Abrechnungskreise werden nicht verändert. Bereits gebundene Zeiträume oder Verwaltungsarten können gesperrt sein." />}
           <table className="info-table">
             <tbody>
               <tr><td>Art</td><td>{MANDATE_TYPE_LABELS[mandate.mandate_type]}</td></tr>

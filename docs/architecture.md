@@ -770,6 +770,24 @@ Pipeline behält ihre Attestierungs-/Snapshotregeln und die Vorjahresprovenienz.
 Keine Migration oder Änderung alter Kosten/finalisierter Pläne, kein automatischer
 WEG-Beschluss. Ein unklarer Create-Ausgang wird nicht automatisch wiederholt.
 
+### Bearbeitbare Stammdaten mit Bestandsschutz (T55)
+
+Bank-PATCH verlangt Live-Writer, Finanzsperre vor Zeilensperre, exaktes Prepare-
+und kanonisches Objekt-Quellenrecht. Dienstleister-PUT verlangt zusätzlich das
+aktuelle Kontakt-Prepare-/Verarbeitungsrecht; Verwaltungsmandats-PATCH bleibt
+Live-Admin vorbehalten. Bereits gebundene Mandatszeiträume/-arten bleiben durch
+den vorhandenen SQL-Guard unveränderbar (409), Bezeichnungen sind bearbeitbar.
+
+Revision 0136 ergänzt ausschließlich bank/vendor `is_active`, nullable Baujahr
+und `Numeric(14,2)`-Gesamtfläche sowie eigene additive Trigger. Inaktive Quellen
+bleiben historisch lesbar, sind für neue Finanzreferenzen gesperrt. Der SQL-
+Bankidentitätsschutz prüft auch durch RLS verborgene bestehende Referenzen;
+Umbenennungen verändern weder Bankfingerprint noch SEPA-Zustimmung. Eine eng
+geprüfte exakte Gegenbuchung eines gebuchten Originals bleibt als Storno möglich.
+Die alten Policies/Funktionen und Originalbelege bleiben unverändert. Befüllte
+neue Felder verhindern ein verlustbehaftetes Downgrade; der echte Rundlauf
+vergleicht alte Spalten und Sicherheitsobjekte in einer zurückgerollten Transaktion.
+
 ## 10. Was dieses Dokument bewusst NICHT entscheidet
 
 - Konkrete Abrechnungs-/Verteilungslogik (M3/M4) — eigener `engine-correctness`-Schritt.

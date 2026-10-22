@@ -3,9 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+import re
 from decimal import Decimal, InvalidOperation
 from fastapi import HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt, StrictStr, field_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.declarations.review_schemas import NewPropertyAudience
@@ -20,7 +21,23 @@ from app.models.property import Property
 from app.models.unit import Unit
 from app.models.person import Person
 
-class PropertyCreate(BaseModel):
+class PropertyFacts(BaseModel):
+    construction_year: StrictInt | None = Field(default=None, ge=1, le=9999)
+    total_area: StrictStr | None = None
+
+    @field_validator("total_area")
+    @classmethod
+    def validate_total_area(cls, value):
+        if value is None:
+            return None
+        if not re.fullmatch(r"[0-9]+(?:\.[0-9]{1,2})?", value):
+            raise ValueError("total_area must be a plain nonnegative decimal with at most two fractional digits")
+        if Decimal(value) >= Decimal("1000000000000"):
+            raise ValueError("total_area exceeds NUMERIC(14,2)")
+        return value
+
+
+class PropertyCreate(PropertyFacts):
     name: str
     street: str = ""
     zip_code: str = ""
@@ -66,7 +83,10 @@ async def create_property(db, auth, body: PropertyCreate, idempotency_key=None):
         raise HTTPException(422, 'Explicit property data audience required')
     if body.data_audience is not None and idempotency_key is None:
         raise HTTPException(422, 'Idempotency-Key required for audience creation')
-    payload = body.model_dump(mode='json')
+    # Keep existing receipt digests stable when callers omit the new facts.
+    payload = body.model_dump(mode='json', exclude={
+        field for field in ("construction_year", "total_area") if field not in body.model_fields_set
+    })
     if body.data_audience is not None:
         for grant in payload['data_audience']['grants']:
             grant['capabilities'] = sorted(grant['capabilities'])
@@ -95,6 +115,8 @@ async def create_property(db, auth, body: PropertyCreate, idempotency_key=None):
         city=body.city,
         management_type=body.management_type,
         fiscal_year_start_month=body.fiscal_year_start_month,
+        construction_year=body.construction_year,
+        total_area=Decimal(body.total_area) if body.total_area is not None else None,
         mea_denominator=body.mea_denominator,
         mea_scale_status=("CONFIRMED" if body.mea_denominator is not None else "LEGACY_UNCONFIRMED"),
     )

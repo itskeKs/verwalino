@@ -2,7 +2,7 @@
  * Properties list -- shows all Objekte (properties) with inline creation.
  */
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { createProperty, updateProperty } from "../api/endpoints";
 import type { Property, PropertyCreate, ManagementType } from "../api/types";
@@ -20,6 +20,8 @@ const MANAGEMENT_TYPES: { value: ManagementType; label: string }[] = [
 ];
 
 const EMPTY_FORM: PropertyCreate = {
+  construction_year: null,
+  total_area: null,
   name: "",
   street: "",
   zip_code: "",
@@ -45,8 +47,15 @@ export function PropertiesPage() {
   const [creationKey, setCreationKey] = useState(() => crypto.randomUUID());
   const [withAudience, setWithAudience] = useState(false);
   const [audienceReason, setAudienceReason] = useState("");
+  const busyRef = useRef(false);
+  const generation = useRef(0);
+  const originalBuilding = useRef<Pick<Property, "construction_year" | "total_area">>({});
+  const invalidateGeneration = useCallback(() => { generation.current++; }, []);
+  useEffect(() => { invalidateGeneration(); return invalidateGeneration; }, [invalidateGeneration]);
 
   function openCreate() {
+    if (busyRef.current) return;
+    setError(null);
     setCreationKey(crypto.randomUUID());
     setWithAudience(false);
     setAudienceReason("");
@@ -56,8 +65,13 @@ export function PropertiesPage() {
   }
 
   function openEdit(p: Property) {
+    if (busyRef.current) return;
+    setError(null);
+    originalBuilding.current = { construction_year: p.construction_year ?? null, total_area: p.total_area ?? null };
     setEditId(p.id);
     setForm({
+      construction_year: p.construction_year ?? null,
+      total_area: p.total_area ?? null,
       name: p.name,
       street: p.street,
       zip_code: p.zip_code,
@@ -70,11 +84,25 @@ export function PropertiesPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!isWrite || busyRef.current) return;
+    if (form.construction_year != null && (!Number.isInteger(form.construction_year) || form.construction_year < 1 || form.construction_year > 9999)) {
+      setError("Baujahr muss eine ganze Zahl zwischen 1 und 9999 sein."); return;
+    }
+    if (form.total_area != null && !/^[0-9]{1,12}(?:\.[0-9]{1,2})?$/.test(form.total_area)) {
+      setError("Gesamtfläche muss eine nichtnegative Dezimalzahl bis 999999999999.99 mit höchstens zwei Nachkommastellen sein (Dezimalpunkt)."); return;
+    }
+    busyRef.current = true;
+    const version = generation.current;
     setSaving(true);
     setError(null);
     try {
       if (editId) {
-        await updateProperty(editId, form);
+        const { construction_year, total_area, ...otherFields } = form;
+        await updateProperty(editId, {
+          ...otherFields,
+          ...(construction_year !== originalBuilding.current.construction_year ? { construction_year } : {}),
+          ...(total_area !== originalBuilding.current.total_area ? { total_area } : {}),
+        });
       } else {
         await createProperty({ ...form, ...(withAudience && session ? { data_audience: {
           label: form.name.trim(), reason: audienceReason.trim(), grants: [{
@@ -82,17 +110,19 @@ export function PropertiesPage() {
           }],
         } } : {}) }, creationKey);
       }
+      if (version !== generation.current) return;
       setShowForm(false);
       setEditId(null);
       reload();
     } catch (err) {
+      if (version !== generation.current) return;
       if (err instanceof ApiError) {
         setError(err.message);
       } else {
         setError(String(err));
       }
     } finally {
-      setSaving(false);
+      if (version === generation.current) { busyRef.current = false; setSaving(false); }
     }
   }
 
@@ -121,6 +151,7 @@ export function PropertiesPage() {
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>{editId ? "Objekt bearbeiten" : "Neues Objekt anlegen"}</h2>
           <form onSubmit={handleSubmit} className="form-grid">
+            <fieldset disabled={saving} style={{ border: 0, padding: 0, minWidth: 0, display: "contents" }}>
             <label>
               Name *
               <input
@@ -177,6 +208,12 @@ export function PropertiesPage() {
                 ))}
               </select>
             </label>
+            <label>Baujahr
+              <input type="number" min="1" max="9999" step="1" value={form.construction_year ?? ""} onChange={event => setForm({ ...form, construction_year: event.target.value === "" ? null : Number(event.target.value) })} />
+            </label>
+            <label>Gesamtfläche (m²)
+              <input type="text" inputMode="decimal" value={form.total_area ?? ""} onChange={event => setForm({ ...form, total_area: event.target.value || null })} />
+            </label>
             {!editId && session?.role === "OWNER_ADMIN" && <fieldset style={{ gridColumn: "1 / -1", minWidth: 0, display: "grid", gap: "0.65rem" }}>
               <legend>Datenfreigabe für das neue Objekt</legend>
               <label style={{ display: "flex", flexDirection: "row", alignItems: "flex-start", gap: "0.5rem" }}>
@@ -196,6 +233,7 @@ export function PropertiesPage() {
                 Abbrechen
               </button>
             </div>
+            </fieldset>
           </form>
         </div>
       )}
