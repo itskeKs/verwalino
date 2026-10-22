@@ -172,6 +172,407 @@ def _insert_dunning_sql() -> str:
 
 
 # ===========================================================================
+# T53 batch dunning
+# ===========================================================================
+def batch_request(**changes):
+    return {
+        "period_start": "2025-01-01", "period_end": "2025-06-30",
+        "reference_date": "2025-07-01", "threshold": "2399.99",
+        "grace_days": 0, "base_interest_rate": None, **changes,
+    }
+
+
+async def batch_preview(client, body=None):
+    response = await client.post("/api/dunning/batch/preview", json=body or batch_request())
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+@pytest.mark.asyncio
+async def test_batch_preview_exact_threshold_and_no_writes(client_a_admin, m7_seed):
+    before = (await client_a_admin.get("/api/dunning")).json()
+    result = await batch_preview(client_a_admin)
+    row = next(r for r in result["candidates"] if r["lease_agreement_id"] == str(m7_seed["lease_m7"]))
+    assert Decimal(row["principal_amount"]) == Decimal("2400.00")
+    assert row["tenant_profile_id"] == str(m7_seed["tenant_m7"])
+    assert len(result["source_digest"]) == 64
+    equal = await batch_preview(client_a_admin, batch_request(threshold="2400.00"))
+    assert str(m7_seed["lease_m7"]) not in [r["lease_agreement_id"] for r in equal["candidates"]]
+    assert (await client_a_admin.get("/api/dunning")).json() == before
+
+
+@pytest.mark.asyncio
+async def test_batch_selected_draft_and_same_request_replay(client_a_admin, m7_seed):
+    body = batch_request()
+    preview = await batch_preview(client_a_admin, body)
+    request = {**body, "expected_source_digest": preview["source_digest"],
+               "request_id": str(uuid.uuid4()), "lease_agreement_ids": [str(m7_seed["lease_m7"])]}
+    before = {r["id"] for r in (await client_a_admin.get("/api/dunning")).json()}
+    response = await client_a_admin.post("/api/dunning/batch", json=request)
+    assert response.status_code == 201, response.text
+    rows = response.json()
+    assert len(rows) == 1 and rows[0]["status"] == "draft"
+    assert Decimal(rows[0]["principal_amount"]) == Decimal("2400.00")
+    assert rows[0]["issued_at"] is None and rows[0]["interest_amount"] in ("0.00", "0")
+    replay = await client_a_admin.post("/api/dunning/batch", json=request)
+    assert replay.status_code == 201, replay.text
+    assert replay.json() == rows
+    after = {r["id"] for r in (await client_a_admin.get("/api/dunning")).json()}
+    assert after - before == {rows[0]["id"]}
+    changed = await client_a_admin.post("/api/dunning/batch", json={**request, "threshold": "0.00"})
+    assert changed.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_batch_stale_and_unknown_selection_are_atomic(client_a_admin, m7_seed):
+    preview = await batch_preview(client_a_admin)
+    before = (await client_a_admin.get("/api/dunning")).json()
+    body = {**batch_request(), "expected_source_digest": "0" * 64,
+            "request_id": str(uuid.uuid4()), "lease_agreement_ids": [str(m7_seed["lease_m7"])]}
+    response = await client_a_admin.post("/api/dunning/batch", json=body)
+    assert response.status_code == 409, response.text
+    body["expected_source_digest"] = preview["source_digest"]
+    body["lease_agreement_ids"].append(str(uuid.uuid4()))
+    response = await client_a_admin.post("/api/dunning/batch", json=body)
+    assert response.status_code in (404, 422), response.text
+    assert (await client_a_admin.get("/api/dunning")).json() == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("threshold", ["-1.00", "NaN", "Infinity", "1.001"])
+async def test_batch_invalid_threshold(client_a_admin, m7_seed, threshold):
+    response = await client_a_admin.post("/api/dunning/batch/preview", json=batch_request(threshold=threshold))
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_batch_readonly_cannot_prepare(client_a_readonly, m7_seed):
+    response = await client_a_readonly.post("/api/dunning/batch/preview", json=batch_request())
+    assert response.status_code == 403, response.text
+    response = await client_a_readonly.post("/api/dunning/batch", json={**batch_request(),
+        "expected_source_digest": "0" * 64, "request_id": str(uuid.uuid4()),
+        "lease_agreement_ids": [str(m7_seed["lease_m7"])]})
+    assert response.status_code == 403, response.text
+
+
+# Fresh organizations isolate concurrency and history from session-shared M7 data.
+from tests.test_rent_changes import rent_db, rent_world, api_client, post_change  # noqa: E402,F401
+
+
+def fresh_batch_request(**changes):
+    return batch_request(period_start="2026-01-01", period_end="2026-01-31",
+                         reference_date="2026-02-15", threshold="100.00", **changes)
+
+
+def selected_batch(body, preview, leases, request_id=None):
+    return {**body, "expected_source_digest": preview["source_digest"],
+            "lease_agreement_ids": [str(value) for value in leases],
+            "request_id": str(request_id or uuid.uuid4())}
+
+
+@pytest.mark.asyncio
+async def test_batch_real_history_invalidates_preview_and_single_draft_agrees(rent_world):
+    w = rent_world
+    body = fresh_batch_request()
+    async with api_client(w) as api:
+        old = await batch_preview(api, body)
+        await post_change(api, w, valid_from="2026-01-16", base_rent="760.00")
+        response = await api.post("/api/dunning/batch", json=selected_batch(body, old, [w["lease"]]))
+        assert response.status_code == 409, response.text
+        assert (await api.get("/api/dunning")).json() == []
+        current = await batch_preview(api, body)
+        row = next(r for r in current["candidates"] if r["lease_agreement_id"] == str(w["lease"]))
+        assert Decimal(row["principal_amount"]) == Decimal("880.97")
+        single = await api.post("/api/dunning/tenant", json={
+            "tenant_profile_id": str(w["tenant"]), "lease_agreement_id": str(w["lease"]),
+            "period_start": body["period_start"], "period_end": body["period_end"],
+            "reference_date": body["reference_date"], "base_interest_rate": None})
+        assert single.status_code == 201, single.text
+        assert Decimal(single.json()["principal_amount"]) == Decimal("880.97")
+
+
+@pytest.mark.asyncio
+async def test_batch_parallel_replay_and_replay_after_changed_rent(rent_world):
+    import asyncio
+    w = rent_world
+    body = fresh_batch_request()
+    async with api_client(w) as api:
+        preview = await batch_preview(api, body)
+        request = selected_batch(body, preview, [w["lease"], w["hidden_lease"]])
+    async with api_client(w) as first, api_client(w) as second:
+        a, b = await asyncio.gather(first.post("/api/dunning/batch", json=request),
+                                    second.post("/api/dunning/batch", json=request))
+        assert a.status_code == b.status_code == 201, (a.text, b.text)
+        assert a.json() == b.json()
+        assert len(a.json()) == 2
+        assert [Decimal(row["principal_amount"]) for row in a.json()] == [Decimal("850.00")] * 2
+        originals = a.json()
+        await post_change(first, w, valid_from="2026-01-16", base_rent="760.00")
+        replay = await second.post("/api/dunning/batch", json=request)
+        assert replay.status_code == 201, replay.text
+        assert replay.json() == originals
+        assert {row["id"] for row in (await second.get("/api/dunning")).json()} == {row["id"] for row in originals}
+
+
+@pytest.mark.asyncio
+async def test_batch_second_draft_failure_rolls_back_every_result(rent_world, monkeypatch):
+    from fastapi import HTTPException
+    from app.repositories.dunning_notice_repo import DunningNoticeRepository
+    original = DunningNoticeRepository.create
+    calls = 0
+
+    async def fail_second(repo, notice):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise HTTPException(422, "Synthetic late second-draft failure")
+        return await original(repo, notice)
+
+    w = rent_world
+    body = fresh_batch_request()
+    async with api_client(w) as api:
+        preview = await batch_preview(api, body)
+        request = selected_batch(body, preview, [w["lease"], w["hidden_lease"]])
+        monkeypatch.setattr(DunningNoticeRepository, "create", fail_second)
+        response = await api.post("/api/dunning/batch", json=request)
+        assert response.status_code == 422, response.text
+        assert calls == 2
+        assert (await api.get("/api/dunning")).json() == []
+        monkeypatch.setattr(DunningNoticeRepository, "create", original)
+        retry = await api.post("/api/dunning/batch", json=request)
+        assert retry.status_code == 201, retry.text
+        assert len(retry.json()) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selection", [[], ["duplicate", "duplicate"]])
+async def test_batch_empty_or_duplicate_selection_rejected(rent_world, selection):
+    w = rent_world
+    body = fresh_batch_request()
+    async with api_client(w) as api:
+        preview = await batch_preview(api, body)
+        ids = [] if not selection else [w["lease"], w["lease"]]
+        response = await api.post("/api/dunning/batch", json=selected_batch(body, preview, ids))
+        assert response.status_code == 422, response.text
+        assert (await api.get("/api/dunning")).json() == []
+
+
+@pytest.mark.asyncio
+async def test_batch_foreign_selection_cannot_create_partial_result(rent_world):
+    w = rent_world
+    body = fresh_batch_request()
+    async with api_client(w) as api:
+        preview = await batch_preview(api, body)
+        response = await api.post("/api/dunning/batch", json=selected_batch(body, preview, [w["lease"], w["foreign_lease"]]))
+        assert response.status_code in (404, 422), response.text
+        assert (await api.get("/api/dunning")).json() == []
+
+
+from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noqa: E402,F401
+
+
+@pytest.mark.asyncio
+async def test_batch_scope_members_and_revoked_replay_fail_closed(migrator_session, scope_seed):
+    from sqlalchemy import text
+    from tests.test_scoped_account_statements import statement_fixture, client, mutate
+    from tests.test_scoped_dunning import grant
+    ids = await statement_fixture(migrator_session, scope_seed, "lease")
+    await grant(ids, ["read", "prepare"])
+    body = batch_request(period_end="2025-12-31", reference_date="2026-01-15",
+                         threshold="7000.00", accounting_scope_id=str(ids["scope"]))
+    async with client(ids) as api:
+        preview = await batch_preview(api, body)
+        assert [r["lease_agreement_id"] for r in preview["candidates"]] == [str(ids["lease"])]
+        assert Decimal(preview["candidates"][0]["principal_amount"]) == Decimal("7100.00")
+        request = selected_batch(body, preview, [ids["lease"]])
+        created = await api.post("/api/dunning/batch", json=request)
+        assert created.status_code == 201, created.text
+        assert created.json()[0]["accounting_scope_id"] == str(ids["scope"])
+    await grant(ids, ["read"])
+    async with client(ids) as api:
+        replay = await api.post("/api/dunning/batch", json=request)
+        assert replay.status_code == 404, replay.text
+        assert len((await api.get("/api/dunning")).json()) == 1
+    await mutate(text("UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE organization_id=:org AND scope_id=:scope AND user_id=:clerk AND revoked_at IS NULL"), ids)
+    async with client(ids) as api:
+        assert (await api.post("/api/dunning/batch/preview", json=body)).status_code == 404
+        assert (await api.post("/api/dunning/batch", json=request)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_batch_waits_for_existing_financial_input_lock(rent_world, rent_db):
+    import asyncio
+    from sqlalchemy import text
+    w = rent_world
+    await rent_db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
+                          {"key": f"financial-inputs:{w['org']}"})
+    blocker = await rent_db.scalar(text("SELECT pg_backend_pid()"))
+    async with api_client(w) as api:
+        task = asyncio.create_task(api.post("/api/dunning/batch/preview", json=fresh_batch_request()))
+        waiting = False
+        try:
+            for _ in range(200):
+                waiting = await rent_db.scalar(text("""SELECT EXISTS(SELECT 1 FROM pg_locks l
+                    WHERE l.locktype='advisory' AND NOT l.granted
+                    AND :blocker=ANY(pg_blocking_pids(l.pid)))"""), {"blocker": blocker})
+                if waiting or task.done():
+                    break
+                await asyncio.sleep(0.01)
+        finally:
+            await rent_db.rollback()
+        response = await asyncio.wait_for(task, timeout=15)
+        assert waiting, "Batch dunning must wait for the shared financial-input boundary"
+        assert response.status_code == 200, response.text
+
+
+@pytest.mark.asyncio
+async def test_batch_migration_preserves_data_security_and_issued_original(rent_world):
+    import importlib.util
+    from pathlib import Path
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.exc import DBAPIError
+    from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.test_letters import create_template, issue_body
+    w = rent_world
+    body = fresh_batch_request()
+    async with api_client(w) as api:
+        preview = await batch_preview(api, body)
+        request = selected_batch(body, preview, [w["lease"]])
+        created = await api.post("/api/dunning/batch", json=request)
+        assert created.status_code == 201, created.text
+        template = await create_template(api)
+        issued = await api.post("/api/letters/issue", json=issue_body(w, template))
+        assert issued.status_code == 201, issued.text
+        pdf_url = issued.json()[0]["pdf_url"]
+        original_pdf = (await api.get(pdf_url)).content
+        assert original_pdf.startswith(b"%PDF")
+    paths = list((Path(__file__).parents[1] / "migrations/versions").glob("0135_*.py"))
+    assert len(paths) == 1
+    spec = importlib.util.spec_from_file_location("dunning_batch_migration", paths[0])
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    assert migration.revision == "0135" and migration.down_revision == "0134"
+    engine = create_engine(MIGRATOR_SYNC_URL)
+    try:
+        with engine.connect() as connection:
+            transaction = connection.begin()
+
+            def snapshot():
+                tables = connection.execute(text("""SELECT c.relname FROM pg_class c
+                    JOIN pg_namespace n ON n.oid=c.relnamespace
+                    WHERE n.nspname='public' AND c.relkind IN ('r','p')
+                    AND c.relname <> 'dunning_batch'
+                    AND NOT EXISTS(SELECT 1 FROM pg_depend d WHERE d.classid='pg_class'::regclass
+                        AND d.objid=c.oid AND d.deptype='e') ORDER BY c.relname""")).scalars().all()
+                rows = {name: connection.execute(text(
+                    f'SELECT to_jsonb(t)::text FROM "{name}" t ORDER BY to_jsonb(t)::text'
+                )).scalars().all() for name in tables}
+                security = [connection.execute(text(query)).all() for query in (
+                    "SELECT c.relname,c.relrowsecurity,c.relforcerowsecurity,c.relacl::text,pg_get_userbyid(c.relowner) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p') AND c.relname <> 'dunning_batch' ORDER BY c.relname",
+                    "SELECT tablename,policyname,permissive,roles::text,cmd,qual,with_check FROM pg_policies WHERE schemaname='public' AND tablename <> 'dunning_batch' ORDER BY tablename,policyname",
+                    "SELECT pg_get_triggerdef(t.oid) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND NOT t.tgisinternal AND c.relname <> 'dunning_batch' ORDER BY pg_get_triggerdef(t.oid)",
+                    "SELECT pg_get_functiondef(p.oid),p.proacl::text,pg_get_userbyid(p.proowner) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prokind='f' AND p.proname <> 'protect_dunning_batch' ORDER BY p.proname,p.oid",
+                )]
+                return rows, security
+
+            try:
+                before = snapshot()
+                assert before[0]["lease_agreement"] and before[0]["letter_document"] and before[0]["dunning_notice"]
+                with Operations.context(MigrationContext.configure(connection)):
+                    with pytest.raises(DBAPIError):
+                        with connection.begin_nested():
+                            migration.downgrade()
+                    assert snapshot() == before
+                    connection.execute(text("TRUNCATE dunning_batch"))
+                    migration.downgrade()
+                    assert connection.scalar(text("SELECT to_regclass('public.dunning_batch')")) is None
+                    assert snapshot() == before
+                    migration.upgrade()
+                    assert snapshot() == before
+                    assert connection.scalar(text("SELECT relrowsecurity AND relforcerowsecurity FROM pg_class WHERE oid='dunning_batch'::regclass"))
+                    assert connection.scalar(text("SELECT count(*) FROM pg_policies WHERE tablename='dunning_batch'")) >= 2
+            finally:
+                transaction.rollback()
+    finally:
+        engine.dispose()
+    async with api_client(w) as api:
+        replay = await api.post("/api/dunning/batch", json=request)
+        assert replay.status_code == 201 and replay.json() == created.json()
+        assert (await api.get(pdf_url)).content == original_pdf
+
+
+@pytest.mark.asyncio
+async def test_batch_receipt_is_actor_scoped_and_immutable(rent_world):
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError
+    from app.core.db import get_tenant_session
+    w = rent_world
+    async with api_client(w) as api:
+        body = fresh_batch_request()
+        preview = await batch_preview(api, body)
+        created = await api.post("/api/dunning/batch", json=selected_batch(body, preview, [w["lease"]]))
+        assert created.status_code == 201, created.text
+    async with get_tenant_session(w["org"]) as db:
+        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {"actor": str(w["admin"])})
+        assert await db.scalar(text("SELECT count(*) FROM dunning_batch")) == 1
+        for statement in ("UPDATE dunning_batch SET request_digest=request_digest", "DELETE FROM dunning_batch"):
+            with pytest.raises(DBAPIError):
+                async with db.begin_nested():
+                    await db.execute(text(statement))
+        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {"actor": str(w["clerk"])})
+        assert await db.scalar(text("SELECT count(*) FROM dunning_batch")) == 0
+
+
+@pytest.mark.asyncio
+async def test_batch_escalation_change_invalidates_basis_and_preserves_issued_notice(rent_world):
+    w = rent_world
+    body = fresh_batch_request()
+    async with api_client(w) as api:
+        old = await batch_preview(api, body)
+        created = await api.post("/api/dunning/tenant", json={
+            "tenant_profile_id": str(w["tenant"]), "lease_agreement_id": str(w["lease"]),
+            "period_start": body["period_start"], "period_end": body["period_end"],
+            "reference_date": body["reference_date"], "base_interest_rate": None})
+        assert created.status_code == 201, created.text
+        issued = await api.post(f"/api/dunning/{created.json()['id']}/issue")
+        assert issued.status_code == 200, issued.text
+        original = issued.json()
+        original_pdf = await api.get(f"/api/dunning/{original['id']}/pdf")
+        assert original_pdf.status_code == 200 and original_pdf.content.startswith(b"%PDF")
+        response = await api.post("/api/dunning/batch", json=selected_batch(body, old, [w["lease"]]))
+        assert response.status_code == 409, response.text
+        current = await batch_preview(api, body)
+        row = next(row for row in current["candidates"] if row["lease_agreement_id"] == str(w["lease"]))
+        assert row["level"] == 2
+        assert Decimal(row["principal_amount"]) == Decimal("850.00")
+        assert Decimal(row["fee_amount"]) == Decimal("5.00")
+        assert Decimal(row["total_amount"]) == Decimal("855.00")
+        created = await api.post("/api/dunning/batch", json=selected_batch(body, current, [w["lease"]]))
+        assert created.status_code == 201, created.text
+        assert (await api.get(f"/api/dunning/{original['id']}")).json() == original
+        assert (await api.get(f"/api/dunning/{original['id']}/pdf")).content == original_pdf.content
+
+
+@pytest.mark.asyncio
+async def test_batch_live_role_downgrade_blocks_existing_cookie_and_replay(rent_world, rent_db):
+    from sqlalchemy import text
+    w = rent_world
+    async with api_client(w) as api:
+        body = fresh_batch_request()
+        preview = await batch_preview(api, body)
+        request = selected_batch(body, preview, [w["lease"]])
+        created = await api.post("/api/dunning/batch", json=request)
+        assert created.status_code == 201, created.text
+        await rent_db.execute(text("UPDATE membership SET role='READ_ONLY' WHERE organization_id=:org AND user_id=:admin"), w)
+        await rent_db.commit()
+        assert (await api.post("/api/dunning/batch/preview", json=body)).status_code == 403
+        assert (await api.post("/api/dunning/batch", json=request)).status_code == 403
+        assert {row["id"] for row in (await api.get("/api/dunning")).json()} == {row["id"] for row in created.json()}
+
+
+# ===========================================================================
 # Pure engine tests (no DB)
 # ===========================================================================
 class TestDunningEngine:
@@ -922,8 +1323,15 @@ async def test_t35_raw_sql_draft_total_and_provenance_consistency(client_a_admin
 async def test_t35_aggregated_open_item_overflow_returns_422(client_a_admin, m7_seed, monkeypatch):
     from types import SimpleNamespace
     from app.engine.mietkonto import OpenItem
-    from app.services import dunning_service
+    from app.services import payment_service
     item = OpenItem(2025, 3, 'KALTMIETE', Decimal('1000000000000.00'), Decimal('0'), Decimal('1000000000000.00'))
-    monkeypatch.setattr(dunning_service, 'account_statement', lambda *args: SimpleNamespace(open_items=[item]))
+    calls = []
+
+    def overflowing_statement(*args):
+        calls.append(args)
+        return SimpleNamespace(open_items=[item])
+
+    monkeypatch.setattr(payment_service, 'account_statement', overflowing_statement)
     response = await client_a_admin.post('/api/dunning/tenant', json=TestT35Interest.tenant_body(m7_seed, base_interest_rate='2.50'))
+    assert len(calls) == 1, 'Overflow must be injected into the canonical tenant statement'
     assert response.status_code == 422, response.text

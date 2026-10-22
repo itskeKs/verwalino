@@ -70,7 +70,7 @@ TENANT_TABLES = frozenset({
     # M6 Zahlungen, Mietkonto & offene Posten
     "payment", "bank_transaction", "sepa_creditor", "sepa_mandate",
     # M7 Mahnwesen
-    "dunning_notice", "dunning_scope_context",
+    "dunning_notice", "dunning_scope_context", "dunning_batch",
     # M8 Eigentümerversammlung & Beschluss-Sammlung
     "owners_meeting",
     "agenda_item",

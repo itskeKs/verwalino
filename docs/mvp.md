@@ -113,7 +113,7 @@ Kurzpfade: `api/ services/ engine/ models/ workers/` liegen unter `backend/app/`
 | Funktion | Referenz | Status im Code | Fundstelle |
 | --- | --- | --- | --- |
 | Mahnung, 3 Stufen, Gebühr, PDF | teilw. | ✅ | `api/dunning.py`, `engine/dunning.py` |
-| Verzugszinsen, Mahnlauf | nein | ❌ | `engine/dunning.py:26` |
+| Verzugszinsen, ausgewählter Mahnlauf | ja | ✅ | `engine/dunning.py`, `services/dunning_batch_service.py` |
 | Fristenmonitor | teilw. | ✅ abgeleitet | `api/fristen.py` |
 | Aufgaben, Wiedervorlagen | ja | ❌ | – |
 
@@ -316,7 +316,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 
 ### Phase 3 – Parität und Komfort
 
-**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43–T52 abgeschlossen; nächste Aufgabe T53.** T10 bleibt offen.
+**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43–T53 abgeschlossen; nächste Aufgabe T54.** T10 bleibt offen.
 
 - [x] **T43 Staffelmiete** — Aus Start, Betrag oder Prozent, Intervall und Stufenzahl mehrere Mietänderungen (T23) anlegen.
   Dateien: `frontend/src/pages/UnitDetailPage.tsx`, `backend/app/api/leases.py`
@@ -358,9 +358,10 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
   Dateien: `backend/app/api/reports.py`, `backend/app/engine/mietkonto.py`, `frontend/src/pages/DashboardPage.tsx`
   Fertig, wenn: `uv run pytest tests/test_dashboard_kpis.py` (neu) grün UND Ablauf in der App: „Dashboard zeigt erwartete und eingegangene Miete“.
   Umgesetzt: rein lesende monatliche KALT-/NK-Soll-/Ist-Projektion mit bestehender Decimal-Miethistorie, Ist nach zugeordnetem Mietmonat statt Wertstellung, Rückständen je Vertrag seit Beginn ohne Fremdguthabenverrechnung sowie Belegung/Leerstand zum Monatsende. Fehlende Monatszuordnung separat, inkohärente Quellen 409; vollständige MIET-Historienabdeckung, Live-/Quellen-/Kontaktrechte, Finanzsperre und abschließende Zulassungsprüfung. Vor Implementierung sieben fehlende API-Fälle rot; zusätzliche MISCH-Gegenprobe rot und korrigiert. Pflichtlauf 22 sowie 238 Report-/CSV-/Miet-/Zahlungs-/Mietkonto-Regressionen grün, 72 Frontendfälle und Build/Gesamtlint grün. Teilmonate, Vertragswechsel, Storno/Draft, separate Vertragsguthaben, unzugeordnete Buchung, niedrige Decimal-Außenpräzision, Rechtewiderruf, parallele Abrufe und echte Finanzsperrwartezeit geprüft. Vollständiger UI-only-PASS `t52_dashboard_kpis_browser.cjs`: echte Oktoberbuchungen mit November-Wertstellung ergeben 850/800/50 EUR, November 850/0/900, zwei Einheiten mit einer Belegung/einem Leerstand am 31.10., Rückkehr/Reload/Smartphone und sämtliche Quell-DTOs unverändert. Drei technische Vorläufe scheiterten an nativen Label-/Select-Zuordnungen; konsistente exakte Combobox-Rollen beheben ausschließlich die Selektoren, keine geänderten Fachwerte. Keine Migration oder Buchungsänderung; aktueller Einheitsbestand, keine historische Inventarversion behauptet. App/Browser beendet; bekannte Alembic-/Vite-Warnungen und Gesamtprüfungen bleiben offen.
-- [ ] **T53 Mahnlauf** — Liste aller Rückstände über Schwelle, ausgewählte als Mahnentwürfe in einem Schritt.
+- [x] **T53 Mahnlauf** — Liste aller Rückstände über Schwelle, ausgewählte als Mahnentwürfe in einem Schritt.
   Dateien: `backend/app/api/dunning.py`, `backend/app/services/dunning_service.py`, `frontend/src/pages/OpenItemsPage.tsx`
   Fertig, wenn: `uv run pytest tests/test_m7_dunning.py -k batch` (neu) grün UND Ablauf in der App: „drei Rückstände, drei Entwürfe“.
+  Umgesetzt: nichtschreibende Vorschau mit ausdrücklichem Zeitraum/Stichtag/Schwelle, aktuellem MIET-Prepare-Kreis und historiesensitiver gemeinsamer Einzel-/Batchbasis; bestätigte Auswahl atomar als Entwürfe, unveränderliche actor-/org-gebundene Wiederholung ohne Neuberechnung oder Teilantwort nach Rechteentzug. Zunächst acht fehlende API-Fälle rot; final exakt 20 Batch-Pflichtfälle, 29 kombinierte Batch-/RLS-Fälle und 208 Mahn-/Scope-/Miet-/Versandregressionen grün; 53 Frontendfälle, Build und Gesamtlint grün. Stale Quellen/Eskalation, Live-Rollenentzug, Finanzsperre, paralleler Replay und später Gesamtrollback geprüft. Bestehende Overflow-Gegenprobe zunächst rot, weil sie nach der Extraktion den nicht mehr aufgerufenen Import injizierte; ausschließlich auf den kanonischen Mietkonto-Injektionspunkt verlegt und genau einen Aufruf sowie unveränderte 422-Erwartung geprüft, danach vollständige 208er-Wiederholung grün. Tatsächlicher geschützter 0135→0134→0135-Rundlauf vergleicht alte Daten/RLS/ACLs/Policies/Trigger/Funktionen und bytegleiches ausgestelltes Brieforiginal; gefüllter Downgrade verweigert. Vollständiger UI-only-PASS `t53_dunning_batch_browser.cjs`: drei echte UI-Verträge à 850 EUR, Vorschau/Invalidierung, 390×844 Auswahl/Abbruch/Reload, genau ein bestätigter Batch und drei gespeicherte nicht ausgestellte Entwürfe über 2.550 EUR, unveränderte Quellen und alte Mahnungen. Keine Ausstellung, PDF-Erzeugung oder Sendung im Mahnlauf; App/Browser beendet, Ports geschlossen. Bekannte Alembic-path_separator-/Vite-Chunkwarnungen bleiben; Gesamtprüfungen offen.
 - [ ] **T54 Wirtschaftsplan aus Vorjahr** — Neuen Plan mit Ist-Kosten des Vorjahres je Kategorie vorbelegen.
   Dateien: `backend/app/services/economic_plan_service.py`, `backend/app/api/economic_plans.py`, `frontend/src/pages/EconomicPlansPage.tsx`
   Fertig, wenn: `uv run pytest tests/test_m4_weg.py -k previous` (neu) grün UND Ablauf in der App: „Plan 2027 aus Ist 2026“.

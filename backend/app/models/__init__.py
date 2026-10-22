@@ -39,6 +39,7 @@ from app.models.payment import Payment
 
 # M7 Mahnwesen
 from app.models.dunning_notice import DunningNotice
+from app.models.dunning_batch import DunningBatch
 
 # M8 Eigentümerversammlung & Beschluss-Sammlung
 from app.models.owners_meeting import OwnersMeeting
@@ -109,6 +110,7 @@ __all__ = [
     "Payment",
     # M7
     "DunningNotice",
+    "DunningBatch",
     # M8
     "OwnersMeeting",
     "AgendaItem",

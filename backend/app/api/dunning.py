@@ -7,23 +7,26 @@ Foreign ID -> 404 (not 403). An issued dunning notice is never hard-deleted
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
-from pydantic import BaseModel, StrictStr, field_validator
+from pydantic import BaseModel, Field, StrictStr, field_validator, model_validator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.live_principal import get_live_writer_db
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
 from app.models.dunning_notice import DunningNotice
 from app.repositories.dunning_notice_repo import DunningNoticeRepository
 from app.services.dunning_pdf import render_dunning_pdf
 from app.services.dunning_service import DunningService
+from app.services.dunning_batch_service import DunningBatchService
 from app.services.dunning_scope_service import DunningScopeService
 from app.core.rbac import ScopeCapability
 
@@ -71,6 +74,67 @@ class DunningCreateOwner(DunningInterestInput):
     reference_date: date | None = None
     grace_days: int = 0
     override_fee: str | None = None
+
+
+class DunningBatchPreview(DunningInterestInput):
+    model_config = {"extra": "forbid"}
+
+    period_start: date
+    period_end: date
+    reference_date: date
+    threshold: StrictStr
+    grace_days: int = Field(default=0, strict=True, ge=0, le=365)
+    override_fee: StrictStr | None = None
+    accounting_scope_id: uuid.UUID | None = None
+
+    @field_validator("threshold", "override_fee")
+    @classmethod
+    def validate_money(cls, value):
+        if value is not None and not re.fullmatch(r"[0-9]{1,12}(?:\.[0-9]{1,2})?", value):
+            raise ValueError("Amount must be a nonnegative plain decimal within Numeric(14,2)")
+        return value
+
+    @model_validator(mode="after")
+    def validate_period(self):
+        if self.period_start > self.period_end:
+            raise ValueError("Period must not end before it starts")
+        return self
+
+
+class DunningBatchApply(DunningBatchPreview):
+    lease_agreement_ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
+    expected_source_digest: StrictStr = Field(pattern=r"^[0-9a-fA-F]{64}$")
+    request_id: uuid.UUID
+
+    @field_validator("lease_agreement_ids")
+    @classmethod
+    def unique_leases(cls, value):
+        if len(set(value)) != len(value):
+            raise ValueError("Lease agreement IDs must be unique")
+        return value
+
+    @field_validator("expected_source_digest")
+    @classmethod
+    def normalize_digest(cls, value):
+        return value.lower()
+
+
+class DunningBatchCandidate(BaseModel):
+    lease_agreement_id: str
+    tenant_profile_id: str
+    person_name: str
+    unit_number: str
+    property_name: str
+    principal_amount: str
+    fee_amount: str
+    interest_amount: str
+    total_amount: str
+    level: int
+
+
+class DunningBatchPreviewOut(BaseModel):
+    candidates: list[DunningBatchCandidate]
+    source_digest: str
 
 
 class DunningOut(BaseModel):
@@ -162,6 +226,25 @@ async def list_dunning_notices(
 async def dunning_settings(auth: AuthContext = Depends(get_current_user)):
     rate = settings.dunning_base_interest_rate
     return {"base_interest_rate": str(rate) if rate is not None else None}
+
+
+@router.post("/batch/preview", response_model=DunningBatchPreviewOut)
+async def preview_dunning_batch(
+    body: DunningBatchPreview,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_live_writer_db, scope="function"),
+):
+    return await DunningBatchService(db, auth.organization_id, auth.user_id).preview(body)
+
+
+@router.post("/batch", response_model=list[DunningOut], status_code=201)
+async def create_dunning_batch(
+    body: DunningBatchApply,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_live_writer_db, scope="function"),
+):
+    notices = await DunningBatchService(db, auth.organization_id, auth.user_id).apply(body)
+    return [_to_out(notice) for notice in notices]
 
 
 @router.get("/{dunning_id}", response_model=DunningOut)

@@ -206,6 +206,14 @@ Semantik. Es wird kein amtlicher Zinssatz erfunden und keine Zustellung behaupte
 Migration 0129 schützt die neuen Beträge und Provenienz auch beim direkten SQL-Update
 und verweigert einen Downgrade, der vorhandene Zinsgrundlagen verlieren würde.
 
+Seit T53 verwenden Einzel- und ausgewählte Mietermahnungen denselben
+historiesensitiven Mietkonto-Pfad. Die nichtschreibende Mahnlauf-Vorschau filtert
+Hauptforderungen strikt größer als die ausdrücklich gewählte Schwelle. Bestätigung
+legt die gewählten Entwürfe atomar an; Quellen-/Eskalationsänderungen machen eine
+neue Vorschau erforderlich. Wiederholung eines unklaren Requests gibt nach erneuter
+Prepare-/Quellenzulassung dieselben Originalentwürfe zurück. M6-Zahlungen werden
+nicht ergänzt, alte ausgestellte Briefe/PDFs nicht verändert und nichts versendet.
+
 ### 2.3 Soll-Engine als reine Funktion
 
 `app/engine/mietkonto.py`:

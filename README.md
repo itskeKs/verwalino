@@ -541,6 +541,23 @@ nicht neu. Migration 0129 schützt diese Provenienz und verweigert deren Verlust
 beim Downgrade. Ausstellung allein bestätigt keinen Zugang. Der echte UI-/PDFablauf
 ist mit `scripts/acceptance/t35_dunning_interest_browser.cjs` wiederholbar.
 
+### Mahnlauf mit ausgewählten Entwürfen (T53)
+
+Unter **Offene Posten → Mahnlauf öffnen** Zeitraum, Stichtag, Mindestrückstand
+und gegebenenfalls den MIET-Vorbereitungskreis ausdrücklich wählen. Die Vorschau
+schreibt nichts und enthält Verträge mit Hauptforderung **größer** als die Schwelle.
+Miethistorie, gebuchte Zahlungen und Mahnstufen kommen aus demselben Mietkonto-/
+Mahnpfad wie bei Einzelentwürfen. Auswahl und angezeigte Gesamtsumme müssen bestätigt
+werden; es entstehen nur Entwürfe, keine Ausstellung, PDFs oder E-Mails.
+
+Zwischenzeitlich geänderte Quellen verlangen eine neue Vorschau (409). Bei unklarer
+Netzwerkantwort bleibt derselbe Auftrag für eine manuelle Wiederholung erhalten;
+dessen Original-IDs werden unter erneuter vollständiger Prepare-/Quellenprüfung
+zurückgegeben, nicht neu berechnet oder dupliziert. Alte ausgestellte Briefe bleiben
+unverändert. `scripts/acceptance/t53_dunning_batch_browser.cjs` prüft tatsächlich drei
+Rückstände à 850 EUR und genau drei Entwürfe über zusammen 2.550 EUR einschließlich
+Mobil-Abbruch, Reload und unveränderter Quelldaten.
+
 ### E-Mail-Versand (T47)
 
 Ausgestellte Mahnungen, finalisierte BK-Abrechnungen und personengenau adressierte

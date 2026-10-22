@@ -733,6 +733,24 @@ relevante Historie abdecken, inkohärente Quellen führen zu 409 statt Teilzahle
 Leerstand nutzt aktuelle Einheiten und die Belegung am Monatsende. Keine neue
 Persistenz, Migration, Umbuchung oder Rekonstruktion historischer Einheitsversionen.
 
+### Ausgewählte Mahnentwürfe (T53)
+
+`POST /api/dunning/batch/preview` ist nichtschreibend; der gemeinsame
+`DunningService.tenant_basis` verwendet das historiesensitive kanonische Mietkonto
+auch für Einzelentwürfe. Vollständige Prepare-/Quellen-/Kontaktzulassung steht vor
+der RLS-gefilterten Aufzählung. Der Digest umfasst Quellen, Einstellungen und
+Eskalationshistorie, nicht nur die Hauptforderung. `POST /batch` erstellt die
+bestätigte Teilmenge atomar unter ACL → Finanz- → Request-Sperre; spätere Fehler
+rollen Entwürfe und Provenienz gemeinsam zurück. Kein Ausstellen oder Senden.
+
+0135 hält nur unveränderliche Original-IDs im actor-/org-gebundenen `dunning_batch`
+(FORCE RLS, SELECT/INSERT). Ein gleicher Request nach Quellenänderung liefert nach
+erneuter Zulassung aller Originale dieselben IDs, keinen neu berechneten Mahnlauf;
+geänderte Requests mit gleichem Schlüssel und veraltete neue Vorschauen sind 409.
+Ausgestellte Mahnungen und ihre PDFs bleiben unverändert. Befüllte Downgrades
+verweigern Datenverlust; der echte Test-Rundlauf vergleicht alte Daten und sämtliche
+Sicherheitsobjekte innerhalb einer zurückgerollten Transaktion.
+
 ## 10. Was dieses Dokument bewusst NICHT entscheidet
 
 - Konkrete Abrechnungs-/Verteilungslogik (M3/M4) — eigener `engine-correctness`-Schritt.

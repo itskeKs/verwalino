@@ -178,6 +178,23 @@ Synthetic UI acceptance uses the isolated local launcher and
 `node scripts/acceptance/t52_dashboard_kpis_browser.cjs`; stop it afterward.
 This does not authorize any production promotion or change the accepted 0122 gate.
 
+## Selected dunning batches (T53; local head 0135)
+
+Revision **0135**, after unchanged 0134, retains immutable actor/org/request-scoped
+`dunning_batch` result identities. FORCE RLS and SELECT/INSERT-only grants prevent
+rewriting or deleting completed batches; a populated downgrade refuses removal.
+The protected 0135→0134→0135 test compares all existing rows, relation rights,
+policies, triggers/functions and an issued letter PDF inside an outer rollback.
+Do not erase history to force rollback. This does **not** authorize deployment or
+promotion of **0123–0135**, or change the accepted **0122** production gate.
+
+No new credentials or sending service. Preview/apply reuse live source/contact and
+MIET preparation rights, ACL → financial → request locks, and one HTTP transaction.
+Source changes require a fresh preview; uncertain responses retry the same request,
+not a new batch. Only selected drafts are created, never issued or sent. Synthetic
+UI acceptance uses the isolated local launcher and
+`node scripts/acceptance/t53_dunning_batch_browser.cjs`; stop it afterward.
+
 ## Fresh installation: one-time preparation on Moon
 
 Run as `chris` without sudo. The host must have Docker, Compose, `curl`,
