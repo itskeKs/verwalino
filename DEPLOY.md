@@ -231,6 +231,22 @@ storage and `node scripts/acceptance/t55_master_data_browser.cjs`; stop app/brow
 afterward. This does **not** authorize production deployment/promotion of
 **0123–0136** or change the accepted **0122** gate.
 
+## Unused master deletion (T56; local head 0137)
+
+Revision **0137** adds only an authorized read-only reference inventory and an
+internal exact-UUID JSON matcher. No table data, old RLS policy or DELETE grant
+is changed. Actual deletion remains invoker/RLS-bound, requires a returned row
+and executes deferred constraints before HTTP 204. Physical references including
+CASCADE edges, immutable receipts, source evidence, audit and snapshot references
+prevent deletion. The real rollback-protected 0137→0136→0137 test compares all
+existing rows/security objects and an issued letter's exact PDF bytes.
+
+Run `uv run pytest tests/test_master_delete.py` on the disposable test database.
+The UI acceptance uses the prescribed isolated launcher and
+`node scripts/acceptance/t56_master_delete_browser.cjs`; stop app/browser afterward.
+This does **not** authorize production promotion of **0123–0137** or change the
+accepted **0122** gate.
+
 ## Fresh installation: one-time preparation on Moon
 
 Run as `chris` without sudo. The host must have Docker, Compose, `curl`,

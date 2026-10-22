@@ -4,9 +4,11 @@
  */
 
 import { Fragment, useEffect, useState, useCallback, useRef } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   getUnit,
+  deleteUnit,
+  deleteLease,
   getProperty,
   listOwnership,
   listLeases,
@@ -44,6 +46,8 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../compon
 import { Input } from "../components/ui/input";
 import { MeterPanel } from "../components/MeterPanel";
 
+import { MasterDataDelete } from "../components/MasterDataDelete";
+
 function formatLegalMea(mea: string | null, property: Property): string {
   if (!mea) return "-";
   if (property.mea_scale_status !== "CONFIRMED" || !Number.isSafeInteger(property.mea_denominator) || !property.mea_denominator) {
@@ -70,6 +74,7 @@ interface LeaseFormData {
 }
 
 export function UnitDetailPage() {
+  const navigate = useNavigate();
   const { session } = useAuth();
   const canWriteOwnership = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
   const { propertyId, unitId } = useParams<{ propertyId: string; unitId: string }>();
@@ -254,6 +259,7 @@ export function UnitDetailPage() {
         <Link to={`/objekte/${propertyId}`} className="link">&larr; {property.name}</Link>
       </p>
       <h1>Einheit {unit.number}</h1>
+      {canWriteOwnership && <MasterDataDelete entityId={unit.id} title="Einheit löschen" entityName={`Einheit ${unit.number}`} remove={deleteUnit} onDeleted={() => navigate(`/objekte/${encodeURIComponent(property.id)}`, { replace: true })} />}
       {(session?.role === "OWNER_ADMIN" || session?.role === "CLERK") && <Link className="btn btn-primary" to={`/aufgaben?${new URLSearchParams({ property_id: property.id, unit_id: unit.id, create: "1" })}`}>Aufgabe anlegen</Link>}
 
       {error && <p className="error-text">{error}</p>}
@@ -528,7 +534,9 @@ export function UnitDetailPage() {
                         advance_payment: la.advance_payment, deposit: la.deposit ?? "", notes: la.notes,
                       });
                       setShowLeaseForm(true);
-                    }}>Bearbeiten / beenden</button></td>
+                    }}>Bearbeiten / beenden</button>
+                      {canWriteOwnership && <MasterDataDelete entityId={la.id} title="Mietvertrag löschen" entityName={`Mietvertrag ${la.id} · Einheit ${unit.number} · ${tenantProfileLabel(la.tenant_profile_id)} · ${la.valid_from} bis ${la.valid_to ?? "offen"}`} remove={deleteLease} onDeleted={reload} />}
+                    </td>
                   </tr>
                   <tr><td colSpan={7}>
                     <LeaseRentHistory lease={la} tenantLabel={tenantProfileLabel(la.tenant_profile_id)} />

@@ -4,9 +4,10 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   getPerson,
+  deletePerson,
   listOwnerProfiles,
   listTenantProfiles,
   listVendors,
@@ -22,7 +23,10 @@ import { AttachmentsPanel } from "../components/AttachmentsPanel";
 import { MasterDataEditor } from "../components/MasterDataEditor";
 import { DsgvoPanel } from "../components/DsgvoPanel";
 
+import { MasterDataDelete } from "../components/MasterDataDelete";
+
 export function PersonDetailPage() {
+  const navigate = useNavigate();
   const { personId } = useParams<{ personId: string }>();
   const { session } = useAuth();
   const isWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
@@ -140,6 +144,7 @@ export function PersonDetailPage() {
         <Link to="/personen" className="link">&larr; Alle Personen</Link>
       </p>
       <h1>{person.first_name} {person.last_name}</h1>
+      {isWrite && person.can_prepare && <MasterDataDelete entityId={person.id} title="Person löschen" entityName={`${person.first_name} ${person.last_name}`} remove={deletePerson} onDeleted={() => navigate("/personen", { replace: true })} />}
 
       {error && <p className="error-text">{error}</p>}
       {actionError && <p className="error-text">{actionError}</p>}

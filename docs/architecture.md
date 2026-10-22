@@ -788,6 +788,23 @@ Die alten Policies/Funktionen und Originalbelege bleiben unverändert. Befüllte
 neue Felder verhindern ein verlustbehaftetes Downgrade; der echte Rundlauf
 vergleicht alte Spalten und Sicherheitsobjekte in einer zurückgerollten Transaktion.
 
+### Referenzgeschützte Fehleingaben-Löschung (T56)
+
+Vier feste DELETE-Routen verwenden Live-Writer, ACL-/Finanzsperre, Eltern- vor
+Kindzeilensperren und die vorhandenen kanonischen Prepare-Prüfungen. Eine rein
+lesende, eng autorisierte Definerfunktion der additiven Revision 0137 inventarisiert
+sämtliche eingehenden Fremdschlüssel einschließlich verborgener/CASCADE-Kanten
+sowie logische Quellen-, Audit-, Import-/Batch- und Snapshotreferenzen. Sie liefert
+nur eine begrenzte Referenzklasse, keine fremden IDs oder Inhalte. Der interne
+JSON-Matcher vergleicht vollständige UUID-Werte/-Schlüssel, nicht Teiltexte.
+
+DELETE selbst bleibt unter unveränderter RLS, mit expliziter Organisation und
+RETURNING-Prüfung; null betroffene Zeilen sind niemals Erfolg. Deferred Constraints
+werden vor 204 ausgeführt. Referenzen oder bestehender Quellschutz ergeben 409,
+fehlende Autorität 404/403. Keine Kaskaden, Profilbereinigung, Auditlöschung oder
+Umgehung der bestehenden ENFORCED-Kontaktlöschpolicy. Der reale Down-/Up-Test
+vergleicht alle alten Daten/Sicherheitsobjekte und bytegleiche ausgestellte PDFs.
+
 ## 10. Was dieses Dokument bewusst NICHT entscheidet
 
 - Konkrete Abrechnungs-/Verteilungslogik (M3/M4) — eigener `engine-correctness`-Schritt.

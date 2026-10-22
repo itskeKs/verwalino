@@ -17,6 +17,8 @@ from app.core.tenant import (
     get_current_user,
     require_write_dep,
 )
+from fastapi.responses import Response
+from app.services.master_delete_service import MasterDeleteService, master_delete_writer_db
 from app.core.live_principal import get_live_member_db, get_live_writer_db
 from app.services.history_source_access import require_history_prepare
 from app.services.lease_rent_change_service import LeaseRentChangeService
@@ -325,3 +327,13 @@ def _to_out(la: LeaseAgreement) -> LeaseOut:
         deposit=str(la.deposit) if la.deposit is not None else None,
         notes=la.notes,
     )
+
+
+@router.delete("/{lease_id}", status_code=204, response_class=Response)
+async def delete_lease_agreement(
+    lease_id: uuid.UUID,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(master_delete_writer_db),
+):
+    await MasterDeleteService(db, auth).delete("lease_agreement", lease_id)
+    return Response(status_code=204)

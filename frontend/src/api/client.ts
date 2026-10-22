@@ -87,8 +87,8 @@ export const api = {
       body: body ? JSON.stringify(body) : undefined,
     });
   },
-  delete<T>(url: string): Promise<T> {
-    return request<T>(url, { method: "DELETE" });
+  delete<T>(url: string, options?: RequestInit): Promise<T> {
+    return request<T>(url, { ...options, method: "DELETE" });
   },
 };
 

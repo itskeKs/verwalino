@@ -9,6 +9,8 @@ from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fastapi.responses import Response
+from app.services.master_delete_service import MasterDeleteService, master_delete_writer_db
 from app.core.live_principal import get_live_member_db, get_live_writer_db
 from app.services.person_source_access import require_person_prepare
 from app.core.tenant import (
@@ -158,3 +160,13 @@ def _to_out(p: Person) -> PersonOut:
         bic=p.bic,
         bank_name=p.bank_name,
     )
+
+
+@router.delete("/{person_id}", status_code=204, response_class=Response)
+async def delete_person(
+    person_id: uuid.UUID,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(master_delete_writer_db),
+):
+    await MasterDeleteService(db, auth).delete("person", person_id)
+    return Response(status_code=204)

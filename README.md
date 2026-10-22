@@ -541,6 +541,20 @@ nicht neu. Migration 0129 schützt diese Provenienz und verweigert deren Verlust
 beim Downgrade. Ausstellung allein bestätigt keinen Zugang. Der echte UI-/PDFablauf
 ist mit `scripts/acceptance/t35_dunning_interest_browser.cjs` wiederholbar.
 
+### Unverwendete Fehleingaben löschen (T56)
+
+In Objekt-, Einheits- und Personendetails sowie an einem Mietvertrag gibt es für
+Schreibberechtigte einen ausdrücklichen Löschdialog. Ohne eingehende Referenzen
+und bei aktuellem Quellen-Vorbereitungsrecht wird genau der gewählte Datensatz
+entfernt; verknüpfte Daten werden niemals mitgelöscht. Bei Referenzen nennt 409
+den Grund, beispielsweise einen Mietvertrag oder eine Miethistorie. Auch
+Quellenfreigaben, Anlage-/Importquittungen, Audit und gespeicherte Finanzsnapshots
+sind geschützte Referenzen. Bestehende RLS-/Datenschutzsperren bleiben maßgeblich.
+Eine Person mit Mieter-/Eigentümer-/Dienstleisterprofil ist bereits referenziert.
+Der UI-only-Test `scripts/acceptance/t56_master_delete_browser.cjs` prüft Abbrechen,
+echte Löschung einer leeren Einheit und den sichtbaren Vertragsgrund einer
+verwendeten Einheit nach Desktop-/Telefon-Reload; Originalverträge bleiben gleich.
+
 ### Stammdaten bearbeiten und beenden (T55)
 
 Bankkonten lassen sich unter **Bankkonten → Bankkonto bearbeiten** umbenennen und

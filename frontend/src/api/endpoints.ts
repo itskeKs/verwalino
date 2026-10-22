@@ -421,6 +421,10 @@ export function pollDeclarationImport(
   };
 }
 
+export function deleteProperty(id: string, signal?: AbortSignal): Promise<void> {
+  return api.delete<void>(`/api/properties/${encodeURIComponent(id)}`, { signal });
+}
+
 // --- Units ---
 
 export function listUnits(propertyId?: string): Promise<Unit[]> {
@@ -440,6 +444,10 @@ export function updateUnit(id: string, body: UnitUpdate): Promise<Unit> {
   return api.put<Unit>(`/api/units/${id}`, body);
 }
 
+export function deleteUnit(id: string, signal?: AbortSignal): Promise<void> {
+  return api.delete<void>(`/api/units/${encodeURIComponent(id)}`, { signal });
+}
+
 // --- Persons ---
 
 export function listPersons(): Promise<Person[]> {
@@ -456,6 +464,10 @@ export function createPerson(body: PersonCreate): Promise<Person> {
 
 export function updatePerson(id: string, body: PersonUpdate): Promise<Person> {
   return api.put<Person>(`/api/persons/${id}`, body);
+}
+
+export function deletePerson(id: string, signal?: AbortSignal): Promise<void> {
+  return api.delete<void>(`/api/persons/${encodeURIComponent(id)}`, { signal });
 }
 
 // --- Owner Profiles ---
@@ -526,6 +538,10 @@ export function patchLease(
   body: LeaseUpdate,
 ): Promise<LeaseRecord> {
   return api.patch<LeaseRecord>(`/api/leases/${leaseId}`, body);
+}
+
+export function deleteLease(id: string, signal?: AbortSignal): Promise<void> {
+  return api.delete<void>(`/api/leases/${encodeURIComponent(id)}`, { signal });
 }
 
 export function listLeaseRentChanges(leaseId: string): Promise<LeaseRentChange[]> {

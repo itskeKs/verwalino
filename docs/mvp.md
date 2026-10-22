@@ -33,7 +33,7 @@ Kurzpfade: `api/ services/ engine/ models/ workers/` liegen unter `backend/app/`
 
 | Funktion | Referenz | Status im Code | Fundstelle |
 | --- | --- | --- | --- |
-| Objekt anlegen/bearbeiten (Miete/WEG/SEV/Misch) | ja | ✅ (kein Löschen) | `api/properties.py`, `pages/PropertiesPage.tsx` |
+| Objekt anlegen/bearbeiten (Miete/WEG/SEV/Misch) | ja | ✅ einschließlich referenzgeschütztem Löschen (T56) | `api/properties.py`, `pages/PropertiesPage.tsx` |
 | Baujahr, Gesamtfläche | ja | ✅ optional, ausdrücklich gespeichert | `models/property.py`, T55 |
 | Fotos | ja | ❌ | – |
 | Einheiten (Typ, Fläche, beheizte Fläche) | ja | ✅ | `api/units.py`, `pages/PropertyDetailPage.tsx` |
@@ -317,7 +317,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 
 ### Phase 3 – Parität und Komfort
 
-**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43–T55 abgeschlossen; nächste Aufgabe T56.** T10 bleibt offen.
+**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43–T56 abgeschlossen; nächste Aufgabe T57.** T10 bleibt offen.
 
 - [x] **T43 Staffelmiete** — Aus Start, Betrag oder Prozent, Intervall und Stufenzahl mehrere Mietänderungen (T23) anlegen.
   Dateien: `frontend/src/pages/UnitDetailPage.tsx`, `backend/app/api/leases.py`
@@ -371,9 +371,10 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
   Dateien: `backend/app/api/bank_accounts.py`, `backend/app/api/vendors.py`, `backend/app/api/mandates.py`, `backend/app/models/property.py`
   Fertig, wenn: `uv run pytest tests/test_m6_bank_accounts.py tests/test_m1_profiles_api.py` grün UND Ablauf in der App: „Bankkonto umbenennen“.
   Umgesetzt: Live-/Quellen-berechtigte Bank- und Dienstleisterpflege mit ausdrücklichem Aktivstatus, Admin-Verwaltungsmandatseditor mit bestehendem gebundenem Zeitraumsschutz sowie nullable Baujahr/Decimal-Gesamtfläche. 17 neue Fälle zunächst rot, final 39 Pflichtfälle und 143 Zahlungs-/SEPA-/Import-/Quellen-/RLS-Regressionen grün; unabhängig 49 Frontendfälle, Build und Gesamtlint grün. Geprüft: echte Finanzsperre, entzogene Prepare-Rechte trotz Lesen, Rollenherabstufung, Mandatskonflikt, unveränderte SEPA-Zustimmung und 850-EUR-Vorschau nach Umbenennen, SQL-Schutz verwendeter Bankdetails und inaktiver neuer Quellen. Zusätzlicher roter Storno-Gegenfall behoben durch enges exaktes Original-Gegenbuchungspaar; keine beliebige Zahlungsausnahme. Tatsächlicher verlustgeschützter 0136→0135→0136-Rundlauf mit befüllter Downgrade-Verweigerung, alten Datenspalten/Sicherheitsobjekten und bytegleichem ausgestelltem Brief-PDF grün; Deferred Constraints ausgeführt, nicht deaktiviert, Alembic-Namenskonvention ausdrücklich festgelegt. Vollständiger UI-only-PASS `t55_master_data_browser.cjs`: Objekt 1984 / 1.234,56 m², Konto anlegen, genau eine Umbenennung und unveränderte übrige Quellen nach Desktop-/390×844-Reload. App/Browser beendet und Ports geschlossen; Head 0136, alte Revisionen unverändert. Fotos, T10, T56/T57 und finale Gesamtprüfungen bleiben offen; bekannte Alembic-path_separator-/Vite-Chunkwarnungen bestehen.
-- [ ] **T56 Fehleingaben löschen** — Objekt, Einheit, Person, Vertrag löschbar, solange nichts darauf verweist (sonst 409 mit Grund).
+- [x] **T56 Fehleingaben löschen** — Objekt, Einheit, Person, Vertrag löschbar, solange nichts darauf verweist (sonst 409 mit Grund).
   Dateien: `backend/app/api/properties.py`, `backend/app/api/units.py`, `backend/app/api/persons.py`, `backend/app/api/leases.py`
   Fertig, wenn: `uv run pytest tests/test_master_delete.py` (neu) grün UND Ablauf in der App: „leere Einheit löschen, Einheit mit Vertrag nennt Grund“.
+  Umgesetzt: vier Live-/Prepare-berechtigte DELETE-Routen, normale unveränderte RLS, Eltern-/Finanzsperren und tatsächliches RETURNING vor 204; vollständige physische und exakte logische Referenzprüfung, niemals Kaskadenbereinigung. Zunächst 18 fehlende DELETE-Fälle rot (405), final 26 Pflichtfälle sowie 185 Stammdaten-/Quellen-/Historien-/Import-/Briefregressionen grün; unabhängig 198 Frontendfälle, Build und Gesamtlint grün. Geprüft: Rollen/Organisation/Live-Herabstufung, Read ohne Prepare auch für Admin, parallele Löschung, echte Finanzsperre, Miethistorie, append-only Audit, unveränderliche Import-Replays, reine Snapshot-UUID ohne FK und kein falscher Textteiltreffer. Tatsächlicher 0137→0136→0137-Rundlauf bewahrt alle alten Daten/Sicherheitsobjekte und ein bytegleiches ausgestelltes Brief-PDF; nur lesende neue Funktionen, alte Migrationen unverändert. Vollständiger UI-only-PASS `t56_master_delete_browser.cjs`: Abbrechen ohne DELETE, leere Einheit tatsächlich 204/anschließend 404, verwendete Einheit tatsächlich 409 mit exakt sichtbarer Vertragsbegründung, Originalvertrag 700/150 und alle übrigen DTOs/Freigaben unverändert, 390×844-Reload. Drei technische Vorläufe scheiterten an Playwright-APIResponse-Diagnostik, unterschiedlicher Decimal-Darstellung im Setup und leerem 204-Body; Adapter/Eingabedarstellung eng korrigiert, sämtliche Status-/Originaldatenprüfungen erhalten, erst danach Vollpass. App/Browser beendet; bekannte Alembic-/Vite-Warnungen, T57 und finale Gesamtprüfungen bleiben offen.
 - [ ] **T57 Benutzerverwaltung** — Rolle ändern, deaktivieren, Passwort zurücksetzen durch Admin; Schreibknöpfe für Nur-Lesen ausblenden.
   Dateien: `backend/app/api/users.py`, `frontend/src/pages/UsersPage.tsx`, `frontend/src/pages/UnitDetailPage.tsx`
   Fertig, wenn: `uv run pytest tests/test_rbac.py` grün UND Ablauf in der App: „deaktivierter Benutzer kann sich nicht anmelden“.

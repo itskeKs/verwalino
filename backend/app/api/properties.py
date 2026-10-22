@@ -9,6 +9,8 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi.responses import Response
+from app.services.master_delete_service import MasterDeleteService, master_delete_writer_db
 from app.core.live_principal import get_live_member_db, get_live_writer_db, get_live_publication_db
 from app.services.property_master_service import require_property_master
 
@@ -30,7 +32,6 @@ from app.services.master_creation_service import (
     PropertyCreate, PropertyFacts, create_property as create_property_record, _validate_management_type,
 )
 
-from fastapi.responses import Response
 from app.services.master_import_service import (
     MasterImportRequest, MasterImportApplyRequest, MasterImportService, template_csv,
 )
@@ -253,3 +254,13 @@ def _to_out(p: Property) -> PropertyOut:
         mea_denominator=p.mea_denominator,
         mea_scale_status=p.mea_scale_status,
     )
+
+
+@router.delete("/{property_id}", status_code=204, response_class=Response)
+async def delete_property(
+    property_id: uuid.UUID,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(master_delete_writer_db),
+):
+    await MasterDeleteService(db, auth).delete("property", property_id)
+    return Response(status_code=204)

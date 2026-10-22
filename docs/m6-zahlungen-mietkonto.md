@@ -671,6 +671,16 @@ Golden-Test 5 + Invariante I6-E sind zusammen der objektive Nachweis des M6-Exit
 
 ---
 
+### Fehleingaben und Finanzhistorie (T56)
+
+Ein unreferenziertes Objekt, eine Einheit, Person oder ein Mietvertrag kann nach
+expliziter Bestätigung und aktuellem Quellen-Prepare gelöscht werden. Schon ein
+Profil, eine Miethistorie, Zahlung, ein Beleg, eine Quellfreigabe, Importquittung,
+Auditidentität oder gespeicherte Snapshotreferenz verhindert dies mit 409 und
+Grund. Auch Entwürfe und RLS-verdeckte Referenzen zählen; keine Verknüpfung wird
+zum Zweck der Löschung entfernt. Ausgestellte Briefe und Finanzoriginale bleiben
+bytegleich. Das ist keine DSGVO-Anonymisierung und keine Storno-/Korrekturfunktion.
+
 ## 11. Was dieses Dokument bewusst NICHT entscheidet
 
 - **Mahnwesen / Mahnstufen / `DunningNotice` / Mahn-Persistenz:** M7 (§0, ADR-0009 §1/F6-1) — M6 liefert nur die *berechneten* überfälligen Posten.
