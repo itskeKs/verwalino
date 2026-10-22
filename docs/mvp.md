@@ -27,7 +27,7 @@ Kurzpfade: `api/ services/ engine/ models/ workers/` liegen unter `backend/app/`
 | Passwort ändern | ja | ❌ | `api/auth.py` |
 | Mandate mit Dokumenten | nein | 🟡 kein Bearbeiten/Beenden | `api/mandates.py` |
 | Quellen-Governance (Bereiche, Freigaben, Quarantänen) | nein | ✅ im Default-Modus PREPARATION nicht blockierend, überlädt das Menü | `services/financial_scope_service.py:59-72` |
-| Dashboard | ja | 🟡 nur Fristen und Zähler | `pages/DashboardPage.tsx` |
+| Dashboard | ja | ✅ Fristen, Aufgaben und monatliche Miet-/Leerstandskennzahlen | `pages/DashboardPage.tsx` |
 
 ### 2.2 Objekte und Einheiten
 
@@ -316,7 +316,7 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
 
 ### Phase 3 – Parität und Komfort
 
-**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43–T51 abgeschlossen; nächste Aufgabe T52.** T10 bleibt offen.
+**Phase 3 auf `mvp/phase-3` (Basis `432563e`): T43–T52 abgeschlossen; nächste Aufgabe T53.** T10 bleibt offen.
 
 - [x] **T43 Staffelmiete** — Aus Start, Betrag oder Prozent, Intervall und Stufenzahl mehrere Mietänderungen (T23) anlegen.
   Dateien: `frontend/src/pages/UnitDetailPage.tsx`, `backend/app/api/leases.py`
@@ -354,9 +354,10 @@ Backend-Tests laufen in `backend/` gegen die flüchtige Test-DB `localhost:55432
   Dateien: `backend/app/services/master_import_service.py` (neu), `backend/app/api/properties.py`, `frontend/src/pages/PropertiesPage.tsx`
   Fertig, wenn: `uv run pytest tests/test_master_import.py` (neu) grün UND Ablauf in der App: „1 Objekt, 4 Einheiten, 4 Kontakte importiert“.
   Umgesetzt: begrenztes UTF-8/BOM-Semikolon-CSV mit echter Vorlage, Zeilen-/Feldfehlern und nichtschreibender Vorschau; gemeinsame kanonische Einzel-/Batchanlage, ausdrückliche Quellenfreigabe und atomare Digest-/Request-Wiederholung ohne Teilantwort nach Rechteentzug. Vor Implementierung 17 fehlende API-Fälle rot; final Pflichtlauf 22 grün, zusammen mit globaler RLS-Inventur 29 sowie 77 bisherige Stammdaten-/Quellen-/Kontaktfälle grün. 63 Frontendfälle, Build und Gesamtlint grün; bekannte Alembic-/Vite-Warnungen bleiben. Später Kontaktfehler rollt sämtliche neun Datensätze zurück; Fremdquellen, paralleler Replay, explizite ENFORCED-Freigabe, nichtschreibende Vorschau, Widerruf sowie direkte Batch-Unveränderbarkeit/Actor-RLS geprüft. Neuer Head 0134 nach unveränderten alten Revisionen: tatsächlicher geschützter 0134→0133→0134-Rundlauf vergleicht alte Tabelleninhalte, RLS/ACLs, Policies, Trigger/Funktionen und ausgestelltes Brieforiginal; gefüllter Downgrade verweigert. Vollständiger UI-only-PASS `t51_master_import_browser.cjs`: echte CSV-Vorlagendownloadbytes, ungültige Flächenvorschau ohne Mutation, ausdrückliche Read/Prepare/Export-Freigabe und bestätigter Import von 1 Objekt/4 Einheiten/4 Kontakten, exakte 60,25 und weitere Flächen/E-Mails, Reload und Smartphone. Keine impliziten Profile/Verträge oder Änderung vorhandener DTOs. Zwei technische Vorläufe scheiterten an der unbelegten Annahme, Chromes nativer Link-Download werde geroutet; exakte tatsächliche Download-URL und Dateibytes belegen den unveränderten Fachcheck im abschließenden Vollpass. App/Browser beendet und Ports geschlossen; Gesamtprüfungen offen.
-- [ ] **T52 Dashboard-Kennzahlen** — Soll/Ist Miete des Monats, Rückstände, Leerstand; Vorbild `rg -n "RF01" docs/fachreferenz.md`.
+- [x] **T52 Dashboard-Kennzahlen** — Soll/Ist Miete des Monats, Rückstände, Leerstand; Vorbild `rg -n "RF01" docs/fachreferenz.md`.
   Dateien: `backend/app/api/reports.py`, `backend/app/engine/mietkonto.py`, `frontend/src/pages/DashboardPage.tsx`
   Fertig, wenn: `uv run pytest tests/test_dashboard_kpis.py` (neu) grün UND Ablauf in der App: „Dashboard zeigt erwartete und eingegangene Miete“.
+  Umgesetzt: rein lesende monatliche KALT-/NK-Soll-/Ist-Projektion mit bestehender Decimal-Miethistorie, Ist nach zugeordnetem Mietmonat statt Wertstellung, Rückständen je Vertrag seit Beginn ohne Fremdguthabenverrechnung sowie Belegung/Leerstand zum Monatsende. Fehlende Monatszuordnung separat, inkohärente Quellen 409; vollständige MIET-Historienabdeckung, Live-/Quellen-/Kontaktrechte, Finanzsperre und abschließende Zulassungsprüfung. Vor Implementierung sieben fehlende API-Fälle rot; zusätzliche MISCH-Gegenprobe rot und korrigiert. Pflichtlauf 22 sowie 238 Report-/CSV-/Miet-/Zahlungs-/Mietkonto-Regressionen grün, 72 Frontendfälle und Build/Gesamtlint grün. Teilmonate, Vertragswechsel, Storno/Draft, separate Vertragsguthaben, unzugeordnete Buchung, niedrige Decimal-Außenpräzision, Rechtewiderruf, parallele Abrufe und echte Finanzsperrwartezeit geprüft. Vollständiger UI-only-PASS `t52_dashboard_kpis_browser.cjs`: echte Oktoberbuchungen mit November-Wertstellung ergeben 850/800/50 EUR, November 850/0/900, zwei Einheiten mit einer Belegung/einem Leerstand am 31.10., Rückkehr/Reload/Smartphone und sämtliche Quell-DTOs unverändert. Drei technische Vorläufe scheiterten an nativen Label-/Select-Zuordnungen; konsistente exakte Combobox-Rollen beheben ausschließlich die Selektoren, keine geänderten Fachwerte. Keine Migration oder Buchungsänderung; aktueller Einheitsbestand, keine historische Inventarversion behauptet. App/Browser beendet; bekannte Alembic-/Vite-Warnungen und Gesamtprüfungen bleiben offen.
 - [ ] **T53 Mahnlauf** — Liste aller Rückstände über Schwelle, ausgewählte als Mahnentwürfe in einem Schritt.
   Dateien: `backend/app/api/dunning.py`, `backend/app/services/dunning_service.py`, `frontend/src/pages/OpenItemsPage.tsx`
   Fertig, wenn: `uv run pytest tests/test_m7_dunning.py -k batch` (neu) grün UND Ablauf in der App: „drei Rückstände, drei Entwürfe“.

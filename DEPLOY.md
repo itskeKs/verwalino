@@ -168,6 +168,16 @@ Only result identities/counts, not raw CSV/contact fields, are retained per batc
 For synthetic UI/download acceptance use `scripts/dev-local.sh` with fresh `/tmp`
 storage, run `node scripts/acceptance/t51_master_import_browser.cjs`, then stop it.
 
+## Monthly dashboard rent KPIs (T52)
+
+No migration, credentials or background job. The read-only dashboard endpoint uses
+the existing complete property/source/contact and MIET accounting-scope admission,
+financial-input lock and booked-payment computation context. A selected scope must
+cover the relevant complete lease history; incomplete coverage is not clipped.
+Synthetic UI acceptance uses the isolated local launcher and
+`node scripts/acceptance/t52_dashboard_kpis_browser.cjs`; stop it afterward.
+This does not authorize any production promotion or change the accepted 0122 gate.
+
 ## Fresh installation: one-time preparation on Moon
 
 Run as `chris` without sudo. The host must have Docker, Compose, `curl`,

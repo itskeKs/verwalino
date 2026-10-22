@@ -16,9 +16,23 @@ from app.core.storage import attachment_content_disposition
 from app.core.tenant import AuthContext, get_current_user
 from app.services.authorization_service import AuthorizationService
 from app.services.report_service import PropertyYearReport, ReportService
+from app.services.dashboard_kpi_service import DashboardKpis, DashboardKpiService
 from app.services.datev_export import DatevExportService, DatevRequest, render_datev
 
 router = APIRouter(prefix='/api/reports', tags=['reports'])
+
+
+@router.get('/dashboard-kpis', response_model=DashboardKpis)
+async def dashboard_kpis(
+    property_id: UUID,
+    year: Annotated[int, Query(ge=1, le=9998)],
+    month: Annotated[int, Query(ge=1, le=12)],
+    accounting_scope_id: UUID | None = None,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+) -> DashboardKpis:
+    return await DashboardKpiService(db, auth.organization_id, auth.user_id).monthly(
+        property_id, year, month, accounting_scope_id)
 
 
 @router.get('/property-year', response_model=PropertyYearReport)

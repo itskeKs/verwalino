@@ -721,6 +721,18 @@ Mindest-Assertions:
 
 ---
 
+### Monatliche Mietkennzahlen (T52)
+
+`GET /api/reports/dashboard-kpis` verwendet die vollständige Report-Zulassung,
+Live-/Quellen-/Kontaktrechte und die bestehende Finanzsperre. Das bestehende reine
+Mietkonto berechnet Soll und Nettosaldo getrennt je Vertrag mit Miethistorie und
+exklusiven Datenbank-Enddaten. Ist folgt ausschließlich dem zugeordneten Mietmonat
+aktiver gebuchter KALTMIETE/NK (IN minus OUT); unzugeordnete Beträge werden separat
+ausgewiesen. Fremdvertragsguthaben werden nicht verrechnet. Der Scope muss die ganze
+relevante Historie abdecken, inkohärente Quellen führen zu 409 statt Teilzahlen.
+Leerstand nutzt aktuelle Einheiten und die Belegung am Monatsende. Keine neue
+Persistenz, Migration, Umbuchung oder Rekonstruktion historischer Einheitsversionen.
+
 ## 10. Was dieses Dokument bewusst NICHT entscheidet
 
 - Konkrete Abrechnungs-/Verteilungslogik (M3/M4) — eigener `engine-correctness`-Schritt.

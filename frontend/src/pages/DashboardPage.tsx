@@ -31,6 +31,7 @@ import {
 } from "../api/endpoints";
 import type { Organization, DeadlineItem, DeadlineStatus, Task } from "../api/types";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
+import { DashboardKpis } from "../components/DashboardKpis";
 import { useAuth } from "../auth/useAuth";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
 import { Badge, type BadgeTone } from "../components/ui/badge";
@@ -89,11 +90,12 @@ function DashboardContent() {
   const [org, setOrg] = useState<Organization | null>(null);
   const [fristen, setFristen] = useState<DeadlineItem[] | null>(null);
   const [propertyCount, setPropertyCount] = useState<number | null>(null);
+  const [properties, setProperties] = useState<Awaited<ReturnType<typeof listProperties>> | null>(null);
   const [personCount, setPersonCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [masterError, setMasterError] = useState<string | null>(null);
   const [masterLoading, setMasterLoading] = useState(true);
-  const [scopeRequired, setScopeRequired] = useState(false);
+  const [scopeRequired, setScopeRequired] = useState<boolean | null>(null);
   const [revision, setRevision] = useState(0);
   const [scopeId, setScopeId] = useState<string | null>(null);
   const [resultScope, setResultScope] = useState<string | null | undefined>(undefined);
@@ -106,6 +108,7 @@ function DashboardContent() {
         if (cancelled) return;
         setOrg(o.status === "fulfilled" ? o.value : null);
         setPropertyCount(props.status === "fulfilled" ? props.value.length : null);
+        setProperties(props.status === "fulfilled" ? props.value : null);
         setPersonCount(persons.status === "fulfilled" ? persons.value.length : null);
         const failures = [o, props, persons].filter(result => result.status === "rejected");
         setMasterError(failures.length ? failures.map(result => String(result.reason)).join(" · ") : null);
@@ -208,6 +211,8 @@ function DashboardContent() {
           to="/offene-posten"
         />
       </div>
+
+      <DashboardKpis properties={properties} requiresScope={scopeRequired} sessionKey={`${session?.organization_id}:${session?.user_id}:${session?.role}`} />
 
       <DueTasks key={`${session?.organization_id}:${session?.user_id}:${session?.role}`} canWrite={session?.role === "OWNER_ADMIN" || session?.role === "CLERK"} />
 

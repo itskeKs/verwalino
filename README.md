@@ -663,6 +663,24 @@ benutzergebundene Ergebnis-IDs, nicht die CSV oder Kontaktdaten im Batch.
 Tests: `uv run pytest tests/test_master_import.py`; echter UI-/Downloadablauf:
 `node scripts/acceptance/t51_master_import_browser.cjs`.
 
+### Monatliche Mietkennzahlen (T52)
+
+Im Dashboard unter **Mietkennzahlen** Objekt, Mietmonat/Jahr und gegebenenfalls den
+vollständigen MIET-Abrechnungskreis auswählen. Soll umfasst Kaltmiete und
+Nebenkostenvorauszahlung einschließlich Miethistorie und Teilmonaten. Ist zählt
+aktive gebuchte KALTMIETE-/NK-Zahlungen nach zugeordnetem Mietmonat, nicht nach
+Wertstellung; Auszahlungen werden abgezogen. Nicht zugeordnete Zahlungen werden
+separat gemeldet, nicht still einem Monat zugeschlagen.
+
+Rückstände sind positive Nettosalden je Vertrag seit Vertragsbeginn bis zum
+gewählten Monatsende; Guthaben eines anderen Vertrags gleichen sie nicht aus.
+Leerstand bewertet den heutigen Einheitsbestand zum gewählten Monatsende, nicht
+einen versionierten historischen Objektbestand. Fehlende Rechte, unvollständige
+Historienabdeckung oder inkohärente Buchungen ergeben Fehler statt falscher Nullen.
+Die Übersicht verändert keine Buchungen oder Verträge. Pflichtprüfung:
+`uv run pytest tests/test_dashboard_kpis.py`; echte UI-Abnahme:
+`node scripts/acceptance/t52_dashboard_kpis_browser.cjs`.
+
 Weiterführende Dokumentation:
 
 - [Deployment](DEPLOY.md)
