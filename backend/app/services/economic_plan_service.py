@@ -91,10 +91,11 @@ class PlanInputs:
 
 
 class EconomicPlanService:
-    def __init__(self, session: AsyncSession, org_id: uuid.UUID, user_id: uuid.UUID):
+    def __init__(self, session: AsyncSession, org_id: uuid.UUID, user_id: uuid.UUID, *, session_version: int = 0):
         self._session = session
         self._org_id = org_id
         self._user_id = user_id
+        self._session_version = session_version
         self._plans = EconomicPlanRepository(session, org_id)
         self._lines = EconomicPlanLineRepository(session, org_id)
         self._runs = SettlementRunRepository(session, org_id)  # property aggregation
@@ -123,7 +124,7 @@ class EconomicPlanService:
     async def _previous_admit(self, property_id, plan_year, source_scope_id, target_scope_id):
         if type(plan_year) is not int or not 2 <= plan_year <= 9998:
             raise HTTPException(422, "Plan year must be an integer between 2 and 9998")
-        auth = AuthContext(self._user_id, self._org_id, "live database role required")
+        auth = AuthContext(self._user_id, self._org_id, "live database role required", session_version=self._session_version)
         await require_live_principal(self._session, auth, writer=True)
         context = FinancialScopeService(self._session, self._org_id, self._user_id)
         await context.lock_inputs()

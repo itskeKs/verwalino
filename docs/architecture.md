@@ -333,6 +333,11 @@ Selbstentzug und committen zusammen mit nicht-sensitiven Auditdaten. Dies ist
 API-Adminautorisierung, kein behaupteter Ersatz sämtlicher bestehender SQL-RLS-
 Verantwortlichkeiten. Nur-Lesen verbirgt Fachschreibaktionen, nicht eigene
 Passwortpflege. Downmigration verweigert den Verlust positiver Generationen.
+Die ursprüngliche authentifizierte Generation wird durch alle kurzen Wissensphasen
+und die Vorjahresplan-Zulassung weitergereicht, niemals dort frisch übernommen.
+Revision 0139 gewährt der isolierten Review-Runtime ausschließlich Ausführung der
+versionierten Sessionprüfung, nicht des Passwort-Lookups. Unbekannte Altrollen
+bleiben nicht autorisierend (`null` im Verwaltungs-DTO, Login 401).
 
 > **[ENTSCHEIDUNG]:** Server-Session (empfohlen) vs. JWT. Und: Self-Hosting-Auth vs. externer Identity-Provider (z. B. Keycloak/Authentik). Für das MVP empfehle ich **eigene, schlanke Server-Session-Auth** (volle Kontrolle, keine externe Abhängigkeit), die Schnittstelle aber so kapseln, dass ein späterer IdP-Wechsel möglich bleibt.
 

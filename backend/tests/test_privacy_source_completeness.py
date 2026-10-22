@@ -114,7 +114,10 @@ async def test_privacy_rechecks_administrator_in_the_data_transaction(client_a_a
     assert response.status_code==201,response.text
     person=response.json()['id']
     ids={'org':seed_data['org_a_id'],'actor':seed_data['user_a_admin_id']}
-    app.dependency_overrides[get_current_user]=lambda:AuthContext(ids['actor'],ids['org'],'OWNER_ADMIN')
+    from app.core.security import decode_session_token
+    from tests.conftest import _make_session_cookie
+    generation = decode_session_token(_make_session_cookie(ids['actor'], ids['org'])).get('sv', 0)
+    app.dependency_overrides[get_current_user]=lambda:AuthContext(ids['actor'],ids['org'],'OWNER_ADMIN',session_version=generation)
     try:
         await mutate(text("UPDATE membership SET role='CLERK' WHERE organization_id=:org AND user_id=:actor"),ids)
         request=client_a_admin.get if action=='status' else client_a_admin.post

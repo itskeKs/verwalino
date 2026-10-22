@@ -224,7 +224,7 @@ async def preview_previous_plan(
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_live_writer_db, scope="function"),
 ):
-    return await EconomicPlanService(db, auth.organization_id, auth.user_id).previous_preview(
+    return await EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version).previous_preview(
         body.property_id, body.plan_year, body.source_accounting_scope_id, body.accounting_scope_id)
 
 
@@ -234,7 +234,7 @@ async def create_previous_plan(
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_live_writer_db, scope="function"),
 ):
-    plan = await EconomicPlanService(db, auth.organization_id, auth.user_id).create_from_previous(
+    plan = await EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version).create_from_previous(
         property_id=body.property_id, plan_year=body.plan_year,
         source_accounting_scope_id=body.source_accounting_scope_id,
         accounting_scope_id=body.accounting_scope_id,
@@ -265,7 +265,7 @@ async def create_plan(
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_db),
 ):
-    svc = EconomicPlanService(db, auth.organization_id, auth.user_id)
+    svc = EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version)
     plan = await svc.create_draft(
         accounting_scope_id=body.accounting_scope_id,
         property_id=uuid.UUID(body.property_id),
@@ -287,7 +287,7 @@ async def compute_plan(
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_db),
 ):
-    svc = EconomicPlanService(db, auth.organization_id, auth.user_id)
+    svc = EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version)
     plan, _result = await svc.compute(plan_id, _to_inputs(body))
     line_repo = EconomicPlanLineRepository(db, auth.organization_id)
     lines = await line_repo.list_for_plan(plan_id)
@@ -302,7 +302,7 @@ async def finalize_plan(
     # Commit before the client can request the finalized plan's PDF.
     db: AsyncSession = Depends(get_db, scope="function"),
 ):
-    svc = EconomicPlanService(db, auth.organization_id, auth.user_id)
+    svc = EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version)
     plan = await svc.finalize(plan_id, _to_inputs(body))
     line_repo = EconomicPlanLineRepository(db, auth.organization_id)
     lines = await line_repo.list_for_plan(plan_id)
@@ -315,7 +315,7 @@ async def create_plan_correction(
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_db),
 ):
-    svc = EconomicPlanService(db, auth.organization_id, auth.user_id)
+    svc = EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version)
     plan = await svc.create_correction_run(plan_id)
     return _plan_out(plan, [])
 

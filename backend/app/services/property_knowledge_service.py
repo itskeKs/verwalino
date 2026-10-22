@@ -720,9 +720,9 @@ def _usage_for_reservation(
     return sanitized, _stored_cost(expected_cost), None
 
 
-async def _knowledge_actor(session: AsyncSession, organization_id: uuid.UUID, actor_user_id: uuid.UUID, property_id: uuid.UUID) -> None:
+async def _knowledge_actor(session: AsyncSession, organization_id: uuid.UUID, actor_user_id: uuid.UUID, property_id: uuid.UUID, session_version: int = 0) -> None:
     await session.execute(text("SELECT set_config('app.current_user_id', :actor, true)"), {"actor": str(actor_user_id)})
-    await require_live_principal(session, AuthContext(actor_user_id, organization_id, ""), writer=False)
+    await require_live_principal(session, AuthContext(actor_user_id, organization_id, "", session_version=session_version), writer=False)
     if not await session.scalar(text("SELECT knowledge_query_source_access(:org,:property)"),
         {"org":organization_id,"property":property_id}):
         raise HTTPException(status_code=404,detail="Property not found")
@@ -732,6 +732,7 @@ async def query_property_knowledge(
     *,
     organization_id: uuid.UUID,
     actor_user_id: uuid.UUID,
+    session_version: int = 0,
     property_id: uuid.UUID,
     question: KnowledgeQuestionRequest,
     provider: KnowledgeAnswerProvider | None = None,
@@ -743,7 +744,7 @@ async def query_property_knowledge(
     # Resolve the tenant-local property before process-local backpressure so an
     # unknown/foreign identifier remains a stable 404 even under load.
     async with get_tenant_session(organization_id) as session:
-        await _knowledge_actor(session, organization_id, actor_user_id, property_id)
+        await _knowledge_actor(session, organization_id, actor_user_id, property_id, session_version)
         service = PropertyKnowledgeService(session, organization_id)
         prepared = await service.prepare_question(property_id, question)
         if not prepared.hits:
@@ -761,7 +762,7 @@ async def query_property_knowledge(
         raise KnowledgeQueryBudgetExceeded("QA_CONCURRENCY_EXCEEDED")
     try:
         async with get_tenant_session(organization_id) as session:
-            await _knowledge_actor(session, organization_id, actor_user_id, property_id)
+            await _knowledge_actor(session, organization_id, actor_user_id, property_id, session_version)
             try:
                 estimate = provider.estimate_reservation(
                     prepared.request,
@@ -841,7 +842,7 @@ async def query_property_knowledge(
                 persisted_actor = await session.scalar(text("SELECT knowledge_query_actor(:org,:run)"), {"org": organization_id, "run": reservation.run_id})
                 if persisted_actor != actor_user_id:
                     raise HTTPException(status_code=401, detail="Not authenticated")
-                await _knowledge_actor(session, organization_id, persisted_actor, property_id)
+                await _knowledge_actor(session, organization_id, persisted_actor, property_id, session_version)
                 if provider_result is not None and mismatch is None:
                     answer = await PropertyKnowledgeService(session, organization_id).finalize_provider_result(
                         prepared, provider_result,

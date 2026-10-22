@@ -161,6 +161,7 @@ async def query_property_knowledge_endpoint(
         return await query_property_knowledge(
             organization_id=auth.organization_id,
             actor_user_id=auth.user_id,
+            session_version=auth.session_version,
             property_id=property_id,
             question=body,
             provider_factory=provider_source,

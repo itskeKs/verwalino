@@ -86,7 +86,7 @@ async def login(body: LoginRequest, response: Response):
     # Always verify one Argon2 hash so unknown identities have no cheap path.
     password_hash = principal.password_hash if principal is not None else _DUMMY_PASSWORD_HASH
     password_matches = verify_password(body.password, password_hash)
-    if principal is None or not password_matches or not principal.is_active:
+    if principal is None or not password_matches or not principal.is_active or principal.role not in {"OWNER_ADMIN", "CLERK", "READ_ONLY"}:
         raise _invalid_credentials()
 
     token = create_session_token(principal.user_id, principal.organization_id, principal.session_version)

@@ -231,7 +231,7 @@ storage and `node scripts/acceptance/t55_master_data_browser.cjs`; stop app/brow
 afterward. This does **not** authorize production deployment/promotion of
 **0123–0136** or change the accepted **0122** gate.
 
-## User administration and session invalidation (T57; local head 0138)
+## User administration and session invalidation (T57; local head 0139)
 
 Revision **0138** adds a nonnegative session generation, its own invalidation/ACL
 triggers and narrow versioned auth wrappers; existing auth functions and policies
@@ -246,7 +246,14 @@ issued PDF bytes. Only the DDL-owning migrator can prepare the new counter for a
 rollback-only rehearsal; app_rw cannot alter it. Disposable-test cleanup is
 explicitly database/role-guarded, not a production downgrade bypass.
 
-This is **not** authorization to promote **0123–0138** to production or change the
+Revision **0139** grants only `app_validate_session_versioned(uuid,uuid,integer)`
+execution to the isolated `app_review` role, not either password lookup. The real
+0139→0138→0139 round trip retains all data, RLS/policies/triggers, function
+definitions and other ACLs, including issued PDF bytes; the normal Alembic CLI
+round trip also passed. Authenticated generation is carried unchanged through
+short knowledge-query transactions and prior-year plan admission.
+
+This is **not** authorization to promote **0123–0139** to production or change the
 accepted production **0122** gate. No deployment was performed.
 
 ## Unused master deletion (T56; local head 0137)

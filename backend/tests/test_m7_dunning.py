@@ -18,6 +18,7 @@ from datetime import date, datetime, timezone as _tz
 from decimal import Decimal
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import text
 
 
@@ -174,6 +175,18 @@ def _insert_dunning_sql() -> str:
 # ===========================================================================
 # T53 batch dunning
 # ===========================================================================
+@pytest_asyncio.fixture
+async def isolated_batch_seed(rent_world, seed_data):
+    # An organization-wide preview must not enumerate other modules' retained
+    # scoped portfolios. Reuse the exact original EUR 2,400 seed in its own org.
+    seed = {**seed_data, "org_a_id": rent_world["org"],
+            "user_a_admin_id": rent_world["admin"],
+            "org_b_id": rent_world["foreign_org"]}
+    rows = m7_seed.__wrapped__(seed)
+    async with api_client(rent_world) as client:
+        yield client, rows
+
+
 def batch_request(**changes):
     return {
         "period_start": "2025-01-01", "period_end": "2025-06-30",
@@ -189,7 +202,8 @@ async def batch_preview(client, body=None):
 
 
 @pytest.mark.asyncio
-async def test_batch_preview_exact_threshold_and_no_writes(client_a_admin, m7_seed):
+async def test_batch_preview_exact_threshold_and_no_writes(isolated_batch_seed):
+    client_a_admin, m7_seed = isolated_batch_seed
     before = (await client_a_admin.get("/api/dunning")).json()
     result = await batch_preview(client_a_admin)
     row = next(r for r in result["candidates"] if r["lease_agreement_id"] == str(m7_seed["lease_m7"]))
@@ -202,7 +216,8 @@ async def test_batch_preview_exact_threshold_and_no_writes(client_a_admin, m7_se
 
 
 @pytest.mark.asyncio
-async def test_batch_selected_draft_and_same_request_replay(client_a_admin, m7_seed):
+async def test_batch_selected_draft_and_same_request_replay(isolated_batch_seed):
+    client_a_admin, m7_seed = isolated_batch_seed
     body = batch_request()
     preview = await batch_preview(client_a_admin, body)
     request = {**body, "expected_source_digest": preview["source_digest"],
@@ -224,7 +239,8 @@ async def test_batch_selected_draft_and_same_request_replay(client_a_admin, m7_s
 
 
 @pytest.mark.asyncio
-async def test_batch_stale_and_unknown_selection_are_atomic(client_a_admin, m7_seed):
+async def test_batch_stale_and_unknown_selection_are_atomic(isolated_batch_seed):
+    client_a_admin, m7_seed = isolated_batch_seed
     preview = await batch_preview(client_a_admin)
     before = (await client_a_admin.get("/api/dunning")).json()
     body = {**batch_request(), "expected_source_digest": "0" * 64,

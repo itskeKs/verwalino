@@ -42,6 +42,10 @@ Reset, eigener Passwortwechsel und Deaktivierung widerrufen bestehende Cookies
 wieder. Die Live-Prüfung erfolgt erneut unter der ACL-Sperre; Rollen-/Aktivänderung
 und nicht-sensitive Auditdaten werden atomar gespeichert. Der tatsächliche lokale
 Desktop-/Smartphone-Ablauf ist `scripts/acceptance/t57_users_browser.cjs`.
+Die authentifizierte Generation bleibt auch in späteren Wissens-/Plantransaktionen
+erhalten; die isolierte Review-Runtime darf nur Sessions prüfen, keine Passwörter
+nachschlagen. Unbekannte Altrollen werden als ungültig angezeigt und beim Login
+abgewiesen, nicht still in eine gültige Rolle umgewandelt.
 
 ## Bankumsätze und Dateiimport (Phase 2)
 

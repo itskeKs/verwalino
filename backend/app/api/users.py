@@ -93,7 +93,7 @@ async def user_admin_db(
 
 def user_out(user: User, role: str | None) -> UserOut:
     return UserOut(id=str(user.id), email=user.email, display_name=user.display_name,
-                   is_active=user.is_active, role=role)
+                   is_active=user.is_active, role=role if role in {item.value for item in Role} else None)
 
 
 async def user_roles(db: AsyncSession, organization_id: uuid.UUID, users) -> dict:
