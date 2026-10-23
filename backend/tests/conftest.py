@@ -207,10 +207,16 @@ def run_migrations():
         if cursor.fetchone()[0] is not None:
             cursor.execute("TRUNCATE public.declaration_review_receipt")
 
-    # Downgrade to clean state, then upgrade to head
+    # Rehearse the supported upgrade before any retained test originals exist.
+    # The rehearsal uses one rollback-only transaction; never clear later rows
+    # or weaken a populated downgrade guard to make a historical test pass.
+    from tests.test_deployment_upgrade import rehearse_initial_upgrade
+
     command.downgrade(alembic_cfg, "base")
+    command.upgrade(alembic_cfg, "0122")
+    upgraded_tables = rehearse_initial_upgrade()
     command.upgrade(alembic_cfg, "head")
-    yield
+    yield {'upgrade_0122_to_0139_tables': upgraded_tables}
 
 
 # ---------------------------------------------------------------------------

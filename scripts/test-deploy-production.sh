@@ -4,6 +4,11 @@
 # starts without ever touching a real Docker daemon.
 set -eu
 
+# Never inherit real developer provider/smoke credentials into the fake CLI.
+unset HV_OPENAI_API_KEY HV_SMOKE_ADMIN_PASSWORD
+
+if [ "$(basename "$0")" = sleep ]; then exit 0; fi
+
 if [ "$(basename "$0")" = stat ]; then
   case "${2:-}" in
     '%a') printf '%s\n' 600 ;;
@@ -20,7 +25,10 @@ if [ "$(basename "$0")" = mv ]; then
       [ -z "${FAKE_DOCKER_LOG:-}" ] || printf '%s\n' promoted >> "$FAKE_DOCKER_LOG"
       ;;
   esac
-  /bin/mv -f "$1" "$2"
+  python3 - "$1" "$2" <<'REPLACE'
+import os, sys
+os.replace(sys.argv[1], sys.argv[2])
+REPLACE
   exit 0
 fi
 
@@ -122,6 +130,7 @@ fi
 if [ "$(basename "$0")" = docker ]; then
   printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
   case "${1:-}" in
+    ps) [ "${FAKE_FAILURE:-}" != competing ] || printf '%s\n' unknown-runtime; printf '%s\n' db-id old-app old-worker; [ "${FAKE_NO_PREVIOUS_INVOICE:-0}" = 1 ] || printf '%s\n' old-invoice; exit 0 ;;
     network)
       printf '%s\n' '172.21.0.0/16'
       exit 0
@@ -137,14 +146,37 @@ if [ "$(basename "$0")" = docker ]; then
       exit 0
       ;;
     run)
+      case " $* " in
+        *' --entrypoint alembic '*) printf '%s\n' "${FAKE_PREVIOUS_HEAD:-0122} (head)"; exit 0 ;;
+        *' archive-documents '*) [ "${FAKE_FAILURE:-}" != documents ] || exit 91; printf 'synthetic-documents'; exit 0 ;;
+        *' verify-documents '*) cat >/dev/null; [ "${FAKE_FAILURE:-}" != archive-check ]; exit $? ;;
+      esac
       printf '%s\n' '{}' > "$FAKE_SHARED/test.sbom.cdx.json"
       exit 0
       ;;
+    exec)
+      case " $* " in
+        *' pg_dump '*) [ "${FAKE_FAILURE:-}" != backup ] || exit 91; printf 'synthetic-dump'; exit 0 ;;
+        *' pg_restore --list '*) cat >/dev/null; [ "${FAKE_FAILURE:-}" != dump-check ]; exit $? ;;
+      esac
+      exit 97
+      ;;
     inspect)
       case "$*" in
+        *'{{.State.Running}}'*) printf '%s\n' false ;;
+        *'com.docker.compose.project'*) printf '%s\n' hausverwaltung-alpha ;;
+        *'com.docker.compose.service'*) case "$*" in *invoice*) printf '%s\n' invoice-worker ;; *worker*) printf '%s\n' worker ;; *) printf '%s\n' app ;; esac ;;
+        *'com.karat.hausverwaltung.release'*'old-'*) printf '%s\n' old ;;
+        *'{{.State.Health.Status}}'*'new-invoice'*) [ "${FAKE_FAILURE:-}" != invoice-health ] || { printf '%s\n' unhealthy; exit 0; }; printf '%s\n' healthy ;;
+        *'{{.Id}}'*'invoice'*) printf '%s\n' "${4:-}" ;;
+        *'{{.Image}}'*'new-invoice'*) printf '%s\n' new-image-id ;;
+        *'{{.Image}}'*'old-invoice'*) printf '%s\n' old-image-id ;;
+        *'{{.Image}}'*'restored-invoice'*) printf '%s\n' old-image-id ;;
+        *'com.karat.hausverwaltung.release'*'new-invoice'*) printf '%s\n' test ;;
+        *'com.karat.hausverwaltung.release'*'restored-'*) printf '%s\n' old ;;
         *'{{.State.Health.Status}}'*'db-id'*) printf '%s\n' healthy ;;
-        *'{{.State.Health.Status}}'*'new-app'*) printf '%s\n' healthy ;;
-        *'{{.State.Health.Status}}'*'new-worker'*) printf '%s\n' healthy ;;
+        *'{{.State.Health.Status}}'*'new-app'*) if [ "${FAKE_FAILURE:-}" = app-health ]; then printf '%s\n' unhealthy; else printf '%s\n' healthy; fi ;;
+        *'{{.State.Health.Status}}'*'new-worker'*) if [ "${FAKE_FAILURE:-}" = worker-health ]; then printf '%s\n' unhealthy; else printf '%s\n' healthy; fi ;;
         *'{{.State.Health.Status}}'*'restored-app'*) printf '%s\n' healthy ;;
         *'{{.State.Health.Status}}'*'restored-worker'*) printf '%s\n' healthy ;;
         *'{{.Config.Image}}'*'new-app'*) printf '%s\n' 'hausverwaltung-alpha:test' ;;
@@ -163,7 +195,7 @@ if [ "$(basename "$0")" = docker ]; then
         *'{{.Image}}'*'old-worker'*) printf '%s\n' old-image-id ;;
         *'{{.Image}}'*'restored-app'*) printf '%s\n' old-image-id ;;
         *'{{.Image}}'*'restored-worker'*) printf '%s\n' old-image-id ;;
-        *'com.karat.hausverwaltung.release'*'new-app'*) printf '%s\n' test ;;
+        *'com.karat.hausverwaltung.release'*'new-app'*) printf '%s\n' "${FAKE_NEW_LABEL:-test}" ;;
         *'com.karat.hausverwaltung.release'*'new-worker'*) printf '%s\n' test ;;
         *'{{json .HostConfig.PortBindings}}'*) printf '%s\n' '{}' ;;
         *'{{range .Config.Env}}'*) exit 0 ;;
@@ -172,12 +204,22 @@ if [ "$(basename "$0")" = docker ]; then
       exit 0
       ;;
     stop)
-      printf '%s\n' "stopped:${2:-}" >> "$FAKE_DOCKER_LOG"
+      case "$*" in *new-worker*) [ "${FAKE_FAILURE:-}" != cleanup-stop-fail ] || exit 90 ;; esac
+      printf '%s\n' "stopped:${4:-${2:-}}" >> "$FAKE_DOCKER_LOG"
       exit 0
       ;;
     compose)
       case " $* " in
         *' up -d --no-recreate db '*) exit 0 ;;
+        *' ps -q invoice-worker '*)
+          if [ -f "$FAKE_INVOICE_RESTORED" ]; then printf '%s\n' restored-invoice
+          elif [ -f "$FAKE_INVOICE_CREATED" ]; then printf '%s\n' new-invoice
+          elif [ "${FAKE_NO_PREVIOUS_INVOICE:-0}" != 1 ]; then printf '%s\n' old-invoice
+          fi; exit 0 ;;
+        *' up -d --no-deps invoice-worker '*)
+          case "$*" in *'releases/old/'*) : > "$FAKE_INVOICE_RESTORED"; exit 0 ;; esac
+          : > "$FAKE_INVOICE_CREATED"
+          [ "${FAKE_FAILURE:-}" != invoice-start ]; exit $? ;;
         *' ps -q db '*) printf '%s\n' db-id; exit 0 ;;
         *' ps -q app '*)
           if [ -f "${FAKE_APP_RESTORED:-}" ]; then printf '%s\n' restored-app
@@ -187,6 +229,7 @@ if [ "$(basename "$0")" = docker ]; then
           exit 0
           ;;
         *' ps -q worker '*)
+          if [ "${FAKE_FAILURE:-}" = cleanup-discovery-fail ] && [ -f "$FAKE_WORKER_CREATED" ]; then exit 94; fi
           if [ -f "${FAKE_WORKER_RESTORED:-}" ]; then printf '%s\n' restored-worker
           elif [ -f "$FAKE_WORKER_CREATED" ]; then printf '%s\n' new-worker
           else printf '%s\n' old-worker
@@ -198,6 +241,20 @@ if [ "$(basename "$0")" = docker ]; then
           [ "${FAKE_PROVIDER_SMOKE_FAIL:-0}" = 1 ] && exit 99
           exit 0
           ;;
+        *' run '*'app.deployment preflight '*)
+          [ "${FAKE_FAILURE:-}" != roles ] || exit 92
+          [ "${FAKE_FAILURE:-}" != release-head ] || exit 92
+          printf '%s\n' "${FAKE_SCHEMA:-0122}"; exit 0 ;;
+        *' run '*'app.deployment current '*)
+          if [ -f "$FAKE_SHARED/schema-changed" ]; then printf '%s\n' 0139; elif [ -f "$FAKE_MIGRATED" ]; then printf '%s\n' "${FAKE_TARGET:-0139}"; else printf '%s\n' "${FAKE_SCHEMA:-0122}"; fi; exit 0 ;;
+        *' run '*'app.deployment quiescent '*)
+          [ "${FAKE_FAILURE:-}" != busy ] || exit 93
+          if [ "${FAKE_FAILURE:-}" = quiescent-changed ] && [ -f "$FAKE_SHARED/backups/test-from-0122/documents.tar.gz.partial" ]; then
+            : > "$FAKE_SHARED/schema-changed"; printf '%s\n' 0139
+          else printf '%s\n' "$FAKE_SCHEMA"; fi; exit 0 ;;
+        *' run '*'app.deployment runtime '*) [ "${FAKE_FAILURE:-}" != credentials ]; exit $? ;;
+        *' run --rm --no-deps migrate '*)
+          : > "$FAKE_MIGRATED"; [ "${FAKE_FAILURE:-}" != migrate ]; exit $? ;;
         *' run '*' alembic current '*) printf '%s\n' '0122 (head)'; exit 0 ;;
         *' run '*) exit 0 ;;
         *' exec -T app python -c '*'import json'*)
@@ -212,6 +269,7 @@ print(json.dumps({
           exit 0
           ;;
         *' exec -T db sh -ec '*) printf '%s\n' app_rw; exit 0 ;;
+        *' exec -T app python -c '*'import urllib.request'*) [ "${FAKE_FAILURE:-}" != api-ready ]; exit $? ;;
         *' exec '*) exit 0 ;;
         *' up -d --no-deps app '*)
           case "$*" in
@@ -286,7 +344,7 @@ assert_verifier_label_assertions() {
 
 assert_declaration_worker_runtime() {
   for file in scripts/deploy-production.sh scripts/verify-production.sh; do
-    grep -Fq '0122 (head)' "$file" || fail "$file does not gate on Alembic head 0122"
+    grep -Fq 'app.deployment' "$file" || fail "$file does not validate the release migration graph"
     grep -Fq 'wait_for_health worker' "$file" || fail "$file does not wait for the declaration worker healthcheck"
     grep -Fq 'runtime_service in app worker' "$file" || fail "$file does not validate both runtime services"
   done
@@ -368,8 +426,8 @@ assert_provider_smoke_gate() {
 assert_release_replacement_hardening() {
   grep -Fq 'flock -n 9' scripts/deploy-production.sh || \
     fail 'deployment does not acquire an exclusive host lock before Compose work'
-  grep -Fq 'compose up -d --no-recreate db' scripts/deploy-production.sh || \
-    fail 'deployment does not prevent PostgreSQL recreation during a release update'
+  grep -Fq 'existing database container is required' scripts/deploy-production.sh || \
+    fail 'upgrade must require the existing database without reconciling it'
   grep -Fq 'compose up -d --no-deps app' scripts/deploy-production.sh || \
     fail 'app startup may re-evaluate or recreate its already-verified database dependency'
   grep -Fq 'compose up -d --no-deps worker' scripts/deploy-production.sh || \
@@ -388,33 +446,25 @@ assert_release_replacement_hardening() {
     fail 'deployment provider-key gate accepts malformed or comment-only values'
   for expected in \
     'compose --profile ops run --rm --no-deps migrate' \
-    'compose --profile ops run --rm --no-deps migrate alembic current' \
+    'compose --profile ops run --rm --no-deps migrate python -m app.deployment' \
     'compose --profile ops run --rm --no-deps -T bootstrap'; do
     grep -Fq "$expected" scripts/deploy-production.sh || \
       fail "deployment ops command may start or reconcile database dependencies: $expected"
   done
   for expected in \
     'compose --profile ops run --rm --no-deps migrate' \
-    'compose --profile ops run --rm --no-deps migrate alembic current'; do
+    'compose --profile ops run --rm --no-deps migrate python -m app.deployment preflight'; do
     grep -Fq "$expected" scripts/verify-production.sh || \
       fail "verification ops command may start or reconcile database dependencies: $expected"
   done
   for file in scripts/deploy-production.sh scripts/verify-production.sh; do
-    grep -Fq 'wait_for_database_role' "$file" || \
+    grep -Eq 'wait_for_database_role|app.deployment' "$file" || \
       fail "$file does not wait for app_rw after PostgreSQL reports healthy"
   done
 }
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 deploy_script="$script_dir/deploy-production.sh"
-assert_gateway_basic_auth_removed
-assert_admin_password_handling
-assert_verifier_label_assertions
-assert_declaration_worker_runtime
-assert_worker_egress_isolation
-assert_worker_database_isolation
-assert_provider_smoke_gate
-assert_release_replacement_hardening
 admin_password='Alpha"$\;{}[]Pass12'
 tmpdir=$(mktemp -d)
 cleanup() { rm -rf "$tmpdir"; }
@@ -427,6 +477,7 @@ ln -s "$script_dir/$(basename "$0")" "$tmpdir/bin/curl"
 ln -s "$script_dir/$(basename "$0")" "$tmpdir/bin/mv"
 ln -s "$script_dir/$(basename "$0")" "$tmpdir/bin/flock"
 ln -s "$script_dir/$(basename "$0")" "$tmpdir/bin/readlink"
+ln -s "$script_dir/$(basename "$0")" "$tmpdir/bin/sleep"
 
 missing_key_root="$tmpdir/missing-key-root"
 mkdir -p "$missing_key_root/releases/test" "$missing_key_root/shared"
@@ -478,181 +529,113 @@ for blank_key_case in unquoted-comment quoted-comment; do
     fail "$blank_key_case reached Docker before the deployment gate failed"
 done
 
-mkdir -p "$tmpdir/root/releases/test/infra/db" "$tmpdir/root/shared"
-printf '%s\n' 'HV_DECLARATION_IMPORT_ENABLED=false' > "$tmpdir/root/shared/.env"
-chmod 600 "$tmpdir/root/shared/.env"
-: > "$tmpdir/root/releases/test/docker-compose.prod.yml"
-: > "$tmpdir/root/releases/test/infra/db/prod-init.sh"
-: > "$tmpdir/docker.log"
+# Each case uses only the fake CLI, synthetic archives and a private release root.
+for scenario in wrong-source ambiguous-source release-head previous-head roles credentials competing backup-exists busy quiescent-changed backup documents dump-check archive-check migrate target app-start app-health api-ready provider-smoke worker-start worker-health invoice-start invoice-health no-invoice no-invoice-restore restore-compatible cleanup-stop-fail cleanup-discovery-fail foreign-container success; do
+  case_root="$tmpdir/$scenario"
+  mkdir -p "$case_root/releases/test/infra/db" "$case_root/releases/old" "$case_root/shared"
+  printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' > "$case_root/shared/.env"
+  chmod 600 "$case_root/shared/.env"
+  : > "$case_root/releases/test/docker-compose.prod.yml"
+  : > "$case_root/releases/test/infra/db/prod-init.sh"
+  : > "$case_root/releases/old/docker-compose.prod.yml"
+  ln -s releases/old "$case_root/current"
+  export FAKE_DOCKER_LOG="$case_root/docker.log" FAKE_SHARED="$case_root/shared"
+  export FAKE_APP_CREATED="$case_root/app-created" FAKE_WORKER_CREATED="$case_root/worker-created"
+  export FAKE_APP_RESTORED="$case_root/app-restored" FAKE_WORKER_RESTORED="$case_root/worker-restored"
+  export FAKE_INVOICE_CREATED="$case_root/invoice-created" FAKE_INVOICE_RESTORED="$case_root/invoice-restored"
+  export FAKE_MIGRATED="$case_root/migrated" FAKE_READLINK_F="$case_root/releases/old"
+  export FAKE_PROVIDER_SMOKE_CALLED="$case_root/provider-smoke" FAKE_ADMIN_PASSWORD="$admin_password"
+  export FAKE_SCHEMA=0122 FAKE_TARGET=0139 FAKE_PREVIOUS_HEAD=0122 FAKE_FAILURE="$scenario"
+  export FAKE_PROVIDER_SMOKE_FAIL=0
+  export FAKE_NO_PREVIOUS_INVOICE=0 FAKE_APP_UP_FAIL=0 FAKE_WORKER_UP_FAIL=0 FAKE_NEW_LABEL=test
+  case "$scenario" in
+    wrong-source) FAKE_SCHEMA=0121 ;;
+    ambiguous-source) FAKE_SCHEMA='0122
+0139' ;;
+    target) FAKE_TARGET=0138 ;;
+    previous-head) FAKE_PREVIOUS_HEAD=0138 ;;
+    backup-exists) mkdir -p "$case_root/shared/backups/test-from-0122"; printf preserve > "$case_root/shared/backups/test-from-0122/database.dump" ;;
+    provider-smoke) FAKE_PROVIDER_SMOKE_FAIL=1 ;;
+    cleanup-stop-fail|cleanup-discovery-fail) FAKE_SCHEMA=0139; FAKE_PREVIOUS_HEAD=0139; FAKE_WORKER_UP_FAIL=1 ;;
+    no-invoice-restore) FAKE_SCHEMA=0139; FAKE_PREVIOUS_HEAD=0139; FAKE_WORKER_UP_FAIL=1; FAKE_NO_PREVIOUS_INVOICE=1 ;;
+    app-start) FAKE_APP_UP_FAIL=1 ;;
+    worker-start) FAKE_WORKER_UP_FAIL=1 ;;
+    no-invoice) FAKE_NO_PREVIOUS_INVOICE=1 ;;
+    restore-compatible) FAKE_SCHEMA=0139; FAKE_PREVIOUS_HEAD=0139; FAKE_WORKER_UP_FAIL=1 ;;
+    foreign-container) FAKE_NEW_LABEL=foreign; FAKE_APP_UP_FAIL=1 ;;
+  esac
+  outcome=0
+  printf '%s\n' "$admin_password" | PATH="$tmpdir/bin:$PATH" \
+    DEPLOY_ROOT="$case_root" RELEASE_ID=test sh "$deploy_script" >"$case_root/output" 2>&1 || outcome=$?
+  case "$scenario" in
+    success|no-invoice)
+      [ "$outcome" -eq 0 ] || { cat "$case_root/output" >&2; fail "$scenario failed"; }
+      [ "$(readlink "$case_root/current")" = releases/test ] || fail "$scenario did not promote"
+      [ -f "$case_root/shared/backups/test-from-0122/database.dump" ] || fail 'no completed database backup'
+      [ -f "$case_root/shared/backups/test-from-0122/documents.tar.gz" ] || fail 'no completed documents backup'
+      python3 - "$FAKE_DOCKER_LOG" <<'ASSERT_ORDER'
+import sys
+log = open(sys.argv[1]).read()
+steps = ['stopped:old-worker', 'stopped:old-app', 'pg_dump', 'archive-documents',
+         'run --rm --no-deps migrate\n', 'up -d --no-deps app', 'http://127.0.0.1:8000/api/health/ready',
+         'up -d --no-deps worker', 'up -d --no-deps invoice-worker', 'promoted']
+positions = [log.index(step) for step in steps]
+assert positions == sorted(positions), positions
+from pathlib import Path
+import stat
+pair = Path(sys.argv[1]).parent / 'shared/backups/test-from-0122'
+assert stat.S_IMODE(pair.stat().st_mode) == 0o700
+assert all(stat.S_IMODE((pair / name).stat().st_mode) == 0o600 for name in ['database.dump', 'documents.tar.gz'])
+ASSERT_ORDER
+      if [ "$scenario" = no-invoice ]; then
+        ! grep -q 'stopped:old-invoice' "$FAKE_DOCKER_LOG" || fail 'stopped absent old invoice worker'
+      else
+        grep -q 'stopped:old-invoice' "$FAKE_DOCKER_LOG" || fail 'did not stop previous invoice worker'
+      fi
+      # A repeated release must not overwrite its existing backup.
+      printf '%s' preserve > "$case_root/shared/backups/test-from-0122/database.dump"
+      if printf '%s\n' "$admin_password" | PATH="$tmpdir/bin:$PATH" DEPLOY_ROOT="$case_root" RELEASE_ID=test sh "$deploy_script" >"$case_root/repeat-output" 2>&1; then fail 'repeated release accepted'; fi
+      [ "$(cat "$case_root/shared/backups/test-from-0122/database.dump")" = preserve ] || fail 'backup overwritten'
+      ;;
+    *)
+      [ "$outcome" -ne 0 ] || fail "$scenario unexpectedly succeeded"
+      [ "$(readlink "$case_root/current")" = releases/old ] || fail "$scenario changed current"
+      case "$scenario" in
+        wrong-source|ambiguous-source|release-head|previous-head|roles|credentials|competing|backup-exists)
+          ! grep -q 'stopped:' "$FAKE_DOCKER_LOG" || fail "$scenario stopped runtime before preflight passed" ;;
+        busy|backup|documents|dump-check|archive-check)
+          [ ! -f "$FAKE_MIGRATED" ] || fail "$scenario began migration"
+          [ -f "$FAKE_APP_RESTORED" ] && [ -f "$FAKE_WORKER_RESTORED" ] && [ -f "$FAKE_INVOICE_RESTORED" ] || fail "$scenario did not resume compatible runtime" ;;
+        quiescent-changed)
+          [ ! -f "$FAKE_MIGRATED" ] && [ ! -f "$FAKE_APP_RESTORED" ] || fail 'schema drift migrated or blindly resumed old runtime'
+          grep -q 'MAINTENANCE REQUIRED' "$case_root/output" || fail 'schema drift lacks recovery instruction' ;;
+        no-invoice-restore)
+          [ -f "$FAKE_APP_RESTORED" ] && [ -f "$FAKE_WORKER_RESTORED" ] || fail 'prior runtime without invoice worker not restored'
+          [ ! -f "$FAKE_INVOICE_RESTORED" ] || fail 'restoration invented an absent invoice worker' ;;
+        restore-compatible)
+          [ -f "$FAKE_APP_RESTORED" ] && [ -f "$FAKE_INVOICE_RESTORED" ] || fail 'compatible runtime not restored' ;;
+        foreign-container)
+          ! grep -q 'stopped:new-app' "$FAKE_DOCKER_LOG" || fail 'cleanup stopped foreign container' ;;
+        *)
+          [ ! -f "$FAKE_APP_RESTORED" ] || fail "$scenario blindly restored incompatible old runtime"
+          grep -q 'MAINTENANCE REQUIRED' "$case_root/output" || fail "$scenario lacks recovery instruction" ;;
+      esac
+      case "$scenario" in
+        invoice-start|invoice-health)
+          for id in new-invoice new-worker new-app; do grep -q "stopped:$id" "$FAKE_DOCKER_LOG" || fail "$scenario did not clean $id"; done ;;
+      esac
+      ;;
+  esac
+  ! grep -Eq 'stopped:db-id| down |volume rm|alembic downgrade|up -d.* db' "$FAKE_DOCKER_LOG" || fail 'database/volume mutation in runtime handling'
+  ! grep -Fq "$admin_password" "$FAKE_DOCKER_LOG" || fail 'admin secret in CLI arguments'
+done
+printf '%s\n' 'deploy-production: 31 upgrade/backup/worker/recovery scenarios passed'
 
-if printf '%s\n' "$admin_password" | \
-  PATH="$tmpdir/bin:$PATH" \
-  FAKE_DOCKER_LOG="$tmpdir/docker.log" \
-  FAKE_SHARED="$tmpdir/root/shared" \
-  FAKE_APP_CREATED="$tmpdir/app-created" \
-  FAKE_WORKER_CREATED="$tmpdir/worker-created" \
-  FAKE_ADMIN_PASSWORD="$admin_password" \
-  FAKE_APP_UP_FAIL=1 \
-  DEPLOY_ROOT="$tmpdir/root" RELEASE_ID=test sh "$deploy_script"; then
-  fail 'deployment unexpectedly succeeded despite the injected compose failure'
-fi
-
-grep -Fqx 'stopped:new-app' "$tmpdir/docker.log" || \
-  fail 'the partially-created exact release container was not stopped'
-if grep -Fqx 'stopped:old-app' "$tmpdir/docker.log"; then
-  fail 'the healthy pre-existing app container was stopped'
-fi
-if grep -Fqx 'compose-stop-app' "$tmpdir/docker.log"; then
-  fail 'cleanup used compose stop app instead of an exact container ID'
-fi
-if grep -Fqx 'stopped:new-worker' "$tmpdir/docker.log"; then
-  fail 'cleanup stopped a worker which was never created'
-fi
-
-worker_failure_root="$tmpdir/worker-failure-root"
-mkdir -p "$worker_failure_root/releases/test/infra/db" "$worker_failure_root/shared"
-printf '%s\n' 'HV_DECLARATION_IMPORT_ENABLED=false' > "$worker_failure_root/shared/.env"
-chmod 600 "$worker_failure_root/shared/.env"
-: > "$worker_failure_root/releases/test/docker-compose.prod.yml"
-: > "$worker_failure_root/releases/test/infra/db/prod-init.sh"
-: > "$tmpdir/worker-failure-docker.log"
-if printf '%s\n' "$admin_password" | \
-  PATH="$tmpdir/bin:$PATH" \
-  FAKE_DOCKER_LOG="$tmpdir/worker-failure-docker.log" \
-  FAKE_SHARED="$worker_failure_root/shared" \
-  FAKE_APP_CREATED="$tmpdir/worker-failure-app-created" \
-  FAKE_WORKER_CREATED="$tmpdir/worker-failure-worker-created" \
-  FAKE_ADMIN_PASSWORD="$admin_password" \
-  FAKE_WORKER_UP_FAIL=1 \
-  DEPLOY_ROOT="$worker_failure_root" RELEASE_ID=test sh "$deploy_script"; then
-  fail 'deployment unexpectedly succeeded despite the injected worker compose failure'
-fi
-grep -Fqx 'stopped:new-worker' "$tmpdir/worker-failure-docker.log" || \
-  fail 'the partially-created exact release worker was not stopped'
-grep -Fqx 'stopped:new-app' "$tmpdir/worker-failure-docker.log" || \
-  fail 'the exact release app was not stopped after worker startup failed'
-if grep -Eqx 'stopped:old-(app|worker)' "$tmpdir/worker-failure-docker.log"; then
-  fail 'worker failure cleanup stopped a healthy pre-existing runtime container'
-fi
-
-restore_root="$tmpdir/restore-root"
-mkdir -p "$restore_root/releases/test/infra/db" "$restore_root/releases/old/infra/db" "$restore_root/shared"
-printf '%s\n' 'HV_DECLARATION_IMPORT_ENABLED=false' > "$restore_root/shared/.env"
-chmod 600 "$restore_root/shared/.env"
-: > "$restore_root/releases/test/docker-compose.prod.yml"
-: > "$restore_root/releases/test/infra/db/prod-init.sh"
-: > "$restore_root/releases/old/docker-compose.prod.yml"
-: > "$restore_root/releases/old/infra/db/prod-init.sh"
-ln -s releases/old "$restore_root/current"
-: > "$tmpdir/restore-docker.log"
-if printf '%s\n' "$admin_password" | \
-  PATH="$tmpdir/bin:$PATH" \
-  FAKE_DOCKER_LOG="$tmpdir/restore-docker.log" \
-  FAKE_SHARED="$restore_root/shared" \
-  FAKE_APP_CREATED="$tmpdir/restore-app-created" \
-  FAKE_WORKER_CREATED="$tmpdir/restore-worker-created" \
-  FAKE_APP_RESTORED="$tmpdir/restore-app-restored" \
-  FAKE_WORKER_RESTORED="$tmpdir/restore-worker-restored" \
-  FAKE_READLINK_F="$restore_root/releases/old" \
-  FAKE_ADMIN_PASSWORD="$admin_password" \
-  FAKE_WORKER_UP_FAIL=1 \
-  DEPLOY_ROOT="$restore_root" RELEASE_ID=test sh "$deploy_script"; then
-  fail 'deployment unexpectedly succeeded despite the injected replacement failure'
-fi
-grep -Fq 'releases/old/docker-compose.prod.yml up -d --no-deps app' "$tmpdir/restore-docker.log" || \
-  fail 'failed replacement did not restore the previous app runtime'
-grep -Fq 'releases/old/docker-compose.prod.yml up -d --no-deps worker' "$tmpdir/restore-docker.log" || \
-  fail 'failed replacement did not restore the previous worker runtime'
-[ -f "$tmpdir/restore-app-restored" ] || fail 'previous app was not restored after replacement failure'
-[ -f "$tmpdir/restore-worker-restored" ] || fail 'previous worker was not restored after replacement failure'
-
-provider_failure_root="$tmpdir/provider-failure-root"
-mkdir -p "$provider_failure_root/releases/test/infra/db" "$provider_failure_root/shared"
-printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' > "$provider_failure_root/shared/.env"
-chmod 600 "$provider_failure_root/shared/.env"
-: > "$provider_failure_root/releases/test/docker-compose.prod.yml"
-: > "$provider_failure_root/releases/test/infra/db/prod-init.sh"
-if printf '%s\n' "$admin_password" | \
-  PATH="$tmpdir/bin:$PATH" \
-  FAKE_DOCKER_LOG="$tmpdir/provider-failure-docker.log" \
-  FAKE_SHARED="$provider_failure_root/shared" \
-  FAKE_APP_CREATED="$tmpdir/provider-failure-app-created" \
-  FAKE_WORKER_CREATED="$tmpdir/provider-failure-worker-created" \
-  FAKE_PROVIDER_SMOKE_CALLED="$tmpdir/provider-smoke-called" \
-  FAKE_ADMIN_PASSWORD="$admin_password" \
-  FAKE_PROVIDER_SMOKE_FAIL=1 \
-  DEPLOY_ROOT="$provider_failure_root" RELEASE_ID=test sh "$deploy_script"; then
-  fail 'deployment unexpectedly succeeded despite the injected provider smoke failure'
-fi
-[ -f "$tmpdir/provider-smoke-called" ] || fail 'provider smoke was not invoked from the worker container'
-[ ! -e "$provider_failure_root/current" ] || fail 'provider smoke failure promoted the release'
-
-provider_restore_root="$tmpdir/provider-restore-root"
-mkdir -p "$provider_restore_root/releases/test/infra/db" "$provider_restore_root/releases/old/infra/db" "$provider_restore_root/shared"
-printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' > "$provider_restore_root/shared/.env"
-chmod 600 "$provider_restore_root/shared/.env"
-: > "$provider_restore_root/releases/test/docker-compose.prod.yml"
-: > "$provider_restore_root/releases/test/infra/db/prod-init.sh"
-: > "$provider_restore_root/releases/old/docker-compose.prod.yml"
-: > "$provider_restore_root/releases/old/infra/db/prod-init.sh"
-ln -s releases/old "$provider_restore_root/current"
-: > "$tmpdir/provider-restore-docker.log"
-if printf '%s\n' "$admin_password" | \
-  PATH="$tmpdir/bin:$PATH" \
-  FAKE_DOCKER_LOG="$tmpdir/provider-restore-docker.log" \
-  FAKE_SHARED="$provider_restore_root/shared" \
-  FAKE_APP_CREATED="$tmpdir/provider-restore-app-created" \
-  FAKE_WORKER_CREATED="$tmpdir/provider-restore-worker-created" \
-  FAKE_APP_RESTORED="$tmpdir/provider-restore-app-restored" \
-  FAKE_WORKER_RESTORED="$tmpdir/provider-restore-worker-restored" \
-  FAKE_PROVIDER_SMOKE_CALLED="$tmpdir/provider-restore-smoke-called" \
-  FAKE_READLINK_F="$provider_restore_root/releases/old" \
-  FAKE_ADMIN_PASSWORD="$admin_password" \
-  FAKE_PROVIDER_SMOKE_FAIL=1 \
-  DEPLOY_ROOT="$provider_restore_root" RELEASE_ID=test sh "$deploy_script"; then
-  fail 'deployment unexpectedly succeeded despite the injected provider smoke failure with a prior release'
-fi
-[ -f "$tmpdir/provider-restore-smoke-called" ] || fail 'provider smoke was not invoked before replacement with a prior release'
-[ -f "$tmpdir/provider-restore-app-restored" ] || fail 'provider smoke failure did not restore the prior app'
-[ -f "$tmpdir/provider-restore-worker-restored" ] || fail 'provider smoke failure did not restore the prior worker'
-grep -Fq 'releases/old/docker-compose.prod.yml up -d --no-deps app' "$tmpdir/provider-restore-docker.log" || \
-  fail 'provider smoke failure did not restore the prior app command'
-grep -Fq 'releases/old/docker-compose.prod.yml up -d --no-deps worker' "$tmpdir/provider-restore-docker.log" || \
-  fail 'provider smoke failure did not restore the prior worker command'
-if grep -Fq "releases/test/docker-compose.prod.yml up -d --no-deps worker" "$tmpdir/provider-restore-docker.log"; then
-  fail 'provider smoke failure started the consuming replacement worker'
-fi
-[ "$(readlink "$provider_restore_root/current")" = releases/old ] || \
-  fail 'provider smoke failure changed the prior current release pointer'
-
-success_root="$tmpdir/success-root"
-mkdir -p "$success_root/releases/test/infra/db" "$success_root/shared"
-printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' > "$success_root/shared/.env"
-chmod 600 "$success_root/shared/.env"
-: > "$success_root/releases/test/docker-compose.prod.yml"
-: > "$success_root/releases/test/infra/db/prod-init.sh"
-: > "$tmpdir/success-docker.log"
-printf '%s\n' "$admin_password" | \
-  PATH="$tmpdir/bin:$PATH" \
-  FAKE_DOCKER_LOG="$tmpdir/success-docker.log" \
-  FAKE_SHARED="$success_root/shared" \
-  FAKE_APP_CREATED="$tmpdir/success-app-created" \
-  FAKE_WORKER_CREATED="$tmpdir/success-worker-created" \
-  FAKE_PROVIDER_SMOKE_CALLED="$tmpdir/success-smoke-called" \
-  FAKE_ADMIN_PASSWORD="$admin_password" \
-  DEPLOY_ROOT="$success_root" RELEASE_ID=test sh "$deploy_script"
-[ "$(readlink "$success_root/current")" = releases/test ] || fail 'successful public-gate probe did not promote the release'
-grep -Fq 'up -d --no-deps worker' "$tmpdir/success-docker.log" || \
-  fail 'successful deployment did not start the declaration worker'
-success_smoke_line=$(grep -nF 'run --rm --no-deps --entrypoint python worker -m app.workers.declaration_provider_smoke' "$tmpdir/success-docker.log" | cut -d: -f1)
-success_worker_line=$(grep -nF 'up -d --no-deps worker' "$tmpdir/success-docker.log" | cut -d: -f1)
-success_promotion_line=$(grep -nFx promoted "$tmpdir/success-docker.log" | cut -d: -f1)
-[ -n "$success_smoke_line" ] || fail 'successful deployment did not run the isolated provider smoke'
-[ -n "$success_worker_line" ] || fail 'successful deployment did not start the consuming worker'
-[ -n "$success_promotion_line" ] || fail 'successful deployment did not record promotion'
-[ "$success_smoke_line" -lt "$success_worker_line" ] || \
-  fail 'successful deployment ran the consuming worker before the provider smoke'
-[ "$success_worker_line" -lt "$success_promotion_line" ] || \
-  fail 'successful deployment promoted before the consuming worker started'
-
-printf '%s\n' 'deploy-production app and worker cleanup regression probe passed'
+assert_gateway_basic_auth_removed
+assert_admin_password_handling
+assert_verifier_label_assertions
+assert_declaration_worker_runtime
+assert_worker_egress_isolation
+assert_worker_database_isolation
+assert_provider_smoke_gate
+assert_release_replacement_hardening

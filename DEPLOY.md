@@ -13,16 +13,24 @@ directory:
 └── current -> releases/...   # changed only after all deployment gates pass
 ```
 
-This is an alpha with **no backups** by explicit decision. PostgreSQL and
-uploaded-document loss is permanent; do not use it for live operations or
-retention-sensitive data.
+The former explicit **no backups** decision is superseded by the prepared
+upgrade procedure: a verified, paired database/document backup is mandatory
+before schema changes. **No production backup is assumed to exist or to have
+been approved or created.** Actual backup creation, maintenance downtime,
+migration and worker activation require a separately authorized operating
+window. The application already contains real data; preserve its volumes.
 
 ## Deployment boundary and accepted head
 
 Documentation only: these procedures require a separately authorized operator
 window; editing this runbook does not authorize SSH, secret access or deployment.
-The accepted production gate is **0122**. The local test head **0123** is not a
-production approval; do not change the helpers' exact-head gate implicitly.
+The previously documented production approval gate is **0122**, not a fresh
+measurement of the live database. The prepared code now targets **0139** and
+accepts only measured **0122 → 0139** or **0139 → 0139**. Unknown, missing,
+multiple or intermediate revisions fail before stopping writers or migrating.
+This is code preparation, **not production approval**. Historical feature notes
+below describe earlier boundaries; their statements about an unchanged helper
+are superseded by the upgrade procedure in this document.
 
 Phase 2 is verified locally on the disposable test database through migration
 **0131**. This does **not** authorize promotion of migrations 0123–0131, change
@@ -66,10 +74,9 @@ restart, image build or deployment is authorized or performed by this change.
 The operator authorized this configuration change separately and added only the
 exact offline Git inspection/staging exceptions to the production guard. Runtime
 protection remains enabled; this is a configuration completion, not activation.
-The accepted **0122** production migration gate remains unchanged; this task adds
-no migration (local test head **0139**). The existing promotion helper remains
-unchanged and does not implicitly activate this additional service. Its eventual
-activation must be included in a separately reviewed deployment/rollback window.
+No migration is added by the worker. The prepared upgrade helper now includes
+its start, health/identity checks, cleanup and compatible runtime restoration.
+Its production activation remains subject to the separate operating window.
 
 The service uses the same immutable app image and existing `documents` volume,
 mounted **read-only**. It receives only `HV_DATABASE_URL_WORKER` (`app_worker`),
@@ -415,20 +422,105 @@ below using the reviewed `infra/db/prod-init.sh`; never reset populated volumes.
 
 Existing database-container environment may predate those keys. Merely editing
 `shared/.env` does not update it, and the deploy helper deliberately refuses an
-unexpected database-container replacement. Resolve missing settings/roles in that
-maintenance window before starting a release; do not use `app_rw` as a workaround.
+database-container replacement: it requires the existing healthy DB and never
+starts or reconciles that service. Runtime credential probes use the new release
+settings, independently of old DB-container environment. Resolve missing roles
+or credentials before release; do not use `app_rw` as a worker workaround.
 The provisioning script creates missing roles, but does not rotate passwords on
 existing roles. Credential rotation is a separate operation with workers paused.
 
 | Connection | Runtime role / setting | Boundary |
 | --- | --- | --- |
 | Ordinary web API | `app_rw` / `HV_DATABASE_URL` | No worker credential; no migrator connection |
-| Extraction worker | `app_worker` / `HV_DATABASE_URL_WORKER` | No web URL fallback; no review credential |
+| Declaration and invoice workers | `app_worker` / `HV_DATABASE_URL_WORKER` | No web URL fallback; no review credential |
 | Dedicated human-review commands in API | `app_review` / `HV_DATABASE_URL_REVIEW` | Separate pool, no ordinary-role fallback |
 | One-shot migration/bootstrap | Privileged ops credentials only | Never injected into app/worker runtime |
 
-Production promotion still requires exactly `0122 (head)`. This runbook correction
-does not accept local migration 0123, change privileges, or authorize deployment.
+Before downtime, the new image checks its single head **0139**, the exact linear
+0123–0139 chain, the measured single DB revision and the isolated login/role
+membership, ownership and schema/ACL prerequisites. Disposable non-consuming
+probes test each actual API/review/worker credential. The captured previous image
+must have exactly the measured DB head and every previous runtime must have the
+same immutable image plus matching project/service/release labels. Unexpected
+running project containers fail closed. No roles or privileges are repaired.
+
+The helper requires an existing `current` release and API container. Fresh
+installation is a separate procedure; this helper no longer initializes an empty
+DB. `0122` is accepted only when actually measured, never inferred from this page.
+
+### Migration compatibility: 0123–0139
+
+| Revisions | Effect on existing data and runtime compatibility |
+| --- | --- |
+| 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
+| 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
+| 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
+| 0128–0129 | Extends dunning provenance with default empty levy IDs, default zero interest and nullable snapshots. Existing amounts survive; new levy/interest provenance blocks downgrade. |
+| 0130–0135 | Adds retained attachments, tasks, letters/PDF references, SEPA consent, immutable import and dunning batches. No original files are migrated. Most populated downgrades refuse; task downgrade drops its table. No blanket lossless rollback claim. |
+| 0136–0137 | Adds default-active bank/vendor lifecycle and nullable property facts plus stricter reference triggers and read-only deletion-reference functions. Non-default lifecycle/property facts prevent downgrade. |
+| 0138–0139 | Adds default-zero session generation and versioned auth functions, then grants only session validation to `app_review`. Positive generations block downgrade. An older runtime's unversioned auth does not enforce the new invalidations: **automatic 0122 runtime restoration on the new schema is unsafe**. |
+
+DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
+and ACL locks with NOWAIT table locks. Contention or unexpected data/function
+definitions must abort, not trigger repair/deletion. A rollback-only synthetic
+0122→0139 rehearsal compares every old table column/row and its RLS/ACL flags;
+it does not prove live data validity or cross-version runtime compatibility.
+
+### Paired backup and recovery
+
+During the authorized maintenance window, the helper reserves a new private
+`shared/backups/<release-id>-from-<measured-revision>/` directory (0700; files
+0600). It stops captured declaration/invoice workers with a 130-second drain,
+then the API, and verifies they stopped. An absent old invoice worker is allowed.
+Leased work uses the existing fencing/recovery rules after restart. PostgreSQL
+stays running; all database clients other than the check itself must be gone.
+The operator must prevent other writers/restarts throughout this window and retain
+the previous source release, immutable image and protected credentials for recovery.
+
+It creates `database.dump` with PostgreSQL's custom-format `pg_dump` and
+`documents.tar.gz` from the stopped API's document mount, inherited read-only by
+a network-disabled container using the new immutable image. It checks the dump
+catalogue and reads every archive member including gzip integrity; links and
+unsafe paths are refused. It rechecks DB identity and quiescence before migration.
+Failed `.partial` files remain private and unusable. Both final files must exist
+and verify to form a recovery pair; never use a partial pair. Existing directories
+are never reused or overwritten. No credentials enter backup command arguments
+or error logs. These host-local backups do not provide off-host disaster recovery;
+retention/off-host storage needs an operator decision before relying on it.
+
+Before migration, a failure can restart the captured API, then only the workers
+that previously existed, after rechecking the unchanged schema. On 0139→0139,
+the helper skips migration and may similarly restore the prior 0139 runtime.
+Once a 0122→0139 migration is attempted, any failure leaves `current` unchanged
+and stops only provably owned new runtime containers. It reports
+`MAINTENANCE REQUIRED` and keeps old writers stopped, even if the migration may
+have rolled back. Unknown ownership or failed stops also prohibit automatic
+restoration. PostgreSQL, both live volumes and the backup remain intact.
+
+Recovery in a **separately authorized** window:
+
+1. Keep API and both workers stopped. Preserve the failed DB/documents as well
+   as the pre-upgrade pair, especially any uploads/writes after new API startup.
+   Prefer a reviewed forward repair when it preserves these later writes.
+2. For snapshot recovery, verify both complete backup files and restore the dump
+   with `pg_restore --exit-on-error --single-transaction` into an operator-provided
+   **empty recovery destination** with the original separated roles. Never run
+   `--clean`, downgrade, reset or volume removal against the live installation.
+3. Restore documents with the reviewed image's
+   `python -m app.deployment restore-documents <empty-staging-directory>` reading
+   `documents.tar.gz` on stdin. It refuses a nonempty target, links and traversal;
+   failed staging output must not be promoted. Check referenced originals and
+   byte identity, the recorded source revision and role separation in recovery.
+4. Select the immutable runtime whose head matches that recovered schema. Only
+   after recovery acceptance and reconciliation of later writes may the operator
+   switch storage/runtime/current. Start API and verify `/api/health/ready` before
+   the previously present workers. Never start old and new consumers together.
+
+Local synthetic restoration is reproducible with
+`source scripts/test-env.sh; cd backend; uv run pytest tests/test_deployment_upgrade.py`.
+It uses only a unique synthetic schema inside existing `infra-postgres-1` on
+127.0.0.1:55432 and temporary synthetic document files, not another database or
+production data. This task does not perform a production restore rehearsal.
 
 ## Declaration-worker network boundary
 
@@ -452,7 +544,7 @@ That container makes the non-billable Models API lookup for the configured
 primary and escalation model IDs with a short timeout and one bounded SDK
 retry. It sends no prompt, PDF, document content, or Responses API request;
 the key is read solely from the worker container environment and is never
-printed. A smoke failure preserves/restores the prior runtime and prevents
+printed. A smoke failure applies the compatibility/recovery policy above and prevents
 promotion.
 
 Docker's ordinary non-internal network is **not** a domain firewall. The fixed
@@ -514,41 +606,20 @@ email:        admin@verwaltung.karat.immo
 name:         Alpha Admin
 ```
 
-Before starting PostgreSQL it acquires an exclusive host deployment lock,
-verifies the enabled import has its provider key, builds the exact local image,
-creates a mode-0600 CycloneDX SBOM in `shared/`, and runs the pinned Trivy
-vulnerability HIGH/CRITICAL (`--scanners vuln --ignore-unfixed`) gate. It
-installs the reviewed PostgreSQL init script at a stable shared-host path and
-starts PostgreSQL with `--no-recreate`; an existing database container ID must
-remain unchanged. After Docker health reports ready, it also waits until the
-unprivileged `app_rw` role can connect as an additional database completion
-gate.
-It then uses the fixed order `db → migrate → bootstrap → app → worker`, waits
-for both runtime health checks, requires exactly Alembic head `0122 (head)`,
-and runs each one-shot `migrate`/`bootstrap` Compose command with `--no-deps`,
-so that command cannot re-evaluate, create, or replace the already verified
-PostgreSQL service. It then verifies per-release ownership labels, Docker image IDs, closed host ports,
-the separated runtime credentials: `app_rw` for ordinary API access,
-`app_worker` for extraction, and the API-only `app_review` pool. It polls
-the public Traefik/Let's Encrypt route for at most 180 seconds and, before
-atomically moving `current`, checks HTTPS/TLS,
-the public unauthenticated session boundary, security headers, secure session
-cookie, login/session/organization, traversal rejection, upload 413 and
-readiness.
+The helper acquires the exclusive host deployment lock, verifies the provider
+setting, builds/scans the exact image and writes its protected SBOM. It then
+executes the existing-installation preflight and paired backup above. All ops
+and runtime starts use `--no-deps`; there is no DB start/recreation. After the
+exact target revision check, the order is `bootstrap → app → API readiness →
+provider connectivity probe → worker → invoice-worker`. Both workers must pass
+health, immutable image and release identity checks before acceptance.
 
-Compose replaces fixed-project app/worker containers when a new release has a
-different runtime configuration. On any unpromoted failure after replacement,
-the helper stops **only** newly created containers proven by the release label
-and Docker image ID, then restores the previously captured app and optional
-worker with the prior release Compose file and immutable image IDs. The
-PostgreSQL container and named volumes are not replaced or deleted, and
-`current` is not moved. Already applied schema migrations remain in place and
-are never rolled back. This restoration is therefore safe only for additive,
-backward-compatible schema migrations; assess that compatibility before every
-deployment. `current` is changed only after the full smoke;
-the previous pointer is atomically persisted first and a stale `current.new`
-is removed only when it is a validated release symlink. Assess migration
-compatibility before an explicit app-only rollback.
+It verifies closed host ports and isolated API/review/worker database roles,
+then the existing public TLS/security-header/session/login/traversal/upload-limit
+smoke. `current` changes atomically only after every gate succeeds; the previous
+pointer is persisted first. On failure the recovery policy above applies, with
+no automatic downgrade or volume deletion. The disposable CI verifier now checks
+0139 and the invoice worker too; running it is not authorized by this preparation.
 
 ## Operation and rollback
 
@@ -572,12 +643,11 @@ APP_IMAGE="$image" HV_RELEASE_ID="$(basename "$release")" docker compose --proje
   --env-file "$root/shared/.env" -f "$release/docker-compose.prod.yml" ps
 ```
 
-There is no automatic rollback after promotion. Before promotion, the helper
-automatically restores the prior runtime after a failed replacement while
-leaving the migrated schema in place. After promotion, only if an earlier image
-is compatible with that schema, explicitly start that app with its own release
-Compose file and then move `current`; do not run downgrade or stop
-PostgreSQL/volumes.
+There is no automatic rollback after promotion. Before promotion, automatic
+runtime restoration requires the unchanged schema, matching previous image head,
+and successful cleanup of all owned replacement consumers. A cross-schema attempt
+requires maintenance/recovery as described above; never blindly start the 0122
+image on 0139. The same compatibility requirement applies to a manual rollback.
 
 ## Optional GitLab deploy
 

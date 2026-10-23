@@ -53,7 +53,7 @@ assert_owned_resources() {
     project=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$container_id")
     service=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$container_id")
     [ "$project" = "$HV_VERIFY_PROJECT_NAME" ] || return 1
-    case "$service" in db|app|worker) ;; *) return 1 ;; esac
+    case "$service" in db|app|worker|invoice-worker) ;; *) return 1 ;; esac
   done
 
   for volume in $(docker volume ls -q --filter "label=com.docker.compose.project=$HV_VERIFY_PROJECT_NAME"); do
@@ -148,28 +148,32 @@ compose up -d db
 wait_for_health db
 wait_for_database_role
 compose --profile ops run --rm --no-deps migrate
-migration_state=$(compose --profile ops run --rm --no-deps migrate alembic current)
-[ "$migration_state" = '0122 (head)' ] || {
-  echo "migration state is not exactly 0122 (head)" >&2
+migration_state=$(compose --profile ops run --rm --no-deps migrate python -m app.deployment preflight)
+[ "$migration_state" = '0139' ] || {
+  echo "migration state is not exactly the validated release target 0139" >&2
   exit 1
 }
 compose up -d app
 wait_for_health app
 compose up -d worker
 wait_for_health worker
+compose up -d --no-deps invoice-worker
+wait_for_health invoice-worker
 
 app_id=$(compose ps -q app)
 worker_id=$(compose ps -q worker)
+invoice_worker_id=$(compose ps -q invoice-worker)
 db_id=$(compose ps -q db)
-for container_id in "$app_id" "$worker_id" "$db_id"; do
+for container_id in "$app_id" "$worker_id" "$invoice_worker_id" "$db_id"; do
   [ -n "$container_id" ] || { echo "missing expected runtime container" >&2; exit 1; }
   port_bindings=$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$container_id")
   case "$port_bindings" in null|'{}') ;; *) echo "runtime container has published ports" >&2; exit 1 ;; esac
 done
-for runtime_service in app worker; do
+for runtime_service in app worker invoice-worker; do
   case "$runtime_service" in
     app) runtime_id=$app_id ;;
     worker) runtime_id=$worker_id ;;
+    invoice-worker) runtime_id=$invoice_worker_id ;;
   esac
   runtime_image_id=$(docker inspect --format '{{.Image}}' "$runtime_id")
   [ "$runtime_image_id" = "$expected_image_id" ] || {
@@ -218,6 +222,8 @@ egress_gateway=$(docker network inspect --format '{{(index .IPAM.Config 0).Gatew
   echo "worker egress network has no gateway" >&2
   exit 1
 }
+assert_exact_networks "$invoice_worker_id" "$backend_network"
+
 worker_default_gateway=$(compose exec -T worker python -c "
 import socket
 import struct
@@ -239,7 +245,7 @@ assert_runtime_db_role() {
   runtime_service=$1
   case "$runtime_service" in
     app) runtime_url_key=HV_DATABASE_URL; runtime_role=app_rw ;;
-    worker) runtime_url_key=HV_DATABASE_URL_WORKER; runtime_role=app_worker ;;
+    worker|invoice-worker) runtime_url_key=HV_DATABASE_URL_WORKER; runtime_role=app_worker ;;
     review) runtime_url_key=HV_DATABASE_URL_REVIEW; runtime_role=app_review; runtime_service=app ;;
   esac
   compose exec -T "$runtime_service" python -c "
@@ -264,6 +270,7 @@ asyncio.run(main())
 }
 assert_runtime_db_role app
 assert_runtime_db_role worker
+assert_runtime_db_role invoice-worker
 assert_runtime_db_role review
 
 if docker inspect --format '{{range $key, $_ := .Config.Labels}}{{println $key}}{{end}}' "$app_id" | \
