@@ -56,21 +56,31 @@ def test_preflight_rejects_unsafe_roles_without_repairing_them(statement):
         engine.dispose()
 
 
-def test_upgrade_0122_to_0139_preserves_existing_rows_and_security(seed_data):
-    """One rollback-only rehearsal; no new DB, committed migration or guard edits."""
+def rehearse_initial_upgrade():
+    """Rehearse before the shared fixture reaches head or creates retained data."""
     _, _, url = require_disposable_database_settings(settings)
     engine = create_engine(url)
     graph = ScriptDirectory('migrations')
     revisions = list(graph.iterate_revisions('0139', '0122'))
     try:
-        with engine.connect() as connection, connection.begin() as transaction:
+        with engine.connect() as connection:
+            transaction = connection.begin()
             context = MigrationContext.configure(connection)
             with Operations.context(context):
-                for revision in revisions:
-                    revision.module.downgrade()
+                assert MigrationContext.configure(connection).get_current_heads() == ('0122',)
                 org = str(uuid.uuid4())
                 connection.execute(text('INSERT INTO organization(id,name) VALUES (:id,:name)'),
                                    {'id': org, 'name': 'Synthetic upgrade organization'})
+                actor = str(uuid.uuid4())
+                values = {'id': actor, 'org': org, 'email': actor + '@upgrade.invalid'}
+                connection.execute(text('INSERT INTO "user"(id,organization_id,email,password_hash,display_name) '
+                                        "VALUES (:id,:org,:email,'synthetic-not-a-login','Upgrade actor')"), values)
+                connection.execute(text("INSERT INTO membership(id,organization_id,user_id,role) "
+                                        "VALUES (gen_random_uuid(),:org,:id,'OWNER_ADMIN')"), values)
+                connection.execute(text("INSERT INTO management_mandate(id,organization_id,mandate_type,label,start_date) "
+                                        "VALUES (gen_random_uuid(),:org,'MIET','Synthetic mandate','2025-01-01')"), values)
+                connection.execute(text("INSERT INTO audit_event(id,organization_id,actor_user_id,entity_type,entity_id,action) "
+                                        "VALUES (gen_random_uuid(),:org,:id,'organization',:org,'org.created')"), values)
                 # Compare every old column of every pre-upgrade table, including
                 # seeded users/memberships/mandates/audit, without normalizing data.
                 tables = connection.scalars(text("SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename")).all()
@@ -93,8 +103,18 @@ def test_upgrade_0122_to_0139_preserves_existing_rows_and_security(seed_data):
             assert not connection.scalar(text("SELECT has_function_privilege('app_review',"
                 "'app_auth_lookup_versioned(text)','EXECUTE')"))
             transaction.rollback()
+            assert MigrationContext.configure(connection).get_current_heads() == ('0122',)
+            assert not connection.scalar(text('SELECT EXISTS(SELECT 1 FROM organization WHERE id=:id)'), {'id': org})
+            return len(tables)
     finally:
         engine.dispose()
+
+
+def test_upgrade_0122_to_0139_preserves_existing_rows_and_security(run_migrations):
+    # The actual rehearsal ran before any retained domain-test originals existed.
+    # Its SQL/data/security assertions fail fixture setup if preservation fails.
+    assert run_migrations['upgrade_0122_to_0139_tables'] > 50
+    assert deployment.database_check('preflight') == '0139'
 
 
 def test_document_archive_restore_is_exact_and_refuses_overwrite(tmp_path):
@@ -143,6 +163,10 @@ def test_database_dump_restore_synthetic_schema_in_allowed_container(tmp_path):
     Never copy production, create a database or restore public/test fixture data.
     """
     _, _, url = require_disposable_database_settings(settings)
+    from sqlalchemy.engine import make_url
+    parsed = make_url(url)
+    if parsed.host not in ('127.0.0.1', 'localhost') or parsed.port != 55432:
+        pytest.skip('paired restore rehearsal requires the allowed local infra-postgres-1 container')
     engine = create_engine(url)
     schema = 'backup_test_' + uuid.uuid4().hex
     docker = ['docker', 'exec', '-i', 'infra-postgres-1']
@@ -183,11 +207,15 @@ def test_cli_preflight_and_actual_runtime_credentials_are_read_only():
     import os
     import sys
 
-    require_disposable_database_settings(settings)
+    _, app_url, _ = require_disposable_database_settings(settings)
+    from sqlalchemy.engine import make_url
+    runtime = make_url(app_url)
     # Whitelist the subprocess environment; never inherit developer provider keys.
     env = {name: os.environ[name] for name in ('PATH', 'LANG', 'HV_DATABASE_URL',
-           'HV_DATABASE_URL_SYNC', 'HV_DATABASE_URL_MIGRATOR', 'HV_DATABASE_URL_REVIEW') if name in os.environ}
-    env['HV_DATABASE_URL_WORKER'] = 'postgresql+asyncpg://app_worker:worker_secret@127.0.0.1:55432/hausverwaltung'
+           'HV_DATABASE_URL_SYNC', 'HV_DATABASE_URL_MIGRATOR', 'HV_DATABASE_URL_REVIEW',
+           'CI', 'HV_DECLARATION_TEST_DATABASE_PROFILE') if name in os.environ}
+    env['HV_DATABASE_URL_WORKER'] = runtime.set(username='app_worker', password='worker_secret').render_as_string(hide_password=False)
+    env.setdefault('HV_DATABASE_URL_REVIEW', runtime.set(username='app_review', password='review_secret').render_as_string(hide_password=False))
     for arguments, expected in [(['preflight'], '0139'), (['runtime', 'app_rw'], ''),
                                 (['runtime', 'app_review'], ''), (['runtime', 'app_worker'], '')]:
         result = subprocess.run([sys.executable, '-m', 'app.deployment', *arguments],
