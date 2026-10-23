@@ -1,28 +1,131 @@
-# docker-compose for development / test database
-# Provides PostgreSQL with the two-role setup required for RLS.
-#
-# Usage:
-#   docker-compose -f infra/docker-compose.yml up -d
-#   # To run tests:
-#   cd backend && pytest
+# Portable self-hosting stack; use scripts/self-host.sh to validate configuration.
+# Independent of the alpha deployment and the disposable development/test DB.
+name: verwalino
+
+x-logging: &logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-operations: &operations
+  image: ${VERWALINO_IMAGE:?run self-host.sh init first}
+  profiles: ["ops"]
+  restart: "no"
+  user: "10001:10001"
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=128m
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  environment:
+    HV_DATABASE_URL_SYNC: postgresql://app_migrator:${MIGRATOR_PASSWORD:?missing secret}@db:5432/hausverwaltung
+  networks: [backend]
+  logging: *logging
 
 services:
-  postgres:
-    image: postgres:16-alpine
+  db:
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+    restart: unless-stopped
     environment:
       POSTGRES_DB: hausverwaltung
-      POSTGRES_USER: app_migrator          # Owner role (DDL, bypasses RLS by ownership)
-      POSTGRES_PASSWORD: migrator_secret   # Dev-only; never use in production
-    ports:
-      - "5433:5432"
+      POSTGRES_USER: app_migrator
+      POSTGRES_PASSWORD: ${MIGRATOR_PASSWORD:?missing secret}
+      APP_RW_PASSWORD: ${APP_RW_PASSWORD:?missing secret}
+      APP_WORKER_PASSWORD: ${APP_WORKER_PASSWORD:?missing secret}
+      APP_REVIEW_PASSWORD: ${APP_REVIEW_PASSWORD:?missing secret}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ../infra/db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./db/prod-init.sh:/docker-entrypoint-initdb.d/10-app-roles.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app_migrator -d hausverwaltung"]
-      interval: 3s
+      interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 20
+      start_period: 10s
+    networks: [backend]
+    logging: *logging
+
+  migrate:
+    <<: *operations
+    command: ["alembic", "upgrade", "head"]
+
+  bootstrap:
+    <<: *operations
+    entrypoint: ["python", "-m", "app.admin_cli"]
+    command: []
+
+  app:
+    image: ${VERWALINO_IMAGE:?run self-host.sh init first}
+    build:
+      context: ..
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      HV_DATABASE_URL: postgresql+asyncpg://app_rw:${APP_RW_PASSWORD:?missing secret}@db:5432/hausverwaltung
+      HV_DATABASE_URL_REVIEW: postgresql+asyncpg://app_review:${APP_REVIEW_PASSWORD:?missing secret}@db:5432/hausverwaltung
+      HV_SESSION_SECRET: ${SESSION_SECRET:?missing secret}
+      HV_SESSION_COOKIE_NAME: ${VERWALINO_COOKIE_NAME:?use self-host.sh}
+      HV_SESSION_COOKIE_SECURE: ${VERWALINO_COOKIE_SECURE:?use self-host.sh}
+      HV_ALLOWED_HOSTS: ${VERWALINO_ALLOWED_HOSTS:?use self-host.sh}
+      HV_ENABLE_API_DOCS: "false"
+      HV_DOCUMENT_STORAGE_ROOT: /data/documents
+      HV_DECLARATION_IMPORT_ENABLED: "false"
+      HV_DECLARATION_QA_ENABLED: "false"
+      HV_INVOICE_EXTRACTION_ENABLED: "false"
+      WEB_CONCURRENCY: "2"
+      FORWARDED_ALLOW_IPS: ${VERWALINO_PROXY_SUBNET:?use self-host.sh}
+    ports:
+      - "127.0.0.1:${VERWALINO_PORT:?missing port}:8000"
+    volumes:
+      - documents:/data/documents
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 768m
+    cpus: "1.00"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks: [backend, proxy]
+    logging: *logging
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    profiles: ["https"]
+    restart: unless-stopped
+    environment:
+      VERWALINO_DOMAIN: ${VERWALINO_DOMAIN:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    security_opt: ["no-new-privileges:true"]
+    networks: [proxy]
+    logging: *logging
+
+networks:
+  backend:
+    internal: true
+  proxy:
+    ipam:
+      config:
+        - subnet: ${VERWALINO_PROXY_SUBNET:?use self-host.sh}
 
 volumes:
   pgdata:
+  documents:
+  caddy_data:
+  caddy_config:

@@ -35,7 +35,7 @@ backend-test:
     - until pg_isready -h postgres -U app_migrator -d hausverwaltung; do sleep 1; done
     - psql -h postgres -U app_migrator -d hausverwaltung -c "CREATE ROLE app_rw LOGIN PASSWORD 'app_secret' NOBYPASSRLS NOCREATEDB NOCREATEROLE; GRANT CONNECT ON DATABASE hausverwaltung TO app_rw;"
   script:
-    - cd backend && uv sync --locked --extra dev --extra ops --extra ocr && uv run pytest -q
+    - cd backend && uv sync --locked --extra dev --extra ops --extra ocr && uv run python ../scripts/test-self-host.py && uv run pytest -q
 
 frontend-test:
   stage: test

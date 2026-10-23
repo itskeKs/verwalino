@@ -12,6 +12,19 @@ Autor: `engine-correctness` (Opus 4.8) · Status: **Entwurf zur Bestätigung dur
 
 ---
 
+## Portabler Betrieb (2026-10-23)
+
+`scripts/self-host.sh` und die umgewidmete `infra/docker-compose.yml` bilden
+neben der unveränderten Alpha einen eigenen Erstinstallationsweg (Projekt
+`verwalino`). Web-App, private PostgreSQL-DB und einmalige Migrations-/Adminjobs
+nutzen das vorhandene Image; nur Ops erhält Migrator-Rechte. Standard ist
+Loopback-HTTP, optional übernimmt Caddy HTTPS auf einem getrennten Proxy-Netz.
+Secrets werden lokal erzeugt und nicht als Shellcode geladen. KI, SMTP und
+Rechnungs-OCR sind hier deaktiviert; kein automatischer Update-/Rollbackpfad.
+Entwicklungs-/Testdatenbank bleibt ausschließlich `infra-postgres-1`:55432.
+Echte portable Erstinstallation und TLS-Abnahme stehen noch aus; Details in
+[DEPLOY.md](../DEPLOY.md#portable-docker-first-installation).
+
 ## Aktueller Teilungserklärungs-Workflow (2026-08-29)
 
 Die Anwendung verwendet für Teilungserklärungen einen **festen,
