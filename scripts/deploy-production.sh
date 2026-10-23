@@ -1,5 +1,5 @@
 #!/bin/sh
-# Host-side, initial-alpha deployment gate. It is deliberately invoked only
+# Host-side, existing-installation upgrade gate. It is deliberately invoked only
 # after a reviewed release archive has been extracted on Moon. The first stdin
 # line is the admin password; interactive use reads it with terminal echo
 # disabled. It is neither persisted nor echoed.
@@ -9,7 +9,7 @@ set -eu
 : "${RELEASE_ID:?set RELEASE_ID}"
 
 case "$RELEASE_ID" in
-  ''|*[!A-Za-z0-9._-]*)
+  ''|.|..|*[!A-Za-z0-9._-]*)
     echo "RELEASE_ID must contain only letters, digits, dot, underscore, or dash" >&2
     exit 2
     ;;
@@ -25,17 +25,23 @@ image="hausverwaltung-alpha:$RELEASE_ID"
 image_id=
 env_file="$root/shared/.env"
 sbom_file="$root/shared/$RELEASE_ID.sbom.cdx.json"
-db_init_source="$release/infra/db/prod-init.sh"
 db_init_file="$root/shared/prod-init.sh"
-db_init_tmp=
 base_url="https://verwaltung.karat.immo"
 app_start_attempted=0
 worker_start_attempted=0
+invoice_worker_start_attempted=0
+previous_invoice_worker_id=
+previous_invoice_worker_image_id=
+new_invoice_worker_id=
+runtime_quiesced=0
+migration_attempted=0
+starting_schema=
+backup_dir=
+previous=
 previous_app_id=
 previous_worker_id=
 previous_app_image_id=
 previous_worker_image_id=
-previous_release=
 previous_release_id=
 previous_release_path=
 new_app_id=
@@ -144,18 +150,22 @@ require_declaration_provider_key() {
 
 cleanup() {
   status=$?
-  if [ "$promoted" -ne 1 ] && [ "$app_start_attempted" -eq 1 ]; then
-    # If an interrupt lands immediately after the atomic current rename, the
-    # durable pointer wins: never leave that new current pointing at a stopped
-    # app. Otherwise this is still the unpromoted new app and is safe to stop.
+  if [ "$promoted" -ne 1 ] && [ "$runtime_quiesced" -eq 1 ]; then
     if ! { [ -L "$root/current" ] && [ "$(readlink "$root/current")" = "releases/$RELEASE_ID" ]; }; then
-      # Stop each exact-release runtime container independently. A failed
-      # `compose up` may have created one service but not the other, and the
-      # previous release containers must remain untouched.
-      [ "$worker_start_attempted" -eq 0 ] || stop_new_release_container worker "$new_worker_id" "$previous_worker_id" || true
-      stop_new_release_container app "$new_app_id" "$previous_app_id" || true
-      if ! restore_previous_runtime; then
-        echo "failed to restore the previous runtime after an unpromoted release failure" >&2
+      # A partial up can create a container before failing. Stop only IDs with
+      # this release's image, project, service and ownership label.
+      cleanup_safe=1
+      [ "$invoice_worker_start_attempted" -eq 0 ] || stop_new_release_container invoice-worker "$new_invoice_worker_id" "$previous_invoice_worker_id" || cleanup_safe=0
+      [ "$worker_start_attempted" -eq 0 ] || stop_new_release_container worker "$new_worker_id" "$previous_worker_id" || cleanup_safe=0
+      [ "$app_start_attempted" -eq 0 ] || stop_new_release_container app "$new_app_id" "$previous_app_id" || cleanup_safe=0
+      if [ "$cleanup_safe" -eq 1 ] && [ "$migration_attempted" -eq 0 ] &&
+        [ "$(compose --profile ops run --rm --no-deps migrate python -m app.deployment current 2>/dev/null)" = "$starting_schema" ]; then
+        if ! restore_previous_runtime; then
+          echo "MAINTENANCE REQUIRED: previous runtime restoration failed; inspect captured release identities and partial starts before resuming workers" >&2
+          status=1
+        fi
+      else
+        echo "MAINTENANCE REQUIRED: schema compatibility with the previous runtime is not proven; old API and workers remain stopped. Preserve DB/documents. Repair forward or restore the paired backup at $backup_dir in a separately authorized window; never downgrade automatically." >&2
         status=1
       fi
     fi
@@ -223,12 +233,6 @@ image_id=$(docker image inspect --format '{{.Id}}' "$image")
   echo "could not capture the locally built image ID" >&2
   exit 1
 }
-test -f "$db_init_source"
-umask 077
-db_init_tmp="$root/shared/.prod-init.$RELEASE_ID.$$"
-install -m 600 "$db_init_source" "$db_init_tmp"
-mv -f "$db_init_tmp" "$db_init_file"
-db_init_tmp=
 
 compose_release() {
   compose_release_path=$1
@@ -241,14 +245,14 @@ compose_release() {
 }
 
 compose() {
-  compose_release "$release" "$image" "$RELEASE_ID" "$@"
+  compose_release "$release" "$image_id" "$RELEASE_ID" "$@"
 }
 
 is_new_release_container() {
   service=$1
   candidate_container_id=$2
   previous_container_id=$3
-  case "$service" in app|worker) ;; *) return 1 ;; esac
+  case "$service" in app|worker|invoice-worker) ;; *) return 1 ;; esac
   [ -n "$candidate_container_id" ] || return 1
   [ "$candidate_container_id" != "$previous_container_id" ] || return 1
   inspected_container_id=$(docker inspect --format '{{.Id}}' "$candidate_container_id" 2>/dev/null) || return 1
@@ -256,7 +260,9 @@ is_new_release_container() {
   inspected_container_image_id=$(docker inspect --format '{{.Image}}' "$candidate_container_id" 2>/dev/null) || return 1
   [ "$inspected_container_image_id" = "$image_id" ] || return 1
   inspected_release_label=$(docker inspect --format '{{index .Config.Labels "com.karat.hausverwaltung.release"}}' "$candidate_container_id" 2>/dev/null) || return 1
-  [ "$inspected_release_label" = "$RELEASE_ID" ]
+  [ "$inspected_release_label" = "$RELEASE_ID" ] || return 1
+  [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$candidate_container_id")" = hausverwaltung-alpha ] || return 1
+  [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$candidate_container_id")" = "$service" ]
 }
 
 stop_new_release_container() {
@@ -267,10 +273,13 @@ stop_new_release_container() {
   # returning. Discover only that service, then require a new ID and the exact
   # release image before stopping it.
   if [ -z "$candidate_container_id" ]; then
-    candidate_container_id=$(compose ps -q "$service" 2>/dev/null || true)
+    candidate_container_id=$(compose ps -q "$service" 2>/dev/null) || return 1
   fi
-  is_new_release_container "$service" "$candidate_container_id" "$previous_container_id" || return 0
-  docker stop "$candidate_container_id" >/dev/null 2>&1
+  [ -n "$candidate_container_id" ] || return 0
+  [ "$candidate_container_id" != "$previous_container_id" ] || return 0
+  is_new_release_container "$service" "$candidate_container_id" "$previous_container_id" || return 1
+  docker stop --time 130 "$candidate_container_id" >/dev/null 2>&1 || return 1
+  [ "$(docker inspect --format '{{.State.Running}}' "$candidate_container_id")" = false ]
 }
 
 wait_for_release_health() {
@@ -294,23 +303,31 @@ wait_for_release_health() {
 }
 
 wait_for_health() {
-  wait_for_release_health "$release" "$image" "$RELEASE_ID" "$1"
+  wait_for_release_health "$release" "$image_id" "$RELEASE_ID" "$1"
 }
 
-wait_for_database_role() {
-  attempt=1
-  while [ "$attempt" -le 30 ]; do
-    if compose exec -T db sh -ec \
-      'PGPASSWORD="$APP_RW_PASSWORD" psql -U app_rw -d hausverwaltung -Atqc "SELECT current_user"' | \
-      grep -Fxq app_rw; then
-      return 0
-    fi
-    sleep 2
-    attempt=$((attempt + 1))
-  done
-  echo "database became healthy but app_rw did not become ready within 60 seconds" >&2
-  compose ps >&2 || true
-  return 1
+assert_api_ready() {
+  compose_release "$1" "$2" "$3" exec -T app python -c "
+import urllib.request
+request = urllib.request.Request(
+    'http://127.0.0.1:8000/api/health/ready',
+    headers={'Host': 'verwaltung.karat.immo'},
+)
+with urllib.request.urlopen(request, timeout=10) as response:
+    assert response.status == 200
+"
+}
+
+assert_restored_identity() {
+  restored_service=$1
+  restored_id=$2
+  restored_image=$3
+  [ -n "$restored_id" ] || return 1
+  [ "$(docker inspect --format '{{.Id}}' "$restored_id")" = "$restored_id" ] || return 1
+  [ "$(docker inspect --format '{{.Image}}' "$restored_id")" = "$restored_image" ] || return 1
+  [ "$(docker inspect --format '{{index .Config.Labels "com.karat.hausverwaltung.release"}}' "$restored_id")" = "$previous_release_id" ] || return 1
+  [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$restored_id")" = hausverwaltung-alpha ] || return 1
+  [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$restored_id")" = "$restored_service" ]
 }
 
 restore_previous_runtime() {
@@ -322,8 +339,8 @@ restore_previous_runtime() {
   compose_release "$previous_release_path" "$previous_app_image_id" "$previous_release_id" up -d --no-deps app || return 1
   wait_for_release_health "$previous_release_path" "$previous_app_image_id" "$previous_release_id" app || return 1
   restored_app_id=$(compose_release "$previous_release_path" "$previous_app_image_id" "$previous_release_id" ps -q app)
-  [ -n "$restored_app_id" ] || return 1
-  [ "$(docker inspect --format '{{.Image}}' "$restored_app_id")" = "$previous_app_image_id" ] || return 1
+  assert_restored_identity app "$restored_app_id" "$previous_app_image_id" || return 1
+  assert_api_ready "$previous_release_path" "$previous_app_image_id" "$previous_release_id" || return 1
   if [ -n "$previous_worker_id" ]; then
     [ -n "$previous_worker_image_id" ] || {
       echo "cannot restore previous runtime: captured worker identity is incomplete" >&2
@@ -332,8 +349,13 @@ restore_previous_runtime() {
     compose_release "$previous_release_path" "$previous_worker_image_id" "$previous_release_id" up -d --no-deps worker || return 1
     wait_for_release_health "$previous_release_path" "$previous_worker_image_id" "$previous_release_id" worker || return 1
     restored_worker_id=$(compose_release "$previous_release_path" "$previous_worker_image_id" "$previous_release_id" ps -q worker)
-    [ -n "$restored_worker_id" ] || return 1
-    [ "$(docker inspect --format '{{.Image}}' "$restored_worker_id")" = "$previous_worker_image_id" ] || return 1
+    assert_restored_identity worker "$restored_worker_id" "$previous_worker_image_id" || return 1
+  fi
+  if [ -n "$previous_invoice_worker_id" ]; then
+    compose_release "$previous_release_path" "$previous_invoice_worker_image_id" "$previous_release_id" up -d --no-deps invoice-worker || return 1
+    wait_for_release_health "$previous_release_path" "$previous_invoice_worker_image_id" "$previous_release_id" invoice-worker || return 1
+    restored_invoice_id=$(compose_release "$previous_release_path" "$previous_invoice_worker_image_id" "$previous_release_id" ps -q invoice-worker)
+    assert_restored_identity invoice-worker "$restored_invoice_id" "$previous_invoice_worker_image_id" || return 1
   fi
 }
 
@@ -350,62 +372,112 @@ validate_release_target() {
   esac
 }
 
-previous=
-if [ -e "$root/current" ] || [ -L "$root/current" ]; then
-  [ -L "$root/current" ] || {
-    echo "refusing non-symlink current pointer" >&2
-    exit 1
-  }
-  previous=$(readlink "$root/current")
-  validate_release_target "$previous" || {
-    echo "refusing current pointer outside releases" >&2
-    exit 1
-  }
-  previous_release_id=${previous#releases/}
-  previous_release_path=$(readlink -f "$root/$previous")
-  previous_app_id=$(compose ps -q app)
-  [ -n "$previous_app_id" ] || {
-    echo "current release exists but its app container could not be captured for restoration" >&2
-    exit 1
-  }
-  [ "$(docker inspect --format '{{.Id}}' "$previous_app_id")" = "$previous_app_id" ] || {
-    echo "current release app identity could not be validated for restoration" >&2
-    exit 1
-  }
-  previous_app_image_id=$(docker inspect --format '{{.Image}}' "$previous_app_id")
-  [ -n "$previous_app_image_id" ] || {
-    echo "current release app has no immutable image ID" >&2
-    exit 1
-  }
-  previous_worker_id=$(compose ps -q worker)
-  if [ -n "$previous_worker_id" ]; then
-    [ "$(docker inspect --format '{{.Id}}' "$previous_worker_id")" = "$previous_worker_id" ] || {
-      echo "current release worker identity could not be validated for restoration" >&2
-      exit 1
-    }
-    previous_worker_image_id=$(docker inspect --format '{{.Image}}' "$previous_worker_id")
-    [ -n "$previous_worker_image_id" ] || {
-      echo "current release worker has no immutable image ID" >&2
-      exit 1
-    }
-  fi
-fi
-db_before_id=$(compose ps -q db)
-compose up -d --no-recreate db
-wait_for_health db
-wait_for_database_role
-db_after_id=$(compose ps -q db)
-[ -n "$db_after_id" ] || { echo "database container is missing after startup" >&2; exit 1; }
-if [ -n "$db_before_id" ] && [ "$db_before_id" != "$db_after_id" ]; then
-  echo "refusing deployment: Compose replaced the existing database container" >&2
-  exit 1
-fi
-compose --profile ops run --rm --no-deps migrate
-migration_state=$(compose --profile ops run --rm --no-deps migrate alembic current)
-[ "$migration_state" = '0122 (head)' ] || {
-  echo "migration state is not exactly 0122 (head)" >&2
-  exit 1
+# This helper upgrades an existing installation. It never starts/reconciles db.
+[ -L "$root/current" ] || { echo "existing current release symlink is required" >&2; exit 1; }
+previous=$(readlink "$root/current")
+validate_release_target "$previous" || { echo "refusing current pointer outside releases" >&2; exit 1; }
+previous_release_id=${previous#releases/}
+case "$previous_release_id" in ''|*[!A-Za-z0-9._-]*) echo "invalid previous release identifier" >&2; exit 1 ;; esac
+[ "$previous_release_id" != "$RELEASE_ID" ] || { echo "release is already current" >&2; exit 1; }
+previous_release_path=$(readlink -f "$root/$previous")
+
+capture_previous() {
+  capture_service=$1
+  captured_id=$(compose ps -q "$capture_service") || return 1
+  captured_image=
+  [ -n "$captured_id" ] || return 0
+  [ "$(docker inspect --format '{{.Id}}' "$captured_id")" = "$captured_id" ] || return 1
+  [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$captured_id")" = hausverwaltung-alpha ] || return 1
+  [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$captured_id")" = "$capture_service" ] || return 1
+  [ "$(docker inspect --format '{{index .Config.Labels "com.karat.hausverwaltung.release"}}' "$captured_id")" = "$previous_release_id" ] || return 1
+  captured_image=$(docker inspect --format '{{.Image}}' "$captured_id")
+  [ -n "$captured_image" ]
 }
+capture_previous app || { echo "cannot validate previous app ownership" >&2; exit 1; }
+previous_app_id=$captured_id
+previous_app_image_id=$captured_image
+[ -n "$previous_app_id" ] || { echo "existing app container is required for document backup" >&2; exit 1; }
+capture_previous worker || { echo "cannot validate previous worker ownership" >&2; exit 1; }
+previous_worker_id=$captured_id
+previous_worker_image_id=$captured_image
+capture_previous invoice-worker || { echo "cannot validate previous invoice worker ownership" >&2; exit 1; }
+previous_invoice_worker_id=$captured_id
+previous_invoice_worker_image_id=$captured_image
+for prior_image in "$previous_worker_image_id" "$previous_invoice_worker_image_id"; do
+  [ -z "$prior_image" ] || [ "$prior_image" = "$previous_app_image_id" ] || {
+    echo "previous runtime has mixed image identities" >&2; exit 1;
+  }
+done
+
+db_before_id=$(compose ps -q db)
+[ -n "$db_before_id" ] || { echo "existing database container is required" >&2; exit 1; }
+for running_id in $(docker ps --no-trunc -q --filter label=com.docker.compose.project=hausverwaltung-alpha); do
+  case "$running_id" in
+    "$db_before_id"|"$previous_app_id"|"$previous_worker_id"|"$previous_invoice_worker_id") ;;
+    *) echo "unexpected running project container; stop competing writers in maintenance first" >&2; exit 1 ;;
+  esac
+done
+wait_for_health db
+starting_schema=$(compose --profile ops run --rm --no-deps migrate python -m app.deployment preflight)
+case "$starting_schema" in 0122|0139) ;; *) echo "unsupported or ambiguous starting schema" >&2; exit 1 ;; esac
+previous_head=$(docker run --rm --network none --entrypoint alembic "$previous_app_image_id" heads)
+[ "$previous_head" = "$starting_schema (head)" ] || {
+  echo "previous image schema head does not match the measured database; restoration compatibility is unknown" >&2; exit 1;
+}
+# Validate actual credentials from the NEW release env, not possibly stale db
+# container environment. Disposable probes never enter consuming worker loops.
+compose run --rm --no-deps --entrypoint python app -m app.deployment runtime app_rw
+compose run --rm --no-deps --entrypoint python app -m app.deployment runtime app_review
+compose run --rm --no-deps --entrypoint python worker -m app.deployment runtime app_worker
+compose run --rm --no-deps --entrypoint python invoice-worker -m app.deployment runtime app_worker
+
+# Reserve a non-overwriting pair before stopping writers. Failed/incomplete
+# files remain private with .partial names and are never usable as a backup.
+install -d -m 700 "$root/shared/backups"
+backup_dir="$root/shared/backups/$RELEASE_ID-from-$starting_schema"
+mkdir -m 700 "$backup_dir" || { echo "backup already exists or cannot be reserved" >&2; exit 1; }
+runtime_quiesced=1
+for prior_id in "$previous_worker_id" "$previous_invoice_worker_id" "$previous_app_id"; do
+  [ -n "$prior_id" ] || continue
+  docker stop --time 130 "$prior_id" >/dev/null
+  [ "$(docker inspect --format '{{.State.Running}}' "$prior_id")" = false ] || {
+    echo "previous runtime did not stop" >&2; exit 1;
+  }
+done
+quiescent_schema=$(compose --profile ops run --rm --no-deps migrate python -m app.deployment quiescent)
+[ "$quiescent_schema" = "$starting_schema" ] || { echo "schema changed during backup maintenance" >&2; exit 1; }
+
+backup_failed() { echo "required paired backup failed; migration has not started" >&2; exit 1; }
+docker exec "$db_before_id" pg_dump --username app_migrator --dbname hausverwaltung --format=custom \
+  > "$backup_dir/database.dump.partial" 2>/dev/null || backup_failed
+test -s "$backup_dir/database.dump.partial" || backup_failed
+docker exec -i "$db_before_id" pg_restore --list < "$backup_dir/database.dump.partial" >/dev/null 2>&1 || backup_failed
+docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+  --user 10001:10001 --volumes-from "$previous_app_id:ro" --entrypoint python "$image_id" \
+  -m app.deployment archive-documents > "$backup_dir/documents.tar.gz.partial" 2>/dev/null || backup_failed
+test -s "$backup_dir/documents.tar.gz.partial" || backup_failed
+docker run --rm -i --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+  --user 10001:10001 --entrypoint python "$image_id" -m app.deployment verify-documents \
+  < "$backup_dir/documents.tar.gz.partial" >/dev/null 2>&1 || backup_failed
+# Verify quiescence and identity again before changing schema.
+quiescent_schema=$(compose --profile ops run --rm --no-deps migrate python -m app.deployment quiescent)
+[ "$quiescent_schema" = "$starting_schema" ] || { echo "schema changed during backup maintenance" >&2; exit 1; }
+db_after_id=$(compose ps -q db)
+[ "$db_before_id" = "$db_after_id" ] || { echo "database identity changed" >&2; exit 1; }
+mv "$backup_dir/database.dump.partial" "$backup_dir/database.dump"
+mv "$backup_dir/documents.tar.gz.partial" "$backup_dir/documents.tar.gz"
+echo "paired backup verified: $backup_dir (restore requires both files)"
+
+if [ "$starting_schema" != 0139 ]; then
+  # No compatibility claim for 0122 runtime on 0139, including uncertain or
+  # partial migration outcomes. The trap keeps the old writers stopped.
+  migration_attempted=1
+  compose --profile ops run --rm --no-deps migrate >/dev/null 2>&1 || {
+    echo "migration failed; preserve backup and inspect schema in maintenance" >&2; exit 1;
+  }
+fi
+migration_state=$(compose --profile ops run --rm --no-deps migrate python -m app.deployment current)
+[ "$migration_state" = 0139 ] || { echo "migration state is not exactly the release target 0139" >&2; exit 1; }
 printf '%s\n' "$admin_password" | compose --profile ops run --rm --no-deps -T bootstrap \
   python -m app.admin_cli \
   --org 'Karat Hausverwaltung Alpha' \
@@ -424,10 +496,12 @@ is_new_release_container app "$new_app_id" "$previous_app_id" || {
   echo "new app container was not created from the expected release image" >&2
   exit 1
 }
+assert_api_ready "$release" "$image_id" "$RELEASE_ID"
+
 # This disposable container overrides the worker entrypoint, so it never runs
 # the consuming worker loop. It makes only Models API GET requests to the
 # SDK's fixed OpenAI origin; no document, prompt, response, or tool request is
-# sent. The existing worker stays alive until the checked replacement starts.
+# sent. Previous workers remain stopped throughout the upgrade.
 if declaration_import_is_enabled; then
   compose run --rm --no-deps --entrypoint python worker -m app.workers.declaration_provider_smoke
 fi
@@ -439,28 +513,28 @@ is_new_release_container worker "$new_worker_id" "$previous_worker_id" || {
   echo "new worker container was not created from the expected release image" >&2
   exit 1
 }
-compose exec -T app python -c "
-import urllib.request
-request = urllib.request.Request(
-    'http://127.0.0.1:8000/api/health/ready',
-    headers={'Host': 'verwaltung.karat.immo'},
-)
-with urllib.request.urlopen(request, timeout=10) as response:
-    assert response.status == 200
-"
+invoice_worker_start_attempted=1
+compose up -d --no-deps invoice-worker
+wait_for_health invoice-worker
+new_invoice_worker_id=$(compose ps -q invoice-worker)
+is_new_release_container invoice-worker "$new_invoice_worker_id" "$previous_invoice_worker_id" || {
+  echo "new invoice worker identity does not match the release" >&2; exit 1;
+}
 
 app_id=$(compose ps -q app)
 worker_id=$(compose ps -q worker)
+invoice_worker_id=$(compose ps -q invoice-worker)
 db_id=$(compose ps -q db)
-for container_id in "$app_id" "$worker_id" "$db_id"; do
+for container_id in "$app_id" "$worker_id" "$invoice_worker_id" "$db_id"; do
   [ -n "$container_id" ] || { echo "missing expected runtime container" >&2; exit 1; }
   port_bindings=$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$container_id")
   case "$port_bindings" in null|'{}') ;; *) echo "runtime container has published ports" >&2; exit 1 ;; esac
 done
-for runtime_service in app worker; do
+for runtime_service in app worker invoice-worker; do
   case "$runtime_service" in
     app) runtime_id=$app_id ;;
     worker) runtime_id=$worker_id ;;
+    invoice-worker) runtime_id=$invoice_worker_id ;;
   esac
   runtime_image_id=$(docker inspect --format '{{.Image}}' "$runtime_id")
   [ "$runtime_image_id" = "$image_id" ] || {
@@ -477,7 +551,7 @@ assert_runtime_db_role() {
   runtime_service=$1
   case "$runtime_service" in
     app) runtime_url_key=HV_DATABASE_URL; runtime_role=app_rw ;;
-    worker) runtime_url_key=HV_DATABASE_URL_WORKER; runtime_role=app_worker ;;
+    worker|invoice-worker) runtime_url_key=HV_DATABASE_URL_WORKER; runtime_role=app_worker ;;
     review) runtime_url_key=HV_DATABASE_URL_REVIEW; runtime_role=app_review; runtime_service=app ;;
   esac
   compose exec -T "$runtime_service" python -c "
@@ -502,6 +576,7 @@ asyncio.run(main())
 }
 assert_runtime_db_role app
 assert_runtime_db_role worker
+assert_runtime_db_role invoice-worker
 assert_runtime_db_role review
 
 cookie_jar=$(mktemp)
