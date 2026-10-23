@@ -57,6 +57,57 @@ day counts and interest amounts. Existing issued notices are not recalculated
 when configuration changes. The UI permits a deliberate rate entry when no
 default is configured. This documentation does not change any runtime setting.
 
+## Invoice worker (T10; configuration only, no deployment authorization)
+
+The separately authorized `invoice-worker` service is defined in the existing
+production Compose file and checked offline in
+`tests/test_invoice_extraction_worker.py`; no production Compose command, service
+restart, image build or deployment is authorized or performed by this change.
+The operator authorized this configuration change separately and added only the
+exact offline Git inspection/staging exceptions to the production guard. Runtime
+protection remains enabled; this is a configuration completion, not activation.
+The accepted **0122** production migration gate remains unchanged; this task adds
+no migration (local test head **0139**). The existing promotion helper remains
+unchanged and does not implicitly activate this additional service. Its eventual
+activation must be included in a separately reviewed deployment/rollback window.
+
+The service uses the same immutable app image and existing `documents` volume,
+mounted **read-only**. It receives only `HV_DATABASE_URL_WORKER` (`app_worker`),
+local storage/worker settings and `HV_INVOICE_EXTRACTION_ENABLED` (default true,
+shared with the API). It has only the internal `backend` network: no published
+ports, Traefik, provider egress/key, web/review connection or migration credential.
+Non-root/read-only execution, dropped capabilities, bounded tmpfs/memory/processes
+and `no-new-privileges` remain enforced. Init plus a 130-second stop grace period
+allow the bounded extractor to drain on SIGTERM; a canceled job retains its lease
+for the existing fenced recovery path. Original bytes are never rewritten.
+
+`python -m app.workers.invoice_extraction --healthcheck` checks the isolated worker
+role, queue access, readable document storage, temporary storage and German local
+OCR without consuming jobs or calling a provider. Startup fails closed if the
+check fails. Normal processing discovers organization IDs each polling round;
+source/principal RLS checks still apply to every claim and completion. A failure
+in one organization is logged without source content and does not stop the others.
+`--organization UUID` may be repeated to restrict processing; `--once` returns
+nonzero on an iteration failure. Retry/lease budgets and human review are unchanged.
+
+For a **local synthetic test only**, install the README's dev/OCR dependencies,
+Poppler and Tesseract with `deu`, then run `scripts/dev-local.sh`. The launcher
+pins all database connections to the disposable `:55432` database, uses a fresh
+`/tmp/hv-dev-documents.*` directory by default (or an explicitly supplied `/tmp`
+`HV_DOCUMENT_STORAGE_ROOT`), probes the worker and starts worker/API/UI. Ctrl+C
+stops its children, including on partial startup failure; it does not delete
+stored originals or stop PostgreSQL. Do not run resetting backend tests while
+this UI acceptance is active.
+
+In another terminal run `node scripts/acceptance/t10_invoice_worker_browser.cjs`
+with `HV_PLAYWRIGHT_PACKAGE`/`HV_CHROMIUM_EXECUTABLE` pointing to installed tools
+when necessary. It logs in as the synthetic local test admin, uploads a generated
+PDF through the UI, waits for real worker extraction and checks **119.00 EUR /
+2025-06-01**, unchanged source identity and no cost adoption/release. It blocks
+external requests and non-login/upload writes. `HV_T10_INVOICE_PDF` may point to a
+synthetic image-only PDF with those exact values to exercise OCR instead. No
+extraction override, API/SQL fixture write or saved report is used by the check.
+
 ## Optional document SMTP (T47; no deployment authorization)
 
 Outbound mail is disabled unless `HV_SMTP_HOST` and `HV_SMTP_FROM` are supplied.
@@ -210,9 +261,9 @@ not the invoice-date year used by the separate accounting report. Reserve propos
 remain separate. Existing sources and finalized originals are untouched; no schema
 or new environment credential is required. Repeat the synthetic UI flow with the
 isolated launcher and `node scripts/acceptance/t54_previous_plan_browser.cjs`, then
-stop app/browser. The manual invoice path does not require the intentionally open
-T10 OCR worker. Unknown create outcomes require checking the plan list, not retrying
-creation automatically.
+stop app/browser. The manual invoice path remains independent of automatic
+invoice extraction; the local launcher now also starts the T10 worker. Unknown
+create outcomes require checking the plan list, not retrying creation automatically.
 
 ## Editable master metadata (T55; local head 0136)
 

@@ -4,8 +4,8 @@
 #   scripts/dev-local.sh
 #
 # Starts the disposable test database (if not already running), runs
-# migrations, creates a test admin user, starts the FastAPI backend on
-# port 18000 and the Vite dev server on port 13000.
+# migrations, creates a test admin user, starts the invoice worker, the
+# FastAPI backend on port 18000 and the Vite dev server on port 13000.
 #
 # The production API (port 8000) is never touched.
 
@@ -15,6 +15,24 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 INFRA="$ROOT/infra"
 BACKEND="$ROOT/backend"
 FRONTEND="$ROOT/frontend"
+BACKEND_PID=""
+VITE_PID=""
+INVOICE_WORKER_PID=""
+
+cleanup() {
+  echo "Stopping local services..."
+  for pid in "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID"; do
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
+  for pid in "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID"; do
+    if [ -n "$pid" ]; then wait "$pid" 2>/dev/null || true; fi
+  done
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # ------------------------------------------------------------------
 # 1. Start disposable test database if not already running
@@ -34,6 +52,14 @@ fi
 # 2. Source test environment variables
 # ------------------------------------------------------------------
 . "$ROOT/scripts/test-env.sh"
+export HV_DATABASE_URL_WORKER="postgresql+asyncpg://app_worker:worker_secret@127.0.0.1:55432/hausverwaltung"
+export HV_DOCUMENT_STORAGE_ROOT="${HV_DOCUMENT_STORAGE_ROOT:-$(mktemp -d /tmp/hv-dev-documents.XXXXXX)}"
+case "$HV_DOCUMENT_STORAGE_ROOT" in
+  /tmp/*|/private/tmp/*) ;;
+  *) echo "Local documents must use a separate directory under /tmp." >&2; exit 1 ;;
+esac
+mkdir -p "$HV_DOCUMENT_STORAGE_ROOT"
+echo "Local document storage: $HV_DOCUMENT_STORAGE_ROOT"
 
 # ------------------------------------------------------------------
 # 3. Run migrations
@@ -48,14 +74,19 @@ cd "$ROOT"
 # ------------------------------------------------------------------
 echo "Ensuring test admin user exists..."
 cd "$BACKEND"
-uv run python -m app.admin_cli --org "Test Hausverwaltung" --email test@example.de --name "Test Admin" --password "testpassword" 2>/dev/null || true
+uv run python -m app.admin_cli --org "Test Hausverwaltung" --email test@example.de --name "Test Admin" --password "testpassword"
 cd "$ROOT"
 
 # ------------------------------------------------------------------
 # 5. Start FastAPI backend on port 18000
 # ------------------------------------------------------------------
-echo "Starting FastAPI backend on :18000..."
 cd "$BACKEND"
+echo "Checking invoice worker (database, storage, German OCR)..."
+uv run python -m app.workers.invoice_extraction --healthcheck
+echo "Starting local invoice worker..."
+uv run python -m app.workers.invoice_extraction &
+INVOICE_WORKER_PID=$!
+echo "Starting FastAPI backend on :18000..."
 uv run uvicorn app.main:app --host 127.0.0.1 --port 18000 &
 BACKEND_PID=$!
 cd "$ROOT"
@@ -96,13 +127,4 @@ echo "Login as test@example.de / testpassword"
 echo ""
 echo "Press Ctrl+C to stop."
 
-# Cleanup on exit
-cleanup() {
-  echo ""
-  echo "Stopping services..."
-  kill $BACKEND_PID 2>/dev/null || true
-  kill $VITE_PID 2>/dev/null || true
-}
-trap cleanup EXIT INT TERM
-
-wait
+wait "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID"

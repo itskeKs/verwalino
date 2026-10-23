@@ -239,3 +239,143 @@ def test_embedded_xml_bypasses_ocr(monkeypatch):
     assert result["status"] == "succeeded"
     assert result["payload"]["is_einvoice"]
     assert result["payload"]["gross_amount"] == "476.00"
+
+
+def test_entrypoint_forwards_worker_arguments(tmp_path):
+    import os
+    from pathlib import Path
+    import subprocess
+    executable = tmp_path / "python"
+    executable.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+    executable.chmod(0o755)
+    entrypoint = Path(__file__).resolve().parents[2] / "docker/worker-entrypoint.sh"
+    result = subprocess.run(["sh", str(entrypoint), "--once", "--organization", str(uuid.UUID(int=1))],
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "HV_WORKER_KIND": "invoice_extraction"},
+        capture_output=True, text=True, check=True)
+    assert result.stdout.splitlines() == ["-m", "app.workers.invoice_extraction", "--once", "--organization", str(uuid.UUID(int=1))]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("explicit", [False, True], ids=["all-organizations", "explicit-organization"])
+async def test_worker_cli_runs_once_with_selected_organizations(monkeypatch, explicit):
+    from app.workers import invoice_extraction as worker
+    organizations = [uuid.uuid4(), uuid.uuid4()]
+    calls = []
+    async def ready():
+        pass
+    async def discover():
+        return organizations
+    async def process(factory, org):
+        calls.append(org)
+        return False
+    monkeypatch.setattr(worker, "check_readiness", ready, raising=False)
+    monkeypatch.setattr(worker, "organization_ids", discover, raising=False)
+    monkeypatch.setattr(worker, "process_once", process)
+    monkeypatch.setattr("sys.argv", ["invoice-worker", "--once"] +
+        (["--organization", str(organizations[1])] if explicit else []))
+    assert await worker.main() == 0
+    assert calls == ([organizations[1]] if explicit else organizations)
+
+
+@pytest.mark.asyncio
+async def test_worker_continues_after_one_organization_failure(monkeypatch, caplog):
+    from app.workers import invoice_extraction as worker
+    organizations = [uuid.uuid4(), uuid.uuid4()]
+    calls = []
+    async def ready():
+        pass
+    async def discover():
+        return organizations
+    async def process(factory, org):
+        calls.append(org)
+        if org == organizations[0]:
+            raise RuntimeError("secret-source-content")
+        return False
+    async def stop(_):
+        raise asyncio.CancelledError
+    import asyncio
+    monkeypatch.setattr(worker, "check_readiness", ready, raising=False)
+    monkeypatch.setattr(worker, "organization_ids", discover, raising=False)
+    monkeypatch.setattr(worker, "process_once", process)
+    monkeypatch.setattr(worker.asyncio, "sleep", stop)
+    monkeypatch.setattr("sys.argv", ["invoice-worker"])
+    with pytest.raises(asyncio.CancelledError):
+        await worker.main()
+    assert calls == organizations
+    assert "iteration_failed" in caplog.text
+    assert "secret-source-content" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_worker_discovers_real_organizations_without_web_credentials(worker_tenant, monkeypatch):
+    from app.core.config import settings
+    from app.workers import invoice_extraction as worker
+    _, ids = worker_tenant
+    monkeypatch.setattr(settings, "database_url", "postgresql+asyncpg://unavailable:unused@127.0.0.1:1/unavailable")
+    assert ids["org_a_id"] in await worker.organization_ids()
+
+
+@pytest.mark.asyncio
+async def test_worker_healthcheck_cli_does_not_consume_queue(monkeypatch):
+    from app.workers import invoice_extraction as worker
+    checks = []
+    async def ready():
+        checks.append(True)
+    async def forbidden(*args):
+        pytest.fail("Healthchecks must not discover or consume work")
+    monkeypatch.setattr(worker, "check_readiness", ready, raising=False)
+    monkeypatch.setattr(worker, "organization_ids", forbidden, raising=False)
+    monkeypatch.setattr(worker, "process_once", forbidden)
+    monkeypatch.setattr("sys.argv", ["invoice-worker", "--healthcheck"])
+    assert await worker.main() == 0
+    assert checks == [True]
+
+
+@pytest.mark.asyncio
+async def test_worker_readiness_checks_ocr_and_database(tmp_path, monkeypatch):
+    from app.core.config import settings
+    from app.workers import invoice_extraction as worker
+    monkeypatch.setattr(settings, "document_storage_root", str(tmp_path))
+    await worker.check_readiness()
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    with pytest.raises(RuntimeError, match="ocr_unavailable"):
+        await worker.check_readiness()
+
+
+def test_local_launcher_owns_worker_and_isolated_storage():
+    from pathlib import Path
+    launcher = (Path(__file__).resolve().parents[2] / "scripts/dev-local.sh").read_text()
+    assert 'export HV_DOCUMENT_STORAGE_ROOT=' in launcher
+    assert 'export HV_DATABASE_URL_WORKER=' in launcher
+    assert 'python -m app.workers.invoice_extraction --healthcheck' in launcher
+    assert 'python -m app.workers.invoice_extraction &' in launcher
+    assert 'INVOICE_WORKER_PID=$!' in launcher
+    assert 'wait "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID"' in launcher
+    assert launcher.index('trap cleanup') < launcher.index('BACKEND_PID=$!')
+    assert '"$INVOICE_WORKER_PID"' in launcher
+
+
+def test_invoice_compose_service_is_offline_and_least_privilege():
+    from pathlib import Path
+    import yaml
+    compose = yaml.safe_load((Path(__file__).resolve().parents[2] / "docker-compose.prod.yml").read_text())
+    services = compose["services"]
+    worker = services["invoice-worker"]
+    environment = worker["environment"]
+    assert worker["image"] == services["app"]["image"]
+    assert worker["entrypoint"] == ["/usr/local/bin/worker-entrypoint.sh"]
+    assert environment["HV_WORKER_KIND"] == "invoice_extraction"
+    assert environment["HV_DATABASE_URL_WORKER"] == services["worker"]["environment"]["HV_DATABASE_URL_WORKER"]
+    assert environment["HV_INVOICE_EXTRACTION_ENABLED"] == services["app"]["environment"]["HV_INVOICE_EXTRACTION_ENABLED"]
+    assert environment["HV_DECLARATION_IMPORT_ENABLED"] == "false"
+    assert not {"HV_DATABASE_URL", "HV_DATABASE_URL_SYNC", "HV_DATABASE_URL_REVIEW", "HV_OPENAI_API_KEY", "HV_SESSION_SECRET"} & environment.keys()
+    assert worker["networks"] == ["backend"]
+    assert worker["volumes"] == ["documents:/data/documents:ro"]
+    assert not worker.get("ports")
+    assert worker["read_only"] is True
+    assert worker["user"] == "10001:10001"
+    assert worker["cap_drop"] == ["ALL"]
+    assert worker["security_opt"] == ["no-new-privileges:true"]
+    assert worker["restart"] == "unless-stopped"
+    assert worker["healthcheck"]["test"] == ["CMD", "python", "-m", "app.workers.invoice_extraction", "--healthcheck"]
+    assert worker["depends_on"]["app"]["condition"] == "service_healthy"

@@ -19,6 +19,33 @@ Dokumentinhalt bleibt untrusted data. Betrieb, Datenschutz, lokale Tests und die
 absichtlich gesperrte Live-Evaluation stehen im
 [Runbook für Teilungserklärungen](docs/operations/declaration-imports.md).
 
+## Lokaler Rechnungsworker (T10)
+
+Nach dem Backend-Setup oben und `cd frontend && npm ci` aus dem Repository-Root
+`scripts/dev-local.sh` starten. Er verwendet ausschließlich die Testdatenbank
+`:55432`, einen separaten `/tmp/hv-dev-documents.*`-Speicher und startet API
+`:18000`, UI `:13000` sowie den Rechnungsworker gemeinsam. Benötigt werden Poppler
+(`pdftoppm`) und Tesseract mit deutscher Sprache (`deu`). Ctrl+C beendet alle drei
+Prozesse; Originale im ausgegebenen lokalen Dokumentenordner bleiben erhalten.
+Keine Backend-Tests parallel zur UI-Abnahme starten: deren Fixture setzt diese
+Testdatenbank zurück.
+
+Unter **Belege** eine synthetische Rechnung hochladen und **Details** öffnen:
+„Gespeichert · wartet auf Verarbeitung“ wechselt zu „Felder vorbereitet · bitte
+prüfen“; Betrag und Datum erscheinen ohne manuelles Setzen der Ergebnisse.
+Die Extraktion bucht keine Kosten und gibt keinen Beleg automatisch frei.
+Wiederholbarer Chrome-Check: `node scripts/acceptance/t10_invoice_worker_browser.cjs`
+(`HV_PLAYWRIGHT_PACKAGE` zeigt bei Bedarf auf das vorhandene Playwright-Paket;
+`HV_CHROMIUM_EXECUTABLE` auf Chrome). Optional liest `HV_T10_INVOICE_PDF` ein
+synthetisches PDF mit **119,00 EUR / 01.06.2025**, etwa für einen Bild-/OCR-Test.
+
+Die Worker-CLI `python -m app.workers.invoice_extraction` verarbeitet standardmäßig
+alle vorhandenen Mandanten, erkennt neue Mandanten ohne Neustart und unterstützt
+`--organization UUID` (wiederholbar), `--once` und `--healthcheck`. Sie benötigt
+explizit `HV_DATABASE_URL_WORKER` mit der isolierten Rolle `app_worker` sowie den
+Speicher der API; keine Web-/Review-Zugangsdaten und keinen Provider-Key.
+Produktionskonfiguration und Freigabegrenzen stehen in [DEPLOY.md](DEPLOY.md).
+
 ## Eigenes Passwort ändern
 
 Nach der Anmeldung öffnet „Passwort ändern“ in der oberen Benutzerleiste den

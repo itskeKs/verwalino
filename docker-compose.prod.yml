@@ -76,6 +76,7 @@ services:
       HV_ALLOWED_HOSTS: verwaltung.karat.immo
       HV_ENABLE_API_DOCS: "false"
       HV_DOCUMENT_STORAGE_ROOT: /data/documents
+      HV_INVOICE_EXTRACTION_ENABLED: ${HV_INVOICE_EXTRACTION_ENABLED:-true}
       HV_DATA_REGION: ${HV_DATA_REGION:-EU}
       # The API needs the server-only key only for optional cited Q&A.  Browse
       # and lexical search are deterministic and remain available without it.
@@ -275,6 +276,52 @@ services:
         gw_priority: 0
       egress:
         gw_priority: 1
+    labels:
+      com.karat.hausverwaltung.release: ${HV_RELEASE_ID:?set HV_RELEASE_ID to the reviewed release identifier}
+
+  invoice-worker:
+    image: ${APP_IMAGE:?set APP_IMAGE to an immutable image reference}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 130s
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    environment:
+      HV_WORKER_KIND: invoice_extraction
+      HV_DATABASE_URL_WORKER: postgresql+asyncpg://app_worker:${APP_WORKER_PASSWORD}@db:5432/hausverwaltung
+      HV_DOCUMENT_STORAGE_ROOT: /data/documents
+      HV_INVOICE_EXTRACTION_ENABLED: ${HV_INVOICE_EXTRACTION_ENABLED:-true}
+      HV_DECLARATION_IMPORT_ENABLED: "false"
+    volumes:
+      - documents:/data/documents:ro
+    entrypoint: ["/usr/local/bin/worker-entrypoint.sh"]
+    command: []
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    user: "10001:10001"
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1536m
+    cpus: "1.00"
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.invoice_extraction", "--healthcheck"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - backend
     labels:
       com.karat.hausverwaltung.release: ${HV_RELEASE_ID:?set HV_RELEASE_ID to the reviewed release identifier}
 

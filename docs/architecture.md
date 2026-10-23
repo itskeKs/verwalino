@@ -12,6 +12,27 @@ Autor: `engine-correctness` (Opus 4.8) · Status: **Entwurf zur Bestätigung dur
 
 ---
 
+## Lokaler Rechnungsworker (T10)
+
+Die Belegextraktion läuft unabhängig vom Teilungserklärungs-Provider als eigener
+Prozess. Die API speichert das Original und reiht den Auftrag dauerhaft ein;
+`invoice_extraction` ermittelt standardmäßig in jeder Runde die Mandanten-IDs und
+verarbeitet seriell unter der isolierten `app_worker`-Rolle. `--organization`
+schränkt die Auswahl ein. Claim und Ergebnisabschluss bleiben kurze, getrennte
+Transaktionen mit bestehenden Principal-/Source-RLS-, Lease- und Fencing-Prüfungen;
+PDF/XML/OCR läuft außerhalb der DB-Transaktion im zeitlich begrenzten Kindprozess.
+Vorschläge ändern weder Kosten noch manuelle Eingaben oder Freigaben.
+
+Der eigene Healthcheck prüft lokale OCR, Speicher und DB-Rolle ohne Queue-Konsum
+oder Provider-Aufruf. SIGTERM lässt laufende begrenzte Extraktion auslaufen, ohne
+nach Abbruch Ergebnisse zu übernehmen; die bestehende Lease-Wiederaufnahme greift.
+Der lokale Launcher verwaltet API, UI und Worker mit gemeinsamem isoliertem
+`/tmp`-Dokumentenspeicher und ausschließlich Test-DB `:55432`. Der freigegebene,
+noch nicht aktivierte Produktionsdienst nutzt nur internes Netz und ein lesbares
+Originalvolume; keine Provider-, Web-, Review- oder Migrator-Zugangsdaten.
+Betriebsdetails und unveränderte Produktionsfreigabegrenze: [DEPLOY.md](../DEPLOY.md).
+Keine Schema-/RLS-Änderung.
+
 ## Aktueller Teilungserklärungs-Workflow (2026-08-29)
 
 Die Anwendung verwendet für Teilungserklärungen einen **festen,
