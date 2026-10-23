@@ -29,5 +29,15 @@ Alle Funktionen aus `docs/mvp.md` sollen in der laufenden App von Anfang bis End
 - `docker compose` nur mit `-f infra/docker-compose.declaration-test.yml` aufrufen. Nie ohne `-f`,
   nie mit `docker-compose.prod.yml` oder einer neuen Datei: Ein Dienst `db` im Projekt
   `hausverwaltung` ersetzt sonst den produktiven Datenbank-Container.
+  Exception: separately authorized portable acceptance may use the reviewed
+  `infra/docker-compose.yml` from this checkout or a registered Git worktree, with
+  project `verwalino` and its explicit private `.env.selfhost`, only for the existing
+  installer's build/pull, readiness/start, one-shot migration/admin bootstrap,
+  status/logs and normal stop operations. It must never use alpha containers,
+  volumes or networks, delete volumes, or serve as a backend test database.
+  Separately authorized Caddy validation may use only the reviewed Caddyfile as
+  a read-only bind mount, with network `none`, no published ports, a read-only
+  root filesystem, all capabilities dropped and `no-new-privileges`, executing
+  only `caddy validate`. These exceptions do not authorize execution or deployment.
 - Bereits committete Migrationen nicht ändern; `downgrade()` nie leeren, um Tests grün zu bekommen.
 - Commits nicht pushen, außer der Nutzer verlangt es.
