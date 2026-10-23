@@ -280,6 +280,9 @@ async def test_worker_cli_runs_once_with_selected_organizations(monkeypatch, exp
 @pytest.mark.asyncio
 async def test_worker_continues_after_one_organization_failure(monkeypatch, caplog):
     from app.workers import invoice_extraction as worker
+    # Alembic fileConfig disables loggers imported before migration rehearsals.
+    monkeypatch.setattr(worker.logger, "disabled", False)
+    caplog.set_level("ERROR", logger=worker.logger.name)
     organizations = [uuid.uuid4(), uuid.uuid4()]
     calls = []
     async def ready():
