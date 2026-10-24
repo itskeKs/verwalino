@@ -32,6 +32,7 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
       libcairo2 libgdk-pixbuf-2.0-0 libffi8 \
+      libbrotli1 libexpat1 libpcre2-8-0 libssh2-1 perl-base \
       fonts-dejavu-core shared-mime-info \
       poppler-utils qpdf tesseract-ocr tesseract-ocr-deu \
     && rm -rf /var/lib/apt/lists/* \
