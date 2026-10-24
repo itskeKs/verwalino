@@ -53,8 +53,8 @@ werden auf dem Host nicht benötigt. Ein bereits verfügbares Image kann mit
 Ein öffentliches GitHub-Image wird hier noch nicht vorausgesetzt.
 KI-Import, KI-Q&A, SMTP und automatische Rechnungs-OCR sind im portablen Stack
 abgeschaltet; manuelle Belegbearbeitung bleibt verfügbar.
-The existing T10 worker is available through the separate development/alpha
-paths; adding it to the portable stack remains outside this installer's scope.
+The T10 invoice worker has been active on the existing alpha since 2026-10-24;
+adding it to the portable stack remains outside this installer's scope.
 Update-/Backup-Automatisierung und ein echter frischer Installations-/Loginlauf
 stehen noch aus; dies ist noch keine allgemeine Produktionsfreigabe.
 Details und Grenzen: [DEPLOY.md](DEPLOY.md#portable-docker-first-installation).

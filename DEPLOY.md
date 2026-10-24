@@ -96,9 +96,9 @@ authorize an alpha deployment, promote its schema gate, or supply a backup
 and disaster-recovery guarantee.
 
 AI declaration import/Q&A, SMTP and invoice OCR are disabled in this initial
-portable stack. Manual invoice review remains supported. The existing T10 worker
-is available through the separate development/alpha paths; portable worker
-integration is outside this installer's scope. GitHub publication/CI, multi-arch
+portable stack. Manual invoice review remains supported. The T10 worker is
+active on the existing alpha; portable worker integration is outside this
+installer's scope. GitHub publication/CI, multi-arch
 image acceptance, complete clean-host setup/login/restart and real domain/TLS
 acceptance are still separate work; do not treat the mock installer tests as
 proof of those behaviors. Run the portable tests without Docker using
@@ -121,29 +121,33 @@ directory:
 └── current -> releases/...   # changed only after all deployment gates pass
 ```
 
-The former explicit **no backups** decision is superseded by the prepared
-upgrade procedure: a verified, paired database/document backup is mandatory
-before schema changes. **No production backup is assumed to exist or to have
-been approved or created.** Actual backup creation, maintenance downtime,
-migration and worker activation require a separately authorized operating
-window. The application already contains real data; preserve its volumes.
+The former explicit **no backups** decision is superseded: a verified, paired
+database/document backup is mandatory before schema changes. The authorized
+2026-10-24 upgrade created and verified the private pair at
+`shared/backups/f0d2c411d52a6e2c927ea2d346d0a5070cf53ec5-from-0028/`
+(`database.dump` and `documents.tar.gz`, both 0600; directory 0700). A future
+schema change needs its own authorized window and backup. Preserve both live
+volumes and the previous release.
 
 ## Deployment boundary and accepted head
 
 These procedures require an authorized operator window; editing this runbook
-does not itself authorize SSH, secret access or deployment. A read-only check on
-2026-10-24 measured the existing alpha database at **0028** and the current
-release image also targets **0028**. The former **0122** assumption was not a
-measurement of the live database. The prepared code targets **0139** and accepts
-only measured **0028 → 0139**, **0122 → 0139** or **0139 → 0139**. Unknown, missing,
-multiple or intermediate revisions fail before stopping writers or migrating.
-This is code preparation, **not production approval**. Historical feature notes
-below describe earlier boundaries; their statements about an unchanged helper
-are superseded by the upgrade procedure in this document.
+does not itself authorize SSH, secret access or deployment. Before the
+2026-10-24 upgrade, the alpha database and running image were at **0028**; the
+former **0122** assumption was not a live measurement. The authorized release
+`f0d2c411d52a6e2c927ea2d346d0a5070cf53ec5` migrated the database to
+**0139** and is now the `current` release. The API, declaration worker, invoice
+worker and existing database were healthy after promotion; public HTTPS
+`/api/health/ready` returned 200 with verified TLS. The release gate accepts
+only measured **0028 → 0139**, **0122 → 0139** or **0139 → 0139**. Unknown,
+missing, multiple or intermediate revisions fail before stopping writers or
+migrating. Historical feature notes below describe earlier boundaries; their
+statements about an unchanged helper or an inactive alpha are superseded by
+this verified deployment.
 
-Phase 2 is verified locally on the disposable test database through migration
-**0131**. This does **not** authorize promotion of migrations 0123–0131, change
-the accepted 0122 production gate, or authorize a production schema operation.
+The earlier phase-2 work was verified locally on the disposable test database
+through migration **0131**. Its former 0122 gate and authorization statements
+were superseded by the separately authorized 2026-10-24 alpha upgrade above.
 Retained attachments and financial provenance can deliberately prevent a
 lossy downgrade; do not delete originals or disable guards to force rollback.
 Any later promotion requires its own reviewed compatibility and backup plan.
@@ -174,18 +178,14 @@ day counts and interest amounts. Existing issued notices are not recalculated
 when configuration changes. The UI permits a deliberate rate entry when no
 default is configured. This documentation does not change any runtime setting.
 
-## Invoice worker (T10; configuration only, no deployment authorization)
+## Invoice worker (T10; alpha active since 2026-10-24)
 
-The separately authorized `invoice-worker` service is defined in the existing
-production Compose file and checked offline in
-`tests/test_invoice_extraction_worker.py`; no production Compose command, service
-restart, image build or deployment is authorized or performed by this change.
-The operator authorized this configuration change separately and added only the
-exact offline Git inspection/staging exceptions to the production guard. Runtime
-protection remains enabled; this is a configuration completion, not activation.
-No migration is added by the worker. The prepared upgrade helper now includes
+The `invoice-worker` service is defined in the existing production Compose file
+and checked in `tests/test_invoice_extraction_worker.py`. The separately
+authorized 2026-10-24 alpha upgrade started it on the same immutable image as
+the API and declaration worker; its container passed health and release identity
+checks. The worker adds no migration of its own. The deployment helper includes
 its start, health/identity checks, cleanup and compatible runtime restoration.
-Its production activation remains subject to the separate operating window.
 
 The service uses the same immutable app image and existing `documents` volume,
 mounted **read-only**. It receives only `HV_DATABASE_URL_WORKER` (`app_worker`),
@@ -528,11 +528,12 @@ existing database has the distinct `app_worker` and `app_review` logins and the
 protected `APP_WORKER_PASSWORD` and `APP_REVIEW_PASSWORD` settings. Fresh-volume
 init scripts do **not** run again on existing volumes. Follow the role prerequisites
 below with the stdin-only procedure; never reset populated volumes.
-The 2026-10-24 read-only check found only `app_migrator` and `app_rw`, and neither
-new password key was present in `shared/.env`. Provision the two new roles and
-protected random credentials before invoking the release helper. Retain those
-credentials with the paired backup for recovery. Do not rotate the existing
-`app_rw` or `app_migrator` passwords.
+The pre-upgrade read-only check found only `app_migrator` and `app_rw`, and
+neither new password key was present in `shared/.env`. Both new roles and
+protected random credentials were provisioned before the 2026-10-24 upgrade.
+For another existing installation, provision them before invoking the release
+helper. Retain those credentials with the paired backup for recovery. Do not
+rotate the existing `app_rw` or `app_migrator` passwords.
 
 Existing database-container environment may predate those keys. Merely editing
 `shared/.env` does not update it, and the deploy helper deliberately refuses an
@@ -541,10 +542,10 @@ starts or reconciles that service. Runtime credential probes use the new release
 settings, independently of old DB-container environment. Resolve missing roles
 or credentials before release; do not use `app_rw` as a worker workaround.
 The provisioning procedure creates missing roles, but does not rotate passwords on
-existing roles. For the measured 0028 installation, create the two missing
-credentials and roles as `chris` on Moon before running the release helper. The
-existing database container stays running. Run this in a private shell without
-tracing; no password is passed in a process argument or printed:
+existing roles. It was used as `chris` on Moon before the 0028 upgrade and can
+be rerun only when the role/credential prerequisite needs repair. The existing
+database container stays running. Run this in a private shell without tracing;
+no password is passed in a process argument or printed:
 
 ```sh
 (
@@ -795,8 +796,8 @@ It verifies closed host ports and isolated API/review/worker database roles,
 then the existing public TLS/security-header/session/login/traversal/upload-limit
 smoke. `current` changes atomically only after every gate succeeds; the previous
 pointer is persisted first. On failure the recovery policy above applies, with
-no automatic downgrade or volume deletion. The disposable CI verifier now checks
-0139 and the invoice worker too; running it is not authorized by this preparation.
+no automatic downgrade or volume deletion. The disposable CI verifier checks
+0139 and the invoice worker too; its execution remains separately authorized.
 
 ## Operation and rollback
 
