@@ -3,6 +3,62 @@
 Webanwendung für die Verwaltung von Immobilien, Einheiten, Vorgängen und
 abrechnungsrelevanten Daten.
 
+## Verwalino selbst hosten (portable Docker-Erstinstallation)
+
+Voraussetzungen: Linux oder macOS mit Bash, OpenSSL, Docker und Compose v2
+(ab 2.24). Im ausgecheckten Repository, **nicht auf der bestehenden Alpha-Instanz**:
+
+```bash
+bash scripts/self-host.sh init
+bash scripts/self-host.sh start
+bash scripts/self-host.sh admin --org "Meine Hausverwaltung" --email admin@example.org
+```
+
+Das Setup erzeugt fünf zufällige Secrets in `.env.selfhost` (0600). Das
+Adminpasswort wird verdeckt abgefragt, bestätigt und nur über stdin übertragen.
+Es gibt kein Standardpasswort. Lokal ist die App nur unter
+**http://127.0.0.1:18080** erreichbar; PostgreSQL veröffentlicht keinen Port.
+Ein erneutes `init` erhält die Datei unverändert, ein erneuter Admin-Aufruf
+setzt kein vorhandenes Passwort zurück. Die vorhandene Alpha-Konfiguration und
+Entwicklungs-/Testdatenbank werden nicht verwendet.
+
+Für einen **neuen** Server mit eigener Domain stattdessen vor dem ersten Start:
+
+```bash
+bash scripts/self-host.sh init --https verwaltung.example.org
+bash scripts/self-host.sh start
+bash scripts/self-host.sh admin --org "Meine Hausverwaltung" --email admin@example.org
+```
+
+DNS muss auf den Server zeigen, TCP 80/443 müssen frei und öffentlich erreichbar
+sein. Caddy übernimmt HTTPS; die Anmeldung erfolgt dann ausschließlich über
+`https://verwaltung.example.org`. Die Zertifikatsausstellung kann nach dem Start
+noch laufen. Ein fertiger HTTPS-/Browser-Abnahmelauf ist noch nicht belegt.
+
+`status` zeigt die Container, `stop` beendet sie **ohne Datenlöschung**:
+
+```bash
+bash scripts/self-host.sh status
+bash scripts/self-host.sh stop
+```
+
+Der Projektname ist fest `verwalino`; es gibt pro Docker-Kontext eine Installation.
+Datenbank und Dokumente liegen in eigenen benannten Volumes. **Config, Datenbank
+und Dokumente gemeinsam sichern; keine Volumes löschen.** Ein anderer Checkout
+oder Config-Pfad erzeugt keine zweite unabhängige Installation.
+
+Zunächst wird das vorhandene Image lokal aus dem Checkout gebaut; Python/Node/uv
+werden auf dem Host nicht benötigt. Ein bereits verfügbares Image kann mit
+`init --image registry.example.org/verwalino@sha256:<64-hex-digest>` gewählt werden.
+Ein öffentliches GitHub-Image wird hier noch nicht vorausgesetzt.
+KI-Import, KI-Q&A, SMTP und automatische Rechnungs-OCR sind im portablen Stack
+abgeschaltet; manuelle Belegbearbeitung bleibt verfügbar.
+The existing T10 worker is available through the separate development/alpha
+paths; adding it to the portable stack remains outside this installer's scope.
+Update-/Backup-Automatisierung und ein echter frischer Installations-/Loginlauf
+stehen noch aus; dies ist noch keine allgemeine Produktionsfreigabe.
+Details und Grenzen: [DEPLOY.md](DEPLOY.md#portable-docker-first-installation).
+
 ## Lokales Setup für Entwicklung und Teilungserklärungen
 
 Im Backend-Verzeichnis werden die Entwicklungs-, OCR- und Betriebsabhängigkeiten

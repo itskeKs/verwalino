@@ -1,4 +1,112 @@
-# Alpha deployment: `verwaltung.karat.immo`
+# Deployment
+
+## Portable Docker first installation
+
+This path is independent of the existing alpha. `infra/docker-compose.yml`
+replaces the obsolete development-only :5433 database starter; development and
+backend tests still use **only** `infra/docker-compose.declaration-test.yml`
+and `scripts/test-env.sh`. Never run the portable stack as a test database or
+on the existing production Docker host. Agent execution of this stack or an
+isolated Caddy validation container requires separate authorization and must
+satisfy the narrow exceptions in `AGENTS.md` and the installed guard. Current
+checks use simulated Docker and static contracts; no real-container or complete
+installation test is claimed.
+
+Prerequisites: Bash (including macOS Bash 3.2), OpenSSL, Docker Engine/Desktop
+and Compose v2 >= 2.24. From a reviewed checkout:
+
+```bash
+bash scripts/self-host.sh init
+bash scripts/self-host.sh start
+bash scripts/self-host.sh admin --org "My property management" --email admin@example.org
+```
+
+No host Python, Node, uv, API key, external proxy network or SMTP account is
+required. Until a public image release exists, `start` builds the checked-out
+Dockerfile (including its frontend checks). To use an already published image,
+select its exact digest on first init:
+
+```bash
+bash scripts/self-host.sh init --image registry.example.org/verwalino@sha256:<64-hex-digest>
+```
+
+The installer generates five distinct 256-bit hexadecimal secrets in
+`.env.selfhost`, mode 0600. Keep this file private and back it up. It is neither
+sourced as shell code nor passed wholesale into containers. Init does not
+rotate credentials or overwrite an existing file; a repeat with configuration
+options is refused. Symlinks, unsafe permissions, unknown/duplicate/missing
+keys, malformed domains and non-digest remote images fail closed.
+`VERWALINO_CONFIG=/absolute/private/path/.env.selfhost` changes its location,
+not the Compose project. Only `.env.*` filenames are accepted and these are
+excluded recursively from Git and Docker build contexts. Do not run with shell
+tracing or print the environment/config in support logs.
+
+The Compose project is always **verwalino**, with project-owned `pgdata`,
+`documents`, `caddy_data` and `caddy_config` volumes, no external alpha volumes
+or networks. Only one portable installation per Docker context is supported.
+Keep the checkout and file paths stable: moving bind-mounted infrastructure
+files may cause Docker to recreate containers. An interrupted operation can
+leave `<config>.lock`; remove that empty directory only after verifying no
+installer operation is active. A partial/absent config on an existing database
+requires restoring the original config, not regenerating different passwords.
+
+Start order is build/pull -> database readiness -> stop any existing web writer
+-> one-shot migration -> app readiness (DB and document-store probe) -> optional
+Caddy. Migration, build, database or app failures return nonzero without a
+success message. A failed migration leaves the web app stopped; no automatic
+schema downgrade, restoration or container rollback is attempted. Do not use
+`start` as an unreviewed version upgrade. The migration and bootstrap services
+alone receive the migrator URL; app runtime gets only app_rw/app_review.
+PostgreSQL has no published port and runs on an internal backend network.
+
+Default local mode publishes only **127.0.0.1:18080**, without secure-cookie
+requirements over HTTP. `init --port 19080` selects another loopback port.
+Do not expose this HTTP listener publicly or tunnel it as a production endpoint.
+For a new Internet-facing installation choose HTTPS at init instead:
+
+```bash
+bash scripts/self-host.sh init --https verwaltung.example.org
+```
+
+Configure A/AAAA records correctly (remove an unusable AAAA record); open TCP
+80/443 and ensure no other proxy uses those ports. Caddy redirects HTTP to HTTPS
+and persists certificates. The app uses secure `__Host-` session cookies,
+explicit allowed hosts, security headers and a 30 MB proxy upload limit. The
+loopback diagnostic listener remains published, but use the HTTPS URL to log
+in. Uvicorn trusts forwarded headers only from the dedicated private proxy
+subnet (default `172.30.97.0/28`). If it conflicts with a host/VPN/Docker route,
+choose an unused aligned private /24 through /28 at init with
+`--proxy-subnet 192.168.240.0/28`. The script reports certificate provisioning
+as pending, not as a successful TLS/Internet reachability check. The stock
+Caddy configuration does not replicate Traefik's alpha login-rate middleware;
+public rollout requires a separate abuse-protection review.
+
+Admin bootstrap prompts for the password twice without echo. Existing users
+are left unchanged by the existing admin CLI; it is not a password-reset tool.
+For automation feed a newline-terminated password from a secret manager to
+`admin --org ... --email ... --password-stdin`; never place it in arguments,
+checked-in files, or an `echo` command in shell history.
+
+Use `status` for container status and `stop` to stop without deleting any data.
+There is deliberately no destroy, automatic update or backup command. Before
+an upgrade, plan a consistent backup of the stopped application's database,
+document volume and private config, and test restoring them together on a
+separate host. An older image is not a schema rollback. This feature does not
+authorize an alpha deployment, promote its schema gate, or supply a backup
+and disaster-recovery guarantee.
+
+AI declaration import/Q&A, SMTP and invoice OCR are disabled in this initial
+portable stack. Manual invoice review remains supported. The existing T10 worker
+is available through the separate development/alpha paths; portable worker
+integration is outside this installer's scope. GitHub publication/CI, multi-arch
+image acceptance, complete clean-host setup/login/restart and real domain/TLS
+acceptance are still separate work; do not treat the mock installer tests as
+proof of those behaviors. Run the portable tests without Docker using
+`cd backend && uv run python ../scripts/test-self-host.py`; the backend CI job
+runs these before pytest. Real Caddyfile validation and the complete portable
+stack smoke test require a separately authorized clean Docker host.
+
+## Existing alpha: `verwaltung.karat.immo`
 
 This alpha runs on Moon behind the existing Traefik Docker network and its
 `letsencrypt` resolver. Do not add Caddy, publish an app/database port, use

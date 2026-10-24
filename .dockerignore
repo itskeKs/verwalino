@@ -26,6 +26,7 @@ infra/
 .env
 **/.env
 .env.*
+**/.env.*
 
 # CI / compose -- not needed inside the image
 .gitlab-ci.yml
