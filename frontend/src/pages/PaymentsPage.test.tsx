@@ -160,7 +160,7 @@ describe("T40 filtered list CSV", () => {
     const listUrl = fetchMock.mock.calls.find(([url]) => url.split("?")[0] === route)![0];
     expect(exportCalls()[0][0]).toBe(route + "/export.csv" + listUrl.slice(route.length));
     expect(exportCalls()[0][1]!.credentials).toBe("include");
-    expect(createUrl.mock.calls[0][0]).toBeInstanceOf(Blob);
+    expect(Array.from(new Uint8Array(await (createUrl.mock.calls[0][0] as Blob).arrayBuffer()))).toEqual(Array.from(new TextEncoder().encode("\ufeffID;Betrag\r\n")));
     const anchor = click.mock.instances[0] as HTMLAnchorElement;
     expect(anchor.download).toBe("zahlungen.csv");
     expect(anchor.href).toBe("blob:test-csv");

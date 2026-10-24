@@ -9,7 +9,7 @@ it("exports payments with all seven known filters, encoded, without unknown para
   vi.stubGlobal("fetch", fetch);
   const query = { bank_account_id: "a &b", lease_agreement_id: "l/?", tenant_profile_id: "t#", owner_profile_id: "o=", payment_type: "KALTMIETE", period_year: 2026, status: "booked", unknown: "secret", accounting_scope_id: "ignored" };
   const blob = await endpoints.exportPaymentsCsv(query);
-  expect(blob).toBeInstanceOf(Blob);
+  expect(blob.type).toBe("text/csv");
   expect(await blob.text()).toContain("ID;Betrag (EUR)\r\n");
   const [url, options] = fetch.mock.calls[0];
   expect(url.split("?")[0]).toBe("/api/payments/export.csv");
