@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.core.declaration_test_database import require_disposable_database_settings
 
 
-@pytest.mark.parametrize('heads', [(), ('0122', '0139'), ('0138',), ('garbage',)])
+@pytest.mark.parametrize('heads', [(), ('0028', '0122'), ('0122', '0139'), ('0138',), ('garbage',)])
 def test_reject_unknown_or_ambiguous_database_version(heads):
     with pytest.raises(ValueError, match='schema'):
         deployment.supported_schema(heads)
@@ -29,6 +29,10 @@ def test_release_graph_is_exact_and_linear(tmp_path):
         "revision='0140'\ndown_revision=None\nbranch_labels=None\ndepends_on=None\n")
     with pytest.raises(ValueError, match='release'):
         deployment.release_head(ScriptDirectory(str(tmp_path)))
+
+
+def test_measured_0028_is_a_supported_upgrade_source():
+    assert deployment.supported_schema(('0028',)) == '0028'
 
 
 @pytest.mark.parametrize('statement', [
@@ -56,18 +60,18 @@ def test_preflight_rejects_unsafe_roles_without_repairing_them(statement):
         engine.dispose()
 
 
-def rehearse_initial_upgrade():
+def rehearse_initial_upgrade(starting_schema='0122'):
     """Rehearse before the shared fixture reaches head or creates retained data."""
     _, _, url = require_disposable_database_settings(settings)
     engine = create_engine(url)
     graph = ScriptDirectory('migrations')
-    revisions = list(graph.iterate_revisions('0139', '0122'))
+    revisions = list(graph.iterate_revisions('0139', starting_schema))
     try:
         with engine.connect() as connection:
             transaction = connection.begin()
             context = MigrationContext.configure(connection)
             with Operations.context(context):
-                assert MigrationContext.configure(connection).get_current_heads() == ('0122',)
+                assert MigrationContext.configure(connection).get_current_heads() == (starting_schema,)
                 org = str(uuid.uuid4())
                 connection.execute(text('INSERT INTO organization(id,name) VALUES (:id,:name)'),
                                    {'id': org, 'name': 'Synthetic upgrade organization'})
@@ -81,6 +85,32 @@ def rehearse_initial_upgrade():
                                         "VALUES (gen_random_uuid(),:org,'MIET','Synthetic mandate','2025-01-01')"), values)
                 connection.execute(text("INSERT INTO audit_event(id,organization_id,actor_user_id,entity_type,entity_id,action) "
                                         "VALUES (gen_random_uuid(),:org,:id,'organization',:org,'org.created')"), values)
+                if starting_schema == '0028':
+                    document = str(uuid.uuid4())
+                    draft = str(uuid.uuid4())
+                    failed = str(uuid.uuid4())
+                    connection.execute(text("""INSERT INTO property_document
+                        (id,organization_id,doc_type,original_filename,mime_type,content_byte_size,
+                         content_sha256,storage_uri,storage_backend,page_count,uploaded_by)
+                        VALUES (:doc,:org,'DECLARATION','synthetic.pdf','application/pdf',32,
+                                :digest,:storage,'LOCAL_FS',1,:actor)"""),
+                        {'doc': document, 'org': org, 'digest': '0' * 64,
+                         'storage': 'synthetic/upgrade.pdf', 'actor': actor})
+                    connection.execute(text("""INSERT INTO declaration_import
+                        (id,organization_id,mode,status,initiated_by,max_cost_usd)
+                        VALUES (:draft,:org,'NEW_PROPERTY','DRAFT',:actor,1),
+                               (:failed,:org,'NEW_PROPERTY','FAILED',:actor,1)"""),
+                        {'draft': draft, 'failed': failed, 'org': org, 'actor': actor})
+                    connection.execute(text("""INSERT INTO declaration_import_document
+                        (organization_id,import_id,document_id,sequence_no,document_role)
+                        VALUES (:org,:draft,:doc,1,'DECLARATION')"""),
+                        {'org': org, 'draft': draft, 'doc': document})
+                    connection.execute(text("""INSERT INTO declaration_extraction_run
+                        (organization_id,import_id,status,provider,model_name,prompt_version,
+                         schema_version,harness_version,error_code,completed_at)
+                        VALUES (:org,:failed,'FAILED','synthetic','synthetic','v1','v1','v1',
+                                'SYNTHETIC_FAILURE',now())"""),
+                        {'org': org, 'failed': failed})
                 # Compare every old column of every pre-upgrade table, including
                 # seeded users/memberships/mandates/audit, without normalizing data.
                 tables = connection.scalars(text("SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename")).all()
@@ -92,18 +122,31 @@ def rehearse_initial_upgrade():
                         + ' FROM ' + quote(table) + ') r ORDER BY row_to_json(r)::text')).all() for table in tables}
                 before = old_rows()
                 assert before['user'] and before['membership'] and before['audit_event']
+                if starting_schema == '0028':
+                    assert all(before[table] for table in (
+                        'property_document', 'declaration_import',
+                        'declaration_import_document', 'declaration_extraction_run'))
                 security = connection.execute(text("SELECT c.relname,c.relrowsecurity,c.relforcerowsecurity,c.relacl::text FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relname=ANY(:tables) ORDER BY c.relname"), {'tables': tables}).all()
                 for revision in reversed(revisions):
                     revision.module.upgrade()
             assert old_rows() == before
-            assert connection.execute(text("SELECT c.relname,c.relrowsecurity,c.relforcerowsecurity,c.relacl::text FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relname=ANY(:tables) ORDER BY c.relname"), {'tables': tables}).all() == security
+            after_security = connection.execute(text("SELECT c.relname,c.relrowsecurity,c.relforcerowsecurity,c.relacl::text FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relname=ANY(:tables) ORDER BY c.relname"), {'tables': tables}).all()
+            if starting_schema == '0122':
+                assert after_security == security
+            else:
+                before_by_name = {row.relname: row for row in security}
+                assert all(
+                    (not before_by_name[row.relname].relrowsecurity or row.relrowsecurity)
+                    and (not before_by_name[row.relname].relforcerowsecurity or row.relforcerowsecurity)
+                    for row in after_security
+                )
             deployment.validate_roles(connection)
             assert connection.scalar(text("SELECT has_function_privilege('app_review',"
                 "'app_validate_session_versioned(uuid,uuid,integer)','EXECUTE')"))
             assert not connection.scalar(text("SELECT has_function_privilege('app_review',"
                 "'app_auth_lookup_versioned(text)','EXECUTE')"))
             transaction.rollback()
-            assert MigrationContext.configure(connection).get_current_heads() == ('0122',)
+            assert MigrationContext.configure(connection).get_current_heads() == (starting_schema,)
             assert not connection.scalar(text('SELECT EXISTS(SELECT 1 FROM organization WHERE id=:id)'), {'id': org})
             return len(tables)
     finally:
@@ -115,6 +158,10 @@ def test_upgrade_0122_to_0139_preserves_existing_rows_and_security(run_migration
     # Its SQL/data/security assertions fail fixture setup if preservation fails.
     assert run_migrations['upgrade_0122_to_0139_tables'] > 50
     assert deployment.database_check('preflight') == '0139'
+
+
+def test_upgrade_0028_to_0139_preserves_existing_rows_and_rls(run_migrations):
+    assert run_migrations['upgrade_0028_to_0139_tables'] > 20
 
 
 def test_document_archive_restore_is_exact_and_refuses_overwrite(tmp_path):

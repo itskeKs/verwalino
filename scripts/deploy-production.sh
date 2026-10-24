@@ -419,7 +419,7 @@ for running_id in $(docker ps --no-trunc -q --filter label=com.docker.compose.pr
 done
 wait_for_health db
 starting_schema=$(compose --profile ops run --rm --no-deps migrate python -m app.deployment preflight)
-case "$starting_schema" in 0122|0139) ;; *) echo "unsupported or ambiguous starting schema" >&2; exit 1 ;; esac
+case "$starting_schema" in 0028|0122|0139) ;; *) echo "unsupported or ambiguous starting schema" >&2; exit 1 ;; esac
 previous_head=$(docker run --rm --network none --entrypoint alembic "$previous_app_image_id" heads)
 [ "$previous_head" = "$starting_schema (head)" ] || {
   echo "previous image schema head does not match the measured database; restoration compatibility is unknown" >&2; exit 1;
@@ -469,7 +469,7 @@ mv "$backup_dir/documents.tar.gz.partial" "$backup_dir/documents.tar.gz"
 echo "paired backup verified: $backup_dir (restore requires both files)"
 
 if [ "$starting_schema" != 0139 ]; then
-  # No compatibility claim for 0122 runtime on 0139, including uncertain or
+  # No compatibility claim for an older runtime on 0139, including uncertain or
   # partial migration outcomes. The trap keeps the old writers stopped.
   migration_attempted=1
   compose --profile ops run --rm --no-deps migrate >/dev/null 2>&1 || {

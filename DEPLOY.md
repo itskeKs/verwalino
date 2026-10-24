@@ -130,11 +130,12 @@ window. The application already contains real data; preserve its volumes.
 
 ## Deployment boundary and accepted head
 
-Documentation only: these procedures require a separately authorized operator
-window; editing this runbook does not authorize SSH, secret access or deployment.
-The previously documented production approval gate is **0122**, not a fresh
-measurement of the live database. The prepared code now targets **0139** and
-accepts only measured **0122 → 0139** or **0139 → 0139**. Unknown, missing,
+These procedures require an authorized operator window; editing this runbook
+does not itself authorize SSH, secret access or deployment. A read-only check on
+2026-10-24 measured the existing alpha database at **0028** and the current
+release image also targets **0028**. The former **0122** assumption was not a
+measurement of the live database. The prepared code targets **0139** and accepts
+only measured **0028 → 0139**, **0122 → 0139** or **0139 → 0139**. Unknown, missing,
 multiple or intermediate revisions fail before stopping writers or migrating.
 This is code preparation, **not production approval**. Historical feature notes
 below describe earlier boundaries; their statements about an unchanged helper
@@ -522,11 +523,16 @@ isolated verifier otherwise fail closed before starting runtime containers.
 ## Upgrade of an existing installation
 
 Do not rerun the fresh-install password-generation loop or overwrite `shared/.env`.
-Before migration, verify in a separately authorized maintenance window that the
+Before migration, verify in the authorized maintenance window that the
 existing database has the distinct `app_worker` and `app_review` logins and the
 protected `APP_WORKER_PASSWORD` and `APP_REVIEW_PASSWORD` settings. Fresh-volume
 init scripts do **not** run again on existing volumes. Follow the role prerequisites
-below using the reviewed `infra/db/prod-init.sh`; never reset populated volumes.
+below with the stdin-only procedure; never reset populated volumes.
+The 2026-10-24 read-only check found only `app_migrator` and `app_rw`, and neither
+new password key was present in `shared/.env`. Provision the two new roles and
+protected random credentials before invoking the release helper. Retain those
+credentials with the paired backup for recovery. Do not rotate the existing
+`app_rw` or `app_migrator` passwords.
 
 Existing database-container environment may predate those keys. Merely editing
 `shared/.env` does not update it, and the deploy helper deliberately refuses an
@@ -534,8 +540,69 @@ database-container replacement: it requires the existing healthy DB and never
 starts or reconciles that service. Runtime credential probes use the new release
 settings, independently of old DB-container environment. Resolve missing roles
 or credentials before release; do not use `app_rw` as a worker workaround.
-The provisioning script creates missing roles, but does not rotate passwords on
-existing roles. Credential rotation is a separate operation with workers paused.
+The provisioning procedure creates missing roles, but does not rotate passwords on
+existing roles. For the measured 0028 installation, create the two missing
+credentials and roles as `chris` on Moon before running the release helper. The
+existing database container stays running. Run this in a private shell without
+tracing; no password is passed in a process argument or printed:
+
+```sh
+(
+set -eu
+umask 077
+root=/home/chris/apps/hausverwaltung-alpha
+env_file="$root/shared/.env"
+test -f "$env_file" && test ! -L "$env_file"
+test "$(stat -c '%a' "$env_file")" = 600
+exec 9>"$root/shared/deploy.lock"
+flock -n 9
+worker_count=$(grep -c '^APP_WORKER_PASSWORD=' "$env_file" || true)
+review_count=$(grep -c '^APP_REVIEW_PASSWORD=' "$env_file" || true)
+test "$worker_count" = "$review_count"
+case "$worker_count" in
+  0)
+    worker=$(openssl rand -hex 32)
+    review=$(openssl rand -hex 32)
+    test "${#worker}" -eq 64 && test "${#review}" -eq 64 && test "$worker" != "$review"
+    case "$worker$review" in *[!0-9a-f]*) exit 1 ;; esac
+    tmp=$(mktemp "$env_file.XXXXXX")
+    trap 'rm -f "$tmp"' EXIT
+    chmod 600 "$tmp"
+    cat "$env_file" > "$tmp"
+    printf '\nAPP_WORKER_PASSWORD=%s\nAPP_REVIEW_PASSWORD=%s\n' "$worker" "$review" >> "$tmp"
+    mv -f "$tmp" "$env_file"
+    tmp=
+    ;;
+  1)
+    worker=$(sed -n 's/^APP_WORKER_PASSWORD=//p' "$env_file")
+    review=$(sed -n 's/^APP_REVIEW_PASSWORD=//p' "$env_file")
+    ;;
+  *) exit 1 ;;
+esac
+test "${#worker}" -eq 64 && test "${#review}" -eq 64 && test "$worker" != "$review"
+case "$worker$review" in *[!0-9a-f]*) exit 1 ;; esac
+db_id=$(docker ps --no-trunc -q --filter label=com.docker.compose.project=hausverwaltung-alpha --filter label=com.docker.compose.service=db)
+test -n "$db_id" && test "$(printf '%s\n' "$db_id" | wc -l)" -eq 1
+docker exec -i "$db_id" psql -Xqv ON_ERROR_STOP=1 -U app_migrator -d hausverwaltung <<SQL
+BEGIN;
+SELECT pg_catalog.format('CREATE ROLE app_worker LOGIN PASSWORD %L INHERIT NOBYPASSRLS NOCREATEDB NOCREATEROLE', '$worker')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='app_worker')
+\gexec
+SELECT pg_catalog.format('CREATE ROLE app_review LOGIN PASSWORD %L NOINHERIT NOBYPASSRLS NOCREATEDB NOCREATEROLE', '$review')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='app_review')
+\gexec
+GRANT app_rw TO app_worker;
+GRANT CONNECT ON DATABASE hausverwaltung TO app_worker,app_review;
+COMMIT;
+SQL
+unset worker review
+)
+```
+
+If provisioning stops partway through, rerun it with the same protected keys;
+never generate replacements for a partly provisioned database. The release
+helper's disposable credential probes must pass before stopping writers.
+Credential rotation is a separate operation with workers paused.
 
 | Connection | Runtime role / setting | Boundary |
 | --- | --- | --- |
@@ -545,7 +612,7 @@ existing roles. Credential rotation is a separate operation with workers paused.
 | One-shot migration/bootstrap | Privileged ops credentials only | Never injected into app/worker runtime |
 
 Before downtime, the new image checks its single head **0139**, the exact linear
-0123–0139 chain, the measured single DB revision and the isolated login/role
+0029–0139 chain, the measured single DB revision and the isolated login/role
 membership, ownership and schema/ACL prerequisites. Disposable non-consuming
 probes test each actual API/review/worker credential. The captured previous image
 must have exactly the measured DB head and every previous runtime must have the
@@ -554,12 +621,13 @@ running project containers fail closed. No roles or privileges are repaired.
 
 The helper requires an existing `current` release and API container. Fresh
 installation is a separate procedure; this helper no longer initializes an empty
-DB. `0122` is accepted only when actually measured, never inferred from this page.
+DB. Each source revision is accepted only when actually measured.
 
-### Migration compatibility: 0123–0139
+### Migration compatibility: 0029–0139
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0139 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -571,7 +639,8 @@ DB. `0122` is accepted only when actually measured, never inferred from this pag
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0122→0139 rehearsal compares every old table column/row and its RLS/ACL flags;
+0028→0139 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0139 rehearsal also compares existing ACLs;
 it does not prove live data validity or cross-version runtime compatibility.
 
 ### Paired backup and recovery
@@ -599,7 +668,7 @@ retention/off-host storage needs an operator decision before relying on it.
 Before migration, a failure can restart the captured API, then only the workers
 that previously existed, after rechecking the unchanged schema. On 0139→0139,
 the helper skips migration and may similarly restore the prior 0139 runtime.
-Once a 0122→0139 migration is attempted, any failure leaves `current` unchanged
+Once an older-to-0139 migration is attempted, any failure leaves `current` unchanged
 and stops only provably owned new runtime containers. It reports
 `MAINTENANCE REQUIRED` and keeps old writers stopped, even if the migration may
 have rolled back. Unknown ownership or failed stops also prohibit automatic

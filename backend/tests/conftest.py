@@ -213,10 +213,13 @@ def run_migrations():
     from tests.test_deployment_upgrade import rehearse_initial_upgrade
 
     command.downgrade(alembic_cfg, "base")
+    command.upgrade(alembic_cfg, "0028")
+    upgraded_0028_tables = rehearse_initial_upgrade('0028')
     command.upgrade(alembic_cfg, "0122")
-    upgraded_tables = rehearse_initial_upgrade()
+    upgraded_tables = rehearse_initial_upgrade('0122')
     command.upgrade(alembic_cfg, "head")
-    yield {'upgrade_0122_to_0139_tables': upgraded_tables}
+    yield {'upgrade_0028_to_0139_tables': upgraded_0028_tables,
+           'upgrade_0122_to_0139_tables': upgraded_tables}
 
 
 # ---------------------------------------------------------------------------

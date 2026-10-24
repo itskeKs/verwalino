@@ -530,7 +530,7 @@ for blank_key_case in unquoted-comment quoted-comment; do
 done
 
 # Each case uses only the fake CLI, synthetic archives and a private release root.
-for scenario in wrong-source ambiguous-source release-head previous-head roles credentials competing backup-exists busy quiescent-changed backup documents dump-check archive-check migrate target app-start app-health api-ready provider-smoke worker-start worker-health invoice-start invoice-health no-invoice no-invoice-restore restore-compatible cleanup-stop-fail cleanup-discovery-fail foreign-container success; do
+for scenario in wrong-source ambiguous-source release-head previous-head roles credentials competing backup-exists busy quiescent-changed backup documents dump-check archive-check migrate target app-start app-health api-ready provider-smoke worker-start worker-health invoice-start invoice-health no-invoice no-invoice-restore restore-compatible cleanup-stop-fail cleanup-discovery-fail foreign-container success success-0028; do
   case_root="$tmpdir/$scenario"
   mkdir -p "$case_root/releases/test/infra/db" "$case_root/releases/old" "$case_root/shared"
   printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' > "$case_root/shared/.env"
@@ -550,6 +550,7 @@ for scenario in wrong-source ambiguous-source release-head previous-head roles c
   export FAKE_NO_PREVIOUS_INVOICE=0 FAKE_APP_UP_FAIL=0 FAKE_WORKER_UP_FAIL=0 FAKE_NEW_LABEL=test
   case "$scenario" in
     wrong-source) FAKE_SCHEMA=0121 ;;
+    success-0028) FAKE_SCHEMA=0028; FAKE_PREVIOUS_HEAD=0028 ;;
     ambiguous-source) FAKE_SCHEMA='0122
 0139' ;;
     target) FAKE_TARGET=0138 ;;
@@ -568,12 +569,13 @@ for scenario in wrong-source ambiguous-source release-head previous-head roles c
   printf '%s\n' "$admin_password" | PATH="$tmpdir/bin:$PATH" \
     DEPLOY_ROOT="$case_root" RELEASE_ID=test sh "$deploy_script" >"$case_root/output" 2>&1 || outcome=$?
   case "$scenario" in
-    success|no-invoice)
+    success|success-0028|no-invoice)
       [ "$outcome" -eq 0 ] || { cat "$case_root/output" >&2; fail "$scenario failed"; }
       [ "$(readlink "$case_root/current")" = releases/test ] || fail "$scenario did not promote"
-      [ -f "$case_root/shared/backups/test-from-0122/database.dump" ] || fail 'no completed database backup'
-      [ -f "$case_root/shared/backups/test-from-0122/documents.tar.gz" ] || fail 'no completed documents backup'
-      python3 - "$FAKE_DOCKER_LOG" <<'ASSERT_ORDER'
+      pair="$case_root/shared/backups/test-from-$FAKE_SCHEMA"
+      [ -f "$pair/database.dump" ] || fail 'no completed database backup'
+      [ -f "$pair/documents.tar.gz" ] || fail 'no completed documents backup'
+      python3 - "$FAKE_DOCKER_LOG" "$pair" <<'ASSERT_ORDER'
 import sys
 log = open(sys.argv[1]).read()
 steps = ['stopped:old-worker', 'stopped:old-app', 'pg_dump', 'archive-documents',
@@ -583,7 +585,7 @@ positions = [log.index(step) for step in steps]
 assert positions == sorted(positions), positions
 from pathlib import Path
 import stat
-pair = Path(sys.argv[1]).parent / 'shared/backups/test-from-0122'
+pair = Path(sys.argv[2])
 assert stat.S_IMODE(pair.stat().st_mode) == 0o700
 assert all(stat.S_IMODE((pair / name).stat().st_mode) == 0o600 for name in ['database.dump', 'documents.tar.gz'])
 ASSERT_ORDER
@@ -593,9 +595,9 @@ ASSERT_ORDER
         grep -q 'stopped:old-invoice' "$FAKE_DOCKER_LOG" || fail 'did not stop previous invoice worker'
       fi
       # A repeated release must not overwrite its existing backup.
-      printf '%s' preserve > "$case_root/shared/backups/test-from-0122/database.dump"
+      printf '%s' preserve > "$pair/database.dump"
       if printf '%s\n' "$admin_password" | PATH="$tmpdir/bin:$PATH" DEPLOY_ROOT="$case_root" RELEASE_ID=test sh "$deploy_script" >"$case_root/repeat-output" 2>&1; then fail 'repeated release accepted'; fi
-      [ "$(cat "$case_root/shared/backups/test-from-0122/database.dump")" = preserve ] || fail 'backup overwritten'
+      [ "$(cat "$pair/database.dump")" = preserve ] || fail 'backup overwritten'
       ;;
     *)
       [ "$outcome" -ne 0 ] || fail "$scenario unexpectedly succeeded"
@@ -629,7 +631,7 @@ ASSERT_ORDER
   ! grep -Eq 'stopped:db-id| down |volume rm|alembic downgrade|up -d.* db' "$FAKE_DOCKER_LOG" || fail 'database/volume mutation in runtime handling'
   ! grep -Fq "$admin_password" "$FAKE_DOCKER_LOG" || fail 'admin secret in CLI arguments'
 done
-printf '%s\n' 'deploy-production: 31 upgrade/backup/worker/recovery scenarios passed'
+printf '%s\n' 'deploy-production: 32 upgrade/backup/worker/recovery scenarios passed'
 
 assert_gateway_basic_auth_removed
 assert_admin_password_handling

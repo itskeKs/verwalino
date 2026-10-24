@@ -19,15 +19,15 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 
 TARGET = '0139'
-SUPPORTED = ('0122', TARGET)
+SUPPORTED = ('0028', '0122', TARGET)
 
 
 def release_head(graph: ScriptDirectory) -> str:
     if graph.get_heads() != [TARGET]:
         raise ValueError('unsupported release head')
-    revisions = list(graph.iterate_revisions(TARGET, '0122'))
+    revisions = list(graph.iterate_revisions(TARGET, '0028'))
     if [(r.revision, r.down_revision) for r in revisions] != [
-        (f'{n:04}', f'{n - 1:04}') for n in range(139, 122, -1)
+        (f'{n:04}', f'{n - 1:04}') for n in range(139, 28, -1)
     ]:
         raise ValueError('unsupported release upgrade graph')
     return TARGET
