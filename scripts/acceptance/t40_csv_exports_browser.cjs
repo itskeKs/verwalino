@@ -19,8 +19,7 @@ const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
-const { chromium } = require(process.env.HV_PLAYWRIGHT_PACKAGE
-  || '/Users/keks/.npm/_npx/420ff84f11983ee5/node_modules/playwright');
+const { chromium } = require(process.env.HV_PLAYWRIGHT_PACKAGE || 'playwright');
 const base = 'http://127.0.0.1:13000';
 const prefix = `T40 ${Date.now().toString(36)} ${randomUUID().slice(0, 6)}`;
 const propertyName = `${prefix} MIET A`;

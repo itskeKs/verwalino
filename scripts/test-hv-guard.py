@@ -1,6 +1,6 @@
 """Guard decisions only: no Docker, HTTP, stack installation or database access.
 
-python3 scripts/test-hv-guard.py --guard /Users/keks/.coddy/hooks/hv_guard.py
+python3 scripts/test-hv-guard.py --guard ~/.coddy/hooks/hv_guard.py
 """
 import argparse
 import contextlib
@@ -24,6 +24,8 @@ spec = importlib.util.spec_from_file_location("hv_guard_under_test", options.gua
 guard = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(guard)
 SOURCE = Path(__file__).resolve().parents[1]
+GUARD_HOOK = os.path.expanduser("~/.coddy/hooks/hv_guard.py")
+GUARD_CONFIG = os.path.expanduser("~/.coddy/hooks.json")
 PORTABLE = SOURCE / ".coddy/worktrees/feat-portable-docker"
 if not (PORTABLE / "scripts/self-host.sh").exists():
     PORTABLE = SOURCE
@@ -131,7 +133,7 @@ class GuardTests(unittest.TestCase):
                         "git add -- infra/docker-compose.yml $(touch marker)",
                         "git add -- infra/docker-compose.yml `touch marker`",
                         "git status --short\ndocker stop hausverwaltung-app-1",
-                        "git diff -- infra/docker-compose.yml > /Users/keks/.coddy/hooks/hv_guard.py"):
+                        f"git diff -- infra/docker-compose.yml > {GUARD_HOOK}"):
             with self.subTest(command=command):
                 self.block(command)
 
@@ -263,8 +265,8 @@ class GuardTests(unittest.TestCase):
                         "curl http://[::1]:8000", "curl http://0.0.0.0:8000",
                         "sed -i x backend/migrations/versions/0001_test.py",
                         "git restore -- backend/migrations/versions/0001_test.py",
-                        "cp other /Users/keks/.coddy/hooks/hv_guard.py",
-                        "echo x > /Users/keks/.coddy/hooks.json"):
+                        f"cp other {GUARD_HOOK}",
+                        f"echo x > {GUARD_CONFIG}"):
             with self.subTest(command=command):
                 self.block(command)
 
@@ -292,7 +294,7 @@ class GuardTests(unittest.TestCase):
         for tool in ("edit", "write", "apply_patch"):
             for root in (self.repo, self.worktree):
                 for path in (str(root / "backend/migrations/versions/0001_test.py"),
-                             "/Users/keks/.coddy/hooks/hv_guard.py", "/Users/keks/.coddy/hooks.json"):
+                             GUARD_HOOK, GUARD_CONFIG):
                     with self.subTest(tool=tool, root=root.name, path=path):
                         payload = {"cwd": str(root), "tool_name": tool, "tool_input": {"path": path}}
                         out = io.StringIO()
@@ -320,8 +322,8 @@ class HookProtocolTests(unittest.TestCase):
             (SOURCE, "run_command", {"command": "docker stop hausverwaltung-db-1"}, "deny"),
             (SOURCE, "run_command", {"command": "docker volume rm hausverwaltung_documents"}, "deny"),
             (SOURCE, "run_command", {"command": "curl http://localhost:8000/api/health"}, "deny"),
-            (SOURCE, "write", {"path": "/Users/keks/.coddy/hooks/hv_guard.py"}, "deny"),
-            (SOURCE, "edit", {"path": "/Users/keks/.coddy/hooks.json"}, "deny"),
+            (SOURCE, "write", {"path": GUARD_HOOK}, "deny"),
+            (SOURCE, "edit", {"path": GUARD_CONFIG}, "deny"),
             (SOURCE, "edit", {"path": str(SOURCE / "backend/migrations/versions/0001_core_tables.py")}, "deny"),
             (PORTABLE, "run_command", {"command": "git diff -- infra/docker-compose.yml"}, "allow"),
             (Path(tempfile.gettempdir()), "run_command", {"command": "docker stop hausverwaltung-app-1"}, "allow"),
