@@ -16,7 +16,17 @@ red before the change. "None" needs a reason. -->
 - [ ] `make lint` green
 - [ ] `make test` green (whole suite, against the test database)
 - [ ] Docs updated in the same PR (owning page, `docs/feature-status.md` if a status changed)
-- [ ] Screenshot below for a visible UI change; `DESIGN.md` updated if look or copy changed
+- [ ] Screenshots section filled in if `frontend/` changed; `DESIGN.md` updated if look or copy changed
+
+## Screenshots
+
+<!-- Mandatory when frontend/ changed, otherwise delete this section. Before and after, desktop
+and 360 px wide, taken from a local instance with seed data — never from a production instance. -->
+
+| | Desktop | 360 px |
+| --- | --- | --- |
+| Before | | |
+| After | | |
 
 ## Notes for the reviewer
 
