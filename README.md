@@ -5,6 +5,11 @@ data.
 
 ## Self-hosting Verwalino (portable Docker first installation)
 
+For a new server or laptop, follow [Install in one command](DEPLOY.md#install-in-one-command)
+for the release installer, HTTPS/local variants, checksum/signature verification
+and offline bundles. The first release with these assets and the fresh-VM run
+remain maintainer acceptance steps. The checkout-based path below is also available.
+
 Prerequisites: Linux or macOS with Bash, OpenSSL, Docker, and Compose v2
 (2.24 or later). In the checked-out repository, **not on the existing alpha instance**:
 
@@ -76,7 +81,7 @@ digest at first init:
 bash scripts/self-host.sh init --image 'ghcr.io/itskeks/verwalino@sha256:<64-hex-digest>'
 ```
 
-Remote tags are not accepted by the installer. See the
+Remote image tags are not accepted by `scripts/self-host.sh`. See the
 [maintainer release checklist](DEPLOY.md#maintainer-release-checklist) for publication.
 AI import, AI Q&A, SMTP, and automatic invoice OCR are disabled in the portable stack;
 manual voucher (Beleg) processing remains available.
