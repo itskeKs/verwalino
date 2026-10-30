@@ -6,4 +6,4 @@ description: German software and English project artifacts
 
 - The software is German: UI copy, visible routes, errors, PDFs, letters and emails.
 - Write documentation, issues, comments, docstrings, tests, feature files and commits
-  in English. Quote existing German software text verbatim.
+  in English; German costs about twice the tokens. Quote existing German software text verbatim.

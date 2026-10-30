@@ -11,4 +11,5 @@ export const routes = {
   notfound: { de: '/404.html', en: '/en/404/' },
 } as const;
 export type Page = keyof typeof routes;
+export const noindexPages: readonly Page[] = ['notfound', 'privacy', 'terms', 'dpa'];
 export const pathFor = (locale: Locale, page: Page) => routes[page][locale];

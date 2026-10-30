@@ -1,6 +1,8 @@
 import { defineConfig } from 'astro/config';
 import sitemap from '@astrojs/sitemap';
-import { routes } from './src/content/routes.ts';
+import { noindexPages, routes } from './src/content/routes.ts';
+
+const noindexPaths = noindexPages.flatMap(page => Object.values(routes[page]));
 
 const site = process.env.SITE_URL || 'https://verwalino.de';
 const base = new URL(site);
@@ -15,7 +17,7 @@ export default defineConfig({
   build: { inlineStylesheets: 'always' },
   integrations: [sitemap({
     i18n: { defaultLocale: 'de', locales: { de: 'de-DE', en: 'en-GB' } },
-    filter: page => !new URL(page).pathname.includes('/404'),
+    filter: page => !noindexPaths.includes(new URL(page).pathname),
     serialize(item) {
       const paths = Object.values(routes).find(paths => Object.values(paths).includes(new URL(item.url).pathname));
       if (paths) item.links = [
