@@ -3,6 +3,8 @@
 Web application for managing properties, units, cases, and settlement-relevant
 data.
 
+The public website is a separate static Astro site: [website guide](website/README.md).
+
 ## Self-hosting Verwalino (portable Docker first installation)
 
 Prerequisites: Linux or macOS with Bash, OpenSSL, Docker, and Compose v2
