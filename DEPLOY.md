@@ -13,7 +13,7 @@ checks use simulated Docker and static contracts; no real-container or complete
 installation test is claimed.
 
 Prerequisites: Bash (including macOS Bash 3.2), OpenSSL, Docker Engine >= 24 (or Docker Desktop with that engine)
-and Compose v2 >= 2.24. From a reviewed checkout:
+and Compose >= 2.24 (including later major releases). From a reviewed checkout:
 
 ```bash
 bash scripts/self-host.sh init
@@ -105,14 +105,14 @@ reported explicitly; a warning is not proof that the installation works.
 
 | Check | `FEHLER` (blocker) | `WARN` / next step |
 | --- | --- | --- |
-| Docker and Compose | Docker missing, daemon unreachable, engine below 24 or version unknown, Compose outside v2 or below 2.24 | Install/update Docker and the Compose plugin; check daemon access and Docker context |
+| Docker and Compose | Docker missing, daemon unreachable, engine below 24 or version unknown, Compose below 2.24 or version unknown | Install/update Docker and the Compose plugin; versions 2.24 and later, including 5.x, are supported. Check daemon access and Docker context |
 | Private configuration | Missing, symlink, unsafe filename, mode other than 0600/0400, incomplete or invalid keys/settings/secrets | Restore the original `.env.selfhost`; `chmod 600` it. Existing database credentials must not be regenerated |
 | Port occupancy | Foreign listener on the configured HTTP port, or on 80/443 in HTTPS mode | Install `ss`, `lsof` or `nc` when inspection is unavailable; identify conflicting services before changing their listeners |
 | Free disk | Less than **2 GiB** available | Less than **10 GiB**: free space before backups/updates. Both thresholds use binary GiB (1,048,576 KiB); exactly 2 GiB warns, exactly 10 GiB passes |
 | Containers (`db`, `app`, HTTPS `caddy`) | Restarting, unhealthy, dead or paused | Missing, exited, starting, missing healthcheck or status unavailable: use the printed `start` and scoped `logs` commands |
 | Migration state | Database revision newer than the configured image's release target | Behind: back up, then `start` migrates. Empty/missing version table: not initialized yet, run `start`. Unknown/ambiguous/query failure or unavailable image target: inspect config/image/logs |
 | First organization | — | Count zero: `bash scripts/self-host.sh admin --org NAME --email EMAIL`. An unreadable database/count also warns |
-| HTTPS domain and DNS | Invalid domain, no A/AAAA records, or no DNS address matches a determinable public host address | Missing DNS tools, unknown public host address or partial address mismatch: compare A/AAAA manually, especially stale AAAA records |
+| HTTPS domain and DNS | Invalid domain or no A/AAAA records | Missing DNS tools, unknown public host address or any address mismatch: compare A/AAAA and the public destination manually; proxies, NAT/elastic IPs and `/etc/hosts` can explain a mismatch. Check for stale AAAA records |
 | HTTPS local reachability | — | Cannot connect to 127.0.0.1:80/443 or `nc` unavailable: start Caddy, check port publishing and firewall |
 | HTTPS certificate | — | Caddy stopped, domain certificate absent/unreadable in `/data/caddy/certificates`, OpenSSL unavailable, TLS probe fails, invalid certificate or expiry within **14 days**: inspect Caddy logs, DNS and renewal access |
 
@@ -134,11 +134,12 @@ another host as well.
 
 Doctor does not repair settings, migrate, bootstrap users, build/pull images or
 start/stop the stack. Database queries and Caddy certificate listing require
-running services. Comparing migration revisions reuses the backup helper's
-`target` action in a temporary, dependency-free app-image container; the helper
-overrides the server entrypoint and performs no data changes. If the image
-predates release-target metadata, doctor warns even when the helper's checkout
-fallback equals the database revision. Docker diagnostics use the current
+running services. Comparing migration revisions runs
+`from app.deployment import TARGET; print(TARGET)` in a temporary container from
+the configured local image, with Python as its entrypoint. The probe uses a
+non-root user and a read-only filesystem, mounts no volumes, adds no capabilities
+and has no network access. Missing or unreadable release-target metadata warns.
+Docker diagnostics use the current
 Docker context, which must refer to the same host as the checkout/port checks
 for those checks to describe one machine. After following a finding's next
 step, rerun doctor; use `status` and the printed `logs` commands for detail.
@@ -190,7 +191,8 @@ Retain the reviewed checkout and the selected image, especially a mutable local
 build, so recovery has the required application and PostgreSQL tools.
 The default `<checkout>/backups/` directory is created with mode 0700. Git ignores
 `backups/`, `verwalino-backup-*.tar` and `.verwalino-backup.*`; output directly in
-the checkout root is refused. Custom output directories also use mode 0700.
+the checkout root is refused. New custom output directories use mode 0700;
+existing directories keep their permissions.
 
 `restore FILE [--yes]` checks the private config and acquires the installer lock,
 then refuses running, restarting or paused app/migration/bootstrap containers
@@ -198,8 +200,7 @@ with the `stop` command.
 It copies the input to private staging, requires all three regular archive members,
 checks the manifest marker and format version, and refuses a schema newer than
 the selected image's `app.deployment.TARGET`, read inside the helper container.
-Only an image predating `TARGET` falls back to this checkout's value, with a
-printed warning. Unknown/ambiguous heads,
+Unknown/ambiguous heads,
 unsafe document paths, links, special files and invalid document archives are
 refused before the database starts. An older numeric schema head is allowed;
 `start` performs subsequent migrations. This portable restore check does not
@@ -214,19 +215,36 @@ type `restore`; `--yes` explicitly skips that prompt for automation. It starts
 requires exactly the manifest head. It then extracts, verifies and sets ownership
 of staged documents on the documents volume, before changing the old database
 or document contents. Allow free space for both databases and both document copies.
-An existing `hausverwaltung_restore` is refused; inspect it before removing it.
+An existing `hausverwaltung_restore` or `hausverwaltung_previous` is refused;
+inspect it and recover the intended live database before removing any leftover.
+Restore also refuses any `.restore-*` directory on the documents volume before
+creating the scratch database. Verify the live data, then remove the named
+directory, then retry; it may contain the only retained copy of previous documents.
+Before cutover, failures remove the scratch database and staged documents and
+leave old data untouched; all failures attempt to stop db and leave the app stopped.
 
-After staging succeeds, a short cutover drops `hausverwaltung` with
-`dropdb --if-exists`, renames `hausverwaltung_restore` to `hausverwaltung` using
-`ALTER DATABASE`, and swaps the document contents, including hidden files,
-without deleting the volume. Database roles and their current passwords stay.
-Finally it stops db and prints the `start` command. Before cutover, failures
-remove the scratch database and staged documents, leave old data untouched and
-say so. During cutover, failures report whether each database exists and whether
-documents are untouched, partially swapped or swapped, with recovery instructions.
-Failures attempt to stop db, report nonzero and leave the app stopped. Cutover
-is destructive and has no automatic rollback; keep the app stopped and follow
-the printed recovery instructions before starting again.
+After staging succeeds, cutover renames `hausverwaltung` to
+`hausverwaltung_previous` (skipped if no live database exists) and
+`hausverwaltung_restore` to `hausverwaltung`, moves
+old document entries into `.restore-<id>/previous/` and staged entries into place
+on the same volume, then drops the previous database and deletes the previous
+documents only after the swap succeeds.
+If no live database existed, there is no previous database to drop.
+Failures before that drop attempt to rename the old database and move previous
+documents back, retain staged documents in `.restore-<id>/documents/`, and report
+the remaining database names and document directories with manual recovery SQL
+and move instructions if rollback fails; keep the app stopped until recovery is verified.
+If interruption happens after the previous database was dropped but before
+document cleanup, the restored database and documents remain live. Verify them,
+manually remove the retained `.restore-<id>` directory (including `previous/`)
+from the documents volume, then run `bash scripts/self-host.sh start`.
+Do not run the rollback SQL in this state. Avoid backups until the retained
+directory is removed: document archives include it while it remains on the volume.
+When no live database existed initially, an incomplete document swap rolls back
+to that absent-live state and retains the restored database as
+`hausverwaltung_restore`; a completed swap keeps the restored data live and
+requires the same directory cleanup and `start` if interrupted during cleanup.
+After success, db stops and the printed `start` command starts the restored installation.
 Use only trusted archives: PostgreSQL restoration executes SQL from the dump.
 
 Back up at least daily while the installation is in use and before a reviewed
@@ -288,24 +306,35 @@ Update can start from a stopped stack: it starts db before reading its schema
 and backing up, and starts Caddy again in HTTPS mode after app is ready.
 The new image's release target must not be older than the database revision.
 
+Before stopping app, update refuses any `hausverwaltung_previous` database or
+`.restore-*` document directory left by an earlier restore. Verify the retained
+data and follow the restore recovery instructions before retrying.
 Next it stops app and verifies app/migration/bootstrap are stopped, then runs
 `backup` into `<checkout>/backups/`, printing and retaining the archive.
 **Downtime starts before the backup**, covering both the database dump and document
 copy. The portable stack currently has no workers. PostgreSQL stays running.
-It atomically replaces only the config's image line (mode 0600), runs the same
-one-shot migration as `start`, and starts app with a 120-second readiness bound.
+It atomically replaces only the config's image line, preserving its mode (0600
+or 0400), runs the same one-shot migration as `start`, and starts app with a
+120-second readiness bound.
 It also probes `/api/health/live` and `/api/health/ready` inside app, with an
 eight-second outer bound, and checks the measured schema against the image
 target. Success prints old/new images, measured migration revisions and the
 retained archive path, then runs `doctor` again. Caddy is left running.
 
-Any failure or handled interruption from config switching through migration,
+Any failure or handled interruption (including HUP on a terminal/SSH disconnect)
+from config switching through migration,
 startup, health and schema verification triggers recovery: stop and verify
 writers, atomically restore the previous image setting, retag the retained local
 image if needed, then call the existing `restore FILE --yes` path on that exact
-backup. Restore stages a scratch database and documents, drops the half-migrated
-database at cutover and replaces documents. It then starts db and the previous
-app and runs the same health probes. A successful recovery prints
+backup, reusing update's installation lock. Restore stages a scratch database
+and documents, renames the half-migrated database to `hausverwaltung_previous`,
+renames the scratch database into place, and moves old documents into
+`.restore-<id>/previous` before installing the staged documents. Only after the
+document swap finishes does it drop `hausverwaltung_previous` and discard the
+previous documents. A cutover failure calls `recover_restore()` to rename the
+previous database back and move the previous documents back, retaining staged
+data for inspection and reporting the exact state. After restore succeeds,
+update starts db and the previous app and runs the same health probes. A successful recovery prints
 `rolled back to <previous image>, data from <archive>` and still exits nonzero.
 No Alembic downgrade is run. The archive is kept after success and failure;
 choose archive retention/off-site storage yourself. Local image tags follow the
@@ -333,13 +362,17 @@ require inspection; they do not discard data from the successfully updated app.
 
 If recovery fails, the installer prints the failed stage, configured image,
 observed app/db container states, restore diagnostics and concrete commands.
-It attempts to leave app stopped and keeps the backup. Manual recovery:
+It attempts to leave app stopped and keeps the backup. Handled failures release
+the installation lock and remove the temporary update directory, including its
+full config copy; any cleanup failure reports the retained private path.
+Manual recovery:
 
 1. Keep users/external writers paused. Run `self-host.sh stop` and inspect the
    reported container states. Preserve failed data separately if later writes
    must be reconciled. Do not delete volumes or run a migration downgrade.
 2. Select the printed previous image by changing only `VERWALINO_IMAGE` in a
-   private temporary copy of the original `.env.selfhost`, chmod 600 that copy
+   private temporary copy of the original `.env.selfhost`, preserve its mode
+   (0600 or 0400) on that copy
    and atomically `mv` it over the original. Keep every secret and other setting.
    For a local build, first run the printed `docker image tag <retained-ID>
    verwalino:local` command; do not rebuild the newer checkout for recovery.
@@ -348,8 +381,11 @@ It attempts to leave app stopped and keeps the backup. Manual recovery:
    terminated process, verify no installer is active before removing its empty
    `<config>.lock` directory. Run the printed
    `VERWALINO_CONFIG=... bash scripts/self-host.sh restore <archive> --yes`.
-   Do not start if restore fails; its detailed state distinguishes an untouched
-   failed database from partial cutover.
+   Do not start if restore fails; its detailed state distinguishes a failure
+   before cutover, a rename-back recovery, a failed recovery with retained
+   `_previous`/scratch databases and documents, and a completed swap whose
+   previous database was already dropped. Verify the data before removing
+   retained `.restore-*` directories or databases and retrying the archive.
 4. Only after restore succeeds, run the printed `env ... docker compose ... up
    -d --no-build --pull never --wait --wait-timeout 120 db app` command. It clears
    caller config/profile overrides, supplies the derived host/cookie settings

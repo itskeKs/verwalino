@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -59,8 +58,7 @@ class AgentRuleTests(unittest.TestCase):
             [sys.executable, str(root / ".codex/hooks/attach_rules.py")],
             input=payload if raw else json.dumps(payload), text=True,
             capture_output=True, cwd=root,
-            env={key: value for key, value in os.environ.items()
-                 if key not in {"CODEX_HOOK_EVENT", "USER"}}, timeout=10,
+            timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "")
@@ -77,7 +75,7 @@ class AgentRuleTests(unittest.TestCase):
         return set(re.findall(r"<!-- from \.cursor/rules/([\w-]+)\.mdc -->", context))
 
     def temporary_repo(self):
-        temporary = tempfile.TemporaryDirectory(dir=ROOT)
+        temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
         hook = root / ".codex/hooks/attach_rules.py"
@@ -109,7 +107,7 @@ class AgentRuleTests(unittest.TestCase):
         config = json.loads((ROOT / ".codex/hooks.json").read_text())
         self.assertEqual(set(config["hooks"]), {"SessionStart", "PreToolUse"})
         expected = 'python3 "$(git rev-parse --show-toplevel)/.codex/hooks/attach_rules.py"'
-        for event, names in (("SessionStart", ("startup", "resume", "clear", "compact")),
+        for event, names in (("SessionStart", ("startup", "resume", "clear", "compact", "fork")),
                              ("PreToolUse", ("apply_patch", "Edit", "Write"))):
             entries = config["hooks"][event]
             self.assertEqual(len(entries), 1)
@@ -123,8 +121,8 @@ class AgentRuleTests(unittest.TestCase):
     def test_session_start_returns_only_the_always_on_rules(self):
         expected = {path.stem for path in (ROOT / ".cursor/rules").glob("*.mdc")
                     if read_rule(path)[0]["alwaysApply"]}
-        self.assertTrue(expected)
-        for source in ("startup", "resume", "clear", "compact"):
+        self.assertEqual(expected, {"language", "docs"})
+        for source in ("startup", "resume", "clear", "compact", "fork"):
             with self.subTest(source=source):
                 payload = {"hook_event_name": "SessionStart", "source": source}
                 self.assertEqual(self.attached_topics(payload), expected)
@@ -139,6 +137,12 @@ class AgentRuleTests(unittest.TestCase):
         self.assertNotIn(".cursor/rules/frontend-ui.mdc", context)
         self.assertNotIn(".cursor/rules/language.mdc", context)
 
+    def test_a_patch_from_a_subdirectory_resolves_paths_from_the_session_cwd(self):
+        payload = {"hook_event_name": "PreToolUse", "tool_name": "apply_patch",
+                   "cwd": str(ROOT / "frontend"),
+                   "tool_input": {"patch": "*** Begin Patch\n*** Update File: src/App.tsx\n@@\n-old\n+new\n*** End Patch"}}
+        self.assertEqual(self.attached_topics(payload), {"frontend-ui"})
+
     def test_each_area_is_reachable_by_its_representative_path(self):
         cases = {
             "backend/app/api/auth.py": "api-layer",
@@ -150,8 +154,6 @@ class AgentRuleTests(unittest.TestCase):
             "scripts/test_agent_rules.py": "testing",
             "infra/docker-compose.declaration-test.yml": "selfhost",
             "scripts/self-host.sh": "selfhost",
-            "docs/architecture.md": "docs",
-            "CONTRIBUTING.md": "docs",
         }
         for path, topic in cases.items():
             with self.subTest(path=path):

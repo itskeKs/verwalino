@@ -11,6 +11,9 @@ RESTORE_DB=0
 RESTORE_SCRATCH=0
 RESTORE_WINDOW=0
 RESTORE_ACTIVE=0
+RESTORE_DOCUMENTS_STARTED=0
+RESTORE_LIVE_EXISTED=0
+RESTORE_SWAP_FINISHED=0
 UPDATE_DIR=""
 UPDATE_ACTIVE=0
 UPDATE_PHASE=""
@@ -22,16 +25,16 @@ BACKUP_SCHEMA=""
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 cleanup() {
     local status="${1:-$?}"
+    trap '' PIPE
     set +e
+    trap '' HUP INT TERM
     if [[ "$status" != 0 && "$UPDATE_ACTIVE" = 1 ]]; then
         UPDATE_ACTIVE=0
         # Recovery must complete before releasing the installation lock.
-        trap '' INT TERM
         update_rollback
     fi
     if [[ -n "$UPDATE_PHASE" ]]; then
-        if [[ "$status" = 130 || "$status" = 143 ]]; then
-            trap '' INT TERM
+        if [[ "$status" = 129 || "$status" = 130 || "$status" = 143 ]]; then
             if compose stop app; then
                 printf 'Update interrupted before the switch; config and data unchanged; app stopped — run start.\n' >&2
             else
@@ -42,8 +45,11 @@ cleanup() {
         fi
     fi
     restore_cleanup "$status"
-    [[ -z "$UPDATE_DIR" ]] || rm -rf "$UPDATE_DIR"
-    if [[ "$LOCKED" = 1 ]]; then rmdir "$CONFIG.lock"; fi
+    [[ -z "$UPDATE_DIR" ]] || rm -rf "$UPDATE_DIR" || \
+        printf 'Could not remove private update directory %s; it contains a full config copy. Remove it after inspecting recovery.\n' "$UPDATE_DIR" >&2 || true
+    if [[ "$LOCKED" = 1 ]]; then
+        rmdir "$CONFIG.lock" || printf 'Could not release installation lock %s; verify no installer is active before removing it.\n' "$CONFIG.lock" >&2 || true
+    fi
     return "$status"
 }
 
@@ -53,28 +59,22 @@ restore_cleanup() {
         if [[ "$RESTORE_WINDOW" = 0 ]]; then
             if [[ "$RESTORE_SCRATCH" = 1 ]]; then
                 compose exec -T db dropdb -U app_migrator --if-exists hausverwaltung_restore || \
-                    printf 'Could not remove scratch database hausverwaltung_restore; remove it before retrying restore.\n' >&2
+                    printf 'Could not remove scratch database hausverwaltung_restore; remove it before retrying restore.\n' >&2 || true
             fi
-            printf 'Restore failed before cutover; old database and documents are untouched. Retry restore after fixing the reported error.\n' >&2
+            printf 'Restore failed before cutover; old database and documents are untouched. Retry restore after fixing the reported error.\n' >&2 || true
+            archive_tool discard-documents || printf 'Could not remove staged documents; inspect .restore-* in the documents volume.\n' >&2 || true
         else
-            printf 'Restore failed during cutover. Installation state:\n' >&2
-            compose exec -T db psql -X --set ON_ERROR_STOP=1 -U app_migrator -d postgres -Atc \
-                "SELECT name || '=' || CASE WHEN EXISTS (SELECT 1 FROM pg_database WHERE datname=name) THEN 'present' ELSE 'absent' END FROM (VALUES ('hausverwaltung'), ('hausverwaltung_restore')) AS databases(name)" >&2 || \
-                printf 'Database state unavailable; inspect hausverwaltung and hausverwaltung_restore before recovery.\n' >&2
-            local documents_state
-            documents_state=$(archive_tool document-state) || documents_state=unknown
-            printf 'documents=%s\n' "$documents_state" >&2
-            printf 'Recovery: keep the app stopped. If hausverwaltung is absent and hausverwaltung_restore is present, rename the scratch database to hausverwaltung before retrying the same archive. If both exist, remove only hausverwaltung_restore before retrying. If documents are partially swapped, retry the same archive to replace them completely. Do not start until restore succeeds.\n' >&2
+            recover_restore
         fi
-        archive_tool discard-documents || printf 'Could not remove staged documents; inspect .restore-* in the documents volume.\n' >&2
     fi
     if [[ "$RESTORE_DB" = 1 ]]; then
-        compose stop db || printf 'Could not stop db; run: bash scripts/self-host.sh stop\n' >&2
+        compose stop db || printf 'Could not stop db; run: bash scripts/self-host.sh stop\n' >&2 || true
     fi
-    [[ -z "$TMP_DIR" ]] || rm -rf "$TMP_DIR"
+    [[ -z "$TMP_DIR" ]] || rm -rf "$TMP_DIR" || printf 'Could not remove private staging directory %s.\n' "$TMP_DIR" >&2 || true
     return "$status"
 }
 trap cleanup EXIT
+trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
@@ -104,6 +104,7 @@ Successful local updates remove temporary update tags and older rollback tags.
 Backups exclude private config/secrets and certificates; keep config separately.
 Backup output defaults to the private checkout backups/ directory; the checkout root is refused.
 Restore stages the database and documents before replacing the stopped installation.
+Leftover .restore-* directories require checking live data and removing the directory before retrying.
 HELP
 }
 
@@ -149,7 +150,7 @@ validate_settings() {
     esac
 }
 lock_config() {
-    mkdir "$CONFIG.lock" 2>/dev/null || fail 'Another operation is running (or a stale .lock directory needs operator review).'
+    mkdir "$CONFIG.lock" 2>/dev/null || { printf 'Another operation is running (or a stale .lock directory needs operator review).\n' >&2; return 1; }
     LOCKED=1
 }
 load_config() {
@@ -186,12 +187,13 @@ read_config() {
     done
 }
 config_environment() {
-    export VERWALINO_ALLOWED_HOSTS='localhost,127.0.0.1'
-    export VERWALINO_COOKIE_SECURE=false VERWALINO_COOKIE_NAME=hv_session
+    CONFIG_ENVIRONMENT=(VERWALINO_ALLOWED_HOSTS=localhost,127.0.0.1
+        VERWALINO_COOKIE_SECURE=false VERWALINO_COOKIE_NAME=hv_session)
     if [[ "$VERWALINO_MODE" = https ]]; then
-        export VERWALINO_ALLOWED_HOSTS="$VERWALINO_DOMAIN,localhost,127.0.0.1"
-        export VERWALINO_COOKIE_SECURE=true VERWALINO_COOKIE_NAME=__Host-hv_session
+        CONFIG_ENVIRONMENT=("VERWALINO_ALLOWED_HOSTS=$VERWALINO_DOMAIN,localhost,127.0.0.1"
+            VERWALINO_COOKIE_SECURE=true VERWALINO_COOKIE_NAME=__Host-hv_session)
     fi
+    export "${CONFIG_ENVIRONMENT[@]}"
     # Explicit files/projects and profiles must not inherit caller overrides.
     unset COMPOSE_FILE COMPOSE_PROJECT_NAME COMPOSE_PROFILES COMPOSE_ENV_FILES
 }
@@ -201,6 +203,8 @@ compose() {
     docker compose --project-name verwalino --env-file "$CONFIG" \
         -f "$ROOT/infra/docker-compose.yml" "${profiles[@]}" "$@"
 }
+
+container_state() { compose ps --all --format '{{.State}}|{{.Health}}|{{.ID}}' "$1"; }
 
 config_fingerprint() {
     local key
@@ -251,7 +255,7 @@ doctor_disk() {
 doctor_container() {
     local service="$1" row state health id hint
     hint="Mit bash scripts/self-host.sh start starten; Protokolle: $doctor_logs $service"
-    if [[ "$doctor_compose_ready" != 1 ]] || ! row=$(compose ps --all --format '{{.State}}|{{.Health}}|{{.ID}}' "$service" 2>/dev/null); then
+    if [[ "$doctor_compose_ready" != 1 ]] || ! row=$(container_state "$service" 2>/dev/null); then
         doctor_report WARN "Container $service" "Status nicht prüfbar; Docker und Konfiguration prüfen. $hint"
         return
     fi
@@ -335,19 +339,17 @@ doctor_database() {
     elif [[ ! "$schema" =~ ^[0-9]{4}$ ]]; then
         doctor_report WARN Migration 'Schema unbekannt oder mehrdeutig; alembic_version prüfen, vor manuellen Änderungen ein Backup erstellen.'
     elif ! docker image inspect "$VERWALINO_IMAGE" >/dev/null 2>&1; then
-        # Compose 2.24 run can build/pull missing images; diagnostics must not.
+        # Diagnostics must not build or pull missing images.
         doctor_report WARN Migration 'Konfiguriertes Image fehlt; nach Backup mit bash scripts/self-host.sh start bereitstellen und doctor wiederholen.'
-    elif ! TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/verwalino-doctor.XXXXXX"); then
-        doctor_report WARN Migration 'Imageziel nicht prüfbar; Schreibrechte im temporären Verzeichnis prüfen und doctor wiederholen.'
-    elif ! target=$(archive_tool target "$(sed -n "s/^TARGET = '\([0-9][0-9]*\)'$/\1/p" "$ROOT/backend/app/deployment.py")" 2>"$TMP_DIR/target-error") ||
+    elif ! target=$(docker run --rm --pull never --network none --read-only --user 10001:10001 \
+        --cap-drop ALL --security-opt no-new-privileges --entrypoint python "$VERWALINO_IMAGE" \
+        -c 'from app.deployment import TARGET; print(TARGET)' < /dev/null 2>/dev/null) ||
         [[ ! "$target" =~ ^[0-9]{4}$ ]]; then
         doctor_report WARN Migration 'Imageziel nicht lesbar; das konfigurierte Image bereitstellen und doctor wiederholen.'
     elif (( 10#$schema > 10#$target )); then
         doctor_report FEHLER Migration "Datenbank $schema ist neuer als Imageziel $target; passendes neueres Image verwenden, kein Downgrade ausführen."
     elif (( 10#$schema < 10#$target )); then
         doctor_report WARN Migration "Datenbank $schema liegt hinter Imageziel $target; nach Backup bash scripts/self-host.sh start ausführen, start migriert."
-    elif [[ -s "$TMP_DIR/target-error" ]]; then
-        doctor_report WARN Migration 'Image liefert kein verlässliches Releaseziel; aktuelles Image mit Releaseziel bereitstellen und doctor wiederholen.'
     else
         doctor_report OK Migration "Datenbank und Image stehen auf $target; vor einem Versionswechsel ein Backup erstellen."
     fi
@@ -418,7 +420,7 @@ doctor_dns() {
         case $'\n'"$public"$'\n' in *$'\n'"$address"$'\n'*) matches=$((matches + 1)) ;; esac
     done <<< "$addresses"
     if [[ "$matches" = 0 ]]; then
-        doctor_report FEHLER DNS-Ziel 'DNS zeigt auf keine öffentliche Adresse dieses Hosts; A/AAAA auf den Server richten oder NAT-Ziel manuell prüfen.'
+        doctor_report WARN DNS-Ziel 'DNS zeigt auf keine öffentliche Schnittstellenadresse dieses Hosts; Proxy (z. B. Cloudflare), NAT/Elastic IP oder /etc/hosts können dies erklären. A/AAAA und öffentliches Ziel manuell prüfen.'
     elif [[ "$matches" != "$total" ]]; then
         doctor_report WARN DNS-Ziel 'Nicht alle DNS-Adressen passen zum Host; insbesondere veraltete AAAA-Einträge korrigieren oder entfernen.'
     else
@@ -504,11 +506,11 @@ doctor() {
     else
         doctor_report FEHLER Docker-Version 'Docker-Version unbekannt oder älter als 24; Daemonzugriff herstellen bzw. Docker aktualisieren.'
     fi
-    if [[ "$docker_present" = 1 ]] && version=$(docker compose version --short 2>/dev/null) && doctor_version_at_least "$version" 2 24 && [[ "${version#v}" = 2.* ]]; then
+    if [[ "$docker_present" = 1 ]] && version=$(docker compose version --short 2>/dev/null) && doctor_version_at_least "$version" 2 24; then
         compose_ready=1
-        doctor_report OK Compose 'Compose v2 mindestens 2.24; dieses Compose-Plugin für start verwenden.'
+        doctor_report OK Compose 'Compose mindestens 2.24; dieses Compose-Plugin für start verwenden.'
     else
-        doctor_report FEHLER Compose 'Compose v2 ab 2.24 fehlt; Docker-Compose-Plugin installieren oder aktualisieren.'
+        doctor_report FEHLER Compose 'Compose ab 2.24 fehlt; Docker-Compose-Plugin installieren oder aktualisieren.'
     fi
     if config_filename_valid && [[ ! -L "$CONFIG" && -f "$CONFIG" ]]; then
         config_present=1
@@ -551,6 +553,87 @@ doctor() {
     [[ "$doctor_errors" = 0 ]]
 }
 
+database_sql() {
+    compose exec -T db psql -X --set ON_ERROR_STOP=1 -U app_migrator -d postgres -Atc "$1"
+}
+
+database_state() {
+    database_sql "SELECT name || '=' || CASE WHEN EXISTS (SELECT 1 FROM pg_database WHERE datname=name) THEN 'present' ELSE 'absent' END FROM (VALUES ('hausverwaltung'), ('hausverwaltung_restore'), ('hausverwaltung_previous')) AS databases(name)"
+}
+
+restore_database_ready() {
+    local previous
+    previous=$(database_sql "SELECT 1 FROM pg_database WHERE datname='hausverwaltung_previous'") || return $?
+    [[ -z "$previous" ]] || {
+        printf 'hausverwaltung_previous already exists; keep the app stopped and inspect it alongside hausverwaltung and any .restore-* directory before recovery. Rename it back if the live database is absent, or remove it only after verifying which data to keep. Verify the live data, then remove any retained .restore-* directory, then retry restore or update.\n' >&2
+        return 1
+    }
+}
+
+recover_restore() {
+    local state documents_state rollback_failed=0 restored_live=0
+    state=$(database_state) || state=unknown
+    # Query actual names: interruption can happen after SQL committed but before
+    # the shell received its exit code. Never discard either database here.
+    if [[ "$state" = *'hausverwaltung_previous=present'* ]]; then
+        if [[ "$state" = *'hausverwaltung=present'* ]]; then
+            if [[ "$state" = *'hausverwaltung_restore=absent'* ]] && \
+                database_sql 'ALTER DATABASE hausverwaltung RENAME TO hausverwaltung_restore'; then
+                :
+            else
+                rollback_failed=1
+            fi
+        fi
+        if [[ "$rollback_failed" = 0 ]]; then
+            database_sql 'ALTER DATABASE hausverwaltung_previous RENAME TO hausverwaltung' || rollback_failed=1
+        fi
+        if [[ "$RESTORE_DOCUMENTS_STARTED" = 1 ]]; then
+            archive_tool rollback-documents || rollback_failed=1
+        fi
+    elif [[ "$state" = *'hausverwaltung=present'* && "$state" = *'hausverwaltung_restore=absent'* ]]; then
+        if [[ "$RESTORE_LIVE_EXISTED" = 1 || "$RESTORE_SWAP_FINISHED" = 1 ]]; then
+            restored_live=1
+        else
+            # With no original database, an incomplete swap can still return
+            # to the initial absent-live state without discarding restored data.
+            database_sql 'ALTER DATABASE hausverwaltung RENAME TO hausverwaltung_restore' || rollback_failed=1
+            if [[ "$RESTORE_DOCUMENTS_STARTED" = 1 ]]; then
+                archive_tool rollback-documents || rollback_failed=1
+            fi
+        fi
+    elif [[ "$state" = unknown ]]; then
+        rollback_failed=1
+    fi
+    # Recovery must finish even if diagnostics cannot be written (closed stderr
+    # or a disconnected pipeline). The EXIT trap ignores PIPE and disables -e.
+    printf 'Restore failed during cutover; keep the app stopped.\n' >&2 || true
+    state=$(database_state) || state=unknown
+    printf 'Installation state:\n%s\n' "$state" >&2 || true
+    documents_state=$(archive_tool document-state) || documents_state='unknown; inspect /data/documents/.restore-*/documents and /data/documents/.restore-*/previous'
+    printf 'documents=%s\n' "$documents_state" >&2 || true
+    if [[ "$restored_live" = 1 ]]; then
+        if [[ "$RESTORE_LIVE_EXISTED" = 1 ]]; then
+            printf 'The previous database was already dropped; restored data remains live.\n' >&2 || true
+        else
+            printf 'No previous database existed; restored data remains live.\n' >&2 || true
+        fi
+        printf 'After verifying the live database and documents, remove the .restore-<id> directory shown above, then run: bash scripts/self-host.sh start\n' >&2 || true
+        return
+    fi
+    if [[ "$RESTORE_LIVE_EXISTED" = 0 ]]; then
+        printf 'No previous database existed; the restored database is retained under the name shown above. Keep the app stopped until recovery is verified.\n' >&2 || true
+    fi
+    if [[ "$rollback_failed" = 1 ]]; then
+        printf 'Automatic rollback failed. Inspect the exact state above before running manual recovery.\n' >&2 || true
+    fi
+    printf '%s\n' \
+        'Recovery SQL (psql -X --set ON_ERROR_STOP=1 -U app_migrator -d postgres in the db service):' \
+        'If hausverwaltung_previous and hausverwaltung exist, and hausverwaltung_restore is absent: ALTER DATABASE hausverwaltung RENAME TO hausverwaltung_restore;' \
+        'Then, if hausverwaltung_previous exists and hausverwaltung is absent: ALTER DATABASE hausverwaltung_previous RENAME TO hausverwaltung;' \
+        'For documents, move any installed restored entries back into the staged documents directory above, then move previous entries back to /data/documents. Keep every .restore-* directory until recovery is verified.' \
+        'After verifying the database and documents, remove the scratch database hausverwaltung_restore and retained .restore-* directory before retrying the archive.' >&2 || true
+}
+
 backup() {
     local out="$ROOT/backups" archive schema
     if [[ "$#" != 0 ]]; then
@@ -560,10 +643,9 @@ backup() {
     command -v openssl >/dev/null || fail 'OpenSSL is required for configuration fingerprints.'
     umask 077
     [[ "$LOCKED" = 1 ]] || lock_config
-    mkdir -p "$out"
+    [[ -d "$out" ]] || mkdir -p -m 700 "$out"
     out=$(cd "$out" && pwd -P)
     [[ "$out" != "$(cd "$ROOT" && pwd -P)" ]] || fail 'Backup output must not be the checkout root.'
-    chmod 700 "$out"
     archive="$out/verwalino-backup-$(date -u +%Y%m%dT%H%M%SZ).tar"
     TMP_DIR=$(mktemp -d "$out/.verwalino-backup.XXXXXX")
     # The installer lock excludes migrations; pg_dump takes a consistent online
@@ -595,13 +677,17 @@ writers_stopped() {
 restore() {
     # Explicit cleanup also works when rollback runs inside Bash 3.2's EXIT trap.
     local TMP_DIR='' RESTORE_DB=0 RESTORE_SCRATCH=0 RESTORE_WINDOW=0 RESTORE_ACTIVE=0 status=0
+    local RESTORE_DOCUMENTS_STARTED=0 RESTORE_LIVE_EXISTED=0 RESTORE_SWAP_FINISHED=0
     restore_data "$@" || status=$?
+    # Standalone restore cleans up before EXIT too; a closed diagnostic pipe
+    # must not interrupt recovery or bypass the outer lock cleanup.
+    trap '' PIPE HUP INT TERM
     restore_cleanup "$status" || :
     return "$status"
 }
 
 restore_data() {
-    local file="${1:-}" yes=0 target confirmation schema restored_schema
+    local file="${1:-}" yes=0 target confirmation schema restored_schema live
     [[ -n "$file" && -f "$file" ]] || { printf 'Usage: restore FILE [--yes]\n' >&2; return 1; }
     shift
     if [[ "$#" != 0 ]]; then
@@ -610,14 +696,15 @@ restore_data() {
     fi
     command -v openssl >/dev/null || { printf 'OpenSSL is required for configuration fingerprints.\n' >&2; return 1; }
     umask 077
-    [[ "$LOCKED" = 1 ]] || lock_config
+    [[ "$LOCKED" = 1 ]] || lock_config || return $?
     writers_stopped || { printf 'Installation is running; first run: bash scripts/self-host.sh stop\n' >&2; return 1; }
     TMP_DIR=$(mktemp -d "$(dirname "$CONFIG")/.env.verwalino-restore.XXXXXX") || return $?
     # Work on a private copy so a changed input cannot bypass verification.
     cp "$file" "$TMP_DIR/archive.tar" || return $?
-    target=$(archive_tool target "$(sed -n "s/^TARGET = '\([0-9][0-9]*\)'$/\1/p" "$ROOT/backend/app/deployment.py")") || return $?
+    target=$(archive_tool target) || return $?
     [[ "$target" =~ ^[0-9]{4}$ ]] || { printf 'Cannot read the image release target.\n' >&2; return 1; }
     schema=$(archive_tool verify "$target" "$(config_fingerprint)") || return $?
+    archive_tool check-documents || return $?
     if [[ "$yes" = 0 ]]; then
         printf 'This replaces the application database and all documents. Type restore to confirm: ' >&2
         IFS= read -r confirmation || { printf 'Restore cancelled; use --yes for non-interactive restore.\n' >&2; return 1; }
@@ -627,6 +714,7 @@ restore_data() {
     RESTORE_DB=1
     RESTORE_ACTIVE=1
     compose up -d --wait --wait-timeout 120 db || return $?
+    restore_database_ready || return $?
     compose exec -T db pg_restore --list < "$TMP_DIR/db.dump" > /dev/null || return $?
     compose exec -T db createdb -U app_migrator -T template0 hausverwaltung_restore || return $?
     RESTORE_SCRATCH=1
@@ -636,12 +724,20 @@ restore_data() {
         -Atc 'SELECT version_num FROM alembic_version') || return $?
     [[ "$restored_schema" = "$schema" ]] || { printf 'Restored database schema head does not match the manifest.\n' >&2; return 1; }
     archive_tool stage-documents || return $?
+    live=$(database_sql "SELECT 1 FROM pg_database WHERE datname='hausverwaltung'") || return $?
+    if [[ -n "$live" ]]; then RESTORE_LIVE_EXISTED=1; fi
     RESTORE_WINDOW=1
-    compose exec -T db dropdb -U app_migrator --if-exists hausverwaltung || return $?
-    compose exec -T db psql -X --set ON_ERROR_STOP=1 -U app_migrator -d postgres \
-        -Atc 'ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung' || return $?
-    RESTORE_SCRATCH=0
+    if [[ "$RESTORE_LIVE_EXISTED" = 1 ]]; then
+        database_sql 'ALTER DATABASE hausverwaltung RENAME TO hausverwaltung_previous' || return $?
+    fi
+    database_sql 'ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung' || return $?
+    RESTORE_DOCUMENTS_STARTED=1
     archive_tool swap-documents || return $?
+    RESTORE_SWAP_FINISHED=1
+    if [[ "$RESTORE_LIVE_EXISTED" = 1 ]]; then
+        database_sql 'DROP DATABASE hausverwaltung_previous' || return $?
+    fi
+    archive_tool discard-documents || return $?
     RESTORE_ACTIVE=0
     compose stop db || return $?
     RESTORE_DB=0
@@ -656,10 +752,12 @@ update_doctor() (
 )
 
 image_config() {
-    local image="$1" destination="$2"
+    local image="$1" destination="$2" permissions
+    permissions=$(stat -c '%a' "$CONFIG" 2>/dev/null || stat -f '%Lp' "$CONFIG") || return 1
     # UPDATE_DIR is beside CONFIG: publication is atomic on the same filesystem.
+    rm -f "$UPDATE_DIR/config.next" || return 1
     awk -v image="$image" '/^VERWALINO_IMAGE=/ {$0="VERWALINO_IMAGE=" image} {print}' "$CONFIG" > "$UPDATE_DIR/config.next" || return 1
-    chmod 600 "$UPDATE_DIR/config.next" || return 1
+    chmod "$permissions" "$UPDATE_DIR/config.next" || return 1
     mv -f "$UPDATE_DIR/config.next" "$destination"
 }
 
@@ -684,14 +782,14 @@ update_recovery() {
     printf 'Rollback failed at %s. Installation state:\n' "$1" >&2
     printf 'Configured image: %s\n' "$(sed -n 's/^VERWALINO_IMAGE=//p' "$CONFIG")" >&2
     for service in app db; do
-        if state=$(compose ps --all --format '{{.State}}|{{.Health}}|{{.ID}}' "$service"); then
+        if state=$(container_state "$service"); then
             printf '%s container state: %s\n' "$service" "${state:-not created}" >&2
         else
             printf '%s container state: unknown\n' "$service" >&2
         fi
     done
     printf 'Database/documents: %s. Backup kept at %s\n' "$2" "$BACKUP_ARCHIVE" >&2
-    printf 'Recovery: keep the app stopped. Resolve the error and inspect any restore state above (DEPLOY.md, Portable update and recovery). Set VERWALINO_IMAGE=%s in the private config using an atomic mode-0600 write.\n' "$UPDATE_PREVIOUS_IMAGE" >&2
+    printf 'Recovery: keep the app stopped. Resolve the error and inspect any restore state above (DEPLOY.md, Portable update and recovery). Set VERWALINO_IMAGE=%s in the private config using an atomic write preserving its mode (0600 or 0400).\n' "$UPDATE_PREVIOUS_IMAGE" >&2
     if [[ -n "$UPDATE_LOCAL_ID" ]]; then
         printf 'Restore the retained local image: docker image tag %q verwalino:local\n' "$UPDATE_LOCAL_ID" >&2
     fi
@@ -702,8 +800,7 @@ update_recovery() {
     printf '%q ' env -u COMPOSE_FILE -u COMPOSE_PROJECT_NAME -u COMPOSE_PROFILES -u COMPOSE_ENV_FILES \
         -u VERWALINO_MODE -u VERWALINO_DOMAIN -u VERWALINO_PORT -u VERWALINO_IMAGE -u VERWALINO_PROXY_SUBNET \
         -u MIGRATOR_PASSWORD -u APP_RW_PASSWORD -u APP_WORKER_PASSWORD -u APP_REVIEW_PASSWORD -u SESSION_SECRET \
-        "VERWALINO_ALLOWED_HOSTS=$VERWALINO_ALLOWED_HOSTS" "VERWALINO_COOKIE_SECURE=$VERWALINO_COOKIE_SECURE" \
-        "VERWALINO_COOKIE_NAME=$VERWALINO_COOKIE_NAME" \
+        "${CONFIG_ENVIRONMENT[@]}" \
         docker compose --project-name verwalino --env-file "$CONFIG" -f "$ROOT/infra/docker-compose.yml" --profile ops >&2
     if [[ "$VERWALINO_MODE" = https ]]; then printf '%q ' --profile https >&2; fi
     printf '%q ' up -d --no-build --pull never --wait --wait-timeout 120 db app >&2
@@ -719,7 +816,7 @@ update_rollback() {
     if [[ -n "$UPDATE_LOCAL_ID" ]]; then
         docker image tag "$UPDATE_LOCAL_ID" "$UPDATE_PREVIOUS_IMAGE" || { update_recovery 'local image restoration' 'not restored'; return 1; }
     fi
-    restore "$BACKUP_ARCHIVE" --yes || { update_recovery restore 'recovery incomplete; see restore diagnostics above'; return 1; }
+    restore "$BACKUP_ARCHIVE" --yes || { update_recovery restore 'snapshot restore did not complete; half-migrated data may remain; see restore diagnostics above'; return 1; }
     if ! { compose up -d --wait --wait-timeout 120 db &&
         compose up -d --no-deps --wait --wait-timeout 120 app && app_health; }; then
         compose stop app || printf 'Could not stop the previous app after failed readiness.\n' >&2
@@ -764,10 +861,16 @@ update() {
     command -v openssl >/dev/null || fail 'OpenSSL is required for configuration fingerprints.'
     lock_config
     load_config
-    update_doctor || fail 'Update refused: doctor reported blockers.'
+    if ! update_doctor; then
+        state=$(container_state app) || state=''
+        if [[ "$state" = restarting\|* || "$state" = running\|unhealthy\|* ]]; then
+            fail 'Update refused: app is restarting or unhealthy. Run bash scripts/self-host.sh stop, then update.'
+        fi
+        fail 'Update refused: doctor reported blockers.'
+    fi
     UPDATE_PREVIOUS_IMAGE="$VERWALINO_IMAGE"
     if [[ "$image" = "$VERWALINO_IMAGE" && "$image" != verwalino:local ]]; then
-        state=$(compose ps --all --format '{{.State}}|{{.Health}}|{{.ID}}' app)
+        state=$(container_state app)
         if [[ "$state" = running\|* ]]; then
             app_health || fail 'Current image failed health checks; no update attempted.'
             printf 'No update needed; already using %s and healthy.\n' "$image"
@@ -800,15 +903,17 @@ update() {
     fi
     TMP_DIR="$UPDATE_DIR/target"
     mkdir "$TMP_DIR"
-    target=$(update_candidate "$candidate" archive_tool target "$(sed -n "s/^TARGET = '\([0-9][0-9]*\)'$/\1/p" "$ROOT/backend/app/deployment.py")")
+    target=$(update_candidate "$candidate" archive_tool target)
     [[ "$target" =~ ^[0-9]{4}$ ]] || fail 'Cannot read the new image release target.'
-    state=$(compose ps --all --format '{{.State}}|{{.Health}}|{{.ID}}' db)
+    state=$(container_state db)
     if [[ "$state" != running\|* ]]; then
         compose up -d --wait --wait-timeout 120 db || fail 'Database not running; run start/doctor before updating.'
     fi
     schema=$(doctor_sql 'SELECT version_num FROM alembic_version') || fail 'Database not running or query failed; run start/doctor before updating.'
     [[ "$schema" =~ ^[0-9]{4}$ ]] || fail 'Missing or ambiguous database schema head.'
     (( 10#$target >= 10#$schema )) || fail 'Update refused: migration downgrades are not supported.'
+    restore_database_ready
+    archive_tool check-documents
     UPDATE_PHASE=stopping
     compose stop app || fail 'Could not stop app; config and data unchanged. Inspect status before restarting.'
     writers_stopped || fail 'Writers remain active; update refused before backup. Inspect status.'
@@ -916,7 +1021,7 @@ fi
 case "$command" in
     help|--help|-h) usage; exit 0 ;;
     init) init_config "$@"; exit 0 ;;
-    doctor) [[ "$#" = 0 ]] || fail 'This command accepts no additional arguments.'; doctor; exit $? ;;
+    doctor) [[ "$#" = 0 ]] || fail 'Dieser Befehl akzeptiert keine zusätzlichen Argumente.'; doctor; exit $? ;;
     start|status|stop) [[ "$#" = 0 ]] || fail 'This command accepts no additional arguments.' ;;
     admin|backup|restore|update) ;;
     *) usage >&2; fail 'Unknown command.' ;;

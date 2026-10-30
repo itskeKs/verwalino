@@ -13,7 +13,7 @@ import pytest
 
 from app.core.config import settings
 from app.core.declaration_test_database import require_disposable_database_settings
-from app.selfhost_backup import pack, replace_documents, verify
+from app.selfhost_backup import discard_documents, pack, stage_documents, swap_documents, verify
 
 pytestmark = [
     pytest.mark.skipif(os.environ.get('VERWALINO_FORMAT_TEST') != '1',
@@ -80,10 +80,15 @@ def test_custom_dump_and_paired_documents_survive_scratch_database_restore(tmp_p
         assert sql(destination, 'SELECT version_num FROM alembic_version') == manifest['schema_head']
         (documents / 'nested/original.pdf').unlink()
         (documents / 'not-in-backup').write_bytes(b'remove on restore')
-        replace_documents(restored, documents)
+        stage_documents(restored, documents)
+        temporary = documents / (restored / 'documents-stage').read_text()
+        swap_documents(restored, documents)
         assert (documents / 'nested/original.pdf').read_bytes() == b'synthetic retained original\x00\xff'
         assert (documents / '.hidden').read_bytes() == b'also retained'
         assert not (documents / 'not-in-backup').exists()
+        assert (temporary / 'previous/not-in-backup').read_bytes() == b'remove on restore'
+        discard_documents(restored, documents)
+        assert not temporary.exists()
         assert ownership and all(call[1:] == (10001, 10001) for call in ownership)
     finally:
         for database in reversed(created):
