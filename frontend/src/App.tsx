@@ -12,6 +12,7 @@ import { AuthProvider } from "./auth/AuthContext";
 import { useAuth } from "./auth/useAuth";
 import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
+import { SignupPage, SignupConfirmPage } from "./pages/SignupPage";
 import { SetupPage } from "./pages/SetupPage";
 import { useSetupStatus } from "./auth/useSetupStatus";
 import { useDeploymentMode } from "./auth/useDeploymentMode";
@@ -86,6 +87,11 @@ export function AppRoutes() {
     );
   }
 
+  if (location.pathname === "/signup" || location.pathname === "/signup/confirm") {
+    if (deployment.mode !== "hosted") return <Navigate to="/login" replace />;
+    return location.pathname === "/signup/confirm" ? <SignupConfirmPage /> : <SignupPage />;
+  }
+
   if (setupRequired) {
     return <Routes>
       <Route path="/setup" element={<SetupPage onClosed={setup.markClosed} />} />
@@ -96,7 +102,7 @@ export function AppRoutes() {
   if (location.pathname === "/setup") return <Navigate to="/login" replace />;
 
   if (!session) {
-    return <LoginPage />;
+    return <LoginPage signupEnabled={deployment.mode === "hosted"} />;
   }
 
   const canWriteDeclarations = session.role === "OWNER_ADMIN" || session.role === "CLERK";
