@@ -52,26 +52,31 @@ Usage notes and operational limits are linked in the documentation table below.
 
 ### Self-hosting
 
-The portable stack ships without AI import and AI Q&A, SMTP and automatic invoice OCR; manual voucher processing works.
-
 Prerequisites: Linux or macOS, Bash, OpenSSL, Docker, and Compose v2 2.24 or later.
 From a checkout on a new host, run:
 
 ```bash
 bash scripts/self-host.sh init
 bash scripts/self-host.sh start
-bash scripts/self-host.sh admin --org "Meine Hausverwaltung" --email admin@example.org
 ```
 
-The app listens at **http://127.0.0.1:18080**. The admin password is prompted for;
-there is no default password. For a new server with a domain, use
-`bash scripts/self-host.sh init --https <domain>` before the first start;
-DNS and public TCP ports 80/443 must be ready for Caddy.
+`init` writes five random secrets to `.env.selfhost` and builds the image from the
+checkout; `start` prints a one-time setup token. Open **http://127.0.0.1:18080/setup**,
+enter the token, your organization, the administrator and a password, and you are
+signed in. There is no default password; the token expires after 24 hours, and
+`start` issues a new one. The CLI alternative is
+`bash scripts/self-host.sh admin --org "Meine Hausverwaltung" --email admin@example.org`.
+For a new server with a domain, use `bash scripts/self-host.sh init --https <domain>`
+before the first start; DNS and public TCP ports 80/443 must be ready for Caddy.
 
-Database and documents live in named volumes. Back up the private configuration,
-database, and documents together. This is not yet a general production release.
-See [portable installation](DEPLOY.md#portable-docker-first-installation) for
-HTTPS, image selection, operation, backups, and the remaining acceptance limits.
+The portable stack ships without AI import and AI Q&A, SMTP and automatic invoice
+OCR; manual voucher processing works. Database and documents live in named volumes:
+back up the private configuration, database, and documents together. A signed
+multi-arch image on `ghcr.io/itskeks/verwalino` is prepared but not published yet;
+this is not yet a general production release. See
+[portable installation](DEPLOY.md#portable-docker-first-installation) for HTTPS,
+image verification and selection, operation, backups, and the remaining
+acceptance limits.
 
 ### Local development
 
