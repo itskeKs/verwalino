@@ -1,6 +1,7 @@
 ---
 import { t, type Locale } from "../i18n";
 import { pathFor } from "../content/routes";
+import Rich from "./Rich.astro";
 interface Props { locale: Locale }
 const { locale } = Astro.props;
 const text = t(locale);
@@ -47,7 +48,7 @@ const text = t(locale);
 </ul>
 </div>
 <figure class="statement-figure">
-<div class="paper" aria-label={text("visual.sheetlabel")} >
+<div class="paper" role="img" aria-label={text("visual.sheetlabel")}>
 <div class="paper-top">
 <span>Muster Hausverwaltung</span>
 <strong>2026</strong>
@@ -497,22 +498,14 @@ const text = t(locale);
 <span>bash · Docker Compose</span>
 </div>
 <div class="code-scroll" tabindex="0" role="region" aria-label={text("visual.codescroll")} >
-<pre>
-<code>
-<span class="comment">{text("s.term.c1")}</span>
-<span class="command">bash scripts/self-host.sh init</span>
-<span class="command">bash scripts/self-host.sh start</span>
-<span class="command">bash scripts/self-host.sh admin --org "Muster Hausverwaltung" --email admin@example.org</span>
-<span class="comment">{text("s.term.c2")}</span>
-</code>
-</pre>
+<pre><code><span class="comment">{text("s.term.c1")}</span><span class="command">bash scripts/self-host.sh init</span><span class="command">bash scripts/self-host.sh start</span><span class="command">bash scripts/self-host.sh admin --org "Muster Hausverwaltung" --email admin@example.org</span><span class="comment">{text("s.term.c2")}</span></code></pre>
 </div>
 </div>
 <details class="guide">
 <summary>
 <span>{text("self.guide")}</span>
 </summary>
-<p>{text("self.guide.body")} <a class="text-link" href={pathFor(locale, "selfhost")}>{text("self.guide")}</a></p>
+<p><Rich value={text("self.guide.body")} /> <a class="text-link" href={pathFor(locale, "selfhost")}>{text("self.guide")}</a></p>
 </details>
 <p class="planned">{text("self.future")}</p>
 </article>

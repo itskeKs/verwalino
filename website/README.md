@@ -36,7 +36,8 @@ origin. The app CTA uses the planned placeholder `https://app.verwalino.de`, exp
 
 - `src/content/routes.ts`: shared route names and translated paths, including error pages.
 - `src/i18n/de.json` and `src/i18n/en.json`: flat translation dictionaries. Add every key to both;
-  `t(locale)` provides typed access without client-side translation code.
+  `t(locale)` provides typed access without client-side translation code. In running text, wrap
+  flags, file names, paths and URLs in backticks; `Rich.astro` renders them as non-wrapping `<code>`.
 - `src/components/Page.astro`: selects one shared page component for both languages.
 - `src/pages/[...path].astro`: generates the ordinary routes. The two small error-page entries
   reuse the same component and layout; German builds to `404.html`, English to `en/404/index.html`.
@@ -61,9 +62,11 @@ npm run build
 npm run check:links
 ```
 
-`lint` runs `astro check`. `check:i18n` requires matching non-empty dictionary keys.
-`check:links` parses every built HTML document with parse5, verifies internal `href` and `src`
-targets and HTML fragments, and prints external URLs without fetching them. It accepts an optional
+`lint` runs `astro check`. `check:i18n` requires matching non-empty dictionary keys and matching backtick pairs.
+`check:links` parses every built HTML document with parse5, verifies internal `href`, `src` and
+`srcset` targets and HTML fragments, and fails on any external URL outside a short allowlist
+(`https://app.verwalino.de`) or on `mailto:`/`tel:` links outside the imprint pages; it never
+fetches external URLs. It accepts an optional
 directory argument for fixtures. It reads the built canonical origin, so it also checks absolute
 internal URLs after a build with a custom `SITE_URL`. CI runs these checks using Node 22 for
 changes to this directory or its workflow. CI builds and checks files; no deployment is configured.

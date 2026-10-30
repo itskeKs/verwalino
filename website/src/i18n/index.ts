@@ -7,3 +7,8 @@ const dictionaries = { de, en };
 export function t(locale: Locale) {
   return (key: TranslationKey): string => dictionaries[locale][key];
 }
+
+/** Splits a string at backtick pairs; odd parts are code fragments (flags, files, paths, URLs). */
+export function richParts(value: string): { code: boolean; text: string }[] {
+  return value.split('`').map((text, index) => ({ code: index % 2 === 1, text })).filter(part => part.text);
+}

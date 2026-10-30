@@ -8,8 +8,14 @@ const missing = keys.flatMap((list, index) => list.filter((key) =>
 const empty = dictionaries.flatMap((dictionary, index) => Object.entries(dictionary)
   .filter(([, value]) => typeof value !== 'string' || !value.trim())
   .map(([key]) => `${key} is empty in ${index ? 'en' : 'de'}`));
-if (missing.length || empty.length) {
-  console.error([...missing, ...empty].join('\n'));
+// Backticks mark code fragments (flags, files, paths, URLs) rendered by Rich.astro; they must pair up and match in both languages.
+const fragments = (value) => (value.match(/`/g) || []).length;
+const markup = Object.keys(dictionaries[0]).filter((key) => Object.hasOwn(dictionaries[1], key)
+  && typeof dictionaries[0][key] === 'string' && typeof dictionaries[1][key] === 'string'
+  && (fragments(dictionaries[0][key]) % 2 || fragments(dictionaries[0][key]) !== fragments(dictionaries[1][key])))
+  .map((key) => `${key} has unbalanced or differing code fragments in de and en`);
+if (missing.length || empty.length || markup.length) {
+  console.error([...missing, ...empty, ...markup].join('\n'));
   process.exitCode = 1;
 } else {
   console.log(`i18n: ${keys[0].length} matching, non-empty keys in de and en`);

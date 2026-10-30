@@ -1,5 +1,6 @@
 ---
 import { t, type Locale } from '../i18n';
+import Rich from './Rich.astro';
 interface Props { locale: Locale }
 const { locale } = Astro.props;
 const text = t(locale);
@@ -27,7 +28,7 @@ const planned = ['installer', 'image', 'backup', 'update', 'setup', 'doctor', 'm
   </section>
   {sections.filter(section => section !== 'requirements').map(section => <section aria-labelledby={section}>
     <h2 id={section}>{text(`self.${section}.title`)}</h2>
-    <p>{text(`self.${section}.body`)}</p>
+    <p><Rich value={text(`self.${section}.body`)} /></p>
   </section>)}
   <p><a class="text-link" href="#repository-guide">{text('self.repository')}</a></p>
   <section class="unreleased" aria-labelledby="unreleased">
@@ -38,7 +39,7 @@ const planned = ['installer', 'image', 'backup', 'update', 'setup', 'doctor', 'm
   </section>
   <section id="repository-guide" aria-labelledby="repository-title">
     <h2 id="repository-title">{text('self.repository')}</h2>
-    <p>{text('self.repository.body')}</p>
+    <p><Rich value={text('self.repository.body')} /></p>
     <p class="source">{text('source')}</p>
   </section>
 </article>
