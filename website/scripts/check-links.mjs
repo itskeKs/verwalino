@@ -2,10 +2,11 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve, relative, sep } from 'node:path';
 import { parse } from 'parse5';
+import { operator } from '../src/content/operator.ts';
 
 // External targets the site may link to. Anything else fails the check.
 const allowedExternal = ['https://app.verwalino.de/', 'https://app.verwalino.de'];
-const allowedMail = 'mailto:hello@fogu.app';
+const allowedMail = `mailto:${operator.email}`;
 const contactFiles = ['impressum', 'legal-notice'];
 const dist = resolve(process.argv[2] || fileURLToPath(new URL('../dist/', import.meta.url)));
 async function filesIn(directory) {

@@ -6,6 +6,8 @@ or runtime third-party requests are used. The only browser scripts control the t
 menu. The theme preference is stored locally when storage is available; language is determined
 by the URL. FAQ entries use native `details` elements.
 
+[DESIGN.md](../DESIGN.md) is the app's frontend contract and does not cover `website/`.
+
 ## Develop and build
 
 Use Node 22.12 or later and npm:
@@ -29,14 +31,15 @@ SITE_URL=https://verwalino.example npm run build
 
 The default is `https://verwalino.example`. Paths, credentials, queries and fragments are rejected.
 Canonical URLs, language alternates, Open Graph URLs, sitemap URLs and `robots.txt` all use this
-origin. The app CTA uses the planned placeholder `https://app.verwalino.de`, explicitly labelled
-“demnächst” / “coming soon”; registration is not open.
+origin. The sign-up page shows a disabled “demnächst” / “coming soon” button without a link;
+registration is not open.
 
 ## Structure and languages
 
 - `src/content/routes.ts`: shared route names and translated paths, including error pages.
 - `src/i18n/de.json` and `src/i18n/en.json`: flat translation dictionaries. Add every key to both;
-  `t(locale)` provides typed access without client-side translation code. In running text, wrap
+  `t(locale)` provides typed access and fills `{operator.field}` placeholders from `operator.ts`
+  without client-side translation code. In running text, wrap
   flags, file names, paths and URLs in backticks; `Rich.astro` renders them as non-wrapping `<code>`.
 - `src/components/Page.astro`: selects one shared page component for both languages.
 - `src/pages/[...path].astro`: generates the ordinary routes. The two small error-page entries
@@ -50,8 +53,12 @@ origin. The app CTA uses the planned placeholder `https://app.verwalino.de`, exp
 Every page links to its corresponding page in the other language, with `html lang`, `de` / `en`
 / `x-default` alternates, a canonical URL and localized Open Graph metadata. The sitemap integration
 uses the translated route table so different slugs remain paired. Error pages are excluded from
-indexing. Fonts are Latin-subset WOFF2 files from the three Fontsource packages, using swap;
-the bold display face is preloaded.
+indexing and the sitemap, as are privacy, terms and DPA drafts in both languages until legal
+review (#26); the imprint remains indexable. Fonts are Latin-subset WOFF2 files from the three
+Fontsource packages, using swap; the bold display face is preloaded.
+
+The [desktop screenshot](../docs/assets/website/landing-de-1280.png) shows the German landing page at 1280 px.
+The [mobile screenshot](../docs/assets/website/landing-de-360.png) shows the German landing page at 360 px.
 
 ## Checks
 
@@ -86,8 +93,7 @@ npm run og
 HEADLESS_CHROMIUM=/absolute/path/to/chrome-headless-shell npm run og
 ```
 
-The default binary is
-`~/Library/Caches/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-mac-x64/chrome-headless-shell`.
+`HEADLESS_CHROMIUM` overrides the macOS default `~/Library/Caches/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-mac-x64/chrome-headless-shell`.
 The renderer uses `playwright-core`; it does not download a browser. Rebuild after regenerating
 images. Review and commit the resulting `public/og/` PNGs and `public/apple-touch-icon.png`.
 
