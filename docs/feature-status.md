@@ -15,6 +15,7 @@ history). Update this page in the same PR whenever a feature's status changes.
 | --- | --- | --- | --- |
 | Browser first-run setup | n/a | ✅ one-time installer token, 24-hour expiry, atomic first organization/admin; real-stack acceptance pending | `api/setup.py`, `pages/SetupPage.tsx`, `scripts/self-host.sh`, issue #8 |
 | Manual diagnostics reports | n/a | ✅ admin download and installer bundle with structural redacted logs; manual attachment only, fake-Docker acceptance | `diagnostics.py`, `api/diagnostics.py`, `pages/UsersPage.tsx`, `scripts/self-host.sh`, issue #17 |
+| Request IDs and opt-in error tracking | n/a | ✅ response/log correlation always enabled; API error events scrubbed before sending, tracking off by default | `core/request_id.py`, `core/logging.py`, `core/error_tracking.py`, `core/scrub.py`, `DEPLOY.md`, issue #16 |
 | Login/logout | yes | ✅ | `api/auth.py`, `pages/LoginPage.tsx` |
 | Create users | yes | ✅ admin-only form and user management | `api/users.py`, `pages/UsersPage.tsx`, T06, T57 |
 | Roles admin/clerk/read-only | yes | ✅ admin can change role and deactivate; write buttons hidden for read-only | `core/rbac.py` (`OWNER_ADMIN`, `CLERK`, `READ_ONLY`), T57 |
@@ -48,7 +49,7 @@ history). Update this page in the same PR whenever a feature's status changes.
 | Change/end lease, tenant change | yes | ✅ end and note always editable; amounts locked (409) once payments are booked or a settlement is final | `api/leases.py` (`PATCH /{id}`), `pages/UnitDetailPage.tsx`, T04 |
 | Rent change with effective date | yes | ✅ | `models/lease_rent_change.py`, `api/leases.py` (`/rent-changes`), `engine/mietkonto.py`, T23, T24 |
 | Graduated (Staffel) / index rent | yes | ✅ | `api/leases.py` (`/rent-changes/staffel`, `/rent-changes/index`), `engine/index_rent.py`, T43, T44 |
-| Security deposit management | partial | 🟡 target, paid and refunded tracked; no interest accrual/credit | `engine/mietkonto.py` (`deposit_statement`), `api/payments.py` (`/deposits`), `pages/DepositsPage.tsx`, T25 |
+| Security deposit management | partial | 🟡 target, paid and refunded tracked; no installments, no recording of interest credits | `engine/mietkonto.py` (`deposit_statement`), `api/payments.py` (`/deposits`), `pages/DepositsPage.tsx`, T25 |
 | Lease template, handover protocol | yes | ❌ only generic letter templates exist (see Documents, communication, reports) | – |
 
 ## Tenant ledger, bank and payments
@@ -126,11 +127,16 @@ history). Update this page in the same PR whenever a feature's status changes.
 
 ## Gaps
 
-- Photos (Properties and units): no photo upload or display for properties or units.
-- Security deposit management (People and tenancies): no interest accrual or credit for the deposit account.
-- Lease template, handover protocol (People and tenancies): neither a lease contract template nor a handover protocol exists; only generic letter templates.
-- Bank retrieval PSD2/FinTS (Tenant ledger, bank and payments): no automatic bank statement retrieval; import is by CSV/CAMT file only.
-- Inbox (Posteingang) with review chain (Vouchers and costs): intake pipeline stages are not started by any Compose service (`workers/workflow_runner.py`); verify end-to-end operation and add a worker service.
-- Maintenance reserve (Erhaltungsrücklage) (WEG): opening balance and withdrawals are manual inputs; no reserve ledger or bank-account tracking.
-- Tenant portal (Documents, communication, reports): not built.
-- Year overview per property (Anlage V) (Documents, communication, reports): no Anlage V line mapping or form-ready output.
+- Source access protection (Access and organization): implemented but off (mode `PREPARATION`), and its admin screens are five separate menu items (#73).
+- Photos (Properties and units): no photo upload or display for properties or units (#39).
+- Advance payments (People and tenancies): a lease has one combined advance; operating-cost and heating advances are not separate (#67).
+- Security deposit management (People and tenancies): no installments with due dates (#70) and no booking of interest credits (#38).
+- VAT-liable letting (People and tenancies): no VAT on rent, advances and statements for units with the VAT option (#71); no input VAT apportionment (#72).
+- Lease template, handover protocol (People and tenancies): neither a lease contract template nor a handover protocol exists; only generic letter templates (#37).
+- Bank retrieval PSD2/FinTS (Tenant ledger, bank and payments): no automatic bank statement retrieval; import is by CSV/CAMT file only (#40).
+- Inbox (Posteingang) with review chain (Vouchers and costs): intake pipeline stages are not started by any Compose service (`workers/workflow_runner.py`); verify end-to-end operation and add a worker service (#35).
+- Settlement period (Operating and heating cost statements): the property's period start month is stored but statements and economic plans do not use it; periods are not validated for length or overlap (#68).
+- Maintenance reserve (Erhaltungsrücklage) (WEG): opening balance and withdrawals are manual inputs; no reserve ledger or bank-account tracking (#36).
+- Dunning fees and default interest (Dunning, deadlines, tasks): fees are fixed constants and interest needs a base rate typed per notice; neither is configurable per organization (#69).
+- Tenant portal (Documents, communication, reports): not built; planned right after the hosted launch (#41).
+- Year overview per property (Anlage V) (Documents, communication, reports): no Anlage V line mapping or form-ready output (#34).

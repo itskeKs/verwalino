@@ -37,8 +37,8 @@ async def unhandled_error(request: Request, error: Exception) -> JSONResponse:
     import sentry_sdk
     from app.core.error_tracking import request_state
 
-    # A stream can fail after user middleware has unwound. Restore its state
-    # while the outer ServerErrorMiddleware invokes this handler.
+    # User middleware has unwound by the time ServerErrorMiddleware invokes
+    # this handler. Restore its state for reporting and logging.
     with correlation_context(request.state.request_id):
         state_token = request_state.set(request.scope["state"])
         try:
@@ -49,7 +49,7 @@ async def unhandled_error(request: Request, error: Exception) -> JSONResponse:
             request_state.reset(state_token)
     return JSONResponse(status_code=500, content={
         "detail": "Internal Server Error", "request_id": request.state.request_id,
-    })
+    }, headers={"X-Request-ID": request.state.request_id})
 
 
 async def http_error(request: Request, error: HTTPException) -> JSONResponse:
@@ -66,11 +66,7 @@ async def http_error(request: Request, error: HTTPException) -> JSONResponse:
 
 
 class RequestIdMiddleware:
-    """Run outside the perimeter and catch failures before context is reset.
-
-    Starlette's outer ServerErrorMiddleware otherwise generates its 500 after
-    user middleware has unwound, losing both the context and response header.
-    """
+    """Correlate perimeter responses and logs while allowing errors to propagate."""
 
     def __init__(self, app: ASGIApp):
         self.app = app
@@ -83,12 +79,9 @@ class RequestIdMiddleware:
         supplied = values[0] if len(values) == 1 else ""
         value = supplied if is_valid_request_id(supplied) else str(uuid4())
         scope.setdefault("state", {})["request_id"] = value
-        started = False
 
         async def send_with_id(message: Message) -> None:
-            nonlocal started
             if message["type"] == "http.response.start":
-                started = True
                 message = dict(message)
                 message["headers"] = [(key, val) for key, val in message.get("headers", []) if key.lower() != b"x-request-id"] + [(b"x-request-id", value.encode("ascii"))]
             await send(message)
@@ -98,12 +91,5 @@ class RequestIdMiddleware:
             state_token = request_state.set(scope["state"])
             try:
                 await self.app(scope, receive, send_with_id)
-            except Exception as error:
-                if started:
-                    # The outer error handler reports this once; propagating
-                    # also lets the server abort the incomplete response.
-                    raise
-                response = await unhandled_error(Request(scope), error)
-                await response(scope, receive, send_with_id)
             finally:
                 request_state.reset(state_token)

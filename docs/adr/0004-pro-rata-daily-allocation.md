@@ -2,7 +2,6 @@
 
 Status: **Proposed** (confirmation by the human pending — no code/commit yet)
 Date: 2026-06-01 · Context: M3 · Reference: [../m3-abrechnungs-engine.md](../m3-abrechnungs-engine.md) §3 · [../sdd-property-management-mvp.md](../sdd-property-management-mvp.md) §6.9, §14 · SDD §18 (indirect)
-Author: `engine-correctness` (Opus 4.8)
 
 > This ADR decides the **basis of the pro rata period calculation** in case of a mid-year owner/tenant change and vacancy, which is required by roadmap M3 and SDD §14 but not defined there. It is a **[DECISION]** for the human — the ADR documents the recommendation and the consequences, but does not replace the domain confirmation.
 

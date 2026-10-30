@@ -7,6 +7,8 @@ Rules for coding agents, which apply to people too, are in [AGENTS.md](AGENTS.md
 
 - Python with [uv](https://docs.astral.sh/uv/), Node 22, Docker (for the test database only).
 - Backend dependencies: `cd backend && uv sync --extra dev --extra ops --extra ocr`.
+- Browser setup (once, and after Playwright lock updates):
+  `cd backend && uv run --locked --extra dev playwright install chromium`.
 - Frontend dependencies: `cd frontend && npm ci` (`make frontend-deps` does it when needed).
 - Test database: `docker compose -f infra/docker-compose.declaration-test.yml up -d` starts
   `infra-postgres-1` on `127.0.0.1:55432` (in-memory, recreated on restart);
@@ -17,9 +19,12 @@ Rules for coding agents, which apply to people too, are in [AGENTS.md](AGENTS.md
 
 ## Agent host setup
 
-Claude Code loads `.claude/rules/*.md` and Coddy reads the same tree. Cursor uses the paired
-`.cursor/rules/*.mdc`. A Claude rule without `paths` is always on; otherwise its `paths` match
-the Cursor `globs`, with `alwaysApply: false`. Keep bodies and descriptions equivalent.
+Root `AGENTS.md` is the common policy for every host; `CLAUDE.md` is a symlink to it (the
+checkout must preserve symlinks, which Git does by default). Claude Code loads `.claude/rules/*.md`
+and Coddy reads the same tree. Cursor uses the paired `.cursor/rules/*.mdc`. A Claude rule without
+`paths` is always on; otherwise its `paths` match the Cursor `globs`, with `alwaysApply: false`.
+Keep bodies and descriptions equivalent and change both trees in the same commit (Rules Sync);
+`make test-agent-rules` checks parity, the symlink and the hook.
 
 For Codex, trust this checkout's project configuration and run **`/hooks` once per clone** to
 review and approve both handlers in `.codex/hooks.json`. Review approval again after changing
@@ -40,14 +45,20 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
 - **`make test`** — the whole run before a merge: agent-rule and installer contracts, the backend
   suite (including the BDD scenarios), frontend vitest and typecheck. Needs the test database.
 - **`make lint`** — ruff over the backend, eslint and `tsc` over the frontend.
-- **`make test-bdd`** — only the scenarios in `features/` ([features/README.md](features/README.md)).
-- **`make test-agent-rules`** — paired bodies/activation and Codex hook contracts; Python stdlib,
-  no database or backend dependencies. Run after changing rules or the adapter.
+- **`make test-bdd`** — API scenarios in `features/` ([features/README.md](features/README.md)).
+- **`make test-browser`** — headless `@browser` scenarios; acquires the shared DB lock and
+  owns/stops its local API and Vite stack. See [browser setup and runner](features/README.md#browser-features).
+- **`make test-agent-rules`** — paired bodies/activation, the `CLAUDE.md` symlink and Codex hook
+  contracts; Python stdlib, no database or backend dependencies. Run after changing rules or the adapter.
 - **`make docs-check`** — relative links and images in every Markdown file outside `docs/archive/`.
 - While iterating, run one file: `cd backend && uv run pytest tests/test_x.py -k name`,
   `cd frontend && npm test -- src/pages/X.test.tsx`; `make test-backend PYTEST_ARGS="…"` does the
   same with the test environment loaded.
 - The backend suite truncates tables in the shared test database: never run two suites at once.
+  For direct pytest runs or a dev stack, acquire the lock in that same shell with
+  `until mkdir /tmp/verwalino-testdb.lock 2>/dev/null; do sleep 10; done` and
+  `trap 'rmdir /tmp/verwalino-testdb.lock' EXIT`; stop the stack before releasing it.
+  `make test-backend`, `make test-bdd` and `make test-browser` acquire/release the lock themselves.
 
 The pre-commit hook (`.githooks/pre-commit` → `scripts/checks.sh`) runs ruff when backend Python
 is staged, eslint on staged frontend TypeScript files, and always the docs link check.
@@ -83,6 +94,7 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 |---|---|
 | `backend` | ruff and the full backend suite with BDD scenarios against Postgres 16 with RLS |
 | `frontend` | eslint, TypeScript, vitest |
+| `browser` | locked Chromium, real UI journeys (`make test-browser`) |
 | `docs` | no broken relative links; paired rule parity and Codex hook contracts |
 
 ## Where things live
@@ -91,9 +103,9 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 |---|---|
 | `backend/app/` | `api/` routes, `services/`, `engine/` (pure calculations), `models/`, `workers/` |
 | `backend/migrations/versions/` | Alembic migrations; committed ones are never edited |
-| `backend/tests/` | unit and API tests; `bdd/` binds the scenarios |
-| `features/` | Gherkin scenarios (executable specs) |
+| `backend/tests/` | unit and API tests; `bdd/` binds scenarios, `bdd/browser.py` owns browser fixtures, `bdd/steps/browser_*.py` shares browser steps |
+| `features/` | API and `@browser` Gherkin scenarios (executable specs) |
 | `frontend/src/` | `pages/`, `components/`, `api/`, `lib/` |
-| `scripts/` | dev, self-host, deploy, checks; `acceptance/` holds legacy browser scripts (being migrated, #5) |
+| `scripts/` | dev, self-host, deploy, checks; `acceptance/` holds legacy browser scripts (being migrated, #54) |
 | `DESIGN.md` | frontend design contract: tokens, layout, components, states, copy and formats; screenshots in `docs/assets/design/` |
 | `docs/` | architecture, domain pages (`m*.md`), ADRs, operations, roadmap, feature status |

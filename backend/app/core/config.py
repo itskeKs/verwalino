@@ -54,7 +54,6 @@ class Settings(BaseSettings):
     # --- Optional errors-only tracker (empty DSN leaves reporting disabled) ---
     error_tracking_dsn: SecretStr = SecretStr("")
     error_tracking_environment: str = "selfhost"
-    error_tracking_sample_rate: float = Field(1.0, ge=0, le=1, allow_inf_nan=False)
 
     # Operator-supplied percentage, not an assumed official market rate.
     # None retains legacy zero-interest behavior.

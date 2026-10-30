@@ -2,7 +2,6 @@
 
 Status: **Proposed** (confirmation by the human pending — no code/commit yet)
 Date: 2026-06-02 · Context: M6 · Reference: [../m6-zahlungen-mietkonto.md](../m6-zahlungen-mietkonto.md) §1, §2, §3, §5 · [0003-gobd-immutability-mechanism.md](0003-gobd-immutability-mechanism.md) (reused pattern) · [0005-rounding-largest-remainder.md](0005-rounding-largest-remainder.md) · [0007-weg-settlement-balance-and-economic-plan.md](0007-weg-settlement-balance-and-economic-plan.md) · [../architecture.md](../architecture.md) §2.6, §3, §5.1 · [../sdd-property-management-mvp.md](../sdd-property-management-mvp.md) §6.3, §6.7, §14, §16, §17, §18
-Author: `engine-correctness` (Opus 4.8)
 
 > This ADR decides two related core M6 questions: (1) whether the **expected position** (`open_item`) is **derived** (computed at runtime) or **persisted** (materialized), and (2) whether a captured **payment** carries the GoBD voucher character and is therefore **immutable** (correction = reversal + rebooking) or editable. Both are **[DECISION]** items for the human. Open domain/§18 points are marked **[§18/domain]**.
 

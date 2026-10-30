@@ -75,6 +75,20 @@ async def test_error_responses_keep_the_correlation_header(path, status, error_r
         assert response.headers["Retry-After"] == "10"
 
 
+async def test_unhandled_exceptions_propagate_and_reset_request_context(error_routes, caplog):
+    from app.core.error_tracking import request_state
+    from app.core.request_id import request_id
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        with pytest.raises(RuntimeError, match="private failure"):
+            await client.get(error_routes + "/crash", headers={"X-Request-ID": "propagate-123"})
+    assert request_id.get() == "-"
+    assert request_state.get() is None
+    records = [record for record in caplog.records if record.name == "app.core.request_id"]
+    assert len(records) == 1
+    assert records[0].request_id == "propagate-123"
+
+
 async def test_upload_limit_response_also_has_a_request_id():
     from app.core.uploads import MAX_REQUEST_BODY_BYTES
 
