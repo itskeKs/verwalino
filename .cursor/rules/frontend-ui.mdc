@@ -1,0 +1,20 @@
+---
+description: German UI formats and existing React components
+globs:
+  - "frontend/**"
+alwaysApply: false
+---
+
+# Frontend UI
+
+- Write visible copy and errors in German. Format money as `1.234,56 €` and
+  dates as `TT.MM.JJJJ`; follow existing formatting at the call site.
+- Reuse `frontend/src/components/ui/`, existing page patterns,
+  `frontend/src/index.css` and `frontend/src/lib/utils.ts` before adding styles
+  or components. This checkout has no DESIGN.md.
+- Report real outcomes; no placeholder success or "everything OK" for an empty
+  result. Preserve useful inputs when a request fails.
+- Check long German names, four-digit amounts, many rows and narrow screens.
+  Keep labels, keyboard access and error feedback usable.
+- Put interaction regressions in the area's existing `*.test.tsx` file and run
+  it with `cd frontend && npm test -- src/pages/X.test.tsx` (use the actual file).

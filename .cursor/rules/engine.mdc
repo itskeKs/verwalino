@@ -1,0 +1,20 @@
+---
+description: Pure calculations with exact decimal rounding
+globs:
+  - "backend/app/engine/**"
+  - "backend/tests/engine/**"
+alwaysApply: false
+---
+
+# Calculation engine
+
+- Keep `backend/app/engine/` pure: explicit inputs and outputs, no database,
+  network, filesystem, implicit clock or mutable global state.
+- Use `Decimal` for money and shares, constructed from strings or integers,
+  never floats.
+- Reuse `backend/app/engine/rounding.py` and follow
+  `docs/adr/0005-rounding-largest-remainder.md`: commercial cent rounding,
+  largest-remainder distribution, deterministic ties and shares summing exactly
+  to the total. Do not round intermediate values arbitrarily.
+- Extend the existing golden tests in `backend/tests/engine/test_golden*.py`
+  for changed calculations; include uneven shares and four-digit amounts.

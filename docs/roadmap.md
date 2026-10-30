@@ -29,7 +29,9 @@ What exists today: [feature-status.md](feature-status.md).
 2. #2 Executable specs with pytest-bdd (pilot)
 3. #3 English documentation, this roadmap, issue-based tasks
 4. #4 Organization isolation sweep over every API route
-5. #5 Migrate browser acceptance scripts to features
+5. #44 Area-scoped agent rules for Claude Code, Cursor and Codex
+6. #45 DESIGN.md — the frontend design contract
+7. #5 Migrate browser acceptance scripts to features
 
 ### 2 Self-hosting ready
 

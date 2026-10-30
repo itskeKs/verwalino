@@ -17,7 +17,7 @@ UV_LINT := uv run --locked --extra dev
 # Extra pytest arguments, e.g. make test-backend PYTEST_ARGS="-q tests/test_x.py -k name"
 PYTEST_ARGS ?= -q
 
-.PHONY: help test test-backend test-installer test-frontend test-bdd typecheck lint lint-backend lint-frontend \
+.PHONY: help test test-agent-rules test-backend test-installer test-frontend test-bdd typecheck lint lint-backend lint-frontend \
         docs-check frontend-deps hooks check-testdb
 
 help: ## List the documented targets
@@ -25,7 +25,10 @@ help: ## List the documented targets
 
 # ---- tests -----------------------------------------------------------------
 
-test: test-installer test-backend test-frontend typecheck ## Express run before every push: backend pytest (whole suite, incl. tests/bdd) + installer contracts + frontend vitest + typecheck
+test: test-agent-rules test-installer test-backend test-frontend typecheck ## Whole suite before a merge: agent rules + installer contracts + backend pytest (incl. BDD) + frontend vitest + typecheck
+
+test-agent-rules: ## Paired agent rules and Codex hook contracts (stdlib only; no DB)
+	python3 -B scripts/test_agent_rules.py
 
 test-backend: check-testdb ## Backend pytest against the test DB (PYTEST_ARGS="-q tests/test_x.py -k name" narrows it)
 	@( . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest $(PYTEST_ARGS) )

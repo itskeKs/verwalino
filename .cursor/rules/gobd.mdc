@@ -1,0 +1,22 @@
+---
+description: Immutable financial originals and retention
+globs:
+  - "backend/app/models/**"
+  - "backend/app/services/**"
+  - "backend/app/engine/snapshot.py"
+  - "backend/app/core/storage.py"
+alwaysApply: false
+---
+
+# GoBD and retention
+
+- Preserve confirmed costs, booked payments, released vouchers and finalized
+  snapshots. Keep content and original files immutable, including in migrations.
+- Correct a booking by reversal or an existing version/supersession path; retain
+  the original, its references, checksum and audit trail. Never delete it to fix it.
+- Preserve database immutability guards and add negative tests for changed paths,
+  following `docs/adr/0003-gobd-immutability-mechanism.md`.
+- Respect `retention_until` and existing retention-binding checks. GDPR operations
+  restrict retained data instead of erasing or rewriting originals; use
+  `docs/adr/0012-gdpr-erasure-vs-gobd-retention.md` and
+  `backend/app/services/dsgvo_service.py`. Do not invent new retention policy.
