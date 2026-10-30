@@ -145,6 +145,8 @@ unavailable until source assignment can prove complete document coverage.
 
 ### Scoped dunning
 
+The Open Items shortcut, scope retention and draft discard journey is now a [browser feature](../../features/scoped_dunning.feature).
+
 Tenant dunning selects a rental accounting scope and a matching lease whose term
 overlaps the requested period. Open Items carries that scope into the draft form;
 the form checks the live preparation permission before enabling creation. Failed

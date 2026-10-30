@@ -48,7 +48,8 @@ Scoped rules add context, not enforcement; every baseline and safety rule here s
 | `make lint` | ruff (backend), eslint and `tsc --noEmit` (frontend) |
 | `make test` | agent rules, installer contracts, backend pytest (with BDD), frontend vitest and typecheck |
 | `make test-agent-rules` | paired rule parity and Codex hook contracts (no DB) |
-| `make test-bdd` | only the `features/` scenarios |
+| `make test-bdd` | API scenarios in `features/` |
+| `make test-browser` | headless `@browser` scenarios; owns the shared DB lock and local stack |
 | `make docs-check` | relative links in all Markdown outside `docs/archive/` |
 | `make hooks` | enables `.githooks/pre-commit` (ruff and eslint on staged code, docs link check) |
 
