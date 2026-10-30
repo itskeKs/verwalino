@@ -49,3 +49,4 @@ from tests.bdd.steps.organization import *  # noqa: E402,F401,F403
 from tests.bdd.steps.password import *  # noqa: E402,F401,F403
 from tests.bdd.steps.bank_import import *  # noqa: E402,F401,F403
 from tests.bdd.steps.setup import *  # noqa: E402,F401,F403
+from tests.bdd.steps.diagnostics import *  # noqa: E402,F401,F403

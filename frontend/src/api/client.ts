@@ -24,11 +24,19 @@ function financialInputMessage(detail: { blockers?: { code: string }[] }): strin
   return "Datengrundlage unvollständig oder geändert. Bitte Beträge und Zeitraum prüfen und die Vollständigkeit erneut bestätigen.";
 }
 
+let lastErrorRequestId: string | null = null;
+
+export function getLastErrorRequestId(): string | null {
+  return lastErrorRequestId;
+}
+
 function withRequestId(response: Response, detail: string): string {
   const requestId = response.headers.get("X-Request-ID");
-  return response.status >= 500 && requestId && /^[A-Za-z0-9._-]{8,128}$/.test(requestId)
-    ? `${detail} (Request-ID: ${requestId})`
-    : detail;
+  if (response.status >= 500 && requestId && /^[A-Za-z0-9._-]{8,128}$/.test(requestId)) {
+    lastErrorRequestId = requestId;
+    return `${detail} (Request-ID: ${requestId})`;
+  }
+  return detail;
 }
 
 async function request<T>(
@@ -60,6 +68,8 @@ async function request<T>(
     }
     throw new ApiError(res.status, withRequestId(res, detail));
   }
+
+  if (url === "/api/auth/login" || url === "/api/auth/logout") lastErrorRequestId = null;
 
   // 204 No Content has no body
   if (res.status === 204 && responseType === "json") return undefined as T;

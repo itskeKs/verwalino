@@ -171,6 +171,24 @@ New screens follow these page structures and use a German noun as their `h1`.
   open as a card above the list; small edits of master data open `MasterDataEditor` as a dialog.
   Selects, checkboxes and file inputs are the native elements.
 
+### Manual problem reports
+
+`UsersPage.tsx` places an outline kit Button **Problem melden** above the administrator's
+user form. It opens the existing kit Dialog, titled **Problem melden**, with German
+Sie-form disclosure of metadata/counts and excluded personal data. It states **Es wird
+nichts automatisch gesendet** and asks the user to review and attach the package manually.
+The support link **Problem im Issue-Tracker melden** comes from `HV_SUPPORT_URL`; the
+last remembered server-error request ID appears separately, wraps long IDs, and is never
+added to the URL. A failed link lookup is an inline alert; reopening retries it.
+
+**Diagnosepaket herunterladen** is the primary action. During collection it reads
+**Diagnosepaket wird erstellt…** and disables duplicate downloads. Failure remains an
+inline `role="alert"` and permits retry. Success says only that the download started
+(`role="status"`). The dialog remains keyboard-operable and dismissible; completing a
+request after dismissal or session replacement cannot initiate a download. Content
+scrolls inside 90vh and fits the existing narrow-screen dialog. No new tokens or CSS
+components are introduced. See [reporting instructions](DEPLOY.md#diagnostics-and-reporting-a-problem).
+
 ### Responsive behaviour (down to 360 px)
 
 Verify screens at 360 px with long German names, four-digit amounts and many rows. The page must not

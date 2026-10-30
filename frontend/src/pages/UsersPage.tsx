@@ -5,6 +5,8 @@ import { usePagedList } from "../hooks/usePagedList";
 import { ListSearch, MoreResults } from "../components/ListSearch";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
 import { createUser, resetUserPassword, updateUser } from "../api/endpoints";
+import { api, ApiError, getLastErrorRequestId } from "../api/client";
+import { Button } from "../components/ui/button";
 import type { User, UserRole } from "../api/types";
 
 const roles: { value: UserRole; label: string }[] = [
@@ -162,10 +164,81 @@ function UserActionDialog({ action, actorId, onClose, onSuccess }: {
   </Dialog>;
 }
 
+function ProblemReport() {
+  const [open, setOpen] = React.useState(false);
+  return <>
+    <Button variant="outline" onClick={() => setOpen(true)}>Problem melden</Button>
+    {open && <ProblemReportDialog onClose={() => setOpen(false)} />}
+  </>;
+}
+
+function ProblemReportDialog({ onClose }: { onClose: () => void }) {
+  const [supportUrl, setSupportUrl] = React.useState<string | null>(null);
+  const [linkError, setLinkError] = React.useState("");
+  const [error, setError] = React.useState("");
+  const [downloaded, setDownloaded] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const { mountedRef, busyRef } = useMutationGuard();
+  const requestId = getLastErrorRequestId();
+  React.useEffect(() => {
+    let active = true;
+    api.get<{ support_url: string }>("/api/admin/diagnostics").then(result => {
+      if (active) setSupportUrl(result.support_url);
+    }).catch(() => { if (active) setLinkError("Der Link zum Issue-Tracker konnte nicht geladen werden. Bitte öffnen Sie den Dialog erneut."); });
+    return () => { active = false; };
+  }, []);
+
+  async function download() {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true); setError(""); setDownloaded(false);
+    try {
+      const blob = await api.getBlob("/api/admin/diagnostics", { method: "POST" });
+      if (!mountedRef.current) return;
+      const url = URL.createObjectURL(blob);
+      try {
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `verwalino-diagnostics-${new Date().toISOString().split("-").join("").split(":").join("").split(".").join("")}.tar.gz`;
+        document.body.appendChild(link);
+        link.click(); link.remove();
+      } finally { URL.revokeObjectURL(url); }
+      setDownloaded(true);
+    } catch (reason) {
+      if (mountedRef.current) setError(reason instanceof ApiError && [401, 403].includes(reason.status)
+        ? "Sie benötigen eine aktive Sitzung als Inhaber/Admin. Bitte melden Sie sich erneut an."
+        : "Das Diagnosepaket konnte nicht heruntergeladen werden. Bitte versuchen Sie es erneut.");
+    } finally {
+      busyRef.current = false;
+      if (mountedRef.current) setBusy(false);
+    }
+  }
+
+  return <Dialog open onOpenChange={value => { if (!value) onClose(); }}>
+    <DialogContent className="max-h-[90vh] overflow-y-auto">
+      <DialogTitle>Problem melden</DialogTitle>
+      <DialogDescription>
+        Das Paket enthält Version, Systeminformationen, Konfigurationsschlüssel mit Typ oder Länge,
+        Funktionsschalter, sichtbare Datenbank-Zählwerte und technische Fehlerangaben mit Request-IDs.
+        Namen, E-Mails, Adressen, Zugangsdaten, Konfigurationswerte und Anfrageinhalte sind ausgeschlossen.
+      </DialogDescription>
+      <p className="text-sm">Es wird nichts automatisch gesendet. Prüfen Sie das Paket und hängen Sie es Ihrer Meldung im Issue-Tracker oder einer E-Mail manuell an. Beschreiben Sie Ihre Schritte sowie das erwartete und tatsächliche Verhalten.</p>
+      <p className="text-sm text-muted-foreground">Die Fehlerangaben stammen nur aus diesem laufenden API-Prozess und Ihrer Organisation. Nach einem Neustart oder in einem anderen Prozess können sie fehlen. Containerzustände sind nur im Paket des Installers enthalten.</p>
+      {requestId && <p className="break-all text-sm">Letzter Fehler – Request-ID: <code>{requestId}</code></p>}
+      {supportUrl && <a className="text-sm text-primary underline" href={supportUrl} target="_blank" rel="noreferrer">Problem im Issue-Tracker melden</a>}
+      {linkError && <p role="alert" className="text-sm text-destructive">{linkError}</p>}
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {downloaded && <p role="status" className="text-sm">Der Download wurde gestartet. Senden Sie das Paket bei Bedarf manuell.</p>}
+      <Button disabled={busy} onClick={() => void download()}>{busy ? "Diagnosepaket wird erstellt…" : "Diagnosepaket herunterladen"}</Button>
+    </DialogContent>
+  </Dialog>;
+}
+
 function UserAdministration({ actorId }: { actorId: string }) {
   const page = usePagedList<User>("/api/users/page");
   const [action, setAction] = React.useState<UserAction | null>(null);
   return <>
+    <div className="mb-4"><ProblemReport /></div>
     <CreateUserForm onSuccess={page.reload} />
     <ListSearch label="Benutzer suchen" onSearch={page.setQuery} />
     {page.error && <p className="error-text">{page.error}</p>}

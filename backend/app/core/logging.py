@@ -2,6 +2,8 @@
 
 import logging
 import copy
+from collections import deque
+from datetime import datetime, timezone
 
 from app.core.request_id import REPORTED_ERROR_ATTRIBUTE, request_id
 from app.core.scrub import scrub_text
@@ -38,6 +40,45 @@ class RequestFormatter(logging.Formatter):
         return super().format(record)
 
 
+class DiagnosticsHandler(logging.Handler):
+    """Transient structural records only; never retains a LogRecord or its message."""
+
+    def __init__(self):
+        super().__init__(logging.WARNING)
+        from app.diagnostics import DEFAULT_LOG_LINES
+        self.records = deque(maxlen=DEFAULT_LOG_LINES)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        from app.core.error_tracking import request_state
+        from app.diagnostics import diagnostic_log_lines
+
+        state = request_state.get() or {}
+        organization = state.get("organization_id")
+        if organization is None:
+            return
+        stamp = datetime.fromtimestamp(record.created, timezone.utc).strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
+        identity = getattr(record, "request_id", request_id.get())
+        exception = type(record.exc_info[1]).__name__ + ":" if record.exc_info and record.exc_info[1] else ""
+        # Formatting message/traceback would retain free text unnecessarily.
+        lines = diagnostic_log_lines([f"{stamp} {record.levelname} app request_id={identity} {exception}"])
+        for line in lines:
+            self.records.append((str(organization), line))
+
+    def for_organization(self, organization) -> list[str]:
+        self.acquire()
+        try:
+            return [line for owner, line in self.records if owner == str(organization)]
+        finally:
+            self.release()
+
+
+def recent_diagnostics(organization) -> list[str]:
+    for handler in logging.getLogger().handlers:
+        if isinstance(handler, DiagnosticsHandler):
+            return handler.for_organization(organization)
+    return []
+
+
 def configure_logging() -> None:
     """Keep existing handlers, including Uvicorn's non-propagating handlers."""
     factory = logging.getLogRecordFactory()
@@ -49,6 +90,9 @@ def configure_logging() -> None:
         correlated_record._request_id_factory = True
         logging.setLogRecordFactory(correlated_record)
     logging.basicConfig(level=logging.INFO)
+    root = logging.getLogger()
+    if not any(isinstance(handler, DiagnosticsHandler) for handler in root.handlers):
+        root.addHandler(DiagnosticsHandler())
     server_logger = logging.getLogger("uvicorn.error")
     if not any(isinstance(item, _ReportedRequestErrorFilter) for item in server_logger.filters):
         server_logger.addFilter(_ReportedRequestErrorFilter())
