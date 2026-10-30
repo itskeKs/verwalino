@@ -127,6 +127,8 @@ async def create_property(db, auth, body: PropertyCreate, idempotency_key=None):
 
 
 async def create_unit(db, auth, body: UnitCreate):
+    if await PropertyRepository(db, auth.organization_id).get_by_id(uuid.UUID(body.property_id)) is None:
+        raise HTTPException(404, "Property not found")
     await require_property_master(db, auth.organization_id, uuid.UUID(body.property_id))
     _validate_usage_type(body.usage_type)
     repo = UnitRepository(db, auth.organization_id)

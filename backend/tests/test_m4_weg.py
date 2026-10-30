@@ -159,6 +159,46 @@ async def _create_and_finalize_plan(client, m4_seed, reserve="6000.00"):
     return plan_id
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route, table", [
+    ("economic-plans", "economic_plan"),
+    ("weg-settlements/asset-reports", "settlement_run"),
+    ("weg-settlements", "settlement_run"),
+])
+@pytest.mark.parametrize("field", ["property_id", "management_mandate_id"])
+async def test_foreign_and_unknown_parents_create_no_financial_draft(
+    client_a_admin, client_b_admin, m4_seed, migrator_session, field, route, table,
+):
+    body = {"property_id": m4_seed["property"], "plan_year": 2025,
+            "period_start": "2025-01-01", "period_end": "2025-12-31"}
+    if route != "economic-plans":
+        body.pop("plan_year")
+    client = client_b_admin if field == "property_id" else client_a_admin
+    foreign = m4_seed["property"] if field == "property_id" else m4_seed["mandate_b_id"]
+    if route == "weg-settlements":
+        plan = await client_a_admin.post("/api/economic-plans", json={
+            "property_id": m4_seed["property"], "plan_year": 2025,
+            "period_start": "2025-01-01", "period_end": "2025-12-31",
+        })
+        assert plan.status_code == 201, plan.text
+        body["economic_plan_id"] = plan.json()["id"]
+        client = client_a_admin
+        if field == "property_id":
+            property_response = await client_b_admin.post("/api/properties", json={
+                "name": "Foreign WEG parent", "management_type": "WEG",
+            })
+            assert property_response.status_code == 201, property_response.text
+            foreign = property_response.json()["id"]
+    before = await migrator_session.scalar(text(f"SELECT count(*) FROM {table}"))
+    responses = []
+    for parent in (foreign, uuid.uuid4()):
+        response = await client.post(f"/api/{route}", json=body | {field: str(parent)})
+        assert response.status_code == 404, response.text
+        responses.append(response.json())
+    assert responses[0] == responses[1]
+    assert await migrator_session.scalar(text(f"SELECT count(*) FROM {table}")) == before
+
+
 # T54: prior-year actuals are a proposal, never a computation or finalization.
 @pytest.fixture
 def previous_world(seed_data):

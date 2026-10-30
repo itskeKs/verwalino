@@ -46,6 +46,7 @@ def m6_seed(seed_data):
         "unit_a": uuid.uuid4(),
         "person_t": uuid.uuid4(),
         "tenant": uuid.uuid4(),
+        "tenant_b": uuid.uuid4(),
         "person_o": uuid.uuid4(),
         "owner": uuid.uuid4(),
         "lease": uuid.uuid4(),
@@ -182,6 +183,10 @@ def m6_seed(seed_data):
         cur.execute(
             "INSERT INTO owner_profile (id, organization_id, person_id) VALUES (%s,%s,%s)",
             (str(ids["owner_b"]), org_b, str(ids["person_o_b"])),
+        )
+        cur.execute(
+            "INSERT INTO tenant_profile (id, organization_id, person_id) VALUES (%s,%s,%s)",
+            (str(ids["tenant_b"]), org_b, str(ids["person_o_b"])),
         )
 
         conn.commit()
@@ -470,6 +475,46 @@ class TestPaymentRLS:
 # ===========================================================================
 # Test 5: API -- create / book / list / reverse + RBAC + foreign 404.
 # ===========================================================================
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["post", "patch"])
+@pytest.mark.parametrize("field, key", [
+    ("bank_account_id", "acct_a"), ("tenant_profile_id", "tenant"),
+    ("owner_profile_id", "owner"), ("lease_agreement_id", "lease"),
+    ("settlement_run_id", None),
+])
+async def test_foreign_and_unknown_payment_parents_leave_no_changes(
+    client_a_admin, client_b_admin, m6_seed, migrator_session, method, field, key,
+):
+    report = await client_a_admin.post("/api/weg-settlements/asset-reports", json={
+        "property_id": str(m6_seed["prop_a"]),
+        "period_start": "2025-01-01", "period_end": "2025-12-31",
+    })
+    assert report.status_code == 201, report.text
+    foreign = str(m6_seed[key]) if key else report.json()["id"]
+    body = {"bank_account_id": str(m6_seed["acct_b_org"]), "direction": "IN",
+            "amount": "1.00", "value_date": "2025-06-01", "payment_type": "NK_VORAUSZAHLUNG",
+            "tenant_profile_id": str(m6_seed["tenant_b"])}
+    if field == "owner_profile_id":
+        body.pop("tenant_profile_id")
+        body.update(payment_type="SONDERZAHLUNG", owner_profile_id=str(m6_seed["owner_b"]))
+    path = "/api/payments"
+    if method == "patch":
+        draft = await client_b_admin.post(path, json=body)
+        assert draft.status_code == 201, draft.text
+        path += "/" + draft.json()["id"]
+    before = (await migrator_session.scalars(text(
+        "SELECT to_jsonb(p)::text FROM payment p ORDER BY id"))).all()
+    responses = []
+    for parent in (foreign, str(uuid.uuid4())):
+        payload = (body if method == "post" else {}) | {field: parent}
+        response = await getattr(client_b_admin, method)(path, json=payload)
+        assert response.status_code == 404, response.text
+        responses.append(response.json())
+    assert responses[0] == responses[1]
+    assert (await migrator_session.scalars(text(
+        "SELECT to_jsonb(p)::text FROM payment p ORDER BY id"))).all() == before
+
+
 class TestPaymentAPI:
     @pytest.mark.asyncio
     async def test_create_book_list_reverse_flow(self, client_a_clerk, m6_seed):

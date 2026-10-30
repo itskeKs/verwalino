@@ -108,6 +108,24 @@ async def test_get_foreign_404(client_a_admin, ba_seed):
 # Create
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
+async def test_foreign_and_unknown_properties_create_no_bank_account(client_a_admin, ba_seed):
+    with psycopg2.connect(SYNC_URL) as conn, conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM bank_account")
+        before = cur.fetchone()[0]
+    responses = []
+    for parent in (ba_seed["prop_b_org"], uuid.uuid4()):
+        response = await client_a_admin.post("/api/bank-accounts", json={
+            "property_id": str(parent), "account_type": "LAUFEND", "label": "Rejected parent",
+        })
+        assert response.status_code == 404, response.text
+        responses.append(response.json())
+    assert responses[0] == responses[1]
+    with psycopg2.connect(SYNC_URL) as conn, conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM bank_account")
+        assert cur.fetchone()[0] == before
+
+
+@pytest.mark.asyncio
 async def test_create_success(client_a_admin, ba_seed):
     r = await client_a_admin.post(
         "/api/bank-accounts",

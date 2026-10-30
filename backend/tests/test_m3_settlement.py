@@ -215,6 +215,28 @@ async def _create_run(client, m3_seed, lease_key, advance):
     return resp.json()["id"]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["property_id", "management_mandate_id"])
+async def test_foreign_and_unknown_parents_create_no_rental_settlement(
+    client_a_admin, client_b_admin, m3_seed, seed_data, migrator_session, field,
+):
+    foreign_property = await client_b_admin.post("/api/properties", json={
+        "name": "Foreign settlement parent", "management_type": "MIET",
+    })
+    assert foreign_property.status_code == 201, foreign_property.text
+    foreign = foreign_property.json()["id"] if field == "property_id" else seed_data["mandate_b_id"]
+    body = {"property_id": m3_seed["property"], "lease_agreement_id": m3_seed["lease_a"],
+            "period_start": "2025-01-01", "period_end": "2025-12-31"}
+    before = await migrator_session.scalar(text("SELECT count(*) FROM settlement_run"))
+    responses = []
+    for parent in (foreign, uuid.uuid4()):
+        response = await client_a_admin.post("/api/settlements", json=body | {field: str(parent)})
+        assert response.status_code == 404, response.text
+        responses.append(response.json())
+    assert responses[0] == responses[1]
+    assert await migrator_session.scalar(text("SELECT count(*) FROM settlement_run")) == before
+
+
 # ===========================================================================
 # Test: RLS fail-closed + cross-org isolation for the new tables
 # ===========================================================================

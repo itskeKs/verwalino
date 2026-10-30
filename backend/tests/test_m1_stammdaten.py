@@ -19,6 +19,7 @@ from decimal import Decimal
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 # ============================================================================
@@ -144,6 +145,38 @@ async def _seed_m1_scenario(session, org_id: str):
 # ============================================================================
 # 1. EXCLUDE rejects overlapping ownership for SAME (unit, owner_profile)
 # ============================================================================
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route, table, field, key", [
+    ("leases", "lease_agreement", "unit_id", "unit_1_id"),
+    ("leases", "lease_agreement", "tenant_profile_id", "tp1_id"),
+    ("ownership", "ownership_history", "unit_id", "unit_1_id"),
+    ("ownership", "ownership_history", "owner_profile_id", "op1_id"),
+    ("units", "unit", "property_id", "prop_id"),
+])
+async def test_foreign_and_unknown_parents_are_not_found_before_writing(
+    client_a_admin, migrator_session, seed_data, route, table, field, key,
+):
+    async with AsyncSession(migrator_session.bind) as setup:
+        own = await _seed_m1_scenario(setup, str(seed_data["org_a_id"]))
+        foreign = await _seed_m1_scenario(setup, str(seed_data["org_b_id"]))
+        await setup.commit()
+    bodies = {
+        "leases": {"unit_id": own["unit_1_id"], "tenant_profile_id": own["tp1_id"],
+                   "valid_from": "2025-08-01", "base_rent": "500", "advance_payment": "100"},
+        "ownership": {"unit_id": own["unit_1_id"], "owner_profile_id": own["op1_id"],
+                      "valid_from": "2025-03-01"},
+        "units": {"property_id": own["prop_id"], "number": "Rejected parent", "usage_type": "WOHNUNG"},
+    }
+    before = await migrator_session.scalar(text(f"SELECT count(*) FROM {table}"))
+    responses = []
+    for parent in (foreign[key], str(uuid.uuid4())):
+        response = await client_a_admin.post(f"/api/{route}", json=bodies[route] | {field: parent})
+        assert response.status_code == 404, response.text
+        responses.append(response.json())
+    assert responses[0] == responses[1]
+    assert await migrator_session.scalar(text(f"SELECT count(*) FROM {table}")) == before
+
+
 class TestOwnershipExclude:
     @pytest.mark.asyncio
     async def test_overlap_same_owner_rejected(self, migrator_session, seed_data):
