@@ -31,7 +31,8 @@ The software is German; documentation, issues, code comments, tests and commits 
 ## Agent host integrations
 
 Claude Code reads `CLAUDE.md` (a symlink to this file) and loads `.claude/rules/*.md`; Coddy is
-used with the same tree (`.coddy/crossreview.json`), untested here. Cursor loads the equivalent `.cursor/rules/*.mdc`. Codex reads AGENTS.md and uses
+used with the same tree and runs the blind cross-review (`.coddy/crossreview.json`); its rule
+loading is not tested here. Cursor loads the equivalent `.cursor/rules/*.mdc`. Codex reads AGENTS.md and uses
 `.codex/hooks.json` to attach always-on rules at session start and scoped rules before
 `apply_patch`, `Edit` or `Write`. Approve the hooks with `/hooks` once per clone; see
 [CONTRIBUTING.md](CONTRIBUTING.md#agent-host-setup).
@@ -54,11 +55,14 @@ enforcement; every baseline and safety rule here stays in force.
 - Red first: the scenario and the unit tests fail without the change, then the smallest change
   turns them green, then refactor with the tests still green.
 - A finding outside the scope becomes a new issue (or a line in the PR description), not extra code.
-- Implementers open the PR and stop. The maintainer's review merges; nobody else does.
+- Implementers open the PR and stop. The maintainer's review merges; nobody else does. A risky
+  PR (migrations, isolation or RLS, money, GoBD, auth, backup and restore) gets a parallel,
+  blind cross-review by independent reviewers before the merge (`.coddy/crossreview.json`);
+  that is recommended, not a chain.
 - Progress is code, tests and a commit. Do not create state, contract, receipt, evidence, handoff,
-  hash or audit files, do not build repair or review chains, and write no new plan, log or status
-  documents; decisions go into the issue, the PR description, or an ADR under `docs/adr/` when
-  they bind future work.
+  hash or audit files, do not build sequential repair or review chains that pass such files
+  along, and write no new plan, log or status documents; decisions go into the issue, the PR
+  description, or an ADR under `docs/adr/` when they bind future work.
 
 ## Verification
 

@@ -2,7 +2,7 @@
 
 As of: 2026-06-01 · Version 0.1 (design, before implementation)
 Reference: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2 · [archived roadmap](archive/roadmap.md)
-Author: `engine-correctness` (Opus 4.8) · Status: **Draft for confirmation by the human — no code yet, no commit**
+Status: **Draft for confirmation by the human — no code yet, no commit**
 
 > **Historical note:** The following sections document the
 > M0 design state of 2026-06-01. They are not the status of today's
@@ -109,7 +109,7 @@ and [RouterEval](https://aclanthology.org/2025.findings-emnlp.208.pdf) supports
 the decision to measure and compare variants; it does not replace
 representative domain labels.
 
-> This document covers M0 (and the preparatory data model for M1). It makes the load-bearing architecture decisions that can hardly be retrofitted later (organization isolation, GoBD immutability). It contains **no** application code and **no** migration implementation — only design, rationale, and an actionable scaffolding plan for `bulk-impl`.
+> This document covers M0 (and the preparatory data model for M1). It makes the load-bearing architecture decisions that can hardly be retrofitted later (organization isolation, GoBD immutability). It contains **no** application code and **no** migration implementation — only design, rationale, and an actionable scaffolding plan for the implementer.
 >
 > **Binding status:** The SDD (v0.2) and the roadmap are the source of domain truth and remain untouched. Where this document goes beyond the SDD, this is marked as an *assumption* or *open item*. Points the human must decide are marked **[DECISION]**. The associated Architecture Decision Records are in [adr/](adr/).
 
@@ -173,7 +173,7 @@ A fifth axis, distinct in domain terms, is the **segregation of funds** (SDD §4
         └──────────────────────────┘      └──────────────────────────────┘
 ```
 
-In M0 only the left core is relevant (auth, tenant context, org/user/mandates, RLS foundation). The PDF rendering pipeline and object storage are set up as an **infrastructure skeleton** (roadmap M0), but filled with domain content only from M2/M3. This document describes the voucher storage and snapshot concept (Section 3) completely in advance, because it is an invariant and shapes the data model — the actual voucher implementation is M2 (`engine-correctness` delivers the in-depth GoBD voucher storage design there, roadmap model assignment).
+In M0 only the left core is relevant (auth, tenant context, org/user/mandates, RLS foundation). The PDF rendering pipeline and object storage are set up as an **infrastructure skeleton** (roadmap M0), but filled with domain content only from M2/M3. This document describes the voucher storage and snapshot concept (Section 3) completely in advance, because it is an invariant and shapes the data model — the actual voucher implementation is M2 (the in-depth GoBD voucher storage design is delivered there as a correctness-critical design step).
 
 ### 1.2 Architecture principles (from SDD §16, made concrete here)
 
@@ -220,7 +220,7 @@ The invariant must not be bypassable by accident. It is enforced at three comple
 - A `USING` policy for reading and a `WITH CHECK` policy for writing bind each row to the active organization, which is set as a session variable (GUC):
 
   ```sql
-  -- Concept (implementation in M0 by bulk-impl, only the form here):
+  -- Concept (implementation in M0, only the form here):
   CREATE POLICY org_isolation ON <table>
     USING      (organization_id = current_setting('app.current_org_id')::uuid)
     WITH CHECK (organization_id = current_setting('app.current_org_id')::uuid);
@@ -270,7 +270,7 @@ Segregation of funds is **not** implemented in M0 as a second RLS axis (that wou
 
 ## 3. GoBD immutability (I2) and interlocking with the GDPR (DSGVO) erasure obligation
 
-> Note on depth: M0 anchors the concept in the data model. The *in-depth* GoBD voucher storage specification is planned as a separate step in M2 (`engine-correctness`, roadmap model assignment). This section establishes the load-bearing structure so that M1/M2 can build on it.
+> Note on depth: M0 anchors the concept in the data model. The *in-depth* GoBD voucher storage specification is planned as a separate, correctness-critical design step in M2. This section establishes the load-bearing structure so that M1/M2 can build on it.
 
 ### 3.1 What must be immutable (SDD §6.6, §14, §16)
 
@@ -587,7 +587,7 @@ Only the fields that anchor the immutability/snapshot concept in the model are l
 - **`settlement_line`**: per addressee/category; belongs to the snapshot of the `settlement_run`; all amounts `NUMERIC(14,2)`.
 - Audit trail (`audit_event`) — already in M0 (Section 5.2), used intensively from M2.
 
-> This preview is **not** part of the M0 implementation. It is here so that the M0 structural decisions (UUID PKs, `organization_id`, `NUMERIC`, status/version fields, RLS table list) are consistent with the later model family and `bulk-impl` does not have to rebuild anything in M2.
+> This preview is **not** part of the M0 implementation. It is here so that the M0 structural decisions (UUID PKs, `organization_id`, `NUMERIC`, status/version fields, RLS table list) are consistent with the later model family and nothing has to be rebuilt in M2.
 
 ---
 
@@ -629,17 +629,17 @@ The SDD (§16) leaves the backend open: **Python/FastAPI** vs. **Node.js/NestJS*
 
 **Short rationale:** The value-determining and riskiest part of this product is the **correct, audit-proof settlement with exact decimal arithmetic** (M3 is the largest, riskiest chunk according to the roadmap). Python offers the least “friction” here: `Decimal` is first class (no permanent float-avoidance regime necessary), Alembic versions **RLS policies and triggers as clean, reviewable migration steps** (central for enforcing I1/I2), and the XRechnung/EN-16931 ecosystem (M5) is more mature. The main disadvantage — two languages in the stack instead of one — weighs less for a correctness-critical financial/legal product than consistent money/decimal safety and the RLS/migration handling.
 
-> **[DECISION]:** Backend Python/FastAPI (recommended) vs. Node/NestJS. Secondary, if FastAPI is chosen: ORM/migrations combination **SQLAlchemy + Alembic** (recommended because of fine RLS/DDL control) vs. a higher-level alternative. **Please confirm before `bulk-impl` scaffolds — nothing is committed yet.**
+> **[DECISION]:** Backend Python/FastAPI (recommended) vs. Node/NestJS. Secondary, if FastAPI is chosen: ORM/migrations combination **SQLAlchemy + Alembic** (recommended because of fine RLS/DDL control) vs. a higher-level alternative. **Please confirm before scaffolding starts — nothing is committed yet.**
 
 > **Important (independent of the backend):** Whatever is chosen, these points are non-negotiable: (1) money as a decimal type, never float; (2) RLS + `FORCE` + app role without `BYPASSRLS`; (3) transaction-local setting of the tenant context (`SET LOCAL`/`set_config(... is_local => true)`); (4) migrations with explicitly versioned RLS policies/triggers.
 
 ---
 
-## 7. Scaffolding plan for `bulk-impl` (M0 implementation)
+## 7. Scaffolding plan (M0 implementation)
 
 Goal: meet the M0 exit — “Two organizations can be created and are guaranteed not to see any of each other's data; roles take effect.” Actionable checklist. **Prerequisite: stack confirmation by the human (Section 6). No commit before then.**
 
-> This checklist is written for `bulk-impl` (Opus 4.6, bulk engineering). Architecture/data model decisions have already been made in this document; `bulk-impl` implements them and escalates only if an open specification question (SDD §18) or an organization isolation/GoBD design question arises (per the `bulk-impl.md` escalation rule).
+> This checklist is written for the implementer. Architecture/data model decisions have already been made in this document; the implementer implements them and escalates for a correctness review only if an open specification question (SDD §18) or an organization isolation/GoBD design question arises.
 
 ### 7.1 Project structure (proposal, FastAPI variant)
 
@@ -873,7 +873,7 @@ compares all old data/security objects and byte-identical issued PDFs.
 
 ## 10. What this document deliberately does NOT decide
 
-- Concrete settlement/distribution logic (M3/M4) — a separate `engine-correctness` step.
+- Concrete settlement/distribution logic (M3/M4) — a separate correctness-critical design step.
 - In-depth GoBD voucher storage design (M2) — only the load-bearing structure here.
 - PDF layouts (SDD §18, open).
 - Final choice of the immutability enforcement mechanism (trigger vs. grants vs. frozen table) — detail in M2.
