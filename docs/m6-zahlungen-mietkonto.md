@@ -1,692 +1,693 @@
-# M6-Design: Zahlungen, Mietkonto & offene Posten
+# M6 design: payments, tenant ledger (Mietkonto) & open items
 
-Stand: 2026-06-02 · Version 0.1 (Design, vor Implementierung)
-Bezug: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2 §3 (Nicht-Ziel Bankimport), §5.4 (Zahlungseingänge — *Anm.: SDD nummeriert §6.3/§6.7*), §6.3 (Bankkonten), §6.7 (Miet-/Zahlungsverwaltung), §11 (PDF), §13 (`Payment`/`OpenItem`), §14 (Chronologie), §16, §17, §18 · [roadmap.md](roadmap.md) M6 · [architecture.md](architecture.md) §2.6 (Vermögenstrennung), §5.1 (Konventionen), §5.3 (`bank_account`-Anker), Annahme A-4 · [m3-abrechnungs-engine.md](m3-abrechnungs-engine.md) §7 (`advance_payments_source` MANUAL→DERIVED) · [m4-weg-abrechnung.md](m4-weg-abrechnung.md) §2.4 (paid_advances, Spitze) · ADRs: [0003](adr/0003-gobd-unveraenderbarkeit-mechanik.md) (wiederverwendet), [0005](adr/0005-rundung-largest-remainder.md) (wiederverwendet), [0006](adr/0006-valid-to-konvention.md) (wiederverwendet), [0007](adr/0007-weg-abrechnungsspitze-und-wirtschaftsplan.md) (Maßstab monatlich, Spitze) · **[0009-soll-ist-und-zahlungsbeleg.md](adr/0009-soll-ist-und-zahlungsbeleg.md) (neu)** · **[0010-vermoegenstrennung-zahlungen.md](adr/0010-vermoegenstrennung-zahlungen.md) (neu)**
-Autor: `engine-correctness` (Opus 4.8) · Status: **Entwurf zur Bestätigung durch den Menschen — kein Anwendungscode, keine Migration, kein Commit**
+As of: 2026-06-02 · Version 0.1 (design, before implementation)
+Reference: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2 §3 (non-goal: bank import), §5.4 (incoming payments — *note: the SDD numbers them §6.3/§6.7*), §6.3 (bank accounts), §6.7 (rent/payment management), §11 (PDF), §13 (`Payment`/`OpenItem`), §14 (chronology), §16, §17, §18 · [archived roadmap](archive/roadmap.md) M6 · [architecture.md](architecture.md) §2.6 (segregation of funds (Vermögenstrennung)), §5.1 (conventions), §5.3 (`bank_account` anchor), assumption A-4 · [m3-abrechnungs-engine.md](m3-abrechnungs-engine.md) §7 (`advance_payments_source` MANUAL→DERIVED) · [m4-weg-abrechnung.md](m4-weg-abrechnung.md) §2.4 (paid_advances, settlement balance (Abrechnungsspitze)) · ADRs: [0003](adr/0003-gobd-immutability-mechanism.md) (reused), [0005](adr/0005-rounding-largest-remainder.md) (reused), [0006](adr/0006-valid-to-convention.md) (reused), [0007](adr/0007-weg-settlement-balance-and-economic-plan.md) (monthly basis, balance) · **[0009-expected-actual-and-payment-receipt.md](adr/0009-expected-actual-and-payment-receipt.md) (new)** · **[0010-segregation-of-funds-payments.md](adr/0010-segregation-of-funds-payments.md) (new)**
+Author: `engine-correctness` (Opus 4.8) · Status: **Draft for confirmation by the human — no application code, no migration, no commit**
 
-> Dieses Dokument spezifiziert **M6** (Zahlungen, Mietkonto, offene Posten) bis auf die Arithmetik. M6 ist der Punkt, an dem der **Geldfluss** real wird und die in M3/M4 vorbereitete Brücke `advance_payments_source: MANUAL → DERIVED` geschlossen wird: Abrechnungen sollen die Vorauszahlungssumme **aus erfassten Zahlungen ableiten** können, statt sie manuell zu führen. **Manuell bleibt als Fallback.**
+> This document specifies **M6** (payments, tenant ledger, open items) down to the arithmetic. M6 is the point where the **flow of money** becomes real and the bridge `advance_payments_source: MANUAL → DERIVED` prepared in M3/M4 is closed: settlements are to be able to **derive the advance payment total from recorded payments** instead of maintaining it manually. **Manual remains as a fallback.**
 >
-> **Verbindlichkeit:** SDD (v0.2), Roadmap, `architecture.md`, `m3-abrechnungs-engine.md`, `m4-weg-abrechnung.md` und die ADRs 0001–0008 sind die Quelle der Wahrheit und bleiben **unangetastet**. Dieses Dokument ist additiv (neues Doc + ADR-0009/0010). Entscheidungen, die der Mensch bestätigen soll, sind **[ENTSCHEIDUNG]**; offene SDD-§18-/fachliche Punkte **[§18/fachlich]** (nicht eigenmächtig final entschieden; provisorische, klar markierte Annahme; fachliche Abnahme empfohlen).
+> **Binding status:** SDD (v0.2), roadmap, `architecture.md`, `m3-abrechnungs-engine.md`, `m4-weg-abrechnung.md` and ADRs 0001–0008 are the source of truth and remain **untouched**. This document is additive (new doc + ADR-0009/0010). Decisions the human is to confirm are marked **[DECISION]** (decision); open SDD §18 / domain-expertise points are marked **[§18/domain]** (not decided unilaterally; provisional, clearly marked assumption; domain sign-off recommended).
 >
-> **Manuelle Erfassung — kein Bankimport.** SDD §3 ist hart: „Kein Bankimport (CAMT/MT940) und kein automatischer Zahlungsabgleich." M6 erfasst Zahlungen **ausschließlich manuell**; die einzige „Automatik" ist die **deterministische, reine Ableitung** erfasster Zahlungen in Abrechnungsgrößen (§6) — kein Bank-Parsing, kein Matching gegen Kontoauszüge.
+> **Manual recording — no bank import.** SDD §3 is explicit: "No bank import (CAMT/MT940) and no automatic payment reconciliation." M6 records payments **exclusively manually**; the only "automation" is the **deterministic, pure derivation** of recorded payments into settlement figures (§6) — no bank parsing, no matching against bank statements.
 >
-> **Keine Selbst-Zertifizierung:** Dieses Design macht Soll, Ist, offene Posten und die Abrechnungs-Anbindung *transparent, deterministisch und nachrechenbar* und legt jede Annahme offen. Es kann **nicht** garantieren, dass das Mietkonto/Hausgeldkonto im konkreten Fall buchhalterisch/prüfungsfest ist (M6 ist ausdrücklich **keine** Finanzbuchhaltung, SDD §1/§3). Die fachliche Richtigkeit (Mietkonto-Tiefe, Kaution, GoBD-Belegqualität manueller Zahlungen, Treuhandtrennung) ist vor produktivem Einsatz durch **Steuerberater/Fachanwalt** abzunehmen.
+> **No self-certification:** This design makes expected amounts (Soll), actual amounts (Ist), open items and the settlement integration *transparent, deterministic and reproducible* and discloses every assumption. It **cannot** guarantee that the tenant ledger / Hausgeld (monthly owner contribution) account is accounting-sound or audit-proof in a concrete case (M6 is explicitly **not** financial accounting, SDD §1/§3). Before productive use, the domain correctness (ledger depth, security deposit, GoBD voucher (Beleg) quality of manual payments, trust account segregation) must be signed off by a **tax advisor / specialist lawyer**.
 
 ---
 
-## 0. Geltungsbereich, Exit-Kriterium, Anschluss an M0–M5
+## 0. Scope, exit criterion, connection to M0–M5
 
-**M6-Exit (Roadmap):** „Soll-Ist je Person stimmt; **eine Abrechnung zieht erfasste Zahlungen automatisch**." Das ist die objektive Messlatte. „Soll-Ist stimmt" wird durch die **synthetischen Golden-Tests** (§7) mit handberechneten Soll-/Ist-/Saldo-Werten belegt; „Abrechnung zieht Zahlungen automatisch" durch einen Golden-Test, der eine **DERIVED**-Vorauszahlung in einer BK-Abrechnung gegen die **manuelle** Variante prüft (Bit-Gleichheit des Ergebnisses, §7.3).
+**M6 exit (roadmap):** "Expected/actual (Soll/Ist) per person is correct; **a settlement pulls recorded payments automatically**." This is the objective yardstick. "Soll/Ist is correct" is demonstrated by the **synthetic golden tests** (§7) with hand-calculated expected/actual/balance values; "settlement pulls payments automatically" by a golden test that checks a **DERIVED** advance payment in an operating cost statement (Betriebskostenabrechnung) against the **manual** variant (bit-identical result, §7.3).
 
-**M6 baut auf einem verifizierten Fundament auf (M0–M5, 291 Tests grün) und übernimmt dessen Konventionen unverändert.** M6 ist **additiv**: es fügt `payment` + Soll-Berechnung + Zuordnung hinzu und schließt einen vorbereiteten Anschluss in M3/M4. Die wichtigste Erkenntnis aus der Code-Durchsicht: **das M3/M4-Fundament ist bereits M6-fähig gebaut.**
+**M6 builds on a verified foundation (M0–M5, 291 tests green) and adopts its conventions unchanged.** M6 is **additive**: it adds `payment` + expected-amount calculation + assignment and closes a prepared connection in M3/M4. The key finding from the code review: **the M3/M4 foundation is already built to be M6-capable.**
 
-| Vorhandenes Fundament (M0–M5, live) | M6 nutzt es so |
+| Existing foundation (M0–M5, live) | How M6 uses it |
 | --- | --- |
-| `bank_account` (M1-Anker): `organization_id`, `property_id`, `account_type` (`LAUFEND`/`RUECKLAGE`/`KAUTION`), IBAN/BIC/Bank — **keine** Salden-/Buchungsspalten (Modell-Kommentar: „model anchor: schema + FK only; full implementation in M6") | **Drehpunkt der Vermögenstrennung** (ADR-0010). M6 baut **kein** Saldenfeld an `bank_account` an — Salden bleiben **abgeleitet** aus `payment` (§1.1). |
-| `settlement_run.advance_payments_total` (`NUMERIC(14,2)`) + `advance_payments_source` (`String(12)`, `MANUAL`\|`DERIVED`, im Immutability-Trigger als eingefrorene Spalte gelistet, Migration `0011`) | **Die vorbereitete Brücke.** M6 setzt `DERIVED` und füllt `advance_payments_total` aus Zahlungen (§6). **Kein Schemabruch** — die Spalten existieren und sind eingefroren-ab-`finalized`. |
-| `lease_agreement` (temporal, EXCLUDE pro Einheit, `base_rent`, `advance_payment`, `valid_from`/`valid_to`) | **Soll-Quelle Mieter** (Kaltmiete + NK-Vorauszahlung), monatlicher Maßstab, tagegenaue Anschnitte (§2). |
-| `economic_plan_line(line_type='OWNER_ADVANCE')` mit `owner_profile_id`, `unit_id`, `planned_amount` (Jahres), `monthly_amount` (monatlich, ADR-0007 E4-3b) | **Soll-Quelle Eigentümer** (Hausgeld-Vorschuss) aus dem **finalisierten** Plan (§2.2). |
-| WEG-Service: `WegComputeExtras.paid_advances: list[ManualOwnerAdvance]` (per Eigentümer, **nachrichtlich**, MANUAL) und `OwnerAdvanceInput(plan_advance_total)` (Soll aus Plan); Spitze = `Ist − Soll(Plan)` (ADR-0007), `paid_advances` **getrennt** | M6 ersetzt die **MANUAL** `paid_advances` durch **DERIVED** aus Zahlungen (§6.3). **Die Abrechnungsspitze bleibt `Ist−Soll(Plan)` — Zahlungen fließen NICHT hinein** (nur nachrichtlicher Zahlungsstand). |
-| `cost_entry`-Muster: `status` (`draft`→`confirmed`) + `superseded_by_id` (Vorwärts-Zeiger) + ADR-0003-Trigger (`status='confirmed'` einfriert) + Storno-als-Neuversion | **1:1-Vorbild für `payment`**: `status` (`draft`→`booked`), `reversed_by_id`, ADR-0003-Trigger (`status='booked'` einfriert), Korrektur = Storno + Neubuchung (ADR-0009). |
-| RLS-Muster (`ENABLE`+`FORCE`, vier Policies, `NULLIF(current_setting('app.current_org_id', true),'')::uuid`, fail-closed, Migration `0010`/`0014`) | `payment` bekommt exakt dieses Muster (Migration analog). |
-| `TenantRepository`/`base.py`, atomare Service-Transaktion (`*_service.confirm`/`finalize`), `AuditRepository`, `app/core/temporal.py` (`db_exclusive_to_engine_inclusive`, ADR-0006), `app/engine/rounding.py` (`distribute_amount`), `app/engine/periods.py` (tagegenau) | Vorbilder/Bausteine 1:1 für `PaymentRepository`, `payment_service`, `app/engine/mietkonto.py` (reine Soll/Ist-Funktionen). |
-| Geld `NUMERIC(14,2)`/`Decimal`, Quoten `NUMERIC(12,6)`, UUID-PK, `TIMESTAMPTZ`, String+CHECK statt DB-Enum, FK `ondelete=RESTRICT` zu `organization` | Durchgängig übernommen. |
-| Migrationen `0001`–`0015` vorhanden | M6 fügt **`0016`–`0019`** additiv hinzu (Reihenfolge §8). |
+| `bank_account` (M1 anchor): `organization_id`, `property_id`, `account_type` (`LAUFEND`/`RUECKLAGE`/`KAUTION`), IBAN/BIC/bank — **no** balance/booking columns (model comment: "model anchor: schema + FK only; full implementation in M6") | **Pivot of the segregation of funds** (ADR-0010). M6 adds **no** balance field to `bank_account` — balances stay **derived** from `payment` (§1.1). |
+| `settlement_run.advance_payments_total` (`NUMERIC(14,2)`) + `advance_payments_source` (`String(12)`, `MANUAL`\|`DERIVED`, listed as a frozen column in the immutability trigger, migration `0011`) | **The prepared bridge.** M6 sets `DERIVED` and fills `advance_payments_total` from payments (§6). **No schema break** — the columns exist and are frozen from `finalized` on. |
+| `lease_agreement` (temporal, EXCLUDE per unit, `base_rent`, `advance_payment`, `valid_from`/`valid_to`) | **Expected-amount source for tenants** (base rent + operating cost advance payment), monthly basis, day-accurate partial months (§2). |
+| `economic_plan_line(line_type='OWNER_ADVANCE')` with `owner_profile_id`, `unit_id`, `planned_amount` (annual), `monthly_amount` (monthly, ADR-0007 E4-3b) | **Expected-amount source for owners** (Hausgeld advance (Hausgeld-Vorschuss)) from the **finalized** economic plan (Wirtschaftsplan) (§2.2). |
+| WEG service: `WegComputeExtras.paid_advances: list[ManualOwnerAdvance]` (per owner, **informational**, MANUAL) and `OwnerAdvanceInput(plan_advance_total)` (expected amount from plan); balance = `actual − expected(plan)` (ADR-0007), `paid_advances` **separate** | M6 replaces the **MANUAL** `paid_advances` with **DERIVED** ones from payments (§6.3). **The settlement balance remains `actual−expected(plan)` — payments do NOT flow into it** (informational payment status only). |
+| `cost_entry` pattern: `status` (`draft`→`confirmed`) + `superseded_by_id` (forward pointer) + ADR-0003 trigger (`status='confirmed'` freezes) + reversal as a new version | **1:1 template for `payment`**: `status` (`draft`→`booked`), `reversed_by_id`, ADR-0003 trigger (`status='booked'` freezes), correction = reversal + rebooking (ADR-0009). |
+| RLS pattern (`ENABLE`+`FORCE`, four policies, `NULLIF(current_setting('app.current_org_id', true),'')::uuid`, fail-closed, migration `0010`/`0014`) | `payment` gets exactly this pattern (analogous migration). |
+| `TenantRepository`/`base.py`, atomic service transaction (`*_service.confirm`/`finalize`), `AuditRepository`, `app/core/temporal.py` (`db_exclusive_to_engine_inclusive`, ADR-0006), `app/engine/rounding.py` (`distribute_amount`), `app/engine/periods.py` (day-accurate) | Templates/building blocks 1:1 for `PaymentRepository`, `payment_service`, `app/engine/mietkonto.py` (pure expected/actual functions). |
+| Money `NUMERIC(14,2)`/`Decimal`, ratios `NUMERIC(12,6)`, UUID PK, `TIMESTAMPTZ`, string+CHECK instead of DB enum, FK `ondelete=RESTRICT` to `organization` | Adopted throughout. |
+| Migrations `0001`–`0015` present | M6 adds **`0016`–`0019`** additively (order in §8). |
 
-**Nicht in M6:** Mahnwesen/Mahnstufen/`DunningNotice` (M7 — M6 liefert die *berechneten* überfälligen Posten als Eingabe; die Mahn-Persistenz entscheidet **M7**, nicht M6, ADR-0009 §1/F6-1). Bankimport/Matching (SDD §3 Nicht-Ziel, dauerhaft). Vollwertige Kautionsbuchhaltung mit Verzinsung (§3.4, [§18/fachlich]). Kontoauszugsabgleich.
+**Not in M6:** dunning / dunning levels / `DunningNotice` (M7 — M6 supplies the *computed* overdue items as input; the dunning persistence is decided by **M7**, not M6, ADR-0009 §1/F6-1). Bank import/matching (SDD §3 non-goal, permanent). Full security deposit accounting with interest (§3.4, [§18/domain]). Bank statement reconciliation.
 
-**Architektur-Leitsatz (SDD §16, hier hart, wie M3/M4):** Die **Soll-/Ist-/Saldo-Arithmetik ist eine Schicht reiner Funktionen** (`Decimal`/`date` ein/aus, keine DB/HTTP/I/O), getrennt von Persistenz, API und PDF. Das ist die Voraussetzung für die testbare, deterministische Ableitung in die Abrechnung (§6) und die Golden-Tests (§7). M6-Logik kommt in dasselbe `app/engine/`-Paket, nicht in Services.
+**Architecture principle (SDD §16, strict here, as in M3/M4):** The **expected/actual/balance arithmetic is a layer of pure functions** (`Decimal`/`date` in/out, no DB/HTTP/I/O), separated from persistence, API and PDF. This is the prerequisite for the testable, deterministic derivation into the settlement (§6) and for the golden tests (§7). M6 logic goes into the same `app/engine/` package, not into services.
 
 ---
 
-## 1. Datenmodell
+## 1. Data model
 
-### 1.1 `bank_account` — jetzt ausbauen oder unverändert lassen?
+### 1.1 `bank_account` — expand now or leave unchanged?
 
-> **[ENTSCHEIDUNG E6-5]: `bank_account` strukturell unverändert lassen — KEINE Salden-/Buchungsspalten anbauen.** *(Empfehlung)*
+> **[DECISION E6-5]: Leave `bank_account` structurally unchanged — add NO balance/booking columns.** *(Recommendation)*
 
-Der Anker hat heute `organization_id`, `property_id`, `account_type` (`LAUFEND`/`RUECKLAGE`/`KAUTION`), IBAN/BIC/Bank — und bewusst **keine** Saldenspalte. Das ist richtig und bleibt so:
+Today the anchor has `organization_id`, `property_id`, `account_type` (`LAUFEND`/`RUECKLAGE`/`KAUTION`), IBAN/BIC/bank — and deliberately **no** balance column. That is correct and stays so:
 
-- **Der Kontostand ist eine abgeleitete Größe**, kein gespeicherter Wert: `saldo(konto) = Σ Eingänge − Σ Ausgänge` über die `payment`-Zeilen dieses Kontos (analog zur abgeleiteten Soll-Philosophie, ADR-0009). Ein gespeicherter Saldo würde von den Buchungen driften (dieselbe Zwei-Wahrheiten-Falle wie beim Soll) und wäre ein zweiter, pflegebedürftiger Zustand.
-- **Genau das hat M4 (§6.2) bereits vorausgesehen:** Der Vermögensbericht nutzt heute einen **manuell erfassten Stichtagssaldo** je Konto (ADR-0008), gerade *weil* `bank_account` keine Saldenspalte hat. Ab M6 kann derselbe Bericht den Saldo **optional aus `payment` ableiten** (§6.5) — ohne `bank_account` umzubauen.
-- **Eine additive Härtung** ist nötig (nicht für Salden, sondern für die Vermögens-Kohärenz, ADR-0010): ein **UNIQUE-Index `(organization_id, id, property_id)`** auf `bank_account`, damit `payment` per Composite-FK garantiert an das richtige Objekt gebunden ist (§4). Das ist kein „Ausbau" des Kontos, sondern die Voraussetzung der treuhandsicheren Zuordnung.
+- **The account balance is a derived quantity**, not a stored value: `balance(account) = Σ inflows − Σ outflows` over the `payment` rows of this account (analogous to the derived-expected-amount philosophy, ADR-0009). A stored balance would drift from the bookings (the same two-sources-of-truth trap as with the expected amount) and would be a second state that needs maintenance.
+- **M4 (§6.2) already anticipated exactly this:** Today the asset report (Vermögensbericht) uses a **manually recorded reference-date balance** per account (ADR-0008), precisely *because* `bank_account` has no balance column. From M6 on, the same report can **optionally derive the balance from `payment`** (§6.5) — without restructuring `bank_account`.
+- **One additive hardening** is needed (not for balances, but for segregation-of-funds coherence, ADR-0010): a **UNIQUE index `(organization_id, id, property_id)`** on `bank_account`, so that `payment` is guaranteed to be bound to the right property via a composite FK (§4). This is not an "expansion" of the account but the prerequisite of trust-safe assignment.
 
-**Optionale, additive Felder (nicht zwingend M6):** `opening_balance NUMERIC(14,2)` + `opening_balance_date DATE` als **Eröffnungssaldo-Anker** (Kontostand zu einem Stichtag, ab dem `payment`-Bewegungen fortgeschrieben werden). Begründung: ohne Eröffnungssaldo ist der abgeleitete Kontostand nur relativ zu den *im System erfassten* Zahlungen, nicht der reale Banksaldo (Zahlungen vor Systemeinführung fehlen). **[ENTSCHEIDUNG E6-6]** ob M6 diesen Eröffnungssaldo-Anker einführt (empfohlen: ja, klein und additiv) oder ihn nach M9 verschiebt. Er ist **kein** Buchungssatz, sondern eine Verwalter-Stichtagsangabe (wie der Vermögensbericht-Stichtagssaldo, ADR-0008).
+**Optional, additive fields (not mandatory for M6):** `opening_balance NUMERIC(14,2)` + `opening_balance_date DATE` as an **opening balance anchor** (account balance at a reference date from which `payment` movements are carried forward). Rationale: without an opening balance, the derived account balance is only relative to the payments *recorded in the system*, not the real bank balance (payments before the system was introduced are missing). **[DECISION E6-6]** whether M6 introduces this opening balance anchor (recommended: yes, small and additive) or defers it to after M9. It is **not** a booking entry but a property manager's reference-date statement (like the asset report reference-date balance, ADR-0008).
 
-**T55 – Lebenszyklus ohne neue Salden:** `is_active=false` beendet die Nutzung
-für neue Zahlungen, Bankimporte und SEPA-Vorschläge; historische Referenzen bleiben
-erhalten und lesbar. Reaktivierung ist ausdrücklich möglich. Metadaten werden unter
-Live-/Quellen-Prepare-Recht und der Finanzsperre geändert. Eine Umbenennung belässt
-SEPA-Mandate/Fingerprints unverändert; verwendete IBAN/BIC werden auch SQL-seitig
-gegen Umschreiben geschützt. Ein exakt zum Original passendes gebuchtes Storno darf
-weiterhin entstehen, nicht aber eine beliebige neue Zahlung auf dem inaktiven Konto.
-Dienstleister nutzen denselben Aktivstatus für neue Kostenreferenzen. Verwaltungs-
-mandate sind davon getrennt und behalten ihren vorhandenen gebundenen Zeitraumsschutz.
+**T55 – Lifecycle without new balances:** `is_active=false` ends use for new payments,
+bank imports and SEPA suggestions; historical references remain preserved and
+readable. Reactivation is explicitly possible. Metadata is changed under the
+live/source prepare permission and the financial lock. A rename leaves SEPA
+mandates/fingerprints unchanged; IBAN/BIC that are in use are also protected against
+rewriting on the SQL side. A booked reversal that matches the original exactly may
+still be created, but not an arbitrary new payment on the inactive account. Service
+providers use the same active status for new cost references. Management mandates are
+separate from this and keep their existing bound-period protection.
 
-### 1.2 `payment` (neue Tabelle, tenant-behaftet, RLS, ab `booked` unveränderbar)
+### 1.2 `payment` (new table, tenant-scoped, RLS, immutable from `booked` on)
 
-Eine `payment`-Zeile ist **eine erfasste Geldbewegung** (Eingang oder Ausgang) gegen ein Konto, einer Gegenpartei und einem Zweck/Typ zugeordnet. Sie ist ein **Buchungsbeleg** (GoBD, ADR-0009): ab Status `booked` unveränderbar; Korrektur = Storno + Neubuchung.
+A `payment` row is **one recorded money movement** (inflow or outflow) against an account, assigned to a counterparty and a purpose/type. It is a **booking voucher (Buchungsbeleg)** (GoBD, ADR-0009): immutable from status `booked` on; correction = reversal + rebooking.
 
-| Spalte | Typ | Bedeutung / Begründung |
+| Column | Type | Meaning / rationale |
 | --- | --- | --- |
-| `id` | `UUID` PK | `gen_random_uuid()`, wie überall. |
+| `id` | `UUID` PK | `gen_random_uuid()`, as everywhere. |
 | `organization_id` | `UUID NOT NULL` FK→`organization` (`RESTRICT`) | I1, RLS. |
-| `bank_account_id` | `UUID NOT NULL` FK→`bank_account` (`RESTRICT`) | **Pflicht-Drehpunkt** (ADR-0010): jede Zahlung läuft gegen genau ein Konto. |
-| `property_id` | `UUID NOT NULL` FK→`property` (`RESTRICT`) | Objektbezug (Vermögenstrennung). **Gespiegelt aus dem Konto**, per Composite-FK an das Konto gebunden (§4) — nicht frei wählbar. |
-| `management_mandate_id` | `UUID NULL` FK→`management_mandate` (`RESTRICT`) | Mandatsbezug (Vermögenstrennung-Anker, architecture.md §2.6). Aus dem Konto/Objekt abgeleitet. |
-| **Geldbewegung (I4):** | | |
-| `direction` | `String(3) NOT NULL` | `IN` (Eingang) \| `OUT` (Ausgang). CHECK. |
-| `amount` | `NUMERIC(14,2) NOT NULL` | **Betrag, immer positiv**; das Vorzeichen trägt `direction` (klarer als signierte Beträge; ein Storno ist eine eigene `IN`/`OUT`-Zeile, kein negativer Betrag). `CHECK (amount > 0)`. |
-| `value_date` | `DATE NOT NULL` | Wertstellungs-/Buchungsdatum der Zahlung (maßgeblich für Perioden-Zuordnung, §6). |
-| **Gegenpartei (genau eine Rolle):** | | |
-| `tenant_profile_id` | `UUID NULL` FK→`tenant_profile` (`RESTRICT`) | bei Mieter-Zahlung. |
-| `owner_profile_id` | `UUID NULL` FK→`owner_profile` (`RESTRICT`) | bei Eigentümer-Zahlung. *(genau **eine** der beiden gesetzt bei personenbezogenen Typen; CHECK §1.4.)* |
-| **Zweck/Typ (kontrolliertes Vokabular, §1.3):** | | |
-| `payment_type` | `String(24) NOT NULL` | `NK_VORAUSZAHLUNG` \| `HAUSGELD_VORSCHUSS` \| `RUECKLAGENANTEIL` \| `KALTMIETE` \| `SONDERZAHLUNG` \| `NACHZAHLUNG` \| ggf. `KAUTION`. CHECK. **Der Typ steuert die Abrechnungs-Anbindung (§6) — er ist korrektheitskritisch.** |
-| **Zuordnung (was wird mit der Zahlung beglichen):** | | |
-| `lease_agreement_id` | `UUID NULL` FK→`lease_agreement` (`RESTRICT`) | bei mieterbezogenen Typen: der Mietvertrag, dessen Soll die Zahlung bedient. |
-| `period_year` | `SMALLINT NULL` | Abrechnungs-/Soll-Jahr, dem die Zahlung zugeordnet ist (für die DERIVED-Aggregation, §6). |
-| `period_month` | `SMALLINT NULL` | optionaler Monatsbezug (1–12) bei monatlicher Sollstellung; NULL = ganze Periode/Pauschalzahlung. CHECK 1–12. |
-| `settlement_run_id` | `UUID NULL` FK→`settlement_run` (`RESTRICT`) | optional: Zahlung gegen eine konkrete finalisierte Nachzahlung/Guthaben (z. B. `payment_type=NACHZAHLUNG` begleicht das `balance` eines BK-Laufs). |
-| **GoBD/Unveränderbarkeit (ADR-0003/0009):** | | |
-| `status` | `String(12) NOT NULL DEFAULT 'draft'` | `draft` (Erfassung, editierbar) \| `booked` (verbucht, eingefroren). CHECK. Einfrier-Bedingung: `booked`. |
-| `booked_at` | `TIMESTAMPTZ NULL` | Zeitpunkt des Verbuchens. |
-| `booked_by` | `UUID NULL` FK→`user` (`SET NULL`) | Wer verbucht hat (Audit). |
-| `reverses_id` | `UUID NULL` FK self (`RESTRICT`) | bei einer **Storno-Zahlung**: zeigt auf die stornierte Original-Zahlung. |
-| `reversed_by_id` | `UUID NULL` FK self (`RESTRICT`) | bei der **stornierten** Zahlung: zeigt auf die Storno-Zeile (Vorwärts-Zeiger, E-4-Konvention wie `superseded_by_id`). |
-| `retention_until` | `DATE NULL` | Aufbewahrungsanker (8 Jahre, architecture.md §3.3 / ADR-0003 #3) — Buchungsbeleg-Aufbewahrung; DSGVO-Verzahnung (§5). |
-| `note` | `String(500) NULL` | Verwendungszweck/Notiz (z. B. Originaltext der Überweisung, soweit manuell eingegeben). |
-| `created_at`/`updated_at` | `TIMESTAMPTZ` | wie überall. |
+| `bank_account_id` | `UUID NOT NULL` FK→`bank_account` (`RESTRICT`) | **Mandatory pivot** (ADR-0010): every payment runs against exactly one account. |
+| `property_id` | `UUID NOT NULL` FK→`property` (`RESTRICT`) | Property reference (segregation of funds). **Mirrored from the account**, bound to the account by composite FK (§4) — not freely selectable. |
+| `management_mandate_id` | `UUID NULL` FK→`management_mandate` (`RESTRICT`) | Mandate reference (segregation-of-funds anchor, architecture.md §2.6). Derived from the account/property. |
+| **Money movement (I4):** | | |
+| `direction` | `String(3) NOT NULL` | `IN` (inflow) \| `OUT` (outflow). CHECK. |
+| `amount` | `NUMERIC(14,2) NOT NULL` | **Amount, always positive**; the sign is carried by `direction` (clearer than signed amounts; a reversal is its own `IN`/`OUT` row, not a negative amount). `CHECK (amount > 0)`. |
+| `value_date` | `DATE NOT NULL` | Value/booking date of the payment (authoritative for period assignment, §6). |
+| **Counterparty (exactly one role):** | | |
+| `tenant_profile_id` | `UUID NULL` FK→`tenant_profile` (`RESTRICT`) | for a tenant payment. |
+| `owner_profile_id` | `UUID NULL` FK→`owner_profile` (`RESTRICT`) | for an owner payment. *(exactly **one** of the two set for person-related types; CHECK §1.4.)* |
+| **Purpose/type (controlled vocabulary, §1.3):** | | |
+| `payment_type` | `String(24) NOT NULL` | `NK_VORAUSZAHLUNG` \| `HAUSGELD_VORSCHUSS` \| `RUECKLAGENANTEIL` \| `KALTMIETE` \| `SONDERZAHLUNG` \| `NACHZAHLUNG` \| optionally `KAUTION`. CHECK. **The type controls the settlement integration (§6) — it is correctness-critical.** |
+| **Assignment (what the payment settles):** | | |
+| `lease_agreement_id` | `UUID NULL` FK→`lease_agreement` (`RESTRICT`) | for tenant-related types: the lease whose expected amount the payment serves. |
+| `period_year` | `SMALLINT NULL` | Settlement/expected-amount year to which the payment is assigned (for the DERIVED aggregation, §6). |
+| `period_month` | `SMALLINT NULL` | optional month reference (1–12) for monthly expected-amount posting; NULL = whole period/lump-sum payment. CHECK 1–12. |
+| `settlement_run_id` | `UUID NULL` FK→`settlement_run` (`RESTRICT`) | optional: payment against a specific finalized additional payment/credit (e.g. `payment_type=NACHZAHLUNG` settles the `balance` of an operating cost run). |
+| **GoBD/immutability (ADR-0003/0009):** | | |
+| `status` | `String(12) NOT NULL DEFAULT 'draft'` | `draft` (recording, editable) \| `booked` (booked, frozen). CHECK. Freeze condition: `booked`. |
+| `booked_at` | `TIMESTAMPTZ NULL` | Time of booking. |
+| `booked_by` | `UUID NULL` FK→`user` (`SET NULL`) | Who booked (audit). |
+| `reverses_id` | `UUID NULL` FK self (`RESTRICT`) | for a **reversal payment**: points to the reversed original payment. |
+| `reversed_by_id` | `UUID NULL` FK self (`RESTRICT`) | for the **reversed** payment: points to the reversal row (forward pointer, E-4 convention like `superseded_by_id`). |
+| `retention_until` | `DATE NULL` | Retention anchor (8 years, architecture.md §3.3 / ADR-0003 #3) — booking voucher retention; GDPR (DSGVO) interlocking (§5). |
+| `note` | `String(500) NULL` | Payment reference/note (e.g. original transfer text, where entered manually). |
+| `created_at`/`updated_at` | `TIMESTAMPTZ` | as everywhere. |
 
-Constraints: `CHECK (direction IN ('IN','OUT'))`; `CHECK (amount > 0)`; `CHECK (payment_type IN (...))`; `CHECK (status IN ('draft','booked'))`; `CHECK (period_month IS NULL OR period_month BETWEEN 1 AND 12)`; Gegenpartei-/Typ-Konsistenz-CHECKs (§1.4); **Composite-FK** `(organization_id, bank_account_id, property_id)` → `bank_account(organization_id, id, property_id)` (§4, ADR-0010). **RLS** vier Policies (Muster `0010`). Indizes: `organization_id`; `bank_account_id`; `(property_id, period_year)`; `lease_agreement_id`; `(tenant_profile_id, period_year)`; `(owner_profile_id, period_year)`; `payment_type`; `settlement_run_id`; `reverses_id`/`reversed_by_id`.
+Constraints: `CHECK (direction IN ('IN','OUT'))`; `CHECK (amount > 0)`; `CHECK (payment_type IN (...))`; `CHECK (status IN ('draft','booked'))`; `CHECK (period_month IS NULL OR period_month BETWEEN 1 AND 12)`; counterparty/type consistency CHECKs (§1.4); **composite FK** `(organization_id, bank_account_id, property_id)` → `bank_account(organization_id, id, property_id)` (§4, ADR-0010). **RLS** four policies (pattern `0010`). Indexes: `organization_id`; `bank_account_id`; `(property_id, period_year)`; `lease_agreement_id`; `(tenant_profile_id, period_year)`; `(owner_profile_id, period_year)`; `payment_type`; `settlement_run_id`; `reverses_id`/`reversed_by_id`.
 
-### 1.3 `payment_type` — kontrolliertes Vokabular [§18/fachlich, nicht eigenmächtig final]
+### 1.3 `payment_type` — controlled vocabulary [§18/domain, not decided unilaterally as final]
 
-Der Typ ist der **Steuerschlüssel** für die Abrechnungs-Anbindung (§6) — daher streng als CHECK-Vokabular, nicht freitext. SDD §6.7 listet die Zuordnungs-Zwecke; daraus das M6-Vokabular:
+The type is the **control key** for the settlement integration (§6) — hence strictly a CHECK vocabulary, not free text. SDD §6.7 lists the assignment purposes; the M6 vocabulary is derived from them:
 
-| `payment_type` | Gegenpartei | SDD §6.7 | fließt in (§6) |
+| `payment_type` | Counterparty | SDD §6.7 | flows into (§6) |
 | --- | --- | --- | --- |
-| `KALTMIETE` | Mieter | „Mieter: Kaltmiete" | Mietkonto-Soll-Ist (Miete); **nicht** in BK-Abrechnung. |
-| `NK_VORAUSZAHLUNG` | Mieter | „Mieter: Nebenkostenvorauszahlung" | **BK-Abrechnung `advance_payments_total` (DERIVED)** (§6.2). |
-| `HAUSGELD_VORSCHUSS` | Eigentümer | „Eigentümer: Hausgeldvorauszahlung" | WEG-Soll-Ist **nachrichtlich**; **NICHT** in die Abrechnungsspitze (§6.3). |
-| `RUECKLAGENANTEIL` | Eigentümer | „Eigentümer: Rücklagenanteil" | Rücklagen-Ist (nachrichtlich); **nicht** in die Spitze (§6.3/§6.4). |
-| `SONDERZAHLUNG` | Eigentümer | „Eigentümer: Sonderumlage/Sonderzahlung" | Sonder-Soll-Ist (nachrichtlich); abrechnungsneutral, soweit nicht als Kostenposition erfasst. |
-| `NACHZAHLUNG` | Mieter o. Eigentümer | „… / Nachzahlung" | begleicht das `balance` einer **finalisierten** Abrechnung (`settlement_run_id`); abrechnungsneutral für die *nächste* Periode. |
-| `KAUTION` *(optional)* | Mieter | „Mieter: Kaution" | Kautionskonto-Bestand; **abrechnungsneutral** (§3.4). |
+| `KALTMIETE` | Tenant | "Tenant: base rent" | Tenant ledger expected/actual (rent); **not** into the operating cost statement. |
+| `NK_VORAUSZAHLUNG` | Tenant | "Tenant: operating cost advance payment" | **Operating cost statement `advance_payments_total` (DERIVED)** (§6.2). |
+| `HAUSGELD_VORSCHUSS` | Owner | "Owner: Hausgeld advance payment" | WEG expected/actual **informational**; **NOT** into the settlement balance (§6.3). |
+| `RUECKLAGENANTEIL` | Owner | "Owner: reserve share (Rücklagenanteil)" | Reserve actual (informational); **not** into the balance (§6.3/§6.4). |
+| `SONDERZAHLUNG` | Owner | "Owner: special assessment/special payment" | Special expected/actual (informational); settlement-neutral unless recorded as a cost item. |
+| `NACHZAHLUNG` | Tenant or owner | "… / additional payment" | settles the `balance` of a **finalized** settlement (`settlement_run_id`); settlement-neutral for the *next* period. |
+| `KAUTION` *(optional)* | Tenant | "Tenant: security deposit" | Security deposit account holdings; **settlement-neutral** (§3.4). |
 
-> **[§18/fachlich F6-3] Umfang der Zahlungsarten.** SDD §18 nennt die Mietkonto-Detailtiefe und Kautionsbehandlung ausdrücklich offen. Ob `KAUTION` in M6 schon geführt wird (eigener Kontotyp existiert: `bank_account.account_type='KAUTION'`) oder nach M9 verschoben wird, und ob weitere Typen nötig sind (z. B. Mietminderung, Rückzahlung Guthaben als eigener `OUT`-Typ), ist **nicht eigenmächtig** entschieden. **Provisorische Annahme:** obiges Vokabular; `KAUTION` als optionaler Typ mitgeführt, aber abrechnungsneutral. Fachlich abzunehmen.
+> **[§18/domain F6-3] Scope of payment types.** SDD §18 explicitly lists the depth of the tenant ledger and the treatment of security deposits as open. Whether `KAUTION` is already maintained in M6 (a dedicated account type exists: `bank_account.account_type='KAUTION'`) or deferred to after M9, and whether further types are needed (e.g. rent reduction, refund of credit as its own `OUT` type), has **not** been decided unilaterally. **Provisional assumption:** the vocabulary above; `KAUTION` carried as an optional type, but settlement-neutral. Requires domain sign-off.
 
-### 1.4 `open_item` — abgeleitet (berechnet), nicht persistiert [ENTSCHEIDUNG]
+### 1.4 `open_item` — derived (computed), not persisted [DECISION]
 
-> **[ENTSCHEIDUNG E6-1]: `open_item` ist ein abgeleitetes (berechnetes) Objekt, KEINE persistierte Tabelle.** *(Empfehlung; vollständige Begründung in ADR-0009.)*
+> **[DECISION E6-1]: `open_item` is a derived (computed) object, NOT a persisted table.** *(Recommendation; full rationale in ADR-0009.)*
 
-Ein offener Posten ist die **berechnete Saldo-Sicht** je (Person, Periode, Typ):
+An open item is the **computed balance view** per (person, period, type):
 
 ```
-open_item(person, periode, typ) = Soll(person, periode, typ)  −  Σ zugeordnetes Ist(person, periode, typ)
-   offen > 0  → Rückstand (Person schuldet noch)
-   offen < 0  → Überzahlung / Guthaben
-   offen = 0  → ausgeglichen
+open_item(person, period, type) = expected(person, period, type)  −  Σ assigned actual(person, period, type)
+   open > 0  → arrears (person still owes)
+   open < 0  → overpayment / credit
+   open = 0  → settled
 ```
 
-- **Soll** ist selbst abgeleitet (§2): aus `lease_agreement`/`economic_plan`, monatlicher Maßstab. **Ist** ist `Σ amount` der `booked`, **nicht-stornierten**, typ-/perioden-/person-gleichen `payment`-Zeilen.
-- `open_item` wird als **reine Funktion** (`app/engine/mietkonto.py`) berechnet und über einen **read-only API-Endpunkt** geliefert (Liste je Person/Objekt). Es entsteht **keine** je Monat materialisierte Zeile, kein Erzeugungsjob, keine zweite Wahrheit, die driften könnte.
-- **M7-Abgrenzung (kein Vorgriff):** Mahnstufen/-historie (M7) brauchen einen pro-Posten-Anker (ein Mahn-Status „klebt" an einem konkreten überfälligen Posten). M6 liefert die *berechneten* überfälligen Posten als Eingabe; ob M7 daraus einen kleinen persistierten Mahn-/Status-Datensatz materialisiert (mit Bezug auf Person/Periode/Typ), ist **[§18/fachlich F6-1]** und Sache von M7. **M6 entscheidet die Mahn-Persistenz nicht.**
+- **Soll** (expected amount) is itself derived (§2): from `lease_agreement`/`economic_plan`, monthly basis. **Ist** (actual) is `Σ amount` of the `booked`, **non-reversed** `payment` rows with the same type/period/person.
+- `open_item` is computed as a **pure function** (`app/engine/mietkonto.py`) and delivered via a **read-only API endpoint** (list per person/property). No row is materialized per month, there is no generation job, and no second truth that could drift.
+- **M7 delimitation (no anticipation):** Dunning levels/history (M7) need a per-item anchor (a dunning status "sticks" to a specific overdue item). M6 supplies the *computed* overdue items as input; whether M7 materializes a small persisted dunning/status record from them (referencing person/period/type) is **[§18/domain F6-1]** and M7's concern. **M6 does not decide the dunning persistence.**
 
-**Gegenpartei-/Typ-Konsistenz (CHECK auf `payment`):** mieterbezogene Typen (`KALTMIETE`, `NK_VORAUSZAHLUNG`, `KAUTION`) verlangen `tenant_profile_id NOT NULL` und `owner_profile_id NULL`; eigentümerbezogene (`HAUSGELD_VORSCHUSS`, `RUECKLAGENANTEIL`, `SONDERZAHLUNG`) das Umgekehrte; `NACHZAHLUNG` erlaubt beide (je nach Adressat), verlangt aber, dass **genau eine** Person gesetzt ist. Diese CHECKs verhindern, dass eine Zahlung typ-inkonsistent erfasst wird (Grundlage der eindeutigen DERIVED-Zuordnung, §6).
+**Counterparty/type consistency (CHECK on `payment`):** tenant-related types (`KALTMIETE`, `NK_VORAUSZAHLUNG`, `KAUTION`) require `tenant_profile_id NOT NULL` and `owner_profile_id NULL`; owner-related ones (`HAUSGELD_VORSCHUSS`, `RUECKLAGENANTEIL`, `SONDERZAHLUNG`) the reverse; `NACHZAHLUNG` allows both (depending on the addressee), but requires that **exactly one** person is set. These CHECKs prevent a payment from being recorded type-inconsistently (basis of the unambiguous DERIVED assignment, §6).
 
 ---
 
-## 2. Soll-Generierung — monatlicher Maßstab (konsistent zu ADR-0007)
+## 2. Expected-amount generation (Soll) — monthly basis (consistent with ADR-0007)
 
-Das Soll ist **abgeleitet** (ADR-0009) und wird je (Person, Periode) als reine Funktion berechnet. Maßstab **monatlich** — konsistent zu ADR-0007 E4-3b (Hausgeld als 12 gleiche Monatsraten) und zur SDD §6.7 („Soll-Stellung je Periode").
+The expected amount (Soll) is **derived** (ADR-0009) and computed per (person, period) as a pure function. **Monthly** basis — consistent with ADR-0007 E4-3b (Hausgeld as 12 equal monthly installments) and with SDD §6.7 ("expected-amount posting per period").
 
-### 2.1 Mieter-Soll (je Mietvertrag)
-
-```
-monatliches Soll ohne Satzwechsel = gültige Kaltmiete + gültige Vorauszahlung
-                                   (lease_agreement + lease_rent_change)
-```
-
-- **Stichtagsänderungen (Phase 2, T23):** `lease_rent_change` ergänzt vollständige Kaltmiete/NK-Raten, ohne die ursprünglichen Vertragsbeträge zu überschreiben. Jede Rate gilt ab ihrem Stichtag inklusive; die letzte vorherige Rate gilt auch bei später beginnender Abfrage fort. Mehrere Tagessegmente werden je Monat/Komponente exakt summiert und erst danach gerundet; konstante Raten behalten die bestehende Largest-Remainder-Anschnittlogik. Beispiel März 2026: 700 EUR bis 14.03., 750 EUR ab 15.03. ergibt 727,42 EUR Kaltmiete, NK 150 EUR unverändert. Historie append-only, Stichtage je Vertrag eindeutig; Org-/Parent-RLS und Prepare-Rechte gelten, Finanzsperre vor Vertragslock. Bestehende Buchungen/finale Snapshots bleiben unverändert.
-- **Bedienung (Phase 2, T24):** Jede Vertragshistorie in der Einheit zeigt Originalraten und Änderungen mit Quelle; „Miete ändern ab …“ erfasst die volle gültige KALT-/NK-Rate. Datum innerhalb der inklusiv angezeigten Vertragsgrenzen, centgenaue Strings bis `Numeric(14,2)`, keine Floatarithmetik. Schreibrollen können ergänzen, READ_ONLY nur lesen; Lade-/Serverfehler sind sichtbar, Eingaben bleiben erhalten und der Dialog ist während des POST gegen Doppelaktionen/Schließen gesperrt. Der Browserprüflauf belegt unveränderte Originaldaten nach Reload und 24 Mietkontoposten mit 10.650 EUR Jahressoll für +50 EUR ab 01.04.2026.
-- **Trennung nach Komponente:** Das Soll wird getrennt nach `KALTMIETE` (= `base_rent`) und `NK_VORAUSZAHLUNG` (= `advance_payment`) geführt, denn nur die NK-Vorauszahlung fließt in die BK-Abrechnung (§6.2), die Kaltmiete nicht. Eine Vermischung würde die Abrechnungs-Anbindung verfälschen.
-- **Unterjähriger Beginn/Ende (tagegenau angeschnitten):** Beginnt/endet der Mietvertrag mitten im Monat, ist die Soll-Stellung des Anschnittsmonats **anteilig**. Maßstab: monatlich, der Anschnitt tagegenau über dieselbe `app/engine/periods.py`-Arithmetik wie M3 (tag-inklusiv, ADR-0004/0006). **[§18/fachlich F6-4]** ob ein angeschnittener Monat tagegenau (`tage_im_monat_belegt / tage_im_monat`) oder pauschal voll/halb berechnet wird — mietvertraglich/fachlich unterschiedlich gehandhabt. **Provisorische Annahme:** tagegenauer Anschnitt (konsistent zu M3); klar markiert, fachlich abzunehmen.
-- **Lese-Grenze:** `lease_agreement.valid_to` ist halboffen gespeichert; die Soll-Funktion liest über `db_exclusive_to_engine_inclusive` (ADR-0006) — **dieselbe** Lese-Grenze wie M3, **eine** Definition. So zählt der letzte Mietmonat korrekt (kein Off-by-one am Vertragsende).
-- **Fälligkeitstag:** ein Soll-Monat gilt ab seinem Fälligkeitstag als fällig (für „überfällig", M7). **[§18/fachlich]** Default-Fälligkeit (z. B. 3. Werktag des Monats, § 556b BGB) — provisorisch Monatsanfang; fachlich abzunehmen.
-
-### 2.2 Eigentümer-Soll (je Eigentümer, aus finalisiertem Wirtschaftsplan)
+### 2.1 Tenant expected amount (per lease)
 
 ```
-monatliches Soll(owner, monat) = economic_plan_line(OWNER_ADVANCE, owner).monthly_amount
-                                 (aus dem FINALISIERTEN economic_plan des Jahres)
+monthly expected without rate change = valid base rent + valid advance payment
+                                       (lease_agreement + lease_rent_change)
 ```
 
-- Die Quelle ist die in M4 bereits berechnete und **monatsbasiert** (ADR-0007 E4-3b) gerundete `OWNER_ADVANCE.monthly_amount` je Eigentümer. M6 erfindet hier **nichts** — es liest den finalisierten Plan.
-- **Nur finalisierte Pläne** liefern verbindliches monatliches Hausgeld-Soll (ein `draft`-Plan ist kein beschlossenes Soll). Ohne finalisierten Plan wird kein Hausgeld-Vorschuss erfunden. Seit Phase 2 (T32) können unabhängig davon ausdrücklich angelegte, eingefrorene Sonderumlagen als einmaliges Eigentümer-Soll hinzukommen.
-- **Mehrere Einheiten je Eigentümer:** Der Plan hat eine `OWNER_ADVANCE`-Zeile je (Eigentümer, Einheit); das Eigentümer-Soll je Monat ist die **Summe** der `monthly_amount` über seine Einheiten (exakt, kein erneutes Runden — Cent + Cent = Cent, m3 §4.3).
+- **Effective-date changes (Phase 2, T23):** `lease_rent_change` adds complete base rent/operating cost rates without overwriting the original contract amounts. Each rate applies from its effective date inclusive; the last previous rate also continues to apply when a query begins later. Several daily segments are summed exactly per month/component and only then rounded; constant rates keep the existing largest-remainder partial-month logic. Example March 2026: 700 EUR through March 14, 750 EUR from March 15 yields 727.42 EUR base rent, operating costs 150 EUR unchanged. History append-only, effective dates unique per lease; organization/parent RLS and prepare permissions apply, financial lock before lease lock. Existing bookings/final snapshots remain unchanged.
+- **Operation (Phase 2, T24):** Every lease history in the unit shows original rates and changes with their source; "Miete ändern ab …" ("Change rent from …") records the full valid base rent/operating cost rate. The date must lie within the contract limits displayed inclusively, cent-exact strings up to `Numeric(14,2)`, no floating-point arithmetic. Write roles can add entries, READ_ONLY can only read; load/server errors are visible, inputs are kept and the dialog is locked against double actions/closing during the POST. The browser acceptance run demonstrates unchanged original data after reload and 24 tenant ledger items with an annual expected amount of 10,650 EUR for +50 EUR from April 1, 2026.
+- **Separation by component:** The expected amount is maintained separately for `KALTMIETE` (= `base_rent`) and `NK_VORAUSZAHLUNG` (= `advance_payment`), because only the operating cost advance payment flows into the operating cost statement (§6.2), the base rent does not. Mixing them would distort the settlement integration.
+- **Mid-year start/end (day-accurate partial months):** If the lease begins/ends in the middle of a month, the expected amount of the partial month is **pro rata**. Basis: monthly, the partial month computed day-accurately via the same `app/engine/periods.py` arithmetic as M3 (day-inclusive, ADR-0004/0006). **[§18/domain F6-4]** whether a partial month is computed day-accurately (`days_occupied_in_month / days_in_month`) or as a flat full/half month — handled differently under leases/in practice. **Provisional assumption:** day-accurate partial month (consistent with M3); clearly marked, requires domain sign-off.
+- **Read boundary:** `lease_agreement.valid_to` is stored half-open; the expected-amount function reads via `db_exclusive_to_engine_inclusive` (ADR-0006) — the **same** read boundary as M3, **one** definition. This way the last rental month counts correctly (no off-by-one at lease end).
+- **Due date:** an expected-amount month is due from its due date on (for "overdue", M7). **[§18/domain]** Default due date (e.g. 3rd working day of the month, § 556b BGB) — provisionally the start of the month; requires domain sign-off.
 
-#### Sonderumlagen seit Phase 2 (T32)
+### 2.2 Owner expected amount (per owner, from the finalized economic plan)
 
-`GET/POST /api/special-levies` ergänzt das bestehende Konto um ausdrücklich
-angelegte Sonderumlagen. Erforderlich sind Objekt, vollständiger WEG-Kreis,
-positiver centgenauer Gesamtbetrag und Fälligkeit; ein Beschluss kann optional
-referenziert werden und muss zum selben Objekt und derselben Organisation gehören.
-Teilkreise werden nicht als vollständige Objektumlage behandelt. Alle Einheiten
-benötigen positive MEA und am Fälligkeitstag gültige Eigentümer; mehrere Eigentümer
-benötigen positive Anteile, die innerhalb ihrer Einheit normalisiert werden.
-Die bestehende Restverteilung erhält die Gesamtsumme centgenau.
+```
+monthly expected(owner, month) = economic_plan_line(OWNER_ADVANCE, owner).monthly_amount
+                                 (from the FINALIZED economic_plan of the year)
+```
 
-Die Anlage friert Eigentümer, Einheit, Historienzeile, wirksame MEA und Betrag je
-Anteil ein. Kopf und Anteile sind append-only; spätere MEA-/Historienänderungen
-ändern diese Verpflichtung nicht. Das Eigentümerkonto übernimmt sie genau einmal
-als `SONDERZAHLUNG` im Fälligkeitsmonat, nur wenn die Fälligkeit im gewählten
-Berichtszeitraum liegt. Ein Wirtschaftsplan ist dafür nicht erforderlich. Bestehende
-gebuchte `SONDERZAHLUNG`-Eingänge werden über denselben Soll-/Ist-Pfad angerechnet;
-Zahlungen, Storni und alte Abrechnungssnapshots werden dabei nicht geändert.
-READ-, Prepare-, Quellen- und Organisationsgrenzen gelten auch für die neue Quelle.
-Seit T33 zeigt `/sonderumlagen` die eingefrorenen Anteile mit Namen und getrennten
-READ-/Prepare-Kreiswahlen. Die vorhandenen Konto- und Mahnungsformulare unterstützen
-Sonderumlagen ohne erfundenen Wirtschaftsplan; für eine solche Mahnung wird das
-WEG-Objekt ausdrücklich ausgewählt. Die Mahnungsberechnung erhält das wirkliche
-Fälligkeitsdatum: 15. Juni ist am 14./15. Juni noch nicht überfällig. Bei mehreren
-Fälligkeiten im selben Monat wird die gemeinsame Monatszahlung genau einmal,
-älteste Fälligkeit zuerst, angerechnet; Hausgeld und andere Zahlungstypen bleiben
-getrennt. Bisherige undatierte Monatsposten behalten ihre bisherigen Regeln.
+- The source is the `OWNER_ADVANCE.monthly_amount` per owner already computed in M4 and rounded on a **monthly basis** (ADR-0007 E4-3b). M6 invents **nothing** here — it reads the finalized plan.
+- **Only finalized plans** yield a binding monthly Hausgeld expected amount (a `draft` plan is not a resolved expected amount). Without a finalized plan, no Hausgeld advance is invented. Since Phase 2 (T32), explicitly created, frozen special levies (Sonderumlagen) can be added independently of this as a one-time owner expected amount.
+- **Multiple units per owner:** The plan has one `OWNER_ADVANCE` row per (owner, unit); the owner's expected amount per month is the **sum** of the `monthly_amount` over their units (exact, no further rounding — cent + cent = cent, m3 §4.3).
 
-Der unveränderliche Mahnungskontext hält die verwendeten Umlagen-IDs sowie Kreis,
-Eigentümer und Berichtszeitraum fest. Migration 0128 erweitert dafür die bestehende
-Provenienzprüfung; sie verweigert einen Downgrade, sobald sonst bereits verwendete
-Umlagen-Provenienz verloren ginge. Rück-/Hochlauf ohne solche Kontexte und die
-Verweigerung mit bereits belegter Provenienz sind getestet. Ausgestellte Briefe,
-Snapshots und Anteile werden nicht nachträglich geändert.
+#### Special levies since Phase 2 (T32)
 
-Seit Phase 2 (T35) kann M7 für diese offenen Posten Verzugszinsen aus einer
-expliziten Basiszinseingabe mit optionaler Konfigurationsvorgabe berechnen:
-`offen × (Basis + 5) / 100 × Kalendertage ab Fälligkeit / 365`. Je Posten wird
-nur einmal auf Cent (`ROUND_HALF_UP`) gerundet, anschließend werden die gespeicherten
-Zinszeilen summiert. Gebühren und Zinsen werden nicht mitverzinst. Beispiel:
-700 EUR bei Basis 2,50 % über 60 Tage → 8,63 EUR Zinsen. Der Zinssnapshot hält
-Fälligkeit, Stichtag, Tage, Basis-/Jahreszins und Beträge fest; eine ausgestellte
-Mahnung einschließlich PDF verwendet ausschließlich diese gespeicherten Werte.
-Der Soll-/Ist-Saldo des Kontos wird dadurch nicht um weitere Kontobuchungen ergänzt.
-Ohne konfigurierte Vorgabe fordert die neue Oberfläche eine ausdrückliche Eingabe;
-alte API-Aufrufe ohne Zinsbasis und bestehende Briefe behalten ihre zinsfreie
-Semantik. Es wird kein amtlicher Zinssatz erfunden und keine Zustellung behauptet.
-Migration 0129 schützt die neuen Beträge und Provenienz auch beim direkten SQL-Update
-und verweigert einen Downgrade, der vorhandene Zinsgrundlagen verlieren würde.
+`GET/POST /api/special-levies` extends the existing account with explicitly created
+special levies. Required are the property, the complete WEG scope, a positive
+cent-exact total amount and a due date; a resolution may optionally be referenced and
+must belong to the same property and the same organization. Partial scopes are not
+treated as a complete property-wide levy. All units need a positive MEA (co-ownership
+share, Miteigentumsanteil) and owners valid on the due date; multiple owners need
+positive shares, which are normalized within their unit. The existing remainder
+distribution preserves the total cent-exactly.
 
-Seit T53 verwenden Einzel- und ausgewählte Mietermahnungen denselben
-historiesensitiven Mietkonto-Pfad. Die nichtschreibende Mahnlauf-Vorschau filtert
-Hauptforderungen strikt größer als die ausdrücklich gewählte Schwelle. Bestätigung
-legt die gewählten Entwürfe atomar an; Quellen-/Eskalationsänderungen machen eine
-neue Vorschau erforderlich. Wiederholung eines unklaren Requests gibt nach erneuter
-Prepare-/Quellenzulassung dieselben Originalentwürfe zurück. M6-Zahlungen werden
-nicht ergänzt, alte ausgestellte Briefe/PDFs nicht verändert und nichts versendet.
+The creation freezes owner, unit, history row, effective MEA and amount per share.
+Header and shares are append-only; later MEA/history changes do not alter this
+obligation. The owner account takes it over exactly once as `SONDERZAHLUNG` in the due
+month, only if the due date falls within the selected reporting period. An economic
+plan is not required for this. Existing booked `SONDERZAHLUNG` inflows are credited
+via the same expected/actual path; payments, reversals and old settlement snapshots
+are not changed in the process. READ, prepare, source and organization boundaries also
+apply to the new source. Since T33, `/sonderumlagen` shows the frozen shares with
+names and separate READ/prepare scope selections. The existing account and dunning
+forms support special levies without an invented economic plan; for such a dunning
+notice the WEG property is selected explicitly. The dunning calculation receives the
+actual due date: a levy due June 15 is not yet overdue on June 14/15. With several due
+dates in the same month, the combined monthly payment is credited exactly once, oldest
+due date first; Hausgeld and other payment types remain separate. Previous undated
+monthly items keep their previous rules.
 
-### 2.3 Soll-Engine als reine Funktion
+The immutable dunning context records the levy IDs used as well as the scope, owner
+and reporting period. For this, migration 0128 extends the existing provenance check;
+it refuses a downgrade as soon as levy provenance that is already in use would
+otherwise be lost. A downgrade-and-upgrade run without such contexts and the refusal
+when provenance is already recorded are tested. Issued letters, snapshots and shares
+are not changed retrospectively.
+
+Since Phase 2 (T35), M7 can calculate default interest (Verzugszinsen) for these open
+items from an explicit base interest rate input with an optional configured default:
+`open × (base + 5) / 100 × calendar days since due date / 365`. Per item, rounding to
+the cent (`ROUND_HALF_UP`) happens only once; afterwards the stored interest lines are
+summed. Fees and interest are not themselves charged interest. Example: 700 EUR at a
+base rate of 2.50% over 60 days → 8.63 EUR interest. The interest snapshot records due
+date, reference date, days, base/annual interest rate and amounts; an issued dunning
+notice, including its PDF, uses exclusively these stored values. The expected/actual
+balance of the account is not supplemented by further account postings as a result.
+Without a configured default, the new interface requires an explicit input; old API
+calls without an interest base and existing letters keep their interest-free
+semantics. No official interest rate is invented and no delivery is claimed. Migration
+0129 protects the new amounts and provenance even against a direct SQL update and
+refuses a downgrade that would lose existing interest bases.
+
+Since T53, individual and selected tenant dunning notices use the same
+history-sensitive tenant ledger path. The non-writing dunning-run preview filters
+principal claims strictly greater than the explicitly chosen threshold. Confirmation
+creates the chosen drafts atomically; changes to sources/escalation make a new preview
+necessary. Repeating a request whose outcome was unclear returns the same original
+drafts after renewed prepare/source admission. No M6 payments are added, old issued
+letters/PDFs are not changed and nothing is sent.
+
+### 2.3 Expected-amount engine as a pure function
 
 `app/engine/mietkonto.py`:
-- `tenant_expected_charges(lease, period) -> list[ExpectedCharge]` — monatliche Soll-Positionen (getrennt KALTMIETE/NK_VORAUSZAHLUNG), tagegenaue Anschnitte.
-- `owner_expected_charges(owner_advance_lines, period) -> list[ExpectedCharge]` — monatliche Hausgeld-Soll-Positionen je Eigentümer.
-- Beide nehmen **eingefrorene Eingaben** (Dataclasses) und liefern eine deterministische Soll-Liste; keine DB. Die Rundung der Monatsraten erfolgt bereits in M4 (`monthly_amount`) bzw. ist beim Mieter-Soll `base_rent+advance_payment` (bereits Cent-genau) × ggf. tagegenauem Anschnitt über `distribute_amount` (ADR-0005, falls ein Anschnitt mehrere Teil-Soll ergibt).
+- `tenant_expected_charges(lease, period) -> list[ExpectedCharge]` — monthly expected-amount items (KALTMIETE/NK_VORAUSZAHLUNG separately), day-accurate partial months.
+- `owner_expected_charges(owner_advance_lines, period) -> list[ExpectedCharge]` — monthly Hausgeld expected-amount items per owner.
+- Both take **frozen inputs** (dataclasses) and return a deterministic expected-amount list; no DB. The rounding of the monthly installments already happens in M4 (`monthly_amount`); for the tenant expected amount, `base_rent+advance_payment` is already cent-exact, × a day-accurate partial month if applicable via `distribute_amount` (ADR-0005, if a partial month yields several partial expected amounts).
 
 ---
 
-## 3. Ist / Zuordnung — Zahlungen den Soll-Positionen zuordnen
+## 3. Actual (Ist) / assignment — assigning payments to expected-amount items
 
-### 3.1 Saldo & offene Posten je Person (reine Arithmetik, Decimal)
+### 3.1 Balance & open items per person (pure arithmetic, Decimal)
 
 `app/engine/mietkonto.py`:
 ```
 account_statement(expected_charges, payments) -> MietkontoResult
 ```
-- Gruppiert das **Soll** (aus §2) und das **Ist** (`booked`, nicht-stornierte `payment`) je (Periode, Typ).
-- Liefert je Soll-Periode den **offenen Posten** (Soll − zugeordnetes Ist) und den **laufenden Saldo** über die Periode.
-- **Reine Decimal-Arithmetik**, kein Float, deterministisch — Golden-getestet (§7). Summenbildung ohne Rundung (alle Beträge bereits Cent-genau).
+- Groups the **expected amount** (from §2) and the **actual** (`booked`, non-reversed `payment`) per (period, type).
+- Returns, per expected-amount period, the **open item** (expected − assigned actual) and the **running balance** over the period.
+- **Pure Decimal arithmetic**, no float, deterministic — golden-tested (§7). Summation without rounding (all amounts already cent-exact).
 
-### 3.2 Teilzahlung → offener Posten
+### 3.2 Partial payment → open item
 
-Zahlt der Mieter weniger als das Soll (z. B. Soll 850,00 €, Zahlung 600,00 €), bleibt ein **offener Posten** von 250,00 € (offen > 0). Mehrere Teilzahlungen summieren sich (Σ Ist). Keine automatische „Verrechnungsreihenfolge" über Perioden hinweg im MVP — die Zuordnung folgt der **expliziten** `period_year`/`period_month`/`lease_agreement_id` der Zahlung (manuell erfasst), nicht einer geratenen Tilgungslogik.
+If the tenant pays less than the expected amount (e.g. expected 850.00 €, payment 600.00 €), an **open item** of 250.00 € remains (open > 0). Several partial payments add up (Σ actual). No automatic "offsetting order" across periods in the MVP — the assignment follows the **explicit** `period_year`/`period_month`/`lease_agreement_id` of the payment (assigned manually), not a guessed order of application.
 
-> **[§18/fachlich F6-6] Tilgungsreihenfolge / Verrechnung.** Bei mehreren offenen Perioden und einer Zahlung ohne genauen Monatsbezug ist die Verrechnungsreihenfolge (älteste Schuld zuerst? § 366 BGB?) fachlich. **Provisorische Annahme:** Zahlungen tragen ihren Periodenbezug **explizit** (manuell beim Erfassen zugeordnet); keine automatische Tilgungsreihenfolge im MVP. Fachlich abzunehmen, ob eine §-366-BGB-Verrechnung nötig ist.
+> **[§18/domain F6-6] Order of application / offsetting.** With several open periods and a payment without an exact month reference, the offsetting order (oldest debt first? § 366 BGB?) is a domain question. **Provisional assumption:** Payments carry their period reference **explicitly** (assigned manually when recorded); no automatic order of application in the MVP. Whether a § 366 BGB offsetting is needed requires domain sign-off.
 
-### 3.3 Überzahlung → Guthaben
+### 3.3 Overpayment → credit balance
 
-Zahlt die Person mehr als das Soll (z. B. Soll 850,00 €, Zahlung 1000,00 €), ist der offene Posten **negativ** (−150,00 €) = **Guthaben**. Das Guthaben erscheint als negativer offener Posten/Saldo; eine **Rückzahlung** an die Person ist eine eigene `payment`-Zeile mit `direction='OUT'` (kein negatives `amount`).
+If the person pays more than the expected amount (e.g. expected 850.00 €, payment 1000.00 €), the open item is **negative** (−150.00 €) = **credit balance**. The credit balance appears as a negative open item/balance; a **refund** to the person is its own `payment` row with `direction='OUT'` (no negative `amount`).
 
-### 3.4 Kaution / Kautionskonto [§18/fachlich]
+### 3.4 Security deposit / deposit account [§18/domain]
 
-`bank_account.account_type='KAUTION'` existiert. Kautionszahlungen (`payment_type='KAUTION'`) sind **abrechnungsneutral** und bleiben außerhalb des Mietsaldos. **Phase 2, T25:** `lease.deposit` liefert das eigene vereinbarte Soll; die reine `deposit_statement` summiert gebuchte aktive Eingänge und echte Ausgänge getrennt, Bestand = Eingang − Rückzahlung. Entwürfe, stornierte Originale und Stornozeilen zählen nicht. `/kautionen` bzw. `GET /api/payments/deposits` zeigen die vollständige berechtigte Vertragssicht mit Labels, auch vor erster Zahlung und für vergangene Verträge; innerhalb eines ausdrücklich gewählten MIET-Kreises ohne Jahres-/Kontotypfilter. Ohne Kreis ist nur der vollständige Legacy-Kontext zulässig; fehlende Rechte/Quellen, unklassifizierte Inputs oder inkohärente Altkautionen werden statt eines Teil-/Nullberichts abgewiesen. Neue/geänderte/zu buchende Kautionen prüfen Kontoobjekt, Mietvertrag und Mieter, der bestehende Stornopfad für Altdaten bleibt erhalten. Beispiel: Soll 1.800, zwei IN-Raten à 900, echte OUT-Rückzahlung 300 → gezahlt 1.800, zurück 300, Bestand 1.500 EUR; KALT/NK-Mietkonto unverändert. Erfassung/Buchen/Rückzahlung erfolgen über die bestehende Zahlungsoberfläche, READ_ONLY liest nur. Keine neue Migration oder Änderung finalisierter Snapshots. Verzinsung, Anlageform und rechtliche Rückzahlungsbedingungen bleiben **[§18/fachlich]** — keine automatische Zins-/Tilgungsregel, keine erfundene Bestandsobergrenze; negative Bestände bei unvollständiger Historie bleiben transparent.
-
----
-
-## 4. Vermögenstrennung — DB-Härtung (Constraint) jetzt [ENTSCHEIDUNG]
-
-> **[ENTSCHEIDUNG E6-4]: DB-Constraint-Härtung der Vermögens-Kohärenz jetzt (Composite-FK), KEINE zweite RLS-Achse.** *(Empfehlung; vollständige Begründung + verworfene Optionen in ADR-0010.)*
-
-M0 hat diese Entscheidung ausdrücklich **nach M6 vertagt** (architecture.md A-4, ADR-0001 §Abgrenzung: „DB-Härtung der Vermögenstrennung frühestens mit M6"). M6 entscheidet sie:
-
-- **Das Risiko ist konkret und treuhandrelevant:** Geld der WEG A darf nie auf dem Konto/in der Sphäre der WEG B landen — **auch innerhalb derselben Organization**. RLS fängt das **nicht** ab (beide WEGs sind dieselbe Org). Reine App-Layer-Disziplin ist hier zu schwach (dieselbe Schwäche, die ADR-0001 für die Mandantentrennung gerade nicht akzeptiert hat).
-- **Mechanik (hart, ohne zweite RLS-Achse):** Jede `payment` läuft gegen genau ein `bank_account` (`bank_account_id NOT NULL`). Objekt/Mandat der Zahlung **folgen aus dem Konto** und sind per **Composite-FK** `payment(organization_id, bank_account_id, property_id) → bank_account(organization_id, id, property_id)` an das Konto gebunden. „Zahlung auf Konto X behauptet Objekt Y, obwohl Konto X zu Objekt Z gehört" ist damit **DB-unmöglich** — nicht nur Konvention. Voraussetzung: UNIQUE-Index `(organization_id, id, property_id)` auf `bank_account` (§1.1, §8).
-- **Warum nicht die volle zweite RLS-Achse (Option C):** Sie wäre die stärkste Isolation, ist aber für ein MVP überschießend und stünde den **mandatsübergreifenden Verwaltungs-Sichten** (Fristenmonitor über alle WEGs, offene Posten gesamt) im Weg, die ADR-0001 als gewollten Vorteil der Shared-DB nennt. Die Composite-FK-Kohärenz sichert das konkret gefährdete Szenario (Querbuchen von Geld) **hart** und lässt die spätere C-Aufrüstung offen.
-- **Konto-Typ-↔-Zahlungstyp-Stimmigkeit (Plausibilität):** Kaution aufs Kautionskonto, Rücklagenanteil aufs Rücklagenkonto — im MVP als **Warnung/Plausibilität**, nicht als harter CHECK (real-world-Daten sind unsauber). **[§18/fachlich F6-2]**, fachlich abzunehmen. Die Kohärenz Objekt↔Konto bleibt **hart**.
+`bank_account.account_type='KAUTION'` exists. Security deposit payments (`payment_type='KAUTION'`) are **settlement-neutral** and stay outside the rent balance. **Phase 2, T25:** `lease.deposit` supplies the separate agreed expected amount; the pure `deposit_statement` sums booked active inflows and genuine outflows separately, holdings = inflow − repayment. Drafts, reversed originals and reversal rows do not count. `/kautionen` or `GET /api/payments/deposits` show the complete authorized lease view with labels, also before the first payment and for past leases; within an explicitly chosen MIET scope without year/account-type filter. Without a scope only the complete legacy context is permitted; missing permissions/sources, unclassified inputs or incoherent legacy deposits are rejected instead of yielding a partial/zero report. New/changed/to-be-booked deposits check the account's property, lease and tenant; the existing reversal path for legacy data is preserved. Example: expected amount 1,800, two IN installments of 900, genuine OUT repayment of 300 → paid 1,800, returned 300, holdings 1,500 EUR; base rent/operating cost tenant ledger unchanged. Recording/booking/repayment happen via the existing payment interface, READ_ONLY only reads. No new migration or change to finalized snapshots. Interest, form of investment and legal repayment conditions remain **[§18/domain]** — no automatic interest/repayment rule, no invented holdings cap; negative holdings with incomplete history remain transparent.
 
 ---
 
-## 5. GoBD — Zahlungen unveränderbar (Storno statt Edit) [ENTSCHEIDUNG]
+## 4. Segregation of funds — DB hardening (constraint) now [DECISION]
 
-> **[ENTSCHEIDUNG E6-2]: Eine verbuchte Zahlung ist ein unveränderbarer Buchungsbeleg; Korrektur = Storno + Neubuchung.** *(Empfehlung; vollständige Begründung in ADR-0009.)*
+> **[DECISION E6-4]: DB constraint hardening of the segregation-of-funds coherence now (composite FK), NO second RLS axis.** *(Recommendation; full rationale + rejected options in ADR-0010.)*
 
-Zahlungen sind **Buchungsbelege** (GoBD, SDD §6.6/§17, 8-Jahres-Aufbewahrung). M6 wendet das **bestehende ADR-0003-Muster** an — **nichts wird neu erfunden**:
+M0 explicitly **deferred this decision to M6** (architecture.md A-4, ADR-0001 §Abgrenzung (delimitation): "DB hardening of the segregation of funds at the earliest with M6"). M6 decides it:
 
-- **`draft` → `booked`-Zweiteilung** (analog `cost_entry.draft→confirmed`): Im Status `draft` ist die Zahlung frei editier-/löschbar (reine Erfassungs-Korrektur, kein GoBD-Vorgang). Mit dem bewussten **Verbuchen** (`booked`) wird sie eingefroren. **[ENTSCHEIDUNG E6-3]** ob die Zweiteilung geführt wird (empfohlen) oder eine Zahlung sofort `booked` ist — Empfehlung: Zweiteilung, weil sie das etablierte Muster spiegelt und Tipp-Korrekturen nicht zu Storni zwingt.
-- **Status-bewusster `BEFORE UPDATE/DELETE`-Trigger** (Einfrier-Bedingung `status='booked'`, Muster `0011`/`trg_settlement_run_immutability`): Inhaltstragende Spalten (`amount`, `direction`, `value_date`, `bank_account_id`, `property_id`, `management_mandate_id`, `tenant_profile_id`, `owner_profile_id`, `payment_type`, `lease_agreement_id`, `period_year`, `period_month`, `settlement_run_id`, `status`) sind nach `booked` per `IS DISTINCT FROM` gesperrt; **einzig erlaubte** Mutation einer `booked`-Zeile: das Setzen von `reversed_by_id` (Storno-Kette) + `updated_at`. DELETE einer `booked`-Zeile → immer Exception. `draft`-Zeilen sind frei (Trigger lässt sie durch). Volles CRUD-Grant + Trigger als alleinige statusabhängige Sperre (E3-5-Linie wie `cost_entry`/`settlement_*`, weil ein editierbarer `draft`-Zustand existiert).
-- **Korrektur = Storno + Neubuchung:** Storno = neue `payment`-Zeile mit gegenläufiger `direction`, `reverses_id` → Original; das Original wird über `reversed_by_id` darauf verwiesen und bleibt unverändert (GoBD, SDD §14). Die korrekte Buchung ist eine weitere neue Zeile. Im Service als geführter `reverse_payment(...)`-Vorgang (analog `create_correction_run`, settlement_service).
-- **Verzahnung mit finalisierten Abrechnungen (der eigentliche Grund):** Eine finalisierte Abrechnung friert ihren `advance_payments_total`/Ist als **Kopie** in den Snapshot (M3 §1.2, M4 §1.5). Ein späterer Storno verändert die **finalisierte** Abrechnung **nicht** (Snapshot bleibt unveränderbar); er wirkt erst auf eine neue (Storno-/Korrektur-)Abrechnung. So bleibt die Kette konsistent: unveränderbare Zahlung → unveränderbarer Abrechnungs-Snapshot → Korrektur stets als neue Version.
-- **Audit-Trail:** `payment.created`, `payment.booked`, `payment.reversed` über das bestehende `AuditRepository` (append-only `audit_event`, M0).
-- **Aufbewahrung/DSGVO:** `payment.retention_until` ist der Aufbewahrungsanker (8 Jahre, architecture.md §3.3); eine Zahlung als Buchungsbeleg fällt unter die gesetzliche Aufbewahrung — eine DSGVO-Löschanfrage führt (wie bei Belegen) zu **Sperrung/Verarbeitungseinschränkung**, nicht Hard-Delete, solange `retention_until` läuft (M9-Mechanik, hier nur der Anker).
+- **The risk is concrete and trust-relevant:** Money of WEG A must never end up on the account/in the sphere of WEG B — **even within the same organization**. RLS does **not** catch this (both WEGs are the same org). Pure app-layer discipline is too weak here (the same weakness that ADR-0001 explicitly did not accept for organization isolation).
+- **Mechanism (strict, without a second RLS axis):** Every `payment` runs against exactly one `bank_account` (`bank_account_id NOT NULL`). Property/mandate of the payment **follow from the account** and are bound to the account by **composite FK** `payment(organization_id, bank_account_id, property_id) → bank_account(organization_id, id, property_id)`. "Payment on account X claims property Y although account X belongs to property Z" is thereby **impossible at DB level** — not merely a convention. Prerequisite: UNIQUE index `(organization_id, id, property_id)` on `bank_account` (§1.1, §8).
+- **Why not the full second RLS axis (option C):** It would be the strongest isolation, but is overshooting for an MVP and would stand in the way of the **cross-mandate management views** (deadline monitor across all WEGs, total open items) that ADR-0001 names as an intended advantage of the shared DB. The composite-FK coherence secures the concretely endangered scenario (cross-posting of money) **strictly** and leaves the later upgrade to C open.
+- **Account type ↔ payment type consistency (plausibility):** Security deposit to the deposit account, reserve share to the reserve account — in the MVP as a **warning/plausibility check**, not as a hard CHECK (real-world data is messy). **[§18/domain F6-2]**, requires domain sign-off. The property↔account coherence remains **strict**.
 
 ---
 
-## 6. Abrechnungs-Anbindung (Kern) — welche Zahlung → welche Abrechnungsgröße
+## 5. GoBD — payments immutable (reversal instead of edit) [DECISION]
 
-Dies ist die korrektheitskritischste Stelle von M6 und der Grund, warum `engine-correctness` es designt. Die Brücke `advance_payments_source: MANUAL → DERIVED` ist in M3/M4 vorbereitet; M6 definiert **präzise**, welche Zahlungen in welche Abrechnungsgröße fließen — **ohne Doppelzählung, klar abgegrenzt, manuell als Fallback**.
+> **[DECISION E6-2]: A booked payment is an immutable booking voucher; correction = reversal + rebooking.** *(Recommendation; full rationale in ADR-0009.)*
 
-### 6.1 Grundprinzip: eine reine Ableitungsfunktion, kein Matching
+Payments are **booking vouchers** (GoBD, SDD §6.6/§17, 8-year retention). M6 applies the **existing ADR-0003 pattern** — **nothing is reinvented**:
+
+- **`draft` → `booked` two-step** (analogous to `cost_entry.draft→confirmed`): In status `draft` the payment is freely editable/deletable (pure recording correction, not a GoBD event). With the deliberate **booking** (`booked`) it is frozen. **[DECISION E6-3]** whether the two-step is used (recommended) or a payment is `booked` immediately — recommendation: two-step, because it mirrors the established pattern and does not force typo corrections into reversals.
+- **Status-aware `BEFORE UPDATE/DELETE` trigger** (freeze condition `status='booked'`, pattern `0011`/`trg_settlement_run_immutability`): Content-bearing columns (`amount`, `direction`, `value_date`, `bank_account_id`, `property_id`, `management_mandate_id`, `tenant_profile_id`, `owner_profile_id`, `payment_type`, `lease_agreement_id`, `period_year`, `period_month`, `settlement_run_id`, `status`) are locked after `booked` via `IS DISTINCT FROM`; the **only permitted** mutation of a `booked` row: setting `reversed_by_id` (reversal chain) + `updated_at`. DELETE of a `booked` row → always an exception. `draft` rows are free (the trigger lets them through). Full CRUD grant + trigger as the sole status-dependent lock (E3-5 line like `cost_entry`/`settlement_*`, because an editable `draft` state exists).
+- **Correction = reversal + rebooking:** Reversal = new `payment` row with opposite `direction`, `reverses_id` → original; the original is pointed to via `reversed_by_id` and stays unchanged (GoBD, SDD §14). The correct booking is another new row. In the service as a guided `reverse_payment(...)` operation (analogous to `create_correction_run`, settlement_service).
+- **Interlocking with finalized settlements (the actual reason):** A finalized settlement freezes its `advance_payments_total`/actual as a **copy** in the snapshot (M3 §1.2, M4 §1.5). A later reversal does **not** change the **finalized** settlement (snapshot stays immutable); it only affects a new (reversal/correction) settlement. This keeps the chain consistent: immutable payment → immutable settlement snapshot → correction always as a new version.
+- **Audit trail:** `payment.created`, `payment.booked`, `payment.reversed` via the existing `AuditRepository` (append-only `audit_event`, M0).
+- **Retention/GDPR:** `payment.retention_until` is the retention anchor (8 years, architecture.md §3.3); a payment as a booking voucher falls under statutory retention — a GDPR erasure request leads (as with vouchers) to **blocking/restriction of processing**, not hard delete, as long as `retention_until` is running (M9 mechanics, only the anchor here).
+
+---
+
+## 6. Settlement integration (core) — which payment → which settlement quantity
+
+This is the most correctness-critical place in M6 and the reason why `engine-correctness` designs it. The bridge `advance_payments_source: MANUAL → DERIVED` is prepared in M3/M4; M6 defines **precisely** which payments flow into which settlement quantity — **without double counting, clearly delimited, manual as a fallback**.
+
+### 6.1 Basic principle: a pure derivation function, no matching
 
 ```
 derive_advance_total(payments, filter) -> Decimal
-   = Σ amount  über alle payments mit:
-       status = 'booked'  AND  reversed_by_id IS NULL  (nicht storniert)
+   = Σ amount  over all payments with:
+       status = 'booked'  AND  reversed_by_id IS NULL  (not reversed)
        AND payment_type ∈ filter.types
        AND period_year  = filter.year
        AND (filter.lease_agreement_id IS NULL OR lease_agreement_id = filter.lease_agreement_id)
        AND (filter.owner_profile_id  IS NULL OR owner_profile_id  = filter.owner_profile_id)
 ```
 
-- **Reine Funktion** (`app/engine/mietkonto.py`), `Decimal` ein/aus, keine DB — testbar, deterministisch. Der Service lädt die passenden `payment`-Zeilen (Repository-Query mit genau diesem Filter) und übergibt sie der Funktion; die Funktion summiert. **Kein Bank-Matching, kein Parsing** (SDD §3).
-- **Keine Doppelzählung — garantiert durch drei Eigenschaften:** (1) jede Zahlung hat **genau einen** `payment_type` und **genau einen** Periodenbezug (`period_year`) und Adressaten; (2) **stornierte** Zahlungen (`reversed_by_id IS NOT NULL`) und Storno-Zeilen werden konsistent behandelt (entweder beide raus, oder beide rein — netto null; siehe §6.6); (3) die Abrechnungs-Filter sind **disjunkt** je Größe (NK-Vorauszahlung ≠ Hausgeld-Vorschuss ≠ Kaltmiete). Eine Zahlung kann damit in **höchstens eine** Abrechnungsgröße fließen.
+- **Pure function** (`app/engine/mietkonto.py`), `Decimal` in/out, no DB — testable, deterministic. The service loads the matching `payment` rows (repository query with exactly this filter) and passes them to the function; the function sums. **No bank matching, no parsing** (SDD §3).
+- **No double counting — guaranteed by three properties:** (1) every payment has **exactly one** `payment_type` and **exactly one** period reference (`period_year`) and addressee; (2) **reversed** payments (`reversed_by_id IS NOT NULL`) and reversal rows are treated consistently (either both out, or both in — net zero; see §6.6); (3) the settlement filters are **disjoint** per quantity (operating cost advance payment ≠ Hausgeld advance ≠ base rent). A payment can thus flow into **at most one** settlement quantity.
 
-### 6.2 BK-Abrechnung (M3, `advance_payments_total`) ← `NK_VORAUSZAHLUNG`
+### 6.2 Operating cost statement (M3, `advance_payments_total`) ← `NK_VORAUSZAHLUNG`
 
-**Präzise Zuordnung:**
+**Precise assignment:**
 
-| Abrechnungsgröße | M3-Feld | gespeiste Zahlungen (Typ + Periode + Adressat) |
+| Settlement quantity | M3 field | payments fed (type + period + addressee) |
 | --- | --- | --- |
-| Vorauszahlungssumme des Mieters | `settlement_run.advance_payments_total` (`source='DERIVED'`) | `payment` mit `payment_type='NK_VORAUSZAHLUNG'` **AND** `period_year` = Abrechnungsjahr des Laufs **AND** `lease_agreement_id` = `settlement_run.lease_agreement_id` **AND** `status='booked'` **AND** nicht storniert. |
+| Tenant's advance payment total | `settlement_run.advance_payments_total` (`source='DERIVED'`) | `payment` with `payment_type='NK_VORAUSZAHLUNG'` **AND** `period_year` = settlement year of the run **AND** `lease_agreement_id` = `settlement_run.lease_agreement_id` **AND** `status='booked'` **AND** not reversed. |
 
-- **Nur die NK-Vorauszahlung** fließt in die BK-Abrechnung — **nicht** die Kaltmiete (`KALTMIETE` ist Mietkonto-Soll-Ist, keine Betriebskosten). Das ist die schärfste Abgrenzung: ein Mieter zahlt oft Kaltmiete + NK in einem Betrag, aber im System sind es **zwei getrennte `payment`-Zeilen mit zwei Typen** (oder eine Aufteilung beim Erfassen). Die BK-Abrechnung zieht **ausschließlich** den `NK_VORAUSZAHLUNG`-Anteil.
-- **Adressatengenau:** Bei unterjährigem Mieterwechsel hat jeder Mieter seinen **eigenen** `lease_agreement_id`; die DERIVED-Summe je Lauf zieht nur die Zahlungen **dieses** Leases (konsistent zu M3 §3.5: ein `settlement_run` je Lease).
-- **Periodengenau:** `period_year` der Zahlung muss zum Abrechnungsjahr passen. Vorauszahlungen für 2025 fließen in die 2025-BK, nicht in 2024 — analog zur `service_period`-Logik der Kosten (M3 §3.4). **[§18/fachlich F6-7]** Behandlung von Zahlungen am Jahresübergang (Dezember-Miete im Januar gezahlt / Vorauszahlung für das Folgejahr): provisorisch maßgeblich ist der **erfasste `period_year`** (manuell zugeordnet), nicht das `value_date`. Fachlich abzunehmen.
+- **Only the operating cost advance payment** flows into the operating cost statement — **not** the base rent (`KALTMIETE` is tenant ledger expected/actual, not operating costs). This is the sharpest delimitation: a tenant often pays base rent + operating costs in one amount, but in the system they are **two separate `payment` rows with two types** (or a split when recording). The operating cost statement pulls **exclusively** the `NK_VORAUSZAHLUNG` part.
+- **Addressee-exact:** On a mid-year tenant change, each tenant has their **own** `lease_agreement_id`; the DERIVED sum per run pulls only the payments of **this** lease (consistent with M3 §3.5: one `settlement_run` per lease).
+- **Period-exact:** The payment's `period_year` must match the settlement year. Advance payments for 2025 flow into the 2025 operating cost statement, not 2024 — analogous to the `service_period` logic of the costs (M3 §3.4). **[§18/domain F6-7]** Treatment of payments at the year boundary (December rent paid in January / advance payment for the following year): provisionally the **recorded `period_year`** (assigned manually) is authoritative, not the `value_date`. Requires domain sign-off.
 
-### 6.3 WEG-Abrechnung (M4, Zahlungsstand) ← `HAUSGELD_VORSCHUSS` (nachrichtlich, NICHT in die Spitze)
+### 6.3 WEG settlement (M4, payment status) ← `HAUSGELD_VORSCHUSS` (informational, NOT into the balance)
 
-**Präzise Zuordnung — und die wichtigste Abgrenzung von M6:**
+**Precise assignment — and the most important delimitation of M6:**
 
-| Abrechnungsgröße | M4-Träger | gespeiste Zahlungen | fließt in die Abrechnungsspitze? |
+| Settlement quantity | M4 carrier | payments fed | flows into the settlement balance? |
 | --- | --- | --- | --- |
-| **Soll-Vorschuss** des Eigentümers | `OwnerAdvanceInput.plan_advance_total` (aus `economic_plan`, §2.2) | **keine Zahlungen** — kommt aus dem **finalisierten Plan** | **JA** — der Subtrahend der Spitze (ADR-0007). |
-| **Ist-Zahlung** (Zahlungsstand) des Eigentümers | `WegComputeExtras.paid_advances` (heute MANUAL) → **DERIVED** | `payment` mit `payment_type='HAUSGELD_VORSCHUSS'` **AND** `period_year` = Abrechnungsjahr **AND** `owner_profile_id` = Eigentümer **AND** `status='booked'` **AND** nicht storniert | **NEIN** — **nur nachrichtlich** (Zahlungsstand/Rückstand). |
+| **Expected advance (Soll-Vorschuss)** of the owner | `OwnerAdvanceInput.plan_advance_total` (from `economic_plan`, §2.2) | **no payments** — comes from the **finalized plan** | **YES** — the subtrahend of the balance (ADR-0007). |
+| **Actual payment** (payment status) of the owner | `WegComputeExtras.paid_advances` (MANUAL today) → **DERIVED** | `payment` with `payment_type='HAUSGELD_VORSCHUSS'` **AND** `period_year` = settlement year **AND** `owner_profile_id` = owner **AND** `status='booked'` **AND** not reversed | **NO** — **informational only** (payment status/arrears). |
 
-- **Die Abrechnungsspitze bleibt `Ist-Kosten − Soll-Vorschuss(Plan)` (ADR-0007 E4-3a) — Zahlungen fließen NICHT in die Spitze.** Das ist die WEMoG-Systematik: Beschlussgegenstand ist die Anpassung gegen das **Soll**, nicht gegen das tatsächlich Gezahlte. Ein säumiger Eigentümer hat dieselbe Spitze wie ein zahlender (gleiches Soll, gleiche Ist-Kosten); sein **Rückstand** ist eine getrennte, nachrichtliche Größe (Mahnsache, M7). M6 ändert daran **nichts** — es ersetzt nur die **MANUAL** erfassten `paid_advances` (der heutige nachrichtliche Zahlungsstand) durch die **DERIVED**-Summe aus Zahlungen.
-- **Konsequenz:** M6 berührt die korrektheitskritische Spitze **gar nicht**. Es füllt ausschließlich den **nachrichtlichen** Zahlungsstand-Ausweis (`settlement_line(line_type='ADVANCE_PAYMENT')` optional, M4 §2.2/§2.4). Die in M4 etablierte Trennung (Spitze beschlussrelevant ↔ Zahlungsstand nachrichtlich) wird damit **gestärkt**, nicht verwässert.
+- **The settlement balance remains `actual costs − expected advance(plan)` (ADR-0007 E4-3a) — payments do NOT flow into the balance.** This is the WEMoG logic: the subject of the resolution (Beschluss) is the adjustment against the **expected amount**, not against what was actually paid. A defaulting owner has the same balance as a paying one (same expected amount, same actual costs); their **arrears** are a separate, informational quantity (a dunning matter, M7). M6 changes **nothing** about this — it only replaces the **MANUALLY** recorded `paid_advances` (today's informational payment status) with the **DERIVED** sum from payments.
+- **Consequence:** M6 does **not touch** the correctness-critical balance at all. It fills only the **informational** payment status disclosure (`settlement_line(line_type='ADVANCE_PAYMENT')` optional, M4 §2.2/§2.4). The separation established in M4 (balance relevant to the resolution ↔ payment status informational) is thereby **strengthened**, not diluted.
 
-### 6.4 Rücklagenanteil ← `RUECKLAGENANTEIL` (nachrichtlich, nicht in die Spitze)
+### 6.4 Reserve share ← `RUECKLAGENANTEIL` (informational, not into the balance)
 
-`RUECKLAGENANTEIL`-Zahlungen speisen den **Ist-Stand der Rücklagenzuführung** je Eigentümer (nachrichtlich). Sie fließen **nicht** in die Abrechnungsspitze (die Zuführung ist Vermögensbildung, keine Ist-Kosten — M4 §3). Der **Soll**-Zuführungsanteil kommt aus dem Plan/den `ERHALTUNGSRUECKLAGE`-Kostenpositionen (M4 §3.3); die DERIVED-Zahlungssumme ist der **Ist**-Abgleich. Optionaler Beitrag zum Vermögensbericht (§6.5).
+`RUECKLAGENANTEIL` payments feed the **actual state of the reserve contribution** per owner (informational). They do **not** flow into the settlement balance (the contribution is asset formation, not actual costs — M4 §3). The **expected** contribution share comes from the plan/the `ERHALTUNGSRUECKLAGE` cost items (M4 §3.3); the DERIVED payment sum is the **actual** comparison. Optional contribution to the asset report (§6.5).
 
-### 6.5 Vermögensbericht (M4, §28 IV) ← optional Kontostand DERIVED
+### 6.5 Asset report (M4, §28 IV) ← optionally DERIVED account balance
 
-M4 nutzt heute manuell erfasste Stichtagssalden (ADR-0008). Ab M6 **kann** der Vermögensbericht den Kontostand je `bank_account` **aus `payment` ableiten** (`Σ IN − Σ OUT` bis Stichtag, + optional `opening_balance`, §1.1) statt manuell. **[ENTSCHEIDUNG E6-7]** ob M6 den DERIVED-Kontostand für den Vermögensbericht anbietet (empfohlen: ja, als Option neben dem manuellen Stichtagssaldo) oder M4s manuellen Weg unverändert lässt. Empfehlung: DERIVED **anbieten**, MANUAL als Fallback — exakt das `source`-Muster. Forderungen/Verbindlichkeiten (M4 §6.4) bleiben manuell (M6 modelliert keine Lieferanten-Zahlungsstati über das Nötige hinaus).
+M4 currently uses manually recorded reference-date balances (ADR-0008). From M6 on, the asset report **can** derive the account balance per `bank_account` **from `payment`** (`Σ IN − Σ OUT` up to the reference date, + optionally `opening_balance`, §1.1) instead of manually. **[DECISION E6-7]** whether M6 offers the DERIVED account balance for the asset report (recommended: yes, as an option alongside the manual reference-date balance) or leaves M4's manual path unchanged. Recommendation: **offer** DERIVED, MANUAL as a fallback — exactly the `source` pattern. Receivables/liabilities (M4 §6.4) remain manual (M6 models no vendor payment statuses beyond what is necessary).
 
-### 6.6 Storno-Behandlung in der Ableitung (keine Doppel-/Nullzählung)
+### 6.6 Reversal handling in the derivation (no double/zero counting)
 
-Die DERIVED-Summe muss bei Storni **netto** korrekt sein:
-- **Variante A (empfohlen):** Ableitung zählt nur Zahlungen mit `reversed_by_id IS NULL` (nicht stornierte Originale) **und** schließt Storno-Zeilen (`reverses_id IS NOT NULL`) aus. Eine stornierte Zahlung + ihr Storno fallen damit beide raus → netto null. Klar und einfach.
-- **Variante B:** alle `booked` zählen, Storni mit umgekehrtem Vorzeichen — netto ebenfalls null, aber fehleranfälliger (Vorzeichen-Logik). **Empfehlung: Variante A.** Golden-getestet (§7): „stornierte Zahlung fließt nicht in die DERIVED-Summe".
+The DERIVED sum must be correct **net** when reversals exist:
+- **Variant A (recommended):** The derivation counts only payments with `reversed_by_id IS NULL` (non-reversed originals) **and** excludes reversal rows (`reverses_id IS NOT NULL`). A reversed payment + its reversal thus both drop out → net zero. Clear and simple.
+- **Variant B:** count all `booked`, reversals with the opposite sign — also net zero, but more error-prone (sign logic). **Recommendation: variant A.** Golden-tested (§7): "reversed payment does not flow into the DERIVED sum".
 
-### 6.7 Manuell bleibt als Fallback (das `source`-Diskriminator-Muster)
+### 6.7 Manual remains as a fallback (the `source` discriminator pattern)
 
-- `advance_payments_source='MANUAL'` (M3/M4-Default) bleibt vollständig funktionsfähig: der Sachbearbeiter setzt die Vorauszahlungssumme von Hand (z. B. wenn Zahlungen nicht im System erfasst sind). **M6 erzwingt DERIVED nicht.**
-- `advance_payments_source='DERIVED'` wird beim Anlegen/Berechnen eines Laufs **optional** gewählt: dann zieht der Service die Summe per §6.1-Funktion und setzt `advance_payments_total` aus den Zahlungen. Beim **Finalisieren** wird der so ermittelte Wert (wie jeder Wert) als **Kopie** in den Snapshot eingefroren — ab da ist er unveränderlich, auch wenn später Zahlungen storniert werden (§5, ADR-0009 #3).
-- **Übergang ohne Schemabruch:** Die Spalten existieren bereits und sind im Immutability-Trigger gelistet (`0011`). M6 ändert **kein** Abrechnungs-Schema; es füllt nur den `DERIVED`-Pfad im Service.
+- `advance_payments_source='MANUAL'` (M3/M4 default) remains fully functional: the case handler sets the advance payment total by hand (e.g. when payments are not recorded in the system). **M6 does not enforce DERIVED.**
+- `advance_payments_source='DERIVED'` is chosen **optionally** when creating/computing a run: the service then pulls the sum via the §6.1 function and sets `advance_payments_total` from the payments. On **finalizing**, the value determined this way (like every value) is frozen as a **copy** in the snapshot — from then on it is immutable, even if payments are reversed later (§5, ADR-0009 #3).
+- **Transition without schema break:** The columns already exist and are listed in the immutability trigger (`0011`). M6 changes **no** settlement schema; it only fills the `DERIVED` path in the service.
 
-> **[ENTSCHEIDUNG E6-8] Zeitpunkt der Ableitung.** DERIVED-Wert **bei jedem `compute`** frisch ziehen (immer aktuell, bis `finalize` einfriert) — empfohlen — vs. einmal beim Anlegen fixieren. Empfehlung: bei jedem `compute` frisch (der `draft` spiegelt den aktuellen Zahlungsstand); `finalize` friert den dann gültigen Wert ein. Bestätigen.
+> **[DECISION E6-8] Time of derivation.** Pull the DERIVED value freshly **on every `compute`** (always current, until `finalize` freezes it) — recommended — vs. fixing it once on creation. Recommendation: fresh on every `compute` (the `draft` mirrors the current payment status); `finalize` freezes the then-current value. Please confirm.
 
 ---
 
-### 6.8 Bankumsätze und Dateiimport (Phase 2, T15–T19)
+### 6.8 Bank transactions and file import (Phase 2, T15–T19)
 
-Importierte `bank_transaction`-Zeilen sind zunächst **NEU**, keine gebuchten
-`payment`-Zeilen und deshalb noch kein Ist im Miet-/Eigentümerkonto. Sie tragen
-signed EUR-Decimal-Beträge; RLS und Composite-FKs sichern Organisation und Konto.
-Ein späterer Zahlungslink muss zum gleichen Konto gehören und ist nach Buchen
-unveränderlich. Bestehende Zahlungen und finalisierte Abrechnungen werden beim
-Import nicht verändert.
+Imported `bank_transaction` rows are initially **NEU** (new), not booked
+`payment` rows, and therefore not yet actual (Ist) in the tenant or owner account. They carry
+signed EUR decimal amounts; RLS and composite FKs secure organization and account.
+A later payment link must belong to the same account and is immutable
+once booked. Existing payments and finalized settlements are not changed
+by the import.
 
-`POST /api/bank-accounts/{id}/imports` nimmt eine Datei (`file`, CSV/XML/ZIP).
-`dry_run=true` ist die sichere Vorgabe: Anzahl, Gesamtsumme, neue Summe,
-Buchungszeitraum, Dubletten und maximal 100 Vorschauzeilen, **keine Persistenz**.
-Mit `dry_run=false` erfolgt die Übernahme atomar unter Kontosperre und zusätzlichem
-Unique-Conflict-Schutz; derselbe Auszug erzeugt erneut null Zeilen, auch bei
-konkurrierenden Importen. Fremde Konten liefern 404; READ_ONLY darf nicht importieren.
-Bekannte Quell-IBANs müssen mit einer hinterlegten Ziel-IBAN übereinstimmen.
-Parser-/Formatfehler liefern 422, übergroße Uploads 413, jeweils ohne Teilübernahme.
-Formate, Limits und Grenzen bei fehlenden bankseitigen Transaktions-IDs: README.
-Die Oberfläche `/bankkonten/{id}/umsaetze` bietet Statusfilter, Pagination und
-für Schreibrollen Datei → Vorschau → Übernehmen. Ein Dateiwechsel verwirft die
-alte Freigabe; Rückmeldungen nennen auch null neue Umsätze. Der echte lokale
-T19-Browserlauf prüft CSV, Reload, wiederholten Import sowie dieselben Buchungen
-als CAMT-XML/ZIP ohne Duplikate. Kontobezogene Liste über
-`GET /api/bank-accounts/{id}/transactions`, paginiert (50, maximal 100 Zeilen).
-Der Import selbst bucht nicht; die separate API-Zuordnung beschreibt §6.10,
-ihre Bedienoberfläche folgt in T22.
+`POST /api/bank-accounts/{id}/imports` accepts a file (`file`, CSV/XML/ZIP).
+`dry_run=true` is the safe default: count, total sum, new sum,
+booking period, duplicates and at most 100 preview rows, **no persistence**.
+With `dry_run=false` the takeover happens atomically under an account lock and additional
+unique-conflict protection; the same statement again produces zero rows, even with
+concurrent imports. Foreign accounts return 404; READ_ONLY may not import.
+Known source IBANs must match a stored target IBAN.
+Parser/format errors return 422, oversized uploads 413, in each case without partial takeover.
+Formats, limits and boundaries for missing bank-side transaction IDs: README.
+The UI `/bankkonten/{id}/umsaetze` offers status filter, pagination and,
+for write roles, file → preview → apply. Changing the file discards the
+old release; feedback also reports zero new transactions. The real local
+T19 browser run checks CSV, reload, repeated import and the same bookings
+as CAMT XML/ZIP without duplicates. Account-related list via
+`GET /api/bank-accounts/{id}/transactions`, paginated (50, at most 100 rows).
+The import itself does not book; the separate API assignment is described in §6.10,
+its user interface follows in T22.
 
-### 6.9 Zuordnungsvorschläge (Phase 2, T20)
+### 6.9 Assignment suggestions (Phase 2, T20)
 
-`suggest_matches` arbeitet rein auf einem Bankumsatz und bereits aggregierten
-`OpenItem`-Werten aus `account_statement` (Soll aus Mietvertrag/Wirtschaftsplan,
-abzüglich gebuchtem Ist). Sie lädt keine Daten und schreibt keine Zahlungen.
-Der Zuordnungsservice begrenzt die Ziele auf Organisation, Konto und Objekt.
-Bekannte abweichende IBAN verhindert einen Treffer; Namen werden nur anhand
-normalisierter vollständiger Wörter verglichen, nicht als unscharfe Teilzeichenfolge.
-Ein expliziter Monat im Zweck ist maßgeblich. Der Wertstellungsmonat ist nur ein
-prüfpflichtiger Fallback; mehrere widersprüchliche Monate werden nicht geraten.
+`suggest_matches` works purely on one bank transaction and already aggregated
+`OpenItem` values from `account_statement` (expected amount from lease/economic plan,
+minus booked actual). It loads no data and writes no payments.
+The assignment service restricts the targets to organization, account and property.
+A known deviating IBAN prevents a match; names are compared only on the basis of
+normalized whole words, not as a fuzzy substring.
+An explicit month in the payment reference is authoritative. The value date month is only a
+fallback requiring review; several contradictory months are not guessed.
 
-Warmmiete 850 EUR wird bei 700 EUR offener Kaltmiete und 150 EUR offenen NK exakt
-aufgeteilt. Bereits bezahlte Komponenten werden nicht nochmals vorgeschlagen.
-Hausgeld nutzt das vorhandene Eigentümer-Soll. Teilzahlung auf eine eindeutige
-Komponente ist centgenau; bei unklarer Warmmiet-Aufteilung bleiben die Splitbeträge
-`None`, `unallocated_amount` enthält den vollen Eingang und `requires_review` ist
-wahr. **Keine erfundene Tilgungsreihenfolge und keine automatisch buchbare
-Aufteilung** für diesen Fall. Mehrere passende Ziele, abweichender Name oder
-unbekannter Monat senken die Konfidenz bzw. verlangen Prüfung. Kaution, Storno,
-Rückbuchung, gemischter Miet-/Hausgeldzweck, unbekannte Identität und Überzahlung
-werden nicht als sichere reguläre Soll-Zuordnung umgedeutet; manuell bleiben sie
-bearbeitbar. Die API validiert erneut (§6.10); die Oberfläche folgt in T22.
+A gross rent (Warmmiete) of 850 EUR is split exactly with 700 EUR open base rent and 150 EUR open
+operating costs. Components already paid are not suggested again.
+Hausgeld uses the existing owner expected amount. A partial payment on a single unambiguous
+component is cent-exact; with an unclear gross rent split, the split amounts remain
+`None`, `unallocated_amount` contains the full receipt and `requires_review` is
+true. **No invented order of application and no automatically bookable
+split** for this case. Several matching targets, a deviating name or
+an unknown month lower the confidence or require review. Security deposit, reversal,
+chargeback, mixed rent/Hausgeld reference, unknown identity and overpayment
+are not reinterpreted as a safe regular expected-amount assignment; they remain
+manually editable. The API validates again (§6.10); the user interface follows in T22.
 
-### 6.10 Atomare Umsatzzuordnung (Phase 2, T21)
+### 6.10 Atomic transaction assignment (Phase 2, T21)
 
-`GET /api/bank-transactions` liefert paginierte Umsätze mit echten Vorschlägen
-(Statusvorgabe `NEU`, ausdrücklich `ALL` für alle Zustände, Kontofilter,
-Limit 50/maximal 100). Auch ohne Vorschläge
-bleiben die Konto-RLS und aktuelle Kreisfreigaben maßgeblich. Jeder Listeneintrag
-verwendet seinen eigenen Berechnungskontext; Hausgeld nur aus dem passenden
-finalisierten, nicht supersedierten Wirtschaftsplan. Der Eigentümer-Istfilter
-grenzt zusätzlich das Bankobjekt ab, auch wenn die Person mehrere Objekte besitzt.
+`GET /api/bank-transactions` returns paginated transactions with real suggestions
+(default status `NEU`, explicitly `ALL` for all states, account filter,
+limit 50/maximum 100). Even without suggestions,
+the account RLS and current scope grants remain authoritative. Each list entry
+uses its own calculation context; Hausgeld only from the matching
+finalized, non-superseded economic plan. The owner actual filter
+additionally restricts to the bank property, even if the person owns several properties.
 
-`POST /{id}/assign` validiert alle Zeilen vor der ersten Zahlung. Positive,
-centgenaue Decimalbeträge müssen zusammen `abs(bank_transaction.amount)` decken;
-Ziel, Zahlungsart und Periode werden geprüft. Konto, Objekt, Richtung und
-Wertstellung sind nicht clientsetzbar. Der vorhandene Zahlungsdienst erzeugt
-Entwürfe mit Banklink **vor** dem Buchen und setzt Audit-/Aufbewahrungsdaten.
-Der Bankumsatz bleibt bis zum Transaktionsende gesperrt. Erst nach allen
-Buchungen wird er `ZUGEORDNET`; jeder Fehler rollt Zahlungen, Audit und Status
-vollständig zurück. `POST /{id}/ignore` setzt ohne Zahlung `IGNORIERT`.
-Nur `NEU` ist bearbeitbar; parallele oder wiederholte Bearbeitung liefert 409.
-Fremde/unsichtbare IDs liefern 404, READ_ONLY 403, fehlende Anmeldung 401,
-ungültige Inhalte 422. Bei Kontoscope gelten vorhandene `prepare`- und
-`confirm`-Rechte, nicht die Wirtschaftsplan-`approve`-Berechtigung. Keine Änderung
-an gebuchten Historien, finalisierten Plänen oder bestehenden Scope-Regeln.
+`POST /{id}/assign` validates all rows before the first payment. Positive,
+cent-exact decimal amounts must together cover `abs(bank_transaction.amount)`;
+target, payment type and period are checked. Account, property, direction and
+value date cannot be set by the client. The existing payment service creates
+drafts with the bank link **before** booking and sets audit/retention data.
+The bank transaction stays locked until the end of the transaction. Only after all
+bookings does it become `ZUGEORDNET`; any error rolls back payments, audit and status
+completely. `POST /{id}/ignore` sets `IGNORIERT` without a payment.
+Only `NEU` is editable; concurrent or repeated processing returns 409.
+Foreign/invisible IDs return 404, READ_ONLY 403, missing login 401,
+invalid content 422. With account scope, the existing `prepare` and
+`confirm` permissions apply, not the economic plan `approve` permission. No change
+to booked histories, finalized plans or existing scope rules.
 
-### 6.11 Umsatzzuordnung in der Oberfläche (Phase 2, T22)
+### 6.11 Transaction assignment in the user interface (Phase 2, T22)
 
-Schreibrollen können vollständige eindeutige Vorschläge ausdrücklich übernehmen,
-im Dialog manuell auf Mietvertrag/Eigentümer, Zahlungsart und Monat aufteilen
-oder einen Eingang ohne Zahlung ignorieren. Prüfpflichtige oder unvollständige
-Vorschläge werden nicht automatisch gebucht. Die positiven Splitbeträge müssen
-den absoluten Bankbetrag centgenau decken; deutsche Dezimaleingaben werden ohne
-Floatarithmetik geprüft. Fehler behalten die Eingaben, 409 wird sichtbar, Reload
-folgt erst auf Erfolg. READ_ONLY erhält keine Mutationsaktionen. „Alle“ behält
-auch verarbeitete Zeilen; Kontofilter und Pagination bleiben serverseitig.
-Der lokale Browserprüflauf legt alle Stammdaten per UI an und belegt 850=700+150
-im Januar vollständig bezahlt, 600=500+100 im Februar mit 250 Rest sowie 25
-ignoriert ohne Zahlung; Jahres-Soll 10.200, Ist 1.450, Saldo 8.750 EUR.
+Write roles can explicitly accept complete unambiguous suggestions,
+split manually in the dialog by lease/owner, payment type and month,
+or ignore a receipt without a payment. Suggestions requiring review or incomplete
+suggestions are not booked automatically. The positive split amounts must
+cover the absolute bank amount cent-exactly; German decimal input is validated without
+floating-point arithmetic. Errors keep the inputs, 409 becomes visible, reload
+follows only on success. READ_ONLY gets no mutation actions. "Alle" ("All") also keeps
+processed rows; account filter and pagination remain server-side.
+The local browser acceptance run creates all master data via the UI and demonstrates 850=700+150
+in January fully paid, 600=500+100 in February with 250 remainder, and 25
+ignored without a payment; annual expected amount 10,200, actual 1,450, balance 8,750 EUR.
 
-### 6.12 Objekt-Jahresübersicht (Phase 2, T38)
+### 6.12 Property annual overview (Phase 2, T38)
 
-`GET /api/reports/property-year` summiert aktive gebuchte Zahlungen nach
-`value_date` und Typ (`IN` positiv, `OUT` negativ); stornierte Originale,
-Stornozeilen, abgebrochene Entwürfe und Rohbankumsätze bleiben ausgeschlossen.
-Bestätigte, nicht ersetzte Kosten zählen mit ihrem Bruttobetrag nach
-`invoice_date`, gruppiert nach Kategorie und unverändertem Umlagekennzeichen.
-Teilweise zu prüfende Umlage wird nicht automatisch als voll umlagefähig behandelt.
-Saldo = Einnahmensumme − Kostensumme; alle Beträge bleiben Decimal-exakt,
-auch bei großen Summen und niedrigem äußerem Präzisionskontext.
+`GET /api/reports/property-year` sums active booked payments by `value_date` and type
+(`IN` positive, `OUT` negative); reversed originals, reversal rows, cancelled drafts
+and raw bank transactions remain excluded. Confirmed, non-superseded costs count with
+their gross amount by `invoice_date`, grouped by category and the unchanged
+allocability flag. Allocability that is partly still to be reviewed is not
+automatically treated as fully allocable. Balance = income total − cost total; all
+amounts remain Decimal-exact, even with large sums and a low outer precision context.
 
-Die ausgegebene Datumsbasis weicht bewusst vom Sollperioden-/Leistungszeitraum
-ab. Kautionen bleiben separat ausgewiesen und werden nicht steuerlich umgedeutet.
-Die Übersicht ersetzt keine vollständige Anlage V oder EÜR. Vollständige
-Quell-Leserechte und ein gegebenenfalls expliziter Ganzobjekt-/Ganzjahreskreis
-sind erforderlich; Teilzugriff oder ungeklärte Klassifikation liefert keine
-scheinbar vollständigen Summen. Bestehende Buchungen und Snapshots bleiben unverändert.
+The date basis used deliberately differs from the expected-amount period/service
+period. Security deposits remain reported separately and are not reinterpreted for tax
+purposes. The overview does not replace a complete Anlage V (rental income tax form)
+or EÜR (cash-basis profit statement). Complete source read permissions and, where
+applicable, an explicit whole-property/whole-year scope are required; partial access
+or unresolved classification does not yield seemingly complete totals. Existing
+bookings and snapshots remain unchanged.
 
-Die Oberfläche `/berichte` (T39) fragt Objekt/Jahr/Kreis ausdrücklich ab; ein
-Auswahlwechsel entfernt alte Ergebnisse. Der CSV-Download unter
-`/api/reports/property-year.csv` berechnet dieselbe Basis frisch und verlangt
-zusätzlich Kreis-/Quell-Exportrechte, erneut vor Ausgabe geprüft. UTF-8-BOM,
-Semikolon, CRLF und Dezimalkomma sind für Tabellenprogramme festgelegt.
-Formelanfällige Texte erhalten ein Apostrophpräfix, echte negative Beträge
-bleiben unverändert numerisch. CSV und Anzeige verändern keine Buchungen,
-Kosten oder Historien; sie ersetzen keine steuerliche Prüfung.
+The `/berichte` interface (T39) queries property/year/scope explicitly; changing the
+selection removes old results. The CSV download at `/api/reports/property-year.csv`
+computes the same basis afresh and additionally requires scope/source export
+permissions, checked again before output. UTF-8 BOM, semicolon, CRLF and decimal comma
+are fixed for spreadsheet programs. Texts prone to formula injection receive an
+apostrophe prefix, genuine negative amounts remain unchanged numerically. CSV and
+display do not change bookings, costs or histories; they do not replace a tax review.
 
-### 6.13 Listenexport (Phase 2, T40)
+### 6.13 List export (Phase 2, T40)
 
-Zahlungs- und Kostenliste exportieren ihre vollständige gefilterte READ-Zeilenmenge
-über `/api/payments/export.csv` bzw. `/api/cost-entries/export.csv`. Alle sieben
-Zahlungsfilter gelten unverändert; Status und Objekt der Kostenliste werden
-kombiniert. Jeder ausgewählte Datensatz benötigt zusätzlich seine Quellen- und
-Kreis-Exportrechte. Vor der vollständig gepufferten Ausgabe wird erneut geprüft;
-eine inzwischen unsichtbare abgelaufene Bindung ist kein Legacy-Fallback.
+The payment and cost lists export their complete filtered READ row set via
+`/api/payments/export.csv` and `/api/cost-entries/export.csv` respectively. All seven
+payment filters apply unchanged; status and property of the cost list are combined.
+Each selected record additionally needs its source and scope export permissions.
+Before the fully buffered output, a renewed check is made; a binding that has
+meanwhile expired and become invisible is not a legacy fallback.
 
-CSV enthält IDs, Status und Originalcodes, UTF-8-BOM, Semikolon, CRLF und exakte
-Dezimalkommawerte mit Text-Formelschutz. Der separate Saldo-Betrag ist bei IN
-positiv, bei OUT negativ. Listensaldo und Kosten-Bruttosumme umfassen genau die
-angezeigten Status, auch Entwürfe oder Storno-/Korrekturzeilen je Filter; sie sind
-weder automatisches Ist noch Kontostand. Identische Filterwahl ist ein No-op;
-Lade-/Fehler-/Kontextwechsel sperren veraltete Downloads. Export ändert keine
-Finanz-, Beleg-, Audit- oder Historiendaten.
+The CSV contains IDs, statuses and original codes, UTF-8 BOM, semicolon, CRLF and
+exact decimal-comma values with text formula protection. The separate balance amount
+is positive for IN, negative for OUT. List balance and cost gross total cover exactly
+the statuses shown, including drafts or reversal/correction rows per filter; they are
+neither an automatic actual (Ist) nor an account balance. Selecting an identical
+filter is a no-op; load/error/context changes block stale downloads. The export
+changes no financial, voucher, audit or history data.
 
-### 6.14 DATEV-Bestandsausgabe (Phase 3, T49)
+### 6.14 DATEV current-state output (Phase 3, T49)
 
-`GET /api/reports/datev/sources`, `POST /preview` unter demselben DATEV-Präfix
-und `POST /api/reports/datev.csv` nutzen vollständige Objekt-/Finanzkreis- und
-Quellenexportrechte einschließlich Kontakte. Finanzsperre und Liveprüfung bleiben
-bis zur abschließenden Exportprüfung wirksam. Zeitbasis: Wertstellung aktiver
-gebuchter Zahlungen und Rechnungsdatum aktueller bestätigter Kosten. Keine
-zusätzlichen Rohbankumsätze, Stornopaare, ersetzten Revisionen oder Nullbuchungen.
+`GET /api/reports/datev/sources`, `POST /preview` under the same DATEV prefix and
+`POST /api/reports/datev.csv` use complete property/financial-scope and source export
+permissions, including contacts. The financial lock and live check remain effective
+until the final export check. Time basis: value date of active booked payments and
+invoice date of current confirmed costs. No additional raw bank transactions, reversal
+pairs, superseded revisions or zero postings.
 
-SKR03/SKR04 und alle realen Konten werden ausdrücklich pro Datei konfiguriert;
-keine Default-Konten oder globale Änderung des Kategorienplans. Konto/Soll bei
-Bank-IN, Konto/Haben bei Bank-OUT; Kosten positiv im Soll, Gutschrift im Haben.
-Bankgegenkonten sind explizit je Zahlungstyp, Kostenkonten und Verrechnungskonten
-je Kategorie festzulegen. Kaution/Rücklage werden nicht als Erlös umgedeutet;
-Rechnungszahlung und Kostenquelle dürfen durch falsche Kontierung nicht doppelt
-als Aufwand erscheinen. Unterstützt sind bewusst geprüfte Bruttokonten **ohne
-Steuerautomatik**, keine VAT-Aufteilung oder BU-Schlüssel.
+SKR03/SKR04 and all real accounts are configured explicitly per file; no default
+accounts or global change to the category plan. Account/debit for bank IN,
+account/credit for bank OUT; costs positive in debit, credit notes in credit. Bank
+offset accounts must be set explicitly per payment type, cost accounts and clearing
+accounts per category. Security deposit/reserve are not reinterpreted as revenue; an
+invoice payment and the cost source must not appear twice as expense through wrong
+account assignment. Deliberately reviewed gross accounts **without automatic tax
+handling** are supported, no VAT split or BU keys (DATEV posting keys).
 
-Primärformat: [DATEV-Format](https://developer.datev.de/de/file-format/details/datev-format/getting-started),
-öffentlich ausgelieferte offizielle Formatbeschreibung mit Header 700,
-Buchungsstapel 13, 125 Feldern, DDMM, positivem Umsatz/Soll-Haben und UTF-8-BOM.
-Die Vorschau bindet Quellenzeilen und Konfiguration per Fingerabdruck; Abweichung
-vor Download führt zu 409. Kein Senden an DATEV und kein nachgewiesener Import.
-**Keine Delta-/Journalhistorie:** Ausgabe ist ein kompletter aktueller Bestand;
-Wiederholung/Überlappung und nachträgliche Korrekturen im Zielsystem abstimmen,
-nicht mehrfach importieren. Bestehende Buchungen/Snapshots bleiben unverändert.
+Primary format:
+[DATEV format](https://developer.datev.de/de/file-format/details/datev-format/getting-started),
+the publicly provided official format description, with header 700, posting batch
+(Buchungsstapel) 13, 125 fields, DDMM, positive turnover with debit/credit indicator
+and UTF-8 BOM. The preview binds source rows and configuration by fingerprint; a
+deviation before download leads to 409. No sending to DATEV and no proven import. **No
+delta/journal history:** The output is a complete current state; reconcile
+repetition/overlap and later corrections in the target system, do not import multiple
+times. Existing bookings/snapshots remain unchanged.
 
-### 6.15 SEPA-CORE-Monatsdatei (Phase 3, T50)
+### 6.15 SEPA CORE monthly file (Phase 3, T50)
 
-Explizite Gläubiger-/Bankvereinbarung und extern unterschriebenes Mietermandat
-sind Voraussetzungen, keine aus Kontakt-IBAN abgeleitete Zustimmung. Persistente
-Referenz, Unterschrift, FRST/RCUR, letzte tatsächliche Bankvorlage und Originalreferenz
-werden manuell erfasst; Referenzen sind je Gläubiger eindeutig. Name/IBAN-Wechsel,
-Widerruf, Datenschutzsperre oder veraltete Zustimmung blockieren. Die konservative
-36-Monats-Prüfung zählt ab letzter Vorlage, bei unbenutzten Mandaten ab Unterschrift;
-bei Unsicherheit neue Zustimmung einholen. Zurückgewiesene, zurückgegebene und
-erstattete Vorlagen sind ebenfalls als tatsächliche Nutzung zu berücksichtigen.
+An explicit creditor/bank agreement and an externally signed tenant mandate are
+prerequisites, not a consent derived from a contact IBAN. Persistent reference,
+signature, FRST/RCUR, the last actual bank submission and the original reference are
+recorded manually; references are unique per creditor. Name/IBAN changes, revocation,
+a data-protection block or outdated consent each block the collection. The
+conservative 36-month check counts from the last submission, for unused mandates from
+the signature; when in doubt, obtain new consent. Rejected, returned and refunded
+submissions must likewise be counted as actual use.
 
-Monatsbetrag = bestehendes `tenant_expected_charges` über alle überlappenden
-Mietverträge: Kaltmiete plus NK, Miethistorie und getrennte Cent-Rundung je
-Teilmonatskomponente; mehrere Verträge eines Mieters werden zusammengefasst.
-Kein Abzug bereits gebuchter Zahlungen und keine automatische Rückstandsvereinnahmung.
-Vollständige Objekt-/Finanzkreis-/Kontaktexportrechte und Finanzsperren gelten auch
-für Nur-Lesen-Exporte. Fehlendes Mandat ist ein Fehler, keine gefilterte Teilmenge.
-Vorschau und digestgebundener Download buchen nichts und ändern keine Historie.
+Monthly amount = the existing `tenant_expected_charges` over all overlapping leases:
+base rent plus operating costs, rent history and separate cent rounding per
+partial-month component; several leases of one tenant are combined. No deduction of
+payments already booked and no automatic collection of arrears. Complete
+property/financial-scope/contact export permissions and financial locks also apply to
+read-only exports. A missing mandate is an error, not a filtered subset. The preview
+and the digest-bound download book nothing and change no history.
 
-Profil: CORE, EUR, pain.008.001.08, FRST/RCUR, SLEV; Original-EPC-XSD im Runtimepaket,
-zusätzliche unabhängige ISO-XSD-Prüfung in Tests und Browserdownload. Bankannahme,
-Mandatsoriginal und tatsächliche Vorabankündigung (14 Tage, sofern keine kürzere
-Vereinbarung) bleiben extern zu prüfen. Keine Übertragung, OOFF/FNAL-Automatik,
-Mandatsänderungsnachricht oder Bank-/Clearingkalenderzusage. Gleiche Datei nicht
-ungeprüft mehrfach bei der Bank einreichen; eine Vorschau ist kein Ausführungsbeleg.
+Profile: CORE, EUR, pain.008.001.08, FRST/RCUR, SLEV; original EPC XSD in the runtime
+package, additional independent ISO XSD validation in tests and browser download. Bank
+acceptance, the mandate original and the actual pre-notification (14 days, unless a
+shorter period is agreed) remain to be checked externally. No transmission, no
+OOFF/FNAL automation, no mandate amendment message or bank/clearing-calendar
+commitment. Do not submit the same file to the bank several times without checking; a
+preview is not an execution receipt.
 
-Primärquellen: [EPC CORE C2PSP Guidelines](https://www.europeanpaymentscouncil.eu/document-library/implementation-guidelines/sepa-direct-debit-core-customer-psp-implementation-1),
+Primary sources:
+[EPC CORE C2PSP Guidelines](https://www.europeanpaymentscouncil.eu/document-library/implementation-guidelines/sepa-direct-debit-core-customer-psp-implementation-1),
 [EPC CORE Rulebook 2025 v1.2](https://www.europeanpaymentscouncil.eu/document-library/rulebooks/2025-sepa-direct-debit-core-rulebook-version-1-2),
-[Bundesbank Gläubiger-ID](https://www.bundesbank.de/de/aufgaben/unbarer-zahlungsverkehr/serviceangebot/sepa/glaeubiger-identifikationsnummer).
-Die EPC-Mitteilung vom 30.09.2026 verschiebt die zuvor angekündigte feste
-Unstructured-Address-Abschaltung auf einen noch unbestimmten Termin; keine alte
-Novemberfrist als fortgeltende Zusicherung. Gläubiger-ID-Zuteilung allein verleiht
-keine Einzugserlaubnis. Bankprofil ausdrücklich bestätigen.
+[Bundesbank creditor ID](https://www.bundesbank.de/de/aufgaben/unbarer-zahlungsverkehr/serviceangebot/sepa/glaeubiger-identifikationsnummer).
+The EPC notice of September 30, 2026 postpones the previously announced fixed
+unstructured-address shutdown to a date not yet determined; do not treat the old
+November deadline as a continuing assurance. Allocation of a creditor ID alone does
+not confer a collection authorization. Confirm the bank profile explicitly.
 
-## 7. Synthetische Golden-Tests (objektive M6-Messlatte)
+## 7. Synthetic golden tests (objective M6 yardstick)
 
-Es gibt **keine** realen Beispieldaten. Prüffälle sind **synthetisch** aus den Regeln + **handberechneten** Soll-/Ist-/Saldo-Werten (jeder Cent), exakt wie M3/M4 §9. Beide Test-Arten verbindlich für die M6-Abnahme; sie laufen gegen die **reine Engine** (höchste Testdichte) und gegen Service/DB.
+There are **no** real sample data. Test cases are **synthetic** from the rules + **hand-calculated** expected/actual/balance values (every cent), exactly like M3/M4 §9. Both kinds of tests are binding for M6 acceptance; they run against the **pure engine** (highest test density) and against service/DB.
 
-### 7.1 Golden-Tests (handberechnet)
+### 7.1 Golden tests (hand-calculated)
 
-1. **Soll-Ist je Mietvertrag, voll bezahlt:** Lease, Kaltmiete 700,00 € + NK-Vorauszahlung 150,00 € = 850,00 €/Monat, 12 Monate, 12 Zahlungen à 850,00 €. Soll: Jahres-Soll 10.200,00 €, Ist 10.200,00 €, **Saldo 0**; offene Posten leer. Prüft Soll-Generierung (§2) + getrennte Komponenten.
-2. **Teilzahlung → offener Posten:** ein Monat 850,00 € Soll, Zahlung 600,00 €. Soll: offener Posten 250,00 € (offen > 0). Prüft §3.2.
-3. **Überzahlung → Guthaben:** ein Monat 850,00 € Soll, Zahlung 1000,00 €. Soll: offener Posten −150,00 € (Guthaben). Prüft §3.3.
-4. **Unterjähriger Mietbeginn (tagegenauer Anschnitt):** Lease ab 15.03., NK-Vorauszahlung 150,00 €/Monat; März anteilig (17/31 Tage). Soll: März-NK-Soll = `distribute`-genauer Anteil; ganze Monate ab April voll. Prüft §2.1 + Lese-Grenze (ADR-0006).
-5. **DERIVED-NK-Vorauszahlung in einer BK-Abrechnung == MANUAL (Exit-Kern):** Mieter zahlt monatlich 700,00 € `KALTMIETE` + 150,00 € `NK_VORAUSZAHLUNG` (12×), `period_year=2025`, ein Lease. (a) BK-Abrechnung mit `advance_payments_source='MANUAL'`, `advance_payments_total=1800,00` (12×150). (b) BK-Abrechnung mit `advance_payments_source='DERIVED'`. Soll: **beide ergeben exakt `advance_payments_total=1800,00`** und **identische** `balance`; die `KALTMIETE`-Zahlungen (8400,00 €) fließen in **keine** der beiden. **Dies ist das direkte Abbild des M6-Exit-Kriteriums** („eine Abrechnung zieht erfasste Zahlungen automatisch") und der schärfste Abgrenzungstest (Kaltmiete ≠ NK).
-6. **Hausgeld-Soll-Ist + Spitze unberührt:** WEG, Eigentümer A: Plan-Soll-Vorschuss 5500,00 € (aus finalisiertem Plan, §2.2), Ist-Kosten-Anteil 6000,00 €, gezahlte `HAUSGELD_VORSCHUSS` = 5000,00 € (Rückstand 500,00 € ggü. Soll). Soll: **Abrechnungsspitze = 6000 − 5500 = +500,00 € (unverändert ggü. M4 Golden-Test 2)**; der Zahlungsstand (Ist 5000,00 €, Rückstand zum Soll 500,00 €) erscheint **nachrichtlich**, fließt **NICHT** in die Spitze. Prüft §6.3 — die Kern-Abgrenzung „Zahlungen nicht in die Spitze".
-7. **Storno fließt nicht in DERIVED:** Mieter zahlt NK 150,00 €, dann Storno (gegenläufig), dann korrekte 160,00 €. Soll: DERIVED-NK-Summe = 160,00 € (Original + Storno netto null). Prüft §6.6 + GoBD-Storno (§5).
-8. **Vermögenstrennung — Querbuchen scheitert (DB-Negativtest):** Versuch, eine `payment` mit `bank_account` der WEG A, aber `property_id` der WEG B (gleiche Org) zu schreiben → vom Composite-FK **abgewiesen**. Prüft §4 / ADR-0010.
-9. **GoBD — `booked`-Zahlung unveränderbar (DB-Negativtest):** UPDATE von `amount`/Zuordnung einer `booked`-Zahlung → Trigger-Exception; DELETE → Exception; nur `reversed_by_id` setzbar. Prüft §5 / ADR-0003-Muster.
+1. **Expected/actual per lease, fully paid:** Lease, base rent 700.00 € + operating cost advance payment 150.00 € = 850.00 €/month, 12 months, 12 payments of 850.00 € each. Expected result: annual expected amount 10,200.00 €, actual 10,200.00 €, **balance 0**; open items empty. Tests expected-amount generation (§2) + separate components.
+2. **Partial payment → open item:** one month with expected amount 850.00 €, payment 600.00 €. Expected result: open item 250.00 € (open > 0). Tests §3.2.
+3. **Overpayment → credit balance:** one month with expected amount 850.00 €, payment 1000.00 €. Expected result: open item −150.00 € (credit balance). Tests §3.3.
+4. **Mid-year lease start (day-accurate partial month):** Lease from March 15, operating cost advance payment 150.00 €/month; March pro rata (17/31 days). Expected result: March operating cost expected amount = `distribute`-exact share; full months from April in full. Tests §2.1 + read boundary (ADR-0006).
+5. **DERIVED operating cost advance payment in an operating cost statement == MANUAL (exit core):** Tenant pays monthly 700.00 € `KALTMIETE` + 150.00 € `NK_VORAUSZAHLUNG` (12×), `period_year=2025`, one lease. (a) Operating cost statement with `advance_payments_source='MANUAL'`, `advance_payments_total=1800,00` (12×150). (b) Operating cost statement with `advance_payments_source='DERIVED'`. Expected result: **both yield exactly `advance_payments_total=1800,00`** and an **identical** `balance`; the `KALTMIETE` payments (8400.00 €) flow into **neither**. **This is the direct image of the M6 exit criterion** ("a settlement pulls recorded payments automatically") and the sharpest delimitation test (base rent ≠ operating costs).
+6. **Hausgeld expected/actual + settlement balance untouched:** WEG, owner A: plan expected advance (Soll-Vorschuss) 5500.00 € (from finalized plan, §2.2), actual-cost share 6000.00 €, paid `HAUSGELD_VORSCHUSS` = 5000.00 € (arrears 500.00 € vs. expected amount). Expected result: **settlement balance = 6000 − 5500 = +500.00 € (unchanged vs. M4 golden test 2)**; the payment status (actual 5000.00 €, arrears against expected amount 500.00 €) appears **informationally**, does **NOT** flow into the balance. Tests §6.3 — the core delimitation "payments not into the balance".
+7. **Reversal does not flow into DERIVED:** Tenant pays operating cost advance 150.00 €, then reversal (opposite direction), then the correct 160.00 €. Expected result: DERIVED operating cost sum = 160.00 € (original + reversal net zero). Tests §6.6 + GoBD reversal (§5).
+8. **Segregation of funds — cross-posting fails (DB negative test):** Attempt to write a `payment` with the `bank_account` of WEG A but the `property_id` of WEG B (same org) → **rejected** by the composite FK. Tests §4 / ADR-0010.
+9. **GoBD — `booked` payment immutable (DB negative test):** UPDATE of `amount`/assignment of a `booked` payment → trigger exception; DELETE → exception; only `reversed_by_id` can be set. Tests §5 / ADR-0003 pattern.
 
-Jeder Golden-Test prüft **nicht nur die Endsumme**, sondern die **einzelnen offenen Posten, Salden und (bei §6) die exakte DERIVED-Summe** gegen die Handrechnung (sonst rutscht ein kompensierender Doppelfehler durch — M3/M4-Disziplin).
+Each golden test checks **not only the final total**, but the **individual open items, balances and (for §6) the exact DERIVED sum** against the hand calculation (otherwise a compensating double error slips through — M3/M4 discipline).
 
-### 7.2 Property-based Invarianten (Hypothesis, über zufällige Eingaben)
+### 7.2 Property-based invariants (Hypothesis, over random inputs)
 
-- **I6-A „Saldo == Σ Soll − Σ Ist":** für zufällige Soll-/Zahlungslisten gilt der berechnete Saldo exakt (Decimal, kein Float-Drift).
-- **I6-B „DERIVED-Summe == Σ passender, nicht-stornierter Zahlungen":** für zufällige Zahlungsmengen ist die Ableitung (§6.1) exakt die Summe der typ-/perioden-/adressatengleichen `booked`-nicht-stornierten Zahlungen; Storni netto null.
-- **I6-C „keine Doppelzählung / Disjunktheit":** keine einzelne Zahlung fließt in mehr als eine Abrechnungsgröße (NK ⊥ Hausgeld ⊥ Kaltmiete ⊥ Rücklage).
-- **I6-D „Spitze unabhängig von Zahlungen":** für zufällige Ist-Kosten + Plan-Soll + beliebige `HAUSGELD_VORSCHUSS`-Zahlungen ist die WEG-Abrechnungsspitze **invariant** gegenüber den Zahlungen (== `Ist − Soll(Plan)`, ADR-0007). **Die zentrale M6-Sicherheits-Invariante.**
-- **I6-E „DERIVED == MANUAL bei gleichem Wert":** setzt man `advance_payments_total` (MANUAL) = DERIVED-Summe, ist das Abrechnungsergebnis bit-identisch (gleicher Snapshot-Hash). Prüft die Brücke.
-- **I6-F „Vermögens-Kohärenz":** keine `booked`-Zahlung hat ein `property_id`, das vom `property_id` ihres `bank_account` abweicht (Composite-FK-Invariante).
+- **I6-A "balance == Σ expected − Σ actual":** for random expected-amount/payment lists, the computed balance holds exactly (Decimal, no float drift).
+- **I6-B "DERIVED sum == Σ matching, non-reversed payments":** for random payment sets, the derivation (§6.1) is exactly the sum of the `booked` non-reversed payments with the same type/period/addressee; reversals net zero.
+- **I6-C "no double counting / disjointness":** no single payment flows into more than one settlement quantity (operating costs ⊥ Hausgeld ⊥ base rent ⊥ reserve).
+- **I6-D "balance independent of payments":** for random actual costs + plan expected amount + arbitrary `HAUSGELD_VORSCHUSS` payments, the WEG settlement balance is **invariant** with respect to the payments (== `actual − expected(plan)`, ADR-0007). **The central M6 safety invariant.**
+- **I6-E "DERIVED == MANUAL at equal value":** if `advance_payments_total` (MANUAL) is set = the DERIVED sum, the settlement result is bit-identical (same snapshot hash). Tests the bridge.
+- **I6-F "segregation-of-funds coherence":** no `booked` payment has a `property_id` that deviates from the `property_id` of its `bank_account` (composite-FK invariant).
 
-### 7.3 Der Exit-Test (DERIVED == MANUAL)
+### 7.3 The exit test (DERIVED == MANUAL)
 
-Golden-Test 5 + Invariante I6-E sind zusammen der objektive Nachweis des M6-Exit: eine BK-Abrechnung, die ihre Vorauszahlung aus erfassten `NK_VORAUSZAHLUNG`-Zahlungen **ableitet**, ergibt **exakt dasselbe** (bis auf den Cent, bis auf den Snapshot-Hash) wie die manuelle Variante mit derselben Summe. Damit ist „eine Abrechnung zieht erfasste Zahlungen automatisch" **nachrechenbar** belegt — ohne die geprüfte M3-Engine anzutasten.
-
----
-
-## 8. Implementierungs-Checkliste für `bulk-impl` (Roadmap M6 → Opus 4.6)
-
-> M6 ist laut Roadmap-Modellzuordnung **`bulk-impl` (Opus 4.6)** — Geldfluss-Erfassung ist überwiegend Bulk-Engineering. **Aber:** die **Abrechnungs-Anbindung (§6) ist korrektheitskritisch** und als **reine, getestete Ableitungsfunktion** zu bauen; bei Unklarheit in der DERIVED-Logik, der Vermögens-Kohärenz oder der GoBD-Mechanik **an `engine-correctness` eskalieren** (gemäß `bulk-impl.md`-Eskalationsregel). Reihenfolge wie M3/M4: **Engine zuerst (reine Funktionen + Tests), dann Persistenz/Trigger, dann Service, dann API, zuletzt PDF/Anzeige.** **Voraussetzung:** der Mensch hat die [ENTSCHEIDUNG]en (§10) und ADR-0009/0010 bestätigt. Vorher kein Commit. **Alle 291 bestehenden Tests bleiben grün** (additiv).
-
-### 8.1 Engine als reine Funktionen (zuerst, höchste Testdichte)
-- [ ] `app/engine/mietkonto.py` (neu, **bewusst getrennt** von `services`/`api`/`models` — SDD §16): keine DB-/HTTP-/ORM-Importe; `Decimal`/`date`/Dataclasses ein/aus.
-  - [ ] `tenant_expected_charges(...)`, `owner_expected_charges(...)` — Soll-Generierung, monatlicher Maßstab, tagegenaue Anschnitte (§2). **Wiederverwenden:** `app/engine/periods.py` (tagegenau), `app/engine/rounding.py::distribute_amount` (Anschnitt-/Ratenrundung, ADR-0005). **Nicht duplizieren.**
-  - [ ] `account_statement(...)` — Soll/Ist/Saldo/offene Posten (§3), reine Decimal-Arithmetik.
-  - [ ] `derive_advance_total(payments, filter) -> Decimal` — die DERIVED-Ableitung (§6.1), inkl. Storno-Behandlung Variante A (§6.6).
-- [ ] Golden-Tests (§7.1) `tests/engine/test_golden_mietkonto.py` (handberechnet); Property-based (§7.2) `tests/engine/test_invariants_mietkonto.py` (Hypothesis), insb. I6-D (Spitze unabhängig von Zahlungen) und I6-E (DERIVED==MANUAL).
-
-### 8.2 Persistenz & Trigger (danach)
-- [ ] Modell `app/models/payment.py` (Stil `cost_entry.py`/`settlement_run.py`: Mixins, `Numeric`, `Mapped`, String+CHECK, FK `RESTRICT` zu `organization`). Geld `Decimal`. `reverses_id`/`reversed_by_id` (Storno-Kette).
-- [ ] **Migration `0016_payment_table`:** `payment` mit allen CHECK-Constraints (§1.2/§1.4), FKs, **Composite-FK** `(organization_id, bank_account_id, property_id) → bank_account(organization_id, id, property_id)` (ADR-0010) — **erfordert vorab** UNIQUE-Index `(organization_id, id, property_id)` auf `bank_account` (additiv, in dieser Migration). Indizes (§1.2). Optional: `bank_account.opening_balance`/`opening_balance_date` (E6-6, falls bestätigt). `downgrade()` setzt alles zurück.
-- [ ] **Migration `0017_payment_rls_policies`:** vier Policies für `payment` exakt im Muster `0010`/`0014` (`NULLIF(current_setting('app.current_org_id', true),'')::uuid`, fail-closed). Volles CRUD-Grant (editierbarer `draft` → Trigger-only-Freeze, E3-5-Linie).
-- [ ] **Migration `0018_payment_immutability_trigger`** (ADR-0003-Muster von `0011`): `BEFORE UPDATE/DELETE`-Trigger für `payment` (Einfrier-Bedingung `status='booked'`; inhaltstragende Spalten per `IS DISTINCT FROM` gesperrt; einzig erlaubte Mutation `reversed_by_id` + `updated_at`; DELETE einer `booked`-Zeile → Exception; `draft` frei). Trigger-Quelltext ausführlich kommentiert; `downgrade()` droppt Trigger + Funktion.
-- [ ] `TENANT_TABLES` in `tests/test_rls_coverage.py` um `payment` erweitern (eine Zeile).
-- [ ] Repository `app/repositories/payment_repo.py` (Stil `cost_entry_repo.py`): Aktiv-/Booked-Query (`status='booked' AND reversed_by_id IS NULL`); die **DERIVED-Filter-Queries** (§6.1) je Größe (NK je Lease/Jahr; Hausgeld je Owner/Jahr; Kontostand je Konto bis Stichtag).
-
-### 8.3 Service (Erfassung, Verbuchen, Storno — atomar)
-- [ ] `app/services/payment_service.py` (Stil `cost_entry_service.py`): `create_draft`, `update_draft`, `book` (`draft→booked`, atomar, Audit), `reverse_payment` (Storno = neue `booked`-Zeile + `reversed_by_id` setzen — die **einzige** erlaubte Mutation der `booked`-Originalzeile, analog `create_correction_run`), `account_statement_for(person/lease)` (lädt Soll-Eingaben + Zahlungen, ruft die reine Engine), `open_items_for(...)`.
-- [ ] **Abrechnungs-Anbindung (reine, getestete Ableitung):**
-  - [ ] `settlement_service.py` (M3): einen `DERIVED`-Pfad ergänzen — beim `compute`/`finalize` eines Laufs mit `advance_payments_source='DERIVED'` die NK-Summe per `payment_repo` + `derive_advance_total` (§6.2) ziehen, `advance_payments_total` setzen. **MANUAL-Pfad unverändert.** Die M3-Engine selbst (`compute_bk_settlement`) bleibt **unangetastet** — sie bekommt nur denselben `advance_payments_total` wie bisher, jetzt aus Zahlungen.
-  - [ ] `weg_settlement_service.py` (M4): `WegComputeExtras.paid_advances` optional aus Zahlungen ableiten (`HAUSGELD_VORSCHUSS` je Owner/Jahr, §6.3) statt manuell. **Die Spitze (`Ist−Soll(Plan)`) wird NICHT berührt** — nur der nachrichtliche `paid_advances`-Ausweis. Engine (`compute_weg_jahresabrechnung`) unverändert.
-  - [ ] optional `asset_report` (M4): DERIVED-Kontostand je `bank_account` anbieten (§6.5, E6-7), MANUAL als Fallback.
-- [ ] `audit_event`-Actions: `payment.created`, `payment.booked`, `payment.reversed`.
-
-### 8.4 API (API-first, RBAC wie M0–M4)
-- [ ] `app/api/payments.py`: `POST` (Zahlung anlegen, `require_write`), `PATCH /{id}` (nur `draft`), `POST /{id}/book`, `POST /{id}/reverse`, `GET` (Liste/Detail, alle Rollen lesen, Filter nach Konto/Person/Periode/Typ), `DELETE /{id}` (nur `draft`). READ_ONLY: nur GET. Fremde ID → **404** (wie M0–M4).
-- [ ] `app/api/mietkonto.py` (oder in `payments.py`): `GET /accounts/{lease|owner}/statement` (berechnetes Mietkonto/Soll-Ist), `GET /open-items` (berechnete offene Posten je Person/Objekt). Read-only, alle Rollen.
-- [ ] Router in `app/main.py` registrieren.
-
-### 8.5 Anzeige/PDF (zuletzt, strikt getrennt)
-- [ ] Keine **neuen** Abrechnungs-PDFs in M6 (die BK-/WEG-PDFs aus M3/M4 zeigen den Vorauszahlungsabzug bereits; sie rendern den nun ggf. DERIVED-Wert unverändert — **PDF rechnet nichts neu**, Test: PDF-Werte == `settlement_line`-Werte bleibt grün). Optional: eine einfache **Mietkonto-/Offene-Posten-Ansicht** (Liste, read-only) als Vorbereitung für M7-Mahnschreiben.
-
-### 8.6 Definition of Done für M6 (Übergabe an M7)
-- [ ] Engine-Paket rein (keine DB/HTTP-Importe); `distribute_amount`/`periods` **wiederverwendet**, nicht dupliziert; `Decimal` durchgängig.
-- [ ] **Golden-Tests §7.1 grün** (handberechnet), insb. Test 5 (DERIVED-NK == MANUAL, Kaltmiete fließt nicht), Test 6 (Spitze unberührt), Test 7 (Storno netto null).
-- [ ] **Property-based Invarianten §7.2 grün** (I6-A bis I6-F), insb. **I6-D (Spitze unabhängig von Zahlungen)** und **I6-E (DERIVED==MANUAL)**.
-- [ ] `payment` mit RLS (vier Policies, fail-closed) + ADR-0003-Trigger (`booked` unveränderbar) + Composite-FK-Vermögens-Kohärenz (ADR-0010).
-- [ ] `book`/`reverse` atomar; `audit_event` für alle Vorgänge; Korrektur = Storno + Neubuchung (nie Mutation).
-- [ ] DERIVED-Pfad in M3- **und** M4-Service als **reine Ableitung**; **M3/M4-Engine unverändert**; MANUAL bleibt Fallback. Keine Doppelzählung (Disjunktheit der Filter belegt, I6-C).
-- [ ] DB-Negativtests grün: Querbuchen scheitert (§7.1 #8), `booked`-Zahlung unveränderbar (§7.1 #9).
-- [ ] RLS-Coverage-Test + `test_tenant_isolation` um `payment` erweitert; **alle 291 bestehenden Tests bleiben grün** (M3/M4-Abrechnung unverändert; insb. der Snapshot-Hash bestehender Golden-Tests darf sich nicht ändern).
-- [ ] M6-Exit objektiv erfüllt: Soll-Ist je Person stimmt (Golden 1–4); eine BK-Abrechnung zieht erfasste NK-Vorauszahlungen automatisch und ergibt **dasselbe** wie manuell (Golden 5 / I6-E).
-- [ ] Keine **[ENTSCHEIDUNG]**/**[§18/fachlich]** unmarkiert „weggeraten"; provisorische Annahmen klar gekennzeichnet; fachliche Abnahme (StB/Fachanwalt) empfohlen.
+Golden test 5 + invariant I6-E together are the objective proof of the M6 exit: an operating cost statement that **derives** its advance payment from recorded `NK_VORAUSZAHLUNG` payments yields **exactly the same** (to the cent, to the snapshot hash) as the manual variant with the same sum. This provides **reproducible** proof that "a settlement pulls recorded payments automatically" — without touching the verified M3 engine.
 
 ---
 
-## 9. Getroffene Annahmen (M6)
+## 8. Implementation checklist for `bulk-impl` (roadmap M6 → Opus 4.6)
 
-| # | Annahme | Auswirkung wenn falsch | Klären mit |
+> According to the roadmap model assignment, M6 goes to **`bulk-impl` (Opus 4.6)** — recording the flow of money is predominantly bulk engineering. **But:** the **settlement integration (§6) is correctness-critical** and is to be built as a **pure, tested derivation function**; in case of ambiguity in the DERIVED logic, the segregation-of-funds coherence or the GoBD mechanics, **escalate to `engine-correctness`** (per the `bulk-impl.md` escalation rule). Order as in M3/M4: **engine first (pure functions + tests), then persistence/trigger, then service, then API, finally PDF/display.** **Prerequisite:** the human has confirmed the [DECISION] items (§10) and ADR-0009/0010. No commit before that. **All 291 existing tests stay green** (additive).
+
+### 8.1 Engine as pure functions (first, highest test density)
+- [ ] `app/engine/mietkonto.py` (new, **deliberately separated** from `services`/`api`/`models` — SDD §16): no DB/HTTP/ORM imports; `Decimal`/`date`/dataclasses in/out.
+  - [ ] `tenant_expected_charges(...)`, `owner_expected_charges(...)` — expected-amount generation, monthly basis, day-accurate partial months (§2). **Reuse:** `app/engine/periods.py` (day-accurate), `app/engine/rounding.py::distribute_amount` (partial-month/installment rounding, ADR-0005). **Do not duplicate.**
+  - [ ] `account_statement(...)` — expected/actual/balance/open items (§3), pure Decimal arithmetic.
+  - [ ] `derive_advance_total(payments, filter) -> Decimal` — the DERIVED derivation (§6.1), incl. reversal handling variant A (§6.6).
+- [ ] Golden tests (§7.1) `tests/engine/test_golden_mietkonto.py` (hand-calculated); property-based (§7.2) `tests/engine/test_invariants_mietkonto.py` (Hypothesis), esp. I6-D (balance independent of payments) and I6-E (DERIVED==MANUAL).
+
+### 8.2 Persistence & trigger (afterwards)
+- [ ] Model `app/models/payment.py` (style of `cost_entry.py`/`settlement_run.py`: mixins, `Numeric`, `Mapped`, string+CHECK, FK `RESTRICT` to `organization`). Money `Decimal`. `reverses_id`/`reversed_by_id` (reversal chain).
+- [ ] **Migration `0016_payment_table`:** `payment` with all CHECK constraints (§1.2/§1.4), FKs, **composite FK** `(organization_id, bank_account_id, property_id) → bank_account(organization_id, id, property_id)` (ADR-0010) — **requires beforehand** the UNIQUE index `(organization_id, id, property_id)` on `bank_account` (additive, in this migration). Indexes (§1.2). Optional: `bank_account.opening_balance`/`opening_balance_date` (E6-6, if confirmed). `downgrade()` reverts everything.
+- [ ] **Migration `0017_payment_rls_policies`:** four policies for `payment` exactly in the pattern of `0010`/`0014` (`NULLIF(current_setting('app.current_org_id', true),'')::uuid`, fail-closed). Full CRUD grant (editable `draft` → trigger-only freeze, E3-5 line).
+- [ ] **Migration `0018_payment_immutability_trigger`** (ADR-0003 pattern of `0011`): `BEFORE UPDATE/DELETE` trigger for `payment` (freeze condition `status='booked'`; content-bearing columns locked via `IS DISTINCT FROM`; only permitted mutation `reversed_by_id` + `updated_at`; DELETE of a `booked` row → exception; `draft` free). Trigger source extensively commented; `downgrade()` drops trigger + function.
+- [ ] Extend `TENANT_TABLES` in `tests/test_rls_coverage.py` by `payment` (one line).
+- [ ] Repository `app/repositories/payment_repo.py` (style of `cost_entry_repo.py`): active/booked query (`status='booked' AND reversed_by_id IS NULL`); the **DERIVED filter queries** (§6.1) per quantity (operating costs per lease/year; Hausgeld per owner/year; account balance per account up to the reference date).
+
+### 8.3 Service (recording, booking, reversal — atomic)
+- [ ] `app/services/payment_service.py` (style of `cost_entry_service.py`): `create_draft`, `update_draft`, `book` (`draft→booked`, atomic, audit), `reverse_payment` (reversal = new `booked` row + set `reversed_by_id` — the **only** permitted mutation of the `booked` original row, analogous to `create_correction_run`), `account_statement_for(person/lease)` (loads expected-amount inputs + payments, calls the pure engine), `open_items_for(...)`.
+- [ ] **Settlement integration (pure, tested derivation):**
+  - [ ] `settlement_service.py` (M3): add a `DERIVED` path — on `compute`/`finalize` of a run with `advance_payments_source='DERIVED'`, pull the operating cost sum via `payment_repo` + `derive_advance_total` (§6.2), set `advance_payments_total`. **MANUAL path unchanged.** The M3 engine itself (`compute_bk_settlement`) stays **untouched** — it only receives the same `advance_payments_total` as before, now from payments.
+  - [ ] `weg_settlement_service.py` (M4): optionally derive `WegComputeExtras.paid_advances` from payments (`HAUSGELD_VORSCHUSS` per owner/year, §6.3) instead of manually. **The balance (`actual−expected(plan)`) is NOT touched** — only the informational `paid_advances` disclosure. Engine (`compute_weg_jahresabrechnung`) unchanged.
+  - [ ] optionally `asset_report` (M4): offer DERIVED account balance per `bank_account` (§6.5, E6-7), MANUAL as a fallback.
+- [ ] `audit_event` actions: `payment.created`, `payment.booked`, `payment.reversed`.
+
+### 8.4 API (API-first, RBAC as in M0–M4)
+- [ ] `app/api/payments.py`: `POST` (create payment, `require_write`), `PATCH /{id}` (`draft` only), `POST /{id}/book`, `POST /{id}/reverse`, `GET` (list/detail, all roles read, filter by account/person/period/type), `DELETE /{id}` (`draft` only). READ_ONLY: GET only. Foreign ID → **404** (as in M0–M4).
+- [ ] `app/api/mietkonto.py` (or in `payments.py`): `GET /accounts/{lease|owner}/statement` (computed tenant ledger/expected-actual), `GET /open-items` (computed open items per person/property). Read-only, all roles.
+- [ ] Register router in `app/main.py`.
+
+### 8.5 Display/PDF (last, strictly separated)
+- [ ] No **new** settlement PDFs in M6 (the operating cost/WEG PDFs from M3/M4 already show the advance payment deduction; they render the now possibly DERIVED value unchanged — **the PDF recalculates nothing**, test: PDF values == `settlement_line` values stays green). Optional: a simple **tenant ledger / open items view** (list, read-only) as preparation for M7 dunning letters.
+
+### 8.6 Definition of Done for M6 (handover to M7)
+- [ ] Engine package pure (no DB/HTTP imports); `distribute_amount`/`periods` **reused**, not duplicated; `Decimal` throughout.
+- [ ] **Golden tests §7.1 green** (hand-calculated), esp. test 5 (DERIVED operating costs == MANUAL, base rent does not flow in), test 6 (balance untouched), test 7 (reversal net zero).
+- [ ] **Property-based invariants §7.2 green** (I6-A to I6-F), esp. **I6-D (balance independent of payments)** and **I6-E (DERIVED==MANUAL)**.
+- [ ] `payment` with RLS (four policies, fail-closed) + ADR-0003 trigger (`booked` immutable) + composite-FK segregation-of-funds coherence (ADR-0010).
+- [ ] `book`/`reverse` atomic; `audit_event` for all operations; correction = reversal + rebooking (never mutation).
+- [ ] DERIVED path in the M3 **and** M4 service as a **pure derivation**; **M3/M4 engine unchanged**; MANUAL remains a fallback. No double counting (disjointness of the filters demonstrated, I6-C).
+- [ ] DB negative tests green: cross-posting fails (§7.1 #8), `booked` payment immutable (§7.1 #9).
+- [ ] RLS coverage test + `test_tenant_isolation` extended by `payment`; **all 291 existing tests stay green** (M3/M4 settlement unchanged; in particular the snapshot hash of existing golden tests must not change).
+- [ ] M6 exit objectively met: expected/actual per person is correct (golden 1–4); an operating cost statement pulls recorded operating cost advance payments automatically and yields **the same** as manual (golden 5 / I6-E).
+- [ ] No **[DECISION]**/**[§18/domain]** is silently "guessed away" without marking; provisional assumptions clearly marked; domain sign-off (tax advisor/specialist lawyer) recommended.
+
+---
+
+## 9. Assumptions made (M6)
+
+| # | Assumption | Impact if wrong | Clarify with |
 | --- | --- | --- | --- |
-| **M6-A1** | Soll **abgeleitet** (nicht persistiert), monatlicher Maßstab (ADR-0009/0007). | Persistiertes Soll bräuchte Materialisierungs-Job + zweite Wahrheit; Modell-/Service-Umbau. | Mensch (ADR-0009) |
-| **M6-A2** | Zahlung **unveränderbar ab `booked`**; Korrektur = Storno + Neubuchung (ADR-0003-Muster). | Editierbare Zahlung verletzt GoBD + kann finalisierte Abrechnungen widersprüchlich machen. | Mensch/StB (ADR-0009) |
-| **M6-A3** | Vermögenstrennung per **Composite-FK-Kohärenz**, keine zweite RLS-Achse (ADR-0010). | Volle mandatsgebundene DB-Isolation bräuchte zweite GUC/Policy-Achse. | Mensch (ADR-0010) |
-| **M6-A4** | **NK-Vorauszahlung → BK** (DERIVED), **Kaltmiete NICHT**; **Hausgeld-Vorschuss → WEG nachrichtlich, NICHT in die Spitze** (Spitze bleibt `Ist−Soll(Plan)`, ADR-0007). | Falsche Anbindung verfälschte Abrechnungen / Spitze. | Mensch/StB/Fachanwalt (§6) |
-| **M6-A5** | Zahlung trägt **expliziten** Periodenbezug (`period_year`); keine automatische Tilgungsreihenfolge (§ 366 BGB). | Automatische Verrechnung wäre eigener, fachlicher Baustein. | StB/Fachanwalt (§3.2/F6-6) |
-| **M6-A6** | `bank_account` **ohne** Saldenspalte; Kontostand **abgeleitet** (optional + Eröffnungssaldo-Anker). | Gespeicherter Saldo driftet von Buchungen. | Mensch (§1.1) |
-| **M6-A7** | Mahn-Persistenz (offene-Posten-Status) ist **M7**, nicht M6. | Vorgriff auf M7 vermieden; offene Posten in M6 nur berechnet. | (Roadmap M7) |
-| **M6-A8** | Maßgeblich für Perioden-Zuordnung ist der **erfasste `period_year`**, nicht das `value_date` (Jahresübergang). | Andere Zuordnung am Jahresende. | StB (§6.2/F6-7) |
-| **M6-A9** | Kaution nur **Bestandsführung**, keine Verzinsung im MVP. | Verzinsung/Anlageform wäre Zusatzbaustein. | StB/Fachanwalt (§3.4/F6-3) |
+| **M6-A1** | Expected amount (Soll) **derived** (not persisted), monthly basis (ADR-0009/0007). | A persisted expected amount would need a materialization job + a second truth; model/service rework. | Human (ADR-0009) |
+| **M6-A2** | Payment **immutable from `booked`**; correction = reversal + rebooking (ADR-0003 pattern). | An editable payment violates GoBD + can make finalized settlements contradictory. | Human/tax advisor (ADR-0009) |
+| **M6-A3** | Segregation of funds via **composite-FK coherence**, no second RLS axis (ADR-0010). | Full mandate-bound DB isolation would need a second GUC/policy axis. | Human (ADR-0010) |
+| **M6-A4** | **Operating cost advance payment → operating cost statement** (DERIVED), **base rent NOT**; **Hausgeld advance → WEG informational, NOT into the balance** (balance stays `actual−expected(plan)`, ADR-0007). | A wrong integration would distort settlements / the balance. | Human/tax advisor/specialist lawyer (§6) |
+| **M6-A5** | Payment carries an **explicit** period reference (`period_year`); no automatic order of application (§ 366 BGB). | Automatic offsetting would be a separate domain building block. | Tax advisor/specialist lawyer (§3.2/F6-6) |
+| **M6-A6** | `bank_account` **without** balance column; account balance **derived** (optionally + opening balance anchor). | A stored balance drifts from the bookings. | Human (§1.1) |
+| **M6-A7** | Dunning persistence (open-item status) is **M7**, not M6. | Anticipating M7 avoided; open items in M6 only computed. | (Roadmap M7) |
+| **M6-A8** | Authoritative for period assignment is the **recorded `period_year`**, not the `value_date` (year boundary). | Different assignment at year end. | Tax advisor (§6.2/F6-7) |
+| **M6-A9** | Security deposit only **holdings tracking**, no interest in the MVP. | Interest/form of investment would be an additional building block. | Tax advisor/specialist lawyer (§3.4/F6-3) |
 
 ---
 
-## 10. Zusammenfassung der offenen Entscheidungen (für den Menschen)
+## 10. Summary of open decisions (for the human)
 
-| # | Punkt | Typ | Empfehlung | Wann |
+| # | Item | Type | Recommendation | When |
 | --- | --- | --- | --- | --- |
-| **E6-1** | `open_item` abgeleitet vs. persistiert | [ENTSCHEIDUNG] | **abgeleitet** (berechnet), keine Materialisierung (ADR-0009) | vor M6-Impl |
-| **E6-2** | Zahlung unveränderbar (Storno) vs. editierbar | [ENTSCHEIDUNG] | **unveränderbar ab `booked`**, Storno + Neubuchung (ADR-0003-Muster, ADR-0009) | vor M6-Impl |
-| **E6-3** | `draft`→`booked`-Zweiteilung vs. sofort `booked` | [ENTSCHEIDUNG] | **Zweiteilung** (spiegelt `cost_entry`; Tipp-Korrektur ≠ Storno) | bei Impl |
-| **E6-4** | Vermögenstrennung: DB-Constraint jetzt vs. App-Layer | [ENTSCHEIDUNG] | **DB-Composite-FK-Kohärenz jetzt**, keine zweite RLS-Achse (ADR-0010; löst M0-A4) | vor M6-Impl |
-| **E6-5** | `bank_account` ausbauen vs. unverändert | [ENTSCHEIDUNG] | **unverändert** (keine Saldenspalte; Saldo abgeleitet) + UNIQUE-Index für Composite-FK | vor M6-Impl |
-| **E6-6** | Eröffnungssaldo-Anker an `bank_account` | [ENTSCHEIDUNG] | **ja** (klein, additiv: `opening_balance`/`_date`) | bei Impl |
-| **E6-7** | Vermögensbericht-Kontostand DERIVED anbieten | [ENTSCHEIDUNG] | **ja**, DERIVED als Option, MANUAL Fallback (ADR-0008-Linie) | bei Impl |
-| **E6-8** | Zeitpunkt der DERIVED-Ableitung | [ENTSCHEIDUNG] | **bei jedem `compute`** frisch; `finalize` friert ein | bei Impl |
-| **F6-1** | Mahn-Persistenz (offene-Posten-Status) | [§18/fachlich] | **nicht M6** — Sache von M7 | M7 |
-| **F6-2** | Konto-Typ ↔ Zahlungstyp: harter CHECK vs. Warnung | [§18/fachlich] | **Warnung** im MVP; Objekt↔Konto hart | vor produktiv |
-| **F6-3** | Umfang Zahlungsarten (Kaution? weitere Typen?) | [§18/fachlich] | provisorisches Vokabular; `KAUTION` optional/abrechnungsneutral | vor produktiv |
-| **F6-4** | Anschnittsmonat tagegenau vs. pauschal | [§18/fachlich] | provisorisch **tagegenau** (konsistent M3) | vor produktiv |
-| **F6-5** | Eigentümer-Soll ohne finalisierten Plan | [§18/fachlich] | provisorisch: kein Soll ohne finalisierten Plan (analog M4 F4-1) | vor produktiv |
-| **F6-6** | Tilgungsreihenfolge / § 366 BGB-Verrechnung | [§18/fachlich] | provisorisch: expliziter Periodenbezug, keine Auto-Verrechnung | vor produktiv |
-| **F6-7** | Perioden-Zuordnung am Jahresübergang | [§18/fachlich] | provisorisch: erfasster `period_year` maßgeblich | vor produktiv |
+| **E6-1** | `open_item` derived vs. persisted | [DECISION] | **derived** (computed), no materialization (ADR-0009) | before M6 impl. |
+| **E6-2** | Payment immutable (reversal) vs. editable | [DECISION] | **immutable from `booked`**, reversal + rebooking (ADR-0003 pattern, ADR-0009) | before M6 impl. |
+| **E6-3** | `draft`→`booked` two-step vs. immediately `booked` | [DECISION] | **two-step** (mirrors `cost_entry`; typo correction ≠ reversal) | during impl. |
+| **E6-4** | Segregation of funds: DB constraint now vs. app layer | [DECISION] | **DB composite-FK coherence now**, no second RLS axis (ADR-0010; resolves M0-A4) | before M6 impl. |
+| **E6-5** | Expand `bank_account` vs. unchanged | [DECISION] | **unchanged** (no balance column; balance derived) + UNIQUE index for composite FK | before M6 impl. |
+| **E6-6** | Opening balance anchor on `bank_account` | [DECISION] | **yes** (small, additive: `opening_balance`/`_date`) | during impl. |
+| **E6-7** | Offer asset report account balance as DERIVED | [DECISION] | **yes**, DERIVED as an option, MANUAL fallback (ADR-0008 line) | during impl. |
+| **E6-8** | Time of the DERIVED derivation | [DECISION] | **fresh on every `compute`**; `finalize` freezes | during impl. |
+| **F6-1** | Dunning persistence (open-item status) | [§18/domain] | **not M6** — M7's concern | M7 |
+| **F6-2** | Account type ↔ payment type: hard CHECK vs. warning | [§18/domain] | **warning** in the MVP; property↔account strict | before production |
+| **F6-3** | Scope of payment types (security deposit? further types?) | [§18/domain] | provisional vocabulary; `KAUTION` optional/settlement-neutral | before production |
+| **F6-4** | Partial month day-accurate vs. flat | [§18/domain] | provisionally **day-accurate** (consistent with M3) | before production |
+| **F6-5** | Owner expected amount without a finalized plan | [§18/domain] | provisional: no expected amount without a finalized plan (analogous to M4 F4-1) | before production |
+| **F6-6** | Order of application / § 366 BGB offsetting | [§18/domain] | provisional: explicit period reference, no automatic offsetting | before production |
+| **F6-7** | Period assignment at the year boundary | [§18/domain] | provisional: recorded `period_year` authoritative | before production |
 
-> **Keine Selbst-Zertifizierung (Haltung):** Dieses Design macht Soll, Ist, offene Posten, die Vermögenstrennung und die Abrechnungs-Anbindung **transparent, deterministisch und nachrechenbar** (Golden-Tests + Property-based Invarianten als objektive Messlatte, insb. „Spitze unabhängig von Zahlungen" und „DERIVED == MANUAL"). Es kann **nicht** garantieren, dass das Mietkonto/Hausgeldkonto im Einzelfall buchhalterisch/prüfungsfest ist (M6 ist keine Finanzbuchhaltung). Die fachliche Richtigkeit (Mietkonto-Tiefe, Kaution, GoBD-Belegqualität manueller Zahlungen, Treuhand-/Fremdgeldtrennung, Verrechnungsregeln) ist vor produktivem Einsatz durch **Steuerberater/Fachanwalt** abzunehmen.
+> **No self-certification (stance):** This design makes expected amounts (Soll), actual amounts (Ist), open items, the segregation of funds and the settlement integration **transparent, deterministic and reproducible** (golden tests + property-based invariants as the objective yardstick, esp. "balance independent of payments" and "DERIVED == MANUAL"). It **cannot** guarantee that the tenant ledger / Hausgeld account is accounting-sound or audit-proof in an individual case (M6 is not financial accounting). Before productive use, the domain correctness (ledger depth, security deposit, GoBD voucher quality of manual payments, trust/third-party funds segregation, offsetting rules) must be signed off by a **tax advisor / specialist lawyer**.
 
 ---
 
-### Fehleingaben und Finanzhistorie (T56)
+### Erroneous entries and financial history (T56)
 
-Ein unreferenziertes Objekt, eine Einheit, Person oder ein Mietvertrag kann nach
-expliziter Bestätigung und aktuellem Quellen-Prepare gelöscht werden. Schon ein
-Profil, eine Miethistorie, Zahlung, ein Beleg, eine Quellfreigabe, Importquittung,
-Auditidentität oder gespeicherte Snapshotreferenz verhindert dies mit 409 und
-Grund. Auch Entwürfe und RLS-verdeckte Referenzen zählen; keine Verknüpfung wird
-zum Zweck der Löschung entfernt. Ausgestellte Briefe und Finanzoriginale bleiben
-bytegleich. Das ist keine DSGVO-Anonymisierung und keine Storno-/Korrekturfunktion.
+An unreferenced property, unit, person or lease can be deleted after explicit
+confirmation and a current source prepare. Even a single profile, rent history,
+payment, voucher, source release, import receipt, audit identity or stored snapshot
+reference prevents this with 409 and a reason. Drafts and RLS-hidden references also
+count; no link is removed for the purpose of deletion. Issued letters and financial
+originals remain byte-identical. This is not GDPR anonymization and not a
+reversal/correction function.
 
-## 11. Was dieses Dokument bewusst NICHT entscheidet
+## 11. What this document deliberately does NOT decide
 
-- **Mahnwesen / Mahnstufen / `DunningNotice` / Mahn-Persistenz:** M7 (§0, ADR-0009 §1/F6-1) — M6 liefert nur die *berechneten* überfälligen Posten.
-- **Bankimport / Zahlungsabgleich:** war Nicht-Ziel des ursprünglichen M6. Die verbindliche Phase 2 in `docs/mvp.md` erweitert dies um CSV/CAMT-Import (T15–T19) und geprüfte Zuordnung (T20–T22); fertiger Parser-/API-Stand siehe §6.8. MT940 bleibt nicht unterstützt.
-- **Vollwertige Kautionsbuchhaltung** (Verzinsung, Anlageform, Rückzahlung bei Auszug): [§18/fachlich] (§3.4, F6-3).
-- **Tilgungsreihenfolge / § 366 BGB-Verrechnung:** [§18/fachlich] (§3.2, F6-6).
-- **Genaue Fälligkeitsregeln** (§ 556b BGB, Hausgeld-Fälligkeit): [§18/fachlich] (§2.1).
-- **Zweite RLS-Achse (volle mandatsgebundene DB-Isolation):** bewusst nicht im MVP (ADR-0010 Option C) — Tür offen, nicht verbaut.
-- **Endgültige Rechtsabnahme:** Steuerberater/Fachanwalt — nicht durch dieses Dokument ersetzbar.
+- **Dunning / dunning levels / `DunningNotice` / dunning persistence:** M7 (§0, ADR-0009 §1/F6-1) — M6 only supplies the *computed* overdue items.
+- **Bank import / payment reconciliation:** was a non-goal of the original M6. Phase 2 of the former MVP task list (`docs/mvp.md`, now in git history) extended this with CSV/CAMT import (T15–T19) and verified assignment (T20–T22); for the finished parser/API state see §6.8. MT940 remains unsupported.
+- **Full security deposit accounting** (interest, form of investment, refund on move-out): [§18/domain] (§3.4, F6-3).
+- **Order of application / § 366 BGB offsetting:** [§18/domain] (§3.2, F6-6).
+- **Exact due-date rules** (§ 556b BGB, Hausgeld due date): [§18/domain] (§2.1).
+- **Second RLS axis (full mandate-bound DB isolation):** deliberately not in the MVP (ADR-0010 option C) — door left open, not blocked.
+- **Final legal sign-off:** tax advisor/specialist lawyer — cannot be replaced by this document.

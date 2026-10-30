@@ -84,7 +84,7 @@ unknown unbound creators are denied by the resolver and must be reconciled befor
 activation. Its internal actor-parameter functions are not executable by the
 application role. There is no supported actor-impersonation or policy-toggle API.
 The integration and atomic publication prerequisites are recorded in the
-[property-source resolution design](../2026-10-02-property-source-access-resolution.md).
+[property-source resolution design](../archive/2026-10-02-property-source-access-resolution.md).
 For an existing-target draft whose original is still unbound, the prepared resolver
 requires an exact durable attachment-admission receipt from migration 0050. A
 live uploader's explicit target prepare grant is captured when the original is
@@ -388,7 +388,7 @@ Administrator control metadata uses exact known record identities. Internal cont
 tables retain their lack of direct app SELECT rights. Person/history and meeting
 audit kinds are preactivation exclusions until their policies are integrated.
 No event history is rewritten, and strict rollback refuses to remove this boundary.
-See [audit disclosure evidence](../2026-10-02-source-audit-disclosure.md).
+See [audit disclosure evidence](../archive/2026-10-02-source-audit-disclosure.md).
 
 ## Meeting source boundary (0066)
 
@@ -404,7 +404,7 @@ Meeting audit events now use the same source contract. Strict missing/deleted
 references remain hidden. Audience/parent identities cannot move; optional agenda
 associations retain same-meeting lifecycle behavior. Existing register immutability
 and history survive migration and rollback rehearsal. See
-[meeting boundary evidence](../2026-10-02-meeting-source-access.md).
+[meeting boundary evidence](../archive/2026-10-02-meeting-source-access.md).
 
 ## Relationship history source boundary (0067)
 
@@ -419,7 +419,7 @@ History audience IDs and profile-to-person identity cannot be reassigned. Existi
 financial-input serialization remains in force; a writer released after anonymization
 is rejected using current person state. PAUSED retains authorized reads while
 stopping effects. History audit entries inherit the same ordinary source boundary.
-See [history evidence](../2026-10-02-history-source-access.md); contact custody and
+See [history evidence](../archive/2026-10-02-history-source-access.md); contact custody and
 full person/profile access remain pending before activation.
 
 ## Contact audience preparation (0068)
@@ -438,7 +438,7 @@ source mode blocks downgrade; do not remove evidence to force production rollbac
 
 This is preparation only. Person/profile source policies and downstream contact
 completeness remain follow-up work. The activation gate remains false. See the
-[contact authorization design](../2026-10-02-contact-data-domain-design.md).
+[contact authorization design](../archive/2026-10-02-contact-data-domain-design.md).
 
 ## Contact source boundary (0069)
 
@@ -455,4 +455,4 @@ administrator authority. Direct application SQL cannot mark a contact anonymized
 restricted or deletion-requested. Retention decisions inspect expected sources,
 not filtered absences. Anonymized identity cannot be repopulated. Preserve populated
 custody and strict policies on rollback. Activation remains disabled until the
-remaining B1 coverage is accepted. See [contact boundary evidence](../2026-10-02-contact-source-access.md).
+remaining B1 coverage is accepted. See [contact boundary evidence](../archive/2026-10-02-contact-source-access.md).

@@ -1,389 +1,389 @@
-# Software Design Document: Hausverwaltungssoftware MVP
+# Software Design Document: Property Management Software MVP
 
-Stand: 2026-06-01 · Version 0.2
+As of: 2026-06-01 · Version 0.2
 
-> Änderungen ggü. v0.1 (2026-05-10): Auslieferung als reine **Responsive Web-App** festgeschrieben (native Clients gestrichen). Neue Phase-1-Bausteine: **E-Rechnung-Empfang**, **Vermögensbericht (§ 28 IV WEG)**, **GoBD-konforme Belegablage**, **DSGVO-Konzept**, **SEV als Verwaltungsart**, **Beschluss-Sammlung & Eigentümerversammlung**, **Mahnwesen / offene Posten**, **Kaltmiete & Mietkonto**. Zielnutzer auf **Profi-Verwalter mit Mandantentrennung** präzisiert. Abrechnungsengine um Abrechnungsspitze, Leerstand und CO2-Aufteilung ergänzt.
+> Changes relative to v0.1 (2026-05-10): Delivery fixed as a pure **responsive web app** (native clients dropped). New Phase 1 building blocks: **e-invoice receipt**, **asset report (Vermögensbericht, § 28 IV WEG)**, **GoBD-compliant voucher (Beleg) storage**, **GDPR (DSGVO) concept**, **SEV (Sondereigentumsverwaltung, individual unit management) as a management type**, **resolution register (Beschluss-Sammlung) & owners' meeting**, **dunning / open items**, **base rent & tenant ledger (Mietkonto)**. Target users narrowed to **professional property managers with organization isolation**. Settlement engine extended with settlement balance (Abrechnungsspitze), vacancy and CO2 allocation.
 
-## 1. Zweck
+## 1. Purpose
 
-Dieses Dokument beschreibt das MVP einer **responsiven, webbasierten** Hausverwaltungssoftware für Mietverwaltung, WEG-Verwaltung, Sondereigentumsverwaltung und Mischobjekte. Das System soll keine vollständige Finanzbuchhaltung ersetzen. Es dient dazu, Stammdaten, Kosten, Vorauszahlungen, Zahlungseingänge und Abrechnungen strukturiert zu erfassen und daraus nachvollziehbare Betriebskostenabrechnungen, Hausgeldabrechnungen, Wirtschaftspläne und Vermögensberichte zu erzeugen.
+This document describes the MVP of a **responsive, web-based** property management software for rental management, homeowners' association (WEG) management, SEV, and mixed properties. The system is not intended to replace full financial accounting. Its purpose is to capture master data, costs, advance payments, incoming payments and settlements in a structured way and to generate traceable operating cost statements (Betriebskostenabrechnungen), Hausgeld statements (Hausgeld: monthly owner contribution), economic plans (Wirtschaftspläne) and asset reports from them.
 
-Der wichtigste fachliche Anspruch ist **Abrechnungssicherheit**: Automatisierung darf Vorschläge machen, aber rechtlich relevante Buchungen und Abrechnungen werden in Phase 1 erst nach manueller Bestätigung übernommen.
+The most important professional requirement is **settlement reliability** (Abrechnungssicherheit): automation may make suggestions, but legally relevant postings and settlements are adopted in Phase 1 only after manual confirmation.
 
-Das System richtet sich an **professionelle Hausverwaltungen, die mehrere Mandate fremder Eigentümer bzw. Eigentümergemeinschaften betreuen**. Mandantentrennung und Vermögenstrennung sind daher von Beginn an verpflichtende Architekturmerkmale.
+The system is aimed at **professional property management companies that look after multiple mandates of third-party owners or owner communities**. Organization isolation and segregation of funds are therefore mandatory architectural features from the start.
 
-## 2. MVP-Ziele
+## 2. MVP Goals
 
-- Verwaltung von Objekten, Einheiten, Eigentümerinnen/Eigentümern und Mieterinnen/Mietern.
-- Abbildung von reinen Mietobjekten, reinen WEG-Objekten, Sondereigentumsverwaltung (SEV) und Mischobjekten.
-- Mandantenfähigkeit mit Vermögenstrennung je Verwaltungseinheit und einfachem Rollenmodell.
-- Erstellung von Betriebskostenabrechnungen für Mieter.
-- Erstellung von Hausgeld-/Eigentümerabrechnungen für WEG-Objekte (WEMoG-konform als Abrechnungsspitze).
-- Erstellung des **Vermögensberichts** nach § 28 Abs. 4 WEG.
-- Erstellung eines Wirtschaftsplans mit daraus berechneten Hausgeldvorschlägen.
-- Verwaltung von Kaltmiete, Nebenkostenvorauszahlungen und einem einfachen Mietkonto.
-- Manuelle Erfassung von Kosten, Vorauszahlungen und Zahlungseingängen.
-- **Offene-Posten-Übersicht und einfaches Mahnwesen** (Soll-Ist je Person, Mahnstufen).
-- Assistierter Rechnungsimport: **PDF mit Extraktionsvorschlägen** und **strukturierter E-Rechnung-Empfang (XRechnung/ZUGFeRD)**.
-- **GoBD-konforme, revisionssichere Belegablage.**
-- Führung der **Beschluss-Sammlung** und einfache Verwaltung der **Eigentümerversammlung**.
-- Fester Standardkontenplan für Phase 1.
-- Feste, saubere PDF-Ausgabevorlagen für Abrechnungen.
-- Fristen- und Pflichtenüberwachung (z. B. 12-Monats-Frist BK, Abrechnungsfristen WEG).
+- Management of properties, units, owners and tenants.
+- Mapping of pure rental properties, pure WEG properties, SEV and mixed properties.
+- Multi-organization capability with segregation of funds per management entity and a simple role model.
+- Creation of operating cost statements for tenants.
+- Creation of Hausgeld/owner statements for WEG properties (WEMoG-compliant, as settlement balance).
+- Creation of the **asset report** per § 28 Abs. 4 WEG.
+- Creation of an economic plan with Hausgeld proposals calculated from it.
+- Management of base rent, operating cost advance payments and a simple tenant ledger.
+- Manual capture of costs, advance payments and incoming payments.
+- **Open items overview and simple dunning** (expected/actual (Soll/Ist) per person, dunning levels).
+- Assisted invoice import: **PDF with extraction suggestions** and **structured e-invoice receipt (XRechnung/ZUGFeRD)**.
+- **GoBD-compliant, audit-proof voucher storage.**
+- Maintenance of the **resolution register** and simple management of the **owners' meeting**.
+- Fixed standard chart of accounts for Phase 1.
+- Fixed, clean PDF output templates for settlements.
+- Deadline and obligation monitoring (e.g., 12-month deadline for operating cost statements, WEG settlement deadlines).
 
-## 3. Nicht-Ziele für Phase 1
+## 3. Non-Goals for Phase 1
 
-- **Keine nativen Desktop- oder Mobile-Apps.** Die Auslieferung erfolgt ausschließlich als responsive Web-App. Mobile Nutzung geschieht über den Browser.
-- Keine vollständige Finanzbuchhaltung mit DATEV-Logik, Kontenrahmen, Bilanz oder GuV.
-- Kein Self-Service-Portal mit Login für Eigentümer oder Mieter (Verwalter erzeugt und versendet Dokumente).
-- Kein frei konfigurierbares, feingranulares Rechtesystem auf Einzelobjekt-Ebene (es gibt Mandantentrennung und wenige feste Rollen, siehe Abschnitt 4).
-- Kein Bankimport (CAMT/MT940) und kein automatischer Zahlungsabgleich.
-- Kein frei konfigurierbarer Kontenplan.
-- Kein visueller PDF-Template-Builder.
-- Keine automatische Buchung von OCR-/KI-/E-Rechnungs-Ergebnissen ohne Freigabe.
-- Keine automatische E-Rechnungs-Ausstellung (B2B-Ausstellungspflicht gilt erst gestaffelt; im MVP nur Empfang).
-- Keine Online-Eigentümerversammlung/Abstimmung; nur Erfassung und Dokumentation.
+- **No native desktop or mobile apps.** Delivery is exclusively as a responsive web app. Mobile use happens through the browser.
+- No full financial accounting with DATEV logic, chart-of-accounts frameworks, balance sheet or P&L.
+- No self-service portal with login for owners or tenants (the manager generates and sends documents).
+- No freely configurable, fine-grained permission system at the level of individual properties (there is organization isolation and a few fixed roles, see section 4).
+- No bank import (CAMT/MT940) and no automatic payment matching.
+- No freely configurable chart of accounts.
+- No visual PDF template builder.
+- No automatic posting of OCR/AI/e-invoice results without approval.
+- No automatic e-invoice issuance (the B2B issuance obligation applies only in stages; the MVP covers receipt only).
+- No online owners' meeting/voting; only capture and documentation.
 
-## 4. Zielnutzer, Mandantenfähigkeit und Rollen
+## 4. Target Users, Multi-Organization Capability and Roles
 
-Primärer Nutzer ist eine **professionelle Hausverwaltung**, die viele Objekte fremder Eigentümer und Eigentümergemeinschaften betreut.
+The primary user is a **professional property management company** that looks after many properties of third-party owners and owner communities.
 
-**Verwaltungseinheit (Organization):** Oberste Mandanten-/Isolationsgrenze. Alle Stammdaten, Belege, Konten und Abrechnungen sind eindeutig einer Organization zugeordnet. Datenzugriffe sind hart auf die Organization des angemeldeten Nutzers begrenzt.
+**Management entity (Organization):** Top-level organization/isolation boundary. All master data, vouchers, accounts and settlements are unambiguously assigned to one Organization. Data access is strictly limited to the Organization of the signed-in user.
 
-**Mandat (ManagementMandate):** Geschäftliche Beauftragung innerhalb einer Organization. Ein Mandat verbindet die Verwaltung mit einem verwalteten Kontext und kennt eine Laufzeit:
+**Mandate (ManagementMandate):** Business engagement within an Organization. A mandate links the management company to a managed context and has a term:
 
-- WEG-Mandat: Verwaltung einer gesamten Eigentümergemeinschaft.
-- Miet-Mandat: Verwaltung im Auftrag eines einzelnen Eigentümers.
-- SEV-Mandat: Verwaltung einer einzelnen vermieteten Einheit innerhalb einer fremden WEG.
+- WEG mandate: management of an entire owner community.
+- Rental mandate: management on behalf of a single owner.
+- SEV mandate: management of a single rented unit within a third-party WEG.
 
-**Vermögenstrennung:** Gelder und Belege unterschiedlicher Mandate/WEGs werden niemals vermischt. Jede WEG bzw. jeder Auftraggeber hat eigene Konten und eine eigene Abrechnungssphäre (Fremdgeld-/Treuhandtrennung).
+**Segregation of funds:** Funds and vouchers of different mandates/WEGs are never mixed. Each WEG or client has its own accounts and its own settlement sphere (third-party funds/trust segregation).
 
-**Rollen (fest, nicht frei konfigurierbar):**
+**Roles (fixed, not freely configurable):**
 
-| Rolle | Rechte |
+| Role | Permissions |
 | --- | --- |
-| Inhaber/Admin | Vollzugriff inkl. Nutzer-, Rollen- und Mandatsverwaltung |
-| Sachbearbeiter | Operative Erfassung, Abrechnung, Belegfreigabe; keine Nutzerverwaltung |
-| Nur-Lesen | Lesender Zugriff, z. B. für Beirat, Wirtschaftsprüfer, Vertretung |
+| "Inhaber/Admin" (owner/admin) | Full access including user, role and mandate management |
+| "Sachbearbeiter" (clerk) | Operational capture, settlement, voucher approval; no user management |
+| "Nur-Lesen" (read-only) | Read-only access, e.g., for advisory board, auditor, deputy |
 
-Feinere, mandatsbezogene Zugriffsbeschränkungen innerhalb einer Organization sind ein bewusster späterer Ausbau.
+Finer, mandate-related access restrictions within an Organization are a deliberate later extension.
 
-## 5. Objektarten
+## 5. Property Types
 
-Ein Objekt kann in Phase 1 eine der folgenden Verwaltungsarten haben:
+In Phase 1, a property can have one of the following management types:
 
-| Objektart | Beschreibung | Abrechnungen |
+| Property type | Description | Settlements |
 | --- | --- | --- |
-| Mietobjekt | Ein Objekt im Eigentum eines Vermieters, bei dem nur Mieterabrechnungen relevant sind. | Betriebskostenabrechnung |
-| WEG-Objekt | Ein Objekt mit Eigentümerstruktur, MEA, Hausgeld, Wirtschaftsplan und Jahresabrechnung. | Hausgeldabrechnung, Wirtschaftsplan, Vermögensbericht |
-| SEV-Einheit | Eine einzelne vermietete Eigentumswohnung in fremder WEG, verwaltet im Auftrag des Sondereigentümers. | Betriebskostenabrechnung für den Mieter; Weiterreichung der WEG-Hausgeldabrechnung |
-| Mischobjekt | WEG-Objekt, in dem einzelne Einheiten vermietet sind. | Hausgeldabrechnung und Betriebskostenabrechnung |
+| Rental property | A property owned by a landlord where only tenant settlements are relevant. | Operating cost statement |
+| WEG property | A property with an owner structure, MEA (co-ownership share, Miteigentumsanteil), Hausgeld, economic plan and annual settlement. | Hausgeld statement, economic plan, asset report |
+| SEV unit | A single rented condominium in a third-party WEG, managed on behalf of the individual owner. | Operating cost statement for the tenant; forwarding of the WEG Hausgeld statement |
+| Mixed property | WEG property in which individual units are rented out. | Hausgeld statement and operating cost statement |
 
-Wichtig: Ein Mischobjekt bleibt fachlich ein Objekt. Es wird nicht künstlich in ein WEG-Objekt und ein Mietobjekt aufgeteilt. Die Einheit verbindet beide Ebenen: Sie hat immer eine Eigentümerzuordnung und optional eine Mietvertragszuordnung.
+Important: A mixed property remains one property from a professional standpoint. It is not artificially split into a WEG property and a rental property. The unit connects both levels: it always has an owner assignment and optionally a lease assignment.
 
-Die SEV-Einheit ist der Sonderfall, in dem die eigene Organization nicht die WEG verwaltet, sondern nur das Sondereigentum eines einzelnen Eigentümers. Die WEG-Hausgeldabrechnung kommt dann als externes Dokument von der fremden WEG-Verwaltung herein und bildet eine Kostengrundlage für die Mieterabrechnung.
+The SEV unit is the special case in which the own Organization does not manage the WEG, but only the individual ownership of a single owner. The WEG Hausgeld statement then arrives as an external document from the third-party WEG management and forms a cost basis for the tenant settlement.
 
-## 6. Kernmodule
+## 6. Core Modules
 
-### 6.1 Objekt- und Einheitenverwaltung
+### 6.1 Property and Unit Management
 
-Das System verwaltet Gebäude und deren Einheiten. Eine Einheit kann Wohnung, Gewerbeeinheit, Stellplatz oder sonstige Einheit sein.
+The system manages buildings and their units. A unit can be an apartment, a commercial unit, a parking space or another unit.
 
-Wichtige Felder:
+Important fields:
 
-- Objektname und Adresse
-- Verwaltungsart: Mietobjekt, WEG-Objekt, SEV-Einheit, Mischobjekt
-- Abrechnungszeitraum
-- Einheiten mit Nummer, Lage, Fläche, beheizter Fläche, Nutzungsart und MEA
-- optionale Verteilungsbesonderheiten pro Einheit
-- optionale Zähler je Einheit/Objekt (siehe 6.2.1)
+- Property name and address
+- Management type: rental property, WEG property, SEV unit, mixed property
+- Settlement period
+- Units with number, location, area, heated area, type of use and MEA
+- Optional distribution particularities per unit
+- Optional meters per unit/property (see 6.2.1)
 
-### 6.2 Personenverwaltung
+### 6.2 Person Management
 
-Das System verwaltet Eigentümer, Mieter und Dienstleister/Lieferanten getrennt, da diese Rollen unterschiedliche Logiken haben.
+The system manages owners, tenants and vendors/suppliers separately, because these roles follow different logic.
 
-Eigentümer:
+Owners:
 
-- Kontaktdaten
-- Bankdaten optional
-- Eigentumshistorie je Einheit mit Start- und Enddatum
-- MEA bzw. Anteil je Einheit
+- Contact data
+- Bank data optional
+- Ownership history per unit with start and end date
+- MEA or share per unit
 
-Mieter:
+Tenants:
 
-- Kontaktdaten
-- Mietvertrag je Einheit
-- Vertragsbeginn und Vertragsende
-- Kaltmiete und Nebenkostenvorauszahlung
-- optional Kaution und Notizen
+- Contact data
+- Lease per unit
+- Lease start and lease end
+- Base rent and operating cost advance payment
+- Optional security deposit and notes
 
-Dienstleister/Lieferanten:
+Vendors/suppliers:
 
-- Stammkontakt (Name, Adresse, Bankdaten, Steuer-/USt-ID optional)
-- Verknüpfung mit Kostenpositionen und E-Rechnungen (Lieferantenerkennung)
+- Master contact (name, address, bank data, tax/VAT ID optional)
+- Link to cost items and e-invoices (supplier recognition)
 
-#### 6.2.1 Zähler und Ablesungen
+#### 6.2.1 Meters and Readings
 
-Für verbrauchsbasierte Verteilung verwaltet das System optional Zähler (z. B. Kaltwasser, Strom Allgemein) mit Ablesungen (Datum, Stand, Periode). Heiz- und Warmwasserabrechnungen werden in Phase 1 weiterhin extern erstellt und als Werte/Datei importiert (siehe 6.9 und 9).
+For consumption-based distribution, the system optionally manages meters (e.g., cold water, general electricity) with readings (date, reading, period). Heating and hot water statements continue to be created externally in Phase 1 and imported as values/files (see 6.9 and 9).
 
-### 6.3 Bankkonten
+### 6.3 Bank Accounts
 
-Das System verwaltet je Mandat bzw. WEG die zugehörigen Konten als Stammdaten, ohne Kontoauszugsimport in Phase 1:
+The system manages the accounts belonging to each mandate or WEG as master data, without bank statement import in Phase 1:
 
-- WEG-/Mietkonto (laufendes Konto)
-- separates Rücklagenkonto (Erhaltungsrücklage)
-- optional Kautionskonto
+- WEG/rental account (current account)
+- Separate reserve account (maintenance reserve, Erhaltungsrücklage)
+- Optional security deposit account
 
-Konten sind eindeutig einem Mandat/einer WEG zugeordnet (Vermögenstrennung). Zahlungseingänge und -ausgänge werden in Phase 1 manuell gegen diese Konten erfasst.
+Accounts are unambiguously assigned to one mandate/WEG (segregation of funds). Incoming and outgoing payments are captured manually against these accounts in Phase 1.
 
-### 6.4 Kosten- und Rechnungserfassung
+### 6.4 Cost and Invoice Capture
 
-Kosten werden als Kostenpositionen erfasst. Eine Kostenposition kann manuell eingegeben, aus einem hochgeladenen PDF vorgeschlagen oder aus einer strukturierten E-Rechnung übernommen werden.
+Costs are captured as cost items. A cost item can be entered manually, suggested from an uploaded PDF, or taken from a structured e-invoice.
 
-Wichtige Felder:
+Important fields:
 
-- Objekt (und ggf. Mandat)
-- Kategorie aus Standardkontenplan
-- Lieferant/Rechnungsaussteller (verknüpft mit Dienstleister-Stammdaten)
-- Rechnungsdatum
-- Leistungszeitraum von/bis
-- Bruttobetrag (und USt-Betrag/-Satz, wenn aus E-Rechnung verfügbar)
-- optional Belegnummer
-- optional PDF-Datei und/oder E-Rechnungs-Datensatz
-- Verteilerschlüssel für Eigentümerabrechnung
-- Verteilerschlüssel für Mieterabrechnung
-- Umlagefähigkeit
-- Status der Belegherkunft und Freigabe (siehe 9)
+- Property (and mandate, if applicable)
+- Category from the standard chart of accounts
+- Supplier/invoice issuer (linked to vendor master data)
+- Invoice date
+- Service period from/to
+- Gross amount (and VAT amount/rate, if available from the e-invoice)
+- Optional voucher number
+- Optional PDF file and/or e-invoice data record
+- Distribution key for owner settlement
+- Distribution key for tenant settlement
+- Apportionability
+- Status of voucher origin and approval (see 9)
 
-### 6.5 E-Rechnung-Empfang
+### 6.5 E-Invoice Receipt
 
-Seit 01.01.2025 müssen inländische B2B-Empfänger E-Rechnungen empfangen und verarbeiten können. Das System nimmt **XRechnung (XML)** und **ZUGFeRD (PDF mit eingebettetem XML, ab Profil EN-16931)** entgegen.
+Since 01.01.2025, domestic B2B recipients must be able to receive and process e-invoices. The system accepts **XRechnung (XML)** and **ZUGFeRD (PDF with embedded XML, from profile EN-16931)**.
 
-Vorteil gegenüber dem PDF/OCR-Weg: Felder wie Lieferant, Rechnungsnummer, Datum, Beträge, USt und Leistungszeitraum kommen strukturiert aus dem Datensatz; es ist kein Extraktions-Rateschritt nötig. Das System mappt diese Felder auf eine Kostenposition im Status `draft_extracted` bzw. `needs_review` und schlägt wie beim PDF-Import Kategorie, Umlagefähigkeit und Verteilerschlüssel vor. Auch hier gilt: keine automatische, finale Buchung ohne Freigabe.
+Advantage over the PDF/OCR route: fields such as supplier, invoice number, date, amounts, VAT and service period come in structured form from the data record; no extraction guessing step is needed. The system maps these fields to a cost item in status `draft_extracted` or `needs_review` and, as with the PDF import, suggests category, apportionability and distribution key. The same applies here: no automatic, final posting without approval.
 
-### 6.6 Belegarchiv und GoBD-Konformität
+### 6.6 Voucher Archive and GoBD Compliance
 
-Alle Belege (PDF, E-Rechnungs-XML, importierte externe Abrechnungen) werden revisionssicher abgelegt:
+All vouchers (PDF, e-invoice XML, imported external statements) are stored in an audit-proof manner:
 
-- Unveränderbarkeit: Ein freigegebener Beleg wird nicht überschrieben; Korrekturen erzeugen eine neue Version mit Bezug zum Original.
-- Integrität: Prüfsumme (z. B. SHA-256) je Beleg.
-- Nachvollziehbarkeit: Änderungs-/Freigabe-Historie (wer, wann, was) je Beleg und Kostenposition.
-- Aufbewahrung: mindestens **8 Jahre** (Stand BEG IV ab 2025), maschinell lesbar und auffindbar.
-- Verfahrensdokumentation: Der Belegfluss (Eingang → Vorschlag → Freigabe → Abrechnung) ist dokumentiert.
+- Immutability: An approved voucher is not overwritten; corrections create a new version referencing the original.
+- Integrity: Checksum (e.g., SHA-256) per voucher.
+- Traceability: Change/approval history (who, when, what) per voucher and cost item.
+- Retention: at least **8 years** (as of BEG IV from 2025), machine-readable and retrievable.
+- Procedural documentation (Verfahrensdokumentation): The voucher flow (Belegfluss: receipt → suggestion → approval → settlement) is documented.
 
-### 6.7 Miet- und Zahlungsverwaltung
+### 6.7 Rent and Payment Management
 
-Das System erfasst je Mietverhältnis Kaltmiete und Nebenkostenvorauszahlung und führt ein einfaches Mietkonto (Soll-Stellung je Periode, erfasste Zahlungen, Saldo).
+For each tenancy, the system captures base rent and operating cost advance payment and maintains a simple tenant ledger (expected charge per period, captured payments, balance).
 
-Zahlungseingänge werden in Phase 1 manuell erfasst und können zugeordnet werden zu:
+Incoming payments are captured manually in Phase 1 and can be assigned to:
 
-- Mieter: Kaltmiete
-- Mieter: Nebenkostenvorauszahlung
-- Mieter: Kaution
-- Eigentümer: Hausgeldvorauszahlung
-- Eigentümer: Rücklagenanteil
-- Eigentümer: Sonderumlage / Sonderzahlung / Nachzahlung
+- Tenant: base rent
+- Tenant: operating cost advance payment
+- Tenant: security deposit
+- Owner: Hausgeld advance payment
+- Owner: reserve share
+- Owner: special assessment (Sonderumlage) / special payment / supplementary payment
 
-Das System berechnet für Abrechnungen die Differenz zwischen Soll-Anteil und bereits erfassten Zahlungen und führt eine **Offene-Posten-Liste** je Person.
+For settlements, the system calculates the difference between the expected share and the payments already captured, and maintains an **open items list** per person.
 
-### 6.8 Mahnwesen
+### 6.8 Dunning
 
-Auf Basis der offenen Posten unterstützt das System ein einfaches, mehrstufiges Mahnwesen:
+Based on the open items, the system supports simple, multi-level dunning:
 
-- Erkennung überfälliger Soll-Stellungen (Miete, Hausgeld, Nachzahlung)
-- Mahnstufen (z. B. Zahlungserinnerung, 1./2. Mahnung)
-- Erzeugung von Mahnschreiben als PDF
-- Vermerk von Mahnhistorie und Status je offenem Posten
+- Detection of overdue expected charges (rent, Hausgeld, supplementary payment)
+- Dunning levels (e.g., payment reminder, 1st/2nd dunning notice)
+- Generation of dunning letters as PDF
+- Recording of dunning history and status per open item
 
-Kein automatischer Bankabgleich; Zahlungen werden manuell verbucht und gleichen offene Posten aus.
+No automatic bank matching; payments are posted manually and clear open items.
 
-### 6.9 Abrechnungsengine
+### 6.9 Settlement Engine
 
-Die Abrechnungsengine verarbeitet Kosten, Zeiträume, Personenhistorien, Verteilerschlüssel und Zahlungen.
+The settlement engine processes costs, periods, person histories, distribution keys and payments.
 
-Sie erzeugt:
+It produces:
 
-- Betriebskostenabrechnung für Mieter
-- Hausgeld-/Eigentümerabrechnung für WEG-Objekte
-- Wirtschaftsplan mit Hausgeldvorschlägen
-- Datengrundlage für den Vermögensbericht (siehe 11)
+- Operating cost statement for tenants
+- Hausgeld/owner statement for WEG properties
+- Economic plan with Hausgeld proposals
+- Data basis for the asset report (see 11)
 
-Verbindliche Regeln:
+Binding rules:
 
-- **Chronologische Integrität:** Alte Eigentümer- und Mietverhältnisse dürfen nicht überschrieben werden. Bei Eigentümer- oder Mieterwechsel innerhalb eines Abrechnungszeitraums müssen anteilige Zeiträume berechnet werden.
-- **Abrechnungsspitze (WEMoG):** Die WEG-Jahresabrechnung weist die Differenz zwischen den im Wirtschaftsplan beschlossenen Soll-Vorschüssen und den tatsächlichen Kosten als Abrechnungsspitze aus. Beschlussgegenstand ist die Anpassung (Nachschuss/Guthaben), nicht die gesamte Abrechnung.
-- **Leerstand:** Anteile leerstehender Einheiten trägt der Eigentümer; die Verteilung muss Leerstand sauber abbilden.
-- **CO2-Kostenaufteilung:** Für die Aufteilung nach CO2KostAufG (10-Stufen-Modell, abhängig von kg CO₂/m²·a) wird der Mieter-/Vermieteranteil entweder aus der externen Heizkostenabrechnung übernommen oder anhand eingegebener Kennwerte berechnet. Nur der Mieteranteil ist umlagefähig.
-- **Heizkosten:** Heiz-/Warmwasserkosten werden in Phase 1 als extern erstellte Werte je Einheit übernommen (HeizkostenV-konform durch den Messdienst); das System weist diese als externe Abrechnung aus.
+- **Chronological integrity:** Old ownership and tenancy relationships must not be overwritten. In the event of an owner or tenant change within a settlement period, pro rata periods must be calculated.
+- **Settlement balance (Abrechnungsspitze, WEMoG):** The WEG annual settlement shows the difference between the expected advance payments resolved in the economic plan and the actual costs as the settlement balance. The subject of the resolution is the adjustment (additional payment/credit), not the entire settlement.
+- **Vacancy:** The owner bears the shares of vacant units; the distribution must map vacancy cleanly.
+- **CO2 cost allocation:** For the allocation under CO2KostAufG (10-level model, depending on kg CO₂/m²·a), the tenant/landlord share is either taken from the external heating cost statement or calculated from entered parameters. Only the tenant share is apportionable.
+- **Heating costs:** In Phase 1, heating/hot water costs are taken over as externally created values per unit (HeizkostenV-compliant through the metering service); the system shows these as an external statement.
 
-### 6.10 Eigentümerversammlung und Beschluss-Sammlung
+### 6.10 Owners' Meeting and Resolution Register
 
-Für WEG-Mandate führt das System:
+For WEG mandates, the system maintains:
 
-- **Eigentümerversammlung:** Einladung mit Tagesordnung, Teilnehmer/Stimmrechte (nach MEA oder Kopfprinzip), Protokoll, gefasste Beschlüsse mit Abstimmungsergebnis.
-- **Beschluss-Sammlung (§ 24 Abs. 7 WEG):** fortlaufend nummerierte, datierte Sammlung der Beschlüsse mit Ort/Datum der Versammlung und Vermerk bei Anfechtung/Aufhebung. Pflicht für jede WEG.
+- **Owners' meeting:** Invitation with agenda, participants/voting rights (by MEA or per-capita principle), minutes, resolutions passed with voting result.
+- **Resolution register (Beschluss-Sammlung, § 24 Abs. 7 WEG):** consecutively numbered, dated collection of resolutions with place/date of the meeting and a note on contestation/annulment. Mandatory for every WEG.
 
-Online-Abstimmung oder virtuelle Versammlung ist nicht Teil von Phase 1.
+Online voting or a virtual meeting is not part of Phase 1.
 
-## 7. Standardkontenplan Phase 1
+## 7. Standard Chart of Accounts, Phase 1
 
-Der MVP nutzt einen festen Standardkontenplan. Eigene Kategorien werden in Phase 1 nicht angelegt. Jede Kategorie bringt Defaults für Umlagefähigkeit und Verteilerschlüssel mit. Diese Defaults können pro Kostenposition manuell angepasst werden, wenn ein Sonderfall vorliegt.
+The MVP uses a fixed standard chart of accounts. Custom categories are not created in Phase 1. Each category brings defaults for apportionability and distribution key. These defaults can be adjusted manually per cost item if a special case applies.
 
-### 7.1 Umlagefähige Betriebskosten
+### 7.1 Apportionable Operating Costs
 
-Diese Kosten sind grundsätzlich für Betriebskostenabrechnungen vorgesehen, sofern sie mietvertraglich vereinbart und im konkreten Fall laufende Betriebskosten sind.
+These costs are in principle intended for operating cost statements, provided they are agreed in the lease and are recurring operating costs in the specific case.
 
-| Kategorie | Mieter-BK Default | Eigentümerabrechnung | Standard-Verteilung |
+| Category | Tenant operating cost default | Owner statement | Default distribution |
 | --- | --- | --- | --- |
-| Grundsteuer / öffentliche Lasten | umlagefähig | ja | Fläche oder MEA |
-| Kaltwasser | umlagefähig | ja | Verbrauch oder Fläche |
-| Entwässerung / Abwasser | umlagefähig | ja | Verbrauch oder Fläche |
-| Heizung zentral | umlagefähig extern/prüfen | ja | externe Abrechnung oder Heizkostenlogik |
-| Warmwasser zentral | umlagefähig extern/prüfen | ja | externe Abrechnung oder Heizkostenlogik |
-| Müllbeseitigung | umlagefähig | ja | Einheit, Personen oder Fläche |
-| Straßenreinigung | umlagefähig | ja | Fläche oder MEA |
-| Winterdienst | umlagefähig | ja | Fläche oder MEA |
-| Gebäudereinigung | umlagefähig | ja | Fläche |
-| Gartenpflege | umlagefähig | ja | Fläche oder MEA |
-| Allgemeinstrom / Beleuchtung | umlagefähig | ja | Fläche oder MEA |
-| Schornsteinreinigung | umlagefähig | ja | Einheit, Fläche oder externe Abrechnung |
-| Gebäudeversicherung | umlagefähig | ja | Fläche oder MEA |
-| Haftpflichtversicherung | umlagefähig | ja | Fläche oder MEA |
-| Aufzug Betrieb/Wartung | umlagefähig | ja | Einheit oder Fläche |
-| Waschraum / Gemeinschaftswascheinrichtung | umlagefähig | ja | Verbrauch, Einheit oder Fläche |
+| Grundsteuer / öffentliche Lasten (property tax / public charges) | apportionable | yes | area or MEA |
+| Kaltwasser (cold water) | apportionable | yes | consumption or area |
+| Entwässerung / Abwasser (drainage / wastewater) | apportionable | yes | consumption or area |
+| Heizung zentral (central heating) | apportionable external/review | yes | external statement or heating cost logic |
+| Warmwasser zentral (central hot water) | apportionable external/review | yes | external statement or heating cost logic |
+| Müllbeseitigung (waste disposal) | apportionable | yes | unit, persons or area |
+| Straßenreinigung (street cleaning) | apportionable | yes | area or MEA |
+| Winterdienst (winter maintenance) | apportionable | yes | area or MEA |
+| Gebäudereinigung (building cleaning) | apportionable | yes | area |
+| Gartenpflege (garden maintenance) | apportionable | yes | area or MEA |
+| Allgemeinstrom / Beleuchtung (common-area electricity / lighting) | apportionable | yes | area or MEA |
+| Schornsteinreinigung (chimney sweeping) | apportionable | yes | unit, area or external statement |
+| Gebäudeversicherung (building insurance) | apportionable | yes | area or MEA |
+| Haftpflichtversicherung (liability insurance) | apportionable | yes | area or MEA |
+| Aufzug Betrieb/Wartung (elevator operation/maintenance) | apportionable | yes | unit or area |
+| Waschraum / Gemeinschaftswascheinrichtung (laundry room / shared laundry facility) | apportionable | yes | consumption, unit or area |
 
-### 7.2 Gemischte oder prüfpflichtige Kosten
+### 7.2 Mixed or Review-Required Costs
 
-Diese Kategorien dürfen nicht blind vollständig auf Mieter umgelegt werden.
+These categories must not be blindly allocated in full to tenants.
 
-| Kategorie | Mieter-BK Default | Eigentümerabrechnung | Hinweis |
+| Category | Tenant operating cost default | Owner statement | Note |
 | --- | --- | --- | --- |
-| Hausmeister / Hauswart | gemischt_prüfen | ja | Verwaltungs-, Reparatur- und Instandhaltungsanteile herausrechnen |
-| Sonstige Betriebskosten | manuell_prüfen | ja | nur bei konkreter mietvertraglicher Grundlage und laufenden Kosten |
-| Kabel / Breitband / Gemeinschaftsantenne | manuell_prüfen | ja | seit 2024 eingeschränkte Umlagefähigkeit |
-| Messdienst / Abrechnungsdienst | umlagefähig_extern/prüfen | ja | z. B. Heizkosten/Wasser, keine Doppelabrechnung |
-| CO2-Kosten | teilweise_prüfen | ja | nur Mieteranteil umlagefähig (10-Stufen-Modell) |
+| Hausmeister / Hauswart (caretaker / janitor) | mixed_review | yes | Exclude administration, repair and maintenance shares |
+| Sonstige Betriebskosten (other operating costs) | manual_review | yes | only with a specific basis in the lease and for recurring costs |
+| Kabel / Breitband / Gemeinschaftsantenne (cable / broadband / shared antenna) | manual_review | yes | apportionability restricted since 2024 |
+| Messdienst / Abrechnungsdienst (metering service / billing service) | apportionable_external/review | yes | e.g., heating costs/water, no double billing |
+| CO2-Kosten (CO2 costs) | partial_review | yes | only tenant share apportionable (10-level model) |
 
-### 7.3 Nicht umlagefähige Eigentümer-/WEG-Kosten
+### 7.3 Non-Apportionable Owner/WEG Costs
 
-Diese Kosten erscheinen in der Eigentümer-/Hausgeldabrechnung, aber nicht in der Betriebskostenabrechnung für Mieter.
+These costs appear in the owner/Hausgeld statement, but not in the operating cost statement for tenants.
 
-| Kategorie | Mieter-BK Default | Eigentümerabrechnung | Hinweis |
+| Category | Tenant operating cost default | Owner statement | Note |
 | --- | --- | --- | --- |
-| WEG-Verwalterkosten | nicht_umlagefähig | ja | Verwaltungskosten |
-| Buchhaltung / Jahresabrechnung | nicht_umlagefähig | ja | Verwaltungskosten |
-| Eigentümerversammlung | nicht_umlagefähig | ja | Verwaltungskosten |
-| Bankgebühren WEG-Konto | nicht_umlagefähig | ja | Verwaltungskosten/Admin-Kosten |
-| Rechtsberatung / Prozesskosten | nicht_umlagefähig | ja | regelmäßig Eigentümer-/WEG-Kosten |
-| Instandhaltung | nicht_umlagefähig | ja | keine Betriebskosten |
-| Instandsetzung / Reparaturen | nicht_umlagefähig | ja | keine Betriebskosten |
-| Erhaltungsrücklage / Instandhaltungsrücklage | nicht_umlagefähig | ja | getrennt ausweisen |
-| Sonderumlage | nicht_umlagefähig | ja | Zweck prüfen, Default owner-only |
+| WEG-Verwalterkosten (WEG administrator costs) | not_apportionable | yes | administration costs |
+| Buchhaltung / Jahresabrechnung (bookkeeping / annual settlement) | not_apportionable | yes | administration costs |
+| Eigentümerversammlung (owners' meeting) | not_apportionable | yes | administration costs |
+| Bankgebühren WEG-Konto (bank fees, WEG account) | not_apportionable | yes | administration costs/admin costs |
+| Rechtsberatung / Prozesskosten (legal advice / litigation costs) | not_apportionable | yes | regularly owner/WEG costs |
+| Instandhaltung (maintenance) | not_apportionable | yes | not operating costs |
+| Instandsetzung / Reparaturen (repair / repairs) | not_apportionable | yes | not operating costs |
+| Erhaltungsrücklage / Instandhaltungsrücklage (maintenance reserve) | not_apportionable | yes | show separately |
+| Sonderumlage (special assessment) | not_apportionable | yes | check purpose, default owner-only |
 
-### 7.4 Reine Mietobjekte
+### 7.4 Pure Rental Properties
 
-Bei reinen Mietobjekten werden in Phase 1 nur Kosten erfasst, die für die Betriebskostenabrechnung relevant sind. Nicht umlagefähige interne Vermieterkosten wie Reparaturen, Verwaltung oder Instandhaltung werden für reine Mietobjekte im MVP nicht erfasst.
+For pure rental properties, Phase 1 captures only costs that are relevant for the operating cost statement. Non-apportionable internal landlord costs such as repairs, administration or maintenance are not captured for pure rental properties in the MVP.
 
-## 8. Verteilerschlüssel
+## 8. Distribution Keys
 
-Das System unterstützt in Phase 1 folgende Verteilerschlüssel:
+In Phase 1, the system supports the following distribution keys:
 
 - MEA
-- Wohn-/Nutzfläche
-- beheizte Fläche
-- Einheit
-- Personenanzahl
-- Verbrauch
-- externe Abrechnung pro Einheit
-- manueller Betrag pro Einheit
+- Residential/usable area
+- Heated area
+- Unit
+- Number of persons
+- Consumption
+- External statement per unit
+- Manual amount per unit
 
-Eigentümerabrechnung und Mieterabrechnung können für dieselbe Kostenposition unterschiedliche Verteilerschlüssel haben.
+Owner statement and tenant statement can have different distribution keys for the same cost item.
 
-Beispiel: Eine WEG-Rechnung wird in der Eigentümerabrechnung nach MEA verteilt, für Mieter aber nach Wohnfläche oder nach externer Abrechnung.
+Example: A WEG invoice is distributed by MEA in the owner statement, but for tenants by residential area or by external statement.
 
-## 9. Assistierter Rechnungsimport
+## 9. Assisted Invoice Import
 
-Der Rechnungsimport ist in Phase 1 ein Vorschlagswerkzeug. Er darf keine Kostenposition automatisch final buchen. Es gibt zwei Eingangskanäle:
+In Phase 1, the invoice import is a suggestion tool. It must not automatically post a cost item as final. There are two input channels:
 
-- **PDF-Rechnung:** Extraktion per OCR/Parsing (unsicherer).
-- **E-Rechnung (XRechnung/ZUGFeRD):** strukturierte Felder direkt aus dem Datensatz (sicherer, siehe 6.5).
+- **PDF invoice:** Extraction via OCR/parsing (less reliable).
+- **E-invoice (XRechnung/ZUGFeRD):** Structured fields directly from the data record (more reliable, see 6.5).
 
-Ablauf:
+Flow:
 
-1. Nutzer lädt eine PDF- oder E-Rechnung hoch (oder leitet sie an einen Eingangskanal weiter).
-2. Das System extrahiert bzw. übernimmt Lieferant, Rechnungsdatum, Belegnummer, Betrag, USt, Leistungszeitraum und Textmerkmale.
-3. Das System schlägt eine Kategorie aus dem Standardkontenplan vor.
-4. Das System schlägt anhand der Kategorie Umlagefähigkeit und Verteilerschlüssel vor.
-5. Der Nutzer prüft und bestätigt oder korrigiert die Werte.
-6. Erst nach Bestätigung wird die Kostenposition für Abrechnungen aktiv und der Beleg revisionssicher festgeschrieben (siehe 6.6).
+1. The user uploads a PDF or e-invoice (or forwards it to an input channel).
+2. The system extracts or takes over supplier, invoice date, voucher number, amount, VAT, service period and text features.
+3. The system suggests a category from the standard chart of accounts.
+4. Based on the category, the system suggests apportionability and distribution key.
+5. The user reviews and confirms or corrects the values.
+6. Only after confirmation does the cost item become active for settlements and the voucher is locked in an audit-proof manner (see 6.6).
 
-Jeder importierte Vorschlag muss einen Status haben:
+Every imported suggestion must have a status:
 
-- `draft_extracted`: aus PDF/E-Rechnung erkannt, noch nicht bestätigt
-- `needs_review`: Erkennung unsicher oder Kategorie kritisch
-- `confirmed`: vom Nutzer bestätigt und abrechnungsrelevant
-- `rejected`: Vorschlag verworfen
+- `draft_extracted`: detected from PDF/e-invoice, not yet confirmed
+- `needs_review`: detection uncertain or category critical
+- `confirmed`: confirmed by the user and relevant for settlement
+- `rejected`: suggestion discarded
 
-## 10. Wirtschaftsplan
+## 10. Economic Plan
 
-Der Wirtschaftsplan dient zur Berechnung von Hausgeldvorschüssen für Eigentümer.
+The economic plan is used to calculate Hausgeld advance payments for owners.
 
-Eingaben:
+Inputs:
 
-- Vorjahreskosten oder manuelle Planwerte pro Kategorie
-- erwartete Rücklagenzuführung
-- Verteilerschlüssel je Kostenart
-- optional Rundungsregeln und monatliche Zahlweise
+- Prior-year costs or manual plan values per category
+- Expected reserve contribution
+- Distribution key per cost category
+- Optional rounding rules and monthly payment schedule
 
-Ausgaben:
+Outputs:
 
-- Planbetrag je Kategorie
-- Anteil je Einheit/Eigentümer
-- monatlicher Hausgeldvorschlag
-- Anteil umlagefähiger und nicht umlagefähiger Kosten
-- Rücklagenanteil separat
+- Plan amount per category
+- Share per unit/owner
+- Monthly Hausgeld proposal
+- Share of apportionable and non-apportionable costs
+- Reserve share shown separately
 
-Der Wirtschaftsplan ist kein Ersatz für einen formalen WEG-Beschluss. Das System erzeugt Vorschläge und Unterlagen für die Beschlussfassung; der gefasste Beschluss wird in der Beschluss-Sammlung dokumentiert (siehe 6.10).
+The economic plan is not a substitute for a formal WEG resolution. The system generates proposals and documents for the resolution; the resolution passed is documented in the resolution register (see 6.10).
 
-## 11. Dokumenten- und PDF-Ausgabe
+## 11. Document and PDF Output
 
-Phase 1 nutzt feste PDF-Vorlagen. Erzeugt werden:
+Phase 1 uses fixed PDF templates. The following are generated:
 
-- Betriebskostenabrechnung für Mieter
-- Hausgeld-/Eigentümerabrechnung
-- Wirtschaftsplan
-- **Vermögensbericht (§ 28 Abs. 4 WEG)**
-- Mahnschreiben
-- Versammlungseinladung und Protokoll
+- Operating cost statement for tenants
+- Hausgeld/owner statement
+- Economic plan
+- **Asset report (§ 28 Abs. 4 WEG)**
+- Dunning letters
+- Meeting invitation and minutes
 
-Die Abrechnungs-PDFs sollen enthalten (formelle Mindestanforderungen nach BGH-Rechtsprechung für Mieterabrechnungen):
+The settlement PDFs should contain (formal minimum requirements under Federal Court of Justice (BGH) case law for tenant settlements):
 
-- Objekt und Abrechnungszeitraum
-- Adressat und Einheitenbezug
-- Kostenübersicht nach Kategorien (Gesamtkosten je Kostenart)
-- angewandter Verteilerschlüssel je Position
-- Berechnung des Anteils des Adressaten
-- Abzug der Vorauszahlungen
-- Nachzahlung oder Guthaben
-- bei Eigentümerabrechnungen Trennung umlagefähig/nicht umlagefähig/Rücklage sowie Ausweis der Abrechnungsspitze
-- Hinweise auf manuelle externe Abrechnungswerte, falls verwendet
+- Property and settlement period
+- Addressee and unit reference
+- Cost overview by category (total costs per cost category)
+- Distribution key applied per item
+- Calculation of the addressee's share
+- Deduction of advance payments
+- Supplementary payment or credit
+- For owner statements, separation of apportionable/non-apportionable/reserve as well as disclosure of the settlement balance
+- Notes on manual external settlement values, if used
 
-Der Vermögensbericht enthält mindestens den Stand der Erhaltungsrücklage sowie eine Aufstellung des wesentlichen Gemeinschaftsvermögens (Forderungen/Verbindlichkeiten der Gemeinschaft).
+The asset report contains at least the status of the maintenance reserve and a statement of the essential community assets (receivables/liabilities of the community).
 
-## 12. Fristen- und Pflichtenüberwachung
+## 12. Deadline and Obligation Monitoring
 
-Das System überwacht und erinnert an wesentliche Fristen:
+The system monitors and reminds of essential deadlines:
 
-- 12-Monats-Frist der Betriebskostenabrechnung (§ 556 Abs. 3 BGB).
-- WEG-Jahresabrechnung/Vermögensbericht nach Kalenderjahresende.
-- Anstehende Eigentümerversammlung / fällige Wirtschaftspläne.
-- Überfällige offene Posten (Anstoß Mahnwesen).
+- 12-month deadline for the operating cost statement (§ 556 Abs. 3 BGB).
+- WEG annual settlement/asset report after the end of the calendar year.
+- Upcoming owners' meeting / due economic plans.
+- Overdue open items (trigger for dunning).
 
-## 13. Datenmodell auf hoher Ebene
+## 13. High-Level Data Model
 
-Zentrale Entitäten:
+Central entities:
 
-- `Organization` (Mandanten-/Isolationsgrenze)
+- `Organization` (organization/isolation boundary)
 - `User`, `Role`
 - `ManagementMandate`
 - `Property`
@@ -392,104 +392,104 @@ Zentrale Entitäten:
 - `Person`
 - `OwnerProfile`
 - `TenantProfile`
-- `Vendor` (Dienstleister/Lieferant)
+- `Vendor` (vendor/supplier)
 - `OwnershipHistory`
 - `LeaseAgreement`
 - `BankAccount`
 - `CostCategory`
 - `CostEntry`
-- `InvoiceDocument` (PDF und/oder E-Rechnungs-Datensatz, mit Prüfsumme/Version)
+- `InvoiceDocument` (PDF and/or e-invoice data record, with checksum/version)
 - `Payment`
-- `OpenItem` (offener Posten) und `DunningNotice` (Mahnung)
+- `OpenItem` (open item) and `DunningNotice` (dunning notice)
 - `SettlementRun`
 - `SettlementLine`
 - `EconomicPlan`
 - `EconomicPlanLine`
-- `AssetReport` (Vermögensbericht)
-- `OwnersMeeting`, `Resolution` (Beschluss), `ResolutionRegister` (Beschluss-Sammlung)
+- `AssetReport` (asset report)
+- `OwnersMeeting`, `Resolution` (resolution), `ResolutionRegister` (resolution register)
 
-Beziehungen (Auszug):
+Relationships (excerpt):
 
-- `Organization` umschließt alle anderen Entitäten (harte Mandantentrennung).
-- `Property` hat viele `Unit`.
-- `Unit` hat viele `OwnershipHistory` und viele `LeaseAgreement`.
-- `Property`/`Mandate` hat ein oder mehrere `BankAccount`.
-- `Property` hat viele `CostEntry`; `CostEntry` kann ein `InvoiceDocument` haben.
-- `Payment` wird Mieter, Eigentümer, Einheit, Konto und Zeitraum zugeordnet und gleicht `OpenItem` aus.
-- `SettlementRun` erzeugt `SettlementLine` pro Adressat und Kategorie.
-- `OwnersMeeting` erzeugt `Resolution`; bestätigte `Resolution` werden in der `ResolutionRegister` fortgeschrieben.
+- `Organization` encloses all other entities (strict organization isolation).
+- `Property` has many `Unit`.
+- `Unit` has many `OwnershipHistory` and many `LeaseAgreement`.
+- `Property`/`Mandate` has one or more `BankAccount`.
+- `Property` has many `CostEntry`; `CostEntry` can have an `InvoiceDocument`.
+- `Payment` is assigned to tenant, owner, unit, account and period and clears `OpenItem`.
+- `SettlementRun` generates `SettlementLine` per addressee and category.
+- `OwnersMeeting` generates `Resolution`; confirmed `Resolution` entries are carried forward in the `ResolutionRegister`.
 
-## 14. Chronologische Regeln
+## 14. Chronological Rules
 
-- Eigentumswechsel und Mieterwechsel werden als Historie gespeichert.
-- Historische Daten werden nicht überschrieben.
-- Abrechnungen greifen auf den Zustand im jeweiligen Abrechnungszeitraum zu.
-- Kostenpositionen haben Leistungszeiträume, nicht nur Rechnungsdaten.
-- Bei unterjährigem Wechsel muss anteilig berechnet werden können.
-- Freigegebene Belege und finalisierte Abrechnungen sind unveränderbar; Korrekturen erfolgen über Neuversionen mit Bezug zum Original.
+- Ownership changes and tenant changes are stored as history.
+- Historical data is not overwritten.
+- Settlements access the state in the respective settlement period.
+- Cost items have service periods, not just invoice dates.
+- In the event of a change during the year, it must be possible to calculate pro rata.
+- Approved vouchers and finalized settlements are immutable; corrections are made through new versions referencing the original.
 
-## 15. Datenschutz (DSGVO)
+## 15. Data Protection (GDPR)
 
-Das System verarbeitet personenbezogene Daten von Mietern, Eigentümern und Dienstleistern. Phase 1 berücksichtigt:
+The system processes personal data of tenants, owners and vendors. Phase 1 takes the following into account:
 
-- Rechtsgrundlage und Zweckbindung der gespeicherten Daten.
-- Aufbewahrungs- und Löschkonzept (Verzahnung mit den steuerlichen 8-Jahres-Fristen für Belege).
-- Datenzugriff nur innerhalb der eigenen Organization und gemäß Rolle.
-- Datenhaltung in der EU; bei SaaS-Betrieb Auftragsverarbeitung (Art. 28 DSGVO) vorgesehen.
-- Auskunfts- und Löschanfragen müssen technisch bedienbar sein (Export/Anonymisierung), ohne die revisionssichere Belegaufbewahrung zu verletzen.
+- Legal basis and purpose limitation of the stored data.
+- Retention and erasure concept (interlocked with the 8-year tax retention periods for vouchers).
+- Data access only within the own Organization and according to role.
+- Data hosting in the EU; for SaaS operation, commissioned processing (Art. 28 GDPR) is planned.
+- Access and erasure requests must be technically operable (export/anonymization) without violating audit-proof voucher retention.
 
-## 16. Technische Architektur
+## 16. Technical Architecture
 
-Empfohlener MVP-Stack:
+Recommended MVP stack:
 
-- Frontend: **Responsive Web-App** mit React und TypeScript (Desktop-first, voll bedienbar auf Tablet und Smartphone). Keine native App; mobile Nutzung über den Browser. Datei-Upload/Belegfoto über die Browser-Datei-/Kamera-API.
-- Backend: Python FastAPI oder Node.js/NestJS.
-- Datenbank: PostgreSQL mit mandantenfähigem Schema (Organization-Scoping auf jeder relevanten Tabelle).
-- E-Rechnung: Parser/Validator für XRechnung und ZUGFeRD (EN-16931) als modularer Service.
-- PDF-Erzeugung: HTML-zu-PDF Rendering, z. B. Playwright/Puppeteer, oder serverseitige PDF-Bibliothek.
-- Dateispeicher: revisionssicher mit Prüfsummen; lokal im MVP, später S3-kompatibel mit Objektsperre/Versionierung.
-- OCR/PDF-Extraktion: modularer Service, damit später ein anderer Anbieter oder ein lokales Modell angebunden werden kann.
-- AuthN/AuthZ: Login mit Organization-Bindung und festen Rollen.
+- Frontend: **Responsive web app** with React and TypeScript (desktop-first, fully usable on tablet and smartphone). No native app; mobile use via the browser. File upload/voucher photo via the browser file/camera API.
+- Backend: Python FastAPI or Node.js/NestJS.
+- Database: PostgreSQL with a multi-organization schema (Organization scoping on every relevant table).
+- E-invoice: Parser/validator for XRechnung and ZUGFeRD (EN-16931) as a modular service.
+- PDF generation: HTML-to-PDF rendering, e.g., Playwright/Puppeteer, or a server-side PDF library.
+- File storage: audit-proof with checksums; local in the MVP, later S3-compatible with object lock/versioning.
+- OCR/PDF extraction: modular service, so that another provider or a local model can be connected later.
+- AuthN/AuthZ: Login with Organization binding and fixed roles.
 
-Architekturprinzipien:
+Architecture principles:
 
-- **API-first**, sauber getrennt von der Web-UI, damit Integrationen (z. B. späterer Bankimport, DATEV-Export) möglich bleiben. Die API dient Integrationen, nicht nativen Clients.
-- Mandantentrennung als invariante Eigenschaft jeder Datenzugriffsschicht (kein Cross-Org-Zugriff).
-- Abrechnungslogik getrennt von UI und PDF-Layout.
-- Kostenkategorien als versionierte Systemdaten.
-- Alle finalen Abrechnungsergebnisse und freigegebenen Belege werden als unveränderbare Snapshots gespeichert, damit spätere Stammdatenänderungen alte Dokumente nicht verändern.
+- **API-first**, cleanly separated from the web UI, so that integrations (e.g., later bank import, DATEV export) remain possible. The API serves integrations, not native clients.
+- Organization isolation as an invariant property of every data access layer (no cross-org access).
+- Settlement logic separated from UI and PDF layout.
+- Cost categories as versioned system data.
+- All final settlement results and approved vouchers are stored as immutable snapshots, so that later master data changes do not alter old documents.
 
-## 17. Rechtliche Grundlagen für Defaults
+## 17. Legal Bases for Defaults
 
-Die Software bildet fachliche Defaults anhand folgender Grundlagen ab:
+The software maps professional defaults based on the following bases:
 
-- BGB § 556: Vereinbarungen über Betriebskosten
-- BGB § 556 Abs. 3: 12-Monats-Abrechnungsfrist und Einwendungsfrist
-- BGB § 556a: Abrechnungsmaßstab für Betriebskosten
-- BetrKV § 1: Definition und Ausschluss von Verwaltungs-/Instandhaltungskosten
-- BetrKV § 2: Betriebskostenkatalog
-- WEG § 16: Nutzungen und Kosten
-- WEG § 24 Abs. 7: Beschluss-Sammlung
-- WEG § 28: Wirtschaftsplan, Jahresabrechnung, Vermögensbericht (inkl. Abs. 4 Vermögensbericht; Abrechnungsspitze nach WEMoG)
-- HeizkostenV, insbesondere Verteilung von Heiz- und Warmwasserkosten
-- CO2KostAufG für Aufteilung von CO2-Kosten (10-Stufen-Modell)
-- TKG-/Nebenkostenprivileg-Änderungen für Kabel/Breitband seit 2024
-- UStG § 14 / E-Rechnungs-Pflicht (Empfang seit 01.01.2025; XRechnung/ZUGFeRD)
-- GoBD: Unveränderbarkeit, Nachvollziehbarkeit, maschinelle Auswertbarkeit
-- Aufbewahrungsfristen (8 Jahre für Buchungsbelege ab 2025, BEG IV)
-- DSGVO: Verarbeitung personenbezogener Daten, Aufbewahrung/Löschung, Auftragsverarbeitung
+- BGB § 556: Agreements on operating costs
+- BGB § 556 Abs. 3: 12-month settlement deadline and objection period
+- BGB § 556a: Allocation standard for operating costs
+- BetrKV § 1: Definition and exclusion of administration/maintenance costs
+- BetrKV § 2: Operating cost catalog
+- WEG § 16: Benefits and costs
+- WEG § 24 Abs. 7: Resolution register
+- WEG § 28: Economic plan, annual settlement, asset report (incl. Abs. 4 asset report; settlement balance under WEMoG)
+- HeizkostenV, in particular distribution of heating and hot water costs
+- CO2KostAufG for allocation of CO2 costs (10-level model)
+- TKG / Nebenkostenprivileg changes for cable/broadband since 2024
+- UStG § 14 / e-invoice obligation (receipt since 01.01.2025; XRechnung/ZUGFeRD)
+- GoBD: immutability, traceability, machine evaluability
+- Retention periods (8 years for accounting vouchers from 2025, BEG IV)
+- GDPR: processing of personal data, retention/erasure, commissioned processing
 
-Hinweis: Das System kann rechtliche Regeln technisch abbilden und Plausibilitätsprüfungen liefern. Es ersetzt keine juristische oder steuerliche Prüfung bei Sonderfällen.
+Note: The system can map legal rules technically and provide plausibility checks. It does not replace legal or tax review in special cases.
 
-## 18. Offene Punkte für die nächste Spezifikationsrunde
+## 18. Open Points for the Next Specification Round
 
-- Exakte PDF-Struktur für Betriebskostenabrechnung, Hausgeldabrechnung und Vermögensbericht.
-- Welche Rundungsregeln gelten pro Abrechnung.
-- Genaue Mahnstufen, Fristen und Gebührenlogik im Mahnwesen.
-- Wie externe Heiz-/Wasserabrechnungen genau eingegeben werden: Betrag pro Einheit, PDF-Anhang, Gesamtsumme und Plausibilitätscheck; Übernahme des CO2-Aufteilungswerts.
-- Detailtiefe des Mietkontos (nur Soll-Ist vs. einzelne Sollstellungen je Monat) und Behandlung von Kaution/Kautionskonto.
-- Ob und wie Gewerbeeinheiten einen Vorwegabzug benötigen (andere Umlagelogik, USt-Option).
-- Ob Eigentümerabrechnungen steuerliche Ausweise (z. B. § 35a EStG haushaltsnahe Dienstleistungen/Handwerkerleistungen) enthalten sollen.
-- Eingangskanäle für E-Rechnungen (Upload, E-Mail-Postfach je Mandat) und Validierungsstrenge.
-- Genauer Umfang der Versammlungsverwaltung (Stimmrechtsmodelle, Vollmachten, Umlaufbeschluss).
-- Detailtiefe des Lösch-/Anonymisierungskonzepts im Spannungsfeld zur revisionssicheren Aufbewahrung.
+- Exact PDF structure for operating cost statement, Hausgeld statement and asset report.
+- Which rounding rules apply per settlement.
+- Exact dunning levels, deadlines and fee logic in dunning.
+- How external heating/water statements are entered in detail: amount per unit, PDF attachment, total and plausibility check; takeover of the CO2 allocation value.
+- Level of detail of the tenant ledger (expected/actual only vs. individual expected charges per month) and handling of security deposit/security deposit account.
+- Whether and how commercial units need an upfront deduction (Vorwegabzug) (different allocation logic, VAT option).
+- Whether owner statements should include tax disclosures (e.g., § 35a EStG household-related services/craftsman services).
+- Input channels for e-invoices (upload, e-mail inbox per mandate) and validation strictness.
+- Exact scope of meeting management (voting-right models, proxies, written-circulation resolution (Umlaufbeschluss)).
+- Level of detail of the erasure/anonymization concept in tension with audit-proof retention.

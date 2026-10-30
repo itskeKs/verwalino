@@ -1,111 +1,111 @@
-# M2-Design: Kosten, Standardkontenplan & GoBD-Belegfluss
+# M2 Design: Costs, Standard Chart of Accounts & GoBD Voucher Flow (Belegfluss)
 
-Stand: 2026-06-01 · Version 0.1 (Design, vor Implementierung)
-Bezug: [architecture.md](architecture.md) §3 (GoBD-Unveränderbarkeit), §5.4 (I2-tragende Entitäten) · [roadmap.md](roadmap.md) M2 · SDD v0.2 §5.3/§6.4, §6.5, §6.6, §7, §8/§9, §14, §15, §16
-Autor: `engine-correctness` (Opus 4.8) · Status: **Entwurf zur Bestätigung durch den Menschen — kein Anwendungscode, keine Migration, kein Commit**
-ADR zu diesem Dokument: [adr/0003-gobd-unveraenderbarkeit-mechanik.md](adr/0003-gobd-unveraenderbarkeit-mechanik.md)
+As of: 2026-06-01 · Version 0.1 (design, before implementation)
+References: [architecture.md](architecture.md) §3 (GoBD immutability), §5.4 (I2-bearing entities) · [archived roadmap](archive/roadmap.md) M2 · SDD v0.2 §5.3/§6.4, §6.5, §6.6, §7, §8/§9, §14, §15, §16
+Author: `engine-correctness` (Opus 4.8) · Status: **Draft for confirmation by the human — no application code, no migration, no commit**
+ADR for this document: [adr/0003-gobd-immutability-mechanism.md](adr/0003-gobd-immutability-mechanism.md)
 
-> Dieses Dokument vertieft die in `architecture.md` §3 und §5.4 gelegten Grundlagen zu einer **implementierbaren** Spezifikation für M2 (Kosten & GoBD-Belegfluss). Es trifft die korrektheits-/architekturkritischen Entscheidungen (Unveränderbarkeits-Mechanik, Versionskette, Statusmaschine, Storage-Abstraktion) und übergibt eine abarbeitbare Checkliste an `bulk-impl` (Opus 4.6).
+> This document builds on the foundations laid in `architecture.md` §3 and §5.4 and turns them into an **implementable** specification for M2 (costs & GoBD voucher flow). It makes the correctness- and architecture-critical decisions (immutability mechanics, version chain, state machine, storage abstraction) and hands a work-through checklist to `bulk-impl` (Opus 4.6).
 >
-> **Verbindlichkeit:** SDD (v0.2), Roadmap, `architecture.md` und die ADRs 0001/0002 sind die Quelle der Wahrheit und bleiben **unangetastet**. Dieses Dokument ist additiv. Entscheidungen, die der Mensch bestätigen sollte, sind mit **[ENTSCHEIDUNG]** markiert; offene SDD-§18-Punkte mit **[OFFEN]**.
+> **Binding force:** The SDD (v0.2), the roadmap, `architecture.md` and ADRs 0001/0002 are the source of truth and remain **untouched**. This document is additive. Decisions that the human should confirm are marked **[DECISION]**; open SDD §18 items are marked **[OPEN]**.
 >
-> **Keine Selbst-Zertifizierung:** Dieses Design macht die Belegablage *transparent, nachvollziehbar und auditierbar* und legt Annahmen offen. Es kann nicht garantieren, dass die Ablage im konkreten Fall prüfungs-/gerichtsfest ist. Vor Produktivsetzung der GoBD-/DSGVO-relevanten Teile (spätestens M9) ist eine fachliche Abnahme durch Steuerberater/Fachanwalt vorgesehen.
+> **No self-certification:** This design makes voucher (Beleg) storage *transparent, traceable and auditable* and discloses its assumptions. It cannot guarantee that the storage is audit-proof or court-proof in a specific case. Before the GoBD/GDPR (DSGVO)-relevant parts go into production (M9 at the latest), a professional sign-off by a tax advisor/specialist lawyer is planned.
 
 ---
 
-## 0. Geltungsbereich und Anschluss an M0/M1
+## 0. Scope and Connection to M0/M1
 
-**M2-Exit (Roadmap):** „Eine hochgeladene PDF-Rechnung wird als Vorschlag erkannt, bestätigt, unveränderbar archiviert und ist abrechnungsrelevant." Dieses Kriterium ist die Messlatte.
+**M2 exit (roadmap):** "An uploaded PDF invoice is recognized as a proposal, confirmed, archived immutably and is relevant for settlement." This criterion is the benchmark.
 
-M2 baut auf bereits implementierten und verifizierten Fundamenten (58 Tests grün) auf und übernimmt deren Konventionen **unverändert**:
+M2 builds on already implemented and verified foundations (58 tests green) and adopts their conventions **unchanged**:
 
-| Vorhandenes Fundament (M0/M1) | M2 nutzt es so |
+| Existing foundation (M0/M1) | How M2 uses it |
 | --- | --- |
-| RLS-Muster: `ENABLE`+`FORCE`, vier Policies pro Tenant-Tabelle (`org_isolation_select/insert/update/delete`) mit `NULLIF(current_setting('app.current_org_id', true), '')::uuid`, fail-closed | Jede neue Tenant-Tabelle erhält exakt dieses Muster (eigene Migration, analog `0002`/`0004`). |
-| `app_rw`-Grant-Muster; `audit_event` append-only via `GRANT SELECT, INSERT` + weggelassene DELETE-Policy + Coverage-Test | Vorbild für Beleg-Unveränderbarkeit (ADR-0003). |
-| `TENANT_TABLES`-Registry + `test_rls_coverage.py` (jede Tabelle muss eingeordnet sein, sonst Test rot) | Wird um die M2-Tabellen erweitert; `cost_category` kommt nach Annahme A-1-Entscheidung in `TENANT_TABLES` **oder** `GLOBAL_TABLES`. |
-| Repository-Schicht (`TenantRepository`, expliziter `organization_id`-Filter zusätzlich zu RLS) | Alle M2-Repos erben davon; append-only-Repos analog `AuditRepository` (kein `update`/`delete`). |
-| `AuditEvent` + `AuditRepository` | M2 schreibt Beleg-/Kosten-/Freigabe-Events darüber (§6). |
-| Geld-/Quoten-Konvention: `NUMERIC(14,2)` für EUR, `NUMERIC(12,6)` für Anteile, app-seitig `Decimal`; UUID-PK; `TIMESTAMPTZ`; `ondelete="RESTRICT"` auf FKs zu `organization` | Durchgängig übernommen. |
-| Temporale EXCLUDE-Constraints (btree_gist) als Vorbild für DB-erzwungene Integrität | Für Versions-Eindeutigkeit der Belege wiederverwendet (§4). |
-| Swappable `PdfRenderer`-Protocol (`app/core/pdf.py`) | Vorbild für die Storage-Abstraktion (§5) und für die OCR-Extraktions-Abstraktion (§3.5). |
-| `mandate_type`/`usage_type` als `String` + `CHECK (... IN (...))`-Constraint (keine DB-Enums) | M2 nutzt dieselbe String+CHECK-Konvention für alle Aufzählungen (Status, Verteilerschlüssel, Umlagefähigkeit). |
-| `decode_session_token` liefert `uid`/`oid`/`role`; `require_write_dep` (OWNER_ADMIN|CLERK) | Belegfreigabe ist eine Schreib-Operation → `require_write_dep`; READ_ONLY darf nicht freigeben. |
+| RLS pattern: `ENABLE`+`FORCE`, four policies per tenant table (`org_isolation_select/insert/update/delete`) with `NULLIF(current_setting('app.current_org_id', true), '')::uuid`, fail-closed | Every new tenant table gets exactly this pattern (own migration, analogous to `0002`/`0004`). |
+| `app_rw` grant pattern; `audit_event` append-only via `GRANT SELECT, INSERT` + omitted DELETE policy + coverage test | Model for voucher immutability (ADR-0003). |
+| `TENANT_TABLES` registry + `test_rls_coverage.py` (every table must be classified, otherwise the test goes red) | Extended with the M2 tables; `cost_category` goes into `TENANT_TABLES` **or** `GLOBAL_TABLES`, depending on the Assumption A-1 decision. |
+| Repository layer (`TenantRepository`, explicit `organization_id` filter in addition to RLS) | All M2 repos inherit from it; append-only repos analogous to `AuditRepository` (no `update`/`delete`). |
+| `AuditEvent` + `AuditRepository` | M2 writes voucher/cost/approval events through them (§6). |
+| Money/share convention: `NUMERIC(14,2)` for EUR, `NUMERIC(12,6)` for shares, `Decimal` on the application side; UUID PK; `TIMESTAMPTZ`; `ondelete="RESTRICT"` on FKs to `organization` | Adopted throughout. |
+| Temporal EXCLUDE constraints (btree_gist) as a model for DB-enforced integrity | Reused for version uniqueness of vouchers (§4). |
+| Swappable `PdfRenderer` protocol (`app/core/pdf.py`) | Model for the storage abstraction (§5) and for the OCR extraction abstraction (§3.5). |
+| `mandate_type`/`usage_type` as `String` + `CHECK (... IN (...))` constraint (no DB enums) | M2 uses the same String+CHECK convention for all enumerations (status, distribution key, apportionability). |
+| `decode_session_token` returns `uid`/`oid`/`role`; `require_write_dep` (OWNER_ADMIN|CLERK) | Voucher approval is a write operation → `require_write_dep`; READ_ONLY must not approve. |
 
-**Neue Tabellen in M2:** `cost_category`, `cost_entry`, `invoice_document`. Optional (siehe §3.5) eine Extraktions-Hilfstabelle `document_extraction` — Empfehlung: vorerst **nicht** als eigene Tabelle, sondern als JSONB-Spalte am `invoice_document` (Begründung in §3.5).
+**New tables in M2:** `cost_category`, `cost_entry`, `invoice_document`. Optionally (see §3.5) an extraction helper table `document_extraction` — recommendation: **not** as a separate table for now, but as a JSONB column on `invoice_document` (rationale in §3.5).
 
-**Nicht in M2:** Abrechnungs-Snapshots (`settlement_run`/`settlement_line`) — M3/M4. E-Rechnung-Parsing (XRechnung/ZUGFeRD) — M5 (M2 spezifiziert nur das Zusammenspiel mit der Statusmaschine, damit M5 andockt). Zahlungen — M6.
+**Not in M2:** Settlement snapshots (`settlement_run`/`settlement_line`) — M3/M4. E-invoice parsing (XRechnung/ZUGFeRD) — M5 (M2 only specifies the interplay with the state machine so that M5 can dock on). Payments — M6.
 
 ---
 
-## 1. Standardkontenplan (`cost_category`)
+## 1. Standard Chart of Accounts (`cost_category`)
 
-### 1.1 Fachliche Quelle und Anspruch
+### 1.1 Domain Source and Scope
 
-SDD §7: **fester** Standardkontenplan für Phase 1; eigene Kategorien werden nicht angelegt (SDD §3 Nicht-Ziel: „kein frei konfigurierbarer Kontenplan"). Jede Kategorie bringt **Defaults** für Umlagefähigkeit und Verteilerschlüssel mit, die pro Kostenposition manuell übersteuert werden können (SDD §7, §8). `architecture.md` §16/§1.2 verlangt „Kostenkategorien als **versionierte** Systemdaten".
+SDD §7: a **fixed** standard chart of accounts (Standardkontenplan) for phase 1; custom categories are not created (SDD §3 non-goal: "no freely configurable chart of accounts"). Each category brings **defaults** for apportionability (Umlagefähigkeit) and distribution key that can be manually overridden per cost item (SDD §7, §8). `architecture.md` §16/§1.2 requires "cost categories as **versioned** system data".
 
-Die Defaults bilden **rechtliche Vorgaben** ab (SDD §17: BetrKV, BGB §556, WEG §16, CO2KostAufG …). Genau deshalb sind sie versioniert: Ändert sich die Rechtslage (z. B. Kabel/Breitband-Umlagefähigkeit seit 2024, SDD §7.2), darf eine **neue Version** des Kontenplans entstehen, ohne dass alte, bereits abgerechnete Kostenpositionen rückwirkend ihre Default-Herkunft verlieren. Das ist die Brücke zwischen „fester Plan" (keine Nutzer-Anlage) und „versioniert" (Recht ändert sich).
+The defaults reflect **legal requirements** (SDD §17: BetrKV, BGB §556, WEG §16, CO2KostAufG …). That is exactly why they are versioned: if the legal situation changes (e.g., cable/broadband apportionability since 2024, SDD §7.2), a **new version** of the chart of accounts may be created without already settled cost items retroactively losing their default provenance. This is the bridge between "fixed plan" (no user-created entries) and "versioned" (the law changes).
 
-### 1.2 [ENTSCHEIDUNG] Global vs. pro-Org kopiert (Annahme A-1)
+### 1.2 [DECISION] Global vs. Copied Per Org (Assumption A-1)
 
-`architecture.md` Annahme A-1 hält dies offen. **Empfehlung: globaler, versionierter Stammdatensatz (kein `organization_id`), in `GLOBAL_TABLES`** — analog zur Tabelle `organization`.
+`architecture.md` Assumption A-1 leaves this open. **Recommendation: a global, versioned master data set (no `organization_id`), in `GLOBAL_TABLES`** — analogous to the `organization` table.
 
-Begründung:
-- SDD §3/§7 schließt org-eigene Kategorien in Phase 1 **explizit aus**. Ein pro-Org kopierter Plan wäre Komplexität (RLS, Seed je Org, Drift zwischen Orgs) ohne fachlichen Gegenwert, solange Orgs den Plan nicht anpassen dürfen.
-- „Versioniert" wird **nicht** durch pro-Org-Kopien erreicht, sondern durch eine `version`-Achse auf der globalen Tabelle (siehe 1.3). Eine Kostenposition referenziert die konkrete Kategorie-Version, die zum Erfassungszeitpunkt galt — damit ist die Herkunft prüffest, ohne den Plan zu vervielfältigen.
-- Lesezugriff für alle Orgs, Schreibzugriff nur via Migration/Seed (Systemrolle). Das entspricht exakt der Behandlung anderer globaler Systemstammdaten in ADR-0001/`architecture.md` §2.5.
+Rationale:
+- SDD §3/§7 **explicitly excludes** org-specific categories in phase 1. A plan copied per org would be complexity (RLS, seed per org, drift between orgs) without any domain value as long as orgs may not customize the plan.
+- "Versioned" is **not** achieved through per-org copies but through a `version` axis on the global table (see 1.3). A cost item references the concrete category version that applied at the time of capture — this makes the provenance audit-proof without multiplying the plan.
+- Read access for all orgs, write access only via migration/seed (system role). This corresponds exactly to the treatment of other global system master data in ADR-0001/`architecture.md` §2.5.
 
-**Konsequenz für `test_rls_coverage.py`:** `cost_category` wird zu `GLOBAL_TABLES` hinzugefügt und der Test `test_global_tables_have_no_rls` deckt sie ab (kein RLS). **Falls** der Mensch A-1 kippt (Orgs dürfen den Plan anpassen/versionieren), wird `cost_category` stattdessen tenant-behaftet (`organization_id`, RLS, in `TENANT_TABLES`) und pro Org beim Org-Anlegen geseedet — der Modell-Umbau ist auf diese eine Tabelle begrenzt, weil `cost_entry` ohnehin nur per FK auf eine Kategorie-Zeile zeigt. **Diese Entscheidung sollte vor der M2-Implementierung fallen.**
+**Consequence for `test_rls_coverage.py`:** `cost_category` is added to `GLOBAL_TABLES` and the test `test_global_tables_have_no_rls` covers it (no RLS). **If** the human overturns A-1 (orgs may customize/version the plan), `cost_category` instead becomes organization-scoped (`organization_id`, RLS, in `TENANT_TABLES`) and is seeded per org when the org is created — the model rework is limited to this one table, because `cost_entry` only points to a category row via FK anyway. **This decision should be made before M2 implementation.**
 
-### 1.3 Schema `cost_category` (Empfehlung: global)
+### 1.3 Schema `cost_category` (recommendation: global)
 
-| Spalte | Typ | Bedeutung |
+| Column | Type | Meaning |
 | --- | --- | --- |
-| `id` | `UUID` PK | wie überall. |
-| `plan_version` | `SMALLINT NOT NULL` | Version des Gesamt-Kontenplans (1 in Phase 1). Erlaubt spätere Rechtsänderungen als neue Version. |
-| `code` | `String(50) NOT NULL` | stabiler fachlicher Schlüssel, z. B. `GRUNDSTEUER`, `KALTWASSER`, `CO2_KOSTEN`, `INSTANDHALTUNG`. Sprach-/UI-unabhängig. |
-| `label` | `String(255) NOT NULL` | Anzeigename, z. B. „Grundsteuer / öffentliche Lasten". |
-| `cost_group` | `String(20) NOT NULL` | `UMLAGEFAEHIG` \| `GEMISCHT_PRUEFEN` \| `NICHT_UMLAGEFAEHIG` (entspricht SDD §7.1/§7.2/§7.3). `CHECK`-Constraint. |
-| `tenant_apportionability_default` | `String(24) NOT NULL` | Mieter-BK-Default als kontrolliertes Vokabular (siehe 1.4). |
-| `owner_billing_relevant_default` | `BOOLEAN NOT NULL` | Spalte „Eigentümerabrechnung ja" aus SDD §7 (durchgehend `true` im Plan, aber explizit modelliert). |
-| `owner_distribution_key_default` | `String(20) NULL` | Default-Verteilerschlüssel Eigentümerabrechnung (kontrolliertes Vokabular, §1.5). |
-| `tenant_distribution_key_default` | `String(20) NULL` | Default-Verteilerschlüssel Mieterabrechnung. NULL, wenn nicht umlagefähig. |
-| `reserve_relevant` | `BOOLEAN NOT NULL DEFAULT false` | markiert Rücklagen-Kategorien (Erhaltungsrücklage) für die getrennte WEG-Ausweisung (SDD §11, M4). |
-| `legal_hint` | `String(500) NULL` | Hinweistext (z. B. „seit 2024 eingeschränkte Umlagefähigkeit"), für UI/Plausibilität. |
-| `sort_order` | `SMALLINT NOT NULL DEFAULT 0` | feste Reihenfolge in Listen/PDF. |
-| `is_active` | `BOOLEAN NOT NULL DEFAULT true` | erlaubt das Stilllegen einer Kategorie in einer neuen Plan-Version, ohne sie zu löschen (Historien-Integrität). |
-| `created_at` | `TIMESTAMPTZ` | wie überall. |
+| `id` | `UUID` PK | as everywhere. |
+| `plan_version` | `SMALLINT NOT NULL` | Version of the overall chart of accounts (1 in phase 1). Allows later legal changes as a new version. |
+| `code` | `String(50) NOT NULL` | stable domain key, e.g. `GRUNDSTEUER`, `KALTWASSER`, `CO2_KOSTEN`, `INSTANDHALTUNG`. Independent of language/UI. |
+| `label` | `String(255) NOT NULL` | Display name, e.g. "Grundsteuer / öffentliche Lasten". |
+| `cost_group` | `String(20) NOT NULL` | `UMLAGEFAEHIG` \| `GEMISCHT_PRUEFEN` \| `NICHT_UMLAGEFAEHIG` (corresponds to SDD §7.1/§7.2/§7.3). `CHECK` constraint. |
+| `tenant_apportionability_default` | `String(24) NOT NULL` | Tenant operating-cost default as a controlled vocabulary (see 1.4). |
+| `owner_billing_relevant_default` | `BOOLEAN NOT NULL` | Column "owner settlement yes" (Eigentümerabrechnung ja) from SDD §7 (consistently `true` in the plan, but modeled explicitly). |
+| `owner_distribution_key_default` | `String(20) NULL` | Default distribution key for the owner settlement (controlled vocabulary, §1.5). |
+| `tenant_distribution_key_default` | `String(20) NULL` | Default distribution key for the tenant settlement. NULL if not apportionable. |
+| `reserve_relevant` | `BOOLEAN NOT NULL DEFAULT false` | marks reserve categories (maintenance reserve, Erhaltungsrücklage) for the separate WEG presentation (SDD §11, M4). |
+| `legal_hint` | `String(500) NULL` | Hint text (e.g., "limited apportionability since 2024"), for UI/plausibility. |
+| `sort_order` | `SMALLINT NOT NULL DEFAULT 0` | fixed order in lists/PDF. |
+| `is_active` | `BOOLEAN NOT NULL DEFAULT true` | allows retiring a category in a new plan version without deleting it (history integrity). |
+| `created_at` | `TIMESTAMPTZ` | as everywhere. |
 
-Constraints: `UNIQUE (plan_version, code)`; `CHECK (cost_group IN (...))`; `CHECK (tenant_apportionability_default IN (...))`; `CHECK (owner_distribution_key_default IS NULL OR owner_distribution_key_default IN (...))` (analog tenant). **Kein** `organization_id`, **kein** RLS (globaler Stammdatensatz).
+Constraints: `UNIQUE (plan_version, code)`; `CHECK (cost_group IN (...))`; `CHECK (tenant_apportionability_default IN (...))`; `CHECK (owner_distribution_key_default IS NULL OR owner_distribution_key_default IN (...))` (analogous for tenant). **No** `organization_id`, **no** RLS (global master data set).
 
-`cost_entry` referenziert `cost_category_id` (FK). Weil eine bestehende Zeile nie inhaltlich geändert, sondern höchstens via neue `plan_version` ersetzt wird, bleibt die zum Erfassungszeitpunkt gewählte Kategorie-Version prüffest erhalten. **[ENTSCHEIDUNG]** ob `cost_entry` zusätzlich `plan_version` redundant mitschreibt (Empfehlung: ja, als denormalisierter Prüf-Anker — billig und macht Abrechnungen unabhängig von späteren Plan-Versionen).
+`cost_entry` references `cost_category_id` (FK). Because an existing row is never changed in content but at most replaced via a new `plan_version`, the category version chosen at capture time remains audit-proof. **[DECISION]** whether `cost_entry` additionally writes `plan_version` redundantly (recommendation: yes, as a denormalized audit anchor — cheap, and makes settlements independent of later plan versions).
 
-### 1.4 Kontrolliertes Vokabular: Umlagefähigkeit (Mieter-BK-Default)
+### 1.4 Controlled Vocabulary: Apportionability (Tenant Operating-Cost Default)
 
-Direkt aus SDD §7.1–§7.3 abgeleitet (String + CHECK, kein DB-Enum, konsistent zu M0/M1):
+Derived directly from SDD §7.1–§7.3 (String + CHECK, no DB enum, consistent with M0/M1):
 
-| Wert | Bedeutung | SDD-Quelle |
+| Value | Meaning | SDD source |
 | --- | --- | --- |
-| `UMLAGEFAEHIG` | grundsätzlich auf Mieter umlagefähig | §7.1 |
-| `UMLAGEFAEHIG_EXTERN_PRUEFEN` | umlagefähig, aber über externe Abrechnung (Heizung/Warmwasser/Messdienst) — Doppelabrechnung vermeiden | §7.1/§7.2 (Heizung, Warmwasser, Messdienst) |
-| `GEMISCHT_PRUEFEN` | gemischt, Anteile herausrechnen (Hausmeister: Verwaltungs-/Reparaturanteil raus) | §7.2 (Hausmeister) |
-| `TEILWEISE_PRUEFEN` | nur ein Anteil umlagefähig (CO2: nur Mieteranteil, 10-Stufen) | §7.2 (CO2) |
-| `MANUELL_PRUEFEN` | nur bei konkreter mietvertraglicher Grundlage (Sonstige BK; Kabel/Breitband seit 2024) | §7.2 |
-| `NICHT_UMLAGEFAEHIG` | nie Betriebskosten (Verwaltung, Instandhaltung, Rücklage, Sonderumlage …) | §7.3 |
+| `UMLAGEFAEHIG` | generally apportionable to tenants | §7.1 |
+| `UMLAGEFAEHIG_EXTERN_PRUEFEN` | apportionable, but via external settlement (heating/hot water/metering service) — avoid double billing | §7.1/§7.2 (heating, hot water, metering service) |
+| `GEMISCHT_PRUEFEN` | mixed, shares must be carved out (caretaker, Hausmeister: remove administration/repair share) | §7.2 (caretaker) |
+| `TEILWEISE_PRUEFEN` | only a share is apportionable (CO2: tenant share only, 10-stage model) | §7.2 (CO2) |
+| `MANUELL_PRUEFEN` | only with a concrete lease basis (other operating costs; cable/broadband since 2024) | §7.2 |
+| `NICHT_UMLAGEFAEHIG` | never operating costs (administration, maintenance, reserve, special assessment …) | §7.3 |
 
-Wichtig: Diese Werte sind **Defaults/Flags**, keine automatische Buchungsentscheidung. Die Engine (M3) entscheidet je nach effektivem Wert *pro Kostenposition*, ob/wie umgelegt wird; bei `*_PRUEFEN`-Werten ist eine bewusste Nutzer-Entscheidung nötig (Vorschlagswerkzeug, SDD §8/§9 — „keine automatische Buchung ohne Freigabe").
+Important: these values are **defaults/flags**, not an automatic posting decision. The engine (M3) decides, depending on the effective value *per cost item*, whether/how to apportion; for `*_PRUEFEN` values a deliberate user decision is required (suggestion tool, SDD §8/§9 — "no automatic posting without approval").
 
-### 1.5 Kontrolliertes Vokabular: Verteilerschlüssel (SDD §8)
+### 1.5 Controlled Vocabulary: Distribution Keys (SDD §8)
 
 `MEA` · `WOHNFLAECHE` · `BEHEIZTE_FLAECHE` · `EINHEIT` · `PERSONENZAHL` · `VERBRAUCH` · `EXTERNE_ABRECHNUNG` · `MANUELLER_BETRAG`.
 
-Dies ist genau die SDD-§8-Liste. Eigentümer- und Mieterabrechnung können je Kostenposition **unterschiedliche** Schlüssel tragen (SDD §8 Beispiel: Eigentümer nach MEA, Mieter nach Wohnfläche/extern). Deshalb getrennte Default-Spalten in `cost_category` (1.3) **und** getrennte effektive Spalten in `cost_entry` (§2). Die *Semantik* jedes Schlüssels (wie verteilt wird) ist M3 (Verteilungs-Engine) — M2 speichert nur die Auswahl.
+This is exactly the SDD §8 list. Owner and tenant settlements can carry **different** keys per cost item (SDD §8 example: owner by MEA, tenant by living area/external). That is why there are separate default columns in `cost_category` (1.3) **and** separate effective columns in `cost_entry` (§2). The *semantics* of each key (how it distributes) belong to M3 (distribution engine) — M2 only stores the selection.
 
-### 1.6 Seed/Migration der SDD-§7-Tabellen
+### 1.6 Seed/Migration of the SDD §7 Tables
 
-Der Plan wird als **Daten-Seed in einer eigenen Alembic-Migration** angelegt (nicht in einem Fixture, nicht zur Laufzeit), damit er versioniert, reviewbar und in jeder Umgebung identisch ist — dieselbe Disziplin wie bei RLS-Policies (ADR-0002).
+The plan is created as a **data seed in its own Alembic migration** (not in a fixture, not at runtime), so that it is versioned, reviewable and identical in every environment — the same discipline as with RLS policies (ADR-0002).
 
-- Migration `0005_cost_category` (Vorschlag): `CREATE TABLE cost_category` + `INSERT`-Zeilen für **alle** Kategorien aus SDD §7.1, §7.2, §7.3 mit `plan_version = 1`, `code`, `label`, `cost_group`, Default-Umlagefähigkeit und Default-Verteilerschlüsseln **exakt gemäß den SDD-Tabellen**. Beispiel-Zeilen (vollständige Liste in der Migration):
+- Migration `0005_cost_category` (proposal): `CREATE TABLE cost_category` + `INSERT` rows for **all** categories from SDD §7.1, §7.2, §7.3 with `plan_version = 1`, `code`, `label`, `cost_group`, default apportionability and default distribution keys **exactly according to the SDD tables**. Example rows (full list in the migration):
 
   | code | cost_group | tenant_apport_default | owner_dist_default | tenant_dist_default | reserve |
   | --- | --- | --- | --- | --- | --- |
@@ -120,213 +120,213 @@ Der Plan wird als **Daten-Seed in einer eigenen Alembic-Migration** angelegt (ni
   | `ERHALTUNGSRUECKLAGE` | NICHT_UMLAGEFAEHIG | NICHT_UMLAGEFAEHIG | `MEA` | NULL | true |
   | `SONDERUMLAGE` | NICHT_UMLAGEFAEHIG | NICHT_UMLAGEFAEHIG | `MEA` | NULL | false |
 
-  Die exakten Default-Verteilerschlüssel pro Zeile folgen der SDD-§7-Spalte „Standard-Verteilung". Wo die SDD mehrere Optionen nennt („Fläche oder MEA"), wählt der Seed einen sinnvollen Default (für Eigentümer i. d. R. `MEA`, für Mieter i. d. R. `WOHNFLAECHE`); der Nutzer kann pro Kostenposition übersteuern. **[ENTSCHEIDUNG]** pro Mehrdeutigkeit den konkreten Default bestätigen — das ist eine fachliche Festlegung, keine technische. *(Bei A-1 = pro-Org: identischer Seed, aber je Org beim Anlegen ausgeführt und tenant-behaftet.)*
-- `downgrade()` löscht die Seed-Zeilen und die Tabelle.
-- **Idempotenz/Erweiterung:** Eine künftige Rechtsänderung kommt als **neue Migration** mit `plan_version = 2` und neuen Zeilen — alte Zeilen bleiben unangetastet (Versionierung, 1.1).
+  The exact default distribution keys per row follow the SDD §7 column "standard distribution". Where the SDD names several options ("area or MEA"), the seed picks a sensible default (for owners usually `MEA`, for tenants usually `WOHNFLAECHE`); the user can override per cost item. **[DECISION]** confirm the concrete default for each ambiguity — this is a domain determination, not a technical one. *(With A-1 = per org: identical seed, but executed per org on creation and organization-scoped.)*
+- `downgrade()` deletes the seed rows and the table.
+- **Idempotency/extension:** A future legal change arrives as a **new migration** with `plan_version = 2` and new rows — old rows remain untouched (versioning, 1.1).
 
 ---
 
-## 2. Kostenposition (`cost_entry`)
+## 2. Cost Item (`cost_entry`)
 
-### 2.1 Fachliche Quelle
+### 2.1 Domain Source
 
-SDD §5.3/§6.4 (Felder), §14 (Leistungszeitraum, nicht nur Rechnungsdatum), §8 (getrennte Verteilerschlüssel), §9 (Status). Tenant-behaftet (`organization_id`, RLS — vier Policies wie M1).
+SDD §5.3/§6.4 (fields), §14 (service period, not only the invoice date), §8 (separate distribution keys), §9 (status). Organization-scoped (`organization_id`, RLS — four policies as in M1).
 
 ### 2.2 Schema `cost_entry`
 
-| Spalte | Typ | Bedeutung / Begründung |
+| Column | Type | Meaning / rationale |
 | --- | --- | --- |
 | `id` | `UUID` PK | |
-| `organization_id` | `UUID NOT NULL` FK→`organization` (`RESTRICT`) | Mandantentrennung (I1), RLS. |
-| `property_id` | `UUID NOT NULL` FK→`property` (`RESTRICT`) | Objektbezug (SDD §6.4). |
-| `management_mandate_id` | `UUID NULL` FK→`management_mandate` (`RESTRICT`) | optionaler Mandatsbezug (SDD §6.4) — Anker für Vermögenstrennung (architecture.md §2.6). |
-| `cost_category_id` | `UUID NOT NULL` FK→`cost_category` (`RESTRICT`) | Kategorie aus Standardkontenplan. |
-| `cost_category_plan_version` | `SMALLINT NOT NULL` | denormalisierter Prüf-Anker (siehe 1.3) — macht die Abrechnung unabhängig von späteren Plan-Versionen. |
-| `vendor_id` | `UUID NULL` FK→`vendor` (`RESTRICT`) | Lieferant/Rechnungsaussteller (SDD §6.2/§6.4). Nullable, weil Entwürfe aus OCR den Lieferanten evtl. erst nach Review zugeordnet bekommen. |
-| `invoice_date` | `DATE NOT NULL` | Rechnungsdatum (SDD §6.4). |
-| `service_period_from` | `DATE NOT NULL` | **Leistungszeitraum Beginn** (SDD §6.4/§14 — Kern für anteilige Verteilung in M3, *nicht* das Rechnungsdatum). |
-| `service_period_to` | `DATE NOT NULL` | Leistungszeitraum Ende. `CHECK (service_period_to >= service_period_from)`. |
-| `gross_amount` | `NUMERIC(14,2) NOT NULL` | Bruttobetrag (I4, nie Float). Vorzeichen erlaubt (Gutschriften). |
-| `vat_amount` | `NUMERIC(14,2) NULL` | USt-Betrag, wenn verfügbar (SDD §6.4 — v. a. aus E-Rechnung, M5). |
-| `vat_rate` | `NUMERIC(5,2) NULL` | USt-Satz in Prozent (z. B. 19.00), wenn verfügbar. |
-| `document_number` | `String(100) NULL` | Belegnummer (SDD §6.4). |
-| `owner_distribution_key` | `String(20) NULL` | **effektiver** Verteilerschlüssel Eigentümerabrechnung (SDD §8) — vorbelegt aus Kategorie-Default, manuell übersteuerbar. CHECK gegen §1.5-Vokabular. |
-| `tenant_distribution_key` | `String(20) NULL` | **effektiver** Verteilerschlüssel Mieterabrechnung — getrennt vom Eigentümer-Schlüssel (SDD §8). |
-| `tenant_apportionable` | `String(24) NOT NULL` | **effektive** Umlagefähigkeit (Mieter), vorbelegt aus Kategorie-Default, übersteuerbar. CHECK gegen §1.4-Vokabular. |
-| `apportionable_tenant_amount` | `NUMERIC(14,2) NULL` | bei `TEILWEISE_PRUEFEN`/`GEMISCHT_PRUEFEN` der explizit als umlagefähig bestimmte Mieteranteil (z. B. CO2-Mieteranteil, herausgerechneter Hausmeister-Anteil). NULL = ganzer/keiner Betrag je nach `tenant_apportionable`. **[OFFEN]** genaue Modellierung des Vorwegabzugs/Anteils ist M3-Detail (SDD §18: Hausmeister-/CO2-Aufteilung); M2 hält das Feld bereit. |
-| `status` | `String(16) NOT NULL` | Belegfluss-Status: `draft_extracted` \| `needs_review` \| `confirmed` \| `rejected` (SDD §9). CHECK. Default `needs_review` bei manueller Anlage? → siehe 2.3. |
-| `source` | `String(12) NOT NULL` | Herkunft: `MANUAL` \| `PDF_IMPORT` \| `E_INVOICE` (E-Rechnung erst M5, Wert reserviert). CHECK. |
-| `confirmed_at` | `TIMESTAMPTZ NULL` | Zeitpunkt der Freigabe (Übergang nach `confirmed`). |
-| `confirmed_by` | `UUID NULL` FK→`user` (`SET NULL`) | Wer freigegeben hat (Audit/Nachvollziehbarkeit). |
-| `superseded_by_id` | `UUID NULL` FK self (`RESTRICT`) | bei Korrektur: zeigt auf die Nachfolge-Kostenposition (Versionskette, §3.4). |
-| `created_at`/`updated_at` | `TIMESTAMPTZ` | wie überall. |
+| `organization_id` | `UUID NOT NULL` FK→`organization` (`RESTRICT`) | Organization isolation (I1), RLS. |
+| `property_id` | `UUID NOT NULL` FK→`property` (`RESTRICT`) | Property reference (SDD §6.4). |
+| `management_mandate_id` | `UUID NULL` FK→`management_mandate` (`RESTRICT`) | optional mandate reference (SDD §6.4) — anchor for segregation of funds (architecture.md §2.6). |
+| `cost_category_id` | `UUID NOT NULL` FK→`cost_category` (`RESTRICT`) | Category from the standard chart of accounts. |
+| `cost_category_plan_version` | `SMALLINT NOT NULL` | denormalized audit anchor (see 1.3) — makes the settlement independent of later plan versions. |
+| `vendor_id` | `UUID NULL` FK→`vendor` (`RESTRICT`) | Vendor/invoice issuer (SDD §6.2/§6.4). Nullable because drafts from OCR may only have the vendor assigned after review. |
+| `invoice_date` | `DATE NOT NULL` | Invoice date (SDD §6.4). |
+| `service_period_from` | `DATE NOT NULL` | **Start of the service period (Leistungszeitraum)** (SDD §6.4/§14 — core for pro rata distribution in M3, *not* the invoice date). |
+| `service_period_to` | `DATE NOT NULL` | End of the service period. `CHECK (service_period_to >= service_period_from)`. |
+| `gross_amount` | `NUMERIC(14,2) NOT NULL` | Gross amount (I4, never float). Sign allowed (credit notes). |
+| `vat_amount` | `NUMERIC(14,2) NULL` | VAT (USt) amount, if available (SDD §6.4 — mainly from e-invoice, M5). |
+| `vat_rate` | `NUMERIC(5,2) NULL` | VAT rate in percent (e.g., 19.00), if available. |
+| `document_number` | `String(100) NULL` | Voucher number (SDD §6.4). |
+| `owner_distribution_key` | `String(20) NULL` | **Effective** distribution key for the owner settlement (SDD §8) — prefilled from the category default, manually overridable. CHECK against the §1.5 vocabulary. |
+| `tenant_distribution_key` | `String(20) NULL` | **Effective** distribution key for the tenant settlement — separate from the owner key (SDD §8). |
+| `tenant_apportionable` | `String(24) NOT NULL` | **Effective** apportionability (tenant), prefilled from the category default, overridable. CHECK against the §1.4 vocabulary. |
+| `apportionable_tenant_amount` | `NUMERIC(14,2) NULL` | for `TEILWEISE_PRUEFEN`/`GEMISCHT_PRUEFEN`, the tenant share explicitly determined to be apportionable (e.g., CO2 tenant share, carved-out caretaker share). NULL = whole amount/no amount, depending on `tenant_apportionable`. **[OPEN]** the exact modeling of the advance deduction/share is an M3 detail (SDD §18: caretaker/CO2 split); M2 keeps the field ready. |
+| `status` | `String(16) NOT NULL` | Voucher flow status: `draft_extracted` \| `needs_review` \| `confirmed` \| `rejected` (SDD §9). CHECK. Default `needs_review` on manual entry? → see 2.3. |
+| `source` | `String(12) NOT NULL` | Origin: `MANUAL` \| `PDF_IMPORT` \| `E_INVOICE` (e-invoice only in M5, value reserved). CHECK. |
+| `confirmed_at` | `TIMESTAMPTZ NULL` | Time of approval (transition to `confirmed`). |
+| `confirmed_by` | `UUID NULL` FK→`user` (`SET NULL`) | Who approved (audit/traceability). |
+| `superseded_by_id` | `UUID NULL` FK self (`RESTRICT`) | on correction: points to the successor cost item (version chain, §3.4). |
+| `created_at`/`updated_at` | `TIMESTAMPTZ` | as everywhere. |
 
-Indizes: `organization_id`; `property_id`; `(organization_id, status)` (häufiger Filter: „offene Vorschläge"); `cost_category_id`; `(property_id, service_period_from, service_period_to)` (M3 zieht Kosten je Objekt/Zeitraum). FK-Spalten je indiziert.
+Indexes: `organization_id`; `property_id`; `(organization_id, status)` (frequent filter: "open proposals"); `cost_category_id`; `(property_id, service_period_from, service_period_to)` (M3 pulls costs per property/period). FK columns indexed each.
 
-**Begründung Leistungszeitraum NOT NULL (SDD §14):** Die Verteilungs-Engine (M3) berechnet anteilige Zeiträume bei Eigentümer-/Mieterwechsel **anhand des Leistungszeitraums**, nicht des Rechnungsdatums (eine im Januar gestellte Rechnung für Dezember-Leistung gehört ins Vorjahr). Ein fehlender Leistungszeitraum würde die Kernkorrektheit von M3 untergraben — daher Pflichtfeld. Bei OCR-Entwürfen, bei denen der Zeitraum noch nicht erkannt ist, hält die Anwendung den Datensatz im Status `needs_review`; die Freigabe nach `confirmed` setzt einen gültigen Zeitraum voraus (Validierungsregel, 2.3).
+**Rationale for service period NOT NULL (SDD §14):** The distribution engine (M3) computes pro rata periods on owner/tenant change **based on the service period**, not the invoice date (an invoice issued in January for December service belongs to the prior year). A missing service period would undermine the core correctness of M3 — hence a mandatory field. For OCR drafts where the period has not yet been recognized, the application keeps the record in status `needs_review`; approval to `confirmed` requires a valid period (validation rule, 2.3).
 
-### 2.3 Statusabhängige Pflichtfelder
+### 2.3 Status-Dependent Mandatory Fields
 
-Im Entwurf (`draft_extracted`/`needs_review`) dürfen Felder unvollständig sein (OCR liefert evtl. nicht alles). Der **Übergang nach `confirmed`** ist die Stelle, an der fachliche Vollständigkeit erzwungen wird (Anwendungs-Validierung im Confirm-Service, §3.3):
-- `cost_category_id`, `gross_amount`, `invoice_date`, `service_period_from/to`, `tenant_apportionable`, mindestens ein Verteilerschlüssel je relevanter Abrechnungssphäre müssen gesetzt/plausibel sein.
-- Bei `*_PRUEFEN`-Umlagefähigkeit: bewusste Nutzer-Bestätigung des effektiven Werts (kein stilles Default-Durchwinken).
+In draft (`draft_extracted`/`needs_review`) fields may be incomplete (OCR may not deliver everything). The **transition to `confirmed`** is the point at which domain completeness is enforced (application validation in the confirm service, §3.3):
+- `cost_category_id`, `gross_amount`, `invoice_date`, `service_period_from/to`, `tenant_apportionable`, and at least one distribution key per relevant settlement sphere must be set/plausible.
+- For `*_PRUEFEN` apportionability: deliberate user confirmation of the effective value (no silently waving defaults through).
 
-> **[ENTSCHEIDUNG]** Default-Status bei **manueller** Anlage: `needs_review` (konservativ, Vier-Augen-fähig) vs. direkt editierbarer Entwurf, den derselbe Nutzer sofort `confirmed` setzen darf. Empfehlung: manuelle Anlage startet als normaler, editierbarer Datensatz; `confirmed` ist immer ein **expliziter** zweiter Schritt (nie implizit beim Speichern), damit „abrechnungsrelevant" eine bewusste Handlung bleibt (SDD §9 Geist).
+> **[DECISION]** Default status on **manual** entry: `needs_review` (conservative, supports four-eyes review) vs. a directly editable draft that the same user may immediately set to `confirmed`. Recommendation: manual entry starts as a normal, editable record; `confirmed` is always an **explicit** second step (never implicit on save), so that "relevant for settlement" remains a deliberate act (in the spirit of SDD §9).
 
 ---
 
-## 3. Belegfluss-Statusmaschine (SDD §8/§9)
+## 3. Voucher Flow State Machine (SDD §8/§9)
 
-### 3.1 Zustände
+### 3.1 States
 
 ```
-        (Upload PDF / E-Rechnung)                  (manuelle Anlage)
+        (Upload PDF / e-invoice)                   (manual entry)
                  │                                        │
                  ▼                                        ▼
-        ┌─────────────────┐   unsicher / kritisch  ┌──────────────┐
+        ┌─────────────────┐  uncertain / critical  ┌──────────────┐
         │ draft_extracted │ ─────────────────────▶ │ needs_review │
         └────────┬────────┘                         └──────┬───────┘
-                 │  (Nutzer prüft / korrigiert Felder; Beleg-Inhalt editierbar)
+                 │  (user reviews / corrects fields; voucher content editable)
                  │                                         │
                  │  reject                                 │ reject
                  ▼                                         ▼
             ┌──────────┐                              ┌──────────┐
             │ rejected │ ◀────────────────────────────│ rejected │
             └──────────┘                              └────┬─────┘
-                                                           │ confirm  (Freigabe)
+                                                           │ confirm  (approval)
                                                            ▼
                                                    ┌───────────────┐
-                                                   │   confirmed   │  ← INHALT EINGEFROREN
+                                                   │   confirmed   │  ← CONTENT FROZEN
                                                    └───────┬───────┘
-                                                           │ Korrektur nötig?
-                                                           │  → NIE Mutation
+                                                           │ Correction needed?
+                                                           │  → NEVER mutation
                                                            ▼
-                                          neue cost_entry-Version (status=needs_review/confirmed),
-                                          Original.superseded_by_id → neue Zeile  (siehe 3.4)
+                                          new cost_entry version (status=needs_review/confirmed),
+                                          Original.superseded_by_id → new row  (see 3.4)
 ```
 
-### 3.2 Erlaubte Übergänge (präzise)
+### 3.2 Allowed Transitions (Precise)
 
-| Von | Nach | Bedingung | Effekt |
+| From | To | Condition | Effect |
 | --- | --- | --- | --- |
-| `draft_extracted` | `needs_review` | Erkennung unsicher / kritische Kategorie | Inhalt bleibt editierbar. |
-| `draft_extracted` | `confirmed` | Pflichtfelder vollständig (2.3), Nutzer bestätigt | **Einfrieren** (3.3). |
-| `draft_extracted` | `rejected` | Nutzer verwirft | Datensatz inaktiv, bleibt erhalten (kein Hard-Delete im belegtragenden Pfad). |
-| `needs_review` | `confirmed` | wie oben | **Einfrieren**. |
-| `needs_review` | `rejected` | verwerfen | inaktiv. |
-| `confirmed` | — | **kein** weiterer Statuswechsel durch Mutation | Korrektur ausschließlich via Neuversion (3.4). |
-| `rejected` | (Entwurf) | optional „wieder aufnehmen" | **[ENTSCHEIDUNG]**: erlauben oder verworfen = endgültig? Empfehlung: `rejected` ist editierbar zurückholbar **solange kein Beleg festgeschrieben** wurde; nach Festschreibung nicht. |
+| `draft_extracted` | `needs_review` | Recognition uncertain / critical category | Content remains editable. |
+| `draft_extracted` | `confirmed` | Mandatory fields complete (2.3), user confirms | **Freeze** (3.3). |
+| `draft_extracted` | `rejected` | User discards | Record inactive, is retained (no hard delete in the voucher-bearing path). |
+| `needs_review` | `confirmed` | as above | **Freeze**. |
+| `needs_review` | `rejected` | discard | inactive. |
+| `confirmed` | — | **no** further status change by mutation | Correction exclusively via a new version (3.4). |
+| `rejected` | (draft) | optional "resume" | **[DECISION]**: allow, or rejected = final? Recommendation: `rejected` can be brought back and edited **as long as no voucher has been finalized**; not after finalization. |
 
-Jeder Übergang erzeugt ein `audit_event` (§6). Übergänge, die nicht in der Tabelle stehen, sind verboten (Service prüft; DB-Trigger blockt die kritischen, ADR-0003).
+Every transition produces an `audit_event` (§6). Transitions not in the table are forbidden (the service checks; a DB trigger blocks the critical ones, ADR-0003).
 
-### 3.3 „Eingefroren ab `confirmed`" — was genau heißt das
+### 3.3 "Frozen From `confirmed`" — What Exactly Does That Mean
 
-Der **inhaltstragende Teil** der Kostenposition (Betrag, USt, Kategorie, Lieferant, Datum, Leistungszeitraum, Verteilerschlüssel, Umlagefähigkeit, Objekt/Mandat) ist ab `confirmed` **unveränderbar** — DB-erzwungen per `BEFORE UPDATE`-Trigger (ADR-0003). Gleichzeitig wird, **falls** ein Beleg angehängt ist, dessen `invoice_document`-`active`-Version mit `released_at`/`released_by` **freigegeben** und damit ebenfalls eingefroren (§4). „Confirm der Kostenposition" und „Release des Belegs" sind dieselbe Transaktion (§3.6).
+The **content-bearing part** of the cost item (amount, VAT, category, vendor, date, service period, distribution keys, apportionability, property/mandate) is **immutable** from `confirmed` on — DB-enforced via a `BEFORE UPDATE` trigger (ADR-0003). At the same time, **if** a voucher is attached, the `active` version of its `invoice_document` is **released** with `released_at`/`released_by` and thereby also frozen (§4). "Confirm of the cost item" and "release of the voucher" are the same transaction (§3.6).
 
-Reine Status-/Verkettungsfelder (`status` von `confirmed`→`superseded`-Markierung via `superseded_by_id`) sind die **einzige** zulässige Änderung an einer eingefrorenen Zeile — der Trigger lässt genau diese Spalten zu und nichts anderes (ADR-0003 §1).
+Pure status/chaining fields (`status` from `confirmed`→`superseded` marking via `superseded_by_id`) are the **only** permissible change to a frozen row — the trigger permits exactly these columns and nothing else (ADR-0003 §1).
 
-### 3.4 Korrektur = neue Version (statt Mutation, SDD §14)
+### 3.4 Correction = New Version (Instead of Mutation, SDD §14)
 
-Muss eine `confirmed`-Kostenposition korrigiert werden (falscher Betrag, falsche Kategorie):
-1. Es wird eine **neue** `cost_entry`-Zeile angelegt (eigene `id`), mit den korrigierten Werten, Status `needs_review` (oder direkt `confirmed`, wenn die Korrektur eindeutig ist), `source` = `MANUAL`.
-2. Die alte Zeile wird über `superseded_by_id` auf die neue Zeile verwiesen. Ihr Inhalt bleibt **unverändert** (eingefroren). Sie wird in Abrechnungen nicht mehr als aktiv gezählt — die Aktiv-Logik wählt die jüngste Zeile einer Kette ohne `superseded_by_id`.
-3. Der zugehörige Beleg wird, falls er ebenfalls korrigiert wird (neue Datei), als **neue `invoice_document`-Version** angehängt (§4.4); referenziert die korrigierte/zutreffende Kostenposition.
-4. `audit_event`: `cost_entry.superseded` (alt) + `cost_entry.created`/`confirmed` (neu), mit Bezug.
+If a `confirmed` cost item has to be corrected (wrong amount, wrong category):
+1. A **new** `cost_entry` row is created (own `id`) with the corrected values, status `needs_review` (or directly `confirmed` if the correction is unambiguous), `source` = `MANUAL`.
+2. The old row is pointed to the new row via `superseded_by_id`. Its content remains **unchanged** (frozen). It is no longer counted as active in settlements — the active logic selects the most recent row of a chain without `superseded_by_id`.
+3. The associated voucher, if it is also corrected (new file), is attached as a **new `invoice_document` version** (§4.4); it references the corrected/applicable cost item.
+4. `audit_event`: `cost_entry.superseded` (old) + `cost_entry.created`/`confirmed` (new), with reference.
 
-**Aktiv-Definition (für M3-Engine):** Eine Kette beginnt mit der Erst-Zeile und verläuft über `superseded_by_id`. „Aktiv" ist die einzige Zeile der Kette mit `superseded_by_id IS NULL` **und** Status `confirmed`. Das ist die Zeile, die abgerechnet wird. *(Symmetrisch zur Versionskette der Belege, §4.3 — bewusst zwei nebeneinanderliegende, aber getrennte Ketten: eine fachliche `cost_entry`-Korrekturkette, eine datei-/dokumentbezogene `invoice_document`-Versionskette.)*
+**Active definition (for the M3 engine):** A chain starts with the first row and runs via `superseded_by_id`. "Active" is the single row of the chain with `superseded_by_id IS NULL` **and** status `confirmed`. This is the row that is settled. *(Symmetric to the voucher version chain, §4.3 — deliberately two adjacent but separate chains: a domain-level `cost_entry` correction chain, and a file-/document-level `invoice_document` version chain.)*
 
-> **[ENTSCHEIDUNG]** `superseded_by_id` (Vorwärts-Zeiger, hier vorgeschlagen) vs. `supersedes_id` (Rückwärts-Zeiger wie bei `invoice_document` in architecture.md §5.4). Empfehlung: bei `cost_entry` **Vorwärts** (`superseded_by_id`), weil die Aktiv-Abfrage „WHERE superseded_by_id IS NULL" der häufigste, performanteste Query ist; bei `invoice_document` bleibt es beim **Rückwärts**-Zeiger `supersedes_id` (architecture.md §5.4), dort ist die Versions-Historie das Leitbild. Beide sind valide; wichtig ist, dass je Tabelle **eine** Richtung konsistent verwendet wird. Bei der Implementierung festklopfen.
+> **[DECISION]** `superseded_by_id` (forward pointer, proposed here) vs. `supersedes_id` (backward pointer as with `invoice_document` in architecture.md §5.4). Recommendation: for `cost_entry` use **forward** (`superseded_by_id`), because the active query "WHERE superseded_by_id IS NULL" is the most frequent, most performant query; for `invoice_document` it stays with the **backward** pointer `supersedes_id` (architecture.md §5.4), where the version history is the guiding principle. Both are valid; what matters is that **one** direction is used consistently per table. Pin this down during implementation.
 
-### 3.5 Zusammenspiel mit assistiertem PDF-Import/OCR (SDD §8/§9) — nur Schnittstelle
+### 3.5 Interplay With Assisted PDF Import/OCR (SDD §8/§9) — Interface Only
 
-Die **Extraktions-Implementierung** (OCR/Parsing) macht `bulk-impl`; M2-Design legt nur das Zusammenspiel fest:
-- Beim Upload entsteht **sofort** ein `invoice_document` (Datei + SHA-256 gespeichert) im Versions-Zustand `active`, aber **ohne** `released_at` (noch nicht freigegeben) und eine `cost_entry` im Status `draft_extracted` mit den extrahierten Feldvorschlägen.
-- Die Extraktion ist hinter einer **schmalen, austauschbaren Schnittstelle** (Protocol) gekapselt — exakt das Muster von `PdfRenderer` (`app/core/pdf.py`): `DocumentExtractor.extract(file_bytes, mime) -> ExtractionResult`. Default: lokale OCR/Parsing-Stub-Implementierung; später austauschbar gegen einen externen Dienst oder ein lokales Modell (SDD §16). E-Rechnung (M5) ist eine **zweite** Implementierung derselben Schnittstelle (strukturierte Felder statt OCR-Raten, SDD §6.5) — dadurch dockt M5 ohne Statusmaschinen-Änderung an.
-- Das Extraktionsergebnis (erkannte Felder + Konfidenzen + Roh-Text-Merkmale) wird als **JSONB-Spalte `extraction_payload` am `invoice_document`** gespeichert, **nicht** als eigene Tabelle. Begründung: 1:1 zum Dokument, kein eigener Lebenszyklus, keine Cross-Entity-Query nötig; eine eigene Tabelle wäre unnötige Normalisierung. *(Falls später mehrere Extraktionsläufe je Dokument verglichen werden sollen, lässt sich das zu einer Tabelle `document_extraction` herauslösen — dann tenant-behaftet mit RLS. Für M2 nicht nötig.)*
-- Konfidenz-Schwelle entscheidet Start-Status: niedrige Konfidenz / kritische Kategorie → `needs_review` statt `draft_extracted`. Die genaue Schwelle ist eine `bulk-impl`-Implementierungsfrage; **kein** Vorschlag wird je automatisch `confirmed` (SDD §9, §3 Nicht-Ziel: „keine automatische Buchung ohne Freigabe").
+The **extraction implementation** (OCR/parsing) is done by `bulk-impl`; the M2 design only fixes the interplay:
+- On upload, an `invoice_document` (file + SHA-256 stored) is created **immediately** in version state `active`, but **without** `released_at` (not yet released), together with a `cost_entry` in status `draft_extracted` carrying the extracted field suggestions.
+- The extraction is encapsulated behind a **narrow, swappable interface** (protocol) — exactly the pattern of `PdfRenderer` (`app/core/pdf.py`): `DocumentExtractor.extract(file_bytes, mime) -> ExtractionResult`. Default: a local OCR/parsing stub implementation; later swappable for an external service or a local model (SDD §16). E-invoice (M5) is a **second** implementation of the same interface (structured fields instead of OCR guessing, SDD §6.5) — so M5 docks on without a state machine change.
+- The extraction result (recognized fields + confidences + raw-text features) is stored as a **JSONB column `extraction_payload` on `invoice_document`**, **not** as a separate table. Rationale: 1:1 with the document, no lifecycle of its own, no cross-entity query needed; a separate table would be unnecessary normalization. *(If several extraction runs per document are to be compared later, this can be split out into a `document_extraction` table — then organization-scoped with RLS. Not needed for M2.)*
+- A confidence threshold decides the start status: low confidence / critical category → `needs_review` instead of `draft_extracted`. The exact threshold is a `bulk-impl` implementation question; **no** suggestion is ever automatically `confirmed` (SDD §9, §3 non-goal: "no automatic posting without approval").
 
-### 3.6 Freigabe-Transaktion (atomar)
+### 3.6 Approval Transaction (Atomic)
 
-Confirm einer Kostenposition mit angehängtem Beleg ist **eine** DB-Transaktion (eine `get_db`-Session, ein `session.begin()`):
-1. Validierung der Pflichtfelder (2.3); bei Verstoß → 422, kein Statuswechsel.
+Confirming a cost item with an attached voucher is **one** DB transaction (one `get_db` session, one `session.begin()`):
+1. Validation of the mandatory fields (2.3); on violation → 422, no status change.
 2. `cost_entry.status = 'confirmed'`, `confirmed_at = now()`, `confirmed_by = uid`.
-3. Falls Beleg vorhanden: `invoice_document` (active-Version) `released_at = now()`, `released_by = uid`, `retention_until` berechnen (§7), `content_sha256` **(re-)verifizieren** gegen die gespeicherte Datei (§4.5).
-4. `audit_event`: `cost_entry.confirmed` und (falls Beleg) `document.released`.
-5. Commit. Ab Commit greifen die Unveränderbarkeits-Trigger (ADR-0003): die Zeilen sind eingefroren.
+3. If a voucher is present: `invoice_document` (active version) `released_at = now()`, `released_by = uid`, compute `retention_until` (§7), **(re-)verify** `content_sha256` against the stored file (§4.5).
+4. `audit_event`: `cost_entry.confirmed` and (if a voucher is present) `document.released`.
+5. Commit. From the commit on, the immutability triggers (ADR-0003) apply: the rows are frozen.
 
-Schlägt einer der Schritte fehl, rollt die ganze Transaktion zurück — es gibt **keinen** Zustand „Beleg freigegeben, Kostenposition nicht" oder umgekehrt.
+If one of the steps fails, the whole transaction rolls back — there is **no** state "voucher released, cost item not" or vice versa.
 
 ---
 
-## 4. `invoice_document` + Unveränderbarkeits-Mechanik (Kern, I2)
+## 4. `invoice_document` + Immutability Mechanics (Core, I2)
 
-### 4.1 Fachliche Quelle
+### 4.1 Domain Source
 
-SDD §6.6 (Unveränderbarkeit, Prüfsumme, Versionierung, 8 Jahre), §13 (Entität), §16 (revisionssichere Ablage, Snapshots). `architecture.md` §3.2 (Bausteine) und §5.4 (Felder). Tenant-behaftet (`organization_id`, RLS).
+SDD §6.6 (immutability, checksum, versioning, 8 years), §13 (entity), §16 (revision-proof (revisionssicher) storage, snapshots). `architecture.md` §3.2 (building blocks) and §5.4 (fields). Organization-scoped (`organization_id`, RLS).
 
 ### 4.2 Schema `invoice_document`
 
-| Spalte | Typ | Bedeutung / Begründung |
+| Column | Type | Meaning / rationale |
 | --- | --- | --- |
 | `id` | `UUID` PK | |
 | `organization_id` | `UUID NOT NULL` FK→`organization` (`RESTRICT`) | I1, RLS. |
-| `cost_entry_id` | `UUID NULL` FK→`cost_entry` (`RESTRICT`) | zugehörige Kostenposition. Nullable nur im kurzen Moment zwischen Upload und Zuordnung; Regelfall gesetzt. **[ENTSCHEIDUNG]** ob 1:1 (ein Beleg ↔ eine Kostenposition) oder 1:n (ein Beleg über mehrere Positionen, z. B. Sammelrechnung). Empfehlung M2: 1:1 plus optionale spätere Aufteilung als eigene M-Frage; SDD §6.4 spricht von „optional PDF-Datei je Kostenposition" → 1:1 ausreichend. |
-| `storage_uri` | `String(1024) NOT NULL` | logischer Verweis auf die Datei im Objektspeicher (§5). **Nicht** der Dateiinhalt. |
-| `storage_backend` | `String(16) NOT NULL` | `LOCAL_FS` (M2) \| `S3` (später). Erlaubt Migration des Speichers ohne Schemaänderung. |
-| `storage_version` | `String(128) NULL` | versionskennung des Backends (S3 Object-Version-ID / WORM-Marker); bei lokalem FS NULL oder Dateigenerations-Marker. |
-| `original_filename` | `String(255) NULL` | Anzeigename beim Upload. |
-| `mime_type` | `String(100) NOT NULL` | z. B. `application/pdf`, `application/xml` (E-Rechnung M5). |
-| `content_byte_size` | `BIGINT NOT NULL` | Größe; Teil der Integritätsmerkmale. |
-| `content_sha256` | `String(64) NOT NULL` | **SHA-256 über den Dateiinhalt** (Hex). Kern der Integrität (SDD §6.6). |
-| `version` | `SMALLINT NOT NULL DEFAULT 1` | laufende Versionsnummer der logischen Beleg-Kette. |
-| `supersedes_id` | `UUID NULL` FK self (`RESTRICT`) | Rückwärts-Zeiger auf die Vorgänger-Version (architecture.md §5.4). Erst-Version: NULL. |
-| `status` | `String(12) NOT NULL DEFAULT 'active'` | `active` \| `superseded`. CHECK. Pro logischer Kette zu jedem Zeitpunkt **genau eine** `active`-Zeile (§4.3). |
-| `released_at` | `TIMESTAMPTZ NULL` | Freigabezeitpunkt. NULL = noch nicht festgeschrieben (editierbarer Beleg-Entwurf). Gesetzt = **eingefroren** (ADR-0003 Einfrier-Bedingung). |
-| `released_by` | `UUID NULL` FK→`user` (`SET NULL`) | Wer freigegeben hat. |
-| `retention_until` | `DATE NULL` | Aufbewahrungsanker (§7). Wird bei `released_at` berechnet. NULL bis Freigabe. |
-| `superseded_at` | `TIMESTAMPTZ NULL` | wann diese Version abgelöst wurde. |
-| `extraction_payload` | `JSONB NULL` | OCR/Parsing-Ergebnis (§3.5), nur für Vorschlag/Review relevant. |
+| `cost_entry_id` | `UUID NULL` FK→`cost_entry` (`RESTRICT`) | associated cost item. Nullable only in the brief moment between upload and assignment; set in the normal case. **[DECISION]** whether 1:1 (one voucher ↔ one cost item) or 1:n (one voucher covering several items, e.g., a consolidated invoice). Recommendation for M2: 1:1, plus an optional later split as its own M question; SDD §6.4 speaks of "optional PDF file per cost item" → 1:1 is sufficient. |
+| `storage_uri` | `String(1024) NOT NULL` | logical reference to the file in the object store (§5). **Not** the file content. |
+| `storage_backend` | `String(16) NOT NULL` | `LOCAL_FS` (M2) \| `S3` (later). Allows migrating the storage without a schema change. |
+| `storage_version` | `String(128) NULL` | version identifier of the backend (S3 object version ID / WORM marker); NULL for local FS or a file generation marker. |
+| `original_filename` | `String(255) NULL` | Display name at upload. |
+| `mime_type` | `String(100) NOT NULL` | e.g., `application/pdf`, `application/xml` (e-invoice M5). |
+| `content_byte_size` | `BIGINT NOT NULL` | Size; part of the integrity attributes. |
+| `content_sha256` | `String(64) NOT NULL` | **SHA-256 over the file content** (hex). Core of integrity (SDD §6.6). |
+| `version` | `SMALLINT NOT NULL DEFAULT 1` | running version number of the logical voucher chain. |
+| `supersedes_id` | `UUID NULL` FK self (`RESTRICT`) | Backward pointer to the predecessor version (architecture.md §5.4). First version: NULL. |
+| `status` | `String(12) NOT NULL DEFAULT 'active'` | `active` \| `superseded`. CHECK. Per logical chain, **exactly one** `active` row at any point in time (§4.3). |
+| `released_at` | `TIMESTAMPTZ NULL` | Release timestamp. NULL = not yet finalized (editable voucher draft). Set = **frozen** (ADR-0003 freeze condition). |
+| `released_by` | `UUID NULL` FK→`user` (`SET NULL`) | Who released it. |
+| `retention_until` | `DATE NULL` | Retention anchor (§7). Computed at `released_at`. NULL until release. |
+| `superseded_at` | `TIMESTAMPTZ NULL` | when this version was superseded. |
+| `extraction_payload` | `JSONB NULL` | OCR/parsing result (§3.5), relevant only for proposal/review. |
 | `created_at`/`updated_at` | `TIMESTAMPTZ` | |
 
-Indizes: `organization_id`; `cost_entry_id`; `(organization_id, status)`; `content_sha256` (Duplikaterkennung / Integritätsabfrage); `supersedes_id`. `retention_until` (für den späteren M9-Aufbewahrungs-Scan).
+Indexes: `organization_id`; `cost_entry_id`; `(organization_id, status)`; `content_sha256` (duplicate detection / integrity query); `supersedes_id`. `retention_until` (for the later M9 retention scan).
 
-### 4.3 Versionskette und „genau eine active"
+### 4.3 Version Chain and "Exactly One Active"
 
-- Erst-Upload: `version = 1`, `supersedes_id = NULL`, `status = 'active'`.
-- Korrektur: neue Zeile `version = N+1`, `supersedes_id = <id der bisherigen active>`, `status = 'active'`; die bisherige Zeile wird auf `status = 'superseded'`, `superseded_at = now()` gesetzt (das ist der **einzige** erlaubte UPDATE einer freigegebenen Zeile, ADR-0003).
-- **DB-Garantie „höchstens eine active je Kette":** über einen **partiellen Unique-Index** auf der Ketten-Wurzel. Da `supersedes_id` eine verkettete Liste bildet, wird zusätzlich eine stabile `chain_root_id`-Spalte geführt (auf die Wurzel der Kette zeigend; Erst-Version = eigene `id`), und ein
+- First upload: `version = 1`, `supersedes_id = NULL`, `status = 'active'`.
+- Correction: new row `version = N+1`, `supersedes_id = <id of the previous active>`, `status = 'active'`; the previous row is set to `status = 'superseded'`, `superseded_at = now()` (this is the **only** permitted UPDATE of a released row, ADR-0003).
+- **DB guarantee "at most one active per chain":** via a **partial unique index** on the chain root. Since `supersedes_id` forms a linked list, a stable `chain_root_id` column is additionally maintained (pointing to the root of the chain; first version = its own `id`), and a
   `CREATE UNIQUE INDEX uq_active_doc_per_chain ON invoice_document (chain_root_id) WHERE status = 'active'`
-  stellt sicher, dass pro logischer Beleg-Kette nie zwei `active`-Versionen existieren. **[ENTSCHEIDUNG]** `chain_root_id` (denormalisiert, einfacher Unique-Index — empfohlen) vs. ein EXCLUDE/Trigger über die rekursive Kette (komplexer). Empfehlung: `chain_root_id`, weil es dem btree_gist-/partiellen-Index-Stil der Codebasis entspricht und die Aktiv-Abfrage trivial macht.
+  ensures that per logical voucher chain two `active` versions never exist. **[DECISION]** `chain_root_id` (denormalized, simple unique index — recommended) vs. an EXCLUDE/trigger over the recursive chain (more complex). Recommendation: `chain_root_id`, because it matches the btree_gist/partial-index style of the code base and makes the active query trivial.
 
-### 4.4 Korrektur eines bereits freigegebenen Belegs
+### 4.4 Correcting an Already Released Voucher
 
-Symmetrisch zu §3.4, aber auf Dateiebene:
-1. Neue Datei in den Objektspeicher schreiben, SHA-256 berechnen.
-2. Neue `invoice_document`-Zeile (`version+1`, `supersedes_id`=alte active, `chain_root_id` unverändert, `status='active'`); alte Zeile → `superseded`.
-3. Falls fachlich nötig, parallel eine `cost_entry`-Korrekturversion (§3.4).
-4. `audit_event`: `document.superseded` + `document.version_created` (+ ggf. `document.released` der neuen Version, wenn sie sofort freigegeben wird).
+Symmetric to §3.4, but at the file level:
+1. Write the new file to the object store, compute SHA-256.
+2. New `invoice_document` row (`version+1`, `supersedes_id`=old active, `chain_root_id` unchanged, `status='active'`); old row → `superseded`.
+3. If required by the domain, a `cost_entry` correction version in parallel (§3.4).
+4. `audit_event`: `document.superseded` + `document.version_created` (+ if applicable `document.released` of the new version, if it is released immediately).
 
-Das Original bleibt physisch und in der DB erhalten (8-Jahre-Aufbewahrung, §7) — Korrektur fügt hinzu, ersetzt nie.
+The original remains physically and in the DB (8-year retention, §7) — a correction adds, never replaces.
 
-### 4.5 Integritäts-/Hash-Mechanik
+### 4.5 Integrity/Hash Mechanics
 
-- **Berechnung:** SHA-256 über die exakten Datei-Bytes beim Upload; erneut **verifiziert** bei der Freigabe (§3.6 Schritt 3) — stellt sicher, dass zwischen Upload und Freigabe nichts verändert wurde.
-- **Verifikations-Funktion:** eine Storage-unabhängige Hilfsfunktion `verify_document_integrity(doc) -> bool`, die die Datei aus dem Backend liest, den Hash neu berechnet und gegen `content_sha256` prüft. Wird genutzt: (a) bei Freigabe, (b) durch einen späteren M9-Audit-/Prüf-Lauf, (c) in Tests (§8).
-- **Was der Hash leistet / nicht leistet:** Er macht **Manipulation erkennbar** (Tamper-Evidenz). Er verhindert sie nicht allein — das tun die WORM-Eigenschaften des Speichers (S3 Object-Lock, später) plus die DB-Unveränderbarkeit (Trigger/Grants, ADR-0003). Hash + WORM + Trigger zusammen ergeben Revisionssicherheit; einzeln keiner.
+- **Computation:** SHA-256 over the exact file bytes at upload; **verified** again at release (§3.6 step 3) — ensures nothing was changed between upload and release.
+- **Verification function:** a storage-independent helper function `verify_document_integrity(doc) -> bool` that reads the file from the backend, recomputes the hash and checks it against `content_sha256`. Used: (a) at release, (b) by a later M9 audit/check run, (c) in tests (§8).
+- **What the hash does / does not do:** It makes **manipulation detectable** (tamper evidence). It does not prevent it on its own — that is done by the WORM properties of the storage (S3 Object Lock, later) plus the DB immutability (triggers/grants, ADR-0003). Hash + WORM + trigger together yield revision-proofness; none of them alone.
 
-### 4.6 Unveränderbarkeits-Erzwingung → ADR-0003
+### 4.6 Enforcing Immutability → ADR-0003
 
-Die Wahl der DB-nahen Mechanik ist in **[ADR-0003](adr/0003-gobd-unveraenderbarkeit-mechanik.md)** getroffen: **status-bewusster `BEFORE UPDATE/DELETE`-Trigger** als primäre Erzwingung (weil Unveränderbarkeit hier *status-bedingt* ist: editierbar bis Freigabe, danach eingefroren) **+ entzogenes DELETE-Grant** auf `invoice_document` als zweite Linie (Belegdateien werden nie gelöscht). Kurzfassung der Trigger-Regeln:
-- `invoice_document`: ist `released_at IS NOT NULL`, blockt der Trigger jede UPDATE-Änderung an `content_sha256`/`storage_uri`/`storage_version`/`version`/`released_at`/`released_by`/`content_byte_size`; erlaubt **nur** `active→superseded` (+ `superseded_at`). DELETE freigegebener Zeilen immer verboten.
-- `cost_entry`: ist `status = 'confirmed'`, blockt der Trigger jede inhaltliche Spaltenänderung; erlaubt nur das Setzen von `superseded_by_id` (Korrekturverkettung). DELETE einer `confirmed`-Zeile verboten; Entwürfe/`rejected` löschbar.
+The choice of the DB-level mechanism is made in **[ADR-0003](adr/0003-gobd-immutability-mechanism.md)**: a **status-aware `BEFORE UPDATE/DELETE` trigger** as the primary enforcement (because immutability here is *status-dependent*: editable until release, frozen afterwards) **+ a revoked DELETE grant** on `invoice_document` as the second line (voucher files are never deleted). Short version of the trigger rules:
+- `invoice_document`: if `released_at IS NOT NULL`, the trigger blocks any UPDATE change to `content_sha256`/`storage_uri`/`storage_version`/`version`/`released_at`/`released_by`/`content_byte_size`; permits **only** `active→superseded` (+ `superseded_at`). DELETE of released rows is always forbidden.
+- `cost_entry`: if `status = 'confirmed'`, the trigger blocks any content column change; permits only setting `superseded_by_id` (correction chaining). DELETE of a `confirmed` row is forbidden; drafts/`rejected` can be deleted.
 
 ---
 
-## 5. Objektspeicher-Abstraktion
+## 5. Object Store Abstraction
 
-### 5.1 Prinzip (wie `PdfRenderer`)
+### 5.1 Principle (Like `PdfRenderer`)
 
-Schmales, austauschbares Interface hinter einem **Protocol** — exakt das Muster von `app/core/pdf.py`. Vorschlag: `app/core/storage.py`.
+A narrow, swappable interface behind a **protocol** — exactly the pattern of `app/core/pdf.py`. Proposal: `app/core/storage.py`.
 
 ```text
 @runtime_checkable
@@ -334,195 +334,194 @@ class DocumentStore(Protocol):
     def put(self, key: str, data: bytes, *, content_type: str) -> StoredObjectRef: ...
     def get(self, key: str) -> bytes: ...
     def exists(self, key: str) -> bool: ...
-    # bewusst KEIN delete() im Protokoll der Phase 1 -- Belege werden nie gelöscht.
-    # Eine spätere, retention-gesteuerte Entfernung (M9) ist eine separate,
-    # privilegierte Operation, nicht Teil des normalen Belegpfads.
+    # deliberately NO delete() in the phase 1 protocol -- vouchers are never deleted.
+    # A later, retention-driven removal (M9) is a separate,
+    # privileged operation, not part of the normal voucher path.
 
 @dataclass(frozen=True)
 class StoredObjectRef:
     backend: str          # "LOCAL_FS" | "S3"
     uri: str              # -> invoice_document.storage_uri
     version: str | None   # -> invoice_document.storage_version (S3 version id / WORM marker)
-    sha256: str           # zur Quervalidierung gegen die DB
+    sha256: str           # for cross-validation against the DB
     byte_size: int
 ```
 
-- **M2-Default `LocalFsDocumentStore`:** schreibt unter ein konfiguriertes Wurzelverzeichnis, Pfad **content-adressiert** und mandantenpartitioniert, z. B. `/<root>/<organization_id>/<sha256[:2]>/<sha256>.bin`. Datei wird nach dem Schreiben read-only gesetzt (chmod) als schwacher WORM-Ersatz; die echte Unveränderbarkeit trägt die DB (ADR-0003) plus später S3 Object-Lock. Schreibt **nie** über eine existierende Datei (gleicher Hash = identischer Inhalt → idempotent; abweichender Inhalt bekäme einen anderen Hash und damit anderen Pfad).
-- **Später `S3DocumentStore`:** S3-kompatibel mit **Object-Lock (WORM, Compliance-Mode)** + **Versionierung** (SDD §16, architecture.md §1.1). `storage_version` hält die S3-Version-ID. EU-Region (architecture.md A-6).
-- Auswahl über Config (`settings`), nicht im Belegcode hartverdrahtet — Engine-Swap wie beim Renderer (`get_store()`/`set_store()`).
+- **M2 default `LocalFsDocumentStore`:** writes under a configured root directory, path **content-addressed** and organization-partitioned, e.g., `/<root>/<organization_id>/<sha256[:2]>/<sha256>.bin`. The file is set read-only after writing (chmod) as a weak WORM substitute; the real immutability is carried by the DB (ADR-0003) plus S3 Object Lock later. **Never** writes over an existing file (same hash = identical content → idempotent; different content would get a different hash and thus a different path).
+- **Later `S3DocumentStore`:** S3-compatible with **Object Lock (WORM, compliance mode)** + **versioning** (SDD §16, architecture.md §1.1). `storage_version` holds the S3 version ID. EU region (architecture.md A-6).
+- Selection via config (`settings`), not hard-wired in the voucher code — engine swap as with the renderer (`get_store()`/`set_store()`).
 
-### 5.2 Wo liegt die Datei, wie referenziert die DB sie
+### 5.2 Where the File Lives, How the DB References It
 
-- **Datei:** ausschließlich im Objektspeicher. Nie in der DB (kein BLOB) — die DB hält nur Metadaten + Hash + `storage_uri`/`storage_version`/`storage_backend`.
-- **Referenz:** `invoice_document.storage_uri` (+ Backend + Version). Content-Adressierung (Pfad = Hash) gibt eine zweite, implizite Integritätskopplung: ein abweichender Inhalt kann nicht „heimlich" unter demselben Pfad liegen.
-- **Mandantenpartition im Pfad:** zusätzliche Verteidigung gegen Cross-Org-Vermischung auf Dateisystemebene — konsistent zur Mandantentrennung (I1), auch wenn die Autorisierung über die DB/RLS läuft.
+- **File:** exclusively in the object store. Never in the DB (no BLOB) — the DB holds only metadata + hash + `storage_uri`/`storage_version`/`storage_backend`.
+- **Reference:** `invoice_document.storage_uri` (+ backend + version). Content addressing (path = hash) gives a second, implicit integrity coupling: different content cannot lie "secretly" under the same path.
+- **Organization partition in the path:** additional defense against cross-org mixing at the file system level — consistent with organization isolation (I1), even though authorization runs via the DB/RLS.
 
-### 5.3 Vertraulichkeit (kurz)
+### 5.3 Confidentiality (Brief)
 
-Belege enthalten personenbezogene Daten (DSGVO). Der lokale Speicher liegt in der EU (architecture.md A-6); bei S3 zusätzlich serverseitige Verschlüsselung. Kein öffentlicher Zugriff; Auslieferung an die UI nur über authentifizierte, tenant-geprüfte API-Endpunkte (die Datei wird vom Backend gestreamt, nicht per öffentlicher URL).
+Vouchers contain personal data (GDPR). Local storage is located in the EU (architecture.md A-6); for S3, additionally server-side encryption. No public access; delivery to the UI only via authenticated, organization-checked API endpoints (the file is streamed by the backend, not via a public URL).
 
 ---
 
-## 6. Audit-Trail-Nutzung (bestehendes `audit_event` aus M0)
+## 6. Audit Trail Usage (Existing `audit_event` From M0)
 
-M2 ist der erste Milestone, in dem `audit_event` **intensiv** genutzt wird (architecture.md §5.4). Geschrieben über das vorhandene `AuditRepository` (append-only). Protokollierte Vorgänge (`action`-Werte, `entity_type` = `cost_entry` bzw. `invoice_document`):
+M2 is the first milestone in which `audit_event` is used **intensively** (architecture.md §5.4). Written via the existing `AuditRepository` (append-only). Logged operations (`action` values, `entity_type` = `cost_entry` or `invoice_document`):
 
-| action | wann | payload_diff (Auszug) |
+| action | when | payload_diff (excerpt) |
 | --- | --- | --- |
-| `cost_entry.created` | Anlage (manuell oder aus Import) | source, category, gross_amount, status |
-| `cost_entry.updated` | Feldänderung im Entwurf | geänderte Felder (vorher/nachher) |
-| `cost_entry.status_changed` | jeder Statuswechsel | from→to |
-| `cost_entry.confirmed` | Freigabe | confirmed_by, snapshot der freigegebenen Felder |
-| `cost_entry.rejected` | Verwerfen | grund (optional) |
-| `cost_entry.superseded` | Korrekturkette | superseded_by_id (neue Version) |
+| `cost_entry.created` | Creation (manual or from import) | source, category, gross_amount, status |
+| `cost_entry.updated` | Field change in draft | changed fields (before/after) |
+| `cost_entry.status_changed` | every status change | from→to |
+| `cost_entry.confirmed` | Approval | confirmed_by, snapshot of the approved fields |
+| `cost_entry.rejected` | Reject | reason (optional) |
+| `cost_entry.superseded` | Correction chain | superseded_by_id (new version) |
 | `document.uploaded` | Upload | filename, mime, sha256, byte_size |
-| `document.released` | Freigabe (mit cost_entry.confirmed, gleiche Tx) | released_by, sha256, retention_until |
-| `document.superseded` | neue Beleg-Version | new_version_id, version |
-| `document.integrity_verified` | Hash-Check-Lauf | result (ok/fail) |
+| `document.released` | Release (together with cost_entry.confirmed, same tx) | released_by, sha256, retention_until |
+| `document.superseded` | new voucher version | new_version_id, version |
+| `document.integrity_verified` | Hash check run | result (ok/fail) |
 
-- **Wer/Wann/Was** (SDD §6.6 Nachvollziehbarkeit): `actor_user_id` aus dem Session-Kontext (`uid`), `occurred_at` server-gesetzt, `entity_type`/`entity_id`, `payload_diff` als JSONB.
-- **Tenant-Bindung:** `audit_event.organization_id` aus dem Kontext; RLS aktiv (M0). Append-only bleibt durch entzogene UPDATE/DELETE-Grants gewahrt (M0, `test_rls_coverage.py`).
-- **Hash-Chain (optional, architecture.md §3.2d):** `prev_event_hash` ist bereits im Schema (M0). **[ENTSCHEIDUNG]** ob die Kette in M2 schon **befüllt/erzwungen** wird (jedes neue Event hasht das vorherige je `organization_id`) oder erst in M9 gehärtet wird. Empfehlung: in M2 das Feld **konsistent füllen** (billig: SHA-256 über kanonisch serialisiertes Vorgänger-Event je Org), die Verifikation/Erzwingung aber als M9-Härtung; so existiert ab M2 eine lückenerkennende Kette, ohne M2 zu überladen. Dies ist kein blockierender Punkt.
+- **Who/when/what** (SDD §6.6 traceability): `actor_user_id` from the session context (`uid`), `occurred_at` set by the server, `entity_type`/`entity_id`, `payload_diff` as JSONB.
+- **Tenant binding:** `audit_event.organization_id` from the context; RLS active (M0). Append-only remains preserved through revoked UPDATE/DELETE grants (M0, `test_rls_coverage.py`).
+- **Hash chain (optional, architecture.md §3.2d):** `prev_event_hash` is already in the schema (M0). **[DECISION]** whether the chain is already **populated/enforced** in M2 (each new event hashes the previous one per `organization_id`) or only hardened in M9. Recommendation: in M2 **fill the field consistently** (cheap: SHA-256 over the canonically serialized predecessor event per org), but leave verification/enforcement as M9 hardening; this way a gap-detecting chain exists from M2 on, without overloading M2. This is not a blocking point.
 
 ---
 
-## 7. GoBD-Anforderungs-Mapping und DSGVO-Verzahnung
+## 7. GoBD Requirements Mapping and GDPR Integration
 
-### 7.1 GoBD → Bausteine
+### 7.1 GoBD → Building Blocks
 
-| GoBD-Anforderung (SDD §6.6, §16, §17) | Wie in M2 erfüllt |
+| GoBD requirement (SDD §6.6, §16, §17) | How M2 satisfies it |
 | --- | --- |
-| **Unveränderbarkeit** | `BEFORE UPDATE/DELETE`-Trigger auf `cost_entry` (ab `confirmed`) und `invoice_document` (ab `released_at`), + entzogenes DELETE-Grant auf Belege (ADR-0003). Korrektur nur als Neuversion (§3.4/§4.4). |
-| **Integrität** | SHA-256 je Beleg (`content_sha256`), verifiziert bei Freigabe und durch Prüf-Lauf (§4.5); content-adressierte Ablage (§5.2); später S3 Object-Lock/WORM. |
-| **Nachvollziehbarkeit** (wer/wann/was) | `audit_event` für alle Beleg-/Kosten-/Freigabe-Vorgänge (§6); `confirmed_by`/`released_by` direkt an den Entitäten; optionale Hash-Chain. |
-| **Vollständigkeit** | Append-only-Versionsketten (keine Lücken durch Löschen); `status`-Feld statt Hard-Delete; `rejected` bleibt erhalten; partieller Unique-Index „genau eine active" (§4.3) verhindert verwaiste/doppelte Aktiv-Zustände. |
-| **Auffindbarkeit / maschinelle Auswertbarkeit** | strukturierte, indizierte Metadaten in der DB (Objekt, Lieferant, Datum, Leistungszeitraum, Kategorie); Datei content-adressiert auffindbar; Export ist eine reine Lese-Query (kein Spezialformat in M2 nötig). |
-| **8-Jahre-Aufbewahrung** (BEG IV) | `retention_until` je Beleg, gesetzt bei Freigabe (§7.3). Vor Ablauf wird **nichts** entfernt. |
-| **Verfahrensdokumentation** (SDD §6.6) | Dieses Dokument + ADR-0003 + die dokumentierte Statusmaschine (§3) bilden die Verfahrensdokumentation des Belegflusses (Eingang → Vorschlag → Freigabe → Abrechnung). |
+| **Immutability** | `BEFORE UPDATE/DELETE` triggers on `cost_entry` (from `confirmed`) and `invoice_document` (from `released_at`), + revoked DELETE grant on vouchers (ADR-0003). Correction only as a new version (§3.4/§4.4). |
+| **Integrity** | SHA-256 per voucher (`content_sha256`), verified at release and by check run (§4.5); content-addressed storage (§5.2); later S3 Object Lock/WORM. |
+| **Traceability** (who/when/what) | `audit_event` for all voucher/cost/approval operations (§6); `confirmed_by`/`released_by` directly on the entities; optional hash chain. |
+| **Completeness** | Append-only version chains (no gaps through deletion); `status` field instead of hard delete; `rejected` is retained; the partial unique index "exactly one active" (§4.3) prevents orphaned/duplicate active states. |
+| **Findability / machine evaluability** | structured, indexed metadata in the DB (property, vendor, date, service period, category); file findable by content address; export is a pure read query (no special format needed in M2). |
+| **8-year retention** (BEG IV) | `retention_until` per voucher, set at release (§7.3). **Nothing** is removed before expiry. |
+| **Procedural documentation (Verfahrensdokumentation)** (SDD §6.6) | This document + ADR-0003 + the documented state machine (§3) form the procedural documentation of the voucher flow (receipt → proposal → approval → settlement). |
 
-### 7.2 DSGVO-Verzahnung (architecture.md §3.3 bestätigt)
+### 7.2 GDPR Integration (architecture.md §3.3 Confirmed)
 
-M2 ändert das in M0/M1 angelegte Konzept **nicht**, sondern bestätigt und konkretisiert es für Belege:
-- **Beleg bleibt aufbewahrungspflichtig:** Ein freigegebener Beleg (inkl. der darin enthaltenen Namen/Anschrift des Rechnungsadressaten) ist 8 Jahre unverändert aufzubewahren. Eine DSGVO-Löschanfrage löscht **nicht** den Beleg; die gesetzliche Aufbewahrungspflicht ist die Rechtsgrundlage gegen den Löschanspruch (Verarbeitungseinschränkung statt Löschung).
-- **Personenbezogene Reinstammdaten bleiben lösch-/sperrbar:** Die `person`-Stammdaten (M1: `deletion_requested_at`, `processing_restricted`, `anonymized_at`) sind getrennt vom Beleg und können gelöscht/anonymisiert/gesperrt werden, ohne die Belegsubstanz anzutasten. `cost_entry` referenziert den Lieferanten per FK (`vendor_id`) — nicht durch Hineinkopieren von Stammdaten —, sodass eine spätere Sperrung der Stammdaten die Belegmetadaten nicht bricht.
-- **Trennlinie:** Der innerhalb der Belegdatei abgedruckte Adressat ist Belegbestandteil (aufbewahrungspflichtig); die in `person` gehaltenen Reinstammdaten sind löschbar/sperrbar. Diese Trennung ist genau architecture.md §3.3.
+M2 does **not** change the concept laid down in M0/M1, but confirms and makes it concrete for vouchers:
+- **A voucher remains subject to retention:** A released voucher (including the name/address of the invoice addressee contained in it) must be retained unchanged for 8 years. A GDPR erasure request does **not** erase the voucher; the statutory retention obligation is the legal basis against the erasure claim (restriction of processing instead of erasure).
+- **Personal master data proper remain erasable/restrictable:** The `person` master data (M1: `deletion_requested_at`, `processing_restricted`, `anonymized_at`) are separate from the voucher and can be erased/anonymized/restricted without touching the voucher substance. `cost_entry` references the vendor via FK (`vendor_id`) — not by copying master data in —, so a later restriction of the master data does not break the voucher metadata.
+- **Dividing line:** The addressee printed within the voucher file is part of the voucher (subject to retention); the master data proper held in `person` are erasable/restrictable. This separation is exactly architecture.md §3.3.
 
-### 7.3 [OFFEN] Aufbewahrungs-Startdatum je Belegart (SDD §18)
+### 7.3 [OPEN] Retention Start Date Per Voucher Type (SDD §18)
 
-`retention_until` braucht ein maßgebliches Startdatum + 8 Jahre. **Welches Datum je Belegart gilt (Rechnungsdatum vs. Ende des Wirtschafts-/Kalenderjahres vs. Festschreibedatum), ist in SDD §18 explizit offen** und wird hier **nicht eigenmächtig entschieden**. M2 hält das Feld und die Berechnungs-Schnittstelle bereit; die konkrete Regel ist mit Steuerberater/Fachanwalt zu klären (spätestens vor M9).
-- **Vorläufige, klar als Annahme markierte Default-Berechnung für M2-Tests:** `retention_until = (Ende des Kalenderjahres von `invoice_date`) + 8 Jahre`. Das ist eine konservative, gängige Lesart der handels-/steuerrechtlichen Fristberechnung (Frist beginnt mit Ablauf des Kalenderjahres). **Diese Annahme ist provisorisch** und vom Menschen/Fachberater zu bestätigen — sie steht hier nur, damit `bulk-impl` eine testbare Funktion hat, nicht als Rechtsaussage.
+`retention_until` needs a relevant start date + 8 years. **Which date applies per voucher type (invoice date vs. end of the fiscal/calendar year vs. finalization date) is explicitly open in SDD §18** and is **not decided unilaterally** here. M2 keeps the field and the calculation interface ready; the concrete rule is to be clarified with a tax advisor/specialist lawyer (before M9 at the latest).
+- **Provisional default calculation for M2 tests, clearly marked as an assumption:** `retention_until = (end of the calendar year of `invoice_date`) + 8 years`. This is a conservative, common reading of the commercial/tax-law deadline calculation (the period begins with the end of the calendar year). **This assumption is provisional** and must be confirmed by the human/professional advisor — it appears here only so that `bulk-impl` has a testable function, not as a legal statement.
 
-> **Keine Selbst-Zertifizierung:** Die Aufbewahrungslogik ist transparent und auditierbar gemacht; ihre rechtliche Richtigkeit im Einzelfall ist fachlich abzunehmen.
-
----
-
-## 8. Implementierungs-Checkliste für `bulk-impl` (Opus 4.6)
-
-> Architektur-/Korrektheitsentscheidungen sind in diesem Dokument + ADR-0003 getroffen. `bulk-impl` setzt sie um und **eskaliert** nur bei einer offenen Spezifikationsfrage (SDD §18, hier mit **[OFFEN]** markiert) oder einer ungeklärten **[ENTSCHEIDUNG]**. **Voraussetzung: der Mensch hat (a) A-1 (Kontenplan global vs. pro-Org) und (b) die offenen [ENTSCHEIDUNG]-Punkte bestätigt.** Vorher nicht committen.
-
-### 8.1 Datenmodell + Migrationen (Reihenfolge analog M0/M1)
-
-- [ ] **Migration `0005_cost_category`:** Tabelle (§1.3) + vollständiger Seed aller SDD-§7-Kategorien mit Defaults (§1.6). Bei A-1=global: **kein** `organization_id`, **kein** RLS. Bei A-1=pro-Org: `organization_id`, RLS-Migration, Seed je Org beim Anlegen.
-- [ ] **Migration `0006_cost_entry_invoice_document`:** Tabellen `cost_entry` (§2.2) und `invoice_document` (§4.2) mit allen CHECK-Constraints (Status, Verteilerschlüssel, Umlagefähigkeit, `service_period_to >= service_period_from`), FKs (`RESTRICT` zu `organization`, wie M1), Indizes (§2.2/§4.2), `chain_root_id` + partieller Unique-Index `uq_active_doc_per_chain` (§4.3).
-- [ ] **Grants:** `GRANT SELECT, INSERT, UPDATE, DELETE ON cost_entry TO app_rw`; `GRANT SELECT, INSERT, UPDATE ON invoice_document TO app_rw` (**kein DELETE** — ADR-0003 Backstop, [ENTSCHEIDUNG] bestätigen). `cost_category`: `GRANT SELECT ... TO app_rw` (global, nur lesen).
-- [ ] **Migration `0007_m2_rls_policies`:** für `cost_entry` (und `invoice_document`) die vier Policies exakt im Muster von `0002`/`0004` (`org_isolation_select/insert/update/delete`, `NULLIF(... , '')::uuid`, fail-closed). `invoice_document`: DELETE-Policy **weglassen** (kein DELETE-Grant → analog `audit_event`-Präzedenz).
-- [ ] **Migration `0008_immutability_triggers`** (eigener, reviewbarer Schritt — ADR-0003): PL/pgSQL `BEFORE UPDATE/DELETE`-Trigger für `cost_entry` (Einfrieren ab `confirmed`) und `invoice_document` (Einfrieren ab `released_at`), mit präziser inhaltstragend-vs.-zulässig-Spaltenliste. Trigger-Quelltext ausführlich kommentiert. `downgrade()` droppt Trigger + Funktion.
-- [ ] **`TENANT_TABLES` in `tests/test_rls_coverage.py` erweitern:** `cost_entry`, `invoice_document` (und `cost_category` → `GLOBAL_TABLES` bei A-1=global, sonst `TENANT_TABLES`). `test_no_unknown_tables` zwingt diese Einordnung ohnehin.
-- [ ] ORM-Modelle (`app/models/cost_category.py`, `cost_entry.py`, `invoice_document.py`) im Stil von `lease_agreement.py` (Mixins, `Numeric`, `Mapped`); Geld als `Decimal`.
-
-### 8.2 Storage-Modul
-
-- [ ] `app/core/storage.py`: `DocumentStore`-Protocol + `StoredObjectRef` (§5.1), `LocalFsDocumentStore` (content-adressiert, mandantenpartitioniert, read-only nach Schreiben), `get_store()/set_store()` (Swap-Muster wie `pdf.py`). **Kein `delete()`** im Protokoll.
-- [ ] `verify_document_integrity(doc, store)` (§4.5): liest Datei, vergleicht SHA-256 mit `content_sha256`.
-- [ ] Config-Eintrag (`settings`) für Storage-Wurzel/Backend.
-
-### 8.3 Extraktions-Schnittstelle (PDF-Import) — nur Gerüst + Stub
-
-- [ ] `DocumentExtractor`-Protocol (§3.5) + Stub-Default (liefert leere/teilbefüllte `ExtractionResult` mit Konfidenzen); echte OCR-Anbindung ist `bulk-impl`-Implementierung, Schnittstelle hier festgelegt.
-- [ ] Ergebnis → `invoice_document.extraction_payload` (JSONB) + Vorbelegung der `cost_entry`-Felder; Start-Status nach Konfidenz (`draft_extracted`/`needs_review`); **nie** automatisch `confirmed`.
-
-### 8.4 Statusmaschine + Services
-
-- [ ] `app/services/cost_entry_service.py` mit den erlaubten Übergängen (§3.2): `create`, `update_draft`, `confirm`, `reject`, `create_correction_version` (§3.4). Übergänge, die nicht erlaubt sind, → 409/422; DB-Trigger ist die zweite Linie.
-- [ ] `confirm` als **atomare** Transaktion (§3.6): Pflichtfeld-Validierung (2.3) → `cost_entry.confirmed` + Beleg-`released` + `retention_until` + Hash-Verify + `audit_event`, alles in einer `session.begin()`.
-- [ ] `app/services/invoice_document_service.py`: `upload` (Datei→Store, SHA-256, Zeile `active`/nicht freigegeben, `audit_event`), `create_new_version` (§4.4), `verify_integrity`.
-- [ ] Repositories im Stil von `base.py`/`audit_repo.py`: `CostCategoryRepository` (global, nur Lesen — kein `organization_id`-Filter), `CostEntryRepository` (tenant, mit Aktiv-Ketten-Query §3.4), `InvoiceDocumentRepository` (tenant, mit Aktiv-/Versions-Query §4.3, **kein** `delete`).
-- [ ] `audit_event`-Schreiben über vorhandenes `AuditRepository`; optional `prev_event_hash` füllen (§6, [ENTSCHEIDUNG]).
-
-### 8.5 API (API-first, RBAC wie M0)
-
-- [ ] `app/api/cost_categories.py`: `GET /api/cost-categories` (Liste, alle Rollen lesen).
-- [ ] `app/api/cost_entries.py`: `GET` (Liste/Detail), `POST` (Anlage, `require_write_dep`), `PATCH` (Entwurf bearbeiten, `require_write_dep`), `POST /{id}/confirm` (`require_write_dep`), `POST /{id}/reject` (`require_write_dep`), `POST /{id}/correction` (Neuversion, `require_write_dep`). READ_ONLY: nur GET. Direktzugriff auf fremde ID → 404 (nicht 403), wie M0.
-- [ ] `app/api/invoice_documents.py`: `POST /upload` (multipart, `require_write_dep`), `GET` (Liste/Metadaten), `GET /{id}/content` (authentifizierter, tenant-geprüfter Datei-Stream — keine öffentliche URL), `POST /{id}/version` (Neuversion), `GET /{id}/verify` (Integritätscheck). **Kein** DELETE-Endpunkt.
-- [ ] Router in `app/main.py` registrieren.
-
-### 8.6 Tests, die die Unveränderbarkeit BEWEISEN (Kern der M2-Abnahme)
-
-Im Stil von `tests/test_tenant_isolation.py`/`test_rls_coverage.py`, mit den vorhandenen Fixtures (`migrator_session`, `app_rw_session`, `client_a_admin/clerk/readonly`, `client_b_admin`). Diese Tests sind die objektive Messlatte für I2:
-
-1. **`cost_entry` confirmed ist unveränderbar (Trigger):** über `app_rw_session` (org-Kontext gesetzt) eine `confirmed`-Zeile per direktem `UPDATE` der `gross_amount` ändern → DB wirft Exception. Beweist ADR-0003 auf DB-Ebene, unabhängig vom Service.
-2. **`cost_entry` confirmed: DELETE verboten:** direktes `DELETE` einer `confirmed`-Zeile → Exception. Entwurf/`rejected`-Zeile: DELETE **erlaubt** (Positivtest, beweist statusbedingte Differenzierung).
-3. **`cost_entry` draft ist editierbar:** `UPDATE` einer `needs_review`-Zeile → erfolgreich. (Positivtest gegen Übersperrung.)
-4. **`invoice_document` released ist unveränderbar:** `UPDATE` von `content_sha256`/`storage_uri` einer freigegebenen Zeile → Exception; `active→superseded` → erlaubt (einziger zulässiger UPDATE).
-5. **`invoice_document`: kein DELETE-Grant für `app_rw`:** analog `test_audit_event_no_update_delete_for_app_rw` → `information_schema.table_privileges` enthält **kein** `DELETE` für `app_rw` auf `invoice_document` (+ vorhandenes `SELECT/INSERT/UPDATE`).
-6. **Korrektur erzeugt neue Version (cost_entry):** `confirm` → `create_correction_version` → alte Zeile `superseded_by_id` gesetzt + Inhalt unverändert; neue Zeile mit korrigiertem Wert; Aktiv-Query liefert genau die neue Zeile.
-7. **Korrektur erzeugt neue Beleg-Version:** `upload`+release → `create_new_version` → alte Zeile `superseded`, neue `active`, `supersedes_id` korrekt; partieller Unique-Index lässt **keine** zweite `active` je Kette zu (Negativtest: manuelles zweites `active` → Unique-Verletzung).
-8. **Hash-Verifikation:** `verify_document_integrity` ist `True` für unveränderte Datei; künstlich veränderte Datei im Store (Test-Manipulation) → `False`. Beweist Tamper-Evidenz.
-9. **Hash bei Upload≠Freigabe:** Re-Verify in der Confirm-Transaktion schlägt fehl, wenn die Datei zwischen Upload und Freigabe abweicht (Transaktion rollt zurück, kein eingefrorener inkonsistenter Zustand).
-10. **fail-closed / RLS (cost_entry, invoice_document):** Session **ohne** `app.current_org_id` → `SELECT` liefert null Zeilen; Client A sieht keine `cost_entry`/`invoice_document` von Org B; Direktzugriff auf fremde Beleg-ID → 404. (Erweitert `test_tenant_isolation.py` um die M2-Tabellen.)
-11. **Statusmaschine:** unerlaubter Übergang (z. B. `confirmed → needs_review` per API) → 409/422; `confirm` ohne Pflichtfelder → 422 ohne Statuswechsel; READ_ONLY darf weder anlegen noch freigeben → 403.
-12. **RLS-Coverage erweitert:** `test_rls_coverage.py` grün mit den neuen Tabellen (jede Tenant-Tabelle RLS+FORCE+Policies; `cost_category` korrekt als global ohne RLS, falls A-1=global).
-13. **Atomarität der Freigabe:** wenn das `audit_event`-Schreiben in der Confirm-Tx scheitert (simuliert), bleibt `cost_entry` `needs_review` und der Beleg unreleased (Rollback). 
-14. **`retention_until`-Berechnung** (mit der **als provisorisch markierten** Annahme aus §7.3): gesetzt bei Freigabe, NULL davor. Test prüft die Berechnung, nicht die Rechtskonformität.
-
-### 8.7 Definition of Done für M2 (Übergabe an M3)
-
-- [ ] Migrationen `0005`–`0008` als explizite, reviewbare Alembic-Schritte; `downgrade()` jeweils sauber.
-- [ ] `cost_category` vollständig geseedet gemäß SDD §7; A-1-Entscheidung umgesetzt.
-- [ ] `cost_entry`/`invoice_document` mit RLS (vier Policies, fail-closed) + Unveränderbarkeits-Trigger (ADR-0003) + Grant-Backstop.
-- [ ] Storage-Modul (lokal, content-adressiert, swappable Protocol) + Hash-Verifikation.
-- [ ] Statusmaschine + atomare Freigabe-Transaktion; `audit_event` für alle Vorgänge.
-- [ ] API: Upload, Liste, Confirm, Reject, Version/Korrektur, Datei-Stream, Verify — RBAC korrekt, fremde ID → 404.
-- [ ] **Unveränderbarkeits-Tests 1–14 grün** (kein UPDATE/DELETE auf `confirmed`/`released`; Korrektur = neue Version; Hash-Verifikation; fail-closed/RLS) — zusätzlich zu den weiterhin grünen 58 M0/M1-Tests.
-- [ ] M2-Exit objektiv erfüllt: PDF hochladen → Vorschlag (`draft_extracted`) → bestätigen (`confirmed`) → unveränderbar archiviert (Trigger+Hash) → abrechnungsrelevant (Aktiv-Query). End-to-End-Test deckt diesen Pfad ab.
-- [ ] Keine offene **[ENTSCHEIDUNG]**/**[OFFEN]** unmarkiert „weggeraten"; Eskalationen dokumentiert.
+> **No self-certification:** The retention logic is made transparent and auditable; its legal correctness in an individual case must be signed off professionally.
 
 ---
 
-### 8.8 Gespeicherte Brief-Originale (T48)
+## 8. Implementation Checklist for `bulk-impl` (Opus 4.6)
 
-Briefvorlagen sind editierbarer Klartext mit festem Platzhaltervokabular. Die
-Ausstellung friert pro aktuellem Mieterkontakt Betreff, Text, Quellenbezug und
-PDF-Referenz in `letter_document` ein. RLS sowie fehlende UPDATE-/DELETE-Rechte
-und ein Unveränderbarkeitstrigger schützen Originale. Der bestehende
-content-addressierte Dokumentenspeicher und SHA-256-Prüfung werden wiederverwendet;
-Vorlagenänderungen oder neue Stammdaten rendern ausgestellte PDFs nicht neu.
-Vollständige Empfängerzulassung vor Enumeration verhindert unbemerkte Teilmengen;
-Downloads prüfen weiterhin die ursprünglichen Kontakt-/Quellenexportrechte.
-Ein Rendererfehler rollt sämtliche Briefzeilen der Anfrage zurück. Das ist keine
-neue Entscheidung über gesetzliche Aufbewahrungsdauer oder Zustellungsnachweis.
-Migration 0132 verweigert das Entfernen befüllter Vorlagen-/Brieftabellen.
+> Architecture/correctness decisions are made in this document + ADR-0003. `bulk-impl` implements them and **escalates** only on an open specification question (SDD §18, marked here with **[OPEN]**) or an unresolved **[DECISION]**. **Prerequisite: the human has confirmed (a) A-1 (chart of accounts global vs. per org) and (b) the open [DECISION] points.** Do not commit before then.
 
-## 9. Was dieses Dokument bewusst NICHT entscheidet
+### 8.1 Data Model + Migrations (Order Analogous to M0/M1)
 
-- **Verteilungs-/Abrechnungslogik (M3):** *wie* ein Verteilerschlüssel rechnet, anteilige Zeiträume aus dem Leistungszeitraum, CO2-/Hausmeister-Aufteilung. M2 speichert nur Auswahl/Beträge/Anteilsfelder; die Engine ist M3 (`engine-correctness`).
-- **Abrechnungs-Snapshots (`settlement_run`/`settlement_line`):** M3/M4 — derselbe Unveränderbarkeits-Trigger (ADR-0003 §3) wird dort wiederverwendet.
-- **E-Rechnung-Parsing (XRechnung/ZUGFeRD):** M5 — dockt als zweite `DocumentExtractor`-Implementierung an die hier definierte Statusmaschine an.
-- **Aufbewahrungs-Startdatum je Belegart:** SDD §18, **[OFFEN]**, fachlich zu klären (§7.3).
-- **Genaue Anteils-/Vorwegabzugsmodellierung** (Hausmeister, CO2, Gewerbe): SDD §18, M3.
-- **Hash-Chain-Härtung / DSGVO-Löschmechanik:** M9.
+- [ ] **Migration `0005_cost_category`:** table (§1.3) + complete seed of all SDD §7 categories with defaults (§1.6). With A-1=global: **no** `organization_id`, **no** RLS. With A-1=per org: `organization_id`, RLS migration, seed per org on creation.
+- [ ] **Migration `0006_cost_entry_invoice_document`:** tables `cost_entry` (§2.2) and `invoice_document` (§4.2) with all CHECK constraints (status, distribution key, apportionability, `service_period_to >= service_period_from`), FKs (`RESTRICT` to `organization`, as in M1), indexes (§2.2/§4.2), `chain_root_id` + partial unique index `uq_active_doc_per_chain` (§4.3).
+- [ ] **Grants:** `GRANT SELECT, INSERT, UPDATE, DELETE ON cost_entry TO app_rw`; `GRANT SELECT, INSERT, UPDATE ON invoice_document TO app_rw` (**no DELETE** — ADR-0003 backstop, confirm [DECISION]). `cost_category`: `GRANT SELECT ... TO app_rw` (global, read only).
+- [ ] **Migration `0007_m2_rls_policies`:** for `cost_entry` (and `invoice_document`) the four policies exactly in the pattern of `0002`/`0004` (`org_isolation_select/insert/update/delete`, `NULLIF(... , '')::uuid`, fail-closed). `invoice_document`: **omit** the DELETE policy (no DELETE grant → analogous to the `audit_event` precedent).
+- [ ] **Migration `0008_immutability_triggers`** (own, reviewable step — ADR-0003): PL/pgSQL `BEFORE UPDATE/DELETE` triggers for `cost_entry` (freeze from `confirmed`) and `invoice_document` (freeze from `released_at`), with a precise content-bearing-vs.-permitted column list. Trigger source thoroughly commented. `downgrade()` drops trigger + function.
+- [ ] **Extend `TENANT_TABLES` in `tests/test_rls_coverage.py`:** `cost_entry`, `invoice_document` (and `cost_category` → `GLOBAL_TABLES` with A-1=global, otherwise `TENANT_TABLES`). `test_no_unknown_tables` forces this classification anyway.
+- [ ] ORM models (`app/models/cost_category.py`, `cost_entry.py`, `invoice_document.py`) in the style of `lease_agreement.py` (mixins, `Numeric`, `Mapped`); money as `Decimal`.
+
+### 8.2 Storage Module
+
+- [ ] `app/core/storage.py`: `DocumentStore` protocol + `StoredObjectRef` (§5.1), `LocalFsDocumentStore` (content-addressed, organization-partitioned, read-only after writing), `get_store()/set_store()` (swap pattern as in `pdf.py`). **No `delete()`** in the protocol.
+- [ ] `verify_document_integrity(doc, store)` (§4.5): reads the file, compares SHA-256 with `content_sha256`.
+- [ ] Config entry (`settings`) for storage root/backend.
+
+### 8.3 Extraction Interface (PDF Import) — Scaffold + Stub Only
+
+- [ ] `DocumentExtractor` protocol (§3.5) + stub default (returns empty/partially filled `ExtractionResult` with confidences); the real OCR integration is a `bulk-impl` implementation, the interface is fixed here.
+- [ ] Result → `invoice_document.extraction_payload` (JSONB) + prefilling of the `cost_entry` fields; start status by confidence (`draft_extracted`/`needs_review`); **never** automatically `confirmed`.
+
+### 8.4 State Machine + Services
+
+- [ ] `app/services/cost_entry_service.py` with the allowed transitions (§3.2): `create`, `update_draft`, `confirm`, `reject`, `create_correction_version` (§3.4). Transitions that are not allowed → 409/422; the DB trigger is the second line.
+- [ ] `confirm` as an **atomic** transaction (§3.6): mandatory field validation (2.3) → `cost_entry.confirmed` + voucher `released` + `retention_until` + hash verify + `audit_event`, all in one `session.begin()`.
+- [ ] `app/services/invoice_document_service.py`: `upload` (file→store, SHA-256, row `active`/not released, `audit_event`), `create_new_version` (§4.4), `verify_integrity`.
+- [ ] Repositories in the style of `base.py`/`audit_repo.py`: `CostCategoryRepository` (global, read only — no `organization_id` filter), `CostEntryRepository` (tenant, with active-chain query §3.4), `InvoiceDocumentRepository` (tenant, with active/version query §4.3, **no** `delete`).
+- [ ] Writing `audit_event` via the existing `AuditRepository`; optionally fill `prev_event_hash` (§6, [DECISION]).
+
+### 8.5 API (API-First, RBAC as in M0)
+
+- [ ] `app/api/cost_categories.py`: `GET /api/cost-categories` (list, all roles can read).
+- [ ] `app/api/cost_entries.py`: `GET` (list/detail), `POST` (create, `require_write_dep`), `PATCH` (edit draft, `require_write_dep`), `POST /{id}/confirm` (`require_write_dep`), `POST /{id}/reject` (`require_write_dep`), `POST /{id}/correction` (new version, `require_write_dep`). READ_ONLY: GET only. Direct access to another org's ID → 404 (not 403), as in M0.
+- [ ] `app/api/invoice_documents.py`: `POST /upload` (multipart, `require_write_dep`), `GET` (list/metadata), `GET /{id}/content` (authenticated, organization-checked file stream — no public URL), `POST /{id}/version` (new version), `GET /{id}/verify` (integrity check). **No** DELETE endpoint.
+- [ ] Register the router in `app/main.py`.
+
+### 8.6 Tests That PROVE Immutability (Core of the M2 Acceptance)
+
+In the style of `tests/test_tenant_isolation.py`/`test_rls_coverage.py`, with the existing fixtures (`migrator_session`, `app_rw_session`, `client_a_admin/clerk/readonly`, `client_b_admin`). These tests are the objective benchmark for I2:
+
+1. **`cost_entry` confirmed is immutable (trigger):** via `app_rw_session` (org context set), change the `gross_amount` of a `confirmed` row with a direct `UPDATE` → DB raises an exception. Proves ADR-0003 at DB level, independent of the service.
+2. **`cost_entry` confirmed: DELETE forbidden:** direct `DELETE` of a `confirmed` row → exception. Draft/`rejected` row: DELETE **allowed** (positive test, proves the status-dependent differentiation).
+3. **`cost_entry` draft is editable:** `UPDATE` of a `needs_review` row → succeeds. (Positive test against over-locking.)
+4. **`invoice_document` released is immutable:** `UPDATE` of `content_sha256`/`storage_uri` of a released row → exception; `active→superseded` → allowed (the only permitted UPDATE).
+5. **`invoice_document`: no DELETE grant for `app_rw`:** analogous to `test_audit_event_no_update_delete_for_app_rw` → `information_schema.table_privileges` contains **no** `DELETE` for `app_rw` on `invoice_document` (+ existing `SELECT/INSERT/UPDATE`).
+6. **Correction creates a new version (cost_entry):** `confirm` → `create_correction_version` → old row has `superseded_by_id` set + content unchanged; new row with the corrected value; the active query returns exactly the new row.
+7. **Correction creates a new voucher version:** `upload`+release → `create_new_version` → old row `superseded`, new `active`, `supersedes_id` correct; the partial unique index allows **no** second `active` per chain (negative test: manual second `active` → unique violation).
+8. **Hash verification:** `verify_document_integrity` is `True` for an unchanged file; an artificially modified file in the store (test manipulation) → `False`. Proves tamper evidence.
+9. **Hash on upload≠release:** re-verify in the confirm transaction fails if the file differs between upload and release (transaction rolls back, no frozen inconsistent state).
+10. **fail-closed / RLS (cost_entry, invoice_document):** session **without** `app.current_org_id` → `SELECT` returns zero rows; client A sees no `cost_entry`/`invoice_document` of org B; direct access to another org's voucher ID → 404. (Extends `test_tenant_isolation.py` with the M2 tables.)
+11. **State machine:** disallowed transition (e.g., `confirmed → needs_review` via API) → 409/422; `confirm` without mandatory fields → 422 without status change; READ_ONLY may neither create nor approve → 403.
+12. **RLS coverage extended:** `test_rls_coverage.py` green with the new tables (every tenant table RLS+FORCE+policies; `cost_category` correctly as global without RLS, if A-1=global).
+13. **Atomicity of the approval:** if writing the `audit_event` in the confirm tx fails (simulated), `cost_entry` stays `needs_review` and the voucher stays unreleased (rollback).
+14. **`retention_until` calculation** (with the **provisional-marked** assumption from §7.3): set at release, NULL before. The test checks the calculation, not legal conformity.
+
+### 8.7 Definition of Done for M2 (Handover to M3)
+
+- [ ] Migrations `0005`–`0008` as explicit, reviewable Alembic steps; `downgrade()` clean in each case.
+- [ ] `cost_category` fully seeded according to SDD §7; A-1 decision implemented.
+- [ ] `cost_entry`/`invoice_document` with RLS (four policies, fail-closed) + immutability trigger (ADR-0003) + grant backstop.
+- [ ] Storage module (local, content-addressed, swappable protocol) + hash verification.
+- [ ] State machine + atomic approval transaction; `audit_event` for all operations.
+- [ ] API: upload, list, confirm, reject, version/correction, file stream, verify — RBAC correct, another org's ID → 404.
+- [ ] **Immutability tests 1–14 green** (no UPDATE/DELETE on `confirmed`/`released`; correction = new version; hash verification; fail-closed/RLS) — in addition to the still-green 58 M0/M1 tests.
+- [ ] M2 exit objectively met: upload PDF → proposal (`draft_extracted`) → confirm (`confirmed`) → archived immutably (trigger+hash) → relevant for settlement (active query). An end-to-end test covers this path.
+- [ ] No open **[DECISION]**/**[OPEN]** left unmarked and "guessed away"; escalations documented.
 
 ---
 
-## 10. Zusammenfassung der offenen Entscheidungen (für den Menschen)
+### 8.8 Stored Letter Originals (T48)
 
-| # | Punkt | Empfehlung | Wann |
+Letter templates are editable plain text with a fixed placeholder vocabulary. For each
+current tenant contact, issuing a letter freezes the subject, text, source reference, and
+PDF reference in `letter_document`. RLS, missing UPDATE/DELETE privileges, and an
+immutability trigger protect the originals. The existing content-addressed document
+storage and SHA-256 verification are reused; template changes or new master data do not
+re-render already issued PDFs. Admitting all recipients before enumeration prevents
+unnoticed partial sets; downloads still check the original contact/source export
+permissions. A renderer error rolls back all letter rows of the request. This is not a
+new decision on the statutory retention period or proof of delivery. Migration 0132
+refuses to remove populated template/letter tables.
+
+## 9. What This Document Deliberately Does NOT Decide
+
+- **Distribution/settlement logic (M3):** *how* a distribution key computes, pro rata periods from the service period, CO2/caretaker split. M2 stores only the selection/amounts/share fields; the engine is M3 (`engine-correctness`).
+- **Settlement snapshots (`settlement_run`/`settlement_line`):** M3/M4 — the same immutability trigger (ADR-0003 §3) is reused there.
+- **E-invoice parsing (XRechnung/ZUGFeRD):** M5 — docks onto the state machine defined here as the second `DocumentExtractor` implementation.
+- **Retention start date per voucher type:** SDD §18, **[OPEN]**, to be clarified on the domain side (§7.3).
+- **Exact share/advance-deduction modeling** (caretaker, CO2, commercial): SDD §18, M3.
+- **Hash chain hardening / GDPR erasure mechanics:** M9.
+
+---
+
+## 10. Summary of Open Decisions (for the Human)
+
+| # | Item | Recommendation | When |
 | --- | --- | --- | --- |
-| **E-1** | `cost_category` global vs. pro-Org (Annahme A-1) | **global, versioniert** (kein RLS) | vor M2-Impl |
-| **E-2** | Unveränderbarkeits-Mechanik | **status-bewusster Trigger + entzogenes DELETE-Grant auf Belege** (ADR-0003) | bestätigen vor M2-Impl |
-| **E-3** | DELETE auf `invoice_document` für `app_rw` komplett entziehen? | **ja** (Backstop, Belege nie löschen) | vor M2-Impl |
-| **E-4** | Verkettungsrichtung `cost_entry` | **Vorwärts (`superseded_by_id`)**; `invoice_document` bleibt Rückwärts (`supersedes_id`) | bei Impl festklopfen |
-| **E-5** | `chain_root_id` + partieller Unique-Index „genau eine active" | **ja** (einfach, codebasis-konform) | bei Impl |
-| **E-6** | Default-Status bei manueller Anlage; `confirm` immer expliziter Zweitschritt | editierbarer Datensatz, `confirm` nie implizit | bei Impl |
-| **E-7** | Konkrete Default-Verteilerschlüssel bei SDD-Mehrdeutigkeit („Fläche oder MEA") | Eigentümer i. d. R. `MEA`, Mieter i. d. R. `WOHNFLAECHE`, übersteuerbar | fachlich, vor Seed |
-| **O-1** | **[OFFEN, SDD §18]** Aufbewahrungs-Startdatum je Belegart | nicht eigenmächtig; provisorische Test-Annahme (KJ-Ende + 8 J.) klar markiert; StB/Fachanwalt | vor M9 |
+| **E-1** | `cost_category` global vs. per org (Assumption A-1) | **global, versioned** (no RLS) | before M2 impl |
+| **E-2** | Immutability mechanics | **status-aware trigger + revoked DELETE grant on vouchers** (ADR-0003) | confirm before M2 impl |
+| **E-3** | Revoke DELETE on `invoice_document` for `app_rw` entirely? | **yes** (backstop, never delete vouchers) | before M2 impl |
+| **E-4** | Chaining direction `cost_entry` | **Forward (`superseded_by_id`)**; `invoice_document` stays backward (`supersedes_id`) | pin down at impl |
+| **E-5** | `chain_root_id` + partial unique index "exactly one active" | **yes** (simple, code-base-conformant) | at impl |
+| **E-6** | Default status on manual entry; `confirm` always an explicit second step | editable record, `confirm` never implicit | at impl |
+| **E-7** | Concrete default distribution keys for SDD ambiguities ("area or MEA") | Owner usually `MEA`, tenant usually `WOHNFLAECHE`, overridable | domain decision, before seed |
+| **O-1** | **[OPEN, SDD §18]** Retention start date per voucher type | not decided unilaterally; provisional test assumption (end of calendar year + 8 yrs) clearly marked; tax advisor/specialist lawyer | before M9 |

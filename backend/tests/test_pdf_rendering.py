@@ -62,6 +62,24 @@ class TestWeasyPrintRenderer:
         assert pdf_bytes[:5] == b"%PDF-"
 
 
+class TestRenderIsReproducible:
+    """A finalized document is re-rendered on every download; the bytes must not change."""
+
+    def test_same_html_renders_to_identical_bytes_when_the_clock_moves(self, monkeypatch):
+        """Without libharfbuzz-subset (CI, production image) WeasyPrint subsets fonts
+        with fontTools, which stamps the current time into every embedded font."""
+        from types import SimpleNamespace
+
+        from fontTools.misc import timeTools
+
+        ticks = iter(range(1_700_000_000, 1_700_001_000))
+        monkeypatch.setattr(timeTools, "time", SimpleNamespace(time=lambda: float(next(ticks))))
+        monkeypatch.setattr("weasyprint.pdf.fonts.harfbuzz_subset", None)
+        html = "<html><body><h1>Wirtschaftsplan</h1><p>Betriebskosten 1.234,56 EUR</p></body></html>"
+
+        assert render_pdf(html) == render_pdf(html)
+
+
 class TestPdfRendererProtocol:
     """Test the swappable abstraction."""
 

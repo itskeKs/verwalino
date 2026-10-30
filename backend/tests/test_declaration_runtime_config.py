@@ -146,8 +146,8 @@ def test_runbook_states_no_live_call_without_all_gates() -> None:
         "terra_primary",
         "luna_with_mini_router",
         "descriptive_only",
-        "nicht promotionfähig",
-        "SDK-Attempt",
+        "not promotion-eligible",
+        "SDK attempt",
         "23",
     ):
         assert required in runbook
@@ -157,16 +157,20 @@ def test_live_eval_documentation_describes_two_phase_gate_ordering() -> None:
     runbook = DECLARATION_RUNBOOK_PATH.read_text(encoding="utf-8")
     design = DECLARATION_DESIGN_PATH.read_text(encoding="utf-8")
 
-    for document in (runbook, design):
-        for required in (
-            "Phase A",
-            "Phase B",
-            "Path-Methode",
-            "SHA-256",
-            "Capability",
-            "Path-/Manifest-/PDF-/Providerzugriff",
-            "Übertragung",
-        ):
+    # The runbook is English; the archived design record stays German.
+    for document, phrases, local in (
+        (
+            runbook,
+            ("path method", "capability", "path/manifest/PDF/provider access", "transmission"),
+            "local",
+        ),
+        (
+            design,
+            ("Path-Methode", "Capability", "Path-/Manifest-/PDF-/Providerzugriff", "Übertragung"),
+            "lokal",
+        ),
+    ):
+        for required in ("Phase A", "Phase B", "SHA-256", *phrases):
             assert required in document
         phase_a = document.split("**Phase A", maxsplit=1)[1].split(
             "**Phase B", maxsplit=1
@@ -174,7 +178,7 @@ def test_live_eval_documentation_describes_two_phase_gate_ordering() -> None:
         phase_b = document.split("**Phase B", maxsplit=1)[1]
         assert "HV_DECLARATION_REAL_PDF_MANIFEST" in phase_a
         assert "SHA-256" in phase_b
-        assert "lokal" in phase_b
+        assert local in phase_b
 
     assert 'model: Literal["gpt-5.4-mini"] | None' in design
 
@@ -183,11 +187,11 @@ def test_documentation_states_fixed_manager_and_retention_boundary() -> None:
     architecture = ARCHITECTURE_PATH.read_text(encoding="utf-8")
     runbook = DECLARATION_RUNBOOK_PATH.read_text(encoding="utf-8")
 
-    assert "deterministischen Manager" in architecture
-    assert "frei autonomen Agenten" in architecture
+    assert "deterministic manager" in architecture
+    assert "freely autonomous agent" in architecture
     assert "untrusted data" in architecture
     assert "store=false" in runbook
-    assert "nicht ZDR" in runbook
+    assert "is not ZDR" in runbook
 
 
 def test_declaration_runtime_defaults_use_explicit_medium_and_none_effort() -> None:

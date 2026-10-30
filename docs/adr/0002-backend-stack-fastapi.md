@@ -1,31 +1,31 @@
-# ADR-0002: Backend-Stack — Python/FastAPI (Empfehlung)
+# ADR-0002: Backend stack — Python/FastAPI (recommendation)
 
-Status: **Vorgeschlagen** (Bestätigung durch den Menschen ausstehend — noch kein Code/Commit)
-Datum: 2026-06-01 · Kontext: M0 · Bezug: [../architecture.md](../architecture.md) Abschnitt 6 · SDD §16
+Status: **Proposed** (confirmation by the human pending — no code/commit yet)
+Date: 2026-06-01 · Context: M0 · Reference: [../architecture.md](../architecture.md) Section 6 · SDD §16
 
-## Kontext
+## Context
 
-SDD §16 lässt das Backend offen: Python/FastAPI vs. Node.js/NestJS. Das Frontend ist auf React/TypeScript festgelegt. Wertbestimmend und am riskantesten ist die korrekte, prüffeste Abrechnung mit exakter Dezimalrechnung (Roadmap: M3 ist der größte/riskanteste Brocken). Daneben relevant: RLS-/Migrations-Handling (I1/I2), XRechnung/ZUGFeRD-Parsing (M5), HTML→PDF (SDD §16), Testbarkeit.
+SDD §16 leaves the backend open: Python/FastAPI vs. Node.js/NestJS. The frontend is fixed to React/TypeScript. What determines value and is riskiest is correct, audit-proof settlement with exact decimal arithmetic (roadmap: M3 is the largest/riskiest chunk). Also relevant: RLS/migration handling (I1/I2), XRechnung/ZUGFeRD parsing (M5), HTML→PDF (SDD §16), testability.
 
-## Entscheidung
+## Decision
 
-**Python/FastAPI** fürs Backend, mit **SQLAlchemy + Alembic** für ORM/Migrationen. Frontend bleibt React/TypeScript (SDD-Vorgabe).
+**Python/FastAPI** for the backend, with **SQLAlchemy + Alembic** for ORM/migrations. The frontend remains React/TypeScript (SDD requirement).
 
-## Begründung (domänenspezifisch)
+## Rationale (domain-specific)
 
-- **Geldexaktheit (I4):** `decimal.Decimal` ist erstklassiger Standardtyp; `NUMERIC ↔ Decimal` verlustfrei. In Node ist `number` IEEE-754-Float → man muss dauerhaft eine Decimal-Lib erzwingen und sicherstellen, dass nirgends ein `number` für Geld durchrutscht (fehleranfälliger für ein korrektheitskritisches Finanzprodukt).
-- **RLS/Migrationen (I1/I2):** Alembic versioniert RLS-Policies und Trigger als explizite, reviewbare DDL-Schritte — zentral für die Erzwingung der Invarianten.
-- **E-Rechnung (M5):** reiferes Python-Ökosystem für XML/EN-16931 und PDF/A-3-Extraktion (ZUGFeRD).
-- **Testbarkeit:** pytest + Hypothesis (Property-based Testing) passt besonders gut zu Verteilungs-/Rundungslogik.
+- **Monetary exactness (I4):** `decimal.Decimal` is a first-class standard type; `NUMERIC ↔ Decimal` is lossless. In Node, `number` is an IEEE-754 float → a decimal library must be enforced permanently and one must ensure that no `number` slips through anywhere for money (more error-prone for a correctness-critical financial product).
+- **RLS/migrations (I1/I2):** Alembic versions RLS policies and triggers as explicit, reviewable DDL steps — central to enforcing the invariants.
+- **E-invoice (M5):** more mature Python ecosystem for XML/EN-16931 and PDF/A-3 extraction (ZUGFeRD).
+- **Testability:** pytest + Hypothesis (property-based testing) fits distribution/rounding logic particularly well.
 
-## Alternative
+## Alternative considered
 
-**Node.js/NestJS:** vor allem attraktiv wegen *einer* Sprache über Front- und Backend (geteilte Typen/DTOs). Verworfen, weil der Geld-/Dezimalsicherheits- und RLS-/Migrationsvorteil von Python in dieser Domäne schwerer wiegt als der Single-Language-Vorteil. PDF (Playwright/Puppeteer) wäre in Node minimal komfortabler, ist aber sprachunabhängig anbindbar.
+**Node.js/NestJS:** attractive mainly because of *one* language across frontend and backend (shared types/DTOs). Rejected because Python's advantage in money/decimal safety and RLS/migrations outweighs the single-language advantage in this domain. PDF (Playwright/Puppeteer) would be marginally more convenient in Node, but can be integrated regardless of language.
 
-## Konsequenzen
+## Consequences
 
-**Positiv:** geringster Reibungswiderstand für die korrektheitskritische Abrechnung; sauberes RLS-/Migrations-Handling; starkes Test- und E-Rechnungs-Ökosystem.
+**Positive:** least friction for the correctness-critical settlement; clean RLS/migration handling; strong testing and e-invoice ecosystem.
 
-**Negativ:** zwei Sprachen im Stack (TS-Frontend, Python-Backend) → Kontextwechsel, keine geteilten Typen out-of-the-box. Bewusst in Kauf genommen.
+**Negative:** two languages in the stack (TS frontend, Python backend) → context switching, no shared types out of the box. Knowingly accepted.
 
-**Nicht verhandelbar, unabhängig vom Stack:** (1) Geld als dezimaler Typ, nie Float; (2) RLS + `FORCE`, App-Rolle ohne `BYPASSRLS`; (3) transaktionslokaler Tenant-Context; (4) RLS-Policies/Trigger als explizit versionierte Migrationen.
+**Non-negotiable, regardless of stack:** (1) money as a decimal type, never float; (2) RLS + `FORCE`, app role without `BYPASSRLS`; (3) transaction-local organization context; (4) RLS policies/triggers as explicitly versioned migrations.

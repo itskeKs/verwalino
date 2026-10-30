@@ -1,152 +1,152 @@
-# M3-Design: Verteilungs- & Abrechnungs-Engine (Betriebskostenabrechnung Mieter)
+# M3 Design: Distribution & Settlement Engine (Operating Cost Statement for Tenants)
 
-Stand: 2026-06-01 · Version 0.1 (Design, vor Implementierung)
-Bezug: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2 §6.9, §7, §8, §11, §12, §14, §15, §17, §18 · [roadmap.md](roadmap.md) M3 · [architecture.md](architecture.md) §3 (Unveränderbarkeit), §5.1 (Konventionen), §5.4 (I2-Entitäten) · [m2-gobd-belegfluss.md](m2-gobd-belegfluss.md) (`cost_entry`, Leistungszeitraum, getrennte Verteilerschlüssel, `apportionable_tenant_amount`)
-ADRs zu diesem Dokument: [adr/0003-…](adr/0003-gobd-unveraenderbarkeit-mechanik.md) (wiederverwendet) · [adr/0004-zeitanteilige-verteilung-tagegenau.md](adr/0004-zeitanteilige-verteilung-tagegenau.md) (neu) · [adr/0005-rundung-largest-remainder.md](adr/0005-rundung-largest-remainder.md) (neu)
-Autor: `engine-correctness` (Opus 4.8) · Status: **Entwurf zur Bestätigung durch den Menschen — kein Anwendungscode, keine Migration, kein Commit**
+As of: 2026-06-01 · Version 0.1 (design, before implementation)
+Reference: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2 §6.9, §7, §8, §11, §12, §14, §15, §17, §18 · [archived roadmap](archive/roadmap.md) M3 · [architecture.md](architecture.md) §3 (immutability), §5.1 (conventions), §5.4 (I2 entities) · [m2-gobd-belegfluss.md](m2-gobd-belegfluss.md) (`cost_entry`, service period, separate distribution keys, `apportionable_tenant_amount`)
+ADRs for this document: [adr/0003-…](adr/0003-gobd-immutability-mechanism.md) (reused) · [adr/0004-pro-rata-daily-allocation.md](adr/0004-pro-rata-daily-allocation.md) (new) · [adr/0005-rounding-largest-remainder.md](adr/0005-rounding-largest-remainder.md) (new)
+Author: `engine-correctness` (Opus 4.8) · Status: **Draft for confirmation by the human — no application code, no migration, no commit**
 
-> Dieses Dokument spezifiziert die **Verteilungs-/Abrechnungs-Engine** (M3) bis auf die Berechnungsmathematik. M3 ist laut Roadmap der größte, riskanteste und korrektheitskritischste Baustein. Scope M3 ist die **Betriebskostenabrechnung für Mieter** (SDD §6.9, §8, §11); die Engine wird aber so entworfen, dass **M4** (WEG-Jahresabrechnung mit Abrechnungsspitze, Wirtschaftsplan, Vermögensbericht) sie **wiederverwendet** — nicht neu erfindet.
+> This document specifies the **distribution/settlement engine** (M3) down to the calculation mathematics. According to the roadmap, M3 is the largest, riskiest, and most correctness-critical building block. The scope of M3 is the **operating cost statement (Betriebskostenabrechnung) for tenants** (SDD §6.9, §8, §11); however, the engine is designed so that **M4** (annual settlement of the homeowners' association (WEG) with settlement balance (Abrechnungsspitze), economic plan (Wirtschaftsplan), asset report (Vermögensbericht)) **reuses** it rather than reinventing it.
 >
-> **Verbindlichkeit:** SDD (v0.2), Roadmap, `architecture.md`, `m2-gobd-belegfluss.md` und die ADRs 0001–0003 sind die Quelle der Wahrheit und bleiben **unangetastet**. Dieses Dokument ist additiv. Entscheidungen, die der Mensch bestätigen sollte, sind **[ENTSCHEIDUNG]**; offene SDD-§18-Punkte **[OFFEN/§18]** (nicht eigenmächtig final entschieden; provisorische, klar markierte Annahme für Testfälle; fachliche Abnahme empfohlen).
+> **Binding status:** The SDD (v0.2), roadmap, `architecture.md`, `m2-gobd-belegfluss.md`, and ADRs 0001–0003 are the source of truth and remain **untouched**. This document is additive. Decisions that the human should confirm are marked **[DECISION]** (decision); open SDD §18 items are marked **[OPEN/§18]** (open; not decided unilaterally; a provisional, clearly marked assumption is used for test cases; professional sign-off recommended).
 >
-> **Keine Selbst-Zertifizierung:** Dieses Design macht die Abrechnung *transparent, nachrechenbar und auditierbar* und legt jede getroffene Annahme offen. Es kann **nicht** garantieren, dass eine konkrete Abrechnung gerichts-/prüfungsfest ist. Die fachliche Richtigkeit der Verteilungs-, Umlage- und Rundungsregeln im Einzelfall ist durch **Steuerberater/Fachanwalt** abzunehmen, bevor produktiv abgerechnet wird.
+> **No self-certification:** This design makes the settlement *transparent, reproducible, and auditable* and discloses every assumption made. It **cannot** guarantee that a specific settlement will withstand court or audit scrutiny. The professional correctness of the distribution, apportionment, and rounding rules in an individual case must be signed off by a **tax advisor/attorney specializing in the field** before productive settlements are run.
 
 ---
 
-## 0. Geltungsbereich, Exit-Kriterium, Anschluss an M0–M2
+## 0. Scope, exit criterion, connection to M0–M2
 
-**M3-Exit (Roadmap):** „Eine BK-Abrechnung für ein Mischobjekt mit Mieterwechsel ist **nachrechenbar korrekt** und **formell vollständig**." Dieses Kriterium ist die objektive Messlatte. „Nachrechenbar korrekt" wird durch die **synthetischen Golden-Tests** (§9) mit **handberechneten Soll-Ergebnissen** belegt; „formell vollständig" durch die BGH-Pflichtangaben in `settlement_line`/PDF (§8).
+**M3 exit (roadmap):** "An operating cost statement (BK-Abrechnung) for a mixed-use property with a tenant change is **reproducibly correct** and **formally complete**." This criterion is the objective yardstick. "Reproducibly correct" is demonstrated by the **synthetic golden tests** (§9) with **hand-calculated expected results**; "formally complete" by the mandatory BGH disclosures in `settlement_line`/PDF (§8).
 
-**M3 baut auf verifizierten Fundamenten auf (M0/M1/M2, 141 Tests grün) und übernimmt deren Konventionen unverändert.** Die Engine ist **Konsument** der M1/M2-Daten, nicht deren Erweiterung:
+**M3 builds on verified foundations (M0/M1/M2, 141 tests green) and adopts their conventions unchanged.** The engine is a **consumer** of the M1/M2 data, not an extension of it:
 
-| Vorhandenes Fundament | M3 nutzt es so |
+| Existing foundation | How M3 uses it |
 | --- | --- |
-| `cost_entry` mit `service_period_from/_to`, getrennten `owner_/tenant_distribution_key`, `tenant_apportionable`, `apportionable_tenant_amount`, Aktiv-Kette (`status='confirmed' AND superseded_by_id IS NULL`) | **Einzige** Kostenquelle der Engine. Nur **aktive, confirmte** Einträge werden abgerechnet (m2 §3.4). |
-| `unit` (`area`, `heated_area`, `mea`, `usage_type`) | Verteilungs-Basisgrößen je Einheit. |
-| `ownership_history` (temporal, EXCLUDE, `mea_share`, Lücken/Co-Eigentum erlaubt) | Eigentümer-Zuordnung je Tag → Leerstand-Adressat (M3), Eigentümersphäre (M4). |
-| `lease_agreement` (temporal, EXCLUDE pro Einheit, `base_rent`, `advance_payment`) | Mieterperioden je Einheit; Lücke = Leerstand. `advance_payment` = Default-Vorauszahlung (§7). |
-| `cost_category` (global, versioniert, `tenant_apportionable_default`, `reserve_relevant`) | Kategorisierung, Trennung umlagefähig/nicht/Rücklage (M4-relevant, M3 nur „umlagefähig?"). |
-| RLS-Muster (`ENABLE`+`FORCE`, vier Policies, `NULLIF(current_setting('app.current_org_id', true),'')::uuid`, fail-closed) | `settlement_run`/`settlement_line` bekommen exakt dieses Muster (Migration analog `0007`). |
-| ADR-0003-Trigger (`BEFORE UPDATE/DELETE`, status-bewusst, per-Spalte `IS DISTINCT FROM`) | **Wiederverwendet** für `settlement_run`/`settlement_line`, Einfrier-Bedingung `status='finalized'` (ADR-0003 §3). |
-| `TenantRepository`, atomare Service-Transaktion (`cost_entry_service.confirm`), `AuditRepository`, swappable `PdfRenderer` (WeasyPrint) | Vorbilder 1:1 für `SettlementRepository`, `settlement_service.finalize`, Audit, PDF. |
-| Geld `NUMERIC(14,2)`/`Decimal`, Quoten `NUMERIC(12,6)`, UUID-PK, `TIMESTAMPTZ`, String+CHECK statt DB-Enum, FK `ondelete=RESTRICT` zu `organization` | Durchgängig übernommen. |
-| Migrationen `0001`–`0008` vorhanden | M3 fügt **`0009`–`00xx`** additiv hinzu (Reihenfolge §10). |
+| `cost_entry` with `service_period_from/_to`, separate `owner_/tenant_distribution_key`, `tenant_apportionable`, `apportionable_tenant_amount`, active chain (`status='confirmed' AND superseded_by_id IS NULL`) | **Sole** cost source of the engine. Only **active, confirmed** entries are settled (m2 §3.4). |
+| `unit` (`area`, `heated_area`, `mea`, `usage_type`) | Distribution base quantities per unit. |
+| `ownership_history` (temporal, EXCLUDE, `mea_share`, gaps/co-ownership allowed) | Owner assignment per day → vacancy addressee (M3), owner sphere (M4). |
+| `lease_agreement` (temporal, EXCLUDE per unit, `base_rent`, `advance_payment`) | Tenant periods per unit; gap = vacancy. `advance_payment` = default advance payment (§7). |
+| `cost_category` (global, versioned, `tenant_apportionable_default`, `reserve_relevant`) | Categorization, separation of apportionable/non-apportionable/maintenance reserve (Erhaltungsrücklage) (M4-relevant; M3 only "apportionable?"). |
+| RLS pattern (`ENABLE`+`FORCE`, four policies, `NULLIF(current_setting('app.current_org_id', true),'')::uuid`, fail-closed) | `settlement_run`/`settlement_line` get exactly this pattern (migration analogous to `0007`). |
+| ADR-0003 trigger (`BEFORE UPDATE/DELETE`, status-aware, per-column `IS DISTINCT FROM`) | **Reused** for `settlement_run`/`settlement_line`, freeze condition `status='finalized'` (ADR-0003 §3). |
+| `TenantRepository`, atomic service transaction (`cost_entry_service.confirm`), `AuditRepository`, swappable `PdfRenderer` (WeasyPrint) | Templates 1:1 for `SettlementRepository`, `settlement_service.finalize`, audit, PDF. |
+| Money `NUMERIC(14,2)`/`Decimal`, shares `NUMERIC(12,6)`, UUID PK, `TIMESTAMPTZ`, string+CHECK instead of DB enum, FK `ondelete=RESTRICT` to `organization` | Adopted throughout. |
+| Migrations `0001`–`0008` exist | M3 adds **`0009`–`00xx`** additively (order in §10). |
 
-**Nicht in M3:** WEG-Jahresabrechnung/Abrechnungsspitze, Wirtschaftsplan, Vermögensbericht (M4 — diese Engine ist dafür vorbereitet, §1.3). Zahlungen/Mietkonto (M6 — M3 erfasst die Vorauszahlungssumme **manuell**, §7). E-Rechnung (M5). Mahnwesen (M7).
+**Not in M3:** WEG annual settlement/settlement balance (Abrechnungsspitze), economic plan, asset report (M4 — this engine is prepared for it, §1.3). Payments/tenant ledger (Mietkonto) (M6 — M3 captures the advance payment total **manually**, §7). E-invoice (M5). Dunning (M7).
 
-**Architektur-Leitsatz (SDD §16, hier hart):** Die **Berechnungs-Engine ist eine Schicht reiner Funktionen** (`Decimal` ein/aus, keine DB, keine HTTP, keine I/O), getrennt von Persistenz (Snapshot), API und PDF-Layout. Das ist die Voraussetzung für Testbarkeit und für die Wiederverwendung in M4 (§10).
+**Architectural principle (SDD §16, strict here):** The **calculation engine is a layer of pure functions** (`Decimal` in/out, no DB, no HTTP, no I/O), separate from persistence (snapshot), API, and PDF layout. This is the prerequisite for testability and for reuse in M4 (§10).
 
 ---
 
-## 1. Datenmodell: `settlement_run` + `settlement_line`
+## 1. Data model: `settlement_run` + `settlement_line`
 
-### 1.1 Rolle und Lebenszyklus
+### 1.1 Role and lifecycle
 
-Ein **`settlement_run`** ist *ein* Abrechnungslauf für *einen* Adressatenkreis in *einem* Abrechnungszeitraum (z. B. „BK-Abrechnung Wohnung 3, Mieter Müller, 2025"). Er durchläuft genau zwei Zustände:
+A **`settlement_run`** is *one* settlement run for *one* addressee group in *one* settlement period (e.g., "operating cost statement, apartment 3, tenant Müller, 2025"). It passes through exactly two states:
 
 ```
-   draft  ──finalize──▶  finalized   (UNVERÄNDERBAR ab hier, ADR-0003)
+   draft  ──finalize──▶  finalized   (IMMUTABLE from here, ADR-0003)
      │                        │
-     │ (neu rechnen,          │ Korrektur nötig?
-     │  Eingaben ändern,      │  → NIE Mutation
-     │  verwerfen)            ▼
-     └───────────────  neue settlement_run-Version (Storno/Neuberechnung),
-                        supersedes_id → alter Lauf  (siehe 1.6)
+     │ (recalculate,          │ Correction needed?
+     │  change inputs,        │  → NEVER mutation
+     │  discard)              ▼
+     └───────────────  new settlement_run version (cancellation/recalculation),
+                        supersedes_id → old run  (see 1.6)
 ```
 
-- **`draft`:** frei neu berechenbar; `snapshot_payload` wird bei jedem (Neu-)Rechnen überschrieben; nichts ist eingefroren; keine Außenwirkung.
-- **`finalized`:** der berechnete Stand ist als **unveränderbarer Snapshot** eingefroren (SDD §16, architecture.md §3.1/§5.4). `snapshot_payload` + `snapshot_sha256` sind ab hier per ADR-0003-Trigger gegen Mutation gesperrt. Das ist der Stand, der als PDF an den Mieter geht. Spätere Stammdatenänderungen (Mieterwechsel nachgepflegt, MEA korrigiert) verändern eine finalisierte Abrechnung **nicht** (das ist der ganze Zweck des Snapshots).
+- **`draft`:** freely recalculable; `snapshot_payload` is overwritten on every (re)calculation; nothing is frozen; no external effect.
+- **`finalized`:** the calculated state is frozen as an **immutable snapshot** (SDD §16, architecture.md §3.1/§5.4). `snapshot_payload` + `snapshot_sha256` are locked against mutation by the ADR-0003 trigger from here on. This is the state that goes to the tenant as a PDF. Later master-data changes (tenant change recorded retroactively, MEA corrected) do **not** alter a finalized settlement (that is the entire purpose of the snapshot).
 
-### 1.2 Warum ein Snapshot (und nicht „live aus den Stammdaten rechnen")
+### 1.2 Why a snapshot (and not "calculate live from the master data")
 
-SDD §16: „Alle finalen Abrechnungsergebnisse … werden als **unveränderbare Snapshots** gespeichert, damit spätere Stammdatenänderungen alte Dokumente nicht verändern." Eine versendete BK-Abrechnung ist ein rechtsverbindliches Dokument; sie muss exakt reproduzierbar bleiben, auch wenn Jahre später ein Lease korrigiert, eine Einheit umgewidmet oder der Kontenplan in `plan_version 2` überführt wird. Der Snapshot friert **alle** Eingaben *und* alle berechneten Zwischen-/Endwerte ein. Der `snapshot_sha256` macht nachträgliche Manipulation erkennbar (Tamper-Evidenz, analog `invoice_document.content_sha256`, m2 §4.5).
+SDD §16: "All final settlement results … are stored as **immutable snapshots** so that later master-data changes do not alter old documents." A sent operating cost statement is a legally binding document; it must remain exactly reproducible even if a lease is corrected years later, a unit is repurposed, or the chart of accounts is migrated to `plan_version 2`. The snapshot freezes **all** inputs *and* all calculated intermediate and final values. The `snapshot_sha256` makes subsequent tampering detectable (tamper evidence, analogous to `invoice_document.content_sha256`, m2 §4.5).
 
-### 1.3 Typdiskriminator — BK jetzt, WEG/Plan/Vermögensbericht reserviert (M4)
+### 1.3 Type discriminator — BK now, WEG/plan/asset report reserved (M4)
 
-`settlement_run.run_type` (String + CHECK) trägt den Abrechnungstyp. **M3 implementiert nur `BK_MIETER`**; die übrigen Werte sind **im Vokabular reserviert**, damit M4 dieselbe Tabelle/Engine ohne Schemabruch nutzt:
+`settlement_run.run_type` (string + CHECK) carries the settlement type. **M3 implements only `BK_MIETER`**; the remaining values are **reserved in the vocabulary** so that M4 can use the same table/engine without a schema break:
 
-| `run_type` | Bedeutung | Milestone |
+| `run_type` | Meaning | Milestone |
 | --- | --- | --- |
-| `BK_MIETER` | Betriebskostenabrechnung für einen Mieter (SDD §6.9, §11) | **M3** |
-| `WEG_JAHRESABRECHNUNG` | Hausgeld-/Jahresabrechnung mit Abrechnungsspitze (WEMoG) | M4 (reserviert) |
-| `WIRTSCHAFTSPLAN` | Wirtschaftsplan mit Hausgeldvorschlägen | M4 (reserviert) |
-| `VERMOEGENSBERICHT` | Vermögensbericht § 28 IV WEG | M4 (reserviert) |
+| `BK_MIETER` | Operating cost statement for one tenant (SDD §6.9, §11) | **M3** |
+| `WEG_JAHRESABRECHNUNG` | Hausgeld/annual settlement with settlement balance (Abrechnungsspitze) (WEMoG) | M4 (reserved) |
+| `WIRTSCHAFTSPLAN` | Economic plan with Hausgeld proposals | M4 (reserved) |
+| `VERMOEGENSBERICHT` | Asset report § 28 IV WEG | M4 (reserved) |
 
-> **[ENTSCHEIDUNG]** Wirtschaftsplan und Vermögensbericht sind fachlich keine „Abrechnung mit Soll-Ist je Kostenart", sondern Plan- bzw. Bestandsdokumente. Empfehlung: **gleiche `settlement_run`-Hülle** (Snapshot-/Unveränderbarkeits-/Audit-Mechanik wiederverwenden) mit eigenem `run_type` und typabhängiger `snapshot_payload`-Struktur; ob `settlement_line` für sie passt oder eine eigene Detailstruktur im Payload sinnvoller ist, wird in M4 entschieden. M3 verbaut nichts.
+> **[DECISION]** From a professional standpoint, the economic plan and the asset report are not a "settlement with expected/actual per cost category" but plan or inventory documents. Recommendation: **same `settlement_run` shell** (reuse the snapshot/immutability/audit mechanism) with its own `run_type` and a type-dependent `snapshot_payload` structure; whether `settlement_line` fits them or a dedicated detail structure within the payload makes more sense will be decided in M4. M3 blocks nothing.
 
-### 1.4 Schema `settlement_run` (tenant-behaftet, RLS, ab `finalized` unveränderbar)
+### 1.4 Schema `settlement_run` (tenant-bound, RLS, immutable from `finalized`)
 
-| Spalte | Typ | Bedeutung / Begründung |
+| Column | Type | Meaning / rationale |
 | --- | --- | --- |
-| `id` | `UUID` PK | wie überall (`gen_random_uuid()`). |
+| `id` | `UUID` PK | as everywhere (`gen_random_uuid()`). |
 | `organization_id` | `UUID NOT NULL` FK→`organization` (`RESTRICT`) | I1, RLS. |
-| `property_id` | `UUID NOT NULL` FK→`property` (`RESTRICT`) | Objektbezug. |
-| `management_mandate_id` | `UUID NULL` FK→`management_mandate` (`RESTRICT`) | Mandatsbezug (Vermögenstrennung-Anker, architecture.md §2.6). |
-| `run_type` | `String(24) NOT NULL` | `BK_MIETER` (M3) u. a. (§1.3). CHECK. |
-| `period_start` | `DATE NOT NULL` | Abrechnungszeitraum Beginn (BGH-Pflichtangabe, §8). |
-| `period_end` | `DATE NOT NULL` | Abrechnungszeitraum Ende. `CHECK (period_end >= period_start)`. |
-| **Adressat (BK: genau ein Mieter/Lease):** | | |
-| `unit_id` | `UUID NULL` FK→`unit` (`RESTRICT`) | bei `BK_MIETER`: die abgerechnete Einheit. NULL für objektweite Läufe (M4). |
-| `lease_agreement_id` | `UUID NULL` FK→`lease_agreement` (`RESTRICT`) | bei `BK_MIETER`: der abgerechnete Mietvertrag/Adressat. *(Mehrere Leases derselben Einheit im Zeitraum → mehrere `settlement_run`s oder ein Lauf mit mehreren Adressaten — siehe [ENTSCHEIDUNG] 1.5.)* |
-| `tenant_profile_id` | `UUID NULL` FK→`tenant_profile` (`RESTRICT`) | denormalisierter Adressat (Audit/Anzeige). |
-| **Soll/Ist (§7):** | | |
-| `advance_payments_total` | `NUMERIC(14,2) NULL` | Summe der vom Mieter geleisteten NK-Vorauszahlungen im Zeitraum — **in M3 manuell erfassbar** (M6 ersetzt das durch echte `Payment`-Summe). |
-| `advance_payments_source` | `String(12) NOT NULL DEFAULT 'MANUAL'` | `MANUAL` (M3) \| `DERIVED` (M6, aus Zahlungen). CHECK. Macht die Herkunft prüffest. |
-| `total_cost` | `NUMERIC(14,2) NULL` | Summe der umgelegten Soll-Anteile (redundanter Kopf-Wert; muss == Σ `settlement_line.amount` der Soll-Zeilen). |
-| `balance` | `NUMERIC(14,2) NULL` | `total_cost − advance_payments_total`; > 0 = Nachzahlung, < 0 = Guthaben (§7). |
-| **Snapshot/Unveränderbarkeit (ADR-0003):** | | |
-| `status` | `String(12) NOT NULL DEFAULT 'draft'` | `draft` \| `finalized`. CHECK. Einfrier-Bedingung: `finalized`. |
-| `snapshot_payload` | `JSONB NULL` | **kanonische, vollständige** Berechnungsbasis + Ergebnis (§1.7). NULL im frischen `draft` vor erstem Rechnen; gesetzt ab erstem Rechnen; eingefroren ab `finalized`. |
-| `snapshot_sha256` | `String(64) NULL` | SHA-256 über die **kanonische** JSON-Serialisierung von `snapshot_payload` (§1.8). Gesetzt bei `finalize`. Tamper-Evidenz. |
-| `engine_version` | `String(20) NOT NULL` | Version der Engine-Logik (z. B. `m3.1.0`), die den Snapshot erzeugt hat — Reproduzierbarkeit über Code-Änderungen hinweg. |
-| `finalized_at` | `TIMESTAMPTZ NULL` | Zeitpunkt der Finalisierung. |
-| `finalized_by` | `UUID NULL` FK→`user` (`SET NULL`) | Wer finalisiert hat (Audit). |
-| `superseded_by_id` | `UUID NULL` FK self (`RESTRICT`) | bei Storno/Neuberechnung: zeigt auf den Nachfolge-Lauf (Korrekturkette, §1.6 — **Vorwärts**-Zeiger wie `cost_entry`, E-4-Konvention). |
-| `created_at`/`updated_at` | `TIMESTAMPTZ` | wie überall. |
+| `property_id` | `UUID NOT NULL` FK→`property` (`RESTRICT`) | Property reference. |
+| `management_mandate_id` | `UUID NULL` FK→`management_mandate` (`RESTRICT`) | Mandate reference (anchor for segregation of funds (Vermögenstrennung), architecture.md §2.6). |
+| `run_type` | `String(24) NOT NULL` | `BK_MIETER` (M3) among others (§1.3). CHECK. |
+| `period_start` | `DATE NOT NULL` | Start of settlement period (mandatory BGH disclosure, §8). |
+| `period_end` | `DATE NOT NULL` | End of settlement period. `CHECK (period_end >= period_start)`. |
+| **Addressee (BK: exactly one tenant/lease):** | | |
+| `unit_id` | `UUID NULL` FK→`unit` (`RESTRICT`) | for `BK_MIETER`: the settled unit. NULL for property-wide runs (M4). |
+| `lease_agreement_id` | `UUID NULL` FK→`lease_agreement` (`RESTRICT`) | for `BK_MIETER`: the settled lease/addressee. *(Multiple leases of the same unit in the period → multiple `settlement_run`s or one run with multiple addressees — see [DECISION] 1.5.)* |
+| `tenant_profile_id` | `UUID NULL` FK→`tenant_profile` (`RESTRICT`) | denormalized addressee (audit/display). |
+| **Expected/actual (Soll/Ist) (§7):** | | |
+| `advance_payments_total` | `NUMERIC(14,2) NULL` | Sum of the operating cost advance payments made by the tenant in the period — **manually capturable in M3** (M6 replaces this with the real `Payment` sum). |
+| `advance_payments_source` | `String(12) NOT NULL DEFAULT 'MANUAL'` | `MANUAL` (M3) \| `DERIVED` (M6, from payments). CHECK. Makes the origin audit-proof. |
+| `total_cost` | `NUMERIC(14,2) NULL` | Sum of the apportioned expected shares (redundant header value; must be == Σ `settlement_line.amount` of the expected lines). |
+| `balance` | `NUMERIC(14,2) NULL` | `total_cost − advance_payments_total`; > 0 = additional payment due, < 0 = credit (§7). |
+| **Snapshot/immutability (ADR-0003):** | | |
+| `status` | `String(12) NOT NULL DEFAULT 'draft'` | `draft` \| `finalized`. CHECK. Freeze condition: `finalized`. |
+| `snapshot_payload` | `JSONB NULL` | **Canonical, complete** calculation basis + result (§1.7). NULL in a fresh `draft` before the first calculation; set from the first calculation; frozen from `finalized`. |
+| `snapshot_sha256` | `String(64) NULL` | SHA-256 over the **canonical** JSON serialization of `snapshot_payload` (§1.8). Set at `finalize`. Tamper evidence. |
+| `engine_version` | `String(20) NOT NULL` | Version of the engine logic (e.g., `m3.1.0`) that produced the snapshot — reproducibility across code changes. |
+| `finalized_at` | `TIMESTAMPTZ NULL` | Time of finalization. |
+| `finalized_by` | `UUID NULL` FK→`user` (`SET NULL`) | Who finalized (audit). |
+| `superseded_by_id` | `UUID NULL` FK self (`RESTRICT`) | on cancellation/recalculation: points to the successor run (correction chain, §1.6 — **forward** pointer like `cost_entry`, E-4 convention). |
+| `created_at`/`updated_at` | `TIMESTAMPTZ` | as everywhere. |
 
-Constraints: `CHECK (period_end >= period_start)`; `CHECK (run_type IN (...))`; `CHECK (status IN ('draft','finalized'))`; `CHECK (advance_payments_source IN ('MANUAL','DERIVED'))`. **RLS** vier Policies (analog `0007`). Indizes: `organization_id`; `property_id`; `(organization_id, run_type, status)`; `(property_id, period_start, period_end)`; `lease_agreement_id`; `superseded_by_id`.
+Constraints: `CHECK (period_end >= period_start)`; `CHECK (run_type IN (...))`; `CHECK (status IN ('draft','finalized'))`; `CHECK (advance_payments_source IN ('MANUAL','DERIVED'))`. **RLS** four policies (analogous to `0007`). Indexes: `organization_id`; `property_id`; `(organization_id, run_type, status)`; `(property_id, period_start, period_end)`; `lease_agreement_id`; `superseded_by_id`.
 
-### 1.5 Schema `settlement_line` (gehört zum Snapshot des Laufs)
+### 1.5 Schema `settlement_line` (belongs to the run's snapshot)
 
-Eine `settlement_line` ist **eine ausgewiesene Position** der Abrechnung: i. d. R. eine Kostenart (Gesamtkosten + Schlüssel + Mieteranteil), plus Sonderzeilen (Vorauszahlung, Saldo). Sie trägt **alle BGH-Pflichtangaben je Position** (§8) strukturiert — nicht nur den Endbetrag —, damit PDF und maschinelle Prüfung vollständig sind.
+A `settlement_line` is **one reported item** of the settlement: usually one cost category (total costs + key + tenant share), plus special lines (advance payment, balance). It carries **all mandatory BGH disclosures per item** (§8) in structured form — not just the final amount — so that the PDF and machine verification are complete.
 
-| Spalte | Typ | Bedeutung |
+| Column | Type | Meaning |
 | --- | --- | --- |
 | `id` | `UUID` PK | |
 | `organization_id` | `UUID NOT NULL` FK→`organization` (`RESTRICT`) | I1, RLS. |
-| `settlement_run_id` | `UUID NOT NULL` FK→`settlement_run` (`RESTRICT`) | Zugehörigkeit. |
-| `line_type` | `String(20) NOT NULL` | `COST` (Kostenart) \| `ADVANCE_PAYMENT` (Vorauszahlungs-Abzug) \| `BALANCE` (Nachzahlung/Guthaben) \| `SUBTOTAL` (optional, z. B. Σ umlagefähig). CHECK. |
-| `cost_category_id` | `UUID NULL` FK→`cost_category` (`RESTRICT`) | bei `COST`: die Kostenart. |
-| `cost_category_code` | `String(50) NULL` | denormalisiert (prüffest, unabhängig von Plan-Versionen). |
-| `label` | `String(255) NOT NULL` | Anzeigename der Zeile. |
-| `distribution_key` | `String(20) NULL` | **angewandter** Verteilerschlüssel (BGH-Pflicht: „Umlageschlüssel je Position"). CHECK gegen §8-Vokabular. |
-| `total_amount` | `NUMERIC(14,2) NULL` | **Gesamtkosten der Kostenart** im Zeitraum (BGH-Pflicht), vor Verteilung. |
-| `distribution_base_total` | `NUMERIC(12,6) NULL` | Nenner des Schlüssels (z. B. Gesamt-Wohnfläche, Gesamt-MEA, Summe Verbrauch) — macht den Rechenweg nachvollziehbar. |
-| `distribution_base_share` | `NUMERIC(12,6) NULL` | Zähler des Adressaten (z. B. seine Wohnfläche/sein Verbrauch). |
-| `time_share_days` | `INTEGER NULL` | belegte Tage (ADR-0004) — für unterjährige Positionen. |
-| `time_share_total_days` | `INTEGER NULL` | Tage des Leistungszeitraums (Nenner der Zeitanteilung). |
-| `amount` | `NUMERIC(14,2) NOT NULL` | **der dem Adressaten zugerechnete, gerundete Betrag** (ADR-0005). Bei `BALANCE` das Saldo (Vorzeichen). |
-| `sort_order` | `SMALLINT NOT NULL DEFAULT 0` | feste Reihenfolge im PDF. |
-| `note` | `String(500) NULL` | Hinweis (z. B. „extern abgerechnet", „nur Mieteranteil CO2", „zeitanteilig 73/365 Tage"). |
+| `settlement_run_id` | `UUID NOT NULL` FK→`settlement_run` (`RESTRICT`) | Membership. |
+| `line_type` | `String(20) NOT NULL` | `COST` (cost category) \| `ADVANCE_PAYMENT` (advance payment deduction) \| `BALANCE` (additional payment/credit) \| `SUBTOTAL` (optional, e.g., Σ apportionable). CHECK. |
+| `cost_category_id` | `UUID NULL` FK→`cost_category` (`RESTRICT`) | for `COST`: the cost category. |
+| `cost_category_code` | `String(50) NULL` | denormalized (audit-proof, independent of plan versions). |
+| `label` | `String(255) NOT NULL` | Display name of the line. |
+| `distribution_key` | `String(20) NULL` | **Applied** distribution key (BGH requirement: "apportionment key per item"). CHECK against the §8 vocabulary. |
+| `total_amount` | `NUMERIC(14,2) NULL` | **Total costs of the cost category** in the period (BGH requirement), before distribution. |
+| `distribution_base_total` | `NUMERIC(12,6) NULL` | Denominator of the key (e.g., total living area, total MEA, sum of consumption) — makes the calculation path traceable. |
+| `distribution_base_share` | `NUMERIC(12,6) NULL` | Numerator of the addressee (e.g., their living area/their consumption). |
+| `time_share_days` | `INTEGER NULL` | occupied days (ADR-0004) — for intra-year items. |
+| `time_share_total_days` | `INTEGER NULL` | Days of the service period (denominator of the time apportionment). |
+| `amount` | `NUMERIC(14,2) NOT NULL` | **The rounded amount attributed to the addressee** (ADR-0005). For `BALANCE` the balance (signed). |
+| `sort_order` | `SMALLINT NOT NULL DEFAULT 0` | fixed order in the PDF. |
+| `note` | `String(500) NULL` | Note (e.g., "extern abgerechnet" (settled externally), "nur Mieteranteil CO2" (tenant share of CO2 only), "zeitanteilig 73/365 Tage" (pro rata 73/365 days)). |
 | `created_at` | `TIMESTAMPTZ` | |
 
-Constraints: `CHECK (line_type IN (...))`; `CHECK (distribution_key IS NULL OR distribution_key IN (...))`. **RLS** vier Policies. Indizes: `organization_id`; `settlement_run_id`; `(settlement_run_id, sort_order)`.
+Constraints: `CHECK (line_type IN (...))`; `CHECK (distribution_key IS NULL OR distribution_key IN (...))`. **RLS** four policies. Indexes: `organization_id`; `settlement_run_id`; `(settlement_run_id, sort_order)`.
 
-> **Doppelte Wahrheit, bewusst:** `settlement_line` ist die **relationale, abfragbare** Form des Ergebnisses; `snapshot_payload` (JSONB am Run) ist die **kanonische, gehashte** Form. Beide entstehen in derselben `finalize`-Transaktion aus **demselben** Engine-Ergebnis. Ein Test (§9, Invariante) prüft, dass sie konsistent sind (Σ `settlement_line` == Payload-Summen). Begründung: `settlement_line` trägt das PDF und Reporting komfortabel; der Payload-Hash trägt die Unveränderbarkeits-Garantie. Die `settlement_line`-Zeilen eines `finalized`-Laufs sind über denselben ADR-0003-Trigger gegen Mutation gesperrt (Einfrier-Bedingung am Lauf; siehe 1.6).
+> **Double truth, deliberately:** `settlement_line` is the **relational, queryable** form of the result; `snapshot_payload` (JSONB on the run) is the **canonical, hashed** form. Both are produced in the same `finalize` transaction from the **same** engine result. A test (§9, invariant) verifies that they are consistent (Σ `settlement_line` == payload totals). Rationale: `settlement_line` conveniently supports the PDF and reporting; the payload hash carries the immutability guarantee. The `settlement_line` rows of a `finalized` run are locked against mutation by the same ADR-0003 trigger (freeze condition on the run; see 1.6).
 
-### 1.6 Unveränderbarkeit via ADR-0003 (wiederverwendetes Muster, keine neue Mechanik)
+### 1.6 Immutability via ADR-0003 (reused pattern, no new mechanism)
 
-ADR-0003 §3 hat `settlement_run`/`settlement_line` bereits für „dieselbe Trigger-Mechanik mit Einfrier-Bedingung `status='finalized'`" **vorgemerkt**. M3 löst das ein, ohne etwas Neues zu erfinden:
+ADR-0003 §3 has already **earmarked** `settlement_run`/`settlement_line` for "the same trigger mechanism with freeze condition `status='finalized'`". M3 redeems this without inventing anything new:
 
-- **`settlement_run`** (Einfrier-Bedingung `OLD.status = 'finalized'`): `BEFORE UPDATE/DELETE`-Trigger im Muster von `trg_cost_entry_immutability` (Migration `0008`). Inhaltstragende Spalten (alle außer `superseded_by_id`, `updated_at`) sind nach `finalized` per `IS DISTINCT FROM` gesperrt; **einzige** erlaubte Änderung ist das Setzen von `superseded_by_id` (Storno-/Neuberechnungskette, analog `cost_entry` E-4). DELETE eines `finalized`-Laufs → immer Exception. `draft`-Läufe sind frei editier-/löschbar (Neuberechnung).
-- **`settlement_line`** (Einfrier-Bedingung: der **Eltern-Lauf** ist `finalized`): Der Trigger prüft via `SELECT status FROM settlement_run WHERE id = OLD.settlement_run_id`. Ist der Lauf `finalized`, ist **jede** Zeilenänderung/-löschung verboten (eine finalisierte Abrechnung hat keine „erlaubte" Zeilenmutation — Korrektur = neuer Lauf). Solange der Lauf `draft` ist, sind Zeilen frei (Neuberechnung ersetzt sie).
-- **Grant-Backstop:** `settlement_line` bekommt **kein DELETE-Grant** für `app_rw` ist *nicht* sinnvoll, weil `draft`-Neuberechnung Zeilen löschen muss. Daher: volles CRUD-Grant + Trigger als alleinige statusabhängige Sperre (wie `cost_entry`, nicht wie `invoice_document`). **[ENTSCHEIDUNG]** bestätigen: `settlement_run`/`settlement_line` = Trigger-only (kein Grant-Entzug), weil beide einen editierbaren `draft`-Zustand haben.
+- **`settlement_run`** (freeze condition `OLD.status = 'finalized'`): `BEFORE UPDATE/DELETE` trigger following the pattern of `trg_cost_entry_immutability` (migration `0008`). Content-bearing columns (all except `superseded_by_id`, `updated_at`) are locked after `finalized` via `IS DISTINCT FROM`; the **only** permitted change is setting `superseded_by_id` (cancellation/recalculation chain, analogous to `cost_entry` E-4). DELETE of a `finalized` run → always an exception. `draft` runs are freely editable/deletable (recalculation).
+- **`settlement_line`** (freeze condition: the **parent run** is `finalized`): The trigger checks via `SELECT status FROM settlement_run WHERE id = OLD.settlement_run_id`. If the run is `finalized`, **any** row change/deletion is forbidden (a finalized settlement has no "permitted" row mutation — correction = new run). While the run is `draft`, rows are free (recalculation replaces them).
+- **Grant backstop:** Giving `settlement_line` **no DELETE grant** for `app_rw` is *not* sensible, because `draft` recalculation must delete rows. Therefore: full CRUD grant + trigger as the sole status-dependent lock (like `cost_entry`, not like `invoice_document`). **[DECISION]** confirm: `settlement_run`/`settlement_line` = trigger-only (no grant revocation), because both have an editable `draft` state.
 
-**Korrektur einer finalisierten Abrechnung = neuer Lauf (Storno/Neu):** Eine versendete, falsche BK-Abrechnung wird **nicht** geändert. Es entsteht ein neuer `settlement_run` (neue Berechnung), der alte wird über `superseded_by_id` darauf verwiesen und bleibt unverändert erhalten (GoBD, SDD §14). Ob die Korrektur fachlich als „Storno + Neu" oder „korrigierte Zweitabrechnung" auftritt, ist eine M-spätere/fachliche Frage; das **Modell** trägt beides über die Kette.
+**Correcting a finalized settlement = new run (cancellation/new):** A sent, incorrect operating cost statement is **not** changed. A new `settlement_run` (new calculation) is created; the old one is pointed at it via `superseded_by_id` and remains preserved unchanged (GoBD, SDD §14). Whether the correction appears professionally as "cancellation + new" or "corrected second settlement" is a later/professional question; the **model** supports both via the chain.
 
-### 1.7 Inhalt des `snapshot_payload` (kanonisch, vollständig, selbsterklärend)
+### 1.7 Content of the `snapshot_payload` (canonical, complete, self-explanatory)
 
-Der Payload muss **alles** enthalten, was nötig ist, um die Abrechnung **ohne Rückgriff auf veränderliche Stammdaten** zu reproduzieren und nachzuvollziehen. Struktur (konzeptuell; exakte Keys in der Implementierung fixiert und versioniert über `engine_version`):
+The payload must contain **everything** needed to reproduce and trace the settlement **without recourse to mutable master data**. Structure (conceptual; exact keys fixed in the implementation and versioned via `engine_version`):
 
 ```jsonc
 {
@@ -157,7 +157,7 @@ Der Payload muss **alles** enthalten, was nötig ist, um die Abrechnung **ohne R
   "addressee": { "lease_agreement_id": "...", "unit_id": "...", "unit_number": "3",
                  "tenant_name": "...", "lease_periods_in_scope": [ {"from": "...", "to": "..."} ] },
   "inputs": {
-    // EINGEFRORENE Kopien aller verwendeten Stammdaten/Kosten -- nicht nur IDs:
+    // FROZEN copies of all master data/costs used -- not just IDs:
     "units": [ { "id": "...", "number": "...", "area": "75.00", "heated_area": "70.00",
                  "mea": "210.500000", "usage_type": "WOHNUNG" }, ... ],
     "lease_periods": [ { "unit_id": "...", "from": "...", "to": "...", "advance_payment": "150.00" }, ... ],
@@ -165,13 +165,13 @@ Der Payload muss **alles** enthalten, was nötig ist, um die Abrechnung **ohne R
     "cost_entries": [ { "id": "...", "category_code": "GRUNDSTEUER", "gross_amount": "1200.00",
                         "service_period": {"from":"...","to":"..."}, "tenant_distribution_key": "WOHNFLAECHE",
                         "tenant_apportionable": "UMLAGEFAEHIG", "apportionable_tenant_amount": null }, ... ],
-    "consumption_readings": [ ... ],     // bei VERBRAUCH-Schlüssel
-    "external_amounts": [ ... ],         // bei EXTERNE_ABRECHNUNG (Heizung/Wasser), per Einheit
+    "consumption_readings": [ ... ],     // for VERBRAUCH key
+    "external_amounts": [ ... ],         // for EXTERNE_ABRECHNUNG (heating/water), per unit
     "advance_payments_total": "1800.00",
     "advance_payments_source": "MANUAL"
   },
   "computation": [
-    // pro Kostenposition der vollständige Rechenweg:
+    // the complete calculation path per cost item:
     { "cost_entry_id": "...", "category_code": "GRUNDSTEUER",
       "total_amount": "1200.00", "distribution_key": "WOHNFLAECHE",
       "time_share": { "days": 365, "total_days": 365, "factor": "1" },
@@ -180,526 +180,520 @@ Der Payload muss **alles** enthalten, was nötig ist, um die Abrechnung **ohne R
       "largest_remainder_cent_applied": false }, ...
   ],
   "result": {
-    "lines": [ /* exakt die settlement_line-Inhalte */ ],
+    "lines": [ /* exactly the settlement_line contents */ ],
     "total_cost": "1450.00",
     "advance_payments_total": "1800.00",
-    "balance": "-350.00"    // Guthaben
+    "balance": "-350.00"    // credit
   }
 }
 ```
 
-Die Eingaben werden **als Kopie** eingefroren (nicht als Referenz), denn der Zweck des Snapshots ist gerade die Unabhängigkeit von späteren Stammdatenänderungen (§1.2). Co-Eigentum/`mea_share`, Gewerbe-Markierung etc. werden mitgeführt, soweit sie in die Rechnung eingehen.
+The inputs are frozen **as a copy** (not as a reference), because the very purpose of the snapshot is independence from later master-data changes (§1.2). Co-ownership/`mea_share`, commercial flag, etc. are carried along to the extent they enter the calculation.
 
-### 1.8 Kanonische Serialisierung & Hash (Determinismus ist Pflicht)
+### 1.8 Canonical serialization & hash (determinism is mandatory)
 
-Damit `snapshot_sha256` reproduzierbar und damit als Tamper-Evidenz brauchbar ist, muss die JSON-Serialisierung **kanonisch** sein:
+For `snapshot_sha256` to be reproducible and thus usable as tamper evidence, the JSON serialization must be **canonical**:
 
-- Schlüssel **sortiert**, fester Separator, kein Whitespace-Drift; UTF-8.
-- Geld/Quoten als **String** im Payload (z. B. `"300.00"`, `"210.500000"`), **nie** als JSON-`number` (Float-Drift vermeiden) — feste Skala je Feldtyp.
-- Datums-/Zeitwerte als ISO-Strings (Daten als `YYYY-MM-DD`).
-- Reihenfolge von Listen deterministisch (stabil sortiert nach IDs).
+- Keys **sorted**, fixed separator, no whitespace drift; UTF-8.
+- Money/shares as **strings** in the payload (e.g., `"300.00"`, `"210.500000"`), **never** as a JSON `number` (avoid float drift) — fixed scale per field type.
+- Date/time values as ISO strings (dates as `YYYY-MM-DD`).
+- Order of lists deterministic (stably sorted by IDs).
 
-Der Hash wird über genau diese kanonische Bytes-Repräsentation gebildet (eine Hilfsfunktion `canonical_json(payload) -> bytes`, wiederverwendbar für M4 und für den optionalen `audit_event`-Hash-Chain, m2 §6). **Determinismus-Test** (§9): zweimaliges Finalisieren derselben `draft`-Eingaben erzeugt denselben Hash (ADR-0005 garantiert die deterministische Rundung, die das ermöglicht).
+The hash is formed over exactly this canonical byte representation (a helper function `canonical_json(payload) -> bytes`, reusable for M4 and for the optional `audit_event` hash chain, m2 §6). **Determinism test** (§9): finalizing the same `draft` inputs twice produces the same hash (ADR-0005 guarantees the deterministic rounding that makes this possible).
 
 ---
 
-## 2. Verteilungs-Algorithmus — Mathematik je Verteilerschlüssel
+## 2. Distribution algorithm — mathematics per distribution key
 
-Alle acht Schlüssel sind in `cost_entry.tenant_distribution_key` (M2, SDD §8) als kontrolliertes Vokabular hinterlegt: `MEA · WOHNFLAECHE · BEHEIZTE_FLAECHE · EINHEIT · PERSONENZAHL · VERBRAUCH · EXTERNE_ABRECHNUNG · MANUELLER_BETRAG`. M2 speichert nur die *Auswahl*; **M3 definiert die Semantik** (wie verteilt wird). Eigentümer- und Mieterabrechnung können je Kostenposition **unterschiedliche** Schlüssel tragen (SDD §8); M3 verwendet für die BK-Abrechnung den **`tenant_distribution_key`** und die **`tenant_apportionable`**-Sphäre (§6); M4 verwendet später `owner_distribution_key`.
+All eight keys are stored in `cost_entry.tenant_distribution_key` (M2, SDD §8) as a controlled vocabulary: `MEA · WOHNFLAECHE · BEHEIZTE_FLAECHE · EINHEIT · PERSONENZAHL · VERBRAUCH · EXTERNE_ABRECHNUNG · MANUELLER_BETRAG`. M2 stores only the *selection*; **M3 defines the semantics** (how distribution works). Owner and tenant settlements may carry **different** keys per cost item (SDD §8); for the BK statement M3 uses the **`tenant_distribution_key`** and the **`tenant_apportionable`** sphere (§6); M4 will later use `owner_distribution_key`.
 
-### 2.1 Gemeinsames Grundprinzip (Gewichtsvektor → zentrale Verteilungsfunktion)
+### 2.1 Common basic principle (weight vector → central distribution function)
 
-Jeder Schlüssel reduziert sich auf **einen Gewichtsvektor** `wᵢ ≥ 0` über die am Schlüssel teilnehmenden Einheiten/Adressaten. Der zu verteilende Gesamtbetrag `G` wird dann **immer** über die **eine** zentrale Funktion `distribute_amount(G, [w₁..wₙ])` (ADR-0005, Largest-Remainder) verteilt. Damit ist die Verteilungsmathematik **eine** Funktion plus „wie berechne ich den Gewichtsvektor" je Schlüssel:
+Every key reduces to **a weight vector** `wᵢ ≥ 0` over the units/addressees participating in the key. The total amount `G` to be distributed is then **always** distributed via the **one** central function `distribute_amount(G, [w₁..wₙ])` (ADR-0005, largest remainder). The distribution mathematics is thus **one** function plus "how do I compute the weight vector" per key:
 
-| Schlüssel | Gewicht `wᵢ` je Einheit i | Nenner `Σw` | Quelle |
+| Key | Weight `wᵢ` per unit i | Denominator `Σw` | Source |
 | --- | --- | --- | --- |
-| `MEA` | `unit.mea` (bzw. `ownership_history.mea_share` bei Co-Eigentum) | Σ MEA aller teilnehmenden Einheiten | M1 `unit`/`ownership_history` |
-| `WOHNFLAECHE` | `unit.area` | Σ Flächen | M1 `unit.area` |
-| `BEHEIZTE_FLAECHE` | `unit.heated_area` | Σ beheizte Flächen | M1 `unit.heated_area` |
-| `EINHEIT` | `1` je teilnehmender Einheit (Pro-Kopf-der-Einheiten) | Anzahl Einheiten | abgeleitet |
-| `PERSONENZAHL` | Personenzahl der Einheit im Zeitraum | Σ Personen | **[OFFEN/§18]** Datenquelle (s. 2.3) |
-| `VERBRAUCH` | abgelesener Verbrauch der Einheit (`meter_reading`-Differenz) | Σ Verbrauch | M1 `meter`/`meter_reading` |
-| `EXTERNE_ABRECHNUNG` | — (kein Gewicht; **direkter** per-Einheit-Betrag) | — | externe Werte (§5) |
-| `MANUELLER_BETRAG` | — (kein Gewicht; **direkter** per-Einheit-Betrag) | — | manuelle Eingabe |
+| `MEA` | `unit.mea` (or `ownership_history.mea_share` for co-ownership) | Σ MEA of all participating units | M1 `unit`/`ownership_history` |
+| `WOHNFLAECHE` | `unit.area` | Σ areas | M1 `unit.area` |
+| `BEHEIZTE_FLAECHE` | `unit.heated_area` | Σ heated areas | M1 `unit.heated_area` |
+| `EINHEIT` | `1` per participating unit (per-unit head count) | Number of units | derived |
+| `PERSONENZAHL` | Number of persons in the unit in the period | Σ persons | **[OPEN/§18]** data source (see 2.3) |
+| `VERBRAUCH` | Measured consumption of the unit (`meter_reading` difference) | Σ consumption | M1 `meter`/`meter_reading` |
+| `EXTERNE_ABRECHNUNG` | — (no weight; **direct** per-unit amount) | — | external values (§5) |
+| `MANUELLER_BETRAG` | — (no weight; **direct** per-unit amount) | — | manual input |
 
-### 2.2 Flächen-/MEA-/Einheit-Schlüssel (gewichtete Verteilung)
+### 2.2 Area/MEA/unit keys (weighted distribution)
 
-`MEA`, `WOHNFLAECHE`, `BEHEIZTE_FLAECHE`, `EINHEIT` sind reine **gewichtete** Verteilungen:
+`MEA`, `WOHNFLAECHE`, `BEHEIZTE_FLAECHE`, `EINHEIT` are pure **weighted** distributions:
 
 ```
-Anteil_Einheit_i (exakt) = G * wᵢ / Σw          (Decimal, ungerundet)
-→ distribute_amount(G, [wᵢ]) liefert die gerundeten, summengenauen Cent-Beträge (ADR-0005).
+unit_share_i (exact) = G * wᵢ / Σw          (Decimal, unrounded)
+→ distribute_amount(G, [wᵢ]) yields the rounded, sum-exact cent amounts (ADR-0005).
 ```
 
-- **Nenner = Summe der teilnehmenden Einheiten**, nicht „alle Einheiten des Objekts blind". Wer „teilnimmt", folgt aus der Kostenposition und der Abrechnungssphäre (z. B. Stellplätze ohne Wohnfläche nehmen an einem Wohnflächen-Schlüssel mit Gewicht 0 nicht teil; eine Gewerbeeinheit kann je nach Vorwegabzug **[OFFEN/§18]**, §6.3, ausgenommen sein).
-- **Fehlende Basisgröße** (`area`/`mea` ist NULL) bei einer teilnehmenden Einheit → **harter Fehler/Eskalation**, **keine** stille 0 (das würde Kosten unbemerkt umverteilen). Die Engine validiert vor dem Rechnen (§2.6).
-- **MEA bei Co-Eigentum:** Nimmt eine Einheit mit mehreren Bruchteilseigentümern teil (`ownership_history.mea_share`), wird für die **Eigentümer**sphäre (M4) nach `mea_share` weiter aufgeteilt. Für die **Mieter-BK** (M3) ist der Adressat der Mieter der Einheit; die MEA der Einheit ist deren Gewicht (Bruchteilseigentum ist hier irrelevant, weil der Mieter die ganze Einheit nutzt).
+- **Denominator = sum of the participating units**, not "all units of the property blindly". Who "participates" follows from the cost item and the settlement sphere (e.g., parking spaces without living area do not participate in a living-area key, having weight 0; a commercial unit may be excluded depending on the advance deduction (Vorwegabzug) **[OPEN/§18]**, §6.3).
+- **Missing base quantity** (`area`/`mea` is NULL) for a participating unit → **hard error/escalation**, **no** silent 0 (that would redistribute costs unnoticed). The engine validates before calculating (§2.6).
+- **MEA with co-ownership:** If a unit with multiple fractional owners participates (`ownership_history.mea_share`), the **owner** sphere (M4) is split further by `mea_share`. For the **tenant BK** (M3), the addressee is the unit's tenant; the unit's MEA is its weight (fractional ownership is irrelevant here, because the tenant uses the whole unit).
 
-### 2.3 `PERSONENZAHL` — Schlüssel definiert, Datenquelle offen
+### 2.3 `PERSONENZAHL` — key defined, data source open
 
-Die Verteilungsmathematik ist identisch zu 2.2 (Gewicht = Personenzahl der Einheit). **[OFFEN/§18]** ist die **Datenquelle**: M1 modelliert keine zeitabhängige Personenzahl je Einheit/Lease. Optionen: (a) Feld am `lease_agreement` (Personenzahl, ggf. mit eigener kleiner Historie bei unterjähriger Änderung), (b) eigene kleine temporale Tabelle. **Provisorische Annahme für M3-Testfälle:** Personenzahl ist ein per-Lease-Wert (konstant über die Lease-Periode); unterjährige Änderung der Personenzahl wird in M3 **nicht** abgebildet. Klar als Annahme markiert; fachliche/Produkt-Klärung vor produktivem Personenschlüssel. Die Engine nimmt die Personenzahl als **Eingabe** entgegen (reine Funktion), sodass die Datenquellen-Entscheidung die Engine nicht berührt.
+The distribution mathematics is identical to 2.2 (weight = number of persons in the unit). **[OPEN/§18]** is the **data source**: M1 does not model a time-dependent number of persons per unit/lease. Options: (a) a field on `lease_agreement` (number of persons, possibly with its own small history for intra-year changes), (b) a dedicated small temporal table. **Provisional assumption for M3 test cases:** the number of persons is a per-lease value (constant over the lease period); intra-year changes in the number of persons are **not** represented in M3. Clearly marked as an assumption; professional/product clarification before a productive person-count key. The engine accepts the number of persons as **input** (pure function), so the data-source decision does not touch the engine.
 
-### 2.4 `VERBRAUCH` (verbrauchsabhängig)
+### 2.4 `VERBRAUCH` (consumption-based)
 
-Gewicht = gemessener Verbrauch der Einheit im Abrechnungszeitraum, ermittelt aus `meter`/`meter_reading` (M1: Datum, Stand, Periode) als **Differenz** (Endstand − Anfangsstand) der relevanten Periode. Mathematik wie 2.2 (Gewicht = Verbrauchsmenge). Besonderheiten:
+Weight = measured consumption of the unit in the settlement period, determined from `meter`/`meter_reading` (M1: date, reading, period) as the **difference** (end reading − start reading) of the relevant period. Mathematics as in 2.2 (weight = consumption quantity). Special cases:
 
-- **Zählertausch / fehlende Ablesung** im Zeitraum: **[OFFEN/§18]** — Schätzung/Ersatzverfahren ist fachlich (HeizkostenV-/Messdienst-Logik) und in M3 **nicht** automatisch. Provisorisch: Die Engine verlangt für `VERBRAUCH` vollständige, plausible Anfangs-/Endablesungen je teilnehmender Einheit; fehlt etwas → Eskalation, keine stille Schätzung.
-- **Heizung/Warmwasser** laufen in Phase 1 **nicht** über den `VERBRAUCH`-Schlüssel, sondern über `EXTERNE_ABRECHNUNG` (extern HeizkostenV-konform erstellt, SDD §6.9/§7.1, §5 dieses Dokuments). `VERBRAUCH` ist für eigene Zähler (z. B. Kaltwasser) gedacht, die das System selbst führt (SDD §6.2.1).
+- **Meter replacement / missing reading** in the period: **[OPEN/§18]** — estimation/substitute procedure is a professional matter (HeizkostenV/metering-service logic) and **not** automatic in M3. Provisionally: for `VERBRAUCH`, the engine requires complete, plausible start/end readings for each participating unit; if anything is missing → escalation, no silent estimation.
+- **Heating/hot water** do **not** run through the `VERBRAUCH` key in phase 1, but through `EXTERNE_ABRECHNUNG` (prepared externally in compliance with HeizkostenV, SDD §6.9/§7.1, §5 of this document). `VERBRAUCH` is intended for own meters (e.g., cold water) that the system maintains itself (SDD §6.2.1).
 
-#### Periodische Zählervorbelegung seit Phase 2 (T31)
+#### Periodic meter prefill since phase 2 (T31)
 
-Ohne expliziten Handwert wird je Einheit der eindeutig nächste Anfangs- und
-Endstand innerhalb jeweils ±31 Tagen verwendet. Die Differenz bleibt exakt auf
-vier Dezimalstellen; es gibt weder Interpolation noch Rundung auf ganze Einheiten.
-Gleichabstand, doppelte nächste Ablesungen, identische/verkehrte Ablesetage oder
-Rückgänge verlangen Handeingabe. Automatik erfordert genau einen passenden
-Einheitszähler (`meter_type`, getrimmt/großgeschrieben, gleich Kostenkategoriecode)
-und eine einzige relevante Verbrauchsart. Mehrere mögliche Austauschzähler,
-Gemeinschaftszähler und verschiedene Verbrauchskategorien werden nicht still
-kombiniert. Eine fehlende Einheit darf nicht aus dem Verteilungsnenner verschwinden.
+Without an explicit manual value, the unambiguously nearest start and end reading within
+±31 days each is used per unit. The difference stays exact to four decimal places; there
+is neither interpolation nor rounding to whole units. Equidistance, duplicate nearest
+readings, identical/reversed reading dates, or decreases require manual entry. The
+automatic path requires exactly one matching unit meter (`meter_type`, trimmed/uppercased,
+equal to the cost category code) and a single relevant consumption type. Multiple possible
+replacement meters, common-area meters, and different consumption categories are not
+silently combined. A missing unit must not disappear from the distribution denominator.
 
-Der Entwurfsabruf `GET /api/settlements/{id}/consumption-suggestions` verwendet
-READ-Kreisrechte mit vollständiger Quellen-/Klassifikationsprüfung. Die Oberfläche
-zeigt die tatsächlichen Stand-IDs, Daten und Werte; automatische Vorbelegungen
-werden nicht als manuelle Overrides zurückgesendet. Explizite Handwerte, auch 0,
-haben Vorrang. Compute und Finalize bestimmen die Basis unter der bestehenden
-Finanzsperre frisch. Nur tatsächlich automatisch verwendete Werte ergänzen
-`inputs.meter_consumption_sources` im Snapshot; reine Handwertsnapshots und alte
-finalisierte Abrechnungen bleiben unverändert. Finale Ansichten fragen keine
-aktuellen Vorschläge ab. Die vorhandenen Kosteneditoren konvertieren ihre
-UI-Auswahl über `costVocabulary` in kanonische DB-Schlüssel; Ergebniszeilen zeigen
-deren menschliche Bezeichnungen.
+The draft retrieval `GET /api/settlements/{id}/consumption-suggestions` uses READ scope
+permissions with a complete source/classification check. The UI shows the actual reading
+IDs, dates, and values; automatic prefills are not sent back as manual overrides. Explicit
+manual values, including 0, take precedence. Compute and Finalize determine the basis
+afresh under the existing financial lock. Only values actually used automatically are added
+to `inputs.meter_consumption_sources` in the snapshot; pure manual-value snapshots and old
+finalized settlements remain unchanged. Final views do not query current suggestions. The
+existing cost editors convert their UI selection into canonical DB keys via
+`costVocabulary`; result lines show their human-readable names.
 
-### 2.5 `EXTERNE_ABRECHNUNG` und `MANUELLER_BETRAG` (direkte per-Einheit-Beträge)
+### 2.5 `EXTERNE_ABRECHNUNG` and `MANUELLER_BETRAG` (direct per-unit amounts)
 
-Diese beiden Schlüssel **verteilen nicht** — sie übernehmen einen **bereits feststehenden Betrag je Einheit/Adressat**:
+These two keys **do not distribute** — they adopt an **already fixed amount per unit/addressee**:
 
-- `EXTERNE_ABRECHNUNG`: der Betrag stammt aus einer extern erstellten Abrechnung (Messdienst Heizung/Wasser), per Einheit (§5). Die Engine ordnet den Mieteranteil dem Adressaten direkt zu (keine Schlüssel-Verteilung). Bei Mieterwechsel innerhalb des Zeitraums: Der externe Messdienst liefert i. d. R. bereits **pro Nutzzeitraum** getrennte Werte (Zwischenablesung bei Auszug). **[OFFEN/§18]** wie diese pro-Mieter-Aufteilung exakt hereinkommt (§5); provisorisch: ein per-(Einheit, Nutzzeitraum)-Betrag.
-- `MANUELLER_BETRAG`: ein vom Sachbearbeiter bewusst je Einheit gesetzter Betrag (Sonderfall). Die Engine übernimmt ihn direkt.
-- **Invariante auch hier:** Bei einer per-Einheit-Verteilung muss die **Summe der per-Einheit-Beträge == Gesamtbetrag der Kostenposition** sein (Plausibilitätscheck, sonst Eskalation) — sonst wäre die ausgewiesene Gesamtsumme inkonsistent. Bei `EXTERNE_ABRECHNUNG` ist „der Gesamtbetrag" der Mieter-relevante Teil der externen Abrechnung (§5).
+- `EXTERNE_ABRECHNUNG`: the amount comes from an externally prepared settlement (metering service for heating/water), per unit (§5). The engine assigns the tenant share directly to the addressee (no key distribution). For a tenant change within the period: the external metering service usually already supplies values **separated per usage period** (interim reading on move-out). **[OPEN/§18]** how exactly this per-tenant split comes in (§5); provisionally: one per-(unit, usage period) amount.
+- `MANUELLER_BETRAG`: an amount deliberately set per unit by the case worker (special case). The engine adopts it directly.
+- **Invariant here too:** for a per-unit distribution, the **sum of the per-unit amounts must be == total amount of the cost item** (plausibility check, otherwise escalation) — otherwise the reported total would be inconsistent. For `EXTERNE_ABRECHNUNG`, "the total amount" is the tenant-relevant part of the external settlement (§5).
 
-### 2.6 Vorab-Validierung (vor jeder Berechnung — fail-loud)
+### 2.6 Up-front validation (before every calculation — fail-loud)
 
-Die Engine prüft **vor** dem Rechnen und **eskaliert** statt still Falsches zu produzieren:
+The engine checks **before** calculating and **escalates** instead of silently producing something wrong:
 
-1. Jeder zu verteilende `cost_entry` ist **aktiv & confirmed** (m2 §3.4) und liegt im Objekt; sein Leistungszeitraum **überlappt** den Abrechnungszeitraum (sonst gehört er nicht in diese Abrechnung).
-2. Für jeden gewichteten Schlüssel: alle teilnehmenden Einheiten haben die **nötige Basisgröße** (kein NULL bei `area`/`mea`/`heated_area`/Verbrauch); `Σw > 0`.
-3. Für per-Einheit-Schlüssel: Summe der Einheit-Beträge == Positions-Gesamtbetrag (±0 Cent).
-4. Mieterperioden + Leerstandsperioden decken den Abrechnungszeitraum je Einheit **lückenlos & überschneidungsfrei** ab (folgt aus M1-EXCLUDE; Engine prüft dennoch defensiv, §3.4).
-5. `tenant_apportionable`-Sphäre konsistent (kein `*_PRUEFEN` ohne bestimmten Mieteranteil, §6).
+1. Every `cost_entry` to be distributed is **active & confirmed** (m2 §3.4) and belongs to the property; its service period **overlaps** the settlement period (otherwise it does not belong in this settlement).
+2. For every weighted key: all participating units have the **required base quantity** (no NULL for `area`/`mea`/`heated_area`/consumption); `Σw > 0`.
+3. For per-unit keys: sum of the unit amounts == item total amount (±0 cents).
+4. Tenant periods + vacancy periods cover the settlement period per unit **without gaps & without overlaps** (follows from the M1 EXCLUDE; the engine nevertheless checks defensively, §3.4).
+5. `tenant_apportionable` sphere consistent (no `*_PRUEFEN` without a determined tenant share, §6).
 
-Verstöße → strukturierter Fehler mit Positions-/Einheit-Bezug (kein Teil-Snapshot). Die Engine ist hier bewusst **streng**: lieber eine klare Eskalation als eine plausibel aussehende, falsche Abrechnung.
+Violations → structured error with item/unit reference (no partial snapshot). The engine is deliberately **strict** here: better a clear escalation than a plausible-looking, wrong settlement.
 
 ---
 
-## 3. Anteilige Zeiträume (Kern-Korrektheit) — Mieterwechsel & Leerstand
+## 3. Pro rata periods (core correctness) — tenant change & vacancy
 
-Dies ist die schwierigste und prüfungskritischste Stelle (Roadmap: „BK-Abrechnung für ein Mischobjekt mit **Mieterwechsel**"). Sie verbindet drei Zeitachsen: den **Abrechnungszeitraum** (am `settlement_run`), den **Leistungszeitraum** je Kostenposition (`cost_entry`, M2) und die **Mieter-/Eigentümerperioden** je Einheit (`lease_agreement`/`ownership_history`, M1).
+This is the most difficult and audit-critical part (roadmap: "BK statement for a mixed-use property with **tenant change**"). It combines three time axes: the **settlement period** (on the `settlement_run`), the **service period** per cost item (`cost_entry`, M2), and the **tenant/owner periods** per unit (`lease_agreement`/`ownership_history`, M1).
 
-### 3.1 Maßstab: tagegenau (ADR-0004)
+### 3.1 Yardstick: day-accurate (ADR-0004)
 
-Verbindlich tagegenau, tag-inklusiv, exakt als `Decimal` (ADR-0004). Zeitanteil einer Periode an einer Kostenposition:
-
-```
-factor = tage(Leistungszeitraum ∩ Periode) / tage(Leistungszeitraum)
-       = (min(LZ.to, P.to) − max(LZ.from, P.from) + 1) / (LZ.to − LZ.from + 1)
-```
-
-(0, wenn keine Überschneidung). Summe der Faktoren aller lückenlos-überschneidungsfreien Perioden über den Leistungszeitraum = **exakt 1** (ADR-0004 Invariante).
-
-### 3.2 Zwei-Stufen-Verteilung: erst Zeit, dann Schlüssel — exakt verkettet
-
-Für eine Kostenposition, deren Leistungszeitraum sich mit mehreren Mieter-/Leerstandsperioden einer Einheit überschneidet, ist der dem **Adressaten** (= einem bestimmten Lease) zugerechnete **exakte** Betrag:
+Binding: day-accurate, day-inclusive, exactly as `Decimal` (ADR-0004). Time share of a period in a cost item:
 
 ```
-exakt_Adressat = G * (wᵢ / Σw)          // Schlüssel-Anteil der Einheit i
-                   * factor_Periode       // Zeitanteil der Adressaten-Periode an der Position
+factor = days(service_period ∩ period) / days(service_period)
+       = (min(SP.to, P.to) − max(SP.from, P.from) + 1) / (SP.to − SP.from + 1)
 ```
 
-Beide Faktoren werden **exakt** (ungerundet) verkettet; die **Largest-Remainder-Rundung greift einmal am Schluss** über alle finalen Adressaten-Beträge der Position (ADR-0005, Reihenfolge-Disziplin). Niemals zwischendurch runden.
+(0 if there is no overlap). The sum of the factors of all gap-free, overlap-free periods across the service period = **exactly 1** (ADR-0004 invariant).
 
-**Wichtig — Reihenfolge der Verteilungs-Universen:** Eine Kostenposition wird i. d. R. über **das ganze Objekt** verteilt (alle Einheiten nach Schlüssel), nicht nur über die abgerechnete Einheit. Für eine **einzelne** Mieter-BK (`BK_MIETER`, ein Lease) interessiert nur der Teil, der **dieser** Einheit und **dieser** Mieterperiode zufällt. Die Engine berechnet daher konzeptuell:
+### 3.2 Two-stage distribution: first time, then key — exactly chained
 
-1. **Schlüssel-Anteil der Einheit** an der Gesamtposition (Universum = alle teilnehmenden Einheiten des Objekts).
-2. **Zeit-Aufteilung dieses Einheit-Anteils** auf die Mieter-/Leerstandsperioden **innerhalb der Einheit** im Abrechnungszeitraum.
-3. Für die BK-Abrechnung wird **die** Periode des abgerechneten Leases herausgegriffen; Leerstandsperioden fallen dem **Eigentümer** zu (§3.3) und erscheinen nicht in der Mieter-BK.
+For a cost item whose service period overlaps several tenant/vacancy periods of a unit, the **exact** amount attributed to the **addressee** (= a specific lease) is:
 
-So bleibt die Verteilung über das ganze Objekt konsistent (Summe über alle Einheiten/Mieter/Leerstand = G), auch wenn nur eine Einheit abgerechnet wird.
+```
+exact_addressee = G * (wᵢ / Σw)            // key share of unit i
+                    * factor_period        // time share of the addressee period on the item
+```
 
-### 3.3 Leerstand → Eigentümer (SDD §6.9)
+Both factors are chained **exactly** (unrounded); the **largest-remainder rounding applies once at the end** across all final addressee amounts of the item (ADR-0005, order discipline). Never round in between.
 
-Eine **Lücke** zwischen zwei Leases einer Einheit (oder vor dem ersten / nach dem letzten Lease, innerhalb des Abrechnungszeitraums) ist **Leerstand**. Der auf Leerstandstage entfallende, zeitanteilige Kostenanteil der Einheit trägt der **Eigentümer** der Einheit in diesem Teilintervall (`ownership_history`):
+**Important — order of the distribution universes:** A cost item is usually distributed **across the whole property** (all units by key), not only across the settled unit. For a **single** tenant BK (`BK_MIETER`, one lease), only the part that falls to **this** unit and **this** tenant period is of interest. The engine therefore conceptually computes:
 
-- In der **Mieter-BK** (M3) erscheint der Leerstandsanteil **nicht** (der Mieter zahlt nur seine eigenen Tage).
-- Der Leerstandsanteil ist trotzdem **nicht verloren**: Er ist Teil der Gesamtverteilung (Summe über Mieter + Leerstand + andere Einheiten = G) und landet beim Eigentümer. In M3 wird er als **Eigentümer-Restposten** ausgewiesen/vorgehalten (im Payload als `vacancy_periods`-Zuordnung); die *Belastung* des Eigentümers ist Gegenstand der WEG-/Eigentümerabrechnung (M4) bzw. der Mietobjekt-Eigentümersicht. M3 stellt sicher, dass **kein Cent durch Leerstand verschwindet** (Invariante, §9).
-- **Property-based-Invariante (§9):** „Leerstandsanteil landet beim Eigentümer" = für jede Position gilt `Σ(Mieteranteile aller Einheiten) + Σ(Leerstandsanteile) + Σ(Anteile nicht abgerechneter Sphären) == G`.
+1. **Key share of the unit** in the total item (universe = all participating units of the property).
+2. **Time split of this unit share** across the tenant/vacancy periods **within the unit** in the settlement period.
+3. For the BK statement, **the** period of the settled lease is picked out; vacancy periods fall to the **owner** (§3.3) and do not appear in the tenant BK.
 
-### 3.4 Halboffene DB-Intervalle vs. tag-inklusive Engine-Rechnung (Edge-Case)
+This keeps the distribution across the whole property consistent (sum over all units/tenants/vacancy = G), even if only one unit is settled.
 
-Die M1-EXCLUDE-Constraints nutzen `daterange [from, to)` (oberer Rand exklusiv); `valid_to`/`service_period_to` sind aber fachlich **inklusive** Tage. Die Engine rechnet tag-inklusiv (ADR-0004). An der **Lese-Grenze** (Repository → Engine-Eingabe) wird konsistent interpretiert: `valid_to = 2025-06-30` heißt „belegt **bis einschließlich** 30.06.". Der tag-genaue Wechsel (Auszug 30.06., Einzug Nachmieter 01.07.) ergibt:
+### 3.3 Vacancy → owner (SDD §6.9)
 
-- Mieter A: Tage … bis 30.06. (inklusive).
-- Mieter B: Tage ab 01.07.
-- **keine** Lücke (kein Leerstand am 30.06. oder 01.07.), **kein** Überlapp.
+A **gap** between two leases of a unit (or before the first / after the last lease, within the settlement period) is **vacancy**. The pro rata cost share of the unit attributable to vacancy days is borne by the **owner** of the unit in this sub-interval (`ownership_history`):
 
-Dies ist ein **expliziter Golden-/Edge-Test** (§9), weil ein Off-by-one hier genau einen Tag Kosten falsch zuordnet. Ebenso getestet: Wechsel am Monatsersten, Wechsel über Jahresgrenze (Leistungszeitraum im Vorjahr, Rechnung im Folgejahr — die Position gehört über `service_period`, nicht `invoice_date`, ins richtige Jahr; SDD §14 / m2 §2.2).
+- In the **tenant BK** (M3), the vacancy share does **not** appear (the tenant pays only their own days).
+- The vacancy share is nevertheless **not lost**: it is part of the overall distribution (sum over tenants + vacancy + other units = G) and lands with the owner. In M3 it is reported/held as an **owner residual item** (in the payload as a `vacancy_periods` assignment); the *charging* of the owner is the subject of the WEG/owner settlement (M4) or the rental-property owner view. M3 ensures that **no cent disappears through vacancy** (invariant, §9).
+- **Property-based invariant (§9):** "vacancy share lands with the owner" = for every item, `Σ(tenant shares of all units) + Σ(vacancy shares) + Σ(shares of unsettled spheres) == G` holds.
 
-### 3.5 Mehrere Leases derselben Einheit im Abrechnungszeitraum
+### 3.4 Half-open DB intervals vs. day-inclusive engine calculation (edge case)
 
-Wechselt der Mieter unterjährig, gibt es **zwei** Adressaten (zwei Leases) für **eine** Einheit. **[ENTSCHEIDUNG]** Modellierung: Empfehlung — **ein `settlement_run` je Lease/Adressat** (jeder Mieter bekommt seine eigene BK-Abrechnung über seine Tage). Der M3-Exit („BK für ein Mischobjekt mit Mieterwechsel") wird dadurch erfüllt, dass für **dieselbe Einheit** zwei `settlement_run`s entstehen (Alt- und Nachmieter), die zusammen die Einheit-Anteile (ohne Leerstand) tagegenau aufteilen. Alternative (ein Lauf, mehrere Adressatenzeilen) wäre möglich, ist aber für die Mieter-Zustellung (jeder Mieter erhält *sein* Dokument) unpraktisch. Bei der Implementierung festklopfen.
+The M1 EXCLUDE constraints use `daterange [from, to)` (upper bound exclusive); however, `valid_to`/`service_period_to` are professionally **inclusive** days. The engine calculates day-inclusively (ADR-0004). At the **read boundary** (repository → engine input) it is interpreted consistently: `valid_to = 2025-06-30` means "occupied **up to and including** 30.06.". The day-accurate switch (move-out 30.06., move-in of successor tenant 01.07.) yields:
+
+- Tenant A: days … through 30.06. (inclusive).
+- Tenant B: days from 01.07.
+- **no** gap (no vacancy on 30.06. or 01.07.), **no** overlap.
+
+This is an **explicit golden/edge test** (§9), because an off-by-one here misallocates exactly one day of costs. Also tested: change on the first of the month, change across the year boundary (service period in the prior year, invoice in the following year — the item belongs in the correct year via `service_period`, not `invoice_date`; SDD §14 / m2 §2.2).
+
+### 3.5 Multiple leases of the same unit in the settlement period
+
+If the tenant changes during the year, there are **two** addressees (two leases) for **one** unit. **[DECISION]** Modeling: recommendation — **one `settlement_run` per lease/addressee** (each tenant gets their own BK statement covering their days). The M3 exit ("BK for a mixed-use property with tenant change") is met by producing two `settlement_run`s for the **same unit** (previous and successor tenant), which together split the unit shares (excluding vacancy) day-accurately. The alternative (one run, multiple addressee lines) would be possible, but is impractical for delivery to tenants (each tenant receives *their* document). To be nailed down during implementation.
 
 ---
 
-## 4. Rundung — kaufmännisch + Largest-Remainder (ADR-0005)
+## 4. Rounding — commercial + largest remainder (ADR-0005)
 
-### 4.1 Verbindliche Mechanik
+### 4.1 Binding mechanics
 
-Vollständig in [ADR-0005](adr/0005-rundung-largest-remainder.md). Kurzfassung der Garantie, die hier korrektheitskritisch ist:
+Fully specified in [ADR-0005](adr/0005-rounding-largest-remainder.md). Short version of the guarantee that is correctness-critical here:
 
-- Eine **einzige** reine Funktion `distribute_amount(total: Decimal, weights: list[Decimal]) -> list[Decimal]` rundet Geld auf Cent. Jede Verteilung (jeder Schlüssel, jede Zeitaufteilung) läuft durch sie.
-- Algorithmus: exakte Anteile → **abrunden** auf Cent → Rest `k` ganze Cents per **größtem Bruchteil-Rest** vergeben (deterministischer Tie-Break) → **`Σ cᵢ == total` exakt**.
-- **Reihenfolge:** exakt rechnen über alle Stufen (Zeit × Schlüssel), **einmal am Schluss** runden — nie zwischendurch.
+- A **single** pure function `distribute_amount(total: Decimal, weights: list[Decimal]) -> list[Decimal]` rounds money to cents. Every distribution (every key, every time split) runs through it.
+- Algorithm: exact shares → **round down** to cents → award the remainder `k` whole cents by **largest fractional remainder** (deterministic tie-break) → **`Σ cᵢ == total` exactly**.
+- **Order:** compute exactly across all stages (time × key), round **once at the end** — never in between.
 
-### 4.2 Warum das die Kern-Korrektheitsregel ist
+### 4.2 Why this is the core correctness rule
 
-„Σ der Anteile == Gesamtkosten der Kostenart" ist eine **formelle BGH-Anforderung** und eine rechnerische Selbstverständlichkeit, die naive Cent-Rundung **verletzt** (333,33 × 3 ≠ 1000,00). Largest-Remainder macht die Gleichheit zu einer **Eigenschaft der Funktion**, nicht zu einem Zufall. Das ist als Property-based Test über zufällige Beträge/Gewichte beweisbar (§9) und ist die objektivste einzelne Korrektheitsaussage von M3.
+"Σ of the shares == total costs of the cost category" is a **formal BGH requirement** and an arithmetic self-evident fact that naive cent rounding **violates** (333.33 × 3 ≠ 1000.00). Largest remainder makes the equality a **property of the function**, not a coincidence. This is provable as a property-based test over random amounts/weights (§9) and is the most objective single correctness statement of M3.
 
-### 4.3 Aggregation über mehrere Kostenarten
+### 4.3 Aggregation across multiple cost categories
 
-Die **Gesamt-Nachzahlung** des Mieters ist `Σ(gerundete Mieteranteile aller Kostenarten) − Vorauszahlungen`. Da jede Kostenart-Verteilung **für sich** summengenau ist (Σ Mieteranteile je Position konsistent zur ausgewiesenen Positions-Gesamtsumme), addieren sich die bereits gerundeten Mieteranteile **ohne erneute Rundung** zur Gesamtsumme (Cent + Cent = Cent). Es gibt **keine** zweite Rundungsstufe auf der Gesamtsumme — das verhindert einen zweiten Drift.
+The tenant's **total additional payment** is `Σ(rounded tenant shares of all cost categories) − advance payments`. Since each cost-category distribution is exact in its sum **on its own** (Σ tenant shares per item consistent with the reported item total), the already rounded tenant shares add up to the total **without renewed rounding** (cent + cent = cent). There is **no** second rounding stage on the total — this prevents a second drift.
 
-### 4.4 Randfälle der Funktion (getestet)
+### 4.4 Edge cases of the function (tested)
 
-- **`Σw = 0`** (kein gültiges Gewicht): definierter Fehler/Eskalation (§2.6 Validierung), **keine** stille 0-Verteilung.
-- **Negativer Gesamtbetrag** (Gutschrift/Korrekturposition): Largest-Remainder funktioniert vorzeichen-konsistent (abrunden Richtung −∞ vs. kaufmännisch — präzise Definition in ADR-0005/Implementierung festklopfen; getestet).
-- **Ein Adressat** (n=1): trivial `[total]`.
-- **Rest k=0** (alles geht glatt auf): keine Extra-Cents, alle floor-Werte.
-
----
-
-## 5. CO2-Aufteilung (10-Stufen) & externe Heiz-/Wasserabrechnung
-
-### 5.1 Grundsatz: Werte kommen herein, die Engine verteilt/übernimmt nur
-
-Phase 1 erstellt Heiz-/Warmwasser- und CO2-Werte **nicht** selbst (SDD §6.9, §7.1/§7.2): Der Messdienst liefert HeizkostenV-konforme per-Einheit-Werte; die CO2-Aufteilung (CO2KostAufG, 10-Stufen-Modell nach kg CO₂/m²·a) wird entweder **aus der externen Heizkostenabrechnung übernommen** oder aus eingegebenen Kennwerten berechnet. **Nur der Mieteranteil ist umlagefähig** (SDD §6.9). M2 hält dafür bereit: `tenant_apportionable = TEILWEISE_PRUEFEN` (CO2) bzw. `UMLAGEFAEHIG_EXTERN_PRUEFEN` (Heizung/Wasser), `tenant_distribution_key = EXTERNE_ABRECHNUNG`, und das Feld **`apportionable_tenant_amount`** (der explizit als Mieteranteil bestimmte Betrag).
-
-**Ergänzung T45 (reine Engine, BK-Anschluss erst T46):** `heizkosten.py` verteilt
-vorgegebene, nach §9 getrennte Heiz-/Warmwasserpools mit 50–70 % Verbrauchsanteil
-und 30–50 % Grundanteil. Für Heizung wird Fläche/beheizte Fläche/Rauminhalt
-explizit gewählt, Warmwasser nutzt Wohn-/Nutzfläche (§§7/8 HeizkostenV). Der
-bestätigte §7-Sondergebäudefall erzwingt 70 %. Kosten und Einheiten werden mit
-der vorhandenen Largest-Remainder-Funktion in stabiler UUID-Reihenfolge verteilt.
-Bei ausdrücklich nicht verbrauchsabhängiger Abrechnung (`consumption_recorded=False`)
-weist der TENANT-Kontext 15 % des jeweiligen betroffenen Nutzeranteils als
-Kürzung nach §12(1) aus (HALF_UP je Nutzer); Kürzung + Zahlbetrag = Bruttoanteil.
-Der Kürzungsbetrag wird nicht umgelegt. WEG_OWNER erhält diese Kürzung nicht.
-Einzelne fehlende Ablesungen, gemischte unvollständige Messdaten oder Nullnenner
-führen weiterhin zur Eskalation, nicht zu stiller Schätzung oder Nullverbrauch.
-Die Engine beurteilt keine §11-Ausnahmen, erfindet keine §9-Kostentrennung und
-berechnet keine zusätzlichen 3-%-Kürzungen. Bestehende Fremdabrechnungen und
-CO2-Abgrenzungen bleiben unverändert; T45 selbst schaltet keinen UI-/PDF-Weg um.
-
-**T46 – interne BK-Verteilung:** `heating_inputs` aktiviert je bestätigter
-`HEIZUNG_ZENTRAL`-/`WARMWASSER_ZENTRAL`-Kostenquelle genau einen getrennten Pool.
-Gleichzeitige externe/manuelle Geldbeträge für diese Quelle sind unzulässig.
-Die Engine nutzt deren Bruttobetrag bzw. den ausdrücklich abgegrenzten Teilumlagebetrag;
-ein übergreifender Leistungszeitraum wird mit zentraler Centverteilung abgegrenzt.
-Der bestehende DB-Schlüssel bleibt erhalten; UI und PDF kennzeichnen intern
-berechnete Zeilen ausdrücklich als „HeizkostenV intern“.
-
-Alle sichtbaren Einheiten und lückenlosen Mieter-/Leerstandsabschnitte nehmen teil.
-Grundbasis ist Fläche/beheizte Fläche bzw. explizites Volumen × Tage; nach
-[§9b HeizkostenV](https://www.gesetze-im-internet.de/heizkostenv/__9b.html) werden
-Verbrauchskosten nicht nach Mietdauer geschätzt, sondern aus exakten Grenz- und
-Zwischenablesungen gewonnen. Die Endablesung des Vornutzers ist der Anfangszählerstand
-des Nachnutzers. Einzelne fehlende oder mehrdeutige Ablesungen erfordern transparente
-Handwerte, nicht Nullwerte oder eine automatische §9a-/§9b(3)-Ersatzverteilung.
-Leerstand behält den Brutto-Eigentümeranteil; nur Mietern wird im ausdrücklich
-gewählten nicht verbrauchsabhängigen Modus der §12-Abzug ausgewiesen.
-
-Compute speichert `extra_inputs` im Entwurf, Preview nicht. Fehlender Requestbody
-verwendet gespeicherte Absicht, explizite leere Arrays entfernen sie. Automatische
-Quellen werden jedes Mal frisch gelesen; Finalize friert Absicht, Messwerte/-IDs,
-Grund-/Verbrauchstöpfe, Basen, Brutto/Kürzung/Zahlbetrag vor dem Hash ein. Der Renderer
-liest nur diese Daten. GET `/{run_id}/heating-consumption` ist live-/quellen- und
-finanzkreisgeschützt und für finale Läufe gesperrt. Kein neues Schema, kein impliziter
-kombinierter Anlagenpool und keine Änderung bestehender Messdienst-/CO2-Snapshots.
-
-### 5.2 Externe Heiz-/Wasserabrechnung (`EXTERNE_ABRECHNUNG`)
-
-Die Engine **verteilt nicht**, sondern übernimmt den **per-Einheit-Mieteranteil** direkt als Position der betreffenden Einheit (§2.5). Bei Mieterwechsel: pro Nutzzeitraum getrennte externe Werte (Zwischenablesung). In der BK-Zeile wird `note = "extern abgerechnet (Messdienst)"` und `distribution_key = EXTERNE_ABRECHNUNG` ausgewiesen (BGH: Hinweis auf externe Werte, SDD §11).
-
-> **[OFFEN/§18] Eingabeweg externer Werte.** SDD §18 nennt explizit offen: „Wie externe Heiz-/Wasserabrechnungen genau eingegeben werden: Betrag pro Einheit, PDF-Anhang, Gesamtsumme und Plausibilitätscheck; Übernahme des CO2-Aufteilungswerts." M3 **entscheidet das nicht eigenmächtig**. Die Engine nimmt externe Werte als **strukturierte Eingabe** entgegen (reine Funktion); *wie* sie erfasst/gespeichert werden (eigene kleine Tabelle `external_heating_statement` je `cost_entry`/Einheit/Nutzzeitraum vs. JSONB am `cost_entry`), ist eine [ENTSCHEIDUNG]/§18-Frage.
-> **Provisorische Annahme für M3-Testfälle (klar markiert):** Externe Werte liegen als per-(Einheit, Nutzzeitraum)-Mieteranteil vor (`external_amounts` im Payload, §1.7); die Engine summiert sie je Einheit/Adressat und prüft Plausibilität gegen den Positions-Gesamtbetrag. Diese Annahme ist **nicht** rechtlich zertifiziert; der konkrete Eingabeweg und die HeizkostenV-Konformität sind fachlich (Messdienst/StB) abzunehmen.
-
-### 5.3 CO2-Aufteilung (10-Stufen, nur Mieteranteil)
-
-Das CO2KostAufG-Stufenmodell bestimmt, **welcher Prozentsatz** der CO2-Kosten der **Vermieter** trägt (steigend mit der CO₂-Intensität des Gebäudes, kg CO₂/m²·a) — der Rest ist Mieteranteil. **M3 berechnet das Stufenmodell nicht selbst** (das ist fachlich heikel und Teil der externen Heizkostenlogik). Stattdessen:
-
-- Der **Mieteranteil** der CO2-Kosten kommt als **`apportionable_tenant_amount`** in die Kostenposition (aus externer Abrechnung übernommen oder vom Sachbearbeiter aus den Kennwerten bestimmt, M2). Die Engine legt **nur diesen** Mieteranteil um (der Vermieteranteil bleibt beim Eigentümer, erscheint nicht in der Mieter-BK).
-- Bei `tenant_apportionable = TEILWEISE_PRUEFEN` ist `apportionable_tenant_amount` der **maßgebliche** umzulegende Betrag (statt `gross_amount`). Die Engine **verlangt** ihn (Validierung §2.6/§6); fehlt er → Eskalation, kein stilles Umlegen des Gesamtbetrags.
-
-> **[OFFEN/§18] CO2-Stufenberechnung.** Ob das System die 10-Stufen-Einstufung (kg CO₂/m²·a → Vermieter-%) **selbst** rechnen soll oder den Mieteranteil **immer** aus der externen Abrechnung übernimmt, ist offen (SDD §6.9 nennt beide Wege). M3 **nimmt provisorisch** den **Übernahme-Weg** an (Mieteranteil als Eingabe `apportionable_tenant_amount`), weil das die Engine sauber von der CO2-Fachlogik trennt und der externen, HeizkostenV-/CO2KostAufG-konformen Quelle vertraut. Eine eigene Stufenberechnung wäre ein abgegrenzter, separat zu testender und **fachlich abzunehmender** Baustein (Empfehlung: eigener Schritt, nicht in den M3-Verteilungskern mischen). Klar als Annahme markiert.
+- **`Σw = 0`** (no valid weight): defined error/escalation (§2.6 validation), **no** silent 0 distribution.
+- **Negative total amount** (credit note/correction item): largest remainder works sign-consistently (round down toward −∞ vs. commercial rounding — pin down the precise definition in ADR-0005/the implementation; tested).
+- **One addressee** (n=1): trivially `[total]`.
+- **Remainder k=0** (everything divides evenly): no extra cents, all floor values.
 
 ---
 
-## 6. Gemischte/prüfpflichtige Kosten — effektive Werte aus der Kostenposition
+## 5. CO2 split (10 tiers) & external heating/water settlement
 
-### 6.1 Grundsatz: die Engine legt nichts automatisch um
+### 5.1 Principle: values come in, the engine only distributes/adopts
 
-SDD §7.2/§8/§9: Bei `GEMISCHT_PRUEFEN` (Hausmeister), `TEILWEISE_PRUEFEN` (CO2), `MANUELL_PRUEFEN` (Sonstige BK, Kabel/Breitband seit 2024), `UMLAGEFAEHIG_EXTERN_PRUEFEN` (Heizung/Wasser/Messdienst) darf **nicht** automatisch der ganze Betrag umgelegt werden. Die **effektiven** Werte (umzulegender Betrag, Schlüssel, Umlagefähigkeit) sind bereits in der **bestätigten Kostenposition** festgelegt (M2: `tenant_apportionable`, `tenant_distribution_key`, `apportionable_tenant_amount`) — durch eine **bewusste Nutzer-Entscheidung** beim `confirm` (m2 §2.3, „kein stilles Default-Durchwinken"). **M3 rechnet nur mit diesen effektiven Werten** und entscheidet nichts neu.
+Phase 1 does **not** produce heating/hot-water and CO2 values itself (SDD §6.9, §7.1/§7.2): the metering service supplies HeizkostenV-compliant per-unit values; the CO2 split (CO2KostAufG, 10-tier model by kg CO₂/m²·a) is either **adopted from the external heating cost statement** or computed from entered characteristic values. **Only the tenant share is apportionable** (SDD §6.9). M2 provides for this: `tenant_apportionable = TEILWEISE_PRUEFEN` (CO2) or `UMLAGEFAEHIG_EXTERN_PRUEFEN` (heating/water), `tenant_distribution_key = EXTERNE_ABRECHNUNG`, and the field **`apportionable_tenant_amount`** (the amount explicitly determined as the tenant share).
 
-### 6.2 Konkrete Behandlung je Sphäre in M3
+**Addendum T45 (pure engine, BK connection only in T46):** `heizkosten.py` distributes
+given heating/hot-water pools, separated according to §9, with a 50–70 % consumption share
+and a 30–50 % base share. For heating, area/heated area/room volume is chosen explicitly;
+hot water uses residential/usable area (§§7/8 HeizkostenV). The confirmed §7 special
+building case forces 70 %. Costs and units are distributed with the existing
+largest-remainder function in stable UUID order. For explicitly non-consumption-based
+billing (`consumption_recorded=False`), the TENANT context reports 15 % of the respective
+affected user share as a reduction under §12(1) (HALF_UP per user); reduction + payable
+amount = gross share. The reduction amount is not apportioned. WEG_OWNER does not receive
+this reduction. Individual missing readings, mixed incomplete measurement data, or zero
+denominators still lead to escalation, not to silent estimation or zero consumption. The
+engine does not assess §11 exceptions, does not invent a §9 cost separation, and does not
+compute additional 3 % reductions. Existing external settlements and CO2 delimitations
+remain unchanged; T45 itself does not switch any UI/PDF path.
 
-| `tenant_apportionable` | umzulegender Betrag (Mieter) | Engine-Verhalten |
+**T46 – internal BK distribution:** `heating_inputs` activates exactly one separate pool
+per confirmed `HEIZUNG_ZENTRAL`/`WARMWASSER_ZENTRAL` cost source. Simultaneous
+external/manual monetary amounts for this source are not permitted. The engine uses its
+gross amount or the explicitly delimited partial apportionment amount; a spanning service
+period is delimited with central cent distribution. The existing DB key is retained; UI and
+PDF explicitly label internally computed lines as "HeizkostenV intern".
+
+All visible units and gapless tenant/vacancy periods participate. The base-cost basis is
+area/heated area or explicit volume × days; under
+[§9b HeizkostenV](https://www.gesetze-im-internet.de/heizkostenv/__9b.html) consumption
+costs are not estimated from the duration of the tenancy but obtained from exact boundary
+and interim readings. The final reading of the previous user is the opening meter reading
+of the subsequent user. Individual missing or ambiguous readings require transparent
+manual values, not zero values or an automatic §9a/§9b(3) substitute distribution. Vacancy
+retains the gross owner share; only for tenants, in the explicitly chosen
+non-consumption-based mode, is the §12 deduction reported.
+
+Compute stores `extra_inputs` in the draft, preview does not. A missing request body uses
+the stored intent, explicit empty arrays remove it. Automatic sources are read afresh every
+time; Finalize freezes the intent, measured values/IDs, base/consumption pools, bases, and
+gross/reduction/payable amount before the hash. The renderer reads only this data. GET
+`/{run_id}/heating-consumption` is live-, source-, and financial-scope-protected and
+blocked for final runs. No new schema, no implicit combined heating-system pool, and no
+change to existing metering-service/CO2 snapshots.
+
+### 5.2 External heating/water settlement (`EXTERNE_ABRECHNUNG`)
+
+The engine **does not distribute**, but adopts the **per-unit tenant share** directly as an item of the unit concerned (§2.5). For a tenant change: separate external values per usage period (interim reading). In the BK line, `note = "extern abgerechnet (Messdienst)"` (settled externally (metering service)) and `distribution_key = EXTERNE_ABRECHNUNG` are reported (BGH: notice of external values, SDD §11).
+
+> **[OPEN/§18] Input path for external values.** SDD §18 explicitly lists as open: "How external heating/water settlements are entered exactly: amount per unit, PDF attachment, total sum and plausibility check; adoption of the CO2 split value." M3 **does not decide this unilaterally**. The engine accepts external values as **structured input** (pure function); *how* they are captured/stored (a dedicated small table `external_heating_statement` per `cost_entry`/unit/usage period vs. JSONB on the `cost_entry`) is a [DECISION]/§18 question.
+> **Provisional assumption for M3 test cases (clearly marked):** External values are available as a per-(unit, usage period) tenant share (`external_amounts` in the payload, §1.7); the engine sums them per unit/addressee and checks plausibility against the item total amount. This assumption is **not** legally certified; the concrete input path and HeizkostenV compliance must be signed off professionally (metering service/tax advisor).
+
+### 5.3 CO2 split (10 tiers, tenant share only)
+
+The CO2KostAufG tier model determines **what percentage** of the CO2 costs the **landlord** bears (increasing with the building's CO₂ intensity, kg CO₂/m²·a) — the remainder is the tenant share. **M3 does not compute the tier model itself** (that is professionally delicate and part of the external heating cost logic). Instead:
+
+- The **tenant share** of the CO2 costs enters the cost item as **`apportionable_tenant_amount`** (adopted from the external settlement or determined by the case worker from the characteristic values, M2). The engine apportions **only** this tenant share (the landlord share stays with the owner and does not appear in the tenant BK).
+- For `tenant_apportionable = TEILWEISE_PRUEFEN`, `apportionable_tenant_amount` is the **authoritative** amount to be apportioned (instead of `gross_amount`). The engine **requires** it (validation §2.6/§6); if it is missing → escalation, no silent apportionment of the total amount.
+
+> **[OPEN/§18] CO2 tier calculation.** Whether the system should compute the 10-tier classification (kg CO₂/m²·a → landlord %) **itself** or **always** adopt the tenant share from the external settlement is open (SDD §6.9 names both paths). M3 **provisionally assumes** the **adoption path** (tenant share as input `apportionable_tenant_amount`), because this cleanly separates the engine from the CO2 domain logic and trusts the external, HeizkostenV/CO2KostAufG-compliant source. A dedicated tier calculation would be a delimited building block to be tested separately and **signed off professionally** (recommendation: its own step, not mixed into the M3 distribution core). Clearly marked as an assumption.
+
+---
+
+## 6. Mixed/review-required costs — effective values from the cost item
+
+### 6.1 Principle: the engine apportions nothing automatically
+
+SDD §7.2/§8/§9: for `GEMISCHT_PRUEFEN` (caretaker), `TEILWEISE_PRUEFEN` (CO2), `MANUELL_PRUEFEN` (other operating costs, cable/broadband since 2024), `UMLAGEFAEHIG_EXTERN_PRUEFEN` (heating/water/metering service), the entire amount must **not** be apportioned automatically. The **effective** values (amount to apportion, key, apportionability) are already fixed in the **confirmed cost item** (M2: `tenant_apportionable`, `tenant_distribution_key`, `apportionable_tenant_amount`) — through a **deliberate user decision** at `confirm` (m2 §2.3, "no silently waving through defaults"). **M3 computes only with these effective values** and decides nothing anew.
+
+### 6.2 Concrete handling per sphere in M3
+
+| `tenant_apportionable` | Amount to apportion (tenant) | Engine behavior |
 | --- | --- | --- |
-| `UMLAGEFAEHIG` | `gross_amount` | normaler Schlüssel (§2). |
-| `UMLAGEFAEHIG_EXTERN_PRUEFEN` | per-Einheit-Mieteranteil (extern) | `EXTERNE_ABRECHNUNG` (§5.2). |
-| `GEMISCHT_PRUEFEN` (Hausmeister) | `apportionable_tenant_amount` (der herausgerechnete umlagefähige Teil) | legt **nur** diesen Teil um; fehlt er → Eskalation. |
-| `TEILWEISE_PRUEFEN` (CO2) | `apportionable_tenant_amount` (Mieteranteil) | §5.3. |
-| `MANUELL_PRUEFEN` (Sonstige/Kabel) | `gross_amount` **nur wenn** der Nutzer die Position bewusst als umlagefähig bestätigt hat (sonst gehört sie nicht in die Mieter-BK) | legt um, wenn bestätigt; sonst nicht enthalten. |
-| `NICHT_UMLAGEFAEHIG` | — | erscheint **nicht** in der Mieter-BK (gehört in die Eigentümer-/WEG-Abrechnung, M4). |
+| `UMLAGEFAEHIG` | `gross_amount` | normal key (§2). |
+| `UMLAGEFAEHIG_EXTERN_PRUEFEN` | per-unit tenant share (external) | `EXTERNE_ABRECHNUNG` (§5.2). |
+| `GEMISCHT_PRUEFEN` (caretaker) | `apportionable_tenant_amount` (the extracted apportionable part) | apportions **only** this part; if it is missing → escalation. |
+| `TEILWEISE_PRUEFEN` (CO2) | `apportionable_tenant_amount` (tenant share) | §5.3. |
+| `MANUELL_PRUEFEN` (other/cable) | `gross_amount` **only if** the user deliberately confirmed the item as apportionable (otherwise it does not belong in the tenant BK) | apportions if confirmed; otherwise not included. |
+| `NICHT_UMLAGEFAEHIG` | — | does **not** appear in the tenant BK (belongs in the owner/WEG settlement, M4). |
 
-**Hausmeister-Anteil (`GEMISCHT_PRUEFEN`):** Der Verwaltungs-/Reparatur-/Instandhaltungsanteil ist **vorab** (in der Kostenposition) herausgerechnet; M3 legt den verbleibenden, in `apportionable_tenant_amount` hinterlegten umlagefähigen Teil nach dem gewählten Schlüssel um. Die Engine prüft, dass bei `GEMISCHT_PRUEFEN` ein `apportionable_tenant_amount` gesetzt ist (sonst Eskalation).
+**Caretaker share (`GEMISCHT_PRUEFEN`):** The administration/repair/maintenance share is extracted **up front** (in the cost item); M3 apportions the remaining apportionable part stored in `apportionable_tenant_amount` according to the selected key. The engine checks that an `apportionable_tenant_amount` is set for `GEMISCHT_PRUEFEN` (otherwise escalation).
 
-### 6.3 Gewerbe-Vorwegabzug — [OFFEN/§18]
+### 6.3 Commercial advance deduction (Vorwegabzug) — [OPEN/§18]
 
-SDD §18: „Ob und wie Gewerbeeinheiten einen **Vorwegabzug** benötigen (andere Umlagelogik, USt-Option)." Bei Mischnutzung (Wohnen + Gewerbe) kann ein **Vorwegabzug** der auf Gewerbe entfallenden Kosten **vor** der Verteilung auf die Wohnungen rechtlich geboten sein (wenn Gewerbe zu erheblichen Mehrkosten führt). **M3 entscheidet das nicht eigenmächtig.**
+SDD §18: "Whether and how commercial units require an **advance deduction (Vorwegabzug)** (different apportionment logic, VAT option)." In mixed use (residential + commercial), an **advance deduction** of the costs attributable to commercial use **before** distribution to the apartments may be legally required (if commercial use causes significantly higher costs). **M3 does not decide this unilaterally.**
 
-- **Provisorische Annahme für M3-Testfälle (klar markiert):** **Kein** automatischer Vorwegabzug in M3. `unit.usage_type = GEWERBE` ist im Modell vorhanden und wird in den Snapshot mitgeführt; eine Gewerbeeinheit nimmt nach dem **gewählten Schlüssel** an der Verteilung teil wie jede andere Einheit (z. B. nach Fläche). Ein gewünschter Vorwegabzug wird in M3 **manuell** abgebildet (eigene Kostenposition für den Gewerbe-Anteil mit `MANUELLER_BETRAG`/Ausschluss der Wohnungen), nicht automatisch berechnet.
-- Die **automatische** Vorwegabzugs-Logik (und USt-Option bei Gewerbe) ist ein abgegrenzter, fachlich abzunehmender Baustein (Empfehlung: spätere Spezifikationsrunde / mit StB). Hier festgehalten, **nicht weggeraten**.
-
----
-
-## 7. Soll/Ist: Vorauszahlungen → Nachzahlung/Guthaben
-
-### 7.1 Rechnung
-
-```
-Soll (total_cost)        = Σ gerundete Mieteranteile aller umlagefähigen Kostenarten
-Ist (advance_payments)   = Summe der NK-Vorauszahlungen des Mieters im Zeitraum
-balance                  = total_cost − advance_payments_total
-   balance > 0  → Nachzahlung (Mieter zahlt)
-   balance < 0  → Guthaben (Mieter erhält zurück)
-```
-
-`balance`, `total_cost`, `advance_payments_total` stehen am `settlement_run` (Kopf) **und** als `settlement_line` (`ADVANCE_PAYMENT`, `BALANCE`) für PDF/Prüfung.
-
-### 7.2 Herkunft der Vorauszahlungssumme — [ENTSCHEIDUNG], M3 manuell
-
-Zahlungen (M6) existieren noch nicht (Roadmap: M6 hängt an M3). Daher wird die **Vorauszahlungssumme in M3 manuell erfasst** (Roadmap M3 explizit: „Vorauszahlungssumme zunächst manuell"). Festlegung:
-
-- **Feld am Abrechnungslauf je Mieter:** `settlement_run.advance_payments_total` (`NUMERIC(14,2)`), gesetzt durch den Sachbearbeiter beim Anlegen/Berechnen des `draft`. `advance_payments_source = 'MANUAL'`.
-- **Vorbelegungs-Hilfe (kein Automatismus):** Die UI **darf** einen Vorschlag aus `lease_agreement.advance_payment` × anteilige Monate/Tage des Zeitraums anbieten; der **maßgebliche** Wert bleibt aber der manuell bestätigte Betrag (was tatsächlich gezahlt wurde, kann abweichen — Rückstände). Die Engine rechnet mit dem bestätigten `advance_payments_total`, nicht mit der Soll-Vorauszahlung aus dem Vertrag.
-- **M6-Übergang vorbereitet:** Ab M6 wird `advance_payments_source = 'DERIVED'` und der Wert aus erfassten `Payment`s gezogen (Roadmap M6: „echte Nachzahlung/Guthaben statt manueller Vorauszahlungssumme"). Das Feld/`source`-Diskriminator macht den Wechsel sauber, ohne Schemabruch.
-
-> **[ENTSCHEIDUNG]** Speicherort der manuellen Vorauszahlungssumme: **Feld am `settlement_run`** (empfohlen, hier festgelegt) vs. eigene kleine Tabelle. Empfehlung: Feld am Lauf — es gehört semantisch in den eingefrorenen Snapshot (was bei der Abrechnung als gezahlt zugrunde gelegt wurde, ist Teil des unveränderbaren Dokuments). Bestätigen.
-
-### 7.3 Künftige Vorauszahlung vorschlagen (Phase 2, T28)
-
-Die historische M3-Planung in §7.2 ist vom heutigen Ist-Pfad zu unterscheiden:
-M6 kann gebuchte NK-Zahlungen ableiten; T28 verändert weder dieses Ist noch einen
-finalisierten Lauf. `GET /api/settlements/{id}/advance-proposal` liefert für einen
-aktiven finalisierten BK-Lauf den eingefrorenen Mieter-Kostenanteil geteilt durch
-seine eingefrorene Mietdauer innerhalb des Abrechnungszeitraums. Ganze Kalendermonate
-zählen als eins, Teilmonate als belegte Tage/Kalendertage des Monats. Kalendergewichte
-bleiben exakt rational; Geld bleibt Decimal und wird einmal kaufmännisch auf Cent
-gerundet. Beispiel: Januar bis 05.02.2024, 0,17 EUR / (1 + 5/29) = 0,15 EUR.
-Fehlende, negative oder inkohärente historische Basis ergibt 409, keine Nullannahme.
-
-Die Detailseite zeigt Betrag und Basis; Leser sehen keine Übernahmesteuerung.
-POST an dieselbe URL nimmt nur `valid_from` und ergänzt nach Live-Rollen-, Kreis-
-und History-Prepare-Prüfung über den gemeinsamen T23-Service eine unveränderliche
-volle Rate. Die Kaltmiete wird aus der bis zum Stichtag gültigen Miethistorie erhalten.
-Vertragsgrenzen und doppelte Stichtage bleiben geschützt; gemeinsame Finanz-/Zeilensperre,
-Audit und Rollback gelten. Die neue Rate ist vor HTTP 201 committet. Originalvertrag,
-Abrechnungssnapshot/-zeilen und gebuchte Zahlungen werden nicht verändert.
-Der echte UI-Prüffall finalisiert beleggebundene Mieterkosten von 1.200 EUR, übernimmt
-100 EUR ab 01.01.2027 und prüft alle 24 Mietkontoposten: Jahres-Soll 9.600 statt
-10.200 EUR bei unverändertem Ist null.
+- **Provisional assumption for M3 test cases (clearly marked):** **No** automatic advance deduction in M3. `unit.usage_type = GEWERBE` exists in the model and is carried in the snapshot; a commercial unit participates in the distribution under the **selected key** like any other unit (e.g., by area). A desired advance deduction is represented **manually** in M3 (a dedicated cost item for the commercial share with `MANUELLER_BETRAG`/exclusion of the apartments), not computed automatically.
+- The **automatic** advance-deduction logic (and VAT option for commercial use) is a delimited building block to be signed off professionally (recommendation: later specification round / with tax advisor). Recorded here, **not guessed away**.
 
 ---
 
-## 8. Formelle Pflichtangaben (BGH) + PDF-Layout
+## 7. Expected/actual (Soll/Ist): advance payments → additional payment/credit
 
-### 8.1 BGH-Pflichtangaben → wo sie getragen werden
+### 7.1 Calculation
 
-SDD §11 listet die formellen Mindestanforderungen (BGH-Rechtsprechung für Mieterabrechnungen). Jede ist strukturiert in `settlement_run`/`settlement_line` abgelegt (nicht nur im PDF), damit sie maschinell prüfbar **und** unveränderbar im Snapshot sind:
+```
+expected (total_cost)      = Σ rounded tenant shares of all apportionable cost categories
+actual (advance_payments)  = sum of the tenant's operating cost advance payments in the period
+balance                    = total_cost − advance_payments_total
+   balance > 0  → additional payment (tenant pays)
+   balance < 0  → credit (tenant is refunded)
+```
 
-| BGH-Pflichtangabe (SDD §11) | Träger im Modell |
+`balance`, `total_cost`, `advance_payments_total` are on the `settlement_run` (header) **and** as `settlement_line` (`ADVANCE_PAYMENT`, `BALANCE`) for PDF/verification.
+
+### 7.2 Origin of the advance payment total — [DECISION], M3 manual
+
+Payments (M6) do not exist yet (roadmap: M6 depends on M3). Therefore the **advance payment total is captured manually in M3** (roadmap M3 explicitly: "advance payment total initially manual"). Determination:
+
+- **Field on the settlement run per tenant:** `settlement_run.advance_payments_total` (`NUMERIC(14,2)`), set by the case worker when creating/calculating the `draft`. `advance_payments_source = 'MANUAL'`.
+- **Prefill aid (no automatism):** The UI **may** offer a suggestion from `lease_agreement.advance_payment` × pro rata months/days of the period; however, the **authoritative** value remains the manually confirmed amount (what was actually paid can deviate — arrears). The engine calculates with the confirmed `advance_payments_total`, not with the expected advance payment from the contract.
+- **M6 transition prepared:** From M6, `advance_payments_source = 'DERIVED'` and the value is drawn from captured `Payment`s (roadmap M6: "real additional payment/credit instead of a manual advance payment total"). The field/`source` discriminator makes the switch clean, without a schema break.
+
+> **[DECISION]** Storage location of the manual advance payment total: **field on the `settlement_run`** (recommended, determined here) vs. a dedicated small table. Recommendation: field on the run — it belongs semantically in the frozen snapshot (what was taken as paid in the settlement is part of the immutable document). Confirm.
+
+### 7.3 Proposing a future advance payment (phase 2, T28)
+
+The historical M3 plan in §7.2 must be distinguished from today's actual path: M6 can
+derive booked NK payments; T28 changes neither this actual nor a finalized run.
+`GET /api/settlements/{id}/advance-proposal` returns, for an active finalized BK run, the
+frozen tenant cost share divided by its frozen tenancy duration within the settlement
+period. Whole calendar months count as one, partial months as occupied days/calendar days
+of the month. Calendar weights stay exactly rational; money stays Decimal and is
+commercially rounded to the cent once. Example: January through 05.02.2024,
+0.17 EUR / (1 + 5/29) = 0.15 EUR. A missing, negative, or incoherent historical basis
+results in 409, no zero assumption.
+
+The detail page shows the amount and basis; readers see no adoption control. POST to the
+same URL accepts only `valid_from` and, after live role, scope, and history-prepare checks,
+adds an immutable full rate via the shared T23 service. The base rent is obtained from the
+rent history valid up to the effective date. Contract boundaries and duplicate effective
+dates remain protected; the shared financial/line lock, audit, and rollback apply. The new
+rate is committed before HTTP 201. The original contract, settlement snapshot/lines, and
+booked payments are not changed. The real UI verification case finalizes receipt-bound
+tenant costs of 1,200 EUR, adopts 100 EUR from 01.01.2027, and checks all 24 tenant ledger
+items: annual expected amount (Soll) 9,600 instead of 10,200 EUR with the actual (Ist)
+unchanged at zero.
+
+---
+
+## 8. Formal mandatory disclosures (BGH) + PDF layout
+
+### 8.1 Mandatory BGH disclosures → where they are carried
+
+SDD §11 lists the formal minimum requirements (BGH case law for tenant settlements). Each is stored in structured form in `settlement_run`/`settlement_line` (not only in the PDF), so that they are machine-verifiable **and** immutable in the snapshot:
+
+| Mandatory BGH disclosure (SDD §11) | Carrier in the model |
 | --- | --- |
-| Objekt und **Abrechnungszeitraum** | `settlement_run.property_id`, `period_start`/`period_end` |
-| Adressat und Einheitenbezug | `settlement_run.unit_id`/`lease_agreement_id`/`tenant_profile_id` + Payload-Adressat |
-| **Gesamtkosten je Kostenart** | `settlement_line(line_type='COST').total_amount` |
-| **angewandter Verteilerschlüssel je Position** | `settlement_line.distribution_key` (+ `distribution_base_total`/`_share` für den Rechenweg) |
-| **Berechnung des Anteils** des Adressaten | `settlement_line.distribution_base_share` / `time_share_days` / `amount` (+ Payload `computation[]` voller Rechenweg) |
-| **Abzug der Vorauszahlungen** | `settlement_line(line_type='ADVANCE_PAYMENT')` + `advance_payments_total` |
-| **Nachzahlung oder Guthaben** | `settlement_line(line_type='BALANCE')` + `settlement_run.balance` |
-| Hinweis auf externe Abrechnungswerte | `settlement_line.note` (z. B. „extern abgerechnet") |
+| Property and **settlement period** | `settlement_run.property_id`, `period_start`/`period_end` |
+| Addressee and unit reference | `settlement_run.unit_id`/`lease_agreement_id`/`tenant_profile_id` + payload addressee |
+| **Total costs per cost category** | `settlement_line(line_type='COST').total_amount` |
+| **Applied distribution key per item** | `settlement_line.distribution_key` (+ `distribution_base_total`/`_share` for the calculation path) |
+| **Calculation of the addressee's share** | `settlement_line.distribution_base_share` / `time_share_days` / `amount` (+ payload `computation[]` full calculation path) |
+| **Deduction of the advance payments** | `settlement_line(line_type='ADVANCE_PAYMENT')` + `advance_payments_total` |
+| **Additional payment or credit** | `settlement_line(line_type='BALANCE')` + `settlement_run.balance` |
+| Notice of external settlement values | `settlement_line.note` (e.g., "extern abgerechnet") |
 
-Damit ist „formell vollständig" (M3-Exit) eine **prüfbare** Eigenschaft: Ein Test (§9) assertet, dass für einen `BK_MIETER`-Lauf alle diese Felder vorhanden/konsistent sind.
+This makes "formally complete" (M3 exit) a **verifiable** property: a test (§9) asserts that all of these fields are present/consistent for a `BK_MIETER` run.
 
-> **[OFFEN/§18] Exakte PDF-Struktur.** SDD §18: „Exakte PDF-Struktur für Betriebskostenabrechnung …" ist offen. M3 stellt **alle Daten** für ein vollständiges PDF bereit; das **konkrete Layout** (Spaltenanordnung, Texte, Fußnoten, Einwendungsfrist-Hinweis nach § 556 III BGB) ist eine [OFFEN/§18]-/Design-Frage. Provisorisch wird ein funktionales, BGH-vollständiges Standardlayout angenommen; das finale Layout ist mit dem Produkt/Fachseite abzustimmen.
+> **[OPEN/§18] Exact PDF structure.** SDD §18: "Exact PDF structure for the operating cost statement …" is open. M3 provides **all data** for a complete PDF; the **concrete layout** (column arrangement, texts, footnotes, objection-deadline notice per § 556 III BGB) is an [OPEN/§18]/design question. Provisionally, a functional, BGH-complete standard layout is assumed; the final layout is to be agreed with the product/domain side.
 
-### 8.2 PDF-Pipeline (WeasyPrint, M0-Infrastruktur)
+### 8.2 PDF pipeline (WeasyPrint, M0 infrastructure)
 
-Die PDF-Erzeugung nutzt die in M0 angelegte, swappable Pipeline (`app/core/pdf.py`, `PdfRenderer`-Protocol, Default **WeasyPrint**). M3:
+PDF generation uses the swappable pipeline set up in M0 (`app/core/pdf.py`, `PdfRenderer` protocol, default **WeasyPrint**). M3:
 
-- erzeugt **HTML** aus dem **finalisierten** `settlement_run`/`settlement_line` (nie aus `draft` — das versendete Dokument muss dem eingefrorenen Snapshot entsprechen) via Template (z. B. `app/templates/bk_abrechnung.html`), dann `render_pdf(html)`.
-- Die PDF-Schicht ist **strikt getrennt** von der Engine (SDD §16): Sie liest nur das fertige Ergebnis, rechnet **nichts** neu. Test: PDF-Werte == `settlement_line`-Werte (keine Drift zwischen Berechnung und Darstellung).
-- WeasyPrint ist deterministisch (gleicher Input → gleiches PDF), passend zur Snapshot-Philosophie.
+- generates **HTML** from the **finalized** `settlement_run`/`settlement_line` (never from `draft` — the sent document must correspond to the frozen snapshot) via a template (e.g., `app/templates/bk_abrechnung.html`), then `render_pdf(html)`.
+- The PDF layer is **strictly separated** from the engine (SDD §16): it only reads the finished result and recalculates **nothing**. Test: PDF values == `settlement_line` values (no drift between calculation and presentation).
+- WeasyPrint is deterministic (same input → same PDF), which fits the snapshot philosophy.
 
-Seit T47 kann eine finalisierte BK-Abrechnung ausdrücklich an den berechtigten
-Mieterkontakt per SMTP gesendet werden. Quellen-/Kontaktexport und die getrennte
-Finanzkreisfähigkeit `send` werden live geprüft. Der Versand ändert weder Lauf
-noch Zeilen/Snapshot; der tatsächlich versendete PDF-Anhang wird im bestehenden
-Dokumentenspeicher mit Hash und append-only Versandversuch unter der Lauf-ID
-aufbewahrt. Die Historie öffnet diese exakten Bytes statt neu zu rendern und prüft
-auch die ursprünglichen Kontaktexportrechte. SMTP-Annahme ist kein Zustellnachweis;
-unklare/offene Versuche werden nicht automatisch wiederholt.
-
----
-
-## 9. Synthetische Golden-Tests (objektive M3-Messlatte)
-
-Es gibt **keine** realen Beispielabrechnungen. Die Prüffälle sind **synthetisch** aus den Rechtsregeln + **handberechneten** Soll-Ergebnissen konstruiert. Zwei Test-Arten, beide verbindlich für die M3-Abnahme:
-
-### 9.1 Golden-Tests (handberechnete Soll-Ergebnisse, exakte Cent-Werte)
-
-Jeder Golden-Test ist ein vollständiges, **von Hand durchgerechnetes** Szenario mit im Test hinterlegtem Soll-Ergebnis (jeder Cent). Pflicht-Szenarien:
-
-1. **Trivial-Verteilung Fläche:** 1 Objekt, 3 Wohnungen (75/50/25 m²), 1 Kostenart (Grundsteuer 1200,00 €/Jahr), ganzjährig, kein Wechsel. Soll: 600/400/200 €. Prüft Schlüssel + Σ == Gesamt.
-2. **Rundungsfall (Largest-Remainder):** 1000,00 € ÷ 3 gleiche Einheiten → 333,34 / 333,33 / 333,33 (Σ = 1000,00). Prüft, dass **kein** Cent verloren geht und der Tie-Break deterministisch ist.
-3. **Unterjähriger Mieterwechsel (Kern):** 1 Wohnung, Mieter A 01.01.–30.06., Mieter B 01.07.–31.12.; Kostenart ganzjährig. Soll: tagegenaue Aufteilung (181/365 vs. 184/365 in 2025, kein Schaltjahr), zwei `settlement_run`s. Prüft ADR-0004 + tag-inklusiven Wechsel (§3.4).
-4. **Leerstand:** 1 Wohnung, Mieter A 01.01.–31.03., dann Leerstand 01.04.–31.05., Mieter B ab 01.06.; Kostenart ganzjährig. Soll: A trägt 90 Tage, B trägt 214 Tage, **61 Tage Leerstand beim Eigentümer** (nicht in Mieter-BK). Prüft §3.3 + Invariante „Leerstand → Eigentümer".
-5. **Mischobjekt mit Mieterwechsel + Leerstand + mehrere Kostenarten/Schlüssel + CO2 (Exit-Szenario):** Mischobjekt, mehrere Einheiten (eine vermietet mit unterjährigem Wechsel, eine eigengenutzt/Eigentümer, eine zeitweise leer, eine Gewerbeeinheit), Kostenarten mit **verschiedenen Schlüsseln** (Grundsteuer nach Fläche, Müll nach Einheit, Kaltwasser nach Verbrauch, Heizung extern, **CO2 mit Mieteranteil aus `apportionable_tenant_amount`**, Hausmeister `GEMISCHT_PRUEFEN` mit herausgerechnetem Anteil, WEG-Verwalterkosten `NICHT_UMLAGEFAEHIG` → darf **nicht** in Mieter-BK auftauchen). **Vollständig handberechnet.** Dies ist das **direkte Abbild des M3-Exit-Kriteriums**.
-6. **Leistungszeitraum über Jahresgrenze:** Rechnung mit `invoice_date` im Januar 2026, `service_period` Dezember 2025 → gehört in die 2025-Abrechnung (über `service_period`, nicht `invoice_date`). Prüft SDD §14.
-7. **Externe Abrechnung mit Zwischenablesung bei Mieterwechsel:** Heizkosten extern, getrennte per-Mieter-Werte. Prüft §5.2 (direkte Übernahme, keine Schlüssel-Verteilung).
-8. **Snapshot/Hash-Determinismus:** Szenario 5 zweimal finalisiert (auf identischen Eingaben) → **identischer** `snapshot_sha256`. Prüft §1.8 + ADR-0005-Determinismus.
-
-Jeder Golden-Test prüft **nicht nur die Endsumme**, sondern die **einzelnen `settlement_line`-Beträge, Schlüssel-Basiswerte und Zeitanteile** gegen die Handrechnung — sonst könnte ein kompensierender Doppelfehler durchrutschen.
-
-### 9.2 Property-based Invarianten (Hypothesis, über zufällige Eingaben)
-
-Diese fangen Fehlerklassen, die Einzelbeispiele übersehen (architecture.md §6: pytest + Hypothesis ist genau dafür gewählt). Verbindliche Invarianten:
-
-- **I-A „Summe der Anteile = Gesamtkosten":** Für zufällige `total ∈ [−10000, 10000]` €, zufällige Gewichtsvektoren (n ∈ [1, 50], `wᵢ ≥ 0`, `Σw > 0`): `Σ distribute_amount(total, w) == total` **exakt** (in Cent). Die fundamentalste Invariante (ADR-0005).
-- **I-B „kein Cent geht verloren / Nichtnegativität der Sub-Cent-Verteilung":** Jeder Anteil weicht um **höchstens 1 Cent** vom abgerundeten exakten Anteil ab; vergebene Extra-Cents == `k`.
-- **I-C „Zeitanteile summieren sich zu 1":** Für zufällige, lückenlos-überschneidungsfreie Periodenzerlegungen eines Leistungszeitraums: `Σ factor == 1` exakt (ADR-0004).
-- **I-D „Leerstandsanteil landet beim Eigentümer / Vollständigkeit":** Für zufällige Misch-Szenarien gilt je Position `Σ(Mieteranteile) + Σ(Leerstandsanteile) + Σ(sonstige Sphären) == G` (nichts verschwindet).
-- **I-E „Determinismus":** Zweimal dieselbe Eingabe → bit-identischer kanonischer Payload und identischer Hash.
-- **I-F „Nicht-Umlagefähiges erscheint nie in der Mieter-BK":** `NICHT_UMLAGEFAEHIG`-Positionen tauchen in keinem `BK_MIETER`-`settlement_line` auf.
-- **I-G „Konsistenz Payload ↔ settlement_line":** Σ/Werte in `snapshot_payload.result` == Σ/Werte der `settlement_line`-Zeilen.
-
-Diese Invarianten sind die **objektive, modellunabhängige** Messlatte: Sie gelten für *jede* gültige Eingabe, nicht nur für die ausgedachten Beispiele.
+Since T47, a finalized BK settlement can be explicitly sent to the authorized tenant
+contact via SMTP. Source/contact export and the separate financial-scope capability `send`
+are checked live. Sending changes neither the run nor the lines/snapshot; the PDF
+attachment actually sent is retained in the existing document storage with a hash and an
+append-only send attempt under the run ID. The history opens these exact bytes instead of
+re-rendering and also checks the original contact export permissions. SMTP acceptance is
+not proof of delivery; unclear/open attempts are not retried automatically.
 
 ---
 
-## 10. Implementierungs-Checkliste für `engine-correctness` (M3 baut wegen Korrektheit `engine-correctness`, nicht `bulk-impl`)
+## 9. Synthetic golden tests (objective M3 yardstick)
 
-> M3 ist laut Roadmap-Modellzuordnung **`engine-correctness` (Opus 4.8)** — die Verteilungs-Engine ist korrektheitskritisch. Die Reihenfolge ist **Engine zuerst (reine Funktionen + Tests), dann Persistenz/Snapshot, dann API, zuletzt PDF** (Roadmap: „hier zuerst die Engine, dann das PDF"). **Voraussetzung:** der Mensch hat die [ENTSCHEIDUNG]en (§Schluss) und die ADRs 0004/0005 bestätigt. Vorher kein Commit.
+There are **no** real sample settlements. The test cases are constructed **synthetically** from the legal rules + **hand-calculated** expected results. Two kinds of tests, both binding for M3 acceptance:
 
-### 10.1 Engine als reine Funktionen (zuerst, höchste Testdichte)
+### 9.1 Golden tests (hand-calculated expected results, exact cent values)
 
-- [ ] `app/engine/` (neues Paket, **bewusst getrennt** von `services`/`api`/`models` — SDD §16): keine DB-, HTTP-, ORM-Importe; ausschließlich `Decimal`, `date`, Dataclasses ein/aus.
-- [ ] `app/engine/rounding.py`: `distribute_amount(total: Decimal, weights: list[Decimal]) -> list[Decimal]` (ADR-0005, Largest-Remainder, deterministischer Tie-Break). **Zuerst** mit Property-based Tests (I-A/I-B) absichern, bevor irgendetwas darauf baut.
-- [ ] `app/engine/periods.py`: tagegenaue Zeitarithmetik (ADR-0004) — `day_count(from, to)`, `overlap_days(p1, p2)`, `time_factor(service_period, period)`, `split_into_tenant_and_vacancy_periods(abrechnungszeitraum, leases) -> list[Period]` (mit Eigentümer-Adressat bei Leerstand). Tests I-C + tag-inklusive Edge-Cases (§3.4).
-- [ ] `app/engine/distribution.py`: je Schlüssel die Gewichtsvektor-Berechnung (§2) + die Zwei-Stufen-Verkettung (Zeit × Schlüssel, §3.2). Eingaben als eingefrorene Dataclasses (Spiegel des Payload-`inputs`).
-- [ ] `app/engine/settlement.py`: orchestriert eine `BK_MIETER`-Berechnung → `EngineResult` (Zeilen + Summen + Rechenweg) als reine Datenstruktur. **Validierung fail-loud** (§2.6).
-- [ ] `app/engine/canonical.py`: `canonical_json(payload) -> bytes` + `sha256_hex(bytes)` (§1.8) — deterministisch, sortiert, Geld als String.
-- [ ] Golden-Tests (§9.1) als `tests/engine/test_golden_*.py` mit handberechneten Soll-Werten; Property-based (§9.2) als `tests/engine/test_invariants.py` (Hypothesis).
+Each golden test is a complete scenario **worked out by hand**, with the expected result (every cent) stored in the test. Mandatory scenarios:
 
-### 10.2 Persistenz & Snapshot (danach)
+1. **Trivial area distribution:** 1 property, 3 apartments (75/50/25 m²), 1 cost category (property tax 1200.00 €/year), full year, no change. Expected: 600/400/200 €. Tests key + Σ == total.
+2. **Rounding case (largest remainder):** 1000.00 € ÷ 3 equal units → 333.34 / 333.33 / 333.33 (Σ = 1000.00). Tests that **no** cent is lost and that the tie-break is deterministic.
+3. **Intra-year tenant change (core):** 1 apartment, tenant A 01.01.–30.06., tenant B 01.07.–31.12.; cost category full year. Expected: day-accurate split (181/365 vs. 184/365 in 2025, no leap year), two `settlement_run`s. Tests ADR-0004 + day-inclusive switch (§3.4).
+4. **Vacancy:** 1 apartment, tenant A 01.01.–31.03., then vacancy 01.04.–31.05., tenant B from 01.06.; cost category full year. Expected: A bears 90 days, B bears 214 days, **61 days of vacancy with the owner** (not in tenant BK). Tests §3.3 + invariant "vacancy → owner".
+5. **Mixed-use property with tenant change + vacancy + multiple cost categories/keys + CO2 (exit scenario):** mixed-use property, multiple units (one rented with an intra-year change, one owner-occupied/owner, one temporarily vacant, one commercial unit), cost categories with **different keys** (property tax by area, waste by unit, cold water by consumption, heating external, **CO2 with tenant share from `apportionable_tenant_amount`**, caretaker `GEMISCHT_PRUEFEN` with extracted share, WEG administrator costs `NICHT_UMLAGEFAEHIG` → must **not** appear in the tenant BK). **Fully hand-calculated.** This is the **direct representation of the M3 exit criterion**.
+6. **Service period across the year boundary:** invoice with `invoice_date` in January 2026, `service_period` December 2025 → belongs in the 2025 settlement (via `service_period`, not `invoice_date`). Tests SDD §14.
+7. **External settlement with interim reading on tenant change:** heating costs external, separate per-tenant values. Tests §5.2 (direct adoption, no key distribution).
+8. **Snapshot/hash determinism:** scenario 5 finalized twice (on identical inputs) → **identical** `snapshot_sha256`. Tests §1.8 + ADR-0005 determinism.
 
-- [ ] Modelle `app/models/settlement_run.py`, `settlement_line.py` (Stil `lease_agreement.py`/`cost_entry.py`: Mixins, `Numeric`, `Mapped`, String+CHECK). Geld `Decimal`.
-- [ ] **Migration `0009_settlement_tables`:** `settlement_run` + `settlement_line` mit CHECK-Constraints, FKs (`RESTRICT` zu `organization`), Indizes (§1.4/§1.5), `superseded_by_id` (Vorwärts, E-4-Konvention).
-- [ ] **Migration `0010_settlement_rls_policies`:** vier Policies je Tabelle exakt im Muster `0007` (`NULLIF(current_setting('app.current_org_id', true),'')::uuid`, fail-closed). Beide Tabellen mit DELETE-Policy (beide haben editierbaren `draft`-Zustand → volles CRUD-Grant; [ENTSCHEIDUNG] 1.6).
-- [ ] **Migration `0011_settlement_immutability_triggers`** (ADR-0003 §3, Muster von `0008`): `BEFORE UPDATE/DELETE`-Trigger für `settlement_run` (Einfrier-Bedingung `status='finalized'`, einzig erlaubte Änderung `superseded_by_id`) und `settlement_line` (Einfrier-Bedingung: Eltern-Lauf `finalized` → jede Mutation verboten). Trigger-Quelltext ausführlich kommentiert; `downgrade()` droppt Trigger + Funktion.
-- [ ] `TENANT_TABLES` in `tests/test_rls_coverage.py` um `settlement_run`, `settlement_line` erweitern.
-- [ ] Repository `app/repositories/settlement_repo.py` (Stil `cost_entry_repo.py`): Aktiv-Query (`superseded_by_id IS NULL`), Lese-Aggregation der `cost_entry`-Aktivkette + `unit`/`lease`/`ownership` als Engine-Eingabe.
+Each golden test checks **not only the final total**, but the **individual `settlement_line` amounts, key base values, and time shares** against the hand calculation — otherwise a compensating double error could slip through.
 
-### 10.3 Service (Snapshot/Finalize atomar)
+### 9.2 Property-based invariants (Hypothesis, over random inputs)
 
-- [ ] `app/services/settlement_service.py` (Stil `cost_entry_service.py`): `create_draft`, `compute` (rechnet Engine, schreibt `snapshot_payload` + `settlement_line` im `draft`, **überschreibbar**), `set_advance_payments` (§7), `finalize` (**atomar**, analog `confirm`), `create_correction_run` (Storno/Neu, §1.6).
-- [ ] `finalize` als **eine** Transaktion: Engine final rechnen → `snapshot_payload` setzen → `snapshot_sha256` berechnen → `settlement_line` (re-)schreiben → `status='finalized'`, `finalized_at/by`, `total_cost`/`balance` → `audit_event` (`settlement.finalized`) → Commit. Ab Commit greift der ADR-0003-Trigger. Rollback bei jedem Fehler (kein halb-finalisierter Lauf).
-- [ ] `audit_event`-Actions: `settlement.created`, `settlement.computed`, `settlement.finalized`, `settlement.superseded` (über vorhandenes `AuditRepository`).
+These catch classes of errors that individual examples miss (architecture.md §6: pytest + Hypothesis was chosen precisely for this). Binding invariants:
 
-### 10.4 API (API-first, RBAC wie M0/M2)
+- **I-A "sum of the shares = total costs":** For random `total ∈ [−10000, 10000]` €, random weight vectors (n ∈ [1, 50], `wᵢ ≥ 0`, `Σw > 0`): `Σ distribute_amount(total, w) == total` **exactly** (in cents). The most fundamental invariant (ADR-0005).
+- **I-B "no cent is lost / non-negativity of the sub-cent distribution":** Each share deviates by **at most 1 cent** from the rounded-down exact share; extra cents awarded == `k`.
+- **I-C "time shares sum to 1":** For random gap-free, overlap-free period decompositions of a service period: `Σ factor == 1` exactly (ADR-0004).
+- **I-D "vacancy share lands with the owner / completeness":** For random mixed scenarios, for each item: `Σ(tenant shares) + Σ(vacancy shares) + Σ(other spheres) == G` (nothing disappears).
+- **I-E "determinism":** The same input twice → bit-identical canonical payload and identical hash.
+- **I-F "non-apportionable never appears in the tenant BK":** `NICHT_UMLAGEFAEHIG` items appear in no `BK_MIETER` `settlement_line`.
+- **I-G "consistency payload ↔ settlement_line":** Σ/values in `snapshot_payload.result` == Σ/values of the `settlement_line` rows.
 
-Seit Phase 2 (T27) ergänzt `POST /api/settlements/batch` die Einzelanlage um einen
-atomaren Sammellauf mit Objekt, inklusivem Zeitraum und optionalem Abrechnungskreis.
-Nur im Zeitraum überlappende Verträge der berechtigten Kreiseinheiten werden über
-`create_draft` angelegt; aktive BK-Läufe mit identischem Vertrag/Objekt/Zeitraum/Kreis
-werden unverändert übersprungen. Antwort: `created` und `skipped` mit Vertrags-/Lauf-ID.
-Die vorhandene orgweite Finanzsperre serialisiert parallele Sammelläufe; ein Fehler
-rollt auch Audit und bereits angelegte Entwürfe zurück. Source-/Kreisrechte werden
-vor einer Leerantwort geprüft. Keine Berechnung, Coverage oder Finalisierung und
-keine erfundenen Vorauszahlungen: neue Finanzwerte bleiben `null`.
-Unter `/abrechnungen` führt „BK-Sammellauf“ durch Objekt, Zeitraum und Kreis;
-Ergebniszahlen und Liste werden aktualisiert, dieselbe Periode ist wiederholbar.
-
-Implementiertes BK-Verhalten: `POST /api/settlements/{id}/finalize` beendet die DB-Transaktion durch `Depends(get_db, scope="function")` **vor** der HTTP-Erfolgsantwort. Damit sieht ein unmittelbar folgender PDF-Request bereits den finalisierten Snapshot; Entwürfe bleiben mit HTTP 409 gesperrt. Die Regression prüft den gespeicherten Status aus einer unabhängigen DB-Session bei `http.response.start`, da ASGITransport allein das spätere Request-Cleanup abwartet und diese Race Condition verdeckt.
-
-- [ ] `app/api/settlements.py`: `POST` (Lauf anlegen, `require_write_dep`), `POST /{id}/compute`, `PATCH /{id}/advance-payments`, `POST /{id}/finalize`, `POST /{id}/correction`, `GET` (Liste/Detail, alle Rollen lesen), `GET /{id}/pdf` (finalisiert → PDF-Stream). READ_ONLY: nur GET. Fremde ID → **404** (nicht 403), wie M0/M2. Router in `app/main.py` registrieren.
-
-### 10.5 PDF (zuletzt, strikt getrennt)
-
-- [ ] `app/templates/bk_abrechnung.html` (alle BGH-Pflichtangaben §8.1) + `app/services/settlement_pdf.py`, das **nur** aus dem finalisierten `settlement_run`/`settlement_line` rendert (`render_pdf`, WeasyPrint). **Keine** Neuberechnung. Test: PDF-Werte == `settlement_line`-Werte.
-
-### 10.6 Definition of Done für M3 (Übergabe an M4)
-
-- [ ] Engine-Paket rein (keine DB/HTTP-Importe), `Decimal` durchgängig, eine zentrale `distribute_amount`.
-- [ ] **Golden-Tests §9.1 grün** (handberechnete Soll-Werte, inkl. Exit-Szenario 5) — die objektive „nachrechenbar korrekt"-Messlatte.
-- [ ] **Property-based Invarianten §9.2 grün** (I-A bis I-G), insb. „Σ Anteile == Gesamtkosten", „Σ Zeitanteile == 1", „Leerstand → Eigentümer", Determinismus.
-- [ ] `settlement_run`/`settlement_line` mit RLS (vier Policies, fail-closed) + ADR-0003-Trigger (`finalized` unveränderbar) + Snapshot-Hash.
-- [ ] `finalize` atomar; `audit_event` für alle Vorgänge; Korrektur = neuer Lauf (nie Mutation).
-- [ ] BGH-Pflichtangaben vollständig in `settlement_line`/PDF (formell vollständig); PDF rechnet nichts neu.
-- [ ] RLS-Coverage-Test + `test_tenant_isolation` um die M3-Tabellen erweitert; **alle 141 bestehenden Tests bleiben grün.**
-- [ ] M3-Exit objektiv erfüllt: BK-Abrechnung für ein Mischobjekt mit Mieterwechsel + Leerstand ist **nachrechenbar korrekt** (Golden-Test 5) und **formell vollständig** (Pflichtangaben-Test).
-- [ ] Keine **[ENTSCHEIDUNG]**/**[OFFEN/§18]** unmarkiert „weggeraten"; provisorische Annahmen klar gekennzeichnet; fachliche Abnahme (StB/Fachanwalt) empfohlen.
+These invariants are the **objective, model-independent** yardstick: they hold for *every* valid input, not just for the invented examples.
 
 ---
 
-## 11. Getroffene Annahmen (M3)
+## 10. Implementation checklist for `engine-correctness` (M3 is built by `engine-correctness` because of correctness, not `bulk-impl`)
 
-| # | Annahme | Auswirkung wenn falsch | Klären mit |
+> According to the roadmap's model assignment, M3 belongs to **`engine-correctness` (Opus 4.8)** — the distribution engine is correctness-critical. The order is **engine first (pure functions + tests), then persistence/snapshot, then API, PDF last** (roadmap: "engine first here, then the PDF"). **Prerequisite:** the human has confirmed the [DECISION] decisions (closing section) and ADRs 0004/0005. No commit before that.
+
+### 10.1 Engine as pure functions (first, highest test density)
+
+- [ ] `app/engine/` (new package, **deliberately separate** from `services`/`api`/`models` — SDD §16): no DB, HTTP, or ORM imports; exclusively `Decimal`, `date`, dataclasses in/out.
+- [ ] `app/engine/rounding.py`: `distribute_amount(total: Decimal, weights: list[Decimal]) -> list[Decimal]` (ADR-0005, largest remainder, deterministic tie-break). Secure it with property-based tests (I-A/I-B) **first**, before anything builds on it.
+- [ ] `app/engine/periods.py`: day-accurate time arithmetic (ADR-0004) — `day_count(from, to)`, `overlap_days(p1, p2)`, `time_factor(service_period, period)`, `split_into_tenant_and_vacancy_periods(settlement_period, leases) -> list[Period]` (with owner as addressee for vacancy). Tests I-C + day-inclusive edge cases (§3.4).
+- [ ] `app/engine/distribution.py`: per key, the weight vector computation (§2) + the two-stage chaining (time × key, §3.2). Inputs as frozen dataclasses (mirror of the payload `inputs`).
+- [ ] `app/engine/settlement.py`: orchestrates a `BK_MIETER` calculation → `EngineResult` (lines + totals + calculation path) as a pure data structure. **Fail-loud validation** (§2.6).
+- [ ] `app/engine/canonical.py`: `canonical_json(payload) -> bytes` + `sha256_hex(bytes)` (§1.8) — deterministic, sorted, money as string.
+- [ ] Golden tests (§9.1) as `tests/engine/test_golden_*.py` with hand-calculated expected values; property-based (§9.2) as `tests/engine/test_invariants.py` (Hypothesis).
+
+### 10.2 Persistence & snapshot (afterwards)
+
+- [ ] Models `app/models/settlement_run.py`, `settlement_line.py` (style of `lease_agreement.py`/`cost_entry.py`: mixins, `Numeric`, `Mapped`, string+CHECK). Money `Decimal`.
+- [ ] **Migration `0009_settlement_tables`:** `settlement_run` + `settlement_line` with CHECK constraints, FKs (`RESTRICT` to `organization`), indexes (§1.4/§1.5), `superseded_by_id` (forward, E-4 convention).
+- [ ] **Migration `0010_settlement_rls_policies`:** four policies per table exactly in the `0007` pattern (`NULLIF(current_setting('app.current_org_id', true),'')::uuid`, fail-closed). Both tables with a DELETE policy (both have an editable `draft` state → full CRUD grant; [DECISION] 1.6).
+- [ ] **Migration `0011_settlement_immutability_triggers`** (ADR-0003 §3, pattern of `0008`): `BEFORE UPDATE/DELETE` trigger for `settlement_run` (freeze condition `status='finalized'`, only permitted change `superseded_by_id`) and `settlement_line` (freeze condition: parent run `finalized` → every mutation forbidden). Trigger source extensively commented; `downgrade()` drops trigger + function.
+- [ ] Extend `TENANT_TABLES` in `tests/test_rls_coverage.py` with `settlement_run`, `settlement_line`.
+- [ ] Repository `app/repositories/settlement_repo.py` (style of `cost_entry_repo.py`): active query (`superseded_by_id IS NULL`), read aggregation of the `cost_entry` active chain + `unit`/`lease`/`ownership` as engine input.
+
+### 10.3 Service (snapshot/finalize atomic)
+
+- [ ] `app/services/settlement_service.py` (style of `cost_entry_service.py`): `create_draft`, `compute` (runs the engine, writes `snapshot_payload` + `settlement_line` in `draft`, **overwritable**), `set_advance_payments` (§7), `finalize` (**atomic**, analogous to `confirm`), `create_correction_run` (cancellation/new, §1.6).
+- [ ] `finalize` as **one** transaction: final engine calculation → set `snapshot_payload` → compute `snapshot_sha256` → (re-)write `settlement_line` → `status='finalized'`, `finalized_at/by`, `total_cost`/`balance` → `audit_event` (`settlement.finalized`) → commit. From the commit on, the ADR-0003 trigger takes effect. Rollback on any error (no half-finalized run).
+- [ ] `audit_event` actions: `settlement.created`, `settlement.computed`, `settlement.finalized`, `settlement.superseded` (via the existing `AuditRepository`).
+
+### 10.4 API (API-first, RBAC as in M0/M2)
+
+Since phase 2 (T27), `POST /api/settlements/batch` supplements the single creation with an
+atomic batch run with property, inclusive period, and optional accounting scope. Only
+contracts of the authorized scope units that overlap the period are created via
+`create_draft`; active BK runs with identical contract/property/period/scope are skipped
+unchanged. Response: `created` and `skipped` with contract/run ID. The existing
+organization-wide financial lock serializes parallel batch runs; an error also rolls back
+the audit and already created drafts. Source/scope permissions are checked before an empty
+response. No computation, coverage, or finalization, and no invented advance payments: new
+financial values stay `null`.
+Under `/abrechnungen`, "BK-Sammellauf" (BK batch run) guides through property, period, and
+scope; result counts and list are refreshed, and the same period is repeatable.
+
+Implemented BK behavior: `POST /api/settlements/{id}/finalize` ends the DB transaction through `Depends(get_db, scope="function")` **before** the HTTP success response. Thus an immediately following PDF request already sees the finalized snapshot; drafts remain blocked with HTTP 409. The regression test checks the stored status from an independent DB session at `http.response.start`, since ASGITransport alone waits for the later request cleanup and thereby masks this race condition.
+
+- [ ] `app/api/settlements.py`: `POST` (create run, `require_write_dep`), `POST /{id}/compute`, `PATCH /{id}/advance-payments`, `POST /{id}/finalize`, `POST /{id}/correction`, `GET` (list/detail, all roles read), `GET /{id}/pdf` (finalized → PDF stream). READ_ONLY: GET only. Foreign ID → **404** (not 403), as in M0/M2. Register the router in `app/main.py`.
+
+### 10.5 PDF (last, strictly separated)
+
+- [ ] `app/templates/bk_abrechnung.html` (all mandatory BGH disclosures §8.1) + `app/services/settlement_pdf.py`, which renders **only** from the finalized `settlement_run`/`settlement_line` (`render_pdf`, WeasyPrint). **No** recalculation. Test: PDF values == `settlement_line` values.
+
+### 10.6 Definition of Done for M3 (handover to M4)
+
+- [ ] Engine package pure (no DB/HTTP imports), `Decimal` throughout, one central `distribute_amount`.
+- [ ] **Golden tests §9.1 green** (hand-calculated expected values, incl. exit scenario 5) — the objective "reproducibly correct" yardstick.
+- [ ] **Property-based invariants §9.2 green** (I-A through I-G), esp. "Σ shares == total costs", "Σ time shares == 1", "vacancy → owner", determinism.
+- [ ] `settlement_run`/`settlement_line` with RLS (four policies, fail-closed) + ADR-0003 trigger (`finalized` immutable) + snapshot hash.
+- [ ] `finalize` atomic; `audit_event` for all operations; correction = new run (never mutation).
+- [ ] Mandatory BGH disclosures complete in `settlement_line`/PDF (formally complete); PDF recalculates nothing.
+- [ ] RLS coverage test + `test_tenant_isolation` extended with the M3 tables; **all 141 existing tests stay green.**
+- [ ] M3 exit objectively met: BK statement for a mixed-use property with tenant change + vacancy is **reproducibly correct** (golden test 5) and **formally complete** (mandatory-disclosures test).
+- [ ] No **[DECISION]**/**[OPEN/§18]** item "guessed away" unmarked; provisional assumptions clearly labeled; professional sign-off (tax advisor/attorney specializing in the field) recommended.
+
+---
+
+## 11. Assumptions made (M3)
+
+| # | Assumption | Impact if wrong | Clarify with |
 | --- | --- | --- | --- |
-| **M3-A1** | Zeitanteil **tagegenau** (ADR-0004), nicht monatsgenau. | Monatsgenau würde andere Cent-Zuordnung bei Wechsel ergeben; Engine-Methode + Tests müssten angepasst. | Mensch/StB (ADR-0004) |
-| **M3-A2** | Rundung **kaufmännisch + Largest-Remainder** (ADR-0005); Σ == Gesamt exakt. | Abweichende vorgeschriebene Rundung → zentrale Funktion anpassen. | Mensch/StB (ADR-0005) |
-| **M3-A3** | Ein `settlement_run` **je Mieter/Lease** (Mieterwechsel = zwei Läufe je Einheit). | Ein-Lauf-mehrere-Adressaten würde Modell/PDF ändern. | Mensch (§3.5) |
-| **M3-A4** | Mieteranteil bei CO2/Heizung kommt als **Eingabe** (`apportionable_tenant_amount`/extern); Engine berechnet das Stufenmodell **nicht** selbst. | Eigene 10-Stufen-Berechnung wäre ein abgegrenzter, fachlich abzunehmender Zusatzbaustein. | StB/Messdienst (§5) |
-| **M3-A5** | **Kein** automatischer Gewerbe-Vorwegabzug in M3; Gewerbe nimmt nach Schlüssel teil; Vorwegabzug ggf. manuell. | Automatischer Vorwegabzug ist eigener Baustein. | StB/Fachanwalt (§6.3) |
-| **M3-A6** | Vorauszahlungssumme **manuell** am Lauf (`advance_payments_source='MANUAL'`); M6 ersetzt durch `DERIVED`. | M6-Anschluss über `source`-Diskriminator vorbereitet. | (Roadmap M6) |
-| **M3-A7** | Personenzahl (`PERSONENZAHL`-Schlüssel) als per-Lease-Wert, konstant über Lease-Periode (M1 modelliert das nicht zeitabhängig). | Zeitabhängige Personenzahl bräuchte Modellergänzung. | Produkt (§2.3) |
-| **M3-A8** | Externe Werte/Verbrauch müssen **vollständig & plausibel** vorliegen; fehlend → Eskalation, **keine** stille Schätzung. | Ersatz-/Schätzverfahren (HeizkostenV) ist eigener, fachlicher Baustein. | StB/Messdienst (§2.4/§5) |
+| **M3-A1** | Time share **day-accurate** (ADR-0004), not month-accurate. | Month-accurate would yield a different cent allocation on change; engine method + tests would have to be adapted. | Human/tax advisor (ADR-0004) |
+| **M3-A2** | Rounding **commercial + largest remainder** (ADR-0005); Σ == total exactly. | A different prescribed rounding → adapt the central function. | Human/tax advisor (ADR-0005) |
+| **M3-A3** | One `settlement_run` **per tenant/lease** (tenant change = two runs per unit). | One-run-multiple-addressees would change model/PDF. | Human (§3.5) |
+| **M3-A4** | Tenant share for CO2/heating arrives as **input** (`apportionable_tenant_amount`/external); the engine does **not** compute the tier model itself. | An own 10-tier calculation would be a delimited additional building block to be signed off professionally. | Tax advisor/metering service (§5) |
+| **M3-A5** | **No** automatic commercial advance deduction in M3; commercial use participates by key; advance deduction manual if needed. | Automatic advance deduction is its own building block. | Tax advisor/attorney specializing in the field (§6.3) |
+| **M3-A6** | Advance payment total **manual** on the run (`advance_payments_source='MANUAL'`); M6 replaces it with `DERIVED`. | M6 connection prepared via the `source` discriminator. | (Roadmap M6) |
+| **M3-A7** | Number of persons (`PERSONENZAHL` key) as a per-lease value, constant over the lease period (M1 does not model this time-dependently). | A time-dependent number of persons would need a model extension. | Product (§2.3) |
+| **M3-A8** | External values/consumption must be available **complete & plausible**; missing → escalation, **no** silent estimation. | Substitute/estimation procedure (HeizkostenV) is its own professional building block. | Tax advisor/metering service (§2.4/§5) |
 
 ---
 
-## 12. Zusammenfassung der offenen Entscheidungen (für den Menschen)
+## 12. Summary of the open decisions (for the human)
 
-| # | Punkt | Typ | Empfehlung | Wann |
+| # | Item | Type | Recommendation | When |
 | --- | --- | --- | --- | --- |
-| **E3-1** | Zeitmaßstab tagegenau vs. monatsgenau | [ENTSCHEIDUNG] | **tagegenau** (ADR-0004) | vor M3-Impl |
-| **E3-2** | Rundungsmechanik | [ENTSCHEIDUNG] | **kaufmännisch + Largest-Remainder** (ADR-0005), Σ==Gesamt exakt | vor M3-Impl |
-| **E3-3** | Ein Lauf je Mieter/Lease vs. ein Lauf mit mehreren Adressaten | [ENTSCHEIDUNG] | **ein Lauf je Mieter** (§3.5) | bei Impl |
-| **E3-4** | Speicherort manuelle Vorauszahlungssumme | [ENTSCHEIDUNG] | **Feld am `settlement_run`** (`advance_payments_total` + `_source`) (§7.2) | bei Impl |
-| **E3-5** | `settlement_run`/`settlement_line`: Trigger-only (kein Grant-Entzug, weil `draft` editierbar) | [ENTSCHEIDUNG] | **Trigger-only**, volles CRUD-Grant (§1.6) | bei Impl |
-| **E3-6** | `run_type`-Hülle für WEG/Plan/Vermögensbericht in derselben Tabelle | [ENTSCHEIDUNG] | **ja, gleiche Hülle**, Detail-Payload je Typ in M4 (§1.3) | M4 (jetzt reservieren) |
-| **O3-1** | Eingabeweg externer Heiz-/Wasserwerte (Betrag/Einheit, PDF, Plausibilität) | [OFFEN/§18] | nicht eigenmächtig; provisorisch per-(Einheit,Nutzzeitraum); StB/Messdienst | vor produktiv |
-| **O3-2** | CO2 10-Stufen: selbst rechnen vs. Mieteranteil übernehmen | [OFFEN/§18] | provisorisch **übernehmen** (`apportionable_tenant_amount`); eigene Stufenlogik = separater, abnahmepflichtiger Baustein | vor produktiv |
-| **O3-3** | Gewerbe-Vorwegabzug (andere Umlagelogik, USt-Option) | [OFFEN/§18] | provisorisch **keiner** automatisch; ggf. manuell; StB/Fachanwalt | spätere Runde |
-| **O3-4** | Exakte PDF-Struktur BK-Abrechnung (Layout, Einwendungsfrist-Hinweis) | [OFFEN/§18] | Daten vollständig bereit; Layout mit Produkt/Fachseite | vor produktiv |
-| **O3-5** | Datenquelle/Logik `PERSONENZAHL`, Verbrauchs-Ersatzverfahren | [OFFEN/§18] | provisorische Annahmen (M3-A7/A8); fachlich klären | vor produktivem Einsatz dieser Schlüssel |
+| **E3-1** | Time yardstick day-accurate vs. month-accurate | [DECISION] | **day-accurate** (ADR-0004) | before M3 implementation |
+| **E3-2** | Rounding mechanics | [DECISION] | **commercial + largest remainder** (ADR-0005), Σ==total exactly | before M3 implementation |
+| **E3-3** | One run per tenant/lease vs. one run with multiple addressees | [DECISION] | **one run per tenant** (§3.5) | at implementation |
+| **E3-4** | Storage location of manual advance payment total | [DECISION] | **Field on the `settlement_run`** (`advance_payments_total` + `_source`) (§7.2) | at implementation |
+| **E3-5** | `settlement_run`/`settlement_line`: trigger-only (no grant revocation, because `draft` is editable) | [DECISION] | **Trigger-only**, full CRUD grant (§1.6) | at implementation |
+| **E3-6** | `run_type` shell for WEG/plan/asset report in the same table | [DECISION] | **yes, same shell**, detail payload per type in M4 (§1.3) | M4 (reserve now) |
+| **O3-1** | Input path of external heating/water values (amount/unit, PDF, plausibility) | [OPEN/§18] | not unilaterally; provisionally per-(unit, usage period); tax advisor/metering service | before production use |
+| **O3-2** | CO2 10-tier: compute ourselves vs. adopt tenant share | [OPEN/§18] | provisionally **adopt** (`apportionable_tenant_amount`); own tier logic = separate building block requiring sign-off | before production use |
+| **O3-3** | Commercial advance deduction (different apportionment logic, VAT option) | [OPEN/§18] | provisionally **none** automatically; manual if needed; tax advisor/attorney specializing in the field | later round |
+| **O3-4** | Exact PDF structure of the BK statement (layout, objection-deadline notice) | [OPEN/§18] | data fully ready; layout with product/domain side | before production use |
+| **O3-5** | Data source/logic `PERSONENZAHL`, consumption substitute procedure | [OPEN/§18] | provisional assumptions (M3-A7/A8); clarify professionally | before production use of these keys |
 
-> **Keine Selbst-Zertifizierung (Haltung):** Dieses Design macht die Verteilung, die anteiligen Zeiträume, die Rundung und die Soll/Ist-Rechnung **transparent, deterministisch und nachrechenbar** (Golden-Tests + Property-based Invarianten als objektive Messlatte). Es kann **nicht** garantieren, dass eine konkrete BK-Abrechnung im Einzelfall gerichts-/prüfungsfest ist. Die fachliche Richtigkeit der Regeln (insb. CO2-Stufen, Gewerbe-Vorwegabzug, externe Heizkosten, Aufbewahrung) ist vor produktivem Einsatz durch **Steuerberater/Fachanwalt** abzunehmen.
+> **No self-certification (stance):** This design makes the distribution, the pro rata periods, the rounding, and the expected/actual calculation (Soll/Ist) **transparent, deterministic, and reproducible** (golden tests + property-based invariants as the objective yardstick). It **cannot** guarantee that a concrete BK statement withstands court or audit scrutiny in an individual case. The professional correctness of the rules (esp. CO2 tiers, commercial advance deduction, external heating costs, retention) must be signed off by a **tax advisor/attorney specializing in the field** before productive use.
 
 ---
 
-## 13. Was dieses Dokument bewusst NICHT entscheidet
+## 13. What this document deliberately does NOT decide
 
-- **WEG-Jahresabrechnung / Abrechnungsspitze (WEMoG), Wirtschaftsplan, Vermögensbericht (§ 28 IV WEG):** M4 — nutzt diese Engine (`owner_distribution_key`, Eigentümersphäre, `reserve_relevant`-Trennung) und dieselbe Snapshot-/Trigger-Mechanik wieder; `run_type` ist reserviert (§1.3).
-- **CO2-10-Stufen-Eigenberechnung, Gewerbe-Vorwegabzug, Verbrauchs-Ersatzverfahren:** abgegrenzte, fachlich abzunehmende Bausteine (§5/§6/§2.4, SDD §18).
-- **Echte Zahlungen/Mietkonto (Vorauszahlung `DERIVED`):** M6 (§7.2).
-- **Exaktes PDF-Layout / Einwendungsfrist-Texte:** SDD §18 (§8.1).
-- **§ 35a EStG-Ausweis** in Eigentümerabrechnungen: M4/SDD §18.
-- **Endgültige Rechtsabnahme:** Steuerberater/Fachanwalt — nicht durch dieses Dokument ersetzbar.
+- **WEG annual settlement / settlement balance (Abrechnungsspitze) (WEMoG), economic plan, asset report (§ 28 IV WEG):** M4 — reuses this engine (`owner_distribution_key`, owner sphere, `reserve_relevant` separation) and the same snapshot/trigger mechanism; `run_type` is reserved (§1.3).
+- **Own CO2 10-tier calculation, commercial advance deduction, consumption substitute procedure:** delimited building blocks requiring professional sign-off (§5/§6/§2.4, SDD §18).
+- **Real payments/tenant ledger (Mietkonto) (advance payment `DERIVED`):** M6 (§7.2).
+- **Exact PDF layout / objection-deadline texts:** SDD §18 (§8.1).
+- **§ 35a EStG disclosure** in owner settlements: M4/SDD §18.
+- **Final legal sign-off:** tax advisor/attorney specializing in the field — not replaceable by this document.

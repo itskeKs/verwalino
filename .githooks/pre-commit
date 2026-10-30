@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Lint staged backend/frontend code and always check Markdown links.
+# Enable once per clone: make hooks
+set -uo pipefail
+
+root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+exec "$root/scripts/checks.sh"
