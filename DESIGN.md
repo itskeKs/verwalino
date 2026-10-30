@@ -59,7 +59,9 @@ inline styles. Rule: pick a token role from the table; for a new status colour r
 ### Typography
 
 - Family: Inter Variable, self-hosted through `@fontsource-variable/inter` (imported in `main.tsx`),
-  fallback `system-ui`. Monospace (`--mono`) only for `code`.
+  fallback `system-ui`. In `index.css`, monospace (`--mono`) is used for `code`, declaration `pre`
+  blocks (`.declaration-value-grid`, `.declaration-rule-details`) and `.candidate-decision textarea`.
+  Inline styles also use it for amounts in `OpenItemsPage.tsx` and identifiers in `ResolutionRegisterPage.tsx`.
 - The root font size is **15 px** (`:root`), so 1 rem = 15 px and all rem-based Tailwind sizes scale with it.
 - Scale as used: page title `h1` 1.5rem / 600 / -0.01em (`index.css`; dashboard uses `text-2xl`);
   section title `h2` 1.05rem / 600; card title `text-base font-semibold`; body 15 px; form labels
@@ -127,9 +129,8 @@ Detail pages (`/objekte/:id`, `/mandate/:id`, ...) have no nav entry; the parent
 | Verwaltung | Benutzer | `OWNER_ADMIN` |
 | Erweitert | Quellenfreigaben, Altquellen, Berechtigungen, Freigaben vorbereiten, Mahnquarantäne, Mandatsquarantäne, Seitenauszüge, Kontaktdaten-Rechte, Gebäudedaten-Rechte | `OWNER_ADMIN` |
 
-A new top-level screen is one `NavItem` in an existing group (label = German noun, one lucide icon) plus a
-`<Route>` in `App.tsx`. Several icons repeat (`FileText` x7, `KeyRound` x6); pick the closest icon, do not
-rely on it to tell entries apart.
+Navigation entries are `NavItem`s in `GROUPS` (label = German noun, one lucide icon); their routes are in
+`App.tsx`. Several icons repeat (`FileText` x7, `KeyRound` x6).
 
 ### Page patterns
 
@@ -162,9 +163,9 @@ rely on it to tell entries apart.
 | 640-1023 | stat tiles 2 columns |
 | >= 1024 (`lg`) | stat tiles 4 columns; "Handlungsbedarf" and "Schnellzugriff" side by side (2:1) |
 
-The page never scrolls horizontally at 360 px (checked with the screenshots below). Wide tables must sit
-in `overflow-x-auto` or `.paged-table`; long German names need `min-w-0` plus `truncate` or
-`overflow-wrap: anywhere` (`.settlement-detail`). Deviation: in the 360 px detail screenshot the units table
+Wide tables use `overflow-x-auto` (`MandatePage.tsx`) or `.paged-list .paged-table` (`index.css`). Long
+content uses `min-w-0` plus `truncate` (`DashboardPage.tsx`) or `overflow-wrap: anywhere`
+(`.settlement-detail`). Deviation: in the 360 px detail screenshot the units table
 and the document upload button extend beyond their card, so `main` scrolls sideways there.
 
 ## Components
@@ -173,7 +174,7 @@ and the document upload button extend beyond their card, so `main` scrolls sidew
 
 | File | Exports | Variants | Use when |
 |---|---|---|---|
-| `button.tsx` | `Button` (forwardRef) | variant `primary` (default), `secondary`, `outline`, `ghost`, `destructive`; size `sm` (h-8), `md` (h-9, default), `lg` (h-11), `icon` (h-9 w-9) | `primary`: the one main action of a view or form. `outline`: cancel and secondary actions. `ghost`: topbar and toolbars. `destructive`: confirm of an irreversible action. `secondary`, `lg`, `icon` and `destructive` have no call site yet. Legacy twin: `.btn`, `.btn--primary`, `.btn--danger`, `.btn--small`, `.btn--wrap` (use `btn--wrap` when the label may wrap). |
+| `button.tsx` | `Button` (forwardRef) | variant `primary` (default), `secondary`, `outline`, `ghost`, `destructive`; size `sm` (h-8), `md` (h-9, default), `lg` (h-11), `icon` (h-9 w-9) | `primary`: the main action of a view or form (with the deviation below). `outline`: cancel and secondary actions. `ghost`: topbar and toolbars. `destructive`: confirm of an irreversible action. `secondary`, `lg`, `icon` and `destructive` have no call site yet. Legacy twin: `.btn`, `.btn--primary`, `.btn--danger`, `.btn--small`, `.btn--wrap` (wrapping label). |
 | `badge.tsx` | `Badge`, `BadgeTone` | tone `default`, `primary`, `success`, `warning`, `destructive`, `info`, `outline` | A short status or type label. `primary` = category/type (WEG), `success` = done/confirmed, `warning` = needs attention/due, `destructive` = overdue/rejected, `info` = neutral note, `default` = neutral, `outline` = unmapped raw value. Legacy twin: `.badge` + modifier. |
 | `card.tsx` | `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter` | none; compose | Every panel. A table card uses `CardContent className="p-0"` with edge cells `pl-5`/`pr-5`. Legacy twin: `.card` with an `h2`. |
 | `dialog.tsx` | `Dialog`, `DialogContent`, `DialogHeader`, `DialogTitle`, `DialogDescription`, `DialogFooter` (+ `DialogPortal`, `DialogOverlay`) | none | Short focused tasks and confirmations on Radix: focus trap, Esc, built-in close "Schließen". Max width 32 rem, full width on phones. |
@@ -183,6 +184,9 @@ and the document upload button extend beyond their card, so `main` scrolls sidew
 
 Kit adoption today, counted as files that import the part: `Badge` 7, `Dialog` 9, `Card` 5, `Button` 3
 (12 call sites), `Input` 2, `Label` 1, `StatCard` 1. The remaining UI uses the global classes below.
+
+Deviation: the archive form's "Abbrechen" in `MandateDetailPage.tsx` uses the default `primary` variant.
+The create form's "Abbrechen" in `MandatePage.tsx` explicitly uses `outline`.
 
 ### Global classes (`index.css`)
 
@@ -195,10 +199,11 @@ Kit adoption today, counted as files that import the part: `Badge` 7, `Dialog` 9
 | `.form-grid`, `.form-full-width`, `.form-actions` | form layout |
 | `.error-text`, `.empty-hint` | error line (destructive), empty-state line (muted) |
 | `.link`, `.link-button` | text link; button that looks like a link |
-| `.paged-list`, `.paged-table` | list page wrapper; horizontally scrollable table wrapper |
+| `.paged-list`, `.paged-list .paged-table` | list page wrapper; horizontally scrollable table wrapper only inside `.paged-list` |
 
-Referenced in components but defined nowhere, so they do nothing: `muted` (15 files), `btn-primary` (3,
-typo of `btn--primary`), `badge--warning`, `form-hint`, `table-responsive`. Do not copy them.
+Referenced in components but defined nowhere, so they do nothing: `muted` (5 files: `MasterImport.tsx`,
+`DepositsPage.tsx`, `MietkontoPage.tsx`, `PropertiesPage.tsx`, `SpecialLeviesPage.tsx`), `btn-primary` (3,
+typo of `btn--primary`), `badge--warning`, `form-hint`, `table-responsive`.
 
 ### Recurring composites
 
@@ -216,12 +221,15 @@ typo of `btn--primary`), `badge--warning`, `form-hint`, `table-responsive`. Do n
   `SettlementsPage.tsx`. `InvoiceProcessingStatus.tsx` and the rule pill in `knowledge/RuleCard.tsx` are
   plain `role="status"` text/pills, not `Badge`. Management types are still shown as raw codes (MIET, WEG).
 - **Stat cards.** `StatCard` grid `grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4` (`DashboardPage.tsx`);
-  `tone` follows the data (success at 0 overdue, warning above 0). The three rent figures in
+  "Fristen überfällig" uses `destructive` above 0, while "Überfällige Posten" uses `warning` above 0.
+  Both use `success` at 0 and `default` when their data is unavailable. The three rent figures in
   `DashboardKpis.tsx` are bordered boxes, not `StatCard`.
 - **Panels.** `<section class="card" aria-labelledby>` with an `h2`, a sentence saying what the action does
   and what it does not do, the form, then outcome lines: `role="status"` for the receipt, `role="alert"`
   for errors, `<details>` for history. Examples: `AttachmentsPanel.tsx`, `MeterPanel.tsx`, `DsgvoPanel.tsx`,
   and the `components/intake/*Panel.tsx` family.
+  Additional panel files: `MailDispatch.tsx`, `FinancialCoverageReview.tsx`, `SourceSecurityPanel.tsx`,
+  `FinancialCorrectionControls.tsx`; source links use `knowledge/KnowledgeSourceButton.tsx`.
 - **Dialogs.** Default is `ui/dialog.tsx`: `MasterDataEditor.tsx` (edit fields), `MasterDataDelete.tsx`
   (confirm: title, description naming the consequence, "Löschen bestätigen", "Abbrechen"; Esc and outside
   click are blocked while the request runs), `AttachmentsPanel.tsx` (archive with reason), `Topbar.tsx`
@@ -235,8 +243,10 @@ typo of `btn--primary`), `badge--warning`, `form-hint`, `table-responsive`. Do n
   searches, errors as `role="alert"`, "Weitere laden" for more pages.
 - **Upload.** Native `<input type="file">` (the browser's own button text is visible) in a `.form-grid`
   form: `AttachmentsPanel.tsx` (documents, 25 MiB limit stated in the copy), `MasterImport.tsx` (CSV with
-  preview table and row errors), the mandate upload in `MandateDetailPage.tsx`. No drag and drop, no
-  progress bar; the form is disabled while the request runs and the outcome is a `role="status"` line.
+  preview table and row errors), the mandate upload in `MandateDetailPage.tsx`. These forms have no drag
+  and drop or progress bar; controls are disabled while requests run. CSV import and attachments report
+  outcomes in `role="status"` lines. `DeclarationImportPage.tsx` renders a `<progress>` for processing,
+  styled by `.declaration-import-section progress` in `index.css`.
 - **Money and date fields.** Date: `<input type="date">` (63 uses), value ISO `YYYY-MM-DD`, the browser
   shows its locale format. Money: `<input type="text" inputMode="decimal">` (62 uses) with placeholder
   `0.00`; the user may type a comma, helpers turn it into a dot (`moneyInput` in `SpecialLeviesPage.tsx`,
@@ -276,26 +286,26 @@ Principle from [AGENTS.md](AGENTS.md#design-rules): report real outcomes only, n
   (MEA, GoBD, SEPA, DATEV).
 - Page titles: each page renders its own `h1`; `document.title` is the static "Hausverwaltung".
 - Deviation: about 60 strings are written without umlauts ("Strasse", "waehlen", "Ruecklage",
-  "Mietvertraege", "FLAECHE"). Write real umlauts and ß in new copy.
+  "Mietvertraege", "FLAECHE").
 
 ### Number, money, date and size formats
 
 `frontend/src/lib/` holds no formatting helper (`utils.ts` is only `cn`; `costVocabulary.ts`,
-`heatingInputs.ts`, `settlementInputNeeds.ts` are domain helpers). Every page declares its own formatter
-as a file-local function; a new screen copies the behaviour below or, better, extracts one shared helper.
+`heatingInputs.ts`, `settlementInputNeeds.ts` are domain helpers). Formatting uses file-local functions
+or inline expressions, with the variants below. The inconsistencies are tracked in #48.
 
 | What | Contract | Implemented by |
 |---|---|---|
 | Money | `1.234,56 €`: `.` thousands, `,` decimals, always two, sign first (`-1.234,56 €`), no float arithmetic | `euros()` in `components/DashboardKpis.tsx`, `money()` in `pages/BankTransactionsPage.tsx` (both `€`) |
-| Money, deviating | same grouping but suffix ` EUR` | `money()` in `pages/ReportsPage.tsx`, `formatCents()` in `pages/PaymentsPage.tsx` and `pages/CostEntriesPage.tsx`, `formatProposalMoney()` in `pages/SettlementDetailPage.tsx`; ` EUR` appears 93 times in 30 files, `€` in 2. `displayCents()` in `api/allocationProposals.ts` prints `1234,56` without grouping or suffix. |
+| Money, deviating | same grouping but suffix ` EUR`; `OpenItemsPage.tsx` uses ungrouped `toFixed(2)` plus ` EUR` (`1234.56 EUR`) | `money()` in `pages/ReportsPage.tsx`, `formatCents()` in `pages/PaymentsPage.tsx` and `pages/CostEntriesPage.tsx`, `formatProposalMoney()` in `pages/SettlementDetailPage.tsx`; ` EUR` appears 93 times in 30 files, `€` in 2. `displayCents()` in `api/allocationProposals.ts` prints `1234,56` without grouping or suffix. |
 | Date | `TT.MM.JJJJ`, e.g. `05.03.2026`, from the ISO API value | `formatDate()` in `pages/DashboardPage.tsx`, `FristenmonitorPage.tsx`, `MandatePage.tsx`; `date()` in `BankTransactionsPage.tsx`; `dateLabel()` in `DashboardKpis.tsx` |
-| Date, deviating | `toLocaleDateString("de-DE")` prints `5.3.2026` (no zero padding) | `MandateDetailPage.tsx`, `AttachmentsPanel.tsx` |
+| Date, deviating | `toLocaleDateString("de-DE")` or `Intl.DateTimeFormat("de-DE")` prints `5.3.2026` (no zero padding) | `MandateDetailPage.tsx`, `AttachmentsPanel.tsx`; `components/knowledge/PropertyDocuments.tsx` uses `Intl.DateTimeFormat` |
 | Date and time | `new Date(x).toLocaleString("de-DE")` gives `5.3.2026, 15:03:09` (no zero padding, with seconds) | 45 `toLocaleString` calls, all `de-DE`; used for receipts and history |
 | Long date | weekday and month in words ("Freitag, 30. Oktober 2026") | `dateLabel` in `DashboardPage.tsx` |
 | Plain numbers | `Intl.NumberFormat("de-DE")` / `toLocaleString("de-DE")` (`1.234.567`) | `PropertyDetailPage.tsx`, `AttachmentsPanel.tsx`, `IntakeBatchPage.tsx` |
-| File size | `1.5 KB` / `1.0 MB` with a dot (`toFixed`); `1,5 KiB` with `de-DE` in `IntakeBatchPage.tsx` | `formatBytes()` in `InvoiceDocumentsPage.tsx`, `formatSize()` in `MandateDetailPage.tsx` |
-| IBAN | shown exactly as stored (upper case, no spaces); only whitespace removal and upper-casing on input | `normalizedIban` in `components/SepaExport.tsx`; `BankAccountsPage.tsx` prints `iban` raw. No grouping helper exists; if one is added it belongs in `lib/` and groups in blocks of four. |
-| Empty value | `—` (kit, newer pages), `-` (older tables), `–` (`BankTransactionsPage.tsx`) | no single rule yet; prefer `—` |
+| File size | `1.5 KB` / `1.0 MB` with a dot (`toFixed(1)`); mandates use whole KB (`12 KB`, `toFixed(0)`). Attachments show `1.234 Bytes` (`Intl.NumberFormat("de-DE")`); intake shows `1,5 KiB` (`toLocaleString("de-DE")`) | `formatBytes()` in `InvoiceDocumentsPage.tsx`, `formatSize()` in `MandateDetailPage.tsx`, `AttachmentsPanel.tsx`, `IntakeBatchPage.tsx` |
+| IBAN | shown as stored; SEPA confirmation input removes whitespace and upper-cases it | `normalizedIban` in `components/SepaExport.tsx`; `BankAccountsPage.tsx` prints `iban` raw. There is no IBAN display grouping in the frontend. |
+| Empty value | `—` (kit, newer pages), `-` (older tables), `–` (`BankTransactionsPage.tsx`) | `MandatePage.tsx`, `InvoiceDocumentsPage.tsx`, `BankTransactionsPage.tsx`, respectively |
 | Money input | accept `1234,56` and `1234.56`, send `1234.56` | `moneyInput`, `exactCents`, `normalizePlanAmount` (see above) |
 
 ## Screenshots
@@ -326,7 +336,7 @@ button, unstyled buttons on the dashboard task list, ASCII "Strasse").
 3. Every async region has loading, empty, error and success copy from [States](#states); errors keep input.
 4. Write actions are hidden for `READ_ONLY`; admin-only pages say "Zugriff nur für Inhaber/Admin." or sit in an
    admin-only nav group.
-5. Money `1.234,56 €`, dates `TT.MM.JJJJ`, Sie-form, real umlauts; amounts as decimal strings.
+5. Money and date formats as in [Copy and formats](#copy-and-formats) (#48 settles the single target); Sie-form, real umlauts; amounts as decimal strings.
 6. Checked at 360 px (no sideways page scroll), with long German names, four-digit amounts and many rows.
 7. Labels on every control, keyboard operable dialogs, `role="alert"` for errors, `role="status"` for outcomes.
 8. An interaction test in the area's `*.test.tsx`; this file and the screenshots updated if the look changed.
