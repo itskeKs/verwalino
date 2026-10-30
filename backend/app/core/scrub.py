@@ -14,15 +14,16 @@ REQUEST_HEADER_ALLOWLIST = ("content-type", "content-length", "accept", "user-ag
 # Token-start anchors prevent retries at every suffix of a hostile long token.
 # All token/whitespace repetitions are bounded; repeated groups have disjoint
 # separators so they cannot partition the same input in exponentially many ways.
-_EMAIL = re.compile(r"(?<![\w.!#$%&'*+/=?^`{|}~-])[\w.!#$%&'*+/=?^`{|}~-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,4}(?![\w.-])")
-_IBAN = re.compile(r"(?<!\w)[A-Z]{2}\d{2}(?:[ -]?[A-Z0-9]){11,30}(?!\w)", re.I)
+# Underscores delimit filename parts; preceding digits may delimit an IBAN.
+_EMAIL = re.compile(r"(?<![^\W_]|[.!#$%&'*+/=?^`{|}~-])[\w.!#$%&'*+/=?^`{|}~-]{1,64}@(?:[^\W_]|-){1,63}(?:\.(?:[^\W_]|-){1,63}){1,127}(?![^\W_]|[.-])")
+_IBAN = re.compile(r"(?<![^\W\d_])[A-Z]{2}\d{2}(?:[ -]?[A-Z0-9]){11,30}(?![^\W_])", re.I)
 _PHONE = re.compile(r"(?<![\w.+/-])(?:\+\d|\(\d|\d)[\d ()/-]{5,62}\d(?![\w.-])")
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _ADDRESS = re.compile(r"(?<![\w-])[\w-]{1,64}(?:straße|strasse|str\.)[ \t]{1,8}\d{1,6}[a-z]?(?:[ \t]{0,4}[-/][ \t]{0,4}\d{1,6}[a-z]?)?(?!\w)", re.I)
 _TITLE_WORD = r"[A-ZÀ-ÖØ-Þ][a-zßà-öø-ÿ]{1,63}(?:-[A-ZÀ-ÖØ-Þ][a-zßà-öø-ÿ]{1,31})?"
 _NAME_WORD = rf"(?:{_TITLE_WORD}|[A-ZÀ-ÖØ-Þ]{{2,64}})"
 _NAME = re.compile(rf"\b{_TITLE_WORD}(?:[ \t]{{1,3}}{_TITLE_WORD}){{1,3}}\b")
-_COMMA_NAME = re.compile(rf"\b{_NAME_WORD},[ \t]{{1,3}}{_NAME_WORD}\b")
+_COMMA_NAME = re.compile(rf"\b{_NAME_WORD},[ \t]{{1,3}}{_NAME_WORD}\b", re.I)
 _PARTICLE_NAME = re.compile(rf"\b(?:{_TITLE_WORD}[ \t]{{1,3}})?(?:(?:van|von|de|da|zu)[ \t]{{1,3}}){{1,3}}{_TITLE_WORD}\b")
 _OWNER_NAME = re.compile(r"(?i)\b(owner[ \t]{1,8})[^\W\d_][\w'-]{0,63}([ \t]{1,8}not found)\b")
 _KEY_VALUE = re.compile(r"\b(Key[ \t]{1,8}\([^()\r\n]{1,128}\)[ \t]{0,8}=[ \t]{0,8})\([^()\r\n]{0,512}\)")
@@ -90,7 +91,7 @@ def scrub_text(value: str, *, error_context: bool = False) -> str:
     """Mask bounded diagnostic text; generic names need an error context."""
     truncated = len(value) > MAX_SCRUB_CHARS
     value = value[:MAX_SCRUB_CHARS]
-    error_context = (error_context or bool(_ERROR_CONTEXT.search(value))) and not _INFO_LINE.match(value)
+    error_context = error_context or (bool(_ERROR_CONTEXT.search(value)) and not _INFO_LINE.match(value))
     value = _PG_DETAIL.sub("", value)
     value = _HEADER.sub(lambda m: f"{m[1]}: [redacted:header]", value)
     value = _QUERY.sub(r"\1=[redacted:query]", value)
@@ -116,8 +117,6 @@ def scrub(value, *, error_context: bool = True):
         return [scrub(item, error_context=error_context) for item in value]
     if not isinstance(value, dict):
         return value
-    if value.get("level") in ("debug", "info", "warning"):
-        error_context = False
     result = {}
     for key, item in value.items():
         normalized = str(key).lower().replace("-", "_")

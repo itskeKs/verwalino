@@ -212,6 +212,35 @@ def test_tracker_uses_supported_data_collection_controls(offline_tracker):
     assert client.options["data_collection"]["frame_context_lines"] == 0
 
 
+@pytest.mark.parametrize("level", [logging.INFO, logging.WARNING])
+def test_logged_breadcrumb_names_are_masked_in_offline_events(level, offline_tracker, caplog):
+    import sentry_sdk
+    from app.core.request_id import correlation_context
+
+    events, client = offline_tracker
+    with caplog.at_level(level, logger="app.test.breadcrumb"):
+        with correlation_context("breadcrumb-123"):
+            logging.getLogger("app.test.breadcrumb").log(level, "Suche Mieter Erika Musterfrau")
+            sentry_sdk.capture_exception(RuntimeError("lookup failed"))
+    client.flush()
+    assert len(events) == 1
+    assert events[0]["tags"]["request_id"] == "breadcrumb-123"
+    breadcrumbs = [item for item in events[0]["breadcrumbs"]["values"] if item.get("category") == "app.test.breadcrumb"]
+    assert len(breadcrumbs) == 1
+    assert breadcrumbs[0]["level"] == logging.getLevelName(level).lower()
+    assert "Erika" not in json.dumps(events)
+    assert "Musterfrau" not in json.dumps(events)
+    assert "[redacted:name]" in breadcrumbs[0]["message"]
+
+
+def test_tracker_reports_every_error_without_configurable_sampling(offline_tracker):
+    from app.core.config import Settings
+
+    _, client = offline_tracker
+    assert client.options["sample_rate"] == 1.0
+    assert {key for key in Settings.model_fields if key.startswith("error_tracking_")} == {"error_tracking_dsn", "error_tracking_environment"}
+
+
 async def test_empty_dsn_never_initializes_a_transport(tracking_routes, monkeypatch):
     import sentry_sdk
     from app.core.config import Settings
@@ -294,12 +323,3 @@ def test_compressed_application_session_tokens_are_scrubbed(monkeypatch):
     token = security.create_session_token(uuid.UUID(int=1), uuid.UUID(int=2))
     assert token.startswith(".")
     assert token not in scrub_text("Invalid credential " + token)
-
-
-@pytest.mark.parametrize("rate", [-0.1, 1.1, float("nan")])
-def test_error_sample_rate_must_be_a_probability(rate):
-    from pydantic import ValidationError
-    from app.core.config import Settings
-
-    with pytest.raises(ValidationError):
-        Settings(_env_file=None, error_tracking_sample_rate=rate)

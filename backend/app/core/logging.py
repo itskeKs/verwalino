@@ -4,7 +4,7 @@ import logging
 import copy
 
 from app.core.request_id import REPORTED_ERROR_ATTRIBUTE, request_id
-from app.core.scrub import scrub_text
+from app.core.scrub import MAX_SCRUB_CHARS, scrub_text
 
 
 class _ReportedRequestErrorFilter(logging.Filter):
@@ -29,10 +29,21 @@ class RequestFormatter(logging.Formatter):
             record.msg = scrub_text(record.getMessage(), error_context=True)
             record.args = ()
             if record.exc_info:
-                record.exc_text = scrub_text(super().formatException(record.exc_info), error_context=True)
+                record.exc_text = super().formatException(record.exc_info)
                 record.exc_info = None
-            elif record.exc_text:
-                record.exc_text = scrub_text(record.exc_text, error_context=True)
+            if record.exc_text:
+                text = record.exc_text.rstrip("\n")
+                truncated = len(text) > MAX_SCRUB_CHARS
+                if truncated:
+                    # Keep complete trailing lines so clipping cannot strip a
+                    # DETAIL/password prefix from a retained private value.
+                    cutoff = text.find("\n", len(text) - MAX_SCRUB_CHARS)
+                    if cutoff == -1:
+                        # An overlong final line keeps its type/secret labels;
+                        # scrub_text bounds and filters it from the beginning.
+                        cutoff = text.rfind("\n")
+                    text = text[cutoff + 1:]
+                record.exc_text = ("[truncated]\n" if truncated else "") + scrub_text(text, error_context=True)
             if record.stack_info:
                 record.stack_info = scrub_text(record.stack_info, error_context=True)
         return super().format(record)

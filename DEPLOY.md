@@ -251,27 +251,26 @@ are read from the API process environment (or its `.env`):
 | --- | --- | --- |
 | `HV_ERROR_TRACKING_DSN` | empty | Empty disables SDK initialization and tracker transport. A nonempty Sentry-compatible project DSN opts in. Keep it in operator-managed secrets. |
 | `HV_ERROR_TRACKING_ENVIRONMENT` | `selfhost` | Deployment label, e.g. `hosted-production`; never a person's or organization's name. |
-| `HV_ERROR_TRACKING_SAMPLE_RATE` | `1.0` | Fraction of error events to send, from 0 through 1. No performance tracing. |
 
 The portable installer keeps tracking disabled and does not accept/forward these
 keys in `.env.selfhost`. The existing production Compose configuration also needs
 separately reviewed environment wiring before opting in; adding keys to the
-host's dotenv file alone does not forward them into a container. This change
-does not enable a tracker, provision one or alter a running deployment.
-The installer help and `.env.example` describe that boundary.
+host's dotenv file alone does not forward them into a container.
 
 For the hosted offer, use **self-hosted GlitchTip** as the Sentry-compatible
 tracker. Provision its project, access controls, retention and TLS separately,
 then supply its DSN to the API process. No external SaaS account is required by
 the application. Events carry `request_id` and, after session validation,
-`organization_id` (UUID only), so the reported ID finds both log lines and events.
+`organization_id` (UUID only). Filter tracker events by the `request_id` tag
+using the reported ID to find the event matching a response or log line.
 Release is `HV_RELEASE_ID` from the **process environment**, otherwise app version
 `0.1.0`. The production Compose label alone does not set that environment variable;
 image labels/digests are not discovered at runtime. Portable Compose forwards an
 exported `HV_RELEASE_ID`; it is not an accepted `.env.selfhost` setting.
-The SDK uses FastAPI/Starlette integrations, error sampling, explicit
-`data_collection` controls (SDK 2.73+, replacing deprecated `send_default_pii`),
-at most ten breadcrumbs and no performance tracing. User identity, cookies,
+The SDK uses FastAPI/Starlette integrations, explicit `data_collection` controls,
+at most ten breadcrumbs and no performance tracing. Error-event probability is
+fixed at `1.0` in `core/error_tracking.py`: every eligible error is sent while
+tracking is enabled. User identity, cookies,
 bodies, query parameters, SQL values, frame locals and source context are not
 collected. The machine hostname (`server_name`) is omitted. Duplicate exception
 reports are suppressed; a failed response stream is reported once with its ID
@@ -283,7 +282,7 @@ Before sending, a shared pure scrubber removes request bodies, cookies, user
 objects, stack locals and source snippets. Request headers are dropped except
 `content-type`, `content-length`, `accept`, `user-agent` and `x-request-id`
 (case-insensitive); their retained values are scrubbed too. Filtering reaches
-tags, `extra`, contexts and breadcrumb data values. Postgres `DETAIL:`, `HINT:`,
+tags, `extra`, contexts and breadcrumb messages/data at every level. Postgres `DETAIL:`, `HINT:`,
 `Failing row contains (...)` and `Key (...)=(...)` lines are removed while the
 constraint name and SQLSTATE in the error summary remain.
 It masks email addresses, compact/space/hyphen-grouped IBANs (either case), phone
@@ -299,9 +298,12 @@ breadcrumbs. Masks use `[redacted:email]`,
 `[redacted:token]`, `[redacted:password]`, `[redacted:header]` and `[redacted:query]`.
 The same text scrubber filters formatted messages and tracebacks **only at
 ERROR and above** (the 500/unhandled-error paths). `uvicorn.access` receives
-correlation IDs without text scrubbing, regardless of level. INFO/WARNING text
-is unchanged. Each scrubbed string is limited to its first 8,192 characters;
-the remainder is replaced with `[truncated]`. Patterns use bounded tokens and
+correlation IDs without text scrubbing, regardless of level. INFO/WARNING log text
+is unchanged; copies sent as tracker breadcrumbs are scrubbed as error context.
+Each scrubbed string is limited to 8,192 input characters. Tracebacks retain the
+last complete lines within that limit so the final error line survives. An
+overlong final line, and other text, retain the first 8,192 characters. Omitted
+text is marked with `[truncated]`. Patterns use bounded tokens and
 linear scanning. SQLAlchemy hides bound parameters. Correlation IDs are
 preserved, and `weasyprint`/`fontTools` emit only WARNING and above.
 
@@ -310,10 +312,7 @@ available in the request context and are not fetched for reporting. Name masking
 is pattern-based: in error contexts it can mask ordinary capitalized phrases
 and miss unusual or unlabelled single-word names. Other unrecognized free text may still be personal data;
 keep exception messages structural and never intentionally log documents or
-request bodies. Tests use a fake transport and verify serialized events without
-network calls. No new Gherkin feature is needed: these are infrastructure/error
-contracts, covered by unit/API tests. `docs/operations/` currently owns domain
-workflows; this deployment page owns observability configuration and lookup.
+request bodies.
 
 ## Existing alpha: `verwaltung.karat.immo`
 

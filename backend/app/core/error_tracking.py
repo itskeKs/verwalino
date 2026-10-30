@@ -12,6 +12,9 @@ from app.core.config import Settings
 from app.core.request_id import REPORTED_HTTP_STATUS_CODES, request_id
 from app.core.scrub import REQUEST_HEADER_ALLOWLIST, scrub
 
+# Send every eligible error when an operator opts in; no sampling tuning key.
+ERROR_EVENT_PROBABILITY = 1.0
+
 # The middleware owns/reset this dictionary; authentication fills it only after
 # database-backed principal validation. No client-supplied tenant tag is trusted.
 request_state: ContextVar[dict | None] = ContextVar("tracking_request_state", default=None)
@@ -35,7 +38,7 @@ def configure_error_tracking(settings: Settings, *, release: str, transport=None
         environment=settings.error_tracking_environment,
         release=release,
         server_name="",
-        sample_rate=settings.error_tracking_sample_rate,
+        sample_rate=ERROR_EVENT_PROBABILITY,
         traces_sample_rate=None,
         data_collection={
             "user_info": False,
