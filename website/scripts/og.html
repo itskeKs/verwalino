@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="{{lang}}">
+<head><meta charset="utf-8" /><title>Verwalino</title>
+<style>
+@font-face{font-family:Display;src:url(data:font/woff2;base64,{{displayFont}}) format('woff2');font-weight:700;font-display:swap}
+@font-face{font-family:Body;src:url(data:font/woff2;base64,{{bodyFont}}) format('woff2');font-weight:400;font-display:swap}
+@font-face{font-family:Mono;src:url(data:font/woff2;base64,{{monoFont}}) format('woff2');font-weight:400;font-display:swap}
+*{box-sizing:border-box}body{margin:0;background:#F3F4F2;color:#232724;width:1200px;height:630px;padding:38px 48px;font:18px Body}
+header{display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #232724;padding-bottom:24px}.brand{display:flex;align-items:center;gap:12px;font-size:32px;letter-spacing:-1px}.mark{width:22px;height:26px;border-inline:6px solid #B62930;transform:skewY(-14deg)}.label{font:13px Mono;color:#B62930;text-transform:uppercase}
+main{display:grid;grid-template-columns:1.1fr 1fr;gap:56px;padding-top:35px;align-items:center}h1{font:700 114px/.88 Display;text-transform:uppercase;margin:0 0 22px;letter-spacing:-1px}h1 span{display:block}h1 em{color:#B62930;font-style:normal}p{font-size:19px;line-height:1.5;max-width:450px;margin:0}
+.sheet{position:relative;background:white;border:1px solid #7E8980;padding:24px;box-shadow:6px 7px #D2D6D0}.sheet:before{content:"";position:absolute;left:-14px;top:22px;bottom:22px;border-left:3px dotted #7E8980}.sheet-head{font:13px Mono;border-bottom:2px solid #232724;padding-bottom:16px}h2{font:700 34px/1 Display;margin:22px 0;text-transform:uppercase}.row{display:flex;justify-content:space-between;border-top:1px solid #D2D6D0;padding:13px 0;font-size:14px}.row b{font:14px Mono}.result{display:flex;justify-content:space-between;align-items:center;border-top:2px solid #232724;padding-top:24px}.result strong{font:28px Mono}.stamp{border:2px solid #B62930;color:#B62930;padding:10px;font:12px Mono;transform:rotate(-7deg)}footer{position:absolute;bottom:30px;left:48px;right:48px;font:12px Mono;display:flex;justify-content:space-between;color:#555F57}
+</style></head>
+<body><header><div class="brand"><span class="mark"></span>Verwalino</div><span class="label">{{scope}}</span></header>
+<main><div><h1><span>{{line1}}</span><span>{{line2}}</span><span><em>{{line3}}</em></span></h1><p>{{intro}}</p></div>
+<div class="sheet"><div class="sheet-head">Muster Hausverwaltung · 2026</div><h2>{{statement}}</h2><div class="row"><span>{{water}}</span><b>384,20 €</b></div><div class="row"><span>{{clean}}</span><b>216,00 €</b></div><div class="row"><span>{{heat}}</span><b>1.164,36 €</b></div><div class="result"><strong>204,56 €</strong><span class="stamp">{{stamp}}</span></div></div></main>
+<footer><span>{{trust}}</span><span>{{soon}}</span></footer></body></html>

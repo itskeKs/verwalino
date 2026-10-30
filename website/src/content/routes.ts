@@ -8,7 +8,7 @@ export const routes = {
   privacy: { de: '/datenschutz/', en: '/en/privacy/' },
   terms: { de: '/nutzungsbedingungen/', en: '/en/terms/' },
   dpa: { de: '/av-vertrag/', en: '/en/data-processing-agreement/' },
-  notfound: { de: '/404/', en: '/en/404/' },
+  notfound: { de: '/404.html', en: '/en/404/' },
 } as const;
 export type Page = keyof typeof routes;
 export const pathFor = (locale: Locale, page: Page) => routes[page][locale];
