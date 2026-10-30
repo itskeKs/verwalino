@@ -5,8 +5,9 @@ description: English documentation and the documentation contract
 # Documentation contract
 
 - Write project artifacts in English; quote German software text verbatim.
+- [DESIGN.md](../../DESIGN.md) is the frontend design contract; visual changes follow it and
+  update it in the same PR.
 - Update documentation in the same PR, stating exactly what the code does:
-  [DESIGN.md](../../DESIGN.md) is the frontend design contract; visual changes follow it.
 
 | When you change … | Update |
 |---|---|
