@@ -7,6 +7,8 @@ from sqlalchemy import select, text
 from app.core.rbac import ScopeCapability
 from app.core.tenant import AuthContext
 from app.models.accounting_scope import AccountingScopeBinding
+from app.repositories.property_repo import PropertyRepository
+from app.repositories.mandate_repo import MandateRepository
 from app.services.authorization_service import AuthorizationService
 
 
@@ -77,6 +79,15 @@ class FinancialScopeService:
         mode = await self.session.scalar(text('SELECT property_source_security_mode(:org)'), {'org': self.org_id})
         if mode == 'PAUSED':
             raise HTTPException(404, 'Financial creation is paused')
+        if not await PropertyRepository(self.session, self.org_id).exists_for_financial_creation(subject.property_id):
+            raise HTTPException(404, 'Property not found')
+        mandate_id = getattr(subject, 'management_mandate_id', None)
+        if mandate_id is not None and await MandateRepository(self.session, self.org_id).get_by_id(mandate_id) is None:
+            raise HTTPException(404, 'Management mandate not found')
+        requested_scope = None
+        if scope_id is not None:
+            requested_scope = await AuthorizationService(self.session,
+                AuthContext(self.user_id, self.org_id, 'live database role required')).require(scope_id, ScopeCapability.PREPARE)
         selected = await self.session.scalar(text("SELECT NULLIF(current_setting('app.current_scope_id',true),'')::uuid"))
         if scope_id is not None and selected is not None and scope_id != selected:
             raise HTTPException(409, 'Creation scope differs from its financial source')
@@ -87,7 +98,7 @@ class FinancialScopeService:
                     {'org': self.org_id, 'property': subject.property_id}):
                 raise HTTPException(409, 'Select an exact accounting scope for this property')
             return None
-        sphere = await AuthorizationService(self.session, AuthContext(self.user_id, self.org_id, 'live database role required')).require(scope_id, ScopeCapability.PREPARE)
+        sphere = requested_scope or await AuthorizationService(self.session, AuthContext(self.user_id, self.org_id, 'live database role required')).require(scope_id, ScopeCapability.PREPARE)
         if sphere.property_id != subject.property_id:
             raise HTTPException(422, 'Accounting scope belongs to another property')
         if sphere.scope_type == 'SEV':

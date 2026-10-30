@@ -54,7 +54,7 @@ usage() {
 Usage: bash scripts/self-host.sh COMMAND
   init [--https DOMAIN] [--port PORT] [--image REGISTRY/IMAGE@sha256:DIGEST]
        [--proxy-subnet PRIVATE_IPV4_CIDR]
-  start                         Build/pull, migrate, then start the application
+  start                         Build/pull, migrate, start; print browser setup token if empty
   admin --org NAME --email EMAIL [--name NAME] [--password-stdin]
   status                        Show this installation's containers
   doctor                        Diagnose setup; German hints, exit 1 on blockers
@@ -68,6 +68,9 @@ Backups exclude private config/secrets and certificates; keep config separately.
 Backup output defaults to the private checkout backups/ directory; the checkout root is refused.
 Restore stages the database and documents before replacing the stopped installation.
 Leftover .restore-* directories require checking live data and removing the directory before retrying.
+On first start, open the printed /setup URL and enter the one-time token (24 h).
+Another start replaces an unused token. The token is never stored in this file.
+The admin command is the alternative to browser setup.
 HELP
 }
 
@@ -752,6 +755,33 @@ admin() {
         --org "$org" --email "$email" --name "$name" --password-stdin
 }
 
+prepare_setup() {
+    local count token_hash issued
+    SETUP_TOKEN=''
+    count=$(compose exec -T db psql --no-psqlrc -U app_migrator -d hausverwaltung \
+        --set ON_ERROR_STOP=1 -Atc 'SELECT count(*) FROM public.organization')
+    [[ "$count" =~ ^[0-9]+$ ]] || fail 'Could not determine whether setup is required.'
+    [[ "$count" = 0 ]] || return 0
+    command -v openssl >/dev/null || fail 'OpenSSL is required to generate the setup token.'
+    SETUP_TOKEN=$(openssl rand -hex 32) || fail 'Setup token generation failed.'
+    [[ "$SETUP_TOKEN" =~ ^[a-f0-9]{64}$ ]] || fail 'Invalid random setup token.'
+    token_hash=$(printf '%s' "$SETUP_TOKEN" | openssl dgst -sha256)
+    token_hash="${token_hash##* }"
+    [[ "$token_hash" =~ ^[a-f0-9]{64}$ ]] || fail 'Setup token hashing failed.'
+    # Only the digest reaches psql, its arguments or Docker. Recheck under the
+    # same organization lock as browser setup and CLI bootstrap before rotating.
+    issued=$(printf '%s\n' "BEGIN;
+LOCK TABLE public.organization IN SHARE ROW EXCLUSIVE MODE;
+INSERT INTO public.setup_token(token_hash)
+SELECT decode('$token_hash','hex') WHERE NOT EXISTS(SELECT 1 FROM public.organization)
+ON CONFLICT (singleton) DO UPDATE
+SET token_hash=EXCLUDED.token_hash,created_at=clock_timestamp(),used_at=NULL
+RETURNING singleton;
+COMMIT;" | compose exec -T db psql --no-psqlrc -U app_migrator -d hausverwaltung \
+        --set ON_ERROR_STOP=1 -qAt)
+    [[ "$issued" = t ]] || fail 'Setup token was not issued; retry start to recheck the installation.'
+}
+
 command="${1:-help}"
 [[ "$#" = 0 ]] || shift
 if [[ "$command" != doctor ]]; then
@@ -779,14 +809,21 @@ case "$command" in
         # Do not run migrations alongside an already running web writer.
         compose stop app
         compose run --rm --no-deps -T migrate
+        prepare_setup
         compose up -d --no-deps --wait --wait-timeout 120 app
         if [[ "$VERWALINO_MODE" = https ]]; then
             compose up -d --no-deps caddy
-            printf 'App ready; Caddy certificate provisioning may still be pending: https://%s\n' "$VERWALINO_DOMAIN"
+            APP_URL="https://$VERWALINO_DOMAIN"
+            printf 'App ready; Caddy certificate provisioning may still be pending: %s\n' "$APP_URL"
         else
-            printf 'App ready: http://127.0.0.1:%s\n' "$VERWALINO_PORT"
+            APP_URL="http://127.0.0.1:$VERWALINO_PORT"
+            printf 'App ready: %s\n' "$APP_URL"
         fi
-        printf 'Create the first admin with: bash scripts/self-host.sh admin --org NAME --email EMAIL\n'
+        if [[ -n "$SETUP_TOKEN" ]]; then
+            printf 'Browser setup: %s/setup\nSetup token: %s\nValid once for 24 hours. Another start replaces this token.\n' "$APP_URL" "$SETUP_TOKEN"
+            unset SETUP_TOKEN
+            printf 'CLI alternative: bash scripts/self-host.sh admin --org NAME --email EMAIL\n'
+        fi
         ;;
     admin) admin "$@" ;;
     backup) backup "$@" ;;

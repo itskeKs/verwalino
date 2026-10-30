@@ -51,20 +51,20 @@ async def test_mixed_history_cannot_be_filtered_into_apparent_complete_property(
     run=await draft(client_a_admin,m3_seed,'0.00')
     from tests.test_scoped_account_statements import mutate
     from app.models.person import Person
-    from app.models.tenant_profile import TenantProfile
     async with get_tenant_session(seed_data['org_b_id']) as db:
         person=Person(organization_id=seed_data['org_b_id'],first_name='Foreign',last_name='History')
         db.add(person)
         await db.flush()
-        profile=TenantProfile(organization_id=seed_data['org_b_id'],person_id=person.id,notes='Foreign')
-        db.add(profile)
-        await db.flush()
-        foreign_id=profile.id
+        foreign_person=person.id
     # A synthetic historical row, not a guessed repair. Remove the whole fixture
     # in finally; no released record is touched.
     history=uuid.uuid4()
-    ids={'id':history,'org':seed_data['org_a_id'],'unit':uuid.UUID(m3_seed['u1']),'profile':foreign_id}
+    ids={'id':history,'org':seed_data['org_a_id'],'unit':uuid.UUID(m3_seed['u1']),
+         'profile':uuid.uuid4(),'foreign_person':foreign_person}
     try:
+        # The lease/profile edge is tenant-coherent under the parent constraints. The profile's
+        # single-column person FK still permits the mixed historical identity.
+        await mutate(text('INSERT INTO tenant_profile(id,organization_id,person_id) VALUES(:profile,:org,:foreign_person)'),ids)
         await mutate(text("INSERT INTO lease_agreement(id,organization_id,unit_id,tenant_profile_id,valid_from,valid_to,base_rent,advance_payment,notes) VALUES(:id,:org,:unit,:profile,'2000-01-01','2001-01-01',10,1,'Mixed legacy fixture')"),ids)
         await grant(client_a_admin,seed_data,m3_seed['property'],caps=['read','prepare','approve','export'])
         async with synthetic_enforcement(seed_data),get_tenant_session(seed_data['org_a_id']) as db:
@@ -74,6 +74,8 @@ async def test_mixed_history_cannot_be_filtered_into_apparent_complete_property(
             assert (await client_a_admin.post(f'/api/settlements/{run}/compute',json=_extras_for_exit(m3_seed))).status_code==404
     finally:
         await mutate(text('DELETE FROM lease_agreement WHERE id=:id'),{'id':history})
+        await mutate(text('DELETE FROM tenant_profile WHERE id=:profile'),ids)
+        await mutate(text('DELETE FROM person WHERE id=:foreign_person'),ids)
         await clear_disclosure_grants()
 
 

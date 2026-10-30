@@ -8,6 +8,7 @@ import json
 import os
 import shlex
 import shutil
+import re
 import stat
 import subprocess
 import sys
@@ -90,7 +91,7 @@ if dropping:
             json.dump(sorted(str(path.relative_to(root)) for path in root.rglob("*")), snapshot)
     databases.pop(dropping, None)
 if "psql" in sys.argv:
-    statement = sys.argv[-1]
+    statement = sys.stdin.read() if "-qAt" in sys.argv else sys.argv[-1]
     if statement.startswith("ALTER DATABASE"):
         _, _, source, _, _, target = statement.split()
         if source not in databases or target in databases:
@@ -109,8 +110,16 @@ if "psql" in sys.argv:
         name = statement.split("datname='")[1].split("'")[0]
         if name in databases:
             print("1")
-    else:
+    elif statement == "SELECT version_num FROM alembic_version":
         print(os.environ.get("FAKE_RESTORED_SCHEMA" if "hausverwaltung_restore" in sys.argv else "FAKE_SCHEMA", "0139"))
+    elif statement == "SELECT count(*) FROM public.organization":
+        print(os.environ.get("FAKE_ORGANIZATION_COUNT", "1"))
+    elif "-qAt" in sys.argv and "INSERT INTO public.setup_token(token_hash)" in statement:
+        with open(os.environ["FAKE_TOKEN_SQL"], "w") as capture:
+            capture.write(statement)
+        print(os.environ.get("FAKE_TOKEN_ISSUED", "t"))
+    else:
+        sys.exit("Unsupported fake psql statement")
 with open(state_path, "w") as state_file:
     json.dump(databases, state_file)
 if os.environ.get("FAKE_SIGNAL_AFTER") in sys.argv:
@@ -178,7 +187,8 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
                         FAKE_DOCUMENT_MOVES=str(self.base / "document-moves.jsonl"),
                         FAKE_DROP_DOCUMENTS=str(self.base / "drop-documents.json"),
                         VERWALINO_CONFIG=str(self.config), FAKE_DOCKER_LOG=str(self.log),
-                        FAKE_DOCKER_STDIN=str(self.base / "stdin"))
+                        FAKE_DOCKER_STDIN=str(self.base / "stdin"),
+                        FAKE_TOKEN_SQL=str(self.base / "token.sql"))
 
     def run_script(self, *args, input=None, stderr_closed=False, stderr=subprocess.PIPE):
         command = ["bash", str(self.root / "scripts/self-host.sh"), *args]
@@ -664,7 +674,7 @@ elif name == "openssl":
 
     def test_restore_refuses_newer_unknown_or_foreign_archives_before_starting_db(self):
         config = self.init()
-        for changes, message in [({"schema_head": "0140"}, "newer"),
+        for changes, message in [({"schema_head": "0142"}, "newer"),
                                  ({"schema_head": "unknown"}, "schema"),
                                  ({"format": "foreign"}, "manifest"),
                                  ({"format_version": 2}, "format")]:
@@ -1084,6 +1094,57 @@ elif name == "openssl":
             self.assertFalse(call["caller_secret_used"])
         self.assertIn("http://127.0.0.1:18080", result.stdout)
         self.assert_isolated(args)
+
+    def test_fresh_start_prints_one_token_and_url_but_persists_only_its_hash(self):
+        self.init()
+        self.env["FAKE_ORGANIZATION_COUNT"] = "0"
+        before = self.config.read_bytes()
+        result = self.run_script("start")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        match = re.search(r"^Setup token: ([a-f0-9]{64})$", result.stdout, re.M)
+        self.assertIsNotNone(match, result.stdout)
+        token = match.group(1)
+        self.assertEqual(result.stdout.count(token), 1)
+        self.assertIn("http://127.0.0.1:18080/setup", result.stdout)
+        sql = (self.base / "token.sql").read_text()
+        self.assertIn(hashlib.sha256(token.encode()).hexdigest(), sql)
+        self.assertIn("ON CONFLICT", sql)
+        self.assertIn("used_at=NULL", sql)
+        self.assertIn("LOCK TABLE public.organization", sql)
+        self.assertEqual(self.config.read_bytes(), before)
+        for content in (result.stderr, sql, self.log.read_text(), self.config.read_text()):
+            self.assertNotIn(token, content)
+        args = [call["args"] for call in self.calls()]
+        migrated = next(i for i, call in enumerate(args) if "migrate" in call)
+        issued = next(i for i, call in enumerate(args) if "-qAt" in call)
+        self.assertLess(migrated, issued)
+
+    def test_restart_of_unclaimed_installation_rotates_the_token(self):
+        self.init("--https", "verwaltung.example.org")
+        self.env["FAKE_ORGANIZATION_COUNT"] = "0"
+        tokens = []
+        for _ in range(2):
+            result = self.run_script("start")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            tokens.append(re.search(r"^Setup token: ([a-f0-9]{64})$", result.stdout, re.M).group(1))
+            self.assertIn("https://verwaltung.example.org/setup", result.stdout)
+        self.assertNotEqual(*tokens)
+
+    def test_existing_organization_does_not_issue_or_print_a_token(self):
+        self.init()
+        result = self.run_script("start")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Setup token:", result.stdout)
+        self.assertFalse((self.base / "token.sql").exists())
+
+    def test_invalid_database_count_or_failed_token_storage_never_prints_a_token(self):
+        self.init()
+        for count, issued in [("unknown", "t"), ("0", "")]:
+            self.env.update(FAKE_ORGANIZATION_COUNT=count, FAKE_TOKEN_ISSUED=issued)
+            result = self.run_script("start")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("Setup token:", result.stdout)
+            self.assertNotIn("App ready", result.stdout)
 
     def assert_isolated(self, calls):
         for args in calls:

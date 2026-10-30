@@ -2,15 +2,18 @@
  * Root application component.
  *
  * - Wraps everything in AuthProvider.
+ * - Routes an unclaimed installation to token-gated browser setup.
  * - If not authenticated, shows the Login page.
  * - If authenticated, shows the AppShell with routed content.
  */
 
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthContext";
 import { useAuth } from "./auth/useAuth";
 import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
+import { SetupPage } from "./pages/SetupPage";
+import { useSetupStatus } from "./auth/useSetupStatus";
 import { TasksPage } from "./pages/TasksPage";
 import { LettersPage } from "./pages/LettersPage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -70,12 +73,25 @@ import { PropertyKnowledgePage } from "./pages/PropertyKnowledgePage";
 
 export function AppRoutes() {
   const { loading, session } = useAuth();
+  const setup = useSetupStatus();
+  const location = useLocation();
 
-  if (loading) {
+  const setupRequired = setup.error ? false : setup.required;
+
+  if (loading || setupRequired === null) {
     return (
       <div style={{ padding: "2rem", textAlign: "center" }}>Lade...</div>
     );
   }
+
+  if (setupRequired) {
+    return <Routes>
+      <Route path="/setup" element={<SetupPage onClosed={setup.markClosed} />} />
+      <Route path="*" element={<Navigate to="/setup" replace />} />
+    </Routes>;
+  }
+
+  if (location.pathname === "/setup") return <Navigate to="/login" replace />;
 
   if (!session) {
     return <LoginPage />;

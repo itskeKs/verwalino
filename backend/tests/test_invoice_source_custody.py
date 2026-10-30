@@ -36,6 +36,19 @@ async def fixture(db, seed):
     return ids
 
 
+async def foreign_fixture(db):
+    from sqlalchemy.ext.asyncio import AsyncSession
+    org, actor = uuid.uuid4(), uuid.uuid4()
+    async with AsyncSession(db.bind) as setup:
+        await setup.execute(text("INSERT INTO organization(id,name) VALUES (:org,'Foreign parent fixture')"), {'org':org})
+        await setup.execute(text('INSERT INTO "user"(id,organization_id,email,password_hash,display_name) '
+            "VALUES (:actor,:org,:email,'unused-fixture-password','Foreign parent fixture')"),
+            {'actor':actor,'org':org,'email':str(actor)+'@parent-test.invalid'})
+        await setup.execute(text("INSERT INTO membership(organization_id,user_id,role) VALUES (:org,:actor,'OWNER_ADMIN')"),
+            {'org':org,'actor':actor})
+        return await fixture(setup, {'org_a_id':org,'user_a_admin_id':actor,'user_a_clerk_id':actor})
+
+
 async def wait_for_advisory_waiter(ids, holder_pid):
     for _ in range(200):
         if await read_value("SELECT count(*) FROM pg_stat_activity WHERE wait_event='advisory' AND :holder=ANY(pg_blocking_pids(pid))", {**ids, 'holder':holder_pid}):

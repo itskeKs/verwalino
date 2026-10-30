@@ -4,7 +4,7 @@ import uuid
 import pytest
 from sqlalchemy import text
 from tests.test_financial_scope_boundary import worker_tenant,scope_seed  # noqa: F401
-from tests.test_invoice_source_custody import store,fixture
+from tests.test_invoice_source_custody import store,fixture,foreign_fixture
 from tests.test_scoped_account_statements import client,mutate
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_logical_documents import clean_reference
@@ -24,6 +24,23 @@ async def candidates(api,ref):
 def command(children,previous=None,key=None,reason='Reviewed all visual pages'):
     return dict(json={'logical_document_ids':[row['id'] for row in children],'reason':reason,'visual_pages_reviewed':True},
                 headers={'Idempotency-Key':key or str(uuid.uuid4()),'If-Match':'"'+(previous or 'none')+'"'})
+
+
+async def test_foreign_and_unknown_logical_documents_create_no_partition(migrator_session,scope_seed,store):
+    ids=await fixture(migrator_session,scope_seed)
+    foreign=await foreign_fixture(migrator_session)
+    async with client(ids) as api,client(foreign) as other:
+        ref,_=await clean_reference(api,ids)
+        foreign_ref,_=await clean_reference(other,foreign)
+        foreign_child=(await candidates(other,foreign_ref))[0]
+        replies=[]
+        for invalid in (foreign_child['id'],str(uuid.uuid4())):
+            reply=await api.post('/api/document-refs/'+ref['id']+'/partition',**command([{'id':invalid}]))
+            assert reply.status_code==404,reply.text
+            replies.append(reply.json())
+        assert replies[0]==replies[1]
+    assert await read_value('SELECT count(*) FROM source_partition_revision WHERE organization_id=:org',ids)==0
+    assert await read_value('SELECT count(*) FROM source_partition_member WHERE organization_id=:org',ids)==0
 
 
 async def test_partition_is_exact_immutable_history_and_idempotent(migrator_session,scope_seed,store):
