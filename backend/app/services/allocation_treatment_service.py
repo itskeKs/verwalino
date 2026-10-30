@@ -36,6 +36,7 @@ class AllocationTreatmentService(IntakeService):
         return {'items':[dict(row) for row in rows[:limit]],'next_before_revision':rows[limit-1]['revision_number'] if len(rows)>limit else None}
 
     async def create(self,logical,body,key,expected):
+        await self.require_parents('allocation_proposal_line',[line.allocation_line_id for line in body.lines])
         created=await self.call('SELECT create_allocation_treatment(:org,:logical,:allocation,:expected,:request,:preview,CAST(:lines AS jsonb),:reason,:ack)',
           logical=logical,allocation=body.allocation_proposal_id,expected=expected,request=key,preview=body.preview_digest,
           lines=json.dumps([line.model_dump(mode='json') for line in body.lines]),reason=body.reason,ack=body.treatment_reviewed)

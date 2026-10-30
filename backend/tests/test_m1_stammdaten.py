@@ -19,6 +19,7 @@ from decimal import Decimal
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 # ============================================================================
@@ -144,6 +145,150 @@ async def _seed_m1_scenario(session, org_id: str):
 # ============================================================================
 # 1. EXCLUDE rejects overlapping ownership for SAME (unit, owner_profile)
 # ============================================================================
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route, table, field, key", [
+    ("leases", "lease_agreement", "unit_id", "unit_1_id"),
+    ("leases", "lease_agreement", "tenant_profile_id", "tp1_id"),
+    ("ownership", "ownership_history", "unit_id", "unit_1_id"),
+    ("ownership", "ownership_history", "owner_profile_id", "op1_id"),
+    ("units", "unit", "property_id", "prop_id"),
+])
+async def test_foreign_and_unknown_parents_are_not_found_before_writing(
+    client_a_admin, migrator_session, seed_data, route, table, field, key,
+):
+    async with AsyncSession(migrator_session.bind) as setup:
+        own = await _seed_m1_scenario(setup, str(seed_data["org_a_id"]))
+        foreign = await _seed_m1_scenario(setup, str(seed_data["org_b_id"]))
+        await setup.commit()
+    bodies = {
+        "leases": {"unit_id": own["unit_1_id"], "tenant_profile_id": own["tp1_id"],
+                   "valid_from": "2025-08-01", "base_rent": "500", "advance_payment": "100"},
+        "ownership": {"unit_id": own["unit_1_id"], "owner_profile_id": own["op1_id"],
+                      "valid_from": "2025-03-01"},
+        "units": {"property_id": own["prop_id"], "number": "Rejected parent", "usage_type": "WOHNUNG"},
+    }
+    before = await migrator_session.scalar(text(f"SELECT count(*) FROM {table}"))
+    responses = []
+    for parent in (foreign[key], str(uuid.uuid4())):
+        response = await client_a_admin.post(f"/api/{route}", json=bodies[route] | {field: parent})
+        assert response.status_code == 404, response.text
+        responses.append(response.json())
+    assert responses[0] == responses[1]
+    assert await migrator_session.scalar(text(f"SELECT count(*) FROM {table}")) == before
+
+
+@pytest.mark.asyncio
+async def test_parent_foreign_keys_roundtrip_and_reject_existing_invalid_references(
+    client_a_admin, client_b_admin, migrator_session, seed_data,
+):
+    import importlib
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import create_engine
+    from sqlalchemy.exc import DBAPIError, IntegrityError
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    async with AsyncSession(migrator_session.bind) as setup:
+        own = await _seed_m1_scenario(setup, str(seed_data["org_a_id"]))
+        foreign = await _seed_m1_scenario(setup, str(seed_data["org_b_id"]))
+        await setup.commit()
+    bank = await client_a_admin.post("/api/bank-accounts", json={
+        "property_id": own["prop_id"], "account_type": "LAUFEND", "label": "Migration test",
+    })
+    assert bank.status_code == 201, bank.text
+    period = {"property_id": own["prop_id"], "period_start": "2026-01-01", "period_end": "2026-12-31"}
+    plan = await client_a_admin.post("/api/economic-plans", json=period | {"plan_year": 2026})
+    report = await client_a_admin.post("/api/weg-settlements/asset-reports", json=period)
+    assert plan.status_code == report.status_code == 201
+    payment = await client_a_admin.post("/api/payments", json={
+        "bank_account_id": bank.json()["id"], "direction": "IN", "amount": "1.00",
+        "value_date": "2026-06-01", "payment_type": "SONDERZAHLUNG", "owner_profile_id": own["op1_id"],
+    })
+    assert payment.status_code == 201, payment.text
+    vendor = await client_b_admin.post("/api/vendors", json={"person_id": foreign["person_owner1_id"]})
+    assert vendor.status_code == 201, vendor.text
+    category = (await client_a_admin.get("/api/cost-categories")).json()[0]
+    cost = await client_a_admin.post("/api/cost-entries", json={
+        "property_id": own["prop_id"], "cost_category_id": category["id"], "cost_category_plan_version": 1,
+        "invoice_date": "2026-06-01", "service_period_from": "2026-01-01", "service_period_to": "2026-12-31",
+        "gross_amount": "100.00", "tenant_apportionable": "UMLAGEFAEHIG", "source": "MANUAL",
+    })
+    assert cost.status_code == 201, cost.text
+    rows = {"lease_agreement": own["la2_id"], "ownership_history": own["oh1_id"],
+            "bank_account": bank.json()["id"], "economic_plan": plan.json()["id"],
+            "settlement_run": report.json()["id"], "payment": payment.json()["id"], "cost_entry": cost.json()["id"]}
+    parents = {"unit": foreign["unit_2_id"], "tenant_profile": foreign["tp1_id"],
+               "owner_profile": foreign["op1_id"], "property": foreign["prop_id"],
+               "management_mandate": str(seed_data["mandate_b_id"]),
+               "lease_agreement": foreign["la1_id"], "settlement_run": report.json()["id"], "vendor": vendor.json()["id"]}
+    foreign_report = await client_b_admin.post("/api/weg-settlements/asset-reports", json=period | {
+        "property_id": foreign["prop_id"],
+    })
+    assert foreign_report.status_code == 201, foreign_report.text
+    parents["settlement_run"] = foreign_report.json()["id"]
+
+    migration = importlib.import_module("migrations.versions.0140_parent_organization_foreign_keys")
+    engine = create_engine(MIGRATOR_SYNC_URL)
+    try:
+        with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
+            point = db.begin_nested()
+            try:
+                tables = sorted(set(rows) | {"unit", "tenant_profile", "vendor"})
+
+                def constraints():
+                    return db.execute(text("SELECT conrelid::regclass::text,conname,pg_get_constraintdef(oid),convalidated "
+                        "FROM pg_constraint WHERE conrelid::regclass::text=ANY(:tables) ORDER BY 1,2"),
+                        {"tables": tables}).all()
+
+                def insert_invalid(table, column, parent_id):
+                    dates = ", 'valid_from','2024-01-01','valid_to','2024-02-01'" if table in {
+                        "lease_agreement", "ownership_history"} else ""
+                    if table == "payment" and column == "tenant_profile_id":
+                        dates = ", 'owner_profile_id',NULL,'payment_type','NK_VORAUSZAHLUNG'"
+                    return db.scalar(text(f"INSERT INTO {table} SELECT * FROM jsonb_populate_record(NULL::{table}, "
+                        f"(SELECT to_jsonb(row_to_clone) FROM {table} row_to_clone WHERE id=:id) || "
+                        f"jsonb_build_object('id',gen_random_uuid(),'{column}',CAST(:parent AS uuid){dates})) RETURNING id"),
+                        {"parent": parent_id, "id": rows[table]})
+
+                current = constraints()
+                migration.downgrade()
+                previous = constraints()
+                for table, column, parent in migration.RELATIONS:
+                    assert (table, f"fk_{table}_{column}_{parent}",
+                            f"FOREIGN KEY ({column}) REFERENCES {parent}(id) ON DELETE RESTRICT", True) in previous
+                migration.upgrade()
+                assert constraints() == current
+                for table, column, parent in migration.RELATIONS:
+                    for invalid in (parents[parent], str(uuid.uuid4())):
+                        with pytest.raises(IntegrityError) as error:
+                            with db.begin_nested():
+                                insert_invalid(table, column, invalid)
+                        assert error.value.orig.diag.constraint_name == f"fk_{table}_{column}_tenant"
+                migration.downgrade()
+                assert constraints() == previous
+                for table, column, parent in migration.RELATIONS:
+                    invalid_row = db.begin_nested()
+                    try:
+                        invalid_id = insert_invalid(table, column, parents[parent])
+                        before = db.scalar(text(f"SELECT to_jsonb(t)::text FROM {table} t WHERE id=:id"), {"id": invalid_id})
+                        with pytest.raises(DBAPIError, match=f"Cannot upgrade 0140: invalid organization parent in {table}.{column}"):
+                            with db.begin_nested():
+                                migration.upgrade()
+                        assert db.scalar(text(f"SELECT to_jsonb(t)::text FROM {table} t WHERE id=:id"), {"id": invalid_id}) == before
+                    finally:
+                        invalid_row.rollback()
+                migration.upgrade()
+                assert constraints() == current
+            finally:
+                point.rollback()
+    finally:
+        engine.dispose()
+        async with AsyncSession(migrator_session.bind) as cleanup:
+            await cleanup.execute(text("DELETE FROM settlement_run WHERE id=:id"),
+                                  {"id": uuid.UUID(foreign_report.json()["id"])})
+            await cleanup.commit()
+
+
 class TestOwnershipExclude:
     @pytest.mark.asyncio
     async def test_overlap_same_owner_rejected(self, migrator_session, seed_data):

@@ -178,17 +178,22 @@ async def test_one_actor_cannot_borrow_another_creators_source(seed_data):
 
 async def test_projected_complete_graph_rejects_mixed_historical_identity(migrator_session,scope_seed,seed_data):
     ids=await fixture(migrator_session,scope_seed)
-    ids.update(unit=uuid.uuid4(),foreign_person=uuid.uuid4(),foreign_profile=uuid.uuid4(),history=uuid.uuid4(),foreign=seed_data['org_b_id'])
+    ids.update(unit=uuid.uuid4(),foreign_person=uuid.uuid4(),profile=uuid.uuid4(),history=uuid.uuid4(),foreign=seed_data['org_b_id'])
     async with client(ids,'actor') as admin: await grant(admin,scope_seed,ids['property'],actor=ids['clerk'])
     await mutate(text("INSERT INTO unit(id,organization_id,property_id,number,usage_type) VALUES(:unit,:org,:property,'1','WOHNUNG')"),ids)
     assert await evaluate(ids,'property',ids['property'],graph=True)
     await mutate(text("INSERT INTO person(id,organization_id,first_name,last_name,street,zip_code,city) VALUES(:foreign_person,:foreign,'Foreign','History','','','')"),ids)
-    await mutate(text("INSERT INTO tenant_profile(id,organization_id,person_id) VALUES(:foreign_profile,:foreign,:foreign_person)"),ids)
-    await mutate(text("INSERT INTO lease_agreement(id,organization_id,unit_id,tenant_profile_id,valid_from,valid_to,base_rent,advance_payment) VALUES(:history,:org,:unit,:foreign_profile,'2000-01-01','2001-01-01',10,1)"),ids)
     try:
+        # Keep the lease/profile edge tenant-coherent; the profile/person edge
+        # still permits the malformed identity that the projected graph rejects.
+        await mutate(text("INSERT INTO tenant_profile(id,organization_id,person_id) VALUES(:profile,:org,:foreign_person)"),ids)
+        await mutate(text("INSERT INTO lease_agreement(id,organization_id,unit_id,tenant_profile_id,valid_from,valid_to,base_rent,advance_payment) VALUES(:history,:org,:unit,:profile,'2000-01-01','2001-01-01',10,1)"),ids)
         assert not await evaluate(ids,'property',ids['property'],graph=True)
         assert await read_value("SELECT property_source_permitted(:org,'property',:property,'read')",ids,actor_key='clerk')
-    finally: await mutate(text('DELETE FROM lease_agreement WHERE id=:history'),ids)
+    finally:
+        await mutate(text('DELETE FROM lease_agreement WHERE id=:history'),ids)
+        await mutate(text('DELETE FROM tenant_profile WHERE id=:profile'),ids)
+        await mutate(text('DELETE FROM person WHERE id=:foreign_person'),ids)
 
 
 @pytest.mark.parametrize('quarantined',[False,True])

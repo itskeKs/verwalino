@@ -419,7 +419,7 @@ for running_id in $(docker ps --no-trunc -q --filter label=com.docker.compose.pr
 done
 wait_for_health db
 starting_schema=$(compose --profile ops run --rm --no-deps migrate python -m app.deployment preflight)
-case "$starting_schema" in 0028|0122|0139) ;; *) echo "unsupported or ambiguous starting schema" >&2; exit 1 ;; esac
+case "$starting_schema" in 0028|0122|0139|0140) ;; *) echo "unsupported or ambiguous starting schema" >&2; exit 1 ;; esac
 previous_head=$(docker run --rm --network none --entrypoint alembic "$previous_app_image_id" heads)
 [ "$previous_head" = "$starting_schema (head)" ] || {
   echo "previous image schema head does not match the measured database; restoration compatibility is unknown" >&2; exit 1;
@@ -468,8 +468,8 @@ mv "$backup_dir/database.dump.partial" "$backup_dir/database.dump"
 mv "$backup_dir/documents.tar.gz.partial" "$backup_dir/documents.tar.gz"
 echo "paired backup verified: $backup_dir (restore requires both files)"
 
-if [ "$starting_schema" != 0139 ]; then
-  # No compatibility claim for an older runtime on 0139, including uncertain or
+if [ "$starting_schema" != 0140 ]; then
+  # No compatibility claim for an older runtime on 0140, including uncertain or
   # partial migration outcomes. The trap keeps the old writers stopped.
   migration_attempted=1
   compose --profile ops run --rm --no-deps migrate >/dev/null 2>&1 || {
@@ -477,7 +477,7 @@ if [ "$starting_schema" != 0139 ]; then
   }
 fi
 migration_state=$(compose --profile ops run --rm --no-deps migrate python -m app.deployment current)
-[ "$migration_state" = 0139 ] || { echo "migration state is not exactly the release target 0139" >&2; exit 1; }
+[ "$migration_state" = 0140 ] || { echo "migration state is not exactly the release target 0140" >&2; exit 1; }
 printf '%s\n' "$admin_password" | compose --profile ops run --rm --no-deps -T bootstrap \
   python -m app.admin_cli \
   --org 'Karat Hausverwaltung Alpha' \

@@ -217,9 +217,12 @@ def run_migrations():
     upgraded_0028_tables = rehearse_initial_upgrade('0028')
     command.upgrade(alembic_cfg, "0122")
     upgraded_tables = rehearse_initial_upgrade('0122')
+    command.upgrade(alembic_cfg, "0139")
+    upgraded_0139_tables = rehearse_initial_upgrade('0139')
     command.upgrade(alembic_cfg, "head")
-    yield {'upgrade_0028_to_0139_tables': upgraded_0028_tables,
-           'upgrade_0122_to_0139_tables': upgraded_tables}
+    yield {'upgrade_0028_to_0140_tables': upgraded_0028_tables,
+           'upgrade_0122_to_0140_tables': upgraded_tables,
+           'upgrade_0139_to_0140_tables': upgraded_0139_tables}
 
 
 # ---------------------------------------------------------------------------

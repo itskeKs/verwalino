@@ -68,12 +68,10 @@ class Payment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     # Counterparty (exactly one role for personenbezogene types; CHECK in 0016).
     tenant_profile_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("tenant_profile.id", ondelete="RESTRICT"),
         nullable=True,
     )
     owner_profile_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("owner_profile.id", ondelete="RESTRICT"),
         nullable=True,
     )
 
@@ -83,7 +81,6 @@ class Payment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     # Zuordnung (what the payment settles).
     lease_agreement_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("lease_agreement.id", ondelete="RESTRICT"),
         nullable=True,
         index=True,
     )
@@ -91,7 +88,6 @@ class Payment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     period_month: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     settlement_run_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("settlement_run.id", ondelete="RESTRICT"),
         nullable=True,
     )
 
@@ -135,6 +131,14 @@ class Payment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "tenant_profile_id"], ["tenant_profile.organization_id", "tenant_profile.id"],
+            name="fk_payment_tenant_profile_id_tenant", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["organization_id", "owner_profile_id"], ["owner_profile.organization_id", "owner_profile.id"],
+            name="fk_payment_owner_profile_id_tenant", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["organization_id", "lease_agreement_id"], ["lease_agreement.organization_id", "lease_agreement.id"],
+            name="fk_payment_lease_agreement_id_tenant", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["organization_id", "settlement_run_id"], ["settlement_run.organization_id", "settlement_run.id"],
+            name="fk_payment_settlement_run_id_tenant", ondelete="RESTRICT"),
         ForeignKeyConstraint(
             ["organization_id", "bank_account_id", "bank_transaction_id"],
             ["bank_transaction.organization_id", "bank_transaction.bank_account_id", "bank_transaction.id"],

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, ForeignKeyConstraint, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,7 +30,6 @@ class BankAccount(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     # Link to the property (Vermoegenstrennungs anchor)
     property_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("property.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
@@ -45,6 +44,8 @@ class BankAccount(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     bank_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "property_id"], ["property.organization_id", "property.id"],
+            name="fk_bank_account_property_id_tenant", ondelete="RESTRICT"),
         UniqueConstraint("organization_id", "id", name="uq_bank_account_org_id"),
         CheckConstraint(
             "account_type IN ('LAUFEND', 'RUECKLAGE', 'KAUTION')",

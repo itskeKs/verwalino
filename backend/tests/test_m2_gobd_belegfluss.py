@@ -221,6 +221,32 @@ class TestCostEntryDeleteBehavior:
 # ============================================================
 class TestCostEntryDraftEditable:
     @pytest.mark.asyncio
+    async def test_foreign_and_unknown_vendors_leave_the_draft_unchanged(
+        self, client_a_admin, client_b_admin, m2_seed, migrator_session,
+    ):
+        person = await client_b_admin.post("/api/persons", json={"last_name": "Foreign vendor"})
+        assert person.status_code == 201, person.text
+        vendor = await client_b_admin.post("/api/vendors", json={"person_id": person.json()["id"]})
+        assert vendor.status_code == 201, vendor.text
+        category = await migrator_session.scalar(text(_cost_category_id_sql()))
+        created = await client_a_admin.post("/api/cost-entries", json={
+            "property_id": str(m2_seed["property_a_id"]), "cost_category_id": str(category),
+            "cost_category_plan_version": 1, "invoice_date": "2025-06-01",
+            "service_period_from": "2025-01-01", "service_period_to": "2025-12-31",
+            "gross_amount": "100.00", "tenant_apportionable": "UMLAGEFAEHIG", "source": "MANUAL",
+        })
+        assert created.status_code == 201, created.text
+        entry_id = created.json()["id"]
+        before = (await migrator_session.scalars(text("SELECT to_jsonb(c)::text FROM cost_entry c ORDER BY id"))).all()
+        responses = []
+        for parent in (vendor.json()["id"], str(uuid.uuid4())):
+            response = await client_a_admin.patch(f"/api/cost-entries/{entry_id}", json={"vendor_id": parent})
+            assert response.status_code == 404, response.text
+            responses.append(response.json())
+        assert responses[0] == responses[1]
+        assert (await migrator_session.scalars(text("SELECT to_jsonb(c)::text FROM cost_entry c ORDER BY id"))).all() == before
+
+    @pytest.mark.asyncio
     async def test_update_needs_review_succeeds(self, app_rw_session, m2_seed):
         session = app_rw_session
         org_id = m2_seed["org_a_id"]
