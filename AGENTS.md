@@ -76,6 +76,11 @@ specific question.
 `test(bdd): …`, `docs(roadmap): …`, `ci: …`. Body: cause → change → tests. `Refs #N` or
 `Closes #N` at the end. Never push unless the user asks.
 
+No attribution anywhere: no `Co-Authored-By` trailer for an assistant, no "Generated with …" line,
+no mention of Claude, Codex or any other AI or agent as author — in commits, PR descriptions,
+issues, comments, code comments or docs. Naming a tool the repo supports (`.claude/rules`, the
+Codex hook) is subject matter, not attribution.
+
 ## Context economy
 
 One issue per session, cut to fit a 64k context. Read only the files the issue names; read large
