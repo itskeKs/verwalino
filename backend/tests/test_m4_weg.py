@@ -191,9 +191,10 @@ async def test_foreign_and_unknown_parents_create_no_financial_draft(
             foreign = property_response.json()["id"]
     before = await migrator_session.scalar(text(f"SELECT count(*) FROM {table}"))
     responses = []
+    expected_status = 422 if route == "weg-settlements" and field == "property_id" else 404
     for parent in (foreign, uuid.uuid4()):
         response = await client.post(f"/api/{route}", json=body | {field: str(parent)})
-        assert response.status_code == 404, response.text
+        assert response.status_code == expected_status, response.text
         responses.append(response.json())
     assert responses[0] == responses[1]
     assert await migrator_session.scalar(text(f"SELECT count(*) FROM {table}")) == before
