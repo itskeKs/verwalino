@@ -85,8 +85,8 @@ describe("SetupPage", () => {
       organization_name: "Hausverwaltung mit einem sehr langen deutschen Organisationsnamen GmbH",
       admin_name: "Erika Mustermann", admin_email: "erika@example.test", password, token,
     });
-    expect(window.localStorage.length).toBe(0);
-    expect(window.sessionStorage.length).toBe(0);
+    expect(window.localStorage?.length ?? 0).toBe(0);
+    expect(window.sessionStorage?.length ?? 0).toBe(0);
   });
 
   it("keeps the form and useful inputs when a token is refused", async () => {

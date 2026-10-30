@@ -12,7 +12,7 @@ import { AuthProvider } from "./auth/AuthContext";
 import { useAuth } from "./auth/useAuth";
 import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
-import { SetupPage, SetupStatusError } from "./pages/SetupPage";
+import { SetupPage } from "./pages/SetupPage";
 import { useSetupStatus } from "./auth/useSetupStatus";
 import { TasksPage } from "./pages/TasksPage";
 import { LettersPage } from "./pages/LettersPage";
@@ -76,15 +76,15 @@ export function AppRoutes() {
   const setup = useSetupStatus();
   const location = useLocation();
 
-  if (setup.error) return <SetupStatusError retry={setup.retry} />;
+  const setupRequired = setup.error ? false : setup.required;
 
-  if (loading || setup.required === null) {
+  if (loading || setupRequired === null) {
     return (
       <div style={{ padding: "2rem", textAlign: "center" }}>Lade...</div>
     );
   }
 
-  if (setup.required) {
+  if (setupRequired) {
     return <Routes>
       <Route path="/setup" element={<SetupPage onClosed={setup.markClosed} />} />
       <Route path="*" element={<Navigate to="/setup" replace />} />

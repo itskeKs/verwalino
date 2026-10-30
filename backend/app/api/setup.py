@@ -25,7 +25,7 @@ class SetupRoute(APIRoute):
         handler = super().get_route_handler()
 
         async def handle(request: Request) -> Response:
-            if request.method == "POST":
+            if request.method != "GET":
                 # Check closure before FastAPI parses even malformed JSON.
                 await require_setup()
             try:
@@ -50,10 +50,16 @@ class SetupRequest(BaseModel):
     admin_name: str = Field(min_length=1, max_length=255)
     password: SecretStr
 
-    @field_validator("organization_name", "admin_name", mode="before")
+    @field_validator("token", "organization_name", "admin_name", mode="before")
     @classmethod
-    def strip_name(cls, value: object) -> object:
-        return value.strip() if isinstance(value, str) else value
+    def clean_text(cls, value: object) -> object:
+        if isinstance(value, SecretStr):
+            value = value.get_secret_value()
+        if isinstance(value, str):
+            if re.search(r"[\x00-\x1f\x7f-\x9f]", value):
+                raise ValueError("Control characters are not allowed")
+            return value.strip()
+        return value
 
     @field_validator("admin_email", mode="before")
     @classmethod
@@ -101,6 +107,8 @@ async def complete_setup(body: SetupRequest, response: Response) -> LoginRespons
             if principal is None or principal.organization_id != org:
                 raise HTTPException(status_code=403, detail=REFUSED)
     except DBAPIError as error:
+        # Hide sensitive setup parameters without changing other routes' errors.
+        error.hide_parameters = True
         # Classification uses SQLSTATE, never driver message text or input values.
         if getattr(error.orig, "sqlstate", None) != "P0001":
             raise HTTPException(status_code=503, detail="Einrichtung derzeit nicht verfügbar.") from None
@@ -110,3 +118,9 @@ async def complete_setup(body: SetupRequest, response: Response) -> LoginRespons
     _set_session_cookie(response, create_session_token(
         principal.user_id, principal.organization_id, principal.session_version))
     return LoginResponse(user_id=str(principal.user_id), organization_id=str(org), role=principal.role)
+
+
+@router.api_route("", methods=["HEAD", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT"], include_in_schema=False)
+async def unsupported_method() -> None:
+    # SetupRoute checks closure before this method refusal or any body parsing.
+    raise HTTPException(status_code=405, detail="Method Not Allowed", headers={"Allow": "GET, POST"})

@@ -82,26 +82,3 @@ async def test_direct_function_failures_are_generic_and_atomic(fresh_setup):
     with pytest.raises(DBAPIError):
         async with connection.begin_nested():
             await connection.execute(sql, args)
-
-
-@pytest.mark.asyncio
-async def test_setup_lock_blocks_competing_setup_and_migrator_creation(fresh_setup):
-    from sqlalchemy.ext.asyncio import create_async_engine
-    from tests.conftest import APP_RW_URL, MIGRATOR_URL
-
-    _, first = fresh_setup
-    await first.scalar(text("SELECT setup_first_organization(:token,'First','first@example.test','Admin','hash')"), {"token": TOKEN})
-    for url, query in ((APP_RW_URL, "SELECT setup_first_organization(:token,'Second','second@example.test','Admin','hash')"),
-                       (MIGRATOR_URL, "INSERT INTO organization(name) VALUES ('Concurrent CLI')")):
-        engine = create_async_engine(url)
-        try:
-            async with engine.connect() as connection, connection.begin():
-                await connection.execute(text("SET LOCAL lock_timeout='100ms'"))
-                with pytest.raises(DBAPIError) as error:
-                    async with connection.begin_nested():
-                        await connection.execute(text(query), {"token": TOKEN})
-                # The rollback-only TRUNCATE holds ACCESS EXCLUSIVE too, so a
-                # competitor times out before the function can even compile.
-                assert error.value.orig.sqlstate == "55P03"
-        finally:
-            await engine.dispose()

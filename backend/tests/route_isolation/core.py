@@ -5,6 +5,8 @@ from __future__ import annotations
 EXEMPT = {
     "GET /api/setup": "organization-free boolean only; fresh/closed states covered by first_run_setup.feature and test_setup.py",
     "POST /api/setup": "exists only before any organization; token-gated creation covered by first_run_setup.feature and test_setup.py",
+    **{f"{method} /api/setup": "organization-free method refusal; closed setup returns 404, tested in test_setup.py"
+       for method in ("HEAD", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT")},
 }
 
 import uuid

@@ -18,8 +18,3 @@ Feature: First run setup
     Given a fresh installation with an unused setup token
     When the operator sets up the installation with that token
     Then a second setup is not found
-
-  Scenario: A consumed token cannot be used again
-    Given a fresh installation with an unused setup token
-    When the operator sets up the installation with that token
-    Then the same token cannot set up the installation again

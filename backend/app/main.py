@@ -2,7 +2,7 @@
 
 import os
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -153,11 +153,8 @@ if _frontend_dist and os.path.isdir(_frontend_dist):
     if os.path.isdir(_assets_dir):
         app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
 
-    @app.api_route("/{full_path:path}", include_in_schema=False,
-                   methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-    async def spa_fallback(full_path: str, request: Request):
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
         if full_path == "api" or full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="Not Found")
-        if request.method not in {"GET", "HEAD"}:
-            raise HTTPException(status_code=405, detail="Method Not Allowed", headers={"Allow": "GET, HEAD"})
         return FileResponse(resolve_spa_file(_frontend_dist, full_path))

@@ -374,10 +374,15 @@ its canonical-email duplicate check and invalidates pending tokens.
 the same organization lock, printing plaintext once to the terminal only after
 readiness. The token never enters a URL/config/application log. Setup returns
 the existing signed HttpOnly session cookie on 201; a closed setup returns the
-unknown-route 404, token failures 403, validation failures 422. The router sends
-an unclaimed installation to the German setup form, then reloads the dashboard
-from the cookie; a closed setup URL redirects to login. No signup/rate limiter
-is included. Rollback-only tests provision an empty synthetic database without
+unknown-route 404 for every non-GET method, token failures 403, validation failures
+422. Request validation trims the token and organization/admin names and rejects
+control characters in those fields before database writes. SQL parameter hiding
+applies only to caught setup errors, leaving other routes' diagnostics unchanged.
+The router sends an unclaimed installation to the German setup form, then reloads the dashboard
+from the cookie; a closed setup URL redirects to login. A failed initial setup
+status request is logged to the console and leaves login and signed-in routes
+available; a later successful app load still detects an unclaimed installation.
+No signup/rate limiter is included. Rollback-only tests provision an empty synthetic database without
 changing the shared fixtures permanently; real portable-stack acceptance remains
 pending.
 

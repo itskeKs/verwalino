@@ -10,7 +10,12 @@ export function useSetupStatus() {
     let cancelled = false;
     api.get<{ required: boolean }>("/api/setup", { cache: "no-store" }).then(
       (answer) => { if (!cancelled) setRequired(answer.required); },
-      () => { if (!cancelled) setError(true); },
+      () => {
+        if (!cancelled) {
+          console.error("Einrichtungsstatus konnte nicht geladen werden.");
+          setError(true);
+        }
+      },
     );
     return () => { cancelled = true; };
   }, [attempt]);

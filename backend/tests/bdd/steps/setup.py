@@ -45,7 +45,6 @@ def setup_is_required(world):
 
 
 @then("a second setup is not found")
-@then("the same token cannot set up the installation again")
 def second_setup_is_absent(world):
     assert world.response.status_code == 201, world.describe_response()
     answer = world.send(world.anonymous, "POST", "/api/setup", json=BODY)
