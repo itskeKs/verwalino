@@ -42,8 +42,9 @@ test-backend: check-testdb ## Backend pytest against the test DB (PYTEST_ARGS="-
 	@$(TESTDB_LOCK); \
 	( . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest $(PYTEST_ARGS) )
 
-test-installer: ## Self-host installer contract tests (no DB; Docker is faked)
+test-installer: ## Self-host installer and hosted-server script contract tests (no DB; Docker is faked)
 	cd backend && $(UV_LINT) python ../scripts/test-self-host.py
+	cd backend && $(UV_LINT) python ../scripts/test-server-deploy.py
 
 test-frontend: frontend/node_modules ## Frontend vitest (single run)
 	cd frontend && npm test
