@@ -16,8 +16,9 @@ account-specific list with status filter and pagination. „Kontoauszug importie
 „Übernehmen“ (commit); after a file change, a new preview is required. CSV,
 CAMT-XML, and ZIP can be selected; errors and the actual number of new
 transactions are shown. READ_ONLY can read but not import.
-The local browser flow, including a second import with zero new transactions,
-is repeatable with `scripts/acceptance/t19_bank_import_browser.cjs` against `scripts/dev-local.sh`.
+The browser review/confirmation flow is [an executable feature](../../features/bank_statement_browser.feature),
+run with `make test-browser`; parsing and duplicate imports are covered by
+[the API feature](../../features/bank_statement_import.feature).
 For write roles, the transactions page offers „Vorschlag übernehmen“ (accept
 suggestion), „Aufteilen“ (split), and „Ignorieren“ (ignore). Suggestions that
 require review open the split dialog; unclear amounts must be explicitly split
@@ -95,9 +96,9 @@ additional `approve` permission. The split dialog selects the lease or
 owner of the bank account's property, payment type, and period; totals are checked to the cent
 without floating-point arithmetic. API errors remain visible, double clicks
 do not create a second booking. „Alle“ (all) also shows assigned/ignored transactions.
-The real browser flow `scripts/acceptance/t22_bank_assignment_browser.cjs`
-checks gross rent, partial payment, ignoring, second-tab conflict, and the
-tenant ledger values persisted after reload against `scripts/dev-local.sh`.
+The [bank assignment browser feature](../../features/bank_assignment.feature) checks gross rent,
+partial payment, ignoring and rent account values after reload (`make test-browser`).
+Concurrent assignment conflicts remain covered by API tests.
 
 ## Payment and cost lists as CSV
 
@@ -139,7 +140,8 @@ later configuration or payment changes do not recalculate the issued dunning not
 Rollback restrictions are documented under
 [migration compatibility](../../DEPLOY.md#migration-compatibility-00290139).
 Issuance alone confirms no receipt. The real UI/PDF flow
-is repeatable with `scripts/acceptance/t35_dunning_interest_browser.cjs`.
+is repeatable with [the dunning interest browser feature](../../features/dunning_interest.feature)
+using `make test-browser`.
 
 ## Dunning run with selected drafts
 
@@ -156,9 +158,9 @@ Sources changed in the meantime require a new preview (409). If the network resp
 unclear, the same job is kept for a manual retry;
 its original IDs are returned under renewed complete prepare/source checks,
 not recalculated or duplicated. Old issued letters remain
-unchanged. The [UI acceptance procedure](../../DEPLOY.md#selected-dunning-batches-t53-local-head-0135) verifies three
-arrears of 850 EUR each and exactly three drafts totaling 2,550 EUR, including
-mobile abort, reload, and unchanged source data.
+unchanged. [The dunning batch browser feature](../../features/dunning_batch.feature) verifies three
+arrears of 850 EUR each and three drafts totaling 2,550 EUR, including
+mobile cancellation and reload (`make test-browser`). Source immutability remains covered by API tests.
 
 ## Monthly rent KPIs
 

@@ -22,8 +22,8 @@ ab …“ (change rent from …) opens the dialog with date, base rent, and adva
 date is prefilled. Readers see only the history. Invalid
 values are rejected before the POST, server errors retain the inputs;
 while saving, further changes and closing are blocked.
-`scripts/acceptance/t24_rent_change_browser.cjs` verifies the UI flow and all
-24 month/type rows: 700/150 through March, 750/150 from April, annual expected amount (Soll) 10,650 EUR.
+[The rent change browser feature](../../features/rent_change.feature) verifies the UI flow,
+the 24-row year and representative boundary months: 700/150 through March, 750/150 from April, annual expected amount (Soll) 10,650 EUR.
 
 ## Graduated rent (Staffelmiete)
 
@@ -110,7 +110,7 @@ deposits without a complete lease assignment must be corrected (409),
 the existing reversal path remains available for that. New/changed/to-be-booked
 deposits must match the account's property, lease, and tenant. Booking vouchers and
 finalized documents remain unchanged. The real UI test case is
-`scripts/acceptance/t25_deposits_browser.cjs`.
+[the deposits browser feature](../../features/deposits.feature), run with `make test-browser`.
 
 ## Change of ownership
 
