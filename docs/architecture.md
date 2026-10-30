@@ -193,6 +193,9 @@ the same `request_id` field; worker processing uses its durable job/import ID.
 Generic exceptions produce a safe JSON `detail` plus `request_id`; HTTP 5xx
 exceptions retain their detail and headers and add the ID. HTTP 4xx bodies stay
 unchanged. The existing API-client error message includes the header ID for 5xx.
+Starlette's server-error handler restores the request context and adds the ID
+header after the request middleware unwinds. Unhandled exceptions still propagate
+to the server or test transport after Starlette produces the error response.
 
 An empty tracker DSN leaves reporting disabled. When enabled, the Sentry-compatible
 FastAPI/Starlette integration sends error events with the request ID and the

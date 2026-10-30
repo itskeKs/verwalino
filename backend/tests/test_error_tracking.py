@@ -87,9 +87,10 @@ async def test_server_error_is_one_offline_event_with_the_response_id(kind, trac
 
 async def test_authenticated_error_tags_only_the_validated_organization(tracking_routes, offline_tracker, client_a_admin, seed_data):
     events, client = offline_tracker
-    response = await client_a_admin.get("/api/test-tracker-authenticated", headers={"X-Request-ID": "tenant-error-123", "organization_id": str(seed_data["org_b_id"])})
-    assert response.status_code == 500
+    with pytest.raises(RuntimeError, match="Authenticated failure"):
+        await client_a_admin.get("/api/test-tracker-authenticated", headers={"X-Request-ID": "tenant-error-123", "organization_id": str(seed_data["org_b_id"])})
     assert len(events) == 1
+    assert events[0]["tags"]["request_id"] == "tenant-error-123"
     assert events[0]["tags"]["organization_id"] == str(seed_data["org_a_id"])
     assert "Verwaltung Alpha" not in json.dumps(events)
     assert "Admin Alpha" not in json.dumps(events)
@@ -111,7 +112,7 @@ async def test_fresh_instrumented_stack_reports_the_error_once(handled, offline_
             raise HTTPException(500, "Internal Server Error")
         raise RuntimeError(PRIVATE_MESSAGE)
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=fresh), base_url="http://test") as browser:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=fresh, raise_app_exceptions=False), base_url="http://test") as browser:
         response = await browser.get("/failure", headers={"X-Request-ID": "fresh-stack-123"})
     events, client = offline_tracker
     assert response.status_code >= 500
@@ -249,7 +250,7 @@ async def test_empty_dsn_never_initializes_a_transport(tracking_routes, monkeypa
     monkeypatch.setenv("SENTRY_DSN", "https://public@tracker.invalid/1")
     monkeypatch.setattr(sentry_sdk, "init", lambda *a, **kw: pytest.fail("Disabled tracker initialized"))
     assert configure_error_tracking(Settings(_env_file=None, error_tracking_dsn=""), release="0.1.0") is None
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as browser:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test") as browser:
         response = await browser.post(tracking_routes + "/crash")
     assert response.status_code == 500
 
