@@ -29,7 +29,7 @@ def test_report_records_steps_failures_skips_and_portable_artifacts(pytester, mo
             Given a response exists
             Then the result passes
 
-          @failure
+          @failure @browser
           Scenario: A failing scenario
             Given a response exists
             Then the result fails
@@ -70,6 +70,12 @@ def test_report_records_steps_failures_skips_and_portable_artifacts(pytester, mo
     pytester.makeconftest("""
         import pytest
 
+        def pytest_sessionstart(session):
+            directory = session.config.pluginmanager.getplugin('scenario-report').directory / 'logs'
+            directory.mkdir()
+            for name in ('backend.log', 'vite.log'):
+                (directory / name).write_text('synthetic server log')
+
         def pytest_collection_modifyitems(items):
             for item in items:
                 if item.get_closest_marker('unavailable'):
@@ -105,11 +111,12 @@ def test_report_records_steps_failures_skips_and_portable_artifacts(pytester, mo
     failed = scenarios[1]
     assert [step["outcome"] for step in failed["steps"]] == ["passed", "failed", "skipped"]
     assert failed["steps"][1]["error"] == {"type": "builtins.ValueError", "message": "synthetic failure"}
-    assert len(failed["artifacts"]) == 1
+    assert len(failed["artifacts"]) == 3
     for artifact in failed["artifacts"]:
         assert not Path(artifact).is_absolute()
         assert (destination / artifact).is_file()
-    response = json.loads((destination / failed["artifacts"][0]).read_text())
+    response_path = next(path for path in failed["artifacts"] if path.endswith("last-response.json"))
+    response = json.loads((destination / response_path).read_text())
     assert response["body"] == {"detail": "synthetic failure"}
     assert "two organizations" in scenarios[2]["error"]["message"]
     summary = (destination / "summary.md").read_text()
@@ -156,8 +163,8 @@ def test_report_includes_setup_errors_missing_steps_and_rendered_examples(pytest
     assert rows[3]["steps"][0]["error"]["type"].endswith(".StepDefinitionNotFoundError")
 
 
-@pytest.mark.parametrize("failed", [False, True])
-def test_browser_capture_keeps_trace_and_screenshot_only_on_failure(tmp_path, monkeypatch, failed):
+@pytest.mark.parametrize("failed,screenshot_error", [(False, False), (True, False), (True, True)])
+def test_browser_capture_keeps_trace_and_screenshot_only_on_failure(tmp_path, monkeypatch, failed, screenshot_error):
     """Exercise fixture teardown without requiring a browser installation in unit CI."""
     import asyncio
     from types import SimpleNamespace
@@ -171,6 +178,9 @@ def test_browser_capture_keeps_trace_and_screenshot_only_on_failure(tmp_path, mo
 
     class Page:
         async def screenshot(self, path, full_page):
+            if screenshot_error:
+                from playwright.async_api import Error
+                raise Error("Page is closed")
             Path(path).write_bytes(b"screenshot")
 
     class Context:
@@ -198,6 +208,22 @@ def test_browser_capture_keeps_trace_and_screenshot_only_on_failure(tmp_path, mo
     with pytest.raises(StopIteration):
         next(fixture)
     paths = reporter.records["scenario"]["artifacts"]
-    assert sorted(Path(path).name for path in paths) == (["screenshot.png", "trace.zip"] if failed else [])
+    expected = (["capture-error.txt", "trace.zip"] if screenshot_error else ["screenshot.png", "trace.zip"]) if failed else []
+    assert sorted(Path(path).name for path in paths) == expected
     assert all((tmp_path / path).is_file() for path in paths)
     assert len(list(tmp_path.rglob("trace.zip"))) == int(failed)
+
+
+def test_reusing_a_report_directory_clears_previous_failure_artifacts(tmp_path):
+    from types import SimpleNamespace
+    from tests.bdd.report import ScenarioReport, artifact_directory
+    reporter = ScenarioReport(tmp_path)
+    item = SimpleNamespace(nodeid="a-failed-scenario", config=SimpleNamespace(
+        pluginmanager=SimpleNamespace(getplugin=lambda name: reporter),
+    ))
+    directory = artifact_directory(item)
+    for name in ("screenshot.png", "trace.zip", "last-response.json", "capture-error.txt"):
+        (directory / name).write_text("old failure")
+    (directory / "unrelated.txt").write_text("keep")
+    ScenarioReport(tmp_path)
+    assert list(directory.iterdir()) == [directory / "unrelated.txt"]

@@ -44,9 +44,12 @@ pytest_plugins = (
 # ---------------------------------------------------------------------------
 # Database URLs (must target the disposable declaration test database)
 # ---------------------------------------------------------------------------
-MIGRATOR_URL, APP_RW_URL, MIGRATOR_SYNC_URL = require_disposable_database_settings(
-    settings
-)
+# External BDD runs override both database autouse fixtures. They need no local
+# database configuration; all local test paths retain the disposable-DB guard.
+if os.environ.get("VERWALINO_TARGET_URL"):
+    MIGRATOR_URL = APP_RW_URL = MIGRATOR_SYNC_URL = None
+else:
+    MIGRATOR_URL, APP_RW_URL, MIGRATOR_SYNC_URL = require_disposable_database_settings(settings)
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +105,8 @@ async def fixture_has_registered_documents(session: AsyncSession, document_ids: 
 @pytest.fixture(scope="session", autouse=True)
 def run_migrations():
     """Run Alembic migrations using the migrator role."""
+    if MIGRATOR_SYNC_URL is None:
+        raise RuntimeError("VERWALINO_TARGET_URL is supported only by tests/bdd; unset it for local database tests")
     from alembic.config import Config
     from alembic import command
 

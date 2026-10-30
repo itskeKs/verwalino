@@ -64,6 +64,13 @@ class ScenarioReport:
     def __init__(self, directory):
         self.directory = directory.resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
+        # Repeated local runs must not retain a prior failure's trace. Remove
+        # only our known filenames in nodeid directories, preserving other files.
+        for previous in (self.directory / "artifacts").glob("*"):
+            if previous.is_symlink() or len(previous.name) != 16 or any(char not in "0123456789abcdef" for char in previous.name):
+                continue
+            for name in ("screenshot.png", "trace.zip", "last-response.json", "capture-error.txt"):
+                (previous / name).unlink(missing_ok=True)
         self.run = {
             "started": _now(), "finished": None, "git_sha": _git_sha(),
             "mode": os.environ.get("VERWALINO_SCENARIO_MODE", "selfhost"),
