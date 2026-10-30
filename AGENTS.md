@@ -49,7 +49,7 @@ Human-facing workflow and commands: [CONTRIBUTING.md](CONTRIBUTING.md).
 | `make test` | installer contract tests, backend pytest (with BDD scenarios), frontend vitest and typecheck |
 | `make test-bdd` | only the `features/` scenarios |
 | `make docs-check` | relative links in all Markdown outside `docs/archive/` |
-| `make hooks` | enables `.githooks/pre-commit` (lint, docs check; tests opt-in) |
+| `make hooks` | enables `.githooks/pre-commit` (ruff and eslint on staged code, docs link check) |
 
 CI (`.github/workflows/tests-on-pr.yaml`) runs the same on every PR. A red job is fixed, not
 skipped. Do not bypass the hook to land code.

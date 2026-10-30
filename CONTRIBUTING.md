@@ -29,11 +29,9 @@ Rules for coding agents, which apply to people too, are in [AGENTS.md](AGENTS.md
   same with the test environment loaded.
 - The backend suite truncates tables in the shared test database: never run two suites at once.
 
-The pre-commit hook (`.githooks/pre-commit` → `scripts/checks.sh`) runs ruff, eslint on staged
-frontend files and the docs check for staged Markdown — seconds, not minutes. Tests are opt-in:
-`VERWALINO_HOOK_TESTS=fast` (staged test modules, frontend typecheck and vitest) or `full`
-(`make test`). `VERWALINO_HOOK_LINT=0` and `VERWALINO_HOOK_DOCS=0` switch one check off,
-`VERWALINO_HOOK_SKIP=1` skips the hook.
+The pre-commit hook (`.githooks/pre-commit` → `scripts/checks.sh`) runs ruff when backend Python
+is staged, eslint on staged frontend TypeScript files, and always the docs link check.
+If `frontend/node_modules` is missing, eslint is skipped with a message.
 
 ## Making a change
 
