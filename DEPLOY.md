@@ -217,6 +217,103 @@ The **first tag run and the arm64 installation check remain acceptance steps
 for the maintainer**. This preparation does not close #7. Full `make test`
 remains a pre-merge gate; the local workflow/installer checks need no database.
 
+## Request IDs and optional error tracking
+
+Request correlation is always enabled, including when error tracking is off.
+Every HTTP response carries `X-Request-ID`. An incoming value is accepted only
+when it contains 8–128 ASCII letters, digits, dots, underscores or hyphens;
+otherwise the app generates a UUID. Do not put personal data into request IDs.
+Generic exceptions return `{"detail":"Internal Server Error","request_id":"…"}`;
+HTTP 5xx exceptions keep their existing detail and headers and add `request_id`.
+HTTP 4xx bodies are unchanged. The existing frontend error messages show the
+header ID on server failures. No request IDs are added to URLs or stored in the DB.
+Explicit status responses such as readiness `503 {"status":"unavailable"}`
+retain their bodies, carry the header and do not generate exception events.
+Raised HTTP 503 exceptions (for example, disabled features) also retain their
+detail and headers, add the request ID and produce a WARNING without a tracker
+event. Only unhandled exceptions and raised HTTP 500 exceptions are reported
+and logged at ERROR; other raised HTTP 5xx exceptions produce a WARNING.
+
+Log lines include `request_id=<id>` across the API, services and database layer.
+Worker processing uses the durable job/import ID in that same field; startup,
+idle and other records outside a request/job use `-`. On an authorized portable
+installation, an operator can find a reported ID without starting the stack:
+
+```sh
+docker compose --project-name verwalino --env-file .env.selfhost \
+  -f infra/docker-compose.yml logs --no-color app | rg --fixed-strings 'request_id=REPORTED_ID'
+```
+
+Error reporting is **off by default**, including self-host. These optional keys
+are read from the API process environment (or its `.env`):
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `HV_ERROR_TRACKING_DSN` | empty | Empty disables SDK initialization and tracker transport. A nonempty Sentry-compatible project DSN opts in. Keep it in operator-managed secrets. |
+| `HV_ERROR_TRACKING_ENVIRONMENT` | `selfhost` | Deployment label, e.g. `hosted-production`; never a person's or organization's name. |
+
+The portable installer keeps tracking disabled and does not accept/forward these
+keys in `.env.selfhost`. The existing production Compose configuration also needs
+separately reviewed environment wiring before opting in; adding keys to the
+host's dotenv file alone does not forward them into a container.
+
+For the hosted offer, use **self-hosted GlitchTip** as the Sentry-compatible
+tracker. Provision its project, access controls, retention and TLS separately,
+then supply its DSN to the API process. No external SaaS account is required by
+the application. Events carry `request_id` and, after session validation,
+`organization_id` (UUID only). Filter tracker events by the `request_id` tag
+using the reported ID to find the event matching a response or log line.
+Release is `HV_RELEASE_ID` from the **process environment**, otherwise app version
+`0.1.0`. The production Compose label alone does not set that environment variable;
+image labels/digests are not discovered at runtime. Portable Compose forwards an
+exported `HV_RELEASE_ID`; it is not an accepted `.env.selfhost` setting.
+The SDK uses FastAPI/Starlette integrations, explicit `data_collection` controls,
+at most ten breadcrumbs and no performance tracing. Error-event probability is
+fixed at `1.0` in `core/error_tracking.py`: every eligible error is sent while
+tracking is enabled. User identity, cookies,
+bodies, query parameters, SQL values, frame locals and source context are not
+collected. The machine hostname (`server_name`) is omitted. Duplicate exception
+reports are suppressed; a failed response stream is reported once with its ID
+and remains an incomplete response.
+See the [Sentry Python configuration options](https://docs.sentry.io/platforms/python/configuration/options/)
+for the SDK settings.
+
+Before sending, a shared pure scrubber removes request bodies, cookies, user
+objects, stack locals and source snippets. Request headers are dropped except
+`content-type`, `content-length`, `accept`, `user-agent` and `x-request-id`
+(case-insensitive); their retained values are scrubbed too. Filtering reaches
+tags, `extra`, contexts and breadcrumb messages/data at every level. Postgres `DETAIL:`, `HINT:`,
+`Failing row contains (...)` and `Key (...)=(...)` lines are removed while the
+constraint name and SQLSTATE in the error summary remain.
+It masks email addresses, compact/space/hyphen-grouped IBANs (either case), phone
+shapes (international prefix, leading zero or separators), recognizable German
+street addresses (`straße`, `strasse`, `str.` plus house number), surname-first
+names, names with particles and accented capitals, and structured owner/key
+values. Generic capitalized multiword names are masked only in error contexts;
+HTTP reason phrases, ISO dates and digit runs without a phone shape are preserved.
+Bearer/signed session tokens and labeled passwords/secrets are masked as well.
+Query-string values are redacted, including URLs in exception messages and
+breadcrumbs. Masks use `[redacted:email]`,
+`[redacted:iban]`, `[redacted:phone]`, `[redacted:address]`, `[redacted:name]`,
+`[redacted:token]`, `[redacted:password]`, `[redacted:header]` and `[redacted:query]`.
+The same text scrubber filters formatted messages and tracebacks **only at
+ERROR and above** (the 500/unhandled-error paths). `uvicorn.access` receives
+correlation IDs without text scrubbing, regardless of level. INFO/WARNING log text
+is unchanged; copies sent as tracker breadcrumbs are scrubbed as error context.
+Each scrubbed string is limited to 8,192 input characters. Tracebacks retain the
+last complete lines within that limit so the final error line survives. An
+overlong final line, and other text, retain the first 8,192 characters. Omitted
+text is marked with `[truncated]`. Patterns use bounded tokens and
+linear scanning. SQLAlchemy hides bound parameters. Correlation IDs are
+preserved, and `weasyprint`/`fontTools` emit only WARNING and above.
+
+Authenticated names/email and the organization's person directory are not
+available in the request context and are not fetched for reporting. Name masking
+is pattern-based: in error contexts it can mask ordinary capitalized phrases
+and miss unusual or unlabelled single-word names. Other unrecognized free text may still be personal data;
+keep exception messages structural and never intentionally log documents or
+request bodies.
+
 ## Existing alpha: `verwaltung.karat.immo`
 
 This alpha runs on Moon behind the existing Traefik Docker network and its
