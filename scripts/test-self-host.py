@@ -126,8 +126,9 @@ if "-c" in sys.argv:
             os.environ["BACKUP_OWNER"] = argument.split("=", 1)[1]
     position = sys.argv.index("-c")
     args = sys.argv[position + 2:]
-    mount = sys.argv[sys.argv.index("--volume") + 1].rsplit(":", 1)[0]
-    args = [arg.replace("/backup", mount).replace("/data/documents", os.environ["FAKE_DOCUMENTS"]) for arg in args]
+    if "--volume" in sys.argv:
+        mount = sys.argv[sys.argv.index("--volume") + 1].rsplit(":", 1)[0]
+        args = [arg.replace("/backup", mount).replace("/data/documents", os.environ["FAKE_DOCUMENTS"]) for arg in args]
     # Emulate root's container-only ownership operations without chown on the host.
     wrapper = """import os, sys
 from app import deployment
@@ -280,7 +281,7 @@ elif name == "openssl":
         args = [call["args"] for call in self.calls()]
         self.assert_isolated(args)
         self.assertFalse(any(any(word in a for word in ("up", "stop", "build", "pull", "migrate", "bootstrap", "pack", "verify")) for a in args))
-        self.assertTrue(any("target" in a for a in args))
+        self.assertTrue(any("from app.deployment import TARGET; print(TARGET)" in a for a in args))
         self.assertEqual(before, (self.config.read_bytes(), self.db_state.read_bytes()))
         self.assertFalse(Path(str(self.config) + ".lock").exists())
 
@@ -290,6 +291,12 @@ elif name == "openssl":
         result = self.assert_doctor("OK", "Port 19080")
         self.assertNotIn("DNS", result.stdout)
         self.assertNotIn("Zertifikat", result.stdout)
+
+    def test_doctor_rejects_arguments_in_german(self):
+        result = self.run_script("doctor", "unexpected")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr, "Dieser Befehl akzeptiert keine zusätzlichen Argumente.\n")
+        self.assertFalse(self.calls())
 
     def test_doctor_reports_every_check_after_missing_docker_or_daemon(self):
         self.init("--https", "verwaltung.example.org")
@@ -313,6 +320,12 @@ elif name == "openssl":
                 self.env[variable] = value
                 self.assert_doctor("FEHLER", check, 1)
                 del self.env[variable]
+
+    def test_doctor_accepts_current_compose_releases(self):
+        self.init()
+        self.doctor_tools()
+        self.env["FAKE_COMPOSE_VERSION"] = "5.6.0"
+        self.assert_doctor("OK", "Compose")
 
     def test_doctor_checks_config_existence_permissions_and_completeness(self):
         self.init()
@@ -401,7 +414,7 @@ elif name == "openssl":
                                                ("FAKE_SCHEMA_TABLE", "", "WARN", 0),
                                                ("FAKE_SCHEMA", "0138\n0139", "WARN", 0),
                                                ("FAKE_IMAGE_TARGET", "missing", "WARN", 0),
-                                               ("FAKE_DOCKER_FAIL", "target", "WARN", 0),
+                                               ("FAKE_DOCKER_FAIL", "run", "WARN", 0),
                                                ("FAKE_DOCKER_FAIL", "psql", "WARN", 0),
                                                ("FAKE_IMAGE_TARGET", "0122", "FEHLER", 1)):
             with self.subTest(variable=variable, value=value):
@@ -417,12 +430,26 @@ elif name == "openssl":
             result = self.assert_doctor("WARN", "Organisation")
             self.assertIn("admin --org NAME --email EMAIL", result.stdout)
 
-    def test_doctor_does_not_invoke_target_helper_when_image_is_absent(self):
+    def test_doctor_image_target_probe_is_unprivileged_and_has_no_volumes(self):
+        self.init()
+        self.doctor_tools()
+        self.assert_doctor("OK", "Migration")
+        probes = [call["args"] for call in self.calls() if "run" in call["args"]]
+        self.assertEqual(len(probes), 1)
+        probe = probes[0]
+        self.assertTrue(all(flag not in probe for flag in ("--volume", "-v", "--mount", "--cap-add")),
+                        "The image target probe must not mount data or add capabilities.")
+        self.assertEqual(probe[probe.index("--user") + 1], "10001:10001")
+        self.assertIn("--read-only", probe)
+        self.assertEqual(probe[probe.index("--entrypoint") + 1], "python")
+        self.assertEqual(probe[probe.index("-c") + 1], "from app.deployment import TARGET; print(TARGET)")
+
+    def test_doctor_does_not_invoke_target_probe_when_image_is_absent(self):
         self.init()
         self.doctor_tools()
         self.env["FAKE_DOCKER_FAIL"] = "image"
         self.assert_doctor("WARN", "Migration")
-        self.assertFalse(any("target" in c["args"] for c in self.calls()))
+        self.assertFalse(any("run" in c["args"] for c in self.calls()))
 
     def test_doctor_validates_domain_without_stopping_other_checks(self):
         self.init("--https", "verwaltung.example.org")
@@ -447,7 +474,7 @@ elif name == "openssl":
         self.init("--https", "verwaltung.example.org")
         self.doctor_tools()
         self.env["FAKE_PUBLIC_IP"] = "93.184.216.35"
-        self.assert_doctor("FEHLER", "DNS-Ziel", 1)
+        self.assert_doctor("WARN", "DNS-Ziel")
         for address in ("", "192.168.1.2", "10.0.0.1", "172.16.0.1", "127.0.0.1", "fe80::1", "fd00::1"):
             self.env["FAKE_PUBLIC_IP"] = address
             self.assert_doctor("WARN", "DNS-Ziel")

@@ -299,11 +299,11 @@ doctor_database() {
     elif [[ ! "$schema" =~ ^[0-9]{4}$ ]]; then
         doctor_report WARN Migration 'Schema unbekannt oder mehrdeutig; alembic_version prüfen, vor manuellen Änderungen ein Backup erstellen.'
     elif ! docker image inspect "$VERWALINO_IMAGE" >/dev/null 2>&1; then
-        # Compose 2.24 run can build/pull missing images; diagnostics must not.
+        # Diagnostics must not build or pull missing images.
         doctor_report WARN Migration 'Konfiguriertes Image fehlt; nach Backup mit bash scripts/self-host.sh start bereitstellen und doctor wiederholen.'
-    elif ! TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/verwalino-doctor.XXXXXX"); then
-        doctor_report WARN Migration 'Imageziel nicht prüfbar; Schreibrechte im temporären Verzeichnis prüfen und doctor wiederholen.'
-    elif ! target=$(archive_tool target 2>"$TMP_DIR/target-error") ||
+    elif ! target=$(docker run --rm --pull never --network none --read-only --user 10001:10001 \
+        --cap-drop ALL --security-opt no-new-privileges --entrypoint python "$VERWALINO_IMAGE" \
+        -c 'from app.deployment import TARGET; print(TARGET)' < /dev/null 2>/dev/null) ||
         [[ ! "$target" =~ ^[0-9]{4}$ ]]; then
         doctor_report WARN Migration 'Imageziel nicht lesbar; das konfigurierte Image bereitstellen und doctor wiederholen.'
     elif (( 10#$schema > 10#$target )); then
@@ -380,7 +380,7 @@ doctor_dns() {
         case $'\n'"$public"$'\n' in *$'\n'"$address"$'\n'*) matches=$((matches + 1)) ;; esac
     done <<< "$addresses"
     if [[ "$matches" = 0 ]]; then
-        doctor_report FEHLER DNS-Ziel 'DNS zeigt auf keine öffentliche Adresse dieses Hosts; A/AAAA auf den Server richten oder NAT-Ziel manuell prüfen.'
+        doctor_report WARN DNS-Ziel 'DNS zeigt auf keine öffentliche Schnittstellenadresse dieses Hosts; Proxy (z. B. Cloudflare), NAT/Elastic IP oder /etc/hosts können dies erklären. A/AAAA und öffentliches Ziel manuell prüfen.'
     elif [[ "$matches" != "$total" ]]; then
         doctor_report WARN DNS-Ziel 'Nicht alle DNS-Adressen passen zum Host; insbesondere veraltete AAAA-Einträge korrigieren oder entfernen.'
     else
@@ -466,11 +466,11 @@ doctor() {
     else
         doctor_report FEHLER Docker-Version 'Docker-Version unbekannt oder älter als 24; Daemonzugriff herstellen bzw. Docker aktualisieren.'
     fi
-    if [[ "$docker_present" = 1 ]] && version=$(docker compose version --short 2>/dev/null) && doctor_version_at_least "$version" 2 24 && [[ "${version#v}" = 2.* ]]; then
+    if [[ "$docker_present" = 1 ]] && version=$(docker compose version --short 2>/dev/null) && doctor_version_at_least "$version" 2 24; then
         compose_ready=1
-        doctor_report OK Compose 'Compose v2 mindestens 2.24; dieses Compose-Plugin für start verwenden.'
+        doctor_report OK Compose 'Compose mindestens 2.24; dieses Compose-Plugin für start verwenden.'
     else
-        doctor_report FEHLER Compose 'Compose v2 ab 2.24 fehlt; Docker-Compose-Plugin installieren oder aktualisieren.'
+        doctor_report FEHLER Compose 'Compose ab 2.24 fehlt; Docker-Compose-Plugin installieren oder aktualisieren.'
     fi
     if config_filename_valid && [[ ! -L "$CONFIG" && -f "$CONFIG" ]]; then
         config_present=1
@@ -760,7 +760,7 @@ fi
 case "$command" in
     help|--help|-h) usage; exit 0 ;;
     init) init_config "$@"; exit 0 ;;
-    doctor) [[ "$#" = 0 ]] || fail 'This command accepts no additional arguments.'; doctor; exit $? ;;
+    doctor) [[ "$#" = 0 ]] || fail 'Dieser Befehl akzeptiert keine zusätzlichen Argumente.'; doctor; exit $? ;;
     start|status|stop) [[ "$#" = 0 ]] || fail 'This command accepts no additional arguments.' ;;
     admin|backup|restore) ;;
     *) usage >&2; fail 'Unknown command.' ;;
