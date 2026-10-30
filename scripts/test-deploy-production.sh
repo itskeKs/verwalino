@@ -77,28 +77,28 @@ if [ "$(basename "$0")" = curl ]; then
   body=
   [ "$reads_login_payload" -eq 0 ] || login_payload=$(cat)
   case "$url" in
-    http://verwaltung.karat.immo/api/health/live)
+    http://verwaltung.example.org/api/health/live)
       status=308
-      response_headers='Location: https://verwaltung.karat.immo/api/health/live'
+      response_headers='Location: https://verwaltung.example.org/api/health/live'
       ;;
-    https://verwaltung.karat.immo/api/health/live)
+    https://verwaltung.example.org/api/health/live)
       status=200
       ;;
-    https://verwaltung.karat.immo/api/health/ready)
+    https://verwaltung.example.org/api/health/ready)
       response_headers='Strict-Transport-Security: max-age=1
 Content-Security-Policy: default-src '\''self'\''
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
 Referrer-Policy: no-referrer'
       ;;
-    https://verwaltung.karat.immo/api/auth/login)
+    https://verwaltung.example.org/api/auth/login)
       printf '%s' "$login_payload" | FAKE_ADMIN_PASSWORD="$FAKE_ADMIN_PASSWORD" python3 -c '
 import json
 import os
 import sys
 payload = json.load(sys.stdin)
 assert payload == {
-    "email": "admin@verwaltung.karat.immo",
+    "email": "admin@verwaltung.example.org",
     "password": os.environ["FAKE_ADMIN_PASSWORD"],
 }
 '
@@ -106,16 +106,16 @@ assert payload == {
 Set-Cookie: __Host-hv_session=value; Secure; HttpOnly; SameSite=Lax; Path=/'
       : > "$cookie_jar"
       ;;
-    https://verwaltung.karat.immo/api/auth/session)
+    https://verwaltung.example.org/api/auth/session)
       if [ "$has_cookie" -eq 1 ]; then
         body='{"role":"OWNER_ADMIN"}'
       else
         status=401
       fi
       ;;
-    https://verwaltung.karat.immo/api/organizations/me) body='{"name":"Karat Hausverwaltung Alpha"}' ;;
+    https://verwaltung.example.org/api/organizations/me) body='{"name":"Example Hausverwaltung"}' ;;
     *'%2e%2e'*|*'%5c..'*) body='<!doctype html><html>safe spa</html>' ;;
-    https://verwaltung.karat.immo/api/invoice-documents/upload) status=413 ;;
+    https://verwaltung.example.org/api/invoice-documents/upload) status=413 ;;
   esac
   [ -z "$headers_file" ] || printf '%s\n' "$response_headers" > "$headers_file"
   if [ -n "$output_file" ] && [ "$output_file" != /dev/null ]; then
@@ -129,6 +129,9 @@ fi
 
 if [ "$(basename "$0")" = docker ]; then
   printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+  # Containers started before the label rename carry only the legacy key,
+  # assembled so the tracked files do not spell the customer's name.
+  legacy_label="com.kar""at.hausverwaltung.release"
   case "${1:-}" in
     ps) [ "${FAKE_FAILURE:-}" != competing ] || printf '%s\n' unknown-runtime; printf '%s\n' db-id old-app old-worker; [ "${FAKE_NO_PREVIOUS_INVOICE:-0}" = 1 ] || printf '%s\n' old-invoice; exit 0 ;;
     network)
@@ -166,14 +169,15 @@ if [ "$(basename "$0")" = docker ]; then
         *'{{.State.Running}}'*) printf '%s\n' false ;;
         *'com.docker.compose.project'*) printf '%s\n' hausverwaltung-alpha ;;
         *'com.docker.compose.service'*) case "$*" in *invoice*) printf '%s\n' invoice-worker ;; *worker*) printf '%s\n' worker ;; *) printf '%s\n' app ;; esac ;;
-        *'com.karat.hausverwaltung.release'*'old-'*) printf '%s\n' old ;;
+        *"$legacy_label"*'old-'*|*"$legacy_label"*'restored-'*) printf '%s\n' old ;;
+        *'io.verwalino.release'*'old-'*|*'io.verwalino.release'*'restored-'*) printf '\n' ;;
+        *"$legacy_label"*'new-'*) printf '\n' ;;
         *'{{.State.Health.Status}}'*'new-invoice'*) [ "${FAKE_FAILURE:-}" != invoice-health ] || { printf '%s\n' unhealthy; exit 0; }; printf '%s\n' healthy ;;
         *'{{.Id}}'*'invoice'*) printf '%s\n' "${4:-}" ;;
         *'{{.Image}}'*'new-invoice'*) printf '%s\n' new-image-id ;;
         *'{{.Image}}'*'old-invoice'*) printf '%s\n' old-image-id ;;
         *'{{.Image}}'*'restored-invoice'*) printf '%s\n' old-image-id ;;
-        *'com.karat.hausverwaltung.release'*'new-invoice'*) printf '%s\n' test ;;
-        *'com.karat.hausverwaltung.release'*'restored-'*) printf '%s\n' old ;;
+        *'io.verwalino.release'*'new-invoice'*) printf '%s\n' test ;;
         *'{{.State.Health.Status}}'*'db-id'*) printf '%s\n' healthy ;;
         *'{{.State.Health.Status}}'*'new-app'*) if [ "${FAKE_FAILURE:-}" = app-health ]; then printf '%s\n' unhealthy; else printf '%s\n' healthy; fi ;;
         *'{{.State.Health.Status}}'*'new-worker'*) if [ "${FAKE_FAILURE:-}" = worker-health ]; then printf '%s\n' unhealthy; else printf '%s\n' healthy; fi ;;
@@ -195,8 +199,8 @@ if [ "$(basename "$0")" = docker ]; then
         *'{{.Image}}'*'old-worker'*) printf '%s\n' old-image-id ;;
         *'{{.Image}}'*'restored-app'*) printf '%s\n' old-image-id ;;
         *'{{.Image}}'*'restored-worker'*) printf '%s\n' old-image-id ;;
-        *'com.karat.hausverwaltung.release'*'new-app'*) printf '%s\n' "${FAKE_NEW_LABEL:-test}" ;;
-        *'com.karat.hausverwaltung.release'*'new-worker'*) printf '%s\n' test ;;
+        *'io.verwalino.release'*'new-app'*) printf '%s\n' "${FAKE_NEW_LABEL:-test}" ;;
+        *'io.verwalino.release'*'new-worker'*) printf '%s\n' test ;;
         *'{{json .HostConfig.PortBindings}}'*) printf '%s\n' '{}' ;;
         *'{{range .Config.Env}}'*) exit 0 ;;
         *) printf '%s\n' healthy ;;
@@ -262,7 +266,7 @@ if [ "$(basename "$0")" = docker ]; then
 import json
 import sys
 print(json.dumps({
-    "email": "admin@verwaltung.karat.immo",
+    "email": "admin@verwaltung.example.org",
     "password": sys.stdin.read(),
 }, separators=(",", ":")))
 '
@@ -317,7 +321,7 @@ assert_admin_password_handling() {
   if grep -Fq 'URL-safe password' scripts/deploy-production.sh; then
     fail 'deploy script still rejects application-valid special-character admin passwords'
   fi
-  if grep -Fq 'printf '{'"'"'"email":"admin@verwaltung.karat.immo","password":"%s"'"'"'}'' scripts/deploy-production.sh; then
+  if grep -Fq '{"email":"admin@' scripts/deploy-production.sh; then
     fail 'deploy script still interpolates the admin password into raw JSON'
   fi
   grep -Fq 'test "${#admin_password}" -le 128' scripts/deploy-production.sh || \
@@ -434,8 +438,10 @@ assert_release_replacement_hardening() {
     fail 'worker startup may re-evaluate or recreate its already-verified dependencies'
   grep -Fq "'{{.Image}}'" scripts/deploy-production.sh || \
     fail 'deployment does not prove runtime ownership with immutable image IDs'
-  grep -Fq 'com.karat.hausverwaltung.release' docker-compose.prod.yml || \
+  grep -Fq 'io.verwalino.release' docker-compose.prod.yml || \
     fail 'runtime services do not carry a per-release ownership label'
+  grep -Fq 'prior_container_release_label' scripts/deploy-production.sh || \
+    fail 'previous-runtime capture and restoration do not read the legacy ownership label'
   grep -Fq 'runtime_release_label' scripts/verify-production.sh || \
     fail 'isolated verifier does not verify per-release runtime ownership labels'
   grep -Fq 'restore_previous_runtime' scripts/deploy-production.sh || \
@@ -529,11 +535,40 @@ for blank_key_case in unquoted-comment quoted-comment; do
     fail "$blank_key_case reached Docker before the deployment gate failed"
 done
 
+# The public host has no default: a missing or malformed value must stop the
+# helper before Docker is reached, whatever else the env file holds.
+for host_case in missing empty unsafe invalid-label; do
+  host_root="$tmpdir/host-$host_case-root"
+  mkdir -p "$host_root/releases/test" "$host_root/shared"
+  case "$host_case" in
+    missing) printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' > "$host_root/shared/.env" ;;
+    empty) printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' 'HV_PUBLIC_HOST=' > "$host_root/shared/.env" ;;
+    unsafe) printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' "HV_PUBLIC_HOST=a.example.org')+exec('x" > "$host_root/shared/.env" ;;
+    invalid-label) printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' 'HV_PUBLIC_HOST=.example.org' > "$host_root/shared/.env" ;;
+  esac
+  chmod 600 "$host_root/shared/.env"
+  : > "$host_root/releases/test/docker-compose.prod.yml"
+  : > "$tmpdir/host-$host_case-docker.log"
+  if printf '%s\n' "$admin_password" | \
+    PATH="$tmpdir/bin:$PATH" \
+    FAKE_DOCKER_LOG="$tmpdir/host-$host_case-docker.log" \
+    FAKE_SHARED="$host_root/shared" \
+    FAKE_ADMIN_PASSWORD="$admin_password" \
+    DEPLOY_ROOT="$host_root" RELEASE_ID=test sh "$deploy_script" \
+      >"$tmpdir/host-$host_case-output" 2>&1; then
+    fail "deployment unexpectedly accepted $host_case HV_PUBLIC_HOST"
+  fi
+  grep -Fq 'HV_PUBLIC_HOST must name the public host' "$tmpdir/host-$host_case-output" || \
+    fail "$host_case HV_PUBLIC_HOST did not return the fail-closed deployment error"
+  [ ! -s "$tmpdir/host-$host_case-docker.log" ] || \
+    fail "$host_case HV_PUBLIC_HOST reached Docker before the deployment gate failed"
+done
+
 # Each case uses only the fake CLI, synthetic archives and a private release root.
 for scenario in wrong-source ambiguous-source release-head previous-head roles credentials competing backup-exists busy quiescent-changed backup documents dump-check archive-check migrate target app-start app-health api-ready provider-smoke worker-start worker-health invoice-start invoice-health no-invoice no-invoice-restore restore-compatible cleanup-stop-fail cleanup-discovery-fail foreign-container success success-0028 success-0139 success-0140; do
   case_root="$tmpdir/$scenario"
   mkdir -p "$case_root/releases/test/infra/db" "$case_root/releases/old" "$case_root/shared"
-  printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' > "$case_root/shared/.env"
+  printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' 'HV_PUBLIC_HOST=verwaltung.example.org' > "$case_root/shared/.env"
   chmod 600 "$case_root/shared/.env"
   : > "$case_root/releases/test/docker-compose.prod.yml"
   : > "$case_root/releases/test/infra/db/prod-init.sh"

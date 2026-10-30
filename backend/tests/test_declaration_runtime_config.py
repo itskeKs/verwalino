@@ -333,7 +333,7 @@ def test_compose_declares_least_privilege_worker_topology() -> None:
     }.isdisjoint(environment)
 
     assert app["healthcheck"] == {
-        "test": ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/api/health/live', headers={'Host': 'verwaltung.karat.immo'}), timeout=2)\""],
+        "test": ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/api/health/live', headers={'Host': '${HV_PUBLIC_HOST:?set HV_PUBLIC_HOST in the protected env file or invoking environment}'}), timeout=2)\""],
         "interval": "10s",
         "timeout": "3s",
         "retries": 6,
@@ -361,6 +361,24 @@ def test_compose_declares_least_privilege_worker_topology() -> None:
         app_environment[name] == "${" + name + ":-" + default + "}"
         for name, default in _DECLARATION_QA_DEFAULTS.items()
     )
+
+
+def test_compose_takes_the_public_host_from_the_env_file_and_labels_releases() -> None:
+    host = "${HV_PUBLIC_HOST:?set HV_PUBLIC_HOST in the protected env file or invoking environment}"
+    services = _compose()["services"]
+    assert isinstance(services, dict)
+    app = services["app"]
+
+    assert _environment(app)["HV_ALLOWED_HOSTS"] == host
+    assert app["labels"]["traefik.http.routers.hausverwaltung-alpha.rule"] == f"Host(`{host}`)"
+    assert app["labels"]["traefik.http.routers.hausverwaltung-alpha-login.rule"] == (
+        f"Host(`{host}`) && Path(`/api/auth/login`)"
+    )
+    for name in ("app", "worker", "invoice-worker"):
+        labels = services[name]["labels"]
+        assert labels["io.verwalino.release"].startswith("${HV_RELEASE_ID:?")
+        assert not [key for key in labels if key.endswith(".hausverwaltung.release")]
+    assert "HV_PUBLIC_HOST=" in ENV_EXAMPLE_PATH.read_text(encoding="utf-8").splitlines()
 
 
 def test_runtime_example_and_entrypoint_keep_secrets_at_boundaries() -> None:
