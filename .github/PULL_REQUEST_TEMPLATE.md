@@ -2,7 +2,8 @@
 
 ## What this change is for
 
-<!-- One or two sentences. Link the issue this PR implements. -->
+<!-- One or two sentences. `Closes #N` only when every acceptance box of the issue is done, otherwise
+`Refs #N` plus what remains. -->
 
 Refs #
 
@@ -15,6 +16,7 @@ red before the change. "None" needs a reason. -->
 
 - [ ] `make lint` green
 - [ ] `make test` green (whole suite, against the test database)
+- [ ] `make docs-check` green
 - [ ] Docs updated in the same PR (owning page, `docs/feature-status.md` if a status changed)
 - [ ] Screenshots section filled in if `frontend/` changed; `DESIGN.md` updated if look or copy changed
 

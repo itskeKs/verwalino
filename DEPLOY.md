@@ -218,7 +218,7 @@ in the PR. A local cross-platform build alone does not prove installation.
    pulls if necessary, and inspect both platforms, provenance/SBOMs and the
    signature at the summary's digest. Verify anonymously using the commands above.
 4. Copy the successful release tag and index digest into the examples in this
-   section and [README.md](README.md#self-hosting-verwalino-portable-docker-first-installation).
+   section.
    Complete the native arm64 installation check above.
 
 The **first tag run and the arm64 installation check remain acceptance steps

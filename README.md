@@ -1,6 +1,6 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-232724" alt="License: AGPL-3.0" /></a>
-  <a href="https://github.com/itskeKs/verwalino/actions/workflows/tests-on-pr.yaml"><img src="https://github.com/itskeKs/verwalino/actions/workflows/tests-on-pr.yaml/badge.svg" alt="Tests on PR" /></a>
+  <a href="https://github.com/itskeKs/verwalino/actions/workflows/tests-on-pr.yaml"><img src="https://github.com/itskeKs/verwalino/actions/workflows/tests-on-pr.yaml/badge.svg?branch=main" alt="Tests on PR" /></a>
   <a href="https://www.python.org/downloads/release/python-3120/"><img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white" alt="Python 3.12" /></a>
   <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI" /></a>
   <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19-20232A?logo=react&logoColor=61DAFB" alt="React 19" /></a>
@@ -76,8 +76,8 @@ bash scripts/self-host.sh init
 bash scripts/self-host.sh start
 ```
 
-`init` writes five random secrets to `.env.selfhost` and builds the image from the
-checkout; `start` prints a one-time setup token. Open **http://127.0.0.1:18080/setup**,
+`init` writes five random secrets to `.env.selfhost`; `start` builds the image from the
+checkout and prints a one-time setup token. Open **http://127.0.0.1:18080/setup**,
 enter the token, your organization, the administrator and a password, and you are
 signed in. There is no default password; the token expires after 24 hours, and
 `start` issues a new one. The CLI alternative is
@@ -101,7 +101,7 @@ acceptance limits.
 Install both dependency sets:
 
 ```bash
-cd backend && uv sync --extra dev --extra ops --extra ocr
+cd backend && uv sync --extra dev --extra ocr --extra ops
 cd ../frontend && npm ci
 ```
 
@@ -124,8 +124,8 @@ ports, OCR tools, test environment, and contribution checks.
 
 ## Status and roadmap
 
-The MVP for in-house use is complete at migration head `0139`.
-An alpha instance runs for one property-management company.
+The MVP for in-house use is complete; `main` targets migration `0141`.
+An alpha instance at migration `0139` runs for one property-management company.
 Next: self-hosting ready → scenario evals → hosted offering → domain gaps.
 See the [roadmap](docs/roadmap.md), [feature status](docs/feature-status.md), and
 [open domain questions](https://github.com/itskeKs/verwalino/issues?q=is%3Aissue%20is%3Aopen%20label%3Aquestion).
