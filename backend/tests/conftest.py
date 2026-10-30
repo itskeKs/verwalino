@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
+from contextlib import closing
 from datetime import date
 from typing import AsyncGenerator
 
@@ -28,7 +29,10 @@ from sqlalchemy.ext.asyncio import (
 
 from app.core.security import hash_password, create_session_token
 from app.core.config import settings
-from app.core.declaration_test_database import require_disposable_database_settings
+from app.core.declaration_test_database import (
+    require_disposable_database_settings,
+    reset_foreign_test_database,
+)
 from app.core.db import override_engine, override_worker_engine, override_review_engine
 from app.main import app
 
@@ -46,6 +50,11 @@ pytest_plugins = (
 MIGRATOR_URL, APP_RW_URL, MIGRATOR_SYNC_URL = require_disposable_database_settings(
     settings
 )
+
+
+def pytest_collection_modifyitems(items):
+    # Destructive fixture regressions must finish before session seeds are made.
+    items.sort(key=lambda item: item.path.name != "test_testdb_reset.py")
 
 
 # ---------------------------------------------------------------------------
@@ -98,11 +107,13 @@ async def fixture_has_registered_documents(session: AsyncSession, document_ids: 
     ))
 
 
-@pytest.fixture(scope="session", autouse=True)
-def run_migrations():
+def migrate_test_database():
     """Run Alembic migrations using the migrator role."""
     from alembic.config import Config
     from alembic import command
+    from alembic.script import ScriptDirectory
+    from alembic.util import CommandError
+    import psycopg2
 
     alembic_cfg = Config(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
     alembic_cfg.set_main_option("sqlalchemy.url", MIGRATOR_SYNC_URL)
@@ -112,10 +123,26 @@ def run_migrations():
         os.path.join(os.path.dirname(__file__), "..", "migrations"),
     )
 
+    scripts = ScriptDirectory.from_config(alembic_cfg)
+    with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT to_regclass('public.alembic_version')")
+        revisions = []
+        if cursor.fetchone()[0] is not None:
+            cursor.execute("SELECT version_num FROM public.alembic_version")
+            revisions = [row[0] for row in cursor.fetchall()]
+    for revision in revisions:
+        try:
+            known_revision = scripts.get_revision(revision)
+        except CommandError:
+            known_revision = None
+        if known_revision is None:
+            reset_foreign_test_database(MIGRATOR_SYNC_URL)
+            print(f"test database held foreign migration head {revision}; reset to empty before upgrading")
+            return _upgrade_test_database(alembic_cfg)
+
     # This harness is already restricted to the disposable test database above.
     # Production downgrade intentionally refuses to remove a populated dunning
     # boundary. Discard only these synthetic associations before the full reset.
-    import psycopg2
     with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
         cursor.execute("""DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='app_worker') THEN
             CREATE ROLE app_worker LOGIN PASSWORD 'worker_secret' INHERIT NOBYPASSRLS NOCREATEDB NOCREATEROLE;
@@ -207,12 +234,17 @@ def run_migrations():
         if cursor.fetchone()[0] is not None:
             cursor.execute("TRUNCATE public.declaration_review_receipt")
 
+    command.downgrade(alembic_cfg, "base")
+    return _upgrade_test_database(alembic_cfg)
+
+
+def _upgrade_test_database(alembic_cfg):
     # Rehearse the supported upgrade before any retained test originals exist.
     # The rehearsal uses one rollback-only transaction; never clear later rows
     # or weaken a populated downgrade guard to make a historical test pass.
+    from alembic import command
     from tests.test_deployment_upgrade import rehearse_initial_upgrade
 
-    command.downgrade(alembic_cfg, "base")
     command.upgrade(alembic_cfg, "0028")
     upgraded_0028_tables = rehearse_initial_upgrade('0028')
     command.upgrade(alembic_cfg, "0122")
@@ -222,10 +254,15 @@ def run_migrations():
     command.upgrade(alembic_cfg, '0140')  # accepted source
     upgraded_parent_tables = rehearse_initial_upgrade('0140')  # accepted source
     command.upgrade(alembic_cfg, "head")
-    yield {'upgrade_0028_to_0141_tables': upgraded_0028_tables,
-           'upgrade_0122_to_0141_tables': upgraded_tables,
-           'upgrade_0139_to_0141_tables': upgraded_0139_tables,
-           'upgrade_0140_to_0141_tables': upgraded_parent_tables}
+    return {'upgrade_0028_to_0141_tables': upgraded_0028_tables,
+            'upgrade_0122_to_0141_tables': upgraded_tables,
+            'upgrade_0139_to_0141_tables': upgraded_0139_tables,
+            'upgrade_0140_to_0141_tables': upgraded_parent_tables}
+
+
+@pytest.fixture(scope="session", autouse=True)
+def run_migrations():
+    return migrate_test_database()
 
 
 # ---------------------------------------------------------------------------

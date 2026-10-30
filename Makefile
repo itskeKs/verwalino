@@ -77,7 +77,7 @@ hooks: ## Enable pre-commit: lint staged code and always check docs links
 	@echo "The docs link check always runs; eslint is skipped when frontend/node_modules is missing."
 
 check-testdb:
-	@(exec 3<>/dev/tcp/127.0.0.1/55432) 2>/dev/null || { \
+	@( . ./scripts/test-env.sh && (exec 3<>/dev/tcp/127.0.0.1/55432) ) 2>/dev/null || { \
 	  echo "No database on 127.0.0.1:55432. Start the test DB (only this compose file, see AGENTS.md):" >&2; \
 	  echo "  docker compose -f infra/docker-compose.declaration-test.yml up -d postgres" >&2; \
 	  exit 1; }

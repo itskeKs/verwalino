@@ -49,6 +49,24 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   same with the test environment loaded.
 - The backend suite truncates tables in the shared test database: never run two suites at once.
 
+Hold the shared lock for every backend database test run, including setup and cleanup:
+
+```sh
+until mkdir /tmp/verwalino-testdb.lock 2>/dev/null; do sleep 10; done
+trap 'rmdir /tmp/verwalino-testdb.lock' EXIT
+make test-backend PYTEST_ARGS="-q tests/test_testdb_reset.py"
+```
+
+If the shared database holds a migration revision unknown to the checkout, the session fixture
+logs that revision, drops and recreates `public` with its runtime schema grants, preserves the
+cluster roles, and runs the existing upgrade rehearsals. Known revisions still downgrade to
+base first. The reset requires `VERWALINO_TEST_DB=1` (exported by `scripts/test-env.sh`) and the
+validated `app_migrator` connection to `hausverwaltung` on `127.0.0.1` or `localhost`, port
+`55432`; it refuses every other target before connecting. As a manual alternative, hold the
+same lock, recreate only the disposable container with
+`docker compose -f infra/docker-compose.declaration-test.yml up -d --force-recreate --wait postgres`,
+then run the tests.
+
 The pre-commit hook (`.githooks/pre-commit` → `scripts/checks.sh`) runs ruff when backend Python
 is staged, eslint on staged frontend TypeScript files, and always the docs link check.
 If `frontend/node_modules` is missing, eslint is skipped with a message.

@@ -20,6 +20,7 @@ alwaysApply: false
   failure, then implement it. Report that evidence in the PR.
 - Treat the shared test DB as single-writer: never run two backend test processes
   at once. Use only the test database and compose commands in AGENTS.md.
+- The session fixture resets foreign migration heads only in the guarded local test DB with `VERWALINO_TEST_DB=1`; known heads still downgrade to base.
 - Iterate selectively (`cd backend && uv run pytest tests/test_x.py -k name`
   or `cd frontend && npm test -- <file>`). Run `make lint` before a push and
   `make test` before a merge; `make test-agent-rules` needs no DB.
