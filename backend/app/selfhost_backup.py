@@ -1,8 +1,7 @@
 """Portable archive handling, invoked by self-host.sh inside the app image.
 
 The checkout supplies this source via python -c; the selected image must provide
-the app.deployment document helpers. No host Python is needed. Older images
-without TARGET use the checkout release target with a warning.
+the app.deployment document helpers and release target. No host Python is needed.
 """
 from __future__ import annotations
 
@@ -17,14 +16,14 @@ import tarfile
 import tempfile
 
 try:
-    from app.deployment import archive_documents, restore_documents, verify_documents
+    from app.deployment import TARGET, archive_documents, restore_documents, verify_documents
 except ImportError:
     print('image predates backup support; update the image first', file=sys.stderr)
     raise SystemExit(1) from None
 
 
 class ArchiveError(ValueError):
-    """A public diagnostic containing only fixed, non-sensitive text."""
+    """A public diagnostic, including restore staging paths when needed."""
 
 
 def pack(work: Path, documents: Path, schema: str, image: str, fingerprint: str) -> None:
@@ -85,6 +84,12 @@ def verify(work: Path, target: str, fingerprint: str) -> dict:
     return manifest
 
 
+def check_documents(documents: Path) -> None:
+    for path in sorted(documents.glob('.restore-*')):
+        if path.is_dir():
+            raise ArchiveError(f'{path}: verify the live data, then remove the directory, then retry restore')
+
+
 def stage_documents(work: Path, documents: Path) -> None:
     # Extract and set ownership before the database cutover, on the same volume.
     if documents.is_symlink() or not documents.is_dir():
@@ -113,37 +118,56 @@ def discard_documents(work: Path, documents: Path) -> None:
         marker.unlink()
 
 
+def document_phase(work: Path, phase: str) -> None:
+    # An interrupted write must leave the preceding phase available to rollback.
+    pending = work / 'documents-state.pending'
+    pending.write_text(phase)
+    pending.replace(work / 'documents-state')
+
+
 def swap_documents(work: Path, documents: Path) -> None:
     temporary = documents / (work / 'documents-stage').read_text()
     staged = temporary / 'documents'
-    # Persist progress before the first destructive filesystem operation so the
-    # shell can describe partial replacement even if this helper is interrupted.
-    (work / 'documents-state').write_text('partially swapped')
+    previous = temporary / 'previous'
+    previous.mkdir()
+    # Record the phase before moving entries; rollback also handles a helper
+    # interrupted between a rename and its return to the shell.
+    document_phase(work, 'moving previous documents')
     for path in documents.iterdir():
         if path == temporary:
             continue
-        if path.is_dir() and not path.is_symlink():
-            shutil.rmtree(path)
-        else:
-            path.unlink()
+        path.rename(previous / path.name)
+    document_phase(work, 'installing staged documents')
     for path in staged.iterdir():
         path.rename(documents / path.name)
-    (work / 'documents-state').write_text('swapped')
-    discard_documents(work, documents)
+    document_phase(work, 'swapped')
 
 
-def replace_documents(work: Path, documents: Path) -> None:
-    stage_documents(work, documents)
-    swap_documents(work, documents)
+def rollback_documents(work: Path, documents: Path) -> None:
+    temporary = documents / (work / 'documents-stage').read_text()
+    staged = temporary / 'documents'
+    previous = temporary / 'previous'
+    state = work / 'documents-state'
+    phase = state.read_text() if state.exists() else 'not swapped'
+    if phase in ('installing staged documents', 'swapped'):
+        for path in documents.iterdir():
+            if path != temporary:
+                path.rename(staged / path.name)
+    if previous.exists():
+        document_phase(work, 'restoring previous documents')
+        for path in previous.iterdir():
+            path.rename(documents / path.name)
+    document_phase(work, 'rolled back')
 
 
-def image_target(fallback: str) -> str:
-    try:
-        from app.deployment import TARGET
-    except ImportError:
-        print('Warning: image predates app.deployment.TARGET; using checkout release target.', file=sys.stderr)
-        return fallback
-    return TARGET
+def document_state(work: Path, documents: Path) -> None:
+    state = work / 'documents-state'
+    print(state.read_text() if state.exists() else 'not swapped')
+    marker = work / 'documents-stage'
+    if marker.exists():
+        temporary = documents / marker.read_text()
+        print(f'staged documents: {temporary / "documents"}')
+        print(f'previous documents: {temporary / "previous"}')
 
 
 def return_to_host(work: Path) -> None:
@@ -165,20 +189,21 @@ def main() -> int:
         if action == 'pack':
             pack(work, documents, *arguments[:-2])
         elif action == 'target':
-            print(image_target(*arguments[:-2]))
+            print(TARGET)
         elif action == 'verify':
             print(verify(work, *arguments[:-2])['schema_head'])
+        elif action == 'check-documents':
+            check_documents(documents)
         elif action == 'stage-documents':
             stage_documents(work, documents)
         elif action == 'swap-documents':
             swap_documents(work, documents)
+        elif action == 'rollback-documents':
+            rollback_documents(work, documents)
         elif action == 'discard-documents':
             discard_documents(work, documents)
         elif action == 'document-state':
-            state = work / 'documents-state'
-            print(state.read_text() if state.exists() else 'not swapped')
-        elif action == 'restore-documents':
-            replace_documents(work, documents)
+            document_state(work, documents)
         else:
             raise ArchiveError('unknown archive action')
         return_to_host(work)

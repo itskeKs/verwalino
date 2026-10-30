@@ -36,7 +36,7 @@ class SelfHostTests(unittest.TestCase):
         binary.mkdir()
         docker = binary / "docker"
         docker.write_text('''#!/usr/bin/env python3
-import json, os, subprocess, sys
+import json, os, signal, subprocess, sys
 with open(os.environ["FAKE_DOCKER_LOG"], "a") as log:
     log.write(json.dumps({"args": sys.argv[1:], "image": os.environ.get("VERWALINO_IMAGE"), "secure": os.environ.get("VERWALINO_COOKIE_SECURE"), "hosts": os.environ.get("VERWALINO_ALLOWED_HOSTS"), "profiles": os.environ.get("COMPOSE_PROFILES"), "caller_secret_used": os.environ.get("MIGRATOR_PASSWORD") == "attacker"}) + "\\n")
 failure = os.environ.get("FAKE_DOCKER_FAIL")
@@ -51,21 +51,42 @@ state_path = os.environ["FAKE_DB_STATE"]
 with open(state_path) as state_file:
     databases = json.load(state_file)
 if "createdb" in sys.argv:
-    databases.append(sys.argv[-1])
-if "dropdb" in sys.argv:
-    databases = [name for name in databases if name != sys.argv[-1]]
+    if sys.argv[-1] in databases:
+        sys.exit(17)
+    databases[sys.argv[-1]] = "restored data"
+dropping = sys.argv[-1] if "dropdb" in sys.argv else None
+if "psql" in sys.argv and sys.argv[-1].startswith("DROP DATABASE "):
+    dropping = sys.argv[-1].split()[-1]
+if dropping:
+    if dropping == "hausverwaltung_previous":
+        from pathlib import Path
+        root = Path(os.environ["FAKE_DOCUMENTS"])
+        with open(os.environ["FAKE_DROP_DOCUMENTS"], "w") as snapshot:
+            json.dump(sorted(str(path.relative_to(root)) for path in root.rglob("*")), snapshot)
+    databases.pop(dropping, None)
 if "psql" in sys.argv:
     statement = sys.argv[-1]
     if statement.startswith("ALTER DATABASE"):
-        databases.remove("hausverwaltung_restore")
-        databases.append("hausverwaltung")
-    elif "pg_database" in statement:
-        for name in ("hausverwaltung", "hausverwaltung_restore"):
+        _, _, source, _, _, target = statement.split()
+        if source not in databases or target in databases:
+            sys.exit(17)
+        databases[target] = databases.pop(source)
+    elif statement.startswith("DROP DATABASE "):
+        pass
+    elif statement.startswith("SELECT name"):
+        for name in ("hausverwaltung", "hausverwaltung_restore", "hausverwaltung_previous"):
             print(name + "=" + ("present" if name in databases else "absent"))
+    elif "pg_database" in statement:
+        name = statement.split("datname='")[1].split("'")[0]
+        if name in databases:
+            print("1")
     else:
         print(os.environ.get("FAKE_RESTORED_SCHEMA" if "hausverwaltung_restore" in sys.argv else "FAKE_SCHEMA", "0139"))
 with open(state_path, "w") as state_file:
     json.dump(databases, state_file)
+if os.environ.get("FAKE_SIGNAL_AFTER") in sys.argv:
+    os.kill(os.getppid(), getattr(signal, os.environ["FAKE_SIGNAL"]))
+    sys.exit(17)
 if "pg_dump" in sys.argv:
     sys.stdout.buffer.write(b"PGDMPsynthetic-dump")
 if "pg_restore" in sys.argv:
@@ -81,9 +102,7 @@ if "-c" in sys.argv:
     # Emulate root's container-only ownership operations without chown on the host.
     wrapper = """import os, sys
 from app import deployment
-if os.environ.get("FAKE_IMAGE_TARGET") == "missing":
-    del deployment.TARGET
-elif os.environ.get("FAKE_IMAGE_TARGET"):
+if os.environ.get("FAKE_IMAGE_TARGET"):
     deployment.TARGET = os.environ["FAKE_IMAGE_TARGET"]
 if os.environ.get("FAKE_OLD_IMAGE"):
     del deployment.archive_documents
@@ -91,10 +110,24 @@ def chown(path, uid, gid):
     if os.environ.get("FAKE_CHOWN_DENIED") and uid != 10001:
         raise PermissionError("sensitive path")
 os.chown = chown
-if os.environ.get("FAKE_SWAP_FAIL") and "swap-documents" in sys.argv:
+if "swap-documents" in sys.argv or "rollback-documents" in sys.argv:
     from pathlib import Path
-    def rename(*args):
-        raise OSError("sensitive path")
+    original_rename = Path.rename
+    def rename(path, target):
+        root = Path(os.environ["FAKE_DOCUMENTS"])
+        source = str(path.relative_to(root))
+        destination = str(target.relative_to(root))
+        failure = os.environ.get("FAKE_SWAP_FAIL")
+        if "swap-documents" in sys.argv and failure == "after-aside" and "/documents/" in source:
+            raise OSError("sensitive path")
+        result = original_rename(path, target)
+        with open(os.environ["FAKE_DOCUMENT_MOVES"], "a") as moves:
+            moves.write(json.dumps([source, destination]) + chr(10))
+        if "swap-documents" in sys.argv and failure == "after-first-aside" and "/previous/" in destination:
+            raise OSError("sensitive path")
+        if "swap-documents" in sys.argv and failure == "after-first-install" and "/documents/" in source:
+            raise OSError("sensitive path")
+        return result
     Path.rename = rename
 exec(compile(sys.argv.pop(1), '<archive-helper>', 'exec'))"""
     sys.exit(subprocess.call([sys.executable, "-c", wrapper, sys.argv[position + 1], *args]))
@@ -108,15 +141,20 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
         self.documents.mkdir()
         (self.documents / "original.pdf").write_bytes(b"synthetic original")
         self.db_state = self.base / "databases.json"
-        self.db_state.write_text(json.dumps(["hausverwaltung"]))
+        self.db_state.write_text(json.dumps({"hausverwaltung": "old data"}))
         self.env = dict(os.environ, PYTHONPATH=str(ROOT / "backend"), FAKE_DOCUMENTS=str(self.documents), PATH=f"{binary}:{os.environ['PATH']}",
                         FAKE_DB_STATE=str(self.db_state),
+                        FAKE_DOCUMENT_MOVES=str(self.base / "document-moves.jsonl"),
+                        FAKE_DROP_DOCUMENTS=str(self.base / "drop-documents.json"),
                         VERWALINO_CONFIG=str(self.config), FAKE_DOCKER_LOG=str(self.log),
                         FAKE_DOCKER_STDIN=str(self.base / "stdin"))
 
-    def run_script(self, *args, input=None):
-        return subprocess.run(["bash", str(self.root / "scripts/self-host.sh"), *args], env=self.env, input=input,
-                              text=True, capture_output=True, cwd=self.base, check=False, timeout=15)
+    def run_script(self, *args, input=None, stderr_closed=False, stderr=subprocess.PIPE):
+        command = ["bash", str(self.root / "scripts/self-host.sh"), *args]
+        if stderr_closed:
+            command = ["bash", "-c", 'exec 2>&-; exec "$@"', "closed-stderr", *command]
+        return subprocess.run(command, env=self.env, input=input,
+                              text=True, stdout=subprocess.PIPE, stderr=stderr, cwd=self.base, check=False, timeout=15)
 
     def init(self, *args):
         result = self.run_script("init", *args)
@@ -165,6 +203,7 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
         path = archives[0]
         self.assertRegex(path.name, r"^verwalino-backup-\d{8}T\d{6}Z\.tar$")
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o700)
         self.assertIn(str(path), result.stdout)
         self.assertIn(str(path.stat().st_size), result.stdout)
         with tarfile.open(path) as tar:
@@ -268,7 +307,7 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
                 self.assertNotEqual(result.returncode, 0)
                 self.assertTrue(all("ps" in c["args"] for c in self.calls()))
 
-    def test_restore_uses_image_target_and_warns_only_for_missing_target(self):
+    def test_restore_uses_image_target(self):
         config = self.init()
         archive, _ = self.archive(config)
         self.env["FAKE_IMAGE_TARGET"] = "0122"
@@ -280,12 +319,6 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
         archive, _ = self.archive(config, schema_head="0140")
         self.env["FAKE_RESTORED_SCHEMA"] = "0140"
         self.assertEqual(self.run_script("restore", str(archive), "--yes").returncode, 0)
-        self.env["FAKE_IMAGE_TARGET"] = "missing"
-        archive, _ = self.archive(config)
-        self.env["FAKE_RESTORED_SCHEMA"] = "0139"
-        result = self.run_script("restore", str(archive), "--yes")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Warning: image predates app.deployment.TARGET", result.stderr)
 
     def test_restore_refuses_newer_unknown_or_foreign_archives_before_starting_db(self):
         config = self.init()
@@ -325,7 +358,7 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("bash scripts/self-host.sh start", result.stdout)
         args = [c["args"] for c in self.calls()]
-        stages = ["ps", "target", "verify", "up", "--list", "createdb", "--single-transaction", "SELECT version_num FROM alembic_version", "stage-documents", "dropdb", "ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung", "swap-documents", "stop"]
+        stages = ["ps", "target", "verify", "up", "--list", "createdb", "--single-transaction", "SELECT version_num FROM alembic_version", "stage-documents", "ALTER DATABASE hausverwaltung RENAME TO hausverwaltung_previous", "ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung", "swap-documents", "DROP DATABASE hausverwaltung_previous", "discard-documents", "stop"]
         positions = [next(i for i, a in enumerate(args) if stage in a) for stage in stages]
         self.assertEqual(positions, sorted(positions))
         for a in args:
@@ -334,12 +367,19 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
             if "pg_restore" in a and "--list" not in a:
                 self.assertEqual(a[a.index("exec"):], ["exec", "-T", "db", "pg_restore", "-U", "app_migrator",
                                                       "-d", "hausverwaltung_restore", "--exit-on-error", "--single-transaction"])
-            if "dropdb" in a:
-                self.assertEqual(a[a.index("exec"):], ["exec", "-T", "db", "dropdb", "-U", "app_migrator", "--if-exists", "hausverwaltung"])
+            self.assertNotIn("dropdb", a)
             if "createdb" in a:
                 self.assertEqual(a[a.index("exec"):], ["exec", "-T", "db", "createdb", "-U", "app_migrator", "-T", "template0", "hausverwaltung_restore"])
-            if "ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung" in a:
-                self.assertEqual(a[a.index("exec"):], ["exec", "-T", "db", "psql", "-X", "--set", "ON_ERROR_STOP=1", "-U", "app_migrator", "-d", "postgres", "-Atc", "ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung"])
+            if a[-1].startswith(("ALTER DATABASE", "DROP DATABASE")):
+                self.assertEqual(a[a.index("exec"):], ["exec", "-T", "db", "psql", "-X", "--set", "ON_ERROR_STOP=1", "-U", "app_migrator", "-d", "postgres", "-Atc", a[-1]])
+        documents_at_drop = json.loads((self.base / "drop-documents.json").read_text())
+        temporary = next(path.split("/")[0] for path in documents_at_drop if path.startswith(".restore-"))
+        self.assertIn(f"{temporary}/previous/original.pdf", documents_at_drop)
+        self.assertIn("nested/original.pdf", documents_at_drop)
+        moves = [json.loads(line) for line in (self.base / "document-moves.jsonl").read_text().splitlines()]
+        self.assertEqual(moves, [["original.pdf", f"{temporary}/previous/original.pdf"], [f"{temporary}/documents/nested", "nested"]])
+        self.assertEqual(json.loads(self.db_state.read_text()), {"hausverwaltung": "restored data"})
+        self.assertEqual(list(self.documents.glob(".restore-*")), [])
         self.assertFalse((self.documents / "original.pdf").exists())
         self.assertEqual((self.documents / "nested/original.pdf").read_bytes(), b"restored original")
         self.assert_isolated(args)
@@ -355,6 +395,60 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
         result = self.run_script("restore", str(archive), input="restore\n")
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_restore_without_live_database_installs_scratch_without_previous_rename_or_drop(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        self.db_state.write_text('{}')
+        result = self.run_script("restore", str(archive), "--yes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        sql = [call["args"][-1] for call in self.calls() if "psql" in call["args"]]
+        self.assertIn("ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung", sql)
+        self.assertNotIn("ALTER DATABASE hausverwaltung RENAME TO hausverwaltung_previous", sql)
+        self.assertNotIn("DROP DATABASE hausverwaltung_previous", sql)
+        self.assertEqual(json.loads(self.db_state.read_text()), {"hausverwaltung": "restored data"})
+        self.assertEqual((self.documents / "nested/original.pdf").read_bytes(), b"restored original")
+        self.assertEqual(list(self.documents.glob(".restore-*")), [])
+
+    def test_restore_refuses_leftover_document_directory_before_creating_scratch_database(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        previous = self.documents / ".restore-x/previous"
+        previous.mkdir(parents=True)
+        (previous / "retained.pdf").write_bytes(b"previous original")
+        result = self.run_script("restore", str(archive), "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(".restore-x", result.stderr)
+        self.assertIn("verify the live data, then remove the directory, then retry", result.stderr)
+        self.assertFalse(any("createdb" in call["args"] for call in self.calls()))
+        self.assertEqual((previous / "retained.pdf").read_bytes(), b"previous original")
+        self.assertEqual(json.loads(self.db_state.read_text()), {"hausverwaltung": "old data"})
+
+    def test_restore_without_live_database_rolls_back_an_incomplete_document_swap(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        self.db_state.write_text('{}')
+        self.env["FAKE_SWAP_FAIL"] = "after-aside"
+        result = self.run_script("restore", str(archive), "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(json.loads(self.db_state.read_text()), {"hausverwaltung_restore": "restored data"})
+        self.assertEqual((self.documents / "original.pdf").read_bytes(), b"synthetic original")
+        self.assertIn("No previous database existed", result.stderr)
+        self.assertIn("documents=rolled back", result.stderr)
+        self.assertNotIn("previous database was already dropped", result.stderr)
+
+    def test_restore_without_live_database_keeps_completed_swap_if_document_cleanup_fails(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        self.db_state.write_text('{}')
+        self.env["FAKE_DOCKER_FAIL"] = "discard-documents"
+        result = self.run_script("restore", str(archive), "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(json.loads(self.db_state.read_text()), {"hausverwaltung": "restored data"})
+        self.assertEqual((self.documents / "nested/original.pdf").read_bytes(), b"restored original")
+        self.assertIn("No previous database existed; restored data remains live", result.stderr)
+        self.assertIn("bash scripts/self-host.sh start", result.stderr)
+        self.assertNotIn("Recovery SQL", result.stderr)
+
     def test_restore_pre_cutover_failures_preserve_old_data_and_clean_scratch(self):
         config = self.init()
         archive, _ = self.archive(config)
@@ -366,7 +460,7 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("Restored", result.stdout)
                 self.assertIn("old database and documents are untouched", result.stderr)
-                self.assertEqual(json.loads(self.db_state.read_text()), ["hausverwaltung"])
+                self.assertEqual(json.loads(self.db_state.read_text()), {"hausverwaltung": "old data"})
                 self.assertEqual((self.documents / "original.pdf").read_bytes(), b"synthetic original")
                 self.assertTrue(any("stop" in c["args"] for c in self.calls()))
                 self.assertFalse(any("dropdb" in c["args"] and c["args"][-1] == "hausverwaltung" for c in self.calls()))
@@ -384,32 +478,175 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("does not match the manifest", result.stderr)
                 self.assertIn("old database and documents are untouched", result.stderr)
-                self.assertEqual(json.loads(self.db_state.read_text()), ["hausverwaltung"])
+                self.assertEqual(json.loads(self.db_state.read_text()), {"hausverwaltung": "old data"})
 
-    def test_restore_cutover_failures_report_database_and_document_state(self):
+    def test_restore_database_cutover_failures_roll_back_and_keep_staged_documents(self):
         config = self.init()
         archive, _ = self.archive(config)
-        for failure, live, scratch in (("dropdb", "present", "present"),
-                                      ("ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung", "absent", "present"),
-                                      ("swap-documents", "present", "absent")):
+        for failure in ("ALTER DATABASE hausverwaltung RENAME TO hausverwaltung_previous",
+                        "ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung",
+                        "swap-documents", "DROP DATABASE hausverwaltung_previous"):
             with self.subTest(failure=failure):
-                self.db_state.write_text(json.dumps(["hausverwaltung"]))
+                self.log.unlink(missing_ok=True)
+                for path in self.documents.glob(".restore-*"):
+                    shutil.rmtree(path)
+                self.db_state.write_text(json.dumps({"hausverwaltung": "old data"}))
                 self.env["FAKE_DOCKER_FAIL"] = failure
                 result = self.run_script("restore", str(archive), "--yes")
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("hausverwaltung=" + live, result.stderr)
-                self.assertIn("hausverwaltung_restore=" + scratch, result.stderr)
-                self.assertIn("documents=not swapped", result.stderr)
+                self.assertEqual(json.loads(self.db_state.read_text()), {"hausverwaltung": "old data", "hausverwaltung_restore": "restored data"})
+                self.assertIn("hausverwaltung=present", result.stderr)
+                self.assertIn("hausverwaltung_previous=absent", result.stderr)
                 self.assertIn("keep the app stopped", result.stderr)
                 self.assertEqual((self.documents / "original.pdf").read_bytes(), b"synthetic original")
-                self.assertEqual(list(self.documents.glob(".restore-*")), [])
-        del self.env["FAKE_DOCKER_FAIL"]
-        self.db_state.write_text(json.dumps(["hausverwaltung"]))
-        self.env["FAKE_SWAP_FAIL"] = "1"
+                staged = [path for path in self.documents.glob(".restore-*") if (path / "documents/nested/original.pdf").exists()]
+                self.assertTrue(staged)
+                self.assertTrue(any(str(path / "documents") in result.stderr for path in staged))
+                self.assertFalse(any("discard-documents" in call["args"] for call in self.calls()))
+
+    def test_restore_document_move_failures_put_previous_documents_back(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        (self.documents / ".hidden").write_bytes(b"hidden original")
+        (self.documents / "nested").mkdir()
+        (self.documents / "nested/original.pdf").write_bytes(b"old nested original")
+        for failure in ("after-first-aside", "after-aside", "after-first-install"):
+            with self.subTest(failure=failure):
+                for path in self.documents.glob(".restore-*"):
+                    shutil.rmtree(path)
+                self.db_state.write_text(json.dumps({"hausverwaltung": "old data"}))
+                self.env["FAKE_SWAP_FAIL"] = failure
+                result = self.run_script("restore", str(archive), "--yes")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(json.loads(self.db_state.read_text()), {"hausverwaltung": "old data", "hausverwaltung_restore": "restored data"})
+                self.assertEqual((self.documents / "original.pdf").read_bytes(), b"synthetic original")
+                self.assertEqual((self.documents / ".hidden").read_bytes(), b"hidden original")
+                self.assertEqual((self.documents / "nested/original.pdf").read_bytes(), b"old nested original")
+                self.assertTrue(any((path / "documents/nested/original.pdf").read_bytes() == b"restored original" for path in self.documents.glob(".restore-*")))
+                self.assertIn("documents=rolled back", result.stderr)
+                self.assertNotIn("sensitive path", result.stderr)
+
+    def test_restore_interruption_after_first_rename_recovers_old_database(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        self.env["FAKE_SIGNAL_AFTER"] = "ALTER DATABASE hausverwaltung RENAME TO hausverwaltung_previous"
+        for signal in ("SIGHUP", "SIGINT", "SIGTERM"):
+            with self.subTest(signal=signal):
+                for path in self.documents.glob(".restore-*"):
+                    shutil.rmtree(path)
+                self.db_state.write_text(json.dumps({"hausverwaltung": "old data"}))
+                self.env["FAKE_SIGNAL"] = signal
+                result = self.run_script("restore", str(archive), "--yes")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(json.loads(self.db_state.read_text()), {"hausverwaltung": "old data", "hausverwaltung_restore": "restored data"})
+                self.assertTrue(any((path / "documents/nested/original.pdf").exists() for path in self.documents.glob(".restore-*")))
+                self.assertEqual((self.documents / "original.pdf").read_bytes(), b"synthetic original")
+
+    def test_restore_failure_after_first_rename_rolls_back_with_closed_stderr(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        self.env["FAKE_DOCKER_FAIL"] = "ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung"
+        result = self.run_script("restore", str(archive), "--yes", stderr_closed=True)
+        self.assertNotEqual(result.returncode, 0)
+        calls = [call["args"] for call in self.calls()]
+        rollback = ["exec", "-T", "db", "psql", "-X", "--set", "ON_ERROR_STOP=1", "-U", "app_migrator",
+                    "-d", "postgres", "-Atc", "ALTER DATABASE hausverwaltung_previous RENAME TO hausverwaltung"]
+        self.assertIn(rollback, [args[args.index("exec"):] for args in calls if "exec" in args])
+        self.assertEqual(json.loads(self.db_state.read_text()), {"hausverwaltung": "old data", "hausverwaltung_restore": "restored data"})
+        self.assertEqual((self.documents / "original.pdf").read_bytes(), b"synthetic original")
+        self.assertTrue(any("stop" in args for args in calls))
+        self.assertFalse(Path(str(self.config) + ".lock").exists())
+
+    def test_restore_document_failure_rolls_back_with_a_broken_stderr_pipe(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        self.env["FAKE_SWAP_FAIL"] = "after-aside"
+        reader, writer = os.pipe()
+        os.close(reader)
+        try:
+            result = self.run_script("restore", str(archive), "--yes", stderr=writer)
+        finally:
+            os.close(writer)
+        self.assertNotEqual(result.returncode, 0)
+        sql = [call["args"][-1] for call in self.calls() if "psql" in call["args"]]
+        self.assertIn("ALTER DATABASE hausverwaltung RENAME TO hausverwaltung_restore", sql)
+        self.assertIn("ALTER DATABASE hausverwaltung_previous RENAME TO hausverwaltung", sql)
+        self.assertEqual(json.loads(self.db_state.read_text()), {"hausverwaltung": "old data", "hausverwaltung_restore": "restored data"})
+        self.assertEqual((self.documents / "original.pdf").read_bytes(), b"synthetic original")
+        self.assertFalse(Path(str(self.config) + ".lock").exists())
+
+    def test_restore_refuses_previous_database_before_changing_data(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        databases = {"hausverwaltung": "old data", "hausverwaltung_previous": "earlier data"}
+        self.db_state.write_text(json.dumps(databases))
         result = self.run_script("restore", str(archive), "--yes")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("documents=partially swapped", result.stderr)
-        self.assertNotIn("sensitive path", result.stderr)
+        self.assertIn("hausverwaltung_previous already exists", result.stderr)
+        self.assertIn("inspect", result.stderr)
+        self.assertIn(".restore-*", result.stderr)
+        self.assertEqual(json.loads(self.db_state.read_text()), databases)
+        self.assertEqual((self.documents / "original.pdf").read_bytes(), b"synthetic original")
+        self.assertFalse(any("createdb" in call["args"] or "pg_restore" in call["args"] or "stage-documents" in call["args"] for call in self.calls()))
+
+    def test_restore_failed_database_rollback_reports_exact_state_and_manual_sql(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        for failure, live, scratch in (("ALTER DATABASE hausverwaltung RENAME TO hausverwaltung_restore", "present", "absent"),
+                                       ("ALTER DATABASE hausverwaltung_previous RENAME TO hausverwaltung", "absent", "present")):
+            with self.subTest(failure=failure):
+                for path in self.documents.glob(".restore-*"):
+                    shutil.rmtree(path)
+                self.db_state.write_text(json.dumps({"hausverwaltung": "old data"}))
+                self.env.update(FAKE_DOCKER_FAIL=failure, FAKE_SWAP_FAIL="after-aside")
+                result = self.run_script("restore", str(archive), "--yes")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Automatic rollback failed", result.stderr)
+                self.assertIn("hausverwaltung=" + live, result.stderr)
+                self.assertIn("hausverwaltung_restore=" + scratch, result.stderr)
+                self.assertIn("hausverwaltung_previous=present", result.stderr)
+                self.assertIn("ALTER DATABASE hausverwaltung RENAME TO hausverwaltung_restore;", result.stderr)
+                self.assertIn("ALTER DATABASE hausverwaltung_previous RENAME TO hausverwaltung;", result.stderr)
+                self.assertEqual(json.loads(self.db_state.read_text())["hausverwaltung_previous"], "old data")
+                self.assertEqual((self.documents / "original.pdf").read_bytes(), b"synthetic original")
+
+    def test_restore_failed_document_rollback_names_both_retained_directories(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        self.env.update(FAKE_DOCKER_FAIL="rollback-documents", FAKE_SWAP_FAIL="after-aside")
+        result = self.run_script("restore", str(archive), "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Automatic rollback failed", result.stderr)
+        temporary, = self.documents.glob(".restore-*")
+        self.assertIn(str(temporary / "documents"), result.stderr)
+        self.assertIn(str(temporary / "previous"), result.stderr)
+        self.assertEqual((temporary / "previous/original.pdf").read_bytes(), b"synthetic original")
+        self.assertEqual((temporary / "documents/nested/original.pdf").read_bytes(), b"restored original")
+
+    def test_restore_interruption_after_database_drop_keeps_restored_data_and_previous_documents(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        self.env.update(FAKE_SIGNAL_AFTER="DROP DATABASE hausverwaltung_previous", FAKE_SIGNAL="SIGHUP")
+        result = self.run_script("restore", str(archive), "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(json.loads(self.db_state.read_text()), {"hausverwaltung": "restored data"})
+        self.assertEqual((self.documents / "nested/original.pdf").read_bytes(), b"restored original")
+        temporary, = self.documents.glob(".restore-*")
+        self.assertEqual((temporary / "previous/original.pdf").read_bytes(), b"synthetic original")
+        self.assertIn("previous database was already dropped", result.stderr)
+        self.assertIn(str(temporary), result.stderr)
+        self.assertIn("After verifying the live database and documents, remove", result.stderr)
+        self.assertIn("bash scripts/self-host.sh start", result.stderr)
+        self.assertNotIn("Recovery SQL", result.stderr)
+        self.assertNotIn("ALTER DATABASE", result.stderr)
+
+    def test_backup_keeps_existing_output_directory_permissions(self):
+        self.init()
+        output = self.base / "shared backups"
+        output.mkdir(mode=0o755)
+        result = self.run_script("backup", "--out", str(output))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o755)
 
     def test_init_generates_distinct_secrets_and_private_file_without_docker(self):
         config = self.init()
