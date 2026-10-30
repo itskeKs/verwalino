@@ -11,12 +11,24 @@ Prerequisites: Linux or macOS with Bash, OpenSSL, Docker, and Compose v2
 ```bash
 bash scripts/self-host.sh init
 bash scripts/self-host.sh start
+```
+
+Init generates five random deployment secrets in `.env.selfhost` (0600).
+On a fresh database, `start` prints the browser setup URL and a one-time token.
+Open `/setup`, enter that token, your organization, administrator name/email,
+and a password twice. Setup signs you in and opens the dashboard. There is no
+default password. The token expires after 24 hours; another `start` replaces it.
+Only its SHA-256 digest is stored in the database; keep the terminal output
+private. Once an organization exists, setup is closed and no token is printed.
+
+The CLI remains an alternative and invalidates any pending token:
+
+```bash
 bash scripts/self-host.sh admin --org "Meine Hausverwaltung" --email admin@example.org
 ```
 
-The setup generates five random secrets in `.env.selfhost` (0600). The
-admin password is prompted for with hidden input, confirmed, and transmitted only via stdin.
-There is no default password. Locally, the app is reachable only at
+It prompts twice without echo and passes the password only through stdin.
+Locally, the app is reachable only at
 **http://127.0.0.1:18080**; PostgreSQL publishes no port.
 Running `init` again leaves the file unchanged, and running the admin command again
 does not reset an existing password. The existing alpha configuration and the
@@ -27,7 +39,6 @@ For a **new** server with its own domain, instead run the following before the f
 ```bash
 bash scripts/self-host.sh init --https verwaltung.example.org
 bash scripts/self-host.sh start
-bash scripts/self-host.sh admin --org "Meine Hausverwaltung" --email admin@example.org
 ```
 
 DNS must point to the server; TCP 80/443 must be free and publicly reachable.
