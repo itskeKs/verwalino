@@ -714,6 +714,16 @@ Minimum assertions:
 
 > If tests 1–6 pass, the M0 exit criterion is objectively demonstrated: two orgs, guaranteed data separation (at API **and** DB level), roles take effect.
 
+### 7.4a Route sweep (`backend/tests/test_route_isolation_sweep.py`)
+
+Tests 1–6 cover selected resources; the sweep covers every API route. It enumerates the routes FastAPI registers (`fastapi.routing.iter_route_contexts`, so routes of included routers count) and fails, naming the route, for any route that is neither swept nor exempt. A swept route has a probe in the table of its area module in `backend/tests/route_isolation/` (`core`, `finance`, `documents`, `access`): SQL that picks a record of another organization, plus body, query or headers where the generated request would not reach the route. Exempt routes are listed with their reason in `EXEMPT` of the test (health, login, logout, password change). Signed in as an administrator of organization B, the sweep sends each probe with the other organization's ids and once more with ids that exist nowhere:
+
+- a request carrying another organization's ids answers 404 (another status only with the reason written in the probe) and exactly what the unknown ids answer, so the answer cannot reveal that the record exists; a write carrying them is never accepted;
+- no answer contains an id of another organization's record that the request did not send;
+- after a write no row of another organization changed (row count and newest row version per table of `TENANT_TABLES`).
+
+Limits: a probe does not combine an own parent with a foreign child id, and foreign data that leaks without an id (a name, a sum in a report) is not detected. Run it with `make test-backend PYTEST_ARGS="-q tests/test_route_isolation_sweep.py"`.
+
 ### 7.5 App shell & infrastructure (in parallel, roadmap M0)
 
 - **Responsive web app shell** (React/TS): navigation/layout skeleton (desktop + mobile), login page, org context display, placeholder navigation for later modules. No native app.

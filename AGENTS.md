@@ -34,7 +34,10 @@ Scoped rules add context, not enforcement; every baseline and safety rule here s
 
 - Follow the [testing rule](.claude/rules/testing.md) and [features/README.md](features/README.md).
 - Every new or changed API route keeps organization isolation: covered by
-  `features/organization_isolation.feature` and the route sweep (#4).
+  `features/organization_isolation.feature` and the route sweep
+  `backend/tests/test_route_isolation_sweep.py`, which fails until a new route has a probe in
+  `backend/tests/route_isolation/` or an exemption with a reason
+  ([architecture.md 7.4a](docs/architecture.md#74a-route-sweep-backendteststest_route_isolation_sweeppy)).
 - Run tests selectively, `make lint` before every push, and `make test` before a merge.
 
 ## Gates
