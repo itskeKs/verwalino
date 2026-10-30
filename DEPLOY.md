@@ -217,6 +217,79 @@ The **first tag run and the arm64 installation check remain acceptance steps
 for the maintainer**. This preparation does not close #7. Full `make test`
 remains a pre-merge gate; the local workflow/installer checks need no database.
 
+## Request IDs and optional error tracking
+
+Request correlation is always enabled, including when error tracking is off.
+Every HTTP response carries `X-Request-ID`. An incoming value is accepted only
+when it contains 8–128 ASCII letters, digits, dots, underscores or hyphens;
+otherwise the app generates a UUID. Do not put personal data into request IDs.
+Generic exceptions return `{"detail":"Internal Server Error","request_id":"…"}`;
+HTTP 5xx exceptions keep their existing detail and headers and add `request_id`.
+HTTP 4xx bodies are unchanged. The existing frontend error messages show the
+header ID on server failures. No request IDs are added to URLs or stored in the DB.
+Explicit status responses such as readiness `503 {"status":"unavailable"}`
+retain their bodies, carry the header and do not generate exception events.
+
+Log lines include `request_id=<id>` across the API, services and database layer.
+Worker processing uses the durable job/import ID in that same field; startup,
+idle and other records outside a request/job use `-`. On an authorized portable
+installation, an operator can find a reported ID without starting the stack:
+
+```sh
+docker compose --project-name verwalino --env-file .env.selfhost \
+  -f infra/docker-compose.yml logs --no-color app | rg --fixed-strings 'request_id=REPORTED_ID'
+```
+
+Error reporting is **off by default**, including self-host. These optional keys
+are read from the API process environment (or its `.env`):
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `HV_ERROR_TRACKING_DSN` | empty | Empty disables SDK initialization and tracker transport. A nonempty Sentry-compatible project DSN opts in. Keep it in operator-managed secrets. |
+| `HV_ERROR_TRACKING_ENVIRONMENT` | `selfhost` | Deployment label, e.g. `hosted-production`; never a person's or organization's name. |
+| `HV_ERROR_TRACKING_SAMPLE_RATE` | `1.0` | Fraction of error events to send, from 0 through 1. No performance tracing. |
+
+The portable installer keeps tracking disabled and does not accept/forward these
+keys in `.env.selfhost`. The existing production Compose configuration also needs
+separately reviewed environment wiring before opting in; adding keys to the
+host's dotenv file alone does not forward them into a container. This change
+does not enable a tracker, provision one or alter a running deployment.
+The installer help and `.env.example` describe that boundary.
+
+For the hosted offer, use **self-hosted GlitchTip** as the Sentry-compatible
+tracker. Provision its project, access controls, retention and TLS separately,
+then supply its DSN to the API process. No external SaaS account is required by
+the application. Events carry `request_id` and, after session validation,
+`organization_id` (UUID only), so the reported ID finds both log lines and events.
+Release is the existing `HV_RELEASE_ID` when available, otherwise app version
+`0.1.0`. The SDK uses FastAPI/Starlette integrations, error sampling,
+`send_default_pii=False`, at most ten breadcrumbs and no performance tracing.
+Duplicate exception reports are suppressed.
+See the [Sentry Python configuration options](https://docs.sentry.io/platforms/python/configuration/options/)
+for the SDK settings.
+
+Before sending, a shared pure scrubber removes request bodies, cookies, user
+objects, stack locals and source snippets. It masks email addresses, compact or
+space-grouped IBANs, phone numbers, recognizable German street addresses
+(`straße`, `strasse`, `str.` plus house number), capitalized multiword person
+names, bearer/signed session tokens, labeled passwords/secrets and
+Authorization/Cookie headers. Query-string values are redacted, including URLs
+in exception messages and breadcrumbs. Masks use `[redacted:email]`,
+`[redacted:iban]`, `[redacted:phone]`, `[redacted:address]`, `[redacted:name]`,
+`[redacted:token]`, `[redacted:password]`, `[redacted:header]` and `[redacted:query]`.
+The same text scrubber filters formatted log messages and tracebacks, including
+access logs; SQLAlchemy hides bound parameters. Correlation IDs are preserved.
+
+Authenticated names/email and the organization's person directory are not
+available in the request context and are not fetched for reporting. Name masking
+is pattern-based: it can mask ordinary capitalized phrases and miss unusual or
+single-word names. Other unrecognized free text may still be personal data;
+keep exception messages structural and never intentionally log documents or
+request bodies. Tests use a fake transport and verify serialized events without
+network calls. No new Gherkin feature is needed: these are infrastructure/error
+contracts, covered by unit/API tests. `docs/operations/` currently owns domain
+workflows; this deployment page owns observability configuration and lookup.
+
 ## Existing alpha: `verwaltung.karat.immo`
 
 This alpha runs on Moon behind the existing Traefik Docker network and its
