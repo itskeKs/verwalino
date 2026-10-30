@@ -217,6 +217,139 @@ The **first tag run and the arm64 installation check remain acceptance steps
 for the maintainer**. This preparation does not close #7. Full `make test`
 remains a pre-merge gate; the local workflow/installer checks need no database.
 
+## Hosted server
+
+The hosted service runs on one Debian/Ubuntu VPS: the [portable stack](#portable-docker-first-installation)
+in HTTPS mode, updated by a GitHub workflow that logs in over a second SSH key of the admin user, restricted to
+the deploy script. Off-site encrypted backups and the restore drill belong to #42 and are not covered here.
+Placeholders: `SERVER_IP`, `verwaltung.example.org`; the admin user is called `chris` below.
+
+### Bootstrap
+
+From a checkout, as root once (safe to repeat; it resets the firewall to exactly the rules below):
+
+```bash
+scp scripts/server-bootstrap.sh ~/.ssh/id_ed25519.pub root@SERVER_IP:
+ssh root@SERVER_IP 'bash server-bootstrap.sh chris id_ed25519.pub verwalino'
+```
+
+`server-bootstrap.sh ADMIN_USER PUBKEY_FILE [HOSTNAME]` installs the packages (`ufw`, `fail2ban`,
+`unattended-upgrades`, `cron`, `jq`, git), creates the admin user with passwordless sudo and the key(s) from
+the file, writes `/etc/ssh/sshd_config.d/10-hardening.conf` (no root, no passwords, `AllowUsers ADMIN_USER`),
+opens 22 (rate-limited), 80 and 443, installs Docker and Compose from Docker's repository, limits journald
+(500 MB, one month) and the Docker default log driver (`local`, 3 × 10 MB), adds 4 GiB swap when the host
+has none, and sets the time zone (`TIMEZONE`, default `Europe/Berlin`) and, if given, the host name. Afterwards
+only `ADMIN_USER` can log in.
+
+### Folders and ownership
+
+Everything belongs to the admin user, who is also a member of `docker`; nothing needs a second account.
+
+| Path | Mode | Holds |
+|---|---|---|
+| `/srv/verwalino/app` | 755 | checkout of this repository; the deploy script moves it to the release tag |
+| `/srv/verwalino/config` | **700** | `.env.selfhost` (**0600**, the installer insists), `deploy_key` (read-only GitHub deploy key for `git fetch`) and the installer's lock directory |
+| `/srv/verwalino/backups` | 700 | `<timestamp>[-label]/` backups |
+| `/srv/verwalino/logs` | 755 | `deploy-<timestamp>.log`, `backup.log` |
+| `/srv/verwalino/data` | 755 | reserved and empty: the stack keeps its data in the Docker volumes `verwalino_pgdata` and `verwalino_documents`, under Docker's data root |
+
+```bash
+sudo install -d -o chris -g chris /srv/verwalino /srv/verwalino/{app,logs,data}
+sudo install -d -o chris -g chris -m 700 /srv/verwalino/{config,backups}
+ssh-keygen -t ed25519 -N '' -C verwalino-server-readonly -f /srv/verwalino/config/deploy_key   # add the .pub as a read-only GitHub deploy key
+git clone -c core.sshCommand='ssh -i /srv/verwalino/config/deploy_key -o IdentitiesOnly=yes' \
+  git@github.com:itskeKs/verwalino.git /srv/verwalino/app
+```
+
+The repository is public, so an HTTPS remote works without the deploy key too. Initialise and start the stack once
+by hand with a [verified image digest](#published-image-verification):
+
+```bash
+cd /srv/verwalino/app; export VERWALINO_CONFIG=/srv/verwalino/config/.env.selfhost
+bash scripts/self-host.sh init --https verwaltung.example.org --image 'ghcr.io/itskeks/verwalino@sha256:<64-hex-digest>'
+bash scripts/self-host.sh start
+```
+
+Create the first organization as in the [first installation](#portable-docker-first-installation). The deploy
+script masks the setup token, so always run the first `start` in a terminal. To pull the image, make the GHCR
+package public (package settings → visibility) or run `docker login ghcr.io` once as `chris` with a `read:packages`
+token.
+
+### Deploy key
+
+Create a key pair that is used for nothing else and put the private half into the secret `DEPLOY_SSH_KEY`. On the
+server append the public half to the admin user's `authorized_keys`, restricted to the deploy script:
+
+```bash
+ssh-keygen -t ed25519 -N '' -C verwalino-ci -f ci_key && scp ci_key.pub chris@SERVER_IP:   # local
+# on the server, as chris:
+cat >> ~/.ssh/authorized_keys <<EOF2
+command="/srv/verwalino/app/scripts/deploy-server.sh \$SSH_ORIGINAL_COMMAND",restrict $(cat ci_key.pub)
+EOF2
+rm ci_key.pub
+```
+
+The workflow sends only the tag as the SSH command (`ssh chris@host v1.2.3`). The user's shell expands
+`$SSH_ORIGINAL_COMMAND` into arguments of the script, which accepts exactly one argument shaped like a release
+tag (`vX.Y.Z`, optionally `-suffix`) and exits 2 on anything else. `restrict` switches off forwarding, PTYs and
+agent. The user has sudo and Docker, so this key is as sensitive as the admin key: the forced command and the tag
+check are its only limits. Fill `DEPLOY_KNOWN_HOSTS` with the output of `ssh-keyscan -t ed25519 SERVER_IP` after
+comparing it with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server.
+
+### Deploy flow
+
+1. Push `vX.Y.Z` ([release checklist](#maintainer-release-checklist)). `Release image` publishes and signs it.
+2. When that run succeeds, [Deploy hosted server](.github/workflows/deploy.yaml) (`workflow_run`) calls
+   `ssh chris@host vX.Y.Z`. **Actions → Deploy hosted server → Run workflow** with a `tag` redeploys any
+   published tag; on the server, `/srv/verwalino/app/scripts/deploy-server.sh vX.Y.Z` does the same.
+3. [`scripts/deploy-server.sh`](scripts/deploy-server.sh) fetches tags and checks the tag out (it must exist and be
+   on `main`), pulls `ghcr.io/itskeks/verwalino:vX.Y.Z` and resolves its digest, runs
+   [`scripts/server-backup.sh`](scripts/server-backup.sh) as `pre-vX.Y.Z`, writes the digest to `VERWALINO_IMAGE`
+   in the config, runs `scripts/self-host.sh start` (pull by digest, stop the app, migrate, start, wait for
+   healthy) and polls `/api/health/ready` for up to 120 s. The run is logged to
+   `/srv/verwalino/logs/deploy-<timestamp>.log`.
+4. On failure it prints the last 100 app log lines and the previous tag, commit and image, and exits non-zero.
+   There is **no automatic rollback**: the schema may already be migrated, so starting an older image is not safe
+   (#9, #76). Fix forward with a new tag, or restore the pre-deploy backup.
+
+Secrets of the workflow (repository secrets, names only): `DEPLOY_HOST`, `DEPLOY_USER` (the admin user),
+`DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`. The token is read-only (`contents: read`) and the job uses no other secret.
+
+### Backups
+
+[`scripts/server-backup.sh`](scripts/server-backup.sh) writes `/srv/verwalino/backups/<UTC timestamp>[-label]/`:
+`db.dump` (`pg_dump` custom format), `documents.tar`, `config.env` (a copy of the config, secrets in clear:
+keep the directory private and encrypt before it leaves the server), `MANIFEST` and `SHA256SUMS`. It keeps the
+newest backup of each of the last 14 days and 8 weeks and the 10 newest `pre-<tag>` ones. Schedule it daily:
+
+```bash
+echo '0 3 * * * chris /srv/verwalino/app/scripts/server-backup.sh >> /srv/verwalino/logs/backup.log 2>&1' |
+  sudo tee /etc/cron.d/verwalino-backup
+```
+
+These copies live on the same machine as the data, so they do not cover a lost server or disk. The script is a
+stand-in until the installer has `backup` and `restore` (#57) and `update` (#76); then it and the deploy script
+switch to them (marked `TODO` in both). Until then, restoring is manual work for the maintainer: stop the app, load
+`db.dump` with `pg_restore` into an empty database and unpack `documents.tar` into the volume, then rehearse it on
+a throwaway host (#42).
+
+### Runbook
+
+```bash
+cd /srv/verwalino/app; export VERWALINO_CONFIG=/srv/verwalino/config/.env.selfhost
+bash scripts/self-host.sh status                                        # containers
+docker logs --tail 100 "$(docker ps -q --filter label=com.docker.compose.service=app)"   # app log
+less /srv/verwalino/logs/deploy-*.log                                   # last deploys, newest name last
+docker restart "$(docker ps -q --filter label=com.docker.compose.service=app)"   # restart only the app
+scripts/server-backup.sh manual                                         # extra backup before risky work
+docker image prune -af --filter until=720h                              # old release images; running ones stay
+```
+
+The scripts and the workflow are covered by `make test-installer` (`scripts/test-server-deploy.py`; Docker, git,
+curl and sleep are faked, nothing touches a real host). A stale `/srv/verwalino/logs/.deploy.lock` or
+`/srv/verwalino/backups/.lock` (a run was killed) is removed by hand once no deploy or backup is running. Never
+run `docker compose down -v` or delete the volumes.
+
 ## Existing alpha: `verwaltung.karat.immo`
 
 This alpha runs on Moon behind the existing Traefik Docker network and its
