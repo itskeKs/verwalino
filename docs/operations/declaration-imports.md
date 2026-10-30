@@ -1,121 +1,114 @@
-# Teilungserklärungs-Import und Gebäudewissen betreiben
+# Operating the Declaration of Division (Teilungserklärung) Import and Building Knowledge (Gebäudewissen)
 
-Der Teilungserklärungs-Import ist ein asynchroner, prüfpflichtiger Workflow.
-`DeclarationPipeline` ist der feste, deterministische Manager: Sie führt eine
-begrenzte lokale Vorprüfung, feste Extraktionspässe, lokale Validierungen und
-höchstens einen begrenzten Vision-Recheck aus. Sie ist kein frei autonomer
-Agent. Dokumentseiten, OCR-Text und Modellantworten sind **untrusted data**;
-sie erhalten keine Tools, keine Aktionssenke und keine Berechtigung, Daten zu
-ändern. Erst **Human Approval** übernimmt einen geprüften Entwurf in
-kanonische Gebäude-, Einheits- oder Regel-Daten.
+The declaration of division import is an asynchronous workflow that requires review.
+`DeclarationPipeline` is the fixed, deterministic manager: it runs a bounded local
+precheck, fixed extraction passes, local validations and at most one bounded vision
+recheck. It is not a freely autonomous agent. Document pages, OCR text and model
+responses are **untrusted data**; they receive no tools, no action sink and no
+permission to change data. Only **Human Approval** promotes a reviewed draft into
+canonical property, unit or rule data.
 
-Das Gebäudewissen zeigt nur freigegebene Fakten, Regeln, Dokumentbeziehungen
-und Seitenbelege. Die lexikalische PostgreSQL-Suche funktioniert ohne einen
-Modellaufruf. Die optionale Q&A-Funktion liefert ausschließlich eine zitierte
-Antwort aus begrenzt abgerufenen, freigegebenen Belegen und kann separat
-abgeschaltet werden.
+Building knowledge shows only approved facts, rules, document relationships and page
+evidence. The lexical PostgreSQL search works without a model call. The optional Q&A
+feature returns exclusively a cited answer drawn from a bounded retrieval of approved
+evidence and can be switched off separately.
 
-## Betriebsfluss und Modellmatrix
+## Operating Flow and Model Matrix
 
 ```text
-PDF -> lokale Vorprüfung/OCR -> textuelle Luna-Pässe -> lokale Evidenz-/Domain-Validierung
+PDF -> local precheck/OCR -> textual Luna passes -> local evidence/domain validation
        -> RouterDecision(NONE | HUMAN_REVIEW | VISION_RECHECK)
-       -> nur ausgewählte, lokal gerenderte PNG-Seiten an Mini
-       -> erneute Validierung -> NEEDS_REVIEW -> Human Approval
+       -> only selected, locally rendered PNG pages to Mini
+       -> re-validation -> NEEDS_REVIEW -> Human Approval
 ```
 
-| Zweck | Modell / Reasoning | Zulässige Eingabe | Grenze |
+| Purpose | Model / reasoning | Permitted input | Limit |
 | --- | --- | --- | --- |
-| reguläre Extraktion (`inventory`, `extract_core`, `extract_rules`, `reconcile`) | `gpt-5.6-luna`, `medium` | begrenzte Text-/OCR-Batches bzw. strukturierte Zwischenergebnisse | keine Bilder, keine Tools, kein `previous_response_id` |
-| Vision-Recheck | `gpt-5.4-mini`, `none` | nur von `RouterDecision` ausgewählte, lokal gerenderte PNG-Seiten plus begrenzter Kontext | keine regulären Luna-Pässe mit Bildern; Renderfehler ist fail closed |
-| Eval-Kandidaten | Luna `low`, Terra und Luna mit Mini-Router | ausschließlich gleiches Goldset | keine automatische Promotion und kein Produktionsrouting |
+| regular extraction (`inventory`, `extract_core`, `extract_rules`, `reconcile`) | `gpt-5.6-luna`, `medium` | bounded text/OCR batches or structured intermediate results | no images, no tools, no `previous_response_id` |
+| Vision recheck | `gpt-5.4-mini`, `none` | only locally rendered PNG pages selected by `RouterDecision`, plus bounded context | no regular Luna passes with images; a rendering failure is fail closed |
+| Eval candidates | Luna `low`, Terra and Luna with Mini router | exclusively the same gold set | no automatic promotion and no production routing |
 
-Der lokale `route_escalation`-Router nutzt nur reproduzierbare Signale. Er ist
-kein learned oder online lernender Router und verwendet keine Modell-Confidence:
+The local `route_escalation` router uses only reproducible signals. It is not a learned
+or online-learning router and uses no model confidence:
 
-| Vorrang | Lokales Signal | `RouterDecision` |
+| Priority | Local signal | `RouterDecision` |
 | ---: | --- | --- |
-| 1 | isolierter Router-Contract: `PROVIDER_REFUSAL`, `PROVIDER_INCOMPLETE`, `PROVIDER_TIMEOUT` oder `PROVIDER_SCHEMA_FAILURE` | `HUMAN_REVIEW` |
-| 2 | unbekanntes Dokument oder Seite außerhalb der Vorprüfung | `HUMAN_REVIEW` |
-| 3 | fehlende Evidence-Quote auf bekannter, renderbarer Seite | `VISION_RECHECK` |
-| 4 | geringe lokale Seitenqualität auf zitierter/Blocker-Seite | `VISION_RECHECK` |
-| 5 | fachlicher Blocker ohne visuelles Signal | `HUMAN_REVIEW` |
-| 6 | kein Signal | `NONE` |
+| 1 | isolated router contract: `PROVIDER_REFUSAL`, `PROVIDER_INCOMPLETE`, `PROVIDER_TIMEOUT` or `PROVIDER_SCHEMA_FAILURE` | `HUMAN_REVIEW` |
+| 2 | unknown document or page outside the precheck | `HUMAN_REVIEW` |
+| 3 | missing evidence quote on a known, renderable page | `VISION_RECHECK` |
+| 4 | low local page quality on a cited/blocker page | `VISION_RECHECK` |
+| 5 | domain blocker without a visual signal | `HUMAN_REVIEW` |
+| 6 | no signal | `NONE` |
 
-Der Router sortiert und dedupliziert Seiten und begrenzt sie mit
-`HV_DECLARATION_MAX_RECHECK_PAGES`; zusätzliche Aufrufe bleiben durch
-`HV_DECLARATION_MAX_RECHECK_CALLS`, Token-, Kosten- und Deadline-Limits
-begrenzt. Eine nicht renderbare gewählte Seite wird nicht alternativ hochgeladen
-und führt zu Human Review.
+The router sorts and deduplicates pages and limits them with
+`HV_DECLARATION_MAX_RECHECK_PAGES`; additional calls remain bounded by
+`HV_DECLARATION_MAX_RECHECK_CALLS` and by token, cost and deadline limits. A selected
+page that cannot be rendered is not uploaded in an alternative form and leads to Human
+Review.
 
-Der produktive Pipelinepfad ruft den Router aktuell mit
-`provider_failure=None` auf. Providerfehler werden daher nicht in Vision
-umgeleitet, sondern folgen direkt der bestehenden Workerpolitik nach
-`RETRY_WAIT` oder `FAILED`. Die erste Tabellenzeile dokumentiert nur den
-isolierten, totalen Router-Contract: Falls einer seiner vier zulässigen
-Providerfehler dort übergeben wird, ist ausschließlich `HUMAN_REVIEW`
-zulässig.
+The production pipeline path currently calls the router with
+`provider_failure=None`. Provider failures are therefore not redirected to vision,
+but follow the existing worker policy directly to `RETRY_WAIT` or `FAILED`. The first
+table row documents only the isolated, total router contract: if one of its four
+permitted provider failures is passed there, only `HUMAN_REVIEW` is permitted.
 
-## Lokale Vorprüfung und Evidence-Gate
+## Local Precheck and Evidence-Gate
 
-Pro PDF gelten höchstens **25 MiB** (`HV_DECLARATION_MAX_PDF_BYTES`), pro
-Import standardmäßig zehn Dokumente und 500 Seiten. Die Vorprüfung weist
-unlesbare, verschlüsselte oder aktive PDFs sowie eingebettete Dateien ab. Sie
-verwendet erst die Textschicht und nur bei Bedarf OCR.
+A maximum of **25 MiB** applies per PDF (`HV_DECLARATION_MAX_PDF_BYTES`), and by
+default ten documents and 500 pages per import. The precheck rejects unreadable,
+encrypted or active PDFs as well as embedded files. It uses the text layer first and
+OCR only when needed.
 
-| Bereich | Standardgrenze |
+| Area | Default limit |
 | --- | ---: |
-| OCR-Auflösung / Zeit pro Seite | 180 DPI / 30 Sekunden |
-| gerenderte Pixel pro Seite | 20.000.000 |
-| temporäre OCR-Daten pro Import | 256 MiB |
-| OCR-Seiten / Pixel pro Import | 200 / 400.000.000 |
-| Vorprüfungsfrist | 600 Sekunden |
-| Provider-Seiten / Zeichen je Batch | 20 / 80.000 |
-| Eingabe- / Ausgabe-Tokens je Import | 500.000 / 60.000 |
-| Ausgabe-Tokens je Provider-Aufruf | 12.000 |
-| Recheck-Seiten / Recheck-Aufrufe | 12 / 2 |
-| Kandidaten / geschätzte Importkosten | 5.000 / 1,00 USD |
+| OCR resolution / time per page | 180 DPI / 30 seconds |
+| rendered pixels per page | 20,000,000 |
+| temporary OCR data per import | 256 MiB |
+| OCR pages / pixels per import | 200 / 400,000,000 |
+| precheck deadline | 600 seconds |
+| provider pages / characters per batch | 20 / 80,000 |
+| input / output tokens per import | 500,000 / 60,000 |
+| output tokens per provider call | 12,000 |
+| recheck pages / recheck calls | 12 / 2 |
+| candidates / estimated import cost | 5,000 / 1.00 USD |
 
-Jede **Evidence-Quote** muss lokal auf der exakt angegebenen
-`(document_key, pdf_page)` vorkommen. Der Validator normalisiert Unicode,
-Zeilenumbrüche, Whitespace und Bindestriche und verlangt einen nichtleeren,
-zusammenhängenden Treffer. Eine Seitenzahl, Abschnittsnummer oder Modelltext
-ist kein Ersatzbeleg. Fehlercodes wie `EVIDENCE_QUOTE_NOT_FOUND`,
-`UNKNOWN_EVIDENCE_DOCUMENT` und `EVIDENCE_PAGE_OUT_OF_RANGE` enthalten keinen
-Dokumenttext und dürfen diesen auch nicht in Ledger, Logs oder Tickets bringen.
+Every **Evidence-Quote** must appear locally on the exact
+`(document_key, pdf_page)` given. The validator normalizes Unicode, line breaks,
+whitespace and hyphens and requires a non-empty, contiguous match. A page number,
+section number or model text is not a substitute for evidence. Error codes such as
+`EVIDENCE_QUOTE_NOT_FOUND`, `UNKNOWN_EVIDENCE_DOCUMENT` and
+`EVIDENCE_PAGE_OUT_OF_RANGE` contain no document text and must not carry it into the
+ledger, logs or tickets either.
 
-Häufige Vorprüfungsfehler sind `PDF_SIZE_LIMIT_EXCEEDED`,
+Common precheck errors are `PDF_SIZE_LIMIT_EXCEEDED`,
 `PDF_PAGE_LIMIT_EXCEEDED`, `PDF_UNREADABLE`, `PDF_ENCRYPTED_FORBIDDEN`,
 `PDF_ACTIVE_CONTENT_FORBIDDEN`, `PDF_EMBEDDED_FILES_FORBIDDEN`,
 `OCR_UNAVAILABLE`, `OCR_TIMEOUT`, `OCR_FAILED`,
-`OCR_RENDERED_PIXELS_LIMIT_EXCEEDED`, `OCR_IMPORT_PAGE_LIMIT_EXCEEDED` und
+`OCR_RENDERED_PIXELS_LIMIT_EXCEEDED`, `OCR_IMPORT_PAGE_LIMIT_EXCEEDED` and
 `OCR_IMPORT_PIXEL_LIMIT_EXCEEDED`.
 
-## Provider-Failures, Wiederherstellung und sichere Telemetrie
+## Provider Failures, Recovery and Safe Telemetry
 
-Inhaltliche Outcomes, Transportfehler und Usage-Metering sind getrennte
-Klassen; sie dürfen nicht als ein „vier Outcomes“-Schema zusammengezogen
-werden:
+Content outcomes, transport errors and usage metering are separate classes; they must
+not be merged into a single “four outcomes” schema:
 
-| Klasse | Behandlung |
+| Class | Handling |
 | --- | --- |
-| `PROVIDER_REFUSAL` | keine Schema-Reparatur und kein Datenretransmit; bestehende Workerpolitik |
-| `PROVIDER_INCOMPLETE` | eigener, begrenzter Worker-Retry; keine Schema-Reparatur |
-| `PROVIDER_SCHEMA_FAILURE` | genau ein schema-only repair mit demselben begrenzten Input; danach endgültiger Fehler |
-| `PROVIDER_TIMEOUT`, `PROVIDER_CONNECTION_ERROR`, `PROVIDER_RATE_LIMIT`, `PROVIDER_SERVER_ERROR`, `OPENAI_REQUEST_FAILED` | Transportgruppe; Retrybarkeit folgt dem einzelnen stabilen Code und der Workerpolitik |
-| `PROVIDER_USAGE_INVALID` (im OpenAI-Adapter konkret `OPENAI_USAGE_INVALID`) | separates Usage-Metering; Kosten-/Usage-Contract fail closed, keine Veröffentlichung |
+| `PROVIDER_REFUSAL` | no schema repair and no data retransmission; existing worker policy |
+| `PROVIDER_INCOMPLETE` | its own bounded worker retry; no schema repair |
+| `PROVIDER_SCHEMA_FAILURE` | exactly one schema-only repair with the same bounded input; afterwards a final failure |
+| `PROVIDER_TIMEOUT`, `PROVIDER_CONNECTION_ERROR`, `PROVIDER_RATE_LIMIT`, `PROVIDER_SERVER_ERROR`, `OPENAI_REQUEST_FAILED` | transport group; retryability follows the individual stable code and the worker policy |
+| `PROVIDER_USAGE_INVALID` (concretely `OPENAI_USAGE_INVALID` in the OpenAI adapter) | separate usage metering; cost/usage contract fails closed, no publication |
 
-Der Worker beansprucht Aufträge tenantweise mit Lease, Token und Generation.
-Heartbeats verlängern nur die aktuelle Generation. Bei Unterbruch oder
-retryfähigem Fehler geht der Auftrag in `RETRY_WAIT`; verspätete Ergebnisse
-können nicht publizieren. `POST /api/declaration-imports/{id}/retry` ist nur
-für retryfähige Fehler vorgesehen; `cancel` sperrt den aktuellen Lease. Vor
-einem Retry Kosten-/Tokenzähler, Fehlerklasse und Limits prüfen, nicht blind
-wiederholen.
+The worker claims jobs per tenant with a lease, token and generation.
+Heartbeats extend only the current generation. On interruption or a retryable error,
+the job moves to `RETRY_WAIT`; late results cannot publish. `POST /api/declaration-imports/{id}/retry` is intended only
+for retryable errors; `cancel` locks out the current lease. Before a retry, check
+cost/token counters, error class and limits; do not repeat blindly.
 
-## Dienste, Wiederherstellung und Status
+## Services, Recovery and Status
 
-Für lokale Entwicklung laufen API und Import-Worker getrennt:
+For local development, the API and the import worker run separately:
 
 ```bash
 cd backend
@@ -127,106 +120,105 @@ cd backend
 ./.venv/bin/python -m app.workers.declaration_import
 ```
 
-Im Betrieb werden beide Dienste mit einem geschützten externen Env-File
-gestartet:
+In operation, both services are started with a protected external env file:
 
 ```bash
-docker compose --env-file /absoluter/pfad/hausverwaltung.env \
+docker compose --env-file /absolute/path/hausverwaltung.env \
   -f docker-compose.prod.yml up -d app worker
 ```
 
-Vor einem Restore Datenbank und `documents`-Volume als konsistentes Paar
-sichern und auch nur aus derselben Sicherungsgeneration wiederherstellen. Nach
-dem Restore PostgreSQL-Integrität und gespeicherte SHA-256-Werte prüfen, dann
-API und Worker starten. Ein einseitiger Restore kann Dokumentreferenzen und
-Speicherinhalt auseinanderziehen und ist kein gültiger Wiederherstellungspfad.
-Statusdiagnosen verwenden ausschließlich Metadaten wie `status`,
-`error_code`, `current_stage`, Tokens, geschätzte Kosten und Attempts —
-nie Dokumenttext oder Provider-Payloads.
+Before a restore, back up the database and the `documents` volume as a consistent pair
+and restore only from the same backup generation. After the restore, check PostgreSQL
+integrity and the stored SHA-256 values, then start the API and worker. A one-sided
+restore can cause document references and stored content to diverge and is not a valid
+recovery path.
+Status diagnostics use exclusively metadata such as `status`,
+`error_code`, `current_stage`, tokens, estimated cost and attempts —
+never document text or provider payloads.
 
-Das dauerhafte Pass-Ledger hat **eine Zeile pro SDK-Attempt**. Es referenziert
-`declaration_extraction_run_id`; der Repository-Aufruf heißt
-`append_pass_entries`. Die Pipeline leert ihre Queue erst nach einem
-committeten Checkpoint, Fail- oder Publish-Übergang. Die Tabelle ist
-tenant-isoliert per RLS, append-only und die Datenbank validiert exakt 23
-sichere JSON-Felder, Typen, Allowlists und die Bindung der Attempt-Nummer.
-Python- und DB-Contract müssen deshalb gemeinsam geändert werden.
+The durable pass ledger has **one row per SDK attempt**. It references
+`declaration_extraction_run_id`; the repository call is named
+`append_pass_entries`. The pipeline empties its queue only after a
+committed checkpoint, fail or publish transition. The table is
+tenant-isolated via RLS, append-only, and the database validates exactly 23
+safe JSON fields, types, allowlists and the binding of the attempt number.
+The Python and DB contracts must therefore be changed together.
 
-Zulässig sind nur technische Metadaten wie Pass-ID, Attempt-Nummer, Modell,
-Reasoning-Effort, Prompt-/Schema-/Harness-Version und -Hash, Tokenpartition,
-geschätzte Kosten, Latenz, Retry-Zähler, `route_action`, Reason-Codes und
-Failure-Class. Unzulässig sind Prompttext, OCR-/PDF-Text, Quote, Bild,
-Antwortkörper, lokaler Pfad, Tenant-/Property-/User-ID, Header, API-Key und
-Exception-Text. Status-Endpunkte bleiben bei ihren aggregierten Metadaten.
+Only technical metadata is permitted, such as pass ID, attempt number, model,
+reasoning effort, prompt/schema/harness version and hash, token partition,
+estimated cost, latency, retry counter, `route_action`, reason codes and
+failure class. Not permitted are prompt text, OCR/PDF text, quote, image,
+response body, local path, tenant/property/user ID, headers, API key and
+exception text. Status endpoints stay with their aggregated metadata.
 
-## Caching, Kosten und Provider-Daten
+## Caching, Costs and Provider Data
 
-Luna setzt den statischen Developer-Block vor dynamische Dokumentdaten und
-verwendet einen expliziten Cache-Breakpoint sowie einen 30-Minuten-Cache. Der
-stabile Schlüssel enthält nur Modell, Pass sowie Prompt-, Schema- und
-Harness-Version/-Hash. Mini erhält **kein** explizites Caching. Die
-Konfiguration für Luna-Cache-Writes ist
-`declaration_primary_cache_write_multiplier` beziehungsweise
-`HV_DECLARATION_PRIMARY_CACHE_WRITE_MULTIPLIER` und ist auf `1.25` validiert.
+Luna places the static developer block before dynamic document data and
+uses an explicit cache breakpoint and a 30-minute cache. The
+stable key contains only model, pass, and prompt, schema and
+harness version/hash. Mini receives **no** explicit caching. The
+configuration for Luna cache writes is
+`declaration_primary_cache_write_multiplier` or
+`HV_DECLARATION_PRIMARY_CACHE_WRITE_MULTIPLIER` and is validated to `1.25`.
 
-Kosten werden konservativ aus gewöhnlichen Input-, Cached-Input-,
-Cache-Write- und Output-Tokens berechnet. Ungültige Partitionen, negative
-Zähler, fehlende Raten oder Cache-Writes für Mini führen fail closed zu
-`PROVIDER_USAGE_INVALID`; eine günstigere Schätzung rechtfertigt keinen
-Qualitätsverlust.
+Costs are calculated conservatively from ordinary input, cached input,
+cache write and output tokens. Invalid partitions, negative
+counters, missing rates or cache writes for Mini fail closed to
+`PROVIDER_USAGE_INVALID`; a cheaper estimate does not justify a loss of
+quality.
 
-`HV_OPENAI_API_KEY` ist ein ausschließlich serverseitiges Deployment-Secret:
-nie Frontend, Git, Projekt-`.env`, Browser oder Ticket. Nur nach lokaler
-Vorprüfung werden begrenzte zulässige Seiteninhalte an den Provider gesendet.
-`store=false` wird gesetzt, **ist nicht ZDR** und löst keine Retention-Zusage
-aus. API-Daten werden standardmäßig nicht zum Training verwendet; ohne
-genehmigte weitergehende Kontrollen kann Abuse Monitoring Inhalte bis zu 30
-Tage halten. Vor Produktion müssen AVV/DPA, Region/Data Residency,
-Retention-/ZDR-Eignung, Berechtigungen und DSGVO-Bewertung geprüft und
-dokumentiert sein.
+`HV_OPENAI_API_KEY` is an exclusively server-side deployment secret:
+never in the frontend, Git, project `.env`, browser or ticket. Only after the local
+precheck are bounded, permitted page contents sent to the provider.
+`store=false` is set, **is not ZDR** and triggers no retention commitment.
+API data is not used for training by default; without approved extended controls,
+abuse monitoring may retain content for up to 30
+days. Before production, the DPA (AVV), region/data residency,
+retention/ZDR suitability, permissions and GDPR (DSGVO) assessment must be reviewed and
+documented.
 
-## Review und fachliche Grenzen
+## Review and Domain Limits
 
-Ein erfolgreicher Lauf endet in `NEEDS_REVIEW`, niemals in einer Anwendung.
-Prüfende vergleichen jeden Fakt und jede Regel mit den Seitenbelegen, bearbeiten
-oder verwerfen den Entwurf und übernehmen erst danach die Verantwortung.
-Konflikte bleiben `NEEDS_CLARIFICATION`; das System erteilt keine
-Rechtsauskunft. MEA sind als Zähler/Nenner zu behandeln; eine Skala wird nie
-stillschweigend ergänzt oder umgerechnet.
+A successful run ends in `NEEDS_REVIEW`, never in application of the draft.
+Reviewers compare every fact and every rule with the page evidence, edit
+or discard the draft, and only then take responsibility.
+Conflicts remain `NEEDS_CLARIFICATION`; the system gives no legal advice. MEA
+(co-ownership shares, Miteigentumsanteile) are to be treated as numerator/denominator;
+a scale is never silently supplemented or converted.
 
-## Netzwerkgrenze des Workers
+## Worker Network Boundary
 
-In Produktion bleibt `backend` ein internes Docker-Netz: Datenbank,
-Migration und Bootstrap sind ausschließlich dort, die API nur zusätzlich im
-gemeinsamen Traefik-Netz. Ausschließlich der Declaration-Worker hängt außerdem
-am projektlokalen nicht-internen Netz `egress`; er hängt nie an Traefik und
-kein Dienst veröffentlicht Host-Ports. Seine expliziten Docker-Gateway-
-Prioritäten sind `backend: 0` und `egress: 1`: Der Default-Route-Gateway liegt
-damit im Egress-Netz, die Datenbank bleibt ausschließlich über `backend`
-erreichbar.
+In production, `backend` remains an internal Docker network: database,
+migration and bootstrap are exclusively there, the API additionally only in the
+shared Traefik network. Only the declaration worker is additionally attached
+to the project-local non-internal network `egress`; it is never attached to Traefik and
+no service publishes host ports. Its explicit Docker gateway
+priorities are `backend: 0` and `egress: 1`: the default route gateway is
+therefore in the egress network, and the database remains reachable exclusively via
+`backend`.
 
-Der OpenAI-Client verwendet fest `https://api.openai.com/v1`. Der Harness hat
-keine URL-, Browser- oder Tool-Fähigkeit und übermittelt nur die vorgesehenen
-Structured-Output-Anfragen. Bei aktivierten Imports prüft der Worker vor einer
-Promotion die beiden konfigurierten Modell-IDs über die nicht-billable Models
-API (kurzer Timeout, höchstens ein SDK-Retry). Dafür startet der Deploy nach
-dem API-Healthcheck, aber vor dem konsumierenden Worker, einen einmaligen
-`compose run --rm --no-deps`-Container mit explizitem Python-EntryPoint. Der
-normale Worker-EntryPoint und seine Endlosschleife laufen darin nicht. Weder
-PDF-/Prompt-Inhalte noch Responses-Aufrufe werden übertragen und der Schlüssel
-wird ausschließlich aus seiner Container-Umgebung gelesen. Ein Fehler erhält
-den vorherigen Runtime-Stand und verhindert die Promotion.
+The OpenAI client is hard-wired to `https://api.openai.com/v1`. The harness has
+no URL, browser or tool capability and transmits only the intended
+structured output requests. When imports are enabled, the worker checks the two
+configured model IDs via the non-billable Models
+API (short timeout, at most one SDK retry) before a promotion. For this, the deploy starts, after
+the API health check but before the consuming worker, a one-off
+`compose run --rm --no-deps` container with an explicit Python entrypoint. The
+normal worker entrypoint and its endless loop do not run in it. Neither
+PDF/prompt contents nor Responses calls are transmitted, and the key
+is read exclusively from its container environment. A failure preserves
+the previous runtime state and prevents the promotion.
 
-Das nicht-interne Docker-Netz ist keine Domain-Firewall. Wer Egress auf OpenAI
-beschränken muss, benötigt zusätzlich eine Host-/Netzwerk-Allowlist. Der
-isolierte Compose-Verifier prüft zusätzlich die laufende Default-Route gegen
-das Docker-Egress-Gateway, löst mit seinem Platzhalter-Schlüssel aber keinen
-externen Provider-Aufruf aus.
+The non-internal Docker network is not a domain firewall. Anyone who must restrict egress to OpenAI
+additionally needs a host/network allowlist. The
+isolated Compose verifier additionally checks the running default route against
+the Docker egress gateway, but with its placeholder key triggers no
+external provider call.
 
-## Lokale Tests und Gold-Evals
+## Local Tests and Gold Evals
 
-Normale Tests nutzen nur synthetische/redigierte Daten und keine Netzwerkaufrufe.
-Die flüchtige Testdatenbank läuft nur auf Port 55432:
+Normal tests use only synthetic/redacted data and no network calls.
+The ephemeral test database runs only on port 55432:
 
 ```bash
 docker compose -p hv-declaration-tests -f infra/docker-compose.declaration-test.yml up -d --wait
@@ -239,86 +231,84 @@ cd backend
 ./.venv/bin/python -m app.evals.declaration_knowledge --fixtures tests/fixtures/declaration_eval_cases.json --provider fake
 ```
 
-Promotion ist fail closed. Das Goldset benötigt mindestens die neutralen IDs
-`gold-units-mea`, `gold-heating-amendment` und
-`gold-adversarial-evidence` sowie die festen Vergleichslabels `luna_medium`,
-`luna_low`, `terra_primary` und `luna_with_mini_router`. Qualität darf in
-keiner repräsentativen Dimension regressieren; niedrigere Kosten kompensieren
-das nicht. Ungelabelte reale PDFs liefern höchstens einen beschreibenden
-Smoke-Report, **keine Accuracy-Aussage und keine Promotion**.
+Promotion is fail closed. The gold set requires at least the neutral IDs
+`gold-units-mea`, `gold-heating-amendment` and
+`gold-adversarial-evidence` as well as the fixed comparison labels `luna_medium`,
+`luna_low`, `terra_primary` and `luna_with_mini_router`. Quality must not regress in
+any representative dimension; lower costs do not compensate for this. Unlabeled real PDFs yield at most a
+descriptive smoke report, **no accuracy claim and no promotion**.
 
-Ein echter PDF-Smoke ist nie automatisch auszuführen und erzeugt nur einen
-`descriptive_only`-Report: Er ist nicht promotionfähig. Er erfordert eine
-separate explizite Autorisierung und vergleicht exakt `luna_medium`,
-`luna_low`, `terra_primary` und `luna_with_mini_router`.
+A real PDF smoke test is never to be run automatically and produces only a
+`descriptive_only` report: it is not promotion-eligible. It requires a
+separate explicit authorization and compares exactly `luna_medium`,
+`luna_low`, `terra_primary` and `luna_with_mini_router`.
 
-**Phase A — Aktivierung und Werte:** Vor **jeder Path-Methode** werden exakt
-`HV_DECLARATION_LIVE_EVAL=1`, ein serverseitiger API-Key,
-`--provider live --live --compare-models`, ein nichtleerer Wert für
-`HV_DECLARATION_REAL_PDF_MANIFEST` und die drei positiven, vom Aufrufer
-verifizierten Terra-Raten geprüft. Fehlt oder ist einer dieser Werte ungültig,
-findet kein Path-/Manifest-/PDF-/Providerzugriff und keine Übertragung statt.
+**Phase A — Activation and values:** Before **any path method**, exactly
+`HV_DECLARATION_LIVE_EVAL=1`, a server-side API key,
+`--provider live --live --compare-models`, a non-empty value for
+`HV_DECLARATION_REAL_PDF_MANIFEST` and the three positive, caller-verified
+Terra rates are checked. If any of these values is missing or invalid,
+no path/manifest/PDF/provider access and no transmission takes place.
 
-**Phase B — lokale externe Eingabeprüfung:** Erst danach werden Report- und
-Manifestpfad lokal geprüft: beide müssen extern liegen, das übergebene Manifest
-muss exakt `HV_DECLARATION_REAL_PDF_MANIFEST` entsprechen, Case-Limits
-einhalten und pro Case die SHA-256-Prüfung bestehen. In dieser Phase werden
-Manifest und deklarierte PDFs lokal gelesen und gehasht. Ein abweichender Hash
-verhindert Capability, Adapter, Provider und Übertragung — er behauptet nicht,
-dass die Datei nie geöffnet wurde. Erst nach erfolgreicher Phase B wird die
-Capability erzeugt und ein Adapter konstruiert. Manifest, PDFs und Bericht
-gehören nie ins Repository.
+**Phase B — local external input check:** Only then are the report and
+manifest paths checked locally: both must be located externally, the passed manifest
+must exactly match `HV_DECLARATION_REAL_PDF_MANIFEST`, comply with case limits and pass the
+SHA-256 check per case. In this phase, the manifest and declared PDFs are read and hashed locally. A mismatching hash
+prevents capability, adapter, provider and transmission — it does not claim
+that the file was never opened. Only after a successful Phase B is the
+capability created and an adapter constructed. Manifest, PDFs and report
+never belong in the repository.
 
 ```bash
 cd backend
 ./.venv/bin/python -m app.evals.declaration_knowledge \
   --fixtures tests/fixtures/declaration_eval_cases.json \
   --provider live --live --compare-models \
-  --manifest /absoluter/externer/pfad/manifest.json \
-  --report-dir /absoluter/externer/pfad/berichte
+  --manifest /absolute/external/path/manifest.json \
+  --report-dir /absolute/external/path/reports
 ```
 
-Die drei Phase-A-Raten heißen
+The three Phase A rates are named
 `HV_DECLARATION_COMPARE_TERRA_INPUT_USD_PER_MILLION`,
-`HV_DECLARATION_COMPARE_TERRA_OUTPUT_USD_PER_MILLION` und
-`HV_DECLARATION_COMPARE_TERRA_CACHED_INPUT_USD_PER_MILLION`. Das externe
-Die Präsenz von `HV_DECLARATION_REAL_PDF_MANIFEST` ist ein Phase-A-Gate; erst
-in Phase B wird sein Wert als absoluter externer Pfad auf Gleichheit mit dem
-übergebenen Manifest geprüft und anschließend lokal validiert.
+`HV_DECLARATION_COMPARE_TERRA_OUTPUT_USD_PER_MILLION` and
+`HV_DECLARATION_COMPARE_TERRA_CACHED_INPUT_USD_PER_MILLION`.
+The presence of `HV_DECLARATION_REAL_PDF_MANIFEST` is a Phase A gate; only
+in Phase B is its value checked as an absolute external path for equality with the
+passed manifest and then validated locally.
 
-## Forschungseinordnung
+## Research Context
 
-Die Struktur folgt [Harness Engineering](https://openai.com/index/harness-engineering/):
-Repo-Legibilität, erzwingbare Grenzen, Tests und Evals — nicht Autonomie.
-Die Modell-, Vision-, Structured-Output-, Cache- und Datenhinweise sind an den
+The structure follows [Harness Engineering](https://openai.com/index/harness-engineering/):
+repo legibility, enforceable boundaries, tests and evals — not autonomy.
+The model, vision, structured output, cache and data notes are aligned with the
 [Latest model guide](https://developers.openai.com/api/docs/guides/latest-model),
 [GPT-5.4 Mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini),
 [Vision](https://developers.openai.com/api/docs/guides/images-vision),
 [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs),
 [Prompt Caching](https://developers.openai.com/api/docs/guides/prompt-caching)
-und [Your data](https://developers.openai.com/api/docs/guides/your-data)
-ausgerichtet. Datenschutz- und Betriebsannahmen müssen zusätzlich gegen die
-[Business-data-Hinweise](https://openai.com/business-data/) des gewählten
-Vertrags geprüft werden. [Evals](https://openai.com/index/evals-drive-next-chapter-of-ai/)
-begründen die fail-closed Promotion statt einer Kostenentscheidung nach Gefühl.
-Die Routing-Literatur ([RouteLLM](https://proceedings.iclr.cc/paper_files/paper/2025/file/5503a7c69d48a2f86fc00b3dc09de686-Paper-Conference.pdf),
-[RouterEval](https://aclanthology.org/2025.findings-emnlp.208.pdf)) motiviert
-Vergleich und Messung; ohne repräsentative gelabelte Daten bleibt das
-Produktionsrouting bewusst deterministisch. Die Dokumentgrenze folgt außerdem
-den Empfehlungen zu [Prompt-Injection-Resistenz](https://openai.com/index/designing-agents-to-resist-prompt-injection/).
+and [Your data](https://developers.openai.com/api/docs/guides/your-data).
+Privacy and operating assumptions must additionally be checked against the
+[business data notes](https://openai.com/business-data/) of the chosen
+contract. [Evals](https://openai.com/index/evals-drive-next-chapter-of-ai/)
+justify the fail-closed promotion instead of a cost decision made by gut feeling.
+The routing literature ([RouteLLM](https://proceedings.iclr.cc/paper_files/paper/2025/file/5503a7c69d48a2f86fc00b3dc09de686-Paper-Conference.pdf),
+[RouterEval](https://aclanthology.org/2025.findings-emnlp.208.pdf)) motivates
+comparison and measurement; without representative labeled data, production
+routing deliberately remains deterministic. The document boundary also follows
+the recommendations on [prompt injection resistance](https://openai.com/index/designing-agents-to-resist-prompt-injection/).
 
-## Betrieb sauber beenden
+## Shutting Down Operation Cleanly
 
-Lokal gestartete API- und Worker-Prozesse werden im jeweiligen Vordergrund mit
-`Ctrl-C` beendet. Die isolierte Testdatenbank nur mit ihrem exakten
-Projektnamen stoppen:
+Locally started API and worker processes are terminated in their respective foreground with
+`Ctrl-C`. Stop the isolated test database only with its exact
+project name:
 
 ```bash
 docker compose -p hv-declaration-tests -f infra/docker-compose.declaration-test.yml down
 ```
 
-Echte Nutzer-PDFs, Manifestdaten, API-Schlüssel und Provider-Payloads bleiben
-außerhalb von Git, Test-Fixtures, Reports, Logs und Tickets.
+Real user PDFs, manifest data, API keys and provider payloads stay
+outside Git, test fixtures, reports, logs and tickets.
 
 ## Explicit queue principals (migration 0043)
 
