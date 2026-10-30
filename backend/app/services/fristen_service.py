@@ -22,6 +22,7 @@ from datetime import date
 from fastapi import HTTPException
 from app.services.financial_scope_service import FinancialScopeService
 from app.core.temporal import db_exclusive_to_engine_inclusive
+from app.engine.periods import period_for_date, period_label
 from app.engine.dunning import find_overdue_items
 from app.engine.fristen import (
     DeadlineItem,
@@ -39,23 +40,6 @@ from app.engine.mietkonto import (
 from app.repositories.fristen_repo import FristenRepository
 from app.repositories.payment_repo import PaymentRepository
 from app.services.dunning_service import _to_payment_input
-
-
-def _fiscal_year_bounds(d: date, start_month: int) -> tuple[str, date, date]:
-    """Map a date to its fiscal-year (label, period_start, period_end-inclusive).
-
-    start_month == 1 -> calendar year [Y-01-01, Y-12-31], label "Y".
-    start_month == m -> [SY-m-01, (SY+1)-m-01 minus one day], label "SY/SY+1",
-    where SY (start year) = d.year if d.month >= m else d.year-1.
-    """
-    if start_month == 1:
-        y = d.year
-        return (str(y), date(y, 1, 1), date(y, 12, 31))
-    start_year = d.year if d.month >= start_month else d.year - 1
-    period_start = date(start_year, start_month, 1)
-    next_start = date(start_year + 1, start_month, 1)
-    period_end = date.fromordinal(next_start.toordinal() - 1)
-    return (f"{start_year}/{start_year + 1}", period_start, period_end)
 
 
 def _lease_overlaps(lease, period_start: date, period_end: date) -> bool:
@@ -149,7 +133,8 @@ class FristenService:
         periods = await self._repo.confirmed_cost_periods(prop.id)
         fy_map: dict[str, tuple[date, date]] = {}
         for _from, _to in periods:
-            label, ps, pe = _fiscal_year_bounds(_to, prop.fiscal_year_start_month)
+            ps, pe = period_for_date(prop.fiscal_year_start_month, _to)
+            label = period_label(ps, pe)
             if sphere and (ps < sphere.valid_from or sphere.valid_to is not None and pe > sphere.valid_to):
                 raise HTTPException(409, 'A partial fiscal-year scope requires reviewed deadline coverage before this overview is available')
             fy_map[label] = (ps, pe)
