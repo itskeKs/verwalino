@@ -6,7 +6,7 @@ updated: 2026-10-13
 ## Auftrag / Umgebung
 Quelle: `steps/02-status-contract.md` aus `crossreview-remediation-qwen36-49k.plan.md`.
 HEAD `aeee229b1bbb7415b35c5c05985a866d25a75210`; Worktree
-`/Users/keks/Developer/hausverwaltung`.
+`~/Developer/hausverwaltung`.
 
 ## Gelesene Dokumente
 - `docs/project-completion/state.md` (gelesen, aktualisiert)
