@@ -18,7 +18,6 @@ and Compose v2 >= 2.24. From a reviewed checkout:
 ```bash
 bash scripts/self-host.sh init
 bash scripts/self-host.sh start
-bash scripts/self-host.sh admin --org "My property management" --email admin@example.org
 ```
 
 No host Python, Node, uv, API key, external proxy network or SMTP account is
@@ -54,8 +53,8 @@ installer operation is active. A partial/absent config on an existing database
 requires restoring the original config, not regenerating different passwords.
 
 Start order is build/pull -> database readiness -> stop any existing web writer
--> one-shot migration -> app readiness (DB and document-store probe) -> optional
-Caddy. Migration, build, database or app failures return nonzero without a
+-> one-shot migration -> setup-token issuance when empty -> app readiness
+(DB and document-store probe) -> optional Caddy. Migration, build, database or app failures return nonzero without a
 success message. A failed migration leaves the web app stopped; no automatic
 schema downgrade, restoration or container rollback is attempted. Do not use
 `start` as an unreviewed version upgrade. The migration and bootstrap services
@@ -84,8 +83,33 @@ as pending, not as a successful TLS/Internet reachability check. The stock
 Caddy configuration does not replicate Traefik's alpha login-rate middleware;
 public rollout requires a separate abuse-protection review.
 
-Admin bootstrap prompts for the password twice without echo. Existing users
-are left unchanged by the existing admin CLI; it is not a password-reset tool.
+On a database with no organization, `start` prints a `/setup` URL and a new
+256-bit **Setup token** exactly once after app readiness. Open that URL, enter
+the token, organization, administrator name/email and a password (12–128
+characters, repeated). Successful setup signs you in and opens the dashboard.
+The token is never in the URL, private config or application logs; only its
+SHA-256 digest is retained in the private singleton `setup_token` table. Do
+not include terminal output in support logs. It expires after 24 hours; run
+`start` again to replace a lost/expired token and invalidate the previous one.
+A failed start does not print a token; retry `start` to issue another one.
+Once any organization exists, no token is issued, the form redirects to login,
+and non-GET setup requests return the same 404 body as unknown API GET routes.
+Wrong, consumed or expired tokens receive one generic German 403 response; invalid fields
+receive 422. Leading/trailing spaces in the token and organization/admin names
+are trimmed; control characters in these fields and the admin email are rejected. If the initial
+setup-status request fails, login and signed-in pages remain available; reload
+after connectivity recovers to open setup on a fresh installation.
+No signup or application rate limiter is included.
+
+CLI bootstrap remains the alternative:
+
+```bash
+bash scripts/self-host.sh admin --org "My property management" --email admin@example.org
+```
+
+It uses the migrator role and invalidates any pending setup token in the same
+transaction. Admin bootstrap prompts for the password twice without echo.
+Existing users are left unchanged by the existing admin CLI; it is not a password-reset tool.
 For automation feed a newline-terminated password from a secret manager to
 `admin --org ... --email ... --password-stdin`; never place it in arguments,
 checked-in files, or an `echo` command in shell history.
@@ -226,9 +250,9 @@ former **0122** assumption was not a live measurement. The authorized release
 **0139** and is now the `current` release. The API, declaration worker, invoice
 worker and existing database were healthy after promotion; public HTTPS
 `/api/health/ready` returned 200 with verified TLS. The prepared code now targets
-**0140**; this does not change the recorded live release or authorize deployment.
-The release gate accepts only measured **0028 → 0140**, **0122 → 0140**,
-**0139 → 0140** or **0140 → 0140**. Unknown,
+**0141**; this does not change the recorded live release or authorize deployment.
+The release gate accepts only measured **0028 → 0141**, **0122 → 0141**,
+**0139 → 0141**, **0140 → 0141** (accepted source), or **0141 → 0141**. Unknown,
 missing, multiple or intermediate revisions fail before stopping writers or
 migrating. Historical feature notes below describe earlier boundaries; their
 statements about an unchanged helper or an inactive alpha are superseded by
@@ -448,8 +472,8 @@ No new credentials or sending service. Preview/apply reuse live source/contact a
 MIET preparation rights, ACL → financial → request locks, and one HTTP transaction.
 Source changes require a fresh preview; uncertain responses retry the same request,
 not a new batch. Only selected drafts are created, never issued or sent. Synthetic
-UI acceptance uses the isolated local launcher and
-`node scripts/acceptance/t53_dunning_batch_browser.cjs`; stop it afterward.
+UI acceptance uses [the dunning batch browser feature](features/dunning_batch.feature)
+via `make test-browser`, which owns and stops its isolated local app stack.
 
 ## Previous-year plan proposals (T54; no new migration)
 
@@ -701,8 +725,8 @@ Credential rotation is a separate operation with workers paused.
 | Dedicated human-review commands in API | `app_review` / `HV_DATABASE_URL_REVIEW` | Separate pool, no ordinary-role fallback |
 | One-shot migration/bootstrap | Privileged ops credentials only | Never injected into app/worker runtime |
 
-Before downtime, the new image checks its single head **0140**, the exact linear
-0029–0140 chain, the measured single DB revision and the isolated login/role
+Before downtime, the new image checks its single head **0141**, the exact linear
+0029–0141 chain, the measured single DB revision and the isolated login/role
 membership, ownership and schema/ACL prerequisites. Disposable non-consuming
 probes test each actual API/review/worker credential. The captured previous image
 must have exactly the measured DB head and every previous runtime must have the
@@ -713,11 +737,11 @@ The helper requires an existing `current` release and API container. Fresh
 installation is a separate procedure; this helper no longer initializes an empty
 DB. Each source revision is accepted only when actually measured.
 
-### Migration compatibility: 0029–0140
+### Migration compatibility: 0029–0141
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0140 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0141 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -725,13 +749,15 @@ DB. Each source revision is accepted only when actually measured.
 | 0130–0135 | Adds retained attachments, tasks, letters/PDF references, SEPA consent, immutable import and dunning batches. No original files are migrated. Most populated downgrades refuse; task downgrade drops its table. No blanket lossless rollback claim. |
 | 0136–0137 | Adds default-active bank/vendor lifecycle and nullable property facts plus stricter reference triggers and read-only deletion-reference functions. Non-default lifecycle/property facts prevent downgrade. |
 | 0138–0139 | Adds default-zero session generation and versioned auth functions, then grants only session validation to `app_review`. Positive generations block downgrade. An older runtime's unversioned auth does not enforce the new invalidations: **automatic 0122 runtime restoration on the new schema is unsafe**. |
-| 0140 | Replaces client-selected parent references with organization-bound composite foreign keys. Validates pending deferred checks and rejects existing invalid references without repair before replacing constraints. Adds a boolean-only, tenant-bound property existence check for scoped financial creation. Downgrade restores the original constraints and removes that check; an older runtime is not approved on this schema. |
+| Parent references (accepted source 0140) | Replaces client-selected parent references with organization-bound composite foreign keys. Validates pending deferred checks and rejects existing invalid references without repair before replacing constraints. Adds a boolean-only, tenant-bound property existence check for scoped financial creation. Downgrade restores the original constraints and removes that check; an older runtime is not approved on this schema. |
+| 0141 | Adds the private singleton setup-token table and a token-gated, serialized first-organization function. Removes direct organization INSERT from app_rw; the migrator CLI shares the creation SQL. A populated token table blocks downgrade to avoid silently losing pending/consumed state. Existing organization/user/membership rows are preserved. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0140 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0140 and 0139→0140 rehearsals also compare existing ACLs;
+0028→0141 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0141, 0139→0141 and accepted-source 0140→0141 rehearsals also
+compare existing ACLs, allowing only the explicit organization INSERT revocation;
 it does not prove live data validity or cross-version runtime compatibility.
 
 ### Paired backup and recovery
@@ -757,9 +783,9 @@ or error logs. These host-local backups do not provide off-host disaster recover
 retention/off-host storage needs an operator decision before relying on it.
 
 Before migration, a failure can restart the captured API, then only the workers
-that previously existed, after rechecking the unchanged schema. On 0140→0140,
-the helper skips migration and may similarly restore the prior 0140 runtime.
-Once an older-to-0140 migration is attempted, any failure leaves `current` unchanged
+that previously existed, after rechecking the unchanged schema. On 0141→0141,
+the helper skips migration and may similarly restore the prior 0141 runtime.
+Once an older-to-0141 migration is attempted, any failure leaves `current` unchanged
 and stops only provably owned new runtime containers. It reports
 `MAINTENANCE REQUIRED` and keeps old writers stopped, even if the migration may
 have rolled back. Unknown ownership or failed stops also prohibit automatic
@@ -887,7 +913,7 @@ then the existing public TLS/security-header/session/login/traversal/upload-limi
 smoke. `current` changes atomically only after every gate succeeds; the previous
 pointer is persisted first. On failure the recovery policy above applies, with
 no automatic downgrade or volume deletion. The disposable CI verifier checks
-0140 and the invoice worker too; its execution remains separately authorized.
+0141 and the invoice worker too; its execution remains separately authorized.
 
 ## Operation and rollback
 
@@ -915,7 +941,7 @@ There is no automatic rollback after promotion. Before promotion, automatic
 runtime restoration requires the unchanged schema, matching previous image head,
 and successful cleanup of all owned replacement consumers. A cross-schema attempt
 requires maintenance/recovery as described above; never blindly start the 0122
-image on 0140. The same compatibility requirement applies to a manual rollback.
+image on 0141. The same compatibility requirement applies to a manual rollback.
 
 ## Optional GitLab deploy
 

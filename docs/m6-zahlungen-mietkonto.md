@@ -1,5 +1,7 @@
 # M6 design: payments, tenant ledger (Mietkonto) & open items
 
+Browser acceptance journeys for bank import/assignment, rent changes, deposits and dunning now live in the `@browser` features; see [the feature runner](../features/README.md#browser-features).
+
 As of: 2026-06-02 · Version 0.1 (design, before implementation)
 Reference: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2 §3 (non-goal: bank import), §5.4 (incoming payments — *note: the SDD numbers them §6.3/§6.7*), §6.3 (bank accounts), §6.7 (rent/payment management), §11 (PDF), §13 (`Payment`/`OpenItem`), §14 (chronology), §16, §17, §18 · [archived roadmap](archive/roadmap.md) M6 · [architecture.md](architecture.md) §2.6 (segregation of funds (Vermögenstrennung)), §5.1 (conventions), §5.3 (`bank_account` anchor), assumption A-4 · [m3-abrechnungs-engine.md](m3-abrechnungs-engine.md) §7 (`advance_payments_source` MANUAL→DERIVED) · [m4-weg-abrechnung.md](m4-weg-abrechnung.md) §2.4 (paid_advances, settlement balance (Abrechnungsspitze)) · ADRs: [0003](adr/0003-gobd-immutability-mechanism.md) (reused), [0005](adr/0005-rounding-largest-remainder.md) (reused), [0006](adr/0006-valid-to-convention.md) (reused), [0007](adr/0007-weg-settlement-balance-and-economic-plan.md) (monthly basis, balance) · **[0009-expected-actual-and-payment-receipt.md](adr/0009-expected-actual-and-payment-receipt.md) (new)** · **[0010-segregation-of-funds-payments.md](adr/0010-segregation-of-funds-payments.md) (new)**
 Status: **Draft for confirmation by the human — no application code, no migration, no commit**
@@ -439,9 +441,13 @@ cover the absolute bank amount cent-exactly; German decimal input is validated w
 floating-point arithmetic. Errors keep the inputs, 409 becomes visible, reload
 follows only on success. READ_ONLY gets no mutation actions. "Alle" ("All") also keeps
 processed rows; account filter and pagination remain server-side.
-The local browser acceptance run creates all master data via the UI and demonstrates 850=700+150
-in January fully paid, 600=500+100 in February with 250 remainder, and 25
-ignored without a payment; annual expected amount 10,200, actual 1,450, balance 8,750 EUR.
+The browser scenarios in `features/bank_assignment.feature` set up master data and
+import receipts through the API, then accept suggestions, split and ignore receipts
+through the UI. They assert January's 850=700+150 is fully paid and its receipt appears
+under "Zugeordnet"; February's 600=500+100 leaves 250 EUR open. After processing all
+receipts, the reloaded filters separate assigned and ignored receipts, retain all
+three under "Alle", and show none under "Neu"; ignoring the 25 EUR receipt creates
+no rent payment.
 
 ### 6.12 Property annual overview (Phase 2, T38)
 

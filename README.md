@@ -11,12 +11,24 @@ Prerequisites: Linux or macOS with Bash, OpenSSL, Docker, and Compose v2
 ```bash
 bash scripts/self-host.sh init
 bash scripts/self-host.sh start
+```
+
+Init generates five random deployment secrets in `.env.selfhost` (0600).
+On a fresh database, `start` prints the browser setup URL and a one-time token.
+Open `/setup`, enter that token, your organization, administrator name/email,
+and a password twice. Setup signs you in and opens the dashboard. There is no
+default password. The token expires after 24 hours; another `start` replaces it.
+Only its SHA-256 digest is stored in the database; keep the terminal output
+private. Once an organization exists, setup is closed and no token is printed.
+
+The CLI remains an alternative and invalidates any pending token:
+
+```bash
 bash scripts/self-host.sh admin --org "Meine Hausverwaltung" --email admin@example.org
 ```
 
-The setup generates five random secrets in `.env.selfhost` (0600). The
-admin password is prompted for with hidden input, confirmed, and transmitted only via stdin.
-There is no default password. Locally, the app is reachable only at
+It prompts twice without echo and passes the password only through stdin.
+Locally, the app is reachable only at
 **http://127.0.0.1:18080**; PostgreSQL publishes no port.
 Running `init` again leaves the file unchanged, and running the admin command again
 does not reset an existing password. The existing alpha configuration and the
@@ -27,7 +39,6 @@ For a **new** server with its own domain, instead run the following before the f
 ```bash
 bash scripts/self-host.sh init --https verwaltung.example.org
 bash scripts/self-host.sh start
-bash scripts/self-host.sh admin --org "Meine Hausverwaltung" --email admin@example.org
 ```
 
 DNS must point to the server; TCP 80/443 must be free and publicly reachable.
@@ -160,8 +171,9 @@ account-specific list with status filter and pagination. „Kontoauszug importie
 „Übernehmen“ (commit); after a file change, a new preview is required. CSV,
 CAMT-XML, and ZIP can be selected; errors and the actual number of new
 transactions are shown. READ_ONLY can read but not import.
-The local browser flow, including a second import with zero new transactions,
-is repeatable with `scripts/acceptance/t19_bank_import_browser.cjs` against `scripts/dev-local.sh`.
+The browser review/confirmation flow is [an executable feature](features/bank_statement_browser.feature),
+run with `make test-browser`; parsing and duplicate imports are covered by
+[the API feature](features/bank_statement_import.feature).
 For write roles, the transactions page offers „Vorschlag übernehmen“ (accept
 suggestion), „Aufteilen“ (split), and „Ignorieren“ (ignore). Suggestions that
 require review open the split dialog; unclear amounts must be explicitly split
@@ -239,9 +251,9 @@ additional `approve` permission. The split dialog selects the lease or
 owner of the bank account's property, payment type, and period; totals are checked to the cent
 without floating-point arithmetic. API errors remain visible, double clicks
 do not create a second booking. „Alle“ (all) also shows assigned/ignored transactions.
-The real browser flow `scripts/acceptance/t22_bank_assignment_browser.cjs`
-checks gross rent, partial payment, ignoring, second-tab conflict, and the
-tenant ledger values persisted after reload against `scripts/dev-local.sh`.
+The [bank assignment browser feature](features/bank_assignment.feature) checks gross rent,
+partial payment, ignoring and rent account values after reload (`make test-browser`).
+Concurrent assignment conflicts remain covered by API tests.
 
 ## Rent changes with effective date (Phase 2)
 
@@ -263,8 +275,8 @@ ab …“ (change rent from …) opens the dialog with date, base rent, and adva
 date is prefilled. Readers see only the history. Invalid
 values are rejected before the POST, server errors retain the inputs;
 while saving, further changes and closing are blocked.
-`scripts/acceptance/t24_rent_change_browser.cjs` verifies the UI flow and all
-24 month/type rows: 700/150 through March, 750/150 from April, annual expected amount (Soll) 10,650 EUR.
+[The rent change browser feature](features/rent_change.feature) verifies the UI flow,
+the 24-row year and representative boundary months: 700/150 through March, 750/150 from April, annual expected amount (Soll) 10,650 EUR.
 
 ## Graduated rent (Staffelmiete) (T43)
 
@@ -393,7 +405,7 @@ deposits without a complete lease assignment must be corrected (409),
 the existing reversal path remains available for that. New/changed/to-be-booked
 deposits must match the account's property, lease, and tenant. Booking vouchers and
 finalized documents remain unchanged. The real UI test case is
-`scripts/acceptance/t25_deposits_browser.cjs`.
+[the deposits browser feature](features/deposits.feature), run with `make test-browser`.
 
 ## Change of ownership (Phase 2)
 
@@ -657,7 +669,8 @@ days, base/annual interest rate, and amounts are saved and shown in detail/PDF;
 later configuration or payment changes do not recalculate the issued dunning notice.
 Migration 0129 protects this provenance and refuses its loss
 on downgrade. Issuance alone confirms no receipt. The real UI/PDF flow
-is repeatable with `scripts/acceptance/t35_dunning_interest_browser.cjs`.
+is repeatable with [the dunning interest browser feature](features/dunning_interest.feature)
+using `make test-browser`.
 
 ### Deleting unused erroneous entries (T56)
 
@@ -724,9 +737,9 @@ Sources changed in the meantime require a new preview (409). If the network resp
 unclear, the same job is kept for a manual retry;
 its original IDs are returned under renewed complete prepare/source checks,
 not recalculated or duplicated. Old issued letters remain
-unchanged. `scripts/acceptance/t53_dunning_batch_browser.cjs` actually verifies three
-arrears of 850 EUR each and exactly three drafts totaling 2,550 EUR, including
-mobile abort, reload, and unchanged source data.
+unchanged. [The dunning batch browser feature](features/dunning_batch.feature) verifies three
+arrears of 850 EUR each and three drafts totaling 2,550 EUR, including mobile
+cancellation and reload (`make test-browser`). Source immutability remains covered by API tests.
 
 ### Email dispatch (T47)
 

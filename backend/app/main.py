@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import auth, organizations, users, mandates, intake_batches, intake_items, exceptions, invoice_reviews, context_decisions, allocation_proposals, allocation_treatments, allocation_adoptions, duplicate_comparisons
-from app.api import context_mappings
+from app.api import context_mappings, setup
 from app.api import properties, units, persons, ownership, leases
 from app.api import owner_profiles, tenant_profiles, vendors
 from app.api import cost_categories, cost_entries, invoice_documents, document_refs, logical_documents, extraction_revisions, source_partitions, visual_extracts, visual_disclosures
@@ -44,6 +44,7 @@ app.add_middleware(RequestBodyLimitMiddleware)
 
 # --- Routers ---
 app.include_router(auth.router)
+app.include_router(setup.router)
 app.include_router(organizations.router)
 app.include_router(users.router)
 app.include_router(accounting_scopes.router)
@@ -155,5 +156,5 @@ if _frontend_dist and os.path.isdir(_frontend_dist):
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
         if full_path == "api" or full_path.startswith("api/"):
-            raise HTTPException(status_code=404, detail="Not found")
+            raise HTTPException(status_code=404, detail="Not Found")
         return FileResponse(resolve_spa_file(_frontend_dist, full_path))

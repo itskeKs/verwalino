@@ -3,7 +3,9 @@
 Run in backend/ with uv run python ../scripts/test-self-host.py.
 """
 import json
+import hashlib
 import os
+import re
 import stat
 import subprocess
 import tempfile
@@ -38,11 +40,19 @@ if "bootstrap" in sys.argv:
     password = sys.stdin.readline()
     with open(os.environ["FAKE_DOCKER_STDIN"], "w") as capture:
         capture.write(password)
+if "exec" in sys.argv and "psql" in sys.argv:
+    if any("SELECT count(*) FROM public.organization" in arg for arg in sys.argv):
+        print(os.environ.get("FAKE_ORGANIZATION_COUNT", "1"))
+    else:
+        with open(os.environ["FAKE_TOKEN_SQL"], "w") as capture:
+            capture.write(sys.stdin.read())
+        print(os.environ.get("FAKE_TOKEN_ISSUED", "t"))
 ''')
         docker.chmod(0o755)
         self.env = dict(os.environ, PATH=f"{binary}:{os.environ['PATH']}",
                         VERWALINO_CONFIG=str(self.config), FAKE_DOCKER_LOG=str(self.log),
-                        FAKE_DOCKER_STDIN=str(self.base / "stdin"))
+                        FAKE_DOCKER_STDIN=str(self.base / "stdin"),
+                        FAKE_TOKEN_SQL=str(self.base / "token.sql"))
 
     def run_script(self, *args, input=None):
         return subprocess.run(["bash", str(SCRIPT), *args], env=self.env, input=input,
@@ -151,6 +161,57 @@ if "bootstrap" in sys.argv:
             self.assertFalse(call["caller_secret_used"])
         self.assertIn("http://127.0.0.1:18080", result.stdout)
         self.assert_isolated(args)
+
+    def test_fresh_start_prints_one_token_and_url_but_persists_only_its_hash(self):
+        self.init()
+        self.env["FAKE_ORGANIZATION_COUNT"] = "0"
+        before = self.config.read_bytes()
+        result = self.run_script("start")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        match = re.search(r"^Setup token: ([a-f0-9]{64})$", result.stdout, re.M)
+        self.assertIsNotNone(match, result.stdout)
+        token = match.group(1)
+        self.assertEqual(result.stdout.count(token), 1)
+        self.assertIn("http://127.0.0.1:18080/setup", result.stdout)
+        sql = (self.base / "token.sql").read_text()
+        self.assertIn(hashlib.sha256(token.encode()).hexdigest(), sql)
+        self.assertIn("ON CONFLICT", sql)
+        self.assertIn("used_at=NULL", sql)
+        self.assertIn("LOCK TABLE public.organization", sql)
+        self.assertEqual(self.config.read_bytes(), before)
+        for content in (result.stderr, sql, self.log.read_text(), self.config.read_text()):
+            self.assertNotIn(token, content)
+        args = [call["args"] for call in self.calls()]
+        migrated = next(i for i, call in enumerate(args) if "migrate" in call)
+        issued = next(i for i, call in enumerate(args) if "-qAt" in call)
+        self.assertLess(migrated, issued)
+
+    def test_restart_of_unclaimed_installation_rotates_the_token(self):
+        self.init("--https", "verwaltung.example.org")
+        self.env["FAKE_ORGANIZATION_COUNT"] = "0"
+        tokens = []
+        for _ in range(2):
+            result = self.run_script("start")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            tokens.append(re.search(r"^Setup token: ([a-f0-9]{64})$", result.stdout, re.M).group(1))
+            self.assertIn("https://verwaltung.example.org/setup", result.stdout)
+        self.assertNotEqual(*tokens)
+
+    def test_existing_organization_does_not_issue_or_print_a_token(self):
+        self.init()
+        result = self.run_script("start")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Setup token:", result.stdout)
+        self.assertFalse((self.base / "token.sql").exists())
+
+    def test_invalid_database_count_or_failed_token_storage_never_prints_a_token(self):
+        self.init()
+        for count, issued in [("unknown", "t"), ("0", "")]:
+            self.env.update(FAKE_ORGANIZATION_COUNT=count, FAKE_TOKEN_ISSUED=issued)
+            result = self.run_script("start")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("Setup token:", result.stdout)
+            self.assertNotIn("App ready", result.stdout)
 
     def assert_isolated(self, calls):
         for args in calls:

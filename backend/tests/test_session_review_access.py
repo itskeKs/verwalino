@@ -267,7 +267,7 @@ def _chain_0131_projection(head):
     return projected
 
 
-async def test_revision_chain_0140_0131_0140_preserves_full_state_and_issued_pdf(rent_world):
+async def test_revision_chain_0141_0131_0141_preserves_full_state_and_issued_pdf(rent_world):
     """Rollback-only whole-chain rehearsal, not a production downgrade strategy."""
     import os
     from pathlib import Path
@@ -323,9 +323,9 @@ async def test_revision_chain_0140_0131_0140_preserves_full_state_and_issued_pdf
     config = Config()
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ['0140']
-    assert [r.revision for r in scripts.iterate_revisions('0140', '0131')] == [
-        f'{number:04}' for number in range(140, 131, -1)
+    assert scripts.get_heads() == ['0141']
+    assert [r.revision for r in scripts.iterate_revisions('0141', '0131')] == [
+        f'{number:04}' for number in range(141, 131, -1)
     ]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -374,14 +374,14 @@ async def test_revision_chain_0140_0131_0140_preserves_full_state_and_issued_pdf
 
                 def projection_0131():
                     # The historical projection describes 0132–0139. Peel off
-                    # 0140's parent constraints only within this savepoint.
+                    # the parent constraints and bootstrap additions within this savepoint.
                     with connection.begin_nested() as historical:
                         migrate('0139', downgrade=True)
                         projected = _chain_0131_projection(_chain_snapshot(connection))
                         historical.rollback()
                     return projected
 
-                assert version() == ('0140',)
+                assert version() == ('0141',)
                 original = _chain_snapshot(connection)
                 original_0131 = projection_0131()
                 assert original['data']['lease_agreement'] and original['data']['letter_document']
@@ -436,7 +436,7 @@ async def test_revision_chain_0140_0131_0140_preserves_full_state_and_issued_pdf
                 down = _chain_snapshot(connection)
                 down['data'].pop('alembic_version')
                 assert down == old
-                migrate('0140', downgrade=False)
+                migrate('0141', downgrade=False)
                 connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
                 assert _chain_snapshot(connection) == head
             finally:
