@@ -1,0 +1,113 @@
+name: Nightly scenarios
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  scenarios:
+    name: Scenarios (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [selfhost]
+        # Running both deployment modes needs a hosted server; tracked in #TBD.
+    env:
+      UV_LOCKED: "1"
+      HV_DEPLOYMENT_MODE: ${{ matrix.mode }}
+      VERWALINO_TARGET_URL: http://127.0.0.1:18080
+      VERWALINO_TARGET_ADMIN_EMAIL: nightly@example.test
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Prepare report and disposable credentials
+        run: |
+          mkdir -p report
+          : > "$RUNNER_TEMP/scenario-selfhost.log"
+          printf 'SCENARIO_DATE=%s\n' "$(date -u +%F)" >> "$GITHUB_ENV"
+          password=$(openssl rand -hex 24)
+          printf '::add-mask::%s\n' "$password"
+          printf 'VERWALINO_TARGET_ADMIN_PASSWORD=%s\n' "$password" >> "$GITHUB_ENV"
+
+      - name: Initialize and start self-host installation
+        run: |
+          # start builds the checkout image and owns project verwalino.
+          bash scripts/self-host.sh init --port 18080 2>&1 | tee -a "$RUNNER_TEMP/scenario-selfhost.log"
+          bash scripts/self-host.sh start 2>&1 |
+            sed -E 's/^(Setup token: ).*/\1[redacted]/' |
+            tee -a "$RUNNER_TEMP/scenario-selfhost.log"
+          # Use the reviewed CLI alternative after start issues a browser setup token.
+          printf '%s\n' "$VERWALINO_TARGET_ADMIN_PASSWORD" |
+            bash scripts/self-host.sh admin --org "Verwaltung Alpha" \
+              --email "$VERWALINO_TARGET_ADMIN_EMAIL" --password-stdin 2>&1 |
+            tee -a "$RUNNER_TEMP/scenario-selfhost.log"
+
+      - name: Wait for application readiness
+        run: curl --fail --silent --show-error --retry 30 --retry-delay 2 --retry-connrefused http://127.0.0.1:18080/api/health/ready
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install scenario dependencies and Chromium
+        working-directory: backend
+        run: |
+          uv sync --locked --extra dev --extra ops --extra ocr
+          uv run --locked --extra dev playwright install --with-deps chromium
+          sudo apt-get install -y --no-install-recommends libpangoft2-1.0-0 fonts-dejavu-core
+
+      - name: Run all API and browser features
+        working-directory: backend
+        run: |
+          uv run --locked --extra dev --extra ops --extra ocr pytest tests/bdd --run-browser -q --scenario-report ../report
+
+      - name: Stop self-host installation
+        if: always()
+        run: |
+          if [[ -f .env.selfhost ]]; then
+            bash scripts/self-host.sh stop 2>&1 | tee -a "$RUNNER_TEMP/scenario-selfhost.log"
+          fi
+
+      - name: Collect bounded scenario logs
+        if: always()
+        run: |
+          mkdir -p report/logs
+          cp "$RUNNER_TEMP/scenario-selfhost.log" report/logs/selfhost.log
+          # Keep the backend log's last 2 MiB; browser traces already keep failures only.
+          docker logs verwalino-app-1 2>&1 | tail -c 2097152 > report/logs/backend.log
+
+      - name: Publish scenario summary
+        if: always()
+        run: |
+          if [[ ! -f report/summary.md ]]; then
+            mkdir -p report
+            printf 'Scenario execution did not produce a report; see job logs and the artifact.\n' > report/summary.md
+          fi
+          cat report/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain scenario history
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scenarios-${{ matrix.mode }}-${{ env.SCENARIO_DATE }}
+          path: report/
+          retention-days: 90

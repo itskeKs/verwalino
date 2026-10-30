@@ -10,18 +10,44 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from uuid import uuid4
 
+import httpx
 import pytest
 import pytest_asyncio
 
-from tests.bdd.world import World
+from tests.bdd.world import World, admin_credentials, target_url
 from tests.bdd.browser import browser_app, browser_session, browser_world  # noqa: F401
 
 # Reused as-is: a throw-away user that may change its password without
 # touching the shared seed users (see tests/test_auth_password.py).
-from tests.test_auth_password import password_identity  # noqa: F401
 from tests.setup_support import fresh_setup  # noqa: F401
 from app.core.deployment_policy import get_deployment_policy
+from tests.test_auth_password import password_identity as local_password_identity  # noqa: F401
+
+
+@pytest.fixture(scope="session", autouse=True)
+def run_migrations(request):
+    if not target_url():
+        return request.getfixturevalue("run_migrations")
+
+
+@pytest.fixture(autouse=True)
+def inject_test_engine(request):
+    if not target_url():
+        return request.getfixturevalue("inject_test_engine")
+
+
+@pytest.fixture(scope="session")
+def seed_data(request):
+    if not target_url():
+        return request.getfixturevalue("seed_data")
+    email, password = admin_credentials()
+    with httpx.Client(base_url=target_url(), timeout=60) as client:
+        response = client.post("/api/auth/login", json={"email": email, "password": password})
+        assert response.status_code == 200, f"External admin login answered {response.status_code}"
+        identity = response.json()
+    return {"user_a_admin_id": identity["user_id"], "org_a_id": identity["organization_id"]}
 
 
 @pytest_asyncio.fixture
@@ -31,10 +57,46 @@ async def bdd_loop():
 
 
 @pytest.fixture
-def world(bdd_loop, client_a_admin, client_b_admin, client_unauth, request) -> World:
-    state = World(bdd_loop, [client_a_admin, client_b_admin], client_unauth)
+def world(bdd_loop, request):
+    if target_url():
+        admin = httpx.AsyncClient(base_url=target_url(), timeout=60)
+        anonymous = httpx.AsyncClient(base_url=target_url(), timeout=60)
+        state = World(bdd_loop, [admin], anonymous, primary_organization_alias="Verwaltung Alpha")
+    else:
+        admin = request.getfixturevalue("client_a_admin")
+        anonymous = request.getfixturevalue("client_unauth")
+        state = World(bdd_loop, [admin, request.getfixturevalue("client_b_admin")], anonymous)
     state.data["scenario"] = request.node.name
-    return state
+    try:
+        if target_url():
+            email, password = admin_credentials()
+            response = state.send(admin, "POST", "/api/auth/login", json={"email": email, "password": password})
+            assert response.status_code == 200, f"External admin login answered {response.status_code}"
+        yield state
+    finally:
+        if target_url():
+            state.run(admin.aclose())
+            state.run(anonymous.aclose())
+
+
+@pytest.fixture
+def password_identity(request, world):
+    if not target_url():
+        yield request.getfixturevalue("local_password_identity")
+        return
+    from tests.bdd.steps.password import CURRENT_PASSWORD
+    email = f"scenario-password-{uuid4()}@example.test"
+    response = world.send(world.administrator_of("Verwaltung Alpha"), "POST", "/api/users", json={
+        "email": email, "password": CURRENT_PASSWORD, "display_name": "Scenario password user", "role": "CLERK",
+    })
+    assert response.status_code == 201, world.describe_response()
+    client = httpx.AsyncClient(base_url=target_url(), timeout=60)
+    try:
+        response = world.send(client, "POST", "/api/auth/login", json={"email": email, "password": CURRENT_PASSWORD})
+        assert response.status_code == 200, world.describe_response()
+        yield client, email
+    finally:
+        world.run(client.aclose())
 
 
 def pytest_addoption(parser):
@@ -47,6 +109,15 @@ def pytest_collection_modifyitems(config, items):
         for required_mode in ("selfhost", "hosted"):
             if item.get_closest_marker(required_mode) and mode != required_mode:
                 item.add_marker(pytest.mark.skip(reason=f"Requires {required_mode} deployment; running in {mode}"))
+        if target_url():
+            template = getattr(item.obj, "__scenario__", None)
+            if template:
+                reason = {
+                    "organization_isolation.feature": "External isolation requires two organizations; only the bootstrap organization is configured",
+                    "first_run_setup.feature": "Setup requires a fresh installation; the external target already has a bootstrap organization",
+                }.get(Path(template.feature.filename).name)
+                if reason:
+                    item.add_marker(pytest.mark.skip(reason=reason))
         if item.get_closest_marker("browser") and not config.getoption("--run-browser", default=False):
             item.add_marker(pytest.mark.skip(reason="Use make test-browser to run browser journeys"))
 

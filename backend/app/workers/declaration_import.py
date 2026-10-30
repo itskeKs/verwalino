@@ -11,6 +11,8 @@ import secrets
 import shutil
 import subprocess
 import uuid
+
+from app.core.request_id import correlation_context
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, suppress
 from dataclasses import dataclass
@@ -269,16 +271,17 @@ class DeclarationImportWorker:
         lease = await self.claim_one(organization_id) if organization_id is not None else await self.claim_one()
         if lease is None:
             return WorkerResult("IDLE")
-        try:
-            if await self._attempt_limit_reached(lease):
-                if await self._fail_attempt_limit(lease):
-                    return WorkerResult("WORKER_ATTEMPT_LIMIT_REACHED", lease.import_id)
-                return WorkerResult("LEASE_LOST", lease.import_id)
-            return await self._run_claimed(lease)
-        except DeclarationPrincipalDenied:
-            async with self._tenant_session_factory(lease.organization_id) as session:
-                await DeclarationImportRepository(session, lease.organization_id).cancel_unauthorized(lease)
-            return WorkerResult("JOB_PERMISSION_CHANGED", lease.import_id)
+        with correlation_context(lease.import_id):
+            try:
+                if await self._attempt_limit_reached(lease):
+                    if await self._fail_attempt_limit(lease):
+                        return WorkerResult("WORKER_ATTEMPT_LIMIT_REACHED", lease.import_id)
+                    return WorkerResult("LEASE_LOST", lease.import_id)
+                return await self._run_claimed(lease)
+            except DeclarationPrincipalDenied:
+                async with self._tenant_session_factory(lease.organization_id) as session:
+                    await DeclarationImportRepository(session, lease.organization_id).cancel_unauthorized(lease)
+                return WorkerResult("JOB_PERMISSION_CHANGED", lease.import_id)
 
     async def run_forever(self) -> None:
         delay = float(self._settings.declaration_worker_poll_seconds)
@@ -291,7 +294,8 @@ class DeclarationImportWorker:
                 logger.warning("declaration worker result=UNEXPECTED")
                 await self._sleep(min(max(delay, 0.01), 30.0))
                 continue
-            logger.info("declaration worker result=%s import_id=%s", result.code, result.import_id)
+            with correlation_context(result.import_id or "-"):
+                logger.info("declaration worker result=%s import_id=%s", result.code, result.import_id)
             # Keep retrying missing migrations/empty queues, but bound any idle
             # wait to avoid an unresponsive process after configuration changes.
             await self._sleep(min(max(delay, 0.01), 30.0))
@@ -355,6 +359,8 @@ async def _main() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from app.core.logging import configure_logging
+    configure_logging()
     parser = argparse.ArgumentParser(description="Run the declaration import worker.")
     parser.add_argument("--healthcheck", action="store_true")
     options = parser.parse_args(argv)
