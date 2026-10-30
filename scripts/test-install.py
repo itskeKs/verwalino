@@ -66,7 +66,10 @@ elif name == "cosign":
 elif name == "self-host.sh":
     if args == ["help"]:
         print("init start" + (" doctor" if os.environ.get("HAS_DOCTOR") else ""))
+        sys.exit(int(os.environ.get("HELP_FAIL", "0")))
     elif args == ["doctor"]:
+        if os.environ.get("DOCTOR_REQUIRES_CONFIG") and not pathlib.Path(os.environ["VERWALINO_CONFIG"]).exists():
+            sys.exit(1)
         sys.exit(int(os.environ.get("DOCTOR_FAIL", "0")))
     elif args and args[0] == "init":
         config = pathlib.Path(os.environ["VERWALINO_CONFIG"])
@@ -151,7 +154,7 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.calls("curl") + self.calls("wget"), [])
         self.assertEqual(self.calls("self-host.sh"), [
-            ["help"], ["init", "--image", IMAGE, "--port", "19080"], ["start"]])
+            ["init", "--image", IMAGE, "--port", "19080"], ["help"], ["start"]])
         self.assertEqual(self.calls("docker"), [["compose", "version", "--short"], ["info"]])
         self.assertIn("/setup", result.stdout)
         self.assertIn("test-terminal-token", result.stdout)
@@ -244,6 +247,19 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(config.read_text(), "preserve these bytes\n")
         self.assertEqual(self.calls("curl") + self.calls("wget"), [])
 
+    def test_nonempty_directory_requires_force_before_replacing_files(self):
+        helper = self.dest / "scripts/self-host.sh"
+        helper.parent.mkdir(parents=True)
+        helper.write_text("preserve this helper\n")
+        self.assert_aborted(self.run_install(offline=False), "not empty")
+        self.assertEqual(helper.read_text(), "preserve this helper\n")
+        self.assertEqual(self.calls("curl") + self.calls("wget"), [])
+        result = self.run_install("--force")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(helper.read_bytes(), (self.bundle / "self-host.sh").read_bytes())
+        self.assertEqual(self.calls("self-host.sh"), [
+            ["init", "--image", IMAGE], ["help"], ["start"]])
+
     def test_force_retries_the_same_image_without_overwriting_configuration(self):
         self.dest.mkdir()
         config = self.dest / ".env.selfhost"
@@ -252,7 +268,7 @@ class InstallTests(unittest.TestCase):
         result = self.run_install("--force")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(config.read_text(), before)
-        self.assertEqual(self.calls("self-host.sh"), [["help"], ["init"], ["start"]])
+        self.assertEqual(self.calls("self-host.sh"), [["init"], ["help"], ["start"]])
 
     def test_force_refuses_image_changes_and_reconfiguration(self):
         self.dest.mkdir()
@@ -268,11 +284,53 @@ class InstallTests(unittest.TestCase):
         self.assertIn(["init", "--image", IMAGE, "--https", "verwaltung.example.org", "--port", "19080"],
                       self.calls("self-host.sh"))
 
-    def test_doctor_is_optional_and_a_failure_stops_initialization(self):
+    def test_doctor_runs_after_init_creates_configuration_and_before_start(self):
+        self.env.update(HAS_DOCTOR="1", DOCTOR_REQUIRES_CONFIG="1")
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls("self-host.sh"), [
+            ["init", "--image", IMAGE], ["help"], ["doctor"], ["start"]])
+
+    def test_doctor_failure_stops_start(self):
         self.env.update(HAS_DOCTOR="1", DOCTOR_FAIL="1")
         result = self.run_install()
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(self.calls("self-host.sh"), [["help"], ["doctor"]])
+        self.assertIn("doctor check failed", result.stderr)
+        self.assertEqual(self.calls("self-host.sh"), [
+            ["init", "--image", IMAGE], ["help"], ["doctor"]])
+
+    def test_doctor_failure_still_stops_start_when_help_exits_nonzero(self):
+        self.env.update(HAS_DOCTOR="1", HELP_FAIL="1", DOCTOR_FAIL="1")
+        result = self.run_install()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("doctor check failed", result.stderr)
+        self.assertEqual(self.calls("self-host.sh"), [
+            ["init", "--image", IMAGE], ["help"], ["doctor"]])
+
+    def test_piped_install_reaches_start_when_doctor_and_init_read_stdin(self):
+        self.env["HAS_DOCTOR"] = "1"
+        (self.bundle / "self-host.sh").write_text(
+            'if [[ "$1" = doctor || "$1" = init ]]; then cat >/dev/null; fi\n'
+            'exec "$INSTALL_TEST_PYTHON" "$INSTALL_TEST_HELPER" "$@"\n')
+        self.checksums()
+        result = self.run_install(piped=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls("self-host.sh"), [
+            ["init", "--image", IMAGE], ["help"], ["doctor"], ["start"]])
+
+    def test_truncated_piped_script_does_not_create_installation_files(self):
+        script = SCRIPT.read_text().split('stage=$(mktemp', 1)[0]
+        subprocess.run(["/bin/bash", "-s", "--", "--dir", str(self.dest), "--version", TAG],
+                       env=self.env, cwd=self.base, input=script, text=True,
+                       capture_output=True, timeout=15, check=False)
+        self.assertFalse(self.dest.exists())
+        self.assertFalse(self.log.exists())
+
+    def test_release_workflow_pins_both_cosign_installers_to_existing_tag(self):
+        workflow = (ROOT / ".github/workflows/release-image.yaml").read_text()
+        refs = [line.strip() for line in workflow.splitlines()
+                if "uses: sigstore/cosign-installer@" in line]
+        self.assertEqual(refs, ["uses: sigstore/cosign-installer@v4.1.2"] * 2)
 
     def test_wget_and_sha256sum_fallbacks_work_without_curl_or_shasum(self):
         (self.binary / "curl").unlink()

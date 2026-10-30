@@ -104,7 +104,7 @@ jobs:
       # BuildKit attaches provenance and SBOMs; sign their enclosing image index.
       # A second provenance producer is unnecessary for this release path.
       - name: Install cosign
-        uses: sigstore/cosign-installer@v4
+        uses: sigstore/cosign-installer@v4.1.2
 
       - name: Sign image digest with GitHub OIDC
         env:
@@ -152,7 +152,7 @@ jobs:
           sha256sum install.sh self-host.sh docker-compose.yml Caddyfile prod-init.sh env.example IMAGE_DIGEST > SHA256SUMS
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v4
+        uses: sigstore/cosign-installer@v4.1.2
 
       - name: Sign checksums with GitHub OIDC
         run: cosign sign-blob --yes --bundle release-assets/SHA256SUMS.sigstore.json release-assets/SHA256SUMS

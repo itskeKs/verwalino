@@ -53,16 +53,18 @@ the script before executing it.
 The verified `IMAGE_DIGEST` pins the multi-platform GHCR image without a
 registry lookup. The script runs `scripts/self-host.sh init --image
 ghcr.io/itskeks/verwalino@sha256:…`, forwarding `--https`/`--port`, then `start`.
-If that release's helper advertises `doctor` in its help, it runs that check
-first; the current helper has no doctor. All installation files and any
-temporary signature cache stay under `--dir`; the script does not send
-telemetry. Docker pulls images and creates the existing portable stack's
+If that release's helper advertises `doctor` in its help, the installer runs it
+after `init` creates the config and before `start`, stopping if it fails.
+All installation files and any temporary signature cache stay under `--dir`;
+the script does not send telemetry. Docker pulls images and creates the existing portable stack's
 volumes/networks as described below. It does not clone the source or build the
 application on the host.
 
-Init creates `.env.selfhost` with fresh secrets and mode 0600. An existing
-config blocks the installer before downloading anything. To retry a failed
-start, rerun with **the same `--version` and `--dir`**, plus `--force`; omit
+Init creates `.env.selfhost` with fresh secrets and mode 0600.
+A non-empty `--dir` (default `./verwalino`) without `.env.selfhost` is refused
+unless `--force` is given. An existing config blocks the installer before
+downloading anything. To retry a failed start, rerun with **the same `--version`
+and `--dir`**, plus `--force`; omit
 `--https` and `--port`. The existing config is kept byte for byte, and a
 different image digest is refused. This is a retry, not an upgrade mechanism.
 Use the installed helper for normal operations:

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Download a stable release bundle, verify it, then use its portable installer.
+main() {
 set -euo pipefail
 export LC_ALL=C
 
@@ -17,6 +18,8 @@ curl or wget, and sha256sum or shasum. Cosign is optional for signature checks.
   in the offline bundle directory to verify without fetching service keys.
 --force retries an existing config with the same image, preserving its bytes.
   It cannot upgrade or reconfigure; omit --https and --port when retrying.
+A non-empty DIR without .env.selfhost also requires --force to replace files.
+Runs init, then doctor if available (failure stops installation), then start.
 Writes installation files only under DIR; never overwrites .env.selfhost.
 Setup URL/token pass directly to your terminal. Keep that output private.
 HELP
@@ -59,6 +62,13 @@ for path in scripts infra infra/db install.sh scripts/self-host.sh infra/docker-
             infra/Caddyfile infra/db/prod-init.sh env.example IMAGE_DIGEST SHA256SUMS SHA256SUMS.sigstore.json; do
     [[ ! -L "$directory/$path" ]] || fail "Symlink destination refused: $path."
 done
+
+if [[ -d "$directory" && ! -e "$VERWALINO_CONFIG" && "$force" != 1 ]]; then
+    for path in "$directory"/* "$directory"/.[!.]* "$directory"/..?*; do
+        [[ ! -e "$path" && ! -L "$path" ]] \
+            || fail 'Installation directory is not empty; use --force to replace installation files.'
+    done
+fi
 
 command -v docker >/dev/null || fail 'Docker with Compose v2 is required.'
 compose_version=$(docker compose version --short 2>/dev/null) || fail 'Docker Compose v2 >= 2.24 is required.'
@@ -170,16 +180,20 @@ for file in install.sh env.example IMAGE_DIGEST SHA256SUMS SHA256SUMS.sigstore.j
     mv "$stage/$file" "$directory/$file"
 done
 cd "$directory"
-if bash scripts/self-host.sh help 2>&1 | grep -q doctor; then
-    bash scripts/self-host.sh doctor || fail 'Self-host doctor check failed.'
-fi
 if [[ -e "$VERWALINO_CONFIG" ]]; then
-    bash scripts/self-host.sh init || fail 'Self-host init failed.'
+    bash scripts/self-host.sh init </dev/null || fail 'Self-host init failed.'
 else
     init_args=(--image "$image")
     [[ -z "$https" ]] || init_args+=(--https "$https")
     [[ -z "$port" ]] || init_args+=(--port "$port")
-    bash scripts/self-host.sh init "${init_args[@]}" || fail 'Self-host init failed.'
+    bash scripts/self-host.sh init "${init_args[@]}" </dev/null || fail 'Self-host init failed.'
+fi
+help_text=$(bash scripts/self-host.sh help </dev/null 2>&1 || true)
+if [[ "$help_text" == *doctor* ]]; then
+    bash scripts/self-host.sh doctor </dev/null || fail 'Self-host doctor check failed.'
 fi
 # Keep stdout/stderr attached: never capture or persist the setup token.
-bash scripts/self-host.sh start || fail 'Self-host start failed; retry this release with --force after resolving the error.'
+bash scripts/self-host.sh start </dev/null || fail 'Self-host start failed; retry this release with --force after resolving the error.'
+}
+
+main "$@"
