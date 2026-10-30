@@ -4,6 +4,7 @@ Verwalino is a property-management app (rental, WEG, SEV). FastAPI + SQLAlchemy 
 with row-level security in `backend/`, React + Vite + TypeScript in `frontend/`. It runs from one
 image in two ways: self-hosted by anyone, and as a free hosted multi-organization service.
 Where it is going: [docs/roadmap.md](docs/roadmap.md). What exists: [docs/feature-status.md](docs/feature-status.md).
+How the frontend looks and reads: [DESIGN.md](DESIGN.md).
 Human-facing workflow and commands: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 The software is German; documentation, issues, code comments, tests and commits are English.
@@ -51,7 +52,8 @@ Scoped rules add context, not enforcement; every baseline and safety rule here s
 CI (`.github/workflows/tests-on-pr.yaml`) runs the same on every PR. A red job is fixed, not
 skipped. Do not bypass the hook to land code.
 
-Update docs in the same PR under the [documentation contract](.claude/rules/docs.md).
+Update docs in the same PR under the [documentation contract](.claude/rules/docs.md); a change to the
+look or copy of the frontend updates [DESIGN.md](DESIGN.md).
 `docs/archive/` is legacy: do not read it or treat it as rules unless the user asks for a
 specific question.
 
@@ -66,7 +68,7 @@ specific question.
 5. Simple checks after the action beat predictive checks before it.
 6. Classify errors by structured fields (codes, types), never by message text.
 7. UI reports real outcomes only; no placeholder text, no "everything OK" when there is nothing
-   to report. Follow the [frontend rule](.claude/rules/frontend-ui.md) for components and formats.
+   to report. Follow the [frontend rule](.claude/rules/frontend-ui.md) and [DESIGN.md](DESIGN.md) for components and formats.
 8. Test representative long inputs and many rows.
 9. Use what exists and works (libraries, modules, fixtures) before writing new mechanisms.
 

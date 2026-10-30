@@ -95,4 +95,5 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 | `features/` | Gherkin scenarios (executable specs) |
 | `frontend/src/` | `pages/`, `components/`, `api/`, `lib/` |
 | `scripts/` | dev, self-host, deploy, checks; `acceptance/` holds legacy browser scripts (being migrated, #5) |
+| `DESIGN.md` | frontend design contract: tokens, layout, components, states, copy and formats; screenshots in `docs/assets/design/` |
 | `docs/` | architecture, domain pages (`m*.md`), ADRs, operations, roadmap, feature status |

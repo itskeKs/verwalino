@@ -16,6 +16,7 @@ paths:
 | A feature's status | Its row in `docs/feature-status.md` |
 | Deployment, installation or configuration keys | `DEPLOY.md`, `.env.example` and `scripts/self-host.sh` help |
 | An architectural decision binding future work | A new ADR under `docs/adr/` |
+| The look of the frontend: tokens, layout, components, states, copy or formats | `DESIGN.md` and its screenshots in `docs/assets/design/` |
 | A file, route, key or command rename | Every mention; `git grep -n '<old>'` returns no stale mentions outside `docs/archive/` |
 
 - Read `docs/domain-reference.md` selectively with `rg -n` for product workflows.

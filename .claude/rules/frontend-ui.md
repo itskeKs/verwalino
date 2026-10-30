@@ -10,7 +10,8 @@ paths:
   dates as `TT.MM.JJJJ`; follow existing formatting at the call site.
 - Reuse `frontend/src/components/ui/`, existing page patterns,
   `frontend/src/index.css` and `frontend/src/lib/utils.ts` before adding styles
-  or components. This checkout has no DESIGN.md.
+  or components. [DESIGN.md](../../DESIGN.md) is the design contract: tokens, layout,
+  components, states, copy and formats.
 - Report real outcomes; no placeholder success or "everything OK" for an empty
   result. Preserve useful inputs when a request fails.
 - Check long German names, four-digit amounts, many rows and narrow screens.
