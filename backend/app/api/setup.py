@@ -1,6 +1,7 @@
 """Unauthenticated first-run entry points; all creation is gated in PostgreSQL."""
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable
 
@@ -16,6 +17,8 @@ from app.api.auth import LoginResponse, _set_session_cookie
 from app.core.auth_db import lookup_login_principal
 from app.core.db import get_session_factory
 from app.core.security import create_session_token, hash_password, normalize_email, validate_new_password
+
+logger = logging.getLogger(__name__)
 
 
 class SetupRoute(APIRoute):
@@ -64,7 +67,7 @@ class SetupRequest(BaseModel):
     @field_validator("admin_email", mode="before")
     @classmethod
     def email_is_valid(cls, value: object) -> str:
-        normalized = normalize_email(value)
+        normalized = normalize_email(cls.clean_text(value))
         if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized):
             raise ValueError("Invalid email")
         return normalized
@@ -110,7 +113,9 @@ async def complete_setup(body: SetupRequest, response: Response) -> LoginRespons
         # Hide sensitive setup parameters without changing other routes' errors.
         error.hide_parameters = True
         # Classification uses SQLSTATE, never driver message text or input values.
-        if getattr(error.orig, "sqlstate", None) != "P0001":
+        sqlstate = getattr(error.orig, "sqlstate", None)
+        if sqlstate != "P0001":
+            logger.warning("Setup database error (SQLSTATE %s)", sqlstate)
             raise HTTPException(status_code=503, detail="Einrichtung derzeit nicht verfügbar.") from None
         await require_setup()
         raise HTTPException(status_code=403, detail=REFUSED) from None

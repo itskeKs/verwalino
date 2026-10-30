@@ -52,9 +52,14 @@ async def test_downgrade_refuses_to_discard_pending_or_consumed_tokens(fresh_set
 @pytest.mark.asyncio
 async def test_setup_function_has_fixed_security_settings_and_narrow_acl(app_rw_session):
     signature = {"signature": "public.setup_first_organization(text,text,text,text,text)"}
-    security = (await app_rw_session.execute(text("SELECT prosecdef,proconfig FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)"), signature)).one()
+    metadata = text("SELECT pg_get_userbyid(proowner) AS owner,prosecdef,proconfig FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)")
+    security = (await app_rw_session.execute(metadata, signature)).one()
+    assert security.owner == 'app_migrator'
     assert security.prosecdef is True
     assert security.proconfig == ['search_path=pg_catalog, pg_temp', 'row_security=off']
+    bootstrap = (await app_rw_session.execute(metadata, {"signature": "public.bootstrap_organization_admin(text,text,text,text)"})).one()
+    assert bootstrap.prosecdef is False
+    assert bootstrap.proconfig == ['search_path=pg_catalog, pg_temp', 'row_security=off']
     grants = (await app_rw_session.execute(text("""SELECT pg_get_userbyid(a.grantee),a.privilege_type,a.is_grantable
         FROM pg_proc p CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
         WHERE p.oid=CAST(:signature AS regprocedure) AND a.grantee<>p.proowner"""), signature)).all()

@@ -1,4 +1,6 @@
 """Browser setup API boundaries."""
+import logging
+
 import pytest
 from sqlalchemy import text
 from tests.setup_support import BODY, fresh_setup  # noqa: F401
@@ -117,8 +119,8 @@ async def test_unusable_tokens_have_the_same_refusal(fresh_setup, state):
     {"admin_name": " "}, {"admin_name": "a" * 256},
     {"admin_email": "bad-address"}, {"admin_email": "a" * 321},
     {"password": "short"}, {"password": "a" * 129},
-    *({field: "before" + control + "after"}
-      for field in ("token", "organization_name", "admin_name")
+    *({field: "before" + control + "after" + ("@example.test" if field == "admin_email" else "")}
+      for field in ("token", "organization_name", "admin_name", "admin_email")
       for control in ("\x00", "\x1f", "\x7f", "\x85")),
 ])
 async def test_setup_rejects_invalid_input_without_consuming_the_token(fresh_setup, changes):
@@ -157,3 +159,20 @@ async def test_setup_database_errors_hide_only_setup_parameters(fresh_setup):
     database_error = error.value.__context__
     assert database_error.hide_parameters is True
     assert "private-wrong-token" not in str(database_error)
+
+
+@pytest.mark.asyncio
+async def test_setup_database_failures_log_only_the_sqlstate(fresh_setup, caplog, monkeypatch):
+    from fastapi import HTTPException, Response
+    from app.api.setup import SetupRequest, complete_setup, logger
+
+    # Alembic fileConfig disables loggers imported before migration rehearsals.
+    monkeypatch.setattr(logger, "disabled", False)
+    # Bypass validation to exercise a real driver failure without changing the API.
+    body = SetupRequest(**BODY).model_copy(update={"admin_email": "private\x00@example.test"})
+    with caplog.at_level(logging.WARNING, logger="app.api.setup"), pytest.raises(HTTPException) as error:
+        await complete_setup(body, Response())
+    assert error.value.status_code == 503
+    assert error.value.__context__.orig.sqlstate == "22021"
+    assert caplog.record_tuples == [("app.api.setup", logging.WARNING, "Setup database error (SQLSTATE 22021)")]
+    assert caplog.records[0].exc_info is None

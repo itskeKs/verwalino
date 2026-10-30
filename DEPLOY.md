@@ -90,10 +90,10 @@ not include terminal output in support logs. It expires after 24 hours; run
 `start` again to replace a lost/expired token and invalidate the previous one.
 A failed start does not print a token; retry `start` to issue another one.
 Once any organization exists, no token is issued, the form redirects to login,
-and non-GET setup requests return the same 404 body as unknown API routes.
+and non-GET setup requests return the same 404 body as unknown API GET routes.
 Wrong, consumed or expired tokens receive one generic German 403 response; invalid fields
 receive 422. Leading/trailing spaces in the token and organization/admin names
-are trimmed; control characters in these fields are rejected. If the initial
+are trimmed; control characters in these fields and the admin email are rejected. If the initial
 setup-status request fails, login and signed-in pages remain available; reload
 after connectivity recovers to open setup on a fresh installation.
 No signup or application rate limiter is included.
