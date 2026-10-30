@@ -88,12 +88,85 @@ For automation feed a newline-terminated password from a secret manager to
 checked-in files, or an `echo` command in shell history.
 
 Use `status` for container status and `stop` to stop without deleting any data.
-There is deliberately no destroy, automatic update or backup command. Before
-an upgrade, plan a consistent backup of the stopped application's database,
-document volume and private config, and test restoring them together on a
-separate host. An older image is not a schema rollback. This feature does not
-authorize an alpha deployment, promote its schema gate, or supply a backup
-and disaster-recovery guarantee.
+There is deliberately no destroy or automatic update command. An older image
+is not a schema rollback. This feature does not authorize an alpha deployment
+or promote its schema gate.
+
+### Portable backup and restore
+
+```bash
+bash scripts/self-host.sh backup --out /private/backups
+# Default output directory is the current directory.
+bash scripts/self-host.sh stop
+bash scripts/self-host.sh restore /private/backups/verwalino-backup-20261030T120000Z.tar
+bash scripts/self-host.sh start
+```
+
+`backup` works with the app and database running. It writes one private (0600)
+`verwalino-backup-YYYYMMDDTHHMMSSZ.tar`, prints its absolute path and size in
+bytes, and never overwrites a same-named archive. Its three members are:
+
+- `db.dump`: a consistent PostgreSQL custom-format snapshot (`pg_dump -Fc`),
+  executed inside this installation's `db` container as `app_migrator`.
+- `documents.tar.gz`: the documents volume copied **after** the database dump.
+  A one-shot app-image helper overrides the web entrypoint, starts no dependent
+  services, and uses the existing project-owned documents volume. Concurrent
+  uploads can add later files; this is not an atomic database/filesystem snapshot.
+  Stop the app first if an exact maintenance-window pair is required, leaving
+  the database running for the dump.
+- `manifest.json`: `format` (`verwalino-selfhost`), `format_version` (1),
+  `schema_head` (queried from `alembic_version` during backup), `app_image`
+  (configured image reference, including a digest when selected), `created_at`
+  (UTC), and `config_fingerprint`. The latter is SHA-256 over the five ordered
+  `KEY=value\n` settings `VERWALINO_MODE`, `VERWALINO_DOMAIN`, `VERWALINO_PORT`,
+  `VERWALINO_IMAGE`, `VERWALINO_PROXY_SUBNET`.
+
+The helper runs as root with only `CHOWN` and `DAC_OVERRIDE` added to the app's
+otherwise dropped capabilities, so it can access the private staging bind and
+restore app-owned files (UID/GID 10001). It uses the app image's Python; host
+Python is not required. The archive contains application data, including account
+and session data; protect it accordingly. Installation passwords, session signing
+secret and the private configuration file are **not** included. Neither are
+PostgreSQL roles/passwords, container images, Caddy state/certificates or external
+services. Keep the original `.env.selfhost` separately in a private encrypted
+backup; init must not regenerate credentials for an existing installation.
+Retain the reviewed checkout and the selected image, especially a mutable local
+build, so recovery has the required application and PostgreSQL tools.
+
+`restore FILE [--yes]` checks the private config and acquires the installer lock,
+then refuses running app/migration/bootstrap containers with the `stop` command.
+It copies the input to private staging, requires all three regular archive members,
+checks the manifest marker and format version, and refuses a schema newer than
+this checkout's `TARGET` in `backend/app/deployment.py`. Unknown/ambiguous heads,
+unsafe document paths, links, special files and invalid document archives are
+refused before the database starts. An older numeric schema head is allowed;
+`start` performs subsequent migrations. This portable restore check does not
+change the alpha's narrower `SUPPORTED` upgrade gate.
+
+A different configuration fingerprint emits a warning. Restore then asks you to
+type `restore`; `--yes` explicitly skips that prompt for automation. It starts
+**only db**, checks the dump's table of contents with `pg_restore --list`, drops
+and recreates `hausverwaltung` with `dropdb --if-exists` and `createdb -T template0`,
+and imports via `pg_restore -U app_migrator -d hausverwaltung --exit-on-error
+--single-transaction`. This removes old database objects rather than retaining
+objects absent from the backup; database roles and their current passwords stay.
+Only after a successful database import does it replace document contents,
+including hidden files, without deleting the volume. It stages the extracted
+files on that volume before clearing old content; allow free space for both.
+Finally it stops db and prints the `start` command. A failure also attempts to
+stop db, reports nonzero, and leaves the app stopped. Restore is destructive;
+it provides no automatic rollback if database import or document replacement fails.
+Use only trusted archives: PostgreSQL restoration executes SQL from the dump.
+
+Back up at least daily while the installation is in use and before a reviewed
+upgrade or destructive maintenance. Copy completed archives to a separate,
+access-controlled encrypted disk or another host; the local output directory
+alone is not disaster recovery. Off-site transfer, scheduling, retention and
+automatic updates are operator responsibilities. Periodically test recovery on
+a separate authorized installation with the original private config. Contract
+tests and a real PostgreSQL dump/archive/schema-wipe/restore round trip cover
+format and command behavior; a complete running self-host installation restore
+has not yet been accepted.
 
 AI declaration import/Q&A, SMTP and invoice OCR are disabled in this initial
 portable stack. Manual invoice review remains supported. The T10 worker is
