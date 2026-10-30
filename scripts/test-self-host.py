@@ -57,6 +57,8 @@ if "bootstrap" in sys.argv:
 if "exec" in sys.argv and "psql" in sys.argv:
     if any("SELECT count(*) FROM public.organization" in arg for arg in sys.argv):
         print(os.environ.get("FAKE_ORGANIZATION_COUNT", "1"))
+    elif any("SELECT version_num FROM public.alembic_version" in arg for arg in sys.argv):
+        print("0141")
     else:
         with open(os.environ["FAKE_TOKEN_SQL"], "w") as capture:
             capture.write(sys.stdin.read())
@@ -307,11 +309,15 @@ if "exec" in sys.argv and "psql" in sys.argv:
                 self.assertNotIn(config[key], content)
         self.assertIn("installer-failure-123", members["errors.log"])
         self.assertIn("RuntimeError", members["errors.log"])
+        self.assertEqual(json.loads(members["database.json"])["migration_head"], "0141")
         args = [call["args"] for call in self.calls()]
-        self.assertEqual(len(args), 3)
+        self.assertEqual(len(args), 4)
         self.assertEqual(args[0][-4:], ["ps", "--all", "--format", "json"])
         self.assertTrue(any(call[-6:] == ["logs", "--no-color", "--no-log-prefix", "--tail", "2000", "app"] for call in args))
         build = next(call for call in args if "app.diagnostics" in call)
+        schema = next(call for call in args if "psql" in call)
+        self.assertEqual(schema[-8:], ["-U", "app_migrator", "-d", "hausverwaltung", "--set", "ON_ERROR_STOP=1", "-Atc", "SELECT version_num FROM public.alembic_version"])
+        self.assertEqual(build[build.index("--schema-head") + 1], "0141")
         start = build.index("run")
         self.assertEqual(build[start:start + 10], ["run", "--rm", "--no-deps", "-T", "--entrypoint", "python", "app", "-m", "app.diagnostics", "--containers-json"])
         self.assert_isolated(args)
@@ -322,13 +328,33 @@ if "exec" in sys.argv and "psql" in sys.argv:
         result = self.run_script("diagnose", "--out", str(output))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(Path(result.stdout.strip()).parent, output)
-        for command in ("ps", "logs", "app.diagnostics"):
+        for command in ("ps", "psql", "logs", "app.diagnostics"):
             self.env["FAKE_DOCKER_FAIL"] = command
             failed = self.run_script("diagnose", "--out", str(self.base / command))
             self.assertNotEqual(failed.returncode, 0)
             self.assertEqual(list((self.base / command).glob("*.tar.gz")), [])
         for args in [("--out",), ("--out", ""), ("--unknown", "x")]:
             self.assertNotEqual(self.run_script("diagnose", *args).returncode, 0)
+
+    def test_diagnose_preserves_an_existing_output_directory_mode(self):
+        self.init()
+        output = self.base / "existing"
+        output.mkdir(mode=0o755)
+        result = self.run_script("diagnose", "--out", str(output))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(Path(result.stdout.strip()).stat().st_mode), 0o600)
+
+    def test_diagnose_refuses_an_unwritable_existing_output_directory(self):
+        self.init()
+        output = self.base / "unwritable"
+        output.mkdir(mode=0o500)
+        self.addCleanup(output.chmod, 0o700)
+        result = self.run_script("diagnose", "--out", str(output))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Output directory is not writable", result.stderr)
+        self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o500)
+        self.assertEqual(self.calls(), [])
 
     def test_status_and_stop_are_non_destructive(self):
         self.init()

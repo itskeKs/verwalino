@@ -36,6 +36,11 @@ _CONFIG_KEY = re.compile(r'HV_[A-Z][A-Z0-9_]{0,95}')
 _SERVICES = frozenset({'app', 'db', 'caddy', 'migrate', 'bootstrap'})
 _STATES = frozenset({'running', 'exited', 'created', 'restarting', 'paused', 'removing', 'dead'})
 _HEALTH = frozenset({'healthy', 'unhealthy', 'starting', ''})
+# Deliberate allowlist: deployment/security switches are operator metadata.
+_TENANT_SWITCHES = frozenset({
+    'HV_ENABLE_API_DOCS', 'HV_FINANCIAL_COMPUTATION_ENABLED',
+    'HV_INVOICE_EXTRACTION_ENABLED', 'HV_DECLARATION_IMPORT_ENABLED', 'HV_DECLARATION_QA_ENABLED',
+})
 
 
 def bundle_filename(now: datetime | None = None) -> str:
@@ -49,10 +54,15 @@ def config_shapes(config: Mapping) -> dict:
     for key, value in config.items():
         if not isinstance(key, str) or not _CONFIG_KEY.fullmatch(key):
             continue
-        if hasattr(value, 'get_secret_value'):
+        secret = hasattr(value, 'get_secret_value')
+        if secret:
             value = value.get_secret_value()
         if value is None or value == '':
             result[key] = '<unset>'
+        elif secret or any(part in key for part in ('SECRET', 'PASSWORD', 'TOKEN', 'DSN', 'KEY')) or (
+            '_URL' in key and '@' in str(value)
+        ):
+            result[key] = '<set>'
         elif isinstance(value, bool):
             result[key] = '<bool>'
         elif isinstance(value, str):
@@ -120,8 +130,8 @@ def database_summary(database: Mapping | None) -> dict:
     return {
         'status': 'available' if database.get('status') == 'available' else 'unavailable',
         'scope': 'organization' if database.get('scope') == 'organization' else 'installation',
-        'migration_head': head if isinstance(head, str) and _REVISION.fullmatch(head) else None,
-        'organization_count': count if type(count) is int and count >= 0 else None,
+        'migration_head': head if database.get('scope') != 'organization' and isinstance(head, str) and _REVISION.fullmatch(head) else None,
+        'organization_count': count if database.get('scope') != 'organization' and type(count) is int and count >= 0 else None,
         'row_counts': {key: value for key, value in database.get('row_counts', {}).items()
                        if key in Base.metadata.tables and type(value) is int and value >= 0},
     }
@@ -148,6 +158,16 @@ def build_bundle(*, config: Mapping | None = None, log_lines: Iterable[str] = ()
         'feature_flags': {key: value for key, value in config.items()
                           if key in switches and type(value) is bool},
     }
+    if database and database.get('scope') == 'organization':
+        label = config.get('HV_ERROR_TRACKING_ENVIRONMENT', '')
+        mode = label if label in {'selfhost', 'hosted'} else (
+            'hosted' if isinstance(label, str) and label.startswith('hosted-') else None
+        )
+        environment = {
+            'deployment_mode': mode, 'app_version': APP_VERSION,
+            'feature_flags': {key: value for key, value in config.items()
+                              if key in _TENANT_SWITCHES and type(value) is bool},
+        }
     errors = diagnostic_log_lines(log_lines)
     members = {
         'manifest.json': json.dumps(manifest, indent=2),
@@ -161,7 +181,10 @@ def build_bundle(*, config: Mapping | None = None, log_lines: Iterable[str] = ()
             'Logs contain only time, severity, request ID and exception class (last 500 records).\n'
             'No messages, bodies, source, identities, addresses, credentials, config values,\n'
             'container names/commands/ports, DB rows or organization names are included.\n'
-            'API: current-process, current-organization logs since startup; no containers.\n'
+            'API: current-organization logs across live workers on this host; no containers.\n'
+            'Buffer: latest 500 overall plus latest 50 per organization; no multi-host aggregation.\n'
+            'API schema head is null: app_rw lacks SELECT on alembic_version; no privilege probe.\n'
+            'CLI schema head is supplied by the installer via migrator psql.\n'
             'CLI: up to 2000 source lines from Docker, installation-wide numeric counts.\n'
             'Unavailable metadata is null/marked unavailable, never a successful probe.\n'
             'Review before sharing. Request IDs and release identifiers must contain no personal data.\n'
@@ -198,17 +221,24 @@ async def collect_database(organization_id: UUID | None = None, actor_id: UUID |
             await connection.execute(text("SELECT set_config('statement_timeout', '5000', true)"))
             if not await connection.scalar(text("SELECT current_user='app_rw' AND session_user=current_user")):
                 return result
-            # Older deployments may not grant runtime access to alembic_version.
-            try:
-                async with connection.begin_nested():
-                    heads = list((await connection.execute(text('SELECT version_num FROM alembic_version'))).scalars())
-                    result['migration_head'] = heads[0] if len(heads) == 1 else None
-            except Exception:
-                result['migration_head'] = None
+            result['migration_head'] = None
+            if organization_id is None:
+                # Optional for direct CLI callers; the installer supplies the
+                # authoritative head separately without changing runtime grants.
+                try:
+                    async with connection.begin_nested():
+                        heads = list((await connection.execute(text('SELECT version_num FROM alembic_version'))).scalars())
+                        result['migration_head'] = heads[0] if len(heads) == 1 else None
+                except Exception:
+                    pass
             await connection.execute(text("SELECT set_config('app.current_user_id', :actor, true)"), {'actor': str(actor_id or UUID(int=0))})
-            result['organization_count'] = await connection.scalar(text('SELECT count(*) FROM organization'))
-            tables = list((await connection.execute(text("""SELECT tablename FROM pg_tables
-                WHERE schemaname='public' AND has_table_privilege(quote_ident(tablename), 'SELECT')"""))).scalars())
+            if organization_id is None:
+                result['organization_count'] = await connection.scalar(text('SELECT count(*) FROM organization'))
+            # OIDs remain valid even if the planner checks privileges before
+            # filtering schemas; unqualified pg_tables names need not resolve.
+            tables = list((await connection.execute(text("""SELECT c.relname FROM pg_class c
+                JOIN pg_namespace n ON n.oid=c.relnamespace
+                WHERE n.nspname='public' AND c.relkind IN ('r','p') AND has_table_privilege(c.oid, 'SELECT')"""))).scalars())
             # Only known tenant tables; global auth/setup metadata never becomes a row payload.
             tables = sorted(name for name in tables if name in Base.metadata.tables and
                             'organization_id' in Base.metadata.tables[name].c)
@@ -243,6 +273,7 @@ def main() -> int:
     parser.add_argument('--containers-json', default='[]')
     parser.add_argument('--image', default=os.environ.get('HV_IMAGE_DIGEST', ''))
     parser.add_argument('--log-file', help='Read logs from this file instead of stdin')
+    parser.add_argument('--schema-head', help='Schema revision read by the installer migrator')
     args = parser.parse_args()
     try:
         source = open(args.log_file, encoding='utf-8', errors='replace') if args.log_file else sys.stdin
@@ -254,9 +285,12 @@ def main() -> int:
                     break
                 yield line
         try:
+            database = asyncio.run(collect_database())
+            if args.schema_head is not None:
+                database['migration_head'] = args.schema_head
             data = build_bundle(config=runtime_config(), log_lines=lines(),
                                 containers=parse_containers(args.containers_json),
-                                database=asyncio.run(collect_database()),
+                                database=database,
                                 release_id=os.environ.get('HV_RELEASE_ID', ''),
                                 image=args.image)
         finally:

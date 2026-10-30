@@ -1,4 +1,4 @@
-"""Authenticated manual downloads, process-local log isolation and no uploads."""
+"""Authenticated manual downloads, organization isolation and no uploads."""
 import json
 import logging
 
@@ -63,3 +63,35 @@ async def test_admin_support_link_comes_from_setting(client_a_admin, client_a_cl
     assert response.status_code == 200
     assert response.json() == {'support_url': 'https://support.example.org/issues'}
     assert (await client_a_clerk.get('/api/admin/diagnostics')).status_code == 403
+
+
+async def test_hosted_admin_receives_only_tenant_metadata(client_a_admin, client_b_admin, seed_data, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, 'error_tracking_environment', 'hosted-production')
+    monkeypatch.setenv('HV_OPERATOR_PRIVATE_SWITCH', 'operator-only')
+    response = await client_b_admin.post('/api/admin/diagnostics')
+    assert response.status_code == 200
+    members = unpack_bundle(response.content)
+    database = json.loads(members['database.json'])
+    assert database['status'] == 'available'
+    assert database['organization_count'] is None
+    assert database['migration_head'] is None
+    # Alpha has three memberships; Beta has one. No Alpha rows may contribute.
+    assert database['row_counts']['membership'] == 1
+    environment = json.loads(members['environment.json'])
+    assert environment == {
+        'deployment_mode': 'hosted', 'app_version': app.version,
+        'feature_flags': {
+            'HV_ENABLE_API_DOCS': settings.enable_api_docs,
+            'HV_FINANCIAL_COMPUTATION_ENABLED': settings.financial_computation_enabled,
+            'HV_INVOICE_EXTRACTION_ENABLED': settings.invoice_extraction_enabled,
+            'HV_DECLARATION_IMPORT_ENABLED': settings.declaration_import_enabled,
+            'HV_DECLARATION_QA_ENABLED': settings.declaration_qa_enabled,
+        },
+    }
+    content = ''.join(members.values())
+    assert all(value not in content for value in (
+        str(seed_data['org_a_id']), 'Verwaltung Alpha', 'HV_OPERATOR_PRIVATE_SWITCH',
+        'HV_SESSION_SECRET', 'HV_DATABASE_URL', 'HV_SMTP_PASSWORD', 'hosted-production',
+    ))

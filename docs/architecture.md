@@ -199,12 +199,17 @@ allowlisted metadata, configuration shapes, RLS-visible numeric counts and scrub
 structural error records. `POST /api/admin/diagnostics` requires `OWNER_ADMIN`, returns
 an uncached attachment and logs a correlated INFO audit line; `GET` supplies the support
 URL. A bounded transient logging handler retains no free text or LogRecord, partitions
-records by the validated organization, and exposes only the current process's view.
+records by the validated organization, and reads a shared per-host JSONL buffer across
+web workers. The latest 500 records overall and at least the latest 50 per organization
+are retained; dead workers' files are pruned on read. Multi-host aggregation is out of scope.
 The API sets authenticated organization/user context for read-only app_rw counts;
 the CLI aggregates RLS-visible installation counts through the same role. Counts also
 use explicit organization filters alongside transaction-local RLS context. Missing
-migration-read privileges yield a null head, never a privileged fallback. The installer
-passes Docker states/logs into the same Python builder. There is no upload route,
+migration-read privileges yield a null head; the API never probes this table. The installer
+supplies its schema head through migrator `psql` and passes Docker states/logs into
+the same Python builder. API metadata omits the global organization count and config
+shape, exposing only normalized deployment mode, version and tenant-facing switches.
+There is no upload route,
 automatic sending, stored report or new migration. The seeded-500 correlation contract
 and privacy/collection limits are documented in
 [DEPLOY.md](../DEPLOY.md#diagnostics-and-reporting-a-problem).

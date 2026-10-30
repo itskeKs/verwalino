@@ -7,7 +7,7 @@ import tarfile
 
 import pytest
 
-from app.diagnostics import build_bundle, bundle_filename
+from app.diagnostics import build_bundle, bundle_filename, config_shapes
 
 
 @pytest.fixture
@@ -51,7 +51,7 @@ def test_every_bundle_member_excludes_personal_data_and_config_values(private_lo
         for value in [*private, 'x' * 24, 'a-secret', 'secret.example.org']:
             assert value not in member
     environment = json.loads(members['environment.json'])
-    assert environment['config']['HV_SMTP_PASSWORD'] == '<set, 24 chars>'
+    assert environment['config']['HV_SMTP_PASSWORD'] == '<set>'
     assert environment['config']['HV_ENABLE_API_DOCS'] == '<bool>'
     assert environment['feature_flags']['HV_ENABLE_API_DOCS'] is False
     assert json.loads(members['containers.json']) == [{'service': 'app', 'state': 'running', 'health': 'healthy'}]
@@ -88,15 +88,29 @@ def test_metadata_cannot_smuggle_free_text_into_a_bundle():
 async def test_database_collection_is_read_only_and_scoped_to_visible_rows(seed_data, migrator_session):
     from app.diagnostics import collect_database
 
-    own = await collect_database(seed_data['org_a_id'])
+    from sqlalchemy import event
+    from app.core.db import get_engine
+
+    statements = []
+    def capture(connection, cursor, statement, parameters, context, many):
+        statements.append(statement)
+    engine = get_engine().sync_engine
+    event.listen(engine, 'before_cursor_execute', capture)
+    try:
+        own = await collect_database(seed_data['org_a_id'], seed_data['user_a_admin_id'])
+    finally:
+        event.remove(engine, 'before_cursor_execute', capture)
+    assert 'SET TRANSACTION READ ONLY' in statements
+    assert not any('alembic_version' in sql or 'count(*) FROM organization' in sql for sql in statements)
     total = await collect_database()
     assert own['status'] == total['status'] == 'available'
-    assert own['migration_head'] in {None, '0141'}
+    assert own['migration_head'] is None
     from sqlalchemy import text
     organizations = await migrator_session.scalar(text('SELECT count(*) FROM organization'))
     own_members = await migrator_session.scalar(text('SELECT count(*) FROM membership WHERE organization_id=:org'), {'org': seed_data['org_a_id']})
     all_members = await migrator_session.scalar(text('SELECT count(*) FROM membership'))
-    assert own['organization_count'] == organizations
+    assert own.get('organization_count') is None
+    assert total['organization_count'] == organizations
     assert own['row_counts']['membership'] == own_members
     assert total['row_counts']['membership'] == all_members
 
@@ -172,3 +186,109 @@ def test_exception_classes_survive_without_their_messages(kind):
     errors = unpack_bundle(build_bundle(log_lines=logs))['errors.log']
     assert kind in errors
     assert 'private-message' not in errors
+
+
+@pytest.mark.parametrize('key', [
+    'HV_SESSION_SECRET', 'HV_SMTP_PASSWORD', 'HV_SETUP_TOKEN', 'HV_ERROR_TRACKING_DSN',
+    'HV_OPENAI_API_KEY', 'HV_SIGNING_KEY_ID', 'HV_DATABASE_URL',
+    'HV_DATABASE_URL_SYNC', 'HV_DATABASE_URL_MIGRATOR',
+])
+def test_secret_shapes_do_not_disclose_value_lengths(key):
+    from pydantic import SecretStr
+
+    for value in ['postgresql://user:pw@db/test', 'https://user:long-password@host/', SecretStr('tiny')]:
+        assert config_shapes({key: value}) == {key: '<set>'}
+    assert config_shapes({key: ''}) == {key: '<unset>'}
+
+
+def test_non_secret_strings_retain_length_shapes():
+    assert config_shapes({'HV_ALLOWED_HOSTS': 'localhost', 'HV_SUPPORT_URL': 'https://example.org'}) == {
+        'HV_ALLOWED_HOSTS': '<set, 9 chars>', 'HV_SUPPORT_URL': '<set, 19 chars>',
+    }
+
+
+def test_worker_files_share_errors_and_preserve_each_organizations_recent_records(monkeypatch, tmp_path):
+    import logging
+    import os
+    from uuid import UUID
+    from app.core import logging as app_logging
+    from app.core.error_tracking import request_state
+
+    monkeypatch.setenv('HV_DIAGNOSTICS_DIR', str(tmp_path / 'diagnostics'))
+    first, second, reader = (app_logging.DiagnosticsHandler() for _ in range(3))
+    org_a, org_b = UUID(int=1), UUID(int=2)
+    active = {10101, 20202}
+    def probe(pid, signal):
+        if pid not in active:
+            raise ProcessLookupError
+    monkeypatch.setattr(os, 'kill', probe)
+    for pid, handler, organization, count in [(10101, first, org_a, 60), (20202, second, org_b, 600)]:
+        monkeypatch.setattr(os, 'getpid', lambda: pid)
+        token = request_state.set({'organization_id': organization})
+        try:
+            for index in range(count):
+                record = logging.LogRecord('app.test', logging.ERROR, '', 0, 'private-body', (),
+                                           (RuntimeError, RuntimeError('private-message'), None))
+                record.created = 1700000000 + (1000 if organization == org_b else 0) + index
+                record.request_id = f'worker-{pid}-{index:08}'
+                handler.handle(record)
+        finally:
+            request_state.reset(token)
+    # An independent reader sees both workers, with no process-local buffers.
+    own = reader.for_organization(org_a)
+    busy = reader.for_organization(org_b)
+    assert len(own) == 50
+    assert 'worker-10101-00000009' not in '\n'.join(own)
+    assert 'worker-10101-00000010' in own[0]
+    assert len(busy) == 500
+    assert 'worker-20202-00000100' in busy[0]
+    assert 'worker-20202-00000599' in busy[-1]
+    directory = tmp_path / 'diagnostics'
+    assert len((directory / '20202.jsonl').read_text().splitlines()) == 500
+    for path in directory.glob('*.jsonl'):
+        assert len(path.read_text().splitlines()) <= 500
+        assert path.stat().st_mode & 0o777 == 0o600
+        assert 'private-body' not in path.read_text() and 'private-message' not in path.read_text()
+    assert directory.stat().st_mode & 0o777 == 0o700
+    # Dead workers and their organization reserves are removed on read.
+    active.remove(10101)
+    assert reader.for_organization(org_a) == []
+    assert list(directory.glob('10101*.jsonl')) == []
+
+
+def test_shared_error_buffer_excludes_unvalidated_organizations(monkeypatch, tmp_path):
+    import logging
+    from uuid import UUID
+    from app.core.logging import DiagnosticsHandler
+    from app.core.error_tracking import request_state
+
+    token = request_state.set(None)
+    try:
+        DiagnosticsHandler().handle(logging.LogRecord('app.test', logging.ERROR, '', 0, 'private', (), None))
+    finally:
+        request_state.reset(token)
+    assert DiagnosticsHandler().for_organization(UUID(int=1)) == []
+    assert not list((tmp_path / 'diagnostics').glob('*.jsonl'))
+
+
+def test_shared_error_buffer_preserves_distinct_events_with_identical_public_fields(monkeypatch, tmp_path):
+    import logging
+    from uuid import UUID
+    from app.core.logging import DiagnosticsHandler
+    from app.core.error_tracking import request_state
+
+    monkeypatch.setenv('HV_DIAGNOSTICS_DIR', str(tmp_path / 'diagnostics'))
+    writer = DiagnosticsHandler()
+    organization = UUID(int=3)
+    token = request_state.set({'organization_id': organization})
+    try:
+        for _ in range(50):
+            record = logging.LogRecord('app.test', logging.WARNING, '', 0, 'private', (), None)
+            record.created = 1700000000
+            record.request_id = 'same-error-123456'
+            writer.handle(record)
+    finally:
+        request_state.reset(token)
+    lines = DiagnosticsHandler().for_organization(organization)
+    assert len(lines) == 50
+    assert len(set(lines)) == 1  # Only the internal event identity differs.

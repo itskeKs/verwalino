@@ -32,6 +32,7 @@ Usage: bash scripts/self-host.sh COMMAND
 Default: local HTTP on 127.0.0.1:18080; no AI, SMTP or extraction worker.
 Request IDs are always enabled; optional error tracking stays off.
 HV_SUPPORT_URL selects the manual report link (export it; not a private config key).
+HV_DIAGNOSTICS_DIR is an API process setting for the per-host error buffer; see DEPLOY.md.
 HV_ERROR_TRACKING_* keys are not installer settings; see DEPLOY.md.
 Export HV_RELEASE_ID to label tracker releases (otherwise app version 0.1.0).
 VERWALINO_CONFIG selects the private config file (default: .env.selfhost).
@@ -203,14 +204,18 @@ admin() {
 }
 
 diagnose() {
-    local out="${CONFIG%/*}/diagnostics" states destination
+    local out="${CONFIG%/*}/diagnostics" states destination schema_head
     if [[ "$#" != 0 ]]; then [[ "$#" = 2 && "$1" = --out && -n "$2" ]] || fail 'Use diagnose [--out DIR].'; out="$2"; fi
     [[ ! -L "$out" ]] || fail 'Symlink output directories are refused.'
-    umask 077; mkdir -p "$out"; chmod 700 "$out"
+    umask 077
+    if [[ ! -e "$out" ]]; then mkdir -p "$out"; chmod 700 "$out"; fi
+    [[ -d "$out" ]] || fail 'Output path is not a directory.'
+    [[ -w "$out" ]] || fail 'Output directory is not writable.'
     TMP_DIR=$(mktemp -d "$out/.diagnose.XXXXXX")
     destination="$out/verwalino-diagnostics-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
     states=$(compose ps --all --format json)
-    compose logs --no-color --no-log-prefix --tail 2000 app | compose run --rm --no-deps -T --entrypoint python app -m app.diagnostics --containers-json "$states" --image "$VERWALINO_IMAGE" > "$TMP_DIR/bundle"
+    schema_head=$(compose exec -T db psql --no-psqlrc -U app_migrator -d hausverwaltung --set ON_ERROR_STOP=1 -Atc 'SELECT version_num FROM public.alembic_version')
+    compose logs --no-color --no-log-prefix --tail 2000 app | compose run --rm --no-deps -T --entrypoint python app -m app.diagnostics --containers-json "$states" --schema-head "$schema_head" --image "$VERWALINO_IMAGE" > "$TMP_DIR/bundle"
     ln "$TMP_DIR/bundle" "$destination"
     printf '%s\n' "$destination"
 }

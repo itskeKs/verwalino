@@ -40,4 +40,4 @@ document_storage/
 .worktrees/
 
 # Manually shared private diagnostics
-diagnostics/
+/diagnostics/

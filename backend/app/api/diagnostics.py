@@ -1,4 +1,4 @@
-"""Administrator-only, manually downloaded diagnostics; no server-side artifacts."""
+"""Administrator-only, manually downloaded diagnostics; no stored archives."""
 from datetime import datetime, timezone
 import logging
 import os
@@ -25,9 +25,10 @@ async def support_information(response: Response, auth: AuthContext = Depends(re
 async def download_diagnostics(auth: AuthContext = Depends(require_admin_dep)):
     now = datetime.now(timezone.utc)
     database = await collect_database(auth.organization_id, auth.user_id)
+    logs = await run_in_threadpool(recent_diagnostics, auth.organization_id)
     data = await run_in_threadpool(
         build_bundle, config=runtime_config(), database=database,
-        log_lines=recent_diagnostics(auth.organization_id),
+        log_lines=logs,
         release_id=os.environ.get('HV_RELEASE_ID', ''), image=os.environ.get('HV_IMAGE_DIGEST', ''), now=now,
     )
     # Correlation is supplied by the logging factory; never log user/config data.
