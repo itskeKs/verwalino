@@ -129,7 +129,10 @@ def confirm_invoice(world, amount):
         "description": "Reviewed Sonnenhof utility invoice", "gross_amount": amount, "vat_amount": None,
     }]))
     preview = get(world, f"/api/allocation-proposals/{allocation['id']}/treatment-preview")
-    treatment = post(world, base + "/allocation-treatments", treatment_command(allocation, preview))
+    command = treatment_command(allocation, preview)
+    for line in command["json"]["lines"]:
+        line["owner_distribution_key"] = "not_applicable"
+    treatment = post(world, base + "/allocation-treatments", command)
     preview = get(world, f"/api/allocation-treatments/{treatment['id']}/adoption-preview")
     assert preview["can_adopt"], preview
     assert get(world, "/api/cost-entries") == []
@@ -152,5 +155,5 @@ def confirmed_cost(world):
     assert saved["property_id"] == world.data["property"]["id"]
     assert adopted["scope_id"] == world.data["scope"]["id"]
     assert len(get(world, "/api/cost-entries")) == 1
-    state = get(world, f"/api/intake-batches/{world.data['batch']['id']}")
-    assert state["counts"]["confirmed"] == 1, state
+    adoption = get(world, f"/api/logical-documents/{world.data['logical']['id']}/allocation-adoptions")
+    assert adoption["item"] == adopted, adoption
