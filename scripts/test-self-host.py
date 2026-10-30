@@ -5,7 +5,6 @@ Run in backend/ with uv run python ../scripts/test-self-host.py.
 import hashlib
 import io
 import json
-import hashlib
 import os
 import shutil
 import re
@@ -67,7 +66,7 @@ if dropping:
             json.dump(sorted(str(path.relative_to(root)) for path in root.rglob("*")), snapshot)
     databases.pop(dropping, None)
 if "psql" in sys.argv:
-    statement = sys.argv[-1]
+    statement = sys.stdin.read() if "-qAt" in sys.argv else sys.argv[-1]
     if statement.startswith("ALTER DATABASE"):
         _, _, source, _, _, target = statement.split()
         if source not in databases or target in databases:
@@ -82,8 +81,16 @@ if "psql" in sys.argv:
         name = statement.split("datname='")[1].split("'")[0]
         if name in databases:
             print("1")
-    else:
+    elif statement == "SELECT version_num FROM alembic_version":
         print(os.environ.get("FAKE_RESTORED_SCHEMA" if "hausverwaltung_restore" in sys.argv else "FAKE_SCHEMA", "0139"))
+    elif statement == "SELECT count(*) FROM public.organization":
+        print(os.environ.get("FAKE_ORGANIZATION_COUNT", "1"))
+    elif "-qAt" in sys.argv and "INSERT INTO public.setup_token(token_hash)" in statement:
+        with open(os.environ["FAKE_TOKEN_SQL"], "w") as capture:
+            capture.write(statement)
+        print(os.environ.get("FAKE_TOKEN_ISSUED", "t"))
+    else:
+        sys.exit("Unsupported fake psql statement")
 with open(state_path, "w") as state_file:
     json.dump(databases, state_file)
 if os.environ.get("FAKE_SIGNAL_AFTER") in sys.argv:
@@ -137,13 +144,6 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
     password = sys.stdin.readline()
     with open(os.environ["FAKE_DOCKER_STDIN"], "w") as capture:
         capture.write(password)
-if "exec" in sys.argv and "psql" in sys.argv:
-    if any("SELECT count(*) FROM public.organization" in arg for arg in sys.argv):
-        print(os.environ.get("FAKE_ORGANIZATION_COUNT", "1"))
-    else:
-        with open(os.environ["FAKE_TOKEN_SQL"], "w") as capture:
-            capture.write(sys.stdin.read())
-        print(os.environ.get("FAKE_TOKEN_ISSUED", "t"))
 ''')
         docker.chmod(0o755)
         self.documents = self.base / "documents"
@@ -332,7 +332,7 @@ if "exec" in sys.argv and "psql" in sys.argv:
 
     def test_restore_refuses_newer_unknown_or_foreign_archives_before_starting_db(self):
         config = self.init()
-        for changes, message in [({"schema_head": "0140"}, "newer"),
+        for changes, message in [({"schema_head": "0142"}, "newer"),
                                  ({"schema_head": "unknown"}, "schema"),
                                  ({"format": "foreign"}, "manifest"),
                                  ({"format_version": 2}, "format")]:
