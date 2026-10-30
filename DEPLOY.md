@@ -122,10 +122,10 @@ separate host. An older image is not a schema rollback. This feature does not
 authorize an alpha deployment, promote its schema gate, or supply a backup
 and disaster-recovery guarantee.
 
-AI declaration import/Q&A, SMTP and invoice OCR are disabled in this initial
-portable stack. Manual invoice review remains supported. The T10 worker is
-active on the existing alpha; portable worker integration is outside this
-installer's scope. The first tag publication and native arm64 image installation,
+Declaration import/Q&A, SMTP and the ordinary invoice worker are disabled in
+the default portable stack. The optional [inbox worker](#inbox-worker) processes
+intake documents locally; it requires scanner signatures and, for scans, German
+OCR. The T10 worker is active on the existing alpha. The first tag publication and native arm64 image installation,
 complete clean-host setup/login/restart and real domain/TLS acceptance still
 need operator checks; do not treat the mock installer tests as
 proof of those behaviors. Run the portable tests without Docker using
@@ -290,6 +290,70 @@ request can override or disable it; the notice freezes its rate, reference date,
 day counts and interest amounts. Existing issued notices are not recalculated
 when configuration changes. The UI permits a deliberate rate entry when no
 default is configured. This documentation does not change any runtime setting.
+
+## Inbox worker
+
+Both Compose files define `inbox-worker`, using the same app image, isolated
+`app_worker` connection (`HV_DATABASE_URL_WORKER`), `restart: unless-stopped`
+and worker entrypoint pattern as `invoice-worker`. `HV_WORKER_KIND=workflow_runner`
+selects the existing runner; `--all-organizations` schedules only its default
+intake inspection, internal delivery and logical extraction stages. It has no
+provider key/egress, exposed port, web/review role or migrator credential.
+Documents and ClamAV signatures are read-only; the root filesystem is read-only,
+capabilities are dropped and processing uses bounded temporary storage. The
+130-second stop grace period allows bounded processing to drain. The inbox
+container reserves 4 GiB; the isolated inspector has a documented 3 GiB address
+space cap, accommodating the [official signature engine's memory requirements](https://docs.clamav.net/manual/Installing/Docker.html#memory-ram-requirements).
+Startup and
+`python -m app.workers.workflow_runner --healthcheck` fail closed when local
+scanner/storage or worker-role/queue access is unavailable. Healthchecks use
+`sigtool --info` to verify official archives without loading a second signature
+engine alongside a job; startup additionally scans a synthetic XML probe through
+the bounded inspector. Neither claims work. See the [flow and review commands](docs/operations/inbox-review-chain.md).
+
+The image includes ClamAV, Poppler and German Tesseract. **Before enabling the
+worker**, provision a host directory of official, current ClamAV signatures
+(using the host's `freshclam` installation), readable by uid 10001. Maintain
+updates on the host; the worker has no network updater. Set
+`HV_CLAMAV_DATABASE_DIR` to that absolute directory for Compose; the default is
+`./clamav` beside the Compose file. Compose refuses a missing bind source and
+the worker refuses an unusable signature database. Do not put signatures in the
+document volume or bypass scanning. This deployment path is documented in
+`.env.example`; the container receives `HV_CLAMAV_DATABASE_DIR=/var/lib/clamav`
+and `HV_DOCUMENT_STORAGE_ROOT=/data/documents`. For host development, export
+`HV_CLAMAV_DATABASE_DIR` pointing to the host's signature directory before
+launching `scripts/dev-local.sh` (otherwise `/var/lib/clamav` is used).
+
+Portable installations leave the worker **off by default**, under profile
+`inbox`. After the existing installer has completed migrations and app readiness,
+an operator can start just the worker from the reviewed checkout. For local HTTP:
+
+```bash
+VERWALINO_COOKIE_NAME=hv_session VERWALINO_COOKIE_SECURE=false \
+VERWALINO_ALLOWED_HOSTS=localhost,127.0.0.1 \
+HV_CLAMAV_DATABASE_DIR=/absolute/path/to/clamav \
+docker compose --env-file .env.selfhost -f infra/docker-compose.yml \
+  --profile inbox up -d --no-deps inbox-worker
+```
+
+For HTTPS use `VERWALINO_COOKIE_NAME=__Host-hv_session`,
+`VERWALINO_COOKIE_SECURE=true` and
+`VERWALINO_ALLOWED_HOSTS=your.domain,localhost,127.0.0.1` instead. Use the same
+private config, Docker context and reviewed image as the app. These commands
+are operator instructions, not authorization to run the portable or production
+stack in a development session. The installer deliberately clears caller
+profiles; `COMPOSE_PROFILES=inbox self-host.sh start` does not enable the worker.
+Do not add `HV_CLAMAV_DATABASE_DIR` to `.env.selfhost` (its key allowlist is strict).
+Stop the optional worker with the same Compose/config selection and
+`--profile inbox stop inbox-worker` **before every installer start, migration or
+upgrade**, then restart it only after app readiness. Installer stop/status do
+not manage this opt-in service. No installer lifecycle logic changes here.
+
+The production definition is not profiled; provision its signatures and start
+the service only as part of a separately reviewed deployment. Adding the service
+to a file does not start it on an existing deployment. The local launcher starts
+both workers on the test DB; its inbox worker uses the host ClamAV installation.
+No new configuration switch or provider setting is introduced.
 
 ## Invoice worker (T10; alpha active since 2026-10-24)
 

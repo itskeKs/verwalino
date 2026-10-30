@@ -29,6 +29,7 @@ Usage: bash scripts/self-host.sh COMMAND
   status                        Show this installation's containers
   stop                          Stop containers without deleting data
 Default: local HTTP on 127.0.0.1:18080; no AI, SMTP or extraction worker.
+Optional inbox-worker (profile inbox, ClamAV signatures): see DEPLOY.md.
 VERWALINO_CONFIG selects the private config file (default: .env.selfhost).
 No automatic update, downgrade or volume deletion is provided.
 On first start, open the printed /setup URL and enter the one-time token (24 h).

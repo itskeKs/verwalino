@@ -354,7 +354,7 @@ class StackContractTests(unittest.TestCase):
 
     def test_project_network_and_volume_isolation(self):
         self.assertEqual(self.stack["name"], "verwalino")
-        self.assertEqual(set(self.stack["services"]), {"db", "app", "migrate", "bootstrap", "caddy"})
+        self.assertEqual(set(self.stack["services"]), {"db", "app", "migrate", "bootstrap", "caddy", "inbox-worker"})
         for config in self.stack["volumes"].values():
             self.assertFalse(config and (config.get("external") or config.get("name")))
         self.assertTrue(self.stack["networks"]["backend"]["internal"])
@@ -364,6 +364,23 @@ class StackContractTests(unittest.TestCase):
                          ["127.0.0.1:${VERWALINO_PORT:?missing port}:8000"])
         self.assertEqual(self.stack["services"]["caddy"]["profiles"], ["https"])
         self.assertEqual(self.stack["services"]["caddy"]["networks"], ["proxy"])
+
+    def test_inbox_worker_is_opt_in_and_has_only_local_worker_authority(self):
+        worker = self.stack["services"]["inbox-worker"]
+        self.assertEqual(worker["profiles"], ["inbox"])
+        self.assertEqual(worker["image"], self.stack["services"]["app"]["image"])
+        self.assertEqual(worker["restart"], "unless-stopped")
+        self.assertEqual(worker["environment"]["HV_WORKER_KIND"], "workflow_runner")
+        self.assertIn("app_worker:", worker["environment"]["HV_DATABASE_URL_WORKER"])
+        self.assertNotIn("HV_DATABASE_URL", worker["environment"])
+        self.assertNotIn("HV_DATABASE_URL_REVIEW", worker["environment"])
+        self.assertNotIn("HV_OPENAI_API_KEY", worker["environment"])
+        self.assertEqual(worker["networks"], ["backend"])
+        self.assertNotIn("ports", worker)
+        self.assertIn("documents:/data/documents:ro", worker["volumes"])
+        self.assertTrue(worker["read_only"])
+        self.assertEqual(worker["cap_drop"], ["ALL"])
+        self.assertIn("--healthcheck", worker["healthcheck"]["test"])
 
     def test_no_privileged_or_external_service_credentials_in_app(self):
         app = self.stack["services"]["app"]

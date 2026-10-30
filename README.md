@@ -78,7 +78,7 @@ bash scripts/self-host.sh init --image 'ghcr.io/itskeks/verwalino@sha256:<64-hex
 
 Remote tags are not accepted by the installer. See the
 [maintainer release checklist](DEPLOY.md#maintainer-release-checklist) for publication.
-AI import, AI Q&A, SMTP, and automatic invoice OCR are disabled in the portable stack;
+By default, AI import, AI Q&A, SMTP, and automatic invoice OCR are disabled in the portable stack;
 manual voucher (Beleg) processing remains available.
 The T10 invoice worker has been active on the existing alpha since 2026-10-24;
 adding it to the portable stack remains outside this installer's scope.
@@ -107,8 +107,10 @@ and the deliberately blocked live evaluation are described in the
 After the backend setup above and `cd frontend && npm ci`, start
 `scripts/dev-local.sh` from the repository root. It uses exclusively the test database
 `:55432`, a separate `/tmp/hv-dev-documents.*` storage, and starts the API
-`:18000`, the UI `:13000`, and the invoice worker together. Poppler
-(`pdftoppm`) and Tesseract with the German language pack (`deu`) are required. Ctrl+C stops all three
+`:18000`, the UI `:13000`, and the invoice and inbox workers together. Poppler
+(`pdftoppm`), Tesseract with the German language pack (`deu`), and ClamAV with
+current official signatures are required. Export `HV_CLAMAV_DATABASE_DIR` with
+the host signature directory before launch. Ctrl+C stops all four
 processes; originals in the printed local document folder are preserved.
 Do not start backend tests in parallel with the UI acceptance run: their fixture resets this
 test database.
@@ -128,6 +130,9 @@ all existing organizations, detects new organizations without a restart, and sup
 `HV_DATABASE_URL_WORKER` explicitly, with the isolated role `app_worker`, as well as the
 API's storage; no web/review credentials and no provider key.
 Production configuration and release limits are described in [DEPLOY.md](DEPLOY.md).
+The [inbox review chain](docs/operations/inbox-review-chain.md) documents intake
+processing and explicit review through cost adoption; portable installations opt
+in to the `inbox` profile after provisioning scanner signatures.
 
 ## Changing your own password
 
