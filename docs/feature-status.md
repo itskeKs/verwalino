@@ -13,7 +13,8 @@ history). Update this page in the same PR whenever a feature's status changes.
 
 | Feature | Reference product | Status | Location |
 | --- | --- | --- | --- |
-| Browser first-run setup | n/a | ✅ one-time installer token, 24-hour expiry, atomic first organization/admin; real-stack acceptance pending | `api/setup.py`, `pages/SetupPage.tsx`, `scripts/self-host.sh`, issue #8 |
+| Deployment mode | n/a | ✅ validated selfhost/hosted policy, public mode/version metadata, setup gate; hosted features remain deferred | `core/config.py`, `core/deployment_policy.py`, issue #18 |
+| Browser first-run setup | n/a | ✅ selfhost-only, one-time installer token, 24-hour expiry, atomic first organization/admin; real-stack acceptance pending | `api/setup.py`, `pages/SetupPage.tsx`, `scripts/self-host.sh`, issue #8 |
 | Login/logout | yes | ✅ | `api/auth.py`, `pages/LoginPage.tsx` |
 | Create users | yes | ✅ admin-only form and user management | `api/users.py`, `pages/UsersPage.tsx`, T06, T57 |
 | Roles admin/clerk/read-only | yes | ✅ admin can change role and deactivate; write buttons hidden for read-only | `core/rbac.py` (`OWNER_ADMIN`, `CLERK`, `READ_ONLY`), T57 |

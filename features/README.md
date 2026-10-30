@@ -37,6 +37,32 @@ cd backend && uv run --locked --extra dev --extra ops --extra ocr pytest tests/b
 The API specs also run as part of the whole suite (`pytest` collects `tests/`).
 Browser scenarios are skipped unless `--run-browser` is supplied; use the target below.
 
+### Deployment modes
+
+`HV_DEPLOYMENT_MODE` selects the same validated backend policy for scenarios as for
+the application. It defaults to `selfhost`; invalid values fail before collection.
+Run the API suite in both modes with `make test-bdd` and `make test-bdd-hosted`
+(equivalent to `HV_DEPLOYMENT_MODE=hosted make test-bdd`). Both targets own the
+shared database lock; do not wrap them in another lock acquisition.
+
+An untagged scenario holds in both modes. Tag a feature or scenario `@selfhost` or
+`@hosted` only when its claim depends on that mode. The BDD collection hook skips
+the opposite mode with `Requires <mode> deployment; running in <other mode>` as
+the reason. `first_run_setup.feature` is selfhost-only; `hosted_setup.feature`
+checks that an empty hosted installation never offers setup. Organization
+isolation scenarios run in both modes. Browser app processes inherit the selected
+mode too; `@browser` remains a separate opt-in tag.
+
+**CI integration:** the PR backend job currently runs the scenario suite with the
+default selfhost policy as part of `make test-backend`. A separate hosted matrix
+job would also repeat dependency and database setup; add it to PRs only after the
+complete incremental run is demonstrated below three minutes. The intended entry
+for #14's reserved nightly matrix slot `hosted` sets `HV_DEPLOYMENT_MODE=hosted`
+and runs `make test-bdd-hosted`, alongside the default selfhost slot. That nightly
+workflow is developed on `feat/nightly-scenarios` and is absent from this base;
+its hosted entry remains to be wired there. This change leaves the PR workflow
+unchanged and supplies both local commands and the mode tags it needs.
+
 ## How the step library is organised
 
 - `features/<name>.feature` - the spec.

@@ -46,6 +46,54 @@ The development/test database remains exclusively `infra-postgres-1`:55432.
 A real portable first installation and TLS acceptance are still pending; details in
 [DEPLOY.md](../DEPLOY.md#portable-docker-first-installation).
 
+## Deployment modes
+
+One image supports `HV_DEPLOYMENT_MODE=selfhost|hosted`, defaulting to `selfhost`.
+`Settings` validates the enum when the process imports its configuration; any other
+value prevents startup and lists the allowed values. All backend decisions read
+the frozen `DeploymentPolicy` in `backend/app/core/deployment_policy.py`.
+The complete table below is checked against the dataclass by
+`backend/tests/test_deployment_policy.py`, alongside explicit snapshots of both modes.
+
+| Policy field | selfhost | hosted |
+| --- | --- | --- |
+| `deployment_mode` | `selfhost` | `hosted` |
+| `first_run_setup_enabled` | `true` | `false` |
+| `self_service_signup_enabled` | `false` | `false` |
+| `error_tracking_default_environment` | `selfhost` | `hosted` |
+| `admin_cli_bootstrap_allowed` | `true` | `true` |
+| `multi_organization_expected` | `false` | `true` |
+| `rate_limit_profile` | `relaxed` | `strict` |
+| `quota_enforcement` | `false` | `true` |
+| `support_url_default` | `https://github.com/itskeKs/verwalino/issues` | `https://github.com/itskeKs/verwalino/issues` |
+| `show_hosted_legal_links` | `false` | `true` |
+
+Current readers are `/api/meta` (`deployment_mode`), setup's `setup_required()`
+(`first_run_setup_enabled`) and the admin CLI (`admin_cli_bootstrap_allowed`).
+`GET /api/setup` returns `{"required": false}` in hosted mode even with no
+organizations, without opening a database connection. Every non-GET setup method
+returns the same 404 as a closed installation, before parsing its body. Hosted
+organization creation through signup is deferred to #19; the admin CLI remains
+available in both modes.
+
+Other fields reserve decisions for their named consumers, not implemented features:
+signup #19, error tracking #16, the doctor's organization-count warning #11,
+rate limiting #20, quotas #22, support links #17 and hosted legal links #24/#26.
+The error-tracking environment setting and doctor are absent at this revision.
+`multi_organization_expected` describes an operational expectation, never an
+organization limit or an isolation bypass: the same RLS, scoped API queries and
+[route sweep](#74a-route-sweep-backendteststest_route_isolation_sweeppy) apply in both modes.
+
+Unauthenticated `GET /api/meta` returns only `deployment_mode` and the FastAPI
+application `version`, with `Cache-Control: no-store`. It reads no tenant data or
+secrets, so the route sweep explicitly exempts it. The frontend's
+`useDeploymentMode()` reads it once per app load (including StrictMode replay);
+the setup route opens only with a confirmed self-hosted mode and a positive setup
+status. If metadata is unavailable, login and signed-in pages remain available;
+reload after recovery to detect setup. No branding or other hosted UI is added.
+The self-host installer and token issuance remain unchanged: the portable manifest
+uses the default self-hosted policy and does not forward an arbitrary caller's environment.
+
 ## Current Declaration-of-Division Workflow (2026-08-29)
 
 For declarations of division, the application uses a **fixed,
@@ -355,8 +403,9 @@ Role enforcement takes place in the authorization layer (policy check per endpoi
 - **MFA:** not mandatory for M0; note as a hardening option for M9 (back office with personal + financially relevant data).
 - **Audit:** login, logout, failed logins, role changes → `audit_event`.
 
-**First-run bootstrap (revision 0141):** `GET /api/setup` reports only whether
-there are no organizations. `POST /api/setup` is unauthenticated but requires
+**First-run bootstrap (revision 0141):** in self-hosted mode, `GET /api/setup` reports
+whether there are no organizations. In hosted mode it always reports no setup;
+see [Deployment modes](#deployment-modes). `POST /api/setup` is unauthenticated but requires
 the one-time installer token in its JSON body. A `SECURITY DEFINER`
 `setup_first_organization(token text, org_name text, admin_email text,
 admin_name text, password_hash text) RETURNS uuid` locks `organization`,
@@ -751,7 +800,7 @@ Minimum assertions:
 
 ### 7.4a Route sweep (`backend/tests/test_route_isolation_sweep.py`)
 
-Tests 1–6 cover selected resources; the sweep covers every API route. It enumerates the routes FastAPI registers (`fastapi.routing.iter_route_contexts`, so routes of included routers count) and fails, naming the route, for any route that is neither swept nor exempt. A swept route has a probe in the table of its area module in `backend/tests/route_isolation/` (`core`, `finance`, `documents`, `access`): SQL that picks a record of another organization, plus body, query or headers where the generated request would not reach the route. Exempt routes are listed with their reason in `EXEMPT` of the test (health, login, logout, password change, plus the organization-free setup exemptions from `route_isolation/core.py`). Signed in as an administrator of organization B, the sweep sends each probe with the other organization's ids and once more with ids that exist nowhere:
+Tests 1–6 cover selected resources; the sweep covers every API route. It enumerates the routes FastAPI registers (`fastapi.routing.iter_route_contexts`, so routes of included routers count) and fails, naming the route, for any route that is neither swept nor exempt. A swept route has a probe in the table of its area module in `backend/tests/route_isolation/` (`core`, `finance`, `documents`, `access`): SQL that picks a record of another organization, plus body, query or headers where the generated request would not reach the route. Exempt routes are listed with their reason in `EXEMPT` of the test (health, public mode/version metadata, login, logout, password change, plus the organization-free setup exemptions from `route_isolation/core.py`). Signed in as an administrator of organization B, the sweep sends each probe with the other organization's ids and once more with ids that exist nowhere:
 
 - a request carrying another organization's ids answers 404 (another status only with the reason written in the probe) and exactly what the unknown ids answer, so the answer cannot reveal that the record exists; a write carrying them is never accepted;
 - no answer contains an id of another organization's record that the request did not send;
