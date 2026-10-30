@@ -12,7 +12,7 @@ satisfy the narrow exceptions in `AGENTS.md` and the installed guard. Current
 checks use simulated Docker and static contracts; no real-container or complete
 installation test is claimed.
 
-Prerequisites: Bash (including macOS Bash 3.2), OpenSSL, Docker Engine/Desktop
+Prerequisites: Bash (including macOS Bash 3.2), OpenSSL, Docker Engine >= 24 (or Docker Desktop with that engine)
 and Compose v2 >= 2.24. From a reviewed checkout:
 
 ```bash
@@ -91,6 +91,55 @@ Use `status` for container status and `stop` to stop without deleting any data.
 There is deliberately no destroy or automatic update command. An older image
 is not a schema rollback. This feature does not authorize an alpha deployment
 or promote its schema gate.
+
+### Portable troubleshooting: start with doctor
+
+Run `bash scripts/self-host.sh doctor` first when installation or startup fails.
+It attempts every independent check, prints one German finding and a concrete
+next step per check, and ends with counts of `OK`, `WARN` and `FEHLER`.
+Exit **1** means at least one blocker (`FEHLER`); exit **0** means no blocker
+was detected, including runs with warnings. An unavailable dependent check is
+reported explicitly; a warning is not proof that the installation works.
+
+| Check | `FEHLER` (blocker) | `WARN` / next step |
+| --- | --- | --- |
+| Docker and Compose | Docker missing, daemon unreachable, engine below 24 or version unknown, Compose outside v2 or below 2.24 | Install/update Docker and the Compose plugin; check daemon access and Docker context |
+| Private configuration | Missing, symlink, unsafe filename, mode other than 0600/0400, incomplete or invalid keys/settings/secrets | Restore the original `.env.selfhost`; `chmod 600` it. Existing database credentials must not be regenerated |
+| Port occupancy | Foreign listener on the configured HTTP port, or on 80/443 in HTTPS mode | Install `ss`, `lsof` or `nc` when inspection is unavailable; identify conflicting services before changing their listeners |
+| Free disk | Less than **2 GiB** available | Less than **10 GiB**: free space before backups/updates. Both thresholds use binary GiB (1,048,576 KiB); exactly 2 GiB warns, exactly 10 GiB passes |
+| Containers (`db`, `app`, HTTPS `caddy`) | Restarting, unhealthy, dead or paused | Missing, exited, starting, missing healthcheck or status unavailable: use the printed `start` and scoped `logs` commands |
+| Migration state | Database revision newer than the configured image's release target | Behind: back up, then `start` migrates. Empty/missing version table: not initialized yet, run `start`. Unknown/ambiguous/query failure or unavailable image target: inspect config/image/logs |
+| First organization | — | Count zero: `bash scripts/self-host.sh admin --org NAME --email EMAIL`. An unreadable database/count also warns |
+| HTTPS domain and DNS | Invalid domain, no A/AAAA records, or no DNS address matches a determinable public host address | Missing DNS tools, unknown public host address or partial address mismatch: compare A/AAAA manually, especially stale AAAA records |
+| HTTPS local reachability | — | Cannot connect to 127.0.0.1:80/443 or `nc` unavailable: start Caddy, check port publishing and firewall |
+| HTTPS certificate | — | Caddy stopped, domain certificate absent/unreadable in `/data/caddy/certificates`, OpenSSL unavailable, TLS probe fails, invalid certificate or expiry within **14 days**: inspect Caddy logs, DNS and renewal access |
+
+Disk is measured with `df -Pk` at both the checkout and Docker's reported data
+root (`docker info -f '{{.DockerRootDir}}'`). An inaccessible Docker data root
+(common with Docker Desktop or a remote context) warns: inspect the Docker host
+or VM disk separately. Allow additional room for complete backup/restore copies.
+Port checks try `ss`, `lsof`, then `nc`. An existing listener is accepted as owned
+only when the running service belongs to this checkout's Compose file and
+publishes the expected port. HTTPS checks inspect ports 80/443; HTTP checks
+inspect the configured `VERWALINO_PORT`.
+
+DNS uses `getent` (A/AAAA), `dig`, or `host`, in that availability order. Public
+host addresses come from `ip` or `ifconfig`; private/NAT addresses cannot prove
+the public destination. The TLS probe uses SNI for `VERWALINO_DOMAIN` against
+127.0.0.1:443 and bounds the handshake to eight seconds. These are local checks;
+verify Internet reachability, firewall/NAT forwarding and browser trust from
+another host as well.
+
+Doctor does not repair settings, migrate, bootstrap users, build/pull images or
+start/stop the stack. Database queries and Caddy certificate listing require
+running services. Comparing migration revisions reuses the backup helper's
+`target` action in a temporary, dependency-free app-image container; the helper
+overrides the server entrypoint and performs no data changes. If the image
+predates release-target metadata, doctor warns even when the helper's checkout
+fallback equals the database revision. Docker diagnostics use the current
+Docker context, which must refer to the same host as the checkout/port checks
+for those checks to describe one machine. After following a finding's next
+step, rerun doctor; use `status` and the printed `logs` commands for detail.
 
 ### Portable backup and restore
 

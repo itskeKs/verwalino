@@ -5,7 +5,7 @@ data.
 
 ## Self-hosting Verwalino (portable Docker first installation)
 
-Prerequisites: Linux or macOS with Bash, OpenSSL, Docker, and Compose v2
+Prerequisites: Linux or macOS with Bash, OpenSSL, Docker Engine 24+, and Compose v2
 (2.24 or later). In the checked-out repository, **not on the existing alpha instance**:
 
 ```bash
@@ -41,6 +41,8 @@ after the start. A completed HTTPS/browser acceptance run has not been documente
 bash scripts/self-host.sh status
 bash scripts/self-host.sh stop
 ```
+
+For setup problems, run `bash scripts/self-host.sh doctor` first; it prints German next steps and exits 1 on blockers (see [diagnostics](DEPLOY.md#portable-troubleshooting-start-with-doctor)).
 
 The project name is fixed as `verwalino`; there is one installation per Docker context.
 Database and documents live in their own named volumes. **Back up config, database,
