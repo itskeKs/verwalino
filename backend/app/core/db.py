@@ -41,6 +41,7 @@ def get_engine() -> AsyncEngine:
             pool_pre_ping=True,
             pool_size=10,
             max_overflow=5,
+            hide_parameters=True,
         )
     return _engine
 
@@ -127,7 +128,7 @@ def get_worker_session_factory() -> async_sessionmaker[AsyncSession]:
         if settings.database_url_worker is None:
             raise RuntimeError("HV_DATABASE_URL_WORKER is required for declaration workers")
         _worker_engine = create_async_engine(settings.database_url_worker.get_secret_value(), pool_pre_ping=True,
-            pool_size=5, max_overflow=2)
+            pool_size=5, max_overflow=2, hide_parameters=True)
         _worker_session_factory = async_sessionmaker(_worker_engine, expire_on_commit=False)
     return _worker_session_factory
 
@@ -175,7 +176,7 @@ def get_review_session_factory() -> async_sessionmaker[AsyncSession]:
         if settings.database_url_review is None:
             raise RuntimeError('HV_DATABASE_URL_REVIEW is required for human review validation')
         _review_engine = create_async_engine(settings.database_url_review.get_secret_value(), pool_pre_ping=True,
-                                            pool_size=5, max_overflow=2)
+                                            pool_size=5, max_overflow=2, hide_parameters=True)
         _review_session_factory = async_sessionmaker(_review_engine, expire_on_commit=False)
     return _review_session_factory
 

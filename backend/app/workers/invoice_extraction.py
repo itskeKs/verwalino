@@ -44,6 +44,7 @@ async def process_once(factory, org_id, *, processor=run_isolated_extraction):
         async with factory() as session, session.begin():
             await set_tenant_context(session, org_id)
             await InvoiceProcessingService(session, org_id).finish(claim, result)
+        logger.info("Invoice worker job completed")
         return True
 
 

@@ -15,6 +15,7 @@ import os
 import uuid
 from datetime import date
 from typing import AsyncGenerator
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
@@ -25,6 +26,10 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+
+# Never initialize an outbound tracker from a developer's environment or .env.
+# Tracker tests explicitly install their own offline transport after import.
+os.environ["HV_ERROR_TRACKING_DSN"] = ""
 
 from app.core.security import hash_password, create_session_token
 from app.core.config import settings
@@ -212,20 +217,24 @@ def run_migrations():
     # or weaken a populated downgrade guard to make a historical test pass.
     from tests.test_deployment_upgrade import rehearse_initial_upgrade
 
-    command.downgrade(alembic_cfg, "base")
-    command.upgrade(alembic_cfg, "0028")
-    upgraded_0028_tables = rehearse_initial_upgrade('0028')
-    command.upgrade(alembic_cfg, "0122")
-    upgraded_tables = rehearse_initial_upgrade('0122')
-    command.upgrade(alembic_cfg, "0139")
-    upgraded_0139_tables = rehearse_initial_upgrade('0139')
-    command.upgrade(alembic_cfg, '0140')  # accepted source
-    upgraded_parent_tables = rehearse_initial_upgrade('0140')  # accepted source
-    command.upgrade(alembic_cfg, "head")
-    yield {'upgrade_0028_to_0141_tables': upgraded_0028_tables,
-           'upgrade_0122_to_0141_tables': upgraded_tables,
-           'upgrade_0139_to_0141_tables': upgraded_0139_tables,
-           'upgrade_0140_to_0141_tables': upgraded_parent_tables}
+    # Migration CLI logging must not disable the already imported HTTP app's
+    # loggers or replace its scrubber/formatter inside this shared test process,
+    # including later migration rehearsals during the session.
+    with patch("logging.config.fileConfig"):
+        command.downgrade(alembic_cfg, "base")
+        command.upgrade(alembic_cfg, "0028")
+        upgraded_0028_tables = rehearse_initial_upgrade('0028')
+        command.upgrade(alembic_cfg, "0122")
+        upgraded_tables = rehearse_initial_upgrade('0122')
+        command.upgrade(alembic_cfg, "0139")
+        upgraded_0139_tables = rehearse_initial_upgrade('0139')
+        command.upgrade(alembic_cfg, '0140')  # accepted source
+        upgraded_parent_tables = rehearse_initial_upgrade('0140')  # accepted source
+        command.upgrade(alembic_cfg, "head")
+        yield {'upgrade_0028_to_0141_tables': upgraded_0028_tables,
+               'upgrade_0122_to_0141_tables': upgraded_tables,
+               'upgrade_0139_to_0141_tables': upgraded_0139_tables,
+               'upgrade_0140_to_0141_tables': upgraded_parent_tables}
 
 
 # ---------------------------------------------------------------------------

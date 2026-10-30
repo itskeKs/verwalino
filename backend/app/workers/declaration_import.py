@@ -294,7 +294,8 @@ class DeclarationImportWorker:
                 logger.warning("declaration worker result=UNEXPECTED")
                 await self._sleep(min(max(delay, 0.01), 30.0))
                 continue
-            logger.info("declaration worker result=%s import_id=%s", result.code, result.import_id)
+            with correlation_context(result.import_id or "-"):
+                logger.info("declaration worker result=%s import_id=%s", result.code, result.import_id)
             # Keep retrying missing migrations/empty queues, but bound any idle
             # wait to avoid an unresponsive process after configuration changes.
             await self._sleep(min(max(delay, 0.01), 30.0))

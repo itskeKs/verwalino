@@ -56,6 +56,8 @@ async def test_valid_header_is_echoed_and_available_to_services(supplied, error_
 
 @pytest.mark.parametrize(("path", "status"), [("/missing/route", 404), ("/ok?number=no", 422), ("/crash", 500), ("/http", 503), ("/client", 409)])
 async def test_error_responses_keep_the_correlation_header(path, status, error_routes, caplog):
+    from app.core.logging import RequestFormatter
+    caplog.handler.setFormatter(RequestFormatter())
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test") as client:
         response = await client.get(error_routes + path, headers={"X-Request-ID": "error-id-123"})
     assert response.status_code == status
@@ -64,11 +66,21 @@ async def test_error_responses_keep_the_correlation_header(path, status, error_r
         assert response.json()["request_id"] == "error-id-123"
         assert "private failure" not in response.text
         assert any(r.levelno >= logging.ERROR and r.request_id == "error-id-123" for r in caplog.records)
+        assert "request_id=error-id-123" in caplog.text
     else:
         assert "request_id" not in response.json()
     if status == 503:
         assert response.json()["detail"] == "Unavailable"
         assert response.headers["Retry-After"] == "10"
+
+
+async def test_upload_limit_response_also_has_a_request_id():
+    from app.core.uploads import MAX_REQUEST_BODY_BYTES
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/api/invoice-documents/upload", headers={"Content-Length": str(MAX_REQUEST_BODY_BYTES + 1), "X-Request-ID": "upload-error-123"})
+    assert response.status_code == 413
+    assert response.headers["X-Request-ID"] == "upload-error-123"
 
 
 async def test_perimeter_and_spa_responses_have_request_ids(tmp_path, monkeypatch):

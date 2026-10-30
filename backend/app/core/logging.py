@@ -1,8 +1,10 @@
 """One logging configuration for the API, Uvicorn and worker processes."""
 
 import logging
+import copy
 
 from app.core.request_id import request_id
+from app.core.scrub import scrub_text
 
 
 class RequestFormatter(logging.Formatter):
@@ -12,7 +14,18 @@ class RequestFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         if not hasattr(record, "request_id"):
             record.request_id = request_id.get()
+        # Access records use INFO even for 5xx. Filter every formatted message,
+        # without modifying the record seen by other handlers or the tracker.
+        record = copy.copy(record)
+        record.msg = scrub_text(record.getMessage())
+        record.args = ()
+        record.exc_text = None
+        if record.stack_info:
+            record.stack_info = scrub_text(record.stack_info)
         return super().format(record)
+
+    def formatException(self, exc_info) -> str:
+        return scrub_text(super().formatException(exc_info))
 
 
 def configure_logging() -> None:

@@ -33,6 +33,7 @@ from app.core.uploads import RequestBodyLimitMiddleware
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.core.request_id import RequestIdMiddleware, http_error, unhandled_error
+from app.core.error_tracking import configure_error_tracking
 
 configure_logging()
 
@@ -42,6 +43,7 @@ app = FastAPI(
     docs_url=settings.docs_url,
     openapi_url=settings.openapi_url,
 )
+configure_error_tracking(settings, release=os.environ.get("HV_RELEASE_ID") or app.version)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_host_list)
 app.add_middleware(RequestBodyLimitMiddleware)
 # Starlette prepends middleware: registering last makes request IDs run first.
