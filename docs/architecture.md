@@ -701,6 +701,10 @@ An automated test that **prevents accidentally unprotected tables** (level-3 gat
 
 ### 7.4 The concrete isolation test (`test_tenant_isolation.py`) — core of the M0 exit
 
+Every client-supplied parent ID, including a parent changed by PATCH or PUT, is resolved through the session's organization-scoped repository or session before writing or checking overlaps/conflicts. Foreign and unknown parents return an identical 404 response, so neither existence nor an overlap is disclosed. Composite foreign keys `(organization_id, parent_id) → parent(organization_id, id)` enforce parent ownership as defence in depth, because PostgreSQL foreign-key checks bypass RLS. Migration 0140 rejects existing invalid references before replacing the affected constraints; it never repairs data silently.
+
+Financial creation checks PAUSED mode first, then organization ownership of property and mandate, then the exact accounting scope. Its property repository uses `financial_property_exists`, a boolean-only definer constrained to the current organization and a live member, so an accounting PREPARE grant does not also require property master read access. Property data visibility remains governed by its existing policies. Asset-report bank balances and payment transaction links use their organization-scoped repositories before financial validation or writes.
+
 Setup (fixtures): test DB; **two organizations** `org_a`, `org_b`; one user with a role each; one `management_mandate` each; one sample row each in at least one tenant table. Two API clients, each logged in as a user of the respective org (real login flow, real tenant context).
 
 Minimum assertions:
@@ -713,6 +717,16 @@ Minimum assertions:
 6. **RBAC takes effect (`test_rbac.py`):** `READ_ONLY` may read but not create/change (→ 403); `CLERK` may operate but not manage users/roles (→ 403); `OWNER_ADMIN` may do everything in their org. Within the own org, combined with the isolation from 1–5.
 
 > If tests 1–6 pass, the M0 exit criterion is objectively demonstrated: two orgs, guaranteed data separation (at API **and** DB level), roles take effect.
+
+### 7.4a Route sweep (`backend/tests/test_route_isolation_sweep.py`)
+
+Tests 1–6 cover selected resources; the sweep covers every API route. It enumerates the routes FastAPI registers (`fastapi.routing.iter_route_contexts`, so routes of included routers count) and fails, naming the route, for any route that is neither swept nor exempt. A swept route has a probe in the table of its area module in `backend/tests/route_isolation/` (`core`, `finance`, `documents`, `access`): SQL that picks a record of another organization, plus body, query or headers where the generated request would not reach the route. Exempt routes are listed with their reason in `EXEMPT` of the test (health, login, logout, password change). Signed in as an administrator of organization B, the sweep sends each probe with the other organization's ids and once more with ids that exist nowhere:
+
+- a request carrying another organization's ids answers 404 (another status only with the reason written in the probe) and exactly what the unknown ids answer, so the answer cannot reveal that the record exists; a write carrying them is never accepted;
+- no answer contains an id of another organization's record that the request did not send;
+- after a write no row of another organization changed (row count and newest row version per table of `TENANT_TABLES`).
+
+Limits: a probe does not combine an own parent with a foreign child id, and foreign data that leaks without an id (a name, a sum in a report) is not detected. Run it with `make test-backend PYTEST_ARGS="-q tests/test_route_isolation_sweep.py"`.
 
 ### 7.5 App shell & infrastructure (in parallel, roadmap M0)
 

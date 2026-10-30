@@ -3,7 +3,7 @@ import uuid
 import pytest
 from sqlalchemy import text
 from tests.test_financial_scope_boundary import worker_tenant,scope_seed  # noqa: F401
-from tests.test_invoice_source_custody import store,fixture
+from tests.test_invoice_source_custody import store,fixture,foreign_fixture
 from tests.test_scoped_account_statements import client,mutate
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_invoice_reviews import command as review_command,proposal
@@ -29,6 +29,22 @@ def command(p,review,preview,previous=None,**changes):
       'expected_case_event_id':preview['case_event_id'],'quotation':'Synthetic property reference on page 1',
       'page_number':1,'xml_path':None,'comparison_note':'Compared property identity and destination scope with the original',
       'context_reviewed':True,**changes}}
+
+
+async def test_foreign_and_unknown_invoice_reviews_create_no_context_decision(migrator_session,scope_seed,store):
+    ids=await fixture(migrator_session,scope_seed)
+    foreign=await foreign_fixture(migrator_session)
+    async with client(ids) as api,client(foreign) as other:
+        _,child,_,_,p,review,preview=await basis(api,ids,False)
+        *_,foreign_review,_=await basis(other,foreign,False)
+        replies=[]
+        for invalid in (foreign_review['id'],str(uuid.uuid4())):
+            reply=await api.post('/api/logical-documents/'+child['id']+'/context-decisions',
+                **command(p,review,preview,invoice_review_id=invalid))
+            assert reply.status_code==404,reply.text
+            replies.append(reply.json())
+        assert replies[0]==replies[1]
+    assert await read_value('SELECT count(*) FROM context_decision WHERE organization_id=:org',ids)==0
 
 
 async def test_context_exact_dependency_replay_and_new_evidence(migrator_session,scope_seed,store):

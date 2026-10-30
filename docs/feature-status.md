@@ -1,7 +1,7 @@
 # Feature status
 
 Current feature catalog of Verwalino by area, compared with the reference product described in
-[domain-reference.md](domain-reference.md). Status as of 2026-10-30, migration head `0139`.
+[domain-reference.md](domain-reference.md). Status as of 2026-10-30, migration head `0140`.
 Status: ✅ implemented and reachable in the running app, 🟡 partial (reason given), ❌ not implemented.
 Reference product: whether the reference software offers the feature (yes/partial/no, n/a = not a
 reference feature). Short paths: `api/ services/ engine/ models/ workers/ core/` are under

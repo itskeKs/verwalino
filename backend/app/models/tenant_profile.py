@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import UniqueConstraint, ForeignKey, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,6 +18,9 @@ from app.models.base import Base, UUIDPrimaryKeyMixin, TimestampMixin
 
 class TenantProfile(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "tenant_profile"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_tenant_profile_org_id"),
+    )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),

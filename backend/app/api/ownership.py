@@ -24,6 +24,8 @@ from app.core.temporal import (
     inclusive_last_day_to_db_exclusive,
 )
 from app.repositories.ownership_history_repo import OwnershipHistoryRepository
+from app.repositories.unit_repo import UnitRepository
+from app.repositories.owner_profile_repo import OwnerProfileRepository
 from app.models.ownership_history import OwnershipHistory
 
 router = APIRouter(prefix="/api/ownership", tags=["ownership"])
@@ -74,14 +76,20 @@ async def create_ownership(
     from decimal import Decimal
 
     repo = OwnershipHistoryRepository(db, auth.organization_id)
+    unit_id = uuid.UUID(body.unit_id)
+    owner_profile_id = uuid.UUID(body.owner_profile_id)
+    if await UnitRepository(db, auth.organization_id).get_by_id(unit_id) is None:
+        raise HTTPException(404, "Unit not found")
+    if await OwnerProfileRepository(db, auth.organization_id).get_by_id(owner_profile_id) is None:
+        raise HTTPException(404, "Owner profile not found")
     # API write edge (ADR-0006): the user enters the INCLUSIVE last day of ownership;
     # storage is HALF-OPEN [valid_from, valid_to) so persist the EXCLUSIVE bound
     # (last day + 1). valid_from unchanged; NULL stays open-ended. Lets a seamless
     # owner change "Alt bis 30.06." + "Neu ab 01.07." coexist without a false 409.
     oh = OwnershipHistory(
         id=uuid.uuid4(),
-        unit_id=uuid.UUID(body.unit_id),
-        owner_profile_id=uuid.UUID(body.owner_profile_id),
+        unit_id=unit_id,
+        owner_profile_id=owner_profile_id,
         valid_from=body.valid_from,
         valid_to=inclusive_last_day_to_db_exclusive(body.valid_to),
         mea_share=Decimal(body.mea_share) if body.mea_share else None,

@@ -18,7 +18,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, SmallInteger, String
+from sqlalchemy import UniqueConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, Numeric, SmallInteger, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,6 +27,13 @@ from app.models.base import Base, UUIDPrimaryKeyMixin, TimestampMixin
 
 class EconomicPlan(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "economic_plan"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "property_id"], ["property.organization_id", "property.id"],
+            name="fk_economic_plan_property_id_tenant", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["organization_id", "management_mandate_id"], ["management_mandate.organization_id", "management_mandate.id"],
+            name="fk_economic_plan_management_mandate_id_tenant", ondelete="RESTRICT"),
+        UniqueConstraint("organization_id", "id", name="uq_economic_plan_org_id"),
+    )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -37,14 +44,12 @@ class EconomicPlan(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     property_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("property.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
 
     management_mandate_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("management_mandate.id", ondelete="RESTRICT"),
         nullable=True,
     )
 

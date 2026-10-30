@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import text
 
 from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noqa: F401
-from tests.test_invoice_source_custody import store, fixture
+from tests.test_invoice_source_custody import store, fixture, foreign_fixture
 from tests.test_scoped_account_statements import client, mutate
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_logical_documents import clean_reference
@@ -24,6 +24,22 @@ async def basis(api, ids):
     assert partition.status_code == 201, partition.text
     body = {'partition_revision_id': partition.json()['id'], 'reason': 'Prepare exact visible pages for disclosure review'}
     return ref, original, first, whole, body
+
+
+async def test_foreign_and_unknown_partitions_create_no_visual_extract(migrator_session,scope_seed,store):
+    ids=await fixture(migrator_session,scope_seed)
+    foreign=await foreign_fixture(migrator_session)
+    async with client(ids) as api,client(foreign) as other:
+        _,_,first,_,body=await basis(api,ids)
+        *_,foreign_body=await basis(other,foreign)
+        replies=[]
+        for invalid in (foreign_body['partition_revision_id'],str(uuid.uuid4())):
+            reply=await api.post('/api/logical-documents/'+first['id']+'/visual-extracts',
+                json=body|{'partition_revision_id':invalid},headers={'Idempotency-Key':str(uuid.uuid4())})
+            assert reply.status_code==404,reply.text
+            replies.append(reply.json())
+        assert replies[0]==replies[1]
+    assert await read_value('SELECT count(*) FROM visual_extract_artifact WHERE organization_id=:org',ids)==0
 
 
 async def test_private_artifact_exact_bytes_retry_and_current_partition(migrator_session, scope_seed, store):

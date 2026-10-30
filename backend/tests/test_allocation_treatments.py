@@ -2,7 +2,7 @@
 import uuid
 import pytest
 from tests.test_financial_scope_boundary import worker_tenant,scope_seed  # noqa: F401
-from tests.test_invoice_source_custody import store,fixture
+from tests.test_invoice_source_custody import store,fixture,foreign_fixture
 from tests.test_scoped_account_statements import client
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_allocation_proposals import context,lines,command as allocation_command
@@ -23,6 +23,24 @@ def command(allocation,preview,previous=None,key=None):
       'lines':[{'allocation_line_id':line['id'],'expense_intent':'operating_expense','tax_intent':'gross_without_input_vat',
         'tenant_treatment':'none','tenant_amount':'0.00','tenant_distribution_key':None,'owner_distribution_key':'MEA',
         'documentary_basis':'Recorded human interpretation; no legal approval'} for line in allocation['lines']]}}
+
+
+async def test_foreign_and_unknown_allocation_lines_create_no_treatment(migrator_session,scope_seed,store):
+    ids=await fixture(migrator_session,scope_seed)
+    foreign=await foreign_fixture(migrator_session)
+    async with client(ids) as api,client(foreign) as other:
+        child,a=await allocation(api,ids)
+        _,foreign_allocation=await allocation(other,foreign)
+        preview=(await api.get('/api/allocation-proposals/'+a['id']+'/treatment-preview')).json()
+        replies=[]
+        for invalid in (foreign_allocation['lines'][0]['id'],str(uuid.uuid4())):
+            body=command(a,preview);body['json']['lines'][0]['allocation_line_id']=invalid
+            reply=await api.post('/api/logical-documents/'+child['id']+'/allocation-treatments',**body)
+            assert reply.status_code==404,reply.text
+            replies.append(reply.json())
+        assert replies[0]==replies[1]
+    assert await read_value('SELECT count(*) FROM allocation_treatment_review WHERE organization_id=:org',ids)==0
+    assert await read_value('SELECT count(*) FROM allocation_treatment_line WHERE organization_id=:org',ids)==0
 
 
 @pytest.mark.parametrize('credit',[False,True])

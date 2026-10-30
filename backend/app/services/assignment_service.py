@@ -18,6 +18,8 @@ class AssignmentService(IntakeService):
         return {'items':[dict(row) for row in rows[:limit]],'next_before_revision':rows[limit-1]['revision_number'] if len(rows)>limit else None}
 
     async def create(self,logical,body,key,expected):
+        await self.require_parents('source_partition_revision',[body.partition_revision_id])
+        await self.require_parents('extraction_revision',[body.extraction_revision_id])
         created=await self.call('SELECT create_assignment_proposal(:org,:logical,:partition,:extraction,:scope,:expected,:request,:reason)',
             logical=logical,partition=body.partition_revision_id,extraction=body.extraction_revision_id,scope=body.scope_id,
             expected=expected,request=key,reason=body.reason)
