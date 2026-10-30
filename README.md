@@ -47,10 +47,26 @@ Database and documents live in their own named volumes. **Back up config, databa
 and documents together; do not delete volumes.** A different checkout
 or config path does not create a second independent installation.
 
-First, the existing image is built locally from the checkout; Python/Node/uv
-are not required on the host. An image that is already available can be selected with
-`init --image registry.example.org/verwalino@sha256:<64-hex-digest>`.
-A public GitHub image is not yet assumed here.
+By default, the image is built locally from the checkout; Python/Node/uv are not
+required on the host. The release workflow targets **ghcr.io/itskeks/verwalino**
+for **linux/amd64 and linux/arm64**, with only `vX.Y.Z` and `vX.Y` tags, provenance, SBOMs and
+cosign keyless signatures. The first tag publication and native arm64 install
+check still need maintainer acceptance; no published digest is claimed yet.
+Once available, copy the index digest from the successful
+[Release image run summary](https://github.com/itskeKs/verwalino/actions/workflows/release-image.yaml)
+or inspect a release with `docker buildx imagetools inspect ghcr.io/itskeks/verwalino:v1.2.3`
+(example version). Before installing, follow
+[the signature verification and arm64 checks](DEPLOY.md#published-image-verification):
+`cosign verify` must match the release workflow's certificate identity and
+the issuer `https://token.actions.githubusercontent.com`. Select the verified
+digest at first init:
+
+```bash
+bash scripts/self-host.sh init --image 'ghcr.io/itskeks/verwalino@sha256:<64-hex-digest>'
+```
+
+Remote tags are not accepted by the installer. See the
+[maintainer release checklist](DEPLOY.md#maintainer-release-checklist) for publication.
 AI import, AI Q&A, SMTP, and automatic invoice OCR are disabled in the portable stack;
 manual voucher (Beleg) processing remains available.
 The T10 invoice worker has been active on the existing alpha since 2026-10-24;
