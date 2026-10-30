@@ -50,6 +50,7 @@ class Unit(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_unit_org_id"),
         ForeignKeyConstraint(["organization_id", "property_id"], ["property.organization_id", "property.id"],
             name="fk_unit_property_tenant", ondelete="RESTRICT"),
         UniqueConstraint(

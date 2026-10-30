@@ -11,7 +11,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Date, ForeignKey, Numeric, SmallInteger, String, UniqueConstraint
+from sqlalchemy import DateTime, Date, ForeignKey, ForeignKeyConstraint, Numeric, SmallInteger, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,7 +20,11 @@ from app.models.base import Base, UUIDPrimaryKeyMixin, TimestampMixin
 
 class CostEntry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "cost_entry"
-    __table_args__ = (UniqueConstraint("organization_id", "id", name="uq_cost_entry_organization_id_id"),)
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_cost_entry_organization_id_id"),
+        ForeignKeyConstraint(["organization_id", "vendor_id"], ["vendor.organization_id", "vendor.id"],
+            name="fk_cost_entry_vendor_id_tenant", ondelete="RESTRICT"),
+    )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -55,7 +59,6 @@ class CostEntry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     vendor_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("vendor.id", ondelete="RESTRICT"),
         nullable=True,
         index=True,
     )

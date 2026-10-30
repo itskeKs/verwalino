@@ -22,7 +22,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Date, ForeignKey, Numeric
+from sqlalchemy import Date, ForeignKey, ForeignKeyConstraint, Numeric
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,6 +31,12 @@ from app.models.base import Base, UUIDPrimaryKeyMixin, TimestampMixin
 
 class OwnershipHistory(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "ownership_history"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "unit_id"], ["unit.organization_id", "unit.id"],
+            name="fk_ownership_history_unit_id_tenant", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["organization_id", "owner_profile_id"], ["owner_profile.organization_id", "owner_profile.id"],
+            name="fk_ownership_history_owner_profile_id_tenant", ondelete="RESTRICT"),
+    )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -41,14 +47,12 @@ class OwnershipHistory(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     unit_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("unit.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
 
     owner_profile_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("owner_profile.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
