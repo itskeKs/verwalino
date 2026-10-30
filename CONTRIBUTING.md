@@ -57,11 +57,9 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   `trap 'rmdir /tmp/verwalino-testdb.lock' EXIT`; stop the stack before releasing it.
   `make test-backend`, `make test-bdd` and `make test-browser` acquire/release the lock themselves.
 
-The pre-commit hook (`.githooks/pre-commit` → `scripts/checks.sh`) runs ruff, eslint on staged
-frontend files and the docs check for staged Markdown — seconds, not minutes. Tests are opt-in:
-`VERWALINO_HOOK_TESTS=fast` (staged test modules, frontend typecheck and vitest) or `full`
-(`make test`). `VERWALINO_HOOK_LINT=0` and `VERWALINO_HOOK_DOCS=0` switch one check off,
-`VERWALINO_HOOK_SKIP=1` skips the hook.
+The pre-commit hook (`.githooks/pre-commit` → `scripts/checks.sh`) runs ruff when backend Python
+is staged, eslint on staged frontend TypeScript files, and always the docs link check.
+If `frontend/node_modules` is missing, eslint is skipped with a message.
 
 ## Making a change
 
