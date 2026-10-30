@@ -36,6 +36,8 @@ class ContextDecisionService(IntakeService):
         return {'items':[dict(row) for row in rows[:limit]],'next_before_revision':rows[limit-1]['revision_number'] if len(rows)>limit else None}
 
     async def create(self,logical,body,key,expected):
+        if body.invoice_review_id is not None:
+            await self.require_parents('invoice_review_revision',[body.invoice_review_id])
         created=await self.call('''SELECT create_context_decision(:org,:logical,:proposal,:review,:expected,:request,:digest,:event,:quote,:page,:path,:note,:ack)''',
           logical=logical,proposal=body.assignment_proposal_id,review=body.invoice_review_id,expected=expected,request=key,
           digest=body.snapshot_digest,event=body.expected_case_event_id,quote=body.quotation,page=body.page_number,path=body.xml_path,note=body.comparison_note,ack=body.context_reviewed)
