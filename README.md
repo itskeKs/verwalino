@@ -134,5 +134,5 @@ the [issue templates](.github/ISSUE_TEMPLATE/). Report vulnerabilities according
 
 ## License
 
-Not decided yet; the repository is private until it is.
-See the roadmap for the hosted offering this decision has to fit.
+GNU Affero General Public License v3.0, see [LICENSE](LICENSE). Anyone who runs a
+modified Verwalino as a service must offer its source to the users of that service.
