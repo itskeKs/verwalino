@@ -48,6 +48,8 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
 - **`make test-bdd`** — API scenarios in `features/` ([features/README.md](features/README.md)).
 - **`make test-browser`** — headless `@browser` scenarios; acquires the shared DB lock and
   owns/stops its local API and Vite stack. See [browser setup and runner](features/README.md#browser-features).
+- **`make test-scenarios-report`** — all API/browser features on the local stack with JSON,
+  Markdown and failure artifacts in `report/`. See [reports and external targets](features/README.md#scenario-reports-and-nightly-runs).
 - **`make test-agent-rules`** — paired bodies/activation, the `CLAUDE.md` symlink and Codex hook
   contracts; Python stdlib, no database or backend dependencies. Run after changing rules or the adapter.
 - **`make docs-check`** — relative links and images in every Markdown file outside `docs/archive/`.
@@ -58,7 +60,8 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   For direct pytest runs or a dev stack, acquire the lock in that same shell with
   `until mkdir /tmp/verwalino-testdb.lock 2>/dev/null; do sleep 10; done` and
   `trap 'rmdir /tmp/verwalino-testdb.lock' EXIT`; stop the stack before releasing it.
-  `make test-backend`, `make test-bdd` and `make test-browser` acquire/release the lock themselves.
+  `make test-backend`, `make test-bdd`, `make test-browser` and `make test-scenarios-report`
+  acquire/release the lock themselves.
 
 The pre-commit hook (`.githooks/pre-commit` → `scripts/checks.sh`) runs ruff when backend Python
 is staged, eslint on staged frontend TypeScript files, and always the docs link check.
@@ -103,8 +106,9 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 |---|---|
 | `backend/app/` | `api/` routes, `services/`, `engine/` (pure calculations), `models/`, `workers/` |
 | `backend/migrations/versions/` | Alembic migrations; committed ones are never edited |
-| `backend/tests/` | unit and API tests; `bdd/` binds scenarios, `bdd/browser.py` owns browser fixtures, `bdd/steps/browser_*.py` shares browser steps |
+| `backend/tests/` | unit and API tests; `bdd/` binds scenarios, `bdd/browser.py` owns browser fixtures, `bdd/report.py` writes reports, `bdd/steps/browser_*.py` shares browser steps |
 | `features/` | API and `@browser` Gherkin scenarios (executable specs) |
+| `.github/workflows/nightly-scenarios.yaml` | nightly self-host scenarios and 90-day report artifacts; hosted mode pending #18 |
 | `frontend/src/` | `pages/`, `components/`, `api/`, `lib/` |
 | `scripts/` | dev, self-host, deploy, checks; `acceptance/` holds legacy browser scripts (being migrated, #54) |
 | `DESIGN.md` | frontend design contract: tokens, layout, components, states, copy and formats; screenshots in `docs/assets/design/` |
