@@ -13,6 +13,7 @@ let rows: SettlementRun[];
 beforeEach(() => {
   auth.role = "CLERK"; rows = [];
   vi.spyOn(api, "get").mockImplementation(async url => {
+    if (url.includes("/settlement-periods")) return [];
     if (url.startsWith("/api/settlements")) return rows;
     if (url === "/api/properties") return [{ id: "property-1", name: "Sonnenhof" }, { id: "property-2", name: "Gartenhof" }];
     if (url === "/api/leases") return [1, 2, 3].map(n => ({ id: `lease-${n}`, unit_id: `unit-${n}`, tenant_profile_id: "tenant-1", valid_from: "2025-01-01", valid_to: null }));
@@ -57,7 +58,7 @@ it("creates three drafts, reloads human labels, preserves unknown money and perm
   await screen.findByRole("table");
   expect(screen.getByText(/Wohnung 1 — Ada Mieter/)).toBeVisible();
   expect(screen.queryByText("0.00 EUR")).toBeNull();
-  expect(api.get).toHaveBeenCalledTimes(13);
+  expect(api.get).toHaveBeenCalledTimes(14);
   expect(api.post).toHaveBeenCalledWith("/api/settlements/batch", { property_id: "property-1", period_start: "2025-07-01", period_end: "2026-06-30", accounting_scope_id: null });
   vi.mocked(api.post).mockResolvedValueOnce({ created: [], skipped: created.map(run => ({ lease_agreement_id: run.lease_agreement_id, settlement_run_id: run.id })) });
   fireEvent.click(submit);
@@ -99,6 +100,8 @@ it("posts explicit property-bound scope without advance or mandate overrides and
   fireEvent.change(within(region).getByRole("combobox", { name: "Objekt *" }), { target: { value: "property-2" } });
   expect(within(region).queryByRole("status")).toBeNull();
   expect(within(region).getByRole("combobox", { name: "Abrechnungskreis" })).toHaveValue("");
+  fireEvent.change(within(region).getByLabelText("Zeitraum von *"), { target: { value: "2025-07-01" } });
+  fireEvent.change(within(region).getByLabelText("Zeitraum bis *"), { target: { value: "2026-06-30" } });
   fireEvent.click(submit);
   await within(region).findByRole("status");
   expect(api.post).toHaveBeenLastCalledWith("/api/settlements/batch", { property_id: "property-2", period_start: "2025-07-01", period_end: "2026-06-30", accounting_scope_id: null });
@@ -160,7 +163,7 @@ it("invalidates a pending response when form generation changes", async () => {
   fireEvent.change(within(region).getByRole("combobox", { name: "Objekt *" }), { target: { value: "property-2" } });
   await act(async () => finish({ created, skipped: [] }));
   expect(within(region).queryByRole("status")).toBeNull();
-  expect(api.get).toHaveBeenCalledTimes(gets + 1);
+  expect(api.get).toHaveBeenCalledTimes(gets + 2);
 });
 it("never displays single and batch forms together and leaves single creation intact", async () => {
   const { region } = await open();
@@ -208,4 +211,40 @@ it.each(["Objekt *", "Mietvertrag *"])("explicitly labels the single-create sele
   const select = within(form).getByRole("combobox", { name: label });
   expect(select).toHaveAttribute("aria-label", label);
   expect(within(form).getByLabelText(label, { exact: true })).toBe(select);
+});
+
+it.each(["BK-Sammellauf", "+ Neue Abrechnung"])("offers the property's April period in %s and keeps free dates", async action => {
+  const original = vi.mocked(api.get).getMockImplementation()!;
+  vi.mocked(api.get).mockImplementation(async (url, options) => url.includes("/settlement-periods") ? [
+    { year: 2025, label: "2025/2026", period_start: "2025-04-01", period_end: "2026-03-31" },
+  ] : original(url, options));
+  show(); await screen.findByRole("option", { name: "Sonnenhof" });
+  fireEvent.click(screen.getByRole("button", { name: action }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Objekt *" }), { target: { value: "property-1" } });
+  fireEvent.change(await screen.findByRole("combobox", { name: "Abrechnungszeitraum" }), { target: { value: "2025-04-01" } });
+  const start = screen.getByLabelText(action === "BK-Sammellauf" ? "Zeitraum von *" : "Abrechnungszeitraum von *");
+  const end = screen.getByLabelText(action === "BK-Sammellauf" ? "Zeitraum bis *" : "Abrechnungszeitraum bis *");
+  await waitFor(() => expect(start).toHaveValue("2025-04-01"));
+  expect(end).toHaveValue("2026-03-31");
+  fireEvent.change(end, { target: { value: "2025-12-31" } });
+  expect(end).toHaveValue("2025-12-31");
+});
+
+it.each([
+  ["+ Neue Abrechnung", "Abrechnungszeitraum", "von"],
+  ["+ Neue Abrechnung", "Abrechnungszeitraum", "bis"],
+  ["BK-Sammellauf", "Zeitraum", "von"],
+  ["BK-Sammellauf", "Zeitraum", "bis"],
+])("preserves free dates entered before period offers arrive: %s %s %s", async (action, label, field) => {
+  let resolveOffers!: (rows: unknown) => void;
+  const original = vi.mocked(api.get).getMockImplementation()!;
+  vi.mocked(api.get).mockImplementation((url, options) => url.includes("/settlement-periods")
+    ? new Promise(resolve => { resolveOffers = resolve; }) : original(url, options));
+  show(); await screen.findByRole("option", { name: "Sonnenhof" });
+  fireEvent.click(screen.getByRole("button", { name: action }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Objekt *" }), { target: { value: "property-1" } });
+  fireEvent.change(screen.getByLabelText(`${label} ${field} *`), { target: { value: "2025-12-31" } });
+  await act(async () => resolveOffers([{ year: 2025, label: "2025/2026", period_start: "2025-04-01", period_end: "2026-03-31" }]));
+  expect(screen.getByLabelText(`${label} von *`)).toHaveValue(field === "von" ? "2025-12-31" : "");
+  expect(screen.getByLabelText(`${label} bis *`)).toHaveValue(field === "bis" ? "2025-12-31" : "");
 });

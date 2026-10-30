@@ -1,6 +1,8 @@
 /**
  * Wirtschaftsplan list + create (M4). WEG/Misch properties only.
  */
+import { SettlementPeriodSelect } from "../components/SettlementPeriodSelect";
+import { Input } from "../components/ui/input";
 import { useEffect, useState, useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { listEconomicPlans, listProperties, createEconomicPlan } from "../api/endpoints";
@@ -17,8 +19,8 @@ function emptyForm(): EconomicPlanCreate {
   return {
     property_id: "",
     plan_year: y,
-    period_start: `${y}-01-01`,
-    period_end: `${y}-12-31`,
+    period_start: "",
+    period_end: "",
     reserve_contribution_total: "0.00",
     monthly_due_day: 1,
   };
@@ -89,10 +91,10 @@ export function EconomicPlansPage() {
       {showForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Neuen Wirtschaftsplan anlegen</h2>
-          <form onSubmit={handleSubmit} className="form-grid">
+          <form onSubmit={handleSubmit} className="form-grid [&>*]:min-w-0 [&_select]:w-full">
             <label>
               WEG-Objekt *
-              <select aria-label="WEG-Objekt *" required value={form.property_id} onChange={(e) => setForm({ ...form, accounting_scope_id: null, property_id: e.target.value })}>
+              <select aria-label="WEG-Objekt *" required value={form.property_id} onChange={(e) => setForm({ ...form, accounting_scope_id: null, property_id: e.target.value, period_start: "", period_end: "" })}>
                 <option value="">-- Objekt waehlen --</option>
                 {wegProps.map((p) => (
                   <option key={p.id} value={p.id}>{p.name} ({p.management_type})</option>
@@ -102,15 +104,18 @@ export function EconomicPlansPage() {
             <label>
               Wirtschaftsjahr *
               <input type="number" required value={form.plan_year}
-                onChange={(e) => setForm({ ...form, plan_year: parseInt(e.target.value, 10) || form.plan_year })} />
+                onChange={(e) => setForm({ ...form, plan_year: parseInt(e.target.value, 10) || form.plan_year, period_start: "", period_end: "" })} />
             </label>
+            <SettlementPeriodSelect key={`${form.property_id}-${form.plan_year}`} propertyId={form.property_id} year={form.plan_year} freeDates={false}
+              start={form.period_start} end={form.period_end}
+              onSelect={period => setForm(current => ({ ...current, plan_year: period.year, period_start: period.period_start, period_end: period.period_end }))} />
             <label>
               Zeitraum von *
-              <input type="date" required value={form.period_start} onChange={(e) => setForm({ ...form, period_start: e.target.value })} />
+              <Input type="date" required readOnly value={form.period_start} />
             </label>
             <label>
               Zeitraum bis *
-              <input type="date" required value={form.period_end} onChange={(e) => setForm({ ...form, period_end: e.target.value })} />
+              <Input type="date" required readOnly value={form.period_end} />
             </label>
             <label>
               Rücklagenzuführung (Jahr)
@@ -136,7 +141,7 @@ export function EconomicPlansPage() {
       ) : plans.length === 0 ? (
         <p className="empty-hint">Keine Wirtschaftspläne vorhanden.</p>
       ) : (
-        <div className="card">
+        <div className="card overflow-x-auto">
           <table className="data-table">
             <thead>
               <tr><th>Jahr</th><th>Objekt</th><th>Zeitraum</th><th>Rücklage</th><th>Status</th><th></th></tr>
