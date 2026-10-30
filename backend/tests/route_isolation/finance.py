@@ -198,6 +198,8 @@ PROBES: dict[str, Probe] = {
     "GET /api/reports/datev/sources": Probe(PROPERTY),
     "GET /api/reports/property-year": Probe(PROPERTY),
     "GET /api/reports/property-year.csv": Probe(PROPERTY),
+    "GET /api/reports/property-year/anlage-v": Probe(PROPERTY),
+    "GET /api/reports/property-year/anlage-v.csv": Probe(PROPERTY),
     "POST /api/reports/datev.csv": Probe(PROPERTY, body={**DATEV, "expected_source_digest": "0" * 64}),
     "POST /api/reports/datev/preview": Probe(PROPERTY, body=DATEV),
     # app/api/sepa.py

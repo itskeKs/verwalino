@@ -39,3 +39,12 @@ Feature: Organization isolation
       | property     |
       | person       |
       | bank account |
+
+  Scenario Outline: Another organization's Anlage V <view> is not accessible
+    When the user opens the Anlage V <view> for the property of "Verwaltung Beta"
+    Then the report is reported as not found
+
+    Examples:
+      | view     |
+      | summary  |
+      | download |

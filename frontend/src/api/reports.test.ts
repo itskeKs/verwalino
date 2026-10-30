@@ -1,10 +1,19 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError } from "./client";
-import { getPropertyYearReport, getPropertyYearReportCsv } from "./endpoints";
+import { getPropertyYearReport, getPropertyYearReportCsv, getAnlageVSummary, getAnlageVSummaryCsv } from "./endpoints";
 
 beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
 afterEach(() => vi.unstubAllGlobals());
 const query = { property_id: "property&one/two", year: 2026, accounting_scope_id: "scope&one/two", organization_id: "not-allowed" };
+it("uses the same whitelisted scope for Anlage V JSON and CSV", async () => {
+  vi.mocked(fetch).mockResolvedValueOnce(new Response("{}")).mockResolvedValueOnce(new Response("csv"));
+  await getAnlageVSummary(query); await getAnlageVSummaryCsv(query);
+  const calls = vi.mocked(fetch).mock.calls;
+  const urls = calls.map(([url]) => new URL(String(url), "http://test"));
+  expect(urls.map(url => url.pathname)).toEqual(["/api/reports/property-year/anlage-v", "/api/reports/property-year/anlage-v.csv"]);
+  for (const url of urls) expect([...url.searchParams]).toEqual([["property_id", query.property_id], ["year", "2026"], ["accounting_scope_id", query.accounting_scope_id]]);
+  for (const [, options] of calls) expect(options?.credentials).toBe("include");
+});
 it("uses identical whitelisted encoded report and credentialed CSV queries", async () => {
   const csv = "\uFEFFObjekt;Jahr;Bereich;Zahlungstyp;Kategorie;Umlagefähigkeit;Betrag(EUR)\r\nSonnenhof;2026;Einnahmen;Kaltmiete;;;700,00\r\n";
   vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ income_total: "800.00" }))).mockResolvedValueOnce(new Response(csv, { headers: { "Content-Type": "text/csv;charset=utf-8" } }));
