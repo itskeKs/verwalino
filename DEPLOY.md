@@ -259,9 +259,9 @@ stack smoke test require a separately authorized clean Docker host.
 Review the release and checkout first. For published images, **run `cosign verify`
 against the exact digest before `update`**, checking the trusted publisher's
 certificate identity and OIDC issuer. Digest pinning in the installer does not
-verify signatures or publisher identity. Pause user writes, uploads, deletions
-and any external writers before confirming the update, and keep them paused
-until the final diagnostics are accepted.
+verify signatures or publisher identity. Pause external writers before confirming
+the update and keep them paused until the final diagnostics are accepted.
+The installer stops app writes and uploads before taking its backup.
 
 ```bash
 bash scripts/self-host.sh update --image registry.example.org/verwalino@sha256:<64-hex-digest>
@@ -273,15 +273,25 @@ bash scripts/self-host.sh update
 The command holds the existing installer lock throughout. It validates the
 private configuration and runs `doctor`, refusing any FEHLER before pulling.
 It pulls only `app` using a private temporary env file, leaving the original
-configuration untouched. Local builds use a temporary image tag, retaining the
-previous local image under a printed image ID and a `verwalino:rollback-*` tag.
+configuration untouched. Local builds use a temporary `verwalino:update-*` image
+tag, retaining the previous local image under a printed image ID and a
+`verwalino:rollback-*` tag. After successful image/schema acceptance, temporary
+update tags are removed. When replacing a local image, older rollback tags are
+also removed, keeping exactly the current rollback tag. Failed updates retain
+tags for recovery; no image prune is run.
 A digest installation requires an explicit `--image`; selecting its current
-digest only probes health and reports a no-op. Local updates always rebuild.
+digest probes health if app is running and reports a no-op; with app stopped it
+skips the current image's health probe and tells you to run `start`.
+Local updates always rebuild. If the current app is restarting or unhealthy,
+run `bash scripts/self-host.sh stop`, then `update` to replace the broken image.
+Update can start from a stopped stack: it starts db before reading its schema
+and backing up, and starts Caddy again in HTTPS mode after app is ready.
 The new image's release target must not be older than the database revision.
 
-Next it runs the existing online `backup` into `<checkout>/backups/`, prints and
-retains the archive, stops app writers and verifies app/migration/bootstrap are
-stopped. The portable stack currently has no workers. PostgreSQL stays running.
+Next it stops app and verifies app/migration/bootstrap are stopped, then runs
+`backup` into `<checkout>/backups/`, printing and retaining the archive.
+**Downtime starts before the backup**, covering both the database dump and document
+copy. The portable stack currently has no workers. PostgreSQL stays running.
 It atomically replaces only the config's image line (mode 0600), runs the same
 one-shot migration as `start`, and starts app with a 120-second readiness bound.
 It also probes `/api/health/live` and `/api/health/ready` inside app, with an
@@ -297,14 +307,15 @@ backup. Restore stages a scratch database and documents, drops the half-migrated
 database at cutover and replaces documents. It then starts db and the previous
 app and runs the same health probes. A successful recovery prints
 `rolled back to <previous image>, data from <archive>` and still exits nonzero.
-No Alembic downgrade is run. The archive and retained local images are kept
-after success and failure; choose retention/off-site storage yourself.
+No Alembic downgrade is run. The archive is kept after success and failure;
+choose archive retention/off-site storage yourself. Local image tags follow the
+cleanup rule above.
 
-This is recovery to a snapshot, with the existing backup's limits: database
-dump and later document copy are not atomic. Writes between that dump and the
-writer stop, and writes after the new app starts but before a failure is detected,
-are lost on recovery; concurrent document deletion can leave missing originals.
-The operator's write pause is required for a consistent recovery point. Recovery
+This is recovery to a snapshot: app writers stay stopped throughout the database
+dump and document copy, closing the former gap between backup and writer stop.
+External writers must remain paused for a consistent recovery point. Writes
+after the new app starts but before a failure is detected are lost on recovery.
+The standalone online `backup` command still has its documented consistency limits. Recovery
 also needs enough disk for staging, the original secrets, working Docker/storage
 and an available previous image. Power loss or SIGKILL cannot run shell recovery;
 an interruption during recovery can require the manual procedure below.
@@ -312,7 +323,11 @@ Downgrades across migrations and unattended updates remain out of scope.
 
 Failures before config switching (doctor, pull/build, backup or writer stop)
 do not restore data. They leave the original config selected and report nonzero;
-a failed stop may leave app stopped, so inspect status before restarting it.
+a failed stop or backup may leave app stopped, so inspect status before restarting
+it. A handled interruption before switching finishes stopping app, then reports
+that config/data are unchanged and app is stopped; run `start` to resume the
+original version. If Docker cannot confirm the stop, it asks you to inspect
+status before restarting.
 Final doctor blockers after accepted health/schema checks report nonzero and
 require inspection; they do not discard data from the successfully updated app.
 
@@ -339,6 +354,8 @@ It attempts to leave app stopped and keeps the backup. Manual recovery:
    -d --no-build --pull never --wait --wait-timeout 120 db app` command. It clears
    caller config/profile overrides, supplies the derived host/cookie settings
    and starts the retained runtime without building, pulling or migrating.
+   In HTTPS mode the printed command also includes `--profile https` and starts
+   `caddy`, which step 1 stopped, alongside `db app`.
    Do not use `start` from the newer checkout: local mode would rebuild and
    replace the recovered image. Run `doctor`, check both health endpoints,
    verify records and referenced originals, then resume writes. Keep the archive.

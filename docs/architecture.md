@@ -41,7 +41,10 @@ the unchanged alpha, a separate first-installation path (project
 use the existing image; only Ops receives migrator rights. The default is
 loopback HTTP; optionally Caddy takes over HTTPS on a separate proxy network.
 Secrets are generated locally and not loaded as shell code. AI, SMTP and
-invoice OCR are disabled here; no automatic update/rollback path.
+invoice OCR are disabled here. The explicit `update` command stops app writers,
+backs up database/documents, migrates and checks readiness, automatically restoring
+the previous image and backup on failure. See
+[portable update and recovery](../DEPLOY.md#portable-update-and-recovery).
 The development/test database remains exclusively `infra-postgres-1`:55432.
 A real portable first installation and TLS acceptance are still pending; details in
 [DEPLOY.md](../DEPLOY.md#portable-docker-first-installation).
