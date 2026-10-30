@@ -15,6 +15,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+try:
+    import yaml
+except ImportError:  # the workflow contracts need PyYAML; make test-installer provides it
+    yaml = None
+
 ROOT = Path(__file__).resolve().parents[1]
 BOOTSTRAP = ROOT / "scripts/server-bootstrap.sh"
 BACKUP = ROOT / "scripts/server-backup.sh"
@@ -542,6 +547,60 @@ class DeployTests(ServerCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("must be a regular file", result.stdout)
         self.assertEqual(self.calls(), [])
+
+
+@unittest.skipIf(yaml is None, "PyYAML is not installed")
+class WorkflowTests(unittest.TestCase):
+    def setUp(self):
+        path = ROOT / ".github/workflows/deploy.yaml"
+        self.text = path.read_text()
+        self.doc = yaml.safe_load(self.text)
+        self.job = self.doc["jobs"]["deploy"]
+        self.steps = {step["name"]: step for step in self.job["steps"]}
+
+    def test_runs_after_the_successful_release_image_workflow_or_by_hand(self):
+        triggers = self.doc.get("on", self.doc.get(True))  # YAML 1.1 reads a bare "on" as true
+        release = yaml.safe_load((ROOT / ".github/workflows/release-image.yaml").read_text())
+        self.assertEqual(triggers["workflow_run"], {"workflows": [release["name"]], "types": ["completed"]})
+        self.assertEqual(set(triggers), {"workflow_run", "workflow_dispatch"})
+        tag = triggers["workflow_dispatch"]["inputs"]["tag"]
+        self.assertTrue(tag["required"])
+        self.assertEqual(tag["type"], "string")
+        condition = " ".join(self.job["if"].split())
+        for expected in ("github.event.workflow_run.conclusion == 'success'", "github.event.workflow_run.event == 'push'",
+                         "github.event.workflow_run.head_repository.full_name == github.repository"):
+            self.assertIn(expected, condition)
+
+    def test_token_is_read_only_and_deploys_never_overlap(self):
+        self.assertEqual(self.doc["permissions"], {"contents": "read"})
+        self.assertNotIn("permissions", self.job)
+        self.assertEqual(list(self.doc["jobs"]), ["deploy"])
+        self.assertTrue(self.doc["concurrency"]["group"])
+        self.assertIs(self.doc["concurrency"]["cancel-in-progress"], False)
+
+    def test_only_the_four_deploy_secrets_are_used_and_no_action_runs(self):
+        self.assertEqual(sorted(set(re.findall(r"secrets\.(\w+)", self.text))),
+                         ["DEPLOY_HOST", "DEPLOY_KNOWN_HOSTS", "DEPLOY_SSH_KEY", "DEPLOY_USER"])
+        self.assertNotIn("uses:", self.text, "the job needs no checkout and no third-party action")
+
+    def test_untrusted_values_reach_scripts_only_through_the_environment(self):
+        for step in self.job["steps"]:
+            self.assertNotIn("${{", step.get("run", ""), step["name"])
+        env = self.steps["Validate release tag"]["env"]
+        self.assertEqual(env["RUN_TAG"], "${{ github.event.workflow_run.head_branch }}")
+        self.assertIn(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$", self.steps["Validate release tag"]["run"])
+
+    def test_ssh_sends_only_the_tag_with_a_private_key_file_and_pinned_host_key(self):
+        script = self.steps["Deploy over SSH"]["run"]
+        self.assertLess(script.index("umask 077"), script.index('> "$HOME/.ssh/deploy_key"'))
+        self.assertIn('chmod 600 "$HOME/.ssh/deploy_key"', script)
+        self.assertIn('printf \'%s\\n\' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"', script)
+        self.assertIn("StrictHostKeyChecking=yes", script)
+        self.assertIn("BatchMode=yes", script)
+        ssh = script[script.index("ssh -T"):]
+        self.assertTrue(ssh.rstrip().endswith('"$DEPLOY_USER@$DEPLOY_HOST" "$TAG"'), ssh)
+        self.assertEqual(self.steps["Deploy over SSH"]["env"]["TAG"], "${{ steps.release.outputs.tag }}")
+        self.assertEqual(self.steps["Remove the key"]["if"], "always()")
 
 
 if __name__ == "__main__":
