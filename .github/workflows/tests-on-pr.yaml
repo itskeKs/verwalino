@@ -1,0 +1,112 @@
+# Quality gate for pull requests and main: backend (ruff + pytest against
+# Postgres), frontend (eslint + tsc + vitest) and the Markdown link check.
+# Every step runs the same Makefile target a developer runs locally, so this
+# file only adds the CI environment (database service, toolchains, caches).
+
+name: Tests on PR
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer push to the same PR (or branch) cancels the run it supersedes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  backend:
+    name: Backend (ruff, pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # uv run must never rewrite uv.lock in CI.
+      UV_LOCKED: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      # WeasyPrint (PDF rendering) needs pango/cairo; same list as .gitlab-ci.yml.
+      - name: Install system libraries
+        run: >-
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 libcairo2
+          libgdk-pixbuf-2.0-0 libffi8 fonts-dejavu-core shared-mime-info
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync --locked --extra dev --extra ops --extra ocr
+
+      # The same disposable test database as on a developer machine: the compose
+      # file names the container infra-postgres-1, mounts infra/db/init.sql for the
+      # application roles and publishes 127.0.0.1:55432, the only address the
+      # destructive test harness accepts (backend/app/core/declaration_test_database.py).
+      # Tests such as test_deployment_upgrade.py address the container by that name.
+      - name: Start test database
+        run: docker compose -f infra/docker-compose.declaration-test.yml up -d --wait postgres
+
+      - name: Lint (ruff)
+        run: make lint-backend
+
+      - name: Installer contract tests
+        run: make test-installer
+
+      - name: Backend tests (pytest, whole suite)
+        run: make test-backend
+
+  frontend:
+    name: Frontend (eslint, tsc, vitest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: make frontend-deps
+
+      - name: Lint (eslint)
+        run: make lint-frontend
+
+      - name: Typecheck (tsc)
+        run: make typecheck
+
+      - name: Unit tests (vitest)
+        run: make test-frontend
+
+  docs:
+    name: Docs (Markdown links)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Check relative links and images
+        run: make docs-check

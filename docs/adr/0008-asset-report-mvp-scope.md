@@ -1,7 +1,7 @@
 # ADR-0008: Asset report (Vermögensbericht, § 28 IV WEG) — MVP scope given the current data state
 
 Status: **Proposed** (confirmation by the human pending — domain sign-off required; no code/commit yet)
-Date: 2026-06-02 · Context: M4 · Reference: [../m4-weg-abrechnung.md](../m4-weg-abrechnung.md) §6 · [../sdd-property-management-mvp.md](../sdd-property-management-mvp.md) §6.3, §11, §17, §18 · [../architecture.md](../architecture.md) §5.3 (`bank_account` anchor) · [../roadmap.md](../roadmap.md) M4/M6/M7
+Date: 2026-06-02 · Context: M4 · Reference: [../m4-weg-abrechnung.md](../m4-weg-abrechnung.md) §6 · [../sdd-property-management-mvp.md](../sdd-property-management-mvp.md) §6.3, §11, §17, §18 · [../architecture.md](../architecture.md) §5.3 (`bank_account` anchor) · [archived roadmap](../archive/roadmap.md) M4/M6/M7
 Author: `engine-correctness` (Opus 4.8)
 
 > This ADR delimits the **MVP scope of the asset report** (§ 28 IV WEG) against the **current data state** (M0–M3): what can be done cleanly and automatically now, what is captured manually, and what is deliberately deferred to M6/M7. It makes **no** unilateral domain determination — the MVP scope is **[§18/domain]** and must be signed off by a tax advisor/WEG specialist attorney before productive use. It makes the delimitation **transparent** instead of feigning a completeness that the data cannot support.
