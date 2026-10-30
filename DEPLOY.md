@@ -359,8 +359,8 @@ No new credentials or sending service. Preview/apply reuse live source/contact a
 MIET preparation rights, ACL → financial → request locks, and one HTTP transaction.
 Source changes require a fresh preview; uncertain responses retry the same request,
 not a new batch. Only selected drafts are created, never issued or sent. Synthetic
-UI acceptance uses the isolated local launcher and
-`node scripts/acceptance/t53_dunning_batch_browser.cjs`; stop it afterward.
+UI acceptance uses [the dunning batch browser feature](features/dunning_batch.feature)
+via `make test-browser`, which owns and stops its isolated local app stack.
 
 ## Previous-year plan proposals (T54; no new migration)
 
