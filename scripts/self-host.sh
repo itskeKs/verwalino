@@ -214,7 +214,9 @@ diagnose() {
     TMP_DIR=$(mktemp -d "$out/.diagnose.XXXXXX")
     destination="$out/verwalino-diagnostics-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
     states=$(compose ps --all --format json)
-    schema_head=$(compose exec -T db psql --no-psqlrc -U app_migrator -d hausverwaltung --set ON_ERROR_STOP=1 -Atc 'SELECT version_num FROM public.alembic_version')
+    if ! schema_head=$(compose exec -T db psql --no-psqlrc -U app_migrator -d hausverwaltung --set ON_ERROR_STOP=1 -Atc 'SELECT version_num FROM public.alembic_version'); then
+        schema_head=''
+    fi
     compose logs --no-color --no-log-prefix --tail 2000 app | compose run --rm --no-deps -T --entrypoint python app -m app.diagnostics --containers-json "$states" --schema-head "$schema_head" --image "$VERWALINO_IMAGE" > "$TMP_DIR/bundle"
     ln "$TMP_DIR/bundle" "$destination"
     printf '%s\n' "$destination"

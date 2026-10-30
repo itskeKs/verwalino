@@ -328,13 +328,25 @@ if "exec" in sys.argv and "psql" in sys.argv:
         result = self.run_script("diagnose", "--out", str(output))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(Path(result.stdout.strip()).parent, output)
-        for command in ("ps", "psql", "logs", "app.diagnostics"):
+        for command in ("ps", "logs", "app.diagnostics"):
             self.env["FAKE_DOCKER_FAIL"] = command
             failed = self.run_script("diagnose", "--out", str(self.base / command))
             self.assertNotEqual(failed.returncode, 0)
             self.assertEqual(list((self.base / command).glob("*.tar.gz")), [])
         for args in [("--out",), ("--out", ""), ("--unknown", "x")]:
             self.assertNotEqual(self.run_script("diagnose", *args).returncode, 0)
+
+    def test_diagnose_writes_a_bundle_with_unavailable_metadata_when_database_is_down(self):
+        self.init()
+        self.env["FAKE_DOCKER_FAIL"] = "psql"
+        result = self.run_script("diagnose")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with tarfile.open(Path(result.stdout.strip()), "r:gz") as archive:
+            database = json.loads(archive.extractfile("database.json").read())
+        self.assertEqual(database["status"], "unavailable")
+        self.assertIsNone(database["migration_head"])
+        self.assertIsNone(database["organization_count"])
+        self.assertEqual(database["row_counts"], {})
 
     def test_diagnose_preserves_an_existing_output_directory_mode(self):
         self.init()

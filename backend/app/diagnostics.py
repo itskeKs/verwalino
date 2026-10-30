@@ -285,7 +285,8 @@ def main() -> int:
                     break
                 yield line
         try:
-            database = asyncio.run(collect_database())
+            database = ({'status': 'unavailable'} if args.schema_head == ''
+                        else asyncio.run(collect_database()))
             if args.schema_head is not None:
                 database['migration_head'] = args.schema_head
             data = build_bundle(config=runtime_config(), log_lines=lines(),

@@ -2,6 +2,7 @@
 
 import logging
 import copy
+from collections import deque
 from datetime import datetime, timezone
 import json
 import os
@@ -10,6 +11,7 @@ import re
 import tempfile
 from uuid import UUID, uuid4
 
+from app.core.config import settings
 from app.core.request_id import REPORTED_ERROR_ATTRIBUTE, request_id
 from app.core.scrub import MAX_SCRUB_CHARS, scrub_text
 
@@ -68,10 +70,11 @@ class DiagnosticsHandler(logging.Handler):
 
     def __init__(self):
         super().__init__(logging.WARNING)
+        self._entries: dict[Path, deque[str]] = {}
 
     @staticmethod
     def _directory() -> Path:
-        return Path(os.environ.get('HV_DIAGNOSTICS_DIR', '/tmp/verwalino-diagnostics'))
+        return Path(settings.diagnostics_dir)
 
     @staticmethod
     def _read(path: Path) -> list[dict]:
@@ -99,20 +102,33 @@ class DiagnosticsHandler(logging.Handler):
         return entries
 
     def _append(self, path: Path, entry: dict, limit: int) -> None:
-        entries = self._read(path)
+        entries = self._entries.get(path)
+        if entries is None:
+            # Each PID owns its files. Cache only already-scrubbed serialized
+            # records; downloads still validate and scrub the on-disk content.
+            entries = deque(maxlen=limit)
+            try:
+                with path.open(encoding='utf-8') as source:
+                    entries.extend(source)
+            except FileNotFoundError:
+                pass
+            self._entries[path] = entries
+        row = json.dumps(entry) + '\n'
         if len(entries) < limit:
             descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
             with os.fdopen(descriptor, 'w', encoding='utf-8') as output:
-                output.write(json.dumps(entry) + '\n')
+                output.write(row)
+            entries.append(row)
             return
         # Atomic compaction gives concurrent readers a complete old/new file.
         temporary = None
         try:
             with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False, encoding='utf-8') as output:
                 temporary = Path(output.name)
-                for row in [*entries[-(limit - 1):], entry]:
-                    output.write(json.dumps(row) + '\n')
+                output.writelines(list(entries)[1:])
+                output.write(row)
             os.replace(temporary, path)
+            entries.append(row)
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)

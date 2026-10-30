@@ -245,7 +245,7 @@ _test_app_rw_engine = None
 
 @pytest.fixture(autouse=True)
 def isolate_diagnostics_directory(tmp_path, monkeypatch):
-    monkeypatch.setenv('HV_DIAGNOSTICS_DIR', str(tmp_path / 'diagnostics'))
+    monkeypatch.setattr(settings, 'diagnostics_dir', str(tmp_path / 'diagnostics'))
 
 
 @pytest_asyncio.fixture(autouse=True)

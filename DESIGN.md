@@ -177,6 +177,8 @@ New screens follow these page structures and use a German noun as their `h1`.
 user form. It opens the existing kit Dialog, titled **Problem melden**, with German
 Sie-form disclosure of metadata/counts and excluded personal data. It states **Es wird
 nichts automatisch gesendet** and asks the user to review and attach the package manually.
+The disclosure limits error records to the organization's live API workers in one
+container and explains that a worker restart can make its records unavailable.
 The support link **Problem im Issue-Tracker melden** comes from `HV_SUPPORT_URL`; the
 last remembered server-error request ID appears separately, wraps long IDs, and is never
 added to the URL. A failed link lookup is an inline alert; reopening retries it.

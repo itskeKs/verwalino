@@ -43,6 +43,7 @@ class Settings(BaseSettings):
 
     # Reports are attached manually; this URL only opens the operator's tracker.
     support_url: HttpUrl = HttpUrl("https://github.com/itskeKs/verwalino/issues")
+    diagnostics_dir: str = "/tmp/verwalino-diagnostics"
 
     @field_validator("support_url")
     @classmethod

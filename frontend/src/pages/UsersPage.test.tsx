@@ -60,6 +60,7 @@ describe('manual problem reports', () => {
     expect(await screen.findByRole('dialog', { name: 'Problem melden' })).toBeVisible();
     expect(screen.getByText(/Es wird nichts automatisch gesendet/)).toBeVisible();
     expect(screen.getByText(/Version.*Konfigurationsschlüssel/)).toBeVisible();
+    expect(screen.getByText(/Fehlerangaben stammen aus den laufenden API-Prozessen dieses Servers und Ihrer Organisation/)).toBeVisible();
     expect(screen.getByText(/last-error-123456/)).toBeVisible();
     expect(await screen.findByRole('link', { name: 'Problem im Issue-Tracker melden' })).toHaveAttribute('href', 'https://support.example.org/issues');
     expect(download).not.toHaveBeenCalled();

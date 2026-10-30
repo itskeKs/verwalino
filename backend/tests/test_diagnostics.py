@@ -207,14 +207,63 @@ def test_non_secret_strings_retain_length_shapes():
     }
 
 
+def test_appending_records_keeps_files_bounded_and_scrubbed_without_repeated_reads(monkeypatch, tmp_path):
+    import logging
+    from pathlib import Path
+    from uuid import UUID
+    from app.core.config import settings
+    from app.core.logging import DiagnosticsHandler
+    from app.core.error_tracking import request_state
+
+    directory = tmp_path / 'diagnostics'
+    monkeypatch.setattr(settings, 'diagnostics_dir', str(directory))
+    original_open = Path.open
+    reads = 0
+
+    def track_reads(path, mode='r', *args, **kwargs):
+        nonlocal reads
+        if path.parent == directory and 'r' in mode:
+            reads += 1
+        return original_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'open', track_reads)
+    handler = DiagnosticsHandler()
+    organization = UUID(int=4)
+    token = request_state.set({'organization_id': organization})
+    try:
+        for index in range(525):
+            # A replacement handler must retain this PID's already written records.
+            if index == 20:
+                handler = DiagnosticsHandler()
+            record = logging.LogRecord('app.test', logging.ERROR, '', 0, 'private@example.org body-secret', (),
+                                       (RuntimeError, RuntimeError('password=private-secret'), None))
+            record.request_id = f'append-{index:08}'
+            handler.handle(record)
+    finally:
+        request_state.reset(token)
+
+    assert reads <= 4  # At most one initial read per file and handler.
+    files = list(directory.glob('*.jsonl'))
+    assert len(files) == 2
+    for path in files:
+        entries = [json.loads(line) for line in path.read_text().splitlines()]
+        limit = 50 if str(organization) in path.name else 500
+        assert len(entries) == limit
+        assert f'append-{525 - limit:08}' in entries[0]['line']
+        assert 'append-00000524' in entries[-1]['line']
+        assert all('RuntimeError' in entry['line'] for entry in entries)
+        assert all(private not in path.read_text() for private in ('private@example.org', 'body-secret', 'private-secret'))
+
+
 def test_worker_files_share_errors_and_preserve_each_organizations_recent_records(monkeypatch, tmp_path):
     import logging
     import os
     from uuid import UUID
+    from app.core.config import settings
     from app.core import logging as app_logging
     from app.core.error_tracking import request_state
 
-    monkeypatch.setenv('HV_DIAGNOSTICS_DIR', str(tmp_path / 'diagnostics'))
+    monkeypatch.setattr(settings, 'diagnostics_dir', str(tmp_path / 'diagnostics'))
     first, second, reader = (app_logging.DiagnosticsHandler() for _ in range(3))
     org_a, org_b = UUID(int=1), UUID(int=2)
     active = {10101, 20202}
@@ -259,9 +308,11 @@ def test_worker_files_share_errors_and_preserve_each_organizations_recent_record
 def test_shared_error_buffer_excludes_unvalidated_organizations(monkeypatch, tmp_path):
     import logging
     from uuid import UUID
+    from app.core.config import settings
     from app.core.logging import DiagnosticsHandler
     from app.core.error_tracking import request_state
 
+    monkeypatch.setattr(settings, 'diagnostics_dir', str(tmp_path / 'diagnostics'))
     token = request_state.set(None)
     try:
         DiagnosticsHandler().handle(logging.LogRecord('app.test', logging.ERROR, '', 0, 'private', (), None))
@@ -274,10 +325,11 @@ def test_shared_error_buffer_excludes_unvalidated_organizations(monkeypatch, tmp
 def test_shared_error_buffer_preserves_distinct_events_with_identical_public_fields(monkeypatch, tmp_path):
     import logging
     from uuid import UUID
+    from app.core.config import settings
     from app.core.logging import DiagnosticsHandler
     from app.core.error_tracking import request_state
 
-    monkeypatch.setenv('HV_DIAGNOSTICS_DIR', str(tmp_path / 'diagnostics'))
+    monkeypatch.setattr(settings, 'diagnostics_dir', str(tmp_path / 'diagnostics'))
     writer = DiagnosticsHandler()
     organization = UUID(int=3)
     token = request_state.set({'organization_id': organization})

@@ -294,7 +294,8 @@ migrator access; the builder validates its format before inclusion.
 The API buffer is shared by workers on one host through `HV_DIAGNOSTICS_DIR`
 (default `/tmp/verwalino-diagnostics` inside the container), a private mode-0700
 directory. This is an API process setting, not an installer config key; custom
-deployments must give all web workers the same directory. Each worker appends
+deployments must give all web workers in ONE container the same directory; separate
+containers must not share it because PID-keyed files would collide or evict each other. Each worker appends
 structural records to its mode-0600 `<pid>.jsonl`, compacted to the latest 500.
 Separate `<pid>.<organization-id>.jsonl` reserves keep the latest 50 per organization;
 each reserve file is bounded to 50 records. Readers combine live workers' files,

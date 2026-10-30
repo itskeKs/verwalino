@@ -223,7 +223,7 @@ function ProblemReportDialog({ onClose }: { onClose: () => void }) {
         Namen, E-Mails, Adressen, Zugangsdaten, Konfigurationswerte und Anfrageinhalte sind ausgeschlossen.
       </DialogDescription>
       <p className="text-sm">Es wird nichts automatisch gesendet. Prüfen Sie das Paket und hängen Sie es Ihrer Meldung im Issue-Tracker oder einer E-Mail manuell an. Beschreiben Sie Ihre Schritte sowie das erwartete und tatsächliche Verhalten.</p>
-      <p className="text-sm text-muted-foreground">Die Fehlerangaben stammen nur aus diesem laufenden API-Prozess und Ihrer Organisation. Nach einem Neustart oder in einem anderen Prozess können sie fehlen. Containerzustände sind nur im Paket des Installers enthalten.</p>
+      <p className="text-sm text-muted-foreground">Die Fehlerangaben stammen aus den laufenden API-Prozessen dieses Servers und Ihrer Organisation. Nach dem Neustart eines API-Prozesses können dessen Fehlerangaben fehlen. Containerzustände sind nur im Paket des Installers enthalten.</p>
       {requestId && <p className="break-all text-sm">Letzter Fehler – Request-ID: <code>{requestId}</code></p>}
       {supportUrl && <a className="text-sm text-primary underline" href={supportUrl} target="_blank" rel="noreferrer">Problem im Issue-Tracker melden</a>}
       {linkError && <p role="alert" className="text-sm text-destructive">{linkError}</p>}

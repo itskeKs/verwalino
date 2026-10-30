@@ -3,6 +3,7 @@ import json
 import logging
 
 from fastapi import Depends
+import httpx
 import pytest
 
 from app.core.tenant import get_current_user
@@ -45,7 +46,11 @@ async def test_api_bundle_correlates_seeded_failure_without_other_organization_l
         raise RuntimeError('Müller, Jürgen private@example.org body-secret')
 
     for client, identity in [(client_a_admin, 'own-error-123456'), (client_b_admin, 'foreign-error-123456')]:
-        response = await client.get('/api/test-admin-diagnostics-failure', headers={'X-Request-ID': identity})
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+            base_url=client.base_url, cookies=client.cookies,
+        ) as failure_client:
+            response = await failure_client.get('/api/test-admin-diagnostics-failure', headers={'X-Request-ID': identity})
         assert response.status_code == 500
         assert response.json()['request_id'] == identity
     response = await client_a_admin.post('/api/admin/diagnostics')
