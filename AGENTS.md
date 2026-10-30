@@ -55,8 +55,9 @@ enforcement; every baseline and safety rule here stays in force.
 - Red first: the scenario and the unit tests fail without the change, then the smallest change
   turns them green, then refactor with the tests still green.
 - A finding outside the scope becomes a new issue (or a line in the PR description), not extra code.
-- Implementers open the PR and stop. The maintainer's review merges; nobody else does. A risky
-  PR (migrations, isolation or RLS, money, GoBD, auth, backup and restore) gets a parallel,
+- Implementers push only their own PR branch, open the PR and stop; the maintainer review session
+  merges, nobody else. Never push to `main`. A risky PR (migrations, isolation or RLS, money,
+  GoBD, auth, backup and restore) gets a parallel,
   blind cross-review by independent reviewers before the merge (`.coddy/crossreview.json`);
   that is recommended, not a chain.
 - Progress is code, tests and a commit. Do not create state, contract, receipt, evidence, handoff,
@@ -116,7 +117,7 @@ specific question.
 
 `type(scope): lowercase imperative summary` (~70 chars), e.g. `feat(bank): …`, `fix(auth): …`,
 `test(bdd): …`, `docs(roadmap): …`, `ci: …`. Body: cause → change → tests. `Refs #N` or
-`Closes #N` at the end. Never push unless the user asks.
+`Closes #N` at the end. Push only the branch of the PR you work on; never `main`.
 
 No attribution anywhere: no `Co-Authored-By` trailer for an assistant, no "Generated with …" line,
 no mention of Claude, Codex or any other AI or agent as author — in commits, PR descriptions,

@@ -29,10 +29,8 @@ paths:
   release `/tmp/verwalino-testdb.lock` themselves. Direct pytest runs and dev stacks
   must hold that lock in their shell until finished; release between runs.
   Use only the test database and compose commands in AGENTS.md.
-  The database keeps the Alembic head of the last
-  run; when setup fails with `No such revision`, another branch's migrations are applied, and
-  `docker compose -f infra/docker-compose.declaration-test.yml restart postgres` recreates the
-  in-memory database (only while no other run is active; interim until #75).
+  A foreign Alembic head is reset automatically by the test session fixture (#75/#82);
+  never restart the test database container yourself.
 - Iterate selectively (`cd backend && uv run pytest tests/test_x.py -k name`
   or `cd frontend && npm test -- <file>`); the whole backend suite takes about 30 minutes.
   Run `make lint` before a push and `make test` before a merge; `make test-agent-rules` needs no DB.
