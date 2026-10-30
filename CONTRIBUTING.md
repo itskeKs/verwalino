@@ -19,9 +19,12 @@ Rules for coding agents, which apply to people too, are in [AGENTS.md](AGENTS.md
 
 ## Agent host setup
 
-Claude Code loads `.claude/rules/*.md` and Coddy reads the same tree. Cursor uses the paired
-`.cursor/rules/*.mdc`. A Claude rule without `paths` is always on; otherwise its `paths` match
-the Cursor `globs`, with `alwaysApply: false`. Keep bodies and descriptions equivalent.
+Root `AGENTS.md` is the common policy for every host; `CLAUDE.md` is a symlink to it (the
+checkout must preserve symlinks, which Git does by default). Claude Code loads `.claude/rules/*.md`
+and Coddy reads the same tree. Cursor uses the paired `.cursor/rules/*.mdc`. A Claude rule without
+`paths` is always on; otherwise its `paths` match the Cursor `globs`, with `alwaysApply: false`.
+Keep bodies and descriptions equivalent and change both trees in the same commit (Rules Sync);
+`make test-agent-rules` checks parity, the symlink and the hook.
 
 For Codex, trust this checkout's project configuration and run **`/hooks` once per clone** to
 review and approve both handlers in `.codex/hooks.json`. Review approval again after changing
@@ -45,8 +48,8 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
 - **`make test-bdd`** — API scenarios in `features/` ([features/README.md](features/README.md)).
 - **`make test-browser`** — headless `@browser` scenarios; acquires the shared DB lock and
   owns/stops its local API and Vite stack. See [browser setup and runner](features/README.md#browser-features).
-- **`make test-agent-rules`** — paired bodies/activation and Codex hook contracts; Python stdlib,
-  no database or backend dependencies. Run after changing rules or the adapter.
+- **`make test-agent-rules`** — paired bodies/activation, the `CLAUDE.md` symlink and Codex hook
+  contracts; Python stdlib, no database or backend dependencies. Run after changing rules or the adapter.
 - **`make docs-check`** — relative links and images in every Markdown file outside `docs/archive/`.
 - While iterating, run one file: `cd backend && uv run pytest tests/test_x.py -k name`,
   `cd frontend && npm test -- src/pages/X.test.tsx`; `make test-backend PYTEST_ARGS="…"` does the
