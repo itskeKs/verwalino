@@ -19,6 +19,7 @@ from tests.bdd.world import World
 # Reused as-is: a throw-away user that may change its password without
 # touching the shared seed users (see tests/test_auth_password.py).
 from tests.test_auth_password import password_identity  # noqa: F401
+from tests.setup_support import fresh_setup  # noqa: F401
 
 
 @pytest_asyncio.fixture
@@ -47,3 +48,4 @@ from tests.bdd.steps.common import *  # noqa: E402,F401,F403
 from tests.bdd.steps.organization import *  # noqa: E402,F401,F403
 from tests.bdd.steps.password import *  # noqa: E402,F401,F403
 from tests.bdd.steps.bank_import import *  # noqa: E402,F401,F403
+from tests.bdd.steps.setup import *  # noqa: E402,F401,F403

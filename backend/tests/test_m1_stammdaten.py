@@ -227,7 +227,9 @@ async def test_parent_foreign_keys_roundtrip_and_reject_existing_invalid_referen
     assert foreign_report.status_code == 201, foreign_report.text
     parents["settlement_run"] = foreign_report.json()["id"]
 
-    migration = importlib.import_module("migrations.versions.0140_parent_organization_foreign_keys")
+    from pathlib import Path
+    parent_revision = next(Path("migrations/versions").glob("*_parent_organization_foreign_keys.py"))
+    migration = importlib.import_module(f"migrations.versions.{parent_revision.stem}")
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
@@ -271,7 +273,7 @@ async def test_parent_foreign_keys_roundtrip_and_reject_existing_invalid_referen
                     try:
                         invalid_id = insert_invalid(table, column, parents[parent])
                         before = db.scalar(text(f"SELECT to_jsonb(t)::text FROM {table} t WHERE id=:id"), {"id": invalid_id})
-                        with pytest.raises(DBAPIError, match=f"Cannot upgrade 0140: invalid organization parent in {table}.{column}"):
+                        with pytest.raises(DBAPIError, match=f"Cannot upgrade {migration.revision}: invalid organization parent in {table}.{column}"):
                             with db.begin_nested():
                                 migration.upgrade()
                         assert db.scalar(text(f"SELECT to_jsonb(t)::text FROM {table} t WHERE id=:id"), {"id": invalid_id}) == before
