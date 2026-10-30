@@ -6,6 +6,7 @@ import json
 import hashlib
 import os
 import re
+import socket
 import stat
 import subprocess
 import tempfile
@@ -89,6 +90,25 @@ if "exec" in sys.argv and "psql" in sys.argv:
             self.assertNotIn(config[key], result.stdout + result.stderr)
         self.assertNotEqual(self.run_script("init", "--port", "19000").returncode, 0)
         self.assertEqual(self.config.read_bytes(), before)
+
+    def test_busy_port_refuses_init_and_start_before_mutating_docker(self):
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            port = listener.getsockname()[1]
+            result = self.run_script("init", "--port", str(port))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(f"Port {port} is already in use", result.stderr)
+            self.assertFalse(self.config.exists())
+            self.assertEqual(self.calls(), [])
+        self.init("--port", str(port))
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", port))
+            listener.listen()
+            result = self.run_script("start")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(f"Port {port} is already in use", result.stderr)
+            self.assertTrue(all("ps" in call["args"] for call in self.calls()))
 
     def test_separate_installations_get_fresh_secrets(self):
         first = self.init()
@@ -419,7 +439,7 @@ class ReleaseBundleTests(unittest.TestCase):
         step = next(step for step in bundle["steps"] if step.get("id") == "bundle")
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            for path in ("install.sh", "scripts/self-host.sh", "infra/docker-compose.yml",
+            for path in ("install.sh", "scripts/self-host.sh", "scripts/build-release-bundle.sh", "infra/docker-compose.yml",
                          "infra/Caddyfile", "infra/db/prod-init.sh", ".env.example"):
                 target = root / path
                 target.parent.mkdir(parents=True, exist_ok=True)

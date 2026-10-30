@@ -44,6 +44,7 @@ test-backend: check-testdb ## Backend pytest against the test DB (PYTEST_ARGS="-
 
 test-installer: ## Self-host installer contract tests (no DB; Docker is faked)
 	python3 -B scripts/test-install.py
+	python3 -B scripts/test-install-scenarios.py
 	cd backend && $(UV_LINT) python ../scripts/test-self-host.py
 
 test-frontend: frontend/node_modules ## Frontend vitest (single run)

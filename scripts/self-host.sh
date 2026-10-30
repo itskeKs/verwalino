@@ -31,6 +31,7 @@ Usage: bash scripts/self-host.sh COMMAND
 Default: local HTTP on 127.0.0.1:18080; no AI, SMTP or extraction worker.
 VERWALINO_CONFIG selects the private config file (default: .env.selfhost).
 No automatic update, downgrade or volume deletion is provided.
+Init/start refuse an occupied app port: choose a free --port or stop its listener.
 On first start, open the printed /setup URL and enter the one-time token (24 h).
 Another start replaces an unused token. The token is never stored in this file.
 The admin command is the alternative to browser setup.
@@ -39,6 +40,11 @@ HELP
 
 validate_port() {
     [[ "$1" =~ ^[1-9][0-9]{3,4}$ ]] && (( 10#$1 >= 1024 && 10#$1 <= 65535 ))
+}
+check_port() {
+    if (exec 3<>"/dev/tcp/127.0.0.1/$VERWALINO_PORT") 2>/dev/null; then
+        fail "Port $VERWALINO_PORT is already in use; choose a free --port or stop its listener."
+    fi
 }
 validate_domain() {
     local domain="$1" label
@@ -146,6 +152,7 @@ init_config() {
         printf 'Existing configuration kept: %s\n' "$CONFIG"
         return
     fi
+    check_port
     command -v openssl >/dev/null || fail 'OpenSSL is required to generate secrets.'
     [[ -d "$(dirname "$CONFIG")" ]] || fail 'Configuration parent directory must already exist.'
     umask 077
@@ -238,6 +245,9 @@ command -v docker >/dev/null || fail 'Docker with Compose v2 is required.'
 case "$command" in
     start)
         lock_config
+        # A repeat start may own the listening port already. An unrelated
+        # listener must fail before pulling, migrating or starting the database.
+        if [[ -z "$(compose ps --status running --quiet app)" ]]; then check_port; fi
         if [[ "$VERWALINO_IMAGE" = verwalino:local ]]; then
             compose build app
         else
