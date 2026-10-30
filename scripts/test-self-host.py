@@ -9,6 +9,7 @@ import os
 import shlex
 import shutil
 import re
+import runpy
 import stat
 import subprocess
 import sys
@@ -20,6 +21,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+RELEASE_TARGET = runpy.run_path(str(ROOT / "backend/app/deployment.py"))["TARGET"]
 SECRETS = ("MIGRATOR_PASSWORD", "APP_RW_PASSWORD", "APP_WORKER_PASSWORD", "APP_REVIEW_PASSWORD", "SESSION_SECRET")
 
 
@@ -269,6 +271,7 @@ elif name == "openssl":
         self.env["PATH"] = str(binary)
 
     def assert_doctor(self, severity, check, code=0):
+        self.env.setdefault("FAKE_SCHEMA", RELEASE_TARGET)
         result = self.run_script("doctor")
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)
         self.assertRegex(result.stdout, rf"(?m)^{severity} {check}: .+")
@@ -419,7 +422,7 @@ elif name == "openssl":
         self.init()
         self.doctor_tools()
         for variable, value, severity, code in (("FAKE_SCHEMA", "0122", "WARN", 0),
-                                               ("FAKE_SCHEMA", "0140", "FEHLER", 1),
+                                               ("FAKE_SCHEMA", f"{int(RELEASE_TARGET) + 1:04d}", "FEHLER", 1),
                                                ("FAKE_SCHEMA", "", "WARN", 0),
                                                ("FAKE_SCHEMA_TABLE", "", "WARN", 0),
                                                ("FAKE_SCHEMA", "0138\n0139", "WARN", 0),
