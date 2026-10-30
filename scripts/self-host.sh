@@ -26,10 +26,12 @@ Usage: bash scripts/self-host.sh COMMAND
        [--proxy-subnet PRIVATE_IPV4_CIDR]
   start                         Build/pull, migrate, start; print browser setup token if empty
   admin --org NAME --email EMAIL [--name NAME] [--password-stdin]
+  diagnose [--out DIR]           Write a redacted bundle beside the config in diagnostics/
   status                        Show this installation's containers
   stop                          Stop containers without deleting data
 Default: local HTTP on 127.0.0.1:18080; no AI, SMTP or extraction worker.
 Request IDs are always enabled; optional error tracking stays off.
+HV_SUPPORT_URL selects the manual report link (export it; not a private config key).
 HV_ERROR_TRACKING_* keys are not installer settings; see DEPLOY.md.
 Export HV_RELEASE_ID to label tracker releases (otherwise app version 0.1.0).
 VERWALINO_CONFIG selects the private config file (default: .env.selfhost).
@@ -200,6 +202,19 @@ admin() {
         --org "$org" --email "$email" --name "$name" --password-stdin
 }
 
+diagnose() {
+    local out="${CONFIG%/*}/diagnostics" states destination
+    if [[ "$#" != 0 ]]; then [[ "$#" = 2 && "$1" = --out && -n "$2" ]] || fail 'Use diagnose [--out DIR].'; out="$2"; fi
+    [[ ! -L "$out" ]] || fail 'Symlink output directories are refused.'
+    umask 077; mkdir -p "$out"; chmod 700 "$out"
+    TMP_DIR=$(mktemp -d "$out/.diagnose.XXXXXX")
+    destination="$out/verwalino-diagnostics-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
+    states=$(compose ps --all --format json)
+    compose logs --no-color --no-log-prefix --tail 2000 app | compose run --rm --no-deps -T --entrypoint python app -m app.diagnostics --containers-json "$states" --image "$VERWALINO_IMAGE" > "$TMP_DIR/bundle"
+    ln "$TMP_DIR/bundle" "$destination"
+    printf '%s\n' "$destination"
+}
+
 prepare_setup() {
     local count token_hash issued
     SETUP_TOKEN=''
@@ -233,7 +248,7 @@ case "$command" in
     help|--help|-h) usage; exit 0 ;;
     init) init_config "$@"; exit 0 ;;
     start|status|stop) [[ "$#" = 0 ]] || fail 'This command accepts no additional arguments.' ;;
-    admin) ;;
+    admin|diagnose) ;;
     *) usage >&2; fail 'Unknown command.' ;;
 esac
 load_config
@@ -267,6 +282,7 @@ case "$command" in
         fi
         ;;
     admin) admin "$@" ;;
+    diagnose) diagnose "$@" ;;
     status) compose ps ;;
     stop) lock_config; compose stop ;;
 esac

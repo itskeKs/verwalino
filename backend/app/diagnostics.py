@@ -212,13 +212,13 @@ async def collect_database(organization_id: UUID | None = None, actor_id: UUID |
             # Only known tenant tables; global auth/setup metadata never becomes a row payload.
             tables = sorted(name for name in tables if name in Base.metadata.tables and
                             'organization_id' in Base.metadata.tables[name].c)
-            query = ' UNION ALL '.join(f'SELECT \'{name}\' AS name, count(*) AS n FROM "{name}"' for name in tables)
+            query = ' UNION ALL '.join(f'SELECT \'{name}\' AS name, count(*) AS n FROM "{name}" WHERE organization_id=:org' for name in tables)
             organizations = [organization_id] if organization_id else list((await connection.execute(text('SELECT id FROM organization'))).scalars())
             counts = dict.fromkeys(tables, 0)
             for identity in organizations:
                 await connection.execute(text("SELECT set_config('app.current_org_id', :org, true)"), {'org': str(identity)})
                 if query:
-                    for name, count in await connection.execute(text(query)):
+                    for name, count in await connection.execute(text(query), {'org': identity}):
                         counts[name] += count
             result.update(status='available', row_counts=counts)
     except Exception:

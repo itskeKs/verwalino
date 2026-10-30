@@ -194,6 +194,21 @@ Generic exceptions produce a safe JSON `detail` plus `request_id`; HTTP 5xx
 exceptions retain their detail and headers and add the ID. HTTP 4xx bodies stay
 unchanged. The existing API-client error message includes the header ID for 5xx.
 
+Explicit diagnostics use `app.diagnostics.build_bundle`: six fixed tar members with
+allowlisted metadata, configuration shapes, RLS-visible numeric counts and scrubbed
+structural error records. `POST /api/admin/diagnostics` requires `OWNER_ADMIN`, returns
+an uncached attachment and logs a correlated INFO audit line; `GET` supplies the support
+URL. A bounded transient logging handler retains no free text or LogRecord, partitions
+records by the validated organization, and exposes only the current process's view.
+The API sets authenticated organization/user context for read-only app_rw counts;
+the CLI aggregates RLS-visible installation counts through the same role. Counts also
+use explicit organization filters alongside transaction-local RLS context. Missing
+migration-read privileges yield a null head, never a privileged fallback. The installer
+passes Docker states/logs into the same Python builder. There is no upload route,
+automatic sending, stored report or new migration. The seeded-500 correlation contract
+and privacy/collection limits are documented in
+[DEPLOY.md](../DEPLOY.md#diagnostics-and-reporting-a-problem).
+
 An empty tracker DSN leaves reporting disabled. When enabled, the Sentry-compatible
 FastAPI/Starlette integration sends error events with the request ID and the
 database-validated organization ID, never organization names. Error sampling is

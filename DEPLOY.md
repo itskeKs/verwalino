@@ -217,6 +217,89 @@ The **first tag run and the arm64 installation check remain acceptance steps
 for the maintainer**. This preparation does not close #7. Full `make test`
 remains a pre-merge gate; the local workflow/installer checks need no database.
 
+## Diagnostics and reporting a problem
+
+In **Benutzer**, an administrator can select **Problem melden**, read the disclosure,
+and choose **Diagnosepaket herunterladen**. Only `OWNER_ADMIN` can download
+`POST /api/admin/diagnostics`; `GET` on the same path supplies the configured support
+link. The response is an uncached attachment. Collection writes no server-side
+artifact or report state; an INFO audit line `diagnostics_download` carries its request ID.
+Download first, review the archive, then manually attach it to an issue or email with
+steps, expected/actual behavior and the displayed request ID. Nothing is uploaded or
+sent automatically. The client remembers the last valid server-error ID in memory
+until reload or successful login/logout; it never adds it to the support URL.
+
+On a portable installation, use the existing app image without starting the stack:
+
+```sh
+bash scripts/self-host.sh diagnose
+bash scripts/self-host.sh diagnose --out /private/path/support
+```
+
+The default directory is `diagnostics/` beside `.env.selfhost` (or the selected private
+config). The directory is mode 0700, archives mode 0600, and the printed path names a
+`verwalino-diagnostics-<UTC>.tar.gz`. Default diagnostics directories are excluded from
+Git and image build contexts; keep a custom output directory private too. An existing
+same-second filename is never overwritten; retry with a new timestamp. Failed collection
+publishes no archive. Symlink output directories are refused.
+
+The shell wrapper only handles arguments, private output publication, `compose ps --all
+--format json`, the last 2,000 physical lines of `compose logs app`, and the one-shot
+`python -m app.diagnostics` invocation inside the app image. It does not start services,
+run migrations, use a migrator role or invoke an upload service. Bundle collection,
+filtering and serialization live in Python. Installer contracts use fake Docker; this
+is not a claim of live-stack acceptance.
+
+| Member | Contains | Omits |
+| --- | --- | --- |
+| `manifest.json` | Format/time, application version, release target, recognized `HV_RELEASE_ID` and SHA-256 image digest when known | Image registry/name, arbitrary release text, host/user names |
+| `environment.json` | Python version, OS family, effective `HV_*` keys with type/length shapes, boolean feature switches | Every configuration value, including URLs, paths and secrets |
+| `containers.json` | Known Compose service identifiers, state and health; `null` for API bundles | Container names/IDs, commands, ports, mounts, labels and raw Docker output |
+| `database.json` | Migration head when readable, organization count, numeric tenant-table counts with collection status and scope | Organization identifiers/names, rows, schema/driver error messages and connection details |
+| `errors.log` | Last 500 WARNING/ERROR/CRITICAL records: timestamp, severity, request ID and exception class when available | All free-form messages, traceback source/paths, SQL values, bodies, cookies, names, emails, addresses and credentials |
+| `README.txt` | Sharing instructions and collection limits | Installation/user data |
+
+Every source log line passes through `app.core.scrub.scrub_text`; only structural fields
+then survive. Raw messages are excluded even when a name or body has no recognizable
+pattern. Logs are bounded to 8,192 characters per source line and 2,000 source lines.
+UUID request IDs stay opaque; records whose other IDs are recognized as personal data
+or credentials by the scrubber are omitted. Keep personal data out of request IDs and
+release identifiers, since arbitrary names cannot be distinguished from opaque IDs. Recognized release IDs
+are Git hex revisions, UTC `YYYYMMDDTHHMMSSZ` stamps or semantic versions; other labels
+are omitted. Portable CLI bundles obtain a digest from the selected pinned image;
+API deployments may supply `HV_IMAGE_DIGEST=sha256:<64 hex digits>` when known.
+Local builds report an unknown digest rather than guessing.
+
+Database collection uses the runtime **app_rw** role in a read-only transaction, with
+five-second statement bounds. API counts use explicit organization filters and the authenticated organization/user
+RLS context. CLI counts aggregate RLS-visible rows across organizations without a user
+identity; stricter source/user policies may hide rows. Counts are diagnostic observations,
+not a data inventory. The global organization count is a number only. Unavailable
+metadata stays null/marked unavailable. Existing installations may not grant app_rw
+SELECT on `alembic_version`; the head is then null, while other readable metadata is
+collected. Diagnostics never changes grants or substitutes privileged credentials.
+
+The API retains at most 500 structural warning/error records in memory per process,
+tagged internally with the database-validated organization. Only that organization's
+records enter its bundle. This is a transient view since startup: restart clears it,
+other workers may have different records, and records without a validated organization are
+excluded. Use the CLI for the bounded Docker history and container states.
+
+`HV_SUPPORT_URL` defaults to `https://github.com/itskeKs/verwalino/issues`. It accepts
+an HTTP(S) URL without credentials. Set it in the API process environment; portable
+Compose forwards an exported value (it is not a `.env.selfhost` key). The dialog opens
+the link only when selected, without attaching a bundle or adding request data.
+
+**Reproduction contract:** `test_seeded_request_failure_keeps_request_id_and_error_class`
+forces a test-only route to raise `RuntimeError`, captures the safe 500 response ID,
+builds the archive and finds that ID plus the error class in `errors.log`, with the
+private message absent. `test_api_bundle_correlates_seeded_failure_without_other_organization_logs`
+exercises the same path through the admin download and excludes another organization's
+failure. These deterministic tests establish correlation for a seeded failure. A report
+still needs the user's reproduction steps; the archive deliberately contains no data
+or request body to replay. Tests also iterate every tar member for forbidden fixture
+strings and exercise the installer with fake Docker.
+
 ## Request IDs and optional error tracking
 
 Request correlation is always enabled, including when error tracking is off.

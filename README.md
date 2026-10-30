@@ -86,6 +86,8 @@ Update/backup automation and a real fresh installation/login run
 are still outstanding; this is not yet a general production release.
 Details and limits: [DEPLOY.md](DEPLOY.md#portable-docker-first-installation).
 
+Administrators can download a redacted diagnostics bundle via **Problem melden** or `self-host.sh diagnose` and [share it manually](DEPLOY.md#diagnostics-and-reporting-a-problem).
+
 Request IDs correlate error displays, response headers and logs; optional scrubbed error tracking is [off by default](DEPLOY.md#request-ids-and-optional-error-tracking).
 
 ## Local setup for development and declarations of division (Teilungserklärungen)

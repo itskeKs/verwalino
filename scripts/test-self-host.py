@@ -3,6 +3,7 @@
 Run in backend/ with uv run python ../scripts/test-self-host.py.
 """
 import json
+import tarfile
 import hashlib
 import os
 import re
@@ -36,6 +37,19 @@ with open(os.environ["FAKE_DOCKER_LOG"], "a") as log:
 failure = os.environ.get("FAKE_DOCKER_FAIL")
 if failure and (failure in sys.argv or (failure == "app-ready" and "up" in sys.argv and sys.argv[-1] == "app")):
     sys.exit(17)
+if "ps" in sys.argv and "--format" in sys.argv:
+    print(json.dumps([{"Service": "app", "State": "running", "Health": "healthy", "Name": os.environ["SESSION_SECRET"]}]))
+if "logs" in sys.argv:
+    secrets = " ".join(os.environ[key] for key in ("MIGRATOR_PASSWORD", "APP_RW_PASSWORD", "APP_WORKER_PASSWORD", "APP_REVIEW_PASSWORD", "SESSION_SECRET"))
+    print("2026-10-30 12:00:00,123 ERROR app.test request_id=installer-failure-123 RuntimeError: " + secrets)
+if "app.diagnostics" in sys.argv:
+    os.environ["HV_SESSION_SECRET"] = os.environ["SESSION_SECRET"]
+    import app.diagnostics as diagnostics
+    async def database():
+        return {"status": "available", "organization_count": 1, "row_counts": {"person": 23}}
+    diagnostics.collect_database = database
+    sys.argv = ["diagnostics"] + sys.argv[sys.argv.index("app.diagnostics") + 1:]
+    sys.exit(diagnostics.main())
 if "bootstrap" in sys.argv:
     password = sys.stdin.readline()
     with open(os.environ["FAKE_DOCKER_STDIN"], "w") as capture:
@@ -275,6 +289,46 @@ if "exec" in sys.argv and "psql" in sys.argv:
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.base / "stdin").read_text(), password + "\n")
         self.assertNotIn(password, result.stdout + result.stderr + self.log.read_text())
+
+    def test_diagnose_uses_only_read_commands_and_writes_a_private_redacted_bundle(self):
+        config = self.init()
+        result = self.run_script("diagnose")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        path = Path(result.stdout.strip())
+        self.assertEqual(path.parent, self.base / "diagnostics")
+        self.assertRegex(path.name, r"^verwalino-diagnostics-.*\.tar\.gz$")
+        self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        with tarfile.open(path, "r:gz") as archive:
+            members = {member.name: archive.extractfile(member).read().decode() for member in archive}
+        self.assertEqual(len(members), 6)
+        for content in members.values():
+            for key in SECRETS:
+                self.assertNotIn(config[key], content)
+        self.assertIn("installer-failure-123", members["errors.log"])
+        self.assertIn("RuntimeError", members["errors.log"])
+        args = [call["args"] for call in self.calls()]
+        self.assertEqual(len(args), 3)
+        self.assertEqual(args[0][-4:], ["ps", "--all", "--format", "json"])
+        self.assertTrue(any(call[-6:] == ["logs", "--no-color", "--no-log-prefix", "--tail", "2000", "app"] for call in args))
+        build = next(call for call in args if "app.diagnostics" in call)
+        start = build.index("run")
+        self.assertEqual(build[start:start + 10], ["run", "--rm", "--no-deps", "-T", "--entrypoint", "python", "app", "-m", "app.diagnostics", "--containers-json"])
+        self.assert_isolated(args)
+
+    def test_diagnose_supports_out_and_never_leaves_a_bundle_after_failure(self):
+        self.init()
+        output = self.base / "support packages"
+        result = self.run_script("diagnose", "--out", str(output))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(Path(result.stdout.strip()).parent, output)
+        for command in ("ps", "logs", "app.diagnostics"):
+            self.env["FAKE_DOCKER_FAIL"] = command
+            failed = self.run_script("diagnose", "--out", str(self.base / command))
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertEqual(list((self.base / command).glob("*.tar.gz")), [])
+        for args in [("--out",), ("--out", ""), ("--unknown", "x")]:
+            self.assertNotEqual(self.run_script("diagnose", *args).returncode, 0)
 
     def test_status_and_stop_are_non_destructive(self):
         self.init()
