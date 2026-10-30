@@ -52,7 +52,7 @@ the reason, for example a lease or a rent history. Source approvals,
 creation/import receipts, audit, and saved financial snapshots
 are also protected references. Existing RLS/privacy locks remain authoritative.
 A person with a tenant/owner/vendor profile is already referenced.
-The UI-only test `scripts/acceptance/t56_master_delete_browser.cjs` verifies cancel,
+The [UI-only acceptance](../../DEPLOY.md#unused-master-deletion-t56-local-head-0137) verifies cancel,
 actual deletion of an empty unit, and the visible lease reason of a
 used unit after desktop/phone reload; original leases remain identical.
 
@@ -73,5 +73,5 @@ edit/end management mandates, but cannot rewrite a definition already
 bound by financial scopes (409). This does not concern SEPA mandates.
 Properties have optional **Baujahr** (year built) and **Gesamtfläche (m²)** (total area); the area is stored as
 Decimal, not invented from units. Empty entries remain unknown.
-The UI-only test `scripts/acceptance/t55_master_data_browser.cjs` verifies the real
+The [UI-only acceptance](../../DEPLOY.md#editable-master-metadata-t55-local-head-0136) verifies the real
 rename, 1984 / 1.234,56 m² and unchanged sources after desktop/phone reload.

@@ -6,7 +6,7 @@ and mid-size property managers and private landlords in Germany. The UI is Germa
 One Docker image supports self-hosting; a free hosted offering with an isolated
 organization per company is [planned](docs/roadmap.md).
 
-<!-- badges: add license/CI/release badges once a license and a first release exist -->
+<!-- badges: add CI and release badges once the repository is public and a first release exists -->
 
 | Dashboard | Property list |
 | --- | --- |
@@ -21,7 +21,8 @@ Screenshots show demo data.
   dashboard with deadlines, due tasks, and monthly rent figures.
 - **Properties and units:** rental, WEG, SEV, and mixed properties; unit areas and
   co-ownership shares (MEA); meters and readings; CSV master-data import;
-  reviewed declaration-of-division import and property knowledge with sources.
+  AI-assisted declaration-of-division import (feature flag and OpenAI key required)
+  and property knowledge with sources.
 - **People and tenancies:** contacts, tenant and owner profiles, vendors, leases,
   tenant and owner changes, and effective-date rent history with graduated
   (Staffelmiete) and index-linked rent (Indexmiete).
@@ -29,9 +30,8 @@ Screenshots show demo data.
   owner ledgers, payment booking and reversal, CSV/CAMT bank-file import with
   previews, match suggestions and split booking, and SEPA monthly rent files.
 - **Vouchers and costs:** cost entry and confirmation, BetrKV categories, voucher
-  upload and cost adoption, OCR and e-invoice XML extraction (automatic OCR is
-  off in the portable stack), clarification cases, and GoBD immutability,
-  reversal, and correction.
+  upload and cost adoption, OCR and e-invoice XML extraction, clarification cases,
+  and GoBD immutability, reversal, and correction.
 - **Operating and heating cost statements:** calculation, finalization, PDF and
   corrections; allocation keys, pro rata and vacancy; property batch drafts,
   advance-payment proposals, and internal heating allocation or external billing.
@@ -51,6 +51,8 @@ Usage notes and operational limits are linked in the documentation table below.
 ## Quick start
 
 ### Self-hosting
+
+The portable stack ships without AI import and AI Q&A, SMTP and automatic invoice OCR; manual voucher processing works.
 
 Prerequisites: Linux or macOS, Bash, OpenSSL, Docker, and Compose v2 2.24 or later.
 From a checkout on a new host, run:
@@ -72,6 +74,8 @@ See [portable installation](DEPLOY.md#portable-docker-first-installation) for
 HTTPS, image selection, operation, backups, and the remaining acceptance limits.
 
 ### Local development
+
+`scripts/dev-local.sh` needs Poppler and Tesseract with the German language pack; see [CONTRIBUTING.md](CONTRIBUTING.md#development-environment).
 
 Install both dependency sets:
 
@@ -111,7 +115,7 @@ See the [roadmap](docs/roadmap.md), [feature status](docs/feature-status.md), an
 | --- | --- |
 | Install and operate | [Deployment](DEPLOY.md), [operations](docs/operations/) |
 | Understand the architecture | [Architecture](docs/architecture.md), [ADRs](docs/adr/) |
-| Understand the domain | [Voucher flow](docs/m2-gobd-belegfluss.md), [operating costs](docs/m3-abrechnungs-engine.md), [WEG](docs/m4-weg-abrechnung.md), [payments](docs/m6-zahlungen-mietkonto.md), [domain reference](docs/domain-reference.md) |
+| Domain design (2026-06 drafts) | [Voucher flow](docs/m2-gobd-belegfluss.md), [operating costs](docs/m3-abrechnungs-engine.md), [WEG](docs/m4-weg-abrechnung.md), [payments](docs/m6-zahlungen-mietkonto.md), [domain reference](docs/domain-reference.md) |
 | Manage passwords and users | [Users and access](docs/operations/users-and-access.md) |
 | Maintain master data | [Master data and selectors](docs/operations/selector-pages.md) |
 | Manage tenancies and rent | [Tenancies, rent changes, deposits, ownership](docs/operations/tenancies-and-rent.md) |

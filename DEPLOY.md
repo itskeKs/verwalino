@@ -292,6 +292,8 @@ in the existing snapshot path; finalized originals are never recomputed.
 Missing/ambiguous readings fail closed rather than selecting an estimate.
 This local validation does not change the production gate or authorize deployment.
 
+### Dunning interest defaults
+
 `HV_DUNNING_BASE_INTEREST_RATE` is an optional decimal basis-rate default for
 new dunning notices, not an automatically maintained official rate. An explicit
 request can override or disable it; the notice freezes its rate, reference date,
@@ -327,15 +329,8 @@ in one organization is logged without source content and does not stop the other
 `--organization UUID` may be repeated to restrict processing; `--once` returns
 nonzero on an iteration failure. Retry/lease budgets and human review are unchanged.
 
-For a **local synthetic test only**, follow the
-[development environment setup](CONTRIBUTING.md#development-environment), including
-Poppler and Tesseract with `deu`, then run `scripts/dev-local.sh`. The launcher
-pins all database connections to the disposable `:55432` database, uses a fresh
-`/tmp/hv-dev-documents.*` directory by default (or an explicitly supplied `/tmp`
-`HV_DOCUMENT_STORAGE_ROOT`), probes the worker and starts worker/API/UI. Ctrl+C
-stops its children, including on partial startup failure; it does not delete
-stored originals or stop PostgreSQL. Do not run resetting backend tests while
-this UI acceptance is active.
+For a **local synthetic test only**, use the launcher and required OCR dependencies
+documented in the [development environment setup](CONTRIBUTING.md#development-environment).
 
 In another terminal run `node scripts/acceptance/t10_invoice_worker_browser.cjs`
 with `HV_PLAYWRIGHT_PACKAGE`/`HV_CHROMIUM_EXECUTABLE` pointing to installed tools
@@ -349,12 +344,13 @@ extraction override, API/SQL fixture write or saved report is used by the check.
 ## Optional document SMTP (T47; no deployment authorization)
 
 Outbound mail is disabled unless `HV_SMTP_HOST` and `HV_SMTP_FROM` are supplied.
-Set `HV_SMTP_PORT` explicitly for the chosen service (default 587) and
-`HV_SMTP_SECURITY=starttls` or `tls`; certificate verification remains enabled.
+Set `HV_SMTP_PORT` explicitly for the chosen service (default 587).
+`HV_SMTP_SECURITY` defaults to `starttls`; `tls` is also supported and certificate
+verification remains enabled.
 Authentication requires both `HV_SMTP_USERNAME` and secret `HV_SMTP_PASSWORD`.
-`HV_SMTP_TIMEOUT_SECONDS` defaults to 15 (1–60). No real credentials, sender domain
-or delivery authority are assumed by the application or this document. Keep
-credentials in operator-managed secrets, not the repository.
+`HV_SMTP_TIMEOUT_SECONDS` defaults to 15 (1–60). No real credentials, recipients,
+sender domain or delivery authority are assumed by the application or this document.
+Keep credentials in operator-managed secrets, not the repository.
 
 For a **local synthetic test only**, run:
 

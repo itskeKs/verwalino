@@ -16,14 +16,14 @@ Start with the project overview, then choose a page for the task at hand.
 | [Invoice extraction](operations/invoice-extraction.md) | Upload review, extraction queue, OCR limits, retry, and rollback. |
 | [Invoice/cost linking](operations/invoice-cost-linking.md) | Source-link reconciliation, immutable originals, and rollout constraints. |
 
-| Domain and design | Purpose |
+| Design documents (June 2026, pre-implementation) | Purpose |
 | --- | --- |
-| [Architecture](architecture.md) | Application structure, organization isolation, and shared conventions. |
-| [MVP specification](sdd-property-management-mvp.md) | Property-management scope, domain rules, and original acceptance requirements. |
-| [Voucher flow](m2-gobd-belegfluss.md) | Costs, chart of accounts, GoBD immutability, and stored originals. |
-| [Operating cost engine](m3-abrechnungs-engine.md) | Distribution keys, pro rata periods, rounding, snapshots, and tenant statements. |
-| [WEG accounting](m4-weg-abrechnung.md) | Annual settlements, economic plans, owner balances, and asset reports. |
-| [Payments and tenant ledger](m6-zahlungen-mietkonto.md) | Bookings, expected/actual charges, open items, and dunning. |
+| [Architecture](architecture.md) | M0 design: data model, organization isolation, and conventions. |
+| [MVP specification](sdd-property-management-mvp.md) | MVP design: property-management scope, domain rules, and original acceptance requirements. |
+| [Voucher flow](m2-gobd-belegfluss.md) | M2 design: costs, chart of accounts, GoBD immutability, and stored originals. |
+| [Operating cost engine](m3-abrechnungs-engine.md) | M3 design: distribution keys, pro rata periods, rounding, snapshots, and tenant statements. |
+| [WEG accounting](m4-weg-abrechnung.md) | M4 design: annual settlements, economic plans, owner balances, and asset reports. |
+| [Payments and tenant ledger](m6-zahlungen-mietkonto.md) | M6 design: bookings, expected/actual charges, open items, and dunning. |
 
 | ADRs | Purpose |
 | --- | --- |

@@ -45,12 +45,15 @@ the start, otherwise the original lease. A spacing of at least one year is requi
 Existing changes from the start onward return 409; invalid values, amount
 or date overflow, and steps after the lease end return 422. The transaction
 creates either all steps or none. Live write/source permissions, shared
-financial lock, audit, and immutable history apply as with T23.
+financial lock, audit, and immutable history apply as for
+[rent changes with effective date](#rent-changes-with-effective-date).
 
 [§ 557a BGB](https://www.gesetze-im-internet.de/bgb/__557a.html) requires
 written form and monetary amounts as well as rent unchanged for at least one year.
 Percent is merely a calculation aid here; the app replaces neither the agreement nor
-the review of the permissible rent level/rent brake (Mietpreisbremse). No new database revision.
+the review of the permissible rent level/rent brake (Mietpreisbremse).
+Deployment constraints are documented under the
+[deployment boundary](../../DEPLOY.md#deployment-boundary-and-accepted-head).
 `scripts/acceptance/t43_staffelmiete_browser.cjs` verifies the real end-to-end UI flow.
 
 ## Index-linked rent (Indexmiete)
@@ -75,14 +78,17 @@ Only „Als Mietänderung übernehmen“ (apply as rent change) additionally sen
 `expected_base_rent`, `expected_advance_payment`, and
 `expected_previous_valid_from` from the preview. Under the shared
 financial/lease lock, the calculation is redone; a stale preview returns 409.
-The adoption uses the immutable T23 path and logs the VPI and the
+The adoption uses the immutable workflow for
+[rent changes with effective date](#rent-changes-with-effective-date) and logs the VPI and the
 stated receipt in the audit. Live/source permissions also apply to the preview.
 Original lease, booked payments, and final snapshots remain unchanged.
 
 [§ 557b BGB](https://www.gesetze-im-internet.de/bgb/__557b.html) requires a
 written index agreement and a declaration in text form (Textform). The operator checks prerequisites
 and the correct VPI base. The entered date does not prove
-delivery; the function neither creates nor sends a declaration. No migration.
+delivery; the function neither creates nor sends a declaration.
+Deployment constraints are documented under the
+[deployment boundary](../../DEPLOY.md#deployment-boundary-and-accepted-head).
 `scripts/acceptance/t44_indexmiete_browser.cjs` verifies the real UI flow.
 
 ## Security deposits (Kautionen)

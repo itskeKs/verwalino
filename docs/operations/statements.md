@@ -1,10 +1,10 @@
 # Statements
 
-Heating and operating cost statements, annual property figures, and prior-year plan proposals.
+This page covers heating calculation and BK integration (T45/T46), annual property
+figures (T39), BK batch drafts (T27), advance-payment proposals (T28), and prior-year
+economic plan proposals (T54).
 
 ## HeizkostenV calculation engine
-
-T45 introduced this workflow.
 
 `app.engine.heizkosten.calculate_heating_costs(pools, context=...)` distributes
 separately defined heating and hot-water cost pools. Inputs/results are
@@ -51,8 +51,10 @@ restores it. Without a request body, saved inputs are reused,
 an explicitly empty request deletes them. Preview saves nothing. Automatic
 readings are resolved fresh until finalization; afterwards the configuration,
 measurement vouchers, and separate base/consumption/reduction amounts are immutable in the snapshot.
-The PDF opened in the UI reads only this frozen calculation path. No new migration,
-no claimed §9 cost separation, §9a estimate, or legal certification.
+The PDF opened in the UI reads only this frozen calculation path.
+No §9 cost separation, §9a estimate, or legal certification is claimed.
+Deployment constraints are documented under the
+[deployment boundary](../../DEPLOY.md#deployment-boundary-and-accepted-head).
 `uv run pytest tests/test_m3_settlement.py -k heiz` verifies the backend path;
 `scripts/acceptance/t46_heizkosten_browser.cjs` verifies the real UI and PDF contents.
 
@@ -111,7 +113,8 @@ to an error instead of an invented rate.
 `GET /api/settlements/{id}/advance-proposal` returns costs, monthly basis, and amount
 as decimal strings. „Übernehmen ab“ (apply from) and „Vorauszahlung übernehmen“ (apply advance payment) send exclusively `valid_from` via POST
 to the same URL. The adoption uses the existing
-T23 path: full rent history row with the base rent valid on the effective date and the new
+[rent changes with effective date](tenancies-and-rent.md#rent-changes-with-effective-date)
+workflow: a full rent history row with the base rent valid on the effective date and the new
 advance payment, without overwriting the lease. Duplicate effective dates return 409;
 write, source, and scope permissions apply, the history is saved before HTTP 201.
 Finalized snapshots, booked payments, and the actual amounts (Ist) remain unchanged.
@@ -135,7 +138,7 @@ an uncalculated draft is created, with amounts and category IDs retained after r
 source changes require a new preview (409). No automatic
 data-basis attestation or finalization. Existing costs and old plans
 remain unchanged. If the creation response is unclear, check the plan list first, do not
-automatically create again. The UI-only flow
-`scripts/acceptance/t54_previous_plan_browser.cjs` verifies plan 2027 from actuals 2026,
+automatically create again. The [UI-only acceptance](../../DEPLOY.md#previous-year-plan-proposals-t54-no-new-migration)
+verifies plan 2027 from actuals 2026,
 7,000 EUR costs + 6,000 EUR separate reserve as well as edited 7,100.25 + 6,500 EUR
 and desktop/smartphone reload.

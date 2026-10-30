@@ -56,8 +56,8 @@ exactly the verified bytes with safe filenames and `nosniff`. Inline display is 
 PDF, PNG, and JPEG files detected by their signature; other content
 is offered as a download. A failed database operation rolls back
 metadata and audit but does not delete possibly shared
-original bytes. Migration 0130 refuses a lossy downgrade when
-documents exist.
+original bytes. Rollback restrictions are documented under
+[migration compatibility](../../DEPLOY.md#migration-compatibility-00290139).
 
 The „Dokumente“ (documents) section is available in property, unit, and person.
 For persons, an accessible property is deliberately selected for an upload;
@@ -77,7 +77,7 @@ In addition to live write, source, and contact export permissions, for bound
 financial documents the own scope capability `send` is required (PDF export is
 not sufficient). Reading roles cannot trigger a dispatch.
 
-SMTP is disabled until configured; see [SMTP configuration](../../DEPLOY.md#optional-document-smtp-t47-no-deployment-authorization).
+SMTP is disabled until configured; see [SMTP configuration and local UI/PDF acceptance](../../DEPLOY.md#optional-document-smtp-t47-no-deployment-authorization).
 
 Before SMTP, a dispatch attempt is durably stored in the existing append-only audit on the
 document, including recipient, message ID, and a reference to the
@@ -88,11 +88,9 @@ proof that no dispatch took place. No automatic retry on unclear
 outcome. SMTP acceptance is **not proof of delivery or receipt**; deadlines and receipt
 must be checked separately. „Versand-PDF öffnen“ (open dispatch PDF) reads the stored bytes with
 hash verification and current source/original contact export permissions, without
-recalculating finalized documents. No schema change.
+recalculating finalized documents.
 
 `uv run pytest tests/test_mail_service.py` verifies fake SMTP and domain/permission paths.
-`scripts/acceptance/t47_mail_browser.cjs` operates only a local SMTP receiver
-on `127.0.0.1:11025` without forwarding and verifies the actual UI/PDF flow.
 
 ## Letter templates and circulars
 
@@ -110,9 +108,9 @@ a hidden recipient blocks the entire issuance. Readers cannot change a
 template or create letters. Repeating the same request produces
 no duplicates. The history opens stored, hash-verified original bytes;
 later template or name changes do not alter them. No automatic
-dispatch and no proof of delivery. Migration **0132** refuses a downgrade
-with stored templates or letters. Tests: `uv run pytest tests/test_letters.py`;
-real UI/PDF acceptance: `scripts/acceptance/t48_letters_browser.cjs`.
+dispatch and no proof of delivery. Tests: `uv run pytest tests/test_letters.py`.
+Deployment requirements, rollback restrictions, and UI/PDF acceptance are documented
+in the [saved-letter runbook](../../DEPLOY.md#saved-letter-originals-t48-local-head-0132-only).
 
 ## DATEV booking batch (Buchungsstapel)
 
@@ -137,11 +135,12 @@ additionally exported. Zero costs produce no prohibited zero booking.
 **Complete current-state output, no differential export:** do not import files
 repeatedly or overlapping; after corrections, reconciliation in the
 target system is required. A downloaded file is not a successful
-DATEV import. No upload, no change to original bookings, and no new
-migration. The account configuration is entered explicitly per output, not stored
+DATEV import. No upload or change to original bookings.
+The account configuration is entered explicitly per output, not stored
 as a global category assignment. Tests:
-`uv run pytest tests/test_datev_export.py`, real Q1 acceptance:
-`scripts/acceptance/t49_datev_browser.cjs`.
+`uv run pytest tests/test_datev_export.py`.
+Deployment details and synthetic Q1 acceptance are documented in the
+[DATEV runbook](../../DEPLOY.md#datev-file-export-t49).
 
 ## SEPA monthly rent
 
@@ -167,10 +166,9 @@ require explicitly entered BICs; check bank profile and acceptability externally
 **File only, no transmission:** no payment/booking, no automatic switch
 FRST→RCUR, and no proof of bank acceptance. Repeated downloads/uploads can
 trigger duplicate collections; reconcile IDs and collection processing outside the app.
-No predefined real bank data or mandates. Migration **0133** protects
-mandate identities and refuses a downgrade with stored SEPA data.
-Tests: `uv run pytest tests/test_sepa_export.py`; UI-only acceptance with isolated
-launcher: `HV_PYTHON="$PWD/backend/.venv/bin/python" node scripts/acceptance/t50_sepa_browser.cjs`.
+No predefined real bank data or mandates. Tests: `uv run pytest tests/test_sepa_export.py`.
+Deployment requirements, rollback restrictions, and local UI acceptance are documented
+in the [SEPA runbook](../../DEPLOY.md#offline-sepa-rent-file-t50-local-head-0133).
 
 ## CSV master data import
 
@@ -181,15 +179,14 @@ and fill it as a UTF-8 file (BOM permitted) with semicolons and unchanged column
 `property`, `unit`, and `person` create new properties, units, and contacts;
 `property_key` references a local property key or an authorized
 existing property UUID. Areas remain exact decimal values, including `60,25`.
-At most 500 rows or 256 KiB; unknown columns, invalid values, and duplicates
-are reported with row/field. No automatically created profiles or leases.
+Unknown columns, invalid values, and duplicates are reported with row/field.
+No automatically created profiles or leases.
 
 The preview writes nothing. Only after review, explicit approval of the
 data scope (if required), and confirmation is the entire import created atomically.
 There are no silent self-approvals. Changes require a new
 preview; repeating the same request returns the same IDs, after permission revocation
 no partial response. Continue unclear network errors with **Import erneut versuchen** (retry import),
-do not duplicate through new requests. Revision 0134 holds only immutable,
-user-bound result IDs, not the CSV or contact data in the batch.
-Tests: `uv run pytest tests/test_master_import.py`; real UI/download flow:
-`node scripts/acceptance/t51_master_import_browser.cjs`.
+do not duplicate through new requests. Tests: `uv run pytest tests/test_master_import.py`.
+Import limits, retained batch metadata, rollback restrictions, and UI/download acceptance
+are documented in the [CSV import runbook](../../DEPLOY.md#csv-master-data-import-t51-local-head-0134).

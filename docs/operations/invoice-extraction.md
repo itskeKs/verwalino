@@ -30,8 +30,8 @@ proposal. XML and embedded XML precede OCR. Outcome records carry processor
 version and source page numbers; these are extraction provenance, not accounting
 approval or per-field semantic proof.
 
-Runtime requires the existing OCR extras, Poppler and German Tesseract. Missing
-runtime dependencies yield `ocr_unavailable`. Queue admission is serialized per
+Runtime prerequisites are documented in the [development environment setup](../../CONTRIBUTING.md#development-environment).
+Missing runtime dependencies yield `ocr_unavailable`. Queue admission is serialized per
 organization, default 100 active documents (`HV_INVOICE_QUEUE_LIMIT`, 1–1000).
 Disabled extraction or full queues save the original with an explicit manual-review
 status and no new queue entry. Each worker handles one child at a time. This is not yet the shared fair-job

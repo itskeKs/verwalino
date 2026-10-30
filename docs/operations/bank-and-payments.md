@@ -110,8 +110,8 @@ output. A single non-exportable row prevents the entire file; permitted
 partial scopes need no artificial whole-property access.
 
 UTF-8 BOM, semicolon, CRLF, decimal comma, and text formula protection apply as with the
-annual report. Payment files contain the original amount and a separate
-signed balance amount. **Listensaldo** (list balance) and **Listensumme Brutto** (list total, gross)
+[property annual overview](statements.md#property-annual-overview). Payment files contain
+the original amount and a separate signed balance amount. **Listensaldo** (list balance) and **Listensumme Brutto** (list total, gross)
 refer exclusively to the displayed rows; depending on the filter, these may
 also include drafts, reversal lines, or superseded costs, not a booked account balance.
 Summation remains accurate to the cent without JavaScript floating-point arithmetic. Loading,
@@ -122,8 +122,9 @@ a payment list balance of 650 EUR and a cost gross total of 125 EUR including ex
 ## Default interest on dunning notices (Verzugszinsen)
 
 Both dunning notice forms require an explicitly reviewed „Basiszinssatz (%)“ (base interest rate).
-`HV_DUNNING_BASE_INTEREST_RATE` optionally provides the default; without configuration
-the field stays empty. The app claims no official or automatically current
+Without a configured default the field stays empty; see
+[dunning interest defaults](../../DEPLOY.md#dunning-interest-defaults).
+The app claims no official or automatically current
 interest rate. `GET /api/dunning/settings` returns the default for signed-in members.
 An explicit decimal string `base_interest_rate` overrides it; old
 API calls without it and without configuration remain interest-free, explicit `null`
@@ -135,8 +136,9 @@ and interest are not charged interest. Example: 700 EUR, base 2.50%, 60 days →
 8.63 EUR interest and 708.63 EUR total with fee 0. Due date, reference date,
 days, base/annual interest rate, and amounts are saved and shown in detail/PDF;
 later configuration or payment changes do not recalculate the issued dunning notice.
-Migration 0129 protects this provenance and refuses its loss
-on downgrade. Issuance alone confirms no receipt. The real UI/PDF flow
+Rollback restrictions are documented under
+[migration compatibility](../../DEPLOY.md#migration-compatibility-00290139).
+Issuance alone confirms no receipt. The real UI/PDF flow
 is repeatable with `scripts/acceptance/t35_dunning_interest_browser.cjs`.
 
 ## Dunning run with selected drafts
@@ -154,7 +156,7 @@ Sources changed in the meantime require a new preview (409). If the network resp
 unclear, the same job is kept for a manual retry;
 its original IDs are returned under renewed complete prepare/source checks,
 not recalculated or duplicated. Old issued letters remain
-unchanged. `scripts/acceptance/t53_dunning_batch_browser.cjs` actually verifies three
+unchanged. The [UI acceptance procedure](../../DEPLOY.md#selected-dunning-batches-t53-local-head-0135) verifies three
 arrears of 850 EUR each and exactly three drafts totaling 2,550 EUR, including
 mobile abort, reload, and unchanged source data.
 
@@ -175,5 +177,5 @@ Vacancy values today's unit inventory at the end of the chosen month, not
 a versioned historical property inventory. Missing permissions, incomplete
 history coverage, or incoherent bookings produce errors instead of false zeros.
 The overview changes no bookings or leases. Mandatory check:
-`uv run pytest tests/test_dashboard_kpis.py`; real UI acceptance:
-`node scripts/acceptance/t52_dashboard_kpis_browser.cjs`.
+`uv run pytest tests/test_dashboard_kpis.py`; see the
+[local UI acceptance procedure](../../DEPLOY.md#monthly-dashboard-rent-kpis-t52).
