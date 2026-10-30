@@ -7,11 +7,17 @@ CONFIG="${VERWALINO_CONFIG:-$ROOT/.env.selfhost}"
 [[ "$CONFIG" = /* ]] || CONFIG="$PWD/$CONFIG"
 TMP_DIR=""
 LOCKED=0
+RESTORE_DB=0
 
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 cleanup() {
+    local status=$?
+    if [[ "$RESTORE_DB" = 1 ]]; then
+        compose stop db || printf 'Could not stop db; run: bash scripts/self-host.sh stop\n' >&2
+    fi
     [[ -z "$TMP_DIR" ]] || rm -rf "$TMP_DIR"
     if [[ "$LOCKED" = 1 ]]; then rmdir "$CONFIG.lock"; fi
+    return "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -28,9 +34,12 @@ Usage: bash scripts/self-host.sh COMMAND
   admin --org NAME --email EMAIL [--name NAME] [--password-stdin]
   status                        Show this installation's containers
   stop                          Stop containers without deleting data
+  backup [--out DIR]            Archive the running database and documents
+  restore FILE [--yes]          Replace data in a stopped installation
 Default: local HTTP on 127.0.0.1:18080; no AI, SMTP or extraction worker.
 VERWALINO_CONFIG selects the private config file (default: .env.selfhost).
 No automatic update, downgrade or volume deletion is provided.
+Backups exclude private config/secrets and certificates; keep config separately.
 HELP
 }
 
@@ -119,6 +128,84 @@ compose() {
         -f "$ROOT/infra/docker-compose.yml" "${profiles[@]}" "$@"
 }
 
+config_fingerprint() {
+    local key
+    for key in VERWALINO_MODE VERWALINO_DOMAIN VERWALINO_PORT VERWALINO_IMAGE VERWALINO_PROXY_SUBNET; do
+        printf '%s=%s\n' "$key" "${!key}"
+    done | openssl dgst -sha256 | awk '{print $NF}'
+}
+
+archive_tool() {
+    # Override the server entrypoint. Root is needed for the private host bind
+    # and app-owned files. Only CHOWN/DAC_OVERRIDE are added to the dropped caps.
+    compose run --rm --no-deps -T --user 0:0 --cap-add CHOWN --cap-add DAC_OVERRIDE --entrypoint python \
+        --env "BACKUP_OWNER=$(id -u):$(id -g)" --volume "$TMP_DIR:/backup" app -c "$(cat "$ROOT/backend/app/selfhost_backup.py")" \
+        "$@" /backup /data/documents < /dev/null
+}
+
+backup() {
+    local out="$PWD" archive schema
+    if [[ "$#" != 0 ]]; then
+        [[ "$#" = 2 && "$1" = --out && -n "$2" ]] || fail 'Usage: backup [--out DIR]'
+        out="$2"
+    fi
+    command -v openssl >/dev/null || fail 'OpenSSL is required for configuration fingerprints.'
+    umask 077
+    lock_config
+    mkdir -p "$out"
+    out=$(cd "$out" && pwd)
+    archive="$out/verwalino-backup-$(date -u +%Y%m%dT%H%M%SZ).tar"
+    TMP_DIR=$(mktemp -d "$out/.verwalino-backup.XXXXXX")
+    # The installer lock excludes migrations; pg_dump takes a consistent online
+    # snapshot. Documents are copied afterwards and may include later uploads.
+    schema=$(compose exec -T db psql -X --set ON_ERROR_STOP=1 -U app_migrator -d hausverwaltung \
+        -Atc 'SELECT version_num FROM alembic_version')
+    [[ "$schema" =~ ^[0-9]{4}$ ]] || fail 'Missing or ambiguous database schema head.'
+    compose exec -T db pg_dump -U app_migrator -d hausverwaltung -Fc > "$TMP_DIR/db.dump"
+    archive_tool pack "$schema" "$VERWALINO_IMAGE" "$(config_fingerprint)"
+    # Same-filesystem publication never overwrites another backup in this second.
+    ln "$TMP_DIR/archive.tar" "$archive" || fail 'Backup destination exists; nothing overwritten.'
+    printf 'Backup: %s (%s bytes)\n' "$archive" "$(wc -c < "$archive" | tr -d ' ')"
+}
+
+restore() {
+    local file="${1:-}" yes=0 running target confirmation
+    [[ -n "$file" && -f "$file" ]] || fail 'Usage: restore FILE [--yes]'
+    shift
+    if [[ "$#" != 0 ]]; then
+        [[ "$#" = 1 && "$1" = --yes ]] || fail 'Usage: restore FILE [--yes]'
+        yes=1
+    fi
+    command -v openssl >/dev/null || fail 'OpenSSL is required for configuration fingerprints.'
+    umask 077
+    lock_config
+    running=$(compose ps --all --status running --quiet app migrate bootstrap)
+    [[ -z "$running" ]] || fail 'Installation is running; first run: bash scripts/self-host.sh stop'
+    TMP_DIR=$(mktemp -d "$(dirname "$CONFIG")/.env.verwalino-restore.XXXXXX")
+    # Work on a private copy so a changed input cannot bypass verification.
+    cp "$file" "$TMP_DIR/archive.tar"
+    target=$(sed -n "s/^TARGET = '\([0-9][0-9]*\)'$/\1/p" "$ROOT/backend/app/deployment.py")
+    [[ "$target" =~ ^[0-9]{4}$ ]] || fail 'Cannot read the checkout release target.'
+    archive_tool verify "$target" "$(config_fingerprint)"
+    if [[ "$yes" = 0 ]]; then
+        printf 'This replaces the application database and all documents. Type restore to confirm: ' >&2
+        IFS= read -r confirmation || fail 'Restore cancelled; use --yes for non-interactive restore.'
+        [[ "$confirmation" = restore ]] || fail 'Restore cancelled.'
+    fi
+    # Set before startup so cleanup stops db even after a readiness failure.
+    RESTORE_DB=1
+    compose up -d --wait --wait-timeout 120 db
+    compose exec -T db pg_restore --list < "$TMP_DIR/db.dump" > /dev/null
+    compose exec -T db dropdb -U app_migrator --if-exists hausverwaltung
+    compose exec -T db createdb -U app_migrator -T template0 hausverwaltung
+    compose exec -T db pg_restore -U app_migrator -d hausverwaltung \
+        --exit-on-error --single-transaction < "$TMP_DIR/db.dump"
+    archive_tool restore-documents
+    compose stop db
+    RESTORE_DB=0
+    printf 'Restored database and documents. Next: bash scripts/self-host.sh start\n'
+}
+
 init_config() {
     local explicit="$#" option key
     VERWALINO_MODE=local VERWALINO_DOMAIN='' VERWALINO_PORT=18080
@@ -200,7 +287,7 @@ case "$command" in
     help|--help|-h) usage; exit 0 ;;
     init) init_config "$@"; exit 0 ;;
     start|status|stop) [[ "$#" = 0 ]] || fail 'This command accepts no additional arguments.' ;;
-    admin) ;;
+    admin|backup|restore) ;;
     *) usage >&2; fail 'Unknown command.' ;;
 esac
 load_config
@@ -227,6 +314,8 @@ case "$command" in
         printf 'Create the first admin with: bash scripts/self-host.sh admin --org NAME --email EMAIL\n'
         ;;
     admin) admin "$@" ;;
+    backup) backup "$@" ;;
+    restore) restore "$@" ;;
     status) compose ps ;;
     stop) lock_config; compose stop ;;
 esac

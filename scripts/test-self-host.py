@@ -2,11 +2,14 @@
 
 Run in backend/ with uv run python ../scripts/test-self-host.py.
 """
+import hashlib
+import io
 import json
 import os
 import stat
 import subprocess
 import tempfile
+import tarfile
 import unittest
 from pathlib import Path
 
@@ -28,19 +31,38 @@ class SelfHostTests(unittest.TestCase):
         binary.mkdir()
         docker = binary / "docker"
         docker.write_text('''#!/usr/bin/env python3
-import json, os, sys
+import json, os, subprocess, sys
 with open(os.environ["FAKE_DOCKER_LOG"], "a") as log:
     log.write(json.dumps({"args": sys.argv[1:], "image": os.environ.get("VERWALINO_IMAGE"), "secure": os.environ.get("VERWALINO_COOKIE_SECURE"), "hosts": os.environ.get("VERWALINO_ALLOWED_HOSTS"), "profiles": os.environ.get("COMPOSE_PROFILES"), "caller_secret_used": os.environ.get("MIGRATOR_PASSWORD") == "attacker"}) + "\\n")
 failure = os.environ.get("FAKE_DOCKER_FAIL")
 if failure and (failure in sys.argv or (failure == "app-ready" and "up" in sys.argv and sys.argv[-1] == "app")):
     sys.exit(17)
-if "bootstrap" in sys.argv:
+if "ps" in sys.argv and "--quiet" in sys.argv:
+    print(os.environ.get("FAKE_RUNNING", ""), end="")
+if "psql" in sys.argv:
+    print(os.environ.get("FAKE_SCHEMA", "0139"))
+if "pg_dump" in sys.argv:
+    sys.stdout.buffer.write(b"PGDMPsynthetic-dump")
+if "pg_restore" in sys.argv:
+    sys.stdin.buffer.read()
+if "-c" in sys.argv:
+    position = sys.argv.index("-c")
+    args = sys.argv[position + 2:]
+    mount = sys.argv[sys.argv.index("--volume") + 1].rsplit(":", 1)[0]
+    args = [arg.replace("/backup", mount).replace("/data/documents", os.environ["FAKE_DOCUMENTS"]) for arg in args]
+    # Emulate root's container-only ownership operations without chown on the host.
+    wrapper = "import os, sys; os.chown = lambda *args: None; exec(compile(sys.argv.pop(1), '<archive-helper>', 'exec'))"
+    sys.exit(subprocess.call([sys.executable, "-c", wrapper, sys.argv[position + 1], *args]))
+if "run" in sys.argv and "bootstrap" in sys.argv:
     password = sys.stdin.readline()
     with open(os.environ["FAKE_DOCKER_STDIN"], "w") as capture:
         capture.write(password)
 ''')
         docker.chmod(0o755)
-        self.env = dict(os.environ, PATH=f"{binary}:{os.environ['PATH']}",
+        self.documents = self.base / "documents"
+        self.documents.mkdir()
+        (self.documents / "original.pdf").write_bytes(b"synthetic original")
+        self.env = dict(os.environ, PYTHONPATH=str(ROOT / "backend"), FAKE_DOCUMENTS=str(self.documents), PATH=f"{binary}:{os.environ['PATH']}",
                         VERWALINO_CONFIG=str(self.config), FAKE_DOCKER_LOG=str(self.log),
                         FAKE_DOCKER_STDIN=str(self.base / "stdin"))
 
@@ -56,6 +78,163 @@ if "bootstrap" in sys.argv:
 
     def calls(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
+
+    def fingerprint(self, config):
+        keys = ("VERWALINO_MODE", "VERWALINO_DOMAIN", "VERWALINO_PORT", "VERWALINO_IMAGE", "VERWALINO_PROXY_SUBNET")
+        return hashlib.sha256("".join(f"{key}={config[key]}\n" for key in keys).encode()).hexdigest()
+
+    def archive(self, config, **changes):
+        manifest = {"format": "verwalino-selfhost", "format_version": 1, "schema_head": "0139",
+                    "app_image": config["VERWALINO_IMAGE"], "created_at": "2026-10-30T12:00:00Z",
+                    "config_fingerprint": self.fingerprint(config)}
+        manifest.update(changes)
+        documents = io.BytesIO()
+        with tarfile.open(fileobj=documents, mode="w:gz") as tar:
+            data = b"restored original"
+            info = tarfile.TarInfo("nested/original.pdf")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        path = self.base / "input.tar"
+        members = {"manifest.json": json.dumps(manifest).encode(), "db.dump": b"PGDMPsynthetic-dump",
+                   "documents.tar.gz": documents.getvalue()}
+        self.write_archive(path, members)
+        return path, members
+
+    def write_archive(self, path, members):
+        with tarfile.open(path, "w") as tar:
+            for name, content in members.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(content)
+                tar.addfile(info, io.BytesIO(content))
+
+    def test_backup_archives_database_documents_and_nonsecret_manifest(self):
+        config = self.init()
+        output = self.base / "output with spaces"
+        result = self.run_script("backup", "--out", str(output))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        archives = list(output.glob("verwalino-backup-*.tar"))
+        self.assertEqual(len(archives), 1)
+        path = archives[0]
+        self.assertRegex(path.name, r"^verwalino-backup-\d{8}T\d{6}Z\.tar$")
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        self.assertIn(str(path), result.stdout)
+        self.assertIn(str(path.stat().st_size), result.stdout)
+        with tarfile.open(path) as tar:
+            self.assertEqual(set(tar.getnames()), {"db.dump", "documents.tar.gz", "manifest.json"})
+            self.assertTrue(tar.extractfile("db.dump").read().startswith(b"PGDMP"))
+            manifest_bytes = tar.extractfile("manifest.json").read()
+            manifest = json.loads(manifest_bytes)
+            with tarfile.open(fileobj=io.BytesIO(tar.extractfile("documents.tar.gz").read())) as docs:
+                self.assertEqual(docs.extractfile("original.pdf").read(), b"synthetic original")
+        self.assertEqual(manifest["format"], "verwalino-selfhost")
+        self.assertEqual(manifest["format_version"], 1)
+        self.assertEqual(manifest["schema_head"], "0139")
+        self.assertEqual(manifest["app_image"], config["VERWALINO_IMAGE"])
+        self.assertRegex(manifest["created_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+        self.assertEqual(manifest["config_fingerprint"], self.fingerprint(config))
+        for key in SECRETS:
+            self.assertNotIn(key.encode(), manifest_bytes)
+            self.assertNotIn(config[key].encode(), path.read_bytes())
+        args = [c["args"] for c in self.calls()]
+        dump = next(a for a in args if "pg_dump" in a)
+        self.assertEqual(dump[dump.index("exec"):],
+                         ["exec", "-T", "db", "pg_dump", "-U", "app_migrator", "-d", "hausverwaltung", "-Fc"])
+        self.assertLess(next(i for i, a in enumerate(args) if "pg_dump" in a),
+                        next(i for i, a in enumerate(args) if "pack" in a))
+        self.assertFalse(any("up" in a or "stop" in a for a in args))
+        self.assert_isolated(args)
+
+    def test_backup_defaults_to_current_directory_and_does_not_publish_failures(self):
+        self.init()
+        self.env["FAKE_DOCKER_FAIL"] = "pg_dump"
+        self.assertNotEqual(self.run_script("backup").returncode, 0)
+        self.assertEqual(list(self.base.glob("verwalino-backup-*")), [])
+        self.assertEqual(list(self.base.glob(".verwalino-backup.*")), [])
+        del self.env["FAKE_DOCKER_FAIL"]
+        result = self.run_script("backup")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(list(self.base.glob("verwalino-backup-*"))), 1)
+
+    def test_restore_refuses_running_writers_before_any_changes(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        self.env["FAKE_RUNNING"] = "running-app-id"
+        result = self.run_script("restore", str(archive), "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("bash scripts/self-host.sh stop", result.stderr)
+        self.assertTrue(self.calls())
+        self.assertTrue(all("ps" in c["args"] for c in self.calls()))
+
+    def test_restore_refuses_newer_unknown_or_foreign_archives_before_starting_db(self):
+        config = self.init()
+        for changes, message in [({"schema_head": "0140"}, "newer"),
+                                 ({"schema_head": "unknown"}, "schema"),
+                                 ({"format": "foreign"}, "manifest"),
+                                 ({"format_version": 2}, "format")]:
+            with self.subTest(changes=changes):
+                archive, _ = self.archive(config, **changes)
+                result = self.run_script("restore", str(archive), "--yes")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr.lower())
+                self.assertFalse(any("up" in c["args"] for c in self.calls()))
+
+    def test_restore_refuses_missing_members_and_unsafe_documents(self):
+        config = self.init()
+        path, members = self.archive(config)
+        for missing in members:
+            with self.subTest(missing=missing):
+                self.write_archive(path, {k: v for k, v in members.items() if k != missing})
+                self.assertNotEqual(self.run_script("restore", str(path), "--yes").returncode, 0)
+        unsafe = io.BytesIO()
+        with tarfile.open(fileobj=unsafe, mode="w:gz") as tar:
+            info = tarfile.TarInfo("../../escape")
+            tar.addfile(info, io.BytesIO())
+        members["documents.tar.gz"] = unsafe.getvalue()
+        self.write_archive(path, members)
+        self.assertNotEqual(self.run_script("restore", str(path), "--yes").returncode, 0)
+        self.assertFalse(any("up" in c["args"] for c in self.calls()))
+        self.assertEqual((self.documents / "original.pdf").read_bytes(), b"synthetic original")
+
+    def test_restore_recreates_database_replaces_documents_and_stops_db(self):
+        config = self.init()
+        archive, _ = self.archive(config, schema_head="0122")
+        result = self.run_script("restore", str(archive), "--yes", input="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("bash scripts/self-host.sh start", result.stdout)
+        args = [c["args"] for c in self.calls()]
+        stages = ["ps", "verify", "up", "--list", "dropdb", "createdb", "--single-transaction", "restore-documents", "stop"]
+        positions = [next(i for i, a in enumerate(args) if stage in a) for stage in stages]
+        self.assertEqual(positions, sorted(positions))
+        for a in args:
+            if "up" in a or "stop" in a:
+                self.assertEqual(a[-1], "db")
+            if "pg_restore" in a and "--list" not in a:
+                self.assertEqual(a[a.index("exec"):], ["exec", "-T", "db", "pg_restore", "-U", "app_migrator",
+                                                      "-d", "hausverwaltung", "--exit-on-error", "--single-transaction"])
+        self.assertFalse((self.documents / "original.pdf").exists())
+        self.assertEqual((self.documents / "nested/original.pdf").read_bytes(), b"restored original")
+        self.assert_isolated(args)
+
+    def test_restore_warns_on_configuration_change_and_requires_confirmation(self):
+        config = self.init()
+        archive, _ = self.archive(config, config_fingerprint="f" * 64)
+        for answer in ("", "no\n"):
+            result = self.run_script("restore", str(archive), input=answer)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("fingerprint differs", result.stderr)
+            self.assertFalse(any("up" in c["args"] for c in self.calls()))
+        result = self.run_script("restore", str(archive), input="restore\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_restore_failure_stops_db_and_never_reports_success(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        self.env["FAKE_DOCKER_FAIL"] = "--single-transaction"
+        result = self.run_script("restore", str(archive), "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("Restored", result.stdout)
+        self.assertTrue(any("stop" in c["args"] and c["args"][-1] == "db" for c in self.calls()))
+        self.assertFalse(any("restore-documents" in c["args"] for c in self.calls()))
 
     def test_init_generates_distinct_secrets_and_private_file_without_docker(self):
         config = self.init()
