@@ -12,8 +12,8 @@ satisfy the narrow exceptions in `AGENTS.md` and the installed guard. Current
 checks use simulated Docker and static contracts; no real-container or complete
 installation test is claimed.
 
-Prerequisites: Bash (including macOS Bash 3.2), OpenSSL, Docker Engine/Desktop
-and Compose v2 >= 2.24. From a reviewed checkout:
+Prerequisites: Linux or macOS with Bash (including macOS Bash 3.2), OpenSSL,
+Docker Engine/Desktop and Compose v2 >= 2.24. From a reviewed checkout:
 
 ```bash
 bash scripts/self-host.sh init
@@ -108,13 +108,20 @@ bash scripts/self-host.sh admin --org "My property management" --email admin@exa
 ```
 
 It uses the migrator role and invalidates any pending setup token in the same
-transaction. Admin bootstrap prompts for the password twice without echo.
+transaction. Admin bootstrap prompts for the password twice without echo and
+transmits it only via stdin. There is no default password.
 Existing users are left unchanged by the existing admin CLI; it is not a password-reset tool.
 For automation feed a newline-terminated password from a secret manager to
 `admin --org ... --email ... --password-stdin`; never place it in arguments,
 checked-in files, or an `echo` command in shell history.
 
-Use `status` for container status and `stop` to stop without deleting any data.
+Use `status` for container status and `stop` to stop without deleting any data:
+
+```bash
+bash scripts/self-host.sh status
+bash scripts/self-host.sh stop
+```
+
 There is deliberately no destroy, automatic update or backup command. Before
 an upgrade, plan a consistent backup of the stopped application's database,
 document volume and private config, and test restoring them together on a
@@ -124,14 +131,15 @@ and disaster-recovery guarantee.
 
 AI declaration import/Q&A, SMTP and invoice OCR are disabled in this initial
 portable stack. Manual invoice review remains supported. The T10 worker is
-active on the existing alpha; portable worker integration is outside this
-installer's scope. The first tag publication and native arm64 image installation,
+active on the existing alpha since 2026-10-24; portable worker integration is
+outside this installer's scope. The first tag publication and native arm64 image installation,
 complete clean-host setup/login/restart and real domain/TLS acceptance still
 need operator checks; do not treat the mock installer tests as
 proof of those behaviors. Run the portable tests without Docker using
 `cd backend && uv run python ../scripts/test-self-host.py`; the backend CI job
 runs these before pytest. Real Caddyfile validation and the complete portable
-stack smoke test require a separately authorized clean Docker host.
+stack smoke test require a separately authorized clean Docker host. Update/backup
+automation remains outstanding; this is not yet a general production release.
 
 ### Published image verification
 
@@ -319,7 +327,8 @@ in one organization is logged without source content and does not stop the other
 `--organization UUID` may be repeated to restrict processing; `--once` returns
 nonzero on an iteration failure. Retry/lease budgets and human review are unchanged.
 
-For a **local synthetic test only**, install the README's dev/OCR dependencies,
+For a **local synthetic test only**, follow the
+[development environment setup](CONTRIBUTING.md#development-environment), including
 Poppler and Tesseract with `deu`, then run `scripts/dev-local.sh`. The launcher
 pins all database connections to the disposable `:55432` database, uses a fresh
 `/tmp/hv-dev-documents.*` directory by default (or an explicitly supplied `/tmp`
