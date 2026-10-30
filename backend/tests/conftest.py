@@ -36,6 +36,7 @@ from app.main import app
 # their registration at the suite level so it does not depend on pytest's
 # collection order between test modules.
 pytest_plugins = (
+    "tests.bdd.report",
     "tests.test_declaration_approval_new_property",
     "tests.test_declaration_approval_existing_property",
 )

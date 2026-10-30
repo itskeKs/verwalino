@@ -21,6 +21,8 @@ from urllib.request import urlopen
 import pytest
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError, async_playwright, expect
 
+from tests.bdd.report import artifact_directory, attach_artifact
+
 ROOT = Path(__file__).resolve().parents[3]
 BASE_URL = "http://127.0.0.1:13000"
 VIEWPORT = {"width": 1440, "height": 1000}
@@ -37,7 +39,7 @@ def _stop(process):
 
 
 @pytest.fixture(scope="session")
-def browser_app(seed_data):
+def browser_app(seed_data, request):
     """Never attach to an existing stack; it might belong to another session."""
     from app.core.config import settings
     from app.core.declaration_test_database import require_disposable_database_settings
@@ -65,8 +67,14 @@ def browser_app(seed_data):
         stack.callback(signal.signal, signal.SIGTERM, previous_handler)
         storage = stack.enter_context(tempfile.TemporaryDirectory(prefix="verwalino-browser-"))
         env["HV_DOCUMENT_STORAGE_ROOT"] = storage
-        for command, directory, url in commands:
-            log = stack.enter_context(tempfile.TemporaryFile(mode="w+"))
+        reporter = request.config.pluginmanager.getplugin("scenario-report")
+        for (command, directory, url), name in zip(commands, ("backend", "vite")):
+            if reporter:
+                log_directory = reporter.directory / "logs"
+                log_directory.mkdir(exist_ok=True)
+                log = stack.enter_context((log_directory / f"{name}.log").open("w+"))
+            else:
+                log = stack.enter_context(tempfile.TemporaryFile(mode="w+"))
             process = subprocess.Popen(command, cwd=directory, env=env, stdout=log, stderr=log, start_new_session=True)
             stack.callback(_stop, process)
             deadline = time.monotonic() + 30
@@ -132,11 +140,13 @@ class BrowserWorld:
     def run(self, coroutine):
         return self.session.run(coroutine)
 
-    async def start(self):
+    async def start(self, *, trace=False):
         self.context = await self.session.browser.new_context(
             base_url=BASE_URL, viewport=VIEWPORT, storage_state=self.session.auth,
             service_workers="block", locale="de-DE", timezone_id="Europe/Berlin",
         )
+        if trace:
+            await self.context.tracing.start(screenshots=True, snapshots=True, sources=True)
         # Only the real local app is used; never call external services.
         async def local_only(route):
             from urllib.parse import urlsplit
@@ -179,11 +189,28 @@ class BrowserWorld:
 
 
 @pytest.fixture
-def browser_world(world, browser_session):
+def browser_world(world, browser_session, request):
     browser = BrowserWorld(browser_session, world)
-    browser.run(browser.start())
+    directory = artifact_directory(request.node)
     try:
+        browser.run(browser.start(trace=directory is not None))
         yield browser
         assert not browser.errors, browser.errors
     finally:
-        browser.run(browser.context.close())
+        try:
+            reporter = request.config.pluginmanager.getplugin("scenario-report")
+            failed = sys.exc_info()[0] is not None or (reporter and reporter.records[request.node.nodeid]["outcome"] == "failed")
+            if directory and hasattr(browser, "context"):
+                if failed:
+                    if hasattr(browser, "page"):
+                        screenshot = directory / "screenshot.png"
+                        browser.run(browser.page.screenshot(path=str(screenshot), full_page=True))
+                        attach_artifact(request.node, screenshot)
+                    trace = directory / "trace.zip"
+                    browser.run(browser.context.tracing.stop(path=str(trace)))
+                    attach_artifact(request.node, trace)
+                else:
+                    browser.run(browser.context.tracing.stop())
+        finally:
+            if hasattr(browser, "context"):
+                browser.run(browser.context.close())
