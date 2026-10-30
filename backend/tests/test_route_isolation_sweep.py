@@ -272,5 +272,35 @@ async def test_document_routes_keep_organizations_apart(sweep, documents_seeded)
     await run_area(sweep, "documents")
 
 
+@pytest.mark.parametrize("route", [
+    "GET /api/allocation-treatments/{review_id}/visual-adoption-preview",
+    "POST /api/logical-documents/{logical_id}/visual-allocation-adoptions",
+])
+async def test_visual_adoption_probe_skips_organizations_without_disclosures(migrator_session, route):
+    # Earlier tests can leave smaller UUIDs in an organization without disclosures.
+    # Shadow only the lookup tables so this ordering is reproducible without OCR.
+    ids = {name: uuid.UUID(int=value) for name, value in {
+        "unrelated_review": 1, "unrelated_set": 2, "unrelated_logical": 3,
+        "other_org": 4, "review": 11, "set": 12, "logical": 13,
+        "org": 14, "disclosure": 15, "b": 20,
+    }.items()}
+    lookup = """WITH allocation_treatment_review(id,organization_id) AS (
+        VALUES (CAST(:unrelated_review AS uuid),CAST(:other_org AS uuid)),(:review,:org)
+      ), allocation_set(id,organization_id,logical_document_id,treatment_review_id) AS (
+        VALUES (CAST(:unrelated_set AS uuid),CAST(:other_org AS uuid),
+                CAST(:unrelated_logical AS uuid),CAST(:unrelated_review AS uuid)),
+               (:set,:org,:logical,:review)
+      ), visual_disclosure_event(id,organization_id) AS (
+        VALUES (CAST(:disclosure AS uuid),CAST(:org AS uuid))
+      ) """ + documents.PROBES[route].ids
+    selected = (await migrator_session.execute(text(lookup), ids)).mappings().one()
+    assert selected["disclosure_id"] == ids["disclosure"]
+    if "review_id" in selected:
+        assert selected["review_id"] == ids["review"]
+    else:
+        assert selected["logical_id"] == ids["logical"]
+        assert selected["treatment_review_id"] == ids["review"]
+
+
 async def test_access_routes_keep_organizations_apart(sweep, access_seeded):
     await run_area(sweep, "access")

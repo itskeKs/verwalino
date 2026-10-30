@@ -82,6 +82,7 @@ async def documents_seeded(migrator_session, scope_seed, store, monkeypatch):
         artifact, *_ = await visual_prepared(api, ids)
         published = await api.post("/api/visual-extracts/" + artifact["id"] + "/disclosures", **publish_command(artifact, ids))
         assert published.status_code == 201, published.text
+        assert published.json()["receipt"]["id"], "Document isolation fixture published no disclosure id"
 
 
 def pick(columns: str, tables: str, where: str = "") -> str:
@@ -99,13 +100,15 @@ SET_AND_REVIEW = pick(
     "x.predecessor_id AS set_id, n.treatment_review_id AS treatment_review_id",
     "allocation_correction x JOIN allocation_set n ON n.organization_id = x.organization_id AND n.id = x.successor_id",
 )
-DISCLOSURE = "(SELECT d.id FROM visual_disclosure_event d WHERE d.organization_id = x.organization_id ORDER BY d.id LIMIT 1) AS disclosure_id"
+# Earlier tests can retain reviews/sets in organizations without disclosures.
+# Join an existing disclosure before choosing the row used by either probe.
+DISCLOSURE_JOIN = " JOIN visual_disclosure_event d ON d.organization_id = x.organization_id"
 ADOPTED_REVIEW = pick(
     "x.logical_document_id AS logical_id, x.treatment_review_id AS treatment_review_id", "allocation_set x", " AND x.treatment_review_id IS NOT NULL"
 )
 ADOPTED_REVIEW_AND_DISCLOSURE = pick(
-    "x.logical_document_id AS logical_id, x.treatment_review_id AS treatment_review_id, " + DISCLOSURE,
-    "allocation_set x",
+    "x.logical_document_id AS logical_id, x.treatment_review_id AS treatment_review_id, d.id AS disclosure_id",
+    "allocation_set x" + DISCLOSURE_JOIN,
     " AND x.treatment_review_id IS NOT NULL",
 )
 ARTIFACT_AND_SCOPE = pick(
@@ -204,7 +207,7 @@ PROBES: dict[str, Probe] = {
     "GET /api/allocation-treatments/{review_id}/adoption-preview": Probe(row("allocation_treatment_review", review_id="id")),
     "GET /api/allocation-treatments/{review_id}/replacement-candidates": Probe(row("allocation_treatment_review", review_id="id")),
     "GET /api/allocation-treatments/{review_id}/visual-adoption-preview": Probe(
-        pick("x.id AS review_id, " + DISCLOSURE, "allocation_treatment_review x")
+        pick("x.id AS review_id, d.id AS disclosure_id", "allocation_treatment_review x" + DISCLOSURE_JOIN)
     ),
     "GET /api/logical-documents/{logical_id}/allocation-adoptions": Probe(LOGICAL),
     "POST /api/allocation-correction-impacts/{impact_id}/completions": Probe(
