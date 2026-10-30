@@ -13,6 +13,31 @@ Status: **Draft for confirmation by the human — no application code, no migrat
 
 ---
 
+## Property settlement periods (#68)
+
+Economic plan dates are derived from `property.fiscal_year_start_month` using the
+shared pure period functions. `plan_year` identifies the start year: an April plan
+for 2025 runs from 1 April 2025 through 31 March 2026. The create API retains its
+existing date fields for compatibility and derives the actual dates from the
+property and start year. The plan form prefills those dates from the property's
+period offers.
+
+Creating a plan returns 409 if its derived period overlaps a visible active plan
+for the same property and the periods differ. Identical periods remain allowed,
+matching statement runs and preserving repeated draft creation. Superseded plans
+do not block a new period. The check uses normal row-level security, with the same
+[cross-scope limitation as statement runs](m3-abrechnungs-engine.md#property-settlement-periods-68).
+
+The previous-actuals preview and adoption use the preceding property period, including
+its scope boundaries, source digest and day-based cost proration. Paid Hausgeld is
+summed over the settlement's assigned months across calendar years using the ledger's
+sub-period filtering. Booked, active payments only are included; the existing handling
+of payments with a year but no month is preserved. Paid advances remain informational
+and do not change the Abrechnungsspitze calculation. Changing the start month never
+rewrites existing plans, settlement dates or finalized snapshots. The WEG statement
+form initially adopts the selected plan's persisted dates, even if the property's
+start month has changed since that plan was created.
+
 ## 0. Scope, Exit Criterion, Connection to M0–M3
 
 **M4 exit (roadmap):** "Economic plan, annual settlement, and asset report for a WEG can be generated as PDF; **amounts are consistent**." This is the objective benchmark. "Consistent" is demonstrated by the **synthetic golden tests** (§9) with a **hand-calculated settlement balance** and by the **property invariants** (Σ owner shares == total costs; MEA (co-ownership share, Miteigentumsanteil) sums coherent; reserve development start + contribution − withdrawal == end).

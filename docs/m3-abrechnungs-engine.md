@@ -13,6 +13,38 @@ Status: **Draft for confirmation by the human — no application code, no migrat
 
 ---
 
+## Property settlement periods (#68)
+
+`property.fiscal_year_start_month` defines twelve months from the first of that month;
+January remains the default. `engine/periods.py` supplies pure inclusive bounds for a
+containing date or a start year, and labels such as `2025` or `2025/2026`. The deadline
+monitor uses the same functions. No migration or rounding changes are required.
+
+`GET /api/properties/{property_id}/settlement-periods?year=2025` offers start years
+2023–2026 with labels and dates; without `year`, the reference is the current calendar
+year. The statement and batch forms adopt the offered dates and still permit free
+periods. A reversed or over-twelve-month period returns 422. A non-identical overlap
+with another active run for the same lease and type that the acting user can see
+returns 409; identical periods remain permitted and batches continue skipping
+identical existing runs. Active means not superseded, including drafts and finalized
+runs. Short transition periods remain possible after a property's start month changes.
+
+**Current overlap limitation:** the check runs under the acting user's normal
+row-level security. Overlaps with runs in other accounting scopes that the user
+cannot see are not detected. The existing financial-input lock serializes creation,
+but does not widen visibility. A follow-up must add a database constraint to enforce
+the rule across accounting scopes; this change adds neither a migration nor a
+privileged helper.
+
+Automatic form prefill only applies while both date fields are empty. A delayed
+period-offer response preserves dates the user has already entered; choosing an
+offered period explicitly still sets both dates.
+
+Derived tenant advances use the assigned payment months across both calendar years;
+the reference year may be any year touched by the period. Changing the property
+setting only changes future suggestions; stored runs and finalized snapshots retain
+their dates, amounts and hashes.
+
 ## 0. Scope, exit criterion, connection to M0–M2
 
 **M3 exit (roadmap):** "An operating cost statement (BK-Abrechnung) for a mixed-use property with a tenant change is **reproducibly correct** and **formally complete**." This criterion is the objective yardstick. "Reproducibly correct" is demonstrated by the **synthetic golden tests** (§9) with **hand-calculated expected results**; "formally complete" by the mandatory BGH disclosures in `settlement_line`/PDF (§8).

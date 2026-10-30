@@ -171,6 +171,24 @@ New screens follow these page structures and use a German noun as their `h1`.
   open as a card above the list; small edits of master data open `MasterDataEditor` as a dialog.
   Selects, checkboxes and file inputs are the native elements.
 
+### Property settlement periods
+
+Property forms and details call the existing start-month setting "Beginn des
+Abrechnungszeitraums". The adjacent recurring bounds use `01.04. bis 31.03.`;
+concrete dates remain in labelled date controls. Statement and batch forms offer
+backend period labels (`2025`, `2025/2026`) and prefill both dates while retaining
+free date entry. Automatic prefill requires both date fields to be empty, so a
+delayed offer never replaces user-entered dates. Explicitly choosing an offer sets
+both dates. Changing the property resets the period selection. Plan forms
+use a start year and the same offers; their derived date controls are read-only.
+The WEG statement form adopts the selected plan's persisted dates. The previous-
+actuals dialog accepts the property's prior period and does not predict calendar-
+year dates. Forms constrain long selects to their grid cells at 360 px.
+
+Before/after property and statement form captures, plus plan and WEG captures,
+are in [docs/assets/settlement-period/](docs/assets/settlement-period/), taken on
+the disposable database with synthetic records in "Test Hausverwaltung".
+
 ### Responsive behaviour (down to 360 px)
 
 Verify screens at 360 px with long German names, four-digit amounts and many rows. The page must not
