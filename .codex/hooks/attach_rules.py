@@ -39,8 +39,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 RULES_DIR = REPO_ROOT / ".cursor/rules"
 PATCH_FILE_RE = re.compile(r"^\*\*\*\s+(?:Add|Update|Delete)\s+File:\s*(.+?)\s*$", re.M)
 PATCH_MOVE_RE = re.compile(r"^\*\*\*\s+Move to:\s*(.+?)\s*$", re.M)
-PATH_FIELDS = {"file", "file_path", "fileName", "filePath", "path", "paths",
-               "source", "destination", "destination_path", "old_path", "new_path"}
+PATH_FIELDS = {"file_path", "path"}
 
 
 class Rule:
@@ -58,10 +57,6 @@ def scalar(value: str) -> str:
         if not isinstance(decoded, str):
             raise ValueError("Expected a string")
         return decoded
-    if value.startswith("'"):
-        if len(value) < 2 or not value.endswith("'"):
-            raise ValueError("Unterminated string")
-        return value[1:-1].replace("''", "'")
     if not value or any(char in value for char in "[]{}#\n"):
         raise ValueError("Unsupported scalar")
     return value
@@ -132,16 +127,13 @@ def glob_to_regex(pattern: str) -> re.Pattern[str]:
         elif pattern[index] == "*":
             out.append("[^/]*")
             index += 1
-        elif pattern[index] == "?":
-            out.append("[^/]")
-            index += 1
         else:
             out.append(re.escape(pattern[index]))
             index += 1
     return re.compile("^" + "".join(out) + "$")
 
 
-def patched_paths(tool_input: object) -> list[str]:
+def patched_paths(tool_input: object, cwd: Path) -> list[str]:
     """Collect patch headers and known structured edit fields inside the repo."""
     candidates = []
 
@@ -165,7 +157,7 @@ def patched_paths(tool_input: object) -> list[str]:
         if not raw.strip() or "\x00" in raw:
             continue
         path = Path(raw.strip())
-        candidate = path if path.is_absolute() else root / path
+        candidate = path if path.is_absolute() else cwd / path
         try:
             relative = candidate.resolve().relative_to(root)
         except (OSError, RuntimeError, ValueError):
@@ -186,7 +178,7 @@ def main() -> int:
         elif event == "PreToolUse":
             if payload.get("tool_name") not in {"apply_patch", "Edit", "Write"}:
                 return 0
-            paths = patched_paths(payload.get("tool_input"))
+            paths = patched_paths(payload.get("tool_input"), Path(payload.get("cwd", REPO_ROOT)))
             selected = [rule for rule in load_rules() if not rule.always
                         and any(glob_to_regex(glob).match(path)
                                 for glob in rule.globs for path in paths)]

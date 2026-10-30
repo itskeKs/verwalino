@@ -11,37 +11,39 @@ RESTORE_DB=0
 RESTORE_SCRATCH=0
 RESTORE_WINDOW=0
 RESTORE_ACTIVE=0
+RESTORE_DOCUMENTS_STARTED=0
+RESTORE_LIVE_EXISTED=0
+RESTORE_SWAP_FINISHED=0
 
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 cleanup() {
     local status=$?
+    trap '' PIPE
+    set +e
+    # Let recovery finish if the original failure was a dropped connection or
+    # an interrupt; another signal must not interrupt the rename-back sequence.
+    trap '' HUP INT TERM
     if [[ "$status" != 0 && "$RESTORE_ACTIVE" = 1 ]]; then
         if [[ "$RESTORE_WINDOW" = 0 ]]; then
             if [[ "$RESTORE_SCRATCH" = 1 ]]; then
                 compose exec -T db dropdb -U app_migrator --if-exists hausverwaltung_restore || \
-                    printf 'Could not remove scratch database hausverwaltung_restore; remove it before retrying restore.\n' >&2
+                    printf 'Could not remove scratch database hausverwaltung_restore; remove it before retrying restore.\n' >&2 || true
             fi
-            printf 'Restore failed before cutover; old database and documents are untouched. Retry restore after fixing the reported error.\n' >&2
+            printf 'Restore failed before cutover; old database and documents are untouched. Retry restore after fixing the reported error.\n' >&2 || true
+            archive_tool discard-documents || printf 'Could not remove staged documents; inspect .restore-* in the documents volume.\n' >&2 || true
         else
-            printf 'Restore failed during cutover. Installation state:\n' >&2
-            compose exec -T db psql -X --set ON_ERROR_STOP=1 -U app_migrator -d postgres -Atc \
-                "SELECT name || '=' || CASE WHEN EXISTS (SELECT 1 FROM pg_database WHERE datname=name) THEN 'present' ELSE 'absent' END FROM (VALUES ('hausverwaltung'), ('hausverwaltung_restore')) AS databases(name)" >&2 || \
-                printf 'Database state unavailable; inspect hausverwaltung and hausverwaltung_restore before recovery.\n' >&2
-            local documents_state
-            documents_state=$(archive_tool document-state) || documents_state=unknown
-            printf 'documents=%s\n' "$documents_state" >&2
-            printf 'Recovery: keep the app stopped. If hausverwaltung is absent and hausverwaltung_restore is present, rename the scratch database to hausverwaltung before retrying the same archive. If both exist, remove only hausverwaltung_restore before retrying. If documents are partially swapped, retry the same archive to replace them completely. Do not start until restore succeeds.\n' >&2
+            recover_restore
         fi
-        archive_tool discard-documents || printf 'Could not remove staged documents; inspect .restore-* in the documents volume.\n' >&2
     fi
     if [[ "$RESTORE_DB" = 1 ]]; then
-        compose stop db || printf 'Could not stop db; run: bash scripts/self-host.sh stop\n' >&2
+        compose stop db || printf 'Could not stop db; run: bash scripts/self-host.sh stop\n' >&2 || true
     fi
     [[ -z "$TMP_DIR" ]] || rm -rf "$TMP_DIR"
     if [[ "$LOCKED" = 1 ]]; then rmdir "$CONFIG.lock"; fi
     return "$status"
 }
 trap cleanup EXIT
+trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
@@ -65,6 +67,7 @@ No automatic update, downgrade or volume deletion is provided.
 Backups exclude private config/secrets and certificates; keep config separately.
 Backup output defaults to the private checkout backups/ directory; the checkout root is refused.
 Restore stages the database and documents before replacing the stopped installation.
+Leftover .restore-* directories require checking live data and removing the directory before retrying.
 HELP
 }
 
@@ -300,15 +303,13 @@ doctor_database() {
         doctor_report WARN Migration 'Konfiguriertes Image fehlt; nach Backup mit bash scripts/self-host.sh start bereitstellen und doctor wiederholen.'
     elif ! TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/verwalino-doctor.XXXXXX"); then
         doctor_report WARN Migration 'Imageziel nicht prüfbar; Schreibrechte im temporären Verzeichnis prüfen und doctor wiederholen.'
-    elif ! target=$(archive_tool target "$(sed -n "s/^TARGET = '\([0-9][0-9]*\)'$/\1/p" "$ROOT/backend/app/deployment.py")" 2>"$TMP_DIR/target-error") ||
+    elif ! target=$(archive_tool target 2>"$TMP_DIR/target-error") ||
         [[ ! "$target" =~ ^[0-9]{4}$ ]]; then
         doctor_report WARN Migration 'Imageziel nicht lesbar; das konfigurierte Image bereitstellen und doctor wiederholen.'
     elif (( 10#$schema > 10#$target )); then
         doctor_report FEHLER Migration "Datenbank $schema ist neuer als Imageziel $target; passendes neueres Image verwenden, kein Downgrade ausführen."
     elif (( 10#$schema < 10#$target )); then
         doctor_report WARN Migration "Datenbank $schema liegt hinter Imageziel $target; nach Backup bash scripts/self-host.sh start ausführen, start migriert."
-    elif [[ -s "$TMP_DIR/target-error" ]]; then
-        doctor_report WARN Migration 'Image liefert kein verlässliches Releaseziel; aktuelles Image mit Releaseziel bereitstellen und doctor wiederholen.'
     else
         doctor_report OK Migration "Datenbank und Image stehen auf $target; vor einem Versionswechsel ein Backup erstellen."
     fi
@@ -512,6 +513,78 @@ doctor() {
     [[ "$doctor_errors" = 0 ]]
 }
 
+database_sql() {
+    compose exec -T db psql -X --set ON_ERROR_STOP=1 -U app_migrator -d postgres -Atc "$1"
+}
+
+database_state() {
+    database_sql "SELECT name || '=' || CASE WHEN EXISTS (SELECT 1 FROM pg_database WHERE datname=name) THEN 'present' ELSE 'absent' END FROM (VALUES ('hausverwaltung'), ('hausverwaltung_restore'), ('hausverwaltung_previous')) AS databases(name)"
+}
+
+recover_restore() {
+    local state documents_state rollback_failed=0 restored_live=0
+    state=$(database_state) || state=unknown
+    # Query actual names: interruption can happen after SQL committed but before
+    # the shell received its exit code. Never discard either database here.
+    if [[ "$state" = *'hausverwaltung_previous=present'* ]]; then
+        if [[ "$state" = *'hausverwaltung=present'* ]]; then
+            if [[ "$state" = *'hausverwaltung_restore=absent'* ]] && \
+                database_sql 'ALTER DATABASE hausverwaltung RENAME TO hausverwaltung_restore'; then
+                :
+            else
+                rollback_failed=1
+            fi
+        fi
+        if [[ "$rollback_failed" = 0 ]]; then
+            database_sql 'ALTER DATABASE hausverwaltung_previous RENAME TO hausverwaltung' || rollback_failed=1
+        fi
+        if [[ "$RESTORE_DOCUMENTS_STARTED" = 1 ]]; then
+            archive_tool rollback-documents || rollback_failed=1
+        fi
+    elif [[ "$state" = *'hausverwaltung=present'* && "$state" = *'hausverwaltung_restore=absent'* ]]; then
+        if [[ "$RESTORE_LIVE_EXISTED" = 1 || "$RESTORE_SWAP_FINISHED" = 1 ]]; then
+            restored_live=1
+        else
+            # With no original database, an incomplete swap can still return
+            # to the initial absent-live state without discarding restored data.
+            database_sql 'ALTER DATABASE hausverwaltung RENAME TO hausverwaltung_restore' || rollback_failed=1
+            if [[ "$RESTORE_DOCUMENTS_STARTED" = 1 ]]; then
+                archive_tool rollback-documents || rollback_failed=1
+            fi
+        fi
+    elif [[ "$state" = unknown ]]; then
+        rollback_failed=1
+    fi
+    # Recovery must finish even if diagnostics cannot be written (closed stderr
+    # or a disconnected pipeline). The EXIT trap ignores PIPE and disables -e.
+    printf 'Restore failed during cutover; keep the app stopped.\n' >&2 || true
+    state=$(database_state) || state=unknown
+    printf 'Installation state:\n%s\n' "$state" >&2 || true
+    documents_state=$(archive_tool document-state) || documents_state='unknown; inspect /data/documents/.restore-*/documents and /data/documents/.restore-*/previous'
+    printf 'documents=%s\n' "$documents_state" >&2 || true
+    if [[ "$restored_live" = 1 ]]; then
+        if [[ "$RESTORE_LIVE_EXISTED" = 1 ]]; then
+            printf 'The previous database was already dropped; restored data remains live.\n' >&2 || true
+        else
+            printf 'No previous database existed; restored data remains live.\n' >&2 || true
+        fi
+        printf 'After verifying the live database and documents, remove the .restore-<id> directory shown above, then run: bash scripts/self-host.sh start\n' >&2 || true
+        return
+    fi
+    if [[ "$RESTORE_LIVE_EXISTED" = 0 ]]; then
+        printf 'No previous database existed; the restored database is retained under the name shown above. Keep the app stopped until recovery is verified.\n' >&2 || true
+    fi
+    if [[ "$rollback_failed" = 1 ]]; then
+        printf 'Automatic rollback failed. Inspect the exact state above before running manual recovery.\n' >&2 || true
+    fi
+    printf '%s\n' \
+        'Recovery SQL (psql -X --set ON_ERROR_STOP=1 -U app_migrator -d postgres in the db service):' \
+        'If hausverwaltung_previous and hausverwaltung exist, and hausverwaltung_restore is absent: ALTER DATABASE hausverwaltung RENAME TO hausverwaltung_restore;' \
+        'Then, if hausverwaltung_previous exists and hausverwaltung is absent: ALTER DATABASE hausverwaltung_previous RENAME TO hausverwaltung;' \
+        'For documents, move any installed restored entries back into the staged documents directory above, then move previous entries back to /data/documents. Keep every .restore-* directory until recovery is verified.' \
+        'After verifying the database and documents, remove the scratch database hausverwaltung_restore and retained .restore-* directory before retrying the archive.' >&2 || true
+}
+
 backup() {
     local out="$ROOT/backups" archive schema
     if [[ "$#" != 0 ]]; then
@@ -521,10 +594,9 @@ backup() {
     command -v openssl >/dev/null || fail 'OpenSSL is required for configuration fingerprints.'
     umask 077
     lock_config
-    mkdir -p "$out"
+    [[ -d "$out" ]] || mkdir -p -m 700 "$out"
     out=$(cd "$out" && pwd -P)
     [[ "$out" != "$(cd "$ROOT" && pwd -P)" ]] || fail 'Backup output must not be the checkout root.'
-    chmod 700 "$out"
     archive="$out/verwalino-backup-$(date -u +%Y%m%dT%H%M%SZ).tar"
     TMP_DIR=$(mktemp -d "$out/.verwalino-backup.XXXXXX")
     # The installer lock excludes migrations; pg_dump takes a consistent online
@@ -546,7 +618,7 @@ backup() {
 }
 
 restore() {
-    local file="${1:-}" yes=0 running target confirmation schema restored_schema
+    local file="${1:-}" yes=0 running target confirmation schema restored_schema previous live
     [[ -n "$file" && -f "$file" ]] || fail 'Usage: restore FILE [--yes]'
     shift
     if [[ "$#" != 0 ]]; then
@@ -561,9 +633,10 @@ restore() {
     TMP_DIR=$(mktemp -d "$(dirname "$CONFIG")/.env.verwalino-restore.XXXXXX")
     # Work on a private copy so a changed input cannot bypass verification.
     cp "$file" "$TMP_DIR/archive.tar"
-    target=$(archive_tool target "$(sed -n "s/^TARGET = '\([0-9][0-9]*\)'$/\1/p" "$ROOT/backend/app/deployment.py")")
+    target=$(archive_tool target)
     [[ "$target" =~ ^[0-9]{4}$ ]] || fail 'Cannot read the image release target.'
     schema=$(archive_tool verify "$target" "$(config_fingerprint)")
+    archive_tool check-documents
     if [[ "$yes" = 0 ]]; then
         printf 'This replaces the application database and all documents. Type restore to confirm: ' >&2
         IFS= read -r confirmation || fail 'Restore cancelled; use --yes for non-interactive restore.'
@@ -573,6 +646,8 @@ restore() {
     RESTORE_DB=1
     RESTORE_ACTIVE=1
     compose up -d --wait --wait-timeout 120 db
+    previous=$(database_sql "SELECT 1 FROM pg_database WHERE datname='hausverwaltung_previous'")
+    [[ -z "$previous" ]] || fail 'hausverwaltung_previous already exists; keep the app stopped and inspect it alongside hausverwaltung and any .restore-* directory before recovery. Rename it back if the live database is absent, or remove it only after verifying which data to keep. Verify the live data, then remove any retained .restore-* directory, then retry restore.'
     compose exec -T db pg_restore --list < "$TMP_DIR/db.dump" > /dev/null
     compose exec -T db createdb -U app_migrator -T template0 hausverwaltung_restore
     RESTORE_SCRATCH=1
@@ -582,12 +657,20 @@ restore() {
         -Atc 'SELECT version_num FROM alembic_version')
     [[ "$restored_schema" = "$schema" ]] || fail 'Restored database schema head does not match the manifest.'
     archive_tool stage-documents
+    live=$(database_sql "SELECT 1 FROM pg_database WHERE datname='hausverwaltung'")
+    if [[ -n "$live" ]]; then RESTORE_LIVE_EXISTED=1; fi
     RESTORE_WINDOW=1
-    compose exec -T db dropdb -U app_migrator --if-exists hausverwaltung
-    compose exec -T db psql -X --set ON_ERROR_STOP=1 -U app_migrator -d postgres \
-        -Atc 'ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung'
-    RESTORE_SCRATCH=0
+    if [[ "$RESTORE_LIVE_EXISTED" = 1 ]]; then
+        database_sql 'ALTER DATABASE hausverwaltung RENAME TO hausverwaltung_previous'
+    fi
+    database_sql 'ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung'
+    RESTORE_DOCUMENTS_STARTED=1
     archive_tool swap-documents
+    RESTORE_SWAP_FINISHED=1
+    if [[ "$RESTORE_LIVE_EXISTED" = 1 ]]; then
+        database_sql 'DROP DATABASE hausverwaltung_previous'
+    fi
+    archive_tool discard-documents
     RESTORE_ACTIVE=0
     compose stop db
     RESTORE_DB=0

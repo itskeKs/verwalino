@@ -188,7 +188,8 @@ Retain the reviewed checkout and the selected image, especially a mutable local
 build, so recovery has the required application and PostgreSQL tools.
 The default `<checkout>/backups/` directory is created with mode 0700. Git ignores
 `backups/`, `verwalino-backup-*.tar` and `.verwalino-backup.*`; output directly in
-the checkout root is refused. Custom output directories also use mode 0700.
+the checkout root is refused. New custom output directories use mode 0700;
+existing directories keep their permissions.
 
 `restore FILE [--yes]` checks the private config and acquires the installer lock,
 then refuses running, restarting or paused app/migration/bootstrap containers
@@ -196,8 +197,7 @@ with the `stop` command.
 It copies the input to private staging, requires all three regular archive members,
 checks the manifest marker and format version, and refuses a schema newer than
 the selected image's `app.deployment.TARGET`, read inside the helper container.
-Only an image predating `TARGET` falls back to this checkout's value, with a
-printed warning. Unknown/ambiguous heads,
+Unknown/ambiguous heads,
 unsafe document paths, links, special files and invalid document archives are
 refused before the database starts. An older numeric schema head is allowed;
 `start` performs subsequent migrations. This portable restore check does not
@@ -212,19 +212,36 @@ type `restore`; `--yes` explicitly skips that prompt for automation. It starts
 requires exactly the manifest head. It then extracts, verifies and sets ownership
 of staged documents on the documents volume, before changing the old database
 or document contents. Allow free space for both databases and both document copies.
-An existing `hausverwaltung_restore` is refused; inspect it before removing it.
+An existing `hausverwaltung_restore` or `hausverwaltung_previous` is refused;
+inspect it and recover the intended live database before removing any leftover.
+Restore also refuses any `.restore-*` directory on the documents volume before
+creating the scratch database. Verify the live data, then remove the named
+directory, then retry; it may contain the only retained copy of previous documents.
+Before cutover, failures remove the scratch database and staged documents and
+leave old data untouched; all failures attempt to stop db and leave the app stopped.
 
-After staging succeeds, a short cutover drops `hausverwaltung` with
-`dropdb --if-exists`, renames `hausverwaltung_restore` to `hausverwaltung` using
-`ALTER DATABASE`, and swaps the document contents, including hidden files,
-without deleting the volume. Database roles and their current passwords stay.
-Finally it stops db and prints the `start` command. Before cutover, failures
-remove the scratch database and staged documents, leave old data untouched and
-say so. During cutover, failures report whether each database exists and whether
-documents are untouched, partially swapped or swapped, with recovery instructions.
-Failures attempt to stop db, report nonzero and leave the app stopped. Cutover
-is destructive and has no automatic rollback; keep the app stopped and follow
-the printed recovery instructions before starting again.
+After staging succeeds, cutover renames `hausverwaltung` to
+`hausverwaltung_previous` (skipped if no live database exists) and
+`hausverwaltung_restore` to `hausverwaltung`, moves
+old document entries into `.restore-<id>/previous/` and staged entries into place
+on the same volume, then drops the previous database and deletes the previous
+documents only after the swap succeeds.
+If no live database existed, there is no previous database to drop.
+Failures before that drop attempt to rename the old database and move previous
+documents back, retain staged documents in `.restore-<id>/documents/`, and report
+the remaining database names and document directories with manual recovery SQL
+and move instructions if rollback fails; keep the app stopped until recovery is verified.
+If interruption happens after the previous database was dropped but before
+document cleanup, the restored database and documents remain live. Verify them,
+manually remove the retained `.restore-<id>` directory (including `previous/`)
+from the documents volume, then run `bash scripts/self-host.sh start`.
+Do not run the rollback SQL in this state. Avoid backups until the retained
+directory is removed: document archives include it while it remains on the volume.
+When no live database existed initially, an incomplete document swap rolls back
+to that absent-live state and retains the restored database as
+`hausverwaltung_restore`; a completed swap keeps the restored data live and
+requires the same directory cleanup and `start` if interrupted during cleanup.
+After success, db stops and the printed `start` command starts the restored installation.
 Use only trusted archives: PostgreSQL restoration executes SQL from the dump.
 
 Back up at least daily while the installation is in use and before a reviewed

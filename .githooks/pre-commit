@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
-# Pre-commit gate: lint the staged backend/frontend code and check the Markdown
-# links when docs are staged. Fast by default (seconds); the logic and all knobs
-# live in scripts/checks.sh.
-#
-# Enable once per clone:      make hooks     (or: git config core.hooksPath .githooks)
-# Add tests:                  VERWALINO_HOOK_TESTS=fast|full git commit ...
-# Skip parts / everything:    VERWALINO_HOOK_LINT=0, VERWALINO_HOOK_DOCS=0, VERWALINO_HOOK_SKIP=1
-# Emergency bypass:           git commit --no-verify
+# Lint staged backend/frontend code and always check Markdown links.
+# Enable once per clone: make hooks
 set -uo pipefail
 
 root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-exec "$root/scripts/checks.sh" --staged
+exec "$root/scripts/checks.sh"

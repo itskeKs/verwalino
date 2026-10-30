@@ -46,7 +46,7 @@ Scoped rules add context, not enforcement; every baseline and safety rule here s
 | `make test-agent-rules` | paired rule parity and Codex hook contracts (no DB) |
 | `make test-bdd` | only the `features/` scenarios |
 | `make docs-check` | relative links in all Markdown outside `docs/archive/` |
-| `make hooks` | enables `.githooks/pre-commit` (lint, docs check; tests opt-in) |
+| `make hooks` | enables `.githooks/pre-commit` (ruff and eslint on staged code, docs link check) |
 
 CI (`.github/workflows/tests-on-pr.yaml`) runs the same on every PR. A red job is fixed, not
 skipped. Do not bypass the hook to land code.
