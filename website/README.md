@@ -74,9 +74,20 @@ changes to this directory or its workflow. CI builds and checks files; no deploy
 From the repository root, `make lint` and `make docs-check` remain the existing gates.
 The website does not change backend or app behaviour; `make test` is unaffected.
 
+## Icons
+
+The outlined [brand assets](../docs/assets/brand/README.md) are the source for the icons.
+Regenerate them with `npm run icons`. Commit `public/favicon.svg` (adapts to the system
+colour scheme), `public/favicon-16.png` and `public/favicon-32.png` (ink on transparent),
+`public/favicon.ico` (both PNG sizes), and `public/apple-touch-icon.png` (180 × 180 opaque
+ink tile with the paper mark, matching the app-icon SVG). The renderer uses the same local
+Chromium binary and `HEADLESS_CHROMIUM` override as the share-image renderer below.
+It blocks network requests, verifies the ICO directory and PNG entries, and adds no dependency.
+
 ## Regenerate share images
 
-The committed DE and EN PNGs are 1200 × 630 pixels; the Apple touch icon is 180 × 180.
+The committed DE and EN PNGs are 1200 × 630 pixels.
+Social cards use the light palette and do not adapt to dark mode.
 The template in `scripts/og.html` and `scripts/og.mjs` render them using local fonts with all
 network requests blocked:
 
@@ -89,7 +100,7 @@ HEADLESS_CHROMIUM=/absolute/path/to/chrome-headless-shell npm run og
 The default binary is
 `~/Library/Caches/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-mac-x64/chrome-headless-shell`.
 The renderer uses `playwright-core`; it does not download a browser. Rebuild after regenerating
-images. Review and commit the resulting `public/og/` PNGs and `public/apple-touch-icon.png`.
+images. Review and commit the resulting `public/og/` PNGs.
 
 ## Legal publication boundary
 

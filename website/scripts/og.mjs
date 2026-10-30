@@ -21,11 +21,6 @@ try {
     await page.screenshot({ path: new URL(`public/og/verwalino-${lang}.png`, root).pathname });
     console.log(`Rendered OG ${lang}: 1200 × 630`);
   }
-  const svg = await readFile(new URL('public/favicon.svg', root), 'utf8');
-  await page.setViewportSize({ width: 180, height: 180 });
-  await page.setContent(`<html><body style="margin:0;background:#F3F4F2;display:grid;place-items:center;width:180px;height:180px"><div style="width:140px;height:140px">${svg}</div></body></html>`);
-  await page.screenshot({ path: new URL('public/apple-touch-icon.png', root).pathname });
-  console.log('Rendered apple-touch-icon.png: 180 × 180');
 } finally {
   await browser.close();
 }

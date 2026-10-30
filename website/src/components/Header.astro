@@ -1,6 +1,7 @@
 ---
 import { t, type Locale } from "../i18n";
 import { pathFor, type Page } from "../content/routes";
+import Wordmark from "./Wordmark.astro";
 interface Props { locale: Locale; page: Page }
 const { locale, page } = Astro.props;
 const text = t(locale);
@@ -8,8 +9,7 @@ const text = t(locale);
 <header class="site-header">
 <div class="wrap header-grid">
 <a class="brand" href={pathFor(locale, "landing")} aria-label={text("brand.label")} >
-<span class="brand-mark" aria-hidden="true">
-</span>Verwalino</a>
+<Wordmark /></a>
 <div class="tools">
 <div class="language" role="group" aria-label={text("language.label")} >
 <a href={pathFor("de", page)} lang="de" hreflang="de" aria-current={locale === "de" ? "page" : undefined}>DE</a>
