@@ -168,7 +168,10 @@ anonymous downloads, multi-platform publication or public TLS.
 | Fresh install reaches setup | One `install.sh --version v0.0.0 --offline-bundle … --dir … --port …` command succeeds; `/api/health/ready` succeeds; `/api/setup` says `required: true`; `/setup` serves HTML; setup URL and token were printed. |
 | Second run is harmless | The same command refuses with the `--force` hint; retry with `--force` and no port option succeeds, every installed file is unchanged, readiness still succeeds. |
 | Busy port is refused | Stop the instance and occupy its app port with a dummy listener; new init and existing start both refuse with `Port … is already in use; choose a free --port or stop its listener.`; no installation containers run. |
-| Restart keeps data | Start, create an admin through the CLI with stdin password, log in, stop/start, then log in with the same credentials and user/organization identity. |
+| Restart keeps data | Start, create an admin through the CLI with stdin password, log in, stop, remove containers without deleting named volumes, start again, then log in with the same credentials and user/organization identity and check the named documents volume. |
+
+The restart scenario proves that administrator and organization data survive
+container recreation and that the named documents volume still exists.
 
 An existing `verwalino` container or volume blocks the run before any installation
 operation. A failed scenario fails the job and skips dependent scenarios.

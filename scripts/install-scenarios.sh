@@ -184,6 +184,12 @@ def login():
     principal = body
 
 
+def documents_volume():
+    require(docker("volume", "ls", "-q", "--filter", "label=com.docker.compose.project=verwalino",
+                   "--filter", "label=com.docker.compose.volume=documents").stdout.strip(),
+            "The named documents volume must still exist after container recreation.")
+
+
 def artifacts(row):
     if not owned or not (installation / ".env.selfhost").exists():
         return
@@ -271,8 +277,11 @@ try:
          ("Init and start refuse the port without leaving containers running", busy), ("Stop the dummy listener", unlisten)],
         [("Start the instance", lambda: helper("start")), ("Wait for readiness", ready),
          ("Create administrator via CLI", admin), ("Log in before restart", login),
-         ("Stop the instance", lambda: helper("stop")), ("Start the instance again", lambda: helper("start")),
-         ("Wait for readiness after restart", ready), ("Log in with the same identity after restart", login)],
+         ("Stop the instance", lambda: helper("stop")),
+         ("Remove containers while keeping named volumes", lambda: compose("down")),
+         ("Start the instance again", lambda: helper("start")),
+         ("Wait for readiness after restart", ready), ("Log in with the same identity after restart", login),
+         ("The named documents volume still exists", documents_volume)],
     ]
     for active, actions in zip(rows, scenarios):
         for name, action in actions:

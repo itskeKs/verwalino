@@ -45,6 +45,11 @@ elif name == "docker":
     elif args[0] in ("ps", "volume"):
         if os.environ.get("MATRIX_EXISTING"):
             print("existing-installation")
+        elif args[0] == "volume" and state.get("running"):
+            state["volume_checks"] = state.get("volume_checks", 0) + 1
+            save()
+            if not os.environ.get("MATRIX_MISSING_DOCUMENTS"):
+                print("verwalino_documents")
     elif args[0] != "compose":
         sys.exit("Unexpected Docker command")
     elif "logs" in args:
@@ -69,6 +74,10 @@ elif name == "docker":
             state["running"] = False
             state["cleanups"] = state.get("cleanups", 0) + 1
             save()
+    elif "down" in args:
+        state["running"] = False
+        state["recreations"] = state.get("recreations", 0) + 1
+        save()
     elif "up" in args and args[-1] == "app":
         state["running"] = True
         save()
@@ -87,6 +96,7 @@ elif name == "curl":
         state["logins"] = state.get("logins", 0) + 1
         save()
         if (os.environ.get("MATRIX_FAIL_LOGIN") == str(state["logins"])
+                or (state["logins"] == 2 and state.get("recreations") != 1)
                 or hashlib.sha256(body["password"].encode()).hexdigest() != state.get("admin")):
             sys.exit(22)
         print('{"user_id":"test-user","organization_id":"test-org","role":"OWNER_ADMIN"}')
@@ -159,8 +169,12 @@ class InstallScenarioTests(unittest.TestCase):
             if name == "docker" and args[0] == "compose" and "-f" in args:
                 self.assertEqual(args[args.index("--project-name") + 1], "verwalino")
                 self.assertIn("verwalino-install-", args[args.index("-f") + 1])
-                self.assertNotIn("down", args)
                 self.assertNotIn("-v", args)
+                self.assertNotIn("--volumes", args)
+                self.assertEqual(args[args.index("--env-file") + 1],
+                                 str(Path(args[args.index("-f") + 1]).parents[1] / ".env.selfhost"))
+                self.assertIn("--profile", args)
+                self.assertEqual(args[args.index("--profile") + 1], "ops")
 
     def test_four_scenarios_pass_with_reporter_compatible_steps_and_cleanup(self):
         result = self.run_scenarios()
@@ -173,9 +187,28 @@ class InstallScenarioTests(unittest.TestCase):
             self.assertIsNone(row["error"])
             self.assertEqual(row["artifacts"], [])
         self.assertEqual(json.loads((self.base / "state.json").read_text())["logins"], 2)
+        state = json.loads((self.base / "state.json").read_text())
+        self.assertEqual(state["recreations"], 1)
+        self.assertEqual(state["volume_checks"], 1)
+        calls = [args for name, args in self.calls() if name == "docker"]
+        removed = next(i for i, args in enumerate(calls) if "down" in args)
+        self.assertEqual(calls[removed - 1][-1], "stop")
+        self.assertTrue(any("up" in args and args[-1] == "app" for args in calls[removed + 1:]))
+        self.assertIn(["volume", "ls", "-q", "--filter", "label=com.docker.compose.project=verwalino",
+                       "--filter", "label=com.docker.compose.volume=documents"], calls)
         self.assertTrue((self.base / "listener.stopped").exists())
         self.assertIn("Restart keeps data | passed", (self.report / "summary.md").read_text())
         self.assertNotIn("Setup token:", result.stdout + result.stderr)
+        self.assert_cleaned()
+
+    def test_restart_fails_when_documents_named_volume_is_missing(self):
+        self.env["MATRIX_MISSING_DOCUMENTS"] = "1"
+        result = self.run_scenarios()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        row = self.rows()[-1]
+        self.assertEqual(row["outcome"], "failed")
+        self.assertEqual(row["error"]["type"], "install.AssertionError")
+        self.assertIn("documents", row["error"]["message"])
         self.assert_cleaned()
 
     def test_failed_step_has_structured_error_status_logs_and_failure_cleanup(self):

@@ -4,9 +4,11 @@ Run in backend/ with uv run python ../scripts/test-self-host.py.
 """
 import json
 import hashlib
+import errno
 import os
 import re
 import socket
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -18,6 +20,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/self-host.sh"
 SECRETS = ("MIGRATOR_PASSWORD", "APP_RW_PASSWORD", "APP_WORKER_PASSWORD", "APP_REVIEW_PASSWORD", "SESSION_SECRET")
+with socket.socket() as port_probe:
+    port_probe.bind(("127.0.0.1", 0))
+    TEST_PORT = str(port_probe.getsockname()[1])
 
 
 class SelfHostTests(unittest.TestCase):
@@ -56,6 +61,8 @@ if "exec" in sys.argv and "psql" in sys.argv:
                         FAKE_TOKEN_SQL=str(self.base / "token.sql"))
 
     def run_script(self, *args, input=None):
+        if args[:1] == ("init",) and not self.config.exists() and "--port" not in args:
+            args = (*args, "--port", TEST_PORT)
         return subprocess.run(["bash", str(SCRIPT), *args], env=self.env, input=input,
                               text=True, capture_output=True, cwd=self.base, check=False, timeout=15)
 
@@ -72,7 +79,7 @@ if "exec" in sys.argv and "psql" in sys.argv:
         config = self.init()
         self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o600)
         self.assertEqual(config["VERWALINO_MODE"], "local")
-        self.assertEqual(config["VERWALINO_PORT"], "18080")
+        self.assertEqual(config["VERWALINO_PORT"], TEST_PORT)
         self.assertEqual(config["VERWALINO_IMAGE"], "verwalino:local")
         values = [config[key] for key in SECRETS]
         self.assertEqual(len(set(values)), len(SECRETS))
@@ -109,6 +116,20 @@ if "exec" in sys.argv and "psql" in sys.argv:
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(f"Port {port} is already in use", result.stderr)
             self.assertTrue(all("ps" in call["args"] for call in self.calls()))
+
+    def test_init_and_start_succeed_when_default_port_is_occupied(self):
+        with socket.socket() as listener:
+            try:
+                listener.bind(("127.0.0.1", 18080))
+            except OSError as error:
+                if error.errno != errno.EADDRINUSE:
+                    raise
+            else:
+                listener.listen()
+            self.init()
+            result = self.run_script("start")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("App ready:", result.stdout)
 
     def test_separate_installations_get_fresh_secrets(self):
         first = self.init()
@@ -179,7 +200,7 @@ if "exec" in sys.argv and "psql" in sys.argv:
             self.assertNotIn("https", call["args"])
             self.assertIsNone(call["profiles"])
             self.assertFalse(call["caller_secret_used"])
-        self.assertIn("http://127.0.0.1:18080", result.stdout)
+        self.assertIn(f"http://127.0.0.1:{TEST_PORT}", result.stdout)
         self.assert_isolated(args)
 
     def test_fresh_start_prints_one_token_and_url_but_persists_only_its_hash(self):
@@ -192,7 +213,7 @@ if "exec" in sys.argv and "psql" in sys.argv:
         self.assertIsNotNone(match, result.stdout)
         token = match.group(1)
         self.assertEqual(result.stdout.count(token), 1)
-        self.assertIn("http://127.0.0.1:18080/setup", result.stdout)
+        self.assertIn(f"http://127.0.0.1:{TEST_PORT}/setup", result.stdout)
         sql = (self.base / "token.sql").read_text()
         self.assertIn(hashlib.sha256(token.encode()).hexdigest(), sql)
         self.assertIn("ON CONFLICT", sql)
@@ -249,7 +270,7 @@ if "exec" in sys.argv and "psql" in sys.argv:
         result = self.run_script("start")
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any("up" in c["args"] and "app" in c["args"] for c in self.calls()))
-        self.assertNotIn("http://127.0.0.1:18080", result.stdout)
+        self.assertNotIn(f"http://127.0.0.1:{TEST_PORT}", result.stdout)
 
     def test_https_uses_caddy_secure_cookies_and_explicit_host(self):
         self.init("--https", "verwaltung.example.org")
@@ -365,6 +386,42 @@ if "exec" in sys.argv and "psql" in sys.argv:
                 self.assertFalse(self.config.exists())
         config = self.init("--proxy-subnet", "192.168.240.0/28")
         self.assertEqual(config["VERWALINO_PROXY_SUBNET"], "192.168.240.0/28")
+
+
+class InstallMatrixWorkflowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = yaml.safe_load((ROOT / ".github/workflows/install-matrix.yaml").read_text())
+
+    def test_prerequisites_fail_with_the_name_of_each_missing_tool(self):
+        step = next(step for step in self.workflow["jobs"]["install"]["steps"] if step.get("id") == "report")
+        check = step["run"].split("export DOCKER_CONFIG=", 1)[0]
+        # The runner's Bash 5 guard is separate from tool availability.
+        check = check.partition("\n")[2]
+        tools = ("docker", "python3", "openssl", "curl", "nc")
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary)
+            for missing in tools:
+                with self.subTest(missing=missing):
+                    for tool in tools:
+                        if tool != missing:
+                            (binary / tool).symlink_to(shutil.which("true"))
+                    result = subprocess.run([shutil.which("bash"), "-e", "-c", check],
+                                            env=dict(os.environ, PATH=str(binary)), capture_output=True,
+                                            text=True, check=False, timeout=5)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn(f"Missing required tool: {missing}", result.stderr)
+                for tool in binary.iterdir():
+                    tool.unlink()
+
+    def test_runs_queue_by_ref_without_cancelling_active_runs(self):
+        self.assertEqual(self.workflow.get("concurrency"), {
+            "group": "install-matrix-${{ github.ref }}", "cancel-in-progress": False})
+
+    def test_reports_use_verified_artifact_version(self):
+        uploads = [step["uses"] for step in self.workflow["jobs"]["install"]["steps"]
+                   if step.get("uses", "").startswith("actions/upload-artifact@")]
+        self.assertEqual(uploads, ["actions/upload-artifact@v7"])
 
 
 class StackContractTests(unittest.TestCase):

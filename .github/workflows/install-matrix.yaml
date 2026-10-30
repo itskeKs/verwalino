@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: install-matrix-${{ github.ref }}
+  cancel-in-progress: false
+
 defaults:
   run:
     shell: bash
@@ -44,7 +48,12 @@ jobs:
         id: report
         run: |
           (( BASH_VERSINFO[0] >= 5 ))
-          command -v docker python3 openssl curl nc
+          for tool in docker python3 openssl curl nc; do
+            if ! command -v "$tool" > /dev/null; then
+              printf 'Missing required tool: %s\n' "$tool" >&2
+              exit 1
+            fi
+          done
           export DOCKER_CONFIG="$RUNNER_TEMP/install-docker"
           printf 'DOCKER_CONFIG=%s\n' "$DOCKER_CONFIG" >> "$GITHUB_ENV"
           mkdir -p "$DOCKER_CONFIG"
@@ -103,7 +112,7 @@ jobs:
 
       - name: Upload scenario report and failure artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: install-${{ matrix.os }}-${{ steps.report.outputs.date }}
           path: report/
