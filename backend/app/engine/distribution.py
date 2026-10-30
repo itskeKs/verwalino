@@ -365,4 +365,3 @@ def _match_slice(
             best_ov = ov
             best = c
     return best
-    return per_unit
