@@ -22,12 +22,15 @@ bash scripts/self-host.sh admin --org "My property management" --email admin@exa
 ```
 
 No host Python, Node, uv, API key, external proxy network or SMTP account is
-required. Until a public image release exists, `start` builds the checked-out
-Dockerfile (including its frontend checks). To use an already published image,
-select its exact digest on first init:
+required. By default, `start` builds the checked-out Dockerfile (including its
+frontend checks). The release workflow publishes to `ghcr.io/itskeks/verwalino`
+for `linux/amd64` and `linux/arm64`; the first published release and native arm64
+installation still need maintainer acceptance. Once a release is available,
+[find and verify its digest](#published-image-verification) before selecting it
+on first init:
 
 ```bash
-bash scripts/self-host.sh init --image registry.example.org/verwalino@sha256:<64-hex-digest>
+bash scripts/self-host.sh init --image 'ghcr.io/itskeks/verwalino@sha256:<64-hex-digest>'
 ```
 
 The installer generates five distinct 256-bit hexadecimal secrets in
@@ -98,13 +101,94 @@ and disaster-recovery guarantee.
 AI declaration import/Q&A, SMTP and invoice OCR are disabled in this initial
 portable stack. Manual invoice review remains supported. The T10 worker is
 active on the existing alpha; portable worker integration is outside this
-installer's scope. GitHub publication/CI, multi-arch
-image acceptance, complete clean-host setup/login/restart and real domain/TLS
-acceptance are still separate work; do not treat the mock installer tests as
+installer's scope. The first tag publication and native arm64 image installation,
+complete clean-host setup/login/restart and real domain/TLS acceptance still
+need operator checks; do not treat the mock installer tests as
 proof of those behaviors. Run the portable tests without Docker using
 `cd backend && uv run python ../scripts/test-self-host.py`; the backend CI job
 runs these before pytest. Real Caddyfile validation and the complete portable
 stack smoke test require a separately authorized clean Docker host.
+
+### Published image verification
+
+The [release workflow](.github/workflows/release-image.yaml) runs on a pushed
+stable tag such as `v1.2.3` and publishes `v1.2.3`, `1.2`, `latest` and
+`sha-<short-commit>` tags. Tags can move; installation uses the immutable
+**multi-platform index digest**. BuildKit attaches maximum-mode provenance
+and SBOM attestations for both platforms. Cosign signs the enclosing index
+with GitHub Actions OIDC; no stored signing key is used. There is no additional
+GitHub provenance attestation: BuildKit already supplies provenance.
+The static frontend and its lint/tests build on the builder's native platform
+to avoid test failures under emulation; Python dependencies and runtime checks
+build separately for each target architecture. Base-image digests stay pinned.
+
+After a successful [Release image run](https://github.com/itskeKs/verwalino/actions/workflows/release-image.yaml),
+copy `ghcr.io/itskeks/verwalino@sha256:...` from its job summary. Alternatively,
+inspect the release tag and copy the top-level `Digest` (not a platform's digest):
+
+```bash
+image=ghcr.io/itskeks/verwalino
+tag=v1.2.3  # Example; choose a successfully published release.
+docker buildx imagetools inspect "$image:$tag"
+digest='sha256:<64-hex-digest>'  # Replace with the index digest from that run.
+```
+
+Install [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
+and verify the digest against this repository's release workflow and the
+chosen tag. Both the certificate identity and issuer must match:
+
+```bash
+tag_pattern="${tag//./[.]}"
+cosign verify \
+  --certificate-identity-regexp "^https://github[.]com/itskeKs/verwalino/[.]github/workflows/release-image[.]yaml@refs/tags/${tag_pattern}$" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "$image@$digest"
+```
+
+Proceed only after verification succeeds. Use that same digest with
+`bash scripts/self-host.sh init --image "$image@$digest"`, then the `start`
+and `admin` commands above. Remote tags are deliberately refused by the installer;
+it does not resolve tags or verify signatures for you. `latest` is a discovery
+alias, not an automatic update mechanism.
+
+On a **native 64-bit arm64** host (Apple Silicon or a 64-bit Raspberry Pi OS),
+run the same signature verification, then check the selected image:
+
+```bash
+uname -m  # arm64 or aarch64; an emulated run is not native install acceptance.
+docker buildx imagetools inspect "$image@$digest"  # Must include linux/arm64.
+docker pull --platform linux/arm64 "$image@$digest"
+docker image inspect "$image@$digest" --format '{{.Os}}/{{.Architecture}}'
+```
+
+Expect `linux/arm64`. On a clean host, initialize with that digest, start,
+create the admin, open the local URL and sign in. Check
+`curl --fail http://127.0.0.1:18080/api/health/ready`, then `stop`, `start` and
+sign in again to confirm persistence. Record the host, release digest and result
+in the PR. A local cross-platform build alone does not prove installation.
+
+### Maintainer release checklist
+
+1. Choose `X.Y.Z`, bump the application versions in `backend/pyproject.toml`
+   and `frontend/package.json` with their lockfiles, and review/merge the release
+   changes after `make test` and `make lint` pass.
+2. Create and push the reviewed `vX.Y.Z` tag. The `Release image` workflow builds,
+   publishes and signs both platforms. Only stable `vX.Y.Z` tags are accepted.
+   For a manual rehearsal/retry after the workflow exists on the default branch,
+   set `tag` to that existing release tag and run
+   `gh workflow run release-image.yaml -R itskeKs/verwalino --ref "$tag" -f tag="$tag"`.
+   The workflow ref and input must match. **This publishes too** and updates
+   the minor-version and `latest` aliases for the selected version.
+3. Check the workflow succeeded, make the GHCR package public for anonymous
+   pulls if necessary, and inspect both platforms, provenance/SBOMs and the
+   signature at the summary's digest. Verify anonymously using the commands above.
+4. Copy the successful release tag and index digest into the examples in this
+   section and [README.md](README.md#self-hosting-verwalino-portable-docker-first-installation).
+   Complete the native arm64 installation check above.
+
+The **first tag run and the arm64 installation check remain acceptance steps
+for the maintainer**. This preparation does not close #7. Full `make test`
+remains a pre-merge gate; the local workflow/installer checks need no database.
 
 ## Existing alpha: `verwaltung.karat.immo`
 

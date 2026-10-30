@@ -3,7 +3,8 @@
 # Digests below were resolved as multi-platform manifest lists on 2026-08-27.
 # Keep them pinned: a tag is not an immutable deployment input.
 
-FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS frontend
+# Only static assets reach runtime; run frontend checks without target emulation.
+FROM --platform=$BUILDPLATFORM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS frontend
 WORKDIR /fe
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
