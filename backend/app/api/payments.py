@@ -54,7 +54,6 @@ def _dec(value: str, field: str) -> Decimal:
 # ---------------------------------------------------------------------------
 class PaymentCreate(BaseModel):
     bank_account_id: str
-    bank_transaction_id: uuid.UUID | None = None
     direction: str  # IN | OUT
     amount: str
     value_date: date
@@ -70,7 +69,6 @@ class PaymentCreate(BaseModel):
 
 class PaymentUpdate(BaseModel):
     bank_account_id: str | None = None
-    bank_transaction_id: uuid.UUID | None = None
     direction: str | None = None
     amount: str | None = None
     value_date: date | None = None
@@ -456,7 +454,6 @@ async def create_payment(
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     payment = await svc.create_draft(
         bank_account_id=uuid.UUID(body.bank_account_id),
-        bank_transaction_id=body.bank_transaction_id,
         direction=body.direction,
         amount=_dec(body.amount, "amount"),
         value_date=body.value_date,

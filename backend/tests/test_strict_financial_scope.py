@@ -94,6 +94,19 @@ async def test_strict_foreign_and_unknown_financial_parents_are_identical(migrat
     assert await read_value(count, ids) == before
 
 
+async def test_financial_property_lookup_is_a_restricted_security_definer(app_rw_session):
+    signature = {'signature': 'public.financial_property_exists(uuid,uuid)'}
+    security = (await app_rw_session.execute(text("""SELECT prosecdef,proconfig
+        FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)"""), signature)).one()
+    assert security.prosecdef is True
+    assert security.proconfig == ['search_path=pg_catalog, pg_temp', 'row_security=off']
+    grantees = (await app_rw_session.execute(text("""SELECT pg_get_userbyid(acl.grantee),
+        acl.privilege_type,acl.is_grantable FROM pg_proc p
+        CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) acl
+        WHERE p.oid=CAST(:signature AS regprocedure) AND acl.grantee<>p.proowner"""), signature)).all()
+    assert grantees == [('app_rw', 'EXECUTE', False)]
+
+
 async def test_financial_property_existence_requires_current_organization_and_live_actor(migrator_session, scope_seed, seed_data):
     ids = await scope_fixture(migrator_session, scope_seed)
     ids.update(foreign_org=seed_data['org_b_id'], foreign_property=uuid.uuid4())

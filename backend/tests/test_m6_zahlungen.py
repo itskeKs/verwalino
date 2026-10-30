@@ -486,7 +486,7 @@ class TestPaymentRLS:
 @pytest.mark.parametrize("field, key", [
     ("bank_account_id", "acct_a"), ("tenant_profile_id", "tenant"),
     ("owner_profile_id", "owner"), ("lease_agreement_id", "lease"),
-    ("settlement_run_id", None), ("bank_transaction_id", "transaction"),
+    ("settlement_run_id", None),
 ])
 async def test_foreign_and_unknown_payment_parents_leave_no_changes(
     client_a_admin, client_b_admin, m6_seed, migrator_session, method, field, key,
@@ -523,11 +523,10 @@ async def test_foreign_and_unknown_payment_parents_leave_no_changes(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("method", ["post", "patch"])
-@pytest.mark.parametrize("matching_account", [False, True])
-async def test_payment_transaction_link_requires_its_account(
-    client_a_admin, m6_seed, method, matching_account,
+async def test_payment_requests_ignore_bank_transaction_links(
+    client_a_admin, m6_seed, migrator_session, method,
 ):
-    body = {"bank_account_id": str(m6_seed["acct_a"] if matching_account else m6_seed["acct_b"]),
+    body = {"bank_account_id": str(m6_seed["acct_a"]),
             "direction": "IN", "amount": "1.00", "value_date": "2025-06-01",
             "payment_type": "NK_VORAUSZAHLUNG", "tenant_profile_id": str(m6_seed["tenant"])}
     path = "/api/payments"
@@ -537,12 +536,11 @@ async def test_payment_transaction_link_requires_its_account(
         path += "/" + draft.json()["id"]
     response = await getattr(client_a_admin, method)(path,
         json=(body if method == "post" else {}) | {"bank_transaction_id": str(m6_seed["transaction"])})
-    if matching_account:
-        assert response.status_code == (201 if method == "post" else 200), response.text
-        assert response.json()["bank_transaction_id"] == str(m6_seed["transaction"])
-    else:
-        assert response.status_code == 422, response.text
-        assert response.json() == {"detail": "Bank transaction belongs to another bank account"}
+    assert response.status_code == (201 if method == "post" else 200), response.text
+    assert response.json()["bank_transaction_id"] is None
+    assert await migrator_session.scalar(text(
+        "SELECT bank_transaction_id IS NULL FROM payment WHERE id=:id"),
+        {"id": response.json()["id"]}) is True
 
 
 class TestPaymentAPI:

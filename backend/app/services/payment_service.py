@@ -53,7 +53,6 @@ from app.models.payment import Payment
 from app.services.special_levy_service import SpecialLevyService
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.bank_account_repo import BankAccountRepository
-from app.repositories.bank_transaction_repo import BankTransactionRepository
 from app.repositories.economic_plan_repo import (
     EconomicPlanLineRepository,
     EconomicPlanRepository,
@@ -145,7 +144,6 @@ class PaymentService:
         parents = {}
         for field, repository, detail in (
             ("bank_account_id", BankAccountRepository, "Bank account not found"),
-            ("bank_transaction_id", BankTransactionRepository, "Bank transaction not found"),
             ("tenant_profile_id", TenantProfileRepository, "Tenant profile not found"),
             ("owner_profile_id", OwnerProfileRepository, "Owner profile not found"),
             ("lease_agreement_id", LeaseAgreementRepository, "Lease agreement not found"),
@@ -156,9 +154,6 @@ class PaymentService:
                 if parent is None:
                     raise HTTPException(404, detail)
                 parents[field] = parent
-        transaction = parents.get("bank_transaction_id")
-        if transaction is not None and transaction.bank_account_id != links["bank_account_id"]:
-            raise HTTPException(422, "Bank transaction belongs to another bank account")
         return parents
 
     async def create_draft(
@@ -176,7 +171,6 @@ class PaymentService:
         period_month: int | None = None,
         settlement_run_id: uuid.UUID | None = None,
         note: str | None = None,
-        bank_transaction_id: uuid.UUID | None = None,
     ) -> Payment:
         """Create an editable draft payment (m6 section 5; ADR-0009 E6-3).
 
@@ -187,7 +181,6 @@ class PaymentService:
         await FinancialScopeService(self._session, self._org_id, self._user_id).lock_inputs()
         parents = await self._resolve_parents({
             "bank_account_id": bank_account_id, "tenant_profile_id": tenant_profile_id,
-            "bank_transaction_id": bank_transaction_id,
             "owner_profile_id": owner_profile_id, "lease_agreement_id": lease_agreement_id,
             "settlement_run_id": settlement_run_id,
         })
@@ -199,7 +192,6 @@ class PaymentService:
         payment = Payment(
             organization_id=self._org_id,
             bank_account_id=account.id,
-            bank_transaction_id=bank_transaction_id,
             property_id=account.property_id,  # mirrored (ADR-0010)
             management_mandate_id=None,  # DB derives this from the canonical account scope when bound
             direction=direction,
@@ -241,11 +233,7 @@ class PaymentService:
         payment = await self._repo.get_by_id(payment_id)
         if payment is None:
             raise HTTPException(status_code=404, detail="Payment not found")
-        parents = await self._resolve_parents({
-            "bank_account_id": payment.bank_account_id,
-            "bank_transaction_id": payment.bank_transaction_id,
-            **updates,
-        })
+        parents = await self._resolve_parents(updates)
         if payment.status == "booked" or payment.cancelled_at is not None:
             raise HTTPException(
                 status_code=409,

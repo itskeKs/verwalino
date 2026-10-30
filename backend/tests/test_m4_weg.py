@@ -898,37 +898,56 @@ class TestM4VermoegensberichtE2E:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("action", ["compute", "finalize"])
     @pytest.mark.parametrize("invalid_inputs", [False, True])
-    async def test_foreign_and_unknown_report_bank_accounts_precede_validation(
-        self, client_a_admin, client_b_admin, m4_seed, migrator_session, action, invalid_inputs,
+    async def test_out_of_scope_and_unknown_report_bank_accounts_precede_validation(
+        self, client_a_admin, client_b_admin, seed_data, migrator_session, action, invalid_inputs,
     ):
-        property_response = await client_b_admin.post("/api/properties", json={
-            "name": "Foreign report bank", "management_type": "WEG",
-        })
-        assert property_response.status_code == 201, property_response.text
-        bank = await client_b_admin.post("/api/bank-accounts", json={
-            "property_id": property_response.json()["id"], "account_type": "LAUFEND", "label": "Foreign bank",
-        })
-        assert bank.status_code == 201, bank.text
+        banks = []
+        for api, label in ((client_a_admin, "Report"), (client_a_admin, "Other property"), (client_b_admin, "Foreign")):
+            property_response = await api.post("/api/properties", json={
+                "name": label + " report bank", "management_type": "WEG",
+            })
+            assert property_response.status_code == 201, property_response.text
+            bank = await api.post("/api/bank-accounts", json={
+                "property_id": property_response.json()["id"], "account_type": "LAUFEND", "label": label,
+            })
+            assert bank.status_code == 201, bank.text
+            banks.append(bank.json())
+        visible_bank, other_property_bank, foreign_bank = banks
+        scope_id = uuid.uuid4()
+        params = {"scope": str(scope_id), "org": str(seed_data["org_a_id"]),
+                  "property": visible_bank["property_id"], "bank": visible_bank["id"],
+                  "actor": str(seed_data["user_a_admin_id"])}
+        with psycopg2.connect(SYNC_URL) as setup, setup.cursor() as cursor:
+            cursor.execute("""INSERT INTO accounting_scope(
+                id,organization_id,property_id,scope_type,label,valid_from,whole_property,origin,created_by)
+                VALUES(%(scope)s,%(org)s,%(property)s,'WEG','Report scope','2025-01-01',true,'REVIEWED',%(actor)s)""", params)
+            cursor.execute("""INSERT INTO accounting_scope_binding(
+                organization_id,property_id,scope_id,bank_account_id,origin,reason,reviewed_by)
+                VALUES(%(org)s,%(property)s,%(scope)s,%(bank)s,'REVIEWED','Report bank',%(actor)s)""", params)
+            cursor.execute("""INSERT INTO scope_grant(
+                organization_id,scope_id,user_id,capabilities,granted_by,reason)
+                VALUES(%(org)s,%(scope)s,%(actor)s,ARRAY['read','prepare'],%(actor)s,'Report preparation')""", params)
         report = await client_a_admin.post("/api/weg-settlements/asset-reports", json={
-            "property_id": m4_seed["property"], "period_start": "2025-01-01", "period_end": "2025-12-31",
+            "property_id": visible_bank["property_id"], "accounting_scope_id": str(scope_id),
+            "period_start": "2025-01-01", "period_end": "2025-12-31",
         })
         assert report.status_code == 201, report.text
         run_id = report.json()["id"]
         before = await migrator_session.scalar(text("SELECT to_jsonb(r)::text FROM settlement_run r WHERE id=:id"), {"id": run_id})
         body = {"reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
                 "reserve_contributions_total": "0.00", "receivables": [], "payables": [], "bank_balances": [
-                    {"bank_account_id": m4_seed["bank_giro"], "label": "Visible", "account_type": "LAUFEND", "balance": "0.00"},
+                    {"bank_account_id": visible_bank["id"], "label": "Visible", "account_type": "LAUFEND", "balance": "0.00"},
                 ]}
         if invalid_inputs:
             body["reserve_withdrawals_total"] = "1.00"
         responses = []
-        for parent in (bank.json()["id"], str(uuid.uuid4())):
+        for parent in (foreign_bank["id"], str(uuid.uuid4()), other_property_bank["id"]):
             balance = {"bank_account_id": parent, "label": "Unresolved", "account_type": "LAUFEND", "balance": "0.00"}
             response = await client_a_admin.post(f"/api/weg-settlements/asset-reports/{run_id}/{action}",
                 json=body | {"bank_balances": body["bank_balances"] + [balance]})
             assert response.status_code == 404, response.text
             responses.append(response.json())
-        assert responses == [{"detail": "Bank account not found"}] * 2
+        assert responses == [{"detail": "Bank account not found"}] * 3
         assert await migrator_session.scalar(text("SELECT to_jsonb(r)::text FROM settlement_run r WHERE id=:id"), {"id": run_id}) == before
         assert await migrator_session.scalar(text("SELECT count(*) FROM settlement_line WHERE settlement_run_id=:id"), {"id": run_id}) == 0
 

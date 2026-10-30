@@ -366,8 +366,8 @@ class WegSettlementService:
     async def compute_asset_report(
         self, run_id: uuid.UUID, inputs: AssetReportInputs
     ) -> tuple[SettlementRun, AssetReportResult]:
-        await self._resolve_report_bank_accounts(inputs)
         run = await self._get_report_draft_or_404(run_id)
+        await self._resolve_report_bank_accounts(inputs)
         computation_basis = await begin_computation(self._session, self._org_id, run, 'compute')
         coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", inputs)
         inp, result = self._compute_report_engine(run, inputs)
@@ -391,8 +391,8 @@ class WegSettlementService:
     async def finalize_asset_report(
         self, run_id: uuid.UUID, inputs: AssetReportInputs
     ) -> SettlementRun:
-        await self._resolve_report_bank_accounts(inputs)
         run = await self._get_report_draft_or_404(run_id)
+        await self._resolve_report_bank_accounts(inputs)
         computation_basis = await begin_computation(self._session, self._org_id, run, 'finalize')
         coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", inputs)
         inp, result = self._compute_report_engine(run, inputs)

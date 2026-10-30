@@ -400,7 +400,7 @@ storage and `node scripts/acceptance/t55_master_data_browser.cjs`; stop app/brow
 afterward. This does **not** authorize production deployment/promotion of
 **0123–0136** or change the accepted **0122** gate.
 
-## User administration and session invalidation (T57; local head 0139)
+## User administration and session invalidation (T57; revisions 0138–0139)
 
 Revision **0138** adds a nonnegative session generation, its own invalidation/ACL
 triggers and narrow versioned auth wrappers; existing auth functions and policies
