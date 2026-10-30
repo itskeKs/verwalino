@@ -21,6 +21,7 @@ from tests.bdd.browser import browser_app, browser_session, browser_world  # noq
 # touching the shared seed users (see tests/test_auth_password.py).
 from tests.test_auth_password import password_identity  # noqa: F401
 from tests.setup_support import fresh_setup  # noqa: F401
+from app.core.deployment_policy import get_deployment_policy
 
 
 @pytest_asyncio.fixture
@@ -41,10 +42,13 @@ def pytest_addoption(parser):
 
 
 def pytest_collection_modifyitems(config, items):
-    if not config.getoption("--run-browser", default=False):
-        for item in items:
-            if item.get_closest_marker("browser"):
-                item.add_marker(pytest.mark.skip(reason="Use make test-browser to run browser journeys"))
+    mode = get_deployment_policy().deployment_mode
+    for item in items:
+        for required_mode in ("selfhost", "hosted"):
+            if item.get_closest_marker(required_mode) and mode != required_mode:
+                item.add_marker(pytest.mark.skip(reason=f"Requires {required_mode} deployment; running in {mode}"))
+        if item.get_closest_marker("browser") and not config.getoption("--run-browser", default=False):
+            item.add_marker(pytest.mark.skip(reason="Use make test-browser to run browser journeys"))
 
 
 def pytest_bdd_step_error(feature, scenario, step, exception, **_):

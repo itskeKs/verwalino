@@ -53,7 +53,11 @@ include = ["app*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-markers = ["browser: browser journeys (opt in with --run-browser)"]
+markers = [
+    "browser: browser journeys (opt in with --run-browser)",
+    "selfhost: scenario requires the self-hosted deployment policy",
+    "hosted: scenario requires the hosted deployment policy",
+]
 
 [tool.ruff]
 # Gate introduced with the dev workflow (Makefile `lint`, scripts/checks.sh, CI).

@@ -2,7 +2,7 @@
 
 import os
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -30,6 +30,7 @@ from app.core import health
 from app.core.static_files import resolve_spa_file
 from app.core.uploads import RequestBodyLimitMiddleware
 from app.core.config import settings
+from app.core.deployment_policy import get_deployment_policy
 
 app = FastAPI(
     title="Hausverwaltung MVP",
@@ -122,6 +123,14 @@ app.include_router(attachments.router)
 app.include_router(tasks.router)
 app.include_router(reports.router)
 app.include_router(property_knowledge.router)
+
+
+@app.get("/api/meta")
+async def meta(response: Response) -> dict[str, str]:
+    """Public deployment facts only; no settings or organization data."""
+    policy = get_deployment_policy()
+    response.headers["Cache-Control"] = "no-store"
+    return {"deployment_mode": policy.deployment_mode, "version": app.version}
 
 
 @app.get("/api/health/live")

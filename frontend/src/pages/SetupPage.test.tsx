@@ -34,7 +34,8 @@ async function fill(repeat = password) {
 
 beforeEach(() => {
   complete.mockReset();
-  vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => json({ required: true })));
+  vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url) =>
+    json(url === "/api/meta" ? { deployment_mode: "selfhost", version: "0.1.0" } : { required: true })));
 });
 
 describe("SetupPage", () => {
@@ -55,9 +56,33 @@ describe("SetupPage", () => {
     expect(screen.queryByLabelText("Einrichtungs-Token")).not.toBeInTheDocument();
   });
 
+  it("gates the setup route in hosted mode even if a setup response says required", async () => {
+    vi.mocked(fetch).mockImplementation(async (url) =>
+      json(url === "/api/meta" ? { deployment_mode: "hosted", version: "0.1.0" } : { required: true }));
+    render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), logout: vi.fn() }}>
+      <MemoryRouter initialEntries={["/setup"]}><AppRoutes /></MemoryRouter>
+    </AuthCtx.Provider>);
+    expect(await screen.findByRole("button", { name: "Anmelden" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Einrichtungs-Token")).not.toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/meta")).toHaveLength(1);
+  });
+
+  it("keeps login available if deployment metadata cannot be loaded", async () => {
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      if (url === "/api/meta") throw new TypeError("network");
+      return json({ required: true });
+    });
+    render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), logout: vi.fn() }}>
+      <MemoryRouter initialEntries={["/setup"]}><AppRoutes /></MemoryRouter>
+    </AuthCtx.Provider>);
+    expect(await screen.findByRole("button", { name: "Anmelden" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Einrichtungs-Token")).not.toBeInTheDocument();
+  });
+
   it("leaves setup through AppRoutes when another operator completes it", async () => {
     let checks = 0;
-    vi.mocked(fetch).mockImplementation(async (_url, options) => {
+    vi.mocked(fetch).mockImplementation(async (url, options) => {
+      if (url === "/api/meta") return json({ deployment_mode: "selfhost", version: "0.1.0" });
       if (options?.method === "POST") return json({ detail: "Not Found" }, 404);
       checks += 1;
       if (checks > 5) throw new Error("Repeated setup redirects");

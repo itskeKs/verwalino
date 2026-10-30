@@ -16,6 +16,7 @@ from sqlalchemy.exc import DBAPIError
 from app.api.auth import LoginResponse, _set_session_cookie
 from app.core.auth_db import lookup_login_principal
 from app.core.db import get_session_factory
+from app.core.deployment_policy import get_deployment_policy
 from app.core.security import create_session_token, hash_password, normalize_email, validate_new_password
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,9 @@ class SetupRequest(BaseModel):
 
 
 async def setup_required() -> bool:
+    policy = get_deployment_policy()
+    if not policy.first_run_setup_enabled:
+        return False
     async with get_session_factory()() as session, session.begin():
         return not await session.scalar(text("SELECT EXISTS(SELECT 1 FROM public.organization)"))
 

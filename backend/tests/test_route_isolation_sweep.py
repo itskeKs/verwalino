@@ -64,6 +64,7 @@ AREAS = {"core": core, "finance": finance, "documents": documents, "access": acc
 # registers them.
 EXEMPT: dict[str, str] = {
     **core.EXEMPT,
+    "GET /api/meta": "organization-free: public mode/version only, no database access or secrets; tested in test_meta.py",
     "GET /api/health": "organization-free: answers without a session and reads no organization data",
     "GET /api/health/live": "organization-free: answers without a session and reads no organization data",
     "GET /api/health/ready": "organization-free: answers without a session and reads no organization data",

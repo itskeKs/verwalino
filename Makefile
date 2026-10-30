@@ -25,7 +25,7 @@ fi; \
 trap 'rmdir /tmp/verwalino-testdb.lock' EXIT
 endef
 
-.PHONY: help test test-agent-rules test-backend test-installer test-frontend test-bdd test-browser typecheck lint lint-backend lint-frontend \
+.PHONY: help test test-agent-rules test-backend test-installer test-frontend test-bdd test-bdd-hosted test-browser typecheck lint lint-backend lint-frontend \
         docs-check frontend-deps hooks check-testdb
 
 help: ## List the documented targets
@@ -56,6 +56,9 @@ test-bdd: ## API BDD scenarios (backend/tests/bdd); browser journeys use test-br
 	else \
 	  echo "test-bdd: backend/tests/bdd does not exist yet - skipped"; \
 	fi
+
+test-bdd-hosted: ## API BDD scenarios with the hosted deployment policy (same DB lock)
+	@HV_DEPLOYMENT_MODE=hosted $(MAKE) --no-print-directory test-bdd
 
 typecheck: frontend/node_modules ## Frontend TypeScript check (tsc -b, no emit)
 	cd frontend && npx --no-install tsc -b

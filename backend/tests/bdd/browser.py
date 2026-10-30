@@ -40,6 +40,7 @@ def _stop(process):
 def browser_app(seed_data):
     """Never attach to an existing stack; it might belong to another session."""
     from app.core.config import settings
+    from app.core.deployment_policy import get_deployment_policy
     from app.core.declaration_test_database import require_disposable_database_settings
 
     require_disposable_database_settings(settings)
@@ -53,6 +54,7 @@ def browser_app(seed_data):
         "HV_DATABASE_URL", "HV_DATABASE_URL_MIGRATOR", "HV_DATABASE_URL_SYNC",
     )})
     env.update(HV_DECLARATION_IMPORT_ENABLED="false", HV_INVOICE_EXTRACTION_ENABLED="false")
+    env["HV_DEPLOYMENT_MODE"] = get_deployment_policy().deployment_mode
     commands = [
         ([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "18000"], ROOT / "backend", "http://127.0.0.1:18000/api/health/live"),
         (["node", "node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", "13000", "--strictPort"], ROOT / "frontend", BASE_URL),
