@@ -16,6 +16,7 @@ import uuid
 from contextlib import closing
 from datetime import date
 from typing import AsyncGenerator
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
@@ -27,6 +28,10 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+# Never initialize an outbound tracker from a developer's environment or .env.
+# Tracker tests explicitly install their own offline transport after import.
+os.environ["HV_ERROR_TRACKING_DSN"] = ""
+
 from app.core.security import hash_password, create_session_token
 from app.core.config import settings
 from app.core.declaration_test_database import (
@@ -35,11 +40,13 @@ from app.core.declaration_test_database import (
 )
 from app.core.db import override_engine, override_worker_engine, override_review_engine
 from app.main import app
+from tests.bdd.world import admin_credentials, target_url
 
 # Approval graph fixtures are shared by API and knowledge-search tests. Keep
 # their registration at the suite level so it does not depend on pytest's
 # collection order between test modules.
 pytest_plugins = (
+    "tests.bdd.report",
     "tests.test_declaration_approval_new_property",
     "tests.test_declaration_approval_existing_property",
 )
@@ -47,9 +54,30 @@ pytest_plugins = (
 # ---------------------------------------------------------------------------
 # Database URLs (must target the disposable declaration test database)
 # ---------------------------------------------------------------------------
-MIGRATOR_URL, APP_RW_URL, MIGRATOR_SYNC_URL = require_disposable_database_settings(
-    settings
-)
+# External BDD runs override both database autouse fixtures. They need no local
+# database configuration; all local test paths retain the disposable-DB guard.
+if target_url():
+    MIGRATOR_URL = APP_RW_URL = MIGRATOR_SYNC_URL = None
+else:
+    MIGRATOR_URL, APP_RW_URL, MIGRATOR_SYNC_URL = require_disposable_database_settings(settings)
+
+
+def pytest_sessionstart(session):
+    """Verify an external target before any scenario can create records."""
+    url = target_url()
+    if not url:
+        return
+    try:
+        email, password = admin_credentials()
+        with httpx.Client(base_url=url, timeout=60) as client:
+            client.post("/api/auth/login", json={"email": email, "password": password}).raise_for_status()
+            response = client.get("/api/properties")
+            response.raise_for_status()
+            properties = response.json()
+    except (httpx.HTTPError, httpx.InvalidURL, ValueError):
+        raise pytest.UsageError("Cannot verify a fresh external target; refusing to write scenario data") from None
+    if properties != []:
+        raise pytest.UsageError("target is not a fresh installation; refusing to write scenario data")
 
 
 def pytest_collection_modifyitems(items):
@@ -109,6 +137,8 @@ async def fixture_has_registered_documents(session: AsyncSession, document_ids: 
 
 def migrate_test_database(request):
     """Run Alembic migrations using the migrator role."""
+    if MIGRATOR_SYNC_URL is None:
+        raise RuntimeError("VERWALINO_TARGET_URL is supported only by tests/bdd; unset it for local database tests")
     from alembic.config import Config
     from alembic import command
     from alembic.script import ScriptDirectory
@@ -266,7 +296,11 @@ def _upgrade_test_database(alembic_cfg):
 
 @pytest.fixture(scope="session", autouse=True)
 def run_migrations(request):
-    return migrate_test_database(request)
+    # Migration CLI logging must not disable the already imported HTTP app's
+    # loggers or replace its scrubber/formatter inside this shared test process,
+    # including later migration rehearsals during the session.
+    with patch("logging.config.fileConfig"):
+        yield migrate_test_database(request)
 
 
 # ---------------------------------------------------------------------------
