@@ -49,6 +49,7 @@ Database and documents live in their own named volumes. **Back up config, databa
 and documents together; do not delete volumes.**
 A different checkout or config path does not create a second independent installation.
 Use `self-host.sh backup [--out DIR]` and `restore FILE [--yes]`; keep private config separately (see [backup and restore](DEPLOY.md#portable-backup-and-restore)).
+Use `self-host.sh update [--image REGISTRY/IMAGE@sha256:DIGEST] [--yes]` for a reviewed upgrade with a retained backup and recovery on failure (see [update and recovery](DEPLOY.md#portable-update-and-recovery)).
 
 First, the existing image is built locally from the checkout; Python/Node/uv
 are not required on the host. An image that is already available can be selected with
@@ -58,7 +59,7 @@ AI import, AI Q&A, SMTP, and automatic invoice OCR are disabled in the portable 
 manual voucher (Beleg) processing remains available.
 The T10 invoice worker has been active on the existing alpha since 2026-10-24;
 adding it to the portable stack remains outside this installer's scope.
-Automatic updates, backup scheduling and a real fresh installation/login run
+Unattended updates, backup scheduling and a real fresh installation/login run
 are still outstanding; this is not yet a general production release.
 Details and limits: [DEPLOY.md](DEPLOY.md#portable-docker-first-installation).
 

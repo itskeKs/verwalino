@@ -88,7 +88,9 @@ For automation feed a newline-terminated password from a secret manager to
 checked-in files, or an `echo` command in shell history.
 
 Use `status` for container status and `stop` to stop without deleting any data.
-There is deliberately no destroy or automatic update command. An older image
+Use `update` for a reviewed version change with a retained backup and automatic
+recovery; see [portable update and recovery](#portable-update-and-recovery).
+There is deliberately no destroy command or unattended update scheduler. An older image
 is not a schema rollback. This feature does not authorize an alpha deployment
 or promote its schema gate.
 
@@ -231,7 +233,7 @@ Back up at least daily while the installation is in use and before a reviewed
 upgrade or destructive maintenance. Copy completed archives to a separate,
 access-controlled encrypted disk or another host; the local output directory
 alone is not disaster recovery. Off-site transfer, scheduling, retention and
-automatic updates are operator responsibilities. Periodically test recovery on
+unattended updates are operator responsibilities. Periodically test recovery on
 a separate authorized installation with the original private config. Contract
 tests and a real PostgreSQL dump/archive/scratch-database restore round trip cover
 format and command behavior; a complete running self-host installation restore
@@ -251,6 +253,99 @@ proof of those behaviors. Run the portable tests without Docker using
 `cd backend && uv run python ../scripts/test-self-host.py`; the backend CI job
 runs these before pytest. Real Caddyfile validation and the complete portable
 stack smoke test require a separately authorized clean Docker host.
+
+### Portable update and recovery
+
+Review the release and checkout first. For published images, **run `cosign verify`
+against the exact digest before `update`**, checking the trusted publisher's
+certificate identity and OIDC issuer. Digest pinning in the installer does not
+verify signatures or publisher identity. Pause user writes, uploads, deletions
+and any external writers before confirming the update, and keep them paused
+until the final diagnostics are accepted.
+
+```bash
+bash scripts/self-host.sh update --image registry.example.org/verwalino@sha256:<64-hex-digest>
+# For a configuration using verwalino:local, rebuild the reviewed checkout:
+bash scripts/self-host.sh update
+# --yes skips the "update" confirmation, including consent to snapshot recovery.
+```
+
+The command holds the existing installer lock throughout. It validates the
+private configuration and runs `doctor`, refusing any FEHLER before pulling.
+It pulls only `app` using a private temporary env file, leaving the original
+configuration untouched. Local builds use a temporary image tag, retaining the
+previous local image under a printed image ID and a `verwalino:rollback-*` tag.
+A digest installation requires an explicit `--image`; selecting its current
+digest only probes health and reports a no-op. Local updates always rebuild.
+The new image's release target must not be older than the database revision.
+
+Next it runs the existing online `backup` into `<checkout>/backups/`, prints and
+retains the archive, stops app writers and verifies app/migration/bootstrap are
+stopped. The portable stack currently has no workers. PostgreSQL stays running.
+It atomically replaces only the config's image line (mode 0600), runs the same
+one-shot migration as `start`, and starts app with a 120-second readiness bound.
+It also probes `/api/health/live` and `/api/health/ready` inside app, with an
+eight-second outer bound, and checks the measured schema against the image
+target. Success prints old/new images, measured migration revisions and the
+retained archive path, then runs `doctor` again. Caddy is left running.
+
+Any failure or handled interruption from config switching through migration,
+startup, health and schema verification triggers recovery: stop and verify
+writers, atomically restore the previous image setting, retag the retained local
+image if needed, then call the existing `restore FILE --yes` path on that exact
+backup. Restore stages a scratch database and documents, drops the half-migrated
+database at cutover and replaces documents. It then starts db and the previous
+app and runs the same health probes. A successful recovery prints
+`rolled back to <previous image>, data from <archive>` and still exits nonzero.
+No Alembic downgrade is run. The archive and retained local images are kept
+after success and failure; choose retention/off-site storage yourself.
+
+This is recovery to a snapshot, with the existing backup's limits: database
+dump and later document copy are not atomic. Writes between that dump and the
+writer stop, and writes after the new app starts but before a failure is detected,
+are lost on recovery; concurrent document deletion can leave missing originals.
+The operator's write pause is required for a consistent recovery point. Recovery
+also needs enough disk for staging, the original secrets, working Docker/storage
+and an available previous image. Power loss or SIGKILL cannot run shell recovery;
+an interruption during recovery can require the manual procedure below.
+Downgrades across migrations and unattended updates remain out of scope.
+
+Failures before config switching (doctor, pull/build, backup or writer stop)
+do not restore data. They leave the original config selected and report nonzero;
+a failed stop may leave app stopped, so inspect status before restarting it.
+Final doctor blockers after accepted health/schema checks report nonzero and
+require inspection; they do not discard data from the successfully updated app.
+
+If recovery fails, the installer prints the failed stage, configured image,
+observed app/db container states, restore diagnostics and concrete commands.
+It attempts to leave app stopped and keeps the backup. Manual recovery:
+
+1. Keep users/external writers paused. Run `self-host.sh stop` and inspect the
+   reported container states. Preserve failed data separately if later writes
+   must be reconciled. Do not delete volumes or run a migration downgrade.
+2. Select the printed previous image by changing only `VERWALINO_IMAGE` in a
+   private temporary copy of the original `.env.selfhost`, chmod 600 that copy
+   and atomically `mv` it over the original. Keep every secret and other setting.
+   For a local build, first run the printed `docker image tag <retained-ID>
+   verwalino:local` command; do not rebuild the newer checkout for recovery.
+3. Follow any scratch-database/document cutover instructions from
+   [backup and restore](#portable-backup-and-restore). If a lock remains after a
+   terminated process, verify no installer is active before removing its empty
+   `<config>.lock` directory. Run the printed
+   `VERWALINO_CONFIG=... bash scripts/self-host.sh restore <archive> --yes`.
+   Do not start if restore fails; its detailed state distinguishes an untouched
+   failed database from partial cutover.
+4. Only after restore succeeds, run the printed `env ... docker compose ... up
+   -d --no-build --pull never --wait --wait-timeout 120 db app` command. It clears
+   caller config/profile overrides, supplies the derived host/cookie settings
+   and starts the retained runtime without building, pulling or migrating.
+   Do not use `start` from the newer checkout: local mode would rebuild and
+   replace the recovered image. Run `doctor`, check both health endpoints,
+   verify records and referenced originals, then resume writes. Keep the archive.
+
+Fake-Docker contracts verify command order, image/config selection and failure
+recovery. A real N-1 → N run preserving records and originals remains acceptance
+work on the clean host in #6; these contracts do not prove it.
 
 ## Existing alpha: `verwaltung.karat.immo`
 
