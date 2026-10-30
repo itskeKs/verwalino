@@ -43,7 +43,7 @@ Browser scenarios are skipped unless `--run-browser` is supplied; use the target
 - `backend/tests/bdd/test_<name>.py` - one module per feature; it only binds the file
   (`scenarios(<absolute path>)`). No logic.
 - `backend/tests/bdd/steps/` - the shared step library, one module per area
-  (`common.py`, `organization.py`, `password.py`, `bank_import.py`, plus `records.py` for
+  (`common.py`, `organization.py`, `password.py`, `setup.py`, `bank_import.py`, plus `records.py` for
   master data created through the API and `browser_*.py` for browser journeys). Each `Given`/`When`/`Then` phrase is defined once
   and may be used by every feature, so phrase patterns must stay unique. Reuse a phrase
   before inventing a new one.

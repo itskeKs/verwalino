@@ -63,6 +63,7 @@ AREAS = {"core": core, "finance": finance, "documents": documents, "access": acc
 # Routes the sweep does not call, each with the reason. Keys are "METHOD /path" as FastAPI
 # registers them.
 EXEMPT: dict[str, str] = {
+    **core.EXEMPT,
     "GET /api/health": "organization-free: answers without a session and reads no organization data",
     "GET /api/health/live": "organization-free: answers without a session and reads no organization data",
     "GET /api/health/ready": "organization-free: answers without a session and reads no organization data",

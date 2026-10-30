@@ -62,7 +62,7 @@ async def test_mixed_history_cannot_be_filtered_into_apparent_complete_property(
     ids={'id':history,'org':seed_data['org_a_id'],'unit':uuid.UUID(m3_seed['u1']),
          'profile':uuid.uuid4(),'foreign_person':foreign_person}
     try:
-        # The lease/profile edge is tenant-coherent under 0140. The profile's
+        # The lease/profile edge is tenant-coherent under the parent constraints. The profile's
         # single-column person FK still permits the mixed historical identity.
         await mutate(text('INSERT INTO tenant_profile(id,organization_id,person_id) VALUES(:profile,:org,:foreign_person)'),ids)
         await mutate(text("INSERT INTO lease_agreement(id,organization_id,unit_id,tenant_profile_id,valid_from,valid_to,base_rent,advance_payment,notes) VALUES(:id,:org,:unit,:profile,'2000-01-01','2001-01-01',10,1,'Mixed legacy fixture')"),ids)
