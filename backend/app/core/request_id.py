@@ -13,6 +13,8 @@ from starlette.exceptions import HTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 request_id: ContextVar[str] = ContextVar("request_id", default="-")
+REPORTED_HTTP_STATUS_CODES = frozenset({500})
+REPORTED_ERROR_ATTRIBUTE = "_verwalino_request_error_logged"
 _VALID_ID = re.compile(r"[A-Za-z0-9._-]{8,128}")
 logger = logging.getLogger(__name__)
 
@@ -33,8 +35,18 @@ def correlation_context(value: str):
 
 async def unhandled_error(request: Request, error: Exception) -> JSONResponse:
     import sentry_sdk
-    sentry_sdk.capture_exception(error)
-    logger.error("Unhandled request error", exc_info=error)
+    from app.core.error_tracking import request_state
+
+    # A stream can fail after user middleware has unwound. Restore its state
+    # while the outer ServerErrorMiddleware invokes this handler.
+    with correlation_context(request.state.request_id):
+        state_token = request_state.set(request.scope["state"])
+        try:
+            sentry_sdk.capture_exception(error)
+            logger.error("Unhandled request error", exc_info=error)
+            setattr(error, REPORTED_ERROR_ATTRIBUTE, True)
+        finally:
+            request_state.reset(state_token)
     return JSONResponse(status_code=500, content={
         "detail": "Internal Server Error", "request_id": request.state.request_id,
     })
@@ -43,9 +55,12 @@ async def unhandled_error(request: Request, error: Exception) -> JSONResponse:
 async def http_error(request: Request, error: HTTPException) -> JSONResponse:
     content = {"detail": error.detail}
     if error.status_code >= 500:
-        import sentry_sdk
-        sentry_sdk.capture_exception(error)
-        logger.error("HTTP request failed status=%s", error.status_code)
+        if error.status_code in REPORTED_HTTP_STATUS_CODES:
+            import sentry_sdk
+            sentry_sdk.capture_exception(error)
+            logger.error("HTTP request failed status=%s", error.status_code)
+        else:
+            logger.warning("HTTP request failed status=%s", error.status_code)
         content["request_id"] = request.state.request_id
     return JSONResponse(status_code=error.status_code, content=jsonable_encoder(content), headers=error.headers)
 
@@ -84,9 +99,11 @@ class RequestIdMiddleware:
             try:
                 await self.app(scope, receive, send_with_id)
             except Exception as error:
-                response = await unhandled_error(Request(scope), error)
                 if started:
+                    # The outer error handler reports this once; propagating
+                    # also lets the server abort the incomplete response.
                     raise
+                response = await unhandled_error(Request(scope), error)
                 await response(scope, receive, send_with_id)
             finally:
                 request_state.reset(state_token)

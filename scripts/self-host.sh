@@ -31,6 +31,7 @@ Usage: bash scripts/self-host.sh COMMAND
 Default: local HTTP on 127.0.0.1:18080; no AI, SMTP or extraction worker.
 Request IDs are always enabled; optional error tracking stays off.
 HV_ERROR_TRACKING_* keys are not installer settings; see DEPLOY.md.
+Export HV_RELEASE_ID to label tracker releases (otherwise app version 0.1.0).
 VERWALINO_CONFIG selects the private config file (default: .env.selfhost).
 No automatic update, downgrade or volume deletion is provided.
 On first start, open the printed /setup URL and enter the one-time token (24 h).

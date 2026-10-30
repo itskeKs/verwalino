@@ -3,6 +3,8 @@
 import copy
 import json
 import logging
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import httpx
 import pytest
@@ -25,7 +27,7 @@ def tracking_routes(monkeypatch):
         import sentry_sdk
         sentry_sdk.add_breadcrumb(message=PRIVATE_MESSAGE, data={"password": "breadcrumb-password"})
         if kind == "http":
-            raise HTTPException(503, "Unavailable")
+            raise HTTPException(500, "Internal Server Error")
         raise RuntimeError(PRIVATE_MESSAGE)
 
     @app.get("/api/test-tracker-authenticated")
@@ -76,6 +78,7 @@ async def test_server_error_is_one_offline_event_with_the_response_id(kind, trac
     assert event["tags"]["request_id"] == response.headers["X-Request-ID"] == response.json()["request_id"]
     assert event["release"] == "0.1.0"
     assert event["environment"] == "test"
+    assert not event.get("server_name")
     serialized = json.dumps(event)
     for secret in ("Max Mustermann", "DE89 3704 0044 0532 0130 00", "max@example.org", "super-secret-token", "json-private", "json-token", "breadcrumb-password", "query-secret", "header-secret", "cookie-secret", "body-secret", "Body Name"):
         assert secret not in serialized
@@ -105,7 +108,7 @@ async def test_fresh_instrumented_stack_reports_the_error_once(handled, offline_
     @fresh.get("/failure")
     async def failure():
         if handled:
-            raise HTTPException(503, "Unavailable")
+            raise HTTPException(500, "Internal Server Error")
         raise RuntimeError(PRIVATE_MESSAGE)
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=fresh), base_url="http://test") as browser:
@@ -114,6 +117,99 @@ async def test_fresh_instrumented_stack_reports_the_error_once(handled, offline_
     assert response.status_code >= 500
     assert len(events) == 1
     assert events[0]["tags"]["request_id"] == "fresh-stack-123"
+
+
+@pytest.mark.parametrize("status", [501, 502, 503, 504])
+async def test_expected_http_failures_are_warnings_without_tracker_events(status, offline_tracker, caplog):
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+    from app.core.request_id import RequestIdMiddleware, http_error
+
+    fresh = FastAPI()
+    fresh.add_middleware(RequestIdMiddleware)
+    fresh.add_exception_handler(StarletteHTTPException, http_error)
+
+    @fresh.get("/unavailable")
+    async def unavailable():
+        raise HTTPException(status, "Feature disabled", headers={"Retry-After": "10"})
+
+    with caplog.at_level(logging.WARNING):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=fresh), base_url="http://test") as browser:
+            response = await browser.get("/unavailable", headers={"X-Request-ID": "disabled-123"})
+    events, client = offline_tracker
+    client.flush()
+    assert response.status_code == status
+    assert response.headers["X-Request-ID"] == response.json()["request_id"] == "disabled-123"
+    assert response.headers["Retry-After"] == "10"
+    assert response.json()["detail"] == "Feature disabled"
+    assert events == []
+    records = [record for record in caplog.records if record.name == "app.core.request_id"]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert records[0].request_id == "disabled-123"
+
+
+@pytest.mark.parametrize("protocol", ["h11", "httptools"])
+async def test_midstream_failure_is_reported_once_with_the_request_id(protocol, offline_tracker, caplog):
+    from fastapi.responses import StreamingResponse
+    from uvicorn.protocols.http import h11_impl, httptools_impl
+    from app.core.request_id import RequestIdMiddleware, request_id, unhandled_error
+
+    fresh = FastAPI()
+    fresh.add_middleware(RequestIdMiddleware)
+    fresh.add_exception_handler(Exception, unhandled_error)
+
+    @fresh.get("/stream")
+    async def stream():
+        async def chunks():
+            yield b"partial"
+            raise RuntimeError(PRIVATE_MESSAGE)
+        return StreamingResponse(chunks())
+
+    messages = []
+
+    async def receive():
+        pytest.fail("ASGI 2.4 stream should not need a disconnect listener")
+
+    async def send(message):
+        messages.append(message)
+        if message["type"] == "http.response.start":
+            cycle.response_started = True
+
+    scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"}, "http_version": "1.1", "method": "GET", "scheme": "http", "path": "/stream", "query_string": b"", "headers": [(b"x-request-id", b"stream-error-123")], "server": ("test", 80)}
+    # Execute the installed server's exception wrapper without sockets. It must
+    # still close an incomplete response without emitting a duplicate error.
+    cycle = SimpleNamespace(scope=scope, receive=receive, send=send, logger=logging.getLogger("uvicorn.error"), response_started=False, response_complete=False, disconnected=False, transport=Mock())
+    implementation = h11_impl if protocol == "h11" else httptools_impl
+    await implementation.RequestResponseCycle.run_asgi(cycle, fresh)
+    cycle.transport.close.assert_called_once()
+    events, client = offline_tracker
+    client.flush()
+    assert messages[0]["status"] == 200
+    assert (b"x-request-id", b"stream-error-123") in messages[0]["headers"]
+    assert messages[1]["body"] == b"partial"
+    assert not any(message.get("more_body") is False for message in messages)
+    records = [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert len(records) == len(events) == 1
+    assert records[0].request_id == events[0]["tags"]["request_id"] == "stream-error-123"
+    assert request_id.get() == "-"
+
+
+def test_unreported_uvicorn_failures_are_still_logged(caplog):
+    logging.getLogger("uvicorn.error").error("ASGI failure", exc_info=RuntimeError("unreported failure"))
+    assert len(caplog.records) == 1
+    assert caplog.records[0].name == "uvicorn.error"
+
+
+def test_tracker_uses_supported_data_collection_controls(offline_tracker):
+    _, client = offline_tracker
+    assert client.options["send_default_pii"] is None
+    for category in ("user_info", "database_query_data", "stack_frame_variables"):
+        assert client.options["data_collection"][category] is False
+    assert client.options["data_collection"]["http_bodies"] == []
+    assert client.options["data_collection"]["cookies"] == {"mode": "off"}
+    assert client.options["data_collection"]["http_headers"]["request"] == {"mode": "allowlist", "terms": ["content-type", "content-length", "accept", "user-agent", "x-request-id"]}
+    assert client.options["data_collection"]["url_query_params"] == {"mode": "off"}
+    assert client.options["data_collection"]["frame_context_lines"] == 0
 
 
 async def test_empty_dsn_never_initializes_a_transport(tracking_routes, monkeypatch):

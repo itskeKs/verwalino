@@ -754,7 +754,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.18" },
     { name = "reportlab", marker = "extra == 'dev'", specifier = ">=4.0,<5" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8,<1" },
-    { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.64,<3" },
+    { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.73,<3" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0,<3" },
     { name = "tiktoken", specifier = ">=0.9,<1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30,<1" },

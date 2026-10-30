@@ -65,7 +65,8 @@ async def test_error_responses_keep_the_correlation_header(path, status, error_r
     if status >= 500:
         assert response.json()["request_id"] == "error-id-123"
         assert "private failure" not in response.text
-        assert any(r.levelno >= logging.ERROR and r.request_id == "error-id-123" for r in caplog.records)
+        expected_level = logging.WARNING if status == 503 else logging.ERROR
+        assert any(r.levelno == expected_level and r.request_id == "error-id-123" for r in caplog.records)
         assert "request_id=error-id-123" in caplog.text
     else:
         assert "request_id" not in response.json()
@@ -130,3 +131,12 @@ def test_formatter_always_includes_correlation_and_worker_context():
         logger.removeHandler(handler)
     assert "request_id=job-123456" in output.getvalue()
     assert "request_id=-" in output.getvalue()
+
+
+def test_pdf_dependency_loggers_do_not_emit_info_records():
+    from app.core.logging import configure_logging
+
+    configure_logging()
+    for name in ("weasyprint", "fontTools"):
+        assert not logging.getLogger(name).isEnabledFor(logging.INFO)
+        assert logging.getLogger(name).isEnabledFor(logging.WARNING)

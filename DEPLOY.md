@@ -229,6 +229,10 @@ HTTP 4xx bodies are unchanged. The existing frontend error messages show the
 header ID on server failures. No request IDs are added to URLs or stored in the DB.
 Explicit status responses such as readiness `503 {"status":"unavailable"}`
 retain their bodies, carry the header and do not generate exception events.
+Raised HTTP 503 exceptions (for example, disabled features) also retain their
+detail and headers, add the request ID and produce a WARNING without a tracker
+event. Only unhandled exceptions and raised HTTP 500 exceptions are reported
+and logged at ERROR; other raised HTTP 5xx exceptions produce a WARNING.
 
 Log lines include `request_id=<id>` across the API, services and database layer.
 Worker processing uses the durable job/import ID in that same field; startup,
@@ -261,29 +265,50 @@ tracker. Provision its project, access controls, retention and TLS separately,
 then supply its DSN to the API process. No external SaaS account is required by
 the application. Events carry `request_id` and, after session validation,
 `organization_id` (UUID only), so the reported ID finds both log lines and events.
-Release is the existing `HV_RELEASE_ID` when available, otherwise app version
-`0.1.0`. The SDK uses FastAPI/Starlette integrations, error sampling,
-`send_default_pii=False`, at most ten breadcrumbs and no performance tracing.
-Duplicate exception reports are suppressed.
+Release is `HV_RELEASE_ID` from the **process environment**, otherwise app version
+`0.1.0`. The production Compose label alone does not set that environment variable;
+image labels/digests are not discovered at runtime. Portable Compose forwards an
+exported `HV_RELEASE_ID`; it is not an accepted `.env.selfhost` setting.
+The SDK uses FastAPI/Starlette integrations, error sampling, explicit
+`data_collection` controls (SDK 2.73+, replacing deprecated `send_default_pii`),
+at most ten breadcrumbs and no performance tracing. User identity, cookies,
+bodies, query parameters, SQL values, frame locals and source context are not
+collected. The machine hostname (`server_name`) is omitted. Duplicate exception
+reports are suppressed; a failed response stream is reported once with its ID
+and remains an incomplete response.
 See the [Sentry Python configuration options](https://docs.sentry.io/platforms/python/configuration/options/)
 for the SDK settings.
 
 Before sending, a shared pure scrubber removes request bodies, cookies, user
-objects, stack locals and source snippets. It masks email addresses, compact or
-space-grouped IBANs, phone numbers, recognizable German street addresses
-(`straße`, `strasse`, `str.` plus house number), capitalized multiword person
-names, bearer/signed session tokens, labeled passwords/secrets and
-Authorization/Cookie headers. Query-string values are redacted, including URLs
-in exception messages and breadcrumbs. Masks use `[redacted:email]`,
+objects, stack locals and source snippets. Request headers are dropped except
+`content-type`, `content-length`, `accept`, `user-agent` and `x-request-id`
+(case-insensitive); their retained values are scrubbed too. Filtering reaches
+tags, `extra`, contexts and breadcrumb data values. Postgres `DETAIL:`, `HINT:`,
+`Failing row contains (...)` and `Key (...)=(...)` lines are removed while the
+constraint name and SQLSTATE in the error summary remain.
+It masks email addresses, compact/space/hyphen-grouped IBANs (either case), phone
+shapes (international prefix, leading zero or separators), recognizable German
+street addresses (`straße`, `strasse`, `str.` plus house number), surname-first
+names, names with particles and accented capitals, and structured owner/key
+values. Generic capitalized multiword names are masked only in error contexts;
+HTTP reason phrases, ISO dates and digit runs without a phone shape are preserved.
+Bearer/signed session tokens and labeled passwords/secrets are masked as well.
+Query-string values are redacted, including URLs in exception messages and
+breadcrumbs. Masks use `[redacted:email]`,
 `[redacted:iban]`, `[redacted:phone]`, `[redacted:address]`, `[redacted:name]`,
 `[redacted:token]`, `[redacted:password]`, `[redacted:header]` and `[redacted:query]`.
-The same text scrubber filters formatted log messages and tracebacks, including
-access logs; SQLAlchemy hides bound parameters. Correlation IDs are preserved.
+The same text scrubber filters formatted messages and tracebacks **only at
+ERROR and above** (the 500/unhandled-error paths). `uvicorn.access` receives
+correlation IDs without text scrubbing, regardless of level. INFO/WARNING text
+is unchanged. Each scrubbed string is limited to its first 8,192 characters;
+the remainder is replaced with `[truncated]`. Patterns use bounded tokens and
+linear scanning. SQLAlchemy hides bound parameters. Correlation IDs are
+preserved, and `weasyprint`/`fontTools` emit only WARNING and above.
 
 Authenticated names/email and the organization's person directory are not
 available in the request context and are not fetched for reporting. Name masking
-is pattern-based: it can mask ordinary capitalized phrases and miss unusual or
-single-word names. Other unrecognized free text may still be personal data;
+is pattern-based: in error contexts it can mask ordinary capitalized phrases
+and miss unusual or unlabelled single-word names. Other unrecognized free text may still be personal data;
 keep exception messages structural and never intentionally log documents or
 request bodies. Tests use a fake transport and verify serialized events without
 network calls. No new Gherkin feature is needed: these are infrastructure/error

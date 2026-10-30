@@ -9,8 +9,8 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from app.core.config import Settings
-from app.core.request_id import request_id
-from app.core.scrub import scrub
+from app.core.request_id import REPORTED_HTTP_STATUS_CODES, request_id
+from app.core.scrub import REQUEST_HEADER_ALLOWLIST, scrub
 
 # The middleware owns/reset this dictionary; authentication fills it only after
 # database-backed principal validation. No client-supplied tenant tag is trusted.
@@ -34,17 +34,33 @@ def configure_error_tracking(settings: Settings, *, release: str, transport=None
         dsn=dsn,
         environment=settings.error_tracking_environment,
         release=release,
+        server_name="",
         sample_rate=settings.error_tracking_sample_rate,
         traces_sample_rate=None,
-        send_default_pii=False,
-        include_local_variables=False,
-        include_source_context=False,
+        data_collection={
+            "user_info": False,
+            "cookies": {"mode": "off"},
+            "http_headers": {"request": {"mode": "allowlist", "terms": list(REQUEST_HEADER_ALLOWLIST)}},
+            "http_bodies": [],
+            "url_query_params": {"mode": "off"},
+            "graphql": {"document": False, "variables": False},
+            "gen_ai": {"inputs": False, "outputs": False},
+            "database_query_data": False,
+            "queues": False,
+            "stack_frame_variables": False,
+            "frame_context_lines": 0,
+        },
         max_request_body_size="never",
         max_breadcrumbs=10,
         before_send=before_send,
         default_integrations=False,
         auto_enabling_integrations=False,
-        integrations=[FastApiIntegration(), StarletteIntegration(), DedupeIntegration(), LoggingIntegration(event_level=None)],
+        integrations=[
+            FastApiIntegration(failed_request_status_codes=REPORTED_HTTP_STATUS_CODES),
+            StarletteIntegration(failed_request_status_codes=REPORTED_HTTP_STATUS_CODES),
+            DedupeIntegration(),
+            LoggingIntegration(event_level=None),
+        ],
         auto_session_tracking=False,
         send_client_reports=False,
         transport=transport,

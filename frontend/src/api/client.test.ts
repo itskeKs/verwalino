@@ -67,4 +67,18 @@ describe("api client", () => {
     );
     expect(vi.mocked(fetch).mock.calls[0][1]?.headers).toBeUndefined();
   });
+
+  it.each([false, true])("keeps errors useful when a 500 has no request ID header (upload=%s)", async (upload) => {
+    vi.mocked(fetch).mockResolvedValue(response({ detail: "Internal Server Error" }, 500));
+    const pending = upload ? uploadFormData("/api/example", new FormData()) : api.get("/api/example");
+    await expect(pending).rejects.toMatchObject({ status: 500, message: "Internal Server Error" });
+  });
+
+  it.each([false, true])("does not show the request ID on 4xx errors (upload=%s)", async (upload) => {
+    const result = response({ detail: "Conflict" }, 409);
+    result.headers.set("X-Request-ID", "conflict-1234");
+    vi.mocked(fetch).mockResolvedValue(result);
+    const pending = upload ? uploadFormData("/api/example", new FormData()) : api.get("/api/example");
+    await expect(pending).rejects.toMatchObject({ status: 409, message: "Conflict" });
+  });
 });
