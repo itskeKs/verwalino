@@ -122,6 +122,9 @@ make test
 See [CONTRIBUTING.md](CONTRIBUTING.md#development-environment) for prerequisites,
 ports, OCR tools, test environment, and contribution checks.
 
+Request IDs correlate error displays, response headers and logs; optional scrubbed
+error tracking is [off by default](DEPLOY.md#request-ids-and-optional-error-tracking).
+
 ## Status and roadmap
 
 The MVP for in-house use is complete; `main` targets migration `0141`.
