@@ -126,11 +126,15 @@ including the first run, errors, artifact names and a scenario-specific
 `make test-scenarios-report` command (an outline selects all examples of its source
 template). The labels are `scenario` plus feature-level `@area:<name>` tags, if
 present; missing required labels are created, and no milestone is assigned. An open issue receives
-one comment with the run URL, date and mode; the full step error is included only
+one comment with the run URL, date and mode; the step error is included only
 when it changed since the previous report. A closed issue is reopened, labelled
 `regression`, and receives the run comment. Passing and skipped scenarios do
 nothing; issues are never automatically closed. Lookups finish before the write
-batch, and writes are sequential with at least one second between requests.
+batch, and searches and writes are sequential with at least two seconds between requests.
+Error text in issue bodies and comments retains at most 20,000 original characters,
+split between the head and tail with a marker counting omitted characters and pointing to the full run artifact.
+Each run creates at most 10 new failure issues plus one summary issue listing any
+remaining scenario names and fingerprints; comments and reopenings are not capped.
 
 To silence a known flaky scenario, add `@known-flaky` above its `Scenario:` (or
 above `Feature:` to silence the whole feature). It still runs and appears in the

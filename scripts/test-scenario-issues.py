@@ -123,16 +123,44 @@ class ScenarioIssueTests(unittest.TestCase):
         self.assertNotIn("<scenario name>", body)
         self.assertEqual(issue["labels"], ["scenario"])
 
-    def test_long_failure_keeps_details_and_embedded_markdown_inside_a_code_block(self):
+    def test_long_failure_keeps_head_and_tail_with_a_truncation_marker_inside_a_code_block(self):
         row = scenario(scenario="Importing a statement " + "with a long description " * 20)
-        message = "A long response follows:\n```\n" + "entry=123 details " * 400 + "\n```"
+        message = "A long response follows:\n```\n" + "entry=123 details " * 5000 + "\n```\nresponse tail"
         row["steps"][0]["error"]["message"] = message
         self.file(report(row))
         create = next(call for call in self.client.calls if call[0] == "create")
         self.assertLessEqual(len(create[1]), 240)
-        self.assertIn(message, create[2])
+        self.assertLessEqual(len(create[2]), 65_536)
+        self.assertNotIn(message, create[2])
+        self.assertIn(message[:9000], create[2])
+        self.assertIn(message[-9000:], create[2])
+        omitted = len(reporter.error_text(row["steps"][0]["error"])) - reporter.ERROR_TEXT_LIMIT
+        self.assertIn(f"\n… [truncated {omitted} characters; full text in the run artifact]\n", create[2])
         self.assertIn("````text\nbuiltins.AssertionError:", create[2])
         self.assertIn(row["scenario"], create[2])
+
+    def test_error_text_at_the_limit_is_kept_in_full_and_one_extra_character_is_truncated(self):
+        self.assertEqual(reporter.code_block("x" * 20_000), "```text\n" + "x" * 20_000 + "\n```")
+        self.assertIn("\n… [truncated 1 characters; full text in the run artifact]\n",
+                      reporter.code_block("x" * 20_001))
+
+    def test_long_changed_error_comments_are_bounded_and_compare_the_full_error(self):
+        self.file(report(scenario()))
+        row = scenario()
+        row["steps"][0]["error"]["message"] = "head\n" + "x" * 80_000 + "\ntail"
+        self.file(report(row))
+        body = self.client.comments[1][-1]["body"]
+        self.assertLessEqual(len(body), 65_536)
+        self.assertIn("head\n", body)
+        self.assertIn("\ntail", body)
+        self.assertIn("full text in the run artifact", body)
+        message = row["steps"][0]["error"]["message"]
+        row["steps"][0]["error"]["message"] = message[:40_000] + "y" + message[40_001:]
+        self.file(report(row))
+        self.assertIn("Step error changed:", self.client.comments[1][-1]["body"])
+        self.assertNotEqual(body, self.client.comments[1][-1]["body"])
+        self.file(report(row))
+        self.assertNotIn("Step error changed:", self.client.comments[1][-1]["body"])
 
     def test_same_failure_across_runs_keeps_one_issue_and_two_recurrence_comments(self):
         self.file(report(scenario()))
@@ -235,6 +263,48 @@ class ScenarioIssueTests(unittest.TestCase):
             self.assertTrue(set(call[0] for call in self.client.calls) <= {"search", "list_comments"})
         self.assertIn("reopen", self.output.getvalue())
 
+    def test_new_issues_are_capped_with_one_summary_while_comments_and_reopenings_are_unlimited(self):
+        existing = [scenario(scenario=f"Existing failure {number}") for number in range(12)]
+        self.file(report(*existing[:10]))
+        self.file(report(*existing[10:]))
+        for issue in self.client.issues[:6]:
+            issue["state"] = "closed"
+        self.client.calls.clear()
+        new = [scenario(scenario=f"New failure {number}") for number in range(12)]
+        run = RUN.replace("101", "102")
+        plan = self.file(report(*new, *existing), run)
+        creates = [action for action in plan if action["action"] == "create"]
+        self.assertEqual(len(creates), 11)
+        self.assertEqual([action["title"] for action in creates[:10]],
+                         [f"Scenario failure: New failure {number}" for number in range(10)])
+        summary = creates[-1]
+        self.assertEqual(summary["title"], "Nightly scenarios: 2 further failures not filed (run 102)")
+        self.assertEqual(summary["labels"], ["scenario"])
+        self.assertIn(run, summary["body"])
+        for row in new[10:]:
+            fingerprint, token = reporter.fingerprint(row, row["steps"][0])
+            for text in (row["scenario"], fingerprint, token):
+                self.assertIn(text, summary["body"])
+        self.assertEqual(len(self.client.issues), 23)
+        self.assertEqual(sum(call[0] == "comment" for call in self.client.calls), 12)
+        self.assertEqual(sum(call[0] == "reopen" for call in self.client.calls), 6)
+        self.assertEqual(sum(call[0] == "add_labels" for call in self.client.calls), 6)
+        self.assertTrue(all(issue["state"] == "open" for issue in self.client.issues))
+
+    def test_exactly_ten_new_issues_need_no_summary(self):
+        plan = self.file(report(*[scenario(scenario=f"Failure {number}") for number in range(10)]))
+        self.assertEqual(len(plan), 10)
+        self.assertTrue(all(action["title"].startswith("Scenario failure:") for action in plan))
+
+    def test_dry_run_caps_distinct_failures_and_includes_the_summary_without_writes(self):
+        rows = [scenario(scenario=f"Failure {number}") for number in range(11)]
+        plan = self.file(report(*rows, rows[-1]), dry_run=True)
+        self.assertEqual(len(plan), 11)
+        self.assertEqual(plan[-1]["title"], "Nightly scenarios: 1 further failures not filed (run 101)")
+        self.assertEqual(len(self.client.calls), 11)
+        self.assertTrue(all(call[0] == "search" for call in self.client.calls))
+        self.assertEqual(self.client.issues, [])
+
     def test_cli_reads_report_and_mode_override_and_dry_run_without_writes(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "scenarios.json"
@@ -247,7 +317,61 @@ class ScenarioIssueTests(unittest.TestCase):
         self.assertIn("create", self.output.getvalue())
 
 
+class NightlyWorkflowTests(unittest.TestCase):
+    def test_issue_writer_checkout_does_not_persist_credentials(self):
+        workflow = (ROOT / ".github/workflows/nightly-scenarios.yaml").read_text()
+        job = workflow.split("\n  scenarios:\n", 1)[1]
+        self.assertIn("\n      issues: write\n", job)
+        checkout = job.split("      - name: Checkout repository\n", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("uses: actions/checkout@v6", checkout)
+        self.assertIn("\n        with:\n          persist-credentials: false", checkout)
+
+
 class GitHubTransportTests(unittest.TestCase):
+    def test_search_requests_respect_the_thirty_per_minute_limit(self):
+        clock = [0.0]
+        requests = []
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        def respond(*args, **kwargs):
+            requests.append(clock[0])
+            return subprocess.CompletedProcess([], 0, stdout='[{"items": []}]', stderr="")
+
+        with patch.object(reporter.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(reporter.time, "sleep", side_effect=sleep), \
+                patch.object(reporter.subprocess, "run", side_effect=respond):
+            client = reporter.GitHubClient("example/project")
+            for number in range(31):
+                client.search(str(number))
+        self.assertGreaterEqual(requests[30] - requests[0], 60)
+        self.assertTrue(all(right - left >= 2 for left, right in zip(requests, requests[1:])))
+
+    def test_searches_and_writes_share_request_spacing(self):
+        clock = [0.0]
+        requests = []
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        def respond(*args, **kwargs):
+            requests.append(clock[0])
+            return subprocess.CompletedProcess([], 0, stdout='[{"items": []}]', stderr="")
+
+        with patch.object(reporter.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(reporter.time, "sleep", side_effect=sleep), \
+                patch.object(reporter.subprocess, "run", side_effect=respond):
+            client = reporter.GitHubClient("example/project")
+            client.search("first")
+            client.comment(1, "again")
+            client.search("second")
+            client.reopen(1)
+            client.search("third")
+        self.assertTrue(all(right - left >= 1 for left, right in zip(requests, requests[1:])))
+        self.assertGreaterEqual(requests[2] - requests[0], 2)
+        self.assertGreaterEqual(requests[4] - requests[2], 2)
+
     def test_required_missing_labels_are_created_once_before_attachment(self):
         replies = ['[[{"name":"scenario"}]]', '{"name":"regression"}', '[]', '[]']
         with patch.object(reporter.subprocess, "run", side_effect=[
@@ -270,7 +394,7 @@ class GitHubTransportTests(unittest.TestCase):
                    '[[{"body": "first"}], [{"body": "second"}]]', '{}', '{}', '{}']
         with patch.object(reporter.subprocess, "run", side_effect=[
             subprocess.CompletedProcess([], 0, stdout=value, stderr="") for value in replies
-        ]) as run:
+        ]) as run, patch.object(reporter.time, "sleep"):
             client = reporter.GitHubClient("example/project")
             self.assertEqual(client.search("abcd"), [{"number": 1}, {"number": 2}])
             self.assertEqual(client.create("title", "body", ["scenario"]), {"number": 3})

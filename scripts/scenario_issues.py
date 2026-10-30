@@ -15,9 +15,13 @@ import time
 
 
 ROOT = Path(__file__).resolve().parents[1]
-# Keep sequential GitHub mutations at least one second apart, including creates.
-MUTATION_INTERVAL_SECONDS = 1
+# Pace searches and writes together to respect GitHub's 30 searches/minute limit.
+API_INTERVAL_SECONDS = 2
 TOKEN_LENGTH = 16
+# Retain this many original error characters, split between the head and tail.
+ERROR_TEXT_LIMIT = 20_000
+# Bound new failure issues per run; overflow gets one additional summary issue.
+MAX_NEW_ISSUES_PER_RUN = 10
 
 
 def digest(text):
@@ -89,6 +93,11 @@ def scenario_selector(name, templates):
 
 
 def code_block(text):
+    if len(text) > ERROR_TEXT_LIMIT:
+        omitted = len(text) - ERROR_TEXT_LIMIT
+        head = ERROR_TEXT_LIMIT // 2
+        text = (f"{text[:head]}\n… [truncated {omitted} characters; full text in the run artifact]\n"
+                f"{text[-(ERROR_TEXT_LIMIT - head):]}")
     # Errors may themselves contain Markdown fences.
     fence = "`" * max(3, max((len(match[0]) + 1 for match in re.finditer(r"`+", text)), default=0))
     return f"{fence}text\n{text}\n{fence}"
@@ -122,11 +131,11 @@ def issue_body(template, failure, run, run_url, date, source, templates):
 
 
 class GitHubClient:
-    """Thin, injectable transport. Reads may paginate; writes are paced and serial."""
+    """Thin transport. Reads may paginate; searches and writes are paced and serial."""
 
     def __init__(self, repo):
         self.repo = repo
-        self.last_mutation = None
+        self.last_request = None
         self.known_labels = None
 
     def _api(self, method, endpoint, payload=None, *, query=None, paginate=False):
@@ -138,15 +147,16 @@ class GitHubClient:
                 args += ["-f", f"{key}={value}"]
         if payload is not None:
             args += ["--input", "-"]
-            if self.last_mutation is not None:
-                time.sleep(max(0, MUTATION_INTERVAL_SECONDS - (time.monotonic() - self.last_mutation)))
+        paced = payload is not None or endpoint == "search/issues"
+        if paced and self.last_request is not None:
+            time.sleep(max(0, API_INTERVAL_SECONDS - (time.monotonic() - self.last_request)))
         result = subprocess.run(
             args, input=json.dumps(payload) if payload is not None else None,
             text=True, capture_output=True, check=True, timeout=60,
             env={key: value for key, value in os.environ.items() if key != "USER"},
         )
-        if payload is not None:
-            self.last_mutation = time.monotonic()
+        if paced:
+            self.last_request = time.monotonic()
         return json.loads(result.stdout)
 
     def search(self, token):
@@ -207,6 +217,8 @@ def file_failures(report, client, *, run_url, root=ROOT, dry_run=False, output=N
             failure["errors"].add(error_text(step.get("error") or row.get("error")))
 
     plan = []
+    new_issues = 0
+    overflow = []
     sources = feature_sources(root) if failures else {}
     template = (root / ".github/ISSUE_TEMPLATE/scenario-failure.md").read_text() if failures else ""
     for token, failure in failures.items():
@@ -216,6 +228,10 @@ def file_failures(report, client, *, run_url, root=ROOT, dry_run=False, output=N
         matches = [issue for issue in client.search(token) if failure["marker"] in issue["body"].splitlines()]
         issue = min(matches, key=lambda issue: (issue["state"].lower() != "open", issue["number"]), default=None)
         if issue is None:
+            if new_issues >= MAX_NEW_ISSUES_PER_RUN:
+                overflow.append((token, failure))
+                continue
+            new_issues += 1
             source, labels, templates = sources.get(failure["row"]["feature"], (failure["row"]["feature"], [], []))
             plan.append({
                 "action": "create", "title": f"Scenario failure: {failure['row']['scenario']}"[:240],
@@ -231,11 +247,22 @@ def file_failures(report, client, *, run_url, root=ROOT, dry_run=False, output=N
             plan.append({"action": "reopen" if issue["state"].lower() == "closed" else "comment",
                          "number": issue["number"], "body": body})
 
+    if overflow:
+        run_id = run_url.rstrip("/").rsplit("/", 1)[-1]
+        body = f"Further scenario failures in run {run_url} ({date}, mode {run['mode']}):\n\n"
+        body += "\n".join(f"- {failure['row']['scenario']} — `{failure['fingerprint']}` (token `{token}`)"
+                          for token, failure in overflow)
+        plan.append({
+            "action": "create",
+            "title": f"Nightly scenarios: {len(overflow)} further failures not filed (run {run_id})",
+            "body": body + "\n", "labels": ["scenario"],
+        })
+
     if dry_run:
         print(json.dumps(plan, indent=2, ensure_ascii=False), file=output)
         return plan
 
-    # Finish every lookup before applying the batch. The transport paces writes.
+    # Finish every lookup before applying the batch. The transport paces requests.
     for action in plan:
         if action["action"] == "create":
             issue = client.create(action["title"], action["body"], action["labels"])
