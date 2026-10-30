@@ -2,7 +2,7 @@
 from pytest_bdd import given, then, when
 from playwright.async_api import expect
 
-from tests.bdd.steps.browser_common import browser_step, button, field, ledger, ledger_row, submit
+from tests.bdd.steps.browser_common import browser_step, button, field, ledger, ledger_row
 from tests.bdd.steps.browser_setup import bank_account, rental
 
 
@@ -89,6 +89,21 @@ async def empty_deposit(browser_world):
 async def first_deposit(browser_world):
     await deposit_overview(browser_world)
     await assert_deposit(browser_world, 900, 0, 900)
+
+
+@then("the deposit overview shows 1800 EUR paid, 0 EUR refunded and 1800 EUR held")
+@browser_step
+async def full_deposit(browser_world):
+    await deposit_overview(browser_world)
+    await assert_deposit(browser_world, 1800, 0, 1800)
+
+
+@then('the booked deposit detail shows "Zahlungstyp Kaution" without "Buchen"')
+@browser_step
+async def booked_deposit_detail(browser_world):
+    await browser_world.row("Status", "Gebucht")
+    await browser_world.row("Zahlungstyp", "Kaution")
+    await expect(button(browser_world.page, "Buchen")).to_have_count(0)
 
 
 async def deposit_payment(browser, direction, amount, day):

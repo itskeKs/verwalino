@@ -8,10 +8,13 @@ Feature: Bank assignment
 
   Scenario: Accepting a rent suggestion pays both parts of the monthly rent
     When the manager accepts the January rent suggestion
-    Then the January rent account shows both rent parts paid in full
+    Then the January receipt appears under the "Zugeordnet" filter
+    And the January rent account shows both rent parts paid in full
 
   Scenario: Splitting a partial receipt leaves the unpaid rent visible
-    When the manager splits the February receipt into 500 EUR rent and 100 EUR advance payment
+    When the manager accepts the January rent suggestion
+    And the manager splits the February receipt into 500 EUR rent and 100 EUR advance payment
     And the manager ignores the unrelated receipt
     Then the reloaded transaction filters separate assigned and ignored receipts
+    And the "Neu" filter shows no transactions
     And the February rent account shows 250 EUR still open

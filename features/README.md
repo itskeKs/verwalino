@@ -105,13 +105,14 @@ make test-browser PYTEST_ARGS="-q -k rent_change"  # select a journey
 make test-browser PYTEST_ARGS="-q --headed"       # inspect it interactively
 ```
 
-The target acquires `/tmp/verwalino-testdb.lock`, loads `scripts/test-env.sh`, and
-runs the locked dependency set. Fixtures start this checkout's API on 127.0.0.1:18000
+The `make test-backend`, `make test-bdd` and `make test-browser` targets acquire
+and release `/tmp/verwalino-testdb.lock`, load `scripts/test-env.sh`, and run the
+locked dependency set. Browser fixtures start this checkout's API on 127.0.0.1:18000
 and Vite on 127.0.0.1:13000, refusing occupied ports. They stop both process groups
 on success or failure before the lock is released. The target does not start a
 worker or use an existing dev stack; start only the disposable database first.
-Do not wrap this target in another acquisition of the same lock. API test commands
-and separately running dev stacks must hold that lock too; release it between runs.
+Do not wrap these targets in another acquisition of the same lock. Direct pytest
+commands and separately running dev stacks must hold that lock too; release it between runs.
 
 **CI decision:** the separate browser job runs `make test-browser` on PRs. The locked
 Chromium download and `playwright install --with-deps chromium` give a deterministic,

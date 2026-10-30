@@ -2,7 +2,7 @@
 from pytest_bdd import given, then, when
 from playwright.async_api import expect
 
-from tests.bdd.steps.browser_common import browser_step, button, field, ledger, ledger_row, submit
+from tests.bdd.steps.browser_common import browser_step, button, field, ledger, ledger_row
 from tests.bdd.steps.browser_setup import bank_account, rental
 
 STATEMENT = (
@@ -110,6 +110,13 @@ async def accept_suggestion(browser_world):
     await expect(transaction(browser_world, "Warmmiete Januar 2026")).to_have_count(0)
 
 
+@then('the January receipt appears under the "Zugeordnet" filter')
+@browser_step
+async def january_assigned(browser_world):
+    await field(browser_world.page, "Status").select_option("ZUGEORDNET")
+    await expect(transaction(browser_world, "Warmmiete Januar 2026")).to_contain_text("Zugeordnet")
+
+
 @then("the January rent account shows both rent parts paid in full")
 @browser_step
 async def january_paid(browser_world):
@@ -151,6 +158,14 @@ async def assigned_filters(browser_world):
     await expect(transaction(browser_world, "Nichtmiete ignorieren")).to_contain_text("Ignoriert")
     await field(page, "Status").select_option("")
     await expect(transactions(browser_world).locator("tbody tr")).to_have_count(3)
+
+
+@then('the "Neu" filter shows no transactions')
+@browser_step
+async def empty_new_filter(browser_world):
+    await field(browser_world.page, "Status").select_option("NEU")
+    await expect(browser_world.page.get_by_text("Keine Umsätze vorhanden.", exact=True)).to_be_visible()
+    await expect(transactions(browser_world).locator("tbody tr")).to_have_count(0)
 
 
 @then("the February rent account shows 250 EUR still open")

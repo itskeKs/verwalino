@@ -55,7 +55,7 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   For direct pytest runs or a dev stack, acquire the lock in that same shell with
   `until mkdir /tmp/verwalino-testdb.lock 2>/dev/null; do sleep 10; done` and
   `trap 'rmdir /tmp/verwalino-testdb.lock' EXIT`; stop the stack before releasing it.
-  `make test-browser` acquires/releases the lock itself.
+  `make test-backend`, `make test-bdd` and `make test-browser` acquire/release the lock themselves.
 
 The pre-commit hook (`.githooks/pre-commit` → `scripts/checks.sh`) runs ruff, eslint on staged
 frontend files and the docs check for staged Markdown — seconds, not minutes. Tests are opt-in:
@@ -103,5 +103,5 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 | `backend/tests/` | unit and API tests; `bdd/` binds scenarios, `bdd/browser.py` owns browser fixtures, `bdd/steps/browser_*.py` shares browser steps |
 | `features/` | API and `@browser` Gherkin scenarios (executable specs) |
 | `frontend/src/` | `pages/`, `components/`, `api/`, `lib/` |
-| `scripts/` | dev, self-host, deploy, checks; `acceptance/` holds legacy browser scripts (being migrated, #5) |
+| `scripts/` | dev, self-host, deploy, checks; `acceptance/` holds legacy browser scripts (being migrated, #54) |
 | `docs/` | architecture, domain pages (`m*.md`), ADRs, operations, roadmap, feature status |

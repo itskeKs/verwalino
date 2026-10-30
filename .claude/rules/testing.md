@@ -21,8 +21,9 @@ paths:
   `make test-browser` (locks the shared DB and owns/stops its API and Vite stack).
   Install Chromium once as documented in `features/README.md`.
 - Treat the shared test DB as single-writer: never run two backend test processes
-  at once. Direct pytest runs and dev/browser stacks hold
-  `/tmp/verwalino-testdb.lock` in their shell until finished; release between runs.
+  at once. `make test-backend`, `make test-bdd` and `make test-browser` acquire and
+  release `/tmp/verwalino-testdb.lock` themselves. Direct pytest runs and dev stacks
+  must hold that lock in their shell until finished; release between runs.
   Use only the test database and compose commands in AGENTS.md.
 - Iterate selectively (`cd backend && uv run pytest tests/test_x.py -k name`
   or `cd frontend && npm test -- <file>`). Run `make lint` before a push and

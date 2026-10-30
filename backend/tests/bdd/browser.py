@@ -45,6 +45,7 @@ def browser_app(seed_data):
     require_disposable_database_settings(settings)
     for port in (13000, 18000):
         with socket.socket() as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             probe.bind(("127.0.0.1", port))
     # The selected journeys do not need workers, SMTP, or extraction providers.
     env = {key: value for key, value in os.environ.items() if not key.startswith("HV_") and key != "USER"}
@@ -56,7 +57,12 @@ def browser_app(seed_data):
         ([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "18000"], ROOT / "backend", "http://127.0.0.1:18000/api/health/live"),
         (["node", "node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", "13000", "--strictPort"], ROOT / "frontend", BASE_URL),
     ]
+    def interrupt(signum, frame):
+        raise KeyboardInterrupt
+
     with ExitStack() as stack:
+        previous_handler = signal.signal(signal.SIGTERM, interrupt)
+        stack.callback(signal.signal, signal.SIGTERM, previous_handler)
         storage = stack.enter_context(tempfile.TemporaryDirectory(prefix="verwalino-browser-"))
         env["HV_DOCUMENT_STORAGE_ROOT"] = storage
         for command, directory, url in commands:

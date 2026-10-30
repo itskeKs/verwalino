@@ -441,9 +441,13 @@ cover the absolute bank amount cent-exactly; German decimal input is validated w
 floating-point arithmetic. Errors keep the inputs, 409 becomes visible, reload
 follows only on success. READ_ONLY gets no mutation actions. "Alle" ("All") also keeps
 processed rows; account filter and pagination remain server-side.
-The local browser acceptance run creates all master data via the UI and demonstrates 850=700+150
-in January fully paid, 600=500+100 in February with 250 remainder, and 25
-ignored without a payment; annual expected amount 10,200, actual 1,450, balance 8,750 EUR.
+The browser scenarios in `features/bank_assignment.feature` set up master data and
+import receipts through the API, then accept suggestions, split and ignore receipts
+through the UI. They assert January's 850=700+150 is fully paid and its receipt appears
+under "Zugeordnet"; February's 600=500+100 leaves 250 EUR open. After processing all
+receipts, the reloaded filters separate assigned and ignored receipts, retain all
+three under "Alle", and show none under "Neu"; ignoring the 25 EUR receipt creates
+no rent payment.
 
 ### 6.12 Property annual overview (Phase 2, T38)
 
