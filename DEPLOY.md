@@ -112,8 +112,8 @@ stack smoke test require a separately authorized clean Docker host.
 ### Published image verification
 
 The [release workflow](.github/workflows/release-image.yaml) runs on a pushed
-stable tag such as `v1.2.3` and publishes `v1.2.3`, `1.2`, `latest` and
-`sha-<short-commit>` tags. Tags can move; installation uses the immutable
+stable tag such as `v1.2.3` and publishes only `v1.2.3` and `v1.2` tags.
+Tags can move; installation uses the immutable
 **multi-platform index digest**. BuildKit attaches maximum-mode provenance
 and SBOM attestations for both platforms. Cosign signs the enclosing index
 with GitHub Actions OIDC; no stored signing key is used. There is no additional
@@ -148,7 +148,7 @@ cosign verify \
 Proceed only after verification succeeds. Use that same digest with
 `bash scripts/self-host.sh init --image "$image@$digest"`, then the `start`
 and `admin` commands above. Remote tags are deliberately refused by the installer;
-it does not resolve tags or verify signatures for you. `latest` is a discovery
+it does not resolve tags or verify signatures for you. `vX.Y` is a discovery
 alias, not an automatic update mechanism.
 
 On a **native 64-bit arm64** host (Apple Silicon or a 64-bit Raspberry Pi OS),
@@ -174,11 +174,14 @@ in the PR. A local cross-platform build alone does not prove installation.
    changes after `make test` and `make lint` pass.
 2. Create and push the reviewed `vX.Y.Z` tag. The `Release image` workflow builds,
    publishes and signs both platforms. Only stable `vX.Y.Z` tags are accepted.
+   The workflow refuses any tag whose commit is not on `main`.
    For a manual rehearsal/retry after the workflow exists on the default branch,
    set `tag` to that existing release tag and run
    `gh workflow run release-image.yaml -R itskeKs/verwalino --ref "$tag" -f tag="$tag"`.
    The workflow ref and input must match. **This publishes too** and updates
-   the minor-version and `latest` aliases for the selected version.
+   the `vX.Y.Z` and `vX.Y` tags for the selected version.
+   Release runs are serialised; a tag whose run was skipped while another release
+   was pending must be re-dispatched.
 3. Check the workflow succeeded, make the GHCR package public for anonymous
    pulls if necessary, and inspect both platforms, provenance/SBOMs and the
    signature at the summary's digest. Verify anonymously using the commands above.

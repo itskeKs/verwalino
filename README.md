@@ -49,7 +49,7 @@ or config path does not create a second independent installation.
 
 By default, the image is built locally from the checkout; Python/Node/uv are not
 required on the host. The release workflow targets **ghcr.io/itskeks/verwalino**
-for **linux/amd64 and linux/arm64**, with version tags, provenance, SBOMs and
+for **linux/amd64 and linux/arm64**, with only `vX.Y.Z` and `vX.Y` tags, provenance, SBOMs and
 cosign keyless signatures. The first tag publication and native arm64 install
 check still need maintainer acceptance; no published digest is claimed yet.
 Once available, copy the index digest from the successful

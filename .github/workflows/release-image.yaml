@@ -14,7 +14,6 @@ permissions:
   contents: read
   packages: write
   id-token: write
-  attestations: write
 
 # Finish publishing and signing one release before starting another.
 concurrency:
@@ -48,12 +47,21 @@ jobs:
             exit 1
           fi
           printf 'tag=%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          printf 'minor_tag=%s\n' "${RELEASE_TAG%.*}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout release tag
         uses: actions/checkout@v6
         with:
           ref: refs/tags/${{ steps.release.outputs.tag }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Require release commit on main
+        run: |
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo '::error::Release tags must point to a commit reachable from origin/main.'
+            exit 1
+          fi
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
@@ -74,12 +82,9 @@ jobs:
         with:
           context: git
           images: ${{ env.IMAGE }}
-          flavor: latest=false
           tags: |
-            type=semver,pattern=v{{version}},value=${{ steps.release.outputs.tag }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.tag }}
-            type=raw,value=latest
-            type=sha
+            type=raw,value=${{ steps.release.outputs.tag }}
+            type=raw,value=${{ steps.release.outputs.minor_tag }}
 
       - name: Build and push both platforms
         id: build
