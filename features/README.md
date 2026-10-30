@@ -49,7 +49,10 @@ An untagged scenario holds in both modes. Tag a feature or scenario `@selfhost` 
 `@hosted` only when its claim depends on that mode. The BDD collection hook skips
 the opposite mode with `Requires <mode> deployment; running in <other mode>` as
 the reason. `first_run_setup.feature` is selfhost-only; `hosted_setup.feature`
-checks that an empty hosted installation never offers setup. Organization
+checks that an empty hosted installation never offers setup.
+`self_service_signup.feature` is hosted-only and verifies the emailed confirmation
+and subsequent login. The test compose has no Mailpit service; the scenario reuses
+the existing fake SMTP capture transport, with no network or real email. Organization
 isolation scenarios run in both modes. Browser app processes inherit the selected
 mode too; `@browser` remains a separate opt-in tag.
 

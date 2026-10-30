@@ -25,7 +25,7 @@ from app.core.config import Settings
     ("hosted", {
         "deployment_mode": "hosted",
         "first_run_setup_enabled": False,
-        "self_service_signup_enabled": False,
+        "self_service_signup_enabled": True,
         "error_tracking_default_environment": "hosted",
         "admin_cli_bootstrap_allowed": True,
         "multi_organization_expected": True,

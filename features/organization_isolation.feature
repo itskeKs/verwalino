@@ -46,3 +46,10 @@ Feature: Organization isolation
     When the user lists the properties
     Then the list shows the properties of "Verwaltung Alpha"
     And the list does not show the properties of "Verwaltung Beta"
+
+  @hosted
+  Scenario: A public registration cannot claim an existing organization
+    When a visitor registers using the name of another organization
+    And the visitor follows the emailed confirmation link
+    Then the registration cannot claim that organization
+    And the existing administrator stays in the original organization

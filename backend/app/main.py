@@ -1,6 +1,7 @@
 """FastAPI application bootstrap."""
 
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -8,7 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import auth, organizations, users, mandates, intake_batches, intake_items, exceptions, invoice_reviews, context_decisions, allocation_proposals, allocation_treatments, allocation_adoptions, duplicate_comparisons
-from app.api import context_mappings, setup
+from app.api import context_mappings, setup, signup
 from app.api import properties, units, persons, ownership, leases
 from app.api import owner_profiles, tenant_profiles, vendors
 from app.api import cost_categories, cost_entries, invoice_documents, document_refs, logical_documents, extraction_revisions, source_partitions, visual_extracts, visual_disclosures
@@ -32,7 +33,14 @@ from app.core.uploads import RequestBodyLimitMiddleware
 from app.core.config import settings
 from app.core.deployment_policy import get_deployment_policy
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    signup.validate_signup_configuration()
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Hausverwaltung MVP",
     version="0.1.0",
     docs_url=settings.docs_url,
@@ -40,12 +48,14 @@ app = FastAPI(
 )
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_host_list)
 app.add_middleware(RequestBodyLimitMiddleware)
+app.add_middleware(signup.ConfirmationLinkPrivacyMiddleware)
 
 # Invoice extraction runs in the durable worker after upload commits.
 
 # --- Routers ---
 app.include_router(auth.router)
 app.include_router(setup.router)
+app.include_router(signup.router)
 app.include_router(organizations.router)
 app.include_router(users.router)
 app.include_router(accounting_scopes.router)
@@ -166,4 +176,6 @@ if _frontend_dist and os.path.isdir(_frontend_dist):
     async def spa_fallback(full_path: str):
         if full_path == "api" or full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="Not Found")
-        return FileResponse(resolve_spa_file(_frontend_dist, full_path))
+        return FileResponse(resolve_spa_file(_frontend_dist, full_path), headers={
+            "Referrer-Policy": "no-referrer", "Cache-Control": "no-store",
+        } if full_path == "signup/confirm" else None)
