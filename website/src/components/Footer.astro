@@ -1,6 +1,7 @@
 ---
 import { t, type Locale } from '../i18n';
 import { pathFor, type Page } from '../content/routes';
+import { repositoryUrl } from '../content/repository';
 import Wordmark from './Wordmark.astro';
 interface Props { locale: Locale; page: Page }
 const { locale, page } = Astro.props;
@@ -19,7 +20,7 @@ const links = [
     </div>
     <p class="footnote">{text('footer.note')}</p>
     <p class="footnote">{text('footer.operator')}</p>
-    <p class="footnote">{text('source')}</p>
+    <p class="footnote"><a href={repositoryUrl}>{text('source')}</a></p>
     <p class="footnote">{text('footer.copyright')}</p>
   </div>
 </footer>

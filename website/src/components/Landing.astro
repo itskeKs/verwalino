@@ -1,6 +1,7 @@
 ---
 import { t, type Locale } from "../i18n";
 import { pathFor } from "../content/routes";
+import { repositoryUrl } from "../content/repository";
 import Rich from "./Rich.astro";
 interface Props { locale: Locale }
 const { locale } = Astro.props;
@@ -510,7 +511,7 @@ const text = t(locale);
 <p class="planned">{text("self.future")}</p>
 </article>
 </div>
-<p class="source">{text("source")}</p>
+<p class="source"><a href={repositoryUrl}>{text("source")}</a></p>
 </div>
 </section>
 <section id="how" class="band process" aria-labelledby="how-title">

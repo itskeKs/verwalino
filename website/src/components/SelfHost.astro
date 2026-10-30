@@ -1,5 +1,6 @@
 ---
 import { t, type Locale } from '../i18n';
+import { repositoryUrl } from '../content/repository';
 import Rich from './Rich.astro';
 interface Props { locale: Locale }
 const { locale } = Astro.props;
@@ -40,6 +41,6 @@ const planned = ['installer', 'image', 'backup', 'update', 'setup', 'doctor', 'm
   <section id="repository-guide" aria-labelledby="repository-title">
     <h2 id="repository-title">{text('self.repository')}</h2>
     <p><Rich value={text('self.repository.body')} /></p>
-    <p class="source">{text('source')}</p>
+    <p class="source"><a href={repositoryUrl}>{text('source')}</a></p>
   </section>
 </article>
