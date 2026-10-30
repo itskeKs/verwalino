@@ -15,6 +15,7 @@ import pytest
 import pytest_asyncio
 
 from tests.bdd.world import World
+from tests.bdd.browser import browser_app, browser_session, browser_world  # noqa: F401
 
 # Reused as-is: a throw-away user that may change its password without
 # touching the shared seed users (see tests/test_auth_password.py).
@@ -28,8 +29,21 @@ async def bdd_loop():
 
 
 @pytest.fixture
-def world(bdd_loop, client_a_admin, client_b_admin, client_unauth) -> World:
-    return World(bdd_loop, [client_a_admin, client_b_admin], client_unauth)
+def world(bdd_loop, client_a_admin, client_b_admin, client_unauth, request) -> World:
+    state = World(bdd_loop, [client_a_admin, client_b_admin], client_unauth)
+    state.data["scenario"] = request.node.name
+    return state
+
+
+def pytest_addoption(parser):
+    parser.addoption("--run-browser", action="store_true", help="Run the opt-in @browser features")
+
+
+def pytest_collection_modifyitems(config, items):
+    if not config.getoption("--run-browser", default=False):
+        for item in items:
+            if item.get_closest_marker("browser"):
+                item.add_marker(pytest.mark.skip(reason="Use make test-browser to run browser journeys"))
 
 
 def pytest_bdd_step_error(feature, scenario, step, exception, **_):
@@ -47,3 +61,5 @@ from tests.bdd.steps.common import *  # noqa: E402,F401,F403
 from tests.bdd.steps.organization import *  # noqa: E402,F401,F403
 from tests.bdd.steps.password import *  # noqa: E402,F401,F403
 from tests.bdd.steps.bank_import import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_setup import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_bank import *  # noqa: E402,F401,F403
