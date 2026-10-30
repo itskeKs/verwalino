@@ -21,7 +21,7 @@ def inject_test_engine():
 
 
 @contextmanager
-def synthetic_target():
+def synthetic_target(properties=()):
     users = {"nightly@example.test": "bootstrap-password"}
     calls = []
 
@@ -63,7 +63,13 @@ def synthetic_target():
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            result = {"name": "A real installation name", "id": "org-id"} if self.path == "/api/organizations/me" else {"user_id": "admin-id", "organization_id": "org-id"}
+            if self.path == "/api/properties":
+                assert self.headers.get("Cookie") == "identity=nightly@example.test"
+                result = list(properties) if isinstance(properties, tuple) else properties
+            elif self.path == "/api/organizations/me":
+                result = {"name": "A real installation name", "id": "org-id"}
+            else:
+                result = {"user_id": "admin-id", "organization_id": "org-id"}
             self.wfile.write(json.dumps(result).encode())
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -87,7 +93,7 @@ def test_external_features_use_api_and_skip_isolation_and_fresh_setup(pytester, 
     monkeypatch.setenv("VERWALINO_TARGET_ADMIN_PASSWORD", "bootstrap-password")
     destination = pytester.path / "report"
     with synthetic_target() as (url, users, calls):
-        monkeypatch.setenv("VERWALINO_TARGET_URL", url)
+        monkeypatch.setenv("VERWALINO_TARGET_URL", url + "/")
         result = pytester.runpytest_subprocess(
             str(backend / "tests/bdd/test_password_change.py"),
             str(backend / "tests/bdd/test_organization_isolation.py"),
@@ -98,7 +104,11 @@ def test_external_features_use_api_and_skip_isolation_and_fresh_setup(pytester, 
         assert users["nightly@example.test"] == "bootstrap-password"
         assert len(users) == 3
         assert calls.count("/api/users") == 2
-    rows = json.loads((destination / "scenarios.json").read_text())["scenarios"]
+        assert calls[:2] == ["/api/auth/login", "/api/properties"]
+        assert calls.count("/api/properties") == 1
+    report = json.loads((destination / "scenarios.json").read_text())
+    assert report["run"]["target_url"] == url
+    rows = report["scenarios"]
     isolation = [row for row in rows if row["feature"] == "Organization isolation"]
     assert len(isolation) == 9
     assert all("two organizations" in row["error"]["message"] for row in isolation)
@@ -107,17 +117,46 @@ def test_external_features_use_api_and_skip_isolation_and_fresh_setup(pytester, 
     assert all(row["outcome"] == "skipped" and "fresh installation" in row["error"]["message"] for row in setup)
 
 
+@pytest.mark.parametrize("properties", [[{"id": "existing-property"}], {"unexpected": "response"}])
+def test_external_session_refuses_non_fresh_targets_before_scenario_writes(pytester, monkeypatch, properties):
+    backend = Path(__file__).resolve().parents[1]
+    monkeypatch.setenv("PYTHONPATH", str(backend))
+    monkeypatch.setenv("VERWALINO_TARGET_ADMIN_EMAIL", "nightly@example.test")
+    monkeypatch.setenv("VERWALINO_TARGET_ADMIN_PASSWORD", "bootstrap-password")
+    with synthetic_target(properties) as (url, users, calls):
+        monkeypatch.setenv("VERWALINO_TARGET_URL", url)
+        result = pytester.runpytest_subprocess(str(backend / "tests/bdd/test_password_change.py"), "-q")
+        assert result.ret == pytest.ExitCode.USAGE_ERROR
+        result.stderr.fnmatch_lines(["*target is not a fresh installation; refusing to write scenario data*"])
+        assert calls == ["/api/auth/login", "/api/properties"]
+        assert users == {"nightly@example.test": "bootstrap-password"}
+
+
+def test_normalized_empty_target_keeps_the_disposable_database_guard(monkeypatch):
+    import runpy
+    from app.core import declaration_test_database
+
+    monkeypatch.setenv("VERWALINO_TARGET_URL", "///")
+    def refuse(settings):
+        raise RuntimeError("disposable database guard was called")
+    monkeypatch.setattr(declaration_test_database, "require_disposable_database_settings", refuse)
+    with pytest.raises(RuntimeError, match="disposable database guard was called"):
+        runpy.run_path(str(Path(__file__).with_name("conftest.py")))
+
+
 def test_external_browser_app_does_not_start_local_processes(monkeypatch):
     from tests.bdd.browser import browser_app
-    monkeypatch.setenv("VERWALINO_TARGET_URL", "https://scenario.example.test")
     def forbidden(*args, **kwargs):
         pytest.fail("external browser target started a local process")
     monkeypatch.setattr("subprocess.Popen", forbidden)
     from types import SimpleNamespace
-    fixture = browser_app.__wrapped__({}, SimpleNamespace())
-    assert next(fixture) == "https://scenario.example.test"
-    with pytest.raises(StopIteration):
-        next(fixture)
+    with synthetic_target() as (url, _, calls):
+        monkeypatch.setenv("VERWALINO_TARGET_URL", url)
+        fixture = browser_app.__wrapped__({}, SimpleNamespace())
+        assert next(fixture) == url
+        with pytest.raises(StopIteration):
+            next(fixture)
+        assert calls == []
 
 
 def test_external_selection_cannot_fall_through_to_local_database_migrations(monkeypatch):

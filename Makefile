@@ -52,7 +52,8 @@ test-bdd: ## API BDD scenarios (backend/tests/bdd); browser journeys use test-br
 	@if [ -d backend/tests/bdd ]; then \
 	  $(TESTDB_LOCK); \
 	  $(MAKE) --no-print-directory check-testdb && \
-	  ( . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest tests/bdd $(PYTEST_ARGS) ); \
+	  ( unset VERWALINO_TARGET_URL VERWALINO_TARGET_ADMIN_EMAIL VERWALINO_TARGET_ADMIN_PASSWORD; \
+	    . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest tests/bdd $(PYTEST_ARGS) ); \
 	else \
 	  echo "test-bdd: backend/tests/bdd does not exist yet - skipped"; \
 	fi
@@ -63,7 +64,8 @@ typecheck: frontend/node_modules ## Frontend TypeScript check (tsc -b, no emit)
 test-browser: frontend/node_modules ## Headless browser features; owns the test DB lock and local app processes
 	@$(TESTDB_LOCK); \
 	$(MAKE) --no-print-directory check-testdb && \
-	( . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest tests/bdd --run-browser -m browser $(PYTEST_ARGS) )
+	( unset VERWALINO_TARGET_URL VERWALINO_TARGET_ADMIN_EMAIL VERWALINO_TARGET_ADMIN_PASSWORD; \
+	  . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest tests/bdd --run-browser -m browser $(PYTEST_ARGS) )
 
 test-scenarios-report: frontend/node_modules ## All API and browser features against the local stack; write report/scenarios.json and summary.md
 	@$(TESTDB_LOCK); \

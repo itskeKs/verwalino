@@ -92,6 +92,8 @@ def browser_app(seed_data, request):
             else:
                 log.seek(0)
                 pytest.fail(f"Browser app did not start: {url}\n{log.read()[-4000:]}")
+        if reporter:
+            reporter.run["target_url"] = BASE_URL
         yield BASE_URL
 
 
