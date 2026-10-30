@@ -25,7 +25,7 @@ fi; \
 trap 'rmdir /tmp/verwalino-testdb.lock' EXIT
 endef
 
-.PHONY: help test test-agent-rules test-backend test-installer test-frontend test-bdd test-browser typecheck lint lint-backend lint-frontend \
+.PHONY: help test test-agent-rules test-backend test-installer test-frontend test-bdd test-browser test-scenarios-report typecheck lint lint-backend lint-frontend \
         docs-check frontend-deps hooks check-testdb
 
 help: ## List the documented targets
@@ -64,6 +64,12 @@ test-browser: frontend/node_modules ## Headless browser features; owns the test 
 	@$(TESTDB_LOCK); \
 	$(MAKE) --no-print-directory check-testdb && \
 	( . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest tests/bdd --run-browser -m browser $(PYTEST_ARGS) )
+
+test-scenarios-report: frontend/node_modules ## All API and browser features against the local stack; write report/scenarios.json and summary.md
+	@$(TESTDB_LOCK); \
+	$(MAKE) --no-print-directory check-testdb && \
+	( unset VERWALINO_TARGET_URL VERWALINO_TARGET_ADMIN_EMAIL VERWALINO_TARGET_ADMIN_PASSWORD; \
+	  . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest tests/bdd --run-browser --scenario-report ../report $(PYTEST_ARGS) )
 
 # ---- static checks ---------------------------------------------------------
 

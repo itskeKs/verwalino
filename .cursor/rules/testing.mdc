@@ -21,8 +21,13 @@ alwaysApply: false
 - Browser prerequisites reuse the API World; run headless journeys with
   `make test-browser` (locks the shared DB and owns/stops its API and Vite stack).
   Install Chromium once as documented in `features/README.md`.
+- `make test-scenarios-report` runs all API/browser features locally and writes
+  `report/`. Direct pytest with `VERWALINO_TARGET_URL` uses only the explicitly
+  selected disposable installation, without local servers or database fixtures;
+  follow the target credentials and isolation skip policy in `features/README.md`.
 - Treat the shared test DB as single-writer: never run two backend test processes
-  at once. `make test-backend`, `make test-bdd` and `make test-browser` acquire and
+  at once. `make test-backend`, `make test-bdd`, `make test-browser` and
+  `make test-scenarios-report` acquire and
   release `/tmp/verwalino-testdb.lock` themselves. Direct pytest runs and dev stacks
   must hold that lock in their shell until finished; release between runs.
   Use only the test database and compose commands in AGENTS.md.
