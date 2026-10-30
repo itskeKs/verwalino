@@ -287,8 +287,9 @@ def test_admin_cli_normalizes_email_before_query_and_insert(monkeypatch):
     email_params = [
         params
         for query, params in connection.cursor_instance.calls
-        if 'FROM "user"' in query or 'INSERT INTO "user"' in query
+        if 'public."user"' in query or 'bootstrap_organization_admin' in query
     ]
+    assert len(email_params) == 2
     assert all("admin@example.test" in params for params in email_params)
 
 

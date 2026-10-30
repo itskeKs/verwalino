@@ -149,8 +149,8 @@ wait_for_health db
 wait_for_database_role
 compose --profile ops run --rm --no-deps migrate
 migration_state=$(compose --profile ops run --rm --no-deps migrate python -m app.deployment preflight)
-[ "$migration_state" = '0140' ] || {
-  echo "migration state is not exactly the validated release target 0140" >&2
+[ "$migration_state" = '0141' ] || {
+  echo "migration state is not exactly the validated release target 0141" >&2
   exit 1
 }
 compose up -d app

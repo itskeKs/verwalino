@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-import uuid
 
 import psycopg2
 
@@ -53,15 +52,7 @@ def main() -> None:
     conn.autocommit = False
     try:
         cur = conn.cursor()
-        cur.execute("SELECT id FROM organization WHERE name = %s", (args.org,))
-        row = cur.fetchone()
-        org_id = row[0] if row else str(uuid.uuid4())
-        if not row:
-            cur.execute(
-                "INSERT INTO organization (id, name) VALUES (%s, %s)",
-                (org_id, args.org),
-            )
-
+        cur.execute("LOCK TABLE public.organization IN SHARE ROW EXCLUSIVE MODE", ())
         cur.execute(
             'SELECT id FROM public."user" '
             "WHERE pg_catalog.lower(pg_catalog.btrim(email)) = %s",
@@ -72,15 +63,9 @@ def main() -> None:
             conn.rollback()
             return
 
-        user_id = str(uuid.uuid4())
         cur.execute(
-            'INSERT INTO "user" (id, organization_id, email, password_hash, display_name) '
-            "VALUES (%s, %s, %s, %s, %s)",
-            (user_id, org_id, email, hash_password(password), args.name),
-        )
-        cur.execute(
-            "INSERT INTO membership (id, organization_id, user_id, role) VALUES (%s, %s, %s, %s)",
-            (str(uuid.uuid4()), org_id, user_id, "OWNER_ADMIN"),
+            "SELECT public.bootstrap_organization_admin(%s,%s,%s,%s)",
+            (args.org, email, args.name, hash_password(password)),
         )
         conn.commit()
         print(f"Created organization '{args.org}' and OWNER_ADMIN '{email}'.")
