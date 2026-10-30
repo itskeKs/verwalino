@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api import auth, organizations, users, mandates, intake_batches, intake_items, exceptions, invoice_reviews, context_decisions, allocation_proposals, allocation_treatments, allocation_adoptions, duplicate_comparisons
 from app.api import context_mappings, setup
@@ -30,6 +31,10 @@ from app.core import health
 from app.core.static_files import resolve_spa_file
 from app.core.uploads import RequestBodyLimitMiddleware
 from app.core.config import settings
+from app.core.logging import configure_logging
+from app.core.request_id import RequestIdMiddleware, http_error, unhandled_error
+
+configure_logging()
 
 app = FastAPI(
     title="Hausverwaltung MVP",
@@ -39,6 +44,10 @@ app = FastAPI(
 )
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_host_list)
 app.add_middleware(RequestBodyLimitMiddleware)
+# Starlette prepends middleware: registering last makes request IDs run first.
+app.add_middleware(RequestIdMiddleware)
+app.add_exception_handler(StarletteHTTPException, http_error)
+app.add_exception_handler(Exception, unhandled_error)
 
 # Invoice extraction runs in the durable worker after upload commits.
 

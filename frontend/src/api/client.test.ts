@@ -43,6 +43,14 @@ describe("api client", () => {
     await expect(api.delete("/api/example")).resolves.toBeUndefined();
   });
 
+  it.each([false, true])("shows the server request ID in existing error messages (upload=%s)", async (upload) => {
+    const result = response({ detail: "Internal Server Error", request_id: "failure-1234" }, 500);
+    result.headers.set("X-Request-ID", "failure-1234");
+    vi.mocked(fetch).mockResolvedValue(result);
+    const pending = upload ? uploadFormData("/api/example", new FormData()) : api.get("/api/example");
+    await expect(pending).rejects.toMatchObject({ message: "Internal Server Error (Request-ID: failure-1234)" });
+  });
+
   it("does not force a JSON content type for multipart requests", async () => {
     vi.mocked(fetch).mockResolvedValue(response({ id: "upload-1" }));
     const body = new FormData();

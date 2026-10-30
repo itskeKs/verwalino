@@ -10,6 +10,8 @@ import subprocess
 import tempfile
 import uuid
 
+from app.core.request_id import correlation_context
+
 from sqlalchemy import select
 
 from app.core.config import settings
@@ -30,18 +32,19 @@ async def process_once(factory, org_id, *, processor=run_isolated_extraction):
         claim = await InvoiceProcessingService(session, org_id).claim()
     if claim is None:
         return False
-    try:
-        data = get_store().get(claim["storage_uri"])
-        if compute_sha256(data) != claim["sha256"]:
-            result = outcome("failed", "source_integrity_failed")
-        else:
-            result = await run_bounded_processor(processor, data, claim["mime_type"])
-    except Exception:
-        result = outcome("failed", "processor_failed")
-    async with factory() as session, session.begin():
-        await set_tenant_context(session, org_id)
-        await InvoiceProcessingService(session, org_id).finish(claim, result)
-    return True
+    with correlation_context(claim["attempt_id"]):
+        try:
+            data = get_store().get(claim["storage_uri"])
+            if compute_sha256(data) != claim["sha256"]:
+                result = outcome("failed", "source_integrity_failed")
+            else:
+                result = await run_bounded_processor(processor, data, claim["mime_type"])
+        except Exception:
+            result = outcome("failed", "processor_failed")
+        async with factory() as session, session.begin():
+            await set_tenant_context(session, org_id)
+            await InvoiceProcessingService(session, org_id).finish(claim, result)
+        return True
 
 
 logger = logging.getLogger(__name__)
@@ -71,6 +74,8 @@ async def check_readiness():
 
 
 async def main():
+    from app.core.logging import configure_logging
+    configure_logging()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--organization", action="append", type=uuid.UUID,
                         help="Restrict processing to this organization (repeatable; default: all).")
@@ -114,5 +119,4 @@ async def run():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     raise SystemExit(asyncio.run(run()))
