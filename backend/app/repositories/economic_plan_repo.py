@@ -14,7 +14,7 @@ import uuid
 from datetime import date
 from typing import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import select, or_
 
 from app.models.cost_category import CostCategory
 from app.models.cost_entry import CostEntry
@@ -44,6 +44,16 @@ class EconomicPlanRepository(TenantRepository[EconomicPlan]):
         )
         result = await self._session.execute(stmt)
         return result.scalars().all()
+
+    async def has_conflicting_period(self, plan: EconomicPlan) -> bool:
+        stmt = (self._base_query()
+            .where(EconomicPlan.property_id == plan.property_id,
+                EconomicPlan.superseded_by_id.is_(None),
+                EconomicPlan.period_start <= plan.period_end,
+                EconomicPlan.period_end >= plan.period_start,
+                or_(EconomicPlan.period_start != plan.period_start,
+                    EconomicPlan.period_end != plan.period_end)))
+        return (await self._session.execute(stmt.limit(1))).scalar_one_or_none() is not None
 
     async def update(self, entity: EconomicPlan) -> EconomicPlan:
         await self._session.flush()

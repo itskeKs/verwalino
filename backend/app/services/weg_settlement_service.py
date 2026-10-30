@@ -502,7 +502,8 @@ class WegSettlementService:
         ]
 
     async def derive_paid_advances(
-        self, economic_plan_id: uuid.UUID, period_year: int
+        self, economic_plan_id: uuid.UUID, period_year: int,
+        period_start: date | None = None, period_end: date | None = None,
     ) -> list["ManualOwnerAdvance"]:
         """Derive the (nachrichtliche) paid_advances per owner from payments (§6.3).
 
@@ -523,11 +524,15 @@ class WegSettlementService:
         if plan is None:
             raise HTTPException(404, "Economic plan not found")
         await FinancialScopeService(self._session, self._org_id, self._user_id).enter(plan, computation=True)
+        start = period_start if period_start is not None else plan.period_start
+        end = period_end if period_end is not None else plan.period_end
+        if not start.year <= period_year <= end.year:
+            raise HTTPException(422, "Reference year must belong to the settlement period")
         pay_svc = PaymentService(self._session, self._org_id, self._user_id)
         plan_advances = await self._plan_advances_per_owner(economic_plan_id)
         result: list[ManualOwnerAdvance] = []
         for adv in plan_advances:
-            total = await pay_svc.derive_hausgeld_total(adv.owner_profile_id, period_year)
+            total = await pay_svc.derive_hausgeld_total_for_period(adv.owner_profile_id, start, end)
             result.append(
                 ManualOwnerAdvance(owner_profile_id=adv.owner_profile_id, paid_total=total)
             )

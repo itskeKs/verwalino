@@ -32,6 +32,7 @@ from app.core.live_principal import require_live_principal
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.engine.periods import period_starting_in
 from app.engine.canonical import canonical_json, sha256_hex
 from app.engine.rounding import DistributionError
 from app.engine.snapshot import build_plan_snapshot_payload
@@ -119,7 +120,7 @@ class EconomicPlanService:
         if sphere.scope_type != "WEG" or not sphere.whole_property:
             raise HTTPException(422, "Previous actuals require a whole-property WEG scope")
         if start < sphere.valid_from or sphere.valid_to is not None and end > sphere.valid_to:
-            raise HTTPException(422, "Calendar year is outside accounting scope")
+            raise HTTPException(422, "Property period is outside accounting scope")
 
     async def _previous_admit(self, property_id, plan_year, source_scope_id, target_scope_id):
         if type(plan_year) is not int or not 2 <= plan_year <= 9998:
@@ -137,8 +138,8 @@ class EconomicPlanService:
             raise HTTPException(404, "Property not found")
         if prop.management_type not in {"WEG", "MISCH"}:
             raise HTTPException(422, "Previous actuals require a WEG or mixed property")
-        start, end = date(plan_year - 1, 1, 1), date(plan_year - 1, 12, 31)
-        target_start, target_end = date(plan_year, 1, 1), date(plan_year, 12, 31)
+        start, end = period_starting_in(prop.fiscal_year_start_month, plan_year - 1)
+        target_start, target_end = period_starting_in(prop.fiscal_year_start_month, plan_year)
         authorization = AuthorizationService(self._session, auth)
         authorized = set()
         for scope_id, capability, first, last in (
@@ -183,7 +184,7 @@ class EconomicPlanService:
     async def _previous_proposal(self, property_id, plan_year, source_scope_id=None, target_scope_id=None):
         prop, source, target, authorized = await self._previous_admit(
             property_id, plan_year, source_scope_id, target_scope_id)
-        start, end = date(plan_year - 1, 1, 1), date(plan_year - 1, 12, 31)
+        start, end = period_starting_in(prop.fiscal_year_start_month, plan_year - 1)
         rows = await self._plans.prior_year_sources(property_id, start, end)
         if not rows:
             raise HTTPException(422, "No current confirmed prior-year cost sources")
@@ -225,7 +226,7 @@ class EconomicPlanService:
             reserve_value = self._previous_money(format(reserve, ".2f"))
         basis = {"basis": "confirmed_current_service_period_gross_inclusive_days_half_up_cents",
             "organization_id": str(self._org_id), "property_id": str(property_id),
-            "management_type": prop.management_type, "source_year": plan_year - 1, "plan_year": plan_year,
+            "management_type": prop.management_type, "fiscal_year_start_month": prop.fiscal_year_start_month, "source_year": plan_year - 1, "plan_year": plan_year,
             "source_accounting_scope_id": str(source.id) if source else None,
             "accounting_scope_id": str(target.id) if target else None,
             "source_scope": self._previous_row_payload(source) if source else None,
@@ -271,7 +272,8 @@ class EconomicPlanService:
             normalized.append({**proposal, "planned_amount": self._previous_money(supplied.get("planned_amount"))})
         reserve = self._previous_money(reserve_contribution_total)
         await self._previous_switch(authorized)
-        plan = await self.create_draft(property_id, plan_year, date(plan_year, 1, 1), date(plan_year, 12, 31),
+        start, end = period_starting_in(date.fromisoformat(preview["period_start"]).month, plan_year)
+        plan = await self.create_draft(property_id, plan_year, start, end,
             reserve_contribution_total=Decimal(reserve), accounting_scope_id=accounting_scope_id)
         plan.snapshot_payload = {"draft_inputs": {"planned_costs": normalized,
             "reserve_contribution_total": reserve}, "previous_actuals": provenance}
@@ -311,6 +313,14 @@ class EconomicPlanService:
         management_mandate_id: uuid.UUID | None = None,
         accounting_scope_id: uuid.UUID | None = None,
     ) -> EconomicPlan:
+        scope = FinancialScopeService(self._session, self._org_id, self._user_id)
+        await scope.lock_inputs()
+        prop = await PropertyRepository(self._session, self._org_id).get_by_id(property_id)
+        if prop is None:
+            raise HTTPException(404, "Property not found")
+        if not 1 <= plan_year <= 9998:
+            raise HTTPException(422, "Plan year must be between 1 and 9998")
+        period_start, period_end = period_starting_in(prop.fiscal_year_start_month, plan_year)
         plan = EconomicPlan(
             organization_id=self._org_id,
             property_id=property_id,
@@ -323,7 +333,9 @@ class EconomicPlanService:
             status="draft",
             engine_version=ENGINE_VERSION,
         )
-        await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(plan, accounting_scope_id)
+        await scope.prepare_new(plan, accounting_scope_id)
+        if await self._plans.has_conflicting_period(plan):
+            raise HTTPException(409, "Der Zeitraum überschneidet einen aktiven Wirtschaftsplan dieses Objekts.")
         plan = await self._plans.create(plan)
         await self._audit.create(
             AuditEvent(

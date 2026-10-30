@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
+from datetime import date
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import Response
@@ -135,6 +136,34 @@ async def get_property(
     if p is None:
         raise HTTPException(status_code=404, detail="Property not found")
     return _to_out(p)
+
+
+class SettlementPeriodOut(BaseModel):
+    year: int
+    label: str
+    period_start: date
+    period_end: date
+
+
+@router.get("/{property_id}/settlement-periods", response_model=list[SettlementPeriodOut])
+async def settlement_periods(
+    property_id: uuid.UUID,
+    year: int | None = Query(default=None, ge=3, le=9997),
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+):
+    from app.engine.periods import period_starting_in, period_label
+
+    prop = await PropertyRepository(db, auth.organization_id).get_by_id(property_id)
+    if prop is None:
+        raise HTTPException(404, "Property not found")
+    reference_year = year if year is not None else date.today().year
+    periods = []
+    for start_year in range(reference_year - 2, reference_year + 2):
+        start, end = period_starting_in(prop.fiscal_year_start_month, start_year)
+        periods.append(SettlementPeriodOut(year=start_year, label=period_label(start, end),
+            period_start=start, period_end=end))
+    return periods
 
 
 @router.post("", response_model=PropertyOut, status_code=201)

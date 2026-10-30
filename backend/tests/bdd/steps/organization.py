@@ -98,3 +98,9 @@ def record_unchanged(world, organization, kind):
         f'The {record.kind.singular} of "{organization}" was changed: '
         f'expected "{record.name}", found "{answer.json()[record.kind.name_field]}".'
     )
+
+
+@when(parsers.parse('the user opens the settlement period offers of "{organization}"'))
+def user_opens_periods(world, organization):
+    record = record_of(world, organization, kind_named("property"))
+    world.act("GET", f"/api/properties/{record.id}/settlement-periods", params={"year": 2025})

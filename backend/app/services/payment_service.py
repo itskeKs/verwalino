@@ -638,3 +638,16 @@ class PaymentService:
             owner_profile_id=owner_profile_id,
         )
         return derive_advance_total([_to_payment_input(p) for p in rows], filt)
+
+    async def derive_hausgeld_total_for_period(
+        self, owner_profile_id: uuid.UUID, period_start: date, period_end: date
+    ) -> Decimal:
+        """Paid Hausgeld by assigned months, using the ledger's sub-period rules."""
+        rows = []
+        for year in range(period_start.year, period_end.year + 1):
+            rows.extend(await self._repo.derived_for_hausgeld(owner_profile_id, year))
+        inputs = [_to_payment_input(p) for p in self._scope_payments_to_period(rows, period_start, period_end)]
+        return sum((derive_advance_total(inputs, AdvanceFilter(
+            types=frozenset({"HAUSGELD_VORSCHUSS"}), year=year,
+            owner_profile_id=owner_profile_id,
+        )) for year in range(period_start.year, period_end.year + 1)), Decimal("0.00"))

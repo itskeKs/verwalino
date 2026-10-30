@@ -39,3 +39,7 @@ Feature: Organization isolation
       | property     |
       | person       |
       | bank account |
+
+  Scenario: Another organization's settlement period offers are not disclosed
+    When the user opens the settlement period offers of "Verwaltung Beta"
+    Then the property is reported as not found

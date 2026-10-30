@@ -152,6 +152,18 @@ class SettlementRunRepository(TenantRepository[SettlementRun]):
         result = await self._session.execute(stmt)
         return result.scalars().all()
 
+    async def has_conflicting_period(self, run: SettlementRun) -> bool:
+        """Any active, non-identical overlap for this lease and run type."""
+        stmt = (self._base_query()
+            .where(SettlementRun.lease_agreement_id == run.lease_agreement_id,
+                SettlementRun.run_type == run.run_type,
+                SettlementRun.superseded_by_id.is_(None),
+                SettlementRun.period_start <= run.period_end,
+                SettlementRun.period_end >= run.period_start,
+                or_(SettlementRun.period_start != run.period_start,
+                    SettlementRun.period_end != run.period_end)))
+        return (await self._session.execute(stmt.limit(1))).scalar_one_or_none() is not None
+
     async def ownership_for_property(
         self, property_id: uuid.UUID
     ) -> Sequence[OwnershipHistory]:
