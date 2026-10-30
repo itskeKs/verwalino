@@ -27,7 +27,7 @@ help: ## List the documented targets
 
 test: test-agent-rules test-installer test-backend test-frontend typecheck ## Whole suite before a merge: agent rules + installer contracts + backend pytest (incl. BDD) + frontend vitest + typecheck
 
-test-agent-rules: ## Paired agent rules and Codex hook contracts (stdlib only; no DB)
+test-agent-rules: ## Paired agent rules, CLAUDE.md symlink and Codex hook contracts (stdlib only; no DB)
 	python3 -B scripts/test_agent_rules.py
 
 test-backend: check-testdb ## Backend pytest against the test DB (PYTEST_ARGS="-q tests/test_x.py -k name" narrows it)
