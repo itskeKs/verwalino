@@ -17,7 +17,7 @@ UV_LINT := uv run --locked --extra dev
 # Extra pytest arguments, e.g. make test-backend PYTEST_ARGS="-q tests/test_x.py -k name"
 PYTEST_ARGS ?= -q
 
-.PHONY: help test test-agent-rules test-backend test-installer test-frontend test-bdd typecheck lint lint-backend lint-frontend \
+.PHONY: help test test-agent-rules test-backend test-installer test-selfhost-format test-frontend test-bdd typecheck lint lint-backend lint-frontend \
         docs-check frontend-deps hooks check-testdb
 
 help: ## List the documented targets
@@ -35,6 +35,13 @@ test-backend: check-testdb ## Backend pytest against the test DB (PYTEST_ARGS="-
 
 test-installer: ## Self-host installer contract tests (no DB; Docker is faked)
 	cd backend && $(UV_LINT) python ../scripts/test-self-host.py
+
+test-selfhost-format: ## Opt-in backup format round trip in scratch test databases; owns the test DB lock
+	@( until mkdir /tmp/verwalino-testdb.lock 2>/dev/null; do sleep 10; done; \
+	  trap 'rmdir /tmp/verwalino-testdb.lock' EXIT; \
+	  trap 'exit 130' INT; trap 'exit 143' TERM; \
+	  export VERWALINO_FORMAT_TEST=1; \
+	  . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest -q tests/test_selfhost_backup_format.py )
 
 test-frontend: frontend/node_modules ## Frontend vitest (single run)
 	cd frontend && npm test

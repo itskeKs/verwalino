@@ -8,10 +8,32 @@ CONFIG="${VERWALINO_CONFIG:-$ROOT/.env.selfhost}"
 TMP_DIR=""
 LOCKED=0
 RESTORE_DB=0
+RESTORE_SCRATCH=0
+RESTORE_WINDOW=0
+RESTORE_ACTIVE=0
 
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 cleanup() {
     local status=$?
+    if [[ "$status" != 0 && "$RESTORE_ACTIVE" = 1 ]]; then
+        if [[ "$RESTORE_WINDOW" = 0 ]]; then
+            if [[ "$RESTORE_SCRATCH" = 1 ]]; then
+                compose exec -T db dropdb -U app_migrator --if-exists hausverwaltung_restore || \
+                    printf 'Could not remove scratch database hausverwaltung_restore; remove it before retrying restore.\n' >&2
+            fi
+            printf 'Restore failed before cutover; old database and documents are untouched. Retry restore after fixing the reported error.\n' >&2
+        else
+            printf 'Restore failed during cutover. Installation state:\n' >&2
+            compose exec -T db psql -X --set ON_ERROR_STOP=1 -U app_migrator -d postgres -Atc \
+                "SELECT name || '=' || CASE WHEN EXISTS (SELECT 1 FROM pg_database WHERE datname=name) THEN 'present' ELSE 'absent' END FROM (VALUES ('hausverwaltung'), ('hausverwaltung_restore')) AS databases(name)" >&2 || \
+                printf 'Database state unavailable; inspect hausverwaltung and hausverwaltung_restore before recovery.\n' >&2
+            local documents_state
+            documents_state=$(archive_tool document-state) || documents_state=unknown
+            printf 'documents=%s\n' "$documents_state" >&2
+            printf 'Recovery: keep the app stopped. If hausverwaltung is absent and hausverwaltung_restore is present, rename the scratch database to hausverwaltung before retrying the same archive. If both exist, remove only hausverwaltung_restore before retrying. If documents are partially swapped, retry the same archive to replace them completely. Do not start until restore succeeds.\n' >&2
+        fi
+        archive_tool discard-documents || printf 'Could not remove staged documents; inspect .restore-* in the documents volume.\n' >&2
+    fi
     if [[ "$RESTORE_DB" = 1 ]]; then
         compose stop db || printf 'Could not stop db; run: bash scripts/self-host.sh stop\n' >&2
     fi
@@ -40,6 +62,8 @@ Default: local HTTP on 127.0.0.1:18080; no AI, SMTP or extraction worker.
 VERWALINO_CONFIG selects the private config file (default: .env.selfhost).
 No automatic update, downgrade or volume deletion is provided.
 Backups exclude private config/secrets and certificates; keep config separately.
+Backup output defaults to the private checkout backups/ directory; the checkout root is refused.
+Restore stages the database and documents before replacing the stopped installation.
 HELP
 }
 
@@ -144,7 +168,7 @@ archive_tool() {
 }
 
 backup() {
-    local out="$PWD" archive schema
+    local out="$ROOT/backups" archive schema
     if [[ "$#" != 0 ]]; then
         [[ "$#" = 2 && "$1" = --out && -n "$2" ]] || fail 'Usage: backup [--out DIR]'
         out="$2"
@@ -153,7 +177,9 @@ backup() {
     umask 077
     lock_config
     mkdir -p "$out"
-    out=$(cd "$out" && pwd)
+    out=$(cd "$out" && pwd -P)
+    [[ "$out" != "$(cd "$ROOT" && pwd -P)" ]] || fail 'Backup output must not be the checkout root.'
+    chmod 700 "$out"
     archive="$out/verwalino-backup-$(date -u +%Y%m%dT%H%M%SZ).tar"
     TMP_DIR=$(mktemp -d "$out/.verwalino-backup.XXXXXX")
     # The installer lock excludes migrations; pg_dump takes a consistent online
@@ -164,12 +190,18 @@ backup() {
     compose exec -T db pg_dump -U app_migrator -d hausverwaltung -Fc > "$TMP_DIR/db.dump"
     archive_tool pack "$schema" "$VERWALINO_IMAGE" "$(config_fingerprint)"
     # Same-filesystem publication never overwrites another backup in this second.
-    ln "$TMP_DIR/archive.tar" "$archive" || fail 'Backup destination exists; nothing overwritten.'
+    if ! ln "$TMP_DIR/archive.tar" "$archive" 2>/dev/null; then
+        [[ ! -e "$archive" ]] || fail 'Backup destination exists; nothing overwritten.'
+        # Rootless/user-namespace ownership can forbid linking a readable file.
+        # Copy privately, then publish the caller-owned copy without overwriting.
+        cp "$TMP_DIR/archive.tar" "$TMP_DIR/publication.tar" || fail 'Could not copy backup for publication.'
+        ln "$TMP_DIR/publication.tar" "$archive" || fail 'Backup destination exists; nothing overwritten.'
+    fi
     printf 'Backup: %s (%s bytes)\n' "$archive" "$(wc -c < "$archive" | tr -d ' ')"
 }
 
 restore() {
-    local file="${1:-}" yes=0 running target confirmation
+    local file="${1:-}" yes=0 running target confirmation schema restored_schema
     [[ -n "$file" && -f "$file" ]] || fail 'Usage: restore FILE [--yes]'
     shift
     if [[ "$#" != 0 ]]; then
@@ -179,14 +211,14 @@ restore() {
     command -v openssl >/dev/null || fail 'OpenSSL is required for configuration fingerprints.'
     umask 077
     lock_config
-    running=$(compose ps --all --status running --quiet app migrate bootstrap)
+    running=$(compose ps --all --status running --status restarting --status paused --quiet app migrate bootstrap)
     [[ -z "$running" ]] || fail 'Installation is running; first run: bash scripts/self-host.sh stop'
     TMP_DIR=$(mktemp -d "$(dirname "$CONFIG")/.env.verwalino-restore.XXXXXX")
     # Work on a private copy so a changed input cannot bypass verification.
     cp "$file" "$TMP_DIR/archive.tar"
-    target=$(sed -n "s/^TARGET = '\([0-9][0-9]*\)'$/\1/p" "$ROOT/backend/app/deployment.py")
-    [[ "$target" =~ ^[0-9]{4}$ ]] || fail 'Cannot read the checkout release target.'
-    archive_tool verify "$target" "$(config_fingerprint)"
+    target=$(archive_tool target "$(sed -n "s/^TARGET = '\([0-9][0-9]*\)'$/\1/p" "$ROOT/backend/app/deployment.py")")
+    [[ "$target" =~ ^[0-9]{4}$ ]] || fail 'Cannot read the image release target.'
+    schema=$(archive_tool verify "$target" "$(config_fingerprint)")
     if [[ "$yes" = 0 ]]; then
         printf 'This replaces the application database and all documents. Type restore to confirm: ' >&2
         IFS= read -r confirmation || fail 'Restore cancelled; use --yes for non-interactive restore.'
@@ -194,13 +226,24 @@ restore() {
     fi
     # Set before startup so cleanup stops db even after a readiness failure.
     RESTORE_DB=1
+    RESTORE_ACTIVE=1
     compose up -d --wait --wait-timeout 120 db
     compose exec -T db pg_restore --list < "$TMP_DIR/db.dump" > /dev/null
-    compose exec -T db dropdb -U app_migrator --if-exists hausverwaltung
-    compose exec -T db createdb -U app_migrator -T template0 hausverwaltung
-    compose exec -T db pg_restore -U app_migrator -d hausverwaltung \
+    compose exec -T db createdb -U app_migrator -T template0 hausverwaltung_restore
+    RESTORE_SCRATCH=1
+    compose exec -T db pg_restore -U app_migrator -d hausverwaltung_restore \
         --exit-on-error --single-transaction < "$TMP_DIR/db.dump"
-    archive_tool restore-documents
+    restored_schema=$(compose exec -T db psql -X --set ON_ERROR_STOP=1 -U app_migrator -d hausverwaltung_restore \
+        -Atc 'SELECT version_num FROM alembic_version')
+    [[ "$restored_schema" = "$schema" ]] || fail 'Restored database schema head does not match the manifest.'
+    archive_tool stage-documents
+    RESTORE_WINDOW=1
+    compose exec -T db dropdb -U app_migrator --if-exists hausverwaltung
+    compose exec -T db psql -X --set ON_ERROR_STOP=1 -U app_migrator -d postgres \
+        -Atc 'ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung'
+    RESTORE_SCRATCH=0
+    archive_tool swap-documents
+    RESTORE_ACTIVE=0
     compose stop db
     RESTORE_DB=0
     printf 'Restored database and documents. Next: bash scripts/self-host.sh start\n'

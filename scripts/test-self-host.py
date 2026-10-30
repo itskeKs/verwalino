@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -16,7 +17,6 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts/self-host.sh"
 SECRETS = ("MIGRATOR_PASSWORD", "APP_RW_PASSWORD", "APP_WORKER_PASSWORD", "APP_REVIEW_PASSWORD", "SESSION_SECRET")
 
 
@@ -25,6 +25,11 @@ class SelfHostTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name)
+        self.root = self.base / "checkout"
+        for name in ("scripts/self-host.sh", "backend/app/selfhost_backup.py", "backend/app/deployment.py"):
+            destination = self.root / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / name, destination)
         self.config = self.base / ".env.selfhost"
         self.log = self.base / "docker.jsonl"
         binary = self.base / "bin"
@@ -38,20 +43,60 @@ failure = os.environ.get("FAKE_DOCKER_FAIL")
 if failure and (failure in sys.argv or (failure == "app-ready" and "up" in sys.argv and sys.argv[-1] == "app")):
     sys.exit(17)
 if "ps" in sys.argv and "--quiet" in sys.argv:
-    print(os.environ.get("FAKE_RUNNING", ""), end="")
+    state = os.environ.get("FAKE_STATE", "running")
+    statuses = [sys.argv[i + 1] for i, arg in enumerate(sys.argv) if arg == "--status"]
+    if state in statuses:
+        print(os.environ.get("FAKE_RUNNING", ""), end="")
+state_path = os.environ["FAKE_DB_STATE"]
+with open(state_path) as state_file:
+    databases = json.load(state_file)
+if "createdb" in sys.argv:
+    databases.append(sys.argv[-1])
+if "dropdb" in sys.argv:
+    databases = [name for name in databases if name != sys.argv[-1]]
 if "psql" in sys.argv:
-    print(os.environ.get("FAKE_SCHEMA", "0139"))
+    statement = sys.argv[-1]
+    if statement.startswith("ALTER DATABASE"):
+        databases.remove("hausverwaltung_restore")
+        databases.append("hausverwaltung")
+    elif "pg_database" in statement:
+        for name in ("hausverwaltung", "hausverwaltung_restore"):
+            print(name + "=" + ("present" if name in databases else "absent"))
+    else:
+        print(os.environ.get("FAKE_RESTORED_SCHEMA" if "hausverwaltung_restore" in sys.argv else "FAKE_SCHEMA", "0139"))
+with open(state_path, "w") as state_file:
+    json.dump(databases, state_file)
 if "pg_dump" in sys.argv:
     sys.stdout.buffer.write(b"PGDMPsynthetic-dump")
 if "pg_restore" in sys.argv:
     sys.stdin.buffer.read()
 if "-c" in sys.argv:
+    for argument in sys.argv:
+        if argument.startswith("BACKUP_OWNER="):
+            os.environ["BACKUP_OWNER"] = argument.split("=", 1)[1]
     position = sys.argv.index("-c")
     args = sys.argv[position + 2:]
     mount = sys.argv[sys.argv.index("--volume") + 1].rsplit(":", 1)[0]
     args = [arg.replace("/backup", mount).replace("/data/documents", os.environ["FAKE_DOCUMENTS"]) for arg in args]
     # Emulate root's container-only ownership operations without chown on the host.
-    wrapper = "import os, sys; os.chown = lambda *args: None; exec(compile(sys.argv.pop(1), '<archive-helper>', 'exec'))"
+    wrapper = """import os, sys
+from app import deployment
+if os.environ.get("FAKE_IMAGE_TARGET") == "missing":
+    del deployment.TARGET
+elif os.environ.get("FAKE_IMAGE_TARGET"):
+    deployment.TARGET = os.environ["FAKE_IMAGE_TARGET"]
+if os.environ.get("FAKE_OLD_IMAGE"):
+    del deployment.archive_documents
+def chown(path, uid, gid):
+    if os.environ.get("FAKE_CHOWN_DENIED") and uid != 10001:
+        raise PermissionError("sensitive path")
+os.chown = chown
+if os.environ.get("FAKE_SWAP_FAIL") and "swap-documents" in sys.argv:
+    from pathlib import Path
+    def rename(*args):
+        raise OSError("sensitive path")
+    Path.rename = rename
+exec(compile(sys.argv.pop(1), '<archive-helper>', 'exec'))"""
     sys.exit(subprocess.call([sys.executable, "-c", wrapper, sys.argv[position + 1], *args]))
 if "run" in sys.argv and "bootstrap" in sys.argv:
     password = sys.stdin.readline()
@@ -62,12 +107,15 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
         self.documents = self.base / "documents"
         self.documents.mkdir()
         (self.documents / "original.pdf").write_bytes(b"synthetic original")
+        self.db_state = self.base / "databases.json"
+        self.db_state.write_text(json.dumps(["hausverwaltung"]))
         self.env = dict(os.environ, PYTHONPATH=str(ROOT / "backend"), FAKE_DOCUMENTS=str(self.documents), PATH=f"{binary}:{os.environ['PATH']}",
+                        FAKE_DB_STATE=str(self.db_state),
                         VERWALINO_CONFIG=str(self.config), FAKE_DOCKER_LOG=str(self.log),
                         FAKE_DOCKER_STDIN=str(self.base / "stdin"))
 
     def run_script(self, *args, input=None):
-        return subprocess.run(["bash", str(SCRIPT), *args], env=self.env, input=input,
+        return subprocess.run(["bash", str(self.root / "scripts/self-host.sh"), *args], env=self.env, input=input,
                               text=True, capture_output=True, cwd=self.base, check=False, timeout=15)
 
     def init(self, *args):
@@ -144,16 +192,61 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
         self.assertFalse(any("up" in a or "stop" in a for a in args))
         self.assert_isolated(args)
 
-    def test_backup_defaults_to_current_directory_and_does_not_publish_failures(self):
+    def test_backup_defaults_to_private_checkout_backups_and_does_not_publish_failures(self):
         self.init()
         self.env["FAKE_DOCKER_FAIL"] = "pg_dump"
         self.assertNotEqual(self.run_script("backup").returncode, 0)
         self.assertEqual(list(self.base.glob("verwalino-backup-*")), [])
         self.assertEqual(list(self.base.glob(".verwalino-backup.*")), [])
+        self.assertEqual(list((self.root / "backups").glob("*")), [])
         del self.env["FAKE_DOCKER_FAIL"]
         result = self.run_script("backup")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(len(list(self.base.glob("verwalino-backup-*"))), 1)
+        output = self.root / "backups"
+        self.assertEqual(len(list(output.glob("verwalino-backup-*"))), 1)
+        self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o700)
+        self.assertEqual(list(self.base.glob("verwalino-backup-*")), [])
+
+    def test_backup_refuses_checkout_root_and_git_ignores_private_outputs(self):
+        self.init()
+        result = self.run_script("backup", "--out", str(self.root / "."))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("checkout root", result.stderr)
+        self.assertEqual(self.calls(), [])
+        paths = ["backups/private.dump", "verwalino-backup-20261030T120000Z.tar", ".verwalino-backup.abcdef/db.dump"]
+        for path in paths:
+            ignored = subprocess.run(["git", "check-ignore", "--no-index", path], cwd=ROOT, capture_output=True, text=True)
+            self.assertEqual(ignored.returncode, 0, path)
+
+    def test_backup_refuses_missing_or_ambiguous_schema_head(self):
+        self.init()
+        for schema in ("", "0122\n0139"):
+            with self.subTest(schema=schema):
+                self.env["FAKE_SCHEMA"] = schema
+                result = self.run_script("backup")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Missing or ambiguous", result.stderr)
+                self.assertFalse(any("pg_dump" in c["args"] for c in self.calls()))
+
+    def test_backup_warns_on_chown_failure_and_copies_when_hardlink_is_denied(self):
+        self.init()
+        self.env["FAKE_CHOWN_DENIED"] = "1"
+        binary = Path(self.env["PATH"].split(":")[0]) / "ln"
+        binary.write_text('#!/bin/bash\nif [[ "$1" = */archive.tar ]]; then exit 1; fi\nexec /bin/ln "$@"\n')
+        binary.chmod(0o755)
+        result = self.run_script("backup")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Warning:", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(len(list((self.root / "backups").glob("*.tar"))), 1)
+
+    def test_helper_reports_images_without_backup_support_without_traceback(self):
+        self.init()
+        self.env["FAKE_OLD_IMAGE"] = "1"
+        result = self.run_script("backup")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("image predates backup support; update the image first", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
     def test_restore_refuses_running_writers_before_any_changes(self):
         config = self.init()
@@ -164,6 +257,35 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
         self.assertIn("bash scripts/self-host.sh stop", result.stderr)
         self.assertTrue(self.calls())
         self.assertTrue(all("ps" in c["args"] for c in self.calls()))
+
+    def test_restore_refuses_restarting_and_paused_writers(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        for state in ("restarting", "paused"):
+            with self.subTest(state=state):
+                self.env.update(FAKE_STATE=state, FAKE_RUNNING="app-id")
+                result = self.run_script("restore", str(archive), "--yes")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue(all("ps" in c["args"] for c in self.calls()))
+
+    def test_restore_uses_image_target_and_warns_only_for_missing_target(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        self.env["FAKE_IMAGE_TARGET"] = "0122"
+        result = self.run_script("restore", str(archive), "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("newer", result.stderr)
+        self.assertFalse(any("up" in c["args"] for c in self.calls()))
+        self.env["FAKE_IMAGE_TARGET"] = "0140"
+        archive, _ = self.archive(config, schema_head="0140")
+        self.env["FAKE_RESTORED_SCHEMA"] = "0140"
+        self.assertEqual(self.run_script("restore", str(archive), "--yes").returncode, 0)
+        self.env["FAKE_IMAGE_TARGET"] = "missing"
+        archive, _ = self.archive(config)
+        self.env["FAKE_RESTORED_SCHEMA"] = "0139"
+        result = self.run_script("restore", str(archive), "--yes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Warning: image predates app.deployment.TARGET", result.stderr)
 
     def test_restore_refuses_newer_unknown_or_foreign_archives_before_starting_db(self):
         config = self.init()
@@ -198,11 +320,12 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
     def test_restore_recreates_database_replaces_documents_and_stops_db(self):
         config = self.init()
         archive, _ = self.archive(config, schema_head="0122")
+        self.env["FAKE_RESTORED_SCHEMA"] = "0122"
         result = self.run_script("restore", str(archive), "--yes", input="")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("bash scripts/self-host.sh start", result.stdout)
         args = [c["args"] for c in self.calls()]
-        stages = ["ps", "verify", "up", "--list", "dropdb", "createdb", "--single-transaction", "restore-documents", "stop"]
+        stages = ["ps", "target", "verify", "up", "--list", "createdb", "--single-transaction", "SELECT version_num FROM alembic_version", "stage-documents", "dropdb", "ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung", "swap-documents", "stop"]
         positions = [next(i for i, a in enumerate(args) if stage in a) for stage in stages]
         self.assertEqual(positions, sorted(positions))
         for a in args:
@@ -210,7 +333,13 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
                 self.assertEqual(a[-1], "db")
             if "pg_restore" in a and "--list" not in a:
                 self.assertEqual(a[a.index("exec"):], ["exec", "-T", "db", "pg_restore", "-U", "app_migrator",
-                                                      "-d", "hausverwaltung", "--exit-on-error", "--single-transaction"])
+                                                      "-d", "hausverwaltung_restore", "--exit-on-error", "--single-transaction"])
+            if "dropdb" in a:
+                self.assertEqual(a[a.index("exec"):], ["exec", "-T", "db", "dropdb", "-U", "app_migrator", "--if-exists", "hausverwaltung"])
+            if "createdb" in a:
+                self.assertEqual(a[a.index("exec"):], ["exec", "-T", "db", "createdb", "-U", "app_migrator", "-T", "template0", "hausverwaltung_restore"])
+            if "ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung" in a:
+                self.assertEqual(a[a.index("exec"):], ["exec", "-T", "db", "psql", "-X", "--set", "ON_ERROR_STOP=1", "-U", "app_migrator", "-d", "postgres", "-Atc", "ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung"])
         self.assertFalse((self.documents / "original.pdf").exists())
         self.assertEqual((self.documents / "nested/original.pdf").read_bytes(), b"restored original")
         self.assert_isolated(args)
@@ -226,15 +355,61 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
         result = self.run_script("restore", str(archive), input="restore\n")
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_restore_failure_stops_db_and_never_reports_success(self):
+    def test_restore_pre_cutover_failures_preserve_old_data_and_clean_scratch(self):
         config = self.init()
         archive, _ = self.archive(config)
-        self.env["FAKE_DOCKER_FAIL"] = "--single-transaction"
+        for failure in ("createdb", "--single-transaction", "stage-documents"):
+            with self.subTest(failure=failure):
+                self.log.unlink(missing_ok=True)
+                self.env["FAKE_DOCKER_FAIL"] = failure
+                result = self.run_script("restore", str(archive), "--yes")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("Restored", result.stdout)
+                self.assertIn("old database and documents are untouched", result.stderr)
+                self.assertEqual(json.loads(self.db_state.read_text()), ["hausverwaltung"])
+                self.assertEqual((self.documents / "original.pdf").read_bytes(), b"synthetic original")
+                self.assertTrue(any("stop" in c["args"] for c in self.calls()))
+                self.assertFalse(any("dropdb" in c["args"] and c["args"][-1] == "hausverwaltung" for c in self.calls()))
+                if failure != "createdb":
+                    cleanup = next(c["args"] for c in self.calls() if "dropdb" in c["args"])
+                    self.assertEqual(cleanup[cleanup.index("exec"):], ["exec", "-T", "db", "dropdb", "-U", "app_migrator", "--if-exists", "hausverwaltung_restore"])
+
+    def test_restore_rejects_dump_manifest_schema_mismatch_before_cutover(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        for schema in ("0122", "", "0122\n0139"):
+            with self.subTest(schema=schema):
+                self.env["FAKE_RESTORED_SCHEMA"] = schema
+                result = self.run_script("restore", str(archive), "--yes")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("does not match the manifest", result.stderr)
+                self.assertIn("old database and documents are untouched", result.stderr)
+                self.assertEqual(json.loads(self.db_state.read_text()), ["hausverwaltung"])
+
+    def test_restore_cutover_failures_report_database_and_document_state(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        for failure, live, scratch in (("dropdb", "present", "present"),
+                                      ("ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung", "absent", "present"),
+                                      ("swap-documents", "present", "absent")):
+            with self.subTest(failure=failure):
+                self.db_state.write_text(json.dumps(["hausverwaltung"]))
+                self.env["FAKE_DOCKER_FAIL"] = failure
+                result = self.run_script("restore", str(archive), "--yes")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("hausverwaltung=" + live, result.stderr)
+                self.assertIn("hausverwaltung_restore=" + scratch, result.stderr)
+                self.assertIn("documents=not swapped", result.stderr)
+                self.assertIn("keep the app stopped", result.stderr)
+                self.assertEqual((self.documents / "original.pdf").read_bytes(), b"synthetic original")
+                self.assertEqual(list(self.documents.glob(".restore-*")), [])
+        del self.env["FAKE_DOCKER_FAIL"]
+        self.db_state.write_text(json.dumps(["hausverwaltung"]))
+        self.env["FAKE_SWAP_FAIL"] = "1"
         result = self.run_script("restore", str(archive), "--yes")
         self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn("Restored", result.stdout)
-        self.assertTrue(any("stop" in c["args"] and c["args"][-1] == "db" for c in self.calls()))
-        self.assertFalse(any("restore-documents" in c["args"] for c in self.calls()))
+        self.assertIn("documents=partially swapped", result.stderr)
+        self.assertNotIn("sensitive path", result.stderr)
 
     def test_init_generates_distinct_secrets_and_private_file_without_docker(self):
         config = self.init()
@@ -337,7 +512,7 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
                 self.assertIn("--project-name", args)
                 self.assertEqual(args[args.index("--project-name") + 1], "verwalino")
                 self.assertEqual(args[args.index("--env-file") + 1], str(self.config))
-                self.assertEqual(args[args.index("-f") + 1], str(ROOT / "infra/docker-compose.yml"))
+                self.assertEqual(args[args.index("-f") + 1], str(self.root / "infra/docker-compose.yml"))
                 self.assertNotIn("down", args)
                 self.assertNotIn("-v", args)
 
