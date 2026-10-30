@@ -572,7 +572,7 @@ Run:
 ~~~bash
 rg -n 'ports:|HV_DATABASE_URL_MIGRATOR|HV_DATABASE_URL_SYNC|APP_PORT' \
   docker-compose.prod.yml docker/entrypoint.sh DEPLOY.md
-rg -n 'change-me|10zolotarev|verwaltung\.fogu\.io' \
+rg -n 'change-me|10zolotarev|<host>' \
   . --glob '!frontend/node_modules/**' --glob '!backend/.venv/**'
 ~~~
 
