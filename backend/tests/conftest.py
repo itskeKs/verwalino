@@ -31,6 +31,7 @@ from app.core.config import settings
 from app.core.declaration_test_database import require_disposable_database_settings
 from app.core.db import override_engine, override_worker_engine, override_review_engine
 from app.main import app
+from tests.bdd.world import admin_credentials, target_url
 
 # Approval graph fixtures are shared by API and knowledge-search tests. Keep
 # their registration at the suite level so it does not depend on pytest's
@@ -46,10 +47,28 @@ pytest_plugins = (
 # ---------------------------------------------------------------------------
 # External BDD runs override both database autouse fixtures. They need no local
 # database configuration; all local test paths retain the disposable-DB guard.
-if os.environ.get("VERWALINO_TARGET_URL"):
+if target_url():
     MIGRATOR_URL = APP_RW_URL = MIGRATOR_SYNC_URL = None
 else:
     MIGRATOR_URL, APP_RW_URL, MIGRATOR_SYNC_URL = require_disposable_database_settings(settings)
+
+
+def pytest_sessionstart(session):
+    """Verify an external target before any scenario can create records."""
+    url = target_url()
+    if not url:
+        return
+    try:
+        email, password = admin_credentials()
+        with httpx.Client(base_url=url, timeout=60) as client:
+            client.post("/api/auth/login", json={"email": email, "password": password}).raise_for_status()
+            response = client.get("/api/properties")
+            response.raise_for_status()
+            properties = response.json()
+    except (httpx.HTTPError, httpx.InvalidURL, ValueError):
+        raise pytest.UsageError("Cannot verify a fresh external target; refusing to write scenario data") from None
+    if properties != []:
+        raise pytest.UsageError("target is not a fresh installation; refusing to write scenario data")
 
 
 # ---------------------------------------------------------------------------

@@ -19,9 +19,12 @@ Rules for coding agents, which apply to people too, are in [AGENTS.md](AGENTS.md
 
 ## Agent host setup
 
-Claude Code loads `.claude/rules/*.md` and Coddy reads the same tree. Cursor uses the paired
-`.cursor/rules/*.mdc`. A Claude rule without `paths` is always on; otherwise its `paths` match
-the Cursor `globs`, with `alwaysApply: false`. Keep bodies and descriptions equivalent.
+Root `AGENTS.md` is the common policy for every host; `CLAUDE.md` is a symlink to it (the
+checkout must preserve symlinks, which Git does by default). Claude Code loads `.claude/rules/*.md`
+and Coddy reads the same tree. Cursor uses the paired `.cursor/rules/*.mdc`. A Claude rule without
+`paths` is always on; otherwise its `paths` match the Cursor `globs`, with `alwaysApply: false`.
+Keep bodies and descriptions equivalent and change both trees in the same commit (Rules Sync);
+`make test-agent-rules` checks parity, the symlink and the hook.
 
 For Codex, trust this checkout's project configuration and run **`/hooks` once per clone** to
 review and approve both handlers in `.codex/hooks.json`. Review approval again after changing
@@ -47,8 +50,8 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   owns/stops its local API and Vite stack. See [browser setup and runner](features/README.md#browser-features).
 - **`make test-scenarios-report`** — all API/browser features on the local stack with JSON,
   Markdown and failure artifacts in `report/`. See [reports and external targets](features/README.md#scenario-reports-and-nightly-runs).
-- **`make test-agent-rules`** — paired bodies/activation and Codex hook contracts; Python stdlib,
-  no database or backend dependencies. Run after changing rules or the adapter.
+- **`make test-agent-rules`** — paired bodies/activation, the `CLAUDE.md` symlink and Codex hook
+  contracts; Python stdlib, no database or backend dependencies. Run after changing rules or the adapter.
 - **`make test-scenario-issues`** — scenario failure fingerprints, deduplication and regression
   filing; Python stdlib, fake GitHub, no network or database.
 - **`make docs-check`** — relative links and images in every Markdown file outside `docs/archive/`.

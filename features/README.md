@@ -80,17 +80,22 @@ browser prerequisites below first. `report/` is ignored by Git. For API-only run
 hold the lock as shown above and add `--scenario-report /tmp/scenario-report` to
 pytest; browser scenarios appear as skipped unless `--run-browser` is supplied.
 
+Compared with pytest-bdd's built-in `--cucumberjson`, this reporter adds a portable
+artifact index and run metadata. It also records skip reasons and setup errors
+and writes `summary.md` for readable job summaries.
+
 The plugin `backend/tests/bdd/report.py` is loaded by the backend conftest (or
 explicitly with `-p tests.bdd.report` in a standalone pytest suite). Its JSON shape is:
 
 ```text
-run: {started, finished, git_sha, mode, target_url, runner, notes}
+run: {started, finished, git_sha, mode, target_url?, runner}
 scenarios: [{feature, scenario, tags, outcome, duration_s, error,
              steps: [{keyword, name, outcome, duration_s, error}], artifacts}]
 ```
 
-Times are UTC ISO 8601; durations are seconds. Outcomes are `passed`, `failed`, or
-`skipped`. Scenarios are ordered by feature file, source line and example id;
+`target_url` records the external or local browser origin; API-only local runs
+omit it. Times are UTC ISO 8601; durations are seconds. Outcomes are `passed`,
+`failed`, or `skipped`. Scenarios are ordered by feature file, source line and example id;
 outline names and steps contain the rendered example values. Tags and artifact
 paths are sorted. Each scenario occupies one Markdown table row in `summary.md`.
 `error` is null or `{type, message}`; scenario errors also record setup/teardown
@@ -99,8 +104,8 @@ failures and skip reasons. Step errors provide the stable error kind for the
 Artifacts use paths **relative to the report directory**, so a downloaded artifact
 remains portable. Failing API scenarios include `last-response.json` with the last
 remembered response body (no request bodies, headers or cookies). Browser failures
-also include a screenshot, `trace.zip` and available backend/Vite logs. Traces are
-discarded on success. There is no synthetic Vite log for a built self-host image.
+also include a screenshot, `trace.zip` and available local backend/Vite logs.
+Traces are discarded on success. There is no synthetic Vite log for a built self-host image.
 
 ### Failure issues
 
@@ -149,7 +154,7 @@ The first real filing is unverified until the first nightly run with a failure.
 ### External disposable targets
 
 Set `VERWALINO_TARGET_URL` to the installation's origin, for example
-`http://127.0.0.1:18080`, plus `VERWALINO_TARGET_ADMIN_EMAIL` and
+`http://127.0.0.1:<disposable-port>`, plus `VERWALINO_TARGET_ADMIN_EMAIL` and
 `VERWALINO_TARGET_ADMIN_PASSWORD`. Then run:
 
 ```sh
@@ -167,6 +172,11 @@ Password scenarios create disposable users through `/api/users`; they never chan
 the bootstrap admin's password. Use only a dedicated disposable installation:
 scenarios create synthetic records and leave them there, and traces/responses can
 contain their data and session cookies. Keep credentials out of shell tracing.
+Before any scenario runs, the session signs in as the admin and requires
+`GET /api/properties` to return an empty list for that organization. A populated
+target aborts with "target is not a fresh installation; refusing to write scenario
+data"; failed authentication or an unverifiable list also aborts. Start with a
+new disposable installation for each run, including reruns after a partial failure.
 
 **Isolation decision:** all nine examples of `organization_isolation.feature` are
 skipped on external targets because only one bootstrap organization is configured.
@@ -174,19 +184,22 @@ The three `first_run_setup.feature` scenarios are also skipped: they require a
 fresh installation, while the external target already has its bootstrap organization.
 Each skipped scenario records its reason in the report. Local runs continue to
 exercise both organizations, all isolation scenarios and first-run setup.
-`make test-scenarios-report` explicitly selects the local stack even if target
-variables are inherited; use direct pytest for external targets.
+`make test-bdd`, `make test-browser` and `make test-scenarios-report` explicitly
+select the local stack even if target variables are inherited; use direct pytest
+for external targets.
 
 ### Nightly history
 
 [Nightly scenarios](../.github/workflows/nightly-scenarios.yaml) runs at **03:00 UTC**
-and through `workflow_dispatch`. It builds the checkout for linux/amd64, initializes
-the installer's own `verwalino` Compose project on port 18080, starts/migrates it,
+and through `workflow_dispatch`, with one run per workflow/ref at a time. It
+initializes the installer's own `verwalino` Compose project on port 18080, builds
+the checkout on the GitHub runner, starts/migrates it,
 redacts the one-time browser setup token from installer logs, bootstraps an admin
 through the reviewed CLI alternative `self-host.sh admin --password-stdin`, waits for readiness,
-and runs all features against that instance. The job streams backend logs into the
-report, propagates pytest failures, always attempts normal stop, publishes the
-Markdown job summary, and uploads `report/` as `scenarios-selfhost-<UTC date>`.
+and runs all features against that instance. The job collects installer logs and
+the last 2 MiB of backend logs into `report/logs/` after execution, propagates pytest
+failures, always attempts normal stop, publishes the Markdown job summary, and
+uploads `report/` as `scenarios-selfhost-<UTC date>`.
 Download it from the workflow run's **Artifacts** area; retention is **90 days**.
 Artifacts are the history store; there is no dashboard or separate history database.
 The existing installer has no backup command, so the job only stops the disposable

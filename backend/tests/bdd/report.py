@@ -11,6 +11,8 @@ import time
 
 import pytest
 
+from tests.bdd.world import target_url
+
 
 def pytest_addoption(parser):
     parser.addoption("--scenario-report", metavar="DIR", help="Write scenarios.json, summary.md and failure artifacts")
@@ -71,16 +73,15 @@ class ScenarioReport:
                 continue
             for name in ("screenshot.png", "trace.zip", "last-response.json", "capture-error.txt"):
                 (previous / name).unlink(missing_ok=True)
+        for previous in (self.directory / "logs").glob("*.log"):
+            previous.unlink()
         self.run = {
             "started": _now(), "finished": None, "git_sha": _git_sha(),
             "mode": os.environ.get("VERWALINO_SCENARIO_MODE", "selfhost"),
-            "target_url": os.environ.get("VERWALINO_TARGET_URL") or "http://127.0.0.1:13000",
             "runner": f"github-actions:{os.environ['GITHUB_RUN_ID']}" if os.environ.get("GITHUB_RUN_ID") else "local",
-            "notes": [
-                "Hosted mode is pending #18; only selfhost is implemented.",
-                "Nightly self-host startup is unverified until the first GitHub runner run.",
-            ],
         }
+        if url := target_url():
+            self.run["target_url"] = url
         self.records = {}
         self.order = {}
         self.step_indices = {}
@@ -189,7 +190,7 @@ class ScenarioReport:
         (self.directory / "scenarios.json").write_text(json.dumps({"run": self.run, "scenarios": scenarios}, indent=2, ensure_ascii=False) + "\n")
         def cell(value):
             return str(value).replace("|", "\\|").replace("\n", " ")
-        lines = ["# Scenario results", "", *self.run["notes"], "", "| Feature | Scenario | Outcome | Duration (s) |", "|---|---|---|---|"]
+        lines = ["# Scenario results", "", "| Feature | Scenario | Outcome | Duration (s) |", "|---|---|---|---|"]
         lines.extend(
             f"| {cell(row['feature'])} | {cell(row['scenario'])} | {row['outcome']} | {row['duration_s']:.3f} |"
             for row in scenarios

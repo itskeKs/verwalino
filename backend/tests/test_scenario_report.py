@@ -21,7 +21,7 @@ def test_report_records_steps_failures_skips_and_portable_artifacts(pytester, mo
     monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[1]))
     monkeypatch.setenv("GITHUB_SHA", "123abc")
     monkeypatch.setenv("VERWALINO_SCENARIO_MODE", "selfhost")
-    monkeypatch.setenv("VERWALINO_TARGET_URL", "http://127.0.0.1:18080")
+    monkeypatch.delenv("VERWALINO_TARGET_URL", raising=False)
     pytester.makefile(".feature", tiny="""
         @contract
         Feature: Report contract
@@ -88,13 +88,11 @@ def test_report_records_steps_failures_skips_and_portable_artifacts(pytester, mo
     result.assert_outcomes(passed=1, failed=1, skipped=1)
     report = json.loads((destination / "scenarios.json").read_text())
     run = report["run"]
-    assert {"started", "finished", "git_sha", "mode", "target_url", "runner"} <= run.keys()
+    assert {"started", "finished", "git_sha", "mode", "runner"} <= run.keys()
     assert run["started"] <= run["finished"]
-    assert (run["git_sha"], run["mode"], run["target_url"]) == (
-        "123abc", "selfhost", "http://127.0.0.1:18080",
-    )
-    assert any("#18" in note for note in run["notes"])
-    assert any("unverified" in note.lower() for note in run["notes"])
+    assert (run["git_sha"], run["mode"]) == ("123abc", "selfhost")
+    assert "target_url" not in run
+    assert not run.get("notes")
     scenarios = report["scenarios"]
     assert [row["scenario"] for row in scenarios] == [
         "A passing scenario", "A failing scenario", "A skipped scenario",
@@ -124,6 +122,17 @@ def test_report_records_steps_failures_skips_and_portable_artifacts(pytester, mo
         lines = [line for line in summary.splitlines() if row["scenario"] in line]
         assert len(lines) == 1
         assert row["feature"] in lines[0] and row["outcome"] in lines[0]
+
+
+def test_report_does_not_add_release_state_to_run_metadata_or_summary(tmp_path):
+    from tests.bdd.report import ScenarioReport
+
+    reporter = ScenarioReport(tmp_path)
+    reporter.pytest_sessionfinish(None, 0)
+    assert not reporter.run.get("notes")
+    summary = (tmp_path / "summary.md").read_text()
+    assert "#18" not in summary
+    assert "unverified" not in summary
 
 
 def test_report_includes_setup_errors_missing_steps_and_rendered_examples(pytester, monkeypatch):
@@ -225,5 +234,19 @@ def test_reusing_a_report_directory_clears_previous_failure_artifacts(tmp_path):
     for name in ("screenshot.png", "trace.zip", "last-response.json", "capture-error.txt"):
         (directory / name).write_text("old failure")
     (directory / "unrelated.txt").write_text("keep")
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "old-backend.log").write_text("stale server log")
+    (logs / "unrelated.txt").write_text("keep")
     ScenarioReport(tmp_path)
     assert list(directory.iterdir()) == [directory / "unrelated.txt"]
+    assert list(logs.iterdir()) == [logs / "unrelated.txt"]
+    reporter = ScenarioReport(tmp_path)
+    reporter.records["failed-browser"] = {
+        "feature": "Browser", "scenario": "Fails", "duration_s": 0,
+        "outcome": "failed", "tags": ["browser"], "artifacts": [],
+    }
+    reporter.order["failed-browser"] = ("feature", 1, "failed-browser")
+    reporter.pytest_sessionfinish(None, 1)
+    report = json.loads((tmp_path / "scenarios.json").read_text())
+    assert report["scenarios"][0]["artifacts"] == []
