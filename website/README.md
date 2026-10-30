@@ -24,10 +24,10 @@ There is no database, Docker requirement or connection to the application stack.
 Set `SITE_URL` to the chosen public **origin**, including the protocol, before building:
 
 ```sh
-SITE_URL=https://verwalino.example npm run build
+SITE_URL=https://verwalino.de npm run build
 ```
 
-The default is `https://verwalino.example`. Paths, credentials, queries and fragments are rejected.
+The default is `https://verwalino.de`. Paths, credentials, queries and fragments are rejected.
 Canonical URLs, language alternates, Open Graph URLs, sitemap URLs and `robots.txt` all use this
 origin. The app CTA uses the planned placeholder `https://app.verwalino.de`, explicitly labelled
 “demnächst” / “coming soon”; registration is not open.
@@ -132,7 +132,7 @@ until reviewed; a successful build is not approval to launch the hosted service.
 Example Caddy configuration for a separate static host (replace the root and placeholder domain):
 
 ```caddyfile
-verwalino.example {
+verwalino.de {
     root * /srv/verwalino-website/dist
     encode zstd gzip
     header {

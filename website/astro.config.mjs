@@ -2,7 +2,7 @@ import { defineConfig } from 'astro/config';
 import sitemap from '@astrojs/sitemap';
 import { routes } from './src/content/routes.ts';
 
-const site = process.env.SITE_URL || 'https://verwalino.example';
+const site = process.env.SITE_URL || 'https://verwalino.de';
 const base = new URL(site);
 if (!['https:', 'http:'].includes(base.protocol) || base.pathname !== '/' || base.search || base.hash || base.username || base.password) {
   throw new Error('SITE_URL must be an HTTP(S) origin without a path, query, fragment or credentials');

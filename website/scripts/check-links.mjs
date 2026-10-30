@@ -36,7 +36,7 @@ for (const file of htmlFiles) {
 const origins = new Set([...documents.values()].flatMap(({ attrs }) => attrs
   .filter(attr => attr.rel === 'canonical' && attr.href)
   .map(attr => new URL(attr.href).origin)));
-const origin = [...origins][0] || 'https://verwalino.example';
+const origin = [...origins][0] || 'https://verwalino.de';
 const external = new Set();
 // URL of every candidate in a srcset value: split on commas, keep the URL before the width/density descriptor.
 const srcsetUrls = value => value.split(',').map(candidate => candidate.trim().split(/\s+/)[0]).filter(Boolean);
