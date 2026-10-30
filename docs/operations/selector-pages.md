@@ -1,4 +1,8 @@
-# Bounded master-data selectors
+# Master data and bounded selectors
+
+Master-data editing, ending, deletion, and paginated selection.
+
+## Bounded master-data selectors
 
 `GET /api/properties/page`, `/api/persons/page`, `/api/users/page` and
 `/api/units/page` return `{items, next_cursor}`. `limit` defaults to 50 and must be
@@ -35,3 +39,39 @@ pointing to 18000. Run `scripts/acceptance/b1_selectors_browser.cjs` with
 `HV_PLAYWRIGHT_PACKAGE` and `HV_CHROMIUM_EXECUTABLE` pointing to existing installed
 runtimes. Screenshots stay in `/tmp/hv-b1-acceptance` by default. No installation,
 deployment or external account is required.
+
+## Deleting unused erroneous entries
+
+T56 introduced this workflow.
+
+In property, unit, and person details as well as on a lease, there is an explicit delete dialog
+for users with write permission. Without incoming references
+and with current source-prepare permission, exactly the chosen record is
+removed; linked data is never deleted along with it. For references, 409 states
+the reason, for example a lease or a rent history. Source approvals,
+creation/import receipts, audit, and saved financial snapshots
+are also protected references. Existing RLS/privacy locks remain authoritative.
+A person with a tenant/owner/vendor profile is already referenced.
+The UI-only test `scripts/acceptance/t56_master_delete_browser.cjs` verifies cancel,
+actual deletion of an empty unit, and the visible lease reason of a
+used unit after desktop/phone reload; original leases remain identical.
+
+## Editing and ending master data
+
+T55 introduced this workflow.
+
+Bank accounts can be renamed under **Bankkonten → Bankkonto bearbeiten** (bank accounts → edit bank account) and,
+after explicit confirmation, ended or reactivated. Historical transactions
+remain visible; inactive accounts are not a source for new payments, imports,
+or SEPA suggestions. A pure rename changes no SEPA mandates.
+IBAN/BIC that have already been used are protected: create a new account instead.
+Exact reversal corrections of booked originals remain possible even after ending.
+
+Vendor details can be edited and ended with contact-prepare permission;
+new costs may not select inactive vendors. An admin can
+edit/end management mandates, but cannot rewrite a definition already
+bound by financial scopes (409). This does not concern SEPA mandates.
+Properties have optional **Baujahr** (year built) and **Gesamtfläche (m²)** (total area); the area is stored as
+Decimal, not invented from units. Empty entries remain unknown.
+The UI-only test `scripts/acceptance/t55_master_data_browser.cjs` verifies the real
+rename, 1984 / 1.234,56 m² and unchanged sources after desktop/phone reload.

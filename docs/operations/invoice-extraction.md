@@ -53,3 +53,13 @@ existing isolated `app_worker` login. Supply it through the worker secret store,
 as for declaration workers. The web service must not receive this credential.
 The CLI uses the worker connection and has no app_rw fallback; queue metadata
 commands reject the web login. Local worker tests likewise use the worker pool.
+
+## Upload and review
+
+Under **Belege** (vouchers), upload a synthetic invoice and open **Details**:
+„Gespeichert · wartet auf Verarbeitung“ (stored, awaiting processing) changes to „Felder vorbereitet · bitte
+prüfen“ (fields prepared, please review); amount and date appear without manually entering the results.
+The extraction books no costs and does not automatically approve any voucher.
+
+For the local launcher, worker CLI, and repeatable browser check, see
+[the invoice-worker runbook](../../DEPLOY.md#invoice-worker-t10-alpha-active-since-2026-10-24).
