@@ -64,6 +64,12 @@ What exists today: [feature-status.md](feature-status.md).
 9. #24 Website with legal pages
 10. #26 Legal obligations before a public hosted launch (decision)
 
+### 4b Tenant portal
+
+Built right after the hosted launch, before the remaining domain gaps:
+
+1. #41 Tenant portal
+
 ### 5 Domain gaps
 
 Remaining property-management features from the gap list in
@@ -72,15 +78,18 @@ Remaining property-management features from the gap list in
 1. #35 Inbox review chain runs end to end in operation
 2. #34 Anlage V mapping for the per-property year overview
 3. #36 Maintenance reserve ledger
-4. #37 Lease template and handover protocol
-5. #38 Security deposit interest (after #31)
-6. #39 Photos for properties and units
-7. #40 Automatic bank retrieval (PSD2/FinTS)
-8. #41 Tenant portal (only if #33 says so)
+4. #67 Separate operating-cost and heating advances per lease
+5. #68 Settlement period configurable per property
+6. #69 Dunning fees per organization and optional default interest
+7. #70 Security deposit in up to three installments
+8. #71 VAT-liable letting per unit (§ 9 UStG)
+9. #72 Input VAT apportionment (Vorsteueraufteilung)
+10. #73 One permissions area and activated source access protection
+11. #37 Lease template and handover protocol
+12. #38 Security deposit interest credits (after #70)
+13. #39 Photos for properties and units
+14. #40 Automatic bank retrieval (PSD2/FinTS)
 
-## Open domain questions
+## Open decisions
 
-Decisions only the owner can make; each is an issue with the label `question`: #27 management
-types in production, #28 advance payment split, #29 settlement period, #30 dunning fees and
-interest, #31 deposit installments and interest, #32 VAT option for commercial units, #33 source
-access protection and tenant portal.
+Only the owner can decide #26 (legal obligations before a public hosted launch, milestone 4).
