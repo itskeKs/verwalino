@@ -108,7 +108,7 @@ def test_reset_refuses_a_validated_ci_database_without_connecting(guarded_enviro
 
 
 @pytest.mark.parametrize("resolution", ["raises", "none"])
-def test_foreign_revision_is_checked_before_branch_specific_sql(guarded_environment, monkeypatch, resolution):
+def test_foreign_revision_is_checked_before_branch_specific_sql(guarded_environment, monkeypatch, resolution, request):
     from alembic.util import CommandError
 
     monkeypatch.setattr(harness, "MIGRATOR_SYNC_URL", guarded_environment)
@@ -144,16 +144,16 @@ def test_foreign_revision_is_checked_before_branch_specific_sql(guarded_environm
 
     monkeypatch.setattr(harness, "reset_foreign_test_database", stop_after_reset, raising=False)
     with pytest.raises(ResetRequested):
-        migrate_test_database()
+        migrate_test_database(request)
     connection.close.assert_called_once()
 
 
 @pytest.fixture(scope="module")
-def migration_config():
+def migration_config(request):
     config = Config("alembic.ini")
     config.attributes["hv_declaration_test_database"] = True
     config.set_main_option("sqlalchemy.url", MIGRATOR_SYNC_URL)
-    migrate_test_database()
+    migrate_test_database(request)
     return config
 
 
@@ -167,7 +167,7 @@ def database_revisions():
     os.environ.get("HV_DECLARATION_TEST_DATABASE_PROFILE", "local") != "local",
     reason="foreign-head reset integration requires the local test DB on port 55432",
 )
-def test_foreign_revision_is_reset_and_upgraded_to_checkout_head(migration_config, monkeypatch, capsys):
+def test_foreign_revision_is_reset_and_upgraded_to_checkout_head(migration_config, monkeypatch, request):
     """Run only while holding /tmp/verwalino-testdb.lock, like every DB test."""
     head = ScriptDirectory.from_config(migration_config).get_current_head()
     assert database_revisions() == (head,)
@@ -185,14 +185,16 @@ def test_foreign_revision_is_reset_and_upgraded_to_checkout_head(migration_confi
         return downgrade(config, revision)
 
     monkeypatch.setattr(command, "downgrade", track_downgrade)
-    capsys.readouterr()
+    terminal_writer = request.config.get_terminal_writer()
+    reset_notice = MagicMock(wraps=terminal_writer.line)
+    monkeypatch.setattr(terminal_writer, "line", reset_notice)
     try:
-        migrate_test_database()
+        migrate_test_database(request)
         assert database_revisions() == (head,)
         assert downgrade_calls == []
-        assert capsys.readouterr().out.splitlines() == [
+        reset_notice.assert_called_once_with(
             "test database held foreign migration head zzzz; reset to empty before upgrading"
-        ]
+        )
         with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection, connection.cursor() as cursor:
             cursor.execute("SELECT to_regclass('public.foreign_branch_sentinel')")
             assert cursor.fetchone() == (None,)
@@ -214,7 +216,7 @@ def test_foreign_revision_is_reset_and_upgraded_to_checkout_head(migration_confi
         assert database_revisions() == (head,)
 
 
-def test_known_revision_still_downgrades_to_base(migration_config, monkeypatch, capsys):
+def test_known_revision_still_downgrades_to_base(migration_config, monkeypatch, request):
     assert database_revisions() == (ScriptDirectory.from_config(migration_config).get_current_head(),)
     downgrade = command.downgrade
     calls = []
@@ -224,7 +226,10 @@ def test_known_revision_still_downgrades_to_base(migration_config, monkeypatch, 
         return downgrade(config, revision)
 
     monkeypatch.setattr(command, "downgrade", track_downgrade)
-    migrate_test_database()
+    terminal_writer = request.config.get_terminal_writer()
+    reset_notice = MagicMock(wraps=terminal_writer.line)
+    monkeypatch.setattr(terminal_writer, "line", reset_notice)
+    migrate_test_database(request)
     assert calls == ["base"]
     assert database_revisions() == (ScriptDirectory.from_config(migration_config).get_current_head(),)
-    assert "foreign migration head" not in capsys.readouterr().out
+    reset_notice.assert_not_called()

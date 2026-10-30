@@ -107,7 +107,7 @@ async def fixture_has_registered_documents(session: AsyncSession, document_ids: 
     ))
 
 
-def migrate_test_database():
+def migrate_test_database(request):
     """Run Alembic migrations using the migrator role."""
     from alembic.config import Config
     from alembic import command
@@ -137,7 +137,11 @@ def migrate_test_database():
             known_revision = None
         if known_revision is None:
             reset_foreign_test_database(MIGRATOR_SYNC_URL)
-            print(f"test database held foreign migration head {revision}; reset to empty before upgrading")
+            capture_manager = request.config.pluginmanager.getplugin("capturemanager")
+            with capture_manager.global_and_fixture_disabled():
+                request.config.get_terminal_writer().line(
+                    f"test database held foreign migration head {revision}; reset to empty before upgrading"
+                )
             return _upgrade_test_database(alembic_cfg)
 
     # This harness is already restricted to the disposable test database above.
@@ -261,8 +265,8 @@ def _upgrade_test_database(alembic_cfg):
 
 
 @pytest.fixture(scope="session", autouse=True)
-def run_migrations():
-    return migrate_test_database()
+def run_migrations(request):
+    return migrate_test_database(request)
 
 
 # ---------------------------------------------------------------------------

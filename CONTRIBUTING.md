@@ -57,14 +57,6 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   `trap 'rmdir /tmp/verwalino-testdb.lock' EXIT`; stop the stack before releasing it.
   `make test-backend`, `make test-bdd` and `make test-browser` acquire/release the lock themselves.
 
-Hold the shared lock for every backend database test run, including setup and cleanup:
-
-```sh
-until mkdir /tmp/verwalino-testdb.lock 2>/dev/null; do sleep 10; done
-trap 'rmdir /tmp/verwalino-testdb.lock' EXIT
-make test-backend PYTEST_ARGS="-q tests/test_testdb_reset.py"
-```
-
 If the shared database holds a migration revision unknown to the checkout, the session fixture
 logs that revision, drops and recreates `public` with its runtime schema grants, preserves the
 cluster roles, and runs the existing upgrade rehearsals. Known revisions still downgrade to
