@@ -71,10 +71,10 @@ frontend/node_modules: frontend/package-lock.json
 	cd frontend && npm ci --no-audit --no-fund
 	@touch frontend/node_modules
 
-hooks: ## Enable the git hooks in .githooks (pre-commit -> scripts/checks.sh)
+hooks: ## Enable pre-commit: lint staged code and always check docs links
 	git config core.hooksPath .githooks
-	@echo "Enabled .githooks: 'git commit' now runs ruff/eslint on staged code and the docs check on staged Markdown (scripts/checks.sh)."
-	@echo "Add tests with VERWALINO_HOOK_TESTS=fast|full; skip lint with VERWALINO_HOOK_LINT=0, docs with VERWALINO_HOOK_DOCS=0; bypass all with VERWALINO_HOOK_SKIP=1 or git commit --no-verify."
+	@echo "Enabled .githooks: 'git commit' runs ruff for staged backend Python and eslint for staged frontend TypeScript."
+	@echo "The docs link check always runs; eslint is skipped when frontend/node_modules is missing."
 
 check-testdb:
 	@(exec 3<>/dev/tcp/127.0.0.1/55432) 2>/dev/null || { \

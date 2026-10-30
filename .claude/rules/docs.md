@@ -1,8 +1,5 @@
 ---
 description: English documentation and the documentation contract
-paths:
-  - "**/*.md"
-  - "**/*.mdc"
 ---
 
 # Documentation contract
