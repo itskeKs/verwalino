@@ -1,0 +1,44 @@
+---
+import { t, type Locale } from '../i18n';
+interface Props { locale: Locale }
+const { locale } = Astro.props;
+const text = t(locale);
+const sections = ['requirements', 'init', 'admin', 'https', 'backup', 'limits'] as const;
+const planned = ['installer', 'image', 'backup', 'update', 'setup', 'doctor', 'matrix'] as const;
+---
+<article class="document wrap">
+  <header class="document-head">
+    <p class="eyebrow">Verwalino · Docker Compose</p>
+    <h1>{text('page.selfhost.title')}</h1>
+    <p class="document-lead">{text('self.intro')}</p>
+  </header>
+  <section aria-labelledby="requirements">
+    <h2 id="requirements">{text('self.requirements.title')}</h2>
+    <p>{text('self.requirements.body')}</p>
+  </section>
+  <section aria-labelledby="commands">
+    <h2 id="commands">{text('self.commands.title')}</h2>
+    <div class="terminal">
+      <div class="terminal-bar"><span>bash · Docker Compose</span></div>
+      <div class="code-scroll" tabindex="0" role="region" aria-label={text('visual.codescroll')}>
+        <pre><code><span class="command">bash scripts/self-host.sh init</span><span class="command">bash scripts/self-host.sh start</span><span class="command">bash scripts/self-host.sh admin --org "Muster Hausverwaltung" --email admin@example.org</span></code></pre>
+      </div>
+    </div>
+  </section>
+  {sections.filter(section => section !== 'requirements').map(section => <section aria-labelledby={section}>
+    <h2 id={section}>{text(`self.${section}.title`)}</h2>
+    <p>{text(`self.${section}.body`)}</p>
+  </section>)}
+  <p><a class="text-link" href="#repository-guide">{text('self.repository')}</a></p>
+  <section class="unreleased" aria-labelledby="unreleased">
+    <h2 id="unreleased">{text('self.unreleased.title')}</h2>
+    <p>{text('self.unreleased.body')}</p>
+    <!-- Planned publication milestones: #12, #7, #10, #9, #8, #11, #13. -->
+    <ul class="document-list">{planned.map(item => <li>{text(`self.plan.${item}`)}</li>)}</ul>
+  </section>
+  <section id="repository-guide" aria-labelledby="repository-title">
+    <h2 id="repository-title">{text('self.repository')}</h2>
+    <p>{text('self.repository.body')}</p>
+    <p class="source">{text('source')}</p>
+  </section>
+</article>

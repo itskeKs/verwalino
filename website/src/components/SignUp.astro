@@ -1,0 +1,24 @@
+---
+import { t, type Locale } from '../i18n';
+import { pathFor } from '../content/routes';
+interface Props { locale: Locale }
+const { locale } = Astro.props;
+const text = t(locale);
+---
+<article class="document wrap">
+  <header class="document-head">
+    <p class="eyebrow">Verwalino · {text('host.title')}</p>
+    <h1>{text('page.signup.title')}</h1>
+    <p class="document-lead">{text('signup.intro')}</p>
+  </header>
+  <div class="signup-status">
+    <h2>{text('signup.status')}</h2>
+    <p>{text('signup.hosting')}</p>
+    <a class="button primary" href="https://app.verwalino.de" rel="nofollow">{text('signup.button')} <span aria-hidden="true">→</span></a>
+  </div>
+  <section aria-labelledby="alternative">
+    <h2 id="alternative">{text('signup.alternative.title')}</h2>
+    <p>{text('signup.alternative.body')}</p>
+    <a class="button" href={pathFor(locale, 'selfhost')}>{text('cta.self')} <span aria-hidden="true">→</span></a>
+  </section>
+</article>

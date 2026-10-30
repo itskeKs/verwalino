@@ -1,14 +1,29 @@
 ---
 import Site from '../layouts/Site.astro';
 import Landing from '../components/Landing.astro';
-import type { Locale } from '../i18n';
+import SelfHost from '../components/SelfHost.astro';
+import SignUp from '../components/SignUp.astro';
+import Imprint from '../components/Imprint.astro';
+import LegalDraft from '../components/LegalDraft.astro';
+import NotFound from '../components/NotFound.astro';
+import { t, type Locale } from '../i18n';
+import { routes, type Page } from '../content/routes';
 export function getStaticPaths() {
-  return [
-    { params: { path: undefined }, props: { locale: 'de' } },
-    { params: { path: 'en' }, props: { locale: 'en' } },
-  ];
+  return Object.entries(routes).flatMap(([page, paths]) =>
+    Object.entries(paths).map(([locale, path]) => ({
+      params: { path: path === '/' ? undefined : path.slice(1, -1) },
+      props: { locale, page },
+    })));
 }
-interface Props { locale: Locale }
-const { locale } = Astro.props;
+interface Props { locale: Locale; page: Page }
+const { locale, page } = Astro.props;
+const text = t(locale);
 ---
-<Site locale={locale} page="landing"><Landing locale={locale} /></Site>
+<Site locale={locale} page={page} title={text(`page.${page}.title`)} description={text(`page.${page}.description`)}>
+  {page === 'landing' && <Landing locale={locale} />}
+  {page === 'selfhost' && <SelfHost locale={locale} />}
+  {page === 'signup' && <SignUp locale={locale} />}
+  {page === 'imprint' && <Imprint locale={locale} />}
+  {(page === 'privacy' || page === 'terms' || page === 'dpa') && <LegalDraft locale={locale} document={page} />}
+  {page === 'notfound' && <NotFound locale={locale} />}
+</Site>
