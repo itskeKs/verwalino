@@ -173,6 +173,10 @@ class CostEntryService:
         if entry is None:
             raise HTTPException(status_code=404, detail="Cost entry not found")
 
+        if updates.get("vendor_id") is not None and await VendorRepository(
+            self._session, self._org_id
+        ).get_by_id(updates["vendor_id"]) is None:
+            raise HTTPException(404, "Vendor not found")
         if entry.status == "confirmed":
             raise HTTPException(
                 status_code=409,
@@ -187,7 +191,8 @@ class CostEntryService:
                 setattr(entry, field_name, value)
                 changed[field_name] = {"old": str(old_val), "new": str(value)}
 
-        await self._validate_scope(entry, selecting_vendor=selecting_vendor)
+        with self._session.no_autoflush:
+            await self._validate_scope(entry, selecting_vendor=selecting_vendor)
         entry = await self._repo.update(entry)
 
         if changed:

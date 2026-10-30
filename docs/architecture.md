@@ -355,6 +355,37 @@ Role enforcement takes place in the authorization layer (policy check per endpoi
 - **MFA:** not mandatory for M0; note as a hardening option for M9 (back office with personal + financially relevant data).
 - **Audit:** login, logout, failed logins, role changes → `audit_event`.
 
+**First-run bootstrap (revision 0141):** `GET /api/setup` reports only whether
+there are no organizations. `POST /api/setup` is unauthenticated but requires
+the one-time installer token in its JSON body. A `SECURITY DEFINER`
+`setup_first_organization(token text, org_name text, admin_email text,
+admin_name text, password_hash text) RETURNS uuid` locks `organization`,
+checks global emptiness, compares every byte of the SHA-256 token hash, and
+rejects missing, consumed or 24-hour-old tokens with one generic error. It uses
+`search_path=pg_catalog,pg_temp` and `row_security=off`; only `app_rw` receives
+EXECUTE, with no PUBLIC grant. Direct organization INSERT is revoked from
+`app_rw`. The private global singleton `setup_token` table grants no runtime
+read/write access. The function creates organization, Argon2-hashed admin and
+OWNER_ADMIN membership atomically and consumes the token. Hashing stays in
+the app. The migrator CLI shares an invoker-only creation function, retains
+its canonical-email duplicate check and invalidates pending tokens.
+
+`self-host.sh start` checks the migrated DB and rotates an unused token under
+the same organization lock, printing plaintext once to the terminal only after
+readiness. The token never enters a URL/config/application log. Setup returns
+the existing signed HttpOnly session cookie on 201; a closed setup returns the
+unknown-route 404 for every non-GET method, token failures 403, validation failures
+422. Request validation trims the token and organization/admin names and rejects
+control characters in those fields before database writes. SQL parameter hiding
+applies only to caught setup errors, leaving other routes' diagnostics unchanged.
+The router sends an unclaimed installation to the German setup form, then reloads the dashboard
+from the cookie; a closed setup URL redirects to login. A failed initial setup
+status request is logged to the console and leaves login and signed-in routes
+available; a later successful app load still detects an unclaimed installation.
+No signup/rate limiter is included. Rollback-only tests provision an empty synthetic database without
+changing the shared fixtures permanently; real portable-stack acceptance remains
+pending.
+
 **Implemented T57 path:** Signed cookies carry user/organization and,
 for a positive generation, `sv`. The runtime checks active membership and the current
 DB generation on every request and again at live transaction boundaries under the
@@ -701,6 +732,10 @@ An automated test that **prevents accidentally unprotected tables** (level-3 gat
 
 ### 7.4 The concrete isolation test (`test_tenant_isolation.py`) — core of the M0 exit
 
+Every client-supplied parent ID, including a parent changed by PATCH or PUT, is resolved through the session's organization-scoped repository or session before writing or checking overlaps/conflicts. Foreign and unknown parents return an identical 404 response, so neither existence nor an overlap is disclosed. Composite foreign keys `(organization_id, parent_id) → parent(organization_id, id)` enforce parent ownership as defence in depth, because PostgreSQL foreign-key checks bypass RLS. The parent-constraint migration rejects existing invalid references before replacing the affected constraints; it never repairs data silently.
+
+Financial creation checks PAUSED mode first, then organization ownership of property and mandate, then the exact accounting scope. Its property repository uses `financial_property_exists`, a boolean-only definer constrained to the current organization and a live member, so an accounting PREPARE grant does not also require property master read access. Property data visibility remains governed by its existing policies. Asset-report bank balances and payment transaction links use their organization-scoped repositories before financial validation or writes.
+
 Setup (fixtures): test DB; **two organizations** `org_a`, `org_b`; one user with a role each; one `management_mandate` each; one sample row each in at least one tenant table. Two API clients, each logged in as a user of the respective org (real login flow, real tenant context).
 
 Minimum assertions:
@@ -713,6 +748,16 @@ Minimum assertions:
 6. **RBAC takes effect (`test_rbac.py`):** `READ_ONLY` may read but not create/change (→ 403); `CLERK` may operate but not manage users/roles (→ 403); `OWNER_ADMIN` may do everything in their org. Within the own org, combined with the isolation from 1–5.
 
 > If tests 1–6 pass, the M0 exit criterion is objectively demonstrated: two orgs, guaranteed data separation (at API **and** DB level), roles take effect.
+
+### 7.4a Route sweep (`backend/tests/test_route_isolation_sweep.py`)
+
+Tests 1–6 cover selected resources; the sweep covers every API route. It enumerates the routes FastAPI registers (`fastapi.routing.iter_route_contexts`, so routes of included routers count) and fails, naming the route, for any route that is neither swept nor exempt. A swept route has a probe in the table of its area module in `backend/tests/route_isolation/` (`core`, `finance`, `documents`, `access`): SQL that picks a record of another organization, plus body, query or headers where the generated request would not reach the route. Exempt routes are listed with their reason in `EXEMPT` of the test (health, login, logout, password change, plus the organization-free setup exemptions from `route_isolation/core.py`). Signed in as an administrator of organization B, the sweep sends each probe with the other organization's ids and once more with ids that exist nowhere:
+
+- a request carrying another organization's ids answers 404 (another status only with the reason written in the probe) and exactly what the unknown ids answer, so the answer cannot reveal that the record exists; a write carrying them is never accepted;
+- no answer contains an id of another organization's record that the request did not send;
+- after a write no row of another organization changed (row count and newest row version per table of `TENANT_TABLES`).
+
+Limits: a probe does not combine an own parent with a foreign child id, and foreign data that leaks without an id (a name, a sum in a report) is not detected. Run it with `make test-backend PYTEST_ARGS="-q tests/test_route_isolation_sweep.py"`.
 
 ### 7.5 App shell & infrastructure (in parallel, roadmap M0)
 

@@ -11,12 +11,24 @@ Prerequisites: Linux or macOS with Bash, OpenSSL, Docker, and Compose v2
 ```bash
 bash scripts/self-host.sh init
 bash scripts/self-host.sh start
+```
+
+Init generates five random deployment secrets in `.env.selfhost` (0600).
+On a fresh database, `start` prints the browser setup URL and a one-time token.
+Open `/setup`, enter that token, your organization, administrator name/email,
+and a password twice. Setup signs you in and opens the dashboard. There is no
+default password. The token expires after 24 hours; another `start` replaces it.
+Only its SHA-256 digest is stored in the database; keep the terminal output
+private. Once an organization exists, setup is closed and no token is printed.
+
+The CLI remains an alternative and invalidates any pending token:
+
+```bash
 bash scripts/self-host.sh admin --org "Meine Hausverwaltung" --email admin@example.org
 ```
 
-The setup generates five random secrets in `.env.selfhost` (0600). The
-admin password is prompted for with hidden input, confirmed, and transmitted only via stdin.
-There is no default password. Locally, the app is reachable only at
+It prompts twice without echo and passes the password only through stdin.
+Locally, the app is reachable only at
 **http://127.0.0.1:18080**; PostgreSQL publishes no port.
 Running `init` again leaves the file unchanged, and running the admin command again
 does not reset an existing password. The existing alpha configuration and the
@@ -27,7 +39,6 @@ For a **new** server with its own domain, instead run the following before the f
 ```bash
 bash scripts/self-host.sh init --https verwaltung.example.org
 bash scripts/self-host.sh start
-bash scripts/self-host.sh admin --org "Meine Hausverwaltung" --email admin@example.org
 ```
 
 DNS must point to the server; TCP 80/443 must be free and publicly reachable.
@@ -48,10 +59,26 @@ and documents together; do not delete volumes.**
 A different checkout or config path does not create a second independent installation.
 Use `self-host.sh backup [--out DIR]` and `restore FILE [--yes]`; keep private config separately (see [backup and restore](DEPLOY.md#portable-backup-and-restore)).
 
-First, the existing image is built locally from the checkout; Python/Node/uv
-are not required on the host. An image that is already available can be selected with
-`init --image registry.example.org/verwalino@sha256:<64-hex-digest>`.
-A public GitHub image is not yet assumed here.
+By default, the image is built locally from the checkout; Python/Node/uv are not
+required on the host. The release workflow targets **ghcr.io/itskeks/verwalino**
+for **linux/amd64 and linux/arm64**, with only `vX.Y.Z` and `vX.Y` tags, provenance, SBOMs and
+cosign keyless signatures. The first tag publication and native arm64 install
+check still need maintainer acceptance; no published digest is claimed yet.
+Once available, copy the index digest from the successful
+[Release image run summary](https://github.com/itskeKs/verwalino/actions/workflows/release-image.yaml)
+or inspect a release with `docker buildx imagetools inspect ghcr.io/itskeks/verwalino:v1.2.3`
+(example version). Before installing, follow
+[the signature verification and arm64 checks](DEPLOY.md#published-image-verification):
+`cosign verify` must match the release workflow's certificate identity and
+the issuer `https://token.actions.githubusercontent.com`. Select the verified
+digest at first init:
+
+```bash
+bash scripts/self-host.sh init --image 'ghcr.io/itskeks/verwalino@sha256:<64-hex-digest>'
+```
+
+Remote tags are not accepted by the installer. See the
+[maintainer release checklist](DEPLOY.md#maintainer-release-checklist) for publication.
 AI import, AI Q&A, SMTP, and automatic invoice OCR are disabled in the portable stack;
 manual voucher (Beleg) processing remains available.
 The T10 invoice worker has been active on the existing alpha since 2026-10-24;

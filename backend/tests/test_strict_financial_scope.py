@@ -37,6 +37,122 @@ async def test_strict_first_financial_insert_requires_scope(migrator_session, sc
         async with client(ids) as api:
             response = await api.post('/api/bank-accounts', json={'property_id': str(ids['other_property']), 'account_type': 'LAUFEND', 'label': 'No scope'})
             assert response.status_code == 409, response.text
+            assert response.json() == {'detail': 'Select an exact accounting scope for this property'}
+
+
+@pytest.mark.parametrize('mode', ['ENFORCED', 'PAUSED'])
+@pytest.mark.parametrize('scoped', [False, True])
+async def test_financial_creation_preserves_scope_and_pause_order(migrator_session, scope_seed, mode, scoped):
+    ids = await fixture(migrator_session, scope_seed)
+    async with synthetic_enforcement(scope_seed), client(ids) as api:
+        await change_mode(scope_seed, mode)
+        assert await read_value('SELECT count(*) FROM property WHERE id=:property', ids, actor_key='clerk') == 0
+        body = {'property_id': str(ids['property']), 'account_type': 'LAUFEND', 'label': 'Scope-only creation'}
+        if scoped:
+            body['accounting_scope_id'] = str(ids['scope'])
+        response = await api.post('/api/bank-accounts', json=body)
+        if mode == 'PAUSED':
+            assert response.status_code == 404, response.text
+            assert response.json() == {'detail': 'Financial creation is paused'}
+        elif scoped:
+            assert response.status_code == 201, response.text
+        else:
+            assert response.status_code == 409, response.text
+            assert response.json() == {'detail': 'Select an exact accounting scope for this property'}
+
+
+@pytest.mark.parametrize('field,route,table', [
+    ('property_id', 'bank-accounts', 'bank_account'),
+    ('management_mandate_id', 'economic-plans', 'economic_plan'),
+])
+@pytest.mark.parametrize('scoped', [False, True])
+async def test_strict_foreign_and_unknown_financial_parents_are_identical(migrator_session, scope_seed, seed_data, field, route, table, scoped):
+    ids = await scope_fixture(migrator_session, scope_seed)
+    foreign = uuid.uuid4()
+    if field == 'property_id':
+        await migrator_session.execute(text("INSERT INTO property(id,organization_id,name,management_type) VALUES (:id,:org,'Foreign parent','WEG')"),
+            {'id': foreign, 'org': seed_data['org_b_id']})
+    else:
+        await migrator_session.execute(text("INSERT INTO management_mandate(id,organization_id,mandate_type,label,start_date) VALUES (:id,:org,'WEG','Foreign mandate','2025-01-01')"),
+            {'id': foreign, 'org': seed_data['org_b_id']})
+    count = f'SELECT count(*) FROM {table} WHERE organization_id=:org'
+    before = await migrator_session.scalar(text(count), ids)
+    await migrator_session.commit()
+    async with synthetic_enforcement(scope_seed), client(ids) as api:
+        body = {'property_id': str(ids['property']), 'account_type': 'LAUFEND', 'label': 'Invalid parent'}
+        if route == 'economic-plans':
+            body = {'property_id': str(ids['property']), 'plan_year': 2025,
+                    'period_start': '2025-01-01', 'period_end': '2025-12-31'}
+        if scoped:
+            body['accounting_scope_id'] = str(uuid.uuid4())
+        responses = []
+        for parent in (foreign, uuid.uuid4()):
+            response = await api.post(f'/api/{route}', json=body | {field: str(parent)})
+            assert response.status_code == 404, response.text
+            responses.append(response.json())
+        assert responses == [{'detail': 'Property not found' if field == 'property_id' else 'Management mandate not found'}] * 2
+    assert await read_value(count, ids) == before
+
+
+async def test_strict_scoped_clerk_creates_weg_draft_without_property_read_access(migrator_session, scope_seed, seed_data):
+    ids = await scope_fixture(migrator_session, scope_seed)
+    foreign = uuid.uuid4()
+    await migrator_session.execute(text("INSERT INTO property(id,organization_id,name,management_type) VALUES (:id,:org,'Foreign WEG property','WEG')"),
+        {'id': foreign, 'org': seed_data['org_b_id']})
+    await migrator_session.commit()
+    async with synthetic_enforcement(scope_seed), client(ids) as api:
+        assert await read_value('SELECT count(*) FROM property WHERE id=:property', ids, actor_key='clerk') == 0
+        plan = await api.post('/api/economic-plans', json={
+            'property_id': str(ids['property']), 'plan_year': 2025,
+            'period_start': '2025-01-01', 'period_end': '2025-12-31',
+            'accounting_scope_id': str(ids['scope']),
+        })
+        assert plan.status_code == 201, plan.text
+        body = {'property_id': str(ids['property']), 'economic_plan_id': plan.json()['id'],
+                'period_start': '2025-01-01', 'period_end': '2025-12-31'}
+        draft = await api.post('/api/weg-settlements', json=body)
+        assert draft.status_code == 201, draft.text
+        assert draft.json()['status'] == 'draft'
+        assert draft.json()['property_id'] == str(ids['property'])
+        assert draft.json()['economic_plan_id'] == plan.json()['id']
+        assert await read_value('SELECT scope_id FROM accounting_scope_binding WHERE settlement_run_id=:run',
+            ids | {'run': uuid.UUID(draft.json()['id'])}) == ids['scope']
+        count = 'SELECT count(*) FROM settlement_run WHERE organization_id=:org'
+        before = await read_value(count, ids)
+        responses = []
+        for parent in (foreign, uuid.uuid4()):
+            response = await api.post('/api/weg-settlements', json=body | {'property_id': str(parent)})
+            assert response.status_code == 422, response.text
+            responses.append(response.json())
+        assert responses == [{'detail': 'Economic plan belongs to a different property'}] * 2
+        assert await read_value(count, ids) == before
+
+
+async def test_financial_property_lookup_is_a_restricted_security_definer(app_rw_session):
+    signature = {'signature': 'public.financial_property_exists(uuid,uuid)'}
+    security = (await app_rw_session.execute(text("""SELECT prosecdef,proconfig
+        FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)"""), signature)).one()
+    assert security.prosecdef is True
+    assert security.proconfig == ['search_path=pg_catalog, pg_temp', 'row_security=off']
+    grantees = (await app_rw_session.execute(text("""SELECT pg_get_userbyid(acl.grantee),
+        acl.privilege_type,acl.is_grantable FROM pg_proc p
+        CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) acl
+        WHERE p.oid=CAST(:signature AS regprocedure) AND acl.grantee<>p.proowner"""), signature)).all()
+    assert grantees == [('app_rw', 'EXECUTE', False)]
+
+
+async def test_financial_property_existence_requires_current_organization_and_live_actor(migrator_session, scope_seed, seed_data):
+    ids = await scope_fixture(migrator_session, scope_seed)
+    ids.update(foreign_org=seed_data['org_b_id'], foreign_property=uuid.uuid4())
+    await migrator_session.execute(text("INSERT INTO property(id,organization_id,name,management_type) VALUES (:foreign_property,:foreign_org,'Foreign existence check','WEG')"), ids)
+    await migrator_session.commit()
+    own = 'SELECT financial_property_exists(:org,:property)'
+    async with synthetic_enforcement(scope_seed):
+        assert await read_value(own, ids, actor_key='clerk') is True
+        assert await read_value('SELECT financial_property_exists(:org,:foreign_property)', ids, actor_key='clerk') is False
+        assert await read_value('SELECT financial_property_exists(:foreign_org,:foreign_property)', ids, actor_key='clerk') is False
+        await mutate(text('UPDATE "user" SET is_active=false WHERE organization_id=:org AND id=:clerk'), ids)
+        assert await read_value(own, ids, actor_key='clerk') is False
 
 
 async def money_fixture(session, seed):

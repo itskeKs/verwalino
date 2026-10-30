@@ -38,6 +38,7 @@ def verified_bytes(store, binding, *, hash_key='content_sha256'):
 
 class VisualExtractService(IntakeService):
     async def create(self, logical, body, key):
+        await self.require_parents('source_partition_revision', [body.partition_revision_id])
         params = {'logical': logical, 'partition': body.partition_revision_id, 'request': key, 'reason': body.reason}
         args = ':org,:logical,:partition,:request,:reason'
         prepared = await self.call('SELECT prepare_visual_extract(' + args + ')', **params)

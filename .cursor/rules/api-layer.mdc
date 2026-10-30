@@ -13,6 +13,7 @@ alwaysApply: false
   `backend/app/core/tenant.py`; never trust an organization ID supplied by the client.
 - Keep organization filters and transaction-local RLS context. A foreign record
   must look absent (404), including when used as a parent or foreign key.
+- Resolve every client-supplied parent ID in the session's organization before writes or conflict checks; foreign and unknown IDs return identical 404 responses, with composite foreign keys as defence in depth.
 - Reuse existing authorization dependencies and service boundaries; do not bypass
   checks with a privileged database connection.
 - Every new or changed route joins `features/organization_isolation.feature` and

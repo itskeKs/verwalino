@@ -17,7 +17,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String
+from sqlalchemy import UniqueConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,6 +26,13 @@ from app.models.base import Base, UUIDPrimaryKeyMixin, TimestampMixin
 
 class SettlementRun(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "settlement_run"
+    __table_args__ = (
+        ForeignKeyConstraint(["organization_id", "property_id"], ["property.organization_id", "property.id"],
+            name="fk_settlement_run_property_id_tenant", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["organization_id", "management_mandate_id"], ["management_mandate.organization_id", "management_mandate.id"],
+            name="fk_settlement_run_management_mandate_id_tenant", ondelete="RESTRICT"),
+        UniqueConstraint("organization_id", "id", name="uq_settlement_run_org_id"),
+    )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -36,14 +43,12 @@ class SettlementRun(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     property_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("property.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
 
     management_mandate_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("management_mandate.id", ondelete="RESTRICT"),
         nullable=True,
     )
 

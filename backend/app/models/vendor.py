@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Boolean, ForeignKey, String
+from sqlalchemy import Boolean, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,6 +18,7 @@ from app.models.base import Base, UUIDPrimaryKeyMixin, TimestampMixin
 
 class Vendor(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "vendor"
+    __table_args__ = (UniqueConstraint("organization_id", "id", name="uq_vendor_org_id"),)
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),

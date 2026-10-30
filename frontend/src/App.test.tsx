@@ -7,7 +7,7 @@ import { AppRoutes } from "./App";
 import * as endpoints from "./api/endpoints";
 import * as letters from "./api/letters";
 
-function renderRoutes(path: string, role?: string) {
+function renderRoutes(path: string, role?: string, setupStatus: { required: boolean } | Error = { required: false }) {
   if (role) {
     vi.spyOn(endpoints, "getCurrentSession").mockResolvedValue({
       user_id: "user-1",
@@ -18,7 +18,12 @@ function renderRoutes(path: string, role?: string) {
     vi.spyOn(endpoints, "getCurrentSession").mockRejectedValue(new Error("not authenticated"));
   }
   vi.spyOn(endpoints, "getMyOrganization").mockResolvedValue({ id: "org-1", name: "Test" });
-  vi.spyOn(api, "get").mockResolvedValue({ items: [], next_cursor: null });
+  vi.spyOn(api, "get").mockImplementation((url) => {
+    if (url === "/api/setup") {
+      return setupStatus instanceof Error ? Promise.reject(setupStatus) : Promise.resolve(setupStatus);
+    }
+    return Promise.resolve({ items: [], next_cursor: null });
+  });
   vi.spyOn(endpoints, "getPropertyKnowledge").mockResolvedValue({ property_id: "property-1", documents: [], document_relations: [], rules_by_topic: {}, open_rule_topics: [] });
   return render(<MemoryRouter initialEntries={[path]}><AuthProvider><AppRoutes /></AuthProvider></MemoryRouter>);
 }
@@ -26,6 +31,25 @@ function renderRoutes(path: string, role?: string) {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+});
+
+describe("setup status availability", () => {
+  it.each([undefined, "OWNER_ADMIN"])("keeps normal routes available after a failed setup check for %s", async role => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    renderRoutes("/objekte", role, new TypeError("network"));
+    expect(await screen.findByRole("heading", { name: role ? "Objekte" : "Hausverwaltung" })).toBeVisible();
+    expect(screen.queryByText(/Einrichtungsstatus konnte nicht geladen werden/)).toBeNull();
+    expect(log).toHaveBeenCalled();
+  });
+
+  it("opens setup when a later app load can check a fresh installation", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const firstLoad = renderRoutes("/", undefined, new TypeError("network"));
+    expect(await screen.findByRole("heading", { name: "Hausverwaltung" })).toBeVisible();
+    firstLoad.unmount();
+    renderRoutes("/", undefined, { required: true });
+    expect(await screen.findByRole("heading", { name: "Verwalino einrichten" })).toBeVisible();
+  });
 });
 
 describe("declaration route authorization", () => {

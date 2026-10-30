@@ -63,6 +63,8 @@ from app.repositories.payment_repo import PaymentRepository
 from app.repositories.person_repo import PersonRepository
 from app.repositories.property_repo import PropertyRepository
 from app.repositories.tenant_profile_repo import TenantProfileRepository
+from app.repositories.owner_profile_repo import OwnerProfileRepository
+from app.repositories.settlement_repo import SettlementRunRepository
 from app.repositories.unit_repo import UnitRepository
 
 # Tenant-bound vs owner-bound vocabulary (kept in sync with the DB CHECK in 0016
@@ -138,6 +140,22 @@ class PaymentService:
     # ------------------------------------------------------------------
     # create / update draft
     # ------------------------------------------------------------------
+    async def _resolve_parents(self, links):
+        parents = {}
+        for field, repository, detail in (
+            ("bank_account_id", BankAccountRepository, "Bank account not found"),
+            ("tenant_profile_id", TenantProfileRepository, "Tenant profile not found"),
+            ("owner_profile_id", OwnerProfileRepository, "Owner profile not found"),
+            ("lease_agreement_id", LeaseAgreementRepository, "Lease agreement not found"),
+            ("settlement_run_id", SettlementRunRepository, "Settlement run not found"),
+        ):
+            if links.get(field) is not None:
+                parent = await repository(self._session, self._org_id).get_by_id(links[field])
+                if parent is None:
+                    raise HTTPException(404, detail)
+                parents[field] = parent
+        return parents
+
     async def create_draft(
         self,
         *,
@@ -162,9 +180,12 @@ class PaymentService:
         bewusste `book` step freezes it.
         """
         await FinancialScopeService(self._session, self._org_id, self._user_id).lock_inputs()
-        account = await self._accounts.get_by_id(bank_account_id)
-        if account is None:
-            raise HTTPException(status_code=404, detail="Bank account not found")
+        parents = await self._resolve_parents({
+            "bank_account_id": bank_account_id, "tenant_profile_id": tenant_profile_id,
+            "owner_profile_id": owner_profile_id, "lease_agreement_id": lease_agreement_id,
+            "settlement_run_id": settlement_run_id,
+        })
+        account = parents["bank_account_id"]
 
         if not account.is_active:
             raise HTTPException(409, "Bank account is inactive; use an active account for new payments")
@@ -214,6 +235,7 @@ class PaymentService:
         payment = await self._repo.get_by_id(payment_id)
         if payment is None:
             raise HTTPException(status_code=404, detail="Payment not found")
+        parents = await self._resolve_parents(updates)
         if payment.status == "booked" or payment.cancelled_at is not None:
             raise HTTPException(
                 status_code=409,
@@ -224,9 +246,7 @@ class PaymentService:
         if "bank_account_id" in updates and updates["bank_account_id"] is not None:
             if updates["bank_account_id"] != payment.bank_account_id and await self._repo.is_scope_bound(payment.id):
                 raise HTTPException(409, "Discard the scoped draft and create a replacement to change its account")
-            account = await self._accounts.get_by_id(updates["bank_account_id"])
-            if account is None:
-                raise HTTPException(status_code=404, detail="Bank account not found")
+            account = parents["bank_account_id"]
             if account.id != payment.bank_account_id and not account.is_active:
                 raise HTTPException(409, "Bank account is inactive; use an active account")
             payment.bank_account_id = account.id

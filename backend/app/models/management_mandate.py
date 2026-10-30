@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
-from sqlalchemy import CheckConstraint, ForeignKey, String, Date
+from sqlalchemy import CheckConstraint, ForeignKey, String, Date, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,6 +19,7 @@ from app.models.base import Base, UUIDPrimaryKeyMixin, TimestampMixin
 
 class ManagementMandate(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "management_mandate"
+    __table_args__ = (UniqueConstraint("organization_id", "id", name="uq_scope_management_mandate_org_id"),)
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),

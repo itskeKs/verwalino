@@ -1,7 +1,7 @@
 # Feature status
 
 Current feature catalog of Verwalino by area, compared with the reference product described in
-[domain-reference.md](domain-reference.md). Status as of 2026-10-30, migration head `0139`.
+[domain-reference.md](domain-reference.md). Status as of 2026-10-30, migration head `0141`.
 Status: ✅ implemented and reachable in the running app, 🟡 partial (reason given), ❌ not implemented.
 Reference product: whether the reference software offers the feature (yes/partial/no, n/a = not a
 reference feature). Short paths: `api/ services/ engine/ models/ workers/ core/` are under
@@ -13,6 +13,7 @@ history). Update this page in the same PR whenever a feature's status changes.
 
 | Feature | Reference product | Status | Location |
 | --- | --- | --- | --- |
+| Browser first-run setup | n/a | ✅ one-time installer token, 24-hour expiry, atomic first organization/admin; real-stack acceptance pending | `api/setup.py`, `pages/SetupPage.tsx`, `scripts/self-host.sh`, issue #8 |
 | Login/logout | yes | ✅ | `api/auth.py`, `pages/LoginPage.tsx` |
 | Create users | yes | ✅ admin-only form and user management | `api/users.py`, `pages/UsersPage.tsx`, T06, T57 |
 | Roles admin/clerk/read-only | yes | ✅ admin can change role and deactivate; write buttons hidden for read-only | `core/rbac.py` (`OWNER_ADMIN`, `CLERK`, `READ_ONLY`), T57 |

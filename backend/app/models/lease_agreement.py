@@ -18,7 +18,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Date, ForeignKey, Numeric, String, UniqueConstraint
+from sqlalchemy import Date, ForeignKey, ForeignKeyConstraint, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,7 +27,13 @@ from app.models.base import Base, UUIDPrimaryKeyMixin, TimestampMixin
 
 class LeaseAgreement(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "lease_agreement"
-    __table_args__ = (UniqueConstraint("organization_id", "id", name="uq_lease_agreement_org_id"),)
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_lease_agreement_org_id"),
+        ForeignKeyConstraint(["organization_id", "unit_id"], ["unit.organization_id", "unit.id"],
+            name="fk_lease_agreement_unit_id_tenant", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["organization_id", "tenant_profile_id"], ["tenant_profile.organization_id", "tenant_profile.id"],
+            name="fk_lease_agreement_tenant_profile_id_tenant", ondelete="RESTRICT"),
+    )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -38,14 +44,12 @@ class LeaseAgreement(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     unit_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("unit.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
 
     tenant_profile_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("tenant_profile.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )

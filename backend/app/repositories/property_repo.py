@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.models.property import Property
 from app.models.property_assignment import PropertyAssignment
@@ -13,6 +13,11 @@ from app.repositories.base import TenantRepository
 
 class PropertyRepository(TenantRepository[Property]):
     model = Property
+
+    async def exists_for_financial_creation(self, property_id: uuid.UUID) -> bool:
+        """Check organization ownership without requiring property master access."""
+        return bool(await self._session.scalar(text('SELECT financial_property_exists(:org,:property)'),
+            {'org': self._org_id, 'property': property_id}))
 
     async def get_by_id_for_update(self, property_id: uuid.UUID) -> Property | None:
         stmt = self._base_query().where(Property.id == property_id).with_for_update()
