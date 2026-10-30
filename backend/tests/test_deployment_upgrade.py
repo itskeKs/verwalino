@@ -23,16 +23,17 @@ def test_reject_unknown_or_ambiguous_database_version(heads):
 
 def test_release_graph_is_exact_and_linear(tmp_path):
     graph = ScriptDirectory('migrations')
-    assert deployment.release_head(graph) == '0139'
+    assert deployment.release_head(graph) == '0140'
     (tmp_path / 'versions').mkdir()
     (tmp_path / 'versions' / 'unexpected.py').write_text(
-        "revision='0140'\ndown_revision=None\nbranch_labels=None\ndepends_on=None\n")
+        "revision='0141'\ndown_revision=None\nbranch_labels=None\ndepends_on=None\n")
     with pytest.raises(ValueError, match='release'):
         deployment.release_head(ScriptDirectory(str(tmp_path)))
 
 
-def test_measured_0028_is_a_supported_upgrade_source():
-    assert deployment.supported_schema(('0028',)) == '0028'
+@pytest.mark.parametrize('schema', ['0028', '0122', '0139', '0140'])
+def test_measured_release_schema_is_a_supported_upgrade_source(schema):
+    assert deployment.supported_schema((schema,)) == schema
 
 
 @pytest.mark.parametrize('statement', [
@@ -65,7 +66,7 @@ def rehearse_initial_upgrade(starting_schema='0122'):
     _, _, url = require_disposable_database_settings(settings)
     engine = create_engine(url)
     graph = ScriptDirectory('migrations')
-    revisions = list(graph.iterate_revisions('0139', starting_schema))
+    revisions = list(graph.iterate_revisions('0140', starting_schema))
     try:
         with engine.connect() as connection:
             transaction = connection.begin()
@@ -131,7 +132,7 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                     revision.module.upgrade()
             assert old_rows() == before
             after_security = connection.execute(text("SELECT c.relname,c.relrowsecurity,c.relforcerowsecurity,c.relacl::text FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relname=ANY(:tables) ORDER BY c.relname"), {'tables': tables}).all()
-            if starting_schema == '0122':
+            if starting_schema in ('0122', '0139'):
                 assert after_security == security
             else:
                 before_by_name = {row.relname: row for row in security}
@@ -153,15 +154,16 @@ def rehearse_initial_upgrade(starting_schema='0122'):
         engine.dispose()
 
 
-def test_upgrade_0122_to_0139_preserves_existing_rows_and_security(run_migrations):
+@pytest.mark.parametrize('starting_schema', ['0122', '0139'])
+def test_upgrade_to_0140_preserves_existing_rows_and_security(run_migrations, starting_schema):
     # The actual rehearsal ran before any retained domain-test originals existed.
     # Its SQL/data/security assertions fail fixture setup if preservation fails.
-    assert run_migrations['upgrade_0122_to_0139_tables'] > 50
-    assert deployment.database_check('preflight') == '0139'
+    assert run_migrations[f'upgrade_{starting_schema}_to_0140_tables'] > 50
+    assert deployment.database_check('preflight') == '0140'
 
 
-def test_upgrade_0028_to_0139_preserves_existing_rows_and_rls(run_migrations):
-    assert run_migrations['upgrade_0028_to_0139_tables'] > 20
+def test_upgrade_0028_to_0140_preserves_existing_rows_and_rls(run_migrations):
+    assert run_migrations['upgrade_0028_to_0140_tables'] > 20
 
 
 def test_document_archive_restore_is_exact_and_refuses_overwrite(tmp_path):
@@ -263,7 +265,7 @@ def test_cli_preflight_and_actual_runtime_credentials_are_read_only():
            'CI', 'HV_DECLARATION_TEST_DATABASE_PROFILE') if name in os.environ}
     env['HV_DATABASE_URL_WORKER'] = runtime.set(username='app_worker', password='worker_secret').render_as_string(hide_password=False)
     env.setdefault('HV_DATABASE_URL_REVIEW', runtime.set(username='app_review', password='review_secret').render_as_string(hide_password=False))
-    for arguments, expected in [(['preflight'], '0139'), (['runtime', 'app_rw'], ''),
+    for arguments, expected in [(['preflight'], '0140'), (['runtime', 'app_rw'], ''),
                                 (['runtime', 'app_review'], ''), (['runtime', 'app_worker'], '')]:
         result = subprocess.run([sys.executable, '-m', 'app.deployment', *arguments],
                                 env=env, capture_output=True, text=True)

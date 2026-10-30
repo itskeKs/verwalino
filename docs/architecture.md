@@ -703,6 +703,8 @@ An automated test that **prevents accidentally unprotected tables** (level-3 gat
 
 Every client-supplied parent ID, including a parent changed by PATCH or PUT, is resolved through the session's organization-scoped repository or session before writing or checking overlaps/conflicts. Foreign and unknown parents return an identical 404 response, so neither existence nor an overlap is disclosed. Composite foreign keys `(organization_id, parent_id) → parent(organization_id, id)` enforce parent ownership as defence in depth, because PostgreSQL foreign-key checks bypass RLS. Migration 0140 rejects existing invalid references before replacing the affected constraints; it never repairs data silently.
 
+Financial creation checks PAUSED mode first, then organization ownership of property and mandate, then the exact accounting scope. Its property repository uses `financial_property_exists`, a boolean-only definer constrained to the current organization and a live member, so an accounting PREPARE grant does not also require property master read access. Property data visibility remains governed by its existing policies. Asset-report bank balances and payment transaction links use their organization-scoped repositories before financial validation or writes.
+
 Setup (fixtures): test DB; **two organizations** `org_a`, `org_b`; one user with a role each; one `management_mandate` each; one sample row each in at least one tenant table. Two API clients, each logged in as a user of the respective org (real login flow, real tenant context).
 
 Minimum assertions:

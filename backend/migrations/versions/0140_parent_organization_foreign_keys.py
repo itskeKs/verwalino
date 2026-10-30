@@ -30,6 +30,9 @@ def upgrade():
     # Fail rather than inspect an RLS-filtered subset of existing rows. Hold
     # writers until both the preflight and constraint replacement have finished.
     op.execute("SET LOCAL row_security = off")
+    # Earlier revisions can queue deferred mandate checks in the same upgrade
+    # transaction. Validate them before replacing constraints on their tables.
+    op.execute("SET CONSTRAINTS ALL IMMEDIATE")
     tables = sorted({table for table, _, _ in RELATIONS} | {parent for _, _, parent in RELATIONS})
     op.execute(f"LOCK TABLE {', '.join(tables)} IN SHARE ROW EXCLUSIVE MODE")
     for table, column, parent in RELATIONS:
@@ -50,9 +53,21 @@ def upgrade():
             f"fk_{table}_{column}_tenant", table, parent,
             ["organization_id", column], ["organization_id", "id"], ondelete="RESTRICT",
         )
+    op.execute("""
+    CREATE FUNCTION financial_property_exists(org uuid,property uuid) RETURNS boolean
+    LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+    BEGIN
+      IF org IS DISTINCT FROM NULLIF(current_setting('app.current_org_id',true),'')::uuid
+        OR public.scope_actor_role(org) IS NULL THEN RETURN false; END IF;
+      RETURN EXISTS(SELECT 1 FROM public.property p WHERE p.organization_id=org AND p.id=property);
+    END $$;
+    REVOKE ALL ON FUNCTION financial_property_exists(uuid,uuid) FROM PUBLIC;
+    GRANT EXECUTE ON FUNCTION financial_property_exists(uuid,uuid) TO app_rw;
+    """)
 
 
 def downgrade():
+    op.execute("DROP FUNCTION IF EXISTS financial_property_exists(uuid,uuid)")
     for table, column, parent in reversed(RELATIONS):
         op.drop_constraint(f"fk_{table}_{column}_tenant", table, type_="foreignkey")
         op.create_foreign_key(

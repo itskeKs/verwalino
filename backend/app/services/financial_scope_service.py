@@ -76,7 +76,10 @@ class FinancialScopeService:
 
     async def prepare_new(self, subject, scope_id=None):
         await self.lock_inputs()
-        if await PropertyRepository(self.session, self.org_id).get_by_id(subject.property_id) is None:
+        mode = await self.session.scalar(text('SELECT property_source_security_mode(:org)'), {'org': self.org_id})
+        if mode == 'PAUSED':
+            raise HTTPException(404, 'Financial creation is paused')
+        if not await PropertyRepository(self.session, self.org_id).exists_for_financial_creation(subject.property_id):
             raise HTTPException(404, 'Property not found')
         mandate_id = getattr(subject, 'management_mandate_id', None)
         if mandate_id is not None and await MandateRepository(self.session, self.org_id).get_by_id(mandate_id) is None:
@@ -85,9 +88,6 @@ class FinancialScopeService:
         if scope_id is not None:
             requested_scope = await AuthorizationService(self.session,
                 AuthContext(self.user_id, self.org_id, 'live database role required')).require(scope_id, ScopeCapability.PREPARE)
-        mode = await self.session.scalar(text('SELECT property_source_security_mode(:org)'), {'org': self.org_id})
-        if mode == 'PAUSED':
-            raise HTTPException(404, 'Financial creation is paused')
         selected = await self.session.scalar(text("SELECT NULLIF(current_setting('app.current_scope_id',true),'')::uuid"))
         if scope_id is not None and selected is not None and scope_id != selected:
             raise HTTPException(409, 'Creation scope differs from its financial source')

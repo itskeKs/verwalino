@@ -64,6 +64,7 @@ from app.services.financial_input_policy import FinancialInputPolicy, incomplete
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
 from app.repositories.audit_repo import AuditRepository
+from app.repositories.bank_account_repo import BankAccountRepository
 from app.repositories.property_repo import PropertyRepository
 from app.repositories.economic_plan_repo import (
     EconomicPlanLineRepository,
@@ -365,6 +366,7 @@ class WegSettlementService:
     async def compute_asset_report(
         self, run_id: uuid.UUID, inputs: AssetReportInputs
     ) -> tuple[SettlementRun, AssetReportResult]:
+        await self._resolve_report_bank_accounts(inputs)
         run = await self._get_report_draft_or_404(run_id)
         computation_basis = await begin_computation(self._session, self._org_id, run, 'compute')
         coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", inputs)
@@ -389,6 +391,7 @@ class WegSettlementService:
     async def finalize_asset_report(
         self, run_id: uuid.UUID, inputs: AssetReportInputs
     ) -> SettlementRun:
+        await self._resolve_report_bank_accounts(inputs)
         run = await self._get_report_draft_or_404(run_id)
         computation_basis = await begin_computation(self._session, self._org_id, run, 'finalize')
         coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", inputs)
@@ -714,6 +717,12 @@ class WegSettlementService:
     # ------------------------------------------------------------------
     # internals -- Vermoegensbericht
     # ------------------------------------------------------------------
+    async def _resolve_report_bank_accounts(self, inputs: AssetReportInputs) -> None:
+        accounts = BankAccountRepository(self._session, self._org_id)
+        for balance in inputs.bank_balances or ():
+            if await accounts.get_by_id(balance.bank_account_id) is None:
+                raise HTTPException(404, "Bank account not found")
+
     def _compute_report_engine(
         self, run: SettlementRun, inputs: AssetReportInputs
     ) -> tuple[VermoegensberichtInput, AssetReportResult]:

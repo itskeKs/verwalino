@@ -42,6 +42,7 @@ def m6_seed(seed_data):
         "prop_a": uuid.uuid4(),
         "prop_b": uuid.uuid4(),
         "acct_a": uuid.uuid4(),
+        "transaction": uuid.uuid4(),
         "acct_b": uuid.uuid4(),
         "unit_a": uuid.uuid4(),
         "person_t": uuid.uuid4(),
@@ -83,6 +84,11 @@ def m6_seed(seed_data):
             "INSERT INTO bank_account (id, organization_id, property_id, account_type, label) "
             "VALUES (%s,%s,%s,%s,%s)",
             (str(ids["acct_b"]), org_a, str(ids["prop_b"]), "LAUFEND", "Konto B"),
+        )
+        cur.execute(
+            "INSERT INTO bank_transaction (id,organization_id,bank_account_id,booking_date,value_date,amount,import_hash,status) "
+            "VALUES (%s,%s,%s,'2025-06-01','2025-06-01',1,%s,'NEU')",
+            (str(ids["transaction"]), org_a, str(ids["acct_a"]), uuid.uuid4().hex),
         )
 
         # Unit + owner + tenant + lease on property A.
@@ -480,7 +486,7 @@ class TestPaymentRLS:
 @pytest.mark.parametrize("field, key", [
     ("bank_account_id", "acct_a"), ("tenant_profile_id", "tenant"),
     ("owner_profile_id", "owner"), ("lease_agreement_id", "lease"),
-    ("settlement_run_id", None),
+    ("settlement_run_id", None), ("bank_transaction_id", "transaction"),
 ])
 async def test_foreign_and_unknown_payment_parents_leave_no_changes(
     client_a_admin, client_b_admin, m6_seed, migrator_session, method, field, key,
@@ -513,6 +519,30 @@ async def test_foreign_and_unknown_payment_parents_leave_no_changes(
     assert responses[0] == responses[1]
     assert (await migrator_session.scalars(text(
         "SELECT to_jsonb(p)::text FROM payment p ORDER BY id"))).all() == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["post", "patch"])
+@pytest.mark.parametrize("matching_account", [False, True])
+async def test_payment_transaction_link_requires_its_account(
+    client_a_admin, m6_seed, method, matching_account,
+):
+    body = {"bank_account_id": str(m6_seed["acct_a"] if matching_account else m6_seed["acct_b"]),
+            "direction": "IN", "amount": "1.00", "value_date": "2025-06-01",
+            "payment_type": "NK_VORAUSZAHLUNG", "tenant_profile_id": str(m6_seed["tenant"])}
+    path = "/api/payments"
+    if method == "patch":
+        draft = await client_a_admin.post(path, json=body)
+        assert draft.status_code == 201, draft.text
+        path += "/" + draft.json()["id"]
+    response = await getattr(client_a_admin, method)(path,
+        json=(body if method == "post" else {}) | {"bank_transaction_id": str(m6_seed["transaction"])})
+    if matching_account:
+        assert response.status_code == (201 if method == "post" else 200), response.text
+        assert response.json()["bank_transaction_id"] == str(m6_seed["transaction"])
+    else:
+        assert response.status_code == 422, response.text
+        assert response.json() == {"detail": "Bank transaction belongs to another bank account"}
 
 
 class TestPaymentAPI:

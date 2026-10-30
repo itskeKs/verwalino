@@ -364,6 +364,10 @@ A later payment link must belong to the same account and is immutable
 once booked. Existing payments and finalized settlements are not changed
 by the import.
 
+Payment POST and PATCH accept `bank_transaction_id` for a draft. Foreign and
+unknown transaction IDs return the same 404 before draft conflicts or writes;
+a transaction from another account in the same organization returns 422.
+
 `POST /api/bank-accounts/{id}/imports` accepts a file (`file`, CSV/XML/ZIP).
 `dry_run=true` is the safe default: count, total sum, new sum,
 booking period, duplicates and at most 100 preview rows, **no persistence**.
