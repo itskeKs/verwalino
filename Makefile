@@ -17,7 +17,15 @@ UV_LINT := uv run --locked --extra dev
 # Extra pytest arguments, e.g. make test-backend PYTEST_ARGS="-q tests/test_x.py -k name"
 PYTEST_ARGS ?= -q
 
-.PHONY: help test test-agent-rules test-backend test-installer test-selfhost-format test-frontend test-bdd typecheck lint lint-backend lint-frontend \
+define TESTDB_LOCK
+if ! mkdir /tmp/verwalino-testdb.lock 2>/dev/null; then \
+  echo "waiting for /tmp/verwalino-testdb.lock — remove it if no test process is running" >&2; \
+  until mkdir /tmp/verwalino-testdb.lock 2>/dev/null; do sleep 10; done; \
+fi; \
+trap 'rmdir /tmp/verwalino-testdb.lock' EXIT
+endef
+
+.PHONY: help test test-agent-rules test-backend test-installer test-selfhost-format test-frontend test-bdd test-browser typecheck lint lint-backend lint-frontend \
         docs-check frontend-deps hooks check-testdb
 
 help: ## List the documented targets
@@ -31,14 +39,14 @@ test-agent-rules: ## Paired agent rules and Codex hook contracts (stdlib only; n
 	python3 -B scripts/test_agent_rules.py
 
 test-backend: check-testdb ## Backend pytest against the test DB (PYTEST_ARGS="-q tests/test_x.py -k name" narrows it)
-	@( . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest $(PYTEST_ARGS) )
+	@$(TESTDB_LOCK); \
+	( . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest $(PYTEST_ARGS) )
 
 test-installer: ## Self-host installer contract tests (no DB; Docker is faked)
 	cd backend && $(UV_LINT) python ../scripts/test-self-host.py
 
 test-selfhost-format: ## Opt-in backup format round trip in scratch test databases; owns the test DB lock
-	@( until mkdir /tmp/verwalino-testdb.lock 2>/dev/null; do sleep 10; done; \
-	  trap 'rmdir /tmp/verwalino-testdb.lock' EXIT; \
+	@( $(TESTDB_LOCK); \
 	  trap 'exit 130' INT; trap 'exit 143' TERM; \
 	  export VERWALINO_FORMAT_TEST=1; \
 	  . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest -q tests/test_selfhost_backup_format.py )
@@ -46,8 +54,9 @@ test-selfhost-format: ## Opt-in backup format round trip in scratch test databas
 test-frontend: frontend/node_modules ## Frontend vitest (single run)
 	cd frontend && npm test
 
-test-bdd: ## BDD scenarios only (backend/tests/bdd); skipped while the directory does not exist
+test-bdd: ## API BDD scenarios (backend/tests/bdd); browser journeys use test-browser
 	@if [ -d backend/tests/bdd ]; then \
+	  $(TESTDB_LOCK); \
 	  $(MAKE) --no-print-directory check-testdb && \
 	  ( . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest tests/bdd $(PYTEST_ARGS) ); \
 	else \
@@ -56,6 +65,11 @@ test-bdd: ## BDD scenarios only (backend/tests/bdd); skipped while the directory
 
 typecheck: frontend/node_modules ## Frontend TypeScript check (tsc -b, no emit)
 	cd frontend && npx --no-install tsc -b
+
+test-browser: frontend/node_modules ## Headless browser features; owns the test DB lock and local app processes
+	@$(TESTDB_LOCK); \
+	$(MAKE) --no-print-directory check-testdb && \
+	( . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest tests/bdd --run-browser -m browser $(PYTEST_ARGS) )
 
 # ---- static checks ---------------------------------------------------------
 
