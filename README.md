@@ -1,3 +1,21 @@
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-232724" alt="License: AGPL-3.0" /></a>
+  <a href="https://github.com/itskeKs/verwalino/actions/workflows/tests-on-pr.yaml"><img src="https://github.com/itskeKs/verwalino/actions/workflows/tests-on-pr.yaml/badge.svg" alt="Tests on PR" /></a>
+  <a href="https://www.python.org/downloads/release/python-3120/"><img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white" alt="Python 3.12" /></a>
+  <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI" /></a>
+  <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19-20232A?logo=react&logoColor=61DAFB" alt="React 19" /></a>
+  <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL 16" /></a>
+  <a href="DEPLOY.md#portable-docker-first-installation"><img src="https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white" alt="Docker" /></a>
+  <!-- release badge: add https://img.shields.io/github/v/release/itskeKs/verwalino once a first tag exists -->
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/verwalino-wordmark-dark.svg" />
+    <img src="docs/assets/brand/verwalino-wordmark.svg" alt="Verwalino" height="120" />
+  </picture>
+</p>
+
 # Verwalino
 
 Verwalino is a property-management web app for rental management, homeowners'
@@ -5,8 +23,6 @@ associations (WEG), and individual unit management (SEV). It is intended for sma
 and mid-size property managers and private landlords in Germany. The UI is German.
 One Docker image supports self-hosting; a free hosted offering with an isolated
 organization per company is [planned](docs/roadmap.md).
-
-<!-- badges: add CI and release badges once the repository is public and a first release exists -->
 
 | Dashboard | Property list |
 | --- | --- |
