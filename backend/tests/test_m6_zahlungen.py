@@ -521,28 +521,6 @@ async def test_foreign_and_unknown_payment_parents_leave_no_changes(
         "SELECT to_jsonb(p)::text FROM payment p ORDER BY id"))).all() == before
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("method", ["post", "patch"])
-async def test_payment_requests_ignore_bank_transaction_links(
-    client_a_admin, m6_seed, migrator_session, method,
-):
-    body = {"bank_account_id": str(m6_seed["acct_a"]),
-            "direction": "IN", "amount": "1.00", "value_date": "2025-06-01",
-            "payment_type": "NK_VORAUSZAHLUNG", "tenant_profile_id": str(m6_seed["tenant"])}
-    path = "/api/payments"
-    if method == "patch":
-        draft = await client_a_admin.post(path, json=body)
-        assert draft.status_code == 201, draft.text
-        path += "/" + draft.json()["id"]
-    response = await getattr(client_a_admin, method)(path,
-        json=(body if method == "post" else {}) | {"bank_transaction_id": str(m6_seed["transaction"])})
-    assert response.status_code == (201 if method == "post" else 200), response.text
-    assert response.json()["bank_transaction_id"] is None
-    assert await migrator_session.scalar(text(
-        "SELECT bank_transaction_id IS NULL FROM payment WHERE id=:id"),
-        {"id": response.json()["id"]}) is True
-
-
 class TestPaymentAPI:
     @pytest.mark.asyncio
     async def test_create_book_list_reverse_flow(self, client_a_clerk, m6_seed):

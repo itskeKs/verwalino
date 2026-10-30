@@ -94,6 +94,40 @@ async def test_strict_foreign_and_unknown_financial_parents_are_identical(migrat
     assert await read_value(count, ids) == before
 
 
+async def test_strict_scoped_clerk_creates_weg_draft_without_property_read_access(migrator_session, scope_seed, seed_data):
+    ids = await scope_fixture(migrator_session, scope_seed)
+    foreign = uuid.uuid4()
+    await migrator_session.execute(text("INSERT INTO property(id,organization_id,name,management_type) VALUES (:id,:org,'Foreign WEG property','WEG')"),
+        {'id': foreign, 'org': seed_data['org_b_id']})
+    await migrator_session.commit()
+    async with synthetic_enforcement(scope_seed), client(ids) as api:
+        assert await read_value('SELECT count(*) FROM property WHERE id=:property', ids, actor_key='clerk') == 0
+        plan = await api.post('/api/economic-plans', json={
+            'property_id': str(ids['property']), 'plan_year': 2025,
+            'period_start': '2025-01-01', 'period_end': '2025-12-31',
+            'accounting_scope_id': str(ids['scope']),
+        })
+        assert plan.status_code == 201, plan.text
+        body = {'property_id': str(ids['property']), 'economic_plan_id': plan.json()['id'],
+                'period_start': '2025-01-01', 'period_end': '2025-12-31'}
+        draft = await api.post('/api/weg-settlements', json=body)
+        assert draft.status_code == 201, draft.text
+        assert draft.json()['status'] == 'draft'
+        assert draft.json()['property_id'] == str(ids['property'])
+        assert draft.json()['economic_plan_id'] == plan.json()['id']
+        assert await read_value('SELECT scope_id FROM accounting_scope_binding WHERE settlement_run_id=:run',
+            ids | {'run': uuid.UUID(draft.json()['id'])}) == ids['scope']
+        count = 'SELECT count(*) FROM settlement_run WHERE organization_id=:org'
+        before = await read_value(count, ids)
+        responses = []
+        for parent in (foreign, uuid.uuid4()):
+            response = await api.post('/api/weg-settlements', json=body | {'property_id': str(parent)})
+            assert response.status_code == 422, response.text
+            responses.append(response.json())
+        assert responses == [{'detail': 'Economic plan belongs to a different property'}] * 2
+        assert await read_value(count, ids) == before
+
+
 async def test_financial_property_lookup_is_a_restricted_security_definer(app_rw_session):
     signature = {'signature': 'public.financial_property_exists(uuid,uuid)'}
     security = (await app_rw_session.execute(text("""SELECT prosecdef,proconfig

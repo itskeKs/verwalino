@@ -171,6 +171,7 @@ class PaymentService:
         period_month: int | None = None,
         settlement_run_id: uuid.UUID | None = None,
         note: str | None = None,
+        bank_transaction_id: uuid.UUID | None = None,
     ) -> Payment:
         """Create an editable draft payment (m6 section 5; ADR-0009 E6-3).
 
@@ -192,6 +193,7 @@ class PaymentService:
         payment = Payment(
             organization_id=self._org_id,
             bank_account_id=account.id,
+            bank_transaction_id=bank_transaction_id,
             property_id=account.property_id,  # mirrored (ADR-0010)
             management_mandate_id=None,  # DB derives this from the canonical account scope when bound
             direction=direction,

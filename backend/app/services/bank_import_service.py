@@ -230,9 +230,8 @@ class BankImportService:
         booked = []
         for line in lines:
             payment = await payments.create_draft(
-                **line, bank_account_id=account.id,
+                **line, bank_account_id=account.id, bank_transaction_id=transaction.id,
                 direction="IN" if transaction.amount > 0 else "OUT", value_date=transaction.value_date)
-            payment.bank_transaction_id = transaction.id
             booked.append(await payments.book(payment.id))
         transaction.status = "ZUGEORDNET"
         await self._transactions.update(transaction)

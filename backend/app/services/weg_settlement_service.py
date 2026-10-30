@@ -65,7 +65,6 @@ from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.bank_account_repo import BankAccountRepository
-from app.repositories.property_repo import PropertyRepository
 from app.repositories.economic_plan_repo import (
     EconomicPlanLineRepository,
     EconomicPlanRepository,
@@ -219,8 +218,6 @@ class WegSettlementService:
         [F4-1] economic_plan_id is required (the Soll source). Validates the plan
         exists and belongs to the same property.
         """
-        if await PropertyRepository(self._session, self._org_id).get_by_id(property_id) is None:
-            raise HTTPException(404, "Property not found")
         plan = await self._plans.get_by_id(economic_plan_id)
         if plan is None:
             raise HTTPException(status_code=404, detail="Economic plan not found")
