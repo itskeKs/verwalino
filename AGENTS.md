@@ -4,7 +4,7 @@ Verwalino is a property-management app (rental, WEG, SEV). FastAPI + SQLAlchemy 
 with row-level security in `backend/`, React + Vite + TypeScript in `frontend/`. It runs from one
 image in two ways: self-hosted by anyone, and as a free hosted multi-organization service.
 Where it is going: [docs/roadmap.md](docs/roadmap.md). What exists: [docs/feature-status.md](docs/feature-status.md).
-How the frontend looks and reads: [DESIGN.md](DESIGN.md).
+Frontend design contract: [DESIGN.md](DESIGN.md).
 Human-facing workflow and commands: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 The software is German; documentation, issues, code comments, tests and commits are English.

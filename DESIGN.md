@@ -1,15 +1,16 @@
 # Verwalino design contract
 
-What the Verwalino frontend looks like and how screens are put together, derived from the code in
-`frontend/`. This file documents what exists; it is not a redesign. Where the code deviates from the
-rule it states, the deviation is named so a reviewer can tell a convention from an accident.
-When this file and the code disagree, fix one of them in the same PR.
+DESIGN.md is the authoritative frontend design contract for Verwalino: layout, tokens, UI kit
+components and their behaviour, states, copy and formats. Define visual changes here before CSS
+tweaks land. New screens follow this contract; changes to the look or copy update it in the same PR.
+Named implementation deviations remain documented below as known debt tracked in #48, #49, #50
+and #52. New work follows the contract.
 
 Source files: `frontend/tailwind.config.cjs` (token mapping), `frontend/src/index.css` (tokens, global
 classes), `frontend/src/components/ui/` (UI kit), `frontend/src/components/AppShell.tsx`,
 `Sidebar.tsx`, `Topbar.tsx` (shell). Copy and format rules also appear in the
-[frontend rule](.claude/rules/frontend-ui.md). Out of scope here: redesign, new components, dark mode
-(there is no dark theme; every colour below is the light theme).
+[frontend rule](.claude/rules/frontend-ui.md). The current theme is light; dark mode is outside this
+contract.
 
 ## How to build a screen
 
@@ -21,12 +22,21 @@ Two styling layers coexist:
   `.error-text`, `.empty-hint`, ...). About 430 raw `<button class="btn">` and most list/detail pages use
   them. `index.css` says they were restyled to match the kit, so both layers look the same.
 
-Rule for new screens: use the kit components and the tokens; reuse the global classes only for what has
-no kit counterpart yet (tables, key-value tables, form grid, error and empty text). Do not add new global
-classes or inline `style={{}}` (about 470 exist today), and do not hard-code hex colours. Section
-[Components](#components) maps each pattern to its file.
+Follow [Components](#components) for the permitted styling layers and their source files, and
+[Colour](#colour) for token use.
 
 ## Foundations
+
+### Contract ownership and verification
+
+- One fact has one visual place: show a status, result or action on the surface that owns it.
+  An equivalent hidden accessible label may repeat it.
+- Enforce the contract's behaviour and copy with interaction tests in the area's
+  `frontend/src/**/*.test.tsx`; browser features in `features/` verify geometry that jsdom cannot check.
+- When the look changes, update this contract and the screenshots in `docs/assets/design/`
+  in the same PR.
+- External software in [docs/domain-reference.md](docs/domain-reference.md) is a reference for scope
+  and flows, not a design contract for Verwalino.
 
 ### Colour
 
@@ -54,7 +64,8 @@ Semantic colours that are **not** tokens: `ui/badge.tsx` and `ui/stat-card.tsx` 
 `success` and `warning` exist as tokens but no component uses them. Legacy `.badge--*` classes use fixed
 hex pairs. `--border` (hex) and `--ui-border` (HSL) are different variables: the kit uses `--ui-border`.
 Legacy variables `--color-primary` (`#2456c8`), `--bg-content`, `--text`, `--text-muted` remain for old
-inline styles. Rule: pick a token role from the table; for a new status colour reuse a `Badge` tone.
+inline styles. Use token colours rather than hard-coded hex values: pick a role from the table;
+for a new status colour reuse a `Badge` tone.
 
 ### Typography
 
@@ -90,6 +101,9 @@ so x 15 px): `h-4 w-4` inside buttons (`Button` forces `[&_svg]:h-4 [&_svg]:w-4`
 tile, 1.05 rem in the nav, `h-5 w-5` in the `h-10 w-10` `StatCard` tile. Colour follows the text colour.
 
 ### Interaction
+
+Every control has a label, and dialogs are keyboard-operable. Mark errors with `role="alert"` and
+outcomes with `role="status"`.
 
 Focus: kit controls show `ring-2 ring-ring ring-offset-2`; `.btn` shows a 3 px `ring/30` shadow; form-grid
 fields a 3 px `ring/18` shadow with a primary border. Disabled controls use `opacity-50` and
@@ -130,11 +144,14 @@ Detail pages (`/objekte/:id`, `/mandate/:id`, ...) have no nav entry; the parent
 | Erweitert | Quellenfreigaben, Altquellen, Berechtigungen, Freigaben vorbereiten, Mahnquarantäne, Mandatsquarantäne, Seitenauszüge, Kontaktdaten-Rechte, Gebäudedaten-Rechte | `OWNER_ADMIN` |
 
 Navigation entries are `NavItem`s in `GROUPS` (label = German noun, one lucide icon); their routes are in
-`App.tsx`. Several icons repeat (`FileText` x7, `KeyRound` x6).
+`App.tsx`. Add a new top-level screen's nav entry to `GROUPS`; detail pages keep their parent's entry.
+Several icons repeat (`FileText` x7, `KeyRound` x6).
 
 ### Page patterns
 
 ![Dashboard](docs/assets/design/dashboard-desktop.png)
+
+New screens follow these page structures and use a German noun as their `h1`.
 
 - **Page header.** Either a date eyebrow plus greeting `h1` (dashboard: `text-sm muted` line, then
   `h1 text-2xl`), or `h1` left and actions right (`flex justify-between`, wraps): secondary actions
@@ -156,6 +173,9 @@ Navigation entries are `NavItem`s in `GROUPS` (label = German noun, one lucide i
 
 ### Responsive behaviour (down to 360 px)
 
+Verify screens at 360 px with long German names, four-digit amounts and many rows. The page must not
+scroll sideways; wide tables stay within their own horizontal scroll container.
+
 | Width | Behaviour |
 |---|---|
 | < 640 (`sm`) | stat tiles 1 column; role chip and "Passwort ändern" label hidden; `DialogFooter` stacks (Cancel under primary) |
@@ -169,6 +189,10 @@ content uses `min-w-0` plus `truncate` (`DashboardPage.tsx`) or `overflow-wrap: 
 and the document upload button extend beyond their card, so `main` scrolls sideways there.
 
 ## Components
+
+New screens use the kit components and tokens. Reuse global classes only for what has no kit
+counterpart yet (tables, key-value tables, form grid, error and empty text). Do not add new global
+classes or inline `style={{}}`; the existing inline styles (about 470) are known debt.
 
 ### UI kit (`frontend/src/components/ui/`)
 
@@ -255,6 +279,9 @@ typo of `btn--primary`), `badge--warning`, `form-hint`, `table-responsive`.
 
 ## States
 
+Every async region provides loading, empty, error and success copy using the patterns below.
+Failed requests preserve the user's input.
+
 Loading, error and success are inline text, there is no toast, spinner or skeleton component.
 
 | State | Markup | Copy patterns (German text verbatim; `{...}` is a value) |
@@ -270,13 +297,16 @@ Loading, error and success are inline text, there is no toast, spinner or skelet
 Principle from [AGENTS.md](AGENTS.md#design-rules): report real outcomes only, no placeholder text and no
 "everything OK" when there is nothing to report. Unavailable data shows `—` or "Nicht verfügbar", not zero.
 
+Hide write actions for `READ_ONLY`. Admin-only pages say "Zugriff nur für Inhaber/Admin." or sit in an
+admin-only nav group.
+
 ## Copy and formats
 
 ### Tone and wording
 
-- German UI text, formal **Sie**: 47 files address the user as Sie/Ihr, none uses du ("Geben Sie Ihr
-  aktuelles Passwort und das neue Passwort ein."). Instructions are otherwise impersonal ("Bitte erneut
-  versuchen.", "Bitte ein Objekt auswählen.").
+- Use German UI text with real umlauts and formal **Sie**: 47 files address the user as Sie/Ihr, none
+  uses du ("Geben Sie Ihr aktuelles Passwort und das neue Passwort ein."). Instructions are otherwise
+  impersonal ("Bitte erneut versuchen.", "Bitte ein Objekt auswählen.").
 - Headings and nav entries are nouns ("Objekte", "Offene Posten"); buttons are verbs or verb phrases:
   "Speichern", "Abbrechen", "Bearbeiten", "Anlegen" (create: "Mandat anlegen", "Benutzer anlegen"),
   "Hochladen", "Löschen", "Schließen", "Erneut laden". Cancel is always "Abbrechen". "Archivieren" means
@@ -289,6 +319,8 @@ Principle from [AGENTS.md](AGENTS.md#design-rules): report real outcomes only, n
   "Mietvertraege", "FLAECHE").
 
 ### Number, money, date and size formats
+
+Use the money and date contracts below; carry amounts as decimal strings.
 
 `frontend/src/lib/` holds no formatting helper (`utils.ts` is only `cn`; `costVocabulary.ts`,
 `heatingInputs.ts`, `settlementInputNeeds.ts` are domain helpers). Formatting uses file-local functions
@@ -328,15 +360,3 @@ stays valid when they are retaken.
 
 The screenshots show the app as it is, including the deviations named above (legacy table, native file
 button, unstyled buttons on the dashboard task list, ASCII "Strasse").
-
-## Checklist for a new screen
-
-1. Page structure matches [Page patterns](#page-patterns); `h1` is a German noun; nav entry added to `GROUPS`.
-2. Kit components and token colours only; no new global class, no hex, no inline style.
-3. Every async region has loading, empty, error and success copy from [States](#states); errors keep input.
-4. Write actions are hidden for `READ_ONLY`; admin-only pages say "Zugriff nur für Inhaber/Admin." or sit in an
-   admin-only nav group.
-5. Money and date formats as in [Copy and formats](#copy-and-formats) (#48 settles the single target); Sie-form, real umlauts; amounts as decimal strings.
-6. Checked at 360 px (no sideways page scroll), with long German names, four-digit amounts and many rows.
-7. Labels on every control, keyboard operable dialogs, `role="alert"` for errors, `role="status"` for outcomes.
-8. An interaction test in the area's `*.test.tsx`; this file and the screenshots updated if the look changed.

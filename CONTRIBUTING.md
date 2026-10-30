@@ -64,6 +64,8 @@ If `frontend/node_modules` is missing, eslint is skipped with a message.
 4. **Implement** the smallest change that turns them green. Follow the design rules in
    [AGENTS.md](AGENTS.md#design-rules).
 5. **Docs in the same PR**, per the [documentation contract](.claude/rules/docs.md).
+   [DESIGN.md](DESIGN.md) is the frontend design contract: new screens follow it, and changes to the
+   look or copy update it in the same PR.
 6. `make lint` green before every push; `make test` (the whole suite) before the merge — CI runs it on
    every PR.
 
