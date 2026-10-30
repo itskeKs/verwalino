@@ -57,6 +57,8 @@ main() {
     die() { printf 'deploy: %s\n' "$*" >&2; exit 1; }
     git_app() { git -c "safe.directory=$APP" -C "$APP" "$@"; }
     config_value() { sed -n "s/^$1=//p" "$CONFIG"; }
+    # Runs through "trap on_exit EXIT" below; shellcheck does not follow that for a nested function.
+    # shellcheck disable=SC2317
     on_exit() {
         local rc=$?
         if [[ "$locked" = 1 ]]; then rmdir "$LOGS/.deploy.lock"; fi
