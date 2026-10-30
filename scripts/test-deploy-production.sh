@@ -246,11 +246,11 @@ if [ "$(basename "$0")" = docker ]; then
           [ "${FAKE_FAILURE:-}" != release-head ] || exit 92
           printf '%s\n' "${FAKE_SCHEMA:-0122}"; exit 0 ;;
         *' run '*'app.deployment current '*)
-          if [ -f "$FAKE_SHARED/schema-changed" ]; then printf '%s\n' 0141; elif [ -f "$FAKE_MIGRATED" ]; then printf '%s\n' "${FAKE_TARGET:-0141}"; else printf '%s\n' "${FAKE_SCHEMA:-0122}"; fi; exit 0 ;;
+          if [ -f "$FAKE_SHARED/schema-changed" ]; then printf '%s\n' 0142; elif [ -f "$FAKE_MIGRATED" ]; then printf '%s\n' "${FAKE_TARGET:-0142}"; else printf '%s\n' "${FAKE_SCHEMA:-0122}"; fi; exit 0 ;;
         *' run '*'app.deployment quiescent '*)
           [ "${FAKE_FAILURE:-}" != busy ] || exit 93
           if [ "${FAKE_FAILURE:-}" = quiescent-changed ] && [ -f "$FAKE_SHARED/backups/test-from-0122/documents.tar.gz.partial" ]; then
-            : > "$FAKE_SHARED/schema-changed"; printf '%s\n' 0141
+            : > "$FAKE_SHARED/schema-changed"; printf '%s\n' 0142
           else printf '%s\n' "$FAKE_SCHEMA"; fi; exit 0 ;;
         *' run '*'app.deployment runtime '*) [ "${FAKE_FAILURE:-}" != credentials ]; exit $? ;;
         *' run --rm --no-deps migrate '*)
@@ -530,7 +530,7 @@ for blank_key_case in unquoted-comment quoted-comment; do
 done
 
 # Each case uses only the fake CLI, synthetic archives and a private release root.
-for scenario in wrong-source ambiguous-source release-head previous-head roles credentials competing backup-exists busy quiescent-changed backup documents dump-check archive-check migrate target app-start app-health api-ready provider-smoke worker-start worker-health invoice-start invoice-health no-invoice no-invoice-restore restore-compatible cleanup-stop-fail cleanup-discovery-fail foreign-container success success-0028 success-0139 success-0140; do
+for scenario in wrong-source ambiguous-source release-head previous-head roles credentials competing backup-exists busy quiescent-changed backup documents dump-check archive-check migrate target app-start app-health api-ready provider-smoke worker-start worker-health invoice-start invoice-health no-invoice no-invoice-restore restore-compatible cleanup-stop-fail cleanup-discovery-fail foreign-container success success-0028 success-0139 success-0140 success-0141; do
   case_root="$tmpdir/$scenario"
   mkdir -p "$case_root/releases/test/infra/db" "$case_root/releases/old" "$case_root/shared"
   printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' > "$case_root/shared/.env"
@@ -545,7 +545,7 @@ for scenario in wrong-source ambiguous-source release-head previous-head roles c
   export FAKE_INVOICE_CREATED="$case_root/invoice-created" FAKE_INVOICE_RESTORED="$case_root/invoice-restored"
   export FAKE_MIGRATED="$case_root/migrated" FAKE_READLINK_F="$case_root/releases/old"
   export FAKE_PROVIDER_SMOKE_CALLED="$case_root/provider-smoke" FAKE_ADMIN_PASSWORD="$admin_password"
-  export FAKE_SCHEMA=0122 FAKE_TARGET=0141 FAKE_PREVIOUS_HEAD=0122 FAKE_FAILURE="$scenario"
+  export FAKE_SCHEMA=0122 FAKE_TARGET=0142 FAKE_PREVIOUS_HEAD=0122 FAKE_FAILURE="$scenario"
   export FAKE_PROVIDER_SMOKE_FAIL=0
   export FAKE_NO_PREVIOUS_INVOICE=0 FAKE_APP_UP_FAIL=0 FAKE_WORKER_UP_FAIL=0 FAKE_NEW_LABEL=test
   case "$scenario" in
@@ -553,25 +553,26 @@ for scenario in wrong-source ambiguous-source release-head previous-head roles c
     success-0028) FAKE_SCHEMA=0028; FAKE_PREVIOUS_HEAD=0028 ;;
     success-0139) FAKE_SCHEMA=0139; FAKE_PREVIOUS_HEAD=0139 ;;
     success-0140) FAKE_SCHEMA=0140; FAKE_PREVIOUS_HEAD=0140 ;; # accepted source
+    success-0141) FAKE_SCHEMA=0141; FAKE_PREVIOUS_HEAD=0141 ;; # accepted source
     ambiguous-source) FAKE_SCHEMA='0122
 0139' ;;
     target) FAKE_TARGET=0138 ;;
     previous-head) FAKE_PREVIOUS_HEAD=0138 ;;
     backup-exists) mkdir -p "$case_root/shared/backups/test-from-0122"; printf preserve > "$case_root/shared/backups/test-from-0122/database.dump" ;;
     provider-smoke) FAKE_PROVIDER_SMOKE_FAIL=1 ;;
-    cleanup-stop-fail|cleanup-discovery-fail) FAKE_SCHEMA=0141; FAKE_PREVIOUS_HEAD=0141; FAKE_WORKER_UP_FAIL=1 ;;
-    no-invoice-restore) FAKE_SCHEMA=0141; FAKE_PREVIOUS_HEAD=0141; FAKE_WORKER_UP_FAIL=1; FAKE_NO_PREVIOUS_INVOICE=1 ;;
+    cleanup-stop-fail|cleanup-discovery-fail) FAKE_SCHEMA=0142; FAKE_PREVIOUS_HEAD=0142; FAKE_WORKER_UP_FAIL=1 ;;
+    no-invoice-restore) FAKE_SCHEMA=0142; FAKE_PREVIOUS_HEAD=0142; FAKE_WORKER_UP_FAIL=1; FAKE_NO_PREVIOUS_INVOICE=1 ;;
     app-start) FAKE_APP_UP_FAIL=1 ;;
     worker-start) FAKE_WORKER_UP_FAIL=1 ;;
     no-invoice) FAKE_NO_PREVIOUS_INVOICE=1 ;;
-    restore-compatible) FAKE_SCHEMA=0141; FAKE_PREVIOUS_HEAD=0141; FAKE_WORKER_UP_FAIL=1 ;;
+    restore-compatible) FAKE_SCHEMA=0142; FAKE_PREVIOUS_HEAD=0142; FAKE_WORKER_UP_FAIL=1 ;;
     foreign-container) FAKE_NEW_LABEL=foreign; FAKE_APP_UP_FAIL=1 ;;
   esac
   outcome=0
   printf '%s\n' "$admin_password" | PATH="$tmpdir/bin:$PATH" \
     DEPLOY_ROOT="$case_root" RELEASE_ID=test sh "$deploy_script" >"$case_root/output" 2>&1 || outcome=$?
   case "$scenario" in
-    success|success-0028|success-0139|success-0140|no-invoice)
+    success|success-0028|success-0139|success-0140|success-0141|no-invoice)
       [ "$outcome" -eq 0 ] || { cat "$case_root/output" >&2; fail "$scenario failed"; }
       [ "$(readlink "$case_root/current")" = releases/test ] || fail "$scenario did not promote"
       pair="$case_root/shared/backups/test-from-$FAKE_SCHEMA"
@@ -633,7 +634,7 @@ ASSERT_ORDER
   ! grep -Eq 'stopped:db-id| down |volume rm|alembic downgrade|up -d.* db' "$FAKE_DOCKER_LOG" || fail 'database/volume mutation in runtime handling'
   ! grep -Fq "$admin_password" "$FAKE_DOCKER_LOG" || fail 'admin secret in CLI arguments'
 done
-printf '%s\n' 'deploy-production: 33 upgrade/backup/worker/recovery scenarios passed'
+printf '%s\n' 'deploy-production: 34 upgrade/backup/worker/recovery scenarios passed'
 
 assert_gateway_basic_auth_removed
 assert_admin_password_handling

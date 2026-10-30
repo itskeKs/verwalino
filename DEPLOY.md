@@ -13,7 +13,8 @@ offers token-gated first-run setup on an empty database. `hosted` suppresses set
 `GET /api/setup` reports `required: false`, every non-GET request returns the closed
 setup 404, and `/setup` redirects to login. Until signup (#19) exists, operators use
 the existing admin CLI to bootstrap hosted organizations. Selecting hosted mode does
-not implement signup, rate limiting, quotas, password reset or legal pages. The
+not implement signup, quotas, password reset or legal pages. Login uses the
+selected rate-limit profile described below. The
 [policy table](docs/architecture.md#deployment-modes) records current readers and
 future consumers; error tracking's environment default is reserved for #16.
 
@@ -22,6 +23,59 @@ setup-token flow. Its manifest relies on the `selfhost` default; it does not for
 `HV_DEPLOYMENT_MODE` from the caller or accept it in `.env.selfhost`. Its HTTP/HTTPS
 `VERWALINO_MODE` is a separate transport choice. Use a separately managed deployment
 to run hosted mode; do not use the portable installer to start a hosted service.
+
+## Login lockout and proxy trust
+
+Login failure limits come from the deployment policy, with a fixed 15-minute
+window: selfhost permits 20 failures per IP and 10 per normalized email before
+a 15-minute lockout; hosted permits 10 per IP and 5 per email before a 30-minute
+lockout. Repeated hosted lockouts double to at most 24 hours. Correct credentials
+are refused while either key is locked. Active lockouts are not extended by more
+attempts. Success clears both keys and escalation history. State survives restarts;
+rows idle for over one day are cleaned opportunistically every 100th login check
+per worker. There is no new scheduled worker or configurable threshold.
+
+All credential failures retain `401 {"detail":"Invalid credentials"}`, with no
+`Retry-After` or cookie. A WARNING includes the hashed key and a server-generated
+request id, never the raw email/IP. The existing German login message is unchanged.
+
+The limiter uses `request.client.host`, never an unverified forwarding header.
+The existing container entrypoint uses Uvicorn's `--proxy-headers` and
+`--forwarded-allow-ips="$FORWARDED_ALLOW_IPS"`. Without proxy middleware/trust the
+key is the direct peer. Set `FORWARDED_ALLOW_IPS` to only the addresses/subnets
+of proxies that actually front the app, never `*` on a publicly reachable app.
+Uvicorn walks the forwarding chain from the trusted end and supplies the resolved
+client once; the limiter must not parse it again. The portable stack already
+passes `VERWALINO_PROXY_SUBNET` for its dedicated Caddy network, including local
+HTTP mode. The stock Caddy proxy replaces incoming forwarding headers. The
+loopback diagnostic listener remains untrusted. For direct uvicorn development,
+use `--no-proxy-headers` when there is no trusted proxy. No additional
+`HV_TRUSTED_PROXY_COUNT` is introduced alongside the existing address allowlist.
+
+To unlock an email, connect as the **migrator** during an authorized operator
+operation and execute the parameterized equivalent of this SQL (replace the
+example email). No runtime admin endpoint or CLI subcommand is added:
+
+```sql
+DELETE FROM public.auth_throttle
+WHERE key_kind = 'email'
+  AND key_hash = sha256(convert_to('login:' || lower(btrim('user@example.org')), 'UTF8'));
+```
+
+An independently locked IP must also be cleared or allowed to expire. Use its
+canonical address (IPv4-mapped IPv6 is normalized to IPv4):
+
+```sql
+DELETE FROM public.auth_throttle
+WHERE key_kind = 'ip'
+  AND key_hash = sha256(convert_to('login:203.0.113.5', 'UTF8'));
+```
+
+These deletes reset only the chosen key and its escalation history. Hashes are
+scope-specific; future signup (#19) will use separate `signup:` keys and the
+shared limiter/honeypot helpers described in
+[auth hardening](docs/architecture.md#43-loginsession-approach-recommendation-decision).
+Signup and its hidden form field are not exposed by this release.
 
 ## Portable Docker first installation
 
@@ -103,8 +157,8 @@ subnet (default `172.30.97.0/28`). If it conflicts with a host/VPN/Docker route,
 choose an unused aligned private /24 through /28 at init with
 `--proxy-subnet 192.168.240.0/28`. The script reports certificate provisioning
 as pending, not as a successful TLS/Internet reachability check. The stock
-Caddy configuration does not replicate Traefik's alpha login-rate middleware;
-public rollout requires a separate abuse-protection review.
+Caddy configuration relies on the persistent application login limiter described
+above; it does not replicate Traefik's separate alpha middleware.
 
 On a database with no organization, `start` prints a `/setup` URL and a new
 256-bit **Setup token** exactly once after app readiness. Open that URL, enter
@@ -122,7 +176,7 @@ receive 422. Leading/trailing spaces in the token and organization/admin names
 are trimmed; control characters in these fields and the admin email are rejected. If the initial
 setup-status request fails, login and signed-in pages remain available; reload
 after connectivity recovers to open setup on a fresh installation.
-No signup or application rate limiter is included.
+Signup remains deferred to #19; application login lockout is enabled in both modes.
 
 CLI bootstrap remains the alternative:
 
@@ -273,9 +327,9 @@ former **0122** assumption was not a live measurement. The authorized release
 **0139** and is now the `current` release. The API, declaration worker, invoice
 worker and existing database were healthy after promotion; public HTTPS
 `/api/health/ready` returned 200 with verified TLS. The prepared code now targets
-**0141**; this does not change the recorded live release or authorize deployment.
-The release gate accepts only measured **0028 → 0141**, **0122 → 0141**,
-**0139 → 0141**, **0140 → 0141** (accepted source), or **0141 → 0141**. Unknown,
+**0142**; this does not change the recorded live release or authorize deployment.
+The release gate accepts only measured **0028 → 0142**, **0122 → 0142**,
+**0139 → 0142**, **0140 → 0142**, **0141 → 0142** (accepted sources), or **0142 → 0142**. Unknown,
 missing, multiple or intermediate revisions fail before stopping writers or
 migrating. Historical feature notes below describe earlier boundaries; their
 statements about an unchanged helper or an inactive alpha are superseded by
@@ -748,8 +802,8 @@ Credential rotation is a separate operation with workers paused.
 | Dedicated human-review commands in API | `app_review` / `HV_DATABASE_URL_REVIEW` | Separate pool, no ordinary-role fallback |
 | One-shot migration/bootstrap | Privileged ops credentials only | Never injected into app/worker runtime |
 
-Before downtime, the new image checks its single head **0141**, the exact linear
-0029–0141 chain, the measured single DB revision and the isolated login/role
+Before downtime, the new image checks its single head **0142**, the exact linear
+0029–0142 chain, the measured single DB revision and the isolated login/role
 membership, ownership and schema/ACL prerequisites. Disposable non-consuming
 probes test each actual API/review/worker credential. The captured previous image
 must have exactly the measured DB head and every previous runtime must have the
@@ -760,11 +814,11 @@ The helper requires an existing `current` release and API container. Fresh
 installation is a separate procedure; this helper no longer initializes an empty
 DB. Each source revision is accepted only when actually measured.
 
-### Migration compatibility: 0029–0141
+### Migration compatibility: 0029–0142
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0141 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0142 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -773,13 +827,14 @@ DB. Each source revision is accepted only when actually measured.
 | 0136–0137 | Adds default-active bank/vendor lifecycle and nullable property facts plus stricter reference triggers and read-only deletion-reference functions. Non-default lifecycle/property facts prevent downgrade. |
 | 0138–0139 | Adds default-zero session generation and versioned auth functions, then grants only session validation to `app_review`. Positive generations block downgrade. An older runtime's unversioned auth does not enforce the new invalidations: **automatic 0122 runtime restoration on the new schema is unsafe**. |
 | Parent references (accepted source 0140) | Replaces client-selected parent references with organization-bound composite foreign keys. Validates pending deferred checks and rejects existing invalid references without repair before replacing constraints. Adds a boolean-only, tenant-bound property existence check for scoped financial creation. Downgrade restores the original constraints and removes that check; an older runtime is not approved on this schema. |
-| 0141 | Adds the private singleton setup-token table and a token-gated, serialized first-organization function. Removes direct organization INSERT from app_rw; the migrator CLI shares the creation SQL. A populated token table blocks downgrade to avoid silently losing pending/consumed state. Existing organization/user/membership rows are preserved. |
+| Browser setup (accepted source 0141) | Adds the private singleton setup-token table and a token-gated, serialized first-organization function. Removes direct organization INSERT from app_rw; the migrator CLI shares the creation SQL. A populated token table blocks downgrade to avoid silently losing pending/consumed state. Existing organization/user/membership rows are preserved. |
+| 0142 | Adds global authentication throttle rows containing only scoped key hashes, failure windows, lockout expiry and escalation history, with narrow runtime DML. No existing rows or grants change. A populated table blocks downgrade to avoid losing lockouts. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0141 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0141, 0139→0141 and accepted-source 0140→0141 rehearsals also
+0028→0142 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0142, 0139→0142 and accepted-source 0140→0142 and 0141→0142 rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT revocation;
 it does not prove live data validity or cross-version runtime compatibility.
 
@@ -806,9 +861,9 @@ or error logs. These host-local backups do not provide off-host disaster recover
 retention/off-host storage needs an operator decision before relying on it.
 
 Before migration, a failure can restart the captured API, then only the workers
-that previously existed, after rechecking the unchanged schema. On 0141→0141,
-the helper skips migration and may similarly restore the prior 0141 runtime.
-Once an older-to-0141 migration is attempted, any failure leaves `current` unchanged
+that previously existed, after rechecking the unchanged schema. On 0142→0142,
+the helper skips migration and may similarly restore the prior 0142 runtime.
+Once an older-to-0142 migration is attempted, any failure leaves `current` unchanged
 and stops only provably owned new runtime containers. It reports
 `MAINTENANCE REQUIRED` and keeps old writers stopped, even if the migration may
 have rolled back. Unknown ownership or failed stops also prohibit automatic
@@ -936,7 +991,7 @@ then the existing public TLS/security-header/session/login/traversal/upload-limi
 smoke. `current` changes atomically only after every gate succeeds; the previous
 pointer is persisted first. On failure the recovery policy above applies, with
 no automatic downgrade or volume deletion. The disposable CI verifier checks
-0141 and the invoice worker too; its execution remains separately authorized.
+0142 and the invoice worker too; its execution remains separately authorized.
 
 ## Operation and rollback
 
@@ -964,7 +1019,7 @@ There is no automatic rollback after promotion. Before promotion, automatic
 runtime restoration requires the unchanged schema, matching previous image head,
 and successful cleanup of all owned replacement consumers. A cross-schema attempt
 requires maintenance/recovery as described above; never blindly start the 0122
-image on 0141. The same compatibility requirement applies to a manual rollback.
+image on 0142. The same compatibility requirement applies to a manual rollback.
 
 ## Optional GitLab deploy
 
