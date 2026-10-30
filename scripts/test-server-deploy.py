@@ -361,5 +361,188 @@ class BackupTests(ServerCase):
             self.assertTrue((backups / name).exists(), name)
 
 
+class DeployTests(ServerCase):
+    TAG = "v1.2.3"
+
+    def setUp(self):
+        super().setUp()
+        self.install_config()
+        self.before = self.config.read_bytes()
+
+    def deploy(self, *args, **env):
+        return self.run_script(DEPLOY, *(args or (self.TAG,)), **env)
+
+    def log_files(self):
+        return sorted((self.srv / "logs").glob("deploy-*.log"))
+
+    def assert_untouched(self):
+        self.assertEqual(self.config.read_bytes(), self.before)
+        self.assertEqual(list((self.srv / "backups").iterdir()), [])
+
+    def test_exactly_one_strict_release_tag_is_accepted(self):
+        for args in [(), ("",), (self.TAG, "extra"), ("v1; id",), ("v1.2.3;id",), ("v1.2.3 v1.2.4",), ("v1.2",),
+                     ("latest",), ("1.2.3",), ("v1.2.3-",), ("v1.2.3\nfoo",), ("../v1.2.3",), ("-v1.2.3",),
+                     ("v1.2.3-rc 1",), ("v1.2.3$(id)",), ("v1.2.3`id`",), ("V1.2.3",)]:
+            with self.subTest(args=args):
+                # The tag comes from the arguments only, never from SSH_ORIGINAL_COMMAND.
+                result = self.run_script(DEPLOY, *args, SSH_ORIGINAL_COMMAND=self.TAG)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("Usage: deploy-server.sh vX.Y.Z", result.stderr)
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.log_files(), [])
+        self.assert_untouched()
+
+    def test_valid_tags_with_and_without_prerelease_suffix_run(self):
+        for tag in (self.TAG, "v10.20.30", "v1.2.3-rc.1"):
+            with self.subTest(tag=tag):
+                result = self.deploy(tag)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                pulls = [c["args"] for c in self.calls("docker") if c["args"][0] == "pull"]
+                self.assertIn(["pull", f"ghcr.io/itskeks/verwalino:{tag}"], pulls)
+
+    def test_every_git_call_trusts_the_checkout_explicitly(self):
+        self.assertEqual(self.deploy().returncode, 0)
+        calls = self.calls("git")
+        self.assertGreaterEqual(len(calls), 6)
+        for call in calls:
+            self.assertEqual(call["args"][:4], ["-c", f"safe.directory={ROOT}", "-C", str(ROOT)], call)
+
+    def test_release_is_fetched_pulled_backed_up_pinned_migrated_and_checked_in_order(self):
+        result = self.deploy()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        git = [c["args"][4:] for c in self.calls("git")]
+        self.assertIn(["fetch", "--tags", "origin"], git)
+        self.assertIn(["checkout", "--quiet", "--detach", f"refs/tags/{self.TAG}"], git)
+        self.assertLess(git.index(["fetch", "--tags", "origin"]), git.index(["checkout", "--quiet", "--detach", f"refs/tags/{self.TAG}"]))
+
+        sequence = [(c["tool"], c["args"]) for c in self.calls() if c["tool"] in ("git", "docker", "curl")]
+        def at(tool, *needles):
+            for index, (name, args) in enumerate(sequence):
+                if name == tool and all(n in args for n in needles):
+                    return index
+            self.fail(f"missing {tool} {needles}")
+        checkout = at("git", "checkout")
+        pull = at("docker", "pull", f"ghcr.io/itskeks/verwalino:{self.TAG}")
+        dump = at("docker", "pg_dump")
+        documents = at("docker", "run", "tar")
+        installer_pull = at("docker", "compose", "pull", "app")
+        stop_app = at("docker", "compose", "stop", "app")
+        migrate = at("docker", "compose", "run", "migrate")
+        up_app = at("docker", "compose", "up", "app")
+        health = at("curl")
+        self.assertLess(checkout, pull)
+        self.assertLess(pull, dump)
+        self.assertLess(dump, documents)
+        self.assertLess(documents, installer_pull)
+        self.assertLess(installer_pull, stop_app)
+        self.assertLess(stop_app, migrate)
+        self.assertLess(migrate, up_app)
+        self.assertLess(up_app, health)
+        self.assertEqual(self.calls("curl")[0]["args"][-1], "http://127.0.0.1:18080/api/health/ready")
+
+        # The new digest is pinned after the backup copied the old config; nothing else changed.
+        values = self.config_values()
+        self.assertEqual(values["VERWALINO_IMAGE"], NEW_DIGEST)
+        self.assertEqual({k: v for k, v in values.items() if k != "VERWALINO_IMAGE"},
+                         {k: v for k, v in (line.split("=", 1) for line in self.before.decode().splitlines()
+                                            if line and not line.startswith("#")) if k != "VERWALINO_IMAGE"})
+        self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o600)
+        [backup] = (self.srv / "backups").iterdir()
+        self.assertTrue(backup.name.endswith(f"-pre-{self.TAG}"))
+        self.assertEqual((backup / "config.env").read_bytes(), self.before)
+        for call in self.calls("docker"):
+            if call["args"][0] == "compose":
+                self.assertEqual(call["args"][1:3], ["--project-name", "verwalino"])
+
+        [log] = self.log_files()
+        self.assertIn(f"deploy {self.TAG} OK: {NEW_DIGEST}", log.read_text())
+        self.assertEqual(log.read_text(), result.stdout)
+        self.assertFalse((self.srv / "logs/.deploy.lock").exists())
+        self.assertFalse((self.srv / "config/.env.selfhost.lock").exists())
+
+    def test_missing_tag_or_tag_outside_main_or_dirty_checkout_stops_before_any_change(self):
+        for env, message in [({"FAKE_MISSING_TAG": "1"}, "does not exist"), ({"FAKE_NOT_ON_MAIN": "1"}, "not on main"),
+                             ({"FAKE_DIRTY": " M scripts/self-host.sh\n"}, "local changes")]:
+            with self.subTest(env=env):
+                result = self.deploy(**env)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(message, result.stdout)
+                self.assertFalse(any(c["args"][:1] in (["pull"], ["compose"]) for c in self.calls("docker")))
+                self.assertFalse(any("checkout" in c["args"] for c in self.calls("git")))
+                self.assert_untouched()
+                self.assertFalse((self.srv / "logs/.deploy.lock").exists())
+
+    def test_failed_pull_or_missing_digest_stops_before_the_backup(self):
+        for env in [{"FAKE_FAIL": "pull"}, {"FAKE_NO_DIGEST": "1"}]:
+            with self.subTest(env=env):
+                result = self.deploy(**env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(any("pg_dump" in c["args"] for c in self.calls("docker")))
+                self.assert_untouched()
+
+    def test_failed_backup_stops_before_config_change_and_installer(self):
+        result = self.deploy(FAKE_FAIL="pg_dump")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('FAILED at step "backup"', result.stdout)
+        self.assertFalse(any(c["args"][0] == "compose" for c in self.calls("docker")))
+        self.assert_untouched()
+
+    def test_failed_migration_says_there_is_no_rollback_and_skips_the_health_check(self):
+        result = self.deploy(FAKE_FAIL_COMPOSE="migrate")
+        self.assertEqual(result.returncode, 17)
+        self.assertIn('FAILED at step "install (pull, migrate, restart)"', result.stdout)
+        self.assertIn("no automatic rollback", result.stdout)
+        self.assertIn(f"image {OLD_DIGEST}", result.stdout)
+        self.assertIn("#76", result.stdout)
+        self.assertEqual(self.calls("curl"), [])
+        self.assertFalse(any(c["args"][:2] == ["compose", "--project-name"] and "up" in c["args"] and c["args"][-1] == "app"
+                             for c in self.calls("docker")))
+        self.assertFalse((self.srv / "logs/.deploy.lock").exists())
+        [log] = self.log_files()
+        self.assertIn("no automatic rollback", log.read_text())
+
+    def test_health_check_polls_every_three_seconds_until_ready(self):
+        result = self.deploy(FAKE_HEALTH_FAILS="2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.calls("curl")), 3)
+        self.assertEqual([c["args"] for c in self.calls("sleep")], [["3"], ["3"]])
+        self.assertIn("app ready after 3 check(s)", result.stdout)
+
+    def test_unready_app_prints_100_log_lines_and_fails(self):
+        result = self.deploy(FAKE_HEALTH="never")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(len(self.calls("curl")), 24)
+        self.assertEqual(len(self.calls("sleep")), 23, "at most about 120 s in total")
+        self.assertIn(["logs", "--tail", "100", "appcontainer"], [c["args"] for c in self.calls("docker")])
+        self.assertIn("FAKE-APP-LOG line 3", result.stdout)
+        self.assertIn('FAILED at step "health check"', result.stdout)
+        self.assertIn("no automatic rollback", result.stdout)
+        self.assertIn("FAKE-APP-LOG line 3", self.log_files()[0].read_text())
+
+    def test_one_time_setup_token_never_reaches_the_output_or_the_log(self):
+        result = self.deploy(FAKE_ORGANIZATION_COUNT="0")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Setup token: [hidden by deploy-server.sh]", result.stdout)
+        for text in (result.stdout, result.stderr, self.log_files()[0].read_text()):
+            self.assertIsNone(re.search(r"Setup token: [a-f0-9]{64}", text))
+
+    def test_running_deploy_or_unusable_config_is_refused_without_touching_anything(self):
+        (self.srv / "logs/.deploy.lock").mkdir()
+        result = self.deploy()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("another deploy is running", result.stdout)
+        self.assertTrue((self.srv / "logs/.deploy.lock").exists(), "a foreign lock must stay")
+        (self.srv / "logs/.deploy.lock").rmdir()
+
+        target = self.base / "elsewhere"
+        target.write_bytes(self.before)
+        self.config.unlink()
+        self.config.symlink_to(target)
+        result = self.deploy()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("must be a regular file", result.stdout)
+        self.assertEqual(self.calls(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
