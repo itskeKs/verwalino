@@ -1,0 +1,36 @@
+---
+description: Binding product decisions of the owner
+paths:
+  - "backend/app/engine/**"
+  - "backend/app/services/**"
+  - "backend/app/models/**"
+  - "backend/migrations/**"
+  - "frontend/src/pages/**"
+---
+
+# Product decisions
+
+Decided by the owner in the issues named; a decision wins over code that still implements an
+older provisional value. Such code is debt with its own issue; do not change it in passing and do
+not re-open the question.
+
+- Management types: rental management, WEG management for third parties and SEV all run in
+  production, for the owner's instance and for hosted organizations (#27).
+- Advance payments: two per lease, operating costs (Betriebskosten) and heating costs
+  (Heizkosten); heating may be 0 (#28).
+- Settlement period: configurable per property, any twelve months (§ 556 Abs. 3 BGB), calendar
+  year as default (#29).
+- Dunning: fees configurable per organization, defaults 0 / 2.50 / 2.50 € per level. Default
+  interest (§ 288 BGB) is optional and computed automatically when enabled: 5 percentage points
+  above the base rate for residential tenants, 9 for commercial tenants who are not consumers (#30).
+- Deposits: up to three instalments (§ 551 Abs. 2 BGB) shown as open items in the tenant ledger.
+  Interest from the deposit account is recorded as a booking and included in the refund; the app
+  does not calculate it (#31).
+- VAT: a per-unit flag "VAT-liable letting" (§ 9 UStG); rent, advances and the operating cost
+  statement show VAT for such units. Input VAT apportionment is a later issue (#32).
+- Access protection: the per-staff, per-property source access protection is to be activated
+  (no permanent preparation mode) and its admin UI becomes one coherent permissions area instead
+  of five menu items (#33; implementation #73).
+- Tenant portal: planned right after the hosted launch, not last (#33, #41).
+- Roadmap order and open domain work: `docs/roadmap.md`; external reference software in
+  `docs/domain-reference.md` defines scope and flows, never design.

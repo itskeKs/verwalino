@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -14,7 +15,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HOOK = ROOT / ".codex/hooks/attach_rules.py"
 TOPICS = {"language", "migrations", "api-layer", "engine", "gobd",
-          "frontend-ui", "testing", "selfhost", "docs"}
+          "frontend-ui", "testing", "selfhost", "docs",
+          "architecture", "domain", "ai-pipeline"}
 
 
 def read_rule(path: Path) -> tuple[dict, str]:
@@ -103,6 +105,12 @@ class AgentRuleTests(unittest.TestCase):
                 if not right["alwaysApply"]:
                     self.assertTrue(right["globs"])
 
+    def test_claude_md_is_a_symlink_to_the_common_policy(self):
+        link = ROOT / "CLAUDE.md"
+        self.assertTrue(link.is_symlink(), "CLAUDE.md must be a symlink, not a copy")
+        self.assertEqual(os.readlink(link), "AGENTS.md")
+        self.assertEqual(link.read_text(encoding="utf-8"), (ROOT / "AGENTS.md").read_text(encoding="utf-8"))
+
     def test_hooks_configuration_wires_both_events_to_the_adapter(self):
         config = json.loads((ROOT / ".codex/hooks.json").read_text())
         self.assertEqual(set(config["hooks"]), {"SessionStart", "PreToolUse"})
@@ -154,6 +162,11 @@ class AgentRuleTests(unittest.TestCase):
             "scripts/test_agent_rules.py": "testing",
             "infra/docker-compose.declaration-test.yml": "selfhost",
             "scripts/self-host.sh": "selfhost",
+            "backend/app/main.py": "architecture",
+            "backend/app/services/settlement_service.py": "domain",
+            "frontend/src/pages/DashboardPage.tsx": "domain",
+            "backend/app/declarations/pipeline.py": "ai-pipeline",
+            "backend/app/core/invoice_ocr.py": "ai-pipeline",
         }
         for path, topic in cases.items():
             with self.subTest(path=path):
@@ -168,7 +181,7 @@ class AgentRuleTests(unittest.TestCase):
                 patch = f"*** Begin Patch\n*** {operation} File: backend/migrations/versions/x.py\n*** Move to: frontend/src/x.tsx\n*** End Patch"
                 payload = {"hook_event_name": "PreToolUse", "tool_name": "apply_patch",
                            "tool_input": patch}
-                self.assertEqual(self.attached_topics(payload), {"migrations", "frontend-ui"})
+                self.assertEqual(self.attached_topics(payload), {"migrations", "domain", "frontend-ui"})
 
     def test_structured_write_paths_accept_absolute_paths_inside_the_repo(self):
         payload = {"hook_event_name": "PreToolUse", "tool_name": "Write",
