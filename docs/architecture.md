@@ -701,6 +701,8 @@ An automated test that **prevents accidentally unprotected tables** (level-3 gat
 
 ### 7.4 The concrete isolation test (`test_tenant_isolation.py`) — core of the M0 exit
 
+Every client-supplied parent ID, including a parent changed by PATCH or PUT, is resolved through the session's organization-scoped repository or session before writing or checking overlaps/conflicts. Foreign and unknown parents return an identical 404 response, so neither existence nor an overlap is disclosed. Composite foreign keys `(organization_id, parent_id) → parent(organization_id, id)` enforce parent ownership as defence in depth, because PostgreSQL foreign-key checks bypass RLS. Migration 0140 rejects existing invalid references before replacing the affected constraints; it never repairs data silently.
+
 Setup (fixtures): test DB; **two organizations** `org_a`, `org_b`; one user with a role each; one `management_mandate` each; one sample row each in at least one tenant table. Two API clients, each logged in as a user of the respective org (real login flow, real tenant context).
 
 Minimum assertions:
