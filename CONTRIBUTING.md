@@ -39,7 +39,7 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
 
 `make help` lists every target.
 
-- **`make test`** — the whole run before a merge: agent-rule and installer contracts, the backend
+- **`make test`** — the whole run before a merge: agent-rule, scenario-filing and installer contracts, the backend
   suite (including the BDD scenarios), frontend vitest and typecheck. Needs the test database.
 - **`make lint`** — ruff over the backend, eslint and `tsc` over the frontend.
 - **`make test-bdd`** — API scenarios in `features/` ([features/README.md](features/README.md)).
@@ -49,6 +49,8 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   Markdown and failure artifacts in `report/`. See [reports and external targets](features/README.md#scenario-reports-and-nightly-runs).
 - **`make test-agent-rules`** — paired bodies/activation and Codex hook contracts; Python stdlib,
   no database or backend dependencies. Run after changing rules or the adapter.
+- **`make test-scenario-issues`** — scenario failure fingerprints, deduplication and regression
+  filing; Python stdlib, fake GitHub, no network or database.
 - **`make docs-check`** — relative links and images in every Markdown file outside `docs/archive/`.
 - While iterating, run one file: `cd backend && uv run pytest tests/test_x.py -k name`,
   `cd frontend && npm test -- src/pages/X.test.tsx`; `make test-backend PYTEST_ARGS="…"` does the
@@ -105,8 +107,9 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 | `backend/migrations/versions/` | Alembic migrations; committed ones are never edited |
 | `backend/tests/` | unit and API tests; `bdd/` binds scenarios, `bdd/browser.py` owns browser fixtures, `bdd/report.py` writes reports, `bdd/steps/browser_*.py` shares browser steps |
 | `features/` | API and `@browser` Gherkin scenarios (executable specs) |
-| `.github/workflows/nightly-scenarios.yaml` | nightly self-host scenarios and 90-day report artifacts; hosted mode pending #18 |
+| `.github/workflows/nightly-scenarios.yaml` | nightly self-host scenarios, 90-day report artifacts and deduplicated failure issues; hosted mode pending #18 |
 | `frontend/src/` | `pages/`, `components/`, `api/`, `lib/` |
 | `scripts/` | dev, self-host, deploy, checks; `acceptance/` holds legacy browser scripts (being migrated, #54) |
+| `scripts/scenario_issues.py`, `scripts/test-scenario-issues.py` | stdlib report consumer and fake-GitHub filing contracts; `@known-flaky` failures are excluded |
 | `DESIGN.md` | frontend design contract: tokens, layout, components, states, copy and formats; screenshots in `docs/assets/design/` |
 | `docs/` | architecture, domain pages (`m*.md`), ADRs, operations, roadmap, feature status |
