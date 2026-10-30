@@ -142,14 +142,7 @@ jobs:
         id: bundle
         env:
           DIGEST: ${{ needs.release.outputs.digest }}
-        run: |
-          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
-          mkdir release-assets
-          cp install.sh scripts/self-host.sh infra/docker-compose.yml infra/Caddyfile infra/db/prod-init.sh release-assets/
-          cp .env.example release-assets/env.example
-          printf '%s\n' "$DIGEST" > release-assets/IMAGE_DIGEST
-          cd release-assets
-          sha256sum install.sh self-host.sh docker-compose.yml Caddyfile prod-init.sh env.example IMAGE_DIGEST > SHA256SUMS
+        run: bash scripts/build-release-bundle.sh release-assets
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v4

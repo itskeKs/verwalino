@@ -15,6 +15,7 @@ history). Update this page in the same PR whenever a feature's status changes.
 | --- | --- | --- | --- |
 | Browser first-run setup | n/a | ✅ one-time installer token, 24-hour expiry, atomic first organization/admin; real-stack acceptance pending | `api/setup.py`, `pages/SetupPage.tsx`, `scripts/self-host.sh`, issue #8 |
 | One-command release installation | n/a | 🟡 installer and signed release-bundle workflow prepared; first release assets and fresh-VM setup/login/restart pending | `install.sh`, `.github/workflows/release-image.yaml`, [guide](../DEPLOY.md#install-in-one-command), issue #12 |
+| Install matrix | n/a | 🟡 four checkout-install scenarios and nightly/tag workflow prepared; first real matrix run, Debian, update and backup/restore pending; arm64 opt-in | `scripts/install-scenarios.sh`, `.github/workflows/install-matrix.yaml`, [coverage and reports](../DEPLOY.md#install-matrix), issue #13 |
 | Login/logout | yes | ✅ | `api/auth.py`, `pages/LoginPage.tsx` |
 | Create users | yes | ✅ admin-only form and user management | `api/users.py`, `pages/UsersPage.tsx`, T06, T57 |
 | Roles admin/clerk/read-only | yes | ✅ admin can change role and deactivate; write buttons hidden for read-only | `core/rbac.py` (`OWNER_ADMIN`, `CLERK`, `READ_ONLY`), T57 |

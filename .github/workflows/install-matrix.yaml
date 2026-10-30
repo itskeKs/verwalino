@@ -1,0 +1,119 @@
+name: Install matrix
+
+on:
+  schedule:
+    - cron: "0 4 * * *" # 04:00 UTC, after the scenario nightly.
+  workflow_dispatch:
+  push:
+    tags: ["v*"] # Independent checkout build after the tag; no release-job dependency.
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  install:
+    name: Install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+        # Conditional slot: if vars.INSTALL_MATRIX_ARM64 == 'true'. Using an
+        # include expression avoids allocating a paid private-repository runner
+        # when disabled. This builds natively, without QEMU.
+        include: ${{ fromJSON(vars.INSTALL_MATRIX_ARM64 == 'true' && '[{"os":"ubuntu-24.04-arm"}]' || '[]') }}
+        # Deferred: - os: debian-12, container: debian:12
+        # A nested Docker daemon needs privileged mode. Sharing the Ubuntu host
+        # socket instead would test Ubuntu's daemon, bind mounts and loopback,
+        # not Debian host installation/readiness; no privileged containers here.
+        # TODO (#9/#10; PRs #76/#57): update N-1 -> N; backup/restore round trip.
+    env:
+      IMAGE: ghcr.io/itskeks/verwalino
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Check runner prerequisites and name report
+        id: report
+        run: |
+          (( BASH_VERSINFO[0] >= 5 ))
+          command -v docker python3 openssl curl nc
+          export DOCKER_CONFIG="$RUNNER_TEMP/install-docker"
+          printf 'DOCKER_CONFIG=%s\n' "$DOCKER_CONFIG" >> "$GITHUB_ENV"
+          mkdir -p "$DOCKER_CONFIG"
+          docker info > /dev/null
+          docker compose version
+          printf 'date=%s\n' "$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Build native checkout image
+        run: docker build --tag "$IMAGE:install-matrix" .
+
+      # install.sh pins ghcr.io/itskeks/verwalino and start always pulls it.
+      # Serve the checkout image under that exact name on this disposable VM.
+      # Build first: the Dockerfile itself pulls uv from the real GHCR.
+      # Nothing is published to GHCR, and no registry credentials are supplied.
+      - name: Serve checkout image in runner-local TLS registry and assemble bundle
+        run: |
+          registry_dir="$RUNNER_TEMP/install-registry"
+          mkdir "$registry_dir"
+          openssl req -newkey rsa:2048 -nodes -x509 -days 1 \
+            -subj '/CN=ghcr.io' -addext 'subjectAltName=DNS:ghcr.io' \
+            -keyout "$registry_dir/domain.key" -out "$registry_dir/domain.crt"
+          docker pull registry:3
+          docker run --detach --name install-matrix-registry \
+            --publish 127.0.0.1:443:5000 \
+            --mount "type=bind,src=$registry_dir,dst=/certs,readonly" \
+            --env REGISTRY_HTTP_TLS_CERTIFICATE=/certs/domain.crt \
+            --env REGISTRY_HTTP_TLS_KEY=/certs/domain.key registry:3
+          sudo mkdir -p /etc/docker/certs.d/ghcr.io
+          sudo cp "$registry_dir/domain.crt" /etc/docker/certs.d/ghcr.io/ca.crt
+          printf '127.0.0.1 ghcr.io # install-matrix-registry\n' | sudo tee -a /etc/hosts
+          curl --fail --silent --show-error --max-time 5 --retry 10 --retry-connrefused \
+            --retry-delay 1 --cacert "$registry_dir/domain.crt" https://ghcr.io/v2/
+          docker push "$IMAGE:install-matrix"
+          reference=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:install-matrix")
+          export DIGEST="${reference##*@}"
+          bash scripts/build-release-bundle.sh "$RUNNER_TEMP/release-assets"
+          # Deliberately unsigned checkout assets; the installer still checks all
+          # payload hashes. Real release signing remains in release-image.yaml.
+          printf '{}\n' > "$RUNNER_TEMP/release-assets/SHA256SUMS.sigstore.json"
+
+      - name: Run install scenarios
+        run: |
+          bash scripts/install-scenarios.sh --version v0.0.0 \
+            --bundle "$RUNNER_TEMP/release-assets" --report report
+
+      # TODO (#15, PR #89): let the reporter consume report/scenarios.json and
+      # these artifacts with run/OS provenance once scripts/scenario_issues.py
+      # is available. Issue filing needs a separately authorized write context;
+      # this workflow intentionally has contents: read only.
+      - name: Publish scenario summary
+        if: always()
+        run: |
+          if [[ -f report/summary.md ]]; then
+            cat report/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload scenario report and failure artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-${{ matrix.os }}-${{ steps.report.outputs.date }}
+          path: report/
+          retention-days: 90
+
+      - name: Remove runner-local registry and trust override
+        if: always()
+        run: |
+          if docker container inspect install-matrix-registry > /dev/null 2>&1; then
+            docker rm --force install-matrix-registry
+          fi
+          sudo sed -i '/# install-matrix-registry$/d' /etc/hosts
+          sudo rm -f /etc/docker/certs.d/ghcr.io/ca.crt
