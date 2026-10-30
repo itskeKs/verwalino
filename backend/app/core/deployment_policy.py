@@ -7,6 +7,22 @@ from app.core.config import DeploymentMode, settings
 
 
 @dataclass(frozen=True)
+class RateLimitRules:
+    ip_failures: int
+    email_failures: int
+    window_minutes: int
+    lockout_minutes: int
+    lockout_multiplier: int
+    max_lockout_minutes: int
+
+
+_RATE_LIMIT_RULES = {
+    "relaxed": RateLimitRules(20, 10, 15, 15, 1, 15),
+    "strict": RateLimitRules(10, 5, 15, 30, 2, 1440),
+}
+
+
+@dataclass(frozen=True)
 class DeploymentPolicy:
     # Public identity for /api/meta; never infer the mode from individual flags.
     deployment_mode: DeploymentMode
@@ -20,7 +36,7 @@ class DeploymentPolicy:
     admin_cli_bootstrap_allowed: bool
     # consumed by #11 (doctor organization-count warning); isolation always applies.
     multi_organization_expected: bool
-    # consumed by #20; this does not install or enable a rate limiter.
+    # Login and future signup share the selected rules, with separate scopes.
     rate_limit_profile: Literal["relaxed", "strict"]
     # consumed by #22; this does not enforce quotas yet.
     quota_enforcement: bool
@@ -28,6 +44,10 @@ class DeploymentPolicy:
     support_url_default: str
     # consumed by #24/#26; legal pages are not part of this switch.
     show_hosted_legal_links: bool
+
+    @property
+    def rate_limit_rules(self) -> RateLimitRules:
+        return _RATE_LIMIT_RULES[self.rate_limit_profile]
 
     @classmethod
     def for_mode(cls, mode: DeploymentMode) -> "DeploymentPolicy":

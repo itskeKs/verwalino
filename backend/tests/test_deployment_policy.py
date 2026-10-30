@@ -66,7 +66,7 @@ def test_invalid_mode_is_refused_with_the_allowed_values(monkeypatch, mode):
 def test_architecture_documents_the_complete_policy_table():
     from dataclasses import fields
     from app.core.config import DeploymentMode
-    from app.core.deployment_policy import DeploymentPolicy
+    from app.core.deployment_policy import DeploymentPolicy, RateLimitRules
 
     policies = [DeploymentPolicy.for_mode(mode) for mode in DeploymentMode]
 
@@ -83,8 +83,29 @@ def test_architecture_documents_the_complete_policy_table():
             ]) + " |"
             for field in fields(DeploymentPolicy)
         ),
+        *(
+            "| " + " | ".join([
+                f"`rate_limit_rules.{field.name}`",
+                *(f"`{display(getattr(policy.rate_limit_rules, field.name))}`" for policy in policies),
+            ]) + " |"
+            for field in fields(RateLimitRules)
+        ),
     ]
     architecture = (Path(__file__).resolve().parents[2] / "docs/architecture.md").read_text()
     section = architecture.split("## Deployment modes\n", 1)[1].split("\n## ", 1)[0]
     actual = [line for line in section.splitlines() if line.startswith("|")]
     assert actual == expected
+
+
+@pytest.mark.parametrize("mode,expected", [
+    ("selfhost", (20, 10, 15, 15, 1, 15)),
+    ("hosted", (10, 5, 15, 30, 2, 1440)),
+])
+def test_rate_limit_rules_match_the_selected_profile(mode, expected):
+    from dataclasses import astuple
+    from app.core.deployment_policy import DeploymentPolicy
+
+    rules = DeploymentPolicy.for_mode(Settings(_env_file=None, deployment_mode=mode).deployment_mode).rate_limit_rules
+    assert astuple(rules) == expected
+    with pytest.raises(FrozenInstanceError):
+        rules.ip_failures = 1

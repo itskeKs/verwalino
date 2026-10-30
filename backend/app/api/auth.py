@@ -21,6 +21,7 @@ from app.core.security import (
     verify_password,
 )
 from app.core.tenant import AuthContext, get_current_user
+from app.core.rate_limit import ThrottleRequest, throttled
 from app.models.user import User
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -77,16 +78,28 @@ def _set_session_cookie(response: Response, token: str) -> None:
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(body: LoginRequest, response: Response):
+async def login(body: LoginRequest, response: Response, throttle: ThrottleRequest = Depends(throttled("login"))):
     """Authenticate with the narrow app_rw lookup function only."""
     async with get_session_factory()() as session:
         async with session.begin():
-            principal = await lookup_login_principal(session, body.email)
+            attempt = await throttle.check(session, body.email)
+            principal = None
+            authenticated = False
+            if attempt.allowed:
+                principal = await lookup_login_principal(session, body.email)
+                # Always verify one Argon2 hash for an unlocked attempt.
+                password_hash = principal.password_hash if principal is not None else _DUMMY_PASSWORD_HASH
+                password_matches = verify_password(body.password, password_hash)
+                authenticated = bool(principal is not None and password_matches and principal.is_active
+                                     and principal.role in {"OWNER_ADMIN", "CLERK", "READ_ONLY"})
+            if authenticated:
+                await attempt.reset()
+            else:
+                await attempt.record_failure()
 
-    # Always verify one Argon2 hash so unknown identities have no cheap path.
-    password_hash = principal.password_hash if principal is not None else _DUMMY_PASSWORD_HASH
-    password_matches = verify_password(body.password, password_hash)
-    if principal is None or not password_matches or not principal.is_active or principal.role not in {"OWNER_ADMIN", "CLERK", "READ_ONLY"}:
+    # Raise only after committing failure state; an exception inside begin()
+    # would roll back every increment and make the limiter ineffective.
+    if not authenticated:
         raise _invalid_credentials()
 
     token = create_session_token(principal.user_id, principal.organization_id, principal.session_version)
