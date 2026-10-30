@@ -933,7 +933,7 @@ def test_throttle_migration_roundtrip_preserves_schema_and_refuses_retained_stat
     from sqlalchemy.exc import DBAPIError
     from tests.conftest import MIGRATOR_SYNC_URL
 
-    migration = ScriptDirectory("migrations").get_revision("0142").module
+    migration = ScriptDirectory("migrations").get_revision("0142").module  # accepted source under test
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.connect() as connection, connection.begin() as transaction:

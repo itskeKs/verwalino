@@ -11,10 +11,10 @@ explicitly to the container. Changing it requires restarting the backend. The pu
 Both modes use the same image, authentication and organization isolation. `selfhost`
 offers token-gated first-run setup on an empty database. `hosted` suppresses setup:
 `GET /api/setup` reports `required: false`, every non-GET request returns the closed
-setup 404, and `/setup` redirects to login. Until signup (#19) exists, operators use
-the existing admin CLI to bootstrap hosted organizations. Selecting hosted mode does
-not implement signup, quotas, password reset or legal pages. Login uses the
-selected rate-limit profile described below. The
+setup 404, and `/setup` redirects to login. Hosted mode offers public registration
+at `/signup`; confirmation creates the organization and signs its owner in. The
+admin CLI remains available. Quotas, password reset and legal pages remain deferred.
+Login uses the selected rate-limit profile described below. The
 [policy table](docs/architecture.md#deployment-modes) records current readers and
 future consumers; error tracking's environment default is reserved for #16.
 
@@ -23,6 +23,37 @@ setup-token flow. Its manifest relies on the `selfhost` default; it does not for
 `HV_DEPLOYMENT_MODE` from the caller or accept it in `.env.selfhost`. Its HTTP/HTTPS
 `VERWALINO_MODE` is a separate transport choice. Use a separately managed deployment
 to run hosted mode; do not use the portable installer to start a hosted service.
+
+## Hosted signup configuration
+
+For a separately managed hosted deployment, pass `HV_DEPLOYMENT_MODE=hosted`,
+`HV_PUBLIC_URL=https://your-public-host.example` and the SMTP settings described
+under [outbound mail](#optional-document-smtp-t47-no-deployment-authorization). `HV_PUBLIC_URL` is the public origin,
+without credentials, path, query or fragment; HTTPS is required except for loopback
+development. It is never inferred from request Host or forwarded headers. Keep
+`HV_ALLOWED_HOSTS` aligned with the public host. The ASGI startup check refuses
+hosted mode if this origin or valid SMTP configuration is missing. Selfhost needs
+neither setting for setup/login and returns unknown-route 404 for every signup
+API method before body parsing or database access.
+
+Confirmation links use `/signup/confirm?token=…`. The page asks for the chosen password and
+posts `{token, password}` on explicit confirmation; there is no GET API side effect. The browser removes it from the URL before the
+POST and uses a no-referrer policy. The application strips the server query scope
+for this page before the default Uvicorn access logger sees it; separately managed
+reverse proxies must also avoid recording confirmation query strings. Tokens contain 256 random bits; only SHA-256 hashes persist, and each
+link expires after 24 hours. Resending rotates the token and renews that lifetime,
+with one send at most every ten minutes across signup and resend. Pending requests
+cannot sign in. Confirmation creates the tenant and owner atomically and returns
+the normal session cookie. Existing addresses receive the identical generic 202
+without a new pending request or email. Password hashing/verification work is
+equivalent for allowed signup paths and SMTP runs only after the HTTP response.
+A changed duplicate form replaces pending credentials and invalidates earlier links,
+while preserving the send cooldown. Confirmation also requires the chosen password,
+so a resent link cannot activate a password anonymously substituted by someone else.
+SMTP failure keeps the pending request,
+returns the same response and permits retry after the cooldown; SMTP acceptance
+is not proof of recipient delivery. No test submits to real SMTP: the test compose
+has no Mailpit service, so the hosted scenario reuses the captured SMTP double.
 
 ## Login lockout and proxy trust
 
@@ -72,10 +103,12 @@ WHERE key_kind = 'ip'
 ```
 
 These deletes reset only the chosen key and its escalation history. Hashes are
-scope-specific; future signup (#19) will use separate `signup:` keys and the
+scope-specific; signup uses separate `signup:` keys and the
 shared limiter/honeypot helpers described in
 [auth hardening](docs/architecture.md#43-loginsession-approach-recommendation-decision).
-Signup and its hidden form field are not exposed by this release.
+Signup, resend and confirmation count attempts in that scope, including accepted
+submissions. Throttled signup/resend retain the generic 202; confirmation returns
+the generic 403. The hidden `website` field silently accepts bots without effects.
 
 ## Portable Docker first installation
 
@@ -176,7 +209,7 @@ receive 422. Leading/trailing spaces in the token and organization/admin names
 are trimmed; control characters in these fields and the admin email are rejected. If the initial
 setup-status request fails, login and signed-in pages remain available; reload
 after connectivity recovers to open setup on a fresh installation.
-Signup remains deferred to #19; application login lockout is enabled in both modes.
+Public signup is hosted-only; application login lockout is enabled in both modes.
 
 CLI bootstrap remains the alternative:
 
@@ -327,9 +360,9 @@ former **0122** assumption was not a live measurement. The authorized release
 **0139** and is now the `current` release. The API, declaration worker, invoice
 worker and existing database were healthy after promotion; public HTTPS
 `/api/health/ready` returned 200 with verified TLS. The prepared code now targets
-**0142**; this does not change the recorded live release or authorize deployment.
-The release gate accepts only measured **0028 → 0142**, **0122 → 0142**,
-**0139 → 0142**, **0140 → 0142**, **0141 → 0142** (accepted sources), or **0142 → 0142**. Unknown,
+**0143**; this does not change the recorded live release or authorize deployment.
+The release gate accepts only measured **0028 → 0143**, **0122 → 0143**,
+**0139 → 0143**, **0140 → 0143**, **0141 → 0143**, **0142 → 0143** (accepted sources), or **0143 → 0143**. Unknown,
 missing, multiple or intermediate revisions fail before stopping writers or
 migrating. Historical feature notes below describe earlier boundaries; their
 statements about an unchanged helper or an inactive alpha are superseded by
@@ -802,8 +835,8 @@ Credential rotation is a separate operation with workers paused.
 | Dedicated human-review commands in API | `app_review` / `HV_DATABASE_URL_REVIEW` | Separate pool, no ordinary-role fallback |
 | One-shot migration/bootstrap | Privileged ops credentials only | Never injected into app/worker runtime |
 
-Before downtime, the new image checks its single head **0142**, the exact linear
-0029–0142 chain, the measured single DB revision and the isolated login/role
+Before downtime, the new image checks its single head **0143**, the exact linear
+0029–0143 chain, the measured single DB revision and the isolated login/role
 membership, ownership and schema/ACL prerequisites. Disposable non-consuming
 probes test each actual API/review/worker credential. The captured previous image
 must have exactly the measured DB head and every previous runtime must have the
@@ -814,11 +847,11 @@ The helper requires an existing `current` release and API container. Fresh
 installation is a separate procedure; this helper no longer initializes an empty
 DB. Each source revision is accepted only when actually measured.
 
-### Migration compatibility: 0029–0142
+### Migration compatibility: 0029–0143
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0142 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0143 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -828,13 +861,14 @@ DB. Each source revision is accepted only when actually measured.
 | 0138–0139 | Adds default-zero session generation and versioned auth functions, then grants only session validation to `app_review`. Positive generations block downgrade. An older runtime's unversioned auth does not enforce the new invalidations: **automatic 0122 runtime restoration on the new schema is unsafe**. |
 | Parent references (accepted source 0140) | Replaces client-selected parent references with organization-bound composite foreign keys. Validates pending deferred checks and rejects existing invalid references without repair before replacing constraints. Adds a boolean-only, tenant-bound property existence check for scoped financial creation. Downgrade restores the original constraints and removes that check; an older runtime is not approved on this schema. |
 | Browser setup (accepted source 0141) | Adds the private singleton setup-token table and a token-gated, serialized first-organization function. Removes direct organization INSERT from app_rw; the migrator CLI shares the creation SQL. A populated token table blocks downgrade to avoid silently losing pending/consumed state. Existing organization/user/membership rows are preserved. |
-| 0142 | Adds global authentication throttle rows containing only scoped key hashes, failure windows, lockout expiry and escalation history, with narrow runtime DML. No existing rows or grants change. A populated table blocks downgrade to avoid losing lockouts. |
+| 0142 (accepted source) | Adds global authentication throttle rows containing only scoped key hashes, failure windows, lockout expiry and escalation history, with narrow runtime DML. No existing rows or grants change. A populated table blocks downgrade to avoid losing lockouts. |
+| 0143 | Adds global pending/confirmed signup email reservations, hashed tokens, and narrow registration/provisioning functions. Existing tenant rows and ACLs remain unchanged; provisioning shares the setup bootstrap. A populated signup table refuses downgrade. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0142 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0142, 0139→0142 and accepted-source 0140→0142 and 0141→0142 rehearsals also
+0028→0143 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0143, 0139→0143 and accepted-source 0140→0143, 0141→0143 and 0142→0143 rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT revocation;
 it does not prove live data validity or cross-version runtime compatibility.
 
@@ -861,9 +895,9 @@ or error logs. These host-local backups do not provide off-host disaster recover
 retention/off-host storage needs an operator decision before relying on it.
 
 Before migration, a failure can restart the captured API, then only the workers
-that previously existed, after rechecking the unchanged schema. On 0142→0142,
-the helper skips migration and may similarly restore the prior 0142 runtime.
-Once an older-to-0142 migration is attempted, any failure leaves `current` unchanged
+that previously existed, after rechecking the unchanged schema. On 0143→0143,
+the helper skips migration and may similarly restore the prior 0143 runtime.
+Once an older-to-0143 migration is attempted, any failure leaves `current` unchanged
 and stops only provably owned new runtime containers. It reports
 `MAINTENANCE REQUIRED` and keeps old writers stopped, even if the migration may
 have rolled back. Unknown ownership or failed stops also prohibit automatic
@@ -991,7 +1025,7 @@ then the existing public TLS/security-header/session/login/traversal/upload-limi
 smoke. `current` changes atomically only after every gate succeeds; the previous
 pointer is persisted first. On failure the recovery policy above applies, with
 no automatic downgrade or volume deletion. The disposable CI verifier checks
-0142 and the invoice worker too; its execution remains separately authorized.
+0143 and the invoice worker too; its execution remains separately authorized.
 
 ## Operation and rollback
 
@@ -1019,7 +1053,7 @@ There is no automatic rollback after promotion. Before promotion, automatic
 runtime restoration requires the unchanged schema, matching previous image head,
 and successful cleanup of all owned replacement consumers. A cross-schema attempt
 requires maintenance/recovery as described above; never blindly start the 0122
-image on 0142. The same compatibility requirement applies to a manual rollback.
+image on 0143. The same compatibility requirement applies to a manual rollback.
 
 ## Optional GitLab deploy
 
