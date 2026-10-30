@@ -6,13 +6,16 @@ image in two ways: self-hosted by anyone, and as a free hosted multi-organizatio
 Where it is going: [docs/roadmap.md](docs/roadmap.md). What exists: [docs/feature-status.md](docs/feature-status.md).
 Human-facing workflow and commands: [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Language
+The software is German; documentation, issues, code comments, tests and commits are English.
 
-- The **software is German**: UI texts, labels, routes shown to users, error messages, generated
-  PDFs, letters and emails.
-- **Everything else is English**: documentation, issues, code comments, docstrings, test names,
-  feature files and commit messages. When English text quotes what the software shows, keep that
-  text German, verbatim.
+## Agent host integrations
+
+Claude Code loads `.claude/rules/*.md`; Coddy reads that tree too. Cursor loads the equivalent
+`.cursor/rules/*.mdc`. Keep each pair's body and activation equivalent.
+Codex reads AGENTS.md and uses `.codex/hooks.json` to attach always-on rules at session start
+and scoped rules before `apply_patch`, `Edit` or `Write`. Approve the hooks with `/hooks` once
+per clone; see [CONTRIBUTING.md](CONTRIBUTING.md#agent-host-setup).
+Scoped rules add context, not enforcement; every baseline and safety rule here stays in force.
 
 ## Work comes from issues
 
@@ -27,26 +30,20 @@ Human-facing workflow and commands: [CONTRIBUTING.md](CONTRIBUTING.md).
   documents; decisions go into the issue,
   the PR description, or an ADR under `docs/adr/` when they bind future work.
 
-## Specs and tests
+## Verification
 
-- The happy path of a behaviour is a Gherkin scenario in repo-root `features/*.feature`, run by
-  pytest-bdd from `backend/tests/bdd/` through the HTTP API with the shared step library
-  ([features/README.md](features/README.md)). Deterministic, no network, no LLM.
-- Edge and error cases are unit tests next to the code, in the area's **existing** test file,
-  reusing its helpers; test names are sentences.
-- Red first: every new scenario and test fails without its change. Show it once in the PR.
+- Follow the [testing rule](.claude/rules/testing.md) and [features/README.md](features/README.md).
 - Every new or changed API route keeps organization isolation: covered by
   `features/organization_isolation.feature` and the route sweep (#4).
-- Run tests selectively while working (`uv run pytest tests/test_x.py -k ...`,
-  `npm test -- <file>`), `make lint` before every push, and the whole suite (`make test`) only
-  before a merge; CI runs it on every PR.
+- Run tests selectively, `make lint` before every push, and `make test` before a merge.
 
 ## Gates
 
 | Command | Runs |
 |---|---|
 | `make lint` | ruff (backend), eslint and `tsc --noEmit` (frontend) |
-| `make test` | installer contract tests, backend pytest (with BDD scenarios), frontend vitest and typecheck |
+| `make test` | agent rules, installer contracts, backend pytest (with BDD), frontend vitest and typecheck |
+| `make test-agent-rules` | paired rule parity and Codex hook contracts (no DB) |
 | `make test-bdd` | only the `features/` scenarios |
 | `make docs-check` | relative links in all Markdown outside `docs/archive/` |
 | `make hooks` | enables `.githooks/pre-commit` (lint, docs check; tests opt-in) |
@@ -54,18 +51,7 @@ Human-facing workflow and commands: [CONTRIBUTING.md](CONTRIBUTING.md).
 CI (`.github/workflows/tests-on-pr.yaml`) runs the same on every PR. A red job is fixed, not
 skipped. Do not bypass the hook to land code.
 
-## Documentation contract
-
-| When you change … | update in the same PR |
-|---|---|
-| anything a user notices | briefly, the page that owns the area (`README.md`, `docs/architecture.md`, `docs/m*.md`, `docs/operations/`) |
-| a feature's status | its row in `docs/feature-status.md` |
-| deployment, installation, configuration keys | `DEPLOY.md`, `.env.example`, `scripts/self-host.sh` help text |
-| an architectural decision that binds later work | a new ADR in `docs/adr/` |
-| a rename of a file, route, key or command | every mention: `git grep -n '<old>'` comes back empty outside `docs/archive/` |
-
-Docs state exactly what the code does. `docs/domain-reference.md` is the reference product's
-features and workflows (scope and interaction flow); read it selectively with `rg -n`.
+Update docs in the same PR under the [documentation contract](.claude/rules/docs.md).
 `docs/archive/` is legacy: do not read it or treat it as rules unless the user asks for a
 specific question.
 
@@ -80,8 +66,8 @@ specific question.
 5. Simple checks after the action beat predictive checks before it.
 6. Classify errors by structured fields (codes, types), never by message text.
 7. UI reports real outcomes only; no placeholder text, no "everything OK" when there is nothing
-   to report. New UI elements reuse existing components and styles.
-8. Test the long cases: four-digit amounts, long German names, narrow screens, many rows.
+   to report. Follow the [frontend rule](.claude/rules/frontend-ui.md) for components and formats.
+8. Test representative long inputs and many rows.
 9. Use what exists and works (libraries, modules, fixtures) before writing new mechanisms.
 
 ## Commits

@@ -1,0 +1,30 @@
+---
+description: Self-host installer and container safety
+globs:
+  - "infra/**"
+  - "docker/**"
+  - "Dockerfile"
+  - "docker-compose.prod.yml"
+  - "scripts/self-host.sh"
+  - "scripts/test-self-host.py"
+  - "scripts/test-env.sh"
+  - "DEPLOY.md"
+  - ".env.example"
+alwaysApply: false
+---
+
+# Self-host and containers
+
+- Follow AGENTS.md's Databases and containers rules, including its narrow
+  separately authorized exceptions. Never delete production `pgdata` or
+  `documents` volumes, run `docker compose down -v`, or test on production.
+- The test database is only `infra-postgres-1` at `127.0.0.1:55432`, configured by
+  `source scripts/test-env.sh`. Never start a replacement or another test database.
+- Use `docker compose` only with `-f infra/docker-compose.declaration-test.yml`
+  unless an explicit AGENTS.md exception has been separately authorized.
+- Reuse `scripts/self-host.sh` and its existing private-config handling. For
+  installation or configuration changes, update `DEPLOY.md`, `.env.example`
+  and the installer's help together.
+- Extend `scripts/test-self-host.py`; `make test-installer` fakes Docker and
+  must not start containers. New configuration keys represent switches or
+  deployment facts, not tuning lists or numbers.

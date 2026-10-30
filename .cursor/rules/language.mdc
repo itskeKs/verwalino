@@ -1,0 +1,10 @@
+---
+description: German software and English project artifacts
+alwaysApply: true
+---
+
+# Language
+
+- The software is German: UI copy, visible routes, errors, PDFs, letters and emails.
+- Write documentation, issues, comments, docstrings, tests, feature files and commits
+  in English. Quote existing German software text verbatim.

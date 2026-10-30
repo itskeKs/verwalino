@@ -15,14 +15,34 @@ Rules for coding agents, which apply to people too, are in [AGENTS.md](AGENTS.md
 - Local app: `scripts/dev-local.sh`. Self-hosting: [DEPLOY.md](DEPLOY.md) and `scripts/self-host.sh`.
 - Enable the commit gate once per clone: `make hooks`.
 
+## Agent host setup
+
+Claude Code loads `.claude/rules/*.md` and Coddy reads the same tree. Cursor uses the paired
+`.cursor/rules/*.mdc`. A Claude rule without `paths` is always on; otherwise its `paths` match
+the Cursor `globs`, with `alwaysApply: false`. Keep bodies and descriptions equivalent.
+
+For Codex, trust this checkout's project configuration and run **`/hooks` once per clone** to
+review and approve both handlers in `.codex/hooks.json`. Review approval again after changing
+the hook definition or script. Python 3 is required. This is separate from `make hooks`, which
+installs the Git pre-commit gate.
+
+The adapter reads Cursor rules directly: `SessionStart` attaches always-on rules and
+`PreToolUse` on `apply_patch`, `Edit` or `Write` attaches rules matching the edited paths.
+Use quoted block lists for `paths` and `globs`; the adapter supports this repository's flat
+frontmatter convention, not arbitrary YAML. It is stateless, so matching rules attach on each
+edit. Malformed input or rules fail open and never block work. Rules provide context;
+AGENTS.md retains the safety baseline and tests/CI check parity.
+
 ## Running the tests
 
 `make help` lists every target.
 
-- **`make test`** — the whole run before a merge: installer contract tests, the backend
+- **`make test`** — the whole run before a merge: agent-rule and installer contracts, the backend
   suite (including the BDD scenarios), frontend vitest and typecheck. Needs the test database.
 - **`make lint`** — ruff over the backend, eslint and `tsc` over the frontend.
 - **`make test-bdd`** — only the scenarios in `features/` ([features/README.md](features/README.md)).
+- **`make test-agent-rules`** — paired bodies/activation and Codex hook contracts; Python stdlib,
+  no database or backend dependencies. Run after changing rules or the adapter.
 - **`make docs-check`** — relative links and images in every Markdown file outside `docs/archive/`.
 - While iterating, run one file: `cd backend && uv run pytest tests/test_x.py -k name`,
   `cd frontend && npm test -- src/pages/X.test.tsx`; `make test-backend PYTEST_ARGS="…"` does the
@@ -45,7 +65,7 @@ frontend files and the docs check for staged Markdown — seconds, not minutes. 
    cases, in the area's existing test file) and see them fail.
 4. **Implement** the smallest change that turns them green. Follow the design rules in
    [AGENTS.md](AGENTS.md#design-rules).
-5. **Docs in the same PR**, per the [documentation contract](AGENTS.md#documentation-contract).
+5. **Docs in the same PR**, per the [documentation contract](.claude/rules/docs.md).
 6. `make lint` green before every push; `make test` (the whole suite) before the merge — CI runs it on
    every PR.
 
@@ -63,7 +83,7 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 |---|---|
 | `backend` | ruff and the full backend suite with BDD scenarios against Postgres 16 with RLS |
 | `frontend` | eslint, TypeScript, vitest |
-| `docs` | no broken relative links |
+| `docs` | no broken relative links; paired rule parity and Codex hook contracts |
 
 ## Where things live
 
