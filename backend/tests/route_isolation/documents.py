@@ -296,7 +296,8 @@ PROBES: dict[str, Probe] = {
     "POST /api/exceptions/{case_id}/events": Probe(row("exception_case", case_id="id"), body={"action": "claim", "reason": REASON}),
     # app/api/extraction_revisions.py
     "GET /api/document-refs/{ref_id}/extractions": Probe(
-        row("extraction_revision", ref_id="document_ref_id", logical_document_id="logical_document_id")
+        pick("x.document_ref_id AS ref_id, x.logical_document_id AS logical_document_id",
+             "extraction_revision x", " AND x.logical_document_id IS NOT NULL")
     ),
     "GET /api/extraction-revisions/{revision_id}": Probe(row("extraction_revision", revision_id="id")),
     # app/api/intake_batches.py

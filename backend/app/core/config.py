@@ -1,12 +1,21 @@
 """Application configuration via environment / .env file."""
 
 from decimal import Decimal
+from enum import StrEnum
 
 from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
+class DeploymentMode(StrEnum):
+    SELFHOST = "selfhost"
+    HOSTED = "hosted"
+
+
 class Settings(BaseSettings):
+    # One image, with mode-dependent decisions in core/deployment_policy.py.
+    deployment_mode: DeploymentMode = DeploymentMode.SELFHOST
+
     # --- Database (app_rw role -- NO BYPASSRLS) ---
     database_url: str = (
         "postgresql+asyncpg://app_rw:app_secret@localhost:5433/hausverwaltung"

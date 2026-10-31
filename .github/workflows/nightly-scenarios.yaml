@@ -36,10 +36,10 @@ jobs:
       fail-fast: false
       matrix:
         mode: [selfhost]
-        # #18 adds hosted here as a second entry once mode selection exists.
+        # Running both deployment modes needs a hosted server; tracked in #103.
     env:
       UV_LOCKED: "1"
-      VERWALINO_SCENARIO_MODE: ${{ matrix.mode }}
+      HV_DEPLOYMENT_MODE: ${{ matrix.mode }}
       VERWALINO_TARGET_URL: http://127.0.0.1:18080
       VERWALINO_TARGET_ADMIN_EMAIL: nightly@example.test
     steps:
