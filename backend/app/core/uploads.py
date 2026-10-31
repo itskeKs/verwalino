@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import json
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from typing import Protocol
@@ -144,14 +145,15 @@ class RequestBodyLimitMiddleware:
 
     @staticmethod
     async def _send_too_large(send: Send) -> None:
+        body = json.dumps({"detail": "Datei zu groß (maximal 25 MiB). Bitte wählen Sie eine kleinere Datei."}, ensure_ascii=False).encode()
         await send(
             {
                 "type": "http.response.start",
                 "status": 413,
-                "headers": [(b"content-length", b"0")],
+                "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
             }
         )
-        await send({"type": "http.response.body", "body": b""})
+        await send({"type": "http.response.body", "body": body})
 
 
 async def read_upload_limited(
@@ -168,9 +170,9 @@ async def read_upload_limited(
             break
         total += len(chunk)
         if total > max_bytes:
-            raise HTTPException(
-                status_code=413, detail=f"File too large (max {max_bytes} bytes)"
-            )
+            from app.core.quotas import FREE_PLAN, check_quota
+            detail = check_quota(0, FREE_PLAN, "upload_bytes", total).message
+            raise HTTPException(status_code=413, detail=detail or f"Datei zu groß (maximal {max_bytes} Bytes). Bitte wählen Sie eine kleinere Datei.")
         chunks.append(chunk)
 
     if total == 0:

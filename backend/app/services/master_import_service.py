@@ -26,6 +26,7 @@ from app.services.master_creation_service import (
 from app.services.person_source_access import require_contact_creation, require_person_prepare
 from app.services.property_data_domain_service import PropertyDataDomainService
 from app.services.property_master_service import require_property_master
+from app.services.quota_service import require_counts
 
 FIELDS = ('kind', 'key', 'property_key', 'name', 'street', 'zip_code', 'city',
           'management_type', 'number', 'area', 'heated_area', 'usage_type',
@@ -274,6 +275,9 @@ class MasterImportService:
             raise HTTPException(422, detail=projected['errors'])
         if batch is not None:
             return batch.result
+        await require_counts(self.db, self.auth.organization_id,
+                             properties=projected['counts']['properties'],
+                             units=projected['counts']['units'])
         identities, properties = {}, {}
         for row in projected['rows']:
             if row['kind'] != 'property':

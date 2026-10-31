@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 
 from app.core.pdf import render_pdf
-from app.core.storage import compute_sha256, get_store, make_storage_key
+from app.core.storage import compute_sha256, get_store, put_document
 from app.repositories.lease_agreement_repo import LeaseAgreementRepository
 from app.repositories.property_repo import PropertyRepository
 from app.services.financial_scope_service import FinancialScopeService
@@ -126,7 +126,7 @@ class LetterService:
             rendered_body = replace_tokens(template["body"], values)
             pdf = render_letter(name, address(person), subject, rendered_body, body.as_of)
             digest = compute_sha256(pdf)
-            stored = get_store().put(make_storage_key(str(self.org), digest), pdf, content_type="application/pdf")
+            stored = await put_document(self.db, self.org, pdf, content_type="application/pdf")
             await self.db.execute(text("""INSERT INTO letter_document
                 (organization_id,template_id,property_id,person_id,tenant_profile_id,lease_agreement_id,
                  request_id,as_of,recipient_name,subject,body,storage_uri,content_sha256)

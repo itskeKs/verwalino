@@ -55,7 +55,11 @@ and subsequent login. The test compose has no Mailpit service; the scenario reus
 the existing fake SMTP capture transport, with no network or real email.
 `password_reset.feature` is untagged and verifies mailbox recovery and old-session
 revocation in both modes with the same capture double. Organization isolation
-scenarios run in both modes. Browser app processes inherit the selected mode too; `@browser` remains a separate opt-in tag.
+and quota-summary scenarios run in both modes. `organization_quotas.feature` is
+hosted-only: it scales the storage allowance to a small deterministic payload,
+fills it through the real upload API, and verifies the German refusal. Files and
+database records use the ordinary services; no network or model call is involved.
+Browser app processes inherit the selected mode too; `@browser` remains a separate opt-in tag.
 
 **CI integration:** the PR backend job currently runs the scenario suite with the
 default selfhost policy as part of `make test-backend`. A separate hosted matrix

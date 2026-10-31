@@ -246,11 +246,11 @@ if [ "$(basename "$0")" = docker ]; then
           [ "${FAKE_FAILURE:-}" != release-head ] || exit 92
           printf '%s\n' "${FAKE_SCHEMA:-0122}"; exit 0 ;;
         *' run '*'app.deployment current '*)
-          if [ -f "$FAKE_SHARED/schema-changed" ]; then printf '%s\n' 0144; elif [ -f "$FAKE_MIGRATED" ]; then printf '%s\n' "${FAKE_TARGET:-0144}"; else printf '%s\n' "${FAKE_SCHEMA:-0122}"; fi; exit 0 ;;
+          if [ -f "$FAKE_SHARED/schema-changed" ]; then printf '%s\n' 0145; elif [ -f "$FAKE_MIGRATED" ]; then printf '%s\n' "${FAKE_TARGET:-0145}"; else printf '%s\n' "${FAKE_SCHEMA:-0122}"; fi; exit 0 ;;
         *' run '*'app.deployment quiescent '*)
           [ "${FAKE_FAILURE:-}" != busy ] || exit 93
           if [ "${FAKE_FAILURE:-}" = quiescent-changed ] && [ -f "$FAKE_SHARED/backups/test-from-0122/documents.tar.gz.partial" ]; then
-            : > "$FAKE_SHARED/schema-changed"; printf '%s\n' 0144
+            : > "$FAKE_SHARED/schema-changed"; printf '%s\n' 0145
           else printf '%s\n' "$FAKE_SCHEMA"; fi; exit 0 ;;
         *' run '*'app.deployment runtime '*) [ "${FAKE_FAILURE:-}" != credentials ]; exit $? ;;
         *' run --rm --no-deps migrate '*)
@@ -545,7 +545,7 @@ for scenario in wrong-source ambiguous-source release-head previous-head roles c
   export FAKE_INVOICE_CREATED="$case_root/invoice-created" FAKE_INVOICE_RESTORED="$case_root/invoice-restored"
   export FAKE_MIGRATED="$case_root/migrated" FAKE_READLINK_F="$case_root/releases/old"
   export FAKE_PROVIDER_SMOKE_CALLED="$case_root/provider-smoke" FAKE_ADMIN_PASSWORD="$admin_password"
-  export FAKE_SCHEMA=0122 FAKE_TARGET=0144 FAKE_PREVIOUS_HEAD=0122 FAKE_FAILURE="$scenario"
+  export FAKE_SCHEMA=0122 FAKE_TARGET=0145 FAKE_PREVIOUS_HEAD=0122 FAKE_FAILURE="$scenario"
   export FAKE_PROVIDER_SMOKE_FAIL=0
   export FAKE_NO_PREVIOUS_INVOICE=0 FAKE_APP_UP_FAIL=0 FAKE_WORKER_UP_FAIL=0 FAKE_NEW_LABEL=test
   case "$scenario" in
@@ -560,12 +560,12 @@ for scenario in wrong-source ambiguous-source release-head previous-head roles c
     previous-head) FAKE_PREVIOUS_HEAD=0138 ;;
     backup-exists) mkdir -p "$case_root/shared/backups/test-from-0122"; printf preserve > "$case_root/shared/backups/test-from-0122/database.dump" ;;
     provider-smoke) FAKE_PROVIDER_SMOKE_FAIL=1 ;;
-    cleanup-stop-fail|cleanup-discovery-fail) FAKE_SCHEMA=0144; FAKE_PREVIOUS_HEAD=0144; FAKE_WORKER_UP_FAIL=1 ;;
-    no-invoice-restore) FAKE_SCHEMA=0144; FAKE_PREVIOUS_HEAD=0144; FAKE_WORKER_UP_FAIL=1; FAKE_NO_PREVIOUS_INVOICE=1 ;;
+    cleanup-stop-fail|cleanup-discovery-fail) FAKE_SCHEMA=0145; FAKE_PREVIOUS_HEAD=0145; FAKE_WORKER_UP_FAIL=1 ;;
+    no-invoice-restore) FAKE_SCHEMA=0145; FAKE_PREVIOUS_HEAD=0145; FAKE_WORKER_UP_FAIL=1; FAKE_NO_PREVIOUS_INVOICE=1 ;;
     app-start) FAKE_APP_UP_FAIL=1 ;;
     worker-start) FAKE_WORKER_UP_FAIL=1 ;;
     no-invoice) FAKE_NO_PREVIOUS_INVOICE=1 ;;
-    restore-compatible) FAKE_SCHEMA=0144; FAKE_PREVIOUS_HEAD=0144; FAKE_WORKER_UP_FAIL=1 ;;
+    restore-compatible) FAKE_SCHEMA=0145; FAKE_PREVIOUS_HEAD=0145; FAKE_WORKER_UP_FAIL=1 ;;
     foreign-container) FAKE_NEW_LABEL=foreign; FAKE_APP_UP_FAIL=1 ;;
   esac
   outcome=0

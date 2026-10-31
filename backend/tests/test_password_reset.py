@@ -26,7 +26,7 @@ def test_reset_migration_roundtrip_is_exact_and_refuses_retained_state(run_migra
     from sqlalchemy import create_engine
     from tests.conftest import MIGRATOR_SYNC_URL
     from tests.test_session_review_access import _chain_snapshot
-    migration = ScriptDirectory('migrations').get_revision('0144').module
+    migration = ScriptDirectory('migrations').get_revision('0144').module  # accepted source
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.connect() as connection, connection.begin() as transaction:

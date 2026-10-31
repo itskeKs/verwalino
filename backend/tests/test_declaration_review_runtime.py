@@ -201,12 +201,19 @@ async def test_review_runtime_migration_roundtrip_preserves_decisions(committed_
     from tests.conftest import MIGRATOR_SYNC_URL
     seed=committed_scope;params=await review_seed(seed)
     migration=importlib.import_module('migrations.versions.0073_declaration_review_runtime');engine=create_engine(MIGRATOR_SYNC_URL)
+    dependencies='LOCK TABLE '+','.join(migration.TABLES)+',declaration_review_context IN ACCESS EXCLUSIVE MODE'
     try:
         async with synthetic_enforcement(seed):
             with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
+                # Exercise the semantic guard after incidental table contention;
+                # busy-dependency refusal is covered separately below.
+                db.execute(text("SET LOCAL lock_timeout='5s'"))
+                db.execute(text(dependencies))
                 with pytest.raises(DBAPIError,match='Retain isolated review validation'):
                     with db.begin_nested(): migration.downgrade()
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
+            db.execute(text("SET LOCAL lock_timeout='5s'"))
+            db.execute(text(dependencies))
             point=db.begin_nested()
             try:
                 before=db.scalar(text("SELECT md5(COALESCE(string_agg(to_jsonb(c)::text,',' ORDER BY id),'')) FROM declaration_candidate c"))

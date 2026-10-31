@@ -1,7 +1,7 @@
 # Feature status
 
 Current feature catalog of Verwalino by area, compared with the reference product described in
-[domain-reference.md](domain-reference.md). Status as of 2026-10-31, migration head `0144`.
+[domain-reference.md](domain-reference.md). Status as of 2026-10-31, migration head `0145`.
 Status: ✅ implemented and reachable in the running app, 🟡 partial (reason given), ❌ not implemented.
 Reference product: whether the reference software offers the feature (yes/partial/no, n/a = not a
 reference feature). Short paths: `api/ services/ engine/ models/ workers/ core/` are under
@@ -14,6 +14,7 @@ history). Update this page in the same PR whenever a feature's status changes.
 | Feature | Reference product | Status | Location |
 | --- | --- | --- | --- |
 | Deployment mode | n/a | ✅ validated selfhost/hosted policy, public mode/version/mail-capability metadata, setup/signup gates; remaining hosted features deferred | `core/config.py`, `core/deployment_policy.py`, issue #18 |
+| Organization quotas | n/a | ✅ hosted free constants (2 GiB, 25 MiB/upload, 20 properties, 200 units), atomic write refusals, usage card; model calls disabled by default, shared monthly USD cap over existing ledgers; overrides deferred | `core/quotas.py`, `services/quota_service.py`, `components/OrganizationQuotaCard.tsx`, issue #22 |
 | Browser first-run setup | n/a | ✅ selfhost-only, one-time installer token, 24-hour expiry, atomic first organization/admin; real-stack acceptance pending | `api/setup.py`, `pages/SetupPage.tsx`, `scripts/self-host.sh`, issue #8 |
 | Login/logout | yes | ✅ | `api/auth.py`, `pages/LoginPage.tsx` |
 | Login rate limiting | n/a | ✅ persisted IP/email lockout, mode-specific limits, hosted escalation, generic failures; shared signup limiter and active signup honeypot | `core/rate_limit.py`, `core/honeypot.py`, `core/deployment_policy.py`, issue #20 |

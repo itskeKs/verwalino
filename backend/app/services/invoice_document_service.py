@@ -19,7 +19,7 @@ from app.core.storage import (
     DocumentStore,
     compute_sha256,
     get_store,
-    make_storage_key,
+    put_document,
     verify_document_integrity,
 )
 from app.models.audit_event import AuditEvent
@@ -97,8 +97,7 @@ class InvoiceDocumentService:
             store = get_store()
 
         sha256 = compute_sha256(file_bytes)
-        key = make_storage_key(str(self._org_id), sha256)
-        ref = store.put(key, file_bytes, content_type=mime_type)
+        ref = await put_document(self._session, self._org_id, file_bytes, content_type=mime_type, store=store)
 
         # Persist a durable queue entry; the worker extracts after this transaction.
         extraction = ExtractionResult()
@@ -201,8 +200,7 @@ class InvoiceDocumentService:
                 raise HTTPException(409, "Destination cost already has an active source")
 
         sha256 = compute_sha256(file_bytes)
-        key = make_storage_key(str(self._org_id), sha256)
-        ref = store.put(key, file_bytes, content_type=mime_type)
+        ref = await put_document(self._session, self._org_id, file_bytes, content_type=mime_type, store=store)
 
         # Create new version
         new_doc = InvoiceDocument(

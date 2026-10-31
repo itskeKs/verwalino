@@ -207,6 +207,9 @@ async def test_mail_retains_prepared_when_completion_commit_fails(client_a_admin
     retained = await client_a_admin.get(url)
     assert retained.status_code == 200, retained.text
     assert retained.json()["attempts"][0]["status"] == "prepared"
+    retained_pdf = await client_a_admin.get(f"{url}/{body['request_id']}/pdf")
+    assert retained_pdf.status_code == 200, retained_pdf.text
+    assert retained_pdf.content.startswith(b"%PDF-")
     repeated = await client_a_admin.post(url, json=body)
     assert repeated.status_code == 200 and repeated.json()["status"] == "prepared"
     assert len(smtp.messages) == 1

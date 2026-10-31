@@ -14,7 +14,7 @@ from app.core.config import settings
 from app.core.db import get_tenant_session
 from app.core.live_principal import require_live_principal
 from app.core.rbac import ScopeCapability
-from app.core.storage import compute_sha256, get_store, make_storage_key
+from app.core.storage import compute_sha256, get_store, put_document, retain_document
 from app.models.audit_event import AuditEvent
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.dunning_notice_repo import DunningNoticeRepository
@@ -218,12 +218,15 @@ class DocumentMailService:
         await require_live_principal(self.db, self.auth, writer=True)
         await self.resolve(kind, document_id)
         digest = compute_sha256(pdf)
-        stored = get_store().put(make_storage_key(str(self.org), digest), pdf, content_type="application/pdf")
+        stored = await put_document(self.db, self.org, pdf, content_type="application/pdf")
         created = datetime.now(timezone.utc).isoformat()
         message_id = f"<{request_id}@{settings.smtp_from.rsplit('@', 1)[1]}>"
         payload = {"id": str(request_id), "person_id": str(person_id), "email": email,
                    "status": "prepared", "created_at": created, "completed_at": None,
                    "content_sha256": digest, "storage_uri": stored.uri, "message_id": message_id}
+        # The receipt commits independently and can survive this request.
+        # Preserve its original even if that commit's outcome is uncertain.
+        retain_document(self.db, stored)
         await self.record(kind, document_id, "mail_prepared", payload)
         try:
             await asyncio.to_thread(send_pdf, settings, recipient=email, subject=SUBJECT[kind],

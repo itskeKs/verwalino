@@ -41,7 +41,7 @@ class DeploymentPolicy:
     multi_organization_expected: bool
     # Login and signup share the selected rules, with separate scopes.
     rate_limit_profile: Literal["relaxed", "strict"]
-    # consumed by #22; this does not enforce quotas yet.
+    # Selects the shared hosted free plan or unlimited self-hosted usage.
     quota_enforcement: bool
     # consumed by #17; use the issue tracker until a hosted support channel exists.
     support_url_default: str

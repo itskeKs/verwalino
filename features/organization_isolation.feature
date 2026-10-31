@@ -62,3 +62,7 @@ Feature: Organization isolation
     Then the password reset is accepted without signing in
     And the old session is no longer valid
     And the other organization's administrator remains signed in
+
+  Scenario: Quota usage belongs only to the signed-in organization
+    When the administrator adds a property and reads the organization quota
+    Then only that organization's property usage has increased

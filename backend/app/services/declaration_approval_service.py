@@ -26,6 +26,7 @@ from app.repositories.declaration_review_repo import DeclarationReviewRepository
 from app.repositories.property_knowledge_repo import PropertyKnowledgeRepository
 from app.repositories.property_repo import PropertyRepository
 from app.repositories.unit_repo import UnitRepository
+from app.services.quota_service import require_counts
 
 
 class DeclarationApprovalService:
@@ -128,6 +129,9 @@ class DeclarationApprovalService:
         except ApprovalConflict as exc:
             raise _conflict(exc.code) from exc
 
+        await require_counts(self._session, self._organization_id,
+                             properties=plan.summary['properties_created'],
+                             units=plan.summary['units_created'])
         approved_at = datetime.now(timezone.utc)
         if audience is not None:
             domain, publisher_grant_id = await domain_service.prepare_new_audience(plan.property_id, audience)

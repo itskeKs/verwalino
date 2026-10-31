@@ -15,6 +15,7 @@ Content-addressing: path = <root>/<org_id>/<sha256[:2]>/<sha256>.bin
 from __future__ import annotations
 
 import hashlib
+import fcntl
 import os
 import stat
 import tempfile
@@ -23,6 +24,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Protocol, runtime_checkable
 from urllib.parse import quote
+
+from fastapi import HTTPException
+from sqlalchemy import event
+from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 
@@ -205,6 +211,17 @@ class LocalFsDocumentStore:
     def exists(self, key: str) -> bool:
         return self._resolve_key(key).exists()
 
+    def organization_bytes(self, org_id: str) -> int:
+        """Count retained physical bytes once, including archived originals."""
+        directory = self._resolve_key(org_id)
+        if not directory.exists():
+            return 0
+        return sum(path.stat().st_size for path in directory.rglob("*") if path.is_file())
+
+    def discard_uncommitted(self, key: str) -> None:
+        """Remove only an upload tracked as newly created by a failed transaction."""
+        self._resolve_key(key).unlink(missing_ok=True)
+
     def iter_chunks(self, key: str, *, chunk_size: int = 64 * 1024) -> Iterator[bytes]:
         """Yield a stored document without loading it fully into memory."""
         if chunk_size <= 0:
@@ -273,6 +290,89 @@ def set_store(store: DocumentStore) -> None:
     """Replace the active store (useful for testing or backend swap)."""
     global _store
     _store = store
+
+
+def retain_document(session, reference: StoredObjectRef) -> None:
+    """Keep an original once an independent commit may reference it."""
+    pending = session.info.get("uncommitted_storage")
+    if pending is not None:
+        session.info["uncommitted_storage"] = [item for item in pending if item[1] != reference.uri]
+
+
+@event.listens_for(Session, "after_commit")
+def _commit_storage(session):
+    pending = session.info.get("uncommitted_storage", [])
+    nested = session.get_nested_transaction()
+    if nested is not None:
+        session.info["uncommitted_storage"] = [
+            (store, key, nested.parent if transaction is nested else transaction)
+            for store, key, transaction in pending
+        ]
+    else:
+        session.info.pop("uncommitted_storage", None)
+
+
+@event.listens_for(Session, "after_soft_rollback")
+def _rollback_storage(session, previous_transaction):
+    if previous_transaction.parent is not None and not previous_transaction.nested:
+        previous_transaction = previous_transaction.parent
+    pending = session.info.pop("uncommitted_storage", [])
+    keep = []
+    for store, key, transaction in pending:
+        if transaction is previous_transaction:
+            store.discard_uncommitted(key)
+        else:
+            keep.append((store, key, transaction))
+    if keep:
+        session.info["uncommitted_storage"] = keep
+
+
+@event.listens_for(Session, "after_transaction_end")
+def _close_storage(session, transaction):
+    # Session.close also rolls back, without emitting after_soft_rollback.
+    if transaction.parent is None:
+        for store, key, _transaction in session.info.pop("uncommitted_storage", []):
+            store.discard_uncommitted(key)
+        for handle in session.info.pop("storage_write_locks", {}).values():
+            handle.close()
+
+
+async def put_document(session, org_id, data: bytes, *, content_type: str,
+                       store: DocumentStore | None = None) -> StoredObjectRef:
+    """Check before writing; keep only originals belonging to committed writes."""
+    from app.core.quotas import get_quota_plan
+    from app.services.quota_service import lock_quota, require_quota
+
+    active_store = store or get_store()
+    plan = get_quota_plan()
+    require_quota(0, "upload_bytes", len(data), plan=plan)
+    await lock_quota(session, org_id)
+    if isinstance(active_store, LocalFsDocumentStore):
+        # Keep a filesystem lock through rollback cleanup: the DB transaction
+        # lock is released before SQLAlchemy's rollback callbacks execute.
+        locks = session.info.setdefault("storage_write_locks", {})
+        lock_key = (active_store._root, org_id)
+        if lock_key not in locks:
+            lock_directory = active_store._root / ".upload-locks"
+            lock_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            handle = (lock_directory / str(org_id)).open("a+b")
+            try:
+                await run_in_threadpool(fcntl.flock, handle, fcntl.LOCK_EX)
+            except BaseException:
+                handle.close()
+                raise
+            locks[lock_key] = handle
+    key = make_storage_key(str(org_id), compute_sha256(data))
+    existed = active_store.exists(key)
+    if plan.storage_bytes is not None:
+        if not isinstance(active_store, LocalFsDocumentStore):
+            raise HTTPException(503, "Speichernutzung nicht verfügbar.")
+        usage = await run_in_threadpool(active_store.organization_bytes, str(org_id))
+        require_quota(usage, "storage_bytes", 0 if existed else len(data), plan=plan)
+    if not existed and isinstance(active_store, LocalFsDocumentStore):
+        transaction = session.sync_session.get_nested_transaction() or session.sync_session.get_transaction()
+        session.info.setdefault("uncommitted_storage", []).append((active_store, key, transaction))
+    return await run_in_threadpool(active_store.put, key, data, content_type=content_type)
 
 
 def verify_document_integrity(

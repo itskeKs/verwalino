@@ -80,6 +80,8 @@ The complete table below is checked against the dataclass by
 Current readers are `/api/meta` (`deployment_mode`), setup's `setup_required()`
 (`first_run_setup_enabled`), the admin CLI (`admin_cli_bootstrap_allowed`), signup (`self_service_signup_enabled`) and login
 (`rate_limit_profile` and its frozen `RateLimitRules`, included in the drift check above).
+Quota services read `quota_enforcement` to select the shared hosted free plan or
+the unlimited selfhost plan.
 `GET /api/setup` returns `{"required": false}` in hosted mode even with no
 organizations, without opening a database connection. Every non-GET setup method
 returns the same 404 as a closed installation, before parsing its body. Hosted
@@ -88,7 +90,7 @@ available in both modes.
 
 Other fields reserve decisions for their named consumers, not implemented features:
 error tracking #16, the doctor's organization-count warning #11,
-quotas #22, support links #17 and hosted legal links #24/#26.
+support links #17 and hosted legal links #24/#26.
 The error-tracking environment setting and doctor are absent at this revision.
 `multi_organization_expected` describes an operational expectation, never an
 organization limit or an isolation bypass: the same RLS, scoped API queries and
@@ -104,6 +106,63 @@ reload after recovery to detect setup. Hosted login offers “Konto erstellen”
 and `/signup/confirm` require confirmed hosted metadata and otherwise redirect to login.
 The self-host installer and token issuance remain unchanged: the portable manifest
 uses the default self-hosted policy and does not forward an arbitrary caller's environment.
+
+
+## Organization quotas
+
+`core/quotas.py` is the single source of plan limits and the pure inclusive
+`check_quota(usage, plan, kind, delta)` decision. Hosted uses the free plan:
+2 GiB retained storage, 25 MiB per file, 20 properties, 200 units, USD 0 per
+calendar month (UTC). Selfhost selects unlimited through `quota_enforcement`.
+One shared plan applies to all hosted organizations; individual overrides and
+paid plans are deferred. Existing upload/body safety caps remain in both modes.
+
+Services enforce quotas before writes. `put_document` guards attachments,
+invoices and versions, mandate originals, declaration sources, intake uploads,
+and retained generated PDFs. It serializes writes, measures the organization's
+storage directory (all retained files, counted once), and cleans up only newly
+created originals when the owning database transaction rolls back. A filesystem
+lock remains held through rollback cleanup so a concurrent writer cannot reuse
+bytes being removed. Mail originals are retained before their independently
+committed dispatch receipt, so a request rollback cannot remove a referenced PDF.
+Archived and source-restricted files still consume space.
+The request-body middleware remains the first upload boundary. Size/storage
+returns 413 with “Datei zu groß (maximal 25 MiB). …” or
+“Speicherkontingent erschöpft (2 GiB). …”.
+
+Canonical property/unit creation, atomic master import and declaration approval
+check complete organization counts under a transaction lock. Count refusals use
+409, matching existing write conflicts, with “Objektkontingent erschöpft (20
+Objekte). …” or “Einheitenkontingent erschöpft (200 Einheiten). …”. An import
+checks its whole delta before creating any destination rows. Retry receipts are
+resolved before quota checks, so successful replays remain idempotent.
+
+Revision 0145 adds only `organization_quota_usage`: a guarded SECURITY DEFINER
+aggregate, using the session organization and a live member. It returns counts
+and USD totals, never source identities/content. Ordinary source RLS may hide
+rows even within an organization, so application-side COUNT queries would be
+incorrect. No table, quota counter, override, or privileged application connection
+is introduced. The function also supports the existing isolated worker role.
+
+AI admission reuses `property_knowledge_query_run` and
+`declaration_extraction_run`. Each running extraction reserves its existing
+per-import ceiling before any provider call; Q&A reserves its bounded worst case
+before its provider call. Both acquire the same monthly organization lock, across
+properties and processes, in addition to existing per-call controls. Finalized
+costs and conservative unresolved reservations count against the calendar month;
+expired Q&A reservations are not free credit. Work crossing a month boundary is
+included. Abandoned reservations from earlier months with expired leases do not
+consume the new month's allowance. Default USD 0 prevents both Q&A and declaration provider calls, with
+“Das monatliche KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den
+Betreiber.” HTTP admission uses 409; workers record
+`ORGANIZATION_AI_BUDGET_EXCEEDED`. Existing feature switches and reviewed Q&A
+budgets remain additional requirements, not overrides of the hosted cap.
+
+Any authenticated member can read `GET /api/organization/quota`, including
+source-restricted and read-only members. It accepts no organization identifier.
+The dashboard renders storage/property/unit usage and limits, warns at 90%, and
+hides unlimited usage. Its isolation probe and executable scenarios cover the
+session boundary; quota tests cover exact limits, refusals and rollback.
 
 ## Current Declaration-of-Division Workflow (2026-08-29)
 
@@ -529,7 +588,7 @@ submit. StrictMode never submits twice. Server-side query stripping protects
 the default Uvicorn access log; upstream proxies must redact query strings too.
 GET requests never provision a tenant.
 
-**Mailbox password recovery (revision 0144):** Both deployment modes expose
+**Mailbox password recovery (accepted source revision 0144):** Both deployment modes expose
 `POST /api/auth/password-reset` with `{email, website}`. It returns the generic
 202 conditional receipt for known, unknown, locked and mail-unavailable addresses.
 A filled honeypot returns the same receipt before side effects. Other requests
