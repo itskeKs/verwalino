@@ -11,7 +11,7 @@ import {
   uploadDeclarationDocument,
 } from "../api/endpoints";
 import { ApiError } from "../api/client";
-import { useUploadLimit } from "../lib/uploads";
+import { formatUploadLimit, useUploadLimit } from "../lib/uploads";
 import type {
   DeclarationDocument,
   DeclarationDocumentRole,
@@ -175,7 +175,7 @@ export function DeclarationImportPage() {
       if (!isPdf) {
         errors.push(`Nur PDF-Dateien können hochgeladen werden: „${file.name}“ ist keine PDF-Datei.`);
       } else if (file.size > maxUploadBytes) {
-        errors.push(`„${file.name}“ ist größer als maximal 25 MiB.`);
+        errors.push(`„${file.name}“ ist größer als maximal ${formatUploadLimit(maxUploadBytes)}.`);
       } else {
         accepted.push({
           localId: `${file.name}-${file.size}-${crypto.randomUUID()}`,
@@ -374,7 +374,7 @@ export function DeclarationImportPage() {
           <legend>PDF-Dateien auswählen</legend>
           <label htmlFor="declaration-files">PDF-Dateien auswählen</label>
           <input id="declaration-files" aria-label="PDF-Dateien auswählen" type="file" accept="application/pdf,.pdf" multiple onChange={selectFiles} />
-          <p className="empty-hint">Erlaubt sind PDFs bis maximal 25 MiB pro Datei. Die serverseitige Prüfung bleibt maßgeblich.</p>
+          <p className="empty-hint">Erlaubt sind PDFs bis maximal {formatUploadLimit(maxUploadBytes)} pro Datei. Die serverseitige Prüfung bleibt maßgeblich.</p>
         </fieldset>
         {selectionError && <p className="error-text" role="alert">{selectionError}</p>}
 
