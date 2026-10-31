@@ -1,17 +1,40 @@
 """Fill a representative scaled allowance through the document API."""
 from dataclasses import replace
+from uuid import uuid4
 from pytest_bdd import given, when, then
 from tests.bdd.steps.records import create_property
 
 
+@given("another hosted organization has filled its property allowance")
+def filled_other_properties(world):
+    from app.core.quotas import FREE_PLAN
+    client = world.administrator_of("Verwaltung Alpha")
+    count = world.send(client, "GET", "/api/organizations/quota").json()["usage"]["properties"]
+    for number in range(count, FREE_PLAN.properties):
+        create_property(world, "Verwaltung Alpha", f"Vorheriges Objekt {number + 1}")
+
+
 @given("a hosted organization has filled its storage allowance")
-def filled_storage(world, monkeypatch, tmp_path):
+def filled_storage(world, mailpit, monkeypatch, tmp_path):
     from app.core import quotas, storage
+    from app.core.config import settings
+    from tests.bdd.steps.signup import emailed_token
+    from tests.signup_support import BODY
     # Scale the allowance, preserving real writes and the exact-limit boundary.
     monkeypatch.setattr(quotas, "FREE_PLAN", replace(quotas.FREE_PLAN, storage_bytes=8))
     monkeypatch.setattr(storage, "_store", storage.LocalFsDocumentStore(tmp_path))
-    organization = "Verwaltung Alpha"
-    world.actor = world.administrator_of(organization)
+    # Provision an independent tenant through the same hosted signup API as
+    # the signup scenarios; earlier scenarios may have exhausted Alpha's plan.
+    organization = "Kontingentverwaltung"
+    body = BODY | {"email": f"quota-{uuid4().hex}@example.test", "organization_name": organization}
+    monkeypatch.setattr(settings, "public_host", "signup.example.test")
+    world.data["mailpit"] = mailpit
+    assert world.send(world.anonymous, "POST", "/api/signup", json=body).status_code == 202
+    token = emailed_token(world, body["email"])
+    answer = world.send(world.anonymous, "POST", "/api/signup/confirm", json={"token": token, "password": body["password"]})
+    assert answer.status_code == 201, world.describe_response()
+    world.actor = world.anonymous
+    world.organizations[organization] = world.actor
     prop = create_property(world, organization, "Kontingentobjekt")
     world.data["quota_property"] = prop.id
     response = world.act("POST", "/api/attachments", data={"property_id": prop.id},

@@ -503,6 +503,9 @@ new decision on the statutory retention period or proof of delivery. Migration 0
 refuses to remove populated template/letter tables.
 
 Hosted quota usage includes retained visual extracts and their attestations. The
+upload admission check deduplicates existing bytes only with a retained reference;
+reusing an unreferenced orphan charges its full upload size. Failed rollback cleanup
+logs a warning, preserves the original error and releases the directory lock. The
 last-reference cleanup guard is for future accepted deletion paths (#23), not a
 current user operation: classified mandates return 409, unclassified mandates
 remain quarantined, attachment/invoice/letter retention triggers and `RESTRICT`

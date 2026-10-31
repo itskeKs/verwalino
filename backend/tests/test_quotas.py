@@ -318,33 +318,100 @@ def test_quota_refusals_include_a_stable_code(kind, code):
     assert isinstance(error.value.detail["message"], str)
 
 
-def test_property_row_locks_follow_quota_admission():
-    import inspect
-    from app.services.letter_service import LetterService
-    from app.services.declaration_approval_service import DeclarationApprovalService
-    from app.services.master_creation_service import create_unit
-    from app.services.document_mail_service import DocumentMailService
-    from app.services.invoice_document_service import InvoiceDocumentService
+@pytest.mark.asyncio
+async def test_concurrent_delete_and_upload_follow_one_lock_order(rent_world, rent_db, monkeypatch, tmp_path):
+    import asyncio
+    from app.core import storage
+    from app.core.db import get_tenant_session
+    from app.models.property_document import PropertyDocument
+    from app.repositories.mandate_document_repo import MandateDocumentRepository
+    from app.services import mandate_document_service
     from app.services.attachment_service import AttachmentService
-    from app.core.storage import put_document
-    for function, admission, row_lock in (
-        (LetterService.issue, "await lock_quota(", "FOR SHARE"),
-        (DeclarationApprovalService.approve, "await lock_quota(", "get_by_id_for_update("),
-        (create_unit, "await require_counts(", "await _require_confirmed_mea_scale("),
-        # Mail and invoices serialize financial inputs before their source rows;
-        # attachments authorize parents before storage. All reach the same
-        # quota-before-directory-lock boundary in put_document.
-        (DocumentMailService.resolve, ".lock_inputs(", "FOR SHARE"),
-        (DocumentMailService.send, "await self.resolve(", "await put_document("),
-        (InvoiceDocumentService.upload, "await self.prepare_storage_write(", "await self._lock_cost("),
-        (InvoiceDocumentService.create_new_version, "await self.prepare_storage_write(", "get_by_id_for_update("),
-        (InvoiceDocumentService.prepare_storage_write, ".lock_inputs(", "scope_actor_role("),
-        (AttachmentService.upload, "await self.require_parents(", "await put_document("),
-        (put_document, "await lock_quota(", "await lock_document_storage("),
-    ):
-        source = inspect.getsource(function)
-        assert admission in source, function.__qualname__
-        assert source.index(admission) < source.index(row_lock), function.__qualname__
+
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    store = storage.LocalFsDocumentStore(tmp_path)
+    monkeypatch.setattr(storage, "_store", store)
+    org, actor, ident = rent_world["org"], rent_world["admin"], uuid.uuid4()
+    content = b"%PDF-concurrent original"
+    digest = storage.compute_sha256(content)
+    key = storage.make_storage_key(str(org), digest)
+    store.put(key, content, content_type="application/pdf")
+    await rent_db.execute(text("""INSERT INTO property_document(id,organization_id,property_id,doc_type,
+        title,original_filename,mime_type,content_byte_size,content_sha256,storage_uri,storage_backend,page_count,uploaded_by)
+        VALUES (:id,:org,:property,'DECLARATION','Synthetic','source.pdf','application/pdf',:size,:hash,:uri,'LOCAL_FS',1,:admin)"""),
+        {**rent_world, "id": ident, "uri": key, "hash": digest, "size": len(content)})
+    # Same future accepted class as the transaction tests below: keep all
+    # retention triggers intact and restore the disposable grant in finally.
+    await rent_db.execute(text("TRUNCATE document_ref CASCADE"))
+    await rent_db.execute(text("GRANT DELETE ON property_document TO app_rw"))
+    await rent_db.commit()
+
+    class AcceptedPropertyRepository(MandateDocumentRepository):
+        model = PropertyDocument
+
+        async def get_by_id(self, document_id):
+            document = await super().get_by_id(document_id)
+            document.accounting_scope_id = None
+            return document
+
+    delete_has_quota, continue_delete, upload_started = (asyncio.Event() for _ in range(3))
+    pids = {}
+
+    async def pause_delete_before_directory_lock(*args):
+        delete_has_quota.set()
+        await continue_delete.wait()
+        return await storage.lock_document_storage(*args)
+
+    monkeypatch.setattr(mandate_document_service, "lock_document_storage", pause_delete_before_directory_lock)
+
+    async def identify(db, name):
+        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {"actor": str(actor)})
+        await db.execute(text("SET LOCAL lock_timeout='1s'"))
+        pids[name] = await db.scalar(text("SELECT pg_backend_pid()"))
+
+    async def delete():
+        async with get_tenant_session(org) as db:
+            await identify(db, "delete")
+            service = mandate_document_service.MandateDocumentService(db, org, actor)
+            service._repo = AcceptedPropertyRepository(db, org)
+            await service.delete(ident)
+
+    async def upload():
+        async with get_tenant_session(org) as db:
+            await identify(db, "upload")
+            upload_started.set()
+            await AttachmentService(db, org, actor).upload(rent_world["property"], content,
+                original_filename="replacement.pdf")
+
+    async def upload_is_blocked_by_delete():
+        while not await rent_db.scalar(text("SELECT :deleter=ANY(pg_blocking_pids(:uploader))"),
+            {"deleter": pids["delete"], "uploader": pids["upload"]}):
+            await asyncio.sleep(0.01)
+
+    tasks = [asyncio.create_task(delete())]
+    try:
+        await asyncio.wait_for(delete_has_quota.wait(), 2)
+        tasks.append(asyncio.create_task(upload()))
+        await asyncio.wait_for(upload_started.wait(), 2)
+        assert pids["delete"] != pids["upload"]
+        await asyncio.wait_for(upload_is_blocked_by_delete(), 2)
+        continue_delete.set()
+        await asyncio.wait_for(asyncio.gather(*tasks), 3)
+        assert await rent_db.scalar(text("SELECT count(*) FROM property_document WHERE id=:id"), {"id": ident}) == 0
+        assert await rent_db.scalar(text("SELECT count(*) FROM attachment WHERE organization_id=:org AND storage_uri=:key"),
+            {"org": org, "key": key}) == 1
+        async with api_client(rent_world) as api:
+            assert (await api.get("/api/organizations/quota")).json()["usage"]["storage_bytes"] == len(content)
+        assert store.get(key) == content
+        assert list(tmp_path.rglob("*.bin")) == [tmp_path / key]
+    finally:
+        continue_delete.set()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await rent_db.execute(text("REVOKE DELETE ON property_document FROM app_rw"))
+        await rent_db.commit()
 
 
 @pytest.mark.asyncio
@@ -550,6 +617,53 @@ async def test_upload_at_storage_limit_succeeds_then_refuses_without_rows_or_fil
         listed = await api.get("/api/attachments", params=upload["data"])
         assert len(listed.json()["items"]) == 1
         assert (await api.get("/api/organizations/quota")).json()["usage"]["storage_bytes"] == 8
+
+
+@pytest.mark.asyncio
+async def test_an_unreferenced_existing_original_is_charged_on_upload(rent_world, monkeypatch, tmp_path):
+    from app.core import quotas, storage
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    monkeypatch.setattr(quotas, "FREE_PLAN", replace(quotas.FREE_PLAN, storage_bytes=8))
+    store = storage.LocalFsDocumentStore(tmp_path)
+    monkeypatch.setattr(storage, "_store", store)
+    orphan = b"%PDF-456"
+    key = storage.make_storage_key(str(rent_world["org"]), storage.compute_sha256(orphan))
+    store.put(key, orphan, content_type="application/pdf")
+    async with api_client(rent_world) as api:
+        data = {"property_id": str(rent_world["property"])}
+        first = await api.post("/api/attachments", data=data,
+            files={"file": ("live.pdf", b"%PDF-123", "application/pdf")})
+        assert first.status_code == 201, first.text
+        refused = await api.post("/api/attachments", data=data,
+            files={"file": ("orphan.pdf", orphan, "application/pdf")})
+        assert refused.status_code == 413, refused.text
+        assert refused.json()["detail"]["code"] == "QUOTA_STORAGE_EXCEEDED"
+        assert len((await api.get("/api/attachments", params=data)).json()["items"]) == 1
+        assert (await api.get("/api/organizations/quota")).json()["usage"]["storage_bytes"] == 8
+        assert store.get(key) == orphan
+        # A sized, live reference remains deduplicated at the limit.
+        duplicate = await api.post("/api/attachments", data=data,
+            files={"file": ("duplicate.pdf", b"%PDF-123", "application/pdf")})
+        assert duplicate.status_code == 201, duplicate.text
+        assert (await api.get("/api/organizations/quota")).json()["usage"]["storage_bytes"] == 8
+
+
+def test_intake_manifest_uses_the_shared_upload_limit(monkeypatch):
+    import importlib
+    from pydantic import ValidationError
+    from app.core import document_limits
+    from app.schemas import intake
+    item = {"client_item_key": "one", "filename": "one.pdf", "mime_type": "application/pdf",
+            "content_sha256": "a" * 64, "content_byte_size": 4}
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(document_limits, "MAX_UPLOAD_BYTES", 4)
+            importlib.reload(intake)
+            assert intake.IntakeManifestItem(**item).content_byte_size == 4
+            with pytest.raises(ValidationError):
+                intake.IntakeManifestItem(**{**item, "content_byte_size": 5})
+    finally:
+        importlib.reload(intake)
 
 
 @pytest.mark.asyncio

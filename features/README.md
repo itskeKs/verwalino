@@ -75,8 +75,10 @@ for other mail acceptance scenarios; FakeSMTP remains for mail-service unit test
 `password_reset.feature` is untagged and verifies recovery through Mailpit, the emailed reset token, confirmation mail and old-session revocation in both modes.
 Organization isolation and quota-summary scenarios run in both modes. `organization_quotas.feature` is
 hosted-only: it scales the storage allowance to a small deterministic payload,
-fills it through the real upload API, and verifies the German refusal. Files and
-database records use the ordinary services; no network or model call is involved.
+signs up its own organization after another has filled its property allowance,
+fills storage through the real upload API, and verifies the German refusal. Files and
+database records use the ordinary services; signup mail uses local Mailpit.
+No external network or model call is involved.
 Browser app processes inherit the
 selected mode too; `@browser` remains a separate opt-in tag. Browser scenarios do not
 send mail, so only CI's backend job provisions the same digest-pinned Mailpit service.

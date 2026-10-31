@@ -9,6 +9,7 @@ import { DeclarationImportPage } from "./DeclarationImportPage";
 import { PropertiesPage } from "./PropertiesPage";
 import { PropertyDetailPage } from "./PropertyDetailPage";
 import { AuthProvider } from "../auth/AuthContext";
+import * as uploadLimits from "../lib/uploads";
 
 import {
   createDeclarationImport,
@@ -279,6 +280,20 @@ describe("Teilungserklärung upload wizard", () => {
     expect(screen.getByText(/„umbenannt\.pdf“ ist keine PDF-Datei/i)).toBeVisible();
     expect(screen.getByText(/„gross\.pdf“ ist größer als maximal 25 MiB/i)).toBeVisible();
     expect(uploadSpy).not.toHaveBeenCalled();
+  });
+
+  it("uses the shared upload cap for file selection boundaries", async () => {
+    vi.spyOn(uploadLimits, "MAX_UPLOAD_BYTES", "get").mockReturnValue(4);
+    vi.spyOn(declarationApi, "createDeclarationImport").mockResolvedValue(pendingImport());
+    renderImportRoute();
+    const input = await screen.findByLabelText("PDF-Dateien auswählen");
+    fireEvent.change(input, { target: { files: [
+      new File(["%PDF"], "exakt.pdf", { type: "application/pdf" }),
+      new File(["%PDF-"], "darueber.pdf", { type: "application/pdf" }),
+    ] } });
+    expect(screen.getByDisplayValue("exakt.pdf")).toBeVisible();
+    expect(screen.getByText(/„darueber\.pdf“ ist größer als maximal 25 MiB/i)).toBeVisible();
+    expect(screen.queryByDisplayValue("darueber.pdf")).not.toBeInTheDocument();
   });
 
   it("uploads multiple PDFs, lets their metadata be changed, and gates start", async () => {

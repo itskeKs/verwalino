@@ -131,7 +131,10 @@ originals. Uploads and quota reads never walk the storage directory. Database
 counts include every organization-owned property/unit, regardless of source
 grants. Hosted writes serialize quota admission within the organization. New files
 are checked before writing and, in hosted mode, removed on transaction rollback;
-already retained content is preserved. Mail originals are retained before their
+cleanup failures log a warning, preserve the original error and release the directory
+lock. An existing file is admitted at zero additional bytes only when the guarded
+reference index already retains it; an unreferenced orphan is charged its full upload
+size on reuse. Already retained content is preserved. Mail originals are retained before their
 independently committed dispatch receipt, so a request rollback cannot remove a
 referenced PDF. File-size and upload-storage refusals return **413**; visual-extract
 storage admission and count refusals return **409**, with a structured `detail.code`

@@ -2,6 +2,7 @@
 import uuid
 from typing import Literal
 from pydantic import BaseModel,ConfigDict,Field,model_validator
+from app.core.document_limits import MAX_UPLOAD_BYTES
 
 
 class IntakeManifestItem(BaseModel):
@@ -10,7 +11,7 @@ class IntakeManifestItem(BaseModel):
     filename: str=Field(min_length=1,max_length=255)
     mime_type: Literal['application/pdf','application/xml','image/png','image/jpeg']
     content_sha256: str=Field(pattern=r'^[0-9a-f]{64}$')
-    content_byte_size: int=Field(strict=True,ge=1,le=25*1024*1024)
+    content_byte_size: int=Field(strict=True,ge=1,le=MAX_UPLOAD_BYTES)
 
 
 class IntakeBatchCreate(BaseModel):

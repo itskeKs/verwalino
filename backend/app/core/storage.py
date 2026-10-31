@@ -380,7 +380,7 @@ def _rollback_storage(session, previous_transaction):
     keep = []
     for store, key, transaction in pending:
         if transaction is previous_transaction:
-            store.discard_uncommitted(key)
+            _discard_uncommitted(store, key)
         else:
             keep.append((store, key, transaction))
     if keep:
@@ -391,22 +391,31 @@ def _rollback_storage(session, previous_transaction):
     ]
 
 
+def _discard_uncommitted(store, key):
+    try:
+        store.discard_uncommitted(key)
+    except Exception:
+        logger.warning("Rollback document removal failed for %s; original retained for reconciliation", key, exc_info=True)
+
+
 @event.listens_for(Session, "after_transaction_end")
 def _close_storage(session, transaction):
     # Session.close also rolls back, without emitting after_soft_rollback.
     if transaction.parent is None:
         session.info.pop("deleted_storage", None)
-        for store, key, _transaction in session.info.pop("uncommitted_storage", []):
-            store.discard_uncommitted(key)
-        for handle in session.info.pop("storage_write_locks", {}).values():
-            os.close(handle)
+        try:
+            for store, key, _transaction in session.info.pop("uncommitted_storage", []):
+                _discard_uncommitted(store, key)
+        finally:
+            for handle in session.info.pop("storage_write_locks", {}).values():
+                os.close(handle)
 
 
 async def put_document(session, org_id, data: bytes, *, content_type: str,
                        store: DocumentStore | None = None) -> StoredObjectRef:
     """Check before writing; keep only originals belonging to committed writes."""
     from app.core.quotas import get_quota_plan
-    from app.services.quota_service import database_usage, lock_quota, require_quota
+    from app.services.quota_service import lock_quota, require_document_storage, require_quota
 
     active_store = store or get_store()
     plan = get_quota_plan()
@@ -425,8 +434,7 @@ async def put_document(session, org_id, data: bytes, *, content_type: str,
         # Prior writes in this transaction must be visible to the aggregate,
         # including unflushed ORM metadata in multi-document operations.
         await session.flush()
-        usage = await database_usage(session, org_id)
-        require_quota(usage["storage_bytes"], "storage_bytes", 0 if existed else len(data), plan=plan)
+        await require_document_storage(session, org_id, key, len(data), plan=plan)
     if plan.storage_bytes is not None and not existed and isinstance(active_store, LocalFsDocumentStore):
         transaction = session.sync_session.get_nested_transaction() or session.sync_session.get_transaction()
         session.info.setdefault("uncommitted_storage", []).append((active_store, key, transaction))

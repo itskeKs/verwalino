@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 
 from app.core.quotas import check_quota, get_quota_plan
+from app.repositories.mandate_document_repo import MandateDocumentRepository
 
 
 async def lock_quota(db, org_id, *, budget=False):
@@ -29,6 +30,14 @@ def require_quota(usage, kind, delta, *, plan=None):
     if not decision.allowed:
         raise HTTPException(413 if kind in {"storage_bytes", "upload_bytes"} else 409,
                             {"code": decision.code, "message": decision.message})
+
+
+async def require_document_storage(db, org_id, storage_key, byte_size, *, plan):
+    usage = await database_usage(db, org_id)
+    # Physical existence alone cannot deduplicate admission: a failed cleanup
+    # may have left bytes without any owning metadata or reconciliation entry.
+    references = await MandateDocumentRepository(db, org_id).count_storage_references(storage_key)
+    require_quota(usage["storage_bytes"], "storage_bytes", 0 if references else byte_size, plan=plan)
 
 
 async def require_counts(db, org_id, *, properties=0, units=0):
