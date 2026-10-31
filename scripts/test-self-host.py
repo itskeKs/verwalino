@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import tarfile
+import time
 import unittest
 from pathlib import Path
 
@@ -25,6 +26,10 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_TARGET = runpy.run_path(str(ROOT / "backend/app/deployment.py"))["TARGET"]
 SECRETS = ("MIGRATOR_PASSWORD", "APP_RW_PASSWORD", "APP_WORKER_PASSWORD", "APP_REVIEW_PASSWORD", "SESSION_SECRET")
+PATH_BASH = shutil.which("bash")
+PATH_BASH_VERSION = subprocess.check_output([PATH_BASH, "--version"], text=True).splitlines()[0]
+MAC_BASH_VERSION = (subprocess.check_output(["/bin/bash", "--version"], text=True).splitlines()[0]
+                    if Path("/bin/bash").exists() else "unavailable")
 SMTP = {
     "HV_SMTP_HOST": "smtp.example.invalid", "HV_SMTP_PORT": "465",
     "HV_SMTP_FROM": "verwaltung@example.invalid", "HV_SMTP_SECURITY": "tls",
@@ -40,6 +45,8 @@ with socket.socket() as port_probe:
 
 
 class SelfHostTests(unittest.TestCase):
+    bash = PATH_BASH
+
     def test_help_points_to_the_documented_unlock_command(self):
         result = self.run_script("--help")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -77,15 +84,80 @@ class SelfHostTests(unittest.TestCase):
         binary.mkdir()
         docker = binary / "docker"
         docker.write_text('''#!/usr/bin/env python3
-import json, os, signal, subprocess, sys
+import hashlib, json, os, signal, stat, subprocess, sys
+def config_image(path):
+    if not os.path.isfile(path): return None
+    with open(path) as config:
+        return next(line.strip().split("=", 1)[1] for line in config if line.startswith("VERWALINO_IMAGE="))
+env_file = sys.argv[sys.argv.index("--env-file") + 1] if "--env-file" in sys.argv else os.environ["VERWALINO_CONFIG"]
+archive_digest = None
+if "verify" in sys.argv and "--volume" in sys.argv:
+    with open(sys.argv[sys.argv.index("--volume") + 1].rsplit(":", 1)[0] + "/archive.tar", "rb") as archive:
+        archive_digest = hashlib.sha256(archive.read()).hexdigest()
+if "--volume" in sys.argv:
+    mount = sys.argv[sys.argv.index("--volume") + 1].rsplit(":", 1)[0]
+    if not os.path.isabs(mount) or not os.path.isdir(mount):
+        sys.exit("Invalid fake Docker bind source: " + repr(mount))
+# Like Compose interpolation: the caller's environment wins, --env-file fills the rest.
+if os.path.isfile(env_file):
+    with open(env_file) as config:
+        for line in config:
+            key, _, value = line.rstrip("\\n").partition("=")
+            if key.startswith("HV_SMTP_"): os.environ.setdefault(key, value)
 smtp_password = os.environ.get("HV_SMTP_PASSWORD", "")
 with open(os.environ["FAKE_DOCKER_LOG"], "a") as log:
-    log.write(json.dumps({"args": sys.argv[1:], "image": os.environ.get("VERWALINO_IMAGE"), "secure": os.environ.get("VERWALINO_COOKIE_SECURE"), "hosts": os.environ.get("VERWALINO_ALLOWED_HOSTS"), "profiles": os.environ.get("COMPOSE_PROFILES"), "caller_secret_used": os.environ.get("MIGRATOR_PASSWORD") == "attacker",
+    log.write(json.dumps({"args": sys.argv[1:], "image": os.environ.get("VERWALINO_IMAGE"), "secure": os.environ.get("VERWALINO_COOKIE_SECURE"), "hosts": os.environ.get("VERWALINO_ALLOWED_HOSTS"), "profiles": os.environ.get("COMPOSE_PROFILES"), "caller_secret_used": os.environ.get("MIGRATOR_PASSWORD") == "attacker", "config_image": config_image(os.environ["VERWALINO_CONFIG"]), "env_image": config_image(env_file), "env_mode": stat.S_IMODE(os.stat(env_file).st_mode) if os.path.exists(env_file) else None, "locked": os.path.isdir(os.environ["VERWALINO_CONFIG"] + ".lock"), "archive_digest": archive_digest,
                          "smtp": {key: value for key, value in os.environ.items() if key.startswith("HV_SMTP_") and key != "HV_SMTP_PASSWORD"},
                          "smtp_password_matches": smtp_password == os.environ.get("FAKE_SMTP_PASSWORD", "")}) + "\\n")
-failure = os.environ.get("FAKE_DOCKER_FAIL")
-if failure and (failure in sys.argv or (failure == "app-ready" and "up" in sys.argv and sys.argv[-1] == "app")):
+signal_stage = os.environ.get("FAKE_INTERRUPT_STAGE")
+signal_matches = (signal_stage == "stop" and "stop" in sys.argv) or (signal_stage == "writers" and "ps" in sys.argv and "--quiet" in sys.argv)
+if signal_matches and not os.path.exists(os.environ["FAKE_INTERRUPT_SENT"]):
+    import signal
+    with open(os.environ["FAKE_INTERRUPT_SENT"], "w") as sent: sent.write("1")
+    interrupted = getattr(signal, os.environ.get("FAKE_INTERRUPT_SIGNAL", "SIGINT"))
+    signal.signal(interrupted, signal.SIG_IGN)
+    os.killpg(os.getpgrp(), interrupted)
+    sys.exit(128 + interrupted)
+with open(os.environ["FAKE_CONTAINERS"]) as state:
+    containers = json.load(state)
+if "stop" in sys.argv:
+    for service in sys.argv[sys.argv.index("stop") + 1:] or ("app", "db", "caddy", "migrate", "bootstrap"):
+        containers[service] = "exited||" + service + "-id"
+if "up" in sys.argv:
+    for service in ("app", "db", "caddy"):
+        if service in sys.argv: containers[service] = "running|healthy|" + service + "-id"
+if "run" in sys.argv and sys.argv[-1] == "migrate":
+    for service in os.environ.get("FAKE_LINGERING_WRITERS", "").split():
+        containers[service] = "running||" + service + "-id"
+if "stop" in sys.argv or "up" in sys.argv or ("run" in sys.argv and sys.argv[-1] == "migrate"):
+    with open(os.environ["FAKE_CONTAINERS"], "w") as state:
+        json.dump(containers, state)
+if "psql" in sys.argv and containers.get("db", "running").split("|", 1)[0] != "running":
     sys.exit(17)
+tags_path = os.environ["FAKE_IMAGE_TAGS"]
+with open(tags_path) as state:
+    tags = json.load(state)
+if sys.argv[1:3] == ["image", "tag"]: tags.append(sys.argv[-1])
+if "build" in sys.argv: tags.append(os.environ["VERWALINO_IMAGE"])
+if sys.argv[1:3] == ["image", "rm"]:
+    if os.environ.get("FAKE_IMAGE_IN_USE") in sys.argv[3:]: sys.exit(17)
+    tags = [tag for tag in tags if tag not in sys.argv[3:]]
+if sys.argv[1:3] in (["image", "tag"], ["image", "rm"]) or "build" in sys.argv:
+    with open(tags_path, "w") as state:
+        json.dump(tags, state)
+if sys.argv[1:3] == ["image", "ls"]:
+    print("\\n".join(tags))
+    sys.exit(0)
+failure = os.environ.get("FAKE_DOCKER_FAIL")
+image_matches = os.environ.get("FAKE_FAIL_IMAGE", os.environ.get("VERWALINO_IMAGE")) == os.environ.get("VERWALINO_IMAGE")
+if (failure and image_matches and ((failure in sys.argv and (failure != "migrate" or "run" in sys.argv)) or (failure == "app-ready" and "up" in sys.argv and sys.argv[-1] == "app") or (failure == "health" and "exec" in sys.argv and "app" in sys.argv))) or os.environ.get("FAKE_ROLLBACK_FAIL") in sys.argv:
+    if os.environ.get("FAKE_DIRTY_SCHEMA") and "migrate" in sys.argv and "run" in sys.argv:
+        with open(os.environ["FAKE_SCHEMA_STATE"], "w") as schema:
+            schema.write(os.environ["FAKE_DIRTY_SCHEMA"])
+    sys.exit(17)
+if sys.argv[1:3] == ["image", "inspect"] and "--format" in sys.argv:
+    print("sha256:" + "c" * 64)
+    sys.exit(0)
 if sys.argv[1] == "info":
     if "-f" in sys.argv:
         print(os.environ.get("FAKE_DOCKER_ROOT", "/docker-data") if "DockerRootDir" in sys.argv[-1]
@@ -103,7 +175,7 @@ if "ps" in sys.argv and "--format" in sys.argv and sys.argv[-1] == "json":
 if "ps" in sys.argv and "--format" in sys.argv:
     service = sys.argv[-1]
     print(os.environ.get("FAKE_CONTAINER_" + service.upper(),
-                         "running|" + ("" if service == "caddy" else "healthy") + "|" + service + "-id"))
+                         containers.get(service, "running|" + ("" if service == "caddy" else "healthy") + "|" + service + "-id")))
     sys.exit(0)
 if "port" in sys.argv:
     port = os.environ.get("VERWALINO_PORT", "18080") if sys.argv[-2] == "app" else sys.argv[-1]
@@ -112,7 +184,7 @@ if "port" in sys.argv:
 if "find" in sys.argv and "caddy" in sys.argv:
     print(os.environ.get("FAKE_CERTIFICATE", "/data/caddy/certificates/acme/verwaltung.example.org/verwaltung.example.org.crt"))
     sys.exit(0)
-if "ps" in sys.argv and sys.argv[-1] == "inbox-worker":
+if "ps" in sys.argv and sys.argv[-1] == "inbox-worker" and "--status" not in sys.argv:
     print(os.environ.get("FAKE_INBOX_CONTAINER", ""))
 if "logs" in sys.argv:
     secrets = " ".join(os.environ[key] for key in ("MIGRATOR_PASSWORD", "APP_RW_PASSWORD", "APP_WORKER_PASSWORD", "APP_REVIEW_PASSWORD", "SESSION_SECRET"))
@@ -142,6 +214,18 @@ if "ps" in sys.argv and "--quiet" in sys.argv:
     statuses = [sys.argv[i + 1] for i, arg in enumerate(sys.argv) if arg == "--status"]
     if state in statuses:
         print(os.environ.get("FAKE_RUNNING", ""), end="")
+    for service, row in containers.items():
+        if service in sys.argv and row.split("|", 1)[0] in statuses: print(service + "-id")
+if "exec" in sys.argv and "app" in sys.argv:
+    sys.exit(0)
+if "run" in sys.argv and sys.argv[-1] == "migrate":
+    with open(os.environ["FAKE_SCHEMA_STATE"], "w") as schema:
+        schema.write(os.environ.get("FAKE_MIGRATED_SCHEMA", "0139"))
+    with open(os.environ["FAKE_DOCUMENTS"] + "/later.pdf", "wb") as document:
+        document.write(b"written after backup")
+    if os.environ.get("FAKE_MIGRATE_SIGNAL"):
+        import signal
+        os.kill(os.getppid(), getattr(signal, os.environ["FAKE_MIGRATE_SIGNAL"]))
 state_path = os.environ["FAKE_DB_STATE"]
 with open(state_path) as state_file:
     databases = json.load(state_file)
@@ -166,6 +250,9 @@ if "psql" in sys.argv:
         if source not in databases or target in databases:
             sys.exit(17)
         databases[target] = databases.pop(source)
+        if source == "hausverwaltung_restore" and target == "hausverwaltung":
+            with open(os.environ["FAKE_SCHEMA_STATE"], "w") as schema:
+                schema.write(os.environ.get("FAKE_RESTORED_SCHEMA", "0139"))
     elif statement.startswith("DROP DATABASE "):
         pass
     elif statement.startswith("SELECT name"):
@@ -183,7 +270,8 @@ if "psql" in sys.argv:
         from app.deployment import TARGET
         print(TARGET)
     elif statement == "SELECT version_num FROM alembic_version":
-        print(os.environ.get("FAKE_RESTORED_SCHEMA" if "hausverwaltung_restore" in sys.argv else "FAKE_SCHEMA", "0139"))
+        with open(os.environ["FAKE_SCHEMA_STATE"]) as schema:
+            print(os.environ.get("FAKE_RESTORED_SCHEMA" if "hausverwaltung_restore" in sys.argv else "FAKE_SCHEMA", schema.read()))
     elif statement == "SELECT count(*) FROM public.organization":
         print(os.environ.get("FAKE_ORGANIZATION_COUNT", "1"))
     elif "-qAt" in sys.argv and "INSERT INTO public.setup_token(token_hash)" in statement:
@@ -213,7 +301,12 @@ if "-c" in sys.argv:
     # Emulate root's container-only ownership operations without chown on the host.
     wrapper = """import os, sys
 from app import deployment
-if os.environ.get("FAKE_IMAGE_TARGET"):
+targets = __import__("json").loads(os.environ.get("FAKE_IMAGE_TARGETS", "{}"))
+if os.environ.get("VERWALINO_IMAGE") in targets:
+    deployment.TARGET = targets[os.environ["VERWALINO_IMAGE"]]
+if os.environ.get("FAKE_IMAGE_TARGET") == "missing":
+    del deployment.TARGET
+elif os.environ.get("FAKE_IMAGE_TARGET"):
     deployment.TARGET = os.environ["FAKE_IMAGE_TARGET"]
 if os.environ.get("FAKE_OLD_IMAGE"):
     del deployment.archive_documents
@@ -253,8 +346,17 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
         (self.documents / "original.pdf").write_bytes(b"synthetic original")
         self.db_state = self.base / "databases.json"
         self.db_state.write_text(json.dumps({"hausverwaltung": "old data"}))
+        self.schema_state = self.base / "schema"
+        self.schema_state.write_text("0139")
+        self.containers = self.base / "containers.json"
+        self.containers.write_text("{}")
+        self.image_tags = self.base / "tags.json"
+        self.image_tags.write_text("[]")
         self.env = dict(os.environ, PYTHONPATH=str(ROOT / "backend"), FAKE_DOCUMENTS=str(self.documents), PATH=f"{binary}:{os.environ['PATH']}",
+                        FAKE_CONTAINERS=str(self.containers), FAKE_IMAGE_TAGS=str(self.image_tags),
+                        FAKE_INTERRUPT_SENT=str(self.base / "interrupt-sent"),
                         FAKE_DB_STATE=str(self.db_state),
+                        FAKE_SCHEMA_STATE=str(self.schema_state),
                         FAKE_CHECKOUT=str(self.root),
                         FAKE_DOCUMENT_MOVES=str(self.base / "document-moves.jsonl"),
                         FAKE_DROP_DOCUMENTS=str(self.base / "drop-documents.json"),
@@ -265,11 +367,13 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
     def run_script(self, *args, input=None, stderr_closed=False, stderr=subprocess.PIPE):
         if args[:1] == ("init",) and not self.config.exists() and "--port" not in args:
             args = (*args, "--port", TEST_PORT)
-        command = ["bash", str(self.root / "scripts/self-host.sh"), *args]
+        command = [self.bash, str(self.root / "scripts/self-host.sh"), *args]
         if stderr_closed:
-            command = ["bash", "-c", 'exec 2>&-; exec "$@"', "closed-stderr", *command]
+            command = [self.bash, "-c", 'exec 2>&-; exec "$@"', "closed-stderr", *command]
+        # Restore diagnostics spawn many fake CLI processes; allow for host load.
         return subprocess.run(command, env=self.env, input=input,
-                              text=True, stdout=subprocess.PIPE, stderr=stderr, cwd=self.base, check=False, timeout=15)
+                              text=True, stdout=subprocess.PIPE, stderr=stderr, cwd=self.base, check=False,
+                              timeout=60, start_new_session=True)
 
     def init(self, *args):
         result = self.run_script("init", *args)
@@ -284,7 +388,8 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
         # Isolate PATH so missing-tool tests never discover host tools or Docker.
         binary = self.base / "doctor-bin"
         binary.mkdir(exist_ok=True)
-        for name in ("bash", "dirname", "stat", "awk", "sed", "sort", "mktemp", "rm", "cat", "id", "sleep"):
+        for name in ("bash", "dirname", "stat", "awk", "sed", "sort", "mktemp", "rm", "cat", "id", "sleep",
+                     "mkdir", "rmdir", "chmod", "cp", "ln", "date", "wc", "tr", "mv", "env"):
             path = binary / name
             if not path.exists():
                 path.symlink_to(shutil.which(name))
@@ -298,6 +403,9 @@ if name == "lsof": port = next(arg.split(":", 1)[1] for arg in sys.argv if arg.s
 if name == "df":
     key = "FAKE_DISK_CHECKOUT" if sys.argv[-1] == os.environ["FAKE_CHECKOUT"] else "FAKE_DISK_DOCKER"
     value = os.environ.get(key, "20971520")
+    if os.environ.get("FAKE_DISK_AFTER_MIGRATION"):
+        with open(os.environ["FAKE_SCHEMA_STATE"]) as schema:
+            if schema.read() == "0139": value = "100"
     if value == "error": sys.exit(1)
     print("Filesystem 1024-blocks Used Available Capacity Mounted on")
     print("disk 30000000 1 " + value + " 1% /")
@@ -320,7 +428,10 @@ elif name in ("ip", "ifconfig"):
     for address in os.environ.get("FAKE_PUBLIC_IP", "93.184.216.34").split():
         print(("2: eth0 " if name == "ip" else "") + ("inet6 " if ":" in address else "inet ") + address + "/24 scope global")
 elif name == "openssl":
-    if "s_client" in sys.argv:
+    if "dgst" in sys.argv:
+        import hashlib
+        print("SHA2-256(stdin)= " + hashlib.sha256(sys.stdin.buffer.read()).hexdigest())
+    elif "s_client" in sys.argv:
         if os.environ.get("FAKE_TLS_FAIL"): sys.exit(1)
         print("synthetic certificate")
     else:
@@ -596,6 +707,697 @@ elif name == "openssl":
         keys = ("VERWALINO_MODE", "VERWALINO_DOMAIN", "VERWALINO_PORT", "VERWALINO_IMAGE", "VERWALINO_PROXY_SUBNET")
         return hashlib.sha256("".join(f"{key}={config[key]}\n" for key in keys).encode()).hexdigest()
 
+    def update_setup(self, local=False, https=False):
+        self.old_image = "verwalino:local" if local else "registry.example.org/verwalino@sha256:" + "a" * 64
+        self.new_image = "registry.example.org/verwalino@sha256:" + "b" * 64
+        self.init("--image", self.old_image, *(("--https", "verwaltung.example.org") if https else ()))
+        self.schema_state.write_text("0138")
+        self.env.update(FAKE_IMAGE_TARGETS=json.dumps({self.old_image: "0138", self.new_image: "0139"}),
+                        FAKE_RESTORED_SCHEMA="0138", FAKE_FAIL_IMAGE=self.new_image)
+        self.doctor_tools()
+
+    def update_archives(self):
+        return [p.resolve() for p in (self.root / "backups").glob("*.tar")]
+
+    def assert_restore_cleaned(self):
+        self.assertEqual(list(self.base.glob(".env.verwalino-restore.*")), [])
+
+    def assert_update_rollback(self, result, config_mode=0o600):
+        self.assertNotEqual(result.returncode, 0)
+        archive, = self.update_archives()
+        self.assertIn(f"rolled back to {self.old_image}, data from {archive}", result.stdout + result.stderr)
+        self.assertIn("VERWALINO_IMAGE=" + self.old_image + "\n", self.config.read_text())
+        self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), config_mode)
+        calls = self.calls()
+        stopped = [i for i, c in enumerate(calls) if "stop" in c["args"] and "app" in c["args"]]
+        self.assertEqual(len(stopped), 2)
+        verified = next(i for i, c in enumerate(calls) if "verify" in c["args"])
+        restored = next(i for i, c in enumerate(calls) if "pg_restore" in c["args"])
+        started = max(i for i, c in enumerate(calls) if "up" in c["args"] and c["args"][-1] == "app")
+        health = max(i for i, c in enumerate(calls) if "exec" in c["args"] and "app" in c["args"])
+        self.assertLess(stopped[-1], verified)
+        self.assertLess(verified, restored)
+        self.assertEqual(calls[verified]["archive_digest"], hashlib.sha256(archive.read_bytes()).hexdigest())
+        self.assertLess(restored, started)
+        self.assertLess(started, health)
+        self.assertTrue(all(c["config_image"] == self.old_image for c in calls[verified:]))
+        with tarfile.open(archive) as tar:
+            self.assertEqual(json.loads(tar.extractfile("manifest.json").read())["schema_head"], "0138")
+        self.assertEqual(self.schema_state.read_text(), "0138")
+        self.assertEqual((self.documents / "original.pdf").read_bytes(), b"synthetic original")
+        self.assertFalse((self.documents / "later.pdf").exists())
+        self.assertNotIn("fingerprint differs", result.stderr)
+        self.assertNotIn("Type restore", result.stderr)
+        self.assertFalse(Path(str(self.config) + ".lock").exists())
+        self.assert_restore_cleaned()
+        self.assertEqual(list(self.documents.glob(".restore-*")), [])
+        self.assertEqual(list(self.base.glob(".env.verwalino-update.*")), [])
+        self.assertTrue(any("stop" in c["args"] and c["args"][-1] == "db" for c in calls))
+
+    def test_update_backs_up_switches_migrates_and_checks_health_in_order(self):
+        self.update_setup()
+        before = self.config.read_text()
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.calls()
+        args = [c["args"] for c in calls]
+        pull = next(i for i, a in enumerate(args) if "pull" in a)
+        backup = next(i for i, a in enumerate(args) if "pack" in a)
+        stop = next(i for i, a in enumerate(args) if "stop" in a)
+        migrate = next(i for i, a in enumerate(args) if a[-1] == "migrate")
+        start = next(i for i, a in enumerate(args) if "up" in a and a[-1] == "app")
+        health = next(i for i, a in enumerate(args) if "exec" in a and "app" in a)
+        doctor = [i for i, a in enumerate(args) if a == ["info"]]
+        dump = next(i for i, a in enumerate(args) if "pg_dump" in a)
+        self.assertEqual(sorted([doctor[0], pull, stop, dump, backup, migrate, start, health, doctor[-1]]),
+                         [doctor[0], pull, stop, dump, backup, migrate, start, health, doctor[-1]])
+        candidate = args[pull][args[pull].index("--env-file") + 1]
+        prefix = ["compose", "--project-name", "verwalino", "--env-file", str(self.config),
+                  "-f", str(self.root / "infra/docker-compose.yml"), "--profile", "ops"]
+        pull_prefix = prefix.copy()
+        pull_prefix[pull_prefix.index("--env-file") + 1] = candidate
+        self.assertEqual(args[pull], pull_prefix + ["pull", "app"])
+        self.assertEqual(args[migrate], prefix + ["run", "--rm", "--no-deps", "-T", "migrate"])
+        self.assertEqual(args[start], prefix + ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "120", "app"])
+        self.assertNotEqual(candidate, str(self.config))
+        self.assertFalse(Path(candidate).exists())
+        self.assertEqual(calls[pull]["env_image"], self.new_image)
+        self.assertEqual(calls[pull]["env_mode"], 0o600)
+        self.assertTrue(all(c["config_image"] == self.old_image for c in calls[:stop + 1]))
+        self.assertEqual(calls[migrate]["config_image"], self.new_image)
+        self.assertTrue(all(c["locked"] for c in calls))
+        self.assertEqual(self.config.read_text(), before.replace(self.old_image, self.new_image))
+        self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o600)
+        archive, = self.update_archives()
+        with tarfile.open(archive) as tar:
+            manifest = json.loads(tar.extractfile("manifest.json").read())
+            self.assertEqual(manifest["app_image"], self.old_image)
+            self.assertEqual(manifest["schema_head"], "0138")
+        self.assertIn(f"updated {self.old_image} → {self.new_image}, migrations 0138 → 0139, backup kept at {archive}", result.stdout)
+        self.assertEqual(result.stdout.count("Zusammenfassung:"), 2)
+        self.assertIn("health/live", " ".join(args[health]))
+        self.assertIn("health/ready", " ".join(args[health]))
+        self.assertFalse(any("stop" in a and a[-1] == "db" for a in args))
+        self.assert_isolated([a for a in args if "--env-file" not in a or a[a.index("--env-file") + 1] == str(self.config)])
+
+    def test_update_stops_all_writers_before_backup(self):
+        self.update_setup()
+        self.containers.write_text(json.dumps({
+            "migrate": "running||migrate-id", "bootstrap": "paused||bootstrap-id",
+            "inbox-worker": "running||inbox-id",
+        }))
+        self.env["FAKE_INBOX_CONTAINER"] = "inbox-id"
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        args = [c["args"] for c in self.calls()]
+        dump = next(i for i, a in enumerate(args) if "pg_dump" in a)
+        for service in ("app", "migrate", "bootstrap", "inbox-worker"):
+            self.assertTrue(any("stop" in a and service in a[a.index("stop") + 1:] for a in args[:dump]))
+        self.assertFalse(any("up" in a and "inbox-worker" in a for a in args))
+
+    def test_update_reads_both_image_targets_without_privileges_or_volumes(self):
+        self.update_setup()
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        probes = [c for c in self.calls() if "run" in c["args"] and "-c" in c["args"] and
+                  ("target" in c["args"] or "from app.deployment import TARGET; print(TARGET)" in c["args"])]
+        self.assertEqual(len(probes), 3)
+        for call, image in zip(probes, (self.old_image, self.new_image, self.new_image), strict=True):
+            self.assertEqual(call["args"], [
+                "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+                "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+                "--entrypoint", "python", image, "-c", "from app.deployment import TARGET; print(TARGET)",
+            ])
+
+    def test_update_migration_failure_restores_the_backup_and_previous_image(self):
+        self.update_setup()
+        self.env.update(FAKE_DOCKER_FAIL="migrate", FAKE_DIRTY_SCHEMA="0139")
+        self.assert_update_rollback(self.run_script("update", "--image", self.new_image, "--yes", input=""))
+
+    def test_update_broken_output_pipe_during_rollback_restores_and_logs_outcome(self):
+        self.update_setup()
+        self.env.update(FAKE_DOCKER_FAIL="migrate", FAKE_DIRTY_SCHEMA="0139")
+        switched = self.base / "switched"
+        closed = self.base / "output-closed"
+        docker = self.base / "doctor-bin/docker"
+        docker.unlink()
+        docker.write_text(f'''#!{sys.executable}
+import os, sys, time
+from pathlib import Path
+switched = Path({str(switched)!r})
+if "run" in sys.argv and sys.argv[-1] == "migrate":
+    switched.touch()
+    deadline = time.monotonic() + 15
+    while not Path({str(closed)!r}).exists():
+        if time.monotonic() > deadline: sys.exit(99)
+        time.sleep(0.01)
+if switched.exists():
+    # Like Docker, fail when a progress write reaches a disconnected terminal.
+    sys.stderr.write("Container verwalino-app progress\\n")
+    sys.stderr.flush()
+os.execv({str(self.base / "bin/docker")!r}, ["docker", *sys.argv[1:]])
+''')
+        docker.chmod(0o755)
+        command = [self.bash, str(self.root / "scripts/self-host.sh"), "update", "--image", self.new_image, "--yes"]
+        with subprocess.Popen(command, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              cwd=self.base, start_new_session=True) as process:
+            self.addCleanup(lambda: process.kill() if process.poll() is None else None)
+            os.set_blocking(process.stdout.fileno(), False)
+            deadline = time.monotonic() + 30
+            while not switched.exists():
+                self.assertIsNone(process.poll(), "Update exited before the switch")
+                self.assertLess(time.monotonic(), deadline, "Update never reached the switch")
+                try:
+                    os.read(process.stdout.fileno(), 65536)
+                except BlockingIOError:
+                    time.sleep(0.01)
+            process.stdout.close()
+            closed.touch()
+            process.wait(timeout=60)
+        self.assertEqual(process.returncode, 17)
+        log, = (self.base / "logs").glob("update-*.log")
+        self.assertEqual(stat.S_IMODE(log.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(log.parent.stat().st_mode), 0o700)
+        self.assertIn("Container verwalino-app progress", log.read_text())
+        self.assert_update_rollback(subprocess.CompletedProcess(command, process.returncode, "", log.read_text()))
+
+    def test_update_preserves_read_only_config_mode_on_success(self):
+        self.update_setup()
+        self.config.chmod(0o400)
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o400)
+        self.assertTrue(all(c["env_mode"] == 0o400 for c in self.calls()))
+        self.assertIn("VERWALINO_IMAGE=" + self.new_image + "\n", self.config.read_text())
+        self.assertEqual(list(self.base.glob(".env.verwalino-update.*")), [])
+
+    def test_update_preserves_read_only_config_mode_on_rollback(self):
+        self.update_setup()
+        self.config.chmod(0o400)
+        self.env.update(FAKE_DOCKER_FAIL="migrate", FAKE_DIRTY_SCHEMA="0139")
+        self.assert_update_rollback(self.run_script("update", "--image", self.new_image, "--yes"), config_mode=0o400)
+        self.assertTrue(all(c["env_mode"] == 0o400 for c in self.calls()))
+
+    def test_update_rollback_stops_lingering_migration_and_bootstrap_writers(self):
+        self.update_setup()
+        self.env.update(FAKE_DOCKER_FAIL="migrate", FAKE_LINGERING_WRITERS="migrate bootstrap inbox-worker",
+                        FAKE_INBOX_CONTAINER="inbox-id", FAKE_DIRTY_SCHEMA="0139")
+        self.assert_update_rollback(self.run_script("update", "--image", self.new_image, "--yes"))
+        self.assertTrue(any(c["args"][-4:] == ["stop", "app", "migrate", "bootstrap"] for c in self.calls()))
+        self.assertEqual(sum(c["args"][-2:] == ["stop", "inbox-worker"] for c in self.calls()), 2)
+
+    def test_update_health_failure_restores_the_backup_and_previous_image(self):
+        self.update_setup()
+        self.env["FAKE_DOCKER_FAIL"] = "health"
+        self.assert_update_rollback(self.run_script("update", "--image", self.new_image, "--yes"))
+
+    def test_update_startup_failure_restores_the_backup_and_previous_image(self):
+        self.update_setup()
+        self.env["FAKE_DOCKER_FAIL"] = "app-ready"
+        self.assert_update_rollback(self.run_script("update", "--image", self.new_image, "--yes"))
+
+    def test_update_config_switch_failure_restores_the_backup_and_previous_image(self):
+        self.update_setup()
+        self.config.chmod(0o400)
+        binary = self.base / "doctor-bin/mv"
+        binary.unlink()
+        binary.write_text(f'''#!{sys.executable}
+import os, sys
+if sys.argv[-1] == os.environ["VERWALINO_CONFIG"]:
+    with open(sys.argv[-2]) as source:
+        if os.environ["FAKE_FAIL_IMAGE"] in source.read(): sys.exit(17)
+os.execv("/bin/mv", ["mv", *sys.argv[1:]])
+''')
+        binary.chmod(0o755)
+        self.assert_update_rollback(self.run_script("update", "--image", self.new_image, "--yes"), config_mode=0o400)
+        self.assertFalse(any(c["args"][-1] == "migrate" for c in self.calls()))
+
+    def test_update_schema_mismatch_restores_the_backup_and_previous_image(self):
+        self.update_setup()
+        self.env["FAKE_MIGRATED_SCHEMA"] = "0138"
+        self.assert_update_rollback(self.run_script("update", "--image", self.new_image, "--yes"))
+
+    def test_update_termination_after_migration_restores_the_backup_and_previous_image(self):
+        self.update_setup()
+        self.env["FAKE_MIGRATE_SIGNAL"] = "SIGTERM"
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertEqual(result.returncode, 143, result.stdout + result.stderr)
+        self.assert_update_rollback(result)
+
+    def test_update_hangup_during_migration_restores_and_reports_previous_state(self):
+        self.update_setup()
+        self.env["FAKE_MIGRATE_SIGNAL"] = "SIGHUP"
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertEqual(result.returncode, 129, result.stdout + result.stderr)
+        self.assert_update_rollback(result)
+        self.assertEqual(json.loads(self.db_state.read_text()), {"hausverwaltung": "restored data"})
+        self.assertTrue(all(c["locked"] for c in self.calls()))
+
+    def test_update_second_signal_at_cleanup_entry_does_not_skip_rollback(self):
+        self.update_setup()
+        script = self.root / "scripts/self-host.sh"
+        sent = self.base / "second-signal"
+        # Inject a second signal after cleanup captures the original status,
+        # before its first trap command. Only the disposable script is changed.
+        script.write_text(script.read_text().replace("    trap '' PIPE\n", '''    if [[ "$UPDATE_ACTIVE" = 1 ]]; then
+        printf '%s\\n' "$SECOND_SIGNAL" > "$FAKE_SECOND_SIGNAL_SENT"
+        kill -s "$SECOND_SIGNAL" "$$"
+    fi
+    trap '' PIPE
+''', 1))
+        self.env["FAKE_SECOND_SIGNAL_SENT"] = str(sent)
+        for signum, code in (("SIGHUP", 129), ("SIGINT", 130), ("SIGTERM", 143)):
+            with self.subTest(signal=signum):
+                self.env.update(FAKE_MIGRATE_SIGNAL=signum, SECOND_SIGNAL=signum.removeprefix("SIG"))
+                self.log.unlink(missing_ok=True)
+                for archive in self.update_archives():
+                    archive.unlink()
+                result = self.run_script("update", "--image", self.new_image, "--yes")
+                self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+                self.assertEqual(sent.read_text().strip(), signum.removeprefix("SIG"))
+                self.assert_update_rollback(result)
+
+    def test_update_hangup_before_switch_reports_unchanged_data_and_stopped_app(self):
+        self.update_setup()
+        before = self.config.read_bytes()
+        self.env.update(FAKE_INTERRUPT_STAGE="stop", FAKE_INTERRUPT_SIGNAL="SIGHUP")
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertEqual(result.returncode, 129, result.stdout + result.stderr)
+        self.assertIn("interrupted before the switch; config and data unchanged; app stopped", result.stderr)
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertEqual(self.schema_state.read_text(), "0138")
+        self.assertEqual(self.update_archives(), [])
+        self.assertFalse(Path(str(self.config) + ".lock").exists())
+        self.assertEqual(list(self.base.glob(".env.verwalino-update.*")), [])
+
+    def test_update_refuses_restore_leftovers_before_stopping_writers(self):
+        self.update_setup()
+        before = self.config.read_bytes()
+        for leftover in ("hausverwaltung_previous", "hausverwaltung_restore", ".restore-retained"):
+            with self.subTest(leftover=leftover):
+                self.db_state.write_text(json.dumps({"hausverwaltung": "old data"}))
+                if leftover.startswith("hausverwaltung_"):
+                    self.db_state.write_text(json.dumps({"hausverwaltung": "old data", leftover: "retained data"}))
+                else:
+                    (self.documents / leftover / "previous").mkdir(parents=True)
+                self.log.unlink(missing_ok=True)
+                result = self.run_script("update", "--image", self.new_image, "--yes")
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(leftover, result.stdout + result.stderr)
+                if leftover.startswith("hausverwaltung_"):
+                    self.assertRegex(result.stderr, rf"(?m)^.*{leftover}.*prüfen.*manuell.*$")
+                self.assertFalse(any(set(c["args"]) & {"stop", "pack", "migrate"} for c in self.calls()))
+                self.assertEqual(self.config.read_bytes(), before)
+                self.assertEqual(self.schema_state.read_text(), "0138")
+                self.assertEqual(self.update_archives(), [])
+                self.assertFalse(Path(str(self.config) + ".lock").exists())
+                self.assertEqual(list(self.base.glob(".env.verwalino-update.*")), [])
+
+    def test_update_unhealthy_or_restarting_app_explains_stop_then_update(self):
+        self.update_setup()
+        for state in ("running|unhealthy|app-id", "restarting||app-id"):
+            with self.subTest(state=state):
+                self.env["FAKE_CONTAINER_APP"] = state
+                self.log.unlink(missing_ok=True)
+                result = self.run_script("update", "--image", self.new_image, "--yes")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("bash scripts/self-host.sh stop", result.stderr)
+                self.assertIn("then", result.stderr)
+                self.assertIn("update", result.stderr)
+                self.assertFalse(any(set(c["args"]) & {"pull", "stop", "pack", "migrate"} for c in self.calls()))
+
+    def test_update_refuses_a_migration_downgrade_before_backup(self):
+        self.update_setup()
+        self.env["FAKE_IMAGE_TARGETS"] = json.dumps({self.old_image: "0138", self.new_image: "0137"})
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("downgrades are not supported", result.stderr)
+        self.assertTrue(any("pull" in c["args"] for c in self.calls()))
+        self.assertFalse(any("pack" in c["args"] or "stop" in c["args"] for c in self.calls()))
+        self.assertIn("VERWALINO_IMAGE=" + self.old_image + "\n", self.config.read_text())
+
+    def test_update_refuses_with_a_message_when_the_new_image_release_target_cannot_be_read(self):
+        self.update_setup()
+        before = self.config.read_bytes()
+        self.env["FAKE_IMAGE_TARGET"] = "missing"
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Cannot read the new image release target.", result.stderr)
+        self.assertTrue(any("pull" in c["args"] for c in self.calls()))
+        self.assertFalse(any(set(c["args"]) & {"stop", "pack", "pg_dump"} or c["args"][-1] == "migrate" for c in self.calls()))
+        self.assertEqual(self.update_archives(), [])
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertFalse(Path(str(self.config) + ".lock").exists())
+        self.assertEqual(list(self.base.glob(".env.verwalino-update.*")), [])
+
+    def test_update_failed_writer_stop_reports_without_restoring_data(self):
+        self.update_setup()
+        self.env.update(FAKE_DOCKER_FAIL="stop", FAKE_FAIL_IMAGE=self.old_image)
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("config and data unchanged", result.stderr)
+        self.assertEqual(self.update_archives(), [])
+        self.assertFalse(any("verify" in c["args"] or c["args"][-1] == "migrate" for c in self.calls()))
+        self.assertIn("VERWALINO_IMAGE=" + self.old_image + "\n", self.config.read_text())
+
+    def test_update_interrupt_before_switch_reports_stopped_app_and_unchanged_data(self):
+        self.update_setup()
+        before = self.config.read_bytes()
+        for stage in ("stop", "writers"):
+            with self.subTest(stage=stage):
+                Path(self.env["FAKE_INTERRUPT_SENT"]).unlink(missing_ok=True)
+                self.containers.write_text(json.dumps({"app": "running|healthy|app-id"}))
+                self.env["FAKE_INTERRUPT_STAGE"] = stage
+                result = self.run_script("update", "--image", self.new_image, "--yes")
+                self.assertEqual(result.returncode, 130, result.stderr)
+                self.assertIn("interrupted before the switch; config and data unchanged; app stopped", result.stderr)
+                self.assertIn("run start", result.stderr)
+                self.assertEqual(self.config.read_bytes(), before)
+                self.assertEqual(self.schema_state.read_text(), "0138")
+                self.assertEqual(json.loads(self.containers.read_text())["app"], "exited||app-id")
+                self.assertEqual(self.update_archives(), [])
+                self.assertFalse(any("verify" in c["args"] for c in self.calls()))
+
+    def test_update_interrupt_reports_when_cleanup_cannot_confirm_app_stopped(self):
+        self.update_setup()
+        self.env.update(FAKE_INTERRUPT_STAGE="stop", FAKE_DOCKER_FAIL="stop", FAKE_FAIL_IMAGE=self.old_image)
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertEqual(result.returncode, 130, result.stderr)
+        self.assertIn("config and data unchanged; could not confirm app stopped", result.stderr)
+        self.assertIn("inspect status before running start", result.stderr)
+        self.assertNotIn("unchanged; app stopped — run start", result.stderr)
+        self.assertEqual(self.update_archives(), [])
+
+    def test_update_database_query_failure_explains_how_to_recover(self):
+        self.update_setup()
+        self.env.update(FAKE_DOCKER_FAIL="psql", FAKE_FAIL_IMAGE=self.old_image)
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("database not running", result.stderr.lower())
+        self.assertIn("run start/doctor", result.stderr)
+        self.assertFalse(any("stop" in c["args"] or "pack" in c["args"] for c in self.calls()))
+
+    def test_update_from_stopped_stack_skips_current_health_and_starts_database(self):
+        self.update_setup()
+        self.assertEqual(self.run_script("stop").returncode, 0)
+        self.log.unlink()
+        self.env.update(FAKE_DOCKER_FAIL="health", FAKE_FAIL_IMAGE=self.old_image)
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(any(c["image"] == self.old_image and "exec" in c["args"] and "app" in c["args"] for c in self.calls()))
+        self.assertEqual(self.schema_state.read_text(), "0139")
+
+    def test_update_same_digest_with_stopped_app_skips_current_health(self):
+        self.update_setup()
+        self.assertEqual(self.run_script("stop").returncode, 0)
+        self.log.unlink()
+        self.env.update(FAKE_DOCKER_FAIL="health", FAKE_FAIL_IMAGE=self.old_image)
+        result = self.run_script("update", "--image", self.old_image, "--yes")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("app stopped", result.stdout)
+        self.assertNotIn("and healthy", result.stdout)
+        self.assertFalse(any("exec" in c["args"] and "app" in c["args"] for c in self.calls()))
+
+    def test_update_from_stopped_https_stack_restarts_caddy_after_app(self):
+        self.update_setup(https=True)
+        self.assertEqual(self.run_script("stop").returncode, 0)
+        self.log.unlink()
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        args = [c["args"] for c in self.calls()]
+        app = next(i for i, a in enumerate(args) if "up" in a and a[-1] == "app")
+        caddy = next(i for i, a in enumerate(args) if "up" in a and a[-1] == "caddy")
+        self.assertLess(app, caddy)
+        self.assertIn("https", args[caddy])
+        self.assertEqual(json.loads(self.containers.read_text())["caddy"], "running|healthy|caddy-id")
+
+    def test_update_https_manual_recovery_command_restarts_caddy(self):
+        self.update_setup(https=True)
+        self.env.update(FAKE_DOCKER_FAIL="migrate", FAKE_ROLLBACK_FAIL="pg_restore")
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        command = next(line for line in result.stderr.splitlines() if line.startswith("env -u "))
+        args = shlex.split(command)
+        self.assertIn("https", args)
+        self.assertEqual(args[-3:], ["db", "app", "caddy"])
+        self.assertEqual(args[args.index("up"):],
+                         ["up", "-d", "--no-build", "--pull", "never", "--wait", "--wait-timeout", "120", "db", "app", "caddy"])
+
+    def test_update_final_doctor_blocker_reports_without_discarding_updated_data(self):
+        self.update_setup()
+        self.env["FAKE_DISK_AFTER_MIGRATION"] = "1"
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Update completed, but doctor reported blockers", result.stderr)
+        self.assertIn("VERWALINO_IMAGE=" + self.new_image + "\n", self.config.read_text())
+        self.assertFalse(any("verify" in c["args"] for c in self.calls()))
+        self.assertEqual(self.schema_state.read_text(), "0139")
+        self.assertTrue((self.documents / "later.pdf").exists())
+
+    def test_update_pull_failure_preserves_config_and_makes_no_backup(self):
+        self.update_setup()
+        before = self.config.read_bytes()
+        self.env["FAKE_DOCKER_FAIL"] = "pull"
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(any("pull" in c["args"] for c in self.calls()))
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertEqual(self.update_archives(), [])
+        self.assertFalse(any("pack" in c["args"] or "stop" in c["args"] for c in self.calls()))
+
+    def test_update_doctor_blocker_refuses_before_pull(self):
+        self.update_setup()
+        self.env["FAKE_DISK_DOCKER"] = "100"
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FEHLER", result.stdout)
+        self.assertFalse(any("pull" in c["args"] or "pack" in c["args"] for c in self.calls()))
+
+    def test_update_same_digest_is_a_healthy_noop(self):
+        self.update_setup()
+        before = self.config.read_bytes()
+        result = self.run_script("update", "--image", self.old_image)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("already using", result.stdout)
+        self.assertTrue(any("exec" in c["args"] and "app" in c["args"] for c in self.calls()))
+        self.assertFalse(any(set(c["args"]) & {"pull", "pack", "stop", "up", "build"} for c in self.calls()))
+        self.assertEqual(self.config.read_bytes(), before)
+        self.env["FAKE_FAIL_IMAGE"] = self.old_image
+        self.env["FAKE_DOCKER_FAIL"] = "health"
+        self.assertNotEqual(self.run_script("update", "--image", self.old_image).returncode, 0)
+
+    def test_update_failed_rollback_keeps_previous_config_and_reports_manual_recovery(self):
+        self.update_setup()
+        self.env.update(FAKE_DOCKER_FAIL="migrate", FAKE_ROLLBACK_FAIL="pg_restore", FAKE_DIRTY_SCHEMA="0139", FAKE_CONTAINER_APP="")
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Rollback failed", result.stderr)
+        self.assertIn("Installation state:", result.stderr)
+        self.assertIn("app container state: not created", result.stderr)
+        self.assertIn("keep the app stopped", result.stderr)
+        self.assertIn("Restore failed before cutover; old database and documents are untouched", result.stderr)
+        self.assertIn("half-migrated data may remain", result.stderr)
+        self.assertFalse(Path(str(self.config) + ".lock").exists())
+        self.assertEqual(list(self.base.glob(".env.verwalino-update.*")), [])
+        self.assert_restore_cleaned()
+        self.assertTrue(any("discard-documents" in c["args"] for c in self.calls()))
+        self.assertTrue(any(c["args"][-2:] == ["stop", "db"] for c in self.calls()))
+        self.assertIn(str(self.update_archives()[0]), result.stderr)
+        self.assertIn("VERWALINO_IMAGE=" + self.old_image + "\n", self.config.read_text())
+        self.assertFalse(any("up" in c["args"] and c["args"][-1] == "app" for c in self.calls()))
+        self.assertEqual(self.schema_state.read_text(), "0139")
+
+    def test_update_failed_rollback_cutover_reports_state_and_retains_staged_data(self):
+        self.update_setup()
+        self.env.update(FAKE_DOCKER_FAIL="migrate", FAKE_ROLLBACK_FAIL="swap-documents", FAKE_DIRTY_SCHEMA="0139")
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Restore failed during cutover; keep the app stopped.", result.stderr)
+        self.assertIn("Installation state:", result.stderr)
+        self.assertIn("hausverwaltung=present", result.stderr)
+        self.assertIn("hausverwaltung_restore=present", result.stderr)
+        self.assertIn("hausverwaltung_previous=absent", result.stderr)
+        self.assertIn("documents=rolled back", result.stderr)
+        self.assert_restore_cleaned()
+        self.assertTrue(list(self.documents.glob(".restore-*/documents/original.pdf")))
+        self.assertFalse(any("discard-documents" in c["args"] for c in self.calls()))
+        self.assertTrue(any(c["args"][-2:] == ["stop", "db"] for c in self.calls()))
+        self.assertFalse(any("up" in c["args"] and c["args"][-1] == "app" for c in self.calls()))
+        self.assertFalse(Path(str(self.config) + ".lock").exists())
+        self.assertEqual(list(self.base.glob(".env.verwalino-update.*")), [])
+
+    def test_update_rollback_recovers_database_and_documents_after_partial_swap(self):
+        self.update_setup()
+        self.env.update(FAKE_DOCKER_FAIL="migrate", FAKE_DIRTY_SCHEMA="0139", FAKE_SWAP_FAIL="after-first-install")
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Rollback failed at restore", result.stderr)
+        self.assertIn("documents=rolled back", result.stderr)
+        self.assertIn("hausverwaltung_previous=absent", result.stderr)
+        self.assertEqual(json.loads(self.db_state.read_text()),
+                         {"hausverwaltung": "old data", "hausverwaltung_restore": "restored data"})
+        self.assertEqual((self.documents / "original.pdf").read_bytes(), b"synthetic original")
+        self.assertTrue(list(self.documents.glob(".restore-*/documents/original.pdf")))
+        self.assertIn("VERWALINO_IMAGE=" + self.old_image + "\n", self.config.read_text())
+        self.assertTrue(all(c["locked"] for c in self.calls()))
+        self.assertFalse(Path(str(self.config) + ".lock").exists())
+        self.assertEqual(list(self.base.glob(".env.verwalino-update.*")), [])
+        self.assert_restore_cleaned()
+        self.assertFalse(any("up" in c["args"] and c["args"][-1] == "app" for c in self.calls()))
+
+    def test_update_local_manual_recovery_starts_retained_image_without_rebuilding_or_migrating(self):
+        self.update_setup(local=True)
+        self.env.update(FAKE_DOCKER_FAIL="migrate", FAKE_FAIL_IMAGE=self.old_image,
+                        FAKE_ROLLBACK_FAIL="pg_restore", FAKE_DIRTY_SCHEMA="0139")
+        result = self.run_script("update", "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Rollback failed", result.stderr)
+        command = next(line for line in result.stderr.splitlines() if line.startswith("env -u "))
+        for key in SECRETS:
+            secret = next(line.split("=", 1)[1] for line in self.config.read_text().splitlines() if line.startswith(key + "="))
+            self.assertNotIn(secret, result.stdout + result.stderr)
+        del self.env["FAKE_DOCKER_FAIL"], self.env["FAKE_ROLLBACK_FAIL"]
+        archive, = self.update_archives()
+        restored = self.run_script("restore", str(archive), "--yes")
+        self.assertEqual(restored.returncode, 0, restored.stderr)
+        self.log.unlink()
+        launched = subprocess.run(shlex.split(command), env=self.env, text=True, capture_output=True, check=False, timeout=15)
+        self.assertEqual(launched.returncode, 0, launched.stderr)
+        args, = [c["args"] for c in self.calls()]
+        self.assertEqual(args[args.index("up"):],
+                         ["up", "-d", "--no-build", "--pull", "never", "--wait", "--wait-timeout", "120", "db", "app"])
+        self.assertNotIn("migrate", args)
+        self.assertNotIn("build", args)
+        self.assert_isolated([args])
+        self.assertEqual(self.schema_state.read_text(), "0138")
+        self.assertFalse((self.documents / "later.pdf").exists())
+
+    def test_update_manual_recovery_command_reads_mail_settings_from_the_file_not_the_caller(self):
+        self.update_setup()
+        self.smtp_config(SMTP)
+        self.env.update(FAKE_DOCKER_FAIL="migrate", FAKE_ROLLBACK_FAIL="pg_restore", FAKE_DIRTY_SCHEMA="0139")
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        command = next(line for line in result.stderr.splitlines() if line.startswith("env -u "))
+        self.assertNotIn(SMTP["HV_SMTP_PASSWORD"], result.stdout + result.stderr)
+        del self.env["FAKE_DOCKER_FAIL"], self.env["FAKE_ROLLBACK_FAIL"]
+        self.env.update(HV_SMTP_HOST="attacker.invalid", HV_SMTP_PORT="25", HV_SMTP_FROM="attacker@attacker.invalid",
+                        HV_SMTP_SECURITY="starttls", HV_SMTP_USERNAME="attacker", HV_SMTP_PASSWORD="wrong",
+                        HV_SMTP_TIMEOUT_SECONDS="5")
+        self.log.unlink()
+        launched = subprocess.run(shlex.split(command), env=self.env, text=True, capture_output=True, check=False, timeout=15)
+        app, = [c for c in self.calls() if "up" in c["args"] and c["args"][-1] == "app"]
+        self.assertEqual(app["smtp"], {key: value for key, value in SMTP.items() if key != "HV_SMTP_PASSWORD"})
+        self.assertTrue(app["smtp_password_matches"])
+        self.assertEqual(launched.returncode, 0, launched.stderr)
+
+    def test_update_backup_failure_leaves_app_stopped_and_config_unchanged(self):
+        self.update_setup()
+        before = self.config.read_bytes()
+        self.env.update(FAKE_DOCKER_FAIL="pg_dump", FAKE_FAIL_IMAGE=self.old_image)
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("app stopped", result.stderr)
+        self.assertTrue(any("pg_dump" in c["args"] for c in self.calls()))
+        self.assertTrue(any(c["args"][-4:] == ["stop", "app", "migrate", "bootstrap"] for c in self.calls()))
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertEqual(self.update_archives(), [])
+
+    def test_update_local_build_retains_previous_image_for_rollback(self):
+        self.update_setup(local=True)
+        self.env.update(FAKE_FAIL_IMAGE=self.old_image, FAKE_DOCKER_FAIL="migrate", FAKE_DIRTY_SCHEMA="0139")
+        result = self.run_script("update", "--yes")
+        self.assert_update_rollback(result)
+        args = [c["args"] for c in self.calls()]
+        build = next(i for i, a in enumerate(args) if "build" in a)
+        tags = [i for i, a in enumerate(args) if a[:2] == ["image", "tag"]]
+        self.assertEqual(len(tags), 3)
+        self.assertLess(tags[0], build)
+        self.assertGreater(tags[-1], build)
+        self.assertEqual(args[tags[-1]][-1], self.old_image)
+
+    def test_update_local_build_failure_preserves_the_configured_image(self):
+        self.update_setup(local=True)
+        self.env.update(FAKE_DOCKER_FAIL="build")
+        del self.env["FAKE_FAIL_IMAGE"]
+        before = self.config.read_bytes()
+        result = self.run_script("update", "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        build = next(c for c in self.calls() if "build" in c["args"])
+        self.assertTrue(build["image"].startswith("verwalino:update-"))
+        self.assertEqual(build["config_image"], "verwalino:local")
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertFalse(any("stop" in c["args"] or "pack" in c["args"] for c in self.calls()))
+        self.assertFalse(any(c["args"][:2] == ["image", "tag"] and c["args"][-1] == "verwalino:local" for c in self.calls()))
+
+    def test_update_local_build_with_unchanged_schema_still_rebuilds_and_checks_health(self):
+        self.update_setup(local=True)
+        self.schema_state.write_text(RELEASE_TARGET)
+        self.env.update(FAKE_IMAGE_TARGETS=json.dumps({self.old_image: RELEASE_TARGET}),
+                        FAKE_MIGRATED_SCHEMA=RELEASE_TARGET)
+        result = self.run_script("update", "--yes")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(any("build" in c["args"] for c in self.calls()))
+        self.assertTrue(any(c["args"][:2] == ["image", "tag"] and c["args"][-1] == "verwalino:local" for c in self.calls()))
+        self.assertIn(f"updated verwalino:local → verwalino:local, migrations {RELEASE_TARGET} → {RELEASE_TARGET}", result.stdout)
+        self.assertEqual(result.stdout.count("Zusammenfassung:"), 2)
+        self.assertEqual(len(self.update_archives()), 1)
+
+    def test_update_success_cleans_candidate_and_keeps_only_the_latest_rollback_tag(self):
+        self.update_setup(local=True)
+        self.env.update(FAKE_IMAGE_TARGETS=json.dumps({self.old_image: RELEASE_TARGET}),
+                        FAKE_MIGRATED_SCHEMA=RELEASE_TARGET)
+        self.image_tags.write_text(json.dumps(["verwalino:rollback-older", "verwalino:rollback-oldest", "other:keep"]))
+        result = self.run_script("update", "--yes")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        tags = json.loads(self.image_tags.read_text())
+        rollback_tags = [tag for tag in tags if tag.startswith("verwalino:rollback-")]
+        self.assertEqual(len(rollback_tags), 1, tags)
+        retained = rollback_tags[0]
+        self.assertNotIn(retained, ("verwalino:rollback-older", "verwalino:rollback-oldest"))
+        self.assertFalse(any(tag.startswith("verwalino:update-") for tag in tags))
+        self.assertIn("verwalino:local", tags)
+        self.assertIn("other:keep", tags)
+        args = [c["args"] for c in self.calls()]
+        candidate = next(c["image"] for c in self.calls() if "build" in c["args"])
+        self.assertIn(["image", "rm", candidate], args)
+        health = next(i for i, a in enumerate(args) if "exec" in a and "app" in a)
+        removed = [i for i, a in enumerate(args) if a[:2] == ["image", "rm"]]
+        self.assertTrue(removed)
+        self.assertTrue(all(i > health for i in removed))
+
+    def test_update_image_tag_in_use_warns_and_still_runs_final_doctor(self):
+        self.update_setup(local=True)
+        self.env.update(FAKE_IMAGE_TARGETS=json.dumps({self.old_image: RELEASE_TARGET}),
+                        FAKE_MIGRATED_SCHEMA=RELEASE_TARGET, FAKE_IMAGE_IN_USE="verwalino:rollback-older")
+        self.image_tags.write_text(json.dumps(["verwalino:rollback-older"]))
+        result = self.run_script("update", "--yes")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("WARN Update completed, but local image tag cleanup failed", result.stdout + result.stderr)
+        self.assertIn("verwalino:rollback-older", json.loads(self.image_tags.read_text()))
+        self.assertEqual(result.stdout.count("Zusammenfassung:"), 2)
+        self.assertEqual(self.schema_state.read_text(), RELEASE_TARGET)
+        self.assertFalse(any("pg_restore" in c["args"] for c in self.calls()))
+        self.assertFalse(Path(str(self.config) + ".lock").exists())
+
+    def test_update_requires_an_image_for_remote_config_and_confirmation(self):
+        self.update_setup()
+        for options in (("--yes",), ("--image", "latest", "--yes"), ("--image",), ("--unknown",)):
+            with self.subTest(options=options):
+                self.assertNotEqual(self.run_script("update", *options).returncode, 0)
+                self.assertEqual(self.calls(), [])
+        result = self.run_script("update", "--image", self.new_image, input="no\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any("pull" in c["args"] for c in self.calls()))
+
+    def test_update_respects_the_installer_lock(self):
+        self.update_setup()
+        lock = Path(str(self.config) + ".lock")
+        lock.mkdir()
+        self.assertNotEqual(self.run_script("update", "--image", self.new_image, "--yes").returncode, 0)
+        self.assertEqual(self.calls(), [])
+        self.assertTrue(lock.is_dir())
+
     def archive(self, config, **changes):
         manifest = {"format": "verwalino-selfhost", "format_version": 1, "schema_head": "0139",
                     "app_image": config["VERWALINO_IMAGE"], "created_at": "2026-10-30T12:00:00Z",
@@ -724,6 +1526,15 @@ elif name == "openssl":
         self.assertTrue(self.calls())
         self.assertTrue(all("ps" in c["args"] for c in self.calls()))
 
+    def test_restore_refuses_active_inbox_worker_before_any_changes(self):
+        config = self.init()
+        archive, _ = self.archive(config)
+        self.containers.write_text(json.dumps({"inbox-worker": "running||inbox-id"}))
+        result = self.run_script("restore", str(archive), "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("bash scripts/self-host.sh stop", result.stderr)
+        self.assertTrue(all("ps" in c["args"] for c in self.calls()))
+
     def test_restore_refuses_restarting_and_paused_writers(self):
         config = self.init()
         archive, _ = self.archive(config)
@@ -810,6 +1621,7 @@ elif name == "openssl":
         self.assertEqual(list(self.documents.glob(".restore-*")), [])
         self.assertFalse((self.documents / "original.pdf").exists())
         self.assertEqual((self.documents / "nested/original.pdf").read_bytes(), b"restored original")
+        self.assert_restore_cleaned()
         self.assert_isolated(args)
 
     def test_restore_warns_on_configuration_change_and_requires_confirmation(self):
@@ -926,6 +1738,7 @@ elif name == "openssl":
                 self.assertIn("hausverwaltung=present", result.stderr)
                 self.assertIn("hausverwaltung_previous=absent", result.stderr)
                 self.assertIn("keep the app stopped", result.stderr)
+                self.assert_restore_cleaned()
                 self.assertEqual((self.documents / "original.pdf").read_bytes(), b"synthetic original")
                 staged = [path for path in self.documents.glob(".restore-*") if (path / "documents/nested/original.pdf").exists()]
                 self.assertTrue(staged)
@@ -1853,5 +2666,22 @@ class ReleaseBundleTests(unittest.TestCase):
             self.assertEqual((assets / "prod-init.sh").read_bytes(), (ROOT / "infra/db/prod-init.sh").read_bytes())
 
 
+@unittest.skipUnless("version 3." in MAC_BASH_VERSION, "/bin/bash is unavailable or is not Bash 3.x")
+class Bash32UpdateRestoreTests(SelfHostTests):
+    bash = "/bin/bash"
+
+
+def load_tests(loader, tests, pattern):
+    suite = loader.loadTestsFromTestCase(SelfHostTests)
+    suite.addTests(loader.loadTestsFromTestCase(InstallMatrixWorkflowTests))
+    suite.addTests(loader.loadTestsFromTestCase(StackContractTests))
+    suite.addTests(loader.loadTestsFromTestCase(SiteExtensionTests))
+    suite.addTests(loader.loadTestsFromTestCase(ReleaseBundleTests))
+    suite.addTests(Bash32UpdateRestoreTests(name) for name in loader.getTestCaseNames(SelfHostTests)
+                   if name.startswith(("test_update_", "test_restore_")))
+    return suite
+
+
 if __name__ == "__main__":
+    print(f"PATH bash: {PATH_BASH_VERSION}\n/bin/bash: {MAC_BASH_VERSION}", file=sys.stderr)
     unittest.main()
