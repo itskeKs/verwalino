@@ -69,9 +69,11 @@ function Overview() {
         <Badge tone={guidance.tone}>{sourceSecurityLabels[state.mode]}</Badge>
         <p>{guidance.meaning}</p>
         <h3 className="font-semibold">Nächster Schritt</h3><p>{guidance.next}</p>
-        <Link className="link" to={guidance.to}>Zum nächsten Schritt</Link>
       </>}
-      <Button variant="outline" disabled={loading} onClick={reload}>Status und Bestand neu laden</Button>
+      <div className="flex flex-wrap items-center gap-3">
+        {guidance && <Link className="link" to={guidance.to}>Zum nächsten Schritt</Link>}
+        <Button variant="outline" disabled={loading} onClick={reload}>Status und Bestand neu laden</Button>
+      </div>
     </CardContent></Card>
     <Card><CardHeader><h2>Offene Punkte im Bestand</h2><p className="text-sm text-muted-foreground">Kategorien können sich überschneiden. Diese Zahlen bestätigen keine Freigabe oder vollständige Prüfung.</p></CardHeader><CardContent>
       {inventoryError && <p role="alert" className="error-text">Die Bestandszahlen sind nicht verfügbar. Bitte erneut laden.</p>}
