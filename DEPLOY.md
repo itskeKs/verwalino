@@ -12,7 +12,8 @@ offers token-gated first-run setup on an empty database. `hosted` suppresses set
 `GET /api/setup` reports `required: false`, every non-GET request returns the closed
 setup 404, and `/setup` redirects to login. Until hosted signup exists, operators use
 the existing admin CLI to bootstrap hosted organizations. Selecting hosted mode does
-not implement signup, rate limiting, quotas, password reset or legal pages. The
+not implement signup, quotas, password reset or legal pages. Login uses the
+selected rate-limit profile described below. The
 [policy table](docs/architecture.md#deployment-modes) records only decisions with
 implemented readers. Opt-in error tracking is configured separately below.
 
@@ -28,6 +29,75 @@ template; keep the populated `.env` private with mode 0600. Set the required
 `verwaltung.example.org`). Compose passes it as `HV_ALLOWED_HOSTS` and uses it
 in the Traefik router rules. The API healthcheck requests
 `http://127.0.0.1:8000/api/health/live` with that value as its `Host` header.
+
+## Login lockout and proxy trust
+
+Login failure limits come from the deployment policy, with a fixed 15-minute
+window: attempts reserve both counters before password verification. Selfhost
+permits 20 failures per IP and 10 per normalized email before a 15-minute
+lockout; hosted permits 10 per IP and 5 per email before a 30-minute lockout.
+Repeated hosted lockouts double to at most 24 hours. Correct credentials are
+refused while either key is locked or all attempts in its window are reserved.
+Active lockouts are not extended by more attempts. Success clears only the email
+key and its escalation history, preserving IP failures. An attacker who knows an
+email can deliberately lock the victim out with only 5 failures in strict mode,
+with escalating hosted waits. A locked IP also counts each refused attempt
+against the email key. The victim cannot clear an active lockout by logging in:
+they must wait or ask an operator to unlock it as described below.
+
+Escalation resets when the last lockout started strictly more than 24 hours ago
+(hosted) or more than one 15-minute window ago (selfhost), even with continuous
+traffic. Exactly at that boundary it is retained. State survives restarts. Every
+100th login per worker performs one best-effort cleanup batch of at most 1000 rows
+idle for over one day, in a separate transaction after the login outcome commits.
+Lock/statement timeouts bound cleanup; its failure cannot undo a login outcome.
+There is no new scheduled worker or configurable threshold.
+
+All credential failures retain `401 {"detail":"Invalid credentials"}`, with no
+`Retry-After` or cookie, and run one Argon2 verification, including the locked path.
+A WARNING includes the HMAC key hash and a server-generated request id, never raw
+email/IP. HMAC-SHA256 uses a pepper derived from the existing `HV_SESSION_SECRET`;
+rotating that secret clears effective throttling state (old rows age out), as
+well as invalidating existing session cookies. No new secret setting is needed.
+The German login message is unchanged.
+
+Native IPv6 addresses share a /64 throttle key; IPv4-mapped IPv6 maps to IPv4.
+Unparsable client addresses (for example a trusted proxy's `unknown`) share the
+constant `invalid` key and still receive the normal authentication response.
+
+The limiter uses `request.client.host`, never an unverified forwarding header.
+The existing container entrypoint uses Uvicorn's `--proxy-headers` and
+`--forwarded-allow-ips="$FORWARDED_ALLOW_IPS"`. Without proxy middleware/trust the
+key is the direct peer. Set `FORWARDED_ALLOW_IPS` to only the addresses/subnets
+of proxies that actually front the app, never `*` on a publicly reachable app.
+Uvicorn walks the forwarding chain from the trusted end and supplies the resolved
+client once; the limiter must not parse it again. The portable stack already
+passes `VERWALINO_PROXY_SUBNET` for its dedicated Caddy network, including local
+HTTP mode. The stock Caddy proxy replaces incoming forwarding headers. The
+loopback diagnostic listener remains untrusted. For direct uvicorn development,
+use `--no-proxy-headers` when there is no trusted proxy. No additional
+`HV_TRUSTED_PROXY_COUNT` is introduced alongside the existing address allowlist.
+
+To unlock an email, run the existing admin CLI in the backend/container environment
+as an authorized operator, with `HV_DATABASE_URL_SYNC` pointing to the **migrator**
+and the same `HV_SESSION_SECRET` as the app. This command does not bootstrap an
+organization and requires no admin password:
+
+```sh
+python -m app.admin_cli unlock --email user@example.org
+python -m app.admin_cli unlock --ip 203.0.113.5
+```
+
+The mutually exclusive options delete only the selected login key using the
+app's normalization and HMAC, and report the actual number of deleted rows.
+Use any address in the affected /64 to unlock a native IPv6 key. An independently
+locked IP must also be cleared or allowed to expire. No runtime unlock endpoint
+is exposed.
+
+These deletes reset only the chosen key and its escalation history.
+`downgrade()` of 0142 refuses while rows exist; operators must
+delete the `auth_throttle` rows first.
+Signup throttling arrives with #19.
 
 ## Install in one command
 
@@ -331,8 +401,8 @@ subnet (default `172.30.97.0/28`). If it conflicts with a host/VPN/Docker route,
 choose an unused aligned private /24 through /28 at init with
 `--proxy-subnet 192.168.240.0/28`. The script reports certificate provisioning
 as pending, not as a successful TLS/Internet reachability check. The stock
-Caddy configuration has no login-rate middleware;
-public rollout requires a separate abuse-protection review.
+Caddy configuration relies on the persistent application login limiter described
+above; it does not replicate Traefik's separate alpha middleware.
 
 On a database with no organization, `start` prints a `/setup` URL and a new
 256-bit **Setup token** exactly once after app readiness. Open that URL, enter
@@ -350,7 +420,7 @@ receive 422. Leading/trailing spaces in the token and organization/admin names
 are trimmed; control characters in these fields and the admin email are rejected. If the initial
 setup-status request fails, login and signed-in pages remain available; reload
 after connectivity recovers to open setup on a fresh installation.
-No signup or application rate limiter is included.
+Signup remains deferred to #19; application login lockout is enabled in both modes.
 
 CLI bootstrap remains the alternative:
 
@@ -897,11 +967,11 @@ remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/s
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
 
-## Migration compatibility: 0029–0141
+## Migration compatibility: 0029–0142
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0141 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0142 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -910,13 +980,14 @@ run `docker compose down -v` or delete the volumes.
 | 0136–0137 | Adds default-active bank/vendor lifecycle and nullable property facts plus stricter reference triggers and read-only deletion-reference functions. Non-default lifecycle/property facts prevent downgrade. |
 | 0138–0139 | Adds default-zero session generation and versioned auth functions, then grants only session validation to `app_review`. Positive generations block downgrade. An older runtime's unversioned auth does not enforce the new invalidations: **automatic 0122 runtime restoration on the new schema is unsafe**. |
 | Parent references (accepted source 0140) | Replaces client-selected parent references with organization-bound composite foreign keys. Validates pending deferred checks and rejects existing invalid references without repair before replacing constraints. Adds a boolean-only, tenant-bound property existence check for scoped financial creation. Downgrade restores the original constraints and removes that check; an older runtime is not approved on this schema. |
-| 0141 | Adds the private singleton setup-token table and a token-gated, serialized first-organization function. Removes direct organization INSERT from app_rw; the migrator CLI shares the creation SQL. A populated token table blocks downgrade to avoid silently losing pending/consumed state. Existing organization/user/membership rows are preserved. |
+| Browser setup (accepted source 0141) | Adds the private singleton setup-token table and a token-gated, serialized first-organization function. Removes direct organization INSERT from app_rw; the migrator CLI shares the creation SQL. A populated token table blocks downgrade to avoid silently losing pending/consumed state. Existing organization/user/membership rows are preserved. |
+| 0142 | Adds global authentication throttle rows containing only scoped key hashes, failure windows, lockout expiry, last lockout start and escalation history, with narrow runtime DML. No existing rows or grants change. A populated table blocks downgrade to avoid losing lockouts. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0141 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0141, 0139→0141 and accepted-source 0140→0141 rehearsals also
+0028→0142 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0142, 0139→0142 and accepted-source 0140→0142 and 0141→0142 rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT revocation;
 it does not prove live data validity or cross-version runtime compatibility.
 
@@ -938,10 +1009,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0141**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0142**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0141**,
-**0122 → 0141**, **0139 → 0141**, **0140 → 0141**, or **0141 → 0141**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0142**,
+**0122 → 0142**, **0139 → 0142**, **0140 → 0142**, **0141 → 0142**, or **0142 → 0142**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 

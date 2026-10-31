@@ -34,7 +34,7 @@ async def test_downgrade_refuses_to_discard_pending_or_consumed_tokens(fresh_set
 
     _, connection = fresh_setup
     await connection.execute(text("RESET ROLE"))
-    migration = importlib.import_module("migrations.versions.0141_browser_setup")
+    migration = importlib.import_module("migrations.versions.0141_browser_setup")  # accepted source under test
 
     def downgrade(sync_connection):
         with Operations.context(MigrationContext.configure(sync_connection)):

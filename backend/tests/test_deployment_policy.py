@@ -13,10 +13,12 @@ from app.core.config import Settings
     ("selfhost", {
         "deployment_mode": "selfhost",
         "first_run_setup_enabled": True,
+        "rate_limit_profile": "relaxed",
     }),
     ("hosted", {
         "deployment_mode": "hosted",
         "first_run_setup_enabled": False,
+        "rate_limit_profile": "strict",
     }),
 ])
 def test_policy_table_matches_the_mode_snapshot(mode, expected):
@@ -50,7 +52,7 @@ def test_invalid_mode_is_refused_with_the_allowed_values(monkeypatch, mode):
 def test_architecture_documents_the_complete_policy_table():
     from dataclasses import fields
     from app.core.config import DeploymentMode
-    from app.core.deployment_policy import DeploymentPolicy
+    from app.core.deployment_policy import DeploymentPolicy, RateLimitRules
 
     policies = [DeploymentPolicy.for_mode(mode) for mode in DeploymentMode]
 
@@ -67,8 +69,29 @@ def test_architecture_documents_the_complete_policy_table():
             ]) + " |"
             for field in fields(DeploymentPolicy)
         ),
+        *(
+            "| " + " | ".join([
+                f"`rate_limit_rules.{field.name}`",
+                *(f"`{display(getattr(policy.rate_limit_rules, field.name))}`" for policy in policies),
+            ]) + " |"
+            for field in fields(RateLimitRules)
+        ),
     ]
     architecture = (Path(__file__).resolve().parents[2] / "docs/architecture.md").read_text()
     section = architecture.split("## Deployment modes\n", 1)[1].split("\n## ", 1)[0]
     actual = [line for line in section.splitlines() if line.startswith("|")]
     assert actual == expected
+
+
+@pytest.mark.parametrize("mode,expected", [
+    ("selfhost", (20, 10, 15, 15, 1, 15, 15, 100, 1000)),
+    ("hosted", (10, 5, 15, 30, 2, 1440, 1440, 100, 1000)),
+])
+def test_rate_limit_rules_match_the_selected_profile(mode, expected):
+    from dataclasses import astuple
+    from app.core.deployment_policy import DeploymentPolicy
+
+    rules = DeploymentPolicy.for_mode(Settings(_env_file=None, deployment_mode=mode).deployment_mode).rate_limit_rules
+    assert astuple(rules) == expected
+    with pytest.raises(FrozenInstanceError):
+        rules.ip_failures = 1

@@ -101,7 +101,7 @@ TENANT_TABLES = frozenset({
 })
 
 # Global tables that intentionally have no RLS.
-GLOBAL_TABLES = frozenset({"organization", "cost_category", "setup_token"})
+GLOBAL_TABLES = frozenset({"organization", "cost_category", "setup_token", "auth_throttle"})
 
 # Alembic's internal table (not a domain table).
 INFRASTRUCTURE_TABLES = frozenset({"alembic_version"})

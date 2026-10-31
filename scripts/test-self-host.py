@@ -31,6 +31,27 @@ with socket.socket() as port_probe:
 
 
 class SelfHostTests(unittest.TestCase):
+    def test_help_points_to_the_documented_unlock_command(self):
+        result = self.run_script("--help")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("admin_cli unlock", result.stdout)
+        self.assertNotIn("unlock SQL", result.stdout)
+
+    def test_login_guidance_defers_unimplemented_signup_controls(self):
+        for name in ("DEPLOY.md", "docs/architecture.md", "docs/feature-status.md"):
+            with self.subTest(document=name):
+                content = (ROOT / name).read_text()
+                self.assertNotIn("honeypot", content)
+                self.assertNotIn("`signup` scope", content)
+                self.assertNotIn("`signup:`", content)
+        section = (ROOT / "DEPLOY.md").read_text().split("## Login lockout and proxy trust\n", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("Signup throttling arrives with #19.", section)
+
+    def test_login_guidance_explains_throttle_downgrade_refusal(self):
+        section = (ROOT / "DEPLOY.md").read_text().split("## Login lockout and proxy trust\n", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("`downgrade()` of 0142 refuses while rows exist", section)
+        self.assertIn("delete the `auth_throttle` rows first", section)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -702,7 +723,8 @@ elif name == "openssl":
 
     def test_restore_refuses_newer_unknown_or_foreign_archives_before_starting_db(self):
         config = self.init()
-        for changes, message in [({"schema_head": "0142"}, "newer"),
+        newer_head = f"{int(RELEASE_TARGET) + 1:04d}"
+        for changes, message in [({"schema_head": newer_head}, "newer"),
                                  ({"schema_head": "unknown"}, "schema"),
                                  ({"format": "foreign"}, "manifest"),
                                  ({"format_version": 2}, "format")]:
