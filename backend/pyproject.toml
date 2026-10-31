@@ -2,6 +2,7 @@
 name = "hausverwaltung-backend"
 version = "0.1.0"
 description = "Backend for Hausverwaltungssoftware MVP"
+license = "AGPL-3.0-only"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115,<1",
@@ -45,7 +46,7 @@ ocr = [
 ]
 
 [build-system]
-requires = ["setuptools>=70"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
