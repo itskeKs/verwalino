@@ -1,3 +1,4 @@
+import { MAX_UPLOAD_BYTES } from "../lib/uploads";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { archiveAttachment, attachmentDownloadUrl, listAttachments, listProperties, uploadAttachment } from "../api/endpoints";
 import { ApiError } from "../api/client";
@@ -7,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dial
 type Props = { canWrite: boolean; unitId?: string } & (
   { propertyId: string; personId?: string } | { propertyId?: undefined; personId: string }
 );
-const MAX_BYTES = 25 * 1024 * 1024;
+
 const INLINE_TYPES = new Set(["application/pdf", "image/png", "image/jpeg"]);
 
 function errorMessage(error: unknown): string {
@@ -113,7 +114,7 @@ function AttachmentContext({ propertyId, unitId, personId, canWrite }: Props) {
       setUploadError("Bitte ein Objekt auswählen."); return;
     }
     if (!file || file.size === 0) { setUploadError("Bitte eine nicht leere Dokumentdatei auswählen."); return; }
-    if (file.size > MAX_BYTES) { setUploadError("Die Dokumentdatei darf höchstens 25 MiB groß sein."); return; }
+    if (file.size > MAX_UPLOAD_BYTES) { setUploadError("Die Dokumentdatei darf höchstens 25 MiB groß sein."); return; }
     if (title.length > 255 || title.includes("\0")) { setUploadError("Der Dokumenttitel darf höchstens 255 Zeichen und kein Nullzeichen enthalten."); return; }
     mutationLock.current = true;
     setPending(true);

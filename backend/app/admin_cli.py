@@ -147,6 +147,9 @@ def quota_recount(arguments: list[str]) -> None:
                     UNION ALL SELECT storage_uri FROM public.mandate_document WHERE organization_id=%(org)s
                     UNION ALL SELECT storage_uri FROM public.property_document WHERE organization_id=%(org)s
                     UNION ALL SELECT storage_uri FROM public.intake_original WHERE organization_id=%(org)s
+                    UNION ALL SELECT storage_uri FROM public.visual_extract_artifact WHERE organization_id=%(org)s
+                    UNION ALL SELECT payload->>'storage_uri' FROM public.visual_extract_attestation
+                        WHERE organization_id=%(org)s AND payload->>'content_byte_size' IS NOT NULL
                     UNION ALL SELECT storage_uri FROM public.letter_document WHERE organization_id=%(org)s AND size_bytes IS NOT NULL
                     UNION ALL SELECT payload_diff->>'storage_uri' FROM public.audit_event
                         WHERE organization_id=%(org)s AND action='mail_prepared' AND payload_diff->>'bytes' IS NOT NULL
@@ -171,7 +174,7 @@ def quota_recount(arguments: list[str]) -> None:
                             AND a.payload_diff->>'storage_uri'=v.payload::jsonb->>'storage_uri'
                             AND a.payload_diff->>'bytes'=v.payload::jsonb->>'bytes')""", originals)
                 conn.commit()
-                print(f"Reconciled {scanned} originals, {total} bytes for {org}.")
+                print(f"Scanned {scanned} originals, {total} bytes for {org}.")
     except BaseException:
         conn.rollback()
         raise

@@ -502,6 +502,16 @@ permissions. A renderer error rolls back all letter rows of the request. This is
 new decision on the statutory retention period or proof of delivery. Migration 0132
 refuses to remove populated template/letter tables.
 
+Hosted quota usage includes retained visual extracts and their attestations. The
+last-reference cleanup guard is for future accepted deletion paths (#23), not a
+current user operation: classified mandates return 409, unclassified mandates
+remain quarantined, attachment/invoice/letter retention triggers and `RESTRICT`
+foreign keys retain originals, and no current path deletes property documents or
+intake originals. Hosted cleanup requires both quota and directory locks and a
+zero guarded reference count, independent of sizes, before a post-commit unlink.
+Selfhost removes only the row and never queues an unlink. See
+[organization quotas](architecture.md#organization-quotas).
+
 ## 9. What This Document Deliberately Does NOT Decide
 
 - **Distribution/settlement logic (M3):** *how* a distribution key computes, pro rata periods from the service period, CO2/caretaker split. M2 stores only the selection/amounts/share fields; the engine is M3 (a correctness-critical design step).

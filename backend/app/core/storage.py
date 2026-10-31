@@ -324,10 +324,10 @@ def open_storage_lock(store: LocalFsDocumentStore, org_id) -> int:
     return os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
 
 
-async def lock_document_storage(session, org_id, store: DocumentStore) -> None:
+async def lock_document_storage(session, org_id, store: DocumentStore) -> bool:
     from app.core.quotas import get_quota_plan
     if get_quota_plan().name == "unlimited" or not isinstance(store, LocalFsDocumentStore):
-        return
+        return False
     locks = session.info.setdefault("storage_write_locks", {})
     lock_key = (store._root, org_id)
     if lock_key not in locks:
@@ -338,6 +338,7 @@ async def lock_document_storage(session, org_id, store: DocumentStore) -> None:
             os.close(handle)
             raise
         locks[lock_key] = handle
+    return True
 
 
 def remove_document_after_commit(session, store: DocumentStore, key: str) -> None:

@@ -23,7 +23,7 @@ from app.models.mandate_document import MandateDocument
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.mandate_document_repo import MandateDocumentRepository
 from app.repositories.mandate_repo import MandateRepository
-from app.services.quota_service import database_usage, lock_quota
+from app.services.quota_service import lock_quota
 
 DOC_TYPES = frozenset(
     {"VERWALTERVERTRAG", "BANKKONTO", "VOLLMACHT", "VERSICHERUNG", "SONSTIGES"}
@@ -129,24 +129,21 @@ class MandateDocumentService:
         return await self._repo.get_by_id(doc_id)
 
     async def delete(self, doc_id: uuid.UUID) -> None:
-        await lock_quota(self._session, self._org_id)
+        quota_locked = await lock_quota(self._session, self._org_id)
         doc = await self._repo.get_by_id(doc_id)
         if doc is None:
             raise HTTPException(status_code=404, detail="Document not found")
         if doc.accounting_scope_id is not None:
             raise HTTPException(409, "Classified originals must be archived with a reason")
         store = get_store()
-        await lock_document_storage(self._session, self._org_id, store)
-        await self._session.flush()
-        before = await database_usage(self._session, self._org_id)
+        directory_locked = await lock_document_storage(self._session, self._org_id, store) if quota_locked else False
         await self._repo.delete(doc)
-        after = await database_usage(self._session, self._org_id)
-        # The guarded aggregate includes references hidden by source RLS, all
-        # retained document kinds and mail/recount receipts. Ordinary row queries
-        # could mistake an inaccessible shared original for an unreferenced file.
-        if (before["storage_bytes"] > after["storage_bytes"]
+        # Future accepted deletion classes may unlink only under both hosted
+        # locks. Reference counts include unknown sizes and source-hidden rows.
+        if (quota_locked and directory_locked
                 and doc.storage_backend == "LOCAL_FS"
-                and doc.storage_uri == make_storage_key(str(self._org_id), doc.content_sha256)):
+                and doc.storage_uri == make_storage_key(str(self._org_id), doc.content_sha256)
+                and await self._repo.count_storage_references(doc.storage_uri) == 0):
             remove_document_after_commit(self._session, store, doc.storage_uri)
         await self._audit.create(
             AuditEvent(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from typing import Sequence
+from sqlalchemy import text
 
 from app.models.mandate_document import MandateDocument
 from app.repositories.base import TenantRepository
@@ -30,3 +31,8 @@ class MandateDocumentRepository(TenantRepository[MandateDocument]):
     async def delete(self, entity: MandateDocument) -> None:
         await self._session.delete(entity)
         await self._session.flush()
+
+    async def count_storage_references(self, storage_key: str) -> int:
+        """Count retained references even when ordinary source RLS hides rows."""
+        return await self._session.scalar(text("SELECT organization_document_reference_count(:org,:key)"),
+                                          {"org": self._org_id, "key": storage_key})

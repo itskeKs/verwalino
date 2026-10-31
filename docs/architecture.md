@@ -114,11 +114,15 @@ uses the default self-hosted policy and does not forward an arbitrary caller's e
 2 GiB retained storage, 25 MiB per file, 20 properties, 200 units, USD 0 per
 calendar month (UTC). Selfhost selects unlimited through `quota_enforcement`.
 One shared plan applies to all hosted organizations; individual overrides and
-paid plans are deferred. Existing upload/body safety caps remain in both modes.
+paid plans are deferred. `core/document_limits.py:MAX_UPLOAD_BYTES` supplies
+the shared file safety cap to plans, upload readers, declaration defaults, intake
+inspection and visual input/output bounds. Existing upload/body safety caps remain
+in both modes. The frontend shares one matching safety constant because public
+`/api/meta` exposes no file cap and selfhost quota metadata reports unlimited.
 
 Services enforce quotas before writes. `put_document` guards attachments,
 invoices and versions, mandate originals, declaration sources, intake uploads,
-and retained generated PDFs. In hosted mode it serializes writes, queries stored
+visual extracts and retained generated PDFs. In hosted mode it serializes writes, queries stored
 document sizes in the database (deduplicated by storage URI), and cleans up only newly
 created originals when the owning database transaction rolls back. A filesystem
 lock remains held through rollback cleanup so a concurrent writer cannot reuse
@@ -128,18 +132,25 @@ the shared organization directory inode through transaction cleanup. Web and
 worker containers coordinate on the same document volume without creating
 lock files that accumulate or enter backups. Mail originals are retained before their independently
 committed dispatch receipt, so a request rollback cannot remove a referenced PDF.
-Archived and source-restricted files still consume space. Accepted unprotected
-deletions unlink only after commit and only when the guarded aggregate decreases,
-proving the last organization/content-hash reference is gone. Shared and classified
-originals remain retained. Revision 0078 also freezes unclassified mandate
-originals in quarantine; neither current mandate class permits deletion. The
-cleanup rule preserves these guards. Rollback cancels removal; unlink failures log a warning
-and may leave an orphan for `quota-recount`. See [operations](../DEPLOY.md#hosted-organization-quotas).
+Archived and source-restricted files still consume space. Current original deletion
+is unreachable: classified mandates return 409, revision 0078 freezes unclassified
+mandates, attachment/invoice/letter retention triggers and `RESTRICT` foreign keys
+retain their originals, and no path deletes property documents or intake originals.
+The cleanup rule guards future accepted deletion paths (for example #23).
+Only hosted deletion holding both the organization quota and directory locks can
+queue unlink. The guarded `organization_document_reference_count(org, storage_key)`
+counts referencing rows across all document tables and retained mail/recount and
+visual-attestation receipts, including references with NULL sizes. Zero references
+permits unlink after the outer commit; byte aggregates never prove liveness.
+Selfhost removes the row only, without usage/reference queries or unlink.
+Rollback cancels removal; unlink failures log a warning and may leave an orphan
+for `quota-recount`. See [operations](../DEPLOY.md#hosted-organization-quotas).
 The request-body middleware remains the first upload boundary and reports the
 route's actual raw-body cap (1.75 MiB for master import; 26 MiB for uploads,
-including the multipart envelope). File-content/storage
-returns 413 with “Datei zu groß (maximal 25 MiB). …” or
-“Speicherkontingent erschöpft (2 GiB). …”.
+including the multipart envelope). File-content and upload-storage refusals
+return 413 with “Datei zu groß (maximal 25 MiB). …” or
+“Speicherkontingent erschöpft (2 GiB). …”. Visual-extract storage admission
+returns 409 with the same structured storage code and message.
 
 Canonical property/unit creation, atomic master import and declaration approval
 check complete organization counts under a transaction lock. Count refusals use
@@ -148,20 +159,23 @@ Objekte). …” or “Einheitenkontingent erschöpft (200 Einheiten). …”. A
 checks its whole delta before creating any destination rows. Retry receipts are
 resolved before quota checks, so successful replays remain idempotent.
 
-Revision 0146 adds `organization_quota_usage`: a guarded SECURITY DEFINER
-aggregate, using the session organization and a live member. It returns byte/count
-and USD totals, never source identities/content. Ordinary source RLS may hide
+Revision 0146 adds `organization_quota_usage` and
+`organization_document_reference_count`: guarded SECURITY DEFINER functions
+using the session organization and a live member. They return usage totals or
+a reference count, never source identities/content. Ordinary source RLS may hide
 rows even within an organization, so application-side COUNT queries would be
-incorrect. Five original tables already carry `content_byte_size`; issued letters
-gain nullable, nonnegative `size_bytes`, and prepared mail uses `bytes` in its existing
-audit JSON. Archived originals and all versions count; duplicate references share
+incorrect. Six document tables (including private visual artifacts) carry
+`content_byte_size`; issued letters gain nullable, nonnegative `size_bytes`,
+prepared mail uses `bytes` in its existing audit JSON, and visual attestations
+retain their payload sizes. Archived originals and all versions count; duplicate references share
 one charge. Both upload admission and quota GET use this aggregate without filesystem
 enumeration. Legacy letters/mail and interrupted-write originals are reconciled
 once with the migrator's `quota-recount` CLI, which appends URI/byte audit metadata
 without changing retained originals. Already sized live references are skipped
 so a subsequent unprotected deletion can still release its bytes. No table, quota counter, override, or privileged
-application connection is introduced. Downgrade removes only the function and
-reconstructible size column. The function also supports the existing isolated worker role.
+application connection is introduced. Downgrade removes only the two functions
+and reconstructible size column. The functions also support the existing isolated
+worker role.
 
 AI admission reuses `property_knowledge_query_run` and
 `declaration_extraction_run`. Each running extraction reserves its existing

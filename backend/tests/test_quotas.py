@@ -34,8 +34,9 @@ async def test_import_body_refusal_reports_its_actual_limit(path, content_length
 
 
 @pytest.mark.asyncio
-async def test_quota_function_has_fixed_security_metadata_and_narrow_acl(app_rw_session):
-    signature = {"signature": "public.organization_quota_usage(uuid)"}
+@pytest.mark.parametrize("name", ["organization_quota_usage(uuid)", "organization_document_reference_count(uuid,text)"])
+async def test_quota_function_has_fixed_security_metadata_and_narrow_acl(app_rw_session, name):
+    signature = {"signature": "public." + name}
     security = (await app_rw_session.execute(text("""SELECT pg_get_userbyid(proowner) AS owner,prosecdef,proconfig
         FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)"""), signature)).one()
     assert security.owner == "app_migrator"
@@ -60,8 +61,9 @@ def test_quota_migration_downgrade_is_exact_and_preserves_original_metadata(run_
             restore = db.begin()
             try:
                 metadata = text("""SELECT pg_get_functiondef(oid),proacl::text,proconfig,proowner
-                    FROM pg_proc WHERE oid='organization_quota_usage(uuid)'::regprocedure""")
-                function = db.execute(metadata).one()
+                    FROM pg_proc WHERE oid IN ('organization_quota_usage(uuid)'::regprocedure,
+                        'organization_document_reference_count(uuid,text)'::regprocedure) ORDER BY proname""")
+                functions = db.execute(metadata).all()
                 columns = text("""SELECT column_name,data_type,is_nullable,column_default FROM information_schema.columns
                     WHERE table_schema='public' AND table_name='letter_document' AND column_name<>'size_bytes' ORDER BY ordinal_position""")
                 old_columns = db.execute(columns).all()
@@ -73,13 +75,14 @@ def test_quota_migration_downgrade_is_exact_and_preserves_original_metadata(run_
                 with Operations.context(MigrationContext.configure(db)):
                     migration.downgrade()
                     assert db.scalar(text("SELECT to_regprocedure('organization_quota_usage(uuid)')")) is None
+                    assert db.scalar(text("SELECT to_regprocedure('organization_document_reference_count(uuid,text)')")) is None
                     assert not db.scalar(text("""SELECT EXISTS(SELECT 1 FROM information_schema.columns
                         WHERE table_schema='public' AND table_name='letter_document' AND column_name='size_bytes')"""))
                     assert db.execute(columns).all() == old_columns
                     assert db.execute(originals).all() == old_rows
                     assert db.execute(guards).all() == old_guards
                     migration.upgrade()
-                assert db.execute(metadata).one() == function
+                assert db.execute(metadata).all() == functions
                 assert db.execute(guards).all() == old_guards
                 assert db.execute(originals).all() == old_rows
             finally:
@@ -90,14 +93,15 @@ def test_quota_migration_downgrade_is_exact_and_preserves_original_metadata(run_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("foreign_target", [False, True])
-async def test_quota_function_refuses_foreign_targets_and_nonmembers(rent_world, foreign_target):
+@pytest.mark.parametrize("sql", ["SELECT organization_quota_usage(:org)", "SELECT organization_document_reference_count(:org,'unknown')"])
+async def test_quota_function_refuses_foreign_targets_and_nonmembers(rent_world, foreign_target, sql):
     from sqlalchemy.exc import DBAPIError
     from app.core.db import get_tenant_session
     with pytest.raises(DBAPIError) as error:
         async with get_tenant_session(rent_world["org"]) as db:
             await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),
                 {"actor": str(rent_world["admin"] if foreign_target else rent_world["foreign_admin"])})
-            await db.scalar(text("SELECT organization_quota_usage(:org)"),
+            await db.scalar(text(sql),
                 {"org": rent_world["foreign_org"] if foreign_target else rent_world["org"]})
     assert error.value.orig.sqlstate == "42501"
 
@@ -268,7 +272,7 @@ async def test_recount_does_not_add_permanent_charges_for_sized_live_rows(rent_w
         assert response.status_code == 201, response.text
         before = (await api.get("/api/organizations/quota")).json()["usage"]["storage_bytes"]
         admin_cli.quota_recount(["--org", str(rent_world["org"])])
-        assert "8 bytes" in capsys.readouterr().out
+        assert "Scanned 1 originals, 8 bytes" in capsys.readouterr().out
         assert (await api.get("/api/organizations/quota")).json()["usage"]["storage_bytes"] == before
     assert await rent_db.scalar(text("SELECT count(*) FROM audit_event WHERE organization_id=:org AND action='quota_recount'"), {"org": rent_world["org"]}) == 0
 
@@ -319,10 +323,24 @@ def test_property_row_locks_follow_quota_admission():
     from app.services.letter_service import LetterService
     from app.services.declaration_approval_service import DeclarationApprovalService
     from app.services.master_creation_service import create_unit
+    from app.services.document_mail_service import DocumentMailService
+    from app.services.invoice_document_service import InvoiceDocumentService
+    from app.services.attachment_service import AttachmentService
+    from app.core.storage import put_document
     for function, admission, row_lock in (
         (LetterService.issue, "await lock_quota(", "FOR SHARE"),
         (DeclarationApprovalService.approve, "await lock_quota(", "get_by_id_for_update("),
         (create_unit, "await require_counts(", "await _require_confirmed_mea_scale("),
+        # Mail and invoices serialize financial inputs before their source rows;
+        # attachments authorize parents before storage. All reach the same
+        # quota-before-directory-lock boundary in put_document.
+        (DocumentMailService.resolve, ".lock_inputs(", "FOR SHARE"),
+        (DocumentMailService.send, "await self.resolve(", "await put_document("),
+        (InvoiceDocumentService.upload, "await self.prepare_storage_write(", "await self._lock_cost("),
+        (InvoiceDocumentService.create_new_version, "await self.prepare_storage_write(", "get_by_id_for_update("),
+        (InvoiceDocumentService.prepare_storage_write, ".lock_inputs(", "scope_actor_role("),
+        (AttachmentService.upload, "await self.require_parents(", "await put_document("),
+        (put_document, "await lock_quota(", "await lock_document_storage("),
     ):
         source = inspect.getsource(function)
         assert admission in source, function.__qualname__
@@ -340,92 +358,128 @@ async def test_selfhost_upload_safety_refusal_uses_the_actual_limit(monkeypatch)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("copies", [1, 2])
-@pytest.mark.parametrize("rollback", [None, "outer", "savepoint", "released_savepoint"])
-async def test_accepted_unprotected_deletion_unlinks_only_the_last_committed_reference(
-    monkeypatch, tmp_path, copies, rollback
-):
-    """Current mandate classes reject deletion; simulate an accepted repository delete.
+async def test_property_document_oversize_is_structured_and_uses_the_safety_limit(monkeypatch):
+    from app.services.property_document_service import PropertyDocumentService
+    monkeypatch.setattr(settings, "declaration_max_pdf_bytes", 4)
+    service = PropertyDocumentService(None, uuid.uuid4(), uuid.uuid4())
+    with pytest.raises(HTTPException) as error:
+        await service.upload(uuid.uuid4(), b"%PDF-", original_filename="large.pdf",
+                             mime_type="application/pdf", document_role="TEILUNGSERKLAERUNG", sequence_no=1)
+    assert error.value.status_code == 413
+    assert error.value.detail == {"code": "UPLOAD_TOO_LARGE", "message": "Datei zu groß (maximal 4 Bytes). Bitte wählen Sie eine kleinere Datei."}
 
-    Do not disable quarantine or immutability triggers to create a deletable class.
-    The real session exercises commit/savepoint callbacks; the repository and its
-    guarded aggregate are the boundary doubles for a permitted document class.
-    """
+
+@pytest.mark.asyncio
+async def test_selfhost_delete_never_reads_usage_or_unlinks_live_bytes(monkeypatch, tmp_path):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
     from sqlalchemy.orm import Session
     from app.core import storage
-    from app.services import mandate_document_service, quota_service
+    from app.services import mandate_document_service
     from app.services.mandate_document_service import MandateDocumentService
+    monkeypatch.setattr(settings, "deployment_mode", "selfhost")
+    store = storage.LocalFsDocumentStore(tmp_path)
+    monkeypatch.setattr(storage, "_store", store)
+    org = uuid.uuid4()
+    content = b"shared original"
+    digest = storage.compute_sha256(content)
+    key = storage.make_storage_key(str(org), digest)
+    store.put(key, content, content_type="application/pdf")
+    # An unrelated concurrent deletion decreases usage, despite another live ref.
+    usage = AsyncMock(side_effect=[{"storage_bytes": 100}, {"storage_bytes": len(content)}])
+    monkeypatch.setattr(mandate_document_service, "database_usage", usage, raising=False)
+    with Session() as session:
+        session.begin()
+        proxy = SimpleNamespace(info=session.info, sync_session=session, flush=AsyncMock())
+        service = MandateDocumentService(proxy, org, uuid.uuid4())
+        service._repo.get_by_id = AsyncMock(return_value=SimpleNamespace(accounting_scope_id=None,
+            storage_uri=key, content_sha256=digest, storage_backend="LOCAL_FS", doc_type="SONSTIGES"))
+        service._repo.delete = AsyncMock()
+        service._audit.create = AsyncMock()
+        await service.delete(uuid.uuid4())
+        session.commit()
+        assert store.exists(key)
+        assert usage.await_count == 0
+        assert not session.info.get("storage_write_locks")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("remaining", [None, "mail_without_size", "letter_without_size", "other_document"])
+@pytest.mark.parametrize("rollback", [None, "outer", "savepoint", "released_savepoint"])
+async def test_accepted_unprotected_deletion_unlinks_only_the_last_committed_reference(
+    rent_world, rent_db, monkeypatch, tmp_path, remaining, rollback
+):
+    """Exercise a future accepted class using real rows, reference SQL and hooks.
+
+    Property documents have no DELETE retention trigger, but runtime DELETE is
+    revoked. Grant it only for this disposable fixture and restore it in finally.
+    Truncate synthetic registry dependants to model an unregistered legacy class;
+    no retention trigger is disabled and no current route accepts this deletion.
+    """
+    import json
+    from app.core import storage
+    from app.core.db import get_tenant_session
+    from app.models.property_document import PropertyDocument
+    from app.repositories.mandate_document_repo import MandateDocumentRepository
+    from app.services.mandate_document_service import MandateDocumentService
+    from tests.test_letters import create_template
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
     store = storage.LocalFsDocumentStore(tmp_path)
     monkeypatch.setattr(storage, "_store", store)
-    org, actor = uuid.uuid4(), uuid.uuid4()
+    org, actor = rent_world["org"], rent_world["admin"]
     content = b"unprotected source"
-    key = storage.make_storage_key(str(org), storage.compute_sha256(content))
+    digest = storage.compute_sha256(content)
+    key = storage.make_storage_key(str(org), digest)
     store.put(key, content, content_type="application/pdf")
-    rows = {uuid.uuid4(): SimpleNamespace(accounting_scope_id=None, storage_uri=key,
-        content_sha256=storage.compute_sha256(content), content_byte_size=len(content),
-        storage_backend="LOCAL_FS", doc_type="SONSTIGES") for _ in range(copies)}
-    db = Session()
-    db.begin()
-    proxy = SimpleNamespace(info=db.info, sync_session=db, flush=AsyncMock())
-    service = MandateDocumentService(proxy, org, actor)
-    service._repo.get_by_id = AsyncMock(side_effect=lambda ident: rows.get(ident))
-    service._repo.delete = AsyncMock(side_effect=lambda doc: rows.pop(next(ident for ident, row in rows.items() if row is doc)))
-    service._audit.create = AsyncMock()
-    usage = AsyncMock(side_effect=lambda *_: {"storage_bytes": len(content) if rows else 0})
-    monkeypatch.setattr(quota_service, "database_usage", usage)
-    monkeypatch.setattr(quota_service, "lock_quota", AsyncMock())
-    monkeypatch.setattr(mandate_document_service, "lock_quota", AsyncMock())
-    # The service imports the shared aggregate, not a source-filtered row count.
-    monkeypatch.setattr(mandate_document_service, "database_usage", usage, raising=False)
+    ident = uuid.uuid4()
+    params = {**rent_world, "id": ident, "uri": key, "hash": digest, "size": len(content)}
+    for document_id in ([ident, uuid.uuid4()] if remaining == "other_document" else [ident]):
+        await rent_db.execute(text("""INSERT INTO property_document(id,organization_id,property_id,doc_type,
+            title,original_filename,mime_type,content_byte_size,content_sha256,storage_uri,storage_backend,page_count,uploaded_by)
+            VALUES (:id,:org,:property,'DECLARATION','Synthetic','source.pdf','application/pdf',:size,:hash,:uri,'LOCAL_FS',1,:admin)"""),
+            {**params, "id": document_id})
+    await rent_db.execute(text("TRUNCATE document_ref CASCADE"))
+    if remaining == "mail_without_size":
+        await rent_db.execute(text("""INSERT INTO audit_event(organization_id,entity_type,action,payload_diff)
+            VALUES (:org,'dunning_notice','mail_prepared',CAST(:payload AS jsonb))"""),
+            {"org": org, "payload": json.dumps({"storage_uri": key})})
+    await rent_db.commit()
+    if remaining == "letter_without_size":
+        async with api_client(rent_world) as api:
+            template = await create_template(api)
+        await rent_db.execute(text("""INSERT INTO letter_document(organization_id,template_id,property_id,person_id,
+            tenant_profile_id,lease_agreement_id,request_id,as_of,recipient_name,subject,body,storage_uri,content_sha256)
+            VALUES (:org,:template,:property,:person,:tenant,:lease,:id,'2026-06-01','Synthetic','Subject','Body',:uri,:hash)"""),
+            {**params, "template": uuid.UUID(template["id"])})
+    await rent_db.execute(text("GRANT DELETE ON property_document TO app_rw"))
+    await rent_db.commit()
+
+    class AcceptedPropertyRepository(MandateDocumentRepository):
+        model = PropertyDocument
+
+        async def get_by_id(self, document_id):
+            document = await super().get_by_id(document_id)
+            if document is not None:
+                document.accounting_scope_id = None
+            return document
+
     try:
-        for index, ident in enumerate(list(rows)):
-            nested = db.begin_nested() if rollback in {"savepoint", "released_savepoint"} else None
+        async with get_tenant_session(org) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {"actor": str(actor)})
+            service = MandateDocumentService(db, org, actor)
+            service._repo = AcceptedPropertyRepository(db, org)
+            nested = await db.begin_nested() if rollback in {"savepoint", "released_savepoint"} else None
             await service.delete(ident)
-            assert store.get(key) == content  # No unlink before the owning commit.
+            assert store.get(key) == content
             if nested:
-                nested.commit() if rollback == "released_savepoint" else nested.rollback()
-            if rollback:
-                db.rollback() if db.in_transaction() else None
-                assert store.get(key) == content
-                # Reset only the boundary double, preserving the same session hooks.
-                if index == copies - 1:
-                    rows[ident] = SimpleNamespace(accounting_scope_id=None, storage_uri=key,
-                        content_sha256=storage.compute_sha256(content), content_byte_size=len(content),
-                        storage_backend="LOCAL_FS", doc_type="SONSTIGES")
-                    db.begin()
-                    await service.delete(ident)
-                    db.commit()
-                else:
-                    db.begin()
-            else:
-                db.commit()
-                if rows:
-                    assert store.get(key) == content
-                    db.begin()
-        assert not store.exists(key)
-        assert (await quota_service.database_usage(proxy, org))["storage_bytes"] == store.organization_bytes(str(org)) == 0
-        # Exercise the real recount scanner after unlink. Its connection is a
-        # boundary double, like the accepted deletion: current classes retain.
-        from contextlib import redirect_stdout
-        from io import StringIO
-        from unittest.mock import MagicMock
-        from app import admin_cli
-        connection = MagicMock()
-        cursor = connection.cursor.return_value.__enter__.return_value
-        cursor.fetchone.return_value = (org,)
-        cursor.fetchall.return_value = []
-        monkeypatch.setattr(admin_cli.psycopg2, "connect", lambda *_: connection)
-        monkeypatch.setattr(settings, "document_storage_root", str(tmp_path))
-        output = StringIO()
-        with redirect_stdout(output):
-            admin_cli.quota_recount(["--org", str(org)])
-        assert "0 originals, 0 bytes" in output.getvalue()
-        assert not any("INSERT" in call.args[0] for call in cursor.execute.call_args_list)
+                await nested.commit() if rollback == "released_savepoint" else await nested.rollback()
+            if rollback in {"outer", "released_savepoint"}:
+                await db.rollback()
+        assert store.exists(key) == bool(remaining or rollback)
+        assert await rent_db.scalar(text("SELECT count(*) FROM property_document WHERE id=:id"), {"id": ident}) == bool(rollback)
     finally:
-        db.close()
+        await rent_db.execute(text("REVOKE DELETE ON property_document FROM app_rw"))
+        await rent_db.commit()
 
 
 @pytest.mark.asyncio

@@ -10,13 +10,14 @@ from app.core.quotas import check_quota, get_quota_plan
 
 async def lock_quota(db, org_id, *, budget=False):
     if get_quota_plan().name == "unlimited":
-        return
+        return False
     # Source authorization always takes the ACL first. All quota writers then
     # share one organization lock, retained until commit or rollback.
     await db.execute(text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
                      {"key": f"scope-acl:{org_id}"})
     await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
                      {"key": f"{'hosted-ai' if budget else 'organization-quota'}:{org_id}"})
+    return True
 
 
 async def database_usage(db, org_id):

@@ -15,6 +15,7 @@ from decimal import Decimal
 from typing import Literal
 
 from app.core.deployment_policy import get_deployment_policy
+from app.core.document_limits import MAX_UPLOAD_BYTES
 
 QuotaKind = Literal["storage_bytes", "upload_bytes", "properties", "units", "ai_budget_usd"]
 
@@ -29,7 +30,6 @@ class QuotaPlan:
     ai_budget_usd: Decimal | None
 
 
-MAX_UPLOAD_BYTES = 25 * 1024**2
 FREE_PLAN = QuotaPlan("free", 2 * 1024**3, MAX_UPLOAD_BYTES, 20, 200, Decimal("0"))
 UNLIMITED_PLAN = QuotaPlan("unlimited", None, None, None, None, None)
 

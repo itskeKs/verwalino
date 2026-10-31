@@ -108,6 +108,10 @@ are created, accumulated or included in document backups.
 Selfhost creates no filesystem lock files and retains failed-upload bytes for
 offline reconciliation rather than risking a concurrent committed duplicate.
 
+The shared 25 MiB file safety cap is
+`backend/app/core/document_limits.py:MAX_UPLOAD_BYTES`; upload readers, declaration
+defaults, intake inspection and visual input/output bounds derive from it.
+
 To change the hosted offer, edit the documented `FREE_PLAN` constants, run the
 quota/budget tests, rebuild, and restart both web and declaration worker processes
 from the same release. No new environment tuning keys, paid plans, billing, or
@@ -117,34 +121,42 @@ policies may further restrict calls; increasing the hosted monthly constant does
 not enable Q&A or relax those controls.
 
 Usage is derived from database metadata: stored sizes from attachments, invoice
-versions, mandate/property documents, intake originals, letters and prepared mail
-receipts are summed once per storage URI, including archived and source-restricted
+versions, mandate/property documents, intake originals, letters, visual extracts
+(including independently committed attestations) and prepared mail receipts are
+summed once per storage URI, including archived and source-restricted
 originals. Uploads and quota reads never walk the storage directory. Database
 counts include every organization-owned property/unit, regardless of source
 grants. Hosted writes serialize quota admission within the organization. New files
 are checked before writing and, in hosted mode, removed on transaction rollback;
 already retained content is preserved. Mail originals are retained before their
 independently committed dispatch receipt, so a request rollback cannot remove a
-referenced PDF. Size/storage refusals return **413**, count
-refusals **409**, with a structured `detail.code` and German `detail.message`.
+referenced PDF. File-size and upload-storage refusals return **413**; visual-extract
+storage admission and count refusals return **409**, with a structured `detail.code`
+and German `detail.message`.
 Codes are `QUOTA_STORAGE_EXCEEDED`, `QUOTA_PROPERTIES_EXCEEDED`,
 `QUOTA_UNITS_EXCEEDED` and `UPLOAD_TOO_LARGE` (also used by the body safety cap). Authenticated members can read
 `GET /api/organizations/quota`; the dashboard shows “Kontingent” and a warning at
 90%. Selfhost skips the quota request and renders no quota/loading/error card.
 
-An accepted deletion of an **unprotected original** removes its row and,
-only after commit, its local file when the guarded aggregate confirms that the
-last reference to that organization/content hash is gone. Shared originals
-(including source-restricted documents and retained mail/recount references) stay
-until their last reference is removed. Classified mandate originals still reject
-deletion and must be archived with a reason. Unclassified mandate originals are
-also frozen in quarantine by revision 0078, so neither current mandate class
-can reach cleanup. These retention guards are unchanged; the cleanup rule does
-not authorize a new deletable class. Their bytes remain retained. A
-rolled-back deletion never unlinks bytes. Post-commit unlink is best effort: a
-failure logs a warning and leaves bytes for operator reconciliation. A process
-crash between commit and unlink can likewise leave an orphan; `quota-recount`
-accounts for those bytes. No background deletion or retention override is added.
+Original deletion is **not reachable through current user workflows**. Classified
+mandate originals return 409 and must be archived with a reason; unclassified
+mandate originals are frozen in quarantine by revision 0078. Attachment, invoice
+and letter retention triggers, revoked DELETE grants and `RESTRICT` foreign keys
+also retain originals. No current path deletes property documents or intake
+originals. These guards remain unchanged.
+
+The cleanup rule guards **future accepted deletion paths**, such as the import
+and deletion work in #23. Only hosted deletion holding both the organization
+quota lock and the shared directory lock may queue a local unlink. After the row
+is deleted, `organization_document_reference_count(org, storage_key)` counts
+all retained references, including source-restricted rows, NULL-sized legacy
+letters/mail and visual artifacts/attestations; sizes never decide liveness.
+Only zero references permits unlink, and only after the outer commit. Selfhost
+deletes the row only: it neither reads usage/references nor queues an unlink.
+Rollback cancels removal. Post-commit unlink is best effort: a failure logs a
+warning and leaves bytes for operator reconciliation. A process crash between
+commit and unlink can likewise leave an orphan; `quota-recount` accounts for
+those bytes. No background deletion or retention override is added.
 
 Monthly model costs reuse the Q&A reservation ledger and declaration extraction
 runs. Running imports reserve their entire existing per-import ceiling; completed
@@ -1198,7 +1210,7 @@ run `docker compose down -v` or delete the volumes.
 | Lease documents (accepted source 0143) | Allows retained built-in letter documents without a template row; the exact migration is preserved from #114. Downgrade refuses a null template reference. |
 | 0144 (accepted source) | Adds private pending signup requests and token-bound SECURITY DEFINER functions; runtime roles have no direct request-table access. Successful confirmation atomically creates a separate tenant and deletes its request. Retained requests block downgrade. |
 | 0145 (accepted source) | Adds global password reset requests with 32-byte token digests, context-free definer issuance/confirmation and bounded cleanup; runtime table access is revoked. The T57 trigger path revokes sessions and consumes links on password changes/deactivation. Tokens expire after one hour; successful reset marks all outstanding links for that user used. A populated downgrade refuses to discard retained reset state; an empty downgrade exactly removes the new table, index, trigger and functions. |
-| 0146 | Adds a member-checked organization aggregate for deduplicated document bytes, complete property/unit counts and monthly USD usage. Adds nullable, nonnegative letter size metadata; old originals remain unchanged and `quota-recount` records legacy sizes in the existing audit log. Downgrade removes the function and reconstructible size column, preserving originals and events. Older runtimes do not enforce hosted quotas. |
+| 0146 | Adds member-checked organization usage and reference-count functions for deduplicated document bytes (including visual extracts), complete property/unit counts and monthly USD usage. Adds nullable, nonnegative letter size metadata; old originals remain unchanged and `quota-recount` records legacy sizes in the existing audit log. Downgrade removes the functions and reconstructible size column, preserving originals and events. Older runtimes do not enforce hosted quotas. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
