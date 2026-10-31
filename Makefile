@@ -25,7 +25,7 @@ fi; \
 trap 'rmdir /tmp/verwalino-testdb.lock' EXIT
 endef
 
-.PHONY: help test test-agent-rules test-backend test-installer test-frontend test-bdd test-browser typecheck lint lint-backend lint-frontend \
+.PHONY: help test test-agent-rules test-scenario-issues test-backend test-installer test-frontend test-bdd test-browser test-scenarios-report typecheck lint lint-backend lint-frontend \
         docs-check frontend-deps hooks check-testdb
 
 help: ## List the documented targets
@@ -33,10 +33,13 @@ help: ## List the documented targets
 
 # ---- tests -----------------------------------------------------------------
 
-test: test-agent-rules test-installer test-backend test-frontend typecheck ## Whole suite before a merge: agent rules + installer contracts + backend pytest (incl. BDD) + frontend vitest + typecheck
+test: test-agent-rules test-scenario-issues test-installer test-backend test-frontend typecheck ## Whole suite before a merge: agent rules + scenario filing + installer contracts + backend pytest (incl. BDD) + frontend vitest + typecheck
 
 test-agent-rules: ## Paired agent rules, CLAUDE.md symlink and Codex hook contracts (stdlib only; no DB)
 	python3 -B scripts/test_agent_rules.py
+
+test-scenario-issues: ## Scenario failure filing contracts (stdlib only; GitHub is faked, no DB)
+	python3 -B scripts/test-scenario-issues.py
 
 test-backend: check-testdb ## Backend pytest against the test DB (PYTEST_ARGS="-q tests/test_x.py -k name" narrows it)
 	@$(TESTDB_LOCK); \
@@ -53,7 +56,8 @@ test-bdd: ## API BDD scenarios (backend/tests/bdd); browser journeys use test-br
 	@if [ -d backend/tests/bdd ]; then \
 	  $(TESTDB_LOCK); \
 	  $(MAKE) --no-print-directory check-testdb && \
-	  ( . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest tests/bdd $(PYTEST_ARGS) ); \
+	  ( unset VERWALINO_TARGET_URL VERWALINO_TARGET_ADMIN_EMAIL VERWALINO_TARGET_ADMIN_PASSWORD; \
+	    . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest tests/bdd $(PYTEST_ARGS) ); \
 	else \
 	  echo "test-bdd: backend/tests/bdd does not exist yet - skipped"; \
 	fi
@@ -64,7 +68,14 @@ typecheck: frontend/node_modules ## Frontend TypeScript check (tsc -b, no emit)
 test-browser: frontend/node_modules ## Headless browser features; owns the test DB lock and local app processes
 	@$(TESTDB_LOCK); \
 	$(MAKE) --no-print-directory check-testdb && \
-	( . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest tests/bdd --run-browser -m browser $(PYTEST_ARGS) )
+	( unset VERWALINO_TARGET_URL VERWALINO_TARGET_ADMIN_EMAIL VERWALINO_TARGET_ADMIN_PASSWORD; \
+	  . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest tests/bdd --run-browser -m browser $(PYTEST_ARGS) )
+
+test-scenarios-report: frontend/node_modules ## All API and browser features against the local stack; write report/scenarios.json and summary.md
+	@$(TESTDB_LOCK); \
+	$(MAKE) --no-print-directory check-testdb && \
+	( unset VERWALINO_TARGET_URL VERWALINO_TARGET_ADMIN_EMAIL VERWALINO_TARGET_ADMIN_PASSWORD; \
+	  . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest tests/bdd --run-browser --scenario-report ../report $(PYTEST_ARGS) )
 
 # ---- static checks ---------------------------------------------------------
 
