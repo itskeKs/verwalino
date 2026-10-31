@@ -20,7 +20,7 @@ history). Update this page in the same PR whenever a feature's status changes.
 | Roles admin/clerk/read-only | yes | ✅ admin can change role and deactivate; write buttons hidden for read-only | `core/rbac.py` (`OWNER_ADMIN`, `CLERK`, `READ_ONLY`), T57, [usage](operations/users-and-access.md) |
 | Change password | yes | ✅ own change and admin reset, sessions revoked | `api/auth.py` (`POST /api/auth/password`), `api/users.py` (`/reset-password`), `components/Topbar.tsx`, T14, T57, [usage](operations/users-and-access.md) |
 | Management mandates with documents | no | ✅ edit/end, bound definition protected | `api/mandates.py`, `pages/MandateDetailPage.tsx`, T55, [usage](operations/selector-pages.md) |
-| Source governance (scopes, approvals, quarantines) | no | ✅ one admin permissions area with state, next step, team rights, preparation and review lists; guarded activation and emergency pause; new organizations start in preparation; test-stack rehearsal described in the operations runbook | `pages/PermissionsPage.tsx`, `components/SourceSecurityPanel.tsx`, [runbook](operations/accounting-scope-setup.md#owner-activation-runbook), #73 |
+| Source governance (scopes, approvals, quarantines) | no | ✅ one admin permissions area with state, next step, team rights, preparation and review lists; guarded activation and emergency pause; new organizations start in preparation; activation runbook available | `pages/PermissionsPage.tsx`, `components/SourceSecurityPanel.tsx`, [runbook](operations/accounting-scope-setup.md#owner-activation-runbook), #73 |
 | Dashboard | yes | ✅ deadlines, due tasks, monthly rent and vacancy KPIs | `pages/DashboardPage.tsx`, `components/DashboardKpis.tsx`, `api/reports.py` (`/dashboard-kpis`), `services/dashboard_kpi_service.py`, T42, T52, [usage](operations/bank-and-payments.md) |
 
 ## Properties and units
@@ -126,7 +126,6 @@ history). Update this page in the same PR whenever a feature's status changes.
 
 ## Gaps
 
-- Source access protection (Access and organization): implemented but off (mode `PREPARATION`), and its admin screens are five separate menu items (#73).
 - Photos (Properties and units): no photo upload or display for properties or units (#39).
 - Advance payments (People and tenancies): a lease has one combined advance; operating-cost and heating advances are not separate (#67).
 - Security deposit management (People and tenancies): no installments with due dates (#70) and no booking of interest credits (#38).

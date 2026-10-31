@@ -61,6 +61,15 @@ def reviewed_property(world):
                       source_account=account, source_draft=draft, source_document=document, source_pdf=pdf)
 
 
+@given("before activation the ungranted staff member can open the property and original, but not the scoped financial account")
+def preparation_access_baseline(world):
+    assert world.run(status(world.data["source_admin"]))["mode"] == "PREPARATION"
+    open_protected_data(world)
+    # Classified finance needs its exact scope grant in every mode; only the
+    # property/original denial below depends on activating source protection.
+    assert [answer.status_code for answer in world.data["source_answers"]] == [200, 200, 404]
+
+
 @given("source access protection has been activated after review")
 def activate_source_access(world):
     admin = world.data["source_admin"]

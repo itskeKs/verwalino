@@ -189,6 +189,9 @@ inventory, runtime budget, versioned coverage, retention decision and guarded ac
 control. Offene Prüfungen groups the existing source-review and two quarantine lists; each
 shows its loaded count and whether more pages exist. Reviewed quarantine observations remain
 visible. Existing grant forms and immutable receipts keep their own confirmation/retry rules.
+The legacy-source page and declaration publication dialog read the same live admin
+status and shared state descriptions as the overview, with loading and unavailable states.
+Clerks see no admin review link; the combined reviews list omits its self-link.
 Section navigation wraps at 360 px; tables scroll inside their cards, identifiers wrap.
 Old source-review, preparation, quarantine and scope-detail routes redirect with their detail
 references preserved. See [the operations guide](docs/operations/accounting-scope-setup.md).
@@ -372,6 +375,13 @@ stays valid when they are retaken.
 | Screen | Page | Desktop | 360 px |
 |---|---|---|---|
 | Permissions | `/berechtigungen` | [`after-overview-desktop.png`](docs/assets/permissions/after-overview-desktop.png) | [`after-overview-360.png`](docs/assets/permissions/after-overview-360.png) |
+| Previous team page | Previous `/berechtigungen` | [Desktop](docs/assets/permissions/before-team-desktop.png) | [Phone](docs/assets/permissions/before-team-360.png) |
+| Team rights | `/berechtigungen/teamrechte` | [Desktop](docs/assets/permissions/after-team-desktop.png) | [Phone](docs/assets/permissions/after-team-360.png) |
+| Preparation | `/berechtigungen/bestand` | [Desktop](docs/assets/permissions/after-inventory-desktop.png) | [Phone](docs/assets/permissions/after-inventory-360.png) |
+| Review lists | `/berechtigungen/pruefungen` | [Desktop](docs/assets/permissions/after-reviews-desktop.png) | [Phone](docs/assets/permissions/after-reviews-360.png) |
+| Legacy source status | `/altquellen` | [Desktop](docs/assets/permissions/after-legacy-desktop.png) | [Phone](docs/assets/permissions/after-legacy-360.png) |
+| Declaration publication | `/teilungserklaerung/import/:id/review`, "Übernahme vorbereiten" | [Desktop](docs/assets/permissions/after-publication-desktop.png) | [Phone](docs/assets/permissions/after-publication-360.png) |
+| Emergency pause | `/berechtigungen` (paused) | [Desktop](docs/assets/permissions/paused-overview-desktop.png) | [Phone](docs/assets/permissions/paused-overview-360.png) |
 | Dashboard | `/` | [`dashboard-desktop.png`](docs/assets/design/dashboard-desktop.png) | [`dashboard-360.png`](docs/assets/design/dashboard-360.png) |
 | List | `/objekte` | [`list-objekte-desktop.png`](docs/assets/design/list-objekte-desktop.png) | [`list-objekte-360.png`](docs/assets/design/list-objekte-360.png) |
 | Detail | `/objekte/:id` | [`detail-objekt-desktop.png`](docs/assets/design/detail-objekt-desktop.png) | [`detail-objekt-360.png`](docs/assets/design/detail-objekt-360.png) |

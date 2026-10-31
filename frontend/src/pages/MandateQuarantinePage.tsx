@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../auth/useAuth";
 import { usePagedList } from "../hooks/usePagedList";
@@ -58,12 +58,13 @@ function ObservationCard({ row }: { row: Observation }) {
 }
 
 function Inventory() {
+  const { pathname } = useLocation();
   const page = usePagedList<Observation>("/api/mandate-quarantine/page");
   return <div className="space-y-5">
     <header><h2>Mandatsquarantäne prüfen</h2><p>Administrative Prüfung unzugeordneter Altunterlagen. Es werden nur Kennungen und Prüfstatus angezeigt.</p></header>
     <p>Die Beobachtung hält den damaligen Metadatenstand fest. Sie belegt weder historische Herkunft noch die Echtheit oder Verfügbarkeit der Datei. Originale bleiben gesperrt und unverändert. Ein Prüfvermerk kann nicht zurückgenommen werden.</p>
     <p>Für die weitere Nutzung laden Sie ein eigenständig vorliegendes Original mit ausdrücklicher Bereichszuordnung beim <Link to="/mandate" className="link">Mandat</Link> hoch.</p>
-    <p><Link to="/berechtigungen/pruefungen">Offene Prüfungen</Link></p>
+    {pathname !== "/berechtigungen/pruefungen" && <p><Link className="link" to="/berechtigungen/pruefungen">Offene Prüfungen</Link></p>}
     {!page.error && !page.loading && <p>Geladene Mandatsunterlagen: {page.items.length.toLocaleString("de-DE")}{page.nextCursor ? " · Weitere Einträge verfügbar" : ""}</p>}
     <button className="btn" type="button" disabled={page.loading} onClick={page.reload}>Quarantäne neu laden</button>
     {page.error && <p role="alert" className="error-text">{page.error}</p>}

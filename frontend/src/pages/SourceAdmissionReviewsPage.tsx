@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/useAuth";
 import { usePagedList } from "../hooks/usePagedList";
@@ -56,12 +56,15 @@ function ReviewForm({ source }: { source: PendingSource }) {
 }
 
 function PendingReviews() {
+  const { session } = useAuth();
+  const { pathname } = useLocation();
   const page = usePagedList<PendingSource>(endpoint + "/pending/page");
   const [generation, setGeneration] = useState(0);
   function refresh() { setGeneration(value => value + 1); page.reload(); }
   return <>
     <p>Hier erscheinen eigene Originale, die Sie mit Ihren aktuellen Rechten für das Zielobjekt prüfen und freigeben können.</p>
-    <p><Link to="/berechtigungen/pruefungen">Offene Prüfungen</Link></p>
+    {session?.role === "OWNER_ADMIN" && pathname !== "/berechtigungen/pruefungen" &&
+      <p><Link className="link" to="/berechtigungen/pruefungen">Offene Prüfungen</Link></p>}
     {!page.error && !page.loading && <p>Geladene Quellenfreigaben: {page.items.length.toLocaleString("de-DE")}{page.nextCursor ? " · Weitere Einträge verfügbar" : ""}</p>}
     <ListSearch label="Originale suchen" onSearch={page.setQuery} />
     <button className="btn mb-4" disabled={page.loading} onClick={refresh}>Liste neu laden</button>
@@ -91,7 +94,7 @@ export function SourceAdmissionReviewsPage() {
   const canWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
   return <div className="paged-list source-admission-review min-w-0"><h2>Quellenfreigaben</h2>
     <p>Die Freigabe dokumentiert Ihre heutige Entscheidung für den Datenbereich des Zielobjekts. Bei aktivem Quellschutz benötigen Mitarbeitende zusätzlich ihre aktuellen Gebäudedaten-Rechte.</p>
-    {reviewId ? <><Link to="/berechtigungen/pruefungen/quellen">Zur Liste der Quellenfreigaben</Link><ReceiptDetail key={reviewId} reviewId={reviewId} /></> :
+    {reviewId ? <><Link className="link" to="/berechtigungen/pruefungen/quellen">Zur Liste der Quellenfreigaben</Link><ReceiptDetail key={reviewId} reviewId={reviewId} /></> :
       canWrite ? <PendingReviews /> : <p>Quellenfreigaben erfordern Schreibrechte.</p>}
   </div>;
 }

@@ -25,7 +25,8 @@ protection; already classified financial resources still require their exact gra
 **Zugriffsregeln aktiv** limits staff to explicitly authorized property sources,
 master data and financial scopes, including administrators. **Aktionen pausiert**
 stops protected effects while keeping restricted reads. Activation is irreversible:
-there is no return to broad preparation access. Migration 0091 supplies the guarded
+the only way back to preparation is to restore the pre-activation backup, losing
+all writes made after that backup. Migration 0091 supplies the guarded
 transition; this change does not activate any production organization.
 
 In **Teamrechte**, administrators create an immutable scope and explicitly grant or
@@ -303,38 +304,45 @@ call is required to review or activate protection.
    **Teamrechte**, inspect scopes, property/period/unit assignments and capabilities.
    Review independent **Gebäudedaten-Rechte** and **Kontaktdaten-Rechte**, including
    the administrator's own grants. A role alone is not a data grant.
-2. Open **Offene Prüfungen**. Inspect source originals and their exact targets;
+2. Verify the administrator has explicitly granted themselves every property,
+   source and financial capability needed after activation. Activation removes
+   their access to anything not self-granted; the admin role cannot bypass this.
+3. Open **Offene Prüfungen**. Inspect source originals and their exact targets;
    explicitly approve only proven admissions. Use **Altquellen** for classified
    legacy originals. Review unresolved dunning and mandate observations. A quarantine
    review records continued quarantine; it does not make a source available.
-3. Open **Bestand prüfen**, then **Bestand aktualisieren**. Inspect every category.
+4. Open **Bestand prüfen**, then **Bestand aktualisieren**. Inspect every category.
    Zero gaps alone cannot activate protection. Preserve unprovable originals as
    blocked retained records; do not infer custody or rewrite historical facts.
-4. Under **Budget für Wissensauskünfte**, load and inspect the running policy,
+5. Under **Budget für Wissensauskünfte**, load and inspect the running policy,
    enter a reason, confirm it and save **Budgetregel bestätigen**.
    Review is required even when knowledge queries are configured off.
-5. **Neuen Prüfstand erfassen**; load all pages and inspect source relations,
+6. **Neuen Prüfstand erfassen**; load all pages and inspect source relations,
    effective audiences and findings. Follow each remediation link. Check the full
    stand and save its review. If it is stale, capture a new stand after completing
    the changes. Proposed grants require separate explicit acceptance.
-6. In **Entscheidung über Altbestände und Teamzuordnung**, choose
+7. In **Entscheidung über Altbestände und Teamzuordnung**, choose
    **Entscheidungsgrundlage erneut laden** after the stand review and load every entry.
    Resolve blocking findings and running work through their normal workflows.
    Inspect intended team grants and the records that will remain blocked. Enter a
    reason, confirm both acknowledgements and **Altbestandsentscheidung speichern**.
    This decision grants no permissions. Select **Als Grundlage für die Umstellung auswählen**.
-7. In **Zugriffsmodus**, confirm the selected current stand. Enter the activation
+8. In **Zugriffsmodus**, confirm the selected current stand. Enter the activation
    reason, acknowledge permanent enforcement and **Zugriffsregeln aktivieren**.
    The server rechecks mode, predecessor, current runtime budget, review, manifest,
    assessment and absence of blocking/active work under the existing lock. A conflict
    requires reloading and reviewing fresh evidence, never weakening a gate.
-8. Confirm the current display is **Zugriffsregeln aktiv** after its separate status
+9. Confirm the current display is **Zugriffsregeln aktiv** after its separate status
    read. Return to **Übersicht** and refresh. In the staff session, verify that an
    ungranted property's sources and financial account are not found; with explicit
    matching grants verify the intended data and original bytes. Check representative
    normal work, exports and background jobs for the intended team capabilities.
 
 ### Pause and recovery
+
+There is no transition back to preparation. The only way to recover that mode is
+to restore the verified pre-activation backup; this loses all later writes,
+including work done after activation. Pausing does not provide that rollback.
 
 For an incident, open **Bestand prüfen → Zugriffsmodus**, reload current status,
 enter a reason, confirm restricted reads remain in effect and choose **Aktionen
@@ -361,41 +369,3 @@ creating its first property. Subsequent property creation requires an explicit d
 audience; financial creation requires its exact scope and grants. Starting directly
 in enforced mode automatically would require changing bootstrap and initial-audience
 behavior, not just a safe default value. No initialization behavior changes here.
-
-
-## Disposable rehearsal for issue 73
-
-On 31 October 2026, `scripts/dev-local.sh` ran against only `infra-postgres-1` at
-127.0.0.1:55432 under `/tmp/verwalino-testdb.lock`. Synthetic data included four
-properties with long names, seven contacts, one exact rental scope and account,
-one original awaiting current admission, and a staff account.
-
-The guided UI reviewed the actual original and target, confirmed the running budget,
-captured/reviewed coverage, accepted team/retention decisions and activated protection.
-Without grants the staff session received not-found results for the property,
-original PDF and account; after explicit property READ/EXPORT and scope READ grants,
-all three were visible and the PDF bytes matched. Emergency pause worked with no
-selected snapshot: granted reads survived and a property update was denied. A new
-post-pause reviewed snapshot and acceptance resumed the organization. The rehearsal
-ended in enforced mode; this is a disposable result, not production activation.
-The stack was stopped before releasing the lock for backend tests.
-
-No activation gate needed changing. The UI blockers corrected here were scattered
-controls, stale inactive-state claims and incomplete overview counts. Reviewing a
-coverage stand requires reloading the disposition panel before its acceptance;
-the runbook names that existing action explicitly. Fresh-organization behavior is
-also covered by the existing lifecycle test, without changing bootstrap defaults.
-
-Real Chromium opened the changed permissions screens, source receipt and scope detail
-at 1280 and 360 pixels, with no sideways overflow in the area. Before images use the
-base frontend against the same synthetic test data. The permission-area screenshots
-are ready to include in the PR; no production records appear in them.
-
-| View | Desktop | Phone (360 px) |
-| --- | --- | --- |
-| Previous team page | [Before](../assets/permissions/before-team-desktop.png) | [Before](../assets/permissions/before-team-360.png) |
-| Active overview | [After](../assets/permissions/after-overview-desktop.png) | [After](../assets/permissions/after-overview-360.png) |
-| Team rights | [After](../assets/permissions/after-team-desktop.png) | [After](../assets/permissions/after-team-360.png) |
-| Preparation | [After](../assets/permissions/after-inventory-desktop.png) | [After](../assets/permissions/after-inventory-360.png) |
-| Review lists | [After](../assets/permissions/after-reviews-desktop.png) | [After](../assets/permissions/after-reviews-360.png) |
-| Emergency pause | [Paused](../assets/permissions/paused-overview-desktop.png) | [Paused](../assets/permissions/paused-overview-360.png) |

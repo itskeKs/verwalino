@@ -233,7 +233,7 @@ async function selectLabel(scope, label, optionLabel) {
   const changesPath = `/api/leases/${lease.id}/rent-changes`;
   const originalLease = structuredClone(lease);
 
-  await page.goto(base + '/berechtigungen');
+  await page.goto(base + '/berechtigungen/teamrechte');
   await propertySelector('Objekt');
   await field(page, 'Bezeichnung').fill(scopeName);
   const scopeTypes = await field(page, 'Verwaltungsart').getByRole('option').evaluateAll(options =>

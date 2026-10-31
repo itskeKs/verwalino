@@ -10,7 +10,7 @@ let role = "OWNER_ADMIN";
 vi.mock("../auth/useAuth", () => ({ useAuth: () => ({ session: { role } }) }));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); role = "OWNER_ADMIN"; });
 function show(path = "/quellenfreigaben") {
-  render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/quellenfreigaben" element={<SourceAdmissionReviewsPage />} /><Route path="/quellenfreigaben/:reviewId" element={<SourceAdmissionReviewsPage />} /></Routes></MemoryRouter>);
+  render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/berechtigungen/pruefungen" element={<SourceAdmissionReviewsPage />} /><Route path="/quellenfreigaben" element={<SourceAdmissionReviewsPage />} /><Route path="/quellenfreigaben/:reviewId" element={<SourceAdmissionReviewsPage />} /></Routes></MemoryRouter>);
 }
 
 it("hides the original link when the current export check denies preview", async () => {
@@ -89,4 +89,25 @@ it("reloads a changed source after a definitive conflict and submits a newly con
   await screen.findByText(/Der Prüfstand hat sich geändert/);
   expect(post.mock.calls[1][1]).toMatchObject({ draft_revision: 8, reason: "Neue Revision geprüft" });
   expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
+});
+
+it("keeps clerks on their source reviews without an admin-only link", async () => {
+  role = "CLERK";
+  vi.spyOn(api, "get").mockResolvedValue({ items: [source], next_cursor: null });
+  show();
+  expect(await screen.findByRole("button", { name: "Quelle freigeben" })).toBeVisible();
+  expect(screen.queryByRole("link", { name: "Offene Prüfungen" })).not.toBeInTheDocument();
+});
+
+it("omits the reviews self-link inside the combined page", async () => {
+  vi.spyOn(api, "get").mockResolvedValue({ items: [source], next_cursor: null });
+  show("/berechtigungen/pruefungen");
+  await screen.findByRole("button", { name: "Quelle freigeben" });
+  expect(screen.queryByRole("link", { name: "Offene Prüfungen" })).not.toBeInTheDocument();
+});
+
+it("styles the admin navigation link on a standalone source list", async () => {
+  vi.spyOn(api, "get").mockResolvedValue({ items: [source], next_cursor: null });
+  show();
+  expect(await screen.findByRole("link", { name: "Offene Prüfungen" })).toHaveClass("link");
 });
