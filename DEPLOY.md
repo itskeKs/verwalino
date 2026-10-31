@@ -32,12 +32,13 @@ in the Traefik router rules. The API healthcheck requests
 ## Hosted signup configuration
 
 For a separately managed hosted deployment, pass `HV_DEPLOYMENT_MODE=hosted`,
-`HV_PUBLIC_URL=https://your-public-host.example` and the SMTP settings described
-under [outbound mail](#optional-document-smtp-t47-no-deployment-authorization). `HV_PUBLIC_URL` is the public origin,
-without credentials, path, query or fragment; HTTPS is required except for loopback
-development. It is never inferred from request Host or forwarded headers. Keep
+`HV_PUBLIC_HOST=your-public-host.example` and the SMTP settings described
+under [outbound mail](#optional-document-smtp-t47-no-deployment-authorization).
+`HV_PUBLIC_HOST` is the public routing hostname, without scheme, port, credentials,
+path, query or fragment; signup links always use HTTPS. It is never inferred from
+request Host or forwarded headers. Keep
 `HV_ALLOWED_HOSTS` aligned with the public host. The ASGI startup check refuses
-hosted mode if this origin or valid SMTP configuration is missing. Selfhost needs
+hosted mode if this hostname or valid SMTP configuration is missing. Selfhost needs
 neither setting for setup/login and returns unknown-route 404 for every signup
 API method before body parsing or database access.
 
@@ -47,21 +48,26 @@ POST and uses a no-referrer policy. A tab-local `sessionStorage` entry keeps the
 token across reloads until success or a 403; retryable errors retain it. Passwords
 are never stored there. The application strips the server query scope
 for this page before the default Uvicorn access logger sees it; separately managed
-reverse proxies must also avoid recording confirmation query strings. Tokens contain 256 random bits; only SHA-256 hashes persist, and each
-link expires after 24 hours. Resending rotates the token and renews that lifetime,
+reverse proxies must also avoid recording confirmation query strings. Tokens
+contain 244 random bits from two PostgreSQL UUIDs (pgcrypto is absent); only
+SHA-256 hashes persist, and each link expires after 24 hours. Resending rotates the token and renews that lifetime,
 with one send at most every ten minutes across signup and resend. Pending requests
 cannot sign in. Confirmation creates the tenant and owner atomically and returns
 the normal session cookie. Existing addresses receive the identical generic 202
 without a new pending request or email. Password hashing/verification work is
 equivalent for allowed signup paths and SMTP runs only after the HTTP response.
-A changed duplicate form replaces pending credentials while preserving the
-delivered token and its expiry during the send cooldown. A new mail submission
-rotates the token. Confirmation also requires the updated password,
-so a resent link cannot activate a password anonymously substituted by someone else.
+A live pending request keeps the first password hash and names, even after the
+cooldown; only an expired request can be replaced by a new submission. Resend
+rotates the token without changing credentials. A mistyped password on a live
+link returns a retryable 422 and preserves the token; invalid, used, expired or
+throttled confirmation returns the generic 403. Success refunds its limiter
+reservation, so only failed confirmations remain counted. Runtime roles cannot
+read or write `signup_request` directly; guarded SECURITY DEFINER functions issue,
+read, rotate, provision and clean up requests and refuse tenant-context calls.
 SMTP failure keeps the pending request,
 returns the same response and permits retry after the cooldown; SMTP acceptance
 is not proof of recipient delivery. No test submits to real SMTP: the test compose
-has no Mailpit service, so the hosted scenario reuses the captured SMTP double.
+has no Mailpit service, so the hosted scenario keeps the existing **FakeSMTP** capture double.
 Organization names are display names; multiple hosted tenants may share a name,
 and signup always creates a separate tenant. The admin CLI retains its existing
 name-reuse behavior. Successful confirmation deletes the pending signup data;
@@ -1014,11 +1020,11 @@ remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/s
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
 
-## Migration compatibility: 0029–0142
+## Migration compatibility: 0029–0144
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0142 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0144 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1029,12 +1035,15 @@ run `docker compose down -v` or delete the volumes.
 | Parent references (accepted source 0140) | Replaces client-selected parent references with organization-bound composite foreign keys. Validates pending deferred checks and rejects existing invalid references without repair before replacing constraints. Adds a boolean-only, tenant-bound property existence check for scoped financial creation. Downgrade restores the original constraints and removes that check; an older runtime is not approved on this schema. |
 | Browser setup (accepted source 0141) | Adds the private singleton setup-token table and a token-gated, serialized first-organization function. Removes direct organization INSERT from app_rw; the migrator CLI shares the creation SQL. A populated token table blocks downgrade to avoid silently losing pending/consumed state. Existing organization/user/membership rows are preserved. |
 | 0142 | Adds global authentication throttle rows containing only scoped key hashes, failure windows, lockout expiry, last lockout start and escalation history, with narrow runtime DML. No existing rows or grants change. A populated table blocks downgrade to avoid losing lockouts. |
+| Lease documents (accepted source 0143) | Allows retained built-in letter documents without a template row; the exact migration is preserved from #114. Downgrade refuses a null template reference. |
+| 0144 | Adds private pending signup requests and token-bound SECURITY DEFINER functions; runtime roles have no direct request-table access. Successful confirmation atomically creates a separate tenant and deletes its request. Retained requests block downgrade. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0142 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0142, 0139→0142 and accepted-source 0140→0142 and 0141→0142 rehearsals also
+0028→0144 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0144, 0139→0144 and accepted-source 0140→0144, 0141→0144 and
+0142→0144 and 0143→0144 rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT revocation;
 it does not prove live data validity or cross-version runtime compatibility.
 
@@ -1056,10 +1065,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0142**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0144**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0142**,
-**0122 → 0142**, **0139 → 0142**, **0140 → 0142**, **0141 → 0142**, or **0142 → 0142**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0144**,
+**0122 → 0144**, **0139 → 0144**, **0140 → 0144**, **0141 → 0144**, **0142 → 0144**, **0143 → 0144** (accepted source), or **0144 → 0144**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 

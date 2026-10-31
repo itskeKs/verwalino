@@ -136,6 +136,9 @@ adding visual elements.
 
 `/signup` and `/signup/confirm` are standalone pages, gated by confirmed hosted
 metadata. Selfhost and unavailable metadata redirect to login without submitting.
+A mistyped confirmation password shows “Passwort nicht korrekt. Bitte versuchen Sie es erneut.”
+and keeps the live token for another attempt (422). Invalid/expired/used links and
+throttling return 403 and clear it; success clears it too.
 Hosted login adds the text link “Konto erstellen”; selfhost login has no signup link.
 
 Registration uses the setup pattern: centred `max-w-lg` kit `Card`, `p-4 sm:p-6`,
@@ -462,7 +465,7 @@ synthetic browser-intercepted API responses, without starting a backend or acces
 | List | `/objekte` | [`list-objekte-desktop.png`](docs/assets/design/list-objekte-desktop.png) | [`list-objekte-360.png`](docs/assets/design/list-objekte-360.png) |
 | Detail | `/objekte/:id` | [`detail-objekt-desktop.png`](docs/assets/design/detail-objekt-desktop.png) | [`detail-objekt-360.png`](docs/assets/design/detail-objekt-360.png) |
 | Hosted signup | `/signup` | [`signup-desktop.png`](docs/assets/design/signup-desktop.png) | [`signup-360.png`](docs/assets/design/signup-360.png) |
-| Signup confirmation | `/signup/confirm` | [`signup-confirm-desktop.png`](docs/assets/design/signup-confirm-desktop.png) | [`signup-confirm-360.png`](docs/assets/design/signup-confirm-360.png) |
+| Signup confirmation, retryable password error | `/signup/confirm` | [`signup-confirm-desktop.png`](docs/assets/design/signup-confirm-desktop.png) | [`signup-confirm-360.png`](docs/assets/design/signup-confirm-360.png) |
 | Signup receipt | `/signup`, accepted request | — | [`signup-receipt-360.png`](docs/assets/design/signup-receipt-360.png) |
 | Form | `/objekte`, "+ Neues Objekt" | [`form-objekt-desktop.png`](docs/assets/design/form-objekt-desktop.png) | [`form-objekt-360.png`](docs/assets/design/form-objekt-360.png) |
 | Dialog | "Passwort ändern" in the topbar | [`dialog-password-desktop.png`](docs/assets/design/dialog-password-desktop.png) | [`dialog-password-360.png`](docs/assets/design/dialog-password-360.png) |

@@ -941,19 +941,16 @@ def test_throttle_migration_roundtrip_preserves_schema_and_refuses_retained_stat
     from sqlalchemy.exc import DBAPIError
     from tests.conftest import MIGRATOR_SYNC_URL
 
-    migration = ScriptDirectory("migrations").get_revision("0142").module  # accepted source under test
-    signup_migration = ScriptDirectory("migrations").get_revision("0143").module
+    migration = ScriptDirectory("migrations").get_revision("0142").module
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.connect() as connection, connection.begin() as transaction:
             connection.execute(text("DELETE FROM auth_throttle"))
-            connection.execute(text("DELETE FROM signup_request"))
             def snapshot():
                 return connection.execute(text("""SELECT column_name,data_type,is_nullable,column_default
                     FROM information_schema.columns WHERE table_name='auth_throttle' ORDER BY ordinal_position""")).all()
+            before = snapshot()
             with Operations.context(MigrationContext.configure(connection)):
-                signup_migration.downgrade()
-                before = snapshot()
                 migration.downgrade()
                 assert connection.scalar(text("SELECT to_regclass('public.auth_throttle')")) is None
                 migration.upgrade()

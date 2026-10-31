@@ -14,6 +14,7 @@ import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
 import { SignupPage, SignupConfirmPage } from "./pages/SignupPage";
 import { SetupPage } from "./pages/SetupPage";
+import { useDeploymentMode } from "./auth/useDeploymentMode";
 import { useSetupStatus } from "./auth/useSetupStatus";
 import { TasksPage } from "./pages/TasksPage";
 import { LettersPage } from "./pages/LettersPage";
@@ -82,6 +83,7 @@ function PermissionRedirect({ to, parameter }: { to: string; parameter: "scopeId
 export function AppRoutes() {
   const { loading, session } = useAuth();
   const setup = useSetupStatus();
+  const deployment = useDeploymentMode();
   const location = useLocation();
 
   const setupRequired = !setup.error ? setup.required : false;
@@ -93,6 +95,7 @@ export function AppRoutes() {
   }
 
   if (location.pathname === "/signup" || location.pathname === "/signup/confirm") {
+    if (deployment.mode === null && !deployment.error) return <main className="p-6" role="status">Lade...</main>;
     if (deployment.mode !== "hosted") return <Navigate to="/login" replace />;
     return location.pathname === "/signup/confirm" ? <SignupConfirmPage /> : <SignupPage />;
   }

@@ -37,15 +37,16 @@ class SelfHostTests(unittest.TestCase):
         self.assertIn("admin_cli unlock", result.stdout)
         self.assertNotIn("unlock SQL", result.stdout)
 
-    def test_login_guidance_defers_unimplemented_signup_controls(self):
+    def test_login_guidance_documents_implemented_signup_controls(self):
         for name in ("DEPLOY.md", "docs/architecture.md", "docs/feature-status.md"):
             with self.subTest(document=name):
                 content = (ROOT / name).read_text()
-                self.assertNotIn("honeypot", content)
-                self.assertNotIn("`signup` scope", content)
-                self.assertNotIn("`signup:`", content)
+                self.assertIn("honeypot", content)
+                self.assertIn("signup", content)
         section = (ROOT / "DEPLOY.md").read_text().split("## Login lockout and proxy trust\n", 1)[1].split("\n## ", 1)[0]
-        self.assertIn("Signup throttling arrives with #19.", section)
+        self.assertNotIn("Signup throttling arrives with #19.", section)
+        for scope in ("signup", "signup_resend", "signup_confirm"):
+            self.assertIn(f"`{scope}`", section)
 
     def test_login_guidance_explains_throttle_downgrade_refusal(self):
         section = (ROOT / "DEPLOY.md").read_text().split("## Login lockout and proxy trust\n", 1)[1].split("\n## ", 1)[0]

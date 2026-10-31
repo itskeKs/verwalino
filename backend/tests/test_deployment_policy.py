@@ -97,3 +97,14 @@ def test_rate_limit_rules_match_the_selected_profile(mode, expected):
     assert astuple(rules) == expected
     with pytest.raises(FrozenInstanceError):
         rules.ip_failures = 1
+
+
+@pytest.mark.parametrize('mode', ['selfhost', 'hosted'])
+async def test_public_metadata_returns_only_mode_and_version_without_caching(client_unauth, monkeypatch, mode):
+    from app.core.config import settings
+    from app.main import app
+    monkeypatch.setattr(settings, 'deployment_mode', mode)
+    response = await client_unauth.get('/api/meta')
+    assert response.status_code == 200
+    assert response.json() == {'deployment_mode': mode, 'version': app.version}
+    assert response.headers['cache-control'] == 'no-store'

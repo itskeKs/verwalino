@@ -3,7 +3,7 @@
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -33,6 +33,7 @@ from app.core import health
 from app.core.static_files import resolve_spa_file
 from app.core.uploads import RequestBodyLimitMiddleware
 from app.core.config import settings
+from app.core.deployment_policy import get_deployment_policy
 from app.core.logging import configure_logging
 from app.core.request_id import RequestIdMiddleware, http_error, unhandled_error
 from app.core.error_tracking import configure_error_tracking
@@ -145,6 +146,13 @@ app.include_router(attachments.router)
 app.include_router(tasks.router)
 app.include_router(reports.router)
 app.include_router(property_knowledge.router)
+
+
+@app.get("/api/meta")
+async def meta(response: Response) -> dict[str, str]:
+    """Public deployment facts only; no settings or organization data."""
+    response.headers["Cache-Control"] = "no-store"
+    return {"deployment_mode": get_deployment_policy().deployment_mode, "version": app.version}
 
 
 @app.get("/api/health/live")
