@@ -265,8 +265,11 @@ Classification commits take the exclusive organization ACL lock before source
 rows, serializing decisions with in-flight authorization. Q&A checks the complete
 expected graph and refuses partial input when a denied original is hidden by RLS.
 Workers reject incompatible bound sources before loading them. These are staged
-strict-mode integrations. Preparation access is unchanged; later migrations add
-the complete source CRUD/RLS boundary and the guarded activation command.
+strict-mode integrations. Preparation access is unchanged. Migration
+[0063](../../backend/migrations/versions/0063_original_source_access.py) adds ordinary
+original/import CRUD policies; migration
+[0091](../../backend/migrations/versions/0091_source_security_lifecycle.py) adds the
+guarded activation, pause and resumption commands.
 
 Migration 0057 refuses busy proof/source dependencies immediately and refuses
 rollback while any organization is ENFORCED or PAUSED. A PREPARATION rollback
@@ -301,8 +304,13 @@ The database guards calculation snapshots, result lines and coverage declaration
 as well as the service preflight. Coverage authority derives from the referenced
 settlement/plan; its declared property must match. Computed draft reparenting checks
 both audiences. Eight migration dependencies use NOWAIT; strict state refuses
-rollback. Later migrations extend stored-result, report and privacy disclosure checks;
-current readiness is determined by the guarded lifecycle.
+rollback. Migration
+[0060](../../backend/migrations/versions/0060_financial_source_disclosure.py) guards
+stored financial disclosure,
+[0064](../../backend/migrations/versions/0064_privacy_source_completeness.py) adds
+privacy source-completeness checks, and
+[0075](../../backend/migrations/versions/0075_report_source_access.py) adds report and
+dunning source checks. Current readiness is determined by the guarded lifecycle.
 
 ## Stored financial disclosure (0060)
 
@@ -427,8 +435,9 @@ History audience IDs and profile-to-person identity cannot be reassigned. Existi
 financial-input serialization remains in force; a writer released after anonymization
 is rejected using current person state. PAUSED retains authorized reads while
 stopping effects. History audit entries inherit the same ordinary source boundary.
-See [history evidence](../archive/2026-10-02-history-source-access.md); contact custody and
-full person/profile access are covered by the later contact boundary below.
+See [history evidence](../archive/2026-10-02-history-source-access.md). Migration
+[0069](../../backend/migrations/versions/0069_person_source_access.py) adds contact
+custody and person/profile CRUD policies, described in the contact boundary below.
 
 ## Contact audience preparation (0068)
 

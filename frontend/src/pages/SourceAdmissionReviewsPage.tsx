@@ -65,7 +65,7 @@ function PendingReviews() {
     <p>Hier erscheinen eigene Originale, die Sie mit Ihren aktuellen Rechten für das Zielobjekt prüfen und freigeben können.</p>
     {session?.role === "OWNER_ADMIN" && pathname !== "/berechtigungen/pruefungen" &&
       <p><Link className="link" to="/berechtigungen/pruefungen">Offene Prüfungen</Link></p>}
-    {!page.error && !page.loading && <p>Geladene Quellenfreigaben: {page.items.length.toLocaleString("de-DE")}{page.nextCursor ? " · Weitere Einträge verfügbar" : ""}</p>}
+    {!page.error && !page.loading && <p>Quellenfreigaben: {page.items.length.toLocaleString("de-DE")} geladen{page.nextCursor ? " · weitere verfügbar" : ""}</p>}
     <ListSearch label="Originale suchen" onSearch={page.setQuery} />
     <button className="btn mb-4" disabled={page.loading} onClick={refresh}>Liste neu laden</button>
     {page.error && <p role="alert" className="error-text">{page.error}</p>}

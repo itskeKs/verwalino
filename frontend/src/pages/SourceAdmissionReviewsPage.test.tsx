@@ -27,7 +27,7 @@ it("requires explicit source review and retains the exact command after a lost r
   expect(await screen.findByRole("button", { name: "Quelle freigeben" })).toBeDisabled();
   expect(screen.queryByText(/Zugriffskontrolle ist noch nicht aktiviert/)).toBeNull();
   expect(screen.getByRole("link", { name: "Offene Prüfungen" })).toHaveAttribute("href", "/berechtigungen/pruefungen");
-  expect(screen.getByText("Geladene Quellenfreigaben: 1")).toBeVisible();
+  expect(screen.getByText("Quellenfreigaben: 1 geladen")).toBeVisible();
   expect(screen.getByRole("link", { name: /Original prüfen/ })).toHaveAttribute("href", "/api/property-source-admission-reviews/originals/original/content");
   fireEvent.change(screen.getByLabelText("Begründung der Quellenfreigabe"), { target: { value: "Original und Ziel geprüft" } });
   fireEvent.click(screen.getByRole("checkbox"));
@@ -110,4 +110,11 @@ it("styles the admin navigation link on a standalone source list", async () => {
   vi.spyOn(api, "get").mockResolvedValue({ items: [source], next_cursor: null });
   show();
   expect(await screen.findByRole("link", { name: "Offene Prüfungen" })).toHaveClass("link");
+});
+
+
+it("labels a partial page as loaded entries rather than an open total", async () => {
+  vi.spyOn(api, "get").mockResolvedValue({ items: [source], next_cursor: "next-page" });
+  show();
+  expect(await screen.findByText("Quellenfreigaben: 1 geladen · weitere verfügbar")).toBeVisible();
 });

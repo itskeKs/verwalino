@@ -1,9 +1,11 @@
 """Exercise the existing guarded activation and real source/finance reads."""
 from uuid import uuid4
 
+import pytest
 from pytest_bdd import given, then, when
 
 from tests.bdd.steps.browser_setup import create
+from tests.conftest import _api_test_client
 from tests.declaration_fixtures import make_text_pdf
 from tests.test_source_security_lifecycle import accepted, status, transition, transition_body
 
@@ -14,8 +16,17 @@ def grant(world, path, user_id, capabilities):
     }, keyed=True)
 
 
+@pytest.fixture
+def source_staff_client(world):
+    client = _api_test_client()
+    try:
+        yield client
+    finally:
+        world.run(client.aclose())
+
+
 @given("a property with a reviewed original and a financial account")
-def reviewed_property(world):
+def reviewed_property(world, source_staff_client):
     admin = world.actor
     user_id = world.look(admin, "/api/auth/session").json()["user_id"]
     home = create(world, "/api/properties", {
@@ -54,9 +65,9 @@ def reviewed_property(world):
         "email": f"source-access-{uuid4()}@example.test", "password": "source-access-testpass",
         "display_name": "Sachbearbeitung Sonnenhof", "role": "CLERK",
     })
-    login = world.send(world.anonymous, "POST", "/api/auth/login", json={"email": staff["email"], "password": "source-access-testpass"})
+    login = world.send(source_staff_client, "POST", "/api/auth/login", json={"email": staff["email"], "password": "source-access-testpass"})
     assert login.status_code == 200, world.describe_response()
-    world.data.update(source_admin=admin, source_staff=world.anonymous, source_staff_id=staff["id"],
+    world.data.update(source_admin=admin, source_staff=source_staff_client, source_staff_id=staff["id"],
                       source_property=home, source_domain=domain, source_scope=scope,
                       source_account=account, source_draft=draft, source_document=document, source_pdf=pdf)
 

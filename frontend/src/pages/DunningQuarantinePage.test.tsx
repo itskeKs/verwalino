@@ -18,7 +18,7 @@ it("requires explicit confirmation and reuses the request key after a lost respo
   show();
   const button = await screen.findByRole("button", { name: "Quarantäne als geprüft vermerken" });
   expect(screen.getByRole("link", { name: "Offene Prüfungen" })).toHaveAttribute("href", "/berechtigungen/pruefungen");
-  expect(screen.getByText("Geladene Mahnungen: 1")).toBeVisible();
+  expect(screen.getByText("Mahnungen: 1 geladen")).toBeVisible();
   expect(button).toBeDisabled();
   fireEvent.click(screen.getByRole("checkbox"));
   fireEvent.click(button); await screen.findByRole("alert");
@@ -68,4 +68,12 @@ it("styles the link back to the combined reviews from a standalone list", async 
   vi.spyOn(api, "get").mockResolvedValue({ items: [row], next_cursor: null });
   show();
   expect(await screen.findByRole("link", { name: "Offene Prüfungen" })).toHaveClass("link");
+});
+
+
+it("labels a partial page as loaded entries rather than an open total", async () => {
+  vi.spyOn(api, "get").mockResolvedValue({ items: [{ ...row, disposition: { id: "receipt", reviewed_at: row.observed_at } }], next_cursor: "next-page" });
+  show();
+  expect(await screen.findByText("Mahnungen: 1 geladen · weitere verfügbar")).toBeVisible();
+  expect(screen.getByText("Die Liste enthält auch bereits geprüfte Einträge.")).toBeVisible();
 });

@@ -65,7 +65,8 @@ function Inventory() {
     <p>Die Beobachtung hält den damaligen Metadatenstand fest. Sie belegt weder historische Herkunft noch die Echtheit oder Verfügbarkeit der Datei. Originale bleiben gesperrt und unverändert. Ein Prüfvermerk kann nicht zurückgenommen werden.</p>
     <p>Für die weitere Nutzung laden Sie ein eigenständig vorliegendes Original mit ausdrücklicher Bereichszuordnung beim <Link to="/mandate" className="link">Mandat</Link> hoch.</p>
     {pathname !== "/berechtigungen/pruefungen" && <p><Link className="link" to="/berechtigungen/pruefungen">Offene Prüfungen</Link></p>}
-    {!page.error && !page.loading && <p>Geladene Mandatsunterlagen: {page.items.length.toLocaleString("de-DE")}{page.nextCursor ? " · Weitere Einträge verfügbar" : ""}</p>}
+    <p>Die Liste enthält auch bereits geprüfte Einträge.</p>
+    {!page.error && !page.loading && <p>Mandatsunterlagen: {page.items.length.toLocaleString("de-DE")} geladen{page.nextCursor ? " · weitere verfügbar" : ""}</p>}
     <button className="btn" type="button" disabled={page.loading} onClick={page.reload}>Quarantäne neu laden</button>
     {page.error && <p role="alert" className="error-text">{page.error}</p>}
     {page.loading && <p role="status">Quarantäne wird geladen…</p>}

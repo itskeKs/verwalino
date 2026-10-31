@@ -194,8 +194,10 @@ previous results. Counts use German grouping, may overlap and never certify read
 Teamrechte contains the existing accounting scopes and grants. Bestand prüfen retains the
 inventory, runtime budget, versioned coverage, retention decision and guarded activation/pause
 control. Offene Prüfungen groups the existing source-review and two quarantine lists; each
-shows its loaded count and whether more pages exist. Reviewed quarantine observations remain
-visible. Existing grant forms and immutable receipts keep their own confirmation/retry rules.
+labels its page count as **N geladen** and, while a continuation exists,
+**weitere verfügbar**. Quarantine lists explicitly include already-reviewed observations;
+loaded counts are not open-review totals. Existing grant forms and immutable receipts
+keep their own confirmation/retry rules.
 The legacy-source page and declaration publication dialog read the same live admin
 status and shared state descriptions as the overview, with loading and unavailable states.
 Clerks see no admin review link; the combined reviews list omits its self-link.
@@ -258,8 +260,9 @@ classes or inline `style={{}}`; the existing inline styles (about 470) are known
 | `label.tsx` | `Label` (forwardRef) | none; `text-sm font-medium` | `Label htmlFor` + `Input id` in a `grid gap-2`. |
 | `stat-card.tsx` | `StatCard` | props `label`, `value`, `icon`, `tone` (`default`, `primary`, `success`, `warning`, `destructive`), `hint`, `to` | One headline number with an icon tile; with `to` the whole tile is a link. Value `…` while loading, `—` when unavailable (with hint "Nicht verfügbar"). |
 
-Kit adoption today, counted as files that import the part: `Badge` 8, `Dialog` 9, `Card` 6, `Button` 4
-(13 call sites), `Input` 2, `Label` 1, `StatCard` 1. The remaining UI uses the global classes below.
+Kit adoption today, counted as non-test files with runtime imports (excluding type-only
+imports): `Badge` 8, `Dialog` 9, `Card` 7, `Button` 6, `Input` 3, `Label` 2, `StatCard` 1.
+The remaining UI uses the global classes below.
 
 Deviation: the archive form's "Abbrechen" in `MandateDetailPage.tsx` uses the default `primary` variant.
 The create form's "Abbrechen" in `MandatePage.tsx` explicitly uses `outline`.
@@ -397,12 +400,12 @@ or inline expressions, with the variants below. The inconsistencies are tracked 
 Taken from the running dev stack of `scripts/dev-local.sh` (backend `:18000`, Vite `127.0.0.1:13000`) against the
 disposable test database with synthetic data (organisation "Muster Hausverwaltung", fictitious addresses, persons and
 amounts). Desktop is 1280 px wide at 1x; the 360 px images are 2x. File names are fixed so the table
-stays valid when they are retaken.
+stays valid when they are retaken. The review-list screenshots were refreshed with
+synthetic browser-intercepted API responses, without starting a backend or accessing a database.
 
 | Screen | Page | Desktop | 360 px |
 |---|---|---|---|
 | Permissions | `/berechtigungen` | [`after-overview-desktop.png`](docs/assets/permissions/after-overview-desktop.png) | [`after-overview-360.png`](docs/assets/permissions/after-overview-360.png) |
-| Previous team page | Previous `/berechtigungen` | [Desktop](docs/assets/permissions/before-team-desktop.png) | [Phone](docs/assets/permissions/before-team-360.png) |
 | Team rights | `/berechtigungen/teamrechte` | [Desktop](docs/assets/permissions/after-team-desktop.png) | [Phone](docs/assets/permissions/after-team-360.png) |
 | Preparation | `/berechtigungen/bestand` | [Desktop](docs/assets/permissions/after-inventory-desktop.png) | [Phone](docs/assets/permissions/after-inventory-360.png) |
 | Review lists | `/berechtigungen/pruefungen` | [Desktop](docs/assets/permissions/after-reviews-desktop.png) | [Phone](docs/assets/permissions/after-reviews-360.png) |
