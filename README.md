@@ -84,6 +84,9 @@ signed in. There is no default password; the token expires after 24 hours, and
 `bash scripts/self-host.sh admin --org "Meine Hausverwaltung" --email admin@example.org`.
 For a new server with a domain, use `bash scripts/self-host.sh init --https <domain>`
 before the first start; DNS and public TCP ports 80/443 must be ready for Caddy.
+Back up with `bash scripts/self-host.sh backup [--out DIR]` and recover with `stop`, then
+`restore FILE [--yes]`; keep `.env.selfhost` separately
+([backup and restore](DEPLOY.md#portable-backup-and-restore)).
 
 The portable stack ships without AI import and AI Q&A, SMTP and automatic invoice
 OCR; manual voucher processing works. Database and documents live in named volumes:

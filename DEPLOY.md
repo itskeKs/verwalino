@@ -122,12 +122,126 @@ bash scripts/self-host.sh status
 bash scripts/self-host.sh stop
 ```
 
-There is deliberately no destroy, automatic update or backup command. Before
-an upgrade, plan a consistent backup of the stopped application's database,
-document volume and private config, and test restoring them together on a
-separate host. An older image is not a schema rollback. This feature does not
-authorize an alpha deployment, promote its schema gate, or supply a backup
-and disaster-recovery guarantee.
+There is deliberately no destroy or automatic update command. An older image
+is not a schema rollback. This feature does not authorize an alpha deployment
+or promote its schema gate.
+
+### Portable backup and restore
+
+```bash
+bash scripts/self-host.sh backup --out /private/backups
+# Without --out, the private output directory is <checkout>/backups/.
+bash scripts/self-host.sh stop
+bash scripts/self-host.sh restore /private/backups/verwalino-backup-20261030T120000Z.tar
+bash scripts/self-host.sh start
+```
+
+`backup` works with the app and database running. It writes one private (0600)
+`verwalino-backup-YYYYMMDDTHHMMSSZ.tar`, prints its absolute path and size in
+bytes, and never overwrites a same-named archive. Its three members are:
+
+- `db.dump`: a consistent PostgreSQL custom-format snapshot (`pg_dump -Fc`),
+  executed inside this installation's `db` container as `app_migrator`.
+- `documents.tar.gz`: the documents volume copied **after** the database dump.
+  A one-shot app-image helper overrides the web entrypoint, starts no dependent
+  services, and uses the existing project-owned documents volume. Concurrent
+  uploads can add later files; deletions between the dump and the documents copy
+  can leave restored database rows pointing at missing files. Run backup when no
+  one uploads or deletes documents. For a cold backup, stop the app first, then
+  start **only db** for the dump, leaving app/migration/bootstrap stopped. This
+  is not an atomic database/filesystem snapshot.
+- `manifest.json`: `format` (`verwalino-selfhost`), `format_version` (1),
+  `schema_head` (queried from `alembic_version` during backup), `app_image`
+  (configured image reference, including a digest when selected), `created_at`
+  (UTC), and `config_fingerprint`. The latter is SHA-256 over the five ordered
+  `KEY=value\n` settings `VERWALINO_MODE`, `VERWALINO_DOMAIN`, `VERWALINO_PORT`,
+  `VERWALINO_IMAGE`, `VERWALINO_PROXY_SUBNET`.
+
+The helper runs as root with only `CHOWN` and `DAC_OVERRIDE` added to the app's
+otherwise dropped capabilities, so it can access the private staging bind and
+restore app-owned files (UID/GID 10001). It uses the app image's Python; host
+Python is not required. An image without the document helpers fails with an
+update instruction. If rootless Docker or user-namespace remapping prevents host
+ownership changes, the helper warns; publication copies the archive privately
+if hard-linking is refused. The archive contains application data, including account
+and session data; protect it accordingly. Installation passwords, session signing
+secret and the private configuration file are **not** included. Neither are
+PostgreSQL roles/passwords, container images, Caddy state/certificates or external
+services. Keep the original `.env.selfhost` separately in a private encrypted
+backup; init must not regenerate credentials for an existing installation.
+Retain the reviewed checkout and the selected image, especially a mutable local
+build, so recovery has the required application and PostgreSQL tools.
+The default `<checkout>/backups/` directory is created with mode 0700. Git ignores
+`backups/`, `verwalino-backup-*.tar` and `.verwalino-backup.*`; output directly in
+the checkout root is refused. New custom output directories use mode 0700;
+existing directories keep their permissions.
+
+`restore FILE [--yes]` checks the private config and acquires the installer lock,
+then refuses running, restarting or paused app/migration/bootstrap containers
+with the `stop` command.
+It copies the input to private staging, requires all three regular archive members,
+checks the manifest marker and format version, and refuses a schema newer than
+the selected image's `app.deployment.TARGET`, read inside the helper container.
+Unknown/ambiguous heads,
+unsafe document paths, links, special files and invalid document archives are
+refused before the database starts. An older numeric schema head is allowed;
+`start` performs subsequent migrations. This portable restore check does not
+change the alpha's narrower `SUPPORTED` upgrade gate.
+
+A different configuration fingerprint emits a warning. Restore then asks you to
+type `restore`; `--yes` explicitly skips that prompt for automation. It starts
+**only db**, checks the dump's table of contents with `pg_restore --list`, creates
+`hausverwaltung_restore` with `createdb -T template0`, and imports via
+`pg_restore -U app_migrator -d hausverwaltung_restore --exit-on-error
+--single-transaction`. It queries that database's own `alembic_version` and
+requires exactly the manifest head. It then extracts, verifies and sets ownership
+of staged documents on the documents volume, before changing the old database
+or document contents. Allow free space for both databases and both document copies.
+An existing `hausverwaltung_restore` or `hausverwaltung_previous` is refused;
+inspect it and recover the intended live database before removing any leftover.
+Restore also refuses any `.restore-*` directory on the documents volume before
+creating the scratch database. Verify the live data, then remove the named
+directory, then retry; it may contain the only retained copy of previous documents.
+Before cutover, failures remove the scratch database and staged documents and
+leave old data untouched; all failures attempt to stop db and leave the app stopped.
+
+After staging succeeds, cutover renames `hausverwaltung` to
+`hausverwaltung_previous` (skipped if no live database exists) and
+`hausverwaltung_restore` to `hausverwaltung`, moves
+old document entries into `.restore-<id>/previous/` and staged entries into place
+on the same volume, then drops the previous database and deletes the previous
+documents only after the swap succeeds.
+If no live database existed, there is no previous database to drop.
+Failures before that drop attempt to rename the old database and move previous
+documents back, retain staged documents in `.restore-<id>/documents/`, and report
+the remaining database names and document directories with manual recovery SQL
+and move instructions if rollback fails; keep the app stopped until recovery is verified.
+If interruption happens after the previous database was dropped but before
+document cleanup, the restored database and documents remain live. Verify them,
+manually remove the retained `.restore-<id>` directory (including `previous/`)
+from the documents volume, then run `bash scripts/self-host.sh start`.
+Do not run the rollback SQL in this state. Avoid backups until the retained
+directory is removed: document archives include it while it remains on the volume.
+When no live database existed initially, an incomplete document swap rolls back
+to that absent-live state and retains the restored database as
+`hausverwaltung_restore`; a completed swap keeps the restored data live and
+requires the same directory cleanup and `start` if interrupted during cleanup.
+After success, db stops and the printed `start` command starts the restored installation.
+Use only trusted archives: PostgreSQL restoration executes SQL from the dump.
+
+Back up at least daily while the installation is in use and before a reviewed
+upgrade or destructive maintenance. Copy completed archives to a separate,
+access-controlled encrypted disk or another host; the local output directory
+alone is not disaster recovery. Off-site transfer, scheduling, retention and
+automatic updates are operator responsibilities. Periodically test recovery on
+a separate authorized installation with the original private config. Contract
+tests and a real PostgreSQL dump/archive/scratch-database restore round trip cover
+format and command behavior; a complete running self-host installation restore
+has not yet been accepted.
+Run the opt-in rehearsal with `make test-selfhost-format`: it sets
+`VERWALINO_FORMAT_TEST=1`, acquires `/tmp/verwalino-testdb.lock` itself and uses
+only its own scratch databases in `infra-postgres-1` at `127.0.0.1:55432`.
+Ordinary test runs skip it with a reason; it also skips when Docker is missing.
 
 AI declaration import/Q&A, SMTP and invoice OCR are disabled in this initial
 portable stack. Manual invoice review remains supported. The T10 worker is
@@ -138,7 +252,7 @@ need operator checks; do not treat the mock installer tests as
 proof of those behaviors. Run the portable tests without Docker using
 `cd backend && uv run python ../scripts/test-self-host.py`; the backend CI job
 runs these before pytest. Real Caddyfile validation and the complete portable
-stack smoke test require a separately authorized clean Docker host. Update/backup
+stack smoke test require a separately authorized clean Docker host. Update
 automation remains outstanding; this is not yet a general production release.
 
 ### Published image verification
