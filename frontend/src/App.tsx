@@ -83,7 +83,7 @@ export function AppRoutes() {
   const setup = useSetupStatus();
   const location = useLocation();
 
-  const setupRequired = setup.error ? false : setup.required;
+  const setupRequired = !setup.error ? setup.required : false;
 
   if (loading || setupRequired === null) {
     return (

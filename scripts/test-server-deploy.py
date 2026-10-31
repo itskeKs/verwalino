@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import signal
+import socket
 import stat
 import subprocess
 import tarfile
@@ -27,6 +28,9 @@ BOOTSTRAP = ROOT / "scripts/server-bootstrap.sh"
 BACKUP = ROOT / "scripts/server-backup.sh"
 DEPLOY = ROOT / "scripts/deploy-server.sh"
 INSTALLER = ROOT / "scripts/self-host.sh"
+with socket.socket() as port_probe:  # init refuses an occupied port, so never depend on the default one
+    port_probe.bind(("127.0.0.1", 0))
+    TEST_PORT = str(port_probe.getsockname()[1])
 SCRIPTS = ("server-bootstrap.sh", "server-backup.sh", "deploy-server.sh")
 OLD_DIGEST = "ghcr.io/itskeks/verwalino@sha256:" + "b" * 64
 NEW_DIGEST = "ghcr.io/itskeks/verwalino@sha256:" + "a" * 64
@@ -176,7 +180,7 @@ class ServerCase(unittest.TestCase):
 
     def install_config(self, image=OLD_DIGEST):
         """Create the installer config the way a maintainer does."""
-        result = subprocess.run(["bash", str(INSTALLER), "init", "--https", "verwaltung.example.org", "--image", image],
+        result = subprocess.run(["bash", str(INSTALLER), "init", "--https", "verwaltung.example.org", "--port", TEST_PORT, "--image", image],
                                 env=self.env, capture_output=True, text=True, cwd=self.base, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -517,7 +521,7 @@ class DeployTests(ServerCase):
         self.assertLess(stop_app, migrate)
         self.assertLess(migrate, up_app)
         self.assertLess(up_app, health)
-        self.assertEqual(self.calls("curl")[0]["args"][-1], "http://127.0.0.1:18080/api/health/ready")
+        self.assertEqual(self.calls("curl")[0]["args"][-1], f"http://127.0.0.1:{TEST_PORT}/api/health/ready")
 
         # The new digest is pinned after the backup copied the old config; nothing else changed.
         values = self.config_values()

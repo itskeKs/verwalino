@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api import auth, organizations, users, mandates, intake_batches, intake_items, exceptions, invoice_reviews, context_decisions, allocation_proposals, allocation_treatments, allocation_adoptions, duplicate_comparisons
-from app.api import context_mappings, setup
+from app.api import context_mappings, setup, diagnostics
 from app.api import properties, units, persons, ownership, leases
 from app.api import owner_profiles, tenant_profiles, vendors
 from app.api import cost_categories, cost_entries, invoice_documents, document_refs, logical_documents, extraction_revisions, source_partitions, visual_extracts, visual_disclosures
@@ -27,6 +27,7 @@ from app.api import property_documents, attachments, reports, tasks
 from app.api import property_knowledge, property_data_domains, person_data_domains
 from app.api import property_source_admission_reviews,property_source_classifications
 from app.api import meters
+from app.diagnostics import APP_VERSION
 from app.core import health
 from app.core.static_files import resolve_spa_file
 from app.core.uploads import RequestBodyLimitMiddleware
@@ -39,7 +40,7 @@ configure_logging()
 
 app = FastAPI(
     title="Hausverwaltung MVP",
-    version="0.1.0",
+    version=APP_VERSION,
     docs_url=settings.docs_url,
     openapi_url=settings.openapi_url,
 )
@@ -58,6 +59,7 @@ app.include_router(auth.router)
 app.include_router(setup.router)
 app.include_router(organizations.router)
 app.include_router(users.router)
+app.include_router(diagnostics.router)
 app.include_router(accounting_scopes.router)
 app.include_router(access_preparation.router)
 app.include_router(mandate_quarantine.router)

@@ -34,8 +34,9 @@ paths:
   release `/tmp/verwalino-testdb.lock` themselves. Direct pytest runs and dev stacks
   must hold that lock in their shell until finished; release between runs.
   Use only the test database and compose commands in AGENTS.md.
-  A foreign Alembic head is reset automatically by the test session fixture (#75/#82);
-  never restart the test database container yourself.
+  A foreign Alembic head is reset automatically by the test session fixture (#75/#82), only in
+  the guarded local test DB with `VERWALINO_TEST_DB=1`; known heads still downgrade to base.
+  Never restart the test database container yourself.
 - Iterate selectively (`cd backend && uv run pytest tests/test_x.py -k name`
   or `cd frontend && npm test -- <file>`); the whole backend suite takes about 30 minutes.
   Run `make lint` before a push and `make test` before a merge; `make test-agent-rules` needs no DB.

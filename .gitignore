@@ -42,3 +42,6 @@ build/
 .claude/launch.json
 document_storage/
 .worktrees/
+
+# Manually shared private diagnostics
+/diagnostics/
