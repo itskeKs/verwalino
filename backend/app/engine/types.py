@@ -185,6 +185,7 @@ class SettlementInput:
     advance_payments_source: str = "MANUAL"
     engine_version: str = "m3.1.0"
     allocation_inputs: tuple[SettlementInput, ...] = ()
+    uncredited_advance_payments_total: Decimal = Decimal("0.00")
 
 
 # ---------------------------------------------------------------------------

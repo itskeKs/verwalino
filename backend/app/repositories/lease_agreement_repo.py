@@ -73,6 +73,16 @@ class LeaseAgreementRepository(TenantRepository[LeaseAgreement]):
         ).limit(1)
         return await self._session.scalar(stmt) is not None
 
+    async def end_conflicts_finalized_statement(self, lease_id: uuid.UUID, last_day: date) -> bool:
+        """A changed end must leave a window after every frozen statement."""
+        from app.models.settlement_run import SettlementRun
+        stmt = select(SettlementRun.id).where(
+            SettlementRun.organization_id == self._org_id,
+            SettlementRun.lease_agreement_id == lease_id,
+            SettlementRun.status == "finalized", SettlementRun.period_end >= last_day,
+        ).limit(1)
+        return await self._session.scalar(stmt) is not None
+
     async def matching_targets(self, property_id, period_start, period_end):
         statement = select(LeaseAgreement, Person).join(Unit, and_(
             Unit.id == LeaseAgreement.unit_id, Unit.organization_id == self._org_id,

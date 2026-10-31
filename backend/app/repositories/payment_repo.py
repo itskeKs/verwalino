@@ -135,10 +135,10 @@ class PaymentRepository(TenantRepository[Payment]):
         result = await self._session.execute(stmt)
         return result.scalars().all()
 
-    async def derived_for_nk_for_period(
-        self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date
+    async def derived_for_nk_for_lease(
+        self, lease_agreement_id: uuid.UUID,
     ) -> Sequence[Payment]:
-        """Booked NK in the assigned calendar years touched by this statement.
+        """Booked NK for crediting, including outside assignments for the notice.
 
         Keep the full assigned amounts; the engine selects month shares using
         the lease span as well as the statement span (also for year-only rows).
@@ -148,7 +148,7 @@ class PaymentRepository(TenantRepository[Payment]):
             self._booked_active()
             .where(Payment.payment_type == "NK_VORAUSZAHLUNG")
             .where(Payment.lease_agreement_id == lease_agreement_id)
-            .where(Payment.period_year.between(period_start.year, period_end.year))
+            .where(Payment.period_year.is_not(None))
         )
         result = await self._session.execute(stmt)
         return result.scalars().all()

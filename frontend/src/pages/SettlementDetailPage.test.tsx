@@ -429,6 +429,19 @@ async function showConsumption() {
   return screen.findByLabelText(/^Verbrauch \(1/);
 }
 describe("T31 meter consumption prefill", () => {
+  it("shows excluded payments as a notice without a second financial amount", async () => {
+    const notice = "Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: 1.234,56 €";
+    vi.mocked(api.getSettlement).mockResolvedValueOnce({ ...consumptionDraft, lines: [{
+      id: "notice", cost_entry_id: null, line_type: "SUBTOTAL", label: notice, amount: "0.00", sort_order: 0,
+      cost_category_code: null, distribution_key: null, total_amount: null,
+      distribution_base_total: null, distribution_base_share: null,
+      time_share_days: null, time_share_total_days: null, note: null,
+    }] });
+    await showConsumption();
+    const row = (await screen.findByText(notice)).closest("tr")!;
+    expect(row).toHaveTextContent(notice);
+    expect(row).not.toHaveTextContent("0.00 EUR");
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(api.getSettlement).mockReset().mockResolvedValue(structuredClone(consumptionDraft));

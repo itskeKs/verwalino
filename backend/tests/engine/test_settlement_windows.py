@@ -399,6 +399,45 @@ def test_random_lease_statements_credit_every_booked_advance_once():
     assert checked == 358
 
 
+def test_random_late_lease_end_after_a_finalized_prefix_preserves_booked_advances():
+    from datetime import timedelta
+    import random
+    from app.engine.mietkonto import (
+        AdvanceFilter, PaymentInput, derive_advance_credits_for_period, uncredited_advance_total,
+    )
+
+    for seed in range(600):
+        r = random.Random(seed)
+        start = date(2024, 1, 1) + timedelta(days=r.randrange(400))
+        end = start + timedelta(days=r.randrange(2, 600))
+        cuts = sorted(r.sample(range(1, (end - start).days + 1), min(4, (end - start).days)))
+        bounds = [start] + [start + timedelta(days=n) for n in cuts] + [end + timedelta(days=1)]
+        prefix = r.randint(1, len(bounds) - 2)
+        late_end = bounds[prefix] + timedelta(days=r.randrange((end - bounds[prefix]).days + 1))
+        payments = [PaymentInput(uid(y * 100 + (m or 0)), "NK_VORAUSZAHLUNG", "IN",
+            D(r.randint(1, 100000)) / 100, y, m, lease_agreement_id=uid(7))
+            for y in range(start.year, end.year + 1) for m in [*range(1, 13), None]]
+        windows = list(zip(bounds, bounds[1:]))
+        suffix = windows[prefix:]
+        r.shuffle(suffix)
+        windows = windows[:prefix] + suffix
+        frozen = []
+        for index, (a, b) in enumerate(windows):
+            current_end = None if index < prefix else late_end
+            b = min(b - timedelta(days=1), current_end or end)
+            if a > b:
+                continue
+            for year in range(a.year, b.year + 1):
+                filt = AdvanceFilter(frozenset({"NK_VORAUSZAHLUNG"}), year, uid(7))
+                frozen.extend(derive_advance_credits_for_period(payments, filt, a, b,
+                    lease_start=start, lease_end=current_end, finalized_credits=tuple(frozen)))
+        expected = sum((p.amount for p in payments), D(0)) - sum((uncredited_advance_total(
+            payments, AdvanceFilter(frozenset({"NK_VORAUSZAHLUNG"}), year, uid(7)), start, late_end)
+            for year in range(start.year, end.year + 1)), D(0))
+        assert sum((c.amount for c in frozen), D(0)) == expected, seed
+        assert all(c.amount >= 0 for c in frozen), seed
+
+
 def test_consumption_interim_readings_split_only_the_changed_units_share():
     inp = example()
     first = replace(
@@ -512,6 +551,18 @@ def test_cross_boundary_consumption_pool_is_delimited_before_interim_split():
         ),
     )
     assert compute_bk_settlement(inp).total_cost == D("1810.00")
+
+
+def test_excluded_advances_are_a_snapshot_notice_without_changing_the_balance():
+    from app.engine.snapshot import build_snapshot_payload
+
+    inp = replace(example(), uncredited_advance_payments_total=D("1234.56"))
+    result = compute_bk_settlement(inp)
+    notice, = [line for line in result.lines if line.line_type == "SUBTOTAL"]
+    assert notice.label == "Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: 1.234,56 €"
+    assert notice.amount == 0
+    assert result.balance == result.total_cost - result.advance_payments_total
+    assert build_snapshot_payload(inp, result)["result"]["lines"][-1]["label"] == notice.label
 
 
 def test_heating_free_window_freezes_its_selected_amount_for_the_renderer():

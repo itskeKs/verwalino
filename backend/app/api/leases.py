@@ -21,6 +21,7 @@ from fastapi.responses import Response
 from app.services.master_delete_service import MasterDeleteService, master_delete_writer_db
 from app.core.live_principal import get_live_member_db, get_live_writer_db
 from app.services.history_source_access import require_history_prepare
+from app.services.financial_scope_service import FinancialScopeService
 from app.services.lease_rent_change_service import LeaseRentChangeService
 from app.core.temporal import (
     db_exclusive_to_api_inclusive,
@@ -214,8 +215,9 @@ async def update_lease(
 ):
     """Update lease agreement: end date, notes, rent amounts.
 
-    Monetary changes return 409 after booking or finalization; end/notes remain editable.
+    Monetary changes return 409 after booking/finalization; end edits preserve frozen spans.
     """
+    await FinancialScopeService(db, auth.organization_id, auth.user_id).lock_inputs()
     repo = LeaseAgreementRepository(db, auth.organization_id)
     existing = await repo.get_by_id(lease_id)
     if not existing:
@@ -239,6 +241,11 @@ async def update_lease(
     if "valid_to" in body.model_fields_set:
         if body.valid_to is not None and body.valid_to < existing.valid_from:
             raise HTTPException(422, "Lease end must not precede its start")
+        if (body.valid_to is not None
+                and inclusive_last_day_to_db_exclusive(body.valid_to) != existing.valid_to
+                and await repo.end_conflicts_finalized_statement(lease_id, body.valid_to)):
+            raise HTTPException(409, {"code": "lease_end_conflicts_finalized_statement",
+                "message": "Das Mietende darf keine finalisierte Abrechnung dieses Mietvertrags verkürzen."})
         existing.valid_to = inclusive_last_day_to_db_exclusive(body.valid_to)
     if body.notes is not None:
         existing.notes = body.notes

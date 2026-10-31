@@ -567,7 +567,7 @@ export function SettlementDetailPage() {
   function renderLines(lines: SettlementLine[]) {
     const costLines = lines.filter((l) => l.line_type === "COST");
     const summaryLines = lines.filter(
-      (l) => l.line_type === "ADVANCE_PAYMENT" || l.line_type === "BALANCE",
+      (l) => l.line_type === "ADVANCE_PAYMENT" || l.line_type === "BALANCE" || l.line_type === "SUBTOTAL",
     );
 
     return (
@@ -671,15 +671,15 @@ export function SettlementDetailPage() {
                         ln.line_type === "BALANCE" ? "1.05rem" : undefined,
                     }}
                   >
-                    <td>{ln.label}</td>
-                    <td
+                    <td colSpan={ln.line_type === "SUBTOTAL" ? 2 : 1}>{ln.label}</td>
+                    {ln.line_type !== "SUBTOTAL" && <td
                       style={{
                         fontFamily: "var(--mono)",
                         textAlign: "right",
                       }}
                     >
                       {ln.amount} EUR
-                    </td>
+                    </td>}
                   </tr>
                 ))}
               </tbody>

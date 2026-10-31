@@ -208,6 +208,8 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
             "balance": _m(result.balance),
         },
     }
+    if inp.uncredited_advance_payments_total:
+        payload["inputs"]["uncredited_advance_payments_total"] = _m(inp.uncredited_advance_payments_total)
     if result.period_inputs:
         payload['inputs']['property_periods'] = [build_snapshot_payload(part, part_result)
             for part, part_result in zip(result.period_inputs, result.period_results, strict=True)]

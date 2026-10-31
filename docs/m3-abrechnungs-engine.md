@@ -178,8 +178,21 @@ covering the whole calendar year with 1,200 euros paid, January–June and
 July–December credit 600 euros each; April–December credits
 900 euros. For 1,000 euros, January–November credit 83.33 euros each and December
 83.37 euros. A full calendar year still credits the full amount. Month shares
-do not depend on other drafts or finalization order; later statements cannot
-change earlier finalized shares. If a statement boundary splits a month, that
+do not depend on other drafts or finalization order while lease dates are fixed;
+later statements cannot change earlier finalized shares. After a later lease-end
+edit, each year/month bucket uses already finalized snapshot credits in place
+of those windows' current shares, never reducing a new credit below zero. The last
+open statement takes the remainder: 300 euros already finalized from
+a 1,200-euro annual payment leaves 900 euros after entering a September end;
+245.16 euros already finalized from three 100-euro payments through 14 March
+leaves 54.84 euros after entering an end on 20 March. Frozen credits are read from
+the snapshot, never recomputed. This includes later calendar windows finalized
+first, preventing duplicate adjustments during reordering or corrections.
+Identical finalized periods count once and
+superseded runs do not count twice. `PATCH /api/leases/{id}` returns German,
+structured HTTP 409 (`lease_end_conflicts_finalized_statement`) if the proposed
+last occupied day would fall on or before a finalized statement's end; an end after all
+finalized statement ends remains editable. If a statement boundary splits a month, that
 month's share is prorated by its days using cumulative cent boundaries, so
 adjacent partial-month statements cannot credit that share twice. The NK finalization freshness check uses the
 same derivation. **Month-assigned advances (#136)** use the same cumulative day
@@ -198,6 +211,19 @@ share this engine rule; ledger filtering is unchanged. See the
 plan deadline in `fristen_service.py` is still calendar-based for non-January
 properties and remains a follow-up; it is not changed by #68.
 The per-property year overview and Anlage V stay on the calendar year.
+
+Booked NK advances assigned entirely outside the lease's months or years remain
+uncredited. The total is shown in a non-financial `SUBTOTAL` notice line in the
+draft, frozen snapshot, API response and PDF: “Nicht angerechnet: Zahlungen
+außerhalb des Mietverhältnisses: X €”. This includes manually assigned payments
+and payments left outside the tenancy by a later shortening. The notice does not
+change costs, credited advances or the balance.
+
+Legacy DERIVED snapshots without year/month credit buckets can still use fixed
+lease dates. After a date edit, nonzero credits without that frozen evidence
+cause `advance_credit_history_missing` (HTTP 409) on derivation; correction or a
+confirmed MANUAL total is required. Notice calculation remains available for
+MANUAL statements and never invents a historical credit breakdown.
 
 Automatic form prefill only applies while both date fields are empty. A delayed
 period-offer response preserves dates the user has already entered; choosing an

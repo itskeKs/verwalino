@@ -72,6 +72,157 @@ async def test_month_assigned_nk_advance_is_prorated_and_finalizes_across_march_
     assert sum(totals) == Decimal("1200.00")
 
 
+@pytest.mark.parametrize("months,amount,start,cut,end,frozen,remainder,total", [
+    ([None], "1200.00", "2024-04-01", "2025-03-31", "2025-09-30", "300.00", "900.00", "1200.00"),
+    ([1, 2, 3], "100.00", "2025-01-01", "2025-03-14", "2025-03-20", "245.16", "54.84", "300.00"),
+])
+async def test_late_lease_end_preserves_all_booked_advances(client_a_admin, april,
+        months, amount, start, cut, end, frozen, remainder, total):
+    from datetime import date, timedelta
+
+    api = client_a_admin
+    for month in months:
+        await booked(api, april, 2025, month, amount=amount)
+    results = []
+    for a, b, expected in ((start, cut, frozen),
+            ((date.fromisoformat(cut) + timedelta(days=1)).isoformat(), end, remainder)):
+        if results:
+            changed = await api.patch(f"/api/leases/{april['lease']['id']}", json={"valid_to": end})
+            assert changed.status_code == 200, changed.text
+        run = await create(api, "/api/settlements", statement(april, a, b))
+        derived = await api.patch(f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
+        assert derived.status_code == 200, derived.text
+        assert Decimal(derived.json()["advance_payments_total"]) == Decimal(expected)
+        await attest_fixture(api, "settlement", run["id"], {
+            "advance_payments_total": expected, "advance_payments_source": "DERIVED"})
+        final = await api.post(f"/api/settlements/{run['id']}/finalize", json={})
+        assert final.status_code == 200, final.text
+        results.append(final.json())
+    assert sum(Decimal(r["advance_payments_total"]) for r in results) == Decimal(total)
+    unchanged = await api.get(f"/api/settlements/{results[0]['id']}")
+    assert unchanged.json() == results[0]
+
+
+@pytest.mark.parametrize("end,status", [
+    ("2024-12-31", 409), ("2025-01-01", 409), ("2025-03-14", 409),
+    ("2025-03-31", 409), ("2025-04-01", 200), ("2025-09-30", 200), (None, 200),
+])
+async def test_lease_end_cannot_invalidate_a_finalized_statement(client_a_admin, april, end, status):
+    api = client_a_admin
+    run = await create(api, "/api/settlements", {
+        **statement(april, "2025-01-01", "2025-03-31"), "advance_payments_total": "0.00"})
+    await attest_fixture(api, "settlement", run["id"], {
+        "advance_payments_total": "0.00", "advance_payments_source": "MANUAL"})
+    assert (await api.post(f"/api/settlements/{run['id']}/finalize", json={})).status_code == 200
+    answer = await api.patch(f"/api/leases/{april['lease']['id']}", json={"valid_to": end})
+    assert answer.status_code == status, answer.text
+    if status == 409:
+        assert answer.json()["detail"] == {"code": "lease_end_conflicts_finalized_statement",
+            "message": "Das Mietende darf keine finalisierte Abrechnung dieses Mietvertrags verkürzen."}
+
+
+async def _finalize_derived(api, data, start, end, expected):
+    run = await create(api, "/api/settlements", statement(data, start, end))
+    derived = await api.patch(f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
+    assert derived.status_code == 200, derived.text
+    assert Decimal(derived.json()["advance_payments_total"]) == Decimal(expected)
+    await attest_fixture(api, "settlement", run["id"], {
+        "advance_payments_total": expected, "advance_payments_source": "DERIVED"})
+    final = await api.post(f"/api/settlements/{run['id']}/finalize", json={})
+    assert final.status_code == 200, final.text
+    return final.json()
+
+
+async def test_late_end_remainder_survives_reordering_and_correction(client_a_admin, april):
+    api = client_a_admin
+    await booked(api, april, 2025, None, amount="1200.00")
+    first = await _finalize_derived(api, april, "2025-01-01", "2025-03-31", "300.00")
+    assert (await api.patch(f"/api/leases/{april['lease']['id']}", json={"valid_to": "2025-09-30"})).status_code == 200
+    last = await _finalize_derived(api, april, "2025-07-01", "2025-09-30", "500.01")
+    middle = await _finalize_derived(api, april, "2025-04-01", "2025-06-30", "399.99")
+    assert sum(Decimal(r["advance_payments_total"]) for r in (first, middle, last)) == Decimal("1200.00")
+    correction = await api.post(f"/api/settlements/{first['id']}/correction")
+    assert correction.status_code == 201, correction.text
+    run = correction.json()
+    derived = await api.patch(f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
+    assert derived.status_code == 200, derived.text
+    assert Decimal(derived.json()["advance_payments_total"]) == Decimal("300.00")
+    await attest_fixture(api, "settlement", run["id"], {
+        "advance_payments_total": "300.00", "advance_payments_source": "DERIVED"})
+    final = await api.post(f"/api/settlements/{run['id']}/finalize", json={})
+    assert final.status_code == 200, final.text
+
+
+async def test_legacy_derived_history_does_not_block_manual_statements(client_a_admin, april, monkeypatch):
+    from app.services.settlement_service import SettlementService
+
+    api = client_a_admin
+    await booked(api, april, 2025, None, amount="1200.00")
+    build = SettlementService._snapshot_with_meter_sources
+
+    def legacy_snapshot(service, inp, result):
+        payload = build(service, inp, result)
+        payload["inputs"].pop("advance_payment_credits", None)
+        return payload
+
+    with monkeypatch.context() as old:
+        old.setattr(SettlementService, "_snapshot_with_meter_sources", legacy_snapshot)
+        await _finalize_derived(api, april, "2025-01-01", "2025-03-31", "300.00")
+    assert (await api.patch(f"/api/leases/{april['lease']['id']}", json={"valid_to": "2025-09-30"})).status_code == 200
+    manual = await create(api, "/api/settlements", {
+        **statement(april, "2025-04-01", "2025-09-30"), "advance_payments_total": "900.00"})
+    derived = await api.patch(f"/api/settlements/{manual['id']}/advance-payments-derived", params={"period_year": 2025})
+    assert derived.status_code == 409, derived.text
+    assert derived.json()["detail"]["code"] == "advance_credit_history_missing"
+    await attest_fixture(api, "settlement", manual["id"], {
+        "advance_payments_total": "900.00", "advance_payments_source": "MANUAL"})
+    for action in ("compute", "finalize"):
+        final = await api.post(f"/api/settlements/{manual['id']}/{action}", json={})
+        assert final.status_code == 200, final.text
+
+
+async def test_outside_lease_payments_are_visible_without_being_credited(client_a_admin):
+    from tests.conftest import MIGRATOR_SYNC_URL
+    from app.services.settlement_pdf import build_settlement_html
+    from app.models.settlement_run import SettlementRun
+    from app.models.settlement_line import SettlementLine
+    from datetime import date
+    import psycopg2
+
+    api = client_a_admin
+    data = await period_property(api, month=1)
+    # Manual payment entry permits assignments before the tenancy begins.
+    successor = await create(api, "/api/units", {
+        "property_id": data["property"]["id"], "number": "2", "usage_type": "WOHNUNG", "area": "70"})
+    data["lease"] = await create(api, "/api/leases", {
+        "unit_id": successor["id"], "tenant_profile_id": data["tenant"]["id"],
+        "valid_from": "2025-03-15", "base_rent": "700.00", "advance_payment": "100.00"})
+    # Unassigned payments retain their existing exclusion from statement sums.
+    for year, month in ((2025, 2), (2025, 3), (2025, 7), (2024, None), (None, None)):
+        await booked(api, data, year, month)
+    assert (await api.patch(f"/api/leases/{data['lease']['id']}", json={"valid_to": "2025-06-30"})).status_code == 200
+    run = await create(api, "/api/settlements", statement(data, "2025-01-01", "2025-12-31"))
+    answer = await api.patch(f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
+    assert answer.status_code == 200, answer.text
+    assert Decimal(answer.json()["advance_payments_total"]) == Decimal("100.00")
+    await attest_fixture(api, "settlement", run["id"], {
+        "advance_payments_total": "100.00", "advance_payments_source": "DERIVED"})
+    notice = "Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: 300,00 €"
+    for action in ("compute", "finalize"):
+        answer = await api.post(f"/api/settlements/{run['id']}/{action}", json={})
+        assert answer.status_code == 200, answer.text
+        assert any(line["label"] == notice for line in answer.json()["lines"])
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as conn, conn.cursor() as cur:
+            cur.execute("SELECT snapshot_payload FROM settlement_run WHERE id=%s", (run["id"],))
+            snapshot = cur.fetchone()[0]
+        assert any(line["label"] == notice for line in snapshot["result"]["lines"])
+    html_run = SettlementRun(period_start=date(2025, 3, 15), period_end=date(2025, 6, 30))
+    assert notice in build_settlement_html(html_run, [SettlementLine(**{
+        key: Decimal(value) if key == "amount" else value
+        for key, value in line.items() if key in {"line_type", "label", "sort_order", "amount"}
+    }) for line in snapshot["result"]["lines"]])
+
+
 @pytest.mark.parametrize("start,end,months,amount,expected", [
     ("2025-03-15", None, list(range(3, 13)), "100.00", "1000.00"),
     ("2025-07-01", None, [None], "600.00", "600.00"),
@@ -373,11 +524,12 @@ async def test_batch_reports_straddling_lease_and_creates_others(client_a_admin,
 async def test_batch_skips_finalized_legacy_run_covering_later_clipped_lease(client_a_admin, april):
     api = client_a_admin
     run = await create(api, "/api/settlements", {**statement(april), "advance_payments_total": "0.00"})
+    # Preserve the historical oversized-run fixture without editing a frozen span.
+    changed = await api.patch(f"/api/leases/{april['lease']['id']}", json={"valid_to": "2025-09-30"})
+    assert changed.status_code == 200, changed.text
     await attest_fixture(api, "settlement", run["id"], {"advance_payments_total": "0.00", "advance_payments_source": "MANUAL"})
     final = await api.post(f"/api/settlements/{run['id']}/finalize", json={})
     assert final.status_code == 200, final.text
-    changed = await api.patch(f"/api/leases/{april['lease']['id']}", json={"valid_to": "2025-09-30"})
-    assert changed.status_code == 200, changed.text
     single = await api.post("/api/settlements", json=statement(april))
     assert single.status_code == 409, single.text
     body = statement(april)

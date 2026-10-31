@@ -12,7 +12,8 @@ assign the annual remainder to the last covered month, and split boundary months
 only across the occupied lease days (all calendar days for Hausgeld).
 Month-assigned advances and windows cutting balanced cost cells reuse the
 same floored cumulative day-share differences. Adjacent periods reconcile
-exactly, independently of draft or finalization order. These rules live here.
+exactly for fixed lease dates, independently of draft or finalization order.
+After date edits the Mietkonto layer substitutes frozen earlier credits.
 
 Algorithm (ADR-0005, Entscheidung; Hamilton / Hare / Largest-Remainder):
 
@@ -99,7 +100,8 @@ def annual_advance_share_for_period(
 
     Partial months use differences of cumulative day shares rounded down to
     cents. Adjacent windows therefore reconcile even when they split a month.
-    Allocation is independent of other statements and finalization order.
+    With fixed lease dates, allocation is independent of other statements and
+    finalization order. Frozen-credit substitution after edits lives in mietkonto.
     """
     if not period_start.year <= year <= period_end.year:
         return Decimal("0.00")

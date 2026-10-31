@@ -41,6 +41,36 @@ YEAR_START = date(2025, 1, 1)
 YEAR_END = date(2025, 12, 31)
 
 
+@pytest.mark.parametrize("month,amount,first_end,lease_end,frozen,expected", [
+    (None, "1200.00", date(2025, 3, 31), date(2025, 9, 30), "300.00", "900.00"),
+    (3, "100.00", date(2025, 3, 14), date(2025, 3, 20), "45.16", "54.84"),
+])
+def test_late_lease_end_credits_the_frozen_remainder(month, amount, first_end, lease_end, frozen, expected):
+    payment = PaymentInput(uuid.UUID(int=1), PT_NK_VORAUSZAHLUNG, "IN", Decimal(amount),
+        2025, month, lease_agreement_id=uuid.UUID(int=2))
+    filt = AdvanceFilter(frozenset({PT_NK_VORAUSZAHLUNG}), 2025, payment.lease_agreement_id)
+    from datetime import timedelta
+
+    assert mietkonto.derive_advance_total_for_period([payment], filt, first_end + timedelta(days=1),
+        lease_end, lease_start=YEAR_START, lease_end=lease_end,
+        finalized_credits=(mietkonto.AdvanceCredit(2025, month, YEAR_START, first_end, Decimal(frozen)),),
+    ) == Decimal(expected)
+
+
+@pytest.mark.parametrize("start,end,credits,expected", [
+    (date(2025, 4, 1), date(2025, 6, 30), [(YEAR_START, date(2025, 3, 31), "300.00"),
+        (date(2025, 7, 1), date(2025, 9, 30), "500.01")], "399.99"),
+    (YEAR_START, date(2025, 3, 31), [(date(2025, 4, 1), date(2025, 9, 30), "900.00")], "300.00"),
+])
+def test_later_frozen_statements_preserve_the_remainder_during_reordering_and_correction(start, end, credits, expected):
+    payment = PaymentInput(uuid.UUID(int=1), PT_NK_VORAUSZAHLUNG, "IN", Decimal("1200.00"),
+        2025, None, lease_agreement_id=uuid.UUID(int=2))
+    filt = AdvanceFilter(frozenset({PT_NK_VORAUSZAHLUNG}), 2025, payment.lease_agreement_id)
+    frozen = tuple(mietkonto.AdvanceCredit(2025, None, a, b, Decimal(amount)) for a, b, amount in credits)
+    assert mietkonto.derive_advance_total_for_period([payment], filt, start, end,
+        lease_start=YEAR_START, lease_end=date(2025, 9, 30), finalized_credits=frozen) == Decimal(expected)
+
+
 def _U(n: int) -> uuid.UUID:
     return uuid.UUID(int=n)
 

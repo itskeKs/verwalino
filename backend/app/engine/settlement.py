@@ -326,6 +326,11 @@ def _finish_result(inp, cost_lines, computation, vacancy_attr, heating_costs, to
         )
     )
 
+    if inp.uncredited_advance_payments_total:
+        amount = format(inp.uncredited_advance_payments_total, ",.2f").translate(str.maketrans(",.", ".,"))
+        lines.append(ResultLine(line_type="SUBTOTAL", amount=Decimal("0.00"), sort_order=sort_order + 1,
+            label=f"Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: {amount} €"))
+
     return EngineResult(
         lines=tuple(lines),
         computation=tuple(computation),

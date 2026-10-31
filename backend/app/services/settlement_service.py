@@ -685,6 +685,9 @@ class SettlementService:
 
     def _snapshot_with_meter_sources(self, inp, result):
         payload = build_snapshot_payload(inp, result)
+        if inp.advance_payments_source == "DERIVED":
+            payload["inputs"]["advance_payment_credits"] = [
+                {"year": c.year, "month": c.month, "amount": str(c.amount)} for c in self._advance_credits]
         if self._meter_sources:
             payload["inputs"]["meter_consumption_sources"] = self._meter_sources
         payload['extra_inputs'] = self._extra_payload
@@ -777,6 +780,16 @@ class SettlementService:
         self._extra_payload = json.loads(json.dumps(asdict(extras),default=str))
         self._heating_sources = {}
         inp = await self._load_engine_input(run, extras)
+        from app.services.payment_service import PaymentService
+
+        payments = PaymentService(self._session, self._org_id, self._user_id)
+        self._advance_credits = ()
+        if run.advance_payments_source == "DERIVED":
+            self._advance_credits, excluded = await payments.nk_advance_credits_for_period(
+                run.lease_agreement_id, run.period_start, run.period_end)
+        else:
+            excluded = await payments.uncredited_nk_advance_total(run.lease_agreement_id)
+        inp = replace(inp, uncredited_advance_payments_total=excluded)
         try:
             result = compute_bk_settlement(inp)
         except (EngineValidationError, DistributionError, PeriodOverlapError) as exc:

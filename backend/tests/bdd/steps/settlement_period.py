@@ -271,6 +271,106 @@ def yearly_advance_is_shared(world):
     assert sum(totals) == Decimal("1200.00")
 
 
+def finalize_derived_statement(world, data, start, end):
+    run = world.run(create(world.actor, "/api/settlements", statement(data, start, end)))
+    derived = world.act("PATCH", f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
+    assert derived.status_code == 200, world.describe_response()
+    world.run(attest_fixture(world.actor, "settlement", run["id"], {
+        "advance_payments_total": derived.json()["advance_payments_total"], "advance_payments_source": "DERIVED"}))
+    final = world.act("POST", f"/api/settlements/{run['id']}/finalize", json={})
+    assert final.status_code == 200, world.describe_response()
+    return final.json()
+
+
+@given(parsers.parse("an open tenancy with {kind} payments and a finalized first statement"))
+def first_advance_statement(world, period_data_cleanup, kind):
+    data = world.run(period_property(world.actor))
+    monthly = kind == "monthly"
+    for month in ([1, 2, 3] if monthly else [None]):
+        world.run(booked(world.actor, data, 2025, month, amount="100.00" if monthly else "1200.00"))
+    first = finalize_derived_statement(world, data, "2025-01-01" if monthly else "2024-04-01",
+        "2025-03-14" if monthly else "2025-03-31")
+    assert Decimal(first["advance_payments_total"]) == Decimal("245.16" if monthly else "300.00")
+    world.data.update(period_property=data, late_monthly=monthly, late_first=first)
+
+
+@when("the manager enters the late lease end and finalizes the remaining statement")
+def late_lease_end(world):
+    data, monthly = world.data["period_property"], world.data["late_monthly"]
+    end = "2025-03-20" if monthly else "2025-09-30"
+    answer = world.act("PATCH", f"/api/leases/{data['lease']['id']}", json={"valid_to": end})
+    assert answer.status_code == 200, world.describe_response()
+    world.data["late_second"] = finalize_derived_statement(world, data,
+        "2025-03-15" if monthly else "2025-04-01", end)
+
+
+@then(parsers.parse("the two frozen statements credit {total} euros in total"))
+def late_credit_total(world, total):
+    first, second = world.data["late_first"], world.data["late_second"]
+    assert Decimal(first["advance_payments_total"]) + Decimal(second["advance_payments_total"]) == Decimal(total)
+    assert world.act("GET", f"/api/settlements/{first['id']}").json() == first
+
+
+@given("a computed draft with a July advance and an open tenancy")
+def open_lease_notice_draft(world, period_data_cleanup):
+    data = world.run(period_property(world.actor, month=1))
+    world.run(booked(world.actor, data, 2025, 7, amount="1234.56"))
+    run = world.run(create(world.actor, "/api/settlements", statement(data, "2025-01-01", "2025-06-30")))
+    world.data.update(period_property=data, notice_run=run)
+    compute_notice_draft(world)
+
+
+def compute_notice_draft(world):
+    run = world.data["notice_run"]
+    answer = world.act("PATCH", f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
+    assert answer.status_code == 200, world.describe_response()
+    world.run(attest_fixture(world.actor, "settlement", run["id"], {
+        "advance_payments_total": "0.00", "advance_payments_source": "DERIVED"}))
+    answer = world.act("POST", f"/api/settlements/{run['id']}/compute", json={})
+    assert answer.status_code == 200, world.describe_response()
+
+
+async def capture_notice(browser, request, stage):
+    from playwright.async_api import expect
+    from tests.bdd.report import artifact_directory, attach_artifact
+
+    await browser.visit(f"/abrechnungen/{browser.world.data['notice_run']['id']}")
+    page = browser.page
+    await expect(page.get_by_role("heading", name="Berechnete Kostenpositionen")).to_be_visible()
+    directory = artifact_directory(request.node)
+    for width in (1280, 360):
+        await page.set_viewport_size({"width": width, "height": 1000})
+        if width == 360:
+            await page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+        notice = page.get_by_text("Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: 1.234,56 €", exact=True)
+        await page.get_by_role("heading", name="Berechnete Kostenpositionen").locator("..").scroll_into_view_if_needed()
+        if stage == "after":
+            await expect(notice).to_be_visible()
+            await notice.scroll_into_view_if_needed()
+        else:
+            await expect(notice).to_have_count(0)
+        assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        if directory:
+            capture = directory / f"statement-notice-{stage}-{width}.png"
+            await page.screenshot(path=str(capture), full_page=True, animations="disabled")
+            attach_artifact(request.node, capture)
+    assert not browser.errors
+
+
+@when("the manager shortens the tenancy to June and recomputes its statement")
+def shorten_notice_lease(world, browser_world, request):
+    browser_world.run(capture_notice(browser_world, request, "before"))
+    data = world.data["period_property"]
+    answer = world.act("PATCH", f"/api/leases/{data['lease']['id']}", json={"valid_to": "2025-06-30"})
+    assert answer.status_code == 200, world.describe_response()
+    compute_notice_draft(world)
+
+
+@then("the uncredited payment notice is visible on desktop and mobile")
+def notice_visible(browser_world, request):
+    browser_world.run(capture_notice(browser_world, request, "after"))
+
+
 @given(parsers.parse("a calendar-year tenancy starting on {start} with {kind} advances"))
 def lease_bounded_advances(world, period_data_cleanup, start, kind):
     data = world.run(period_property(world.actor, month=1))
@@ -383,12 +483,14 @@ def legacy_statement(world, period_data_cleanup, status):
     run = world.run(create(world.actor, "/api/settlements", {
         **statement(data, "2025-01-01", "2025-12-31"), "advance_payments_total": "0.00",
     }))
+    # Seed the historical oversized span before freezing; the edit guard now
+    # prevents constructing this legacy state by shortening after finalization.
+    answer = world.act("PATCH", f"/api/leases/{data['lease']['id']}", json={"valid_to": "2025-09-30"})
+    assert answer.status_code == 200, world.describe_response()
     if status == "finalized":
         finalize_zero_advance_statement(world, run["id"])
     else:
         assert status == "draft"
-    answer = world.act("PATCH", f"/api/leases/{data['lease']['id']}", json={"valid_to": "2025-09-30"})
-    assert answer.status_code == 200, world.describe_response()
     world.data.update(period_property=data, legacy_run=run)
 
 

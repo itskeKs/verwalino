@@ -559,28 +559,71 @@ def derive_advance_total(
     return _money(total)
 
 
-def derive_advance_total_for_period(
+@dataclass(frozen=True)
+class AdvanceCredit:
+    """Frozen credit for one assigned year/month bucket of this lease's NK."""
+
+    year: int
+    month: int | None
+    period_start: date
+    period_end: date
+    amount: Decimal
+
+
+def derive_advance_credits_for_period(
     payments: list[PaymentInput],
     filt: AdvanceFilter,
     period_start: date,
     period_end: date,
     *, lease_start: date | None = None, lease_end: date | None = None,
-) -> Decimal:
-    """Credit booked advances over the lease's days, never outside its span.
+    finalized_credits: tuple[AdvanceCredit, ...] = (),
+) -> tuple[AdvanceCredit, ...]:
+    """Select stable month shares, substituting already frozen credits after edits.
 
-    A month is credited in full unless two statements of this lease split it.
-    Year-only amounts use the months actually covered by the lease in that year.
-    Without a lease span (Hausgeld), the whole assigned calendar year applies.
-    Existing lifecycle, type and addressee filters apply to both sums.
+    Replace the current expected shares of other finalized windows with what
+    their snapshots actually credited. Unfinalized gaps retain their own shares;
+    a consecutive final window receives the exact remainder, never below zero.
+    With fixed lease dates each substitution is zero, preserving order independence.
     """
     if not period_start.year <= filt.year <= period_end.year:
-        return Decimal("0.00")
-    first = period_start.month if filt.year == period_start.year else 1
-    last = period_end.month if filt.year == period_end.year else 12
-    monthly = sum((monthly_advance_share_for_period(
-        derive_advance_total([p for p in payments if p.period_month == month], filt),
-        filt.year, month, period_start, period_end, lease_start=lease_start, lease_end=lease_end,
-    ) for month in range(first, last + 1)), Decimal("0.00"))
-    yearly = derive_advance_total([p for p in payments if p.period_month is None], filt)
-    return monthly + annual_advance_share_for_period(yearly, filt.year, period_start, period_end,
+        return ()
+    credits = []
+    for month in [*range(1, 13), None]:
+        total = derive_advance_total([p for p in payments if p.period_month == month], filt)
+        if not total:
+            continue
+
+        def share(start, end):
+            args = (total, filt.year, start, end)
+            span = {"lease_start": lease_start, "lease_end": lease_end}
+            if month is None:
+                return annual_advance_share_for_period(*args, **span)
+            return monthly_advance_share_for_period(total, filt.year, month, start, end, **span)
+
+        amount = share(period_start, period_end)
+        for previous in finalized_credits:
+            disjoint = previous.period_end < period_start or previous.period_start > period_end
+            if previous.year == filt.year and previous.month == month and disjoint:
+                amount += share(previous.period_start, previous.period_end) - previous.amount
+        credits.append(AdvanceCredit(filt.year, month, period_start, period_end, max(Decimal("0.00"), amount)))
+    return tuple(credits)
+
+
+def derive_advance_total_for_period(
+    payments: list[PaymentInput], filt: AdvanceFilter, period_start: date, period_end: date,
+    *, lease_start: date | None = None, lease_end: date | None = None,
+    finalized_credits: tuple[AdvanceCredit, ...] = (),
+) -> Decimal:
+    """Credit booked advances over occupied lease months (all months for Hausgeld)."""
+    return sum((c.amount for c in derive_advance_credits_for_period(payments, filt, period_start, period_end,
+        lease_start=lease_start, lease_end=lease_end, finalized_credits=finalized_credits)), Decimal("0.00"))
+
+
+def uncredited_advance_total(
+    payments: list[PaymentInput], filt: AdvanceFilter, lease_start: date, lease_end: date | None,
+) -> Decimal:
+    """Booked advances assigned wholly outside the tenancy remain uncredited."""
+    booked = derive_advance_total(payments, filt)
+    covered = derive_advance_total_for_period(payments, filt, date(filt.year, 1, 1), date(filt.year, 12, 31),
         lease_start=lease_start, lease_end=lease_end)
+    return booked - covered

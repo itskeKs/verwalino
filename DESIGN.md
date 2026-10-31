@@ -269,6 +269,17 @@ New screens follow these page structures and use a German noun as their `h1`.
 
 ### Property settlement periods
 
+Statement summaries display non-financial notice lines across both columns,
+without a second amount. Booked NK payments wholly outside the lease show
+“Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: X €”, with German
+money formatting. Drafts and finalized statements use their persisted lines;
+the PDF carries the same notice. Long notices wrap at 360 px.
+Captures before and after entering the lease end show the same draft at
+[1280 px before](docs/assets/settlement-period/statement-notice-before-1280.png),
+[1280 px after](docs/assets/settlement-period/statement-notice-after-1280.png),
+[360 px before](docs/assets/settlement-period/statement-notice-before-360.png) and
+[360 px after](docs/assets/settlement-period/statement-notice-after-360.png).
+
 Property forms and details call the existing start-month setting "Beginn des
 Abrechnungszeitraums". The adjacent recurring bounds use `01.04. bis 31.03.`;
 concrete dates remain in labelled date controls. Statement and batch forms offer

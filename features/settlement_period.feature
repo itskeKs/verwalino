@@ -71,6 +71,24 @@ Feature: Settlement period
       | 2025-03-15 | ten monthly 100   | 1000.00 |
       | 2025-07-01 | one year-only 600 | 600.00  |
 
+  Scenario Outline: A late lease end preserves advances already partly credited
+    Given an administrator of "Verwaltung Alpha" is signed in
+    And an open tenancy with <kind> payments and a finalized first statement
+    When the manager enters the late lease end and finalizes the remaining statement
+    Then the two frozen statements credit <total> euros in total
+
+    Examples:
+      | kind      | total   |
+      | year-only | 1200.00 |
+      | monthly   | 300.00  |
+
+  @browser
+  Scenario: A shortened tenancy shows uncredited payments in its statement
+    Given an administrator of "Verwaltung Alpha" is signed in
+    And a computed draft with a July advance and an open tenancy
+    When the manager shortens the tenancy to June and recomputes its statement
+    Then the uncredited payment notice is visible on desktop and mobile
+
   Scenario Outline: Either date of an occupant change splits only that unit's water share
     Given an administrator of "Verwaltung Alpha" is signed in
     And a calendar-year property where tenant A leaves on 30 September and tenant B moves in on 1 October

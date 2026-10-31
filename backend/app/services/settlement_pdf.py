@@ -188,6 +188,9 @@ def build_settlement_html(
             f"<td class='num'>{_eur(balance.amount)}</td></tr>"
         )
 
+    for notice in (line for line in ordered if line.line_type == "SUBTOTAL"):
+        summary_rows.append(f"<tr><td colspan='6'>{_esc(notice.label)}</td></tr>")
+
     integrity = ""
     if run.snapshot_sha256:
         integrity = (

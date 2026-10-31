@@ -55,6 +55,20 @@ class SettlementRunRepository(TenantRepository[SettlementRun]):
         await self._session.flush()
         return entity
 
+    async def finalized_bk_for_advance_years(
+        self, lease_id: uuid.UUID, period_start: date, period_end: date,
+    ) -> Sequence[SettlementRun]:
+        """Other active frozen windows sharing an assigned year with this run."""
+        stmt = (self._base_query().where(
+            SettlementRun.lease_agreement_id == lease_id,
+            SettlementRun.run_type == "BK_MIETER", SettlementRun.status == "finalized",
+            SettlementRun.superseded_by_id.is_(None),
+            or_(SettlementRun.period_end < period_start, SettlementRun.period_start > period_end),
+            SettlementRun.period_end >= date(period_start.year, 1, 1),
+            SettlementRun.period_start <= date(period_end.year, 12, 31),
+        ).order_by(SettlementRun.period_start, SettlementRun.period_end, SettlementRun.created_at.desc()))
+        return (await self._session.execute(stmt)).scalars().all()
+
     async def delete(self, entity: SettlementRun) -> None:
         """Delete a draft run. Trigger blocks finalized runs."""
         await self._session.delete(entity)

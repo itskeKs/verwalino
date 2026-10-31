@@ -105,3 +105,31 @@ Without a lease span (Hausgeld), all twelve calendar months apply, and December
 retains the remainder: 1,000 euros becomes eleven shares of 83.33 and one of 83.37.
 The shared helpers live in `backend/app/engine/rounding.py`; lifecycle, payment
 type and addressee filters remain in `derive_advance_total_for_period`.
+
+The independence from other statements holds while lease dates stay fixed. If a
+lease end is entered later, each assigned year/month bucket substitutes the
+credits in already finalized snapshots for those windows' currently calculated
+shares. The current statement receives its occupied-month/day share plus that
+difference, floored at zero. Unfinalized gaps keep their own shares; the last
+open statement receives the remainder. A statement in a later calendar window
+that was finalized first also counts, so corrections and reordered finalization
+cannot apply the same difference again. Already credited amounts come
+from frozen snapshot buckets, never a recalculation of the finalized result.
+Thus a 1,200-euro year-only advance with 300 euros finalized through March still
+credits 900 euros after an end on 30 September is entered. With January–14 March
+already crediting 245.16 euros of three 100-euro payments, an end on 20 March leaves
+54.84 euros, exactly 300 euros together. Identical finalized periods count once;
+superseded statements do not count again. A changed lease end must be after all
+finalized statement ends: the API otherwise refuses it with a structured German
+HTTP 409, leaving an open remainder window even at an inclusive boundary.
+Legacy derived snapshots without per-year/month credits remain usable with fixed
+lease dates. After a date edit, a nonzero legacy credit without that evidence
+requires correction or a confirmed manual total (`advance_credit_history_missing`,
+HTTP 409 on derivation); the application
+does not invent a historical breakdown or mutate a finalized snapshot.
+
+Active booked advances assigned entirely outside the lease remain credited at
+zero (including an assigned year before the lease begins). Their total appears
+as a non-financial notice line in draft and frozen statement lines, the API and
+the PDF: “Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: X €”.
+They do not alter statement costs, credited advances or the balance.
