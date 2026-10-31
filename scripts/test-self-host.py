@@ -28,7 +28,7 @@ SECRETS = ("MIGRATOR_PASSWORD", "APP_RW_PASSWORD", "APP_WORKER_PASSWORD", "APP_R
 SMTP = {
     "HV_SMTP_HOST": "smtp.example.invalid", "HV_SMTP_PORT": "465",
     "HV_SMTP_FROM": "verwaltung@example.invalid", "HV_SMTP_SECURITY": "tls",
-    "HV_SMTP_USERNAME": "smtp-user", "HV_SMTP_PASSWORD": "synthetic $pa'ss#=word`$(touch marker)`",
+    "HV_SMTP_USERNAME": "smtp-user", "HV_SMTP_PASSWORD": "synthetic pa'ss#=word`touch marker`",
     "HV_SMTP_TIMEOUT_SECONDS": "30",
 }
 SMTP_DEFAULTS = {key: "" for key in SMTP} | {
@@ -66,7 +66,7 @@ class SelfHostTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name)
         self.root = self.base / "checkout"
-        for name in ("scripts/self-host.sh", "backend/app/selfhost_backup.py", "backend/app/deployment.py"):
+        for name in ("scripts/self-host.sh", "backend/app/selfhost_backup.py", "backend/app/deployment.py", "infra/docker-compose.yml"):
             destination = self.root / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, destination)
@@ -78,13 +78,10 @@ class SelfHostTests(unittest.TestCase):
         docker.write_text('''#!/usr/bin/env python3
 import json, os, signal, subprocess, sys
 smtp_password = os.environ.get("HV_SMTP_PASSWORD", "")
-env_file = sys.argv[sys.argv.index("--env-file") + 1] if "--env-file" in sys.argv else None
-smtp_password_in_env_file = bool(smtp_password and env_file and smtp_password in open(env_file).read())
 with open(os.environ["FAKE_DOCKER_LOG"], "a") as log:
     log.write(json.dumps({"args": sys.argv[1:], "image": os.environ.get("VERWALINO_IMAGE"), "secure": os.environ.get("VERWALINO_COOKIE_SECURE"), "hosts": os.environ.get("VERWALINO_ALLOWED_HOSTS"), "profiles": os.environ.get("COMPOSE_PROFILES"), "caller_secret_used": os.environ.get("MIGRATOR_PASSWORD") == "attacker",
                          "smtp": {key: value for key, value in os.environ.items() if key.startswith("HV_SMTP_") and key != "HV_SMTP_PASSWORD"},
-                         "smtp_password_matches": smtp_password == os.environ.get("FAKE_SMTP_PASSWORD", ""),
-                         "smtp_password_in_env_file": smtp_password_in_env_file}) + "\\n")
+                         "smtp_password_matches": smtp_password == os.environ.get("FAKE_SMTP_PASSWORD", "")}) + "\\n")
 failure = os.environ.get("FAKE_DOCKER_FAIL")
 if failure and (failure in sys.argv or (failure == "app-ready" and "up" in sys.argv and sys.argv[-1] == "app")):
     sys.exit(17)
@@ -120,8 +117,15 @@ if "logs" in sys.argv:
     secrets = " ".join(os.environ[key] for key in ("MIGRATOR_PASSWORD", "APP_RW_PASSWORD", "APP_WORKER_PASSWORD", "APP_REVIEW_PASSWORD", "SESSION_SECRET"))
     secrets += " " + os.environ.get("HV_SMTP_PASSWORD", "")
     print("2026-10-30 12:00:00,123 ERROR app.test request_id=installer-failure-123 RuntimeError: " + secrets)
-if "up" in sys.argv and sys.argv[-1] == "app":
+if ("up" in sys.argv and sys.argv[-1] == "app") or "app.diagnostics" in sys.argv:
     # Validate the app's settings parser too, without connecting to any service.
+    import yaml
+    with open(os.environ["FAKE_CHECKOUT"] + "/infra/docker-compose.yml") as compose_file:
+        environment = yaml.safe_load(compose_file)["services"]["app"]["environment"]
+    for key, value in environment.items():
+        if key.startswith("HV_SMTP_"):
+            default = value.split(":-", 1)[1][:-1]
+            os.environ[key] = os.environ.get(key) or default
     from app.core.config import Settings
     Settings(_env_file=None)
 if "app.diagnostics" in sys.argv:
@@ -1197,7 +1201,7 @@ elif name == "openssl":
             self.assertNotIn("https", call["args"])
             self.assertIsNone(call["profiles"])
             self.assertFalse(call["caller_secret_used"])
-            self.assertEqual(call["smtp"], {key: value for key, value in SMTP_DEFAULTS.items() if key != "HV_SMTP_PASSWORD"})
+            self.assertEqual(call["smtp"], {key: "" for key in SMTP if key != "HV_SMTP_PASSWORD"})
             self.assertTrue(call["smtp_password_matches"])
         self.assertIn(f"http://127.0.0.1:{TEST_PORT}", result.stdout)
         self.assert_isolated(args)
@@ -1207,10 +1211,17 @@ elif name == "openssl":
             config.writelines(f"{key}={value}\n" for key, value in values.items())
         self.env["FAKE_SMTP_PASSWORD"] = values.get("HV_SMTP_PASSWORD", "")
 
+    def test_smtp_guidance_covers_hosted_follow_up_and_invalid_stop_and_status(self):
+        section = (ROOT / "DEPLOY.md").read_text().split("### Ausgehende Mail\n", 1)[1].split("\n### ", 1)[0]
+        self.assertIn("server's `.env.selfhost`", section)
+        self.assertIn("`noreply@verwalino.de`", section)
+        self.assertIn("`stop` and `status` also refuse invalid mail settings", section)
+
     def test_smtp_accepts_optional_settings_and_passes_values_without_shell_evaluation(self):
         self.init()
         before = self.config.read_text()
         variants = [SMTP, {**SMTP, "HV_SMTP_SECURITY": "starttls", "HV_SMTP_PORT": "587"},
+                    {**SMTP, "HV_SMTP_HOST": " \tsmtp.example.invalid\t ", "HV_SMTP_FROM": " \tverwaltung@example.invalid\t "},
                     {"HV_SMTP_HOST": SMTP["HV_SMTP_HOST"], "HV_SMTP_FROM": SMTP["HV_SMTP_FROM"]},
                     {key: "" for key in SMTP},
                     {**SMTP, "HV_SMTP_USERNAME": "", "HV_SMTP_PASSWORD": ""}]
@@ -1223,7 +1234,10 @@ elif name == "openssl":
                 self.log.unlink(missing_ok=True)
                 result = self.run_script("start")
                 self.assertEqual(result.returncode, 0, result.stderr)
-                expected = SMTP_DEFAULTS | {key: value for key, value in values.items() if value}
+                self.assert_isolated([call["args"] for call in self.calls()])
+                expected = {key: "" for key in SMTP} | values
+                for key in ("HV_SMTP_HOST", "HV_SMTP_FROM"):
+                    expected[key] = expected[key].strip()
                 app = next(call for call in self.calls() if "up" in call["args"] and call["args"][-1] == "app")
                 self.assertEqual(app["smtp"], {key: value for key, value in expected.items() if key != "HV_SMTP_PASSWORD"})
                 self.assertTrue(app["smtp_password_matches"])
@@ -1261,36 +1275,57 @@ elif name == "openssl":
                 self.assertFalse(Path(str(self.config) + ".lock").exists())
                 self.assertNotIn(SMTP["HV_SMTP_PASSWORD"], result.stdout + result.stderr)
 
+    def test_smtp_rejects_whitespace_only_host_or_sender_before_calling_docker(self):
+        self.init()
+        before = self.config.read_text()
+        variants = [{key: value} for key in ("HV_SMTP_HOST", "HV_SMTP_FROM") for value in (" ", "\t", " \t ")]
+        variants += [{"HV_SMTP_HOST": " ", "HV_SMTP_FROM": "\t"},
+                     {"HV_SMTP_HOST": " ", "HV_SMTP_FROM": ""},
+                     {"HV_SMTP_HOST": "", "HV_SMTP_FROM": " "}]
+        for values in variants:
+            for command in ("start", "stop", "status"):
+                with self.subTest(values=values, command=command):
+                    self.config.write_text(before)
+                    self.smtp_config(SMTP | values)
+                    self.log.unlink(missing_ok=True)
+                    result = self.run_script(command)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertEqual(result.stderr, "HV_SMTP_HOST und HV_SMTP_FROM müssen gemeinsam gesetzt oder beide leer sein.\n")
+                    self.assertEqual(self.calls(), [])
+
     def test_smtp_uses_only_private_config_and_ignores_caller_mail_settings(self):
         self.init()
         self.env.update(SMTP)
         result = self.run_script("start")
         self.assertEqual(result.returncode, 0, result.stderr)
         app = next(call for call in self.calls() if "up" in call["args"] and call["args"][-1] == "app")
-        self.assertEqual(app["smtp"], {key: value for key, value in SMTP_DEFAULTS.items() if key != "HV_SMTP_PASSWORD"})
+        self.assertEqual(app["smtp"], {key: "" for key in SMTP if key != "HV_SMTP_PASSWORD"})
         self.assertTrue(app["smtp_password_matches"])
 
-    def test_smtp_password_is_not_reparsed_by_compose(self):
+    def test_smtp_rejects_dollars_in_every_setting_before_calling_docker(self):
         self.init()
         before = self.config.read_text()
-        for password in (SMTP["HV_SMTP_PASSWORD"], "${UNSET:?synthetic-secret}", "unmatched ${"):
-            with self.subTest(password_shape="interpolation" if "${" in password else "shell characters"):
-                self.config.write_text(before)
-                self.smtp_config(SMTP | {"HV_SMTP_PASSWORD": password})
-                self.log.unlink(missing_ok=True)
-                result = self.run_script("start")
-                self.assertEqual(result.returncode, 0, result.stderr)
-                calls = self.calls()
-                self.assertTrue(calls)
-                self.assertTrue(all(call["smtp_password_matches"] for call in calls))
-                self.assertFalse(any(call["smtp_password_in_env_file"] for call in calls))
-                self.assertNotIn(password, result.stdout + result.stderr + self.log.read_text())
+        for key in SMTP:
+            for value in ("${UNSET:?synthetic-secret}", "ab$cd #x", "unmatched ${"):
+                for command in ("start", "stop", "status"):
+                    with self.subTest(key=key, command=command):
+                        self.config.write_text(before)
+                        self.smtp_config(SMTP | {key: value})
+                        self.log.unlink(missing_ok=True)
+                        result = self.run_script(command)
+                        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                        self.assertEqual(result.stderr, f"{key} darf kein $ enthalten (Compose-Interpolation).\n")
+                        self.assertNotIn(value, result.stdout + result.stderr)
+                        self.assertEqual(self.calls(), [])
+                        self.assertFalse(Path(str(self.config) + ".lock").exists())
 
     def test_doctor_reports_only_mail_configuration_without_credentials_or_smtp_probes(self):
         self.init()
         before = self.config.read_text()
         self.doctor_tools()
         for values, expected in [({}, "Mail: aus"), (SMTP, "Mail: konfiguriert (smtp.example.invalid:465, tls)"),
+                                 (SMTP | {"HV_SMTP_HOST": " smtp.example.invalid ", "HV_SMTP_FROM": " verwaltung@example.invalid "},
+                                  "Mail: konfiguriert (smtp.example.invalid:465, tls)"),
                                  ({"HV_SMTP_HOST": SMTP["HV_SMTP_HOST"], "HV_SMTP_FROM": SMTP["HV_SMTP_FROM"]},
                                   "Mail: konfiguriert (smtp.example.invalid:587, starttls)")]:
             with self.subTest(expected=expected):
@@ -1695,7 +1730,7 @@ class StackContractTests(unittest.TestCase):
         self.assertNotIn("HV_DATABASE_URL_WORKER", env)
         self.assertNotIn("HV_OPENAI_API_KEY", env)
         self.assertEqual({key: value for key, value in env.items() if key.startswith("HV_SMTP_")},
-                         {key: "${" + key + ":-}" for key in SMTP})
+                         {key: "${" + key + ":-" + value + "}" for key, value in SMTP_DEFAULTS.items()})
         for key in ("HV_DECLARATION_IMPORT_ENABLED", "HV_DECLARATION_QA_ENABLED", "HV_INVOICE_EXTRACTION_ENABLED"):
             self.assertEqual(env[key], "false")
         self.assertEqual(env["FORWARDED_ALLOW_IPS"], "${VERWALINO_PROXY_SUBNET:?use self-host.sh}")
@@ -1705,6 +1740,21 @@ class StackContractTests(unittest.TestCase):
         self.assertEqual(app["cap_drop"], ["ALL"])
         self.assertIn("health/ready", " ".join(app["healthcheck"]["test"]))
         self.assertEqual(app["volumes"], ["documents:/data/documents"])
+
+    def test_app_defaults_parse_as_selfhost_with_mail_disabled(self):
+        from app.core.config import Settings
+        from app.services.mail_service import MailConfigurationError, validate_configuration
+
+        environment = self.stack["services"]["app"]["environment"]
+        defaults = {key.removeprefix("HV_").lower(): value.split(":-", 1)[1][:-1]
+                    for key, value in environment.items() if key.startswith("HV_SMTP_")}
+        config = Settings(_env_file=None, **defaults)
+        self.assertEqual(config.deployment_mode, "selfhost")
+        self.assertEqual((config.smtp_port, config.smtp_security, config.smtp_timeout_seconds), (587, "starttls", 15))
+        self.assertEqual(config.smtp_host, "")
+        self.assertEqual(config.smtp_from, "")
+        with self.assertRaisesRegex(MailConfigurationError, "SMTP ist nicht konfiguriert"):
+            validate_configuration(config)
 
     def test_privileged_operations_are_explicit_and_do_not_mount_documents(self):
         for service in ("migrate", "bootstrap"):

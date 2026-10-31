@@ -463,22 +463,29 @@ HV_SMTP_TIMEOUT_SECONDS=15
 ```
 
 Set `HV_SMTP_HOST` and `HV_SMTP_FROM` together, or leave both absent/empty to
-disable mail. Authentication is optional; set `HV_SMTP_USERNAME` and
+disable mail. Leading and trailing whitespace is trimmed from host and sender;
+whitespace-only values are refused. Authentication is optional; set `HV_SMTP_USERNAME` and
 `HV_SMTP_PASSWORD` together or leave both absent/empty. Only `starttls` and `tls`
 are allowed; the installer refuses `plain`. Port must be an integer from 1 to
 65535, timeout from 1 to 60 seconds. Absent/empty port, security and timeout use
-the application's defaults: 587, `starttls`, 15 seconds. Values are literal,
+the portable Compose defaults: 587, `starttls`, 15 seconds. Values are literal,
 unquoted single-line text; the installer does not evaluate shell expressions.
+No `HV_SMTP_*` value may contain `$` because Compose interpolates the env file;
+the installer refuses such values without printing them.
 Caller-exported SMTP values are ignored; edit the private file instead.
 
 Keep the file at mode 0600 or 0400 and retain the original generated secrets.
 Run `bash scripts/self-host.sh start` to apply changes; no re-init is needed.
-Invalid mail settings are refused before any service is stopped or started.
+Invalid mail settings are refused before any service is stopped or started;
+`stop` and `status` also refuse invalid mail settings until they are corrected.
 `doctor` prints `Mail: aus` or `Mail: konfiguriert (host:port, security)` for valid
 settings, without contacting SMTP or showing credentials. This reports
 configuration, not delivery. The installer does not print expanded Compose
 configuration or include the SMTP password in its fingerprint or diagnostics.
 Back up the private config separately from portable backup archives.
+
+For the hosted follow-up, place real SMTP values in the server's `.env.selfhost`
+and use `noreply@verwalino.de` as the sender.
 
 Configure SPF, DKIM and DMARC for the sender domain with your mail provider;
 SMTP acceptance does not prove delivery. See [document SMTP](#optional-document-smtp-t47-no-deployment-authorization)
