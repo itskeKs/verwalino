@@ -303,7 +303,7 @@ let browser;
       .getByText('Bereichsbezogene Finanzaktionen nach bestehenden Rechten aktiv', { exact: true }).waitFor();
   }
   // Reproduce the real formerly-409 context, not a mocked financial response.
-  await page.goto(base + '/berechtigungen');
+  await page.goto(base + '/berechtigungen/teamrechte');
   await scopeControlReady();
   await field(page.getByRole('group', { name: 'Objekt', exact: true }), 'Objekte durchsuchen').fill(propertyName);
   await selectLabel(page, 'Objekt', propertyName);

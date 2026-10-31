@@ -337,7 +337,7 @@ function receiptPdf() {
   }
   await persistedOwnership();
 
-  await page.goto(base + '/berechtigungen');
+  await page.goto(base + '/berechtigungen/teamrechte');
   await selectProperty('Objekt');
   await field(page, 'Bezeichnung').fill(scopeName);
   await field(page, 'Verwaltungsart').selectOption({ label: 'WEG' });

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/useAuth";
 import { usePagedList } from "../hooks/usePagedList";
@@ -14,7 +14,7 @@ function ReviewReceipt({ receipt }: { receipt: Receipt }) {
     <h2>Quellenfreigabe dokumentiert</h2>
     <p>Freigegeben am {new Date(receipt.created_at).toLocaleString("de-DE")} · Revision {receipt.draft_revision}</p>
     <p className="whitespace-pre-wrap break-words">{receipt.reason}</p>
-    <p><Link to={`/objekte/${receipt.property_id}`}>Zielobjekt anzeigen</Link> · <Link to={`/quellenfreigaben/${receipt.id}`}>Freigabenachweis öffnen</Link></p>
+    <p><Link to={`/objekte/${receipt.property_id}`}>Zielobjekt anzeigen</Link> · <Link to={`/berechtigungen/pruefungen/quellen/${receipt.id}`}>Freigabenachweis öffnen</Link></p>
     <details><summary>Original identifizieren</summary><p className="break-all">SHA-256: {receipt.content_sha256}</p><p className="break-all">Dokument: {receipt.document_id}</p></details>
   </section>;
 }
@@ -56,11 +56,16 @@ function ReviewForm({ source }: { source: PendingSource }) {
 }
 
 function PendingReviews() {
+  const { session } = useAuth();
+  const { pathname } = useLocation();
   const page = usePagedList<PendingSource>(endpoint + "/pending/page");
   const [generation, setGeneration] = useState(0);
   function refresh() { setGeneration(value => value + 1); page.reload(); }
   return <>
     <p>Hier erscheinen eigene Originale, die Sie mit Ihren aktuellen Rechten für das Zielobjekt prüfen und freigeben können.</p>
+    {session?.role === "OWNER_ADMIN" && pathname !== "/berechtigungen/pruefungen" &&
+      <p><Link className="link" to="/berechtigungen/pruefungen">Offene Prüfungen</Link></p>}
+    {!page.error && !page.loading && <p>Quellenfreigaben: {page.items.length.toLocaleString("de-DE")} geladen{page.nextCursor ? " · weitere verfügbar" : ""}</p>}
     <ListSearch label="Originale suchen" onSearch={page.setQuery} />
     <button className="btn mb-4" disabled={page.loading} onClick={refresh}>Liste neu laden</button>
     {page.error && <p role="alert" className="error-text">{page.error}</p>}
@@ -87,9 +92,9 @@ export function SourceAdmissionReviewsPage() {
   const { reviewId } = useParams();
   const { session } = useAuth();
   const canWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
-  return <div className="paged-list source-admission-review min-w-0"><h1>Quellenfreigaben</h1>
-    <p>Die Freigabe dokumentiert Ihre heutige Entscheidung für den vorbereiteten Datenbereich. Die gemeinsame Zugriffskontrolle ist noch nicht aktiviert; bestehender Zugriff wird dadurch noch nicht eingeschränkt.</p>
-    {reviewId ? <><Link to="/quellenfreigaben">Zur Liste der Quellenfreigaben</Link><ReceiptDetail key={reviewId} reviewId={reviewId} /></> :
+  return <div className="paged-list source-admission-review min-w-0"><h2>Quellenfreigaben</h2>
+    <p>Die Freigabe dokumentiert Ihre heutige Entscheidung für den Datenbereich des Zielobjekts. Bei aktivem Quellschutz benötigen Mitarbeitende zusätzlich ihre aktuellen Gebäudedaten-Rechte.</p>
+    {reviewId ? <><Link className="link" to="/berechtigungen/pruefungen/quellen">Zur Liste der Quellenfreigaben</Link><ReceiptDetail key={reviewId} reviewId={reviewId} /></> :
       canWrite ? <PendingReviews /> : <p>Quellenfreigaben erfordern Schreibrechte.</p>}
   </div>;
 }

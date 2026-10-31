@@ -40,7 +40,7 @@ export function ScopeControl() {
   return <section className="card" aria-label="Bereichsbezogene Finanzaktionen">
     <h2>Bereichsbezogene Finanzaktionen</h2>
     <p>Die Pause stoppt Änderungen und Rechnungsjobs für bereits zugeordnete Finanzbereiche in dieser Organisation. Lesen und Exportieren bleiben mit den vorhandenen Rechten möglich.</p>
-    <p>Unzugeordnete Altbestände laufen im bisherigen Betrieb weiter. Dies ist keine vollständige Buchungssperre. Die vollständige Zugriffsbeschränkung für den Teambetrieb ist weiterhin nicht aktiviert.</p>
+    <p>Diese zusätzliche Pause gilt für bereits zugeordnete Finanzbereiche. Den objektbezogenen Quellschutz und die übergreifende Pause steuern Sie unter Bestand prüfen.</p>
     {loading && <p role="status">Status wird geladen…</p>}
     {state && <>
       <p role="status"><strong>{state.mode === "paused" ? "Bereichsbezogene Finanzaktionen pausiert" : "Bereichsbezogene Finanzaktionen nach bestehenden Rechten aktiv"}</strong></p>
