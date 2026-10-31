@@ -123,7 +123,7 @@ class RequestBodyLimitMiddleware:
         parts = scope.get("path", "").rstrip("/").strip("/").split("/")
         if len(parts) == 4 and parts[:3] == ['api', 'properties', 'import'] and parts[3] in {'preview', 'apply'}:
             return True
-        if parts == ["api", "attachments"]:
+        if parts in (["api", "attachments"], ["api", "organizations", "import"]):
             return True
         if parts == ["api", "invoice-documents", "upload"]:
             return True

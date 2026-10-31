@@ -267,7 +267,7 @@ def _chain_0131_projection(head):
     return projected
 
 
-async def test_revision_chain_0146_0131_0146_preserves_full_state_and_issued_pdf(rent_world):
+async def test_revision_chain_0148_0131_0148_preserves_full_state_and_issued_pdf(rent_world):
     """Rollback-only whole-chain rehearsal, not a production downgrade strategy."""
     import os
     from pathlib import Path
@@ -328,9 +328,9 @@ async def test_revision_chain_0146_0131_0146_preserves_full_state_and_issued_pdf
     config = Config()
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ['0146']
-    assert [r.revision for r in scripts.iterate_revisions('0146', '0131')] == [
-        f'{number:04}' for number in range(146, 131, -1)
+    assert scripts.get_heads() == ['0148']
+    assert [r.revision for r in scripts.iterate_revisions('0148', '0131')] == [
+        f'{number:04}' for number in range(148, 131, -1)
     ]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -387,7 +387,7 @@ async def test_revision_chain_0146_0131_0146_preserves_full_state_and_issued_pdf
                         historical.rollback()
                     return projected
 
-                assert version() == ('0146',)
+                assert version() == ('0148',)
                 retained = _chain_snapshot(connection)
                 with pytest.raises(DBAPIError) as refusal:
                     with connection.begin_nested():
@@ -454,7 +454,7 @@ async def test_revision_chain_0146_0131_0146_preserves_full_state_and_issued_pdf
                 down = _chain_snapshot(connection)
                 down['data'].pop('alembic_version')
                 assert down == old
-                migrate('0146', downgrade=False)
+                migrate('0148', downgrade=False)
                 connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
                 assert _chain_snapshot(connection) == head
             finally:

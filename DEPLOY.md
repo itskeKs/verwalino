@@ -195,6 +195,18 @@ it is safe and adds no identical reconciliation entries. Run it again after an
 operator restores files or investigates originals left by an interrupted write.
 New uploads need no recount; their owning document rows supply the size directly.
 
+Product-level organization exports use a separate private artifact directory and
+expire after 24 hours. They are not the paired disaster-recovery backup below.
+Run `python -m app.organization_export cleanup` regularly in the configured app
+environment to remove expired bytes even during periods without export requests.
+No database or original is changed by that command. Hosted operators must keep
+archive storage private and include transient archives in their deletion and
+backup-expiry procedures. Organization import and the seven-day deletion workflow
+are available. Operators execute due erasure explicitly with
+`python -m app.organization_deletion organization-deletion-run`; no deletion worker is started by Compose.
+See [organization export](docs/operations/organization-export.md) for the API,
+visibility limits, operator procedure and unresolved fresh-install acceptance.
+
 Revision **0146** adds the guarded aggregate function because ordinary source RLS
 can hide rows and undercount usage, plus nullable, nonnegative `letter_document.size_bytes`
 for new letters (the only original table without size metadata). Prepared mail
@@ -1482,11 +1494,11 @@ remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/s
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
 
-## Migration compatibility: 0029–0146
+## Migration compatibility: 0029–0148
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0146 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0148 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1500,14 +1512,16 @@ run `docker compose down -v` or delete the volumes.
 | 0143 (accepted source) | Allows a nullable template reference for built-in lease contracts and handover originals. Existing rows, composite template foreign keys, RLS and immutable PDF snapshots remain intact. Downgrade refuses while an original has no template; it never deletes originals or creates substitute templates. |
 | 0144 (accepted source) | Adds private pending signup requests and token-bound SECURITY DEFINER functions; runtime roles have no direct request-table access. Successful confirmation atomically creates a separate tenant and deletes its request. Retained requests block downgrade. |
 | 0145 (accepted source) | Adds global password reset requests with 32-byte token digests, context-free definer issuance/confirmation and bounded cleanup; runtime table access is revoked. The T57 trigger path revokes sessions and consumes links on password changes/deactivation. Tokens expire after one hour; successful reset marks all outstanding links for that user used. Login, issuance and confirmation share the active-user/live-membership lookup. Because that lookup now filters inactive users and unsupported roles itself, an address that is active in one organization and deactivated or memberless in another is no longer ambiguous: login and reset both resolve to the active account. A populated downgrade refuses to discard retained reset state; an empty downgrade exactly removes the new table, index, trigger and functions and restores the previous login lookup verbatim. |
-| 0146 | Adds member-checked organization usage and reference-count functions for deduplicated document bytes (including visual extracts), complete property/unit counts and monthly USD usage. Adds nullable, nonnegative letter size metadata; old originals remain unchanged and `quota-recount` records legacy sizes in the existing audit log. Downgrade removes the functions and reconstructible size column, preserving originals and events. Older runtimes do not enforce hosted quotas. |
+| 0146 (accepted source) | Adds member-checked organization usage and reference-count functions for deduplicated document bytes (including visual extracts), complete property/unit counts and monthly USD usage. Adds nullable, nonnegative letter size metadata; old originals remain unchanged and `quota-recount` records legacy sizes in the existing audit log. Downgrade removes the functions and reconstructible size column, preserving originals and events. Older runtimes do not enforce hosted quotas. |
+| 0147 (accepted source) | Adds organization erasure state, import admission metadata and lifecycle guards. Populated downgrade refuses. |
+| 0148 | Reconciles expired personal retention in the aggregate preview; immutable vouchers/originals stay unchanged. Populated downgrade refuses to discard the reconciled decision semantics. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0146 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0146, 0139→0146 and accepted-source 0140→0146, 0141→0146 and
-0142→0146, 0143→0146, 0144→0146 and 0145→0146 (accepted source) rehearsals also
+0028→0148 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0148, 0139→0148 and accepted-source 0140→0148, 0141→0148 and
+0142→0148, 0143→0148, 0144→0148, 0145→0148, 0146→0148 and 0147→0148 (accepted sources) rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT revocation;
 it does not prove live data validity or cross-version runtime compatibility.
 
@@ -1529,10 +1543,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0146**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0148**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0146**,
-**0122 → 0146**, **0139 → 0146**, **0140 → 0146**, **0141 → 0146**, **0142 → 0146**, **0143 → 0146**, **0144 → 0146**, **0145 → 0146** (accepted source), or **0146 → 0146**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0148**,
+**0122 → 0148**, **0139 → 0148**, **0140 → 0148**, **0141 → 0148**, **0142 → 0148**, **0143 → 0148**, **0144 → 0148**, **0145 → 0148**, **0146 → 0148**, **0147 → 0148** (accepted sources), or **0148 → 0148**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 
@@ -2098,3 +2112,48 @@ read-only runtime check also validates the review connection. This separation pr
 against arbitrary ordinary-runtime SQL; it does not protect against compromise of
 the API process or its dedicated review credential. Keep that credential server-side
 and rotate it independently. Source activation remains disabled by this release.
+
+
+## Organization erasure and retained-record access
+
+The product flow is documented in
+[organization export/import](docs/operations/organization-export.md#organization-erasure).
+Migration **0147** stores the request, seven-day deadline, status and retention
+list. Runtime database triggers also enforce read-only cooling-off for background
+writers; the operator connection is the deliberate maintenance boundary.
+
+Run due deletions from the matching release using the operator-owned migrator
+credential store/environment and the same private document root as the instance:
+
+```sh
+python -m app.organization_deletion organization-deletion-run
+```
+
+This is an operator command, never a web route or a runtime-role privilege. It
+processes due organizations one transaction at a time, verifies retained content,
+records retained keys/bases/deadlines/hashes, deactivates every account and cleans
+unretained files/exports after commit. Re-running also retries file cleanup for
+completed organizations. A filesystem failure after commit requires that retry;
+accounts remain blocked. Do not run it against a different document root.
+One organization's failure is logged and does not stop later organizations. A
+failed database transaction leaves that organization due in `cooling_off`; run
+the same command again after resolving the cause. Until erasure actually commits,
+its owner-admin can also cancel through the existing product action, including
+after the seven-day deadline. The deadline is the earliest execution time.
+
+After deletion the former owner has **no** login or read-only access. Retained
+records are available only through operator maintenance with the migrator
+connection. For an authorized retention request, use a read-only transaction,
+first inspect the exact organization's `organization_deletion.retention`, then
+select only the recorded keys from the named entity tables. The list also records
+original storage URIs through the retained document metadata. Read those originals
+through the configured storage backend and check their recorded SHA-256. Keep the
+retrieval private and record the operator access in the operator's access log.
+Never reactivate a former account or expose a retained-data HTTP route. Never
+remove rows/files merely because a deadline has passed: ADR-0012 requires a
+separate deliberate expiry/purge decision, and existing immutability guards remain.
+
+The application does not choose an operator identity or invent an automatic purge
+policy. Hosted operators must identify themselves in their privacy information,
+protect retained records and backup copies, honor the published erasure/retention
+process, and schedule the command using their existing operations mechanism.

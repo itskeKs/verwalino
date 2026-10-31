@@ -36,6 +36,7 @@ PRIVATE_POLICIES = {
 }
 
 TENANT_TABLES = frozenset({
+    "organization_deletion",
     "source_partition_revision", "source_partition_member", "assignment_proposal",
     "exception_case", "exception_dependency", "exception_case_event", "invoice_review_revision",
     "mapping_version", "context_decision", "duplicate_comparison", "duplicate_exception_dependency",

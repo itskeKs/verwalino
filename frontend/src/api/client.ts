@@ -7,16 +7,21 @@
 export class ApiError extends Error {
   status: number;
   code?: string;
+  technicalDetails?: string;
 
-  constructor(status: number, message: string, code?: string) {
+  constructor(status: number, message: string, code?: string, technicalDetails?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.technicalDetails = technicalDetails;
   }
 }
 
-const quotaCodes = new Set(["QUOTA_STORAGE_EXCEEDED", "QUOTA_PROPERTIES_EXCEEDED", "QUOTA_UNITS_EXCEEDED", "UPLOAD_TOO_LARGE", "ORGANIZATION_AI_BUDGET_EXCEEDED"]);
+function importDetails(detail: { missing_dependencies?: { entity: string; source_ids: string[]; count: number }[]; entity?: string; source_ids?: string[]; count?: number }): string | undefined {
+  const items = Array.isArray(detail.missing_dependencies) ? detail.missing_dependencies : detail.entity ? [detail] : [];
+  return items.map(item => `Entität: ${item.entity}\nDatensätze: ${item.count ?? "–"}\nQuellkennungen: ${item.source_ids?.join(", ") ?? "–"}`).join("\n\n") || undefined;
+}
 
 function financialInputMessage(detail: { blockers?: { code: string }[] }): string {
   const codes = detail.blockers?.map((blocker) => blocker.code) ?? [];
@@ -59,22 +64,24 @@ async function request<T>(
   if (!res.ok) {
     let detail = res.statusText;
     let code: string | undefined;
+    let technicalDetails: string | undefined;
     try {
       const body = await res.json();
       if (body.detail) {
+        if (typeof body.detail.code === "string") code = body.detail.code;
         if (typeof body.detail === "string") detail = body.detail;
-        else if (quotaCodes.has(body.detail.code) && typeof body.detail.message === "string") {
-          code = body.detail.code;
+        else if (typeof body.detail.message === "string") {
           detail = body.detail.message;
+          technicalDetails = importDetails(body.detail);
         } else if (body.detail.code === "financial_inputs_incomplete") {
           detail = financialInputMessage(body.detail);
-        } else if (typeof body.detail.message === "string") detail = body.detail.message;
+        }
         else detail = "Eingaben unvollständig oder ungültig. Bitte die angegebenen Felder prüfen.";
       }
     } catch {
       // ignore JSON parse errors on error responses
     }
-    throw new ApiError(res.status, withRequestId(res, detail), code);
+    throw new ApiError(res.status, withRequestId(res, detail), code, technicalDetails);
   }
 
   if (url === "/api/auth/login" || url === "/api/auth/logout") lastErrorRequestId = null;
@@ -134,13 +141,15 @@ export async function uploadFormData<T>(
   if (!res.ok) {
     let detail = res.statusText;
     let code: string | undefined;
+    let technicalDetails: string | undefined;
     try {
       const body = await res.json();
       if (body.detail) {
+        if (typeof body.detail.code === "string") code = body.detail.code;
         if (typeof body.detail === "string") detail = body.detail;
-        else if (quotaCodes.has(body.detail.code) && typeof body.detail.message === "string") {
-          code = body.detail.code;
+        else if (typeof body.detail.message === "string") {
           detail = body.detail.message;
+          technicalDetails = importDetails(body.detail);
         } else if (body.detail.code === "financial_inputs_incomplete") {
           detail = financialInputMessage(body.detail);
         } else detail = "Eingaben unvollständig oder ungültig. Bitte die angegebenen Felder prüfen.";
@@ -148,7 +157,7 @@ export async function uploadFormData<T>(
     } catch {
       // ignore
     }
-    throw new ApiError(res.status, withRequestId(res, detail), code);
+    throw new ApiError(res.status, withRequestId(res, detail), code, technicalDetails);
   }
 
   return res.json() as Promise<T>;
