@@ -91,8 +91,8 @@ E   Step: Then the property is reported as not found  (features/organization_iso
 ```
 
 Fix the behaviour or, if the behaviour was changed on purpose, change the sentence in
-the feature file in the same commit. Automatic failure issues are planned in #15;
-the nightly report supplies structured error types for that consumer.
+the feature file in the same commit. Nightly failures become deduplicated issues as
+described below.
 
 ## Scenario reports and nightly runs
 
@@ -122,13 +122,61 @@ omit it. Times are UTC ISO 8601; durations are seconds. Outcomes are `passed`,
 outline names and steps contain the rendered example values. Tags and artifact
 paths are sorted. Each scenario occupies one Markdown table row in `summary.md`.
 `error` is null or `{type, message}`; scenario errors also record setup/teardown
-failures and skip reasons. Step errors provide the stable error kind for #15's
+failures and skip reasons. Step errors provide the stable error kind for the
 `feature::scenario::step::error kind` fingerprint. Unexecuted steps are skipped.
 Artifacts use paths **relative to the report directory**, so a downloaded artifact
 remains portable. Failing API scenarios include `last-response.json` with the last
 remembered response body (no request bodies, headers or cookies). Browser failures
 also include a screenshot, `trace.zip` and available local backend/Vite logs.
 Traces are discarded on success. There is no synthetic Vite log for a built self-host image.
+
+### Failure issues
+
+After uploading the report, the nightly workflow runs
+[`scripts/scenario_issues.py`](../scripts/scenario_issues.py). It groups failed steps by
+`feature::scenario::step::error kind`, hashes that string with SHA-256 to a stable
+16-character token, and stores both the readable fingerprint and the exact
+`<!-- scenario-fingerprint: <token> -->` marker in the issue body. The error kind is
+the structured exception class; if absent, it is the first error line with ids,
+numbers, paths, timestamps and request ids normalized. Setup/teardown failures use
+the scenario error and a `setup/teardown` step. Browser/API variants with the same
+fingerprint share one lookup and one issue per run; artifact names are combined.
+
+The reporter searches both open and closed issues with label `scenario` and the
+token in the body, then checks the complete marker line for an exact match. A new
+fingerprint creates an issue from the [failure template](../.github/ISSUE_TEMPLATE/scenario-failure.md),
+including the first run, errors, artifact names and a scenario-specific
+`make test-scenarios-report` command (an outline selects all examples of its source
+template). The labels are `scenario` plus feature-level `@area:<name>` tags, if
+present; missing required labels are created, and no milestone is assigned. An open issue receives
+one comment with the run URL, date and mode; the step error is included only
+when it changed since the previous report. A closed issue is reopened, labelled
+`regression`, and receives the run comment. Passing and skipped scenarios do
+nothing; issues are never automatically closed. Lookups finish before the write
+batch, and searches and writes are sequential with at least two seconds between requests.
+Error text in issue bodies and comments retains at most 20,000 original characters,
+split between the head and tail with a marker counting omitted characters and pointing to the full run artifact.
+Each run creates at most 10 new failure issues plus one summary issue listing any
+remaining scenario names and fingerprints; comments and reopenings are not capped.
+
+To silence a known flaky scenario, add `@known-flaky` above its `Scenario:` (or
+above `Feature:` to silence the whole feature). It still runs and appears in the
+report, but its failures are excluded from issue filing. Remove the tag after
+fixing the flakiness. Manual `workflow_dispatch` runs file nothing unless the
+boolean input **`file_issues`** is enabled. The job has `issues: write`, uses
+`GITHUB_TOKEN` through `gh api`, and serializes runs to avoid concurrent filing.
+If scenario execution produces no JSON report, it logs that fact and files nothing.
+
+Preview the plan with read-only GitHub access:
+
+```sh
+python3 scripts/scenario_issues.py --report report/scenarios.json \
+  --repo itskeKs/verwalino --run-url https://github.com/itskeKs/verwalino/actions/runs/123 \
+  --mode selfhost --dry-run
+make test-scenario-issues  # stdlib tests with fake GitHub, no network or database
+```
+
+The first real filing is unverified until the first nightly run with a failure.
 
 ### External disposable targets
 
