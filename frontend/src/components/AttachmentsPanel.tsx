@@ -1,4 +1,4 @@
-import { MAX_UPLOAD_BYTES } from "../lib/uploads";
+import { useUploadLimit } from "../lib/uploads";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { archiveAttachment, attachmentDownloadUrl, listAttachments, listProperties, uploadAttachment } from "../api/endpoints";
 import { ApiError } from "../api/client";
@@ -32,6 +32,7 @@ export function AttachmentsPanel(props: Props) {
 }
 
 function AttachmentContext({ propertyId, unitId, personId, canWrite }: Props) {
+  const maxUploadBytes = useUploadLimit();
   const headingId = useId();
   const alive = useRef(false);
   const listVersion = useRef(0);
@@ -114,7 +115,7 @@ function AttachmentContext({ propertyId, unitId, personId, canWrite }: Props) {
       setUploadError("Bitte ein Objekt auswählen."); return;
     }
     if (!file || file.size === 0) { setUploadError("Bitte eine nicht leere Dokumentdatei auswählen."); return; }
-    if (file.size > MAX_UPLOAD_BYTES) { setUploadError("Die Dokumentdatei darf höchstens 25 MiB groß sein."); return; }
+    if (file.size > maxUploadBytes) { setUploadError("Die Dokumentdatei darf höchstens 25 MiB groß sein."); return; }
     if (title.length > 255 || title.includes("\0")) { setUploadError("Der Dokumenttitel darf höchstens 255 Zeichen und kein Nullzeichen enthalten."); return; }
     mutationLock.current = true;
     setPending(true);

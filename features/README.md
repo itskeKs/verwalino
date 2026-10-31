@@ -73,10 +73,11 @@ token; confirmation then uses that emailed token. Missing configuration or an un
 API fails the scenario with setup instructions, never skips it. The helper is reusable
 for other mail acceptance scenarios; FakeSMTP remains for mail-service unit tests.
 `password_reset.feature` is untagged and verifies recovery through Mailpit, the emailed reset token, confirmation mail and old-session revocation in both modes.
-Organization isolation and quota-summary scenarios run in both modes. `organization_quotas.feature` is
-hosted-only: it scales the storage allowance to a small deterministic payload,
-signs up its own organization after another has filled its property allowance,
-fills storage through the real upload API, and verifies the German refusal. Files and
+Organization isolation scenarios run in both modes. `organization_quotas.feature` is
+hosted-only: it signs up separate organizations for the exhausted property allowance,
+the scaled storage boundary and quota-usage isolation. A fixture checks shared Alpha/Beta
+usage before and after each quota scenario, including failures, and closes its own clients.
+It fills storage through the real upload API and verifies the German refusal. Files and
 database records use the ordinary services; signup mail uses local Mailpit.
 No external network or model call is involved.
 Browser app processes inherit the

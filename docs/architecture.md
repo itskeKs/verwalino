@@ -94,8 +94,9 @@ The error-tracking environment setting and doctor are absent at this revision.
 organization limit or an isolation bypass: the same RLS, scoped API queries and
 [route sweep](#74a-route-sweep-backendteststest_route_isolation_sweeppy) apply in both modes.
 
-Unauthenticated `GET /api/meta` returns only `deployment_mode` and the FastAPI
-application `version`, with `Cache-Control: no-store`. It reads no tenant data or
+Unauthenticated `GET /api/meta` returns `deployment_mode`, the FastAPI application
+`version`, `mail_available` and the integer `max_upload_bytes` from
+`core/document_limits.py:MAX_UPLOAD_BYTES`, with `Cache-Control: no-store`. It reads no tenant data or
 secrets, so the route sweep explicitly exempts it. The frontend's
 `useDeploymentMode()` reads it for login and signup (reusing the request during
 StrictMode replay), after the initial setup check. Setup depends only on
@@ -117,8 +118,10 @@ One shared plan applies to all hosted organizations; individual overrides and
 paid plans are deferred. `core/document_limits.py:MAX_UPLOAD_BYTES` supplies
 the shared file safety cap to plans, upload readers, declaration defaults, intake
 inspection and visual input/output bounds. Existing upload/body safety caps remain
-in both modes. The frontend shares one matching safety constant because public
-`/api/meta` exposes no file cap and selfhost quota metadata reports unlimited.
+in both modes. Declaration, intake and attachment file checks read the safety cap
+from public `/api/meta` through `useUploadLimit()`, in both modes, with a 25 MiB
+fallback while metadata is loading, unavailable or lacks a valid positive integer
+cap. This cap is independent of selfhost's unlimited quota metadata.
 
 Services enforce quotas before writes. `put_document` guards attachments,
 invoices and versions, mandate originals, declaration sources, intake uploads,

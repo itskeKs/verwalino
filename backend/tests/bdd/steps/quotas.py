@@ -1,40 +1,79 @@
-"""Fill a representative scaled allowance through the document API."""
+"""Exercise quota boundaries in tenants provisioned by the scenarios themselves."""
 from dataclasses import replace
 from uuid import uuid4
+
+import httpx
+import pytest
 from pytest_bdd import given, when, then
+
+from tests.bdd.world import target_url
+from tests.conftest import _api_test_client
 from tests.bdd.steps.records import create_property
 
 
-@given("another hosted organization has filled its property allowance")
-def filled_other_properties(world):
-    from app.core.quotas import FREE_PLAN
-    client = world.administrator_of("Verwaltung Alpha")
-    count = world.send(client, "GET", "/api/organizations/quota").json()["usage"]["properties"]
-    for number in range(count, FREE_PLAN.properties):
-        create_property(world, "Verwaltung Alpha", f"Vorheriges Objekt {number + 1}")
-
-
-@given("a hosted organization has filled its storage allowance")
-def filled_storage(world, mailpit, monkeypatch, tmp_path):
-    from app.core import quotas, storage
+@pytest.fixture
+def quota_organizations(world, mailpit, monkeypatch):
     from app.core.config import settings
     from tests.bdd.steps.signup import emailed_token
     from tests.signup_support import BODY
+
+    shared = {name: world.administrator_of(name) for name in ("Verwaltung Alpha", "Verwaltung Beta")}
+
+    def shared_usage():
+        usage = {}
+        for name, client in shared.items():
+            response = world.look(client, "/api/organizations/quota")
+            assert response.status_code == 200, response.text
+            usage[name] = response.json()["usage"]
+        return usage
+
+    before = shared_usage()
+    clients = []
+    monkeypatch.setattr(settings, "public_host", "signup.example.test")
+    world.data["mailpit"] = mailpit
+
+    def sign_up(organization):
+        client = httpx.AsyncClient(base_url=target_url(), timeout=60) if target_url() else _api_test_client()
+        clients.append(client)
+        body = BODY | {"email": f"quota-{uuid4().hex}@example.test", "organization_name": organization}
+        assert world.send(client, "POST", "/api/signup", json=body).status_code == 202, world.describe_response()
+        token = emailed_token(world, body["email"])
+        answer = world.send(client, "POST", "/api/signup/confirm", json={"token": token, "password": body["password"]})
+        assert answer.status_code == 201, world.describe_response()
+        world.organizations[organization] = client
+        return organization
+
+    try:
+        yield sign_up
+    finally:
+        # No shared records need restoring, even if setup or an assertion fails.
+        try:
+            after = shared_usage()
+            assert after == before, f"Quota scenario changed shared usage: {before} -> {after}"
+            print(f"Shared quota usage before/after: {before} -> {after}")
+        finally:
+            for client in clients:
+                world.run(client.aclose())
+
+
+@given("another hosted organization has filled its property allowance")
+def filled_other_properties(world, quota_organizations):
+    from app.core.quotas import FREE_PLAN
+    organization = quota_organizations("Erschöpfte Kontingentverwaltung")
+    for number in range(FREE_PLAN.properties):
+        create_property(world, organization, f"Vorheriges Objekt {number + 1}")
+    response = world.look(world.administrator_of(organization), "/api/organizations/quota")
+    assert response.json()["usage"]["properties"] == FREE_PLAN.properties
+
+
+@given("a hosted organization has filled its storage allowance")
+def filled_storage(world, quota_organizations, monkeypatch, tmp_path):
+    from app.core import quotas, storage
     # Scale the allowance, preserving real writes and the exact-limit boundary.
     monkeypatch.setattr(quotas, "FREE_PLAN", replace(quotas.FREE_PLAN, storage_bytes=8))
     monkeypatch.setattr(storage, "_store", storage.LocalFsDocumentStore(tmp_path))
-    # Provision an independent tenant through the same hosted signup API as
-    # the signup scenarios; earlier scenarios may have exhausted Alpha's plan.
-    organization = "Kontingentverwaltung"
-    body = BODY | {"email": f"quota-{uuid4().hex}@example.test", "organization_name": organization}
-    monkeypatch.setattr(settings, "public_host", "signup.example.test")
-    world.data["mailpit"] = mailpit
-    assert world.send(world.anonymous, "POST", "/api/signup", json=body).status_code == 202
-    token = emailed_token(world, body["email"])
-    answer = world.send(world.anonymous, "POST", "/api/signup/confirm", json={"token": token, "password": body["password"]})
-    assert answer.status_code == 201, world.describe_response()
-    world.actor = world.anonymous
-    world.organizations[organization] = world.actor
+    organization = quota_organizations("Kontingentverwaltung")
+    world.actor = world.administrator_of(organization)
     prop = create_property(world, organization, "Kontingentobjekt")
     world.data["quota_property"] = prop.id
     response = world.act("POST", "/api/attachments", data={"property_id": prop.id},
@@ -56,11 +95,21 @@ def refused_document(world):
 
 @when("the administrator adds a property and reads the organization quota")
 def change_only_own_usage(world):
-    clients = [world.administrator_of(name) for name in ("Verwaltung Alpha", "Verwaltung Beta")]
+    organizations = world.data["quota_organizations"]
+    clients = [world.administrator_of(name) for name in organizations]
     before = [world.send(client, "GET", "/api/organizations/quota").json()["usage"]["properties"] for client in clients]
-    create_property(world, "Verwaltung Alpha", "Zusätzliches Kontingentobjekt")
+    create_property(world, organizations[0], "Zusätzliches Kontingentobjekt")
     after = [world.send(client, "GET", "/api/organizations/quota").json()["usage"]["properties"] for client in clients]
     world.data["quota_property_counts"] = before, after
+
+
+@given("two newly signed-up hosted organizations")
+def independent_quota_organizations(world, quota_organizations):
+    world.data["quota_organizations"] = [quota_organizations(name) for name in (
+        "Eigene Kontingentverwaltung", "Andere Kontingentverwaltung",
+    )]
+    world.actor_organization = world.data["quota_organizations"][0]
+    world.actor = world.administrator_of(world.actor_organization)
 
 
 @then("only that organization's property usage has increased")

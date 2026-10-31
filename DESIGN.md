@@ -130,7 +130,8 @@ API client reads the code for JSON and multipart refusals, exposes it on `ApiErr
 and preserves the German message in existing error surfaces.
 Attachment upload errors with status 413 display the backend's German explanation,
 including “Speicherkontingent erschöpft …”, while preserving the file and title.
-The local 25 MiB file check remains in place.
+Declaration, intake and attachment file checks read the public metadata file cap,
+with 25 MiB as the fallback while metadata is loading or unavailable.
 
 ### App shell
 
