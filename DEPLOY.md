@@ -12,8 +12,9 @@ satisfy the narrow exceptions in `AGENTS.md` and the installed guard. Current
 checks use simulated Docker and static contracts; no real-container or complete
 installation test is claimed.
 
-Prerequisites: Linux or macOS with Bash (including macOS Bash 3.2), OpenSSL,
-Docker Engine/Desktop and Compose v2 >= 2.24. From a reviewed checkout:
+Prerequisites: Linux or macOS with Bash (including macOS Bash 3.2), OpenSSL, Docker Engine >= 24
+(or Docker Desktop with that engine) and Compose >= 2.24 (including later major releases).
+From a reviewed checkout:
 
 ```bash
 bash scripts/self-host.sh init
@@ -125,6 +126,56 @@ bash scripts/self-host.sh stop
 There is deliberately no destroy or automatic update command. An older image
 is not a schema rollback. This feature does not authorize an alpha deployment
 or promote its schema gate.
+
+### Portable troubleshooting: start with doctor
+
+Run `bash scripts/self-host.sh doctor` first when installation or startup fails.
+It attempts every independent check, prints one German finding and a concrete
+next step per check, and ends with counts of `OK`, `WARN` and `FEHLER`.
+Exit **1** means at least one blocker (`FEHLER`); exit **0** means no blocker
+was detected, including runs with warnings. An unavailable dependent check is
+reported explicitly; a warning is not proof that the installation works.
+
+| Check | `FEHLER` (blocker) | `WARN` / next step |
+| --- | --- | --- |
+| Docker and Compose | Docker missing, daemon unreachable, engine below 24 or version unknown, Compose below 2.24 or version unknown | Install/update Docker and the Compose plugin; versions 2.24 and later, including 5.x, are supported. Check daemon access and Docker context |
+| Private configuration | Missing, symlink, unsafe filename, mode other than 0600/0400, incomplete or invalid keys/settings/secrets | Restore the original `.env.selfhost`; `chmod 600` it. Existing database credentials must not be regenerated |
+| Port occupancy | Foreign listener on the configured HTTP port, or on 80/443 in HTTPS mode | Install `ss`, `lsof` or `nc` when inspection is unavailable; identify conflicting services before changing their listeners |
+| Free disk | Less than **2 GiB** available | Less than **10 GiB**: free space before backups/updates. Both thresholds use binary GiB (1,048,576 KiB); exactly 2 GiB warns, exactly 10 GiB passes |
+| Containers (`db`, `app`, HTTPS `caddy`) | Restarting, unhealthy, dead or paused | Missing, exited, starting, missing healthcheck or status unavailable: use the printed `start` and scoped `logs` commands |
+| Migration state | Database revision newer than the configured image's release target | Behind: back up, then `start` migrates. Empty/missing version table: not initialized yet, run `start`. Unknown/ambiguous/query failure or unavailable image target: inspect config/image/logs |
+| First organization | — | Count zero: `bash scripts/self-host.sh admin --org NAME --email EMAIL`. An unreadable database/count also warns |
+| HTTPS domain and DNS | Invalid domain or no A/AAAA records | Missing DNS tools, unknown public host address or any address mismatch: compare A/AAAA and the public destination manually; proxies, NAT/elastic IPs and `/etc/hosts` can explain a mismatch. Check for stale AAAA records |
+| HTTPS local reachability | — | Cannot connect to 127.0.0.1:80/443 or `nc` unavailable: start Caddy, check port publishing and firewall |
+| HTTPS certificate | — | Caddy stopped, domain certificate absent/unreadable in `/data/caddy/certificates`, OpenSSL unavailable, TLS probe fails, invalid certificate or expiry within **14 days**: inspect Caddy logs, DNS and renewal access |
+
+Disk is measured with `df -Pk` at both the checkout and Docker's reported data
+root (`docker info -f '{{.DockerRootDir}}'`). An inaccessible Docker data root
+(common with Docker Desktop or a remote context) warns: inspect the Docker host
+or VM disk separately. Allow additional room for complete backup/restore copies.
+Port checks try `ss`, `lsof`, then `nc`. An existing listener is accepted as owned
+only when the running service belongs to this checkout's Compose file and
+publishes the expected port. HTTPS checks inspect ports 80/443; HTTP checks
+inspect the configured `VERWALINO_PORT`.
+
+DNS uses `getent` (A/AAAA), `dig`, or `host`, in that availability order. Public
+host addresses come from `ip` or `ifconfig`; private/NAT addresses cannot prove
+the public destination. The TLS probe uses SNI for `VERWALINO_DOMAIN` against
+127.0.0.1:443 and bounds the handshake to eight seconds. These are local checks;
+verify Internet reachability, firewall/NAT forwarding and browser trust from
+another host as well.
+
+Doctor does not repair settings, migrate, bootstrap users, build/pull images or
+start/stop the stack. Database queries and Caddy certificate listing require
+running services. Comparing migration revisions runs
+`from app.deployment import TARGET; print(TARGET)` in a temporary container from
+the configured local image, with Python as its entrypoint. The probe uses a
+non-root user and a read-only filesystem, mounts no volumes, adds no capabilities
+and has no network access. Missing or unreadable release-target metadata warns.
+Docker diagnostics use the current
+Docker context, which must refer to the same host as the checkout/port checks
+for those checks to describe one machine. After following a finding's next
+step, rerun doctor; use `status` and the printed `logs` commands for detail.
 
 ### Portable backup and restore
 
@@ -576,10 +627,16 @@ and miss unusual or unlabelled single-word names. Other unrecognized free text m
 keep exception messages structural and never intentionally log documents or
 request bodies.
 
-## Existing alpha: `verwaltung.karat.immo`
+## Existing alpha
 
-This alpha runs on Moon behind the existing Traefik Docker network and its
-`letsencrypt` resolver. Do not add Caddy, publish an app/database port, use
+The owner's alpha instance runs on Moon behind the existing Traefik Docker
+network and its `letsencrypt` resolver. Its public host name is not part of the
+repository: `docker-compose.prod.yml` and `deploy-production.sh` read
+**`HV_PUBLIC_HOST`** from the protected `shared/.env` or the invoking environment,
+which wins. `verify-production.sh` reads it only from its environment.
+It has no default; an unset, empty or malformed value (anything but
+lowercase letters, digits, dots and dashes) stops the helper before Docker is reached,
+and Compose refuses to render the stack without it. Do not add Caddy, publish an app/database port, use
 sudo, or modify an unrelated container or network. `chris` owns the deployment
 directory:
 
@@ -598,6 +655,14 @@ database/document backup is mandatory before schema changes. The authorized
 (`database.dump` and `documents.tar.gz`, both 0600; directory 0700). A future
 schema change needs its own authorized window and backup. Preserve both live
 volumes and the previous release.
+
+Containers carry the ownership label `io.verwalino.release=<release-id>`.
+Containers started before that key was introduced carry a vendor-prefixed key
+instead; the helper still reads it as a fallback when it captures the previous
+runtime and when it verifies a runtime restored from the previous release's
+Compose file, so the first deployment after the rename and its rollback keep
+working. Containers created by the new release are checked with the new key only.
+Drop the fallback once every alpha release in `releases/` uses the new key.
 
 ## Deployment boundary and accepted head
 
@@ -1040,6 +1105,10 @@ mv -f "$tmp_env" "$root/shared/.env"
 unset migrator_password app_rw_password app_worker_password app_review_password session_secret
 ```
 
+Set `HV_PUBLIC_HOST=` in the same file to the public host name (for example
+`verwaltung.example.org`); the template leaves it blank on purpose. An existing
+`shared/.env` needs this one line added before the next deployment.
+
 Leave `APP_IMAGE=` blank in that file for the host-build flow. The helper
 builds exactly `hausverwaltung-alpha:<release-id>` from the reviewed source
 archive, scans it, then captures its Docker image ID. `APP_IMAGE` overrides are
@@ -1321,10 +1390,16 @@ this first identity through the privileged,
 one-shot bootstrap container:
 
 ```
-organization: Karat Hausverwaltung Alpha
-email:        admin@verwaltung.karat.immo
+organization: Hausverwaltung Alpha
+email:        admin@<HV_PUBLIC_HOST>
 name:         Alpha Admin
 ```
+
+On the existing alpha, the admin bootstrap is a no-op only while `HV_PUBLIC_HOST`
+equals the host used to create the existing `admin@<host>` e-mail.
+A different value creates a second organization, "Hausverwaltung Alpha", with a
+new OWNER_ADMIN, which the smoke check would not catch because
+`/api/organizations/me` only needs to return a non-empty organization name.
 
 The helper acquires the exclusive host deployment lock, verifies the provider
 setting, builds/scans the exact image and writes its protected SBOM. It then
