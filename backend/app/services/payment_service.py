@@ -42,6 +42,7 @@ from app.engine.mietkonto import (
     PaymentInput,
     account_statement,
     derive_advance_total,
+    derive_advance_total_for_period,
     deposit_statement,
     owner_expected_charges,
     special_levy_expected_charges,
@@ -613,17 +614,17 @@ class PaymentService:
     async def derive_nk_advance_total_for_period(
         self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date
     ) -> Decimal:
-        """DERIVED NK-Vorauszahlung sum for a sub-period (T08)."""
+        """DERIVED NK by assigned months, prorating year-only amounts."""
         rows = await self._repo.derived_for_nk_for_period(
             lease_agreement_id, period_start, period_end
         )
         inputs = [_to_payment_input(p) for p in rows]
         return sum((
-            derive_advance_total(inputs, AdvanceFilter(
+            derive_advance_total_for_period(inputs, AdvanceFilter(
                 types=frozenset({"NK_VORAUSZAHLUNG"}),
                 year=year,
                 lease_agreement_id=lease_agreement_id,
-            ))
+            ), period_start, period_end)
             for year in range(period_start.year, period_end.year + 1)
         ), Decimal("0.00"))
 
@@ -638,3 +639,16 @@ class PaymentService:
             owner_profile_id=owner_profile_id,
         )
         return derive_advance_total([_to_payment_input(p) for p in rows], filt)
+
+    async def derive_hausgeld_total_for_period(
+        self, owner_profile_id: uuid.UUID, period_start: date, period_end: date
+    ) -> Decimal:
+        """Paid Hausgeld with the same year-only month split as NK advances."""
+        rows = []
+        for year in range(period_start.year, period_end.year + 1):
+            rows.extend(await self._repo.derived_for_hausgeld(owner_profile_id, year))
+        inputs = [_to_payment_input(p) for p in rows]
+        return sum((derive_advance_total_for_period(inputs, AdvanceFilter(
+            types=frozenset({"HAUSGELD_VORSCHUSS"}), year=year,
+            owner_profile_id=owner_profile_id,
+        ), period_start, period_end) for year in range(period_start.year, period_end.year + 1)), Decimal("0.00"))

@@ -60,6 +60,11 @@ enforcement; every baseline and safety rule here stays in force.
   GoBD, auth, backup and restore) gets a parallel,
   blind cross-review by independent reviewers before the merge (`.coddy/crossreview.json`);
   that is recommended, not a chain.
+- Whoever creates a git worktree for an issue or a review round removes it and deletes its local
+  branch as soon as the PR is merged or closed (`git worktree remove DIR && git branch -D BRANCH`,
+  after checking the merge landed, the tree is clean and nothing runs there). Before starting a
+  new task, remove your own finished worktrees. Worktrees live outside the checkout under
+  `../verwalino-issue-N` or `../verwalino-review-N`.
 - Progress is code, tests and a commit. Do not create state, contract, receipt, evidence, handoff,
   hash or audit files, do not build sequential repair or review chains that pass such files
   along, and write no new plan, log or status documents; decisions go into the issue, the PR

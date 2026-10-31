@@ -13,6 +13,74 @@ Status: **Draft for confirmation by the human — no application code, no migrat
 
 ---
 
+## Property settlement periods (#68)
+
+Economic plans default to `property.fiscal_year_start_month` using the shared pure
+period functions. `plan_year` identifies the start year: an April plan for 2025
+runs from 1 April 2025 through 31 March 2026. Explicit `period_start` and
+`period_end` are honoured, including short periods for a mid-year accounting scope.
+Omitted dates default to the property period. The plan form prefills dates from
+the property's period offers.
+
+**Property access limitation:** a user without property read access must enter
+the period; the period offer needs property access. Missing plan dates return
+422 with "Abrechnungszeitraum angeben: Beginn und Ende", after pause, parent and
+accounting-scope checks. Explicit dates need no access to the property's start
+month; twelve-month and overlap validation still applies. The organization-bound
+month getter is deferred to #95's migration. No migration is added here.
+
+When the property is readable, explicit dates must fit within its period, or bridge exactly the gap
+between the last finalized, non-superseded plan and the next property period.
+For example, after finalizing 1 January–31 December 2025 and changing the start
+month from January to April, a transition plan for 1 January–31 March 2026 closes
+the gap before the regular 1 April 2026–31 March 2027 plan. The transition can be
+finalized and used for a WEG settlement. Reversed periods, periods longer than
+twelve months and dates outside these boundaries return 422.
+
+Creating or finalizing a plan returns 409 when its period overlaps a visible
+finalized, non-superseded plan for the same property, unless both bounds are
+identical (repeat/correction plans). For finalized bounds `[a, b]` and new bounds
+`[s, e]`, the conflict predicate is
+`a <= e AND b >= s AND (a != s OR b != e)`. Contained and containing periods,
+shared starts or ends and overlap on a boundary day all conflict, subject to the
+plan-date boundaries above. Drafts never block creation. WEG annual runs use the
+same twelve-month validation (422) and overlap rule (409), at creation and
+finalization, for their property, type and accounting context. Superseded documents do not block creation. Checks use normal
+row-level security, with the same [cross-scope limitation (#95) as statement
+runs](m3-abrechnungs-engine.md#property-settlement-periods-68): an inaccessible
+finalized document in another scope can remain undetected. No migration or
+privileged helper is added here.
+
+Period-conflict responses use structured `detail` objects with an unchanged
+German `message` and a stable `code`: `plan_period_conflict` for economic plans
+and `settlement_period_conflict` for WEG annual runs.
+
+The previous-actuals preview and adoption use the preceding property period, including
+its scope boundaries, source digest and day-based cost proration. Paid Hausgeld is
+summed over the settlement's assigned months across calendar years using
+the shared `derive_advance_total_for_period` calculation, also used by NK.
+Booked, active payments only are included. Year-only
+Hausgeld had the same double-credit risk as NK when adjacent periods started
+in the same year, so both now share the calendar-month allocation: twelve equal
+month shares rounded down to cents, with the remaining cents in December.
+Each period credits only its covered months in each assigned year. For an
+April property, a year-only 1,200-euro payment for 2025 credits 300 euros to
+2024/2025 and 900 euros to 2025/2026; adjacent half-years credit 600 euros each.
+For 1,000 euros, January–November credit 83.33 euros each and December 83.37 euros.
+Shares are independent of draft/finalization order. Full calendar-year results
+are retained; split months use day-based cumulative cent boundaries so adjacent
+partial-month statements also reconcile. Explicit monthly assignments
+remain unchanged; ledger filtering is unchanged. Paid advances
+remain informational
+and do not change the Abrechnungsspitze calculation. Changing the start month never
+rewrites existing plans, settlement dates or finalized snapshots. The WEG statement
+form initially adopts the selected plan's persisted dates, even if the property's
+start month has changed since that plan was created.
+
+**Deadline limitation:** the economic plan deadline in `fristen_service.py` still
+uses calendar-year dates for non-January properties. Correcting it is a follow-up,
+outside #68. The tenant-statement deadline already follows the property period.
+
 ## 0. Scope, Exit Criterion, Connection to M0–M3
 
 **M4 exit (roadmap):** "Economic plan, annual settlement, and asset report for a WEG can be generated as PDF; **amounts are consistent**." This is the objective benchmark. "Consistent" is demonstrated by the **synthetic golden tests** (§9) with a **hand-calculated settlement balance** and by the **property invariants** (Σ owner shares == total costs; MEA (co-ownership share, Miteigentumsanteil) sums coherent; reserve development start + contribution − withdrawal == end).

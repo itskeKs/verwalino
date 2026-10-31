@@ -1,6 +1,6 @@
 # Feature status
 
-Current feature catalog of Verwalino by area. Status as of 2026-10-31, migration head `0144`.
+Current feature catalog of Verwalino by area. Status as of 2026-10-31, migration head `0145`.
 Status: ✅ implemented and reachable in the running app, 🟡 partial (reason given), ❌ not implemented.
 Short paths: `api/ services/ engine/ models/ workers/ core/` are under
 `backend/app/`, `pages/ components/ lib/` under `frontend/src/`; other paths are relative to the
@@ -20,7 +20,7 @@ pending; registration stays closed and legal review remains with #26. See the
 
 | Feature | Status | Location |
 | --- | --- | --- |
-| Deployment mode | ✅ validated selfhost/hosted policy, backend-owned setup gate; hosted features remain deferred | `core/config.py`, `core/deployment_policy.py`, issue #18 |
+| Deployment mode | ✅ validated selfhost/hosted policy, public mode/version/mail-capability metadata, setup/signup gates; remaining hosted features deferred | `core/config.py`, `core/deployment_policy.py`, issue #18 |
 | Browser first-run setup | ✅ selfhost-only, one-time installer token, 24-hour expiry, atomic first organization/admin; real-stack acceptance pending | `api/setup.py`, `pages/SetupPage.tsx`, `scripts/self-host.sh`, issue #8 |
 | Manual diagnostics reports | ✅ admin download and installer bundle with structural redacted logs; manual attachment only, fake-Docker acceptance | `diagnostics.py`, `api/diagnostics.py`, `pages/UsersPage.tsx`, `scripts/self-host.sh`, issue #17 |
 | One-command release installation | 🟡 installer and signed release-bundle workflow prepared; first release assets and fresh-VM setup/login/restart pending | `install.sh`, `.github/workflows/release-image.yaml`, [guide](../DEPLOY.md#install-in-one-command), issue #12 |
@@ -32,6 +32,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Self-service signup | ✅ hosted only, captured confirmation email, 24-hour single-use token, atomic tenant/owner creation, durable cooldown and generic responses | `api/signup.py`, `pages/SignupPage.tsx`, issue #19 |
 | Create users | ✅ admin-only form and user management | `api/users.py`, `pages/UsersPage.tsx`, T06, T57, [usage](operations/users-and-access.md) |
 | Roles admin/clerk/read-only | ✅ admin can change role and deactivate; write buttons hidden for read-only | `core/rbac.py` (`OWNER_ADMIN`, `CLERK`, `READ_ONLY`), T57, [usage](operations/users-and-access.md) |
+| Password recovery | ✅ both modes, Mailpit-verified reset and confirmation mail, one-hour single-use token, tenant-context containment, three mails/address/hour, sessions and links revoked on password changes/deactivation, bounded retention; link hidden without SMTP/public origin | `api/password_reset.py`, `pages/PasswordResetPage.tsx`, issue #21 |
 | Change password | ✅ own change and admin reset, sessions revoked | `api/auth.py` (`POST /api/auth/password`), `api/users.py` (`/reset-password`), `components/Topbar.tsx`, T14, T57, [usage](operations/users-and-access.md) |
 | Management mandates with documents | ✅ edit/end, bound definition protected | `api/mandates.py`, `pages/MandateDetailPage.tsx`, T55, [usage](operations/selector-pages.md) |
 | Source governance (scopes, approvals, quarantines) | ✅ one admin permissions area with state, next step, team rights, preparation and review lists; guarded activation and emergency pause; new organizations start in preparation; activation runbook available | `pages/PermissionsPage.tsx`, `components/SourceSecurityPanel.tsx`, [runbook](operations/accounting-scope-setup.md#owner-activation-runbook), #73 |
@@ -94,6 +95,7 @@ pending; registration stays closed and legal review remains with #26. See the
 
 | Feature | Status | Location |
 | --- | --- | --- |
+| Property settlement period | 🟡 month-based offers, statement/batch validation, plan dates and prior actuals, advances across years; all nonidentical overlaps with finalized periods rejected within the acting user's visibility; identical repeats allowed; automatic lease-bounded dates, short-window cost proration and cross-scope database constraint pending | `engine/periods.py`, `api/properties.py` (`/settlement-periods`), `pages/SettlementsPage.tsx`, issue #68 |
 | Operating cost statement per lease: compute, finalize, PDF, correction | ✅ | `api/settlements.py`, `services/settlement_service.py`, `services/settlement_pdf.py` |
 | Keys area/MEA/units, pro rata, vacancy | ✅ | `engine/distribution.py` |
 | Keys consumption/persons/external/manual | ✅ inputs shown and sent with the database key names | `pages/SettlementDetailPage.tsx`, `lib/costVocabulary.ts`, T03 |
@@ -147,7 +149,7 @@ pending; registration stays closed and legal review remains with #26. See the
 - VAT-liable letting (People and tenancies): no VAT on rent, advances and statements for units with the VAT option (#71); no input VAT apportionment (#72).
 - Bank retrieval PSD2/FinTS (Tenant ledger, bank and payments): no automatic bank statement retrieval; import is by CSV/CAMT file only (#40).
 - Inbox (Posteingang) with review chain (Vouchers and costs): worker service and upload-to-cost scenario are present; real-stack acceptance with ClamAV signatures remains pending ([#35](https://github.com/itskeKs/verwalino/issues/35), [runbook](operations/inbox-review-chain.md)).
-- Settlement period (Operating and heating cost statements): the property's period start month is stored but statements and economic plans do not use it; periods are not validated for length or overlap (#68).
+- Settlement period (Operating and heating cost statements): overlaps with runs or plans outside the acting user's visible accounting scopes are not detected; a follow-up database constraint is still needed. Identical periods remain allowed (#68).
 - Maintenance reserve (Erhaltungsrücklage) (WEG): opening balance and withdrawals are manual inputs; no reserve ledger or bank-account tracking (#36).
 - Dunning fees and default interest (Dunning, deadlines, tasks): fees are fixed constants and interest needs a base rate typed per notice; neither is configurable per organization (#69).
 - Tenant portal (Documents, communication, reports): not built; planned right after the hosted launch (#41).

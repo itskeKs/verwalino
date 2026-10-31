@@ -17,7 +17,7 @@ from tests.test_meters_api import new_meter
 from tests.test_rent_changes import rent_db, rent_world  # noqa: F401
 
 EXEMPT = {
-    "GET /api/meta": "organization-free public deployment mode and version only; covered by test_deployment_policy.py",
+    "GET /api/meta": "organization-free public deployment mode, version and mail capability only; covered by test_deployment_policy.py",
     **{f"{method} /api/signup{suffix}": "organization-free hosted signup; pending identity and atomic new-tenant creation covered by self_service_signup.feature and test_signup.py"
        for suffix in ("", "/confirm", "/resend")
        for method in ("POST", "GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT")},
@@ -136,6 +136,7 @@ IMPORT_APPLY = {**import_body(), "expected_digest": "", "request_id": str(uuid.u
 
 
 PROBES: dict[str, Probe] = {
+    "GET /api/properties/{property_id}/settlement-periods": Probe(row("property", property_id="id"), query={"year": 2025}),
     "GET /api/admin/diagnostics": Probe(),
     # app/api/attachments.py
     "GET /api/attachments": Probe(row("property", property_id="id")),

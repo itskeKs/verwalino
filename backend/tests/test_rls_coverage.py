@@ -102,6 +102,7 @@ TENANT_TABLES = frozenset({
 
 # Global tables that intentionally have no RLS.
 GLOBAL_TABLES = frozenset({
+    "password_reset_request",  # Authentication precedes tenant selection.
     "signup_request",  # Global pending identity reservation; no tenant yet.
     "organization", "cost_category", "setup_token", "auth_throttle",
 })

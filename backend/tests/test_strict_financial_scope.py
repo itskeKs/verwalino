@@ -128,6 +128,61 @@ async def test_strict_scoped_clerk_creates_weg_draft_without_property_read_acces
         assert await read_value(count, ids) == before
 
 
+@pytest.mark.parametrize('plan_year', [2024, 2025])
+async def test_scope_only_clerk_keeps_explicit_april_plan_and_run_dates(migrator_session, scope_seed, plan_year):
+    ids = await fixture(migrator_session, scope_seed)
+    async with synthetic_enforcement(scope_seed), client(ids) as api:
+        assert (await api.get(f"/api/properties/{ids['property']}/settlement-periods")).status_code == 404
+        dates = {'period_start': '2025-04-01', 'period_end': '2026-03-31'}
+        response = await api.post('/api/economic-plans', json={
+            'property_id': str(ids['property']), 'plan_year': plan_year,
+            'accounting_scope_id': str(ids['scope']), **dates,
+        })
+        assert response.status_code == 201, response.text
+        plan = response.json()
+        assert plan['plan_year'] == 2025
+        assert {key: plan[key] for key in dates} == dates
+        response = await api.post('/api/weg-settlements', json={
+            'property_id': str(ids['property']), 'economic_plan_id': plan['id'], **dates,
+        })
+        assert response.status_code == 201, response.text
+        assert {key: response.json()[key] for key in dates} == dates
+
+
+@pytest.mark.parametrize('dates', [{}, {'period_start': '2025-04-01'}, {'period_end': '2026-03-31'}])
+async def test_scope_only_clerk_must_supply_both_plan_dates(migrator_session, scope_seed, dates):
+    ids = await fixture(migrator_session, scope_seed)
+    async with synthetic_enforcement(scope_seed), client(ids) as api:
+        response = await api.post('/api/economic-plans', json={
+            'property_id': str(ids['property']), 'plan_year': 2025,
+            'accounting_scope_id': str(ids['scope']), **dates,
+        })
+        assert response.status_code == 422, response.text
+        assert response.json() == {'detail': 'Abrechnungszeitraum angeben: Beginn und Ende'}
+        assert await read_value('SELECT count(*) FROM economic_plan WHERE property_id=:property', ids) == 0
+
+
+@pytest.mark.parametrize('mode,mandate,scoped,status,detail', [
+    ('PAUSED', True, False, 404, 'Financial creation is paused'),
+    ('ENFORCED', True, False, 404, 'Management mandate not found'),
+    ('ENFORCED', False, False, 409, 'Select an exact accounting scope for this property'),
+])
+async def test_missing_plan_dates_do_not_mask_parent_scope_or_pause_errors(
+    migrator_session, scope_seed, mode, mandate, scoped, status, detail,
+):
+    ids = await fixture(migrator_session, scope_seed)
+    async with synthetic_enforcement(scope_seed), client(ids) as api:
+        await change_mode(scope_seed, mode)
+        body = {'property_id': str(ids['property']), 'plan_year': 2025}
+        if mandate:
+            body['management_mandate_id'] = str(uuid.uuid4())
+        if scoped:
+            body['accounting_scope_id'] = str(ids['scope'])
+        response = await api.post('/api/economic-plans', json=body)
+        assert response.status_code == status, response.text
+        assert response.json() == {'detail': detail}
+
+
 async def test_financial_property_lookup_is_a_restricted_security_definer(app_rw_session):
     signature = {'signature': 'public.financial_property_exists(uuid,uuid)'}
     security = (await app_rw_session.execute(text("""SELECT prosecdef,proconfig

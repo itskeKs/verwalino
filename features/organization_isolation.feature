@@ -45,6 +45,10 @@ Feature: Organization isolation
       | person       |
       | bank account |
 
+  Scenario: Another organization's settlement period offers are not disclosed
+    When the user opens the settlement period offers of "Verwaltung Beta"
+    Then the property is reported as not found
+
   Scenario: Signing in again keeps the session in the same organization
     When the administrator signs in again
     Then the signed-in session belongs to "Verwaltung Alpha"
@@ -64,3 +68,12 @@ Feature: Organization isolation
   Scenario: Administrators share technical diagnostics without organization records
     When the administrator downloads a diagnostics bundle
     Then the bundle contains technical counts without either organization’s records
+
+  Scenario: A password recovery link changes only the mailbox owner's account
+    Given a user who is signed in
+    And a test mailbox for password recovery
+    When the user requests a password reset link
+    And the user submits the captured recovery link
+    Then the password reset is accepted without signing in
+    And the old session is no longer valid
+    And the other organization's administrator remains signed in

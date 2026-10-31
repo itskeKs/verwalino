@@ -5,6 +5,7 @@
  * Status badges: Entwurf (draft) / Finalisiert (finalized).
  */
 
+import { SettlementPeriodSelect } from "../components/SettlementPeriodSelect";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import {
@@ -252,7 +253,7 @@ export function SettlementsPage() {
   }
 
   return (
-    <div>
+    <div className="min-w-0 [&_select]:max-w-full">
       <div
         style={{
           display: "flex",
@@ -312,17 +313,20 @@ export function SettlementsPage() {
         <section aria-label="BK-Sammellauf" className="card" style={{ marginBottom: "1rem" }}>
           <h2>BK-Sammellauf</h2>
           <form onSubmit={handleBatchSubmit} noValidate>
-            <fieldset disabled={batchSaving} className="form-grid" style={{ border: 0, padding: 0, margin: 0 }}>
+            <fieldset disabled={batchSaving} className="form-grid [&>*]:min-w-0 [&_select]:w-full" style={{ border: 0, padding: 0, margin: 0 }}>
               <label>
                 Objekt *
                 <select aria-label="Objekt *" required value={batchForm.property_id} onChange={e => {
                   setBatchScopeValid(true);
-                  changeBatchForm({ ...batchForm, property_id: e.target.value, accounting_scope_id: null });
+                  changeBatchForm({ ...batchForm, property_id: e.target.value, accounting_scope_id: null, period_start: "", period_end: "" });
                 }}>
                   <option value="">-- Objekt wählen --</option>
                   {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </label>
+              <SettlementPeriodSelect key={`period-${batchForm.property_id}`} propertyId={batchForm.property_id}
+                start={batchForm.period_start} end={batchForm.period_end}
+                onSelect={period => changeBatchForm({ ...batchForm, period_start: period.period_start, period_end: period.period_end })} />
               <label>Zeitraum von *<input type="date" required value={batchForm.period_start} onChange={e => changeBatchForm({ ...batchForm, period_start: e.target.value })} /></label>
               <label>Zeitraum bis *<input type="date" required value={batchForm.period_end} onChange={e => changeBatchForm({ ...batchForm, period_end: e.target.value })} /></label>
               <AccountingScopeSelector key={batchForm.property_id} propertyId={batchForm.property_id} kind="MIET" value={batchForm.accounting_scope_id} onChange={id => changeBatchForm({ ...batchForm, accounting_scope_id: id })} onValidityChange={setBatchScopeValid} />
@@ -339,13 +343,16 @@ export function SettlementsPage() {
           </form>
           {batchError && <p role="alert" className="error-text">{batchError}</p>}
           {batchResult && <p role="status">{batchResult.created.length} Entwürfe angelegt · {batchResult.skipped.length} bereits vorhanden</p>}
+          {batchResult?.errors?.map(item => <p role="alert" className="error-text" key={item.lease_agreement_id}>
+            {getLeaseLabel(item.lease_agreement_id)}: {item.error}
+          </p>)}
         </section>
       )}
 
       {showForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Neue Abrechnung anlegen</h2>
-          <form onSubmit={handleSubmit} className="form-grid">
+          <form onSubmit={handleSubmit} className="form-grid [&>*]:min-w-0 [&_select]:w-full">
             <label>
               Objekt *
               <select
@@ -353,7 +360,7 @@ export function SettlementsPage() {
                 required
                 value={form.property_id}
                 onChange={(e) =>
-                  setForm({ ...form, accounting_scope_id: null, property_id: e.target.value, lease_agreement_id: "" })
+                  setForm({ ...form, accounting_scope_id: null, property_id: e.target.value, lease_agreement_id: "", period_start: "", period_end: "" })
                 }
               >
                 <option value="">-- Objekt waehlen --</option>
@@ -382,6 +389,9 @@ export function SettlementsPage() {
                 ))}
               </select>
             </label>
+            <SettlementPeriodSelect key={`period-${form.property_id}`} propertyId={form.property_id}
+              start={form.period_start} end={form.period_end}
+              onSelect={period => setForm(current => ({ ...current, period_start: period.period_start, period_end: period.period_end }))} />
             <label>
               Abrechnungszeitraum von *
               <input
@@ -449,7 +459,7 @@ export function SettlementsPage() {
       ) : runs.length === 0 ? (
         <p className="empty-hint">Keine Abrechnungen vorhanden.</p>
       ) : (
-        <div className="card">
+        <div className="card overflow-x-auto">
           <table className="data-table">
             <thead>
               <tr>

@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.engine.canonical import canonical_json, sha256_hex
+from app.engine.periods import validate_settlement_period
 from app.engine.rounding import DistributionError
 from app.engine.mietkonto import _money
 from app.services.lease_rent_change_service import LeaseRentChangeService
@@ -76,6 +77,14 @@ from app.repositories.settlement_repo import (
 )
 
 ENGINE_VERSION = "m3.1.0"
+
+
+class SettlementPeriodConflict(HTTPException):
+    def __init__(self):
+        super().__init__(409, {
+            "code": "settlement_period_conflict",
+            "message": "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags.",
+        })
 
 
 @dataclass
@@ -237,6 +246,13 @@ class SettlementService:
     # ------------------------------------------------------------------
     # create draft
     # ------------------------------------------------------------------
+    @staticmethod
+    def _validate_period(start: date, end: date) -> None:
+        try:
+            validate_settlement_period(start, end)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
     async def create_draft(
         self,
         property_id: uuid.UUID,
@@ -273,6 +289,10 @@ class SettlementService:
             engine_version=ENGINE_VERSION,
         )
         await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(run, accounting_scope_id)
+        # prepare_new holds the existing organization financial-input lock.
+        self._validate_period(period_start, period_end)
+        if await self._runs.has_conflicting_period(run):
+            raise SettlementPeriodConflict()
         run = await self._runs.create(run)
 
         await self._audit.create(
@@ -296,22 +316,16 @@ class SettlementService:
         period_start: date,
         period_end: date,
         accounting_scope_id: uuid.UUID | None = None,
-    ) -> tuple[list[SettlementRun], list[SettlementRun]]:
+    ) -> tuple[list[SettlementRun], list[SettlementRun], list[tuple[uuid.UUID, dict[str, str]]]]:
         """Create missing lease drafts in the ambient, serialized transaction."""
-        from app.repositories.property_repo import PropertyRepository
-
-        if period_start > period_end:
-            raise HTTPException(422, "Settlement period must not end before it starts")
         scope = FinancialScopeService(self._session, self._org_id, self._user_id)
-        await scope.lock_inputs()
-        if await PropertyRepository(self._session, self._org_id).get_by_id(property_id) is None:
-            raise HTTPException(404, "Property not found")
         # Validate even an empty property/period before returning an empty batch.
         context = SettlementRun(
             property_id=property_id, run_type="BK_MIETER",
             period_start=period_start, period_end=period_end,
         )
         sphere = await scope.prepare_new(context, accounting_scope_id)
+        self._validate_period(period_start, period_end)
         if not await self._session.scalar(text(
             "SELECT property_financial_source_access(:org,:property)"
         ), {"org": self._org_id, "property": property_id}):
@@ -322,16 +336,21 @@ class SettlementService:
             property_id, period_start, period_end, scope_id,
         )
         by_lease = {run.lease_agreement_id: run for run in existing}
-        created, skipped = [], []
+        created, skipped, errors = [], [], []
         for lease in leases:
             if lease.id in by_lease:
                 skipped.append(by_lease[lease.id])
             else:
-                created.append(await self.create_draft(
-                    property_id, lease.id, period_start, period_end,
-                    accounting_scope_id=scope_id,
-                ))
-        return created, skipped
+                try:
+                    created.append(await self.create_draft(
+                        property_id, lease.id, period_start, period_end,
+                        accounting_scope_id=scope_id,
+                    ))
+                except SettlementPeriodConflict as exc:
+                    errors.append((lease.id, exc.detail))
+        if errors and not created and not skipped:
+            raise SettlementPeriodConflict()
+        return created, skipped, errors
 
     async def set_advance_payments(
         self, run_id: uuid.UUID, amount: Decimal
@@ -361,7 +380,7 @@ class SettlementService:
         M3 engine is UNCHANGED -- it still reads run.advance_payments_total; this
         only fills that value from the booked, non-reversed NK_VORAUSZAHLUNG
         payments of THIS lease + settlement period. The reference year must
-        match the period start, including for cross-year periods. The pure
+        belong to the period, including for cross-year periods. The pure
         derivation is bit-identical to the MANUAL value (I6-E). MANUAL stays the
         default/fallback; this path is opt-in. E6-8: derived fresh on demand;
         finalize then freezes whatever value is current into the snapshot.
@@ -369,8 +388,8 @@ class SettlementService:
         from app.services.payment_service import PaymentService
 
         run = await self._get_draft_or_404(run_id)
-        if period_year != run.period_start.year:
-            raise HTTPException(422, "DERIVED reference year must match the period start year")
+        if not run.period_start.year <= period_year <= run.period_end.year:
+            raise HTTPException(422, "DERIVED reference year must belong to the settlement period")
         if run.lease_agreement_id is None:
             raise HTTPException(
                 status_code=422,
@@ -470,6 +489,8 @@ class SettlementService:
         """
         run = await self._get_draft_or_404(run_id)
         computation_basis = await begin_computation(self._session, self._org_id, run, 'finalize')
+        if await self._runs.has_conflicting_period(run):
+            raise SettlementPeriodConflict()
         inp, result = await self._compute_engine(run, extras)
 
         payload = self._snapshot_with_meter_sources(inp, result)

@@ -62,11 +62,6 @@ class FinancialInputPolicy:
         if kind != "economic_plan" and subject.run_type == "BK_MIETER":
             if subject.advance_payments_total is None:
                 incomplete("unknown_advance_payments", "advance_payments")
-            if subject.advance_payments_source == "DERIVED" and (
-                subject.period_start != date(subject.period_start.year, 1, 1)
-                or subject.period_end != date(subject.period_start.year, 12, 31)
-            ):
-                incomplete("unsupported_derived_subperiod", "advance_payments")
         return values
 
     async def source_revision(self, subject):
@@ -82,8 +77,8 @@ class FinancialInputPolicy:
     async def validate_scope_coverage(self, subject, kind, values):
         if kind == "settlement" and subject.run_type == "BK_MIETER" and subject.advance_payments_source == "DERIVED":
             from app.services.payment_service import PaymentService
-            current = await PaymentService(self.session, self.org_id, self.user_id).derive_nk_advance_total(
-                subject.lease_agreement_id, subject.period_start.year)
+            current = await PaymentService(self.session, self.org_id, self.user_id).derive_nk_advance_total_for_period(
+                subject.lease_agreement_id, subject.period_start, subject.period_end)
             if current != subject.advance_payments_total:
                 incomplete("derived_total_stale", "advance_payments")
         if kind == "settlement" and subject.run_type == "WEG_JAHRESABRECHNUNG":

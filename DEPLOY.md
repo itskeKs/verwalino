@@ -11,7 +11,8 @@ Both modes use the same image, authentication and organization isolation. `selfh
 offers token-gated first-run setup on an empty database. `hosted` suppresses setup:
 `GET /api/setup` reports `required: false`, every non-GET request returns the closed
 setup 404, and `/setup` redirects to login. Hosted mode offers public signup with
-email confirmation; quotas, password reset and legal pages remain deferred. Login uses the
+email confirmation; quotas and legal pages remain deferred. Password recovery is available
+in both modes when mail is configured. Login uses the
 selected rate-limit profile described below. The
 [policy table](docs/architecture.md#deployment-modes) records only decisions with
 implemented readers. Opt-in error tracking is configured separately below.
@@ -28,6 +29,72 @@ template; keep the populated `.env` private with mode 0600. Set the required
 `verwaltung.example.org`). Compose passes it as `HV_ALLOWED_HOSTS` and uses it
 in the Traefik router rules. The API healthcheck requests
 `http://127.0.0.1:8000/api/health/live` with that value as its `Host` header.
+
+## Password recovery configuration
+
+Password recovery works in both deployment modes. Configure the existing SMTP
+settings and `HV_PUBLIC_HOST` as the trusted public routing hostname, using the
+same validation rules as hosted signup. Links always use HTTPS and never use
+the request Host.
+No new configuration key is required. The public `/api/meta` boolean
+`mail_available` reports only whether this configuration is usable, with no secrets
+or SMTP network probe. Login hides “Passwort vergessen?” when it is false or metadata
+is unavailable. Selfhost setup and login continue to work without mail.
+
+`POST /api/auth/password-reset` accepts `{email, website}` and returns the same
+202 conditional receipt for known, unknown, throttled and mail-unavailable requests.
+An unavailable configuration logs one WARNING per application process; subsequent
+requests remain generic. Known active, unambiguous accounts get a German link to
+`/passwort-zuruecksetzen?token=…`, valid once for one hour. Unknown addresses get no
+mail. Each new link consumes earlier pending links. A separate recipient limiter
+allows at most three issued mails per normalized address per hour, across IPs;
+unknown or unavailable recipients do not count. Both paths perform the same
+Argon2 dummy hash and mail construction; SMTP
+submission runs after the response. Transport failure logs a generic warning and
+keeps the same receipt; SMTP acceptance does not prove delivery.
+
+The page saves the token in tab-local sessionStorage, removes it from the URL and
+POSTs only on explicit submit. Reset returns 204 without a cookie or automatic
+login. The user signs in with the new password; all old sessions and outstanding
+reset links are invalidated. A German confirmation email follows the committed
+reset. SMTP failure cannot undo that reset. Self-service/admin password changes
+and deactivation also consume pending links. Missing, expired, used and throttled
+tokens return the same German 403 refusal. Body/policy errors return a German 422
+before token lookup and do not count as confirmation failures; the page retains
+the token for correction. Password bounds are 12–128 Unicode code points. The server
+strips reset-page queries from its access log; upstream proxies must redact them
+too. Request throttling uses `password_reset` (all IP requests); confirmation uses
+`password_reset_confirm` (all well-formed IP requests, failures keyed by SHA-256
+of the token); `password_reset_recipient` counts issued mails only. The latter
+keeps partial counts until a full hour without an issued mail and locks for one
+hour after the third, without extending that lock on refusals.
+Unit tests capture SMTP; the password-reset scenario sends through the test
+Mailpit SMTP service and checks both messages through its API.
+
+Runtime roles cannot read or write `password_reset_request` directly. Issuance
+and confirmation use fixed-path SECURITY DEFINER functions that refuse any
+non-empty organization context. Tokens are generated in PostgreSQL: 32 random
+bytes (256 bits) when pgcrypto is installed at migration time, otherwise two concatenated random
+UUIDs (244 random bits). Only the SHA-256 digest is stored. Every 100th accepted
+request per process schedules a separate background transaction deleting at
+most 100 rows whose expiry or use time is older than seven days. A materialized
+CTE selects and locks that batch once with `FOR UPDATE SKIP LOCKED`, so deletion
+cannot rescan the limited selection.
+
+Revision 0145 downgrade refuses while **any** reset rows remain, including used
+rows. For an intentional rollback, stop reset traffic/workers, connect using the
+operator's migrator credential store, and explicitly invalidate/delete the reset
+state before running the normal downgrade:
+
+```sql
+BEGIN;
+LOCK TABLE public.password_reset_request IN ACCESS EXCLUSIVE MODE;
+DELETE FROM public.password_reset_request;
+COMMIT;
+```
+
+This invalidates every outstanding recovery link; users must request fresh links
+after an upgrade. Normal retention cleanup does not clear recent rows for rollback.
 
 ## Hosted signup configuration
 
@@ -1165,11 +1232,11 @@ remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/s
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
 
-## Migration compatibility: 0029–0144
+## Migration compatibility: 0029–0145
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0144 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0145 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1180,15 +1247,16 @@ run `docker compose down -v` or delete the volumes.
 | Parent references (accepted source 0140) | Replaces client-selected parent references with organization-bound composite foreign keys. Validates pending deferred checks and rejects existing invalid references without repair before replacing constraints. Adds a boolean-only, tenant-bound property existence check for scoped financial creation. Downgrade restores the original constraints and removes that check; an older runtime is not approved on this schema. |
 | Browser setup (accepted source 0141) | Adds the private singleton setup-token table and a token-gated, serialized first-organization function. Removes direct organization INSERT from app_rw; the migrator CLI shares the creation SQL. A populated token table blocks downgrade to avoid silently losing pending/consumed state. Existing organization/user/membership rows are preserved. |
 | 0142 | Adds global authentication throttle rows containing only scoped key hashes, failure windows, lockout expiry, last lockout start and escalation history, with narrow runtime DML. No existing rows or grants change. A populated table blocks downgrade to avoid losing lockouts. |
-| 0143 | Allows a nullable template reference for built-in lease contracts and handover originals. Existing rows, composite template foreign keys, RLS and immutable PDF snapshots remain intact. Downgrade refuses while an original has no template; it never deletes originals or creates substitute templates. |
-| 0144 | Adds private pending signup requests and token-bound SECURITY DEFINER functions; runtime roles have no direct request-table access. Successful confirmation atomically creates a separate tenant and deletes its request. Retained requests block downgrade. |
+| 0143 (accepted source) | Allows a nullable template reference for built-in lease contracts and handover originals. Existing rows, composite template foreign keys, RLS and immutable PDF snapshots remain intact. Downgrade refuses while an original has no template; it never deletes originals or creates substitute templates. |
+| 0144 (accepted source) | Adds private pending signup requests and token-bound SECURITY DEFINER functions; runtime roles have no direct request-table access. Successful confirmation atomically creates a separate tenant and deletes its request. Retained requests block downgrade. |
+| 0145 | Adds global password reset requests with 32-byte token digests, context-free definer issuance/confirmation and bounded cleanup; runtime table access is revoked. The T57 trigger path revokes sessions and consumes links on password changes/deactivation. Tokens expire after one hour; successful reset marks all outstanding links for that user used. Login, issuance and confirmation share the active-user/live-membership lookup. Because that lookup now filters inactive users and unsupported roles itself, an address that is active in one organization and deactivated or memberless in another is no longer ambiguous: login and reset both resolve to the active account. A populated downgrade refuses to discard retained reset state; an empty downgrade exactly removes the new table, index, trigger and functions and restores the previous login lookup verbatim. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0144 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0144, 0139→0144 and accepted-source 0140→0144, 0141→0144 and
-0142→0144 and 0143→0144 rehearsals also
+0028→0145 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0145, 0139→0145 and accepted-source 0140→0145, 0141→0145 and
+0142→0145, 0143→0145 and 0144→0145 (accepted source) rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT revocation;
 it does not prove live data validity or cross-version runtime compatibility.
 
@@ -1210,10 +1278,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0144**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0145**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0144**,
-**0122 → 0144**, **0139 → 0144**, **0140 → 0144**, **0141 → 0144**, **0142 → 0144**, **0143 → 0144** (accepted source), or **0144 → 0144**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0145**,
+**0122 → 0145**, **0139 → 0145**, **0140 → 0145**, **0141 → 0145**, **0142 → 0145**, **0143 → 0145**, **0144 → 0145** (accepted source), or **0145 → 0145**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 
