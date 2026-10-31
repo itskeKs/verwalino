@@ -9,12 +9,16 @@ vi.mock("../auth/useDeploymentMode");
 vi.mock("../api/endpoints", () => ({ getOrganizationQuota: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
+// Kept identical to SIZE_FORMAT_TABLE in backend/tests/test_quotas.py.
 it.each([
   [MAX_UPLOAD_BYTES, "25 MiB"],
+  [10_000_000, "9,54 MiB"],
   [1.5 * 1024 ** 2, "1,5 MiB"],
   [1_294_537, "1,23 MiB"],
   [1.125 * 1024 ** 2, "1,13 MiB"],
-  [2 * 1024 ** 3, "2.048 MiB"],
+  [2 * 1024 ** 3, "2 GiB"],
+  [1.5 * 1024 ** 3, "1,5 GiB"],
+  [3 * 1024 ** 3 + 1, "3 GiB"],
 ])("formats %i bytes with at most two German decimal places", (bytes, expected) => {
   expect(formatUploadLimit(bytes)).toBe(expected);
 });
@@ -28,6 +32,17 @@ it("uses the shared size formatter for hosted storage usage and limits", async (
   });
   render(<OrganizationQuotaCard />);
   expect(await screen.findByText(`${formatUploadLimit(1_294_537)} / ${formatUploadLimit(2 * 1024 ** 3)}`)).toBeVisible();
+});
+
+it("shows the 2 GiB storage limit in GiB, as the backend refusal does", async () => {
+  vi.mocked(useDeploymentMode).mockReturnValue({ mode: "hosted", error: false, mailAvailable: false });
+  vi.mocked(getOrganizationQuota).mockResolvedValue({
+    plan: "free",
+    usage: { storage_bytes: 1_294_537, properties: 1, units: 2, ai_budget_usd: "0" },
+    limits: { storage_bytes: 2 * 1024 ** 3, properties: 20, units: 200, upload_bytes: MAX_UPLOAD_BYTES, ai_budget_usd: "0" },
+  });
+  render(<OrganizationQuotaCard />);
+  expect(await screen.findByText("1,23 MiB / 2 GiB")).toBeVisible();
 });
 
 it.each(["selfhost", null] as const)("renders nothing and skips quota requests while mode is %s", mode => {

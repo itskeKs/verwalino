@@ -4,8 +4,10 @@ import { api } from "../api/client";
 // Safety fallback for unavailable or older metadata. The backend remains authoritative.
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
+// Mirrors format_upload_limit in backend/app/core/document_limits.py.
 export function formatUploadLimit(bytes: number): string {
-  return `${(bytes / 1024 ** 2).toLocaleString("de-DE", { maximumFractionDigits: 2 })} MiB`;
+  const gib = bytes >= 1024 ** 3;
+  return `${(bytes / (gib ? 1024 ** 3 : 1024 ** 2)).toLocaleString("de-DE", { maximumFractionDigits: 2 })} ${gib ? "GiB" : "MiB"}`;
 }
 
 export function useUploadLimit() {

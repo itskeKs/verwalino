@@ -116,7 +116,7 @@ carries `animate-in`/`fade-in` classes, but the `tailwindcss-animate` plugin is 
 The dashboard shows a kit `Card` named “Kontingent” for the hosted free plan,
 with a semantic `h2` and a responsive one/three-column definition list. It shows
 “Speicher”, “Objekte” and “Einheiten” as usage / limit, with German number
-formatting and MiB storage units, using the shared upload-cap formatter. At 90% or
+formatting and MiB/GiB storage units, using the shared upload-cap formatter. At 90% or
 above, a warning `Badge` says
 “Fast ausgeschöpft” and the card says “Ihr Kontingent ist zu mindestens 90 %
 belegt.” Errors show “Kontingent nicht verfügbar.” with retry; loading shows
@@ -132,11 +132,12 @@ and preserves the German message in existing error surfaces.
 Attachment upload errors with status 413 display the backend's German explanation,
 including “Speicherkontingent erschöpft …”, while preserving the file and title.
 Declaration, intake and attachment file checks, hints and validation messages read
-the public metadata file cap. They and the quota card display MiB through
-`formatUploadLimit` in `frontend/src/lib/uploads.ts`: at most two decimal places,
-trailing zeros dropped, German decimal comma and thousands separator. Backend
-413 upload refusals use the same format. The fallback is 25 MiB while metadata
-is loading or unavailable.
+the public metadata file cap. They and the quota card display MiB, or GiB from
+1 GiB upwards, through `formatUploadLimit` in `frontend/src/lib/uploads.ts`: at
+most two decimal places, trailing zeros dropped, German decimal comma and
+thousands separator (`25 MiB`, `1,5 GiB`, `2 GiB`). Backend 413 upload refusals
+and the storage refusal use the same format through `format_upload_limit`. The
+fallback is 25 MiB while metadata is loading or unavailable.
 
 ### App shell
 

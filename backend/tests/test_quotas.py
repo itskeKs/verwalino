@@ -13,13 +13,34 @@ from sqlalchemy import text
 from fastapi import HTTPException
 
 
-@pytest.mark.parametrize("limit, formatted", [
+# Kept identical to the table in frontend/src/components/OrganizationQuotaCard.test.tsx.
+SIZE_FORMAT_TABLE = [
     (25 * 1024**2, "25 MiB"),
+    (10_000_000, "9,54 MiB"),
     (int(1.5 * 1024**2), "1,5 MiB"),
     (1_294_537, "1,23 MiB"),
     (int(1.125 * 1024**2), "1,13 MiB"),
-    (2 * 1024**3, "2.048 MiB"),
-])
+    (2 * 1024**3, "2 GiB"),
+    (int(1.5 * 1024**3), "1,5 GiB"),
+    (3 * 1024**3 + 1, "3 GiB"),
+]
+
+
+@pytest.mark.parametrize("value, formatted", SIZE_FORMAT_TABLE)
+def test_format_upload_limit_matches_the_frontend_table(value, formatted):
+    from app.core.document_limits import format_upload_limit
+    assert format_upload_limit(value) == formatted
+
+
+@pytest.mark.parametrize("limit, formatted", [(2 * 1024**3, "2 GiB"), (int(1.5 * 1024**3), "1,5 GiB")])
+def test_storage_refusal_formats_the_limit_with_the_shared_formatter(limit, formatted):
+    from app.core.quotas import FREE_PLAN, check_quota
+    decision = check_quota(0, replace(FREE_PLAN, storage_bytes=limit), "storage_bytes", limit + 1)
+    assert decision.code == "QUOTA_STORAGE_EXCEEDED"
+    assert decision.message == f"Speicherkontingent erschöpft ({formatted}). Sie können keine weiteren Dokumente speichern."
+
+
+@pytest.mark.parametrize("limit, formatted", SIZE_FORMAT_TABLE)
 def test_upload_refusal_formats_the_cap_like_the_frontend(limit, formatted):
     from app.core.quotas import FREE_PLAN, check_quota
     decision = check_quota(0, replace(FREE_PLAN, upload_bytes=limit), "upload_bytes", limit + 1)
