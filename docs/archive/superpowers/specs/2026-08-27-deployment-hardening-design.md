@@ -2,8 +2,8 @@
 
 Datum: 2026-08-27
 Status: Freigegeben
-Zielhost: **chris@moon.fogu.io**
-Öffentliche Domain: **verwaltung.karat.immo**
+Zielhost: **<user>@<host>**
+Öffentliche Domain: **verwaltung.<customer>.immo**
 
 ## 1. Ziel und Randbedingungen
 
@@ -16,7 +16,7 @@ Das Paket umfasst:
 
 - Behebung der bestätigten Sicherheits- und Betriebs-Findings im Repository,
 - einen gehärteten Single-Host-Compose-Stack,
-- Einbindung in den bereits laufenden Traefik auf moon.fogu.io,
+- Einbindung in den bereits laufenden Traefik auf <host>,
 - reproduzierbarere Builds und aktuelle, geprüfte Abhängigkeiten,
 - automatisierte Tests, Linting, Dependency-Audits und Image-Scanning,
 - einen kontrollierten Erst-Deploy mit Smoke-Test und dokumentiertem Rollback.
@@ -43,15 +43,15 @@ fremden Containern geteilt.
 
 ## 2. Festgestellter Host-Zustand
 
-moon.fogu.io ist ein Debian-13-Host mit Docker und Docker Compose. Der Benutzer
-chris besitzt Zugriff auf Docker. Auf dem Host laufen bereits zahlreiche
+<host> ist ein Debian-13-Host mit Docker und Docker Compose. Der Benutzer
+<user> besitzt Zugriff auf Docker. Auf dem Host laufen bereits zahlreiche
 fremde Container. Ein zentraler Traefik belegt die öffentlichen Ports 80 und
 443 und verwendet den Docker-Provider sowie einen Let's-Encrypt-Resolver.
 
 Der DNS-Zustand ist deployfähig:
 
-- moon.fogu.io zeigt auf 62.171.188.19,
-- verwaltung.karat.immo zeigt ebenfalls auf 62.171.188.19,
+- <host> zeigt auf <ip>,
+- verwaltung.<customer>.immo zeigt ebenfalls auf <ip>,
 - für die Alpha-Domain ist kein AAAA-Record veröffentlicht.
 
 Traefik beantwortet HTTP bereits und leitet auf HTTPS um. Das derzeit
@@ -68,7 +68,7 @@ Internet
 bestehender Traefik :80/:443
   - HTTP -> HTTPS
   - Let's Encrypt
-  - Host-Regel verwaltung.karat.immo
+  - Host-Regel verwaltung.<customer>.immo
   - Basic Auth
   - Rate- und Request-Body-Limits
   - Security-Header
@@ -160,7 +160,7 @@ Weitere Maßnahmen:
 - Mindestlänge 12 und Obergrenze 128 Zeichen für neu gesetzte Passwörter,
 - begrenzte Login-Rate über eine dedizierte Traefik-Route,
 - Produktionsmodus ohne öffentliche OpenAPI- und Swagger-Oberfläche,
-- erlaubter Host wird auf verwaltung.karat.immo begrenzt.
+- erlaubter Host wird auf verwaltung.<customer>.immo begrenzt.
 
 Traefik setzt mindestens HSTS nach erfolgreichem TLS-Start,
 X-Content-Type-Options: nosniff, eine restriktive Referrer-Policy,
@@ -271,7 +271,7 @@ Der Deploy-Job bleibt manuell. Er verwendet ein unveränderliches Image-Tag,
 führt den Migrationsjob genau einmal aus, wartet auf Readiness und bricht bei
 fehlgeschlagenem Smoke-Test ab.
 
-## 10. Deployment auf moon.fogu.io
+## 10. Deployment auf <host>
 
 Der Stack wird unter einem eigenen Verzeichnis im Home des Deploy-Benutzers
 abgelegt, damit keine Root-Rechte und keine Änderung fremder Verzeichnisse
@@ -285,7 +285,7 @@ Hardening wird additiv darauf aufgebaut.
 
 Erstbereitstellung:
 
-1. DNS-Auflösung auf 62.171.188.19 erneut verifizieren.
+1. DNS-Auflösung auf <ip> erneut verifizieren.
 2. Quellstand ohne lokale Secrets, Git-Metadaten oder Build-Artefakte
    übertragen.
 3. Stark zufällige URL-sichere DB- und Session-Secrets auf dem Host erzeugen.
@@ -317,7 +317,7 @@ Das Hardening gilt als technisch abgeschlossen, wenn:
 - das finale Image als Nicht-Root mit den vorgesehenen
   Container-Einschränkungen läuft,
 - App und Datenbank keine öffentlichen Host-Ports besitzen,
-- https://verwaltung.karat.immo ein gültiges Zertifikat, Basic Auth,
+- https://verwaltung.<customer>.immo ein gültiges Zertifikat, Basic Auth,
   Security-Header und die erwartete Anwendung liefert,
 - Login und ein authentifizierter API-Aufruf auf dem Zielhost funktionieren,
 - alle während der Arbeit gestarteten Hilfscontainer und Prozesse beendet sind.

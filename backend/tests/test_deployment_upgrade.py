@@ -210,6 +210,17 @@ def test_archive_refuses_symlinks(tmp_path):
         deployment.archive_documents(tmp_path, io.BytesIO())
 
 
+@pytest.mark.parametrize('names', [('a/b', 'a//b'), ('a', './a'), ('x', 'x/y'), ('x/y', 'x')])
+def test_verification_rejects_normalized_duplicates_and_file_directory_conflicts(names):
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode='w:gz') as tar:
+        for name in names:
+            tar.addfile(tarfile.TarInfo(name), io.BytesIO())
+    archive.seek(0)
+    with pytest.raises(ValueError, match='unsafe document archive'):
+        deployment.verify_documents(archive)
+
+
 def test_database_dump_restore_synthetic_schema_in_allowed_container(tmp_path):
     """Use the same pg_dump/custom-format/pg_restore commands as the host helper.
 
