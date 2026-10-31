@@ -12,3 +12,8 @@ Feature: Organization quotas
     Given two newly signed-up hosted organizations
     When the administrator adds a property and reads the organization quota
     Then only that organization's property usage has increased
+
+  Scenario: Shared scenario data leaves room for another property
+    Given an administrator of "Verwaltung Alpha" is signed in
+    When the administrator adds an extra shared scenario property
+    Then the extra shared scenario property is available

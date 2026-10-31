@@ -116,3 +116,14 @@ def independent_quota_organizations(world, quota_organizations):
 def own_usage_only(world):
     before, after = world.data["quota_property_counts"]
     assert after == [before[0] + 1, before[1]]
+
+
+@when("the administrator adds an extra shared scenario property")
+def extra_shared_property(world):
+    world.data["extra_shared_property"] = create_property(world, "Verwaltung Alpha", "Zusätzliches Szenarioobjekt")
+
+
+@then("the extra shared scenario property is available")
+def extra_shared_property_available(world):
+    response = world.look(world.actor, f"/api/properties/{world.data['extra_shared_property'].id}")
+    assert response.status_code == 200, response.text

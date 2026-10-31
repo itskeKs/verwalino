@@ -4,6 +4,10 @@ import { api } from "../api/client";
 // Safety fallback for unavailable or older metadata. The backend remains authoritative.
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
+export function formatUploadLimit(bytes: number): string {
+  return `${(bytes / 1024 ** 2).toLocaleString("de-DE", { maximumFractionDigits: 6 })} MiB`;
+}
+
 export function useUploadLimit() {
   const [limit, setLimit] = useState(MAX_UPLOAD_BYTES);
   const pending = useRef<Promise<{ max_upload_bytes?: number }> | null>(null);

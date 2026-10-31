@@ -1,4 +1,4 @@
-import { useUploadLimit } from '../lib/uploads';
+import { formatUploadLimit, useUploadLimit } from '../lib/uploads';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
@@ -22,7 +22,7 @@ function NewIntake() {
     if (busy) return;
     setError(null);
     if (!files.length || files.length > 100 || files.some(file => !file.size || file.name.length > 255 || file.size > maxUploadBytes || !intakeMime(file))) {
-      setError('Bitte 1 bis 100 PDF-, XML-, PNG- oder JPEG-Dateien mit jeweils höchstens 25 MiB auswählen. Leere Dateien sind nicht möglich.'); return;
+      setError(`Bitte 1 bis 100 PDF-, XML-, PNG- oder JPEG-Dateien mit jeweils höchstens ${formatUploadLimit(maxUploadBytes)} auswählen. Leere Dateien sind nicht möglich.`); return;
     }
     setBusy(true);
     try {
@@ -57,7 +57,7 @@ function NewIntake() {
 
   return <section className="card min-w-0 space-y-3" aria-label="Neuer Eingang">
     <h2>Dateien einreichen</h2>
-    <p>Bis zu 100 Dateien, jeweils höchstens 25 MiB. Jede Datei wird einzeln übertragen und vor dem Originalabruf geprüft.</p>
+    <p>Bis zu 100 Dateien, jeweils höchstens {formatUploadLimit(maxUploadBytes)}. Jede Datei wird einzeln übertragen und vor dem Originalabruf geprüft.</p>
     <fieldset disabled={busy || submitted} className="min-w-0 space-y-3">
       <label className="block">Dateien auswählen
         <input className="block max-w-full" type="file" multiple accept=".pdf,.xml,.png,.jpg,.jpeg" onChange={event => setFiles(Array.from(event.target.files ?? []))} />

@@ -20,16 +20,19 @@ function page(path = '/posteingang') {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 it('rejects files above the metadata cap before creating an intake batch', async () => {
+  const metadata = { max_upload_bytes: 1.5 * 1024 ** 2 };
+  const formattedLimit = `${(metadata.max_upload_bytes / 1024 ** 2).toLocaleString('de-DE')} MiB`;
   const fetch = vi.fn(async (url: string) => url === '/api/meta'
-    ? json({ max_upload_bytes: 4 }) : json({ items: [], next_cursor: null }));
+    ? json(metadata) : json({ items: [], next_cursor: null }));
   vi.stubGlobal('fetch', fetch);
   page();
   await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/meta', expect.anything()));
+  expect(await screen.findByText(`Bis zu 100 Dateien, jeweils höchstens ${formattedLimit}. Jede Datei wird einzeln übertragen und vor dem Originalabruf geprüft.`)).toBeVisible();
   fireEvent.change(screen.getByLabelText('Dateien auswählen'), { target: { files: [
-    new File(['%PDF-'], 'gross.pdf', { type: 'application/pdf' }),
+    Object.defineProperty(new File(['%PDF-'], 'gross.pdf', { type: 'application/pdf' }), 'size', { value: metadata.max_upload_bytes + 1 }),
   ] } });
   fireEvent.click(screen.getByRole('button', { name: 'Stapel einreichen' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('höchstens 25 MiB');
+  expect(await screen.findByRole('alert')).toHaveTextContent(`höchstens ${formattedLimit}`);
   expect(fetch.mock.calls.every(call => (call as unknown[])[1] === undefined || ((call as unknown[])[1] as RequestInit).method !== 'POST')).toBe(true);
 });
 

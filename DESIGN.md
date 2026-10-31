@@ -130,7 +130,8 @@ API client reads the code for JSON and multipart refusals, exposes it on `ApiErr
 and preserves the German message in existing error surfaces.
 Attachment upload errors with status 413 display the backend's German explanation,
 including “Speicherkontingent erschöpft …”, while preserving the file and title.
-Declaration, intake and attachment file checks read the public metadata file cap,
+Declaration, intake and attachment file checks, hints and validation messages read
+the public metadata file cap. They display MiB with German number formatting,
 with 25 MiB as the fallback while metadata is loading or unavailable.
 
 ### App shell
@@ -446,7 +447,7 @@ typo of `btn--primary`), `badge--warning`, `form-hint`, `table-responsive`.
   `select` with an empty option ("Alle Objekte", "Bitte wählen"), the current selection survives new
   searches, errors as `role="alert"`, "Weitere laden" for more pages.
 - **Upload.** Native `<input type="file">` (the browser's own button text is visible) in a `.form-grid`
-  form: `AttachmentsPanel.tsx` (documents, 25 MiB limit stated in the copy), `MasterImport.tsx` (CSV with
+  form: `AttachmentsPanel.tsx` (documents, metadata upload limit stated in the copy), `MasterImport.tsx` (CSV with
   preview table and row errors), the mandate upload in `MandateDetailPage.tsx`. These forms have no drag
   and drop or progress bar; controls are disabled while requests run. CSV import and attachments report
   outcomes in `role="status"` lines. `DeclarationImportPage.tsx` renders a `<progress>` for processing,
