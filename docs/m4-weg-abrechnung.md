@@ -3,7 +3,7 @@
 Status as of: 2026-06-02 · Version 0.1 (design, before implementation)
 Reference: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2 §6.3, §6.9, §7.3, §8, §10, §11, §13, §14, §16, §17, §18 · [archived roadmap](archive/roadmap.md) M4 · [architecture.md](architecture.md) §3 (immutability), §5.1 (conventions), §5.3/§5.4 (entities) · [m3-abrechnungs-engine.md](m3-abrechnungs-engine.md) (engine, `run_type`, snapshot, golden tests)
 ADRs for this document: [adr/0003-…](adr/0003-gobd-immutability-mechanism.md) (reused) · [adr/0004-pro-rata-daily-allocation.md](adr/0004-pro-rata-daily-allocation.md) (reused, M4 resolves the plan basis left open there) · [adr/0005-rounding-largest-remainder.md](adr/0005-rounding-largest-remainder.md) (reused) · **[adr/0007-weg-settlement-balance-and-economic-plan.md](adr/0007-weg-settlement-balance-and-economic-plan.md) (new)** · **[adr/0008-asset-report-mvp-scope.md](adr/0008-asset-report-mvp-scope.md) (new)**
-Author: `engine-correctness` (Opus 4.8) · Status: **Draft for confirmation by the human — no application code, no migration, no commit**
+Status: **Draft for confirmation by the human — no application code, no migration, no commit**
 
 > This document specifies the **WEG outputs** (M4): the **economic plan** (forward-looking Hausgeld advance payments; Hausgeld = monthly owner contribution), the **Hausgeld/annual settlement with settlement balance (WEMoG, § 28 II WEG)**, and the **asset report (§ 28 IV WEG)**. M4 is the **owner side** of the settlement core; M3 (operating cost statement for tenants, 227 tests, verified live including PDF) is the tenant side. **M4 does not reinvent the distribution engine — it extends it with an owner mode.**
 >
@@ -458,9 +458,9 @@ These invariants hold for **any** valid input (not only the examples) and are th
 
 ---
 
-## 10. Implementation Checklist for `engine-correctness` (for correctness reasons, `engine-correctness` builds M4)
+## 10. Implementation checklist
 
-> According to the roadmap model assignment, M4 belongs to **`engine-correctness` (Opus 4.8)** — the settlement balance and the owner distribution are correctness-critical. Order as in M3: **engine first (pure functions + tests), then persistence/snapshot, then service, then API, PDF last.** **Prerequisite:** the human has confirmed the [DECISION]s (§11) and ADR-0007/0008. No commit before that. **All 227 existing tests stay green** (additive).
+> M4 is built as a correctness-critical step, because the settlement balance and the owner distribution are correctness-critical. Order as in M3: **engine first (pure functions + tests), then persistence/snapshot, then service, then API, PDF last.** **Prerequisite:** the human has confirmed the [DECISION]s (§11) and ADR-0007/0008. No commit before that. **All 227 existing tests stay green** (additive).
 
 ### 10.1 Engine as Pure Functions (First, Highest Test Density)
 - [ ] Extend `app/engine/types.py`: `OwnerCover`/`build_owner_cover` inputs; `WegSettlementInput` (property-wide, `cost_positions` with `owner_distribution_key`, `reserve_relevant`/`cost_group` per item, `owner_periods` with `mea_share`, plan expected advance payments (Soll) per owner, reserve opening balance/withdrawals); `WirtschaftsplanInput`; `VermoegensberichtInput`. **Reuse**, do not duplicate: `UnitInput`, `OwnerPeriodInput`, `distribute_amount`, `time_factor`, `CoverPeriod` concept.

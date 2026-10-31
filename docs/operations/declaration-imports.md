@@ -425,7 +425,8 @@ bounded, nonwaiting batches. The table contains no source text or approval histo
 Strict output triggers guard runs, passes, candidates, evidence, issues and page
 counts. Manual cancellation/reclaim retains trusted cleanup. Downgrade refuses
 ENFORCED/PAUSED organizations and takes NOWAIT dependency locks. Source activation
-remains disabled pending atomic human-review effects and other B1 coverage.
+uses the current guarded lifecycle; review current coverage and
+follow the [activation runbook](accounting-scope-setup.md#owner-activation-runbook).
 
 ## Atomic review decisions (0072)
 
@@ -461,7 +462,9 @@ no source text and expire via bounded nonwaiting cleanup.
 
 This protects the review pipeline against ordinary runtime SQL, not compromise of
 the trusted API process or review secret. Worker provider processing never receives
-that credential. Source activation remains disabled pending the rest of B1.
+that credential. Source activation requires the current reviewed coverage and
+guarded lifecycle;
+follow the [activation runbook](accounting-scope-setup.md#owner-activation-runbook).
 
 ### Review retry receipts (0074)
 
@@ -478,7 +481,8 @@ review runtime command; do not grant direct runtime access. Its response can con
 source-backed candidate/evidence data and must remain protected as source material.
 Do not purge receipts to resolve retry conflicts. A schema downgrade with receipts
 refuses to discard them; disable writers or forward-repair instead. Source activation
-remains disabled until the remaining B1 acceptance work is complete.
+uses the current reviewed coverage, retention/team decision and
+guarded lifecycle described in the [activation runbook](accounting-scope-setup.md#owner-activation-runbook).
 
 ### Indirect report source coverage (0075)
 
@@ -491,4 +495,6 @@ PAUSED keeps authorized disclosure available and blocks dunning effects. Unclass
 legacy dunning notices require reviewed provenance before strict-mode disclosure;
 contact access alone is insufficient. Privacy checks retain hidden issued notices
 as blockers. Do not remove source policies or rewrite historical notices to resolve
-coverage gaps. Activation remains unavailable pending reviewed legacy coverage.
+coverage gaps. Activation requires reviewed legacy coverage and the guarded
+transition; use the
+[activation runbook](accounting-scope-setup.md#owner-activation-runbook).

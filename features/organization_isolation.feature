@@ -53,3 +53,15 @@ Feature: Organization isolation
     And the visitor follows the emailed confirmation link
     Then the registration creates a separate organization with the same name
     And the existing administrator stays in the original organization
+  Scenario Outline: Another organization's Anlage V <view> is not accessible
+    When the user opens the Anlage V <view> for the property of "Verwaltung Beta"
+    Then the report is reported as not found
+
+    Examples:
+      | view     |
+      | summary  |
+      | download |
+
+  Scenario: Administrators share technical diagnostics without organization records
+    When the administrator downloads a diagnostics bundle
+    Then the bundle contains technical counts without either organization’s records

@@ -1,6 +1,6 @@
 """Persistent authentication throttling with short outcome transactions.
 
-Read admission in one transaction, hash outside it, then record the outcome in
+Reserve admission in one transaction, hash outside it, then record the outcome in
 another transaction. Raise public refusals only after the outcome commits.
 """
 from __future__ import annotations
@@ -59,6 +59,40 @@ def key_hash(scope: str, kind: str, value: str) -> bytes:
     return hmac.digest(pepper, f"{scope}:{normalized}".encode("utf-8"), "sha256")
 
 
+def _finalize_failure(row: dict, rules: RateLimitRules, now: datetime) -> bool:
+    """Update a locked row's failure outcome; report a newly started lockout."""
+    if (row["last_lockout_at"] is not None
+        and row["last_lockout_at"] < now - timedelta(minutes=rules.lockout_decay_minutes)):
+        row["lockouts"] = 0
+    active_lock = row["locked_until"] is not None and row["locked_until"] > now
+    if not active_lock and (
+        row["locked_until"] is not None
+        or row["window_start"] + timedelta(minutes=rules.window_minutes) <= now
+    ):
+        row.update(window_start=now, failures=1, locked_until=None)
+    limit = rules.ip_failures if row["key_kind"] == "ip" else rules.email_failures
+    if not active_lock and row["failures"] >= limit:
+        minutes = rules.lockout_minutes
+        # Saturate history at the cap; no unbounded exponent or counter.
+        repeats = 0
+        while minutes < rules.max_lockout_minutes and repeats < row["lockouts"]:
+            minutes = min(minutes * rules.lockout_multiplier, rules.max_lockout_minutes)
+            repeats += 1
+        row.update(lockouts=repeats + 1, locked_until=now + timedelta(minutes=minutes), last_lockout_at=now)
+        return True
+    return False
+
+
+def _refund_ip_reservation(row: dict, reserved: dict, rules: RateLimitRules) -> None:
+    """Refund one successful reservation in its original, row-locked window."""
+    row["failures"] = max(row["failures"] - 1, 0)
+    if row["failures"] < rules.ip_failures and row["locked_until"] is not None:
+        # This request was admitted before that lock. Pending successful
+        # reservations must not leave a lock or escalation below the limit.
+        row.update(locked_until=None, lockouts=reserved["lockouts"],
+                   last_lockout_at=reserved["last_lockout_at"])
+
+
 @dataclass
 class ThrottleAttempt:
     session: AsyncSession
@@ -70,38 +104,24 @@ class ThrottleAttempt:
 
     @property
     def allowed(self) -> bool:
-        return not any(row["locked_until"] is not None and row["locked_until"] > self.now for row in self.rows)
+        return not any(
+            (row["locked_until"] is not None and row["locked_until"] > self.now)
+            or row["failures"] > (self.rules.ip_failures if row["key_kind"] == "ip" else self.rules.email_failures)
+            for row in self.rows
+        )
 
     async def record_failure(self) -> None:
-        """Count every refusal, without extending an active lockout."""
+        """Finalize reserved failures without extending an active lockout."""
         for key in self.rows:
-            # Admission is read-only. Acquire fresh state here, including when
-            # a concurrent success deleted the email row after admission.
+            # Admission already counted this attempt. A concurrent success may
+            # have cleared its email row; restore one failure in that case.
             row = dict((await self.session.execute(text("""INSERT INTO public.auth_throttle
-                (key_kind,key_hash,window_start,updated_at) VALUES (:key_kind,:key_hash,:now,:now)
+                (key_kind,key_hash,window_start,failures,updated_at) VALUES (:key_kind,:key_hash,:now,1,:now)
                 ON CONFLICT (key_kind,key_hash) DO UPDATE SET key_hash=EXCLUDED.key_hash
                 RETURNING *"""), {**key, "now": utcnow()})).mappings().one())
             # Read after acquiring the row lock so contention cannot shorten a lockout.
             now = utcnow()
-            if (row["last_lockout_at"] is not None
-                and row["last_lockout_at"] < now - timedelta(minutes=self.rules.lockout_decay_minutes)):
-                row["lockouts"] = 0
-            active_lock = row["locked_until"] is not None and row["locked_until"] > now
-            if not active_lock and (
-                row["locked_until"] is not None
-                or row["window_start"] + timedelta(minutes=self.rules.window_minutes) <= now
-            ):
-                row.update(window_start=now, failures=0, locked_until=None)
-            row["failures"] += 1
-            limit = self.rules.ip_failures if row["key_kind"] == "ip" else self.rules.email_failures
-            if not active_lock and row["failures"] >= limit:
-                minutes = self.rules.lockout_minutes
-                # Saturate history at the cap; no unbounded exponent or counter.
-                repeats = 0
-                while minutes < self.rules.max_lockout_minutes and repeats < row["lockouts"]:
-                    minutes = min(minutes * self.rules.lockout_multiplier, self.rules.max_lockout_minutes)
-                    repeats += 1
-                row.update(lockouts=repeats + 1, locked_until=now + timedelta(minutes=minutes), last_lockout_at=now)
+            if _finalize_failure(row, self.rules, now):
                 logger.warning("Authentication lockout scope=%s kind=%s key_hash=%s request_id=%s",
                                self.scope, row["key_kind"], row["key_hash"].hex(), self.request_id)
             await self.session.execute(text("""UPDATE public.auth_throttle SET
@@ -110,10 +130,22 @@ class ThrottleAttempt:
                 WHERE key_kind=:key_kind AND key_hash=:key_hash"""), {**row, "now": now})
 
     async def reset(self) -> None:
-        """Success clears email history; IP failures survive successful logins."""
+        """Refund success, clearing email history and preserving IP failures."""
         for row in self.rows:
             if row["key_kind"] == "email":
                 await self.session.execute(text("DELETE FROM public.auth_throttle WHERE key_kind=:key_kind AND key_hash=:key_hash"), row)
+            else:
+                current = (await self.session.execute(text("""SELECT * FROM public.auth_throttle
+                    WHERE key_kind=:key_kind AND key_hash=:key_hash FOR UPDATE"""), row)).mappings().one_or_none()
+                # Do not refund a newer window if this verification was delayed.
+                if current is None or current["window_start"] != row["window_start"]:
+                    continue
+                current = dict(current)
+                _refund_ip_reservation(current, row, self.rules)
+                await self.session.execute(text("""UPDATE public.auth_throttle SET
+                    failures=:failures,locked_until=:locked_until,lockouts=:lockouts,
+                    last_lockout_at=:last_lockout_at,updated_at=:now
+                    WHERE key_kind=:key_kind AND key_hash=:key_hash"""), {**current, "now": utcnow()})
 
 
 async def cleanup_stale(rules: RateLimitRules) -> None:
@@ -134,19 +166,41 @@ async def check_and_record(
     session: AsyncSession, scope: str, keys: Mapping[str, str], rules: RateLimitRules,
     *, request_id: str | None = None,
 ) -> ThrottleAttempt:
-    """Read scoped lock status without writing or locking throttle rows.
+    """Reserve scoped attempts atomically before password verification.
 
-    Commit this transaction before hashing. The returned attempt acquires fresh
-    row state only when recording its outcome in the caller's next transaction.
+    Commit before hashing. Failure finalization and success refunds happen in
+    the caller's next transaction, without holding row locks during hashing.
     """
     if not keys:
         raise ValueError("Throttle keys are required")
     digests = sorted((kind, key_hash(scope, kind, value)) for kind, value in keys.items())
     rows = []
     for kind, digest in digests:
-        locked_until = await session.scalar(text("""SELECT locked_until FROM public.auth_throttle
-            WHERE key_kind=:kind AND key_hash=:digest"""), {"kind": kind, "digest": digest})
-        rows.append({"key_kind": kind, "key_hash": digest, "locked_until": locked_until})
+        row = dict((await session.execute(text("""INSERT INTO public.auth_throttle
+            (key_kind,key_hash,window_start,failures,updated_at) VALUES (:kind,:digest,:now,1,:now)
+            ON CONFLICT (key_kind,key_hash) DO UPDATE SET
+                failures=auth_throttle.failures+1,updated_at=EXCLUDED.updated_at
+            RETURNING *"""), {"kind": kind, "digest": digest, "now": utcnow()})).mappings().one())
+        # Refresh expired state only after acquiring the row lock. A zero-count
+        # IP row left by success must not start the next failure's window early.
+        now = utcnow()
+        expired_history = (row["last_lockout_at"] is not None
+                           and row["last_lockout_at"] < now - timedelta(minutes=rules.lockout_decay_minutes))
+        active_lock = row["locked_until"] is not None and row["locked_until"] > now
+        reset_window = not active_lock and (
+            row["locked_until"] is not None or row["failures"] == 1
+            or row["window_start"] + timedelta(minutes=rules.window_minutes) <= now
+        )
+        if expired_history:
+            row["lockouts"] = 0
+        if reset_window:
+            row.update(window_start=now, failures=1, locked_until=None)
+        if expired_history or reset_window:
+            await session.execute(text("""UPDATE public.auth_throttle SET
+                window_start=:window_start,failures=:failures,locked_until=:locked_until,
+                lockouts=:lockouts,updated_at=:now WHERE key_kind=:key_kind AND key_hash=:key_hash"""),
+                {**row, "now": now})
+        rows.append(row)
     return ThrottleAttempt(session, scope, rows, rules, utcnow(), request_id or str(uuid.uuid4()))
 
 

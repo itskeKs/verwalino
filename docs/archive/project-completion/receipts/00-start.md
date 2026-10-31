@@ -26,7 +26,7 @@ Aus `docs/acceptance/parity-register.md`:
 Testdatei: `backend/tests/test_replacement_exception_outcomes.py`
 
 ```bash
-cd /Users/keks/Developer/hausverwaltung/backend
+cd $HOME/Developer/hausverwaltung/backend
 export HV_DATABASE_URL_MIGRATOR="postgresql+asyncpg://app_migrator:migrator_secret@localhost:55432/hausverwaltung"
 export HV_DATABASE_URL="postgresql+asyncpg://app_rw:app_secret@localhost:55432/hausverwaltung"
 export HV_DATABASE_URL_SYNC="postgresql://app_migrator:migrator_secret@localhost:55432/hausverwaltung"

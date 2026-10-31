@@ -20,6 +20,7 @@ EXEMPT = {
     **{f"{method} /api/signup{suffix}": "organization-free hosted signup; pending identity and atomic new-tenant creation covered by self_service_signup.feature and test_signup.py"
        for suffix in ("", "/confirm", "/resend")
        for method in ("POST", "GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT")},
+    "POST /api/admin/diagnostics": "binary download: no client-supplied IDs; decoded bundle, current-org counts, process log isolation and roles covered in test_admin_diagnostics.py and organization_isolation.feature",
     "GET /api/setup": "organization-free boolean only; fresh/closed states covered by first_run_setup.feature and test_setup.py",
     "POST /api/setup": "exists only before any organization; token-gated creation covered by first_run_setup.feature and test_setup.py",
     **{f"{method} /api/setup": "organization-free method refusal; closed setup returns 404, tested in test_setup.py"
@@ -134,6 +135,7 @@ IMPORT_APPLY = {**import_body(), "expected_digest": "", "request_id": str(uuid.u
 
 
 PROBES: dict[str, Probe] = {
+    "GET /api/admin/diagnostics": Probe(),
     # app/api/attachments.py
     "GET /api/attachments": Probe(row("property", property_id="id")),
     "GET /api/attachments/{attachment_id}": Probe(row("attachment", attachment_id="id")),

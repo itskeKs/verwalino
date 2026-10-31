@@ -1,0 +1,26 @@
+---
+import { t, type Locale } from '../i18n';
+import { pathFor, type Page } from '../content/routes';
+import { repositoryUrl } from '../content/repository';
+import Wordmark from './Wordmark.astro';
+interface Props { locale: Locale; page: Page }
+const { locale, page } = Astro.props;
+const text = t(locale);
+const links = [
+  ['imprint', 'legal.notice'], ['privacy', 'legal.privacy'],
+  ['terms', 'legal.terms'], ['dpa', 'legal.dpa'], ['selfhost', 'cta.self'],
+] as const;
+---
+<footer>
+  <div class="wrap footer-inner">
+    <a href={pathFor(locale, 'landing')} class="footer-brand" aria-label={text('brand.label')}><Wordmark /></a>
+    <div class="footer-links">
+      {links.map(([route, key]) => <a href={pathFor(locale, route)}>{text(key)}</a>)}
+      <span class="footer-language">{text('language')} · <a href={pathFor('de', page)} lang="de" hreflang="de" aria-current={locale === 'de' ? 'page' : undefined}>DE</a> / <a href={pathFor('en', page)} lang="en" hreflang="en" aria-current={locale === 'en' ? 'page' : undefined}>EN</a></span>
+    </div>
+    <p class="footnote">{text('footer.note')}</p>
+    <p class="footnote">{text('footer.operator')}</p>
+    <p class="footnote"><a href={repositoryUrl}>{text('source')}</a></p>
+    <p class="footnote">{text('footer.copyright')}</p>
+  </div>
+</footer>

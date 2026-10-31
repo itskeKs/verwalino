@@ -10,8 +10,7 @@
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
-const { chromium } = require(process.env.HV_PLAYWRIGHT_PACKAGE
-  || '/Users/keks/.npm/_npx/420ff84f11983ee5/node_modules/playwright');
+const { chromium } = require(process.env.HV_PLAYWRIGHT_PACKAGE || 'playwright');
 const base = 'http://127.0.0.1:13000';
 const prefix = `T46 ${Date.now()} ${randomUUID().slice(0, 8)}`;
 const propertyName = `${prefix} Mietobjekt`;
@@ -288,7 +287,7 @@ async function selectCode(scope, label, code) {
     }
   }
   assert.equal(meters.length, 4); assert.equal(readings.length, 8);
-  await page.goto(base + '/berechtigungen');
+  await page.goto(base + '/berechtigungen/teamrechte');
   const propertyGroup = page.getByRole('group', { name: 'Objekt', exact: true });
   await field(propertyGroup, 'Objekte durchsuchen').fill(propertyName);
   await selectLabel(page, 'Objekt', propertyName);

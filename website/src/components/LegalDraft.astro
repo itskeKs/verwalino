@@ -1,0 +1,19 @@
+---
+import { t, type Locale } from '../i18n';
+import { draftSections, checklist } from '../content/drafts';
+interface Props { locale: Locale; document: keyof typeof draftSections }
+const { locale, document } = Astro.props;
+const text = t(locale);
+---
+<article class="document wrap">
+  <p class="draft-banner"><strong>{text('draft.banner')}</strong></p>
+  <header class="document-head"><h1>{text(`page.${document}.title`)}</h1></header>
+  {draftSections[document].map((section, index) => <section aria-labelledby={`section-${index}`}>
+    <h2 id={`section-${index}`}>{text(`${section}.title`)}</h2>
+    <p>{text(`${section}.body`)}</p>
+  </section>)}
+  <aside class="draft-checklist" aria-labelledby="checklist">
+    <h2 id="checklist">{text('draft.checklist.title')}</h2>
+    <ul>{checklist.map(key => <li>{text(key)}</li>)}</ul>
+  </aside>
+</article>

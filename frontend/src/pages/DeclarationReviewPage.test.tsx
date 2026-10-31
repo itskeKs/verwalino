@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import * as declarationApi from "../api/endpoints";
-import { ApiError } from "../api/client";
+import { api, ApiError } from "../api/client";
 import type { ApprovalPreview, DeclarationCandidate, DeclarationDocument } from "../api/types";
 import { DeclarationReviewPage } from "./DeclarationReviewPage";
 import * as auth from "../auth/useAuth";
@@ -60,6 +60,10 @@ function renderReview(withRouteSwitch = false) {
   );
 }
 
+beforeEach(() => {
+  vi.spyOn(api, "get").mockResolvedValue({ mode: "PREPARATION", changed_at: null });
+});
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -67,6 +71,29 @@ afterEach(() => {
 });
 
 describe("Teilungserklärung review", () => {
+  it.each([
+    ["PREPARATION", "Der objektbezogene Quellschutz ist noch aus."],
+    ["ENFORCED", "Mitarbeitende sehen nur ausdrücklich freigegebene Objektdaten"],
+    ["PAUSED", "Quellen- und Finanzaktionen sind angehalten."],
+  ])("shows the live %s protection state when preparing publication rights", async (mode, message) => {
+    vi.mocked(api.get).mockResolvedValue({ mode, changed_at: null });
+    mockReviewData();
+    renderReview();
+    fireEvent.click(await screen.findByRole("button", { name: "Übernahme vorbereiten" }));
+    expect(await screen.findByText((text) => text.includes(message))).toBeVisible();
+    expect(api.get).toHaveBeenCalledWith("/api/access-preparation/source-security", expect.anything());
+    expect(screen.queryByText(/Zugriffsbeschränkung ist noch nicht aktiviert/)).not.toBeInTheDocument();
+  });
+
+  it("reports unavailable protection when the current status cannot be loaded", async () => {
+    vi.mocked(api.get).mockRejectedValue(new Error("Unavailable"));
+    mockReviewData();
+    renderReview();
+    fireEvent.click(await screen.findByRole("button", { name: "Übernahme vorbereiten" }));
+    expect(await screen.findByText(/Der aktuelle Quellschutz ist nicht verfügbar/)).toBeVisible();
+    expect(screen.queryByText(/noch nicht aktiviert|Quellschutz ist noch aus/)).not.toBeInTheDocument();
+  });
+
   it("requires an explicit audience choice and reason, then retries the exact submitted grant", async () => {
     mockReviewData([candidate({ review_status: "ACCEPTED" })]);
     const approve = vi.spyOn(declarationApi, "approveDeclarationImport").mockRejectedValue(new Error("Antwort verloren"));
@@ -90,7 +117,7 @@ describe("Teilungserklärung review", () => {
         { user_id: "publisher", capabilities: ["read", "prepare", "approve", "export"], reason: "Objektfreigabe geprüft" },
       ] },
     });
-    expect(screen.getByText(/Zugriffsbeschränkung ist noch nicht aktiviert/)).toBeVisible();
+    expect(screen.getByText(/objektbezogene Quellschutz ist noch aus/)).toBeVisible();
   });
 
   it("does not offer new audience creation for an existing property amendment", async () => {

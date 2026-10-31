@@ -2,7 +2,6 @@
 
 Status: **Accepted** (decision made by the human; implementation done — additive fix, no migration)
 Date: 2026-06-02 · Context: M1 ↔ M3 (read/write boundary) · Reference: [0004-pro-rata-daily-allocation.md](0004-pro-rata-daily-allocation.md) #6 · [../m3-abrechnungs-engine.md](../m3-abrechnungs-engine.md) §3.4 · [../sdd-property-management-mvp.md](../sdd-property-management-mvp.md) §6.2, §14
-Author: `engine-correctness` (Opus 4.8)
 
 > This ADR records a **decision already made by the human** and documents the implemented mechanics. It is the follow-up consolidation to the M3 read-edge fix (settlement_service `−1`): after the *engine* read boundary was fixed, this step makes the *API* write/display boundary consistent, so that the `valid_to` semantics follow a single, verifiable rule throughout the system.
 

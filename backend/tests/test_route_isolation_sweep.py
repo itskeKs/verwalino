@@ -64,7 +64,6 @@ AREAS = {"core": core, "finance": finance, "documents": documents, "access": acc
 # registers them.
 EXEMPT: dict[str, str] = {
     **core.EXEMPT,
-    "GET /api/meta": "organization-free: public mode/version only, no database access or secrets; tested in test_meta.py",
     "GET /api/health": "organization-free: answers without a session and reads no organization data",
     "GET /api/health/live": "organization-free: answers without a session and reads no organization data",
     "GET /api/health/ready": "organization-free: answers without a session and reads no organization data",
@@ -302,6 +301,18 @@ async def test_visual_adoption_probe_skips_organizations_without_disclosures(mig
     else:
         assert selected["logical_id"] == ids["logical"]
         assert selected["treatment_review_id"] == ids["review"]
+
+
+async def test_extraction_history_probe_skips_revisions_without_logical_documents(migrator_session):
+    ids = {name: uuid.UUID(int=value) for name, value in {
+        "unlinked": 1, "linked": 2, "ref": 3, "logical": 4, "org": 5, "b": 6,
+    }.items()}
+    lookup = """WITH extraction_revision(id,organization_id,document_ref_id,logical_document_id) AS (
+        VALUES (CAST(:unlinked AS uuid),CAST(:org AS uuid),CAST(:ref AS uuid),NULL::uuid),
+               (:linked,:org,:ref,:logical)
+      ) """ + documents.PROBES["GET /api/document-refs/{ref_id}/extractions"].ids
+    selected = (await migrator_session.execute(text(lookup), ids)).mappings().one()
+    assert dict(selected) == {"ref_id": ids["ref"], "logical_document_id": ids["logical"]}
 
 
 async def test_access_routes_keep_organizations_apart(sweep, access_seeded):

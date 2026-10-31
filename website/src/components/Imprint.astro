@@ -1,0 +1,25 @@
+---
+import { t, type Locale } from '../i18n';
+import { operator } from '../content/operator';
+interface Props { locale: Locale }
+const { locale } = Astro.props;
+const text = t(locale);
+---
+<article class="document wrap">
+  <header class="document-head"><h1>{text('page.imprint.title')}</h1></header>
+  {locale === 'en' && <p>{text('imprint.authoritative')} <a class="text-link" href="/impressum/">Deutsch</a></p>}
+  <section aria-labelledby="provider">
+    <h2 id="provider">{text('imprint.provider')}</h2>
+    <address>{operator.name}<br />{operator.street}<br />{operator.city}<br />{operator.country}</address>
+    <p>{text('imprint.represented')}: {operator.director}</p>
+  </section>
+  <section aria-labelledby="contact">
+    <h2 id="contact">{text('imprint.contact')}</h2>
+    <p>{text('imprint.email')}: <a class="text-link" href={`mailto:${operator.email}`}>{operator.email}</a><br />{text('imprint.phone')}: <a class="text-link" href={`tel:${operator.phone.replaceAll(' ', '')}`}>{operator.phone}</a></p>
+  </section>
+  <section aria-labelledby="register"><h2 id="register">{text('imprint.register')}</h2><p>{text('imprint.court')}<br />{operator.register}</p></section>
+  <section aria-labelledby="vat"><h2 id="vat">{text('imprint.vat')}</h2><p>{text('imprint.vat.label')}: {operator.vat}</p></section>
+  <section aria-labelledby="editor"><h2 id="editor">{text('imprint.editor')}</h2><address>{operator.director}<br />{operator.street}<br />{operator.city}</address></section>
+  <section aria-labelledby="authority"><h2 id="authority">{text('imprint.authority')}</h2><p>{operator.authority}</p></section>
+  <section aria-labelledby="dispute"><h2 id="dispute">{text('imprint.dispute')}</h2><p>{text('imprint.dispute.body')}</p></section>
+</article>

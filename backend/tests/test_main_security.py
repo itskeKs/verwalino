@@ -17,13 +17,13 @@ def test_production_settings_parse_exact_host_and_disable_docs():
     production = Settings(
         session_cookie_name="__Host-hv_session",
         session_cookie_secure=True,
-        allowed_hosts="verwaltung.karat.immo",
+        allowed_hosts="verwaltung.example.org",
         enable_api_docs=False,
     )
 
     assert production.session_cookie_name == "__Host-hv_session"
     assert production.session_cookie_secure is True
-    assert production.allowed_host_list == ["verwaltung.karat.immo"]
+    assert production.allowed_host_list == ["verwaltung.example.org"]
     assert production.docs_url is None
     assert production.openapi_url is None
 

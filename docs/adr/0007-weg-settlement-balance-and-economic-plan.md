@@ -2,7 +2,6 @@
 
 Status: **Proposed** (confirmation by the human pending — no code/commit yet)
 Date: 2026-06-02 · Context: M4 · Reference: [../m4-weg-abrechnung.md](../m4-weg-abrechnung.md) §2, §5 · [0004-pro-rata-daily-allocation.md](0004-pro-rata-daily-allocation.md) (resolves the plan basis left open there) · [0005-rounding-largest-remainder.md](0005-rounding-largest-remainder.md) · [../sdd-property-management-mvp.md](../sdd-property-management-mvp.md) §6.9, §10, §17 · SDD §18 (indirectly)
-Author: `engine-correctness` (Opus 4.8)
 
 > This ADR decides two correctness-critical M4 questions: (1) **how the settlement balance is defined under WEMoG (§ 28 II WEG)** (subject of the resolution), and (2) **which basis applies to the economic plan advances** — which ADR-0004 explicitly left open for M4. Both are **[DECISION]** items for the human; open domain points are marked **[§18/domain]**.
 
