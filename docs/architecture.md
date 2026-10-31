@@ -513,7 +513,7 @@ the token inside PostgreSQL and returns it once for mail submission. pgcrypto is
 absent; two `gen_random_uuid()` values supply **244 random bits** (122 each),
 encoded as 64 hexadecimal characters. Callers cannot choose a token digest.
 `resend_signup(email) RETURNS text` enforces the shared ten-minute send cooldown
-and rotates the token with a fresh 24-hour expiry. A live pending request keeps
+and rotates the token without extending the original 24-hour request expiry. A live pending request keeps
 its first password hash and names even when a third party resubmits it; only an
 expired request can be replaced. Signup always creates a separate organization,
 including when its display name matches an existing tenant.

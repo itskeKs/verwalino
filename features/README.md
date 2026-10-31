@@ -76,10 +76,12 @@ Organization isolation scenarios run in both modes. Browser app processes inheri
 selected mode too; `@browser` remains a separate opt-in tag. Browser scenarios do not
 send mail, so only CI's backend job provisions the same digest-pinned Mailpit service.
 
-**CI integration:** PR CI and the nightly run the selfhost mode. The nightly uses
+**CI integration:** PR CI runs the selfhost backend suite, then the hosted API
+scenarios sequentially in the same backend job against the same disposable
+Postgres and Mailpit services. The nightly runs selfhost mode and uses
 the self-host installer, which starts a selfhost server; changing the pytest
 process's mode only selects tags and cannot change that server's policy. A
-CI/nightly run in both modes, including a server started with
+nightly run in both modes, including a server started with
 `HV_DEPLOYMENT_MODE=hosted`, is tracked in #103.
 
 ## How the step library is organised
@@ -256,7 +258,7 @@ GitHub runner's lifecycle removes its storage.
 
 Only `mode: [selfhost]` is implemented. Report metadata uses the same validated
 `HV_DEPLOYMENT_MODE` policy as scenario tag selection and defaults to `selfhost`;
-the workflow sets it from its matrix. Running both modes in CI/nightly is tracked
+the workflow sets it from its matrix. Running both modes in the nightly is tracked
 in #103 and requires a hosted server in addition to the selfhost installation.
 **The self-host startup and full nightly integration are unverified until the first
 GitHub runner run.** Local checks parse the workflow and test the local runners;

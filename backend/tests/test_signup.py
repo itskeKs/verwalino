@@ -129,6 +129,22 @@ async def test_double_submit_and_resend_share_a_persistent_ten_minute_cooldown(s
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('path', ['/api/signup', '/api/signup/resend'])
+async def test_resending_a_live_request_preserves_its_original_expiry(signup, path):
+    client, connection, mail = signup
+    await client.post('/api/signup', json=BODY)
+    token = confirmation_token(mail)
+    await connection.execute(text("""UPDATE signup_request
+        SET created_at=created_at-interval '23 hours', expires_at=expires_at-interval '23 hours'"""))
+    expires_at = await connection.scalar(text('SELECT expires_at FROM signup_request'))
+    body = BODY if path == '/api/signup' else {'email': BODY['email']}
+    assert (await client.post(path, json=body)).status_code == 202
+    assert len(mail.messages) == 2
+    assert confirmation_token(mail) != token
+    assert await connection.scalar(text('SELECT expires_at FROM signup_request')) == expires_at
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('state', ['expired', 'used', 'wrong', 'missing'])
 async def test_wrong_expired_and_used_tokens_have_one_generic_refusal(signup, state):
     client, connection, mail = signup
@@ -531,20 +547,27 @@ async def test_hosted_startup_requires_a_public_origin_and_smtp(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_expired_request_can_be_replaced_with_new_names_and_password(signup):
+async def test_owner_can_replace_a_strangers_request_after_the_original_day_despite_resend(signup):
     client, connection, mail = signup
     await client.post('/api/signup', json=BODY)
     old_token = confirmation_token(mail)
-    await connection.execute(text("UPDATE signup_request SET expires_at=clock_timestamp()-interval '1 second'"))
+    await connection.execute(text("""UPDATE signup_request
+        SET created_at=created_at-interval '23 hours', expires_at=expires_at-interval '23 hours'"""))
+    await client.post('/api/signup/resend', json={'email': BODY['email']})
+    await connection.execute(text("""UPDATE signup_request
+        SET created_at=created_at-interval '2 hours', expires_at=expires_at-interval '2 hours',
+            resent_at=resent_at-interval '2 hours'"""))
     replacement = BODY | {'password': 'Replacement-password-123', 'admin_name': 'Replacement owner',
                           'organization_name': 'Replacement organization'}
     assert (await client.post('/api/signup', json=replacement)).json() == MESSAGE
-    assert len(mail.messages) == 2
-    assert await connection.scalar(text('SELECT admin_name FROM signup_request')) == replacement['admin_name']
+    assert len(mail.messages) == 3
     assert (await client.post('/api/signup/confirm', json={'token': old_token, 'password': BODY['password']})).json() == REFUSED
-    assert (await client.post('/api/signup/confirm', json={
+    response = await client.post('/api/signup/confirm', json={
         'token': confirmation_token(mail), 'password': replacement['password'],
-    })).status_code == 201
+    })
+    assert response.status_code == 201, response.text
+    assert await connection.scalar(text('SELECT name FROM organization')) == replacement['organization_name']
+    assert await connection.scalar(text('SELECT display_name FROM "user"')) == replacement['admin_name']
 
 
 @pytest.mark.asyncio

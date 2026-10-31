@@ -50,7 +50,8 @@ are never stored there. The application strips the server query scope
 for this page before the default Uvicorn access logger sees it; separately managed
 reverse proxies must also avoid recording confirmation query strings. Tokens
 contain 244 random bits from two PostgreSQL UUIDs (pgcrypto is absent); only
-SHA-256 hashes persist, and each link expires after 24 hours. Resending rotates the token and renews that lifetime,
+SHA-256 hashes persist, and requests expire 24 hours after submission. Resending
+rotates the token while preserving the original expiry,
 with one send at most every ten minutes across signup and resend. Pending requests
 cannot sign in. Confirmation creates the tenant and owner atomically and returns
 the normal session cookie. Existing addresses receive the identical generic 202

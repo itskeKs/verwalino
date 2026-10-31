@@ -71,7 +71,7 @@ def send_signup_confirmation(config: Settings, *, recipient: str, link: str) -> 
     message.set_content(
         "Bitte bestätigen Sie Ihre E-Mail-Adresse, um Ihre Organisation in Verwalino anzulegen.\n\n"
         f"{link}\n\n"
-        "Der Link ist einmalig gültig und läuft nach 24 Stunden ab.\n"
+        "Der Link ist einmalig gültig und läuft 24 Stunden nach der ursprünglichen Registrierungsanfrage ab.\n"
         "Geben Sie zur Bestätigung das bei der Registrierung gewählte Passwort ein.\n"
         "Wenn Sie diese Registrierung nicht selbst angefordert haben, ignorieren Sie diese E-Mail.\n"
     )
