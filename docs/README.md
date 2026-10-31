@@ -65,5 +65,4 @@ Start with the project overview, then choose a page for the task at hand.
 
 | Research and reference | Purpose |
 | --- | --- |
-| [Domain reference](domain-reference.md) | Reference-product workflows and terminology for property management. |
 | [Software trial evaluation](research/software-trials-2026-10-01/README.md) | Comparative trial observations, evidence, and limitations. |

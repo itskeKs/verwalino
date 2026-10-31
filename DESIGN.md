@@ -35,8 +35,6 @@ Follow [Components](#components) for the permitted styling layers and their sour
   `frontend/src/**/*.test.tsx`; browser features in `features/` verify geometry that jsdom cannot check.
 - When the look changes, update this contract and the screenshots in `docs/assets/design/`
   in the same PR.
-- External software in [docs/domain-reference.md](docs/domain-reference.md) is a reference for scope
-  and flows, not a design contract for Verwalino.
 
 ### Colour
 
