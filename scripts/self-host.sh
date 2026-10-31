@@ -30,6 +30,7 @@ Usage: bash scripts/self-host.sh COMMAND
   stop                          Stop containers without deleting data
 Default: local HTTP on 127.0.0.1:18080; no AI, SMTP or extraction worker.
 Optional inbox-worker (profile inbox, ClamAV signatures): see DEPLOY.md.
+Start and stop also stop an existing inbox-worker; restart it after app readiness.
 VERWALINO_CONFIG selects the private config file (default: .env.selfhost).
 No automatic update, downgrade or volume deletion is provided.
 On first start, open the printed /setup URL and enter the one-time token (24 h).
@@ -121,6 +122,12 @@ compose() {
     if [[ "$VERWALINO_MODE" = https ]]; then profiles+=(--profile https); fi
     docker compose --project-name verwalino --env-file "$CONFIG" \
         -f "$ROOT/infra/docker-compose.yml" "${profiles[@]}" "$@"
+}
+
+stop_inbox_worker() {
+    local container_id
+    container_id=$(compose ps --all --quiet inbox-worker)
+    if [[ -n "$container_id" ]]; then compose stop inbox-worker; fi
 }
 
 init_config() {
@@ -245,7 +252,8 @@ case "$command" in
             compose pull app
         fi
         compose up -d --wait --wait-timeout 120 db
-        # Do not run migrations alongside an already running web writer.
+        # Do not run migrations alongside an already running writer.
+        stop_inbox_worker
         compose stop app
         compose run --rm --no-deps -T migrate
         prepare_setup
@@ -266,5 +274,5 @@ case "$command" in
         ;;
     admin) admin "$@" ;;
     status) compose ps ;;
-    stop) lock_config; compose stop ;;
+    stop) lock_config; stop_inbox_worker; compose stop ;;
 esac

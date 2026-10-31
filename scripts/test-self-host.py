@@ -36,6 +36,8 @@ with open(os.environ["FAKE_DOCKER_LOG"], "a") as log:
 failure = os.environ.get("FAKE_DOCKER_FAIL")
 if failure and (failure in sys.argv or (failure == "app-ready" and "up" in sys.argv and sys.argv[-1] == "app")):
     sys.exit(17)
+if "ps" in sys.argv and sys.argv[-1] == "inbox-worker":
+    print(os.environ.get("FAKE_INBOX_CONTAINER", ""))
 if "bootstrap" in sys.argv:
     password = sys.stdin.readline()
     with open(os.environ["FAKE_DOCKER_STDIN"], "w") as capture:
@@ -286,6 +288,36 @@ if "exec" in sys.argv and "psql" in sys.argv:
         self.assertTrue(any("stop" in c["args"] for c in self.calls()))
         self.assert_isolated([c["args"] for c in self.calls()])
         self.assertEqual(before, self.config.read_bytes())
+
+    def test_start_stops_existing_inbox_worker_before_migration(self):
+        self.init()
+        self.env["FAKE_INBOX_CONTAINER"] = "existing-inbox-worker"
+        result = self.run_script("start")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [c["args"] for c in self.calls()]
+        stopped = next(i for i, args in enumerate(calls) if args[-2:] == ["stop", "inbox-worker"])
+        migrated = next(i for i, args in enumerate(calls) if "migrate" in args)
+        self.assertLess(stopped, migrated)
+        self.assertFalse(any("up" in args and args[-1] == "inbox-worker" for args in calls))
+        self.assert_isolated(calls)
+
+    def test_stop_includes_existing_inbox_worker_and_default_services(self):
+        self.init()
+        self.env["FAKE_INBOX_CONTAINER"] = "existing-inbox-worker"
+        result = self.run_script("stop")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [c["args"] for c in self.calls()]
+        self.assertTrue(any(args[-2:] == ["stop", "inbox-worker"] for args in calls))
+        self.assertTrue(any(args[-1] == "stop" for args in calls))
+        self.assert_isolated(calls)
+
+    def test_absent_inbox_worker_is_not_stopped_or_started(self):
+        self.init()
+        for command in ("start", "stop"):
+            result = self.run_script(command)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [c["args"] for c in self.calls()]
+        self.assertFalse(any("inbox-worker" in args and ("stop" in args or "up" in args) for args in calls))
 
     def test_random_generation_failure_leaves_no_partial_config_or_lock(self):
         openssl = self.base / "bin" / "openssl"

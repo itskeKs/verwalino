@@ -1,8 +1,11 @@
 """Inbox commands use HTTP; only worker ticks run in-process, without a daemon."""
 import hashlib
 
+import psycopg2
+import pytest
 from pytest_bdd import given, parsers, then, when
 
+from tests.conftest import MIGRATOR_SYNC_URL, clear_disposable_source_context
 from tests.bdd.steps.browser_setup import create, create_scope
 from tests.test_allocation_adoptions import command as adoption_command
 from tests.test_allocation_proposals import command as allocation_command
@@ -25,9 +28,19 @@ def prepare_reviewer(world, user_id):
     world.data["scope"] = create_scope(world, str(user_id), "Mietkreis Sonnenhof inbox")
 
 
+@pytest.fixture
+def inbox_scenario_tenant(worker_tenant, store):
+    try:
+        yield worker_tenant
+    finally:
+        # Adopted evidence is immutable; reuse the guarded disposable-DB cleanup.
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+            clear_disposable_source_context(cursor)
+
+
 @given("an inbox reviewer with a property and accounting scope")
-def inbox_reviewer(world, worker_tenant, store):
-    world.actor, ids = worker_tenant
+def inbox_reviewer(world, inbox_scenario_tenant):
+    world.actor, ids = inbox_scenario_tenant
     world.data["organization_id"] = ids["org_a_id"]
     prepare_reviewer(world, ids["user_a_admin_id"])
 
@@ -148,6 +161,7 @@ def confirmed_cost(world):
     assert adopted["financial_state"] == "confirmed"
     cost, = adopted["costs"]
     saved = get(world, f"/api/cost-entries/{cost['cost_entry_id']}")
+    assert saved["gross_amount"] == world.data["amount"]
     review = world.data["review"]
     assert saved["status"] == "confirmed" and saved["source"] == "PDF_IMPORT"
     for field in ("gross_amount", "invoice_date", "service_period_from", "service_period_to", "document_number"):

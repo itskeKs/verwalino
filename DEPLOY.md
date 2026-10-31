@@ -302,7 +302,7 @@ provider key/egress, exposed port, web/review role or migrator credential.
 Documents and ClamAV signatures are read-only; the root filesystem is read-only,
 capabilities are dropped and processing uses bounded temporary storage. The
 130-second stop grace period allows bounded processing to drain. The inbox
-container reserves 4 GiB; the isolated inspector has a documented 3 GiB address
+container is capped at 4 GiB; the isolated inspector has a documented 3 GiB address
 space cap, accommodating the [official signature engine's memory requirements](https://docs.clamav.net/manual/Installing/Docker.html#memory-ram-requirements).
 Startup and
 `python -m app.workers.workflow_runner --healthcheck` fail closed when local
@@ -344,15 +344,16 @@ are operator instructions, not authorization to run the portable or production
 stack in a development session. The installer deliberately clears caller
 profiles; `COMPOSE_PROFILES=inbox self-host.sh start` does not enable the worker.
 Do not add `HV_CLAMAV_DATABASE_DIR` to `.env.selfhost` (its key allowlist is strict).
-Stop the optional worker with the same Compose/config selection and
-`--profile inbox stop inbox-worker` **before every installer start, migration or
-upgrade**, then restart it only after app readiness. Installer stop/status do
-not manage this opt-in service. No installer lifecycle logic changes here.
+Installer `start` stops an existing inbox worker before migration; `stop` also
+stops it. The worker stays off until the operator restarts it after app readiness.
+Before migrations or upgrades outside the installer, stop it with the same
+Compose/config selection and `--profile inbox stop inbox-worker`.
 
 The production definition is not profiled; provision its signatures and start
 the service only as part of a separately reviewed deployment. Adding the service
 to a file does not start it on an existing deployment. The local launcher starts
-both workers on the test DB; its inbox worker uses the host ClamAV installation.
+the invoice worker and, when its healthcheck passes, the inbox worker on the test
+DB; the inbox worker uses the host ClamAV installation.
 No new configuration switch or provider setting is introduced.
 
 ## Invoice worker (T10; alpha active since 2026-10-24)
@@ -698,6 +699,11 @@ browse/search features remain available in that mode, but the deployment and
 isolated verifier otherwise fail closed before starting runtime containers.
 
 ## Upgrade of an existing installation
+
+`deploy-production.sh` aborts if any project container outside `db`, `app`, `worker`
+and `invoice-worker` is running, so stop a running `inbox-worker` before deploying.
+Deploy and rollback do not move it to the new image; the operator restarts it on
+the intended image after app readiness.
 
 Do not rerun the fresh-install password-generation loop or overwrite `shared/.env`.
 Before migration, verify in the authorized maintenance window that the

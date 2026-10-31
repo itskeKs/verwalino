@@ -15,6 +15,7 @@ Rules for coding agents, which apply to people too, are in [AGENTS.md](AGENTS.md
   `source scripts/test-env.sh` sets the connection variables. Never point tests at the production
   instance.
 - Local app: `scripts/dev-local.sh`. Self-hosting: [DEPLOY.md](DEPLOY.md) and `scripts/self-host.sh`.
+  Inbox worker skipped: check ClamAV (clamscan and signatures), worker database access, document storage and German OCR; API and UI will continue.
 - Enable the commit gate once per clone: `make hooks`.
 
 ## Agent host setup

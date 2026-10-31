@@ -4,7 +4,7 @@
 #   scripts/dev-local.sh
 #
 # Starts the disposable test database (if not already running), runs
-# migrations, creates a test admin user, starts the invoice and inbox workers, the
+# migrations, creates a test admin user, starts the invoice worker and optional inbox worker, the
 # FastAPI backend on port 18000 and the Vite dev server on port 13000.
 #
 # The production API (port 8000) is never touched.
@@ -85,13 +85,16 @@ cd "$BACKEND"
 echo "Checking invoice worker (database, storage, German OCR)..."
 uv run python -m app.workers.invoice_extraction --healthcheck
 echo "Checking inbox worker (database, storage, ClamAV signatures, German OCR)..."
-uv run python -m app.workers.workflow_runner --healthcheck
+if uv run python -m app.workers.workflow_runner --healthcheck; then
+  echo "Starting local inbox worker..."
+  uv run python -m app.workers.workflow_runner --all-organizations &
+  INBOX_WORKER_PID=$!
+else
+  echo "Inbox worker skipped: check ClamAV (clamscan and signatures), worker database access, document storage and German OCR; API and UI will continue."
+fi
 echo "Starting local invoice worker..."
 uv run python -m app.workers.invoice_extraction &
 INVOICE_WORKER_PID=$!
-echo "Starting local inbox worker..."
-uv run python -m app.workers.workflow_runner --all-organizations &
-INBOX_WORKER_PID=$!
 echo "Starting FastAPI backend on :18000..."
 uv run uvicorn app.main:app --host 127.0.0.1 --port 18000 &
 BACKEND_PID=$!
@@ -133,4 +136,8 @@ echo "Login as test@example.de / testpassword"
 echo ""
 echo "Press Ctrl+C to stop."
 
-wait "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID" "$INBOX_WORKER_PID"
+if [ -n "$INBOX_WORKER_PID" ]; then
+  wait "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID" "$INBOX_WORKER_PID"
+else
+  wait "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID"
+fi

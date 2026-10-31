@@ -128,7 +128,11 @@ async def test_disabled_declaration_and_discovery_failure_are_safe(monkeypatch,c
 
 
 async def test_inbox_healthcheck_fails_closed_without_scanner(monkeypatch,caplog):
+    import logging
     from app.workers import workflow_runner
+    logger_name='app.workers.workflow_runner'
+    monkeypatch.setattr(logging.getLogger(logger_name),'disabled',False)
+    caplog.set_level(logging.ERROR,logger=logger_name)
     async def unavailable(stages):
         raise RuntimeError('PRIVATE SCANNER DETAIL')
     monkeypatch.setattr(workflow_runner,'check_readiness',unavailable)
