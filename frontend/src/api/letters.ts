@@ -13,7 +13,7 @@ export interface LetterTemplate extends LetterTemplateInput {
 export interface LetterDocument {
   id: string;
   request_id: string;
-  template_id: string;
+  template_id: string | null;
   property_id: string;
   person_id: string;
   recipient_name: string;

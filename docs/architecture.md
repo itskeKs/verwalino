@@ -834,6 +834,16 @@ download checks current original-source/contact rights and the hash, without rec
 Changing a template does not change any letters. Populated tables prevent lossy
 downgrade; dispatch is not part of circular letter issuance.
 
+Issue #37 reuses these tables for lease contracts and handover protocols, without a migration.
+`letter_document.body` stores a JSON text snapshot of inputs and rendered content, including
+original landlord source IDs for contracts and meter/reading IDs and exact values for handovers.
+Landlord export/processing access is rechecked on original retrieval. The existing checksum and
+immutable storage path preserve the issued PDF. Lease document routes under `/api/leases/{id}`
+authorize the specific lease independently of its active dates or finalized statements.
+The shared meter reading service writes protocol readings into `meter_reading`, using `period`
+for their source note, and refuses a value below the preceding reading day (including same-day
+values). Readings and the letter original commit together or roll back together.
+
 T49 adds the read-only `/api/reports/datev/{sources|preview}` path and
 `POST /api/reports/datev.csv`. `ReportService.property_period` shares the existing
 complete property/financial-scope admission with annual reports; a dedicated repository

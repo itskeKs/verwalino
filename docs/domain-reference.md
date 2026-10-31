@@ -81,6 +81,13 @@ for capabilities that this account or review could not exercise.
 
 ## Saved synthetic inventory and side effects
 
+Verwalino now implements the lease-document part of RF07/RF29 through issue #37:
+unit detail creates a legally unreviewed contract starting point and retained move-in/out
+handover PDFs, recording readings in the existing meter history. Signature names do not
+constitute e-signature. See [lease documents](operations/tasks-and-documents.md#lease-contracts-and-handovers-37)
+for the implemented inputs, storage, permissions and limits; the external observations above
+remain reference evidence, not proof of those external workflows.
+
 These records remain for reproducibility; deleting them was not part of the test.
 They can affect dashboard counts and forecast totals. None represents a real debt.
 
