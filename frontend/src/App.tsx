@@ -12,6 +12,8 @@ import { AuthProvider } from "./auth/AuthContext";
 import { useAuth } from "./auth/useAuth";
 import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
+import { PasswordResetRequestPage } from "./pages/PasswordResetRequestPage";
+import { PasswordResetPage } from "./pages/PasswordResetPage";
 import { SignupPage, SignupConfirmPage } from "./pages/SignupPage";
 import { SetupPage } from "./pages/SetupPage";
 import { useDeploymentMode } from "./auth/useDeploymentMode";
@@ -91,7 +93,10 @@ function PublicAuthRoutes() {
     return location.pathname === "/signup/confirm" ? <SignupConfirmPage /> : <SignupPage />;
   }
 
-  return <LoginPage signupEnabled={deployment.mode === "hosted"} />;
+  if (location.pathname === "/passwort-vergessen") return <PasswordResetRequestPage />;
+  if (location.pathname === "/passwort-zuruecksetzen") return <PasswordResetPage />;
+
+  return <LoginPage signupEnabled={deployment.mode === "hosted"} mailAvailable={deployment.mailAvailable} />;
 }
 
 export function AppRoutes() {
@@ -116,7 +121,13 @@ export function AppRoutes() {
 
   if (location.pathname === "/setup") return <Navigate to="/login" replace />;
 
-  if (!session || location.pathname === "/signup" || location.pathname === "/signup/confirm") {
+  if (
+    !session ||
+    location.pathname === "/signup" ||
+    location.pathname === "/signup/confirm" ||
+    location.pathname === "/passwort-vergessen" ||
+    location.pathname === "/passwort-zuruecksetzen"
+  ) {
     return <PublicAuthRoutes />;
   }
 

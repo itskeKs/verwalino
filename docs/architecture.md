@@ -497,7 +497,7 @@ Hosted signup is described below; login uses the application limiter below. Roll
 changing the shared fixtures permanently; real portable-stack acceptance remains
 pending.
 
-**Hosted signup (revision 0144):** `POST /api/signup` accepts organization, admin
+**Hosted signup (accepted source revision 0144):** `POST /api/signup` accepts organization, admin
 name, normalized email, password and hidden `website`. Signup and `/api/signup/resend`
 return the same generic 202 for fresh, existing, unknown, cooldown and throttled
 requests. The honeypot silently returns that response without side effects.
@@ -577,6 +577,83 @@ keeps it on retryable errors, never stores the password, and posts only on expli
 submit. StrictMode never submits twice. Server-side query stripping protects
 the default Uvicorn access log; upstream proxies must redact query strings too.
 GET requests never provision a tenant.
+
+**Mailbox password recovery (revision 0145):** Both deployment modes expose
+`POST /api/auth/password-reset` with `{email, website}`. It returns the generic
+202 conditional receipt for known, unknown, locked and mail-unavailable addresses.
+A filled honeypot returns the same receipt before side effects. Other requests
+perform equivalent Argon2 dummy hashing and mail construction outside transactions;
+only active, unambiguous principals get mail, submitted after the response body.
+SMTP and a trusted `HV_PUBLIC_HOST` routing hostname are required; links use HTTPS. The public metadata boolean
+`mail_available` exposes only configuration usability; login hides the recovery link
+without it. Missing configuration logs one WARNING per process, with no addresses.
+No SMTP probe or tenant data is exposed.
+
+The global `password_reset_request` table holds user/organization ids, a unique
+32-byte SHA-256 digest, creation/one-hour expiry and nullable use time. Recovery
+precedes tenant selection. Runtime roles (including the inheriting worker) have
+no direct SELECT/DML privileges; a composite foreign key binds each request to
+the user's organization. `issue_password_reset(text) RETURNS text` finds exactly
+one addressable account through `app_auth_lookup`: an active user with a matching
+organization/user membership and a login-supported role (`OWNER_ADMIN`, `CLERK`,
+`READ_ONLY`), unique by normalized email. Login, issuance and confirmation all use
+this lookup. Issuance generates the plaintext token inside
+PostgreSQL: 256 bits from pgcrypto's `gen_random_bytes(32)` when installed,
+otherwise two concatenated UUIDs with 244 random bits (selected at migration time). It consumes earlier pending
+links and stores only the digest. The plaintext is returned for mail construction.
+
+Issuance and `reset_password_with_token(text,text) RETURNS text` are narrow
+SECURITY DEFINER functions with `search_path=pg_catalog,pg_temp`, `row_security=off`
+and EXECUTE only for `app_rw`. Both refuse a non-empty `app.current_org_id` before
+reading reset state, so an authenticated tenant session cannot issue or confirm
+recovery capabilities. They acquire the T57 tenant ACL, user row, then reset rows
+in that order. Confirmation compares all 32 digest bytes, checks expiry/use/active
+membership and atomically replaces the password hash. The existing T57 trigger
+advances `session_version`; an associated definer AFTER trigger consumes pending
+links on every password change or deactivation, including self-service and admin
+changes. The original T57 invoker function remains unchanged. Confirmation restores
+the empty tenant setting, returns the confirmed email solely for the notification,
+and raises a generic SQL refusal only for expected invalid-token/account conditions.
+Unexpected database failures propagate as 500 responses, preserving the token for retry.
+Downgrade restores the preceding login lookup body verbatim.
+Downgrade refuses any retained reset state; an empty downgrade removes all new
+objects exactly (operator procedure in [DEPLOY.md](../DEPLOY.md)).
+
+`POST /api/auth/password-reset/confirm` validates body shape and the existing
+12–128 Unicode-code-point password policy before token lookup. Invalid bodies
+return German 422 feedback and do not consume tokens or confirmation-limiter
+failures. Malformed request addresses also return a German format-only 422.
+Valid bodies return 204 without login/cookie, or the same German 403 for every
+token refusal. Each valid confirmation hashes once outside transactions, including
+absent, used and locked tokens. No email is accepted. The confirmation limiter
+keys failures by SHA-256(token), removing the privileged user pre-lookup; distinct
+opaque tokens remain bounded by the shared IP request budget. Scope
+`password_reset` counts IP requests; `password_reset_confirm` counts well-formed
+IP requests and failed token confirmations. Separate `password_reset_recipient`
+uses the normalized email hash and counts only issued mails. Partial counts
+expire only after a full quiet hour; the third mail locks for an hour, without
+extension on refusals. This conservative rolling cap prevents fixed-window bursts. A transaction advisory lock
+serializes recipient admission and issuance across concurrent requests/IPs.
+Counters commit before refusals. A successful reset submits a German security
+notification after commit; mail failure cannot roll back the password.
+
+Every 100th accepted reset request per process schedules a separate background
+transaction. A fixed-path, runtime-only cleanup definer deletes at most 100 rows
+with expiry or use time older than seven days using `SKIP LOCKED`.
+Revision 0145 materializes the selected batch once before deleting it: a nested-loop
+semi-join can rescan an `IN` subquery and otherwise exceed its inner limit.
+The cadence is best effort; retained security state remains in PostgreSQL.
+
+The recovery page reads `/passwort-zuruecksetzen?token=…`, saves the token in
+sessionStorage before replacing the query and POSTs on explicit submit only.
+It clears the token after success or a 403, retains it for 422/correctable and retryable failures and
+never persists passwords. No GET changes the password. Server access logs strip
+this query, the SPA response uses no-store/no-referrer, and upstream proxies must
+redact queries too. Public reset routes are explicit isolation-sweep exemptions;
+`password_reset.feature` verifies request → captured mail → reset → old session
+invalid in both modes. Metadata, expiry/replay, limiter and round-trip tests guard
+the boundary. Retained digests/use timestamps are bounded by background cleanup;
+there is no new cleanup job.
 
 **Login hardening (revision 0142):** `POST /api/auth/login` checks the IP and
 normalized email before looking up the password. Both failure thresholds use a

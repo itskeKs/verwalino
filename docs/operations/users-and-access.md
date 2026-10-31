@@ -2,6 +2,17 @@
 
 Password changes, user administration, and session invalidation.
 
+## Recovering a forgotten password
+
+When mail delivery is configured, select „Passwort vergessen?“ on the login page
+and enter your email address. The same receipt appears whether an address has an
+account. An active account with a matching membership receives a link valid for
+one hour; ambiguous addresses receive no link. Open it and enter the new password
+twice, then sign in with that password. A successful reset ends all existing
+sessions and sends a confirmation email. Requesting another link invalidates the
+previous one. An expired or used link requires a new request; a temporary server
+failure keeps the link available for retry.
+
 ## Changing your own password
 
 After sign-in, „Passwort ändern“ (change password) in the top user bar opens the

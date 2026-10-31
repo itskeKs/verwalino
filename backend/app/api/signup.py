@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import itertools
 import logging
-import re
 import smtplib
 from collections.abc import Callable
 
@@ -53,11 +52,7 @@ def validate_signup_configuration() -> None:
 
 def confirmation_origin() -> str:
     """Use the operator's routing hostname, never request headers or a second URL."""
-    host = settings.public_host or ""
-    label = r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?"
-    if len(host)>253 or not re.fullmatch(rf"{label}(?:\.{label})*", host):
-        raise ValueError("Hosted signup requires HV_PUBLIC_HOST (hostname only; links use HTTPS)")
-    return f"https://{host}"
+    return mail_service.public_origin(settings)
 
 
 class ConfirmationLinkPrivacyMiddleware:
@@ -67,7 +62,7 @@ class ConfirmationLinkPrivacyMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope["path"] == "/signup/confirm":
+        if scope["type"] == "http" and scope["path"] in {"/signup/confirm", "/passwort-zuruecksetzen"}:
             # Mutate the original scope used by Uvicorn's access logger too.
             # No server handler consumes this query; the SPA reads window.location.
             scope["query_string"] = b""
