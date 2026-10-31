@@ -23,6 +23,7 @@ from app.core.live_principal import get_live_member_db, get_live_writer_db
 from app.services.history_source_access import require_history_prepare
 from app.services.financial_scope_service import FinancialScopeService
 from app.services.lease_rent_change_service import LeaseRentChangeService
+from app.services.payment_service import PaymentService
 from app.core.temporal import (
     db_exclusive_to_api_inclusive,
     inclusive_last_day_to_db_exclusive,
@@ -243,7 +244,8 @@ async def update_lease(
             raise HTTPException(422, "Lease end must not precede its start")
         if (body.valid_to is not None
                 and inclusive_last_day_to_db_exclusive(body.valid_to) != existing.valid_to
-                and await repo.end_conflicts_finalized_statement(lease_id, body.valid_to)):
+                and await PaymentService(db, auth.organization_id, auth.user_id).lease_end_conflicts_finalized_credit(
+                    lease_id, body.valid_to)):
             raise HTTPException(409, {"code": "lease_end_conflicts_finalized_statement",
                 "message": "Das Mietende darf keine finalisierte Abrechnung dieses Mietvertrags verkürzen."})
         existing.valid_to = inclusive_last_day_to_db_exclusive(body.valid_to)

@@ -602,6 +602,27 @@ class PaymentService:
     # the M3/M4 services. Loads the right rows via the repo, sums via the pure
     # engine, so the value is bit-identical to the MANUAL path (I6-E).
     # ------------------------------------------------------------------
+    @staticmethod
+    def _nk_credit_buckets_change(lease, inputs, start, end, old_end, new_end):
+        def buckets(lease_end):
+            return tuple(credit
+                for year in range(start.year, end.year + 1)
+                for credit in derive_advance_credits_for_period(inputs, AdvanceFilter(
+                    frozenset({"NK_VORAUSZAHLUNG"}), year, lease.id), start, end,
+                    lease_start=lease.valid_from, lease_end=lease_end))
+
+        return buckets(old_end) != buckets(new_end)
+
+    async def lease_end_conflicts_finalized_credit(self, lease_id: uuid.UUID, last_day: date) -> bool:
+        """Protect only derived buckets changed by an end strictly inside their span."""
+        runs = await self._leases.finalized_derived_statements_containing(lease_id, last_day)
+        if not runs:
+            return False
+        lease, inputs = await self._nk_advance_inputs(lease_id)
+        old_end = db_exclusive_to_engine_inclusive(lease.valid_to)
+        return any(self._nk_credit_buckets_change(lease, inputs, run.period_start, run.period_end,
+            old_end, last_day) for run in runs)
+
     async def derive_nk_advance_total(
         self, lease_agreement_id: uuid.UUID, period_year: int
     ) -> Decimal:
@@ -646,8 +667,10 @@ class PaymentService:
             if buckets is None:
                 old_lease = next((row for row in data.get("lease_periods", [])
                     if row["lease_agreement_id"] == str(lease_agreement_id)), {})
-                if (old_lease.get("to") != (lease_end.isoformat() if lease_end else None)
-                        and Decimal(payload["result"]["advance_payments_total"])):
+                old_end = date.fromisoformat(old_lease["to"]) if old_lease.get("to") else None
+                if (old_end != lease_end and Decimal(payload["result"]["advance_payments_total"])
+                        and self._nk_credit_buckets_change(lease, inputs,
+                            date.fromisoformat(bounds[0]), date.fromisoformat(bounds[1]), old_end, lease_end)):
                     raise HTTPException(409, {"code": "advance_credit_history_missing",
                         "message": "Der eingefrorene Vorauszahlungsnachweis fehlt. Bitte die frühere Abrechnung korrigieren."})
                 continue
@@ -661,7 +684,7 @@ class PaymentService:
                 lease_agreement_id=lease_agreement_id,
             ), period_start, period_end, lease_start=lease.valid_from,
                 lease_end=lease_end, finalized_credits=tuple(frozen)))
-        return credits, self._uncredited_nk_total(lease, inputs)
+        return credits, self._uncredited_nk_total(lease, inputs, period_start, period_end)
 
     async def _nk_advance_inputs(self, lease_agreement_id):
         lease = await self._leases.get_by_id(lease_agreement_id)
@@ -671,16 +694,18 @@ class PaymentService:
         return lease, [_to_payment_input(p) for p in rows]
 
     @staticmethod
-    def _uncredited_nk_total(lease, inputs):
+    def _uncredited_nk_total(lease, inputs, period_start, period_end):
         return sum((uncredited_advance_total(inputs, AdvanceFilter(
             frozenset({"NK_VORAUSZAHLUNG"}), year, lease.id), lease.valid_from,
-            db_exclusive_to_engine_inclusive(lease.valid_to))
-            for year in sorted({p.period_year for p in inputs})), Decimal("0.00"))
+            db_exclusive_to_engine_inclusive(lease.valid_to), period_start=period_start, period_end=period_end)
+            for year in range(period_start.year, period_end.year + 1)), Decimal("0.00"))
 
-    async def uncredited_nk_advance_total(self, lease_agreement_id: uuid.UUID) -> Decimal:
+    async def uncredited_nk_advance_total(
+        self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date,
+    ) -> Decimal:
         """Notice-only derivation; manual statement totals need no frozen history."""
         lease, inputs = await self._nk_advance_inputs(lease_agreement_id)
-        return self._uncredited_nk_total(lease, inputs)
+        return self._uncredited_nk_total(lease, inputs, period_start, period_end)
 
     async def derive_hausgeld_total(
         self, owner_profile_id: uuid.UUID, period_year: int

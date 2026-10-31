@@ -104,6 +104,21 @@ def _pay(
     )
 
 
+def test_outside_lease_notice_belongs_only_to_each_statements_assigned_months():
+    payments = [_pay(1, PT_NK_VORAUSZAHLUNG, "1200.00", year=2024, lease=_U(50)),
+        _pay(2, PT_NK_VORAUSZAHLUNG, "20.00", year=2024, month=6, lease=_U(50)),
+        _pay(3, PT_NK_VORAUSZAHLUNG, "30.00", year=2024, month=12, lease=_U(50)),
+        _pay(4, PT_NK_VORAUSZAHLUNG, "99.00", year=2023, month=12, lease=_U(50))]
+    filt = AdvanceFilter(frozenset({PT_NK_VORAUSZAHLUNG}), 2024, _U(50))
+    totals = [mietkonto.uncredited_advance_total(payments, filt, YEAR_START, None,
+        period_start=start, period_end=end) for start, end in (
+            (date(2024, 1, 1), date(2024, 6, 30)), (date(2024, 7, 1), date(2024, 12, 31)))]
+    assert totals == [Decimal("620.00"), Decimal("630.00")]
+    assert sum(totals) == Decimal("1250.00")
+    assert mietkonto.uncredited_advance_total(payments, filt, YEAR_START, None,
+        period_start=YEAR_START, period_end=YEAR_END) == Decimal("0.00")
+
+
 @pytest.mark.parametrize("ptype,addressee", [("NK_VORAUSZAHLUNG", "lease"), ("HAUSGELD_VORSCHUSS", "owner")])
 @pytest.mark.parametrize("cut,expected", [(14, "245.16"), (31, "300.00")])
 def test_month_assigned_advances_reconcile_adjacent_periods(ptype, addressee, cut, expected):

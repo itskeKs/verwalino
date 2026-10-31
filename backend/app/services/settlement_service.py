@@ -788,7 +788,8 @@ class SettlementService:
             self._advance_credits, excluded = await payments.nk_advance_credits_for_period(
                 run.lease_agreement_id, run.period_start, run.period_end)
         else:
-            excluded = await payments.uncredited_nk_advance_total(run.lease_agreement_id)
+            excluded = await payments.uncredited_nk_advance_total(
+                run.lease_agreement_id, run.period_start, run.period_end)
         inp = replace(inp, uncredited_advance_payments_total=excluded)
         try:
             result = compute_bk_settlement(inp)

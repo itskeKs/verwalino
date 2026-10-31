@@ -103,22 +103,43 @@ async def test_late_lease_end_preserves_all_booked_advances(client_a_admin, apri
     assert unchanged.json() == results[0]
 
 
-@pytest.mark.parametrize("end,status", [
-    ("2024-12-31", 409), ("2025-01-01", 409), ("2025-03-14", 409),
-    ("2025-03-31", 409), ("2025-04-01", 200), ("2025-09-30", 200), (None, 200),
+@pytest.mark.parametrize("source,month,end,status", [
+    ("MANUAL", 3, "2025-03-14", 200),
+    ("DERIVED", 3, "2024-12-31", 200),
+    ("DERIVED", 3, "2025-01-01", 200),
+    ("DERIVED", 3, "2025-02-14", 409),
+    ("DERIVED", 3, "2025-03-14", 200),
+    ("DERIVED", 3, "2025-03-31", 200),
+    ("DERIVED", 3, "2025-04-01", 200),
+    ("DERIVED", 3, None, 200),
+    ("DERIVED", 1, "2025-03-14", 200),
+    ("DERIVED", None, "2025-03-14", 409),
 ])
-async def test_lease_end_cannot_invalidate_a_finalized_statement(client_a_admin, april, end, status):
+async def test_lease_end_only_protects_changed_derived_buckets_inside_finalized_span(
+        client_a_admin, april, source, month, end, status):
     api = client_a_admin
+    await booked(api, april, 2025, month)
     run = await create(api, "/api/settlements", {
-        **statement(april, "2025-01-01", "2025-03-31"), "advance_payments_total": "0.00"})
+        **statement(april, "2025-01-01", "2025-03-31"), "advance_payments_total": "100.00"})
+    if source == "DERIVED":
+        derived = await api.patch(f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
+        assert derived.status_code == 200, derived.text
+        run = derived.json()
     await attest_fixture(api, "settlement", run["id"], {
-        "advance_payments_total": "0.00", "advance_payments_source": "MANUAL"})
+        "advance_payments_total": run["advance_payments_total"], "advance_payments_source": source})
     assert (await api.post(f"/api/settlements/{run['id']}/finalize", json={})).status_code == 200
     answer = await api.patch(f"/api/leases/{april['lease']['id']}", json={"valid_to": end})
     assert answer.status_code == status, answer.text
     if status == 409:
         assert answer.json()["detail"] == {"code": "lease_end_conflicts_finalized_statement",
             "message": "Das Mietende darf keine finalisierte Abrechnung dieses Mietvertrags verkürzen."}
+
+
+async def test_december_move_out_can_be_entered_after_finalizing_the_year(client_a_admin, april):
+    await booked(client_a_admin, april, 2025, None, amount="1200.00")
+    await _finalize_derived(client_a_admin, april, "2025-01-01", "2025-12-31", "1200.00")
+    changed = await client_a_admin.patch(f"/api/leases/{april['lease']['id']}", json={"valid_to": "2025-12-31"})
+    assert changed.status_code == 200, changed.text
 
 
 async def _finalize_derived(api, data, start, end, expected):
@@ -181,6 +202,35 @@ async def test_legacy_derived_history_does_not_block_manual_statements(client_a_
         assert final.status_code == 200, final.text
 
 
+@pytest.mark.parametrize("month,expected", [(1, "0.00"), (6, "100.00"), (None, None)])
+async def test_legacy_credit_history_only_blocks_when_a_covered_bucket_changes(
+        client_a_admin, april, monkeypatch, month, expected):
+    from app.services.settlement_service import SettlementService
+
+    api = client_a_admin
+    await booked(api, april, 2025, month, amount="1200.00" if month is None else "100.00")
+    build = SettlementService._snapshot_with_meter_sources
+
+    def legacy_snapshot(service, inp, result):
+        payload = build(service, inp, result)
+        payload["inputs"].pop("advance_payment_credits", None)
+        return payload
+
+    with monkeypatch.context() as old:
+        old.setattr(SettlementService, "_snapshot_with_meter_sources", legacy_snapshot)
+        await _finalize_derived(api, april, "2024-04-01", "2025-03-31", "300.00" if month is None else
+            "100.00" if month == 1 else "0.00")
+    assert (await api.patch(f"/api/leases/{april['lease']['id']}", json={"valid_to": "2025-06-30"})).status_code == 200
+    run = await create(api, "/api/settlements", statement(april, "2025-04-01", "2025-06-30"))
+    derived = await api.patch(f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
+    if month is None:
+        assert derived.status_code == 409, derived.text
+        assert derived.json()["detail"]["code"] == "advance_credit_history_missing"
+    else:
+        assert derived.status_code == 200, derived.text
+        assert Decimal(derived.json()["advance_payments_total"]) == Decimal(expected)
+
+
 async def test_outside_lease_payments_are_visible_without_being_credited(client_a_admin):
     from tests.conftest import MIGRATOR_SYNC_URL
     from app.services.settlement_pdf import build_settlement_html
@@ -200,14 +250,14 @@ async def test_outside_lease_payments_are_visible_without_being_credited(client_
     # Unassigned payments retain their existing exclusion from statement sums.
     for year, month in ((2025, 2), (2025, 3), (2025, 7), (2024, None), (None, None)):
         await booked(api, data, year, month)
-    assert (await api.patch(f"/api/leases/{data['lease']['id']}", json={"valid_to": "2025-06-30"})).status_code == 200
     run = await create(api, "/api/settlements", statement(data, "2025-01-01", "2025-12-31"))
+    assert (await api.patch(f"/api/leases/{data['lease']['id']}", json={"valid_to": "2025-06-30"})).status_code == 200
     answer = await api.patch(f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
     assert answer.status_code == 200, answer.text
     assert Decimal(answer.json()["advance_payments_total"]) == Decimal("100.00")
     await attest_fixture(api, "settlement", run["id"], {
         "advance_payments_total": "100.00", "advance_payments_source": "DERIVED"})
-    notice = "Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: 300,00 €"
+    notice = "Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: 100,00 €"
     for action in ("compute", "finalize"):
         answer = await api.post(f"/api/settlements/{run['id']}/{action}", json={})
         assert answer.status_code == 200, answer.text

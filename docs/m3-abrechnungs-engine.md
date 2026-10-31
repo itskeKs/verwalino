@@ -178,7 +178,7 @@ covering the whole calendar year with 1,200 euros paid, January–June and
 July–December credit 600 euros each; April–December credits
 900 euros. For 1,000 euros, January–November credit 83.33 euros each and December
 83.37 euros. A full calendar year still credits the full amount. Month shares
-do not depend on other drafts or finalization order while lease dates are fixed;
+do not depend on other drafts or finalization order while lease dates and booked payments are fixed;
 later statements cannot change earlier finalized shares. After a later lease-end
 edit, each year/month bucket uses already finalized snapshot credits in place
 of those windows' current shares, never reducing a new credit below zero. The last
@@ -191,8 +191,9 @@ first, preventing duplicate adjustments during reordering or corrections.
 Identical finalized periods count once and
 superseded runs do not count twice. `PATCH /api/leases/{id}` returns German,
 structured HTTP 409 (`lease_end_conflicts_finalized_statement`) if the proposed
-last occupied day would fall on or before a finalized statement's end; an end after all
-finalized statement ends remains editable. If a statement boundary splits a month, that
+last occupied day falls strictly inside an active finalized DERIVED statement's span
+and changes one of its advance-credit buckets. MANUAL statements do not block date edits;
+an end equal to the statement's last day is allowed. If a statement boundary splits a month, that
 month's share is prorated by its days using cumulative cent boundaries, so
 adjacent partial-month statements cannot credit that share twice. The NK finalization freshness check uses the
 same derivation. **Month-assigned advances (#136)** use the same cumulative day
@@ -213,17 +214,34 @@ properties and remains a follow-up; it is not changed by #68.
 The per-property year overview and Anlage V stay on the calendar year.
 
 Booked NK advances assigned entirely outside the lease's months or years remain
-uncredited. The total is shown in a non-financial `SUBTOTAL` notice line in the
+uncredited. Only the share assigned to this statement's months is shown in a non-financial `SUBTOTAL` notice line in the
 draft, frozen snapshot, API response and PDF: “Nicht angerechnet: Zahlungen
 außerhalb des Mietverhältnisses: X €”. This includes manually assigned payments
 and payments left outside the tenancy by a later shortening. The notice does not
-change costs, credited advances or the balance.
+change costs, credited advances or the balance. Month-assigned excluded payments
+belong to their assigned month; excluded year-only totals are split over that year's
+months. A cut inside a month divides its notice share by days, preventing repetition
+across adjacent statements. The structured amount is frozen in the snapshot;
+the API exposes it in the notice label.
 
 Legacy DERIVED snapshots without year/month credit buckets can still use fixed
-lease dates. After a date edit, nonzero credits without that frozen evidence
-cause `advance_credit_history_missing` (HTTP 409) on derivation; correction or a
-confirmed MANUAL total is required. Notice calculation remains available for
+lease dates. After a date edit, `advance_credit_history_missing` (HTTP 409) only
+blocks derivation if a credit bucket in the legacy statement's covered span changes.
+Month-assigned advances from January–March remain usable when an end in June is
+entered later; a year-only payment whose covered-month denominator changes still
+requires correction or a confirmed MANUAL total. Create a correction with
+`POST /api/settlements/{id}/correction`, re-derive its advances, verify the inputs
+and finalize it. If another affected legacy statement blocks re-derivation,
+set the independently verified total through
+`PATCH /api/settlements/{correction_id}/advance-payments`, verify the inputs and
+finalize; never edit frozen snapshots. Notice calculation remains available for
 MANUAL statements and never invents a historical credit breakdown.
+
+After a date edit, several open drafts may each include the same outstanding
+difference. Finalizing one freezes its credit; another stale draft must be
+re-derived before finalization (`derived_total_stale`, HTTP 422). Late bookings
+assigned to an already finalized month likewise enter a later statement through
+the frozen-credit difference; the earlier snapshot stays unchanged.
 
 Automatic form prefill only applies while both date fields are empty. A delayed
 period-offer response preserves dates the user has already entered; choosing an

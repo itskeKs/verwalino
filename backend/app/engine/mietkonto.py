@@ -581,9 +581,9 @@ def derive_advance_credits_for_period(
     """Select stable month shares, substituting already frozen credits after edits.
 
     Replace the current expected shares of other finalized windows with what
-    their snapshots actually credited. Unfinalized gaps retain their own shares;
-    a consecutive final window receives the exact remainder, never below zero.
-    With fixed lease dates each substitution is zero, preserving order independence.
+    their snapshots actually credited. Open drafts may share an outstanding
+    adjustment until one finalizes; the final window receives the remainder.
+    With fixed lease dates and payments each substitution is zero.
     """
     if not period_start.year <= filt.year <= period_end.year:
         return ()
@@ -621,9 +621,18 @@ def derive_advance_total_for_period(
 
 def uncredited_advance_total(
     payments: list[PaymentInput], filt: AdvanceFilter, lease_start: date, lease_end: date | None,
+    *, period_start: date | None = None, period_end: date | None = None,
 ) -> Decimal:
-    """Booked advances assigned wholly outside the tenancy remain uncredited."""
-    booked = derive_advance_total(payments, filt)
-    covered = derive_advance_total_for_period(payments, filt, date(filt.year, 1, 1), date(filt.year, 12, 31),
-        lease_start=lease_start, lease_end=lease_end)
-    return booked - covered
+    """Notice share of outside-lease bookings assigned to this statement's months."""
+    year_start, year_end = date(filt.year, 1, 1), date(filt.year, 12, 31)
+    start, end = period_start or year_start, period_end or year_end
+    result = Decimal("0.00")
+    for month in [*range(1, 13), None]:
+        bucket = [p for p in payments if p.period_month == month]
+        excluded = derive_advance_total(bucket, filt) - derive_advance_total_for_period(
+            bucket, filt, year_start, year_end, lease_start=lease_start, lease_end=lease_end)
+        if month is None:
+            result += annual_advance_share_for_period(excluded, filt.year, start, end)
+        else:
+            result += monthly_advance_share_for_period(excluded, filt.year, month, start, end)
+    return result

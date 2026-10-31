@@ -106,12 +106,14 @@ retains the remainder: 1,000 euros becomes eleven shares of 83.33 and one of 83.
 The shared helpers live in `backend/app/engine/rounding.py`; lifecycle, payment
 type and addressee filters remain in `derive_advance_total_for_period`.
 
-The independence from other statements holds while lease dates stay fixed. If a
+The independence from other statements holds while lease dates and booked payments stay fixed. If a
 lease end is entered later, each assigned year/month bucket substitutes the
 credits in already finalized snapshots for those windows' currently calculated
 shares. The current statement receives its occupied-month/day share plus that
-difference, floored at zero. Unfinalized gaps keep their own shares; the last
-open statement receives the remainder. A statement in a later calendar window
+difference, floored at zero. Several open drafts may each include the same
+outstanding difference; finalizing one makes the others stale until re-derived.
+The last open statement receives the remainder. Late bookings for a finalized
+month also enter the next statement through this difference. A statement in a later calendar window
 that was finalized first also counts, so corrections and reordered finalization
 cannot apply the same difference again. Already credited amounts come
 from frozen snapshot buckets, never a recalculation of the finalized result.
@@ -119,11 +121,12 @@ Thus a 1,200-euro year-only advance with 300 euros finalized through March still
 credits 900 euros after an end on 30 September is entered. With January–14 March
 already crediting 245.16 euros of three 100-euro payments, an end on 20 March leaves
 54.84 euros, exactly 300 euros together. Identical finalized periods count once;
-superseded statements do not count again. A changed lease end must be after all
-finalized statement ends: the API otherwise refuses it with a structured German
-HTTP 409, leaving an open remainder window even at an inclusive boundary.
+superseded statements do not count again. A changed lease end is refused with a
+structured German HTTP 409 only when it falls strictly inside an active finalized
+DERIVED statement and changes one of its credit buckets. MANUAL statements do
+not block date edits, and an end on the statement's last day is allowed.
 Legacy derived snapshots without per-year/month credits remain usable with fixed
-lease dates. After a date edit, a nonzero legacy credit without that evidence
+lease dates. After a date edit, a changed credit bucket within the legacy span
 requires correction or a confirmed manual total (`advance_credit_history_missing`,
 HTTP 409 on derivation); the application
 does not invent a historical breakdown or mutate a finalized snapshot.
@@ -132,4 +135,7 @@ Active booked advances assigned entirely outside the lease remain credited at
 zero (including an assigned year before the lease begins). Their total appears
 as a non-financial notice line in draft and frozen statement lines, the API and
 the PDF: “Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: X €”.
-They do not alter statement costs, credited advances or the balance.
+Only the share assigned to this statement's months is shown; year-only excluded
+totals are divided over their assigned year's months, and statement cuts within
+a month split that month's notice share by days. They do not alter statement
+costs, credited advances or the balance.

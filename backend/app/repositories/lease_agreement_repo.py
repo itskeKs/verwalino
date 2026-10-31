@@ -73,15 +73,17 @@ class LeaseAgreementRepository(TenantRepository[LeaseAgreement]):
         ).limit(1)
         return await self._session.scalar(stmt) is not None
 
-    async def end_conflicts_finalized_statement(self, lease_id: uuid.UUID, last_day: date) -> bool:
-        """A changed end must leave a window after every frozen statement."""
+    async def finalized_derived_statements_containing(self, lease_id: uuid.UUID, last_day: date):
+        """Active derived statements with the proposed end strictly inside their span."""
         from app.models.settlement_run import SettlementRun
-        stmt = select(SettlementRun.id).where(
+        stmt = select(SettlementRun).where(
             SettlementRun.organization_id == self._org_id,
             SettlementRun.lease_agreement_id == lease_id,
-            SettlementRun.status == "finalized", SettlementRun.period_end >= last_day,
-        ).limit(1)
-        return await self._session.scalar(stmt) is not None
+            SettlementRun.status == "finalized", SettlementRun.superseded_by_id.is_(None),
+            SettlementRun.advance_payments_source == "DERIVED",
+            SettlementRun.period_start < last_day, SettlementRun.period_end > last_day,
+        )
+        return (await self._session.execute(stmt)).scalars().all()
 
     async def matching_targets(self, property_id, period_start, period_end):
         statement = select(LeaseAgreement, Person).join(Unit, and_(
