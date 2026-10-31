@@ -1,5 +1,27 @@
 # Deployment
 
+## Deployment mode
+
+`HV_DEPLOYMENT_MODE` accepts exactly `selfhost` (default) or `hosted`. Invalid values
+stop the process at configuration initialization with the allowed values in the error.
+Set it in the backend process environment; a custom container deployment must pass it
+explicitly to the container. Changing it requires restarting the backend.
+
+Both modes use the same image, authentication and organization isolation. `selfhost`
+offers token-gated first-run setup on an empty database. `hosted` suppresses setup:
+`GET /api/setup` reports `required: false`, every non-GET request returns the closed
+setup 404, and `/setup` redirects to login. Until hosted signup exists, operators use
+the existing admin CLI to bootstrap hosted organizations. Selecting hosted mode does
+not implement signup, rate limiting, quotas, password reset or legal pages. The
+[policy table](docs/architecture.md#deployment-modes) records only decisions with
+implemented readers. Opt-in error tracking is configured separately below.
+
+The portable installer below is selfhost-only and unchanged, including `start`'s
+setup-token flow. Its manifest relies on the `selfhost` default; it does not forward
+`HV_DEPLOYMENT_MODE` from the caller or accept it in `.env.selfhost`. Its HTTP/HTTPS
+`VERWALINO_MODE` is a separate transport choice. Use a separately managed deployment
+to run hosted mode; do not use the portable installer to start a hosted service.
+
 ## Install in one command
 
 For a **new** Linux server or macOS/Linux laptop with Bash, OpenSSL, Docker
@@ -144,8 +166,9 @@ satisfy the narrow exceptions in `AGENTS.md` and the installed guard. Current
 checks use simulated Docker and static contracts; no real-container or complete
 installation test is claimed.
 
-Prerequisites: Linux or macOS with Bash (including macOS Bash 3.2), OpenSSL,
-Docker Engine/Desktop and Compose v2 >= 2.24. From a reviewed checkout:
+Prerequisites: Linux or macOS with Bash (including macOS Bash 3.2), OpenSSL, Docker Engine >= 24
+(or Docker Desktop with that engine) and Compose >= 2.24 (including later major releases).
+From a reviewed checkout:
 
 ```bash
 bash scripts/self-host.sh init
@@ -257,6 +280,56 @@ bash scripts/self-host.sh stop
 There is deliberately no destroy or automatic update command. An older image
 is not a schema rollback. This feature does not authorize an alpha deployment
 or promote its schema gate.
+
+### Portable troubleshooting: start with doctor
+
+Run `bash scripts/self-host.sh doctor` first when installation or startup fails.
+It attempts every independent check, prints one German finding and a concrete
+next step per check, and ends with counts of `OK`, `WARN` and `FEHLER`.
+Exit **1** means at least one blocker (`FEHLER`); exit **0** means no blocker
+was detected, including runs with warnings. An unavailable dependent check is
+reported explicitly; a warning is not proof that the installation works.
+
+| Check | `FEHLER` (blocker) | `WARN` / next step |
+| --- | --- | --- |
+| Docker and Compose | Docker missing, daemon unreachable, engine below 24 or version unknown, Compose below 2.24 or version unknown | Install/update Docker and the Compose plugin; versions 2.24 and later, including 5.x, are supported. Check daemon access and Docker context |
+| Private configuration | Missing, symlink, unsafe filename, mode other than 0600/0400, incomplete or invalid keys/settings/secrets | Restore the original `.env.selfhost`; `chmod 600` it. Existing database credentials must not be regenerated |
+| Port occupancy | Foreign listener on the configured HTTP port, or on 80/443 in HTTPS mode | Install `ss`, `lsof` or `nc` when inspection is unavailable; identify conflicting services before changing their listeners |
+| Free disk | Less than **2 GiB** available | Less than **10 GiB**: free space before backups/updates. Both thresholds use binary GiB (1,048,576 KiB); exactly 2 GiB warns, exactly 10 GiB passes |
+| Containers (`db`, `app`, HTTPS `caddy`) | Restarting, unhealthy, dead or paused | Missing, exited, starting, missing healthcheck or status unavailable: use the printed `start` and scoped `logs` commands |
+| Migration state | Database revision newer than the configured image's release target | Behind: back up, then `start` migrates. Empty/missing version table: not initialized yet, run `start`. Unknown/ambiguous/query failure or unavailable image target: inspect config/image/logs |
+| First organization | — | Count zero: `bash scripts/self-host.sh admin --org NAME --email EMAIL`. An unreadable database/count also warns |
+| HTTPS domain and DNS | Invalid domain or no A/AAAA records | Missing DNS tools, unknown public host address or any address mismatch: compare A/AAAA and the public destination manually; proxies, NAT/elastic IPs and `/etc/hosts` can explain a mismatch. Check for stale AAAA records |
+| HTTPS local reachability | — | Cannot connect to 127.0.0.1:80/443 or `nc` unavailable: start Caddy, check port publishing and firewall |
+| HTTPS certificate | — | Caddy stopped, domain certificate absent/unreadable in `/data/caddy/certificates`, OpenSSL unavailable, TLS probe fails, invalid certificate or expiry within **14 days**: inspect Caddy logs, DNS and renewal access |
+
+Disk is measured with `df -Pk` at both the checkout and Docker's reported data
+root (`docker info -f '{{.DockerRootDir}}'`). An inaccessible Docker data root
+(common with Docker Desktop or a remote context) warns: inspect the Docker host
+or VM disk separately. Allow additional room for complete backup/restore copies.
+Port checks try `ss`, `lsof`, then `nc`. An existing listener is accepted as owned
+only when the running service belongs to this checkout's Compose file and
+publishes the expected port. HTTPS checks inspect ports 80/443; HTTP checks
+inspect the configured `VERWALINO_PORT`.
+
+DNS uses `getent` (A/AAAA), `dig`, or `host`, in that availability order. Public
+host addresses come from `ip` or `ifconfig`; private/NAT addresses cannot prove
+the public destination. The TLS probe uses SNI for `VERWALINO_DOMAIN` against
+127.0.0.1:443 and bounds the handshake to eight seconds. These are local checks;
+verify Internet reachability, firewall/NAT forwarding and browser trust from
+another host as well.
+
+Doctor does not repair settings, migrate, bootstrap users, build/pull images or
+start/stop the stack. Database queries and Caddy certificate listing require
+running services. Comparing migration revisions runs
+`from app.deployment import TARGET; print(TARGET)` in a temporary container from
+the configured local image, with Python as its entrypoint. The probe uses a
+non-root user and a read-only filesystem, mounts no volumes, adds no capabilities
+and has no network access. Missing or unreadable release-target metadata warns.
+Docker diagnostics use the current
+Docker context, which must refer to the same host as the checkout/port checks
+for those checks to describe one machine. After following a finding's next
+step, rerun doctor; use `status` and the printed `logs` commands for detail.
 
 ### Portable backup and restore
 
@@ -375,10 +448,10 @@ Run the opt-in rehearsal with `make test-selfhost-format`: it sets
 only its own scratch databases in `infra-postgres-1` at `127.0.0.1:55432`.
 Ordinary test runs skip it with a reason; it also skips when Docker is missing.
 
-AI declaration import/Q&A, SMTP and invoice OCR are disabled in this initial
-portable stack. Manual invoice review remains supported. The T10 worker is
-active on the existing alpha since 2026-10-24; portable worker integration is
-outside this installer's scope. The first tag publication and native arm64 image installation,
+Declaration import/Q&A, SMTP and the ordinary invoice worker are disabled in
+the default portable stack. The optional [inbox worker](#inbox-worker) processes
+intake documents locally; it requires scanner signatures and, for scans, German
+OCR. The T10 worker is active on the existing alpha since 2026-10-24. The first tag publication and native arm64 image installation,
 complete clean-host setup/login/restart and real domain/TLS acceptance still
 need operator checks; do not treat the mock installer tests as
 proof of those behaviors. Run the portable tests without Docker using
@@ -808,6 +881,71 @@ day counts and interest amounts. Existing issued notices are not recalculated
 when configuration changes. The UI permits a deliberate rate entry when no
 default is configured. This documentation does not change any runtime setting.
 
+## Inbox worker
+
+Both Compose files define `inbox-worker`, using the same app image, isolated
+`app_worker` connection (`HV_DATABASE_URL_WORKER`), `restart: unless-stopped`
+and worker entrypoint pattern as `invoice-worker`. `HV_WORKER_KIND=workflow_runner`
+selects the existing runner; `--all-organizations` schedules only its default
+intake inspection, internal delivery and logical extraction stages. It has no
+provider key/egress, exposed port, web/review role or migrator credential.
+Documents and ClamAV signatures are read-only; the root filesystem is read-only,
+capabilities are dropped and processing uses bounded temporary storage. The
+130-second stop grace period allows bounded processing to drain. The inbox
+container is capped at 4 GiB; the isolated inspector has a documented 3 GiB address
+space cap, accommodating the [official signature engine's memory requirements](https://docs.clamav.net/manual/Installing/Docker.html#memory-ram-requirements).
+Startup and
+`python -m app.workers.workflow_runner --healthcheck` fail closed when local
+scanner/storage or worker-role/queue access is unavailable. Healthchecks use
+`sigtool --info` to verify official archives without loading a second signature
+engine alongside a job; startup additionally scans a synthetic XML probe through
+the bounded inspector. Neither claims work. See the [flow and review commands](docs/operations/inbox-review-chain.md).
+
+The image includes ClamAV, Poppler and German Tesseract. **Before enabling the
+worker**, provision a host directory of official, current ClamAV signatures
+(using the host's `freshclam` installation), readable by uid 10001. Maintain
+updates on the host; the worker has no network updater. Set
+`HV_CLAMAV_DATABASE_DIR` to that absolute directory for Compose; the default is
+`./clamav` beside the Compose file. Compose refuses a missing bind source and
+the worker refuses an unusable signature database. Do not put signatures in the
+document volume or bypass scanning. This deployment path is documented in
+`.env.example`; the container receives `HV_CLAMAV_DATABASE_DIR=/var/lib/clamav`
+and `HV_DOCUMENT_STORAGE_ROOT=/data/documents`. For host development, export
+`HV_CLAMAV_DATABASE_DIR` pointing to the host's signature directory before
+launching `scripts/dev-local.sh` (otherwise `/var/lib/clamav` is used).
+
+Portable installations leave the worker **off by default**, under profile
+`inbox`. After the existing installer has completed migrations and app readiness,
+an operator can start just the worker from the reviewed checkout. For local HTTP:
+
+```bash
+VERWALINO_COOKIE_NAME=hv_session VERWALINO_COOKIE_SECURE=false \
+VERWALINO_ALLOWED_HOSTS=localhost,127.0.0.1 \
+HV_CLAMAV_DATABASE_DIR=/absolute/path/to/clamav \
+docker compose --env-file .env.selfhost -f infra/docker-compose.yml \
+  --profile inbox up -d --no-deps inbox-worker
+```
+
+For HTTPS use `VERWALINO_COOKIE_NAME=__Host-hv_session`,
+`VERWALINO_COOKIE_SECURE=true` and
+`VERWALINO_ALLOWED_HOSTS=your.domain,localhost,127.0.0.1` instead. Use the same
+private config, Docker context and reviewed image as the app. These commands
+are operator instructions, not authorization to run the portable or production
+stack in a development session. The installer deliberately clears caller
+profiles; `COMPOSE_PROFILES=inbox self-host.sh start` does not enable the worker.
+Do not add `HV_CLAMAV_DATABASE_DIR` to `.env.selfhost` (its key allowlist is strict).
+Installer `start` stops an existing inbox worker before migration; `stop` also
+stops it. The worker stays off until the operator restarts it after app readiness.
+Before migrations or upgrades outside the installer, stop it with the same
+Compose/config selection and `--profile inbox stop inbox-worker`.
+
+The production definition is not profiled; provision its signatures and start
+the service only as part of a separately reviewed deployment. Adding the service
+to a file does not start it on an existing deployment. The local launcher starts
+the invoice worker and, when its healthcheck passes, the inbox worker on the test
+DB; the inbox worker uses the host ClamAV installation.
+No new configuration switch or provider setting is introduced.
+
 ## Invoice worker (T10; alpha active since 2026-10-24)
 
 The `invoice-worker` service is defined in the existing production Compose file
@@ -1150,6 +1288,11 @@ browse/search features remain available in that mode, but the deployment and
 isolated verifier otherwise fail closed before starting runtime containers.
 
 ## Upgrade of an existing installation
+
+`deploy-production.sh` aborts if any project container outside `db`, `app`, `worker`
+and `invoice-worker` is running, so stop a running `inbox-worker` before deploying.
+Deploy and rollback do not move it to the new image; the operator restarts it on
+the intended image after app readiness.
 
 Do not rerun the fresh-install password-generation loop or overwrite `shared/.env`.
 Before migration, verify in the authorized maintenance window that the
