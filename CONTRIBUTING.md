@@ -148,6 +148,9 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 | `.github/workflows/deploy-staging.yaml` | filtered main pushes: reusable main image job, then staging through the existing forced-command SSH key |
 | `.github/workflows/canary.yaml`, `scripts/canary.py`, `scripts/test-canary.py` | 15-minute production API journey, sanitized reports, e-mail/issue alerts and fake HTTP contracts |
 | `frontend/src/` | `pages/`, `components/`, `api/`, `lib/` |
+| `website/` | bilingual static Astro site, checked multi-stage image and local Caddy file server |
+| `.github/workflows/website.yml` | website PR checks; main-push image publication/signing and forced-command site deploy |
+| `infra/docker-compose.site.yml`, `infra/Caddyfile.site` | optional hosted site network/hardening and public Caddy import; [runbook](docs/operations/website-hosting.md) |
 | `install.sh` | one-command release installer; checksum/signature checks and digest-pinned portable init/start |
 | `scripts/build-release-bundle.sh` | shared flat release payload/checksum assembly for releases and the install matrix |
 | `scripts/install-scenarios.sh` | four install journeys on disposable VMs; JSON/Markdown reports and failure artifacts |
@@ -155,7 +158,7 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 | `.github/workflows/release-image.yaml` | publishes/signs release platforms and installer assets; reusable main job publishes staging images without a release |
 | `infra/docker-compose.staging.yml`, `infra/Caddyfile.staging` | hosted staging project and crawler-blocking shared Caddy site; [operator runbook](docs/operations/staging-and-canary.md) |
 | `infra/docker-compose.hosted-proxy.yml`, `infra/Caddyfile.hosted` | opt-in hosted proxy mounts that preserve staging routing across production deploys |
-| `scripts/deploy-server.sh`, `scripts/test-server-deploy.py` | strict production/staging forced-command targets and fake server contracts |
+| `scripts/deploy-server.sh`, `scripts/test-server-deploy.py` | strict production/staging/site forced-command targets and fake server contracts |
 | `.github/workflows/install-matrix.yaml` | nightly, manual and tag-triggered native install checks; reports retained for 90 days |
 | `scripts/` | dev, self-host, deploy, checks; `acceptance/` holds legacy browser scripts (being migrated, #54) |
 | `scripts/scenario_issues.py`, `scripts/test-scenario-issues.py` | stdlib report consumer and fake-GitHub filing contracts; `@known-flaky` failures are excluded |
