@@ -880,6 +880,8 @@ update_recovery() {
     printf '%q ' env -u COMPOSE_FILE -u COMPOSE_PROJECT_NAME -u COMPOSE_PROFILES -u COMPOSE_ENV_FILES \
         -u VERWALINO_MODE -u VERWALINO_DOMAIN -u VERWALINO_PORT -u VERWALINO_IMAGE -u VERWALINO_PROXY_SUBNET \
         -u MIGRATOR_PASSWORD -u APP_RW_PASSWORD -u APP_WORKER_PASSWORD -u APP_REVIEW_PASSWORD -u SESSION_SECRET \
+        -u HV_SMTP_HOST -u HV_SMTP_PORT -u HV_SMTP_FROM -u HV_SMTP_SECURITY \
+        -u HV_SMTP_USERNAME -u HV_SMTP_PASSWORD -u HV_SMTP_TIMEOUT_SECONDS \
         "${CONFIG_ENVIRONMENT[@]}" \
         docker compose --project-name verwalino --env-file "$CONFIG" -f "$ROOT/infra/docker-compose.yml" --profile ops >&2
     if [[ "$VERWALINO_MODE" = https ]]; then printf '%q ' --profile https >&2; fi

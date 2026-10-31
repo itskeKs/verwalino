@@ -2634,6 +2634,7 @@ class Bash32UpdateRestoreTests(SelfHostTests):
 
 def load_tests(loader, tests, pattern):
     suite = loader.loadTestsFromTestCase(SelfHostTests)
+    suite.addTests(loader.loadTestsFromTestCase(InstallMatrixWorkflowTests))
     suite.addTests(loader.loadTestsFromTestCase(StackContractTests))
     suite.addTests(loader.loadTestsFromTestCase(SiteExtensionTests))
     suite.addTests(loader.loadTestsFromTestCase(ReleaseBundleTests))
