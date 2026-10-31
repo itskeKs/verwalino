@@ -31,6 +31,8 @@ class DeploymentPolicy:
     deployment_mode: DeploymentMode
     # Browser setup is available only to the operator of an empty self-hosted DB.
     first_run_setup_enabled: bool
+    # Public signup exists only in hosted mode.
+    self_service_signup_enabled: bool
     # Login consumes the mode-specific throttling rules.
     rate_limit_profile: Literal["relaxed", "strict"]
 
@@ -47,11 +49,13 @@ _POLICIES = {
     DeploymentMode.SELFHOST: DeploymentPolicy(
         deployment_mode=DeploymentMode.SELFHOST,
         first_run_setup_enabled=True,
+        self_service_signup_enabled=False,
         rate_limit_profile="relaxed",
     ),
     DeploymentMode.HOSTED: DeploymentPolicy(
         deployment_mode=DeploymentMode.HOSTED,
         first_run_setup_enabled=False,
+        self_service_signup_enabled=True,
         rate_limit_profile="strict",
     ),
 }
