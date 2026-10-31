@@ -17,10 +17,10 @@ permissions:
   packages: write
   id-token: write
 
-# Finish publishing and signing one release before starting another.
+# Keep tags serialized for shared minor tags, separate from main builds.
 concurrency:
-  group: release-image
-  cancel-in-progress: false
+  group: release-image-${{ github.ref_type }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
 
 defaults:
   run:
@@ -119,6 +119,8 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
+          # Markdown backticks in the format strings are literal.
+          # shellcheck disable=SC2016
           {
             printf '### Published %s\n\n' "$RELEASE_TAG"
             printf '`%s@%s`\n\n' "$IMAGE" "$DIGEST"

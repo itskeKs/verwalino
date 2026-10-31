@@ -28,13 +28,13 @@ flowchart LR
   browser[Internet] --> caddy[Caddy: ports 80 and 443]
   caddy -->|proxy network: app.verwalino.de| app[app:8000]
   app -->|backend network| db[(db)]
-  caddy -->|proxy network: staging.verwalino.de| staging[staging-app:8000]
+  caddy -->|dedicated staging proxy: staging.verwalino.de| staging[staging-app:8000]
   staging -->|private staging backend| staging_db[(staging db)]
   caddy -->|internal site network: verwalino.de| site[site:8080]
 ```
 
 Only Caddy and `site` join `verwalino_site`, an internal Docker network without outbound internet routing.
-The app uses `proxy` and `backend`; db uses `backend`. Staging's app joins the shared `proxy` and its
+The app uses `proxy` and `backend`; db uses `backend`. Staging's app joins `verwalino-staging_proxy` and its
 own private backend, as described in [the staging runbook](staging-and-canary.md). It never joins `site`.
 The site cannot address app/db directly or read
 host files, documents or credentials. Caddy remains a shared trust boundary: a compromised site can reach
@@ -87,16 +87,19 @@ docker compose --project-name verwalino --env-file "$VERWALINO_CONFIG" \
 ```
 
 Both overlays are required together: they mount the operator-owned wrapper and all three reviewed snippets
-read-only, and connect Caddy to `proxy` and `site`. No mount is given to `site`. `--no-deps` leaves app/db and
-staging alone; the first enable recreates Caddy to attach its additional network. Check HTTPS, the 308 redirect,
+read-only, and connect Caddy to `proxy`, `staging-proxy` and `site`. Create the external
+`verwalino-staging_proxy` network first as described in [the staging runbook](staging-and-canary.md).
+No mount is given to `site`. `--no-deps` leaves app/db and
+staging alone; the first enable recreates Caddy to attach its additional networks. Check HTTPS, the 308 redirect,
 the app and staging after this operator step. Enable staging separately with [its runbook](staging-and-canary.md).
 An omitted `VERWALINO_SITE_IMAGE` defaults to the published `main` tag for compose rendering, but use the
 SHA plus digest pin for actual starts. The forced deploy always supplies that pin itself.
 
 The portable installer deliberately uses only the base compose file. An app release through
-`deploy-server.sh vX.Y.Z` uses the presence of `config/Caddyfile.hosted` as the opt-in. After the installer,
-it validates the wrapper and all three snippets in an isolated read-only Caddy container, then reapplies both
-overlays in one Caddy recreation, without recreating site or staging. After a **manual** `self-host.sh start`,
+`deploy-server.sh vX.Y.Z` uses the presence of `config/Caddyfile.hosted` as the opt-in, including first
+enablement before Caddy is attached to the site network. Before backup, image pinning and the installer,
+it validates the wrapper and all three snippets in an isolated read-only Caddy container. After the installer,
+it reapplies both overlays in one Caddy recreation, without recreating site or staging. After a **manual** `self-host.sh start`,
 reapply the same three-file prefix with `up -d --no-deps caddy` before a site deploy. The production import
 reads the checked-out release's generic Caddyfile; keep all three imports when updating the wrapper.
 

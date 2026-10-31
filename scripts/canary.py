@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from http.client import HTTPException
 from http.cookiejar import CookieJar
 import json
 import os
@@ -63,6 +64,8 @@ class Client:
         except HTTPError as error:
             error.close()
             raise CanaryError(f"HTTP{error.code}") from None
+        except HTTPException as error:
+            raise CanaryError(type(error).__name__) from None
         except (TimeoutError, socket.timeout):
             raise CanaryError("Timeout") from None
         except URLError as error:

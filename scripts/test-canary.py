@@ -29,6 +29,7 @@ class CanaryTests(unittest.TestCase):
     def setUp(self):
         self.calls = []
         self.fail_path = None
+        self.malformed_path = None
         self.bad_json = False
         self.no_cookie = False
         self.redirect = False
@@ -43,6 +44,9 @@ class CanaryTests(unittest.TestCase):
             def request(self):
                 body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 case.calls.append((self.command, self.path, json.loads(body) if body else None))
+                if self.path == case.malformed_path:
+                    self.wfile.write(b"private malformed status fake-password\r\n")
+                    return
                 if self.path == "/api/auth/login":
                     if case.redirect:
                         self.send_response(302)
@@ -101,8 +105,9 @@ class CanaryTests(unittest.TestCase):
 
     def run_canary(self, *args, **env):
         with patch.dict(os.environ, {"CANARY_EMAIL": "canary@example.invalid", "CANARY_PASSWORD": "fake-password", **env}):
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            with contextlib.redirect_stdout(io.StringIO()) as stdout, contextlib.redirect_stderr(io.StringIO()) as stderr:
                 status = canary.main(["--base-url", self.base, "--report", str(self.report), *args])
+        self.assertNotIn("fake-password", stdout.getvalue() + stderr.getvalue())
         return status, json.loads(self.report.read_text()) if self.report.exists() else None
 
     def test_login_create_ledger_and_delete_use_the_cookie_and_explicit_scope(self):
@@ -134,6 +139,25 @@ class CanaryTests(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertEqual(report["scenarios"][0]["steps"][-1]["name"], "cleanup")
         self.assertEqual(report["scenarios"][0]["steps"][-1]["outcome"], "failed")
+
+    def test_malformed_status_line_writes_a_sanitized_report_and_still_cleans_up(self):
+        self.malformed_path = "/api/leases"
+        status, report = self.run_canary()
+        self.assertEqual(status, 1)
+        failure, = [step for step in report["scenarios"][0]["steps"] if step["outcome"] == "failed"]
+        self.assertEqual(failure["name"], "tenant-ledger")
+        self.assertEqual(failure["error"]["type"], "BadStatusLine")
+        self.assertEqual(self.calls[-1][:2], ("DELETE", f"/api/properties/{PROPERTY}"))
+        self.assertNotIn("fake-password", json.dumps(report))
+
+    def test_create_property_failure_reports_without_deleting_an_unknown_property(self):
+        self.fail_path = "/api/properties"
+        status, report = self.run_canary()
+        self.assertEqual(status, 1)
+        self.assertEqual([step["name"] for step in report["scenarios"][0]["steps"]], ["login", "create-property"])
+        self.assertEqual(report["scenarios"][0]["steps"][-1]["error"]["type"], "HTTP503")
+        self.assertEqual([call[:2] for call in self.calls], [("POST", "/api/auth/login"), ("POST", "/api/properties")])
+        self.assertNotIn("fake-password", json.dumps(report))
 
     def test_redirects_are_not_followed_and_never_receive_credentials(self):
         self.redirect = True
@@ -200,8 +224,10 @@ class WorkflowTests(unittest.TestCase):
         mail = steps["Send owner email"]
         self.assertRegex(mail["uses"], r"^dawidd6/action-send-mail@[a-f0-9]{40}$")
         self.assertEqual(mail["with"]["to"], "${{ secrets.ALERT_EMAIL }}")
-        self.assertEqual(mail["if"], "${{ failure() }}")
+        self.assertEqual(mail["if"], "${{ failure() && steps.issue.outputs.canary_issue_created == 'true' }}")
         self.assertEqual(steps["File canary issue"]["if"], "${{ failure() }}")
+        self.assertEqual(steps["File canary issue"]["id"], "issue")
+        self.assertLess(list(steps).index("File canary issue"), list(steps).index("Send owner email"))
         self.assertIn("scripts/scenario_issues.py", steps["File canary issue"]["run"])
         self.assertFalse(workflow["concurrency"]["cancel-in-progress"])
 

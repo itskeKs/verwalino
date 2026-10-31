@@ -3,6 +3,7 @@ from copy import deepcopy
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -76,7 +77,7 @@ class ScenarioIssueTests(unittest.TestCase):
     def test_canary_fingerprint_label_and_open_issue_deduplication(self):
         row = scenario(feature="canary", scenario="Hosted canary", tags=["canary"],
                        steps=[{"name": "tenant-ledger", "outcome": "failed", "error": {"type": "HTTP503"}}])
-        self.assertEqual(reporter.fingerprint(row, row["steps"][0])[0], "canary::tenant-ledger::HTTP503")
+        self.assertEqual(reporter.fingerprint(row, row["steps"][0])[0], "canary")
         self.file(report(row))
         self.file(report(row), run=RUN + "2")
         self.assertEqual(len(self.client.issues), 1)
@@ -85,6 +86,55 @@ class ScenarioIssueTests(unittest.TestCase):
         self.assertIn("scripts/canary.py", issue["body"])
         self.assertNotIn("make test-scenarios-report", issue["body"])
         self.assertEqual(len(self.client.comments[1]), 1)
+
+    def test_canary_step_and_error_changes_keep_one_issue_and_one_comment_per_failing_run(self):
+        row = scenario(feature="canary", scenario="Hosted canary", tags=["canary"], steps=[
+            {"name": "tenant-ledger", "outcome": "failed", "error": {"type": "HTTP502"}},
+            {"name": "cleanup", "outcome": "failed", "error": {"type": "Timeout"}},
+        ])
+        self.file(report(row))
+        create, = [call for call in self.client.calls if call[0] == "create"]
+        self.assertIn("tenant-ledger", create[1])
+        self.assertIn("HTTP502", create[1])
+        for text in ("tenant-ledger", "HTTP502", "cleanup", "Timeout"):
+            self.assertIn(text, create[2])
+        row["steps"] = [{"name": "login", "outcome": "failed", "error": {"type": "Timeout"}}]
+        self.file(report(row), run=RUN + "2")
+        self.file(report(row), run=RUN + "3")
+        self.assertEqual(len(self.client.issues), 1)
+        self.assertEqual(len(self.client.comments[1]), 2)
+        for comment in self.client.comments[1]:
+            self.assertIn("login", comment["body"])
+            self.assertIn("Timeout", comment["body"])
+
+    def test_canary_cli_emits_created_only_after_a_new_issue_is_actually_filed(self):
+        row = scenario(feature="canary", scenario="Hosted canary", tags=["canary"], steps=[
+            {"name": "login", "outcome": "failed", "error": {"type": "HTTP502"}}])
+        with tempfile.TemporaryDirectory() as temp:
+            report_path, output_path = Path(temp) / "report.json", Path(temp) / "output"
+            report_path.write_text(json.dumps(report(row)))
+            args = ["--report", str(report_path), "--repo", "example/project", "--run-url", RUN]
+            with patch.object(reporter, "GitHubClient", return_value=self.client), \
+                    patch.dict(os.environ, {"GITHUB_OUTPUT": str(output_path)}), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                for expected in ("true", "false"):
+                    output_path.unlink(missing_ok=True)
+                    self.assertEqual(reporter.main(args), 0)
+                    self.assertEqual(output_path.read_text(), f"canary_issue_created={expected}\n")
+                self.client.issues[0]["state"] = "closed"
+                output_path.unlink()
+                self.assertEqual(reporter.main(args), 0)
+                self.assertEqual(output_path.read_text(), "canary_issue_created=true\n")
+                self.assertEqual(len(self.client.issues), 2)
+                output_path.unlink()
+                self.assertEqual(reporter.main([*args, "--dry-run"]), 0)
+                self.assertFalse(output_path.exists())
+                self.client.calls.clear()
+                self.client.issues.clear()
+                with patch.object(self.client, "create", side_effect=ValueError("fake API failure")), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(reporter.main(args), 1)
+                self.assertFalse(output_path.exists())
 
     def test_structured_exception_class_ignores_volatile_messages_but_step_changes_identity(self):
         first = scenario()

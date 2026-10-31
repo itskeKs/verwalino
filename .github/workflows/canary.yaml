@@ -37,22 +37,9 @@ jobs:
           CANARY_PASSWORD: ${{ secrets.CANARY_PASSWORD }}
         run: python3 -B scripts/canary.py --base-url https://app.verwalino.de --report report/canary.json
 
-      # Both paths run on the first failure, independently of the other alert's result.
-      - name: Send owner email
-        if: ${{ failure() }}
-        timeout-minutes: 1
-        uses: dawidd6/action-send-mail@a9703ed89296f78cab37cd53cb47a0fcfc1ec1cd
-        with:
-          connection_url: ${{ secrets.ALERT_SMTP_URL }}
-          from: ${{ secrets.ALERT_SMTP_FROM }}
-          to: ${{ secrets.ALERT_EMAIL }}
-          subject: "Verwalino: Produktionsprüfung fehlgeschlagen"
-          body: |
-            Die automatische Produktionsprüfung ist fehlgeschlagen.
-            Bitte den Lauf und die einzelnen Prüfschritte ansehen:
-            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
+      # Open one issue per outage; email only when a new issue was created.
       - name: File canary issue
+        id: issue
         if: ${{ failure() }}
         timeout-minutes: 1
         env:
@@ -74,6 +61,20 @@ jobs:
           fi
           python3 -B scripts/scenario_issues.py --report report/canary.json \
             --repo "$REPOSITORY" --run-url "$RUN_URL"
+
+      - name: Send owner email
+        if: ${{ failure() && steps.issue.outputs.canary_issue_created == 'true' }}
+        timeout-minutes: 1
+        uses: dawidd6/action-send-mail@a9703ed89296f78cab37cd53cb47a0fcfc1ec1cd
+        with:
+          connection_url: ${{ secrets.ALERT_SMTP_URL }}
+          from: ${{ secrets.ALERT_SMTP_FROM }}
+          to: ${{ secrets.ALERT_EMAIL }}
+          subject: "Verwalino: Produktionsprüfung fehlgeschlagen"
+          body: |
+            Die automatische Produktionsprüfung ist fehlgeschlagen.
+            Bitte den Lauf und die einzelnen Prüfschritte ansehen:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: Retain sanitized canary report
         if: always()

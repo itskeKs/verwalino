@@ -16,7 +16,8 @@
 # The previous site's SHA is printed for an explicit "site <previous-sha>" rollback.
 #
 # Steps: fetch tags and check out the tag -> pull ghcr.io/itskeks/verwalino:TAG and resolve
-# its digest -> backup (server-backup.sh) -> pin the digest in the installer config ->
+# its digest -> validate optional hosted proxy -> backup (server-backup.sh) -> pin
+# the digest in the installer config ->
 # "self-host.sh start" (pull, stop app, migrate, start, wait for healthy) -> poll
 # /api/health/ready for up to 120 s. The whole run is logged to
 # /srv/verwalino/logs/deploy-<timestamp>.log.
@@ -157,6 +158,8 @@ main() {
         step='export staging runtime files'
         mkdir -p "$ROOT/staging"
         git_app archive "$staging_sha" infra/docker-compose.staging.yml infra/db/prod-init.sh | tar -x -C "$ROOT/staging"
+        # Postgres runs init scripts as another uid; undo the deploy user's umask.
+        chmod 755 "$ROOT/staging/infra/db" "$ROOT/staging/infra/db/prod-init.sh"
         step='validate staging compose'
         staging_compose config -q
         step='staging database'
@@ -184,14 +187,17 @@ main() {
         done
         export VERWALINO_ALLOWED_HOSTS="$VERWALINO_DOMAIN,localhost,127.0.0.1"
         export VERWALINO_COOKIE_SECURE=true VERWALINO_COOKIE_NAME=__Host-hv_session
+        hosted_compose up -d --no-deps caddy
+    }
+
+    validate_hosted_proxy() {
         docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
-            --env "VERWALINO_DOMAIN=$VERWALINO_DOMAIN" \
+            --env "VERWALINO_DOMAIN=$(config_value VERWALINO_DOMAIN)" \
             --mount "type=bind,src=$ROOT/config/Caddyfile.hosted,dst=/etc/caddy/Caddyfile,readonly" \
             --mount "type=bind,src=$APP/infra/Caddyfile,dst=/etc/caddy/Caddyfile.production,readonly" \
             --mount "type=bind,src=$APP/infra/Caddyfile.staging,dst=/etc/caddy/Caddyfile.staging,readonly" \
             --mount "type=bind,src=$APP/infra/Caddyfile.site,dst=/etc/caddy/Caddyfile.site,readonly" \
             caddy:2.10.2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-        hosted_compose up -d --no-deps caddy
     }
 
     # Polls the loopback listener the installer publishes; true as soon as the app is ready.
@@ -304,6 +310,12 @@ main() {
     [[ -n "$digest_ref" ]] || die "no registry digest for $IMAGE_REPO:$TAG after the pull."
     echo "image $digest_ref"
 
+    # File presence also supports first enablement before Caddy joins the site network.
+    if [[ -f "$ROOT/config/Caddyfile.hosted" ]]; then
+        step='validate hosted proxy extension'
+        validate_hosted_proxy
+    fi
+
     step='backup'
     # TODO(#57, #76): server-backup.sh is a minimal stand-in for the installer's backup command.
     "$APP/scripts/server-backup.sh" "pre-$TAG"
@@ -316,7 +328,7 @@ main() {
     "$APP/scripts/self-host.sh" start 2>&1 | sed -E 's/^(Setup token: )[a-f0-9]{64}$/\1[hidden by deploy-server.sh]/'
 
     if [[ -f "$ROOT/config/Caddyfile.hosted" ]]; then
-        step='validate and restore hosted proxy extension'
+        step='restore hosted proxy extension'
         hosted_proxy
     fi
     step='health check'

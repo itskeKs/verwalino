@@ -1,9 +1,15 @@
 # Apply to the production project only, after enabling the hosted wrapper.
-# Pair with docker-compose.site.yml to mount all imports and retain both networks.
+# Pair with docker-compose.site.yml to mount all imports and retain all networks.
 # The generic self-host installer and its Caddyfile stay unchanged.
 services:
   caddy:
+    networks: [proxy, staging-proxy]
     volumes:
       - ${VERWALINO_SERVER_ROOT:?set the hosted server root}/config/Caddyfile.hosted:/etc/caddy/Caddyfile:ro
       - ./Caddyfile:/etc/caddy/Caddyfile.production:ro
       - ./Caddyfile.staging:/etc/caddy/Caddyfile.staging:ro
+
+networks:
+  staging-proxy:
+    external: true
+    name: verwalino-staging_proxy

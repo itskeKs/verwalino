@@ -54,7 +54,7 @@ def step_text(step):
 def fingerprint(row, step):
     parts = (row["feature"], row["scenario"], step_text(step), error_kind(step.get("error") or row.get("error")))
     if row["feature"] == "canary":
-        parts = ("canary", parts[2], parts[3])
+        parts = ("canary",)
     readable = "::".join(parts)
     return readable, digest(readable)
 
@@ -218,9 +218,13 @@ def file_failures(report, client, *, run_url, root=ROOT, dry_run=False, output=N
             failure = failures.setdefault(token, {
                 "row": row, "fingerprint": readable, "marker": f"<!-- scenario-fingerprint: {token} -->",
                 "step": step_text(step), "artifacts": set(), "errors": set(),
+                "kind": error_kind(step.get("error") or row.get("error")),
             })
             failure["artifacts"].update(row.get("artifacts", []))
-            failure["errors"].add(error_text(step.get("error") or row.get("error")))
+            detail = error_text(step.get("error") or row.get("error"))
+            if row["feature"] == "canary":
+                detail = f"{step_text(step)}: {detail}"
+            failure["errors"].add(detail)
 
     plan = []
     new_issues = 0
@@ -232,6 +236,9 @@ def file_failures(report, client, *, run_url, root=ROOT, dry_run=False, output=N
         failure["error_marker"] = f"<!-- scenario-error: {digest(failure['error'])} -->"
         # Search is fuzzy. Only the complete marker on its own line is identity.
         matches = [issue for issue in client.search(token) if failure["marker"] in issue["body"].splitlines()]
+        if failure["row"]["feature"] == "canary":
+            # Closing the incident permits a fresh issue and first-failure email.
+            matches = [issue for issue in matches if issue["state"].lower() == "open"]
         issue = min(matches, key=lambda issue: (issue["state"].lower() != "open", issue["number"]), default=None)
         if issue is None:
             if new_issues >= MAX_NEW_ISSUES_PER_RUN:
@@ -239,8 +246,10 @@ def file_failures(report, client, *, run_url, root=ROOT, dry_run=False, output=N
                 continue
             new_issues += 1
             source, labels, templates = sources.get(failure["row"]["feature"], (failure["row"]["feature"], [], []))
+            title = (f"Canary failure: {failure['step']} ({failure['kind']})" if failure["row"]["feature"] == "canary"
+                     else f"Scenario failure: {failure['row']['scenario']}")
             plan.append({
-                "action": "create", "title": f"Scenario failure: {failure['row']['scenario']}"[:240],
+                "action": "create", "title": title[:240],
                 "body": issue_body(template, failure, run, run_url, date, source, templates),
                 "labels": ["scenario", *(["canary"] if failure["row"]["feature"] == "canary" else labels)],
             })
@@ -249,7 +258,9 @@ def file_failures(report, client, *, run_url, root=ROOT, dry_run=False, output=N
             previous = next((comment["body"] for comment in reversed(comments) if "<!-- scenario-error:" in comment["body"]), issue["body"])
             changed = failure["error_marker"] not in previous.splitlines()
             body = f"Failed again in run {run_url} ({date}, mode {run['mode']})\n\n{failure['error_marker']}\n"
-            if changed:
+            if failure["row"]["feature"] == "canary":
+                body += f"\nFailing canary steps:\n\n{code_block(failure['error'])}\n"
+            elif changed:
                 body += f"\nStep error changed:\n\n{code_block(failure['error'])}\n"
             plan.append({"action": "reopen" if issue["state"].lower() == "closed" else "comment",
                          "number": issue["number"], "body": body})
@@ -296,7 +307,14 @@ def main(argv=None):
         report = json.loads(args.report.read_text())
         if args.mode:
             report["run"]["mode"] = args.mode
-        file_failures(report, GitHubClient(args.repo), run_url=args.run_url, dry_run=args.dry_run)
+        plan = file_failures(report, GitHubClient(args.repo), run_url=args.run_url, dry_run=args.dry_run)
+        if not args.dry_run and any(row["feature"] == "canary" for row in report["scenarios"]):
+            created = any(action["action"] == "create" and "canary" in action["labels"] for action in plan)
+            result = f"canary_issue_created={str(created).lower()}\n"
+            print(result, end="")
+            if output_path := os.environ.get("GITHUB_OUTPUT"):
+                with open(output_path, "a") as output:
+                    output.write(result)
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         print(f"Scenario filing failed: {error}", file=sys.stderr)
         return 1

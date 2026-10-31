@@ -84,7 +84,7 @@ services:
       HV_DECLARATION_QA_ENABLED: "false"
       HV_INVOICE_EXTRACTION_ENABLED: "false"
       WEB_CONCURRENCY: "2"
-      FORWARDED_ALLOW_IPS: ${VERWALINO_PROXY_SUBNET:?use the existing proxy subnet}
+      FORWARDED_ALLOW_IPS: ${VERWALINO_PROXY_SUBNET:?use the dedicated staging proxy subnet}
     volumes:
       - documents_staging:/data/documents
     user: "10001:10001"
@@ -112,7 +112,7 @@ networks:
     internal: true
   proxy:
     external: true
-    name: verwalino_proxy
+    name: verwalino-staging_proxy
 
 volumes:
   pgdata_staging:

@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
-      group: deploy-hosted-server
+      group: deploy-hosted-staging
       cancel-in-progress: false
     steps:
       - name: Deploy staging over SSH

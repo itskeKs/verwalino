@@ -919,7 +919,9 @@ an IP-only entry does not match a host name in `DEPLOY_HOST`.
    `ssh chris@host vX.Y.Z`. **Actions → Deploy hosted server → Run workflow** with a `tag` redeploys any
    published tag; on the server, `/srv/verwalino/app/scripts/deploy-server.sh vX.Y.Z` does the same.
 3. [`scripts/deploy-server.sh`](scripts/deploy-server.sh) fetches tags and checks the tag out (it must exist and be
-   on `main`), pulls `ghcr.io/itskeks/verwalino:vX.Y.Z` and resolves its digest, runs
+   on `main`), pulls `ghcr.io/itskeks/verwalino:vX.Y.Z` and resolves its digest. If the operator's
+   `config/Caddyfile.hosted` exists, it validates that wrapper before backup, image pinning or the installer.
+   It then runs
    [`scripts/server-backup.sh`](scripts/server-backup.sh) as `pre-vX.Y.Z`, writes the digest to `VERWALINO_IMAGE`
    in the config, runs `scripts/self-host.sh start` (pull by digest, stop the app, migrate, start, wait for
    healthy) and polls `/api/health/ready` for up to 120 s. The run is logged to
@@ -941,7 +943,8 @@ the first real deployment and alert-delivery checks remain operator work (#25).
 
 Staging is Compose project `verwalino-staging`, using
 [`infra/docker-compose.staging.yml`](infra/docker-compose.staging.yml) alone, its own database/backend network
-and volumes `pgdata_staging`/`documents_staging`. Only its app joins the existing `verwalino_proxy` network.
+and volumes `pgdata_staging`/`documents_staging`. Its app and hosted Caddy share the dedicated external
+`verwalino-staging_proxy` network; production's app remains on `verwalino_proxy`.
 It runs hosted mode and restricts SMTP to the single required `CANARY_EMAIL` via `HV_MAIL_ALLOWLIST`.
 [`infra/Caddyfile.staging`](infra/Caddyfile.staging) routes `staging.verwalino.de` to `staging-app:8000`,
 adds `noindex, nofollow` and disallows all crawlers in `/robots.txt`. Enable the
@@ -961,9 +964,10 @@ with the migrated schema. There is no automatic schema downgrade or rollback.
 [Hosted canary](.github/workflows/canary.yaml) runs every 15 minutes against `https://app.verwalino.de`:
 login → create an unused property → read the fixed synthetic tenant ledger with an explicit scope → delete
 its new property, including on ledger failure. Create its dedicated organization/user once with the admin
-CLI and prepare the fixture described in the runbook. A first failure sends German e-mail through a pinned
-mail action and files a `canary` issue via the existing scenario reporter, deduplicated per
-`canary::<step>::<error kind>` while an issue is open.
+CLI and prepare the fixture described in the runbook. A first failure files a `canary` issue via the existing
+scenario reporter, deduplicated under fingerprint `canary` while an issue is open. Later failing runs comment
+on that issue even if steps/errors change. German e-mail through the pinned mail action runs only after
+successful creation of a new canary issue.
 
 Additional secrets: `CANARY_EMAIL`, `CANARY_PASSWORD`, `ALERT_EMAIL` (`alarm@verwalino.de`), `ALERT_SMTP_URL` (TLS-required SMTP
 connection URL) and `ALERT_SMTP_FROM`. The five-minute job timeout gives a nominal **15 + 5 = 20 minute**
