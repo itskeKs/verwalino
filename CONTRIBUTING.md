@@ -84,6 +84,16 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   `make test-backend`, `make test-bdd`, `make test-browser` and `make test-scenarios-report`
   acquire/release the lock themselves.
 
+If the shared database holds a migration revision unknown to the checkout, the session fixture
+logs that revision, drops and recreates `public` with its runtime schema grants, preserves the
+cluster roles, and runs the existing upgrade rehearsals. Known revisions still downgrade to
+base first. The reset requires `VERWALINO_TEST_DB=1` (exported by `scripts/test-env.sh`) and the
+validated `app_migrator` connection to `hausverwaltung` on `127.0.0.1` or `localhost`, port
+`55432`; it refuses every other target before connecting. As a manual alternative, hold the
+same lock, recreate only the disposable container with
+`docker compose -f infra/docker-compose.declaration-test.yml up -d --force-recreate --wait postgres`,
+then run the tests.
+
 The pre-commit hook (`.githooks/pre-commit` → `scripts/checks.sh`) runs ruff when backend Python
 is staged, eslint on staged frontend TypeScript files, and always the docs link check.
 If `frontend/node_modules` is missing, eslint is skipped with a message.
