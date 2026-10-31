@@ -9,6 +9,9 @@ depends_on = None
 
 def upgrade():
     op.execute('''
+    ALTER TABLE public.auth_throttle ADD COLUMN last_lockout_at timestamptz;
+    UPDATE public.auth_throttle SET last_lockout_at=updated_at WHERE lockouts>0;
+
     -- Explicit reuse keeps the four-argument CLI contract while signup always
     -- creates a tenant. Neither bootstrap overload is callable by runtime roles.
     CREATE FUNCTION public.bootstrap_organization_admin(
@@ -109,6 +112,9 @@ def downgrade():
       IF EXISTS(SELECT 1 FROM public.signup_request) THEN
         RAISE EXCEPTION 'Cannot discard retained signup state';
       END IF;
+      IF EXISTS(SELECT 1 FROM public.auth_throttle WHERE last_lockout_at IS NOT NULL) THEN
+        RAISE EXCEPTION 'Cannot discard retained auth throttle state';
+      END IF;
     END $$;
     DROP FUNCTION public.provision_organization(text);
     DROP FUNCTION public.signup_email_registered(text);
@@ -133,4 +139,5 @@ def downgrade():
       RETURN org;
     END $$;
     DROP FUNCTION public.bootstrap_organization_admin(text,text,text,text,boolean);
+    ALTER TABLE public.auth_throttle DROP COLUMN last_lockout_at;
     ''')

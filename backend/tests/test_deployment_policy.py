@@ -98,8 +98,8 @@ def test_architecture_documents_the_complete_policy_table():
 
 
 @pytest.mark.parametrize("mode,expected", [
-    ("selfhost", (20, 10, 15, 15, 1, 15)),
-    ("hosted", (10, 5, 15, 30, 2, 1440)),
+    ("selfhost", (20, 10, 15, 15, 1, 15, 15, 100, 1000)),
+    ("hosted", (10, 5, 15, 30, 2, 1440, 1440, 100, 1000)),
 ])
 def test_rate_limit_rules_match_the_selected_profile(mode, expected):
     from dataclasses import astuple

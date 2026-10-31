@@ -73,6 +73,9 @@ The complete table below is checked against the dataclass by
 | `rate_limit_rules.lockout_minutes` | `15` | `30` |
 | `rate_limit_rules.lockout_multiplier` | `1` | `2` |
 | `rate_limit_rules.max_lockout_minutes` | `15` | `1440` |
+| `rate_limit_rules.lockout_decay_minutes` | `15` | `1440` |
+| `rate_limit_rules.cleanup_every` | `100` | `100` |
+| `rate_limit_rules.cleanup_batch_size` | `1000` | `1000` |
 
 Current readers are `/api/meta` (`deployment_mode`), setup's `setup_required()`
 (`first_run_setup_enabled`), the admin CLI (`admin_cli_bootstrap_allowed`), signup (`self_service_signup_enabled`) and login
@@ -476,9 +479,10 @@ verifies the chosen password against the token-bound pending hash (a dummy hash
 for absent/consumed tokens). This extra proof prevents activation of credentials
 chosen by someone who pre-registered or overwrote another person’s email, including
 when the mailbox owner uses resend. The handler takes the organization lock before
-locking the pending row, then verifies the password while holding that row through
-provisioning. Concurrent form corrections cannot change credentials after password
-proof. It then calls
+locking the pending row in the outcome transaction. Password verification runs
+outside transactions against the checked snapshot; the locked row must still
+contain the same email and password hash before provisioning. Concurrent form
+corrections therefore invalidate an obsolete password proof. It then calls
 `provision_organization(token text) RETURNS uuid`. This definer fixes
 `search_path=pg_catalog,pg_temp`, disables row security only within the function,
 and grants EXECUTE only to `app_rw` (plus the owner). It locks organizations and
@@ -495,7 +499,10 @@ the usual generic 401. All invalid, used, expired, wrong/missing-password and th
 return `403 {"detail":"Bestätigung nicht möglich. Bitte fordern Sie einen neuen
 Link an."}`. The function converts any failure to one generic SQL exception.
 Downgrade refuses retained requests; on an empty table it exactly removes the new
-objects. Metadata, race, replay, expiry, isolation and round-trip tests cover this
+objects. Revision 0143 also adds `auth_throttle.last_lockout_at`, leaving the
+accepted 0142 migration unchanged; existing escalation history is anchored to its
+last update time. Downgrade refuses retained last-lockout timestamps as well as
+pending signups. Metadata, race, replay, expiry, isolation and round-trip tests cover this
 boundary.
 
 Every 100th signup per worker schedules one separate transaction after the response
@@ -522,60 +529,76 @@ submit. StrictMode never submits twice. Server-side query stripping protects
 the default Uvicorn access log; upstream proxies must redact query strings too.
 GET requests never provision a tenant.
 
-**Login hardening (accepted source revision 0142):** `POST /api/auth/login` checks the IP and
-normalized email before password verification. Both failure thresholds use a fixed
-15-minute window starting with the first failure. Selfhost locks after 20 IP or
-10 email failures for 15 minutes. Hosted locks after 10 IP or 5 email failures
-for 30 minutes; each repeated lockout doubles to a maximum of 24 hours. Expiry
-starts a fresh failure window; successful authentication deletes both the email
-and current IP counters, including their escalation history. Attempts during an
-active lockout count as failures but do not extend that lockout. The Nth failure
+**Login hardening (revisions 0142–0143):** `POST /api/auth/login` checks the IP and
+normalized email before looking up the password. Both failure thresholds use a
+fixed 15-minute window starting with the first failure. Selfhost locks after 20
+IP or 10 email failures for 15 minutes. Hosted locks after 10 IP or 5 email
+failures for 30 minutes; each repeated lockout doubles to a maximum of 24 hours.
+Expiry starts a fresh failure window. Success deletes only the email counter
+and its escalation history; IP failures survive successful logins. Attempts
+during an active lockout count as failures without extending it. The Nth failure
 starts the lock; the following request is refused even with a correct password.
 
-Unknown email, wrong password and lockout all return the existing identical
+This deliberately trades resistance to guessing for targeted denial of service:
+an attacker who knows an email can lock it, repeatedly and with escalating hosted
+waits. The victim cannot clear an active lockout by logging in, even with the
+correct password. They must wait or ask an operator to use the migrator CLI
+`python -m app.admin_cli unlock --email ADDRESS` (or `--ip ADDRESS` for an
+independently locked IP); see [operator guidance](../DEPLOY.md#login-lockout-and-proxy-trust).
+Escalation decays on failures based on `last_lockout_at`, independently of traffic
+and cleanup: the count resets when the last lockout is strictly older than
+24 hours in hosted mode or the 15-minute window in selfhost mode. Exactly at the
+boundary history is retained. Each new lockout records its start time.
+
+Unknown email, wrong password and lockout all return the identical
 `401 {"detail":"Invalid credentials"}` body and headers, without `Retry-After`
-or a session cookie. The existing German login UI remains unchanged. Every
-unlocked attempt runs one Argon2 verification, using the existing dummy hash for
-unknown identities; a spy verifies this without wall-clock assertions. An active
-lockout is refused before the password lookup/hash. A WARNING records only scope,
-key kind, SHA-256 key hash and a server-generated request id (or the request-state
-id if available); no dependency on the separate request-id middleware is required.
+or a session cookie. The German login UI is unchanged. Every attempt runs one
+Argon2 verification outside database transactions. Unknown and locked identities
+use the dummy hash; an active lockout still skips the principal lookup. A WARNING
+records only scope, key kind, HMAC key hash and a server-generated request id
+(or the request-state id if available), never raw emails or IPs.
 
 `auth_throttle` is global because authentication precedes tenant selection. It
-stores only key kind, SHA-256 of `scope:normalized_key`, window start, failure
-count, lockout expiry, repeated-lockout count and update time. Email normalization
-reuses `normalize_email`; IPs use their canonical address, mapping IPv4-mapped
-IPv6 to IPv4. The extra `lockouts` column persists escalation independently of
-the current failure window. Only this table receives new runtime DML grants
-(`app_rw`; the existing worker membership inherits them). There is no new
-SECURITY DEFINER function, organization grant or tenant bypass. Downgrade refuses
-to discard retained throttle state, then removes the empty table and its indexes.
+stores key kind, HMAC-SHA256 of `scope:normalized_key`, window start, failure
+count, lockout expiry, repeated-lockout count, last lockout start and update time.
+The pepper is HMAC-SHA256 of `verwalino-auth-throttle`, keyed by the existing
+`HV_SESSION_SECRET`; no new setting is required. Rotating that secret clears
+effective throttling state by changing every key; old rows age out through cleanup.
+Email normalization reuses `normalize_email`. IPv4 uses its canonical address;
+IPv4-mapped IPv6 maps to IPv4. Native IPv6 is grouped by canonical /64 network
+address, preventing interface-address rotation from bypassing the IP limit.
+Unparsable client addresses share the constant `invalid` key and receive the
+normal authentication response. Only this table receives new runtime DML grants
+(`app_rw`; existing worker membership inherits them). There is no new SECURITY
+DEFINER function, organization grant or tenant bypass. Downgrade refuses to discard
+retained throttle state, then removes the empty table and its indexes.
 
-`core/rate_limit.py::check_and_record(session, scope, keys, rules)` creates and
-atomically upserts and locks the hashed rows in consistent order. The caller retains one transaction
-through verification and calls the returned attempt's `record_failure()` or
-`reset()`, then commits **before** raising an HTTP refusal. This prevents lost
-increments and rollback of failed-login counters across concurrent workers.
-`Depends(throttled("login"))` supplies request metadata; its `check(session,
-email)` invokes this service with both keys and the deployment rules. Signup
-uses the same service with its three scopes, IP-only submit/resend admission and
-failure-only confirmation accounting; scopes are hashed into independent keys.
-`core/honeypot.py::honeypot_response`
-returns `None` for a missing/empty hidden field (default `website`, configurable
-per call), otherwise a success-shaped 200 with the caller's supplied body. The
-signup handler changes its status to 202 and returns it before any side effects.
+`core/rate_limit.py::check_and_record(session, scope, keys, rules)` reads lock
+status without writing or taking row locks. The login handler commits that short
+transaction, including the principal lookup, before hashing. A second short
+transaction calls the returned attempt's `record_failure()` or `reset()`.
+Failure recording atomically upserts and locks keys in consistent order, then
+updates their counters under those locks; two parallel failures count once each,
+including when a concurrent success has deleted the email row since admission.
+The handler commits outcomes before raising an HTTP refusal.
+`Depends(throttled("login"))` supplies request metadata and deployment rules.
+Signup uses the same check/hash/record phases under its three independent scopes,
+with IP-only submit/resend accounting and failure-only confirmation accounting.
+`core/honeypot.py::honeypot_response` returns `None` for a missing/empty hidden
+field (default `website`, configurable per call), otherwise a success-shaped 200
+with the caller's supplied body. Signup and resend return it as a 202 before side effects.
 
-Every 100th check per worker opportunistically deletes rows whose `updated_at`
-is over one day old, after finalizing the attempt, using `FOR UPDATE SKIP LOCKED`
-so live attempts are skipped and no cleanup locks precede request-key locks.
-Cleanup has no worker or security state in memory; only its best-effort cadence
-is local. Escalation survives restarts until success or stale-row cleanup. The
-injectable service clock makes lockout expiry and cleanup tests deterministic.
-The IP comes exclusively from `request.client`: by default the direct peer,
-or Uvicorn's resolved address when its existing `FORWARDED_ALLOW_IPS` allowlist
-trusts that peer. The application never reparses `X-Forwarded-For`. The container
-entrypoint enables this middleware; the portable Caddy stack supplies its private
-proxy subnet. See [operator guidance](../DEPLOY.md#login-lockout-and-proxy-trust).
+Every 100th login or signup limiter attempt per worker runs best-effort cleanup in a separate transaction
+**after** the outcome commits. A single delete selects at most 1000 rows whose
+`updated_at` is over one day old, using `ctid`, `LIMIT` and `FOR UPDATE SKIP LOCKED`.
+Local lock and statement timeouts bound database waiting; a cleanup failure cannot
+undo the login outcome. Cadence and batch size are constants in `RateLimitRules`.
+Only cadence is local to the worker; security state is in PostgreSQL. The injectable
+clock makes expiry and cleanup tests deterministic.
+The IP comes exclusively from `request.client`: the direct peer or Uvicorn's
+resolved address when `FORWARDED_ALLOW_IPS` trusts that peer. The application never
+reparses `X-Forwarded-For`. The container entrypoint enables this middleware;
+the portable Caddy stack supplies its private proxy subnet.
 
 **Implemented T57 path:** Signed cookies carry user/organization and,
 for a positive generation, `sv`. The runtime checks active membership and the current
