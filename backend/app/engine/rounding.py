@@ -7,8 +7,9 @@ correctness guarantee of M3: "Sum of shares == total cost, no cent lost"
 (a formal BGH requirement; ADR-0005 section 4.2).
 
 Cost distributions route through this function. Year-only advances use the
-separate calendar-month rule below: floor monthly shares to cents, assign the
-annual remainder to December, and prorate boundary months by calendar days.
+separate calendar-month rule below: floor lease-covered monthly shares to cents,
+assign the annual remainder to the last covered month, and split boundary months
+only across the occupied lease days (all calendar days for Hausgeld).
 Month-assigned advances and windows cutting balanced cost cells reuse the
 same floored cumulative day-share differences. Adjacent periods reconcile
 exactly, independently of draft or finalization order. These rules live here.
@@ -82,17 +83,19 @@ def day_share_for_period(
 
 def monthly_advance_share_for_period(
     total: Decimal, year: int, month: int, period_start: date, period_end: date,
+    *, lease_start: date | None = None, lease_end: date | None = None,
 ) -> Decimal:
-    """Credit an assigned month only for covered days, retaining every cent."""
-    return day_share_for_period(total, date(year, month, 1),
-                                date(year, month, monthrange(year, month)[1]),
-                                period_start, period_end)
+    """Split only between statements covering the same lease's month days."""
+    start = max(date(year, month, 1), lease_start or date.min)
+    end = min(date(year, month, monthrange(year, month)[1]), lease_end or date.max)
+    return day_share_for_period(total, start, end, period_start, period_end)
 
 
 def annual_advance_share_for_period(
     total: Decimal, year: int, period_start: date, period_end: date,
+    *, lease_start: date | None = None, lease_end: date | None = None,
 ) -> Decimal:
-    """Stable month shares; December reconciles the annual cent remainder.
+    """Split over lease-covered months; the last month retains the remainder.
 
     Partial months use differences of cumulative day shares rounded down to
     cents. Adjacent windows therefore reconcile even when they split a month.
@@ -100,14 +103,18 @@ def annual_advance_share_for_period(
     """
     if not period_start.year <= year <= period_end.year:
         return Decimal("0.00")
+    start = max(date(year, 1, 1), lease_start or date.min)
+    end = min(date(year, 12, 31), lease_end or date.max)
+    if start > end:
+        return Decimal("0.00")
     total = total.quantize(CENT)
-    monthly = _floor_to_cent(total / 12)
-    first = period_start.month if year == period_start.year else 1
-    last = period_end.month if year == period_end.year else 12
+    count = end.month - start.month + 1
+    monthly = _floor_to_cent(total / count)
     result = Decimal("0.00")
-    for month in range(first, last + 1):
-        share = total - monthly * 11 if month == 12 else monthly
-        result += monthly_advance_share_for_period(share, year, month, period_start, period_end)
+    for month in range(start.month, end.month + 1):
+        share = total - monthly * (count - 1) if month == end.month else monthly
+        result += monthly_advance_share_for_period(share, year, month, period_start, period_end,
+            lease_start=lease_start, lease_end=lease_end)
     return result
 
 

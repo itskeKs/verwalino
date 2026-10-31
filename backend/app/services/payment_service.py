@@ -614,7 +614,10 @@ class PaymentService:
     async def derive_nk_advance_total_for_period(
         self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date
     ) -> Decimal:
-        """DERIVED NK with day-prorated boundary months and year-only month shares."""
+        """DERIVED NK split only across this lease's statements, retaining all cents."""
+        lease = await self._leases.get_by_id(lease_agreement_id)
+        if lease is None:
+            raise HTTPException(404, "Lease agreement not found")
         rows = await self._repo.derived_for_nk_for_period(
             lease_agreement_id, period_start, period_end
         )
@@ -624,7 +627,8 @@ class PaymentService:
                 types=frozenset({"NK_VORAUSZAHLUNG"}),
                 year=year,
                 lease_agreement_id=lease_agreement_id,
-            ), period_start, period_end)
+            ), period_start, period_end, lease_start=lease.valid_from,
+                lease_end=db_exclusive_to_engine_inclusive(lease.valid_to))
             for year in range(period_start.year, period_end.year + 1)
         ), Decimal("0.00"))
 

@@ -564,11 +564,13 @@ def derive_advance_total_for_period(
     filt: AdvanceFilter,
     period_start: date,
     period_end: date,
+    *, lease_start: date | None = None, lease_end: date | None = None,
 ) -> Decimal:
-    """Day-prorated assigned months plus the period's share of year-only advances.
+    """Credit booked advances over the lease's days, never outside its span.
 
-    Each assigned year is split into twelve months by the rounding module;
-    the statement containing December gets that year's remaining cents.
+    A month is credited in full unless two statements of this lease split it.
+    Year-only amounts use the months actually covered by the lease in that year.
+    Without a lease span (Hausgeld), the whole assigned calendar year applies.
     Existing lifecycle, type and addressee filters apply to both sums.
     """
     if not period_start.year <= filt.year <= period_end.year:
@@ -577,7 +579,8 @@ def derive_advance_total_for_period(
     last = period_end.month if filt.year == period_end.year else 12
     monthly = sum((monthly_advance_share_for_period(
         derive_advance_total([p for p in payments if p.period_month == month], filt),
-        filt.year, month, period_start, period_end,
+        filt.year, month, period_start, period_end, lease_start=lease_start, lease_end=lease_end,
     ) for month in range(first, last + 1)), Decimal("0.00"))
     yearly = derive_advance_total([p for p in payments if p.period_month is None], filt)
-    return monthly + annual_advance_share_for_period(yearly, filt.year, period_start, period_end)
+    return monthly + annual_advance_share_for_period(yearly, filt.year, period_start, period_end,
+        lease_start=lease_start, lease_end=lease_end)

@@ -271,6 +271,34 @@ def yearly_advance_is_shared(world):
     assert sum(totals) == Decimal("1200.00")
 
 
+@given(parsers.parse("a calendar-year tenancy starting on {start} with {kind} advances"))
+def lease_bounded_advances(world, period_data_cleanup, start, kind):
+    data = world.run(period_property(world.actor, month=1))
+    response = world.act("PATCH", f"/api/leases/{data['lease']['id']}", json={"valid_from": start})
+    assert response.status_code == 200, world.describe_response()
+    assert kind in {"ten monthly 100", "one year-only 600"}
+    for month in (range(3, 13) if kind == "ten monthly 100" else [None]):
+        world.run(booked(world.actor, data, 2025, month, amount="100.00" if month else "600.00"))
+    world.data["period_property"] = data
+
+
+@when(parsers.parse("the manager finalizes the lease's clipped statement with derived advances of {total} euros"))
+def finalize_lease_bounded_advances(world, total):
+    run = world.run(create(world.actor, "/api/settlements", statement(world.data["period_property"], "2025-01-01", "2025-12-31")))
+    answer = world.act("PATCH", f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
+    assert answer.status_code == 200, world.describe_response()
+    assert Decimal(answer.json()["advance_payments_total"]) == Decimal(total)
+    world.run(attest_fixture(world.actor, "settlement", run["id"], {
+        "advance_payments_total": total, "advance_payments_source": "DERIVED"}))
+    answer = world.act("POST", f"/api/settlements/{run['id']}/finalize", json={})
+    assert answer.status_code == 200, world.describe_response()
+
+
+@then(parsers.parse("the finalized clipped statement credits {total} euros"))
+def lease_bounded_advance_total(world, total):
+    assert Decimal(world.response.json()["advance_payments_total"]) == Decimal(total)
+
+
 def confirmed_period_cost(world, data, code, amount, start, end, key):
     categories = world.act("GET", "/api/cost-categories")
     assert categories.status_code == 200, world.describe_response()

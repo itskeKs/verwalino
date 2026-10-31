@@ -72,6 +72,29 @@ async def test_month_assigned_nk_advance_is_prorated_and_finalizes_across_march_
     assert sum(totals) == Decimal("1200.00")
 
 
+@pytest.mark.parametrize("start,end,months,amount,expected", [
+    ("2025-03-15", None, list(range(3, 13)), "100.00", "1000.00"),
+    ("2025-07-01", None, [None], "600.00", "600.00"),
+    ("2020-01-01", "2025-03-14", [1, 2, 3], "100.00", "300.00"),
+    ("2025-03-15", None, [3], "54.84", "54.84"),
+])
+async def test_clipped_statement_credits_all_own_lease_advances(client_a_admin, start, end, months, amount, expected):
+    api = client_a_admin
+    data = await period_property(api, month=1)
+    changed = await api.patch(f"/api/leases/{data['lease']['id']}", json={"valid_from": start, "valid_to": end})
+    assert changed.status_code == 200, changed.text
+    for month in months:
+        await booked(api, data, 2025, month, amount=amount)
+    run = await create(api, "/api/settlements", statement(data, "2025-01-01", "2025-12-31"))
+    answer = await api.patch(f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
+    assert answer.status_code == 200, answer.text
+    assert Decimal(answer.json()["advance_payments_total"]) == Decimal(expected)
+    await attest_fixture(api, "settlement", run["id"], {"advance_payments_total": expected, "advance_payments_source": "DERIVED"})
+    final = await api.post(f"/api/settlements/{run['id']}/finalize", json={})
+    assert final.status_code == 200, final.text
+    assert Decimal(final.json()["advance_payments_total"]) == Decimal(expected)
+
+
 @pytest.mark.parametrize("batch", [False, True])
 @pytest.mark.parametrize("start,end", [("2025-04-01", "2026-04-01"), ("2024-02-29", "2025-03-01"), ("2026-01-02", "2026-01-01")])
 async def test_overlong_or_reversed_statement_is_rejected(client_a_admin, april, batch, start, end):

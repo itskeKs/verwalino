@@ -834,13 +834,11 @@ class SettlementService:
         )
         # Annual consumption weights do not widen invoice service periods.
         # Sources outside this statement need no manual quantities or extras.
-        configured_heating = {c.cost_entry_id for c in extras.heating_inputs}
-        entries = [(e,c) for e,c in entries if e.id in configured_heating
-                   or (e.service_period_from <= run.period_end and e.service_period_to >= run.period_start)]
-
         heating_configs = {c.cost_entry_id:c for c in extras.heating_inputs}
         if len(heating_configs)!=len(extras.heating_inputs) or not set(heating_configs)<= {e.id for e,_ in entries}:
             raise HTTPException(422,'Heizkosten: doppelte oder unbekannte aktive Kostenquelle')
+        entries = [(e,c) for e,c in entries
+                   if e.service_period_from <= run.period_end and e.service_period_to >= run.period_start]
         generic_entries = [(e,c) for e,c in entries if e.id not in heating_configs]
 
         # Per-unit metric overrides (consumption / person count).

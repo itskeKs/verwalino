@@ -137,6 +137,23 @@ def test_heating_free_subwindows_reconcile_to_full_lease_share():
     ).total_cost == D("3221.92")
 
 
+@pytest.mark.parametrize("month", [7, 12])
+def test_delimited_heating_pool_uses_annual_unit_weights_but_only_service_period_occupants(month):
+    inp = example(True)
+    pos = replace(inp.cost_positions[0], service_period_from=date(2025, month, 1))
+    amounts = []
+    for lease in inp.lease_periods:
+        result = compute_bk_settlement(replace(inp, cost_positions=(pos,),
+            target_lease_agreement_id=lease.lease_agreement_id,
+            period_start=max(inp.period_start, lease.valid_from),
+            period_end=min(inp.period_end, lease.valid_to or inp.period_end)))
+        amounts.append(result.total_cost)
+    assert amounts[0] + amounts[1] == D("5000.00")
+    assert amounts[2] == D("5000.00")
+    if month == 12:
+        assert amounts[0] == D("0.00")
+
+
 def build_scenario(s):
     """Use the reconciliation generator for all time/consumption/heating keys."""
     from app.engine.periods import build_unit_cover
@@ -350,6 +367,36 @@ def test_random_windows_reconcile_per_unit_and_property():
                 assert pieces == full, (seed, lease, pieces, full)
             checked += 1
     assert checked == 1200
+
+
+def test_random_lease_statements_credit_every_booked_advance_once():
+    from datetime import timedelta
+    import random
+    from app.engine.mietkonto import AdvanceFilter, PaymentInput, derive_advance_total_for_period
+    from tests.engine.settlement_scenarios import rand_scenario
+
+    checked = 0
+    for seed in range(150):
+        s = rand_scenario(seed)
+        r = random.Random(seed)
+        for lease in s["leases"]:
+            start, end = max(s["ys"], lease["valid_from"]), min(s["ye"], lease["valid_to"] or s["ye"])
+            if start > end:
+                continue
+            months = list(range(start.month, end.month + 1)) + [None]
+            payments = [PaymentInput(uid(i), "NK_VORAUSZAHLUNG", "IN", D(r.randint(1, 100000)) / 100,
+                period_year=s["year"], period_month=month, lease_agreement_id=lease["lease_agreement_id"],
+                is_booked=True) for i, month in enumerate(months)]
+            boundaries = [start] + [s["ys"] + timedelta(days=c) for c in s["cuts"]
+                                    if start < s["ys"] + timedelta(days=c) <= end] + [end + timedelta(days=1)]
+            windows = [(a, b - timedelta(days=1)) for a, b in zip(boundaries, boundaries[1:])]
+            r.shuffle(windows)
+            filt = AdvanceFilter(frozenset({"NK_VORAUSZAHLUNG"}), s["year"], lease["lease_agreement_id"])
+            credited = sum((derive_advance_total_for_period(payments, filt, a, b,
+                lease_start=lease["valid_from"], lease_end=lease["valid_to"]) for a, b in windows), D(0))
+            assert credited == sum((p.amount for p in payments), D(0)), (seed, lease, credited)
+            checked += 1
+    assert checked == 358
 
 
 def test_consumption_interim_readings_split_only_the_changed_units_share():

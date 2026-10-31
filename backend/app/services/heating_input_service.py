@@ -78,6 +78,8 @@ class HeatingInputService:
         owners = [OwnerPeriodInput(o.unit_id,o.owner_profile_id,o.valid_from,
                     db_exclusive_to_engine_inclusive(o.valid_to),o.mea_share)
                   for o in await self.runs.ownership_for_property(run.property_id)]
+        # Suggestions retain annual weights/readings. The engine restricts the
+        # cost pool and its occupant shares to the invoice's service period.
         start, end = context.period_start, context.period_end
         meters = await MeterRepository(self.session,self.org_id).list_by_property(run.property_id)
         repository = MeterReadingRepository(self.session,self.org_id)

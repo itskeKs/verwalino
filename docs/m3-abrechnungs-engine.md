@@ -83,7 +83,11 @@ occupancy amounts (the undated-input rule is stated in §5.2).
 Cross-boundary service periods are now apportioned to the selected property period.
 Previously, the whole source could be charged in both years. For building insurance
 of 3,650 euros covering 1 July 2024–30 June 2025, calendar-year statements now
-charge 1,840 euros in 2024 and 1,810 euros in 2025, totaling 3,650 euros once.
+charge 1,840 euros in 2024 and 1,810 euros in 2025 for a single allocation cell
+(one unit without an occupant change), totaling 3,650 euros once. With multiple
+units or occupant cells, each cell selects its own cumulative cents: period sums
+can instead be, for example, 1,839.99 and 1,810.01 euros. The complete source
+still totals exactly 3,650 euros across the adjacent periods.
 An April–March property period follows the same rule (for example, an annual
 calendar-year property-tax source spans two such periods). This is an intentional
 change: recomputed drafts and corrections of these older runs can shift. Existing
@@ -124,7 +128,14 @@ B (October–December), and C (all year) receive 373.97 / 126.03 / 500.00 euros 
 the day fallback, totaling 1,000.00 euros. Interim quantities of 600 / 400 in the
 changed unit instead yield 300.00 / 200.00 / 500.00 euros. The other unit's
 interim pattern never changes these building shares. Heating keeps its separate
-base/consumption pools as described in §5.1. Cumulative cent selection means all
+base/consumption pools as described in §5.1, delimited by the invoice service period.
+Annual slice quantities set each unit's consumption weight; their source-period
+intersections set occupant proportions within that unit (day fallback if those
+quantities sum to zero). A December-only heating invoice cannot charge a departed
+September tenant. Day-split consumption quantities remain unrounded Decimal strings
+in snapshots (up to the engine's 50-digit precision); these are calculation evidence,
+not money or display precision. Only monetary allocation is rounded to cents.
+Cumulative cent selection means all
 successive leases plus vacancy reproduce each unit's full-period share exactly,
 regardless of statement creation order. No second run-window factor is applied to
 already selected consumption/heating shares. Free dates crossing a configured
@@ -157,13 +168,14 @@ retain its default period. The organization-bound month getter is deferred to
 the readable property period or exactly closing the gap from the last finalized
 plan to the next property period; scope-only clerks supply their own dates,
 subject to the same twelve-month and overlap checks. Offered plan dates remain
-editable for mid-year scopes and gap-closing transitions. Year-only NK and
-Hausgeld advances are split across the twelve months of their assigned calendar
-year. A statement credits only the months it covers in that year, including
+editable for mid-year scopes and gap-closing transitions. Year-only NK advances
+are split across the calendar months the lease actually covers in the assigned
+year; Hausgeld uses all twelve months. A statement credits its covered months, including
 months in the second calendar year of a non-calendar period. The rounding module
-floors each monthly share to cents and assigns the remainder to December, so
-the last period covering that year receives the remaining cents. For 1,200 euros,
-January–June and July–December credit 600 euros each; April–December credits
+floors each monthly share to cents and assigns the remainder to the last covered month, so
+the last period covering that year receives the remaining cents. For a lease
+covering the whole calendar year with 1,200 euros paid, January–June and
+July–December credit 600 euros each; April–December credits
 900 euros. For 1,000 euros, January–November credit 83.33 euros each and December
 83.37 euros. A full calendar year still credits the full amount. Month shares
 do not depend on other drafts or finalization order; later statements cannot
@@ -173,7 +185,12 @@ adjacent partial-month statements cannot credit that share twice. The NK finaliz
 same derivation. **Month-assigned advances (#136)** use the same cumulative day
 rule on their assigned calendar month: group the active booked payments by
 addressee, type and month, then credit only the days covered by the statement.
-For twelve 100-euro payments, January–14 March credits 245.16 euros and
+The denominator is the lease's occupied days of that month: a lease starting
+15 March with ten booked 100-euro payments credits the full 1,000 euros, and a
+July-start lease with a year-only payment of 600 euros credits all 600 euros in
+its only July–December statement. The same rule applies at a mid-month lease end
+and never prorates an already prorated payment again. For a full-year lease with
+twelve 100-euro payments, January–14 March credits 245.16 euros and
 15 March–December credits 954.84 euros, exactly 1,200 euros together. Whole
 months and periods starting on the first remain unchanged. NK and paid Hausgeld
 share this engine rule; ledger filtering is unchanged. See the

@@ -1849,7 +1849,7 @@ import pytest_asyncio
 
 
 @pytest_asyncio.fixture
-async def heiz_world(rent_world, rent_db):
+async def heiz_world(rent_world, rent_db, request):
     w = dict(rent_world)
     w['second_unit'] = uuid.uuid4()
     await rent_db.execute(text("UPDATE unit SET area=40,heated_area=40 WHERE id=:unit"), w)
@@ -1863,10 +1863,11 @@ async def heiz_world(rent_world, rent_db):
             (id,organization_id,property_id,cost_category_id,cost_category_plan_version,
              invoice_date,service_period_from,service_period_to,gross_amount,tenant_distribution_key,
              tenant_apportionable,status,source,confirmed_at,confirmed_by)
-            SELECT :id,:org,:property,id,1,'2026-12-31','2026-01-01','2026-12-31',:amount,
+            SELECT :id,:org,:property,id,1,'2026-12-31',:service_start,'2026-12-31',:amount,
              'EXTERNE_ABRECHNUNG','UMLAGEFAEHIG_EXTERN_PRUEFEN','confirmed','MANUAL',now(),:admin
             FROM cost_category WHERE code=:code AND plan_version=1"""),
-            {**w, 'id':w[key], 'code':code, 'amount':Decimal(amount)})
+            {**w, 'id':w[key], 'code':code, 'amount':Decimal(amount),
+             'service_start': date.fromisoformat(getattr(request, 'param', '2026-01-01')) if key=='heat' else date(2026,1,1)})
     w['meters'] = []
     for kind, quantities in [('HEIZUNG',('100','300')), ('WARMWASSER',('3','1'))]:
         for unit, quantity in zip((w['unit'],w['second_unit']), quantities):
@@ -2200,6 +2201,35 @@ async def test_clipped_heating_keeps_building_period_pool_and_uses_only_own_inte
         assert final.status_code == 200, final.text
         pdf = await api.get(f'/api/settlements/{run}/pdf')
         assert pdf.status_code == 200, pdf.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('heiz_world', ['2026-12-01'], indirect=True)
+async def test_december_heating_source_keeps_annual_weights_and_excludes_departed_tenant(heiz_world, rent_db):
+    w = heiz_world
+    await rent_db.execute(text("UPDATE lease_agreement SET valid_to='2026-10-01' WHERE id=:lease"), w)
+    await rent_db.commit()
+    async with api_client(w) as api:
+        incoming = await api.post('/api/leases', json={'unit_id':str(w['unit']),
+            'tenant_profile_id':str(w['tenant']), 'valid_from':'2026-10-01',
+            'base_rent':'700.00', 'advance_payment':'150.00'})
+        assert incoming.status_code == 201, incoming.text
+        amounts = []
+        for lease in (str(w['lease']), incoming.json()['id'], str(w['second_lease'])):
+            run = await api.post('/api/settlements', json={'property_id':str(w['property']),
+                'lease_agreement_id':lease, 'period_start':'2026-01-01',
+                'period_end':'2026-12-31', 'advance_payments_total':'0.00'})
+            assert run.status_code == 201, run.text
+            run_id = run.json()['id']
+            await attest_fixture(api, 'settlement', run_id,
+                {'advance_payments_total':'0.00', 'advance_payments_source':'MANUAL'})
+            result = await api.post(f'/api/settlements/{run_id}/compute', json=_heiz_body(w))
+            assert result.status_code == 200, result.text
+            amounts.append(sum((Decimal(row['amount']) for row in result.json()['lines']
+                if row['cost_category_code']=='HEIZUNG_ZENTRAL'), Decimal(0)))
+            final = await api.post(f'/api/settlements/{run_id}/finalize')
+            assert final.status_code == 200, final.text
+        assert amounts == [Decimal('0.00'), Decimal('295.00'), Decimal('705.00')]
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,7 @@
 Feature: Settlement period
   A property's start month defines the period offered for statements and economic
   plans. Booked advances belong to their assigned months across year boundaries.
-  A year-only advance is split across that calendar year's months.
+  A year-only advance is split across the lease's months in that calendar year.
   Consumption weights describe the property year; each invoice retains its own
   service period. An interim reading on the outgoing tenant's last day or the
   incoming tenant's first day denotes the same boundary. Multiple readings on
@@ -59,6 +59,17 @@ Feature: Settlement period
     And a calendar-year tenancy with a booked yearly advance of 1200 euros
     When the manager finalizes statements for January through June and July through December
     Then each statement credits 600 euros of the yearly advance
+
+  Scenario Outline: A clipped statement credits all advances for its own lease
+    Given an administrator of "Verwaltung Alpha" is signed in
+    And a calendar-year tenancy starting on <start> with <kind> advances
+    When the manager finalizes the lease's clipped statement with derived advances of <total> euros
+    Then the finalized clipped statement credits <total> euros
+
+    Examples:
+      | start      | kind              | total   |
+      | 2025-03-15 | ten monthly 100   | 1000.00 |
+      | 2025-07-01 | one year-only 600 | 600.00  |
 
   Scenario Outline: Either date of an occupant change splits only that unit's water share
     Given an administrator of "Verwaltung Alpha" is signed in

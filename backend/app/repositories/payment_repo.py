@@ -13,7 +13,7 @@ import uuid
 from datetime import date
 from typing import Sequence
 
-from sqlalchemy import and_, case, func, or_, select, text
+from sqlalchemy import case, func, select, text
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -138,22 +138,17 @@ class PaymentRepository(TenantRepository[Payment]):
     async def derived_for_nk_for_period(
         self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date
     ) -> Sequence[Payment]:
-        """Booked NK by assigned months, plus year-only rows in either year.
+        """Booked NK in the assigned calendar years touched by this statement.
 
-        Select touching months in full; the shared pure engine prorates their
-        boundary days as well as the month shares of year-only amounts.
+        Keep the full assigned amounts; the engine selects month shares using
+        the lease span as well as the statement span (also for year-only rows).
         """
         await self.require_computation_context(lease_id=lease_agreement_id)
         stmt = (
             self._booked_active()
             .where(Payment.payment_type == "NK_VORAUSZAHLUNG")
             .where(Payment.lease_agreement_id == lease_agreement_id)
-            .where(or_(
-                and_(Payment.period_month.is_(None), Payment.period_year.between(period_start.year, period_end.year)),
-                and_(Payment.period_month.isnot(None),
-                    Payment.period_year * 12 + Payment.period_month >= period_start.year * 12 + period_start.month,
-                    Payment.period_year * 12 + Payment.period_month <= period_end.year * 12 + period_end.month),
-            ))
+            .where(Payment.period_year.between(period_start.year, period_end.year))
         )
         result = await self._session.execute(stmt)
         return result.scalars().all()
