@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select, text
 
+from app.core import rate_limit
 from app.core.auth_db import lookup_login_principal, validate_session_principal
 from app.core.live_principal import require_live_principal
 from app.core.config import settings
@@ -83,19 +84,21 @@ async def login(body: LoginRequest, response: Response, throttle: ThrottleReques
     async with get_session_factory()() as session:
         async with session.begin():
             attempt = await throttle.check(session, body.email)
-            principal = None
-            authenticated = False
-            if attempt.allowed:
-                principal = await lookup_login_principal(session, body.email)
-                # Always verify one Argon2 hash for an unlocked attempt.
-                password_hash = principal.password_hash if principal is not None else _DUMMY_PASSWORD_HASH
-                password_matches = verify_password(body.password, password_hash)
-                authenticated = bool(principal is not None and password_matches and principal.is_active
-                                     and principal.role in {"OWNER_ADMIN", "CLERK", "READ_ONLY"})
+            principal = await lookup_login_principal(session, body.email) if attempt.allowed else None
+
+        # Every failure path pays for one hash, with no transaction/row lock held.
+        password_hash = principal.password_hash if principal is not None else _DUMMY_PASSWORD_HASH
+        password_matches = verify_password(body.password, password_hash)
+        authenticated = bool(principal is not None and password_matches and principal.is_active
+                             and principal.role in {"OWNER_ADMIN", "CLERK", "READ_ONLY"})
+        async with session.begin():
             if authenticated:
                 await attempt.reset()
             else:
                 await attempt.record_failure()
+
+    if rate_limit.cleanup_due():
+        await rate_limit.cleanup_stale(attempt.rules)
 
     # Raise only after committing failure state; an exception inside begin()
     # would roll back every increment and make the limiter ineffective.

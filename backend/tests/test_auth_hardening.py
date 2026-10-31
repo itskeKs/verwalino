@@ -773,7 +773,7 @@ async def test_profile_limits_email_and_ip_independently(client_unauth, seed_dat
 
 
 @pytest.mark.asyncio
-async def test_success_resets_both_counters_and_failure_window_expires(client_unauth, seed_data, throttle_clock):
+async def test_success_resets_only_email_and_failure_window_expires(client_unauth, seed_data, throttle_clock):
     from app.core.deployment_policy import get_deployment_policy
     from tests.conftest import MIGRATOR_SYNC_URL
 
@@ -784,8 +784,8 @@ async def test_success_resets_both_counters_and_failure_window_expires(client_un
     await _login(client_unauth)
     assert (await _login(client_unauth, password="testpass1234")).status_code == 200
     with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
-        cursor.execute("SELECT count(*) FROM auth_throttle")
-        assert cursor.fetchone() == (0,)
+        cursor.execute("SELECT key_kind,failures FROM auth_throttle")
+        assert cursor.fetchall() == [("ip", 1)]
     for _ in range(rules.email_failures - 1):
         await _login(client_unauth)
     assert (await _login(client_unauth, password="testpass1234")).status_code == 200
@@ -856,6 +856,8 @@ async def test_locked_unknown_and_wrong_password_responses_are_byte_identical(cl
     for _ in range(get_deployment_policy().rate_limit_rules.email_failures - 1):
         await _login(client_unauth)
     locked = await _login(client_unauth, password="testpass1234")
+    assert hashes[-1] == auth_api._DUMMY_PASSWORD_HASH
+    assert len(hashes) == get_deployment_policy().rate_limit_rules.email_failures + 2
     assert _public_response(locked) == _public_response(wrong)
     assert "retry-after" not in locked.headers and "set-cookie" not in locked.headers
     message = next(record.getMessage() for record in caplog.records if record.name == "app.core.rate_limit")
@@ -875,9 +877,11 @@ async def test_cleanup_removes_only_stale_rows_and_storage_contains_only_hashes(
     with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
         cursor.execute("SELECT key_kind,key_hash,failures FROM auth_throttle ORDER BY key_kind")
         rows = cursor.fetchall()
+        import hmac
+        pepper = hmac.digest(settings.session_secret.encode(), b"verwalino-auth-throttle", "sha256")
         assert [(kind, bytes(digest), failures) for kind, digest, failures in rows] == [
-            ("email", rate_limit.key_hash("login", "email", "new@example.test"), 1),
-            ("ip", rate_limit.key_hash("login", "ip", "127.0.0.1"), 1),
+            ("email", hmac.digest(pepper, b"login:new@example.test", "sha256"), 1),
+            ("ip", hmac.digest(pepper, b"login:127.0.0.1", "sha256"), 1),
         ]
         cursor.execute("SELECT row_to_json(t)::text FROM auth_throttle t")
         stored = str(cursor.fetchall())
@@ -978,97 +982,195 @@ async def test_concurrent_failures_do_not_lose_counts_or_bypass_lockout(seed_dat
 
 
 @pytest.mark.asyncio
-async def test_concurrent_success_reset_cannot_remove_a_row_during_admission(client_unauth, monkeypatch):
-    import asyncio
-    from sqlalchemy import text
-    from sqlalchemy.exc import DBAPIError
-    from sqlalchemy.ext.asyncio import AsyncSession
-    from app.core.db import get_session_factory
-    from app.core.rate_limit import check_and_record, key_hash
-    from app.core.deployment_policy import get_deployment_policy
-
-    await _login(client_unauth, email="reset-race@example.test")
-    admitted = asyncio.Event()
-    resume = asyncio.Event()
-    original = AsyncSession.execute
-
-    async def pause_after_email_insert(session, statement, params=None, **kwargs):
-        result = await original(session, statement, params, **kwargs)
-        if (asyncio.current_task().get_name() == "pending-throttle"
-            and "INSERT INTO public.auth_throttle" in str(statement) and params["kind"] == "email"):
-            admitted.set()
-            await resume.wait()
-        return result
-
-    monkeypatch.setattr(AsyncSession, "execute", pause_after_email_insert)
-
-    async def failed_attempt():
-        async with get_session_factory()() as session, session.begin():
-            attempt = await check_and_record(session, "login", {"email": "reset-race@example.test", "ip": "127.0.0.1"}, get_deployment_policy().rate_limit_rules)
-            await attempt.record_failure()
-
-    pending = asyncio.create_task(failed_attempt(), name="pending-throttle")
-    try:
-        await asyncio.wait_for(admitted.wait(), 5)
-        async with get_session_factory()() as reset_session:
-            try:
-                async with reset_session.begin():
-                    # Another successful request's reset must either wait for
-                    # admission or finish before it; it cannot delete mid-check.
-                    await reset_session.execute(text("SET LOCAL lock_timeout='100ms'"))
-                    await reset_session.execute(text("DELETE FROM auth_throttle WHERE key_kind='email' AND key_hash=:digest"), {"digest": key_hash("login", "email", "reset-race@example.test")})
-            except DBAPIError as error:
-                assert error.orig.sqlstate == "55P03"  # The admitted row is locked.
-    finally:
-        resume.set()
-        await asyncio.wait_for(pending, 5)
-
-
-@pytest.mark.asyncio
-async def test_cleanup_and_login_keep_one_lock_order(client_unauth, monkeypatch, throttle_clock):
-    import asyncio
-    from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import AsyncSession
-    from app.core import rate_limit
-    from app.core.db import get_session_factory
+@pytest.mark.parametrize("mode", ["selfhost", "hosted"])
+async def test_interleaved_successes_cannot_bypass_ip_limit(client_unauth, seed_data, monkeypatch, throttle_clock, mode):
+    from app.api import auth as auth_api
     from app.core.deployment_policy import get_deployment_policy
     from tests.conftest import MIGRATOR_SYNC_URL
 
-    await _login(client_unauth, email="cleanup-race@example.test")
+    monkeypatch.setattr(settings, "deployment_mode", mode)
+    monkeypatch.setattr(auth_api, "verify_password", lambda password, _: password == "testpass1234")
+    limit = get_deployment_policy().rate_limit_rules.ip_failures
+    for index in range(45):
+        assert (await _login(client_unauth, email=f"missing-{index}@example.test")).status_code == 401
+        success = await _login(client_unauth, password="testpass1234")
+        assert success.status_code == (200 if index + 1 < limit else 401)
     with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
-        cursor.execute("UPDATE auth_throttle SET updated_at=now()-interval '2 days' WHERE key_kind='ip'")
-    first_has_email = asyncio.Event()
-    second_at_email = asyncio.Event()
-    resume = asyncio.Event()
-    original = AsyncSession.execute
+        cursor.execute("SELECT failures,locked_until FROM auth_throttle WHERE key_kind='ip'")
+        failures, locked_until = cursor.fetchone()
+        assert failures == 45 + (46 - limit)
+        assert locked_until > throttle_clock.now
 
-    async def hold_at_key(session, statement, params=None, **kwargs):
-        if "INSERT INTO public.auth_throttle" in str(statement):
-            task = asyncio.current_task().get_name()
-            if task == "first-login" and params["kind"] == "ip":
-                first_has_email.set()
-                await resume.wait()
-            elif task == "cleanup-login" and params["kind"] == "email":
-                second_at_email.set()
-                await resume.wait()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode,decay", [("selfhost", 15), ("hosted", 1440)])
+@pytest.mark.parametrize("past_boundary", [False, True])
+async def test_escalation_decays_by_last_lockout_even_with_recent_traffic(client_unauth, monkeypatch, throttle_clock, mode, decay, past_boundary):
+    from app.api import auth as auth_api
+    from app.core.deployment_policy import get_deployment_policy
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    monkeypatch.setattr(settings, "deployment_mode", mode)
+    monkeypatch.setattr(auth_api, "verify_password", lambda *_: False)
+    rules = get_deployment_policy().rate_limit_rules
+    for _ in range(rules.email_failures):
+        await _login(client_unauth, email="decay@example.test")
+    throttle_clock.advance(decay + (1 / 60 if past_boundary else 0))
+    # Traffic keeps updated_at fresh; cleanup must not determine escalation.
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute("UPDATE auth_throttle SET updated_at=%s", (throttle_clock.now,))
+    await _login(client_unauth, email="decay@example.test")
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT lockouts FROM auth_throttle WHERE key_kind='email'")
+        assert cursor.fetchone() == (0 if past_boundary else 1,)
+    for _ in range(rules.email_failures - 1):
+        await _login(client_unauth, email="decay@example.test")
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT lockouts FROM auth_throttle WHERE key_kind='email'")
+        expected = 1 if past_boundary or mode == "selfhost" else 2
+        assert cursor.fetchone() == (expected,)
+        cursor.execute("SELECT last_lockout_at FROM auth_throttle WHERE key_kind='email'")
+        assert cursor.fetchone() == (throttle_clock.now,)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("peer,forwarded", [("testclient", None), ("192.0.2.1", "unknown")])
+async def test_invalid_client_address_returns_normal_failure(seed_data, peer, forwarded):
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+    from app.main import app
+    from app.core.rate_limit import key_hash
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    wrapped = ProxyHeadersMiddleware(app, trusted_hosts=["192.0.2.1"])
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=wrapped, client=(peer, 123), raise_app_exceptions=False), base_url="http://test") as client:
+        response = await _login(client, headers={"X-Forwarded-For": forwarded} if forwarded else {})
+    assert response.status_code == 401
+    assert (response.status_code, response.json()) == INVALID_CREDENTIALS
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT key_hash FROM auth_throttle WHERE key_kind='ip'")
+        assert bytes(cursor.fetchone()[0]) == key_hash("login", "ip", "invalid")
+
+
+def test_ipv6_keys_share_a_64_bit_network_and_mapped_ipv4_uses_ipv4():
+    from app.core.rate_limit import key_hash
+
+    assert key_hash("login", "ip", "2001:db8:1234:5678::1") == key_hash("login", "ip", "2001:db8:1234:5678:ffff::2")
+    assert key_hash("login", "ip", "2001:db8:1234:5678::1") != key_hash("login", "ip", "2001:db8:1234:5679::1")
+    assert key_hash("login", "ip", "::ffff:192.0.2.1") == key_hash("login", "ip", "192.0.2.1")
+
+
+def test_rotating_session_secret_changes_throttle_keys(monkeypatch):
+    from app.core.rate_limit import key_hash
+
+    before = key_hash("login", "email", "user@example.test")
+    monkeypatch.setattr(settings, "session_secret", "synthetic-rotated-secret")
+    assert key_hash("login", "email", "user@example.test") != before
+
+
+@pytest.mark.asyncio
+async def test_hasher_runs_outside_transactions_for_all_failure_paths(client_unauth, seed_data, monkeypatch):
+    from app.api import auth as auth_api
+    from app.core.deployment_policy import get_deployment_policy
+
+    factory = auth_api.get_session_factory()
+    sessions = []
+    hashes = []
+
+    def tracked_session():
+        session = factory()
+        sessions.append(session)
+        return session
+
+    def verify(_, hashed):
+        assert sessions and all(not session.in_transaction() for session in sessions)
+        hashes.append(hashed)
+        return False
+
+    monkeypatch.setattr(auth_api, "get_session_factory", lambda: tracked_session)
+    monkeypatch.setattr(auth_api, "verify_password", verify)
+    await _login(client_unauth, email="absent@example.test")
+    limit = get_deployment_policy().rate_limit_rules.email_failures
+    for _ in range(limit + 1):
+        await _login(client_unauth)
+    assert len(hashes) == limit + 2
+    assert hashes[0] == hashes[-1] == auth_api._DUMMY_PASSWORD_HASH
+    assert hashes[1] != auth_api._DUMMY_PASSWORD_HASH
+
+
+@pytest.mark.asyncio
+async def test_admission_does_not_write_or_block_competing_delete(client_unauth):
+    from sqlalchemy import text
+    from app.core.db import get_session_factory
+    from app.core.rate_limit import check_and_record
+    from app.core.deployment_policy import get_deployment_policy
+
+    await _login(client_unauth, email="reset-race@example.test")
+    async with get_session_factory()() as session:
+        async with session.begin():
+            attempt = await check_and_record(session, "login", {"email": "reset-race@example.test"}, get_deployment_policy().rate_limit_rules)
+            async with get_session_factory()() as competing, competing.begin():
+                await competing.execute(text("SET LOCAL lock_timeout='100ms'"))
+                result = await competing.execute(text("DELETE FROM auth_throttle WHERE key_kind='email'"))
+                assert result.rowcount == 1
+            assert await session.scalar(text("SELECT count(*) FROM auth_throttle WHERE key_kind='email'")) == 0
+        async with session.begin():
+            await attempt.record_failure()
+        async with session.begin():
+            assert await session.scalar(text("SELECT failures FROM auth_throttle WHERE key_kind='email'")) == 1
+
+
+@pytest.mark.asyncio
+async def test_cleanup_is_bounded_separate_and_best_effort(client_unauth, monkeypatch, throttle_clock):
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from app.api import auth as auth_api
+    from app.core import rate_limit
+    from app.core.deployment_policy import get_deployment_policy
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    rules = get_deployment_policy().rate_limit_rules
+    monkeypatch.setattr(rate_limit, "cleanup_due", lambda: True)
+    monkeypatch.setattr(auth_api, "verify_password", lambda *_: False)
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute("""INSERT INTO auth_throttle(key_kind,key_hash,window_start,updated_at)
+            SELECT 'email',sha256(i::text::bytea),%s,%s FROM generate_series(1,%s) i""",
+            (throttle_clock.now, throttle_clock.now - __import__("datetime").timedelta(days=2), rules.cleanup_batch_size + 7))
+    original = AsyncSession.execute
+    cleanup_sessions = []
+
+    async def spy(session, statement, params=None, **kwargs):
+        if "DELETE FROM public.auth_throttle" in str(statement) and "cutoff" in str(statement):
+            cleanup_sessions.append(session)
+            # A different connection sees the committed login failure already.
+            with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+                cursor.execute("SELECT failures FROM auth_throttle WHERE key_kind='ip'")
+                assert cursor.fetchone() == (1,)
         return await original(session, statement, params, **kwargs)
 
-    monkeypatch.setattr(AsyncSession, "execute", hold_at_key)
-    monkeypatch.setattr(rate_limit, "cleanup_due", lambda: asyncio.current_task().get_name() == "cleanup-login")
+    monkeypatch.setattr(AsyncSession, "execute", spy)
+    assert (await _login(client_unauth)).status_code == 401
+    assert len(cleanup_sessions) == 1
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT count(*) FROM auth_throttle WHERE updated_at < %s", (throttle_clock.now,))
+        assert cursor.fetchone() == (7,)
 
-    async def attempt():
-        async with get_session_factory()() as session, session.begin():
-            await session.execute(text("SET LOCAL statement_timeout='5s'"))
-            admission = await rate_limit.check_and_record(session, "login", {"email": "cleanup-race@example.test", "ip": "127.0.0.1"}, get_deployment_policy().rate_limit_rules)
-            await admission.record_failure()
+    async def fail_cleanup(session, statement, params=None, **kwargs):
+        if "DELETE FROM public.auth_throttle" in str(statement) and "cutoff" in str(statement):
+            raise OperationalError("synthetic cleanup failure", {}, None)
+        return await original(session, statement, params, **kwargs)
 
-    first = asyncio.create_task(attempt(), name="first-login")
-    second = None
-    try:
-        await asyncio.wait_for(first_has_email.wait(), 5)
-        second = asyncio.create_task(attempt(), name="cleanup-login")
-        await asyncio.wait_for(second_at_email.wait(), 5)
-    finally:
-        resume.set()
-        results = await asyncio.gather(first, *([second] if second else []), return_exceptions=True)
-    assert results == [None, None], results
+    monkeypatch.setattr(AsyncSession, "execute", fail_cleanup)
+    assert (await _login(client_unauth)).status_code == 401
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT failures FROM auth_throttle WHERE key_kind='ip'")
+        assert cursor.fetchone() == (2,)
+
+
+def test_cleanup_cadence_comes_from_rules(monkeypatch):
+    import itertools
+    from app.core import rate_limit
+    from app.core.deployment_policy import get_deployment_policy
+
+    rules = get_deployment_policy().rate_limit_rules
+    monkeypatch.setattr(rate_limit, "_attempts", itertools.count(1))
+    assert [rate_limit.cleanup_due() for _ in range(rules.cleanup_every)] == [False] * (rules.cleanup_every - 1) + [True]

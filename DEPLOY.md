@@ -31,13 +31,30 @@ window: selfhost permits 20 failures per IP and 10 per normalized email before
 a 15-minute lockout; hosted permits 10 per IP and 5 per email before a 30-minute
 lockout. Repeated hosted lockouts double to at most 24 hours. Correct credentials
 are refused while either key is locked. Active lockouts are not extended by more
-attempts. Success clears both keys and escalation history. State survives restarts;
-rows idle for over one day are cleaned opportunistically every 100th login check
-per worker. There is no new scheduled worker or configurable threshold.
+attempts. Success clears only the email key and its escalation history, preserving
+IP failures. An attacker who knows an email can deliberately lock the victim out,
+with escalating hosted waits. The victim cannot clear an active lockout by logging
+in: they must wait or ask an operator to unlock it as described below.
+
+Escalation resets when the last lockout started strictly more than 24 hours ago
+(hosted) or more than one 15-minute window ago (selfhost), even with continuous
+traffic. Exactly at that boundary it is retained. State survives restarts. Every
+100th login per worker performs one best-effort cleanup batch of at most 1000 rows
+idle for over one day, in a separate transaction after the login outcome commits.
+Lock/statement timeouts bound cleanup; its failure cannot undo a login outcome.
+There is no new scheduled worker or configurable threshold.
 
 All credential failures retain `401 {"detail":"Invalid credentials"}`, with no
-`Retry-After` or cookie. A WARNING includes the hashed key and a server-generated
-request id, never the raw email/IP. The existing German login message is unchanged.
+`Retry-After` or cookie, and run one Argon2 verification, including the locked path.
+A WARNING includes the HMAC key hash and a server-generated request id, never raw
+email/IP. HMAC-SHA256 uses a pepper derived from the existing `HV_SESSION_SECRET`;
+rotating that secret clears effective throttling state (old rows age out), as
+well as invalidating existing session cookies. No new secret setting is needed.
+The German login message is unchanged.
+
+Native IPv6 addresses share a /64 throttle key; IPv4-mapped IPv6 maps to IPv4.
+Unparsable client addresses (for example a trusted proxy's `unknown`) share the
+constant `invalid` key and still receive the normal authentication response.
 
 The limiter uses `request.client.host`, never an unverified forwarding header.
 The existing container entrypoint uses Uvicorn's `--proxy-headers` and
@@ -52,24 +69,21 @@ loopback diagnostic listener remains untrusted. For direct uvicorn development,
 use `--no-proxy-headers` when there is no trusted proxy. No additional
 `HV_TRUSTED_PROXY_COUNT` is introduced alongside the existing address allowlist.
 
-To unlock an email, connect as the **migrator** during an authorized operator
-operation and execute the parameterized equivalent of this SQL (replace the
-example email). No runtime admin endpoint or CLI subcommand is added:
+To unlock an email, run the existing admin CLI in the backend/container environment
+as an authorized operator, with `HV_DATABASE_URL_SYNC` pointing to the **migrator**
+and the same `HV_SESSION_SECRET` as the app. This command does not bootstrap an
+organization and requires no admin password:
 
-```sql
-DELETE FROM public.auth_throttle
-WHERE key_kind = 'email'
-  AND key_hash = sha256(convert_to('login:' || lower(btrim('user@example.org')), 'UTF8'));
+```sh
+python -m app.admin_cli unlock --email user@example.org
+python -m app.admin_cli unlock --ip 203.0.113.5
 ```
 
-An independently locked IP must also be cleared or allowed to expire. Use its
-canonical address (IPv4-mapped IPv6 is normalized to IPv4):
-
-```sql
-DELETE FROM public.auth_throttle
-WHERE key_kind = 'ip'
-  AND key_hash = sha256(convert_to('login:203.0.113.5', 'UTF8'));
-```
+The mutually exclusive options delete only the selected login key using the
+app's normalization and HMAC, and report the actual number of deleted rows.
+Use any address in the affected /64 to unlock a native IPv6 key. An independently
+locked IP must also be cleared or allowed to expire. No runtime unlock endpoint
+is exposed.
 
 These deletes reset only the chosen key and its escalation history. Hashes are
 scope-specific; future signup (#19) will use separate `signup:` keys and the
@@ -828,7 +842,7 @@ DB. Each source revision is accepted only when actually measured.
 | 0138–0139 | Adds default-zero session generation and versioned auth functions, then grants only session validation to `app_review`. Positive generations block downgrade. An older runtime's unversioned auth does not enforce the new invalidations: **automatic 0122 runtime restoration on the new schema is unsafe**. |
 | Parent references (accepted source 0140) | Replaces client-selected parent references with organization-bound composite foreign keys. Validates pending deferred checks and rejects existing invalid references without repair before replacing constraints. Adds a boolean-only, tenant-bound property existence check for scoped financial creation. Downgrade restores the original constraints and removes that check; an older runtime is not approved on this schema. |
 | Browser setup (accepted source 0141) | Adds the private singleton setup-token table and a token-gated, serialized first-organization function. Removes direct organization INSERT from app_rw; the migrator CLI shares the creation SQL. A populated token table blocks downgrade to avoid silently losing pending/consumed state. Existing organization/user/membership rows are preserved. |
-| 0142 | Adds global authentication throttle rows containing only scoped key hashes, failure windows, lockout expiry and escalation history, with narrow runtime DML. No existing rows or grants change. A populated table blocks downgrade to avoid losing lockouts. |
+| 0142 | Adds global authentication throttle rows containing only scoped key hashes, failure windows, lockout expiry, last lockout start and escalation history, with narrow runtime DML. No existing rows or grants change. A populated table blocks downgrade to avoid losing lockouts. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function

@@ -14,11 +14,14 @@ class RateLimitRules:
     lockout_minutes: int
     lockout_multiplier: int
     max_lockout_minutes: int
+    lockout_decay_minutes: int
+    cleanup_every: int
+    cleanup_batch_size: int
 
 
 _RATE_LIMIT_RULES = {
-    "relaxed": RateLimitRules(20, 10, 15, 15, 1, 15),
-    "strict": RateLimitRules(10, 5, 15, 30, 2, 1440),
+    "relaxed": RateLimitRules(20, 10, 15, 15, 1, 15, 15, 100, 1000),
+    "strict": RateLimitRules(10, 5, 15, 30, 2, 1440, 1440, 100, 1000),
 }
 
 
