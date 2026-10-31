@@ -366,7 +366,7 @@ async def test_builtin_original_prevents_a_downgrade_that_requires_templates(ren
 
         def downgrade(connection):
             with Operations.context(MigrationContext.configure(connection)):
-                ScriptDirectory('migrations').get_revision('0142').module.downgrade()
+                ScriptDirectory('migrations').get_revision('0143').module.downgrade()
 
         with pytest.raises(IntegrityError):
             async with rent_db.begin_nested():

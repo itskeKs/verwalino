@@ -57,7 +57,7 @@ PDF, PNG, and JPEG files detected by their signature; other content
 is offered as a download. A failed database operation rolls back
 metadata and audit but does not delete possibly shared
 original bytes. Rollback restrictions are documented under
-[migration compatibility](../../DEPLOY.md#migration-compatibility-00290142).
+[migration compatibility](../../DEPLOY.md#migration-compatibility-00290143).
 
 The „Dokumente“ (documents) section is available in property, unit, and person.
 For persons, an accessible property is deliberately selected for an upload;
@@ -148,7 +148,7 @@ Parties and signature names accept 4,000 characters each; notes and contract agr
 A unit without meters produces a protocol without a meter table. A successful save exposes the
 original PDF link and refreshes the unit meter panel. Failed saves preserve the form inputs.
 
-Revision 0142 makes the existing template reference nullable for built-in documents; no new
+Revision 0143 makes the existing template reference nullable for built-in documents; no new
 table is used. General circular templates remain in `letter_template`; originals
 remain in `letter_document`, linked to the lease, tenant and property. Its existing `body` text
 column holds a JSON snapshot of the submitted data and rendered text; protocol meter snapshots
