@@ -17,6 +17,8 @@ it("requires explicit confirmation and reuses the request key after a lost respo
   const post = vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Response lost")).mockResolvedValueOnce({ id: "receipt", document_id: row.id, reason: "CUSTODY_UNVERIFIED", reviewed_at: row.observed_at });
   show();
   const button = await screen.findByRole("button", { name: "Quarantäne als geprüft vermerken" });
+  expect(screen.getByRole("link", { name: "Offene Prüfungen" })).toHaveAttribute("href", "/berechtigungen/pruefungen");
+  expect(screen.getByText("Geladene Mandatsunterlagen: 1")).toBeVisible();
   expect(button).toBeDisabled();
   fireEvent.click(screen.getByRole("checkbox"));
   fireEvent.click(button); await screen.findByRole("alert");

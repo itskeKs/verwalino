@@ -14,7 +14,7 @@ it("reuses a lost command but refreshes current state instead of treating its ol
   render(<ScopeControl />);
   await screen.findByText("Bereichsbezogene Finanzaktionen nach bestehenden Rechten aktiv");
   expect(pause()).toBeDisabled();
-  expect(screen.getByText(/keine vollständige Buchungssperre/)).toBeInTheDocument();
+  expect(screen.getByText(/Den objektbezogenen Quellschutz/)).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Begründung der Betriebsänderung"), { target: { value: "Review" } });
   fireEvent.click(pause());
   await screen.findByRole("alert");

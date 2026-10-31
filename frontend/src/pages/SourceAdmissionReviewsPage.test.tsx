@@ -25,7 +25,9 @@ it("requires explicit source review and retains the exact command after a lost r
   const post = vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Lost response")).mockResolvedValue({ ...source, id: "review", domain_id: "domain", reviewed_by: "actor", reason: "Original und Ziel geprüft", created_at: "2026-10-02T12:00:00Z" });
   show();
   expect(await screen.findByRole("button", { name: "Quelle freigeben" })).toBeDisabled();
-  expect(screen.getByText(/Zugriffskontrolle ist noch nicht aktiviert/)).toBeVisible();
+  expect(screen.queryByText(/Zugriffskontrolle ist noch nicht aktiviert/)).toBeNull();
+  expect(screen.getByRole("link", { name: "Offene Prüfungen" })).toHaveAttribute("href", "/berechtigungen/pruefungen");
+  expect(screen.getByText("Geladene Quellenfreigaben: 1")).toBeVisible();
   expect(screen.getByRole("link", { name: /Original prüfen/ })).toHaveAttribute("href", "/api/property-source-admission-reviews/originals/original/content");
   fireEvent.change(screen.getByLabelText("Begründung der Quellenfreigabe"), { target: { value: "Original und Ziel geprüft" } });
   fireEvent.click(screen.getByRole("checkbox"));

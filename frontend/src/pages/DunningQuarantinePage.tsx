@@ -60,9 +60,11 @@ function ObservationCard({ row }: { row: Observation }) {
 function Inventory() {
   const page = usePagedList<Observation>("/api/dunning-quarantine/page");
   return <div className="space-y-5">
-    <header><h1>Alte Mahnungen prüfen</h1><p>Administrative Prüfung alter Mahnungen ohne belegten Abrechnungskontext. Es werden nur Kennungen und Prüfstatus angezeigt.</p></header>
+    <header><h2>Alte Mahnungen prüfen</h2><p>Administrative Prüfung alter Mahnungen ohne belegten Abrechnungskontext. Es werden nur Kennungen und Prüfstatus angezeigt.</p></header>
     <p>Der Prüfvermerk hält den aktuellen Stand unverändert in Quarantäne. Er ergänzt keinen Abrechnungskontext und kann nicht zurückgenommen werden. Die Mahnung bleibt für die Prüfung bisheriger Mahnstufen und der Aufbewahrung berücksichtigt.</p>
     <p>Neue <Link to="/mahnungen" className="link">Mahnungen</Link> benötigen geprüfte Quellen und einen ausdrücklichen Abrechnungskontext. Eine ungeklärte Historie kann die weitere Erstellung weiterhin blockieren.</p>
+    <p><Link to="/berechtigungen/pruefungen">Offene Prüfungen</Link></p>
+    {!page.error && !page.loading && <p>Geladene Mahnungen: {page.items.length.toLocaleString("de-DE")}{page.nextCursor ? " · Weitere Einträge verfügbar" : ""}</p>}
     <button className="btn" type="button" disabled={page.loading} onClick={page.reload}>Quarantäne neu laden</button>
     {page.error && <p role="alert" className="error-text">{page.error}</p>}
     {page.loading && <p role="status">Quarantäne wird geladen…</p>}
