@@ -74,6 +74,23 @@ it("puts import entity names and source IDs in a technical disclosure", async ()
   expect(screen.getByText("Technische Details")).toBeVisible();
 });
 
+it.each(["QUOTA_STORAGE_EXCEEDED", "UPLOAD_TOO_LARGE"])("shows the structured import refusal code %s in technical details", async code => {
+  const message = "Datei zu groß. Bitte wählen Sie eine kleinere Datei.";
+  vi.mocked(api.get).mockResolvedValue({ id: "org", name: "Verwaltung", import_available: true, deletion: null });
+  vi.mocked(uploadFormData).mockRejectedValue(new ApiError(413, message, code, "Entität: person"));
+  render(<OrganizationDataCard />);
+  const input = await screen.findByLabelText("Exportarchiv");
+  const file = new File(["archive"], "organisation.tar.gz");
+  fireEvent.change(input, { target: { files: [file] } });
+  fireEvent.click(screen.getByRole("button", { name: "Daten importieren" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  expect(screen.getByRole("alert")).not.toHaveTextContent(code);
+  const details = screen.getByText(new RegExp(`Fehlercode: ${code}`));
+  expect(details).toHaveTextContent("Entität: person");
+  expect(details.closest("details")).not.toHaveAttribute("open");
+  expect((input as HTMLInputElement).files?.[0]).toBe(file);
+});
+
 it("shows retention, strongly suggests a fresh export and requires the exact organization name", async () => {
   vi.mocked(api.get).mockResolvedValue({ id: "org", name: "Lange Verwaltung GmbH", import_available: false, deletion: null });
   vi.mocked(api.post).mockResolvedValue({ status: "requested", organization_name: "Lange Verwaltung GmbH", notice: "Nach der Löschung ist keine Anmeldung mehr möglich; aufbewahrungspflichtige Unterlagen bleiben für acht Jahre beim Betreiber.", retention: { retained: { audit_event: { count: 4, until: "2034-12-31" } }, erased: { person: 2 }, erased_fields: ["Ungebundene Personendaten"] } });

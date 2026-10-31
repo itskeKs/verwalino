@@ -100,13 +100,31 @@ async def test_import_refuses_nonempty_target_and_bad_hash(rent_world, import_ta
         assert answer.status_code == 422, answer.text
 
 
-async def test_import_restores_originals_and_cleans_files_after_late_failure(rent_world, import_target, rent_db, export_store, monkeypatch):
+@pytest.mark.parametrize('preexisting', [False, True])
+async def test_import_restores_originals_and_cleans_files_after_late_failure(rent_world, import_target, rent_db, export_store, monkeypatch, preexisting):
     from app.services import organization_import_service as service
     async with api_client(rent_world) as api:
         response = await api.post('/api/attachments', data={'property_id': str(rent_world['property'])},
                                   files={'file': ('original.pdf', b'%PDF-1.4\nportable original\n%%EOF', 'application/pdf')})
         assert response.status_code == 201, response.text
     archive = await exported(rent_world)
+    from app.core.storage import make_storage_key
+    content = b'%PDF-1.4\nportable original\n%%EOF'
+    key = make_storage_key(str(import_target['org']), hashlib.sha256(content).hexdigest())
+    if preexisting:
+        export_store.put(key, content, content_type='application/pdf')
+    import psycopg2
+    from contextlib import closing
+    from tests.conftest import MIGRATOR_SYNC_URL
+    locks_during_cleanup = []
+    discard = export_store.discard_uncommitted
+    def discard_with_admission_held(key):
+        with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection, connection.cursor() as cursor:
+            cursor.execute('SELECT pg_try_advisory_xact_lock_shared(hashtextextended(%s,0))',
+                           (f"scope-acl:{import_target['org']}",))
+            locks_during_cleanup.append(cursor.fetchone()[0])
+        discard(key)
+    monkeypatch.setattr(export_store, 'discard_uncommitted', discard_with_admission_held)
     original = service.put_document
     async def write_then_fail(*args, **kwargs):
         await original(*args, **kwargs)
@@ -115,7 +133,8 @@ async def test_import_restores_originals_and_cleans_files_after_late_failure(ren
     async with api_client(import_target) as api:
         with pytest.raises(RuntimeError, match='synthetic late failure'):
             await api.post('/api/organizations/import', files={'file': ('org.tar.gz', archive)})
-    assert not list((export_store._root / str(import_target['org'])).rglob('*.bin'))
+    assert export_store.exists(key) == preexisting
+    assert locks_during_cleanup == ([] if preexisting else [False])
     monkeypatch.setattr(service, 'put_document', original)
     async with api_client(import_target) as api:
         response = await api.post('/api/organizations/import', files={'file': ('org.tar.gz', archive)})
@@ -154,6 +173,32 @@ async def test_import_keeps_collision_free_entity_ids(rent_world, import_target,
         answer = await api.post('/api/organizations/import', files={'file': ('org.tar.gz', repack(files))})
         assert answer.status_code == 200, answer.text
         assert answer.json()['id_map']['property'][fresh_id] == fresh_id
+
+
+async def test_deferred_import_refusal_erases_new_files_before_releasing_admission(rent_world, import_target, rent_db, export_store):
+    async with api_client(rent_world) as api:
+        response = await api.post('/api/attachments', data={'property_id': str(rent_world['property'])},
+                                  files={'file': ('original.pdf', b'%PDF-1.4\ndeferred original\n%%EOF', 'application/pdf')})
+        assert response.status_code == 201, response.text
+    archive = await exported(rent_world)
+    await rent_db.execute(text(f'''CREATE FUNCTION reject_synthetic_import() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.organization_id='{import_target['org']}'::uuid THEN
+        RAISE EXCEPTION 'Synthetic deferred import refusal' USING ERRCODE='23514';
+      END IF; RETURN NEW; END $$'''))
+    await rent_db.execute(text('''CREATE CONSTRAINT TRIGGER reject_synthetic_import AFTER INSERT ON attachment
+      DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_synthetic_import()'''))
+    await rent_db.commit()
+    try:
+        async with api_client(import_target) as api:
+            answer = await api.post('/api/organizations/import', files={'file': ('org.tar.gz', archive)})
+        assert answer.status_code == 422, answer.text
+        assert answer.json()['detail']['code'] == 'IMPORT_INTEGRITY_REFUSAL'
+        assert not list((export_store._root / str(import_target['org'])).rglob('*.bin'))
+    finally:
+        await rent_db.rollback()
+        async with rent_db.begin():
+            await rent_db.execute(text('DROP TRIGGER reject_synthetic_import ON attachment'))
+            await rent_db.execute(text('DROP FUNCTION reject_synthetic_import()'))
 
 
 @pytest.mark.parametrize('actor', ['reader', 'clerk'])

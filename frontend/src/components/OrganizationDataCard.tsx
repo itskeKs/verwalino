@@ -27,7 +27,9 @@ export function OrganizationDataCard() {
       refresh(); lifecycleChanged();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Der Import ist fehlgeschlagen.");
-      setTechnicalDetails(reason instanceof ApiError ? reason.technicalDetails : undefined);
+      setTechnicalDetails(reason instanceof ApiError
+        ? [reason.code ? `Fehlercode: ${reason.code}` : undefined, reason.technicalDetails].filter(Boolean).join("\n\n") || undefined
+        : undefined);
     }
     finally { setImporting(false); }
   }

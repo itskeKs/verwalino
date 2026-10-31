@@ -16,10 +16,11 @@ from pathlib import Path, PurePosixPath
 
 from alembic.script import ScriptDirectory
 from fastapi import HTTPException
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.exc import DBAPIError
 
-from app.core.storage import make_storage_key, put_document
+from app.core.storage import LocalFsDocumentStore, get_store, make_storage_key, put_document
+from app.core.quotas import get_quota_plan
 from app.core.uploads import MAX_UPLOAD_BYTES
 from app.deployment import TARGET
 from app.services.organization_archive import FORMAT, SECRET_COLUMNS, json_bytes
@@ -330,6 +331,20 @@ async def import_organization(db, auth, source):
                     refuse('Ein Speicher- oder Versandnachweis passt zu keinem geprüften Original.',
                            entity='audit_event', source_ids=[row['id']], count=1)
 
+        store = get_store()
+        if get_quota_plan().name == 'unlimited' and isinstance(store, LocalFsDocumentStore):
+            new_keys = {key for key in storage_map.values() if not store.exists(key)}
+            connection = await db.connection()
+            # Connection rollback fires before PostgreSQL releases the exclusive
+            # import ACL lock. Later Session callbacks would race waiting uploads.
+            @event.listens_for(connection.sync_connection, 'rollback', once=True)
+            def discard_import_files(_connection):
+                for key in new_keys:
+                    try:
+                        store.discard_uncommitted(key)
+                    except OSError:
+                        logger.warning('Import rollback file cleanup failed for %s', key, exc_info=True)
+
         organization = {k: v for k, v in entities['organization'][0].items() if k not in {'id', 'source_id'}}
         columns = ','.join(f'"{c}"' for c in organization)
         projection = ','.join(f'(v)."{c}"' for c in organization)
@@ -434,15 +449,17 @@ async def import_organization(db, auth, source):
                     progress = True
                 if not progress:
                     refuse('Das Archiv enthält zyklische oder nicht auflösbare Abhängigkeiten.')
+            counts = {name: len(rows) for name, rows in entities.items()}
+            source_ids = {name: {id_map[name][r['id']]: r.get('source_id', r['id']) for r in rows if r.get('id')}
+                          for name, rows in entities.items() if name in id_map}
+            await db.execute(text('''INSERT INTO audit_event(organization_id,actor_user_id,entity_type,entity_id,action,payload_diff,occurred_at)
+              VALUES (:org,:actor,'organization',:org,'organization.import.completed',CAST(:payload AS jsonb),clock_timestamp())'''),
+              {'org': auth.organization_id, 'actor': auth.user_id, 'payload': json_bytes({'source_ids': source_ids, 'row_counts': counts}).decode()})
+            # Resolve deferred integrity failures while admission still excludes other writers.
+            await db.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
+            return {'row_counts': counts, 'id_map': id_map}
         except DBAPIError as exc:
             # Structured driver codes only; no SQL, target identities or values.
             code = getattr(exc.orig, 'sqlstate', None)
             logger.warning('organization import rejected by database sqlstate=%s', code)
             refuse('Die Daten können unter den aktuellen Integritäts- und Freigaberegeln nicht importiert werden.', code='IMPORT_INTEGRITY_REFUSAL', entity=name, source_ids=[original.get('id', original.get('request_key'))], count=1)
-        counts = {name: len(rows) for name, rows in entities.items()}
-        source_ids = {name: {id_map[name][r['id']]: r.get('source_id', r['id']) for r in rows if r.get('id')}
-                      for name, rows in entities.items() if name in id_map}
-        await db.execute(text('''INSERT INTO audit_event(organization_id,actor_user_id,entity_type,entity_id,action,payload_diff,occurred_at)
-          VALUES (:org,:actor,'organization',:org,'organization.import.completed',CAST(:payload AS jsonb),clock_timestamp())'''),
-          {'org': auth.organization_id, 'actor': auth.user_id, 'payload': json_bytes({'source_ids': source_ids, 'row_counts': counts}).decode()})
-        return {'row_counts': counts, 'id_map': id_map}

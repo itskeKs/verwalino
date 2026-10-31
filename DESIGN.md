@@ -151,6 +151,9 @@ The labelled archive input preserves the file on refusal. German error copy stay
 in the alert; raw entity names, source IDs and counts appear only in a collapsed
 “Technische Details” disclosure with wrapping text. Import reports the processed
 archive row count.
+Structured import refusal codes are read from `ApiError.code` and appear as
+“Fehlercode: …” in that same disclosure, alongside any entity/source diagnostics.
+The German alert text and selected archive remain available for retry.
 “Organisation löschen” opens a scrollable kit dialog with retained entity
 counts/deadlines, erasure categories, the German no-login/operator-retention
 notice and a prominent fresh-export recommendation/button immediately before

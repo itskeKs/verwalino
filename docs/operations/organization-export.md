@@ -134,6 +134,13 @@ individual JSON rows/manifest to 2 MiB, 20,000 rows and 10,000 regular members,
 and each original to 64 MiB. Gzip and PAX/GNU extension headers are refused before their
 payload is read; official v1/v2 exports do not use them. Larger imports need a worker-based transfer increment.
 
+Failed self-hosted imports remove only previously absent destination files,
+before the database rollback releases exclusive import admission. Existing files
+remain untouched. Deferred integrity checks run before the importer returns, so
+their refusals use the same protected cleanup path. Hosted imports retain the
+storage layer's transaction and filesystem locking. Ordinary unlimited storage
+operations do not acquire hosted quota locks or change their cleanup behavior.
+
 Every UUID collision is consistently remapped. Collision-free entity IDs are
 preserved (including on a fresh installation). The organization always maps to
 the destination. Global cost categories resolve by `code` and `plan_version`.

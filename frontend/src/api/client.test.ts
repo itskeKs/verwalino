@@ -15,12 +15,14 @@ describe("api client", () => {
 
   it.each(["json", "upload"])("keeps import diagnostics outside the German message for %s", async mode => {
     vi.mocked(fetch).mockResolvedValue(response({ detail: {
+      code: "IMPORT_INTEGRITY_REFUSAL",
       message: "Im Archiv fehlen benötigte Abhängigkeiten.",
       missing_dependencies: [{ entity: "person_data_domain", source_ids: ["synthetic-source-id"], count: 1 }],
     } }, 422));
     const error = await (mode === "json" ? api.post("/api/organizations/import") : uploadFormData("/api/organizations/import", new FormData())).catch(reason => reason);
     if (!(error instanceof ApiError)) throw new Error("Expected an API refusal");
     expect(error.message).toBe("Im Archiv fehlen benötigte Abhängigkeiten.");
+    expect(error.code).toBe("IMPORT_INTEGRITY_REFUSAL");
     expect(error.technicalDetails).toContain("person_data_domain");
     expect(error.technicalDetails).toContain("synthetic-source-id");
   });
