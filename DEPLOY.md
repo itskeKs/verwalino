@@ -901,11 +901,12 @@ EOF2
 rm ci_key.pub
 ```
 
-The workflow sends only the tag as the SSH command (`ssh chris@host v1.2.3`). The user's shell expands
-`$SSH_ORIGINAL_COMMAND` into arguments of the script, which accepts exactly one argument shaped like a release
-tag (`vX.Y.Z`, no suffix or leading zeroes) and exits 2 on anything else. `restrict` switches off forwarding, PTYs and
-agent. The user has sudo and Docker, so this key is as sensitive as the admin key: the forced command and the tag
-check are its only limits. Fill `DEPLOY_KNOWN_HOSTS` with the output of `ssh-keyscan -t ed25519 "$DEPLOY_HOST"`,
+The release workflow sends the tag as the SSH command (`ssh chris@host v1.2.3`); staging sends
+`staging <full-sha>`. The user's shell expands `$SSH_ORIGINAL_COMMAND` into arguments of the script.
+It accepts exactly one stable release tag (`vX.Y.Z`, no suffix or leading zeroes), or exactly
+`staging <40-lowercase-hex-sha|vX.Y.Z>`, and exits 2 on anything else. `restrict` switches off forwarding,
+PTYs and agent. The user has sudo and Docker, so this key is as sensitive as the admin key: the forced command
+and strict grammar are its only limits. Fill `DEPLOY_KNOWN_HOSTS` with the output of `ssh-keyscan -t ed25519 "$DEPLOY_HOST"`,
 where `DEPLOY_HOST` is exactly the host name or IP stored in that secret, after comparing the key with
 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server. `StrictHostKeyChecking=yes` matches that name;
 an IP-only entry does not match a host name in `DEPLOY_HOST`.
@@ -929,6 +930,42 @@ an IP-only entry does not match a host name in `DEPLOY_HOST`.
 
 Secrets of the workflow (repository secrets, names only): `DEPLOY_HOST`, `DEPLOY_USER` (the admin user),
 `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`. The token is read-only (`contents: read`) and the job uses no other secret.
+
+### Staging and hosted canary
+
+The hosted-only [staging and canary runbook](docs/operations/staging-and-canary.md)
+covers first enablement, independent credentials, synthetic fixtures, alerts and rollback.
+The maintainer sets DNS `staging.verwalino.de`, the private `.env.staging` file and repository secrets;
+the first real deployment and alert-delivery checks remain operator work (#25).
+
+Staging is Compose project `verwalino-staging`, using
+[`infra/docker-compose.staging.yml`](infra/docker-compose.staging.yml) alone, its own database/backend network
+and volumes `pgdata_staging`/`documents_staging`. Only its app joins the existing `verwalino_proxy` network.
+It runs hosted mode and restricts SMTP to the single required `CANARY_EMAIL` via `HV_MAIL_ALLOWLIST`.
+[`infra/Caddyfile.staging`](infra/Caddyfile.staging) routes `staging.verwalino.de` to `staging-app:8000`,
+adds `noindex, nofollow` and disallows all crawlers in `/robots.txt`. Enable the
+[`Caddyfile.hosted`](infra/Caddyfile.hosted) wrapper and
+[proxy overlay](infra/docker-compose.hosted-proxy.yml) as described in the runbook so production releases
+preserve the staging site. The generic installer is unchanged.
+
+[Deploy staging](.github/workflows/deploy-staging.yaml) runs on relevant main pushes, excluding website-only
+and docs-only changes. It first calls the main image job in [Release image](.github/workflows/release-image.yaml)
+to publish `:main` and `:sha-<sha>` without a GitHub release, then sends `staging <sha>` with the existing key.
+The target verifies main ancestry and a registry digest, exports its own runtime files without moving the
+production checkout, migrates and recreates only staging, checks readiness and prints the previous successful
+SHA. To roll back staging, send `staging <previous-sha>` with the same key; an older image must be compatible
+with the migrated schema. There is no automatic schema downgrade or rollback.
+
+[Hosted canary](.github/workflows/canary.yaml) runs every 15 minutes against `https://app.verwalino.de`:
+login → create an unused property → read the fixed synthetic tenant ledger with an explicit scope → delete
+its new property, including on ledger failure. Create its dedicated organization/user once with the admin
+CLI and prepare the fixture described in the runbook. A first failure sends German e-mail through a pinned
+mail action and files a `canary` issue via the existing scenario reporter, deduplicated per
+`canary::<step>::<error kind>` while an issue is open.
+
+Additional secrets: `CANARY_EMAIL`, `CANARY_PASSWORD`, `ALERT_EMAIL`, `ALERT_SMTP_URL` (TLS-required SMTP
+connection URL) and `ALERT_SMTP_FROM`. The five-minute job timeout gives a nominal **15 + 5 = 20 minute**
+alert budget; GitHub scheduling delays and SMTP delivery remain external limits, not a hard SLA.
 
 ### Backups
 
