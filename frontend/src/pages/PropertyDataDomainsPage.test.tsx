@@ -11,14 +11,14 @@ function renderPage(path: string) {
   render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/gebaeudedaten-rechte" element={<PropertyDataDomainsPage />} /><Route path="/gebaeudedaten-rechte/:domainId" element={<PropertyDataDomainsPage />} /></Routes></MemoryRouter>);
 }
 
-it("retains the creation key after a lost response and clearly labels preparation", async () => {
+it("retains the creation key after a lost response and explains when the grants restrict access", async () => {
   vi.spyOn(api, "get").mockImplementation(async url => url.includes("/properties/page")
     ? { items: [{ id: "property", name: "House", management_type: "WEG" }], next_cursor: null }
     : { items: [], next_cursor: null });
   const post = vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Reply lost"))
     .mockResolvedValue({ id: "domain", label: "Shared house", enforcement_status: "PREPARATION" });
   renderPage("/gebaeudedaten-rechte");
-  expect(screen.getByText(/beschränken den bisherigen Zugriff noch nicht/)).toBeVisible();
+  expect(screen.getByText(/Diese Freigaben bestimmen bei aktivem Quellschutz/)).toBeVisible();
   await screen.findByRole("option", { name: /House/ });
   fireEvent.change(screen.getByLabelText("Objekt", { selector: "select" }), { target: { value: "property" } });
   fireEvent.change(screen.getByLabelText("Bezeichnung"), { target: { value: "Shared house" } });

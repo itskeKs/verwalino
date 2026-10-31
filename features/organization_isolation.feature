@@ -46,3 +46,7 @@ Feature: Organization isolation
     When the user lists the properties
     Then the list shows the properties of "Verwaltung Alpha"
     And the list does not show the properties of "Verwaltung Beta"
+
+  Scenario: Administrators share technical diagnostics without organization records
+    When the administrator downloads a diagnostics bundle
+    Then the bundle contains technical counts without either organization’s records

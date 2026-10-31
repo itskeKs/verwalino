@@ -148,11 +148,11 @@ Detail pages (`/objekte/:id`, `/mandate/:id`, ...) have no nav entry; the parent
 | Versammlungen | Versammlungen, Beschluss-Sammlung | all |
 | Zahlungen | Bankkonten, Zahlungen, Mietkonto, Kautionen, Offene Posten, Mahnungen | all |
 | Verwaltung | Benutzer | `OWNER_ADMIN` |
-| Erweitert | Quellenfreigaben, Altquellen, Berechtigungen, Freigaben vorbereiten, Mahnquarantäne, Mandatsquarantäne, Seitenauszüge, Kontaktdaten-Rechte, Gebäudedaten-Rechte | `OWNER_ADMIN` |
+| Erweitert | Altquellen, Berechtigungen, Seitenauszüge | `OWNER_ADMIN` |
 
 Navigation entries are `NavItem`s in `GROUPS` (label = German noun, one lucide icon); their routes are in
 `App.tsx`. Add a new top-level screen's nav entry to `GROUPS`; detail pages keep their parent's entry.
-Several icons repeat (`FileText` x7, `KeyRound` x6).
+`FileText` is reused for document entries; the permissions area uses `KeyRound`.
 
 ### Page patterns
 
@@ -177,6 +177,53 @@ New screens follow these page structures and use a German noun as their `h1`.
   is wrapped in `<fieldset disabled>` and the button label changes ("Speichern..."). Create and edit forms
   open as a card above the list; small edits of master data open `MasterDataEditor` as a dialog.
   Selects, checkboxes and file inputs are the native elements.
+
+### Permissions area
+
+`/berechtigungen` has one admin sidebar entry, a kit card overview and wrapping section
+navigation: **Übersicht**, **Teamrechte**, **Bestand prüfen**, **Offene Prüfungen**.
+Contact and building-data permissions are text links from the area. Altquellen and
+Seitenauszüge retain their existing navigation.
+
+The overview reads the confirmed source-security status separately from the inventory.
+One shared label map supplies **Vorbereitung**, **Zugriffsregeln aktiv**, **Aktionen pausiert**;
+raw state codes are never visible. Each state explains staff access and the next action.
+Unavailable status hides the advice; unavailable inventory hides its counts. Reload clears
+previous results. Counts use German grouping, may overlap and never certify readiness.
+
+Teamrechte contains the existing accounting scopes and grants. Bestand prüfen retains the
+inventory, runtime budget, versioned coverage, retention decision and guarded activation/pause
+control. Offene Prüfungen groups the existing source-review and two quarantine lists; each
+labels its page count as **N geladen** and, while a continuation exists,
+**weitere verfügbar**. Quarantine lists explicitly include already-reviewed observations;
+loaded counts are not open-review totals. Existing grant forms and immutable receipts
+keep their own confirmation/retry rules.
+The legacy-source page and declaration publication dialog read the same live admin
+status and shared state descriptions as the overview, with loading and unavailable states.
+Clerks see no admin review link; the combined reviews list omits its self-link.
+Section navigation wraps at 360 px; tables scroll inside their cards, identifiers wrap.
+Old source-review, preparation, quarantine and scope-detail routes redirect with their detail
+references preserved. See [the operations guide](docs/operations/accounting-scope-setup.md).
+
+### Manual problem reports
+
+`UsersPage.tsx` places an outline kit Button **Problem melden** above the administrator's
+user form. It opens the existing kit Dialog, titled **Problem melden**, with German
+Sie-form disclosure of metadata/counts and excluded personal data. It states **Es wird
+nichts automatisch gesendet** and asks the user to review and attach the package manually.
+The disclosure limits error records to the organization's live API workers in one
+container and explains that a worker restart can make its records unavailable.
+The support link **Problem im Issue-Tracker melden** comes from `HV_SUPPORT_URL`; the
+last remembered server-error request ID appears separately, wraps long IDs, and is never
+added to the URL. A failed link lookup is an inline alert; reopening retries it.
+
+**Diagnosepaket herunterladen** is the primary action. During collection it reads
+**Diagnosepaket wird erstellt…** and disables duplicate downloads. Failure remains an
+inline `role="alert"` and permits retry. Success says only that the download started
+(`role="status"`). The dialog remains keyboard-operable and dismissible; completing a
+request after dismissal or session replacement cannot initiate a download. Content
+scrolls inside 90vh and fits the existing narrow-screen dialog. No new tokens or CSS
+components are introduced. See [reporting instructions](DEPLOY.md#diagnostics-and-reporting-a-problem).
 
 ### Responsive behaviour (down to 360 px)
 
@@ -213,8 +260,9 @@ classes or inline `style={{}}`; the existing inline styles (about 470) are known
 | `label.tsx` | `Label` (forwardRef) | none; `text-sm font-medium` | `Label htmlFor` + `Input id` in a `grid gap-2`. |
 | `stat-card.tsx` | `StatCard` | props `label`, `value`, `icon`, `tone` (`default`, `primary`, `success`, `warning`, `destructive`), `hint`, `to` | One headline number with an icon tile; with `to` the whole tile is a link. Value `…` while loading, `—` when unavailable (with hint "Nicht verfügbar"). |
 
-Kit adoption today, counted as files that import the part: `Badge` 7, `Dialog` 9, `Card` 5, `Button` 3
-(12 call sites), `Input` 2, `Label` 1, `StatCard` 1. The remaining UI uses the global classes below.
+Kit adoption today, counted as non-test files with runtime imports (excluding type-only
+imports): `Badge` 8, `Dialog` 9, `Card` 7, `Button` 6, `Input` 3, `Label` 2, `StatCard` 1.
+The remaining UI uses the global classes below.
 
 Deviation: the archive form's "Abbrechen" in `MandateDetailPage.tsx` uses the default `primary` variant.
 The create form's "Abbrechen" in `MandatePage.tsx` explicitly uses `outline`.
@@ -352,10 +400,18 @@ or inline expressions, with the variants below. The inconsistencies are tracked 
 Taken from the running dev stack of `scripts/dev-local.sh` (backend `:18000`, Vite `127.0.0.1:13000`) against the
 disposable test database with synthetic data (organisation "Muster Hausverwaltung", fictitious addresses, persons and
 amounts). Desktop is 1280 px wide at 1x; the 360 px images are 2x. File names are fixed so the table
-stays valid when they are retaken.
+stays valid when they are retaken. The review-list screenshots were refreshed with
+synthetic browser-intercepted API responses, without starting a backend or accessing a database.
 
 | Screen | Page | Desktop | 360 px |
 |---|---|---|---|
+| Permissions | `/berechtigungen` | [`after-overview-desktop.png`](docs/assets/permissions/after-overview-desktop.png) | [`after-overview-360.png`](docs/assets/permissions/after-overview-360.png) |
+| Team rights | `/berechtigungen/teamrechte` | [Desktop](docs/assets/permissions/after-team-desktop.png) | [Phone](docs/assets/permissions/after-team-360.png) |
+| Preparation | `/berechtigungen/bestand` | [Desktop](docs/assets/permissions/after-inventory-desktop.png) | [Phone](docs/assets/permissions/after-inventory-360.png) |
+| Review lists | `/berechtigungen/pruefungen` | [Desktop](docs/assets/permissions/after-reviews-desktop.png) | [Phone](docs/assets/permissions/after-reviews-360.png) |
+| Legacy source status | `/altquellen` | [Desktop](docs/assets/permissions/after-legacy-desktop.png) | [Phone](docs/assets/permissions/after-legacy-360.png) |
+| Declaration publication | `/teilungserklaerung/import/:id/review`, "Übernahme vorbereiten" | [Desktop](docs/assets/permissions/after-publication-desktop.png) | [Phone](docs/assets/permissions/after-publication-360.png) |
+| Emergency pause | `/berechtigungen` (paused) | [Desktop](docs/assets/permissions/paused-overview-desktop.png) | [Phone](docs/assets/permissions/paused-overview-360.png) |
 | Dashboard | `/` | [`dashboard-desktop.png`](docs/assets/design/dashboard-desktop.png) | [`dashboard-360.png`](docs/assets/design/dashboard-360.png) |
 | List | `/objekte` | [`list-objekte-desktop.png`](docs/assets/design/list-objekte-desktop.png) | [`list-objekte-360.png`](docs/assets/design/list-objekte-360.png) |
 | Detail | `/objekte/:id` | [`detail-objekt-desktop.png`](docs/assets/design/detail-objekt-desktop.png) | [`detail-objekt-360.png`](docs/assets/design/detail-objekt-360.png) |

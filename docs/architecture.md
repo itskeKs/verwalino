@@ -27,17 +27,20 @@ The dedicated healthcheck verifies local OCR, storage and DB role without queue 
 or a provider call. SIGTERM lets a running bounded extraction run out, without
 adopting results after an abort; the existing lease recovery applies.
 The local launcher manages API, UI and worker with a shared, isolated
-`/tmp` document storage and exclusively the test DB `:55432`. The approved,
-not yet activated production service uses only the internal network and a readable
-original volume; no provider, web, review or migrator credentials.
-Operating details and the unchanged production release limit: [DEPLOY.md](../DEPLOY.md).
+`/tmp` document storage and exclusively the test DB `:55432`. The owner's local
+production Compose service uses only the internal network and a readable original
+volume; no provider, web, review or migrator credentials. The portable and hosted
+stack does not start this worker and disables automatic extraction.
+Operating details and release boundaries: [DEPLOY.md](../DEPLOY.md).
 No schema/RLS change.
 
 ## Portable Operation (2026-10-23)
 
-`scripts/self-host.sh` and the repurposed `infra/docker-compose.yml` form, alongside
-the unchanged alpha, a separate first-installation path (project
-`verwalino`). Web app, private PostgreSQL DB and one-off migration/admin jobs
+`scripts/self-host.sh` and `infra/docker-compose.yml` provide the portable
+first-installation path (project `verwalino`). The hosted instance on the Contabo
+server uses the same installer in HTTPS mode; `scripts/deploy-server.sh` and
+`.github/workflows/deploy.yaml` deploy published release images with a backup
+before migration. Web app, private PostgreSQL DB and one-off migration/admin jobs
 use the existing image; only Ops receives migrator rights. The default is
 loopback HTTP; optionally Caddy takes over HTTPS on a separate proxy network.
 Secrets are generated locally and not loaded as shell code. AI, SMTP and
@@ -242,6 +245,26 @@ unchanged. The existing API-client error message includes the header ID for 5xx.
 Starlette's server-error handler restores the request context and adds the ID
 header after the request middleware unwinds. Unhandled exceptions still propagate
 to the server or test transport after Starlette produces the error response.
+
+Explicit diagnostics use `app.diagnostics.build_bundle`: six fixed tar members with
+allowlisted metadata, configuration shapes, RLS-visible numeric counts and scrubbed
+structural error records. `POST /api/admin/diagnostics` requires `OWNER_ADMIN`, returns
+an uncached attachment and logs a correlated INFO audit line; `GET` supplies the support
+URL. A bounded transient logging handler retains no free text or LogRecord, partitions
+records by the validated organization, and reads a shared per-host JSONL buffer across
+web workers. The latest 500 records overall and at least the latest 50 per organization
+are retained; dead workers' files are pruned on read. Multi-host aggregation is out of scope.
+The API sets authenticated organization/user context for read-only app_rw counts;
+the CLI aggregates RLS-visible installation counts through the same role. Counts also
+use explicit organization filters alongside transaction-local RLS context. Missing
+migration-read privileges yield a null head; the API never probes this table. The installer
+supplies its schema head through migrator `psql` and passes Docker states/logs into
+the same Python builder. API metadata omits the global organization count and config
+shape, exposing only normalized deployment mode, version and tenant-facing switches.
+There is no upload route,
+automatic sending, stored report or new migration. The seeded-500 correlation contract
+and privacy/collection limits are documented in
+[DEPLOY.md](../DEPLOY.md#diagnostics-and-reporting-a-problem).
 
 An empty tracker DSN leaves reporting disabled. When enabled, the Sentry-compatible
 FastAPI/Starlette integration sends error events with the request ID and the

@@ -1,13 +1,25 @@
 # Prepared shared property-data audiences
 
-Migration 0045 introduces explicit shared property-data domains and per-user grants.
-This is configuration preparation only. Existing source and master-data policies
-remain in compatibility mode. Every domain API response declares
-`enforcement_status: PREPARATION`, and the administration screen states that these
-entries do not yet restrict existing access. Do not advertise a source-security
-rollout from these tables or grants.
+The organization starts in preparation until an administrator explicitly activates
+source protection through **Berechtigungen → Bestand prüfen → Zugriffsmodus**.
+The existing guarded endpoint is
+`POST /api/access-preparation/source-security/transitions` (migration 0091).
+It requires a current reviewed snapshot, accepted retention/team decision and
+trusted running budget evidence. The readiness function accepts only the transient
+authorization created by that transition in the same connection and transaction.
+Application roles cannot directly edit security state. There is no production
+activation in this change; follow the [owner activation runbook](accounting-scope-setup.md#owner-activation-runbook).
 
-Administrators open `/gebaeudedaten-rechte` from Users. Create one immutable domain
+The overview uses `GET /api/access-preparation/source-security` for confirmed state
+and `GET /api/access-preparation` for aggregate gaps. Preparation preserves legacy
+compatibility; active protection enforces explicit source audiences; pause denies
+effects while retaining restricted reads. Once activated, preparation cannot be
+restored. Pausing requires no activation evidence; resuming requires fresh reviewed
+evidence after the pause. A domain's legacy `enforcement_status` field is not the
+organization's current source-security state.
+
+Administrators open **Gebäudedaten-Rechte** (`/gebaeudedaten-rechte`) from
+**Berechtigungen**. Create one immutable domain
 per property with a label and reviewed reason. No creator/admin/financial-scope
 grant is added automatically. Prepare each team member's capabilities separately:
 read, prepare, approve and export. Read is mandatory; only active writers can
@@ -44,8 +56,8 @@ are namespaced by operation and initiating administrator.
 
 The capability helper intentionally does not read financial grants. Conversely,
 financial checks never read property-data grants. Complete source/derivative,
-worker, audit, privacy-export and indirect-view coverage is required before a
-future activation operation can be offered; see the property-data-domain design.
+worker, audit, privacy-export and indirect-view checks participate in the existing
+strict boundary; organization activation requires the current guided coverage review.
 Populated downgrade refuses to erase prepared evidence. Repair forward. No live
 provider or production activation is included.
 
@@ -157,13 +169,12 @@ universal proof-required binding must be installed with that enforcement.
 
 ## Internal enforcement staging (0053)
 
-The internal organization state remains PREPARATION by default. There is no
-application write privilege or activation endpoint, and the readiness function
-rejects strict activation until graph closure and coverage are implemented.
-Do not replace that function or edit state manually outside the guarded disposable
-integration tests. Presence of this table is not evidence of an active boundary.
+The organization defaults to PREPARATION when no state row exists. Migration 0091
+adds the guarded transition described above. Direct mode writes remain unavailable
+to the application; never edit state manually or replace readiness functions.
+Presence of the table alone is not evidence of an active boundary.
 
-When strict state is eventually enabled, declaration queue commands and replays
+When strict state is enabled, declaration queue commands and replays
 require current source prepare authority. Every worker phase resolves its durable
 queue actor, including grant expiry/revocation. PAUSED rejects effects, retains
 strict read authorization and durably cancels pending work through its existing
@@ -185,18 +196,18 @@ No provider content is stored in that cancellation path.
 
 Strict reservation requires an internal `knowledge_budget_policy` row with the
 reviewed organization cap, window length and reservation duration. These values
-must mirror approved deployment configuration before future activation; missing
+must mirror approved deployment configuration before activation; missing
 policy blocks requests. The database owns strict windows and expiry and counts
 all organization reservations, including other properties hidden from the actor.
 The app cannot read or modify policy or supply a replacement cap/window. Policy
 changes retain administrator, reason, database timestamp and audit evidence under
-the exclusive ACL lock. There is no new policy setup or activation endpoint.
+the exclusive ACL lock. The guided runtime-budget review records this policy before guarded activation.
 PREPARATION continues to use existing application settings.
 
 Migration 0054 uses NOWAIT locks on organization, user and Q&A ledger dependencies.
 Populated policy or strict state refuses downgrade. Preserve evidence and repair
-forward. General source RLS and organization activation remain unavailable pending
-the remaining closure and coverage gates; this migration does not complete B1.
+forward. The later boundary migrations and guarded lifecycle supply organization activation;
+this historical migration alone did not complete the boundary.
 
 ## Strict original binding (0055)
 
@@ -206,9 +217,9 @@ approval right. A newly inserted already-bound original is rejected. PAUSED deni
 first binding. Strict originals cannot acquire a second import link or be attached
 after binding. Successful publication has one canonical audit in its transaction.
 
-This does not classify historical bound originals or enable source RLS. Complete
-legacy coverage and the remaining indirect disclosure/effect checks still gate
-activation. Migration 0055 takes NOWAIT locks on originals and their import links;
+This does not classify historical bound originals or enable source RLS. Current
+legacy coverage and indirect disclosure/effect checks are evaluated by the guarded
+activation workflow. Migration 0055 takes NOWAIT locks on originals and their import links;
 strict state refuses downgrade. Preserve evidence and repair forward.
 
 ## Current classification of bound originals (0056)
@@ -221,9 +232,9 @@ quiescent source context. Unknown custody or conflicting/multiple import links
 permit only **Quelle sperren**. Such originals have no preview; the list supplies
 only bounded identifying metadata and never exposes their filenames or bytes.
 
-Both choices prepare future enforcement. Neither changes current compatibility
-access, activates source RLS or retroactively supplies historical custody. The page
-states this explicitly. The original, reviewed source links and classification
+In preparation these choices prepare enforcement without changing compatibility
+access. During enforcement they affect strict resolution; quarantine denies access.
+Neither choice activates the organization or supplies historical custody. The original, reviewed source links and classification
 receipt remain immutable. Link role/order changes also invalidate an outstanding
 review and are forbidden after classification. The exact hash, context digest,
 reviewer, grant chain, database clock and reason are retained with a canonical audit.
@@ -237,9 +248,8 @@ can locate a particular original without searching undisclosed filenames.
 
 Migration 0056 takes NOWAIT locks on originals, imports, links, domains and grants.
 Populated downgrade refuses to discard classification evidence. Preserve it and
-repair forward. Integrating classification into strict source resolution, making
-quarantine dominate earlier proof, and enforcing complete activation coverage are
-still subsequent requirements.
+repair forward. Later migrations integrate classification into strict source resolution, make
+quarantine dominate earlier proof and require current activation coverage.
 
 ## Strict bound-source resolution (0057)
 
@@ -255,9 +265,11 @@ Classification commits take the exclusive organization ACL lock before source
 rows, serializing decisions with in-flight authorization. Q&A checks the complete
 expected graph and refuses partial input when a denied original is hidden by RLS.
 Workers reject incompatible bound sources before loading them. These are staged
-strict-mode integrations: ordinary compatibility access is unchanged and there is
-still no supported activation command. Full indirect disclosure/effect coverage
-and source CRUD/RLS remain required.
+strict-mode integrations. Preparation access is unchanged. Migration
+[0063](../../backend/migrations/versions/0063_original_source_access.py) adds ordinary
+original/import CRUD policies; migration
+[0091](../../backend/migrations/versions/0091_source_security_lifecycle.py) adds the
+guarded activation, pause and resumption commands.
 
 Migration 0057 refuses busy proof/source dependencies immediately and refuses
 rollback while any organization is ENFORCED or PAUSED. A PREPARATION rollback
@@ -292,8 +304,13 @@ The database guards calculation snapshots, result lines and coverage declaration
 as well as the service preflight. Coverage authority derives from the referenced
 settlement/plan; its declared property must match. Computed draft reparenting checks
 both audiences. Eight migration dependencies use NOWAIT; strict state refuses
-rollback. Current stored-result, report and privacy disclosure closure remains a
-separate prerequisite, and source activation remains unavailable.
+rollback. Migration
+[0060](../../backend/migrations/versions/0060_financial_source_disclosure.py) guards
+stored financial disclosure,
+[0064](../../backend/migrations/versions/0064_privacy_source_completeness.py) adds
+privacy source-completeness checks, and
+[0075](../../backend/migrations/versions/0075_report_source_access.py) adds report and
+dunning source checks. Current readiness is determined by the guarded lifecycle.
 
 ## Stored financial disclosure (0060)
 
@@ -327,9 +344,8 @@ uses the same audience-before-parent ordering. An admin can prepare a data domai
 for a known property ID without obtaining its source fields.
 
 The new property creation receipt is immutable and actor-scoped. Rollback refuses
-to remove retained receipts or strict authority. Keep source activation disabled
-until the remaining original/derived source and indirect disclosure boundaries are
-closed and legacy coverage is reviewed.
+to remove retained receipts or strict authority. Use the guarded lifecycle only after reviewing current legacy coverage and
+resolving its blocking source/derived-data findings.
 
 ## Derived source records (0062)
 
@@ -344,8 +360,8 @@ preflights prevent hidden children from appearing as empty review drafts; direct
 uploads check prepare before storage. Existing-property approval and applied
 replays check approve. Metadata-only row contexts support first inserts without
 widening access. All sixteen migration dependencies use NOWAIT, and strict state
-refuses downgrade. Original/import row policies and purpose-specific review paths
-remain outstanding; source activation is still unavailable.
+refuses downgrade. Later original/import policies and purpose-specific review paths complete those
+checks; activation uses the guarded lifecycle, not a raw state change.
 
 ## Ordinary originals and imports (0063)
 
@@ -360,8 +376,8 @@ it never adds an exception to ordinary source SELECT. Admission pages use signed
 actor/query cursors and stable UUID order. Review previews retain explicit target
 export, exact custody and quarantine checks, and verify stored bytes once. All six
 migration dependencies use NOWAIT, strict state refuses rollback, and compatibility
-round trips preserve sources. Indirect disclosure and reviewed activation coverage
-remain open; source activation is still unavailable.
+round trips preserve sources. Indirect disclosure and reviewed activation coverage are checked by the later
+boundary migrations and guarded lifecycle.
 
 ## Privacy retention completeness (0064)
 
@@ -373,7 +389,7 @@ so grant expiry cannot turn hidden records into apparently absent retention.
 All privacy routes recheck the current administrator inside the data transaction.
 PAUSED retains authorized inspection/export and existing erasure rules; originals
 and retention periods are unchanged. Eight NOWAIT dependencies and strict rollback
-refusal protect the boundary. Person/history, audit/report and activation work remain.
+refusal protect the boundary. Later migrations extend person/history and audit/report coverage; use current lifecycle readiness.
 
 ## Audit source disclosure (0065)
 
@@ -419,12 +435,13 @@ History audience IDs and profile-to-person identity cannot be reassigned. Existi
 financial-input serialization remains in force; a writer released after anonymization
 is rejected using current person state. PAUSED retains authorized reads while
 stopping effects. History audit entries inherit the same ordinary source boundary.
-See [history evidence](../archive/2026-10-02-history-source-access.md); contact custody and
-full person/profile access remain pending before activation.
+See [history evidence](../archive/2026-10-02-history-source-access.md). Migration
+[0069](../../backend/migrations/versions/0069_person_source_access.py) adds contact
+custody and person/profile CRUD policies, described in the contact boundary below.
 
 ## Contact audience preparation (0068)
 
-Use Team → Kontaktdaten-Rechte to prepare an independent audience for an exact
+Use Berechtigungen → Kontaktdaten-Rechte to prepare an independent audience for an exact
 contact. Administrative setup gives no implicit contact permission. Property and
 financial grants remain independent. Only READ, PREPARE and EXPORT are available;
 READ is required and current READ_ONLY members cannot exercise PREPARE.
@@ -437,7 +454,7 @@ Configuration and actor evidence are immutable. Populated configuration or stric
 source mode blocks downgrade; do not remove evidence to force production rollback.
 
 This is preparation only. Person/profile source policies and downstream contact
-completeness remain follow-up work. The activation gate remains false. See the
+completeness remain follow-up work. Current readiness is checked by the guarded lifecycle. See the
 [contact authorization design](../archive/2026-10-02-contact-data-domain-design.md).
 
 ## Contact source boundary (0069)
@@ -454,5 +471,4 @@ Privacy-state changes use the typed database privacy command and current
 administrator authority. Direct application SQL cannot mark a contact anonymized,
 restricted or deletion-requested. Retention decisions inspect expected sources,
 not filtered absences. Anonymized identity cannot be repopulated. Preserve populated
-custody and strict policies on rollback. Activation remains disabled until the
-remaining B1 coverage is accepted. See [contact boundary evidence](../archive/2026-10-02-contact-source-access.md).
+custody and strict policies on rollback. Activation requires accepted current coverage through the guarded lifecycle. See [contact boundary evidence](../archive/2026-10-02-contact-source-access.md).

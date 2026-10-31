@@ -28,7 +28,7 @@ const output = process.env.HV_ACCEPTANCE_OUTPUT || '/tmp/hv-b1-scope-acceptance'
     const createdProperty = await page.request.post(base + '/api/properties', { data: { name: 'Scope browser acceptance', street: 'Test 1', zip_code: '12345', city: 'Test', management_type: 'MISCH' } });
     assert.equal(createdProperty.status(), 201);
     const property = await createdProperty.json();
-    await page.goto(base + '/berechtigungen');
+    await page.goto(base + '/berechtigungen/teamrechte');
     await page.getByLabel('Objekte durchsuchen', { exact: true }).fill('Scope browser acceptance');
     await page.getByLabel('Objekt', { exact: true }).locator(`option[value="${property.id}"]`).waitFor({ state: 'attached' });
     await page.getByLabel('Objekt', { exact: true }).selectOption(property.id);

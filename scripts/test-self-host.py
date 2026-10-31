@@ -3,6 +3,7 @@
 Run in backend/ with uv run python ../scripts/test-self-host.py.
 """
 import hashlib
+import errno
 import io
 import json
 import os
@@ -10,6 +11,7 @@ import shlex
 import shutil
 import re
 import runpy
+import socket
 import stat
 import subprocess
 import sys
@@ -23,6 +25,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_TARGET = runpy.run_path(str(ROOT / "backend/app/deployment.py"))["TARGET"]
 SECRETS = ("MIGRATOR_PASSWORD", "APP_RW_PASSWORD", "APP_WORKER_PASSWORD", "APP_REVIEW_PASSWORD", "SESSION_SECRET")
+with socket.socket() as port_probe:
+    port_probe.bind(("127.0.0.1", 0))
+    TEST_PORT = str(port_probe.getsockname()[1])
 
 
 class SelfHostTests(unittest.TestCase):
@@ -79,6 +84,9 @@ if sys.argv[1:3] == ["compose", "version"]:
 if sys.argv[1] == "inspect":
     print(os.environ.get("FAKE_OWNER", os.environ["FAKE_CHECKOUT"] + "/infra/docker-compose.yml"))
     sys.exit(0)
+if "ps" in sys.argv and "--format" in sys.argv and sys.argv[-1] == "json":
+    print(json.dumps([{"Service": "app", "State": "running", "Health": "healthy", "Name": os.environ["SESSION_SECRET"]}]))
+    sys.exit(0)
 if "ps" in sys.argv and "--format" in sys.argv:
     service = sys.argv[-1]
     print(os.environ.get("FAKE_CONTAINER_" + service.upper(),
@@ -91,6 +99,19 @@ if "port" in sys.argv:
 if "find" in sys.argv and "caddy" in sys.argv:
     print(os.environ.get("FAKE_CERTIFICATE", "/data/caddy/certificates/acme/verwaltung.example.org/verwaltung.example.org.crt"))
     sys.exit(0)
+if "ps" in sys.argv and sys.argv[-1] == "inbox-worker":
+    print(os.environ.get("FAKE_INBOX_CONTAINER", ""))
+if "logs" in sys.argv:
+    secrets = " ".join(os.environ[key] for key in ("MIGRATOR_PASSWORD", "APP_RW_PASSWORD", "APP_WORKER_PASSWORD", "APP_REVIEW_PASSWORD", "SESSION_SECRET"))
+    print("2026-10-30 12:00:00,123 ERROR app.test request_id=installer-failure-123 RuntimeError: " + secrets)
+if "app.diagnostics" in sys.argv:
+    os.environ["HV_SESSION_SECRET"] = os.environ["SESSION_SECRET"]
+    import app.diagnostics as diagnostics
+    async def database():
+        return {"status": "available", "organization_count": 1, "row_counts": {"person": 23}}
+    diagnostics.collect_database = database
+    sys.argv = ["diagnostics"] + sys.argv[sys.argv.index("app.diagnostics") + 1:]
+    sys.exit(diagnostics.main())
 if "ps" in sys.argv and "--quiet" in sys.argv:
     state = os.environ.get("FAKE_STATE", "running")
     statuses = [sys.argv[i + 1] for i, arg in enumerate(sys.argv) if arg == "--status"]
@@ -133,6 +154,8 @@ if "psql" in sys.argv:
         name = statement.split("datname='")[1].split("'")[0]
         if name in databases:
             print("1")
+    elif statement == "SELECT version_num FROM public.alembic_version":
+        print("0141")
     elif statement == "SELECT version_num FROM alembic_version":
         print(os.environ.get("FAKE_RESTORED_SCHEMA" if "hausverwaltung_restore" in sys.argv else "FAKE_SCHEMA", "0139"))
     elif statement == "SELECT count(*) FROM public.organization":
@@ -214,6 +237,8 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
                         FAKE_TOKEN_SQL=str(self.base / "token.sql"))
 
     def run_script(self, *args, input=None, stderr_closed=False, stderr=subprocess.PIPE):
+        if args[:1] == ("init",) and not self.config.exists() and "--port" not in args:
+            args = (*args, "--port", TEST_PORT)
         command = ["bash", str(self.root / "scripts/self-host.sh"), *args]
         if stderr_closed:
             command = ["bash", "-c", 'exec 2>&-; exec "$@"', "closed-stderr", *command]
@@ -377,7 +402,7 @@ elif name == "openssl":
         self.config.chmod(0o600)
         self.config.write_text(before.replace("SESSION_SECRET=", "UNKNOWN="))
         self.assert_doctor("FEHLER", "Einstellungen", 1)
-        self.config.write_text(before.replace("VERWALINO_PORT=18080", "VERWALINO_PORT=1"))
+        self.config.write_text(before.replace(f"VERWALINO_PORT={TEST_PORT}", "VERWALINO_PORT=1"))
         self.assert_doctor("FEHLER", "Einstellungen", 1)
         self.config.write_text(before + "EVIL=$(touch marker)\n")
         self.assert_doctor("FEHLER", "Einstellungen", 1)
@@ -394,20 +419,20 @@ elif name == "openssl":
     def test_doctor_detects_foreign_port_and_accepts_owned_port(self):
         self.init()
         self.doctor_tools()
-        self.env["FAKE_PORT_BUSY"] = "18080"
-        self.assert_doctor("OK", "Port 18080")
+        self.env["FAKE_PORT_BUSY"] = TEST_PORT
+        self.assert_doctor("OK", f"Port {TEST_PORT}")
         self.env["FAKE_OWNER"] = "/other/infra/docker-compose.yml"
-        self.assert_doctor("FEHLER", "Port 18080", 1)
+        self.assert_doctor("FEHLER", f"Port {TEST_PORT}", 1)
 
     def test_doctor_port_tools_fall_back_and_warn_when_unavailable(self):
         self.init()
-        self.env.update(FAKE_PUBLISHED="", FAKE_PORT_BUSY="18080")
+        self.env.update(FAKE_PUBLISHED="", FAKE_PORT_BUSY=TEST_PORT)
         for omit in (("ss",), ("ss", "lsof")):
             with self.subTest(omit=omit):
                 self.doctor_tools(omit=omit)
-                self.assert_doctor("FEHLER", "Port 18080", 1)
+                self.assert_doctor("FEHLER", f"Port {TEST_PORT}", 1)
         self.doctor_tools(omit=("ss", "lsof", "nc"))
-        self.assert_doctor("WARN", "Port 18080")
+        self.assert_doctor("WARN", f"Port {TEST_PORT}")
 
     def test_doctor_disk_thresholds_apply_independently_to_both_locations(self):
         self.init()
@@ -1029,7 +1054,7 @@ elif name == "openssl":
         config = self.init()
         self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o600)
         self.assertEqual(config["VERWALINO_MODE"], "local")
-        self.assertEqual(config["VERWALINO_PORT"], "18080")
+        self.assertEqual(config["VERWALINO_PORT"], TEST_PORT)
         self.assertEqual(config["VERWALINO_IMAGE"], "verwalino:local")
         values = [config[key] for key in SECRETS]
         self.assertEqual(len(set(values)), len(SECRETS))
@@ -1047,6 +1072,39 @@ elif name == "openssl":
             self.assertNotIn(config[key], result.stdout + result.stderr)
         self.assertNotEqual(self.run_script("init", "--port", "19000").returncode, 0)
         self.assertEqual(self.config.read_bytes(), before)
+
+    def test_busy_port_refuses_init_and_start_before_mutating_docker(self):
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            port = listener.getsockname()[1]
+            result = self.run_script("init", "--port", str(port))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(f"Port {port} is already in use", result.stderr)
+            self.assertFalse(self.config.exists())
+            self.assertEqual(self.calls(), [])
+        self.init("--port", str(port))
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", port))
+            listener.listen()
+            result = self.run_script("start")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(f"Port {port} is already in use", result.stderr)
+            self.assertTrue(all("ps" in call["args"] for call in self.calls()))
+
+    def test_init_and_start_succeed_when_default_port_is_occupied(self):
+        with socket.socket() as listener:
+            try:
+                listener.bind(("127.0.0.1", 18080))
+            except OSError as error:
+                if error.errno != errno.EADDRINUSE:
+                    raise
+            else:
+                listener.listen()
+            self.init()
+            result = self.run_script("start")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("App ready:", result.stdout)
 
     def test_separate_installations_get_fresh_secrets(self):
         first = self.init()
@@ -1117,7 +1175,7 @@ elif name == "openssl":
             self.assertNotIn("https", call["args"])
             self.assertIsNone(call["profiles"])
             self.assertFalse(call["caller_secret_used"])
-        self.assertIn("http://127.0.0.1:18080", result.stdout)
+        self.assertIn(f"http://127.0.0.1:{TEST_PORT}", result.stdout)
         self.assert_isolated(args)
 
     def test_fresh_start_prints_one_token_and_url_but_persists_only_its_hash(self):
@@ -1130,7 +1188,7 @@ elif name == "openssl":
         self.assertIsNotNone(match, result.stdout)
         token = match.group(1)
         self.assertEqual(result.stdout.count(token), 1)
-        self.assertIn("http://127.0.0.1:18080/setup", result.stdout)
+        self.assertIn(f"http://127.0.0.1:{TEST_PORT}/setup", result.stdout)
         sql = (self.base / "token.sql").read_text()
         self.assertIn(hashlib.sha256(token.encode()).hexdigest(), sql)
         self.assertIn("ON CONFLICT", sql)
@@ -1187,7 +1245,7 @@ elif name == "openssl":
         result = self.run_script("start")
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any("up" in c["args"] and "app" in c["args"] for c in self.calls()))
-        self.assertNotIn("http://127.0.0.1:18080", result.stdout)
+        self.assertNotIn(f"http://127.0.0.1:{TEST_PORT}", result.stdout)
 
     def test_https_uses_caddy_secure_cookies_and_explicit_host(self):
         self.init("--https", "verwaltung.example.org")
@@ -1234,6 +1292,82 @@ elif name == "openssl":
         self.assertEqual((self.base / "stdin").read_text(), password + "\n")
         self.assertNotIn(password, result.stdout + result.stderr + self.log.read_text())
 
+    def test_diagnose_uses_only_read_commands_and_writes_a_private_redacted_bundle(self):
+        config = self.init()
+        result = self.run_script("diagnose")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        path = Path(result.stdout.strip())
+        self.assertEqual(path.parent, self.base / "diagnostics")
+        self.assertRegex(path.name, r"^verwalino-diagnostics-.*\.tar\.gz$")
+        self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        with tarfile.open(path, "r:gz") as archive:
+            members = {member.name: archive.extractfile(member).read().decode() for member in archive}
+        self.assertEqual(len(members), 6)
+        for content in members.values():
+            for key in SECRETS:
+                self.assertNotIn(config[key], content)
+        self.assertIn("installer-failure-123", members["errors.log"])
+        self.assertIn("RuntimeError", members["errors.log"])
+        self.assertEqual(json.loads(members["database.json"])["migration_head"], "0141")
+        args = [call["args"] for call in self.calls()]
+        self.assertEqual(len(args), 4)
+        self.assertEqual(args[0][-4:], ["ps", "--all", "--format", "json"])
+        self.assertTrue(any(call[-6:] == ["logs", "--no-color", "--no-log-prefix", "--tail", "2000", "app"] for call in args))
+        build = next(call for call in args if "app.diagnostics" in call)
+        schema = next(call for call in args if "psql" in call)
+        self.assertEqual(schema[-8:], ["-U", "app_migrator", "-d", "hausverwaltung", "--set", "ON_ERROR_STOP=1", "-Atc", "SELECT version_num FROM public.alembic_version"])
+        self.assertEqual(build[build.index("--schema-head") + 1], "0141")
+        start = build.index("run")
+        self.assertEqual(build[start:start + 10], ["run", "--rm", "--no-deps", "-T", "--entrypoint", "python", "app", "-m", "app.diagnostics", "--containers-json"])
+        self.assert_isolated(args)
+
+    def test_diagnose_supports_out_and_never_leaves_a_bundle_after_failure(self):
+        self.init()
+        output = self.base / "support packages"
+        result = self.run_script("diagnose", "--out", str(output))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(Path(result.stdout.strip()).parent, output)
+        for command in ("ps", "logs", "app.diagnostics"):
+            self.env["FAKE_DOCKER_FAIL"] = command
+            failed = self.run_script("diagnose", "--out", str(self.base / command))
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertEqual(list((self.base / command).glob("*.tar.gz")), [])
+        for args in [("--out",), ("--out", ""), ("--unknown", "x")]:
+            self.assertNotEqual(self.run_script("diagnose", *args).returncode, 0)
+
+    def test_diagnose_writes_a_bundle_with_unavailable_metadata_when_database_is_down(self):
+        self.init()
+        self.env["FAKE_DOCKER_FAIL"] = "psql"
+        result = self.run_script("diagnose")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with tarfile.open(Path(result.stdout.strip()), "r:gz") as archive:
+            database = json.loads(archive.extractfile("database.json").read())
+        self.assertEqual(database["status"], "unavailable")
+        self.assertIsNone(database["migration_head"])
+        self.assertIsNone(database["organization_count"])
+        self.assertEqual(database["row_counts"], {})
+
+    def test_diagnose_preserves_an_existing_output_directory_mode(self):
+        self.init()
+        output = self.base / "existing"
+        output.mkdir(mode=0o755)
+        result = self.run_script("diagnose", "--out", str(output))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(Path(result.stdout.strip()).stat().st_mode), 0o600)
+
+    def test_diagnose_refuses_an_unwritable_existing_output_directory(self):
+        self.init()
+        output = self.base / "unwritable"
+        output.mkdir(mode=0o500)
+        self.addCleanup(output.chmod, 0o700)
+        result = self.run_script("diagnose", "--out", str(output))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Output directory is not writable", result.stderr)
+        self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o500)
+        self.assertEqual(self.calls(), [])
+
     def test_status_and_stop_are_non_destructive(self):
         self.init()
         before = self.config.read_bytes()
@@ -1244,6 +1378,36 @@ elif name == "openssl":
         self.assertTrue(any("stop" in c["args"] for c in self.calls()))
         self.assert_isolated([c["args"] for c in self.calls()])
         self.assertEqual(before, self.config.read_bytes())
+
+    def test_start_stops_existing_inbox_worker_before_migration(self):
+        self.init()
+        self.env["FAKE_INBOX_CONTAINER"] = "existing-inbox-worker"
+        result = self.run_script("start")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [c["args"] for c in self.calls()]
+        stopped = next(i for i, args in enumerate(calls) if args[-2:] == ["stop", "inbox-worker"])
+        migrated = next(i for i, args in enumerate(calls) if "migrate" in args)
+        self.assertLess(stopped, migrated)
+        self.assertFalse(any("up" in args and args[-1] == "inbox-worker" for args in calls))
+        self.assert_isolated(calls)
+
+    def test_stop_includes_existing_inbox_worker_and_default_services(self):
+        self.init()
+        self.env["FAKE_INBOX_CONTAINER"] = "existing-inbox-worker"
+        result = self.run_script("stop")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [c["args"] for c in self.calls()]
+        self.assertTrue(any(args[-2:] == ["stop", "inbox-worker"] for args in calls))
+        self.assertTrue(any(args[-1] == "stop" for args in calls))
+        self.assert_isolated(calls)
+
+    def test_absent_inbox_worker_is_not_stopped_or_started(self):
+        self.init()
+        for command in ("start", "stop"):
+            result = self.run_script(command)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [c["args"] for c in self.calls()]
+        self.assertFalse(any("inbox-worker" in args and ("stop" in args or "up" in args) for args in calls))
 
     def test_random_generation_failure_leaves_no_partial_config_or_lock(self):
         openssl = self.base / "bin" / "openssl"
@@ -1305,6 +1469,42 @@ elif name == "openssl":
         self.assertEqual(config["VERWALINO_PROXY_SUBNET"], "192.168.240.0/28")
 
 
+class InstallMatrixWorkflowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = yaml.safe_load((ROOT / ".github/workflows/install-matrix.yaml").read_text())
+
+    def test_prerequisites_fail_with_the_name_of_each_missing_tool(self):
+        step = next(step for step in self.workflow["jobs"]["install"]["steps"] if step.get("id") == "report")
+        check = step["run"].split("export DOCKER_CONFIG=", 1)[0]
+        # The runner's Bash 5 guard is separate from tool availability.
+        check = check.partition("\n")[2]
+        tools = ("docker", "python3", "openssl", "curl", "nc")
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary)
+            for missing in tools:
+                with self.subTest(missing=missing):
+                    for tool in tools:
+                        if tool != missing:
+                            (binary / tool).symlink_to(shutil.which("true"))
+                    result = subprocess.run([shutil.which("bash"), "-e", "-c", check],
+                                            env=dict(os.environ, PATH=str(binary)), capture_output=True,
+                                            text=True, check=False, timeout=5)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn(f"Missing required tool: {missing}", result.stderr)
+                for tool in binary.iterdir():
+                    tool.unlink()
+
+    def test_runs_queue_by_ref_without_cancelling_active_runs(self):
+        self.assertEqual(self.workflow.get("concurrency"), {
+            "group": "install-matrix-${{ github.ref }}", "cancel-in-progress": False})
+
+    def test_reports_use_verified_artifact_version(self):
+        uploads = [step["uses"] for step in self.workflow["jobs"]["install"]["steps"]
+                   if step.get("uses", "").startswith("actions/upload-artifact@")]
+        self.assertEqual(uploads, ["actions/upload-artifact@v7"])
+
+
 class StackContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -1312,7 +1512,7 @@ class StackContractTests(unittest.TestCase):
 
     def test_project_network_and_volume_isolation(self):
         self.assertEqual(self.stack["name"], "verwalino")
-        self.assertEqual(set(self.stack["services"]), {"db", "app", "migrate", "bootstrap", "caddy"})
+        self.assertEqual(set(self.stack["services"]), {"db", "app", "migrate", "bootstrap", "caddy", "inbox-worker"})
         for config in self.stack["volumes"].values():
             self.assertFalse(config and (config.get("external") or config.get("name")))
         self.assertTrue(self.stack["networks"]["backend"]["internal"])
@@ -1322,6 +1522,23 @@ class StackContractTests(unittest.TestCase):
                          ["127.0.0.1:${VERWALINO_PORT:?missing port}:8000"])
         self.assertEqual(self.stack["services"]["caddy"]["profiles"], ["https"])
         self.assertEqual(self.stack["services"]["caddy"]["networks"], ["proxy"])
+
+    def test_inbox_worker_is_opt_in_and_has_only_local_worker_authority(self):
+        worker = self.stack["services"]["inbox-worker"]
+        self.assertEqual(worker["profiles"], ["inbox"])
+        self.assertEqual(worker["image"], self.stack["services"]["app"]["image"])
+        self.assertEqual(worker["restart"], "unless-stopped")
+        self.assertEqual(worker["environment"]["HV_WORKER_KIND"], "workflow_runner")
+        self.assertIn("app_worker:", worker["environment"]["HV_DATABASE_URL_WORKER"])
+        self.assertNotIn("HV_DATABASE_URL", worker["environment"])
+        self.assertNotIn("HV_DATABASE_URL_REVIEW", worker["environment"])
+        self.assertNotIn("HV_OPENAI_API_KEY", worker["environment"])
+        self.assertEqual(worker["networks"], ["backend"])
+        self.assertNotIn("ports", worker)
+        self.assertIn("documents:/data/documents:ro", worker["volumes"])
+        self.assertTrue(worker["read_only"])
+        self.assertEqual(worker["cap_drop"], ["ALL"])
+        self.assertIn("--healthcheck", worker["healthcheck"]["test"])
 
     def test_no_privileged_or_external_service_credentials_in_app(self):
         app = self.stack["services"]["app"]
@@ -1367,6 +1584,38 @@ class StackContractTests(unittest.TestCase):
 
     def test_nested_config_secrets_are_excluded_from_image_context(self):
         self.assertIn("**/.env.*", (ROOT / ".dockerignore").read_text().splitlines())
+
+
+class ReleaseBundleTests(unittest.TestCase):
+    def test_release_assembly_covers_payloads_and_compose_bind_mounts(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/release-image.yaml").read_text())
+        bundle = workflow["jobs"]["installer"]
+        self.assertEqual(bundle["needs"], "release")
+        self.assertEqual(bundle["permissions"], {"contents": "write", "id-token": "write"})
+        step = next(step for step in bundle["steps"] if step.get("id") == "bundle")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for path in ("install.sh", "scripts/self-host.sh", "scripts/build-release-bundle.sh", "infra/docker-compose.yml",
+                         "infra/Caddyfile", "infra/db/prod-init.sh", ".env.example"):
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((ROOT / path).read_bytes())
+            digest = "sha256:" + "a" * 64
+            result = subprocess.run(["bash", "-euo", "pipefail", "-c", step["run"]],
+                                    cwd=root, env=dict(os.environ, DIGEST=digest),
+                                    text=True, capture_output=True, check=False, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            assets = root / "release-assets"
+            self.assertEqual((assets / "IMAGE_DIGEST").read_text(), digest + "\n")
+            lines = (assets / "SHA256SUMS").read_text().splitlines()
+            self.assertEqual(len(lines), 7)
+            self.assertEqual({line.split("  ")[1] for line in lines}, {
+                "install.sh", "self-host.sh", "docker-compose.yml", "Caddyfile",
+                "prod-init.sh", "env.example", "IMAGE_DIGEST"})
+            for line in lines:
+                checksum, name = line.split("  ")
+                self.assertEqual(checksum, hashlib.sha256((assets / name).read_bytes()).hexdigest())
+            self.assertEqual((assets / "prod-init.sh").read_bytes(), (ROOT / "infra/db/prod-init.sh").read_bytes())
 
 
 if __name__ == "__main__":

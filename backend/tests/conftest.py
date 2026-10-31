@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
+from contextlib import closing
 from datetime import date
 from typing import AsyncGenerator
 from unittest.mock import patch
@@ -33,7 +34,10 @@ os.environ["HV_ERROR_TRACKING_DSN"] = ""
 
 from app.core.security import hash_password, create_session_token
 from app.core.config import settings
-from app.core.declaration_test_database import require_disposable_database_settings
+from app.core.declaration_test_database import (
+    require_disposable_database_settings,
+    reset_foreign_test_database,
+)
 from app.core.db import override_engine, override_worker_engine, override_review_engine
 from app.main import app
 from tests.bdd.world import admin_credentials, target_url
@@ -74,6 +78,11 @@ def pytest_sessionstart(session):
         raise pytest.UsageError("Cannot verify a fresh external target; refusing to write scenario data") from None
     if properties != []:
         raise pytest.UsageError("target is not a fresh installation; refusing to write scenario data")
+
+
+def pytest_collection_modifyitems(items):
+    # Destructive fixture regressions must finish before session seeds are made.
+    items.sort(key=lambda item: item.path.name != "test_testdb_reset.py")
 
 
 # ---------------------------------------------------------------------------
@@ -126,13 +135,24 @@ async def fixture_has_registered_documents(session: AsyncSession, document_ids: 
     ))
 
 
-@pytest.fixture(scope="session", autouse=True)
-def run_migrations():
+def migrate_test_database(request):
+    # Migration CLI logging must not disable the already imported HTTP app's
+    # loggers or replace its scrubber/formatter inside this shared test process;
+    # tests call this helper directly, so the patch lives here as well as in the
+    # session fixture that keeps it active for later migration rehearsals.
+    with patch("logging.config.fileConfig"):
+        return _migrate_test_database(request)
+
+
+def _migrate_test_database(request):
     """Run Alembic migrations using the migrator role."""
     if MIGRATOR_SYNC_URL is None:
         raise RuntimeError("VERWALINO_TARGET_URL is supported only by tests/bdd; unset it for local database tests")
     from alembic.config import Config
     from alembic import command
+    from alembic.script import ScriptDirectory
+    from alembic.util import CommandError
+    import psycopg2
 
     alembic_cfg = Config(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
     alembic_cfg.set_main_option("sqlalchemy.url", MIGRATOR_SYNC_URL)
@@ -142,10 +162,30 @@ def run_migrations():
         os.path.join(os.path.dirname(__file__), "..", "migrations"),
     )
 
+    scripts = ScriptDirectory.from_config(alembic_cfg)
+    with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT to_regclass('public.alembic_version')")
+        revisions = []
+        if cursor.fetchone()[0] is not None:
+            cursor.execute("SELECT version_num FROM public.alembic_version")
+            revisions = [row[0] for row in cursor.fetchall()]
+    for revision in revisions:
+        try:
+            known_revision = scripts.get_revision(revision)
+        except CommandError:
+            known_revision = None
+        if known_revision is None:
+            reset_foreign_test_database(MIGRATOR_SYNC_URL)
+            notice = f"test database held foreign migration head {revision}; reset to empty before upgrading"
+            if request is not None:
+                capture_manager = request.config.pluginmanager.getplugin("capturemanager")
+                with capture_manager.global_and_fixture_disabled():
+                    request.config.get_terminal_writer().line(notice)
+            return _upgrade_test_database(alembic_cfg)
+
     # This harness is already restricted to the disposable test database above.
     # Production downgrade intentionally refuses to remove a populated dunning
     # boundary. Discard only these synthetic associations before the full reset.
-    import psycopg2
     with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
         cursor.execute("""DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='app_worker') THEN
             CREATE ROLE app_worker LOGIN PASSWORD 'worker_secret' INHERIT NOBYPASSRLS NOCREATEDB NOCREATEROLE;
@@ -236,39 +276,55 @@ def run_migrations():
         cursor.execute("SELECT to_regclass('public.declaration_review_receipt')")
         if cursor.fetchone()[0] is not None:
             cursor.execute("TRUNCATE public.declaration_review_receipt")
+        cursor.execute("SELECT to_regclass('public.auth_throttle')")
+        if cursor.fetchone()[0] is not None:
+            cursor.execute("TRUNCATE public.auth_throttle")
 
+    command.downgrade(alembic_cfg, "base")
+    return _upgrade_test_database(alembic_cfg)
+
+
+def _upgrade_test_database(alembic_cfg):
     # Rehearse the supported upgrade before any retained test originals exist.
     # The rehearsal uses one rollback-only transaction; never clear later rows
     # or weaken a populated downgrade guard to make a historical test pass.
+    from alembic import command
     from tests.test_deployment_upgrade import rehearse_initial_upgrade
 
-    # Migration CLI logging must not disable the already imported HTTP app's
-    # loggers or replace its scrubber/formatter inside this shared test process,
-    # including later migration rehearsals during the session.
+    command.upgrade(alembic_cfg, "0028")
+    upgraded_0028_tables = rehearse_initial_upgrade('0028')
+    command.upgrade(alembic_cfg, "0122")
+    upgraded_tables = rehearse_initial_upgrade('0122')
+    command.upgrade(alembic_cfg, "0139")
+    upgraded_0139_tables = rehearse_initial_upgrade('0139')
+    command.upgrade(alembic_cfg, '0140')  # accepted source
+    upgraded_parent_tables = rehearse_initial_upgrade('0140')  # accepted source
+    command.upgrade(alembic_cfg, '0141')  # accepted source
+    upgraded_setup_tables = rehearse_initial_upgrade('0141')  # accepted source
+    command.upgrade(alembic_cfg, "head")
+    return {'upgrade_0028_to_0142_tables': upgraded_0028_tables,
+            'upgrade_0122_to_0142_tables': upgraded_tables,
+            'upgrade_0139_to_0142_tables': upgraded_0139_tables,
+            'upgrade_0140_to_0142_tables': upgraded_parent_tables,
+            'upgrade_0141_to_0142_tables': upgraded_setup_tables}
+
+
+@pytest.fixture(scope="session", autouse=True)
+def run_migrations(request=None):
+    # Keep the fileConfig patch active for later migration rehearsals during the session.
     with patch("logging.config.fileConfig"):
-        command.downgrade(alembic_cfg, "base")
-        command.upgrade(alembic_cfg, "0028")
-        upgraded_0028_tables = rehearse_initial_upgrade('0028')
-        command.upgrade(alembic_cfg, "0122")
-        upgraded_tables = rehearse_initial_upgrade('0122')
-        command.upgrade(alembic_cfg, "0139")
-        upgraded_0139_tables = rehearse_initial_upgrade('0139')
-        command.upgrade(alembic_cfg, '0140')  # accepted source
-        upgraded_parent_tables = rehearse_initial_upgrade('0140')  # accepted source
-        command.upgrade(alembic_cfg, '0141')  # accepted source
-        upgraded_setup_tables = rehearse_initial_upgrade('0141')  # accepted source
-        command.upgrade(alembic_cfg, "head")
-        yield {'upgrade_0028_to_0142_tables': upgraded_0028_tables,
-               'upgrade_0122_to_0142_tables': upgraded_tables,
-               'upgrade_0139_to_0142_tables': upgraded_0139_tables,
-               'upgrade_0140_to_0142_tables': upgraded_parent_tables,
-               'upgrade_0141_to_0142_tables': upgraded_setup_tables}
+        yield migrate_test_database(request)
 
 
 # ---------------------------------------------------------------------------
 # Inject test engine into the app's DB module (once, at session start)
 # ---------------------------------------------------------------------------
 _test_app_rw_engine = None
+
+
+@pytest.fixture(autouse=True)
+def isolate_diagnostics_directory(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, 'diagnostics_dir', str(tmp_path / 'diagnostics'))
 
 
 @pytest_asyncio.fixture(autouse=True)

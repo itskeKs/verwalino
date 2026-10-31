@@ -62,4 +62,4 @@ prüfen“ (fields prepared, please review); amount and date appear without manu
 The extraction books no costs and does not automatically approve any voucher.
 
 For the local launcher, worker CLI, and repeatable browser check, see
-[the invoice-worker runbook](../../DEPLOY.md#invoice-worker-t10-alpha-active-since-2026-10-24).
+[the invoice-worker runbook](../../DEPLOY.md#invoice-worker-t10).

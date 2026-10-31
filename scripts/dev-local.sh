@@ -4,7 +4,7 @@
 #   scripts/dev-local.sh
 #
 # Starts the disposable test database (if not already running), runs
-# migrations, creates a test admin user, starts the invoice worker, the
+# migrations, creates a test admin user, starts the invoice worker and optional inbox worker, the
 # FastAPI backend on port 18000 and the Vite dev server on port 13000.
 #
 # The production API (port 8000) is never touched.
@@ -18,15 +18,16 @@ FRONTEND="$ROOT/frontend"
 BACKEND_PID=""
 VITE_PID=""
 INVOICE_WORKER_PID=""
+INBOX_WORKER_PID=""
 
 cleanup() {
   echo "Stopping local services..."
-  for pid in "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID"; do
+  for pid in "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID" "$INBOX_WORKER_PID"; do
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       kill "$pid" 2>/dev/null || true
     fi
   done
-  for pid in "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID"; do
+  for pid in "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID" "$INBOX_WORKER_PID"; do
     if [ -n "$pid" ]; then wait "$pid" 2>/dev/null || true; fi
   done
 }
@@ -83,6 +84,14 @@ cd "$ROOT"
 cd "$BACKEND"
 echo "Checking invoice worker (database, storage, German OCR)..."
 uv run python -m app.workers.invoice_extraction --healthcheck
+echo "Checking inbox worker (database, storage, ClamAV signatures, German OCR)..."
+if uv run python -m app.workers.workflow_runner --healthcheck; then
+  echo "Starting local inbox worker..."
+  uv run python -m app.workers.workflow_runner --all-organizations &
+  INBOX_WORKER_PID=$!
+else
+  echo "Inbox worker skipped: check ClamAV (clamscan and signatures), worker database access, document storage and German OCR; API and UI will continue."
+fi
 echo "Starting local invoice worker..."
 uv run python -m app.workers.invoice_extraction &
 INVOICE_WORKER_PID=$!
@@ -127,4 +136,8 @@ echo "Login as test@example.de / testpassword"
 echo ""
 echo "Press Ctrl+C to stop."
 
-wait "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID"
+if [ -n "$INBOX_WORKER_PID" ]; then
+  wait "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID" "$INBOX_WORKER_PID"
+else
+  wait "$BACKEND_PID" "$VITE_PID" "$INVOICE_WORKER_PID"
+fi
