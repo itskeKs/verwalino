@@ -121,11 +121,12 @@ export function PropertyDataDomainsPage() {
   const { domainId } = useParams();
   if (session?.role !== "OWNER_ADMIN") return <p className="error-text">Zugriff nur für Inhaber/Admin.</p>;
   return <div className="paged-list scope-setup"><h1>Gemeinsame Gebäudedaten</h1>
-    <p>Vorbereitung: Diese Freigaben beschränken den bisherigen Zugriff noch nicht. Die gemeinsame Zugriffskontrolle für Gebäudedaten und Quellen ist noch nicht aktiviert.</p>
+    <p>Diese Freigaben bestimmen bei aktivem Quellschutz den Zugriff auf Gebäudedaten und Quellen. Den aktuellen Zustand und die nächsten Schritte finden Sie unter Berechtigungen.</p>
     <p><Link to="/kontaktdaten-rechte">Kontaktdaten-Rechte vorbereiten</Link></p>
     <p><Link to="/altquellen">Bereits zugeordnete Altquellen prüfen</Link></p>
-    <p><Link to="/quellenfreigaben">Eigene Originale prüfen und für den Datenbereich freigeben</Link></p>
-    <p>Finanzielle Berechtigungen werden separat in den <Link to="/berechtigungen">Abrechnungsbereichen</Link> verwaltet.</p>
+    <p><Link to="/berechtigungen/pruefungen/quellen">Eigene Originale prüfen und für den Datenbereich freigeben</Link></p>
+    <p><Link to="/berechtigungen">Berechtigungen</Link></p>
+    <p>Finanzielle Berechtigungen werden separat in den <Link to="/berechtigungen/teamrechte">Abrechnungsbereichen</Link> verwaltet.</p>
     {domainId ? <DomainGrants key={domainId} domainId={domainId} /> : <DomainList />}
   </div>;
 }

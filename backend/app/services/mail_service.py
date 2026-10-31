@@ -104,25 +104,23 @@ def _submit(config: Settings, message: EmailMessage, sender: str, recipient: str
             raise
 
 
-def valid_public_origin(value: str | None) -> bool:
-    """One trusted-origin rule for every mailbox link."""
-    from urllib.parse import urlsplit
-    try:
-        url = urlsplit(value or '')
-        return bool(url.scheme in {'https', 'http'} and url.hostname and not url.username and not url.password
-                    and not url.query and not url.fragment and url.path in {'', '/'}
-                    and (url.scheme == 'https' or url.hostname in {'localhost', '127.0.0.1', '::1'}))
-    except ValueError:
-        return False
+def public_origin(config: Settings) -> str:
+    """Use the routing hostname for mailbox links, never request headers."""
+    host = config.public_host or ""
+    label = r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?"
+    if len(host) > 253 or not re.fullmatch(rf"{label}(?:\.{label})*", host):
+        raise MailConfigurationError("Mailbox links require HV_PUBLIC_HOST (hostname only; links use HTTPS)")
+    return f"https://{host}"
 
 
 def password_reset_available(config: Settings) -> bool:
     """Public capability only: SMTP and a trusted link origin must be usable."""
     try:
         validate_configuration(config)
+        public_origin(config)
     except MailConfigurationError:
         return False
-    return valid_public_origin(config.public_url)
+    return True
 
 
 def _password_message(config: Settings, recipient: str, subject: str, body: str) -> EmailMessage:

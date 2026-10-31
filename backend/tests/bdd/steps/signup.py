@@ -1,8 +1,6 @@
 """Hosted signup through HTTP with the existing captured SMTP transport."""
 import uuid
 import pytest
-from sqlalchemy import text
-from app.core.db import get_session_factory
 from pytest_bdd import given, then, when
 from tests.signup_support import BODY, MESSAGE, confirmation_token
 
@@ -55,13 +53,11 @@ def signup_isolation(world, signup_mail):
     world.data['signup_isolation_body'] = body
     world.data['signup_mail'] = signup_mail
     yield
-    async def clean():
-        async with get_session_factory()() as session, session.begin():
-            await session.execute(text('DELETE FROM signup_request WHERE email_normalized=:email'), {'email': body['email']})
-    world.run(clean())
+    import psycopg2
+    from tests.conftest import MIGRATOR_SYNC_URL
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute('DELETE FROM signup_request WHERE email_normalized=%s', (body['email'],))
     if created := world.data.get('signup_created_organization'):
-        import psycopg2
-        from tests.conftest import MIGRATOR_SYNC_URL
         with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
             cursor.execute('DELETE FROM membership WHERE organization_id=%s', (created,))
             cursor.execute('DELETE FROM "user" WHERE organization_id=%s', (created,))

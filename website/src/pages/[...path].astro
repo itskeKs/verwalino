@@ -1,0 +1,15 @@
+---
+import PageView from '../components/Page.astro';
+import type { Locale } from '../i18n';
+import { routes, type Page } from '../content/routes';
+export function getStaticPaths() {
+  return Object.entries(routes).filter(([page]) => page !== 'notfound').flatMap(([page, paths]) =>
+    Object.entries(paths).map(([locale, path]) => ({
+      params: { path: path === '/' ? undefined : path.slice(1, -1) },
+      props: { locale, page },
+    })));
+}
+interface Props { locale: Locale; page: Page }
+const { locale, page } = Astro.props;
+---
+<PageView locale={locale} page={page} />

@@ -23,6 +23,9 @@ it("retries a lost grant reply with one key and starts a new explicit grant with
     <Route path="/berechtigungen/:scopeId" element={<AccountingScopesPage />} />
   </Routes></MemoryRouter>);
   await screen.findByRole("heading", { name: "Rental A (MIET)" });
+  expect(screen.getByRole("heading", { name: "Teamrechte" })).toBeVisible();
+  expect(screen.queryByText(/Teambetrieb ist noch nicht aktiviert/)).toBeNull();
+  expect(screen.getByRole("link", { name: "Alle Teamrechte" })).toHaveAttribute("href", "/berechtigungen/teamrechte");
   const user = await screen.findByLabelText("Teammitglied", { selector: "select" });
   await screen.findByRole("option", { name: "Clerk (clerk@example.test)" });
   fireEvent.change(user, { target: { value: "member" } });

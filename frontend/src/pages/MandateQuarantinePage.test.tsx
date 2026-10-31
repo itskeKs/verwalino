@@ -7,9 +7,9 @@ import * as auth from "../auth/useAuth";
 
 const row = { id: "original-id", document_id: "original-id", snapshot_digest: "a".repeat(64), observed_at: "2026-10-02T12:00:00Z", disposition: null };
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
-function show(role: "OWNER_ADMIN" | "CLERK" = "OWNER_ADMIN") {
+function show(role: "OWNER_ADMIN" | "CLERK" = "OWNER_ADMIN", path = "/") {
   vi.spyOn(auth, "useAuth").mockReturnValue({ loading: false, session: { user_id: "actor", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() });
-  render(<MemoryRouter><MandateQuarantinePage /></MemoryRouter>);
+  render(<MemoryRouter initialEntries={[path]}><MandateQuarantinePage /></MemoryRouter>);
 }
 
 it("requires explicit confirmation and reuses the request key after a lost response", async () => {
@@ -17,6 +17,8 @@ it("requires explicit confirmation and reuses the request key after a lost respo
   const post = vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Response lost")).mockResolvedValueOnce({ id: "receipt", document_id: row.id, reason: "CUSTODY_UNVERIFIED", reviewed_at: row.observed_at });
   show();
   const button = await screen.findByRole("button", { name: "Quarantäne als geprüft vermerken" });
+  expect(screen.getByRole("link", { name: "Offene Prüfungen" })).toHaveAttribute("href", "/berechtigungen/pruefungen");
+  expect(screen.getByText("Mandatsunterlagen: 1 geladen")).toBeVisible();
   expect(button).toBeDisabled();
   fireEvent.click(screen.getByRole("checkbox"));
   fireEvent.click(button); await screen.findByRole("alert");
@@ -53,4 +55,25 @@ it("uses the server disposition after refreshing a lost response", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Quarantäne neu laden" }));
   await screen.findByText(/Quarantäne geprüft ·/);
   expect(screen.queryByRole("button", { name: "Quarantäne als geprüft vermerken" })).toBeNull();
+});
+
+it("omits the reviews self-link inside the combined page", async () => {
+  vi.spyOn(api, "get").mockResolvedValue({ items: [row], next_cursor: null });
+  show("OWNER_ADMIN", "/berechtigungen/pruefungen");
+  await screen.findByRole("button", { name: "Quarantäne als geprüft vermerken" });
+  expect(screen.queryByRole("link", { name: "Offene Prüfungen" })).not.toBeInTheDocument();
+});
+
+it("styles the link back to the combined reviews from a standalone list", async () => {
+  vi.spyOn(api, "get").mockResolvedValue({ items: [row], next_cursor: null });
+  show();
+  expect(await screen.findByRole("link", { name: "Offene Prüfungen" })).toHaveClass("link");
+});
+
+
+it("labels a partial page as loaded entries rather than an open total", async () => {
+  vi.spyOn(api, "get").mockResolvedValue({ items: [{ ...row, disposition: { id: "receipt", reviewed_at: row.observed_at } }], next_cursor: "next-page" });
+  show();
+  expect(await screen.findByText("Mandatsunterlagen: 1 geladen · weitere verfügbar")).toBeVisible();
+  expect(screen.getByText("Die Liste enthält auch bereits geprüfte Einträge.")).toBeVisible();
 });

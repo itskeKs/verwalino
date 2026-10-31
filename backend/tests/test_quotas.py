@@ -53,7 +53,7 @@ def test_quota_migration_downgrade_is_exact_and_preserves_original_metadata(run_
     from alembic.operations import Operations
     from sqlalchemy import create_engine
     from tests.conftest import MIGRATOR_SYNC_URL
-    migration = importlib.import_module("migrations.versions.0145_organization_quota_usage")
+    migration = importlib.import_module("migrations.versions.0146_organization_quota_usage")
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.connect() as db:

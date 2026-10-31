@@ -1631,6 +1631,17 @@ export interface PropertyYearReport {
   footnote: string;
 }
 
+export interface AnlageVSummary {
+  property_id: string;
+  property_name: string;
+  year: number;
+  accounting_scope_id: string | null;
+  lines: { key: string; label: string; section: "Einnahmen" | "Werbungskosten"; amount: string; note: string }[];
+  unmapped: { code: string; label: string; section: "Einnahmen" | "Werbungskosten"; amount: string; note: string }[];
+  reconciliation: { section: "Einnahmen" | "Werbungskosten"; mapped_total: string; unmapped_total: string; report_total: string; difference: string }[];
+  footnote: string;
+}
+
 export interface SpecialLevyAllocation {
   owner_profile_id: string;
   unit_id: string;

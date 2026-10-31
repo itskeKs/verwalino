@@ -30,6 +30,9 @@ it("shows aggregate gaps and explicit setup links without an activation action",
   expect(await screen.findByText("100")).toBeVisible();
   expect(screen.getByRole("heading", { name: "Bestand vor der Umstellung prüfen" })).toBeVisible();
   expect(screen.getByRole("link", { name: "Altquellen prüfen" })).toHaveAttribute("href", "/altquellen");
+  expect(screen.getByRole("heading", { name: "Bestand prüfen" })).toBeVisible();
+  expect(screen.getByRole("link", { name: "Abrechnungskreise und Zuordnungen prüfen" })).toHaveAttribute("href", "/berechtigungen/teamrechte");
+  expect(screen.getByRole("link", { name: "Mandatsquarantäne prüfen" })).toHaveAttribute("href", "/berechtigungen/pruefungen/mandate");
   expect(screen.queryByRole("button", { name: /aktivieren/i })).not.toBeInTheDocument();
 });
 

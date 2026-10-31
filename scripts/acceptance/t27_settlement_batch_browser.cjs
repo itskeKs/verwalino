@@ -12,8 +12,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
-const { chromium } = require(process.env.HV_PLAYWRIGHT_PACKAGE
-  || '/Users/keks/.npm/_npx/420ff84f11983ee5/node_modules/playwright');
+const { chromium } = require(process.env.HV_PLAYWRIGHT_PACKAGE || 'playwright');
 const base = 'http://127.0.0.1:13000';
 const prefix = `T27 ${Date.now()} ${randomUUID().slice(0, 8)}`;
 const propertyName = `${prefix} Mietobjekt`;
@@ -197,7 +196,7 @@ async function selectLabel(scope, label, optionLabel) {
   }
   assert.equal(new Set(leases.map(lease => lease.id)).size, 3);
 
-  await page.goto(base + '/berechtigungen');
+  await page.goto(base + '/berechtigungen/teamrechte');
   await propertySelector('Objekt');
   await field(page, 'Bezeichnung').fill(scopeName);
   const scopeTypes = await field(page, 'Verwaltungsart').getByRole('option').evaluateAll(options =>

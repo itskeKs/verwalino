@@ -14,25 +14,15 @@ from app.core.config import Settings
         "deployment_mode": "selfhost",
         "first_run_setup_enabled": True,
         "self_service_signup_enabled": False,
-        "error_tracking_default_environment": "selfhost",
-        "admin_cli_bootstrap_allowed": True,
-        "multi_organization_expected": False,
         "rate_limit_profile": "relaxed",
         "quota_enforcement": False,
-        "support_url_default": "https://github.com/itskeKs/verwalino/issues",
-        "show_hosted_legal_links": False,
     }),
     ("hosted", {
         "deployment_mode": "hosted",
         "first_run_setup_enabled": False,
         "self_service_signup_enabled": True,
-        "error_tracking_default_environment": "hosted",
-        "admin_cli_bootstrap_allowed": True,
-        "multi_organization_expected": True,
         "rate_limit_profile": "strict",
         "quota_enforcement": True,
-        "support_url_default": "https://github.com/itskeKs/verwalino/issues",
-        "show_hosted_legal_links": True,
     }),
 ])
 def test_policy_table_matches_the_mode_snapshot(mode, expected):
@@ -109,3 +99,29 @@ def test_rate_limit_rules_match_the_selected_profile(mode, expected):
     assert astuple(rules) == expected
     with pytest.raises(FrozenInstanceError):
         rules.ip_failures = 1
+
+
+@pytest.mark.parametrize('mode', ['selfhost', 'hosted'])
+async def test_public_metadata_returns_only_mode_version_and_mail_capability_without_caching(client_unauth, monkeypatch, mode):
+    from app.core.config import settings
+    from app.main import app
+    monkeypatch.setattr(settings, 'deployment_mode', mode)
+    monkeypatch.setattr(settings, 'smtp_host', None)
+    response = await client_unauth.get('/api/meta')
+    assert response.status_code == 200
+    assert response.json() == {'deployment_mode': mode, 'version': app.version, 'mail_available': False}
+    assert response.headers['cache-control'] == 'no-store'
+    assert 'set-cookie' not in response.headers
+
+
+@pytest.mark.parametrize('host,available', [('signup.example.test', True), (None, False),
+    ('user:password@example.test', False), ('http://example.test', False)])
+async def test_meta_reports_only_usable_mail_configuration(client_unauth, signup_mail, monkeypatch, host, available):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, 'public_host', host)
+    response = await client_unauth.get('/api/meta')
+    assert response.json()['mail_available'] is available
+    assert set(response.json()) == {'deployment_mode', 'version', 'mail_available'}
+
+
+from tests.signup_support import signup_mail  # noqa: E402,F401

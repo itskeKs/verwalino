@@ -8,8 +8,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
-const { chromium } = require(process.env.HV_PLAYWRIGHT_PACKAGE
-  || '/Users/keks/.npm/_npx/420ff84f11983ee5/node_modules/playwright');
+const { chromium } = require(process.env.HV_PLAYWRIGHT_PACKAGE || 'playwright');
 const base = 'http://127.0.0.1:13000';
 const prefix = `T33 ${Date.now()} ${randomUUID().slice(0, 8)}`;
 const propertyName = `${prefix} WEG`;
@@ -218,7 +217,7 @@ function decimal(value, expected) {
     decimal(ownership.mea_share, '1');
     fixtures.push({ unit, unitName, unitUrl, person, owner, name, ownership, mea, amount });
   }
-  await page.goto(base + '/berechtigungen');
+  await page.goto(base + '/berechtigungen/teamrechte');
   const group = page.getByRole('group', { name: 'Objekt', exact: true });
   await field(group, 'Objekte durchsuchen').fill(propertyName);
   await selectLabel(page, 'Objekt', propertyName);
