@@ -152,14 +152,18 @@ async def settlement_periods(
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_live_member_db),
 ):
-    from app.engine.periods import period_starting_in, period_label
+    from app.engine.periods import period_for_date, period_starting_in, period_label
 
     prop = await PropertyRepository(db, auth.organization_id).get_by_id(property_id)
     if prop is None:
         raise HTTPException(404, "Property not found")
-    reference_year = year if year is not None else date.today().year
+    if year is None:
+        current_start, _ = period_for_date(prop.fiscal_year_start_month, date.today())
+        start_years = range(current_start.year - 1, current_start.year - 4, -1)
+    else:
+        start_years = range(year - 2, year + 2)
     periods = []
-    for start_year in range(reference_year - 2, reference_year + 2):
+    for start_year in start_years:
         start, end = period_starting_in(prop.fiscal_year_start_month, start_year)
         periods.append(SettlementPeriodOut(year=start_year, label=period_label(start, end),
             period_start=start, period_end=end))

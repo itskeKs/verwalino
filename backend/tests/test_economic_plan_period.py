@@ -9,6 +9,65 @@ from tests.financial_coverage_helpers import attest_fixture
 pytestmark = pytest.mark.usefixtures("period_data_cleanup")
 
 
+async def period_draft_plans(api, data):
+    first = await create(api, "/api/economic-plans", {
+        "property_id": data["property"]["id"], "plan_year": 2025,
+        "period_start": "2025-01-01", "period_end": "2025-12-31",
+    })
+    changed = await api.put(f"/api/properties/{data['property']['id']}", json={"fiscal_year_start_month": 7})
+    assert changed.status_code == 200, changed.text
+    second = await create(api, "/api/economic-plans", {
+        "property_id": data["property"]["id"], "plan_year": 2025,
+        "period_start": "2025-07-01", "period_end": "2026-06-30",
+    })
+    return first, second
+
+
+async def test_plan_finalization_rechecks_drafts_against_newly_finalized_period(client_a_admin):
+    api = client_a_admin
+    data = await period_property(api, month=1)
+    plans = await period_draft_plans(api, data)
+    values = {"planned_costs": [], "reserve_contribution_total": "0.00"}
+    for plan in plans:
+        await attest_fixture(api, "economic_plan", plan["id"], values)
+    first = await api.post(f"/api/economic-plans/{plans[0]['id']}/finalize", json=values)
+    assert first.status_code == 200, first.text
+    second = await api.post(f"/api/economic-plans/{plans[1]['id']}/finalize", json=values)
+    assert second.status_code == 409, second.text
+    assert second.json()["detail"] == "Der Zeitraum überschneidet einen finalisierten Wirtschaftsplan dieses Objekts."
+    assert (await api.get(f"/api/economic-plans/{plans[1]['id']}")).json()["status"] == "draft"
+
+
+async def test_weg_finalization_rechecks_drafts_against_newly_finalized_period(client_a_admin):
+    api = client_a_admin
+    data = await period_property(api, month=1)
+    plans = await period_draft_plans(api, data)
+    plan_values = {"planned_costs": [], "reserve_contribution_total": "0.00"}
+    await attest_fixture(api, "economic_plan", plans[0]["id"], plan_values)
+    first_plan = await api.post(f"/api/economic-plans/{plans[0]['id']}/finalize", json=plan_values)
+    assert first_plan.status_code == 200, first_plan.text
+    runs = [await create(api, "/api/weg-settlements", {
+        "property_id": data["property"]["id"], "economic_plan_id": plan["id"],
+        "period_start": plan["period_start"], "period_end": plan["period_end"],
+    }) for plan in plans]
+    values = {"reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
+        "paid_advances": [{"owner_profile_id": data["owner"]["id"], "paid_total": "0.00"}]}
+    await attest_fixture(api, "settlement", runs[0]["id"], values)
+    first = await api.post(f"/api/weg-settlements/{runs[0]['id']}/finalize", json=values)
+    assert first.status_code == 200, first.text
+    # Retire the old plan so the second draft can use its own current finalized plan.
+    correction = await api.post(f"/api/economic-plans/{plans[0]['id']}/correction")
+    assert correction.status_code == 201, correction.text
+    await attest_fixture(api, "economic_plan", plans[1]["id"], plan_values)
+    second_plan = await api.post(f"/api/economic-plans/{plans[1]['id']}/finalize", json=plan_values)
+    assert second_plan.status_code == 200, second_plan.text
+    await attest_fixture(api, "settlement", runs[1]["id"], values)
+    second = await api.post(f"/api/weg-settlements/{runs[1]['id']}/finalize", json=values)
+    assert second.status_code == 409, second.text
+    assert second.json()["detail"] == "Abrechnungszeitraum überschneidet eine finalisierte WEG-Abrechnung dieses Objekts."
+    assert (await api.get(f"/api/weg-settlements/{runs[1]['id']}")).json()["status"] == "draft"
+
+
 @pytest.fixture
 async def april(client_a_admin):
     return await period_property(client_a_admin)

@@ -297,7 +297,10 @@ class WegSettlementService:
         self, run_id: uuid.UUID, extras: WegComputeExtras | None = None
     ) -> SettlementRun:
         run = await self._get_weg_draft_or_404(run_id)
+        scope_id = await FinancialScopeService(self._session, self._org_id, self._user_id).enter(run)
         computation_basis = await begin_computation(self._session, self._org_id, run, 'finalize')
+        if await self._runs.has_conflicting_period(run, scope_id):
+            raise HTTPException(409, "Abrechnungszeitraum überschneidet eine finalisierte WEG-Abrechnung dieses Objekts.")
         extras = extras or WegComputeExtras()
         coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", extras)
         inp, result = await self._compute_weg_engine(run, extras)

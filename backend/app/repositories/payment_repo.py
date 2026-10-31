@@ -13,7 +13,7 @@ import uuid
 from datetime import date
 from typing import Sequence
 
-from sqlalchemy import case, func, select, text
+from sqlalchemy import and_, case, func, or_, select, text
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -138,15 +138,18 @@ class PaymentRepository(TenantRepository[Payment]):
     async def derived_for_nk_for_period(
         self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date
     ) -> Sequence[Payment]:
-        """booked, active NK_VORAUSZAHLUNG payments for one lease, month within period."""
+        """Booked NK by assigned months; year-only payments follow the start year."""
         await self.require_computation_context(lease_id=lease_agreement_id)
         stmt = (
             self._booked_active()
             .where(Payment.payment_type == "NK_VORAUSZAHLUNG")
             .where(Payment.lease_agreement_id == lease_agreement_id)
-            .where(Payment.period_month.isnot(None))
-            .where(Payment.period_year * 12 + Payment.period_month >= period_start.year * 12 + period_start.month)
-            .where(Payment.period_year * 12 + Payment.period_month <= period_end.year * 12 + period_end.month)
+            .where(or_(
+                and_(Payment.period_month.is_(None), Payment.period_year == period_start.year),
+                and_(Payment.period_month.isnot(None),
+                    Payment.period_year * 12 + Payment.period_month >= period_start.year * 12 + period_start.month,
+                    Payment.period_year * 12 + Payment.period_month <= period_end.year * 12 + period_end.month),
+            ))
         )
         result = await self._session.execute(stmt)
         return result.scalars().all()

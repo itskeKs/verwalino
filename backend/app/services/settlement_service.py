@@ -79,6 +79,11 @@ from app.repositories.settlement_repo import (
 ENGINE_VERSION = "m3.1.0"
 
 
+class SettlementPeriodConflict(HTTPException):
+    def __init__(self):
+        super().__init__(409, "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags.")
+
+
 @dataclass
 class ExternalAmountEntry:
     """A per-(cost_entry, unit, occupancy period) external tenant amount."""
@@ -284,7 +289,7 @@ class SettlementService:
         # prepare_new holds the existing organization financial-input lock.
         self._validate_period(period_start, period_end)
         if await self._runs.has_conflicting_period(run):
-            raise HTTPException(409, "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags.")
+            raise SettlementPeriodConflict()
         run = await self._runs.create(run)
 
         await self._audit.create(
@@ -308,7 +313,7 @@ class SettlementService:
         period_start: date,
         period_end: date,
         accounting_scope_id: uuid.UUID | None = None,
-    ) -> tuple[list[SettlementRun], list[SettlementRun]]:
+    ) -> tuple[list[SettlementRun], list[SettlementRun], list[tuple[uuid.UUID, str]]]:
         """Create missing lease drafts in the ambient, serialized transaction."""
         scope = FinancialScopeService(self._session, self._org_id, self._user_id)
         # Validate even an empty property/period before returning an empty batch.
@@ -328,16 +333,21 @@ class SettlementService:
             property_id, period_start, period_end, scope_id,
         )
         by_lease = {run.lease_agreement_id: run for run in existing}
-        created, skipped = [], []
+        created, skipped, errors = [], [], []
         for lease in leases:
             if lease.id in by_lease:
                 skipped.append(by_lease[lease.id])
             else:
-                created.append(await self.create_draft(
-                    property_id, lease.id, period_start, period_end,
-                    accounting_scope_id=scope_id,
-                ))
-        return created, skipped
+                try:
+                    created.append(await self.create_draft(
+                        property_id, lease.id, period_start, period_end,
+                        accounting_scope_id=scope_id,
+                    ))
+                except SettlementPeriodConflict as exc:
+                    errors.append((lease.id, exc.detail))
+        if errors and not created and not skipped:
+            raise SettlementPeriodConflict()
+        return created, skipped, errors
 
     async def set_advance_payments(
         self, run_id: uuid.UUID, amount: Decimal
@@ -476,6 +486,8 @@ class SettlementService:
         """
         run = await self._get_draft_or_404(run_id)
         computation_basis = await begin_computation(self._session, self._org_id, run, 'finalize')
+        if await self._runs.has_conflicting_period(run):
+            raise SettlementPeriodConflict()
         inp, result = await self._compute_engine(run, extras)
 
         payload = self._snapshot_with_meter_sources(inp, result)

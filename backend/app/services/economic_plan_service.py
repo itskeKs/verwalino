@@ -405,6 +405,8 @@ class EconomicPlanService:
     ) -> EconomicPlan:
         plan = await self._get_draft_or_404(plan_id)
         computation_basis = await begin_computation(self._session, self._org_id, plan, 'finalize')
+        if await self._plans.has_conflicting_period(plan):
+            raise HTTPException(409, "Der Zeitraum überschneidet einen finalisierten Wirtschaftsplan dieses Objekts.")
         inp, result = await self._compute_engine(plan, inputs)
 
         payload = {**build_plan_snapshot_payload(inp, result), **self._adopted_snapshot_inputs(plan, inputs)}
