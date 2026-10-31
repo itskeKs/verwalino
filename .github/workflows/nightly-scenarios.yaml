@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:
+    inputs:
+      file_issues:
+        description: File scenario failures as issues
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -20,6 +25,12 @@ jobs:
   scenarios:
     name: Scenarios (${{ matrix.mode }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    concurrency:
+      group: scenario-issues-${{ github.repository }}
+      cancel-in-progress: false
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -34,6 +45,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Prepare report and disposable credentials
         run: |
@@ -111,3 +124,17 @@ jobs:
           name: scenarios-${{ matrix.mode }}-${{ env.SCENARIO_DATE }}
           path: report/
           retention-days: 90
+
+      - name: File scenario failure issues
+        if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.file_issues == true) }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [[ -f report/scenarios.json ]]; then
+            python3 scripts/scenario_issues.py --report report/scenarios.json \
+              --repo "${{ github.repository }}" \
+              --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              --mode "${{ matrix.mode }}"
+          else
+            echo "Scenario execution did not produce scenarios.json; no failures to file."
+          fi

@@ -187,6 +187,6 @@ FAILED tests/test_access_coverage.py::test_capture_waits_for_live_admin_and_migr
 FAILED tests/test_allocation_adoptions.py::test_adoption_requires_source_export_and_current_confirmation_even_for_retry
 FAILED tests/test_allocation_adoptions.py::test_adoption_retained_evidence_blocks_downgrade_and_empty_roundtrip_restores_functions
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!! KeyboardInterrupt !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-/Users/keks/Developer/hausverwaltung/backend/.venv/lib/python3.13/site-packages/psycopg2/__init__.py:122: KeyboardInterrupt
+~/Developer/hausverwaltung/backend/.venv/lib/python3.13/site-packages/psycopg2/__init__.py:122: KeyboardInterrupt
 (to show a full traceback on KeyboardInterrupt use --full-trace)
 3 failed, 226 passed in 182.23s (0:03:02)
