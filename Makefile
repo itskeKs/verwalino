@@ -50,6 +50,7 @@ test-installer: ## Self-host installer and hosted-server script contract tests (
 	python3 -B scripts/test-install-scenarios.py
 	cd backend && $(UV_LINT) python ../scripts/test-self-host.py
 	cd backend && $(UV_LINT) python ../scripts/test-server-deploy.py
+	cd backend && $(UV_LINT) python ../scripts/test-canary.py
 
 test-selfhost-format: ## Opt-in backup format round trip in scratch test databases; owns the test DB lock
 	@( $(TESTDB_LOCK); \

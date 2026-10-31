@@ -1,0 +1,86 @@
+name: Hosted canary
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-canary
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Run production canary
+        id: probe
+        timeout-minutes: 2
+        env:
+          CANARY_EMAIL: ${{ secrets.CANARY_EMAIL }}
+          CANARY_PASSWORD: ${{ secrets.CANARY_PASSWORD }}
+        run: python3 -B scripts/canary.py --base-url https://app.verwalino.de --report report/canary.json
+
+      # Open one issue per outage; email only when a new issue was created.
+      - name: File canary issue
+        id: issue
+        if: ${{ failure() }}
+        timeout-minutes: 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [[ ! -s report/canary.json ]]; then
+            mkdir -p report
+            python3 -B - <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, "scripts")
+          from canary import make_report
+          report = make_report([{"name": "runner", "outcome": "failed", "error": {"type": "JobFailure"}}])
+          Path("report/canary.json").write_text(json.dumps(report))
+          PY
+          fi
+          python3 -B scripts/scenario_issues.py --report report/canary.json \
+            --repo "$REPOSITORY" --run-url "$RUN_URL"
+
+      - name: Send owner email
+        if: ${{ failure() && steps.issue.outputs.canary_issue_created == 'true' }}
+        timeout-minutes: 1
+        uses: dawidd6/action-send-mail@a9703ed89296f78cab37cd53cb47a0fcfc1ec1cd
+        with:
+          connection_url: ${{ secrets.ALERT_SMTP_URL }}
+          from: ${{ secrets.ALERT_SMTP_FROM }}
+          to: ${{ secrets.ALERT_EMAIL }}
+          subject: "Verwalino: Produktionsprüfung fehlgeschlagen"
+          body: |
+            Die automatische Produktionsprüfung ist fehlgeschlagen.
+            Bitte den Lauf und die einzelnen Prüfschritte ansehen:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Retain sanitized canary report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: canary-report
+          path: report/canary.json
+          if-no-files-found: warn
+          retention-days: 14

@@ -35,7 +35,7 @@ from app.services.render_names import settlement_render_names
 from app.services.settlement_pdf import render_settlement_pdf
 from app.services.meeting_service import MeetingService, invitation_short_notice
 from app.services.meeting_pdf import MeetingDisplayNames, render_invitation_pdf
-from app.services.mail_service import send_pdf, validate_address, validate_configuration, MailConfigurationError
+from app.services.mail_service import send_pdf, validate_configuration, validate_address, MailConfigurationError
 
 
 ENTITY = {"dunning": "dunning_notice", "settlement": "settlement_run", "invitation": "owners_meeting"}
@@ -233,7 +233,7 @@ class DocumentMailService:
                 body=f"Guten Tag,\n\nanbei erhalten Sie: {SUBJECT[kind]}.\n", pdf=pdf,
                 filename=f"{kind}-{document_id}.pdf", message_id=message_id)
             status = "accepted"
-        except (smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused, smtplib.SMTPDataError,
+        except (MailConfigurationError, smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused, smtplib.SMTPDataError,
                 smtplib.SMTPAuthenticationError, smtplib.SMTPConnectError, ConnectionRefusedError):
             status = "failed"
         except (smtplib.SMTPException, OSError):
