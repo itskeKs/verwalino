@@ -2,7 +2,7 @@
 
 from contextlib import closing
 import os
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import psycopg2
 import pytest
@@ -18,7 +18,14 @@ from tests import conftest as harness
 
 @pytest.fixture(scope="session")
 def run_migrations():
-    """Unit tests must not invoke the suite's database setup."""
+    """Unit tests must not invoke the suite's database setup.
+
+    Keep the suite's fileConfig patch nevertheless: the integration tests below
+    run Alembic directly, and its logging config would otherwise disable the
+    already imported application loggers for the rest of the session.
+    """
+    with patch("logging.config.fileConfig"):
+        yield None
 
 
 @pytest.fixture

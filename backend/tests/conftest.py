@@ -136,6 +136,15 @@ async def fixture_has_registered_documents(session: AsyncSession, document_ids: 
 
 
 def migrate_test_database(request):
+    # Migration CLI logging must not disable the already imported HTTP app's
+    # loggers or replace its scrubber/formatter inside this shared test process;
+    # tests call this helper directly, so the patch lives here as well as in the
+    # session fixture that keeps it active for later migration rehearsals.
+    with patch("logging.config.fileConfig"):
+        return _migrate_test_database(request)
+
+
+def _migrate_test_database(request):
     """Run Alembic migrations using the migrator role."""
     if MIGRATOR_SYNC_URL is None:
         raise RuntimeError("VERWALINO_TARGET_URL is supported only by tests/bdd; unset it for local database tests")
@@ -296,9 +305,7 @@ def _upgrade_test_database(alembic_cfg):
 
 @pytest.fixture(scope="session", autouse=True)
 def run_migrations(request=None):
-    # Migration CLI logging must not disable the already imported HTTP app's
-    # loggers or replace its scrubber/formatter inside this shared test process,
-    # including later migration rehearsals during the session.
+    # Keep the fileConfig patch active for later migration rehearsals during the session.
     with patch("logging.config.fileConfig"):
         yield migrate_test_database(request)
 
