@@ -31,3 +31,6 @@ infra/
 # CI / compose -- not needed inside the image
 docker-compose*.yml
 scripts/
+
+# Local diagnostics never enter image build contexts
+/diagnostics/

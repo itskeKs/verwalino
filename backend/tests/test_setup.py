@@ -6,6 +6,56 @@ from sqlalchemy import text
 from tests.setup_support import BODY, fresh_setup  # noqa: F401
 
 
+@pytest.fixture(autouse=True)
+def selfhost_mode(monkeypatch):
+    """Existing token contracts explicitly exercise the self-hosted policy."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "deployment_mode", "selfhost")
+
+
+@pytest.mark.asyncio
+async def test_hosted_setup_does_not_open_a_database_connection(monkeypatch):
+    import httpx
+    from app.core import db
+    from app.core.config import settings
+    from app.main import app
+
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
+
+    def unexpected_database_access():
+        pytest.fail("Hosted setup must close before accessing the database")
+
+    monkeypatch.setattr(db, "_session_factory", unexpected_database_access)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.get("/api/setup")).json() == {"required": False}
+        response = await client.post("/api/setup", content="{")
+        assert (response.status_code, response.json()) == (404, {"detail": "Not Found"})
+
+
+@pytest.mark.asyncio
+async def test_hosted_setup_is_closed_even_with_an_empty_database(fresh_setup, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    client, connection = fresh_setup
+    assert await connection.scalar(text("SELECT count(*) FROM public.organization")) == 0
+    status = await client.get("/api/setup")
+    assert status.json() == {"required": False}
+    assert status.headers["cache-control"] == "no-store"
+    unknown = await client.get("/api/not-a-route")
+    for method in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "TRACE", "CONNECT"):
+        for body in (BODY, {}, None):
+            response = await client.request(method, "/api/setup", json=body)
+            assert response.status_code == 404, (method, response.text)
+            if method != "HEAD":
+                assert response.json() == unknown.json()
+    malformed = await client.post("/api/setup", content="{", headers={"content-type": "application/json"})
+    assert (malformed.status_code, malformed.json()) == (404, unknown.json())
+    assert await connection.scalar(text("SELECT count(*) FROM public.organization")) == 0
+    assert (await client.get("/api/auth/session")).status_code == 401
+
+
 @pytest.mark.asyncio
 async def test_setup_creates_an_authenticated_owner_and_then_disappears(fresh_setup):
     client, _ = fresh_setup

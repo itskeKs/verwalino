@@ -125,6 +125,13 @@ Below `md` (768 px) the sidebar is off-canvas (`fixed`, slides in via the hambur
 overlay, closes on link click or overlay click); from `md` it is static. `AppShell.css`, `Sidebar.css`
 and `Topbar.css` exist but are imported nowhere; the shell is styled with utilities only.
 
+First-run setup opens when `GET /api/setup` reports `required: true`; the backend
+owns the deployment decision. In `hosted` mode it reports `required: false` and
+`/setup` redirects to login. While setup status loads, the existing "Lade..." state
+applies; if that check fails, login and signed-in pages stay available and setup
+requires a later successful app load. This changes route availability without
+adding visual elements.
+
 ### Sidebar groups
 
 Source: `GROUPS` in `Sidebar.tsx`. Active item `bg-sidebar-accent text-sidebar-accent-foreground`,
@@ -170,6 +177,26 @@ New screens follow these page structures and use a German noun as their `h1`.
   is wrapped in `<fieldset disabled>` and the button label changes ("Speichern..."). Create and edit forms
   open as a card above the list; small edits of master data open `MasterDataEditor` as a dialog.
   Selects, checkboxes and file inputs are the native elements.
+
+### Manual problem reports
+
+`UsersPage.tsx` places an outline kit Button **Problem melden** above the administrator's
+user form. It opens the existing kit Dialog, titled **Problem melden**, with German
+Sie-form disclosure of metadata/counts and excluded personal data. It states **Es wird
+nichts automatisch gesendet** and asks the user to review and attach the package manually.
+The disclosure limits error records to the organization's live API workers in one
+container and explains that a worker restart can make its records unavailable.
+The support link **Problem im Issue-Tracker melden** comes from `HV_SUPPORT_URL`; the
+last remembered server-error request ID appears separately, wraps long IDs, and is never
+added to the URL. A failed link lookup is an inline alert; reopening retries it.
+
+**Diagnosepaket herunterladen** is the primary action. During collection it reads
+**Diagnosepaket wird erstellt…** and disables duplicate downloads. Failure remains an
+inline `role="alert"` and permits retry. Success says only that the download started
+(`role="status"`). The dialog remains keyboard-operable and dismissible; completing a
+request after dismissal or session replacement cannot initiate a download. Content
+scrolls inside 90vh and fits the existing narrow-screen dialog. No new tokens or CSS
+components are introduced. See [reporting instructions](DEPLOY.md#diagnostics-and-reporting-a-problem).
 
 ### Responsive behaviour (down to 360 px)
 

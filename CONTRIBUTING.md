@@ -19,13 +19,15 @@ Rules for coding agents, which apply to people too, are in [AGENTS.md](AGENTS.md
   instance.
 - Local app: run `scripts/dev-local.sh` from the repository root after installing both
   dependency sets. It starts the API on `:18000`, UI on `:13000`, and invoice worker
-  together, using only the test database on `:55432` and a separate
+  together, plus the inbox worker when its health check passes, using only the test database on `:55432` and a separate
   `/tmp/hv-dev-documents.*` storage folder by default (or an explicitly supplied
   `/tmp` `HV_DOCUMENT_STORAGE_ROOT`). It ensures the local test admin
-  `test@example.de` exists and prints its login when ready. Cleanup stops all three processes on Ctrl+C or partial startup
+  `test@example.de` exists and prints its login when ready. Cleanup stops every started process on Ctrl+C or partial startup
   failure without stopping PostgreSQL; originals in the printed folder are
   preserved. Do not run resetting backend tests during a UI acceptance run.
-  Worker operation: [DEPLOY.md](DEPLOY.md#invoice-worker-t10).
+  Worker operation: [invoice worker](DEPLOY.md#invoice-worker-t10)
+  and [inbox worker](DEPLOY.md#inbox-worker).
+  Inbox worker skipped: check ClamAV (clamscan and signatures), worker database access, document storage and German OCR; API and UI will continue.
 - Declarations of division (Teilungserklärungen): the dependency sets above include the
   operations tooling. Imports require **Human Approval** before creating canonical
   building, unit, or rule data; document content remains untrusted. See the
@@ -69,6 +71,10 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   Markdown and failure artifacts in `report/`. See [reports and external targets](features/README.md#scenario-reports-and-nightly-runs).
 - **`make test-agent-rules`** — paired bodies/activation, the `CLAUDE.md` symlink and Codex hook
   contracts; Python stdlib, no database or backend dependencies. Run after changing rules or the adapter.
+- **`make test-installer`** — release-download, install-scenario reporting and portable
+  self-host contracts; fake curl/wget, Docker and cosign, no network downloads or database.
+  `python3 -B scripts/test-install.py` and `python3 -B scripts/test-install-scenarios.py`
+  also run standalone with stdlib only.
 - **`make test-scenario-issues`** — scenario failure fingerprints, deduplication and regression
   filing; Python stdlib, fake GitHub, no network or database.
 - **`make docs-check`** — relative links and images in every Markdown file outside `docs/archive/`.
@@ -81,6 +87,16 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   `trap 'rmdir /tmp/verwalino-testdb.lock' EXIT`; stop the stack before releasing it.
   `make test-backend`, `make test-bdd`, `make test-browser` and `make test-scenarios-report`
   acquire/release the lock themselves.
+
+If the shared database holds a migration revision unknown to the checkout, the session fixture
+logs that revision, drops and recreates `public` with its runtime schema grants, preserves the
+cluster roles, and runs the existing upgrade rehearsals. Known revisions still downgrade to
+base first. The reset requires `VERWALINO_TEST_DB=1` (exported by `scripts/test-env.sh`) and the
+validated `app_migrator` connection to `hausverwaltung` on `127.0.0.1` or `localhost`, port
+`55432`; it refuses every other target before connecting. As a manual alternative, hold the
+same lock, recreate only the disposable container with
+`docker compose -f infra/docker-compose.declaration-test.yml up -d --force-recreate --wait postgres`,
+then run the tests.
 
 The pre-commit hook (`.githooks/pre-commit` → `scripts/checks.sh`) runs ruff when backend Python
 is staged, eslint on staged frontend TypeScript files, and always the docs link check.
@@ -129,7 +145,13 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 | `features/` | API and `@browser` Gherkin scenarios (executable specs) |
 | `.github/workflows/nightly-scenarios.yaml` | nightly self-host scenarios, 90-day report artifacts and deduplicated failure issues; hosted mode pending #18 |
 | `frontend/src/` | `pages/`, `components/`, `api/`, `lib/` |
-| `scripts/` | dev, portable installer, hosted-server deploy/backup, checks; `acceptance/` holds legacy browser scripts (being migrated, #54) |
+| `install.sh` | one-command release installer; checksum/signature checks and digest-pinned portable init/start |
+| `scripts/build-release-bundle.sh` | shared flat release payload/checksum assembly for releases and the install matrix |
+| `scripts/install-scenarios.sh` | four install journeys on disposable VMs; JSON/Markdown reports and failure artifacts |
+| `scripts/test-install.py`, `scripts/test-self-host.py`, `scripts/test-install-scenarios.py` | installer, portable stack and scenario-report contracts; fake downloads/Docker, no database |
+| `.github/workflows/release-image.yaml` | publishes/signs both image platforms, then signs checksums and attaches installer assets to a GitHub Release |
+| `.github/workflows/install-matrix.yaml` | nightly, manual and tag-triggered native install checks; reports retained for 90 days |
+| `scripts/` | dev, self-host, deploy, checks; `acceptance/` holds legacy browser scripts (being migrated, #54) |
 | `scripts/scenario_issues.py`, `scripts/test-scenario-issues.py` | stdlib report consumer and fake-GitHub filing contracts; `@known-flaky` failures are excluded |
 | `DESIGN.md` | frontend design contract: tokens, layout, components, states, copy and formats; screenshots in `docs/assets/design/` |
 | `docs/` | architecture, domain pages (`m*.md`), ADRs, operations, roadmap, feature status |
