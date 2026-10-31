@@ -15,28 +15,48 @@ Status: **Draft for confirmation by the human — no application code, no migrat
 
 ## Property settlement periods (#68)
 
-Economic plan dates are derived from `property.fiscal_year_start_month` using the
-shared pure period functions. `plan_year` identifies the start year: an April plan
-for 2025 runs from 1 April 2025 through 31 March 2026. The create API retains its
-existing date fields for compatibility and derives the actual dates from the
-property and start year. The plan form prefills those dates from the property's
-period offers.
+Economic plans default to `property.fiscal_year_start_month` using the shared pure
+period functions. `plan_year` identifies the start year: an April plan for 2025
+runs from 1 April 2025 through 31 March 2026. Explicit `period_start` and
+`period_end` are honoured, including short periods for a mid-year accounting scope.
+Omitted dates default to the property period. The plan form prefills dates from
+the property's period offers.
 
-Creating a plan returns 409 if its derived period overlaps a visible active plan
-for the same property and the periods differ. Identical periods remain allowed,
-matching statement runs and preserving repeated draft creation. Superseded plans
-do not block a new period. The check uses normal row-level security, with the same
-[cross-scope limitation as statement runs](m3-abrechnungs-engine.md#property-settlement-periods-68).
+Explicit dates must fit within that property period, or bridge exactly the gap
+between the last finalized, non-superseded plan and the next property period.
+For example, after finalizing 1 January–31 December 2025 and changing the start
+month from January to April, a transition plan for 1 January–31 March 2026 closes
+the gap before the regular 1 April 2026–31 March 2027 plan. The transition can be
+finalized and used for a WEG settlement. Reversed periods, periods longer than
+twelve months and dates outside these boundaries return 422.
+
+Creating a plan returns 409 if its period overlaps a visible finalized,
+non-superseded plan for the property and the periods differ. Drafts may overlap;
+identical periods remain allowed. WEG annual runs use the same twelve-month
+validation (422) and finalized-only overlap rule (409), for their property and
+accounting context. Superseded documents do not block creation. Checks use normal
+row-level security, with the same [cross-scope limitation (#95) as statement
+runs](m3-abrechnungs-engine.md#property-settlement-periods-68): an inaccessible
+finalized document in another scope can remain undetected. No migration or
+privileged helper is added here.
 
 The previous-actuals preview and adoption use the preceding property period, including
 its scope boundaries, source digest and day-based cost proration. Paid Hausgeld is
 summed over the settlement's assigned months across calendar years using the ledger's
 sub-period filtering. Booked, active payments only are included; the existing handling
-of payments with a year but no month is preserved. Paid advances remain informational
+of payments with a year but no month is narrowed in period-aware derivation: a
+year-only payment belongs exactly to the period **starting** in its assigned year.
+For an April property, year 2025 is included in 2025/2026 and excluded from
+2024/2025. Calendar-year results remain unchanged; ledger filtering is unchanged. Paid advances
+remain informational
 and do not change the Abrechnungsspitze calculation. Changing the start month never
 rewrites existing plans, settlement dates or finalized snapshots. The WEG statement
 form initially adopts the selected plan's persisted dates, even if the property's
 start month has changed since that plan was created.
+
+**Deadline limitation:** the economic plan deadline in `fristen_service.py` still
+uses calendar-year dates for non-January properties. Correcting it is a follow-up,
+outside #68. The tenant-statement deadline already follows the property period.
 
 ## 0. Scope, Exit Criterion, Connection to M0–M3
 

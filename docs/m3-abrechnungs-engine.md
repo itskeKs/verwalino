@@ -17,24 +17,34 @@ Status: **Draft for confirmation by the human — no application code, no migrat
 
 `property.fiscal_year_start_month` defines twelve months from the first of that month;
 January remains the default. `engine/periods.py` supplies pure inclusive bounds for a
-containing date or a start year, and labels such as `2025` or `2025/2026`. The deadline
+containing date or a start year, and labels such as `2025` or `2025/2026`. The tenant-statement deadline
 monitor uses the same functions. No migration or rounding changes are required.
 
 `GET /api/properties/{property_id}/settlement-periods?year=2025` offers start years
 2023–2026 with labels and dates; without `year`, the reference is the current calendar
 year. The statement and batch forms adopt the offered dates and still permit free
 periods. A reversed or over-twelve-month period returns 422. A non-identical overlap
-with another active run for the same lease and type that the acting user can see
-returns 409; identical periods remain permitted and batches continue skipping
-identical existing runs. Active means not superseded, including drafts and finalized
-runs. Short transition periods remain possible after a property's start month changes.
+with a finalized, non-superseded run for the same lease and type that the acting
+user can see returns 409; identical periods remain permitted and batches continue
+skipping identical existing runs. Drafts are working state and may overlap. Short
+transition periods remain possible after a property's start month changes. An
+inclusive period from 29 February 2024 through 28 February 2025 is twelve months
+and is accepted.
 
 **Current overlap limitation:** the check runs under the acting user's normal
 row-level security. Overlaps with runs in other accounting scopes that the user
 cannot see are not detected. The existing financial-input lock serializes creation,
-but does not widen visibility. A follow-up must add a database constraint to enforce
+but does not widen visibility. Follow-up #95 must add a database constraint to enforce
 the rule across accounting scopes; this change adds neither a migration nor a
-privileged helper.
+privileged helper. This limitation also applies to economic plans and WEG runs.
+
+**Other period rules and limitation:** economic plans honour explicit dates within
+the property period or exactly closing the gap from the last finalized plan to the
+next property period; omitted dates default to the property period. Year-only
+Hausgeld payments belong to the period starting in the assigned year. See the
+[WEG period rules](m4-weg-abrechnung.md#property-settlement-periods-68). The economic
+plan deadline in `fristen_service.py` is still calendar-based for non-January
+properties and remains a follow-up; it is not changed by #68.
 
 Automatic form prefill only applies while both date fields are empty. A delayed
 period-offer response preserves dates the user has already entered; choosing an
