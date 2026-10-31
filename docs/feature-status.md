@@ -9,7 +9,7 @@ reference feature). Short paths: `api/ services/ engine/ models/ workers/ core/`
 repository root. Task IDs (`T…`) are the historical task numbers of the former MVP task list (see git
 history). Update this page in the same PR whenever a feature's status changes.
 
-The hosted instance runs on the Contabo server through `scripts/self-host.sh`
+The hosted instance is being set up on the hosted server (#6) through `scripts/self-host.sh`
 and the [hosted deploy workflow](../DEPLOY.md#hosted-server). It shares the portable
 stack's limits: declaration import/Q&A, SMTP and automatic invoice OCR are disabled.
 

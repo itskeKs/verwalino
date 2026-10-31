@@ -127,6 +127,7 @@ def test_collection_refuses_a_missing_database_url(env_name: str) -> None:
     [
         lambda env_name: _url(env_name, port=5433),
         lambda env_name: _url(env_name, host="database.example.test"),
+        lambda env_name: _url(env_name, database="other"),
         lambda env_name: _url(env_name, username="unexpected_role"),
     ],
 )
@@ -135,6 +136,17 @@ def test_collection_refuses_non_disposable_database_urls(
     invalid_url,
 ) -> None:
     result = _collect_with({env_name: invalid_url(env_name)})
+
+    assert result.returncode != 0
+    assert "Refusing destructive tests" in result.stderr
+    assert "app_secret" not in result.stderr
+    assert "migrator_secret" not in result.stderr
+
+
+def test_collection_refuses_an_async_scheme_for_the_sync_database_url() -> None:
+    result = _collect_with({
+        "HV_DATABASE_URL_SYNC": _url("HV_DATABASE_URL_SYNC", scheme="postgresql+asyncpg"),
+    })
 
     assert result.returncode != 0
     assert "Refusing destructive tests" in result.stderr

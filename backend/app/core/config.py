@@ -46,7 +46,7 @@ class Settings(BaseSettings):
 
     # --- HTTP perimeter ---
     # Keep local development and ASGI tests working by default. Production
-    # Compose replaces this with the single public alpha hostname.
+    # Compose replaces this with the single public hostname.
     allowed_hosts: str = "localhost,127.0.0.1,test"
     enable_api_docs: bool = True
 

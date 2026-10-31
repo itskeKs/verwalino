@@ -22,6 +22,13 @@ setup-token flow. Its manifest relies on the `selfhost` default; it does not for
 `VERWALINO_MODE` is a separate transport choice. Use a separately managed deployment
 to run hosted mode; do not use the portable installer to start a hosted service.
 
+For the retained `docker-compose.prod.yml`, `.env.example` is the environment
+template; keep the populated `.env` private with mode 0600. Set the required
+`HV_PUBLIC_HOST` to the single public hostname (for example
+`verwaltung.example.org`). Compose passes it as `HV_ALLOWED_HOSTS` and uses it
+in the Traefik router rules. The API healthcheck requests
+`http://127.0.0.1:8000/api/health/live` with that value as its `Host` header.
+
 ## Install in one command
 
 For a **new** Linux server or macOS/Linux laptop with Bash, OpenSSL, Docker
@@ -29,7 +36,7 @@ Engine/Desktop, Compose **v2 >= 2.24**, `curl` or `wget`, and `sha256sum` or
 `shasum`. Docker must already be running and accessible to your user. The
 script does not use sudo or install system packages. Choose a Docker context
 without an existing Verwalino installation; only one installation per context
-is supported. Do not run this on the existing alpha host.
+is supported. Do not run this on an existing production host.
 
 **Release preparation:** these commands work once the maintainer publishes the
 first stable tag with installer assets and enables anonymous repository/release
@@ -541,7 +548,8 @@ Ordinary test runs skip it with a reason; it also skips when Docker is missing.
 Declaration import/Q&A, SMTP and the ordinary invoice worker are disabled in
 the default portable stack. The optional [inbox worker](#inbox-worker) processes
 intake documents locally; it requires scanner signatures and, for scans, German
-OCR. The T10 worker is active on the existing alpha since 2026-10-24. The first tag publication and native arm64 image installation,
+OCR. The T10 worker is configured in the local production Compose file. The
+first tag publication and native arm64 image installation,
 complete clean-host setup/login/restart and real domain/TLS acceptance still
 need operator checks; do not treat the mock installer tests as
 proof of those behaviors. Run the portable tests without Docker using
