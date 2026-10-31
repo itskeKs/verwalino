@@ -103,7 +103,7 @@ def test_mail_transport_exact_pdf_tls_auth_and_no_delivery_claim(smtp):
     assert ("login", "synthetic", "fake-only") in smtp.calls
 
 
-@pytest.fixture(params=["send_pdf", "send_signup_confirmation"])
+@pytest.fixture(params=["send_pdf", "send_signup_confirmation", "submit_password_mail"])
 def mail_sender(request):
     from app.services import mail_service
     kwargs = (dict(subject="Mahnung", body="Anbei", pdf=b"%PDF-x", filename="x.pdf",
@@ -111,6 +111,10 @@ def mail_sender(request):
               else dict(link="https://staging.example.invalid/signup/confirm?token=synthetic"))
 
     def send(config, recipient):
+        if request.param == "submit_password_mail":
+            message = mail_service.build_password_reset(config, recipient=recipient, link=kwargs["link"])
+            mail_service.submit_password_mail(config, message)
+            return
         getattr(mail_service, request.param)(config, recipient=recipient, **kwargs)
 
     return send
