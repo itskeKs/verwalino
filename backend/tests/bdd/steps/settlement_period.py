@@ -170,3 +170,34 @@ def successive_tenant_shares(world):
         line, = [line for line in run["lines"] if line["line_type"] == "COST"]
         assert line["time_share_days"] == days
         assert line["time_share_total_days"] == 365
+
+
+@given("a calendar-year tenancy with a booked yearly advance of 1200 euros")
+def yearly_advance(world, period_data_cleanup):
+    data = world.run(period_property(world.actor, month=1))
+    world.run(booked(world.actor, data, 2025, None, amount="1200.00"))
+    world.data["yearly_advance_property"] = data
+
+
+@when("the manager finalizes statements for January through June and July through December")
+def adjacent_yearly_advance_statements(world):
+    data = world.data["yearly_advance_property"]
+    runs = []
+    for start, end in (("2025-01-01", "2025-06-30"), ("2025-07-01", "2025-12-31")):
+        run = world.run(create(world.actor, "/api/settlements", statement(data, start, end)))
+        derived = world.act("PATCH", f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
+        assert derived.status_code == 200, world.describe_response()
+        world.run(attest_fixture(world.actor, "settlement", run["id"], {
+            "advance_payments_total": derived.json()["advance_payments_total"], "advance_payments_source": "DERIVED",
+        }))
+        final = world.act("POST", f"/api/settlements/{run['id']}/finalize", json={})
+        assert final.status_code == 200, world.describe_response()
+        runs.append(final.json())
+    world.data["yearly_advance_statements"] = runs
+
+
+@then("each statement credits 600 euros of the yearly advance")
+def yearly_advance_is_shared(world):
+    totals = [Decimal(run["advance_payments_total"]) for run in world.data["yearly_advance_statements"]]
+    assert totals == [Decimal("600.00"), Decimal("600.00")]
+    assert sum(totals) == Decimal("1200.00")

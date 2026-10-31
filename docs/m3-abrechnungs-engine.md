@@ -18,7 +18,7 @@ Status: **Draft for confirmation by the human — no application code, no migrat
 `property.fiscal_year_start_month` defines twelve months from the first of that month;
 January remains the default. `engine/periods.py` supplies pure inclusive bounds for a
 containing date or a start year, and labels such as `2025` or `2025/2026`. The tenant-statement deadline
-monitor uses the same functions. No migration or rounding changes are required.
+monitor uses the same functions. No migration is required.
 
 `GET /api/properties/{property_id}/settlement-periods?year=2025` offers start years
 2023–2026 with labels and dates; without `year`, the offers are the three most
@@ -70,7 +70,19 @@ the readable property period or exactly closing the gap from the last finalized
 plan to the next property period; scope-only clerks supply their own dates,
 subject to the same twelve-month and overlap checks. Offered plan dates remain
 editable for mid-year scopes and gap-closing transitions. Year-only NK and
-Hausgeld payments belong to the period starting in the assigned year. See the
+Hausgeld advances are split across the twelve months of their assigned calendar
+year. A statement credits only the months it covers in that year, including
+months in the second calendar year of a non-calendar period. The rounding module
+floors each monthly share to cents and assigns the remainder to December, so
+the last period covering that year receives the remaining cents. For 1,200 euros,
+January–June and July–December credit 600 euros each; April–December credits
+900 euros. For 1,000 euros, January–November credit 83.33 euros each and December
+83.37 euros. A full calendar year still credits the full amount. Month shares
+do not depend on other drafts or finalization order; later statements cannot
+change earlier finalized shares. If a statement boundary splits a month, that
+month's share is prorated by its days using cumulative cent boundaries, so
+adjacent partial-month statements cannot credit that share twice. The NK finalization freshness check uses the
+same derivation. Explicit month assignments and ledger filtering are unchanged. See the
 [WEG period rules](m4-weg-abrechnung.md#property-settlement-periods-68). The economic
 plan deadline in `fristen_service.py` is still calendar-based for non-January
 properties and remains a follow-up; it is not changed by #68.

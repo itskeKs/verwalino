@@ -121,7 +121,7 @@ async def test_statement_finalization_rechecks_drafts_against_newly_finalized_pe
 
 
 @pytest.mark.parametrize("month", [1, 4])
-async def test_year_only_nk_advance_is_attributed_to_period_start_year_and_finalizes(client_a_admin, month):
+async def test_year_only_nk_advance_is_split_between_calendar_year_months_and_finalizes(client_a_admin, month):
     api = client_a_admin
     data = await period_property(api, month=month)
     await booked(api, data, 2025, None, amount="1200.00")
@@ -132,7 +132,7 @@ async def test_year_only_nk_advance_is_attributed_to_period_start_year_and_final
         run = await create(api, "/api/settlements", statement(data, start, end))
         derived = await api.patch(f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": year})
         assert derived.status_code == 200, derived.text
-        expected = "1200.00" if year == 2025 else "0.00"
+        expected = ("1200.00" if year == 2025 else "0.00") if month == 1 else ("900.00" if year == 2025 else "300.00")
         assert Decimal(derived.json()["advance_payments_total"]) == Decimal(expected)
         await attest_fixture(api, "settlement", run["id"], {
             "advance_payments_total": expected, "advance_payments_source": "DERIVED",
@@ -140,7 +140,37 @@ async def test_year_only_nk_advance_is_attributed_to_period_start_year_and_final
         final = await api.post(f"/api/settlements/{run['id']}/finalize", json={})
         assert final.status_code == 200, final.text
         totals.append(Decimal(final.json()["advance_payments_total"]))
-    assert totals == [Decimal("0.00"), Decimal("1200.00")]
+    assert sum(totals) == Decimal("1200.00")
+
+
+@pytest.mark.parametrize("amount,periods,expected", [
+    ("1200.00", [("2025-01-01", "2025-06-30"), ("2025-07-01", "2025-12-31")], ["600.00", "600.00"]),
+    ("1200.00", [("2025-01-01", "2025-03-31"), ("2025-04-01", "2026-03-31")], ["300.00", "900.00"]),
+    ("1200.00", [("2025-01-01", "2025-12-31")], ["1200.00"]),
+    ("1200.00", [("2025-01-01", "2025-01-15"), ("2025-01-16", "2025-12-31")], ["48.38", "1151.62"]),
+    ("1000.00", [(f"2025-{m:02d}-01", f"2025-{m:02d}-{days}")
+                 for m, days in enumerate((31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31), 1)],
+     ["83.33"] * 11 + ["83.37"]),
+])
+async def test_year_only_nk_advance_is_not_credited_twice_across_adjacent_periods(
+    client_a_admin, amount, periods, expected,
+):
+    api = client_a_admin
+    data = await period_property(api, month=1)
+    await booked(api, data, 2025, None, amount=amount)
+    totals = []
+    for (start, end), share in zip(periods, expected):
+        run = await create(api, "/api/settlements", statement(data, start, end))
+        derived = await api.patch(f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
+        assert derived.status_code == 200, derived.text
+        assert Decimal(derived.json()["advance_payments_total"]) == Decimal(share)
+        await attest_fixture(api, "settlement", run["id"], {
+            "advance_payments_total": share, "advance_payments_source": "DERIVED",
+        })
+        final = await api.post(f"/api/settlements/{run['id']}/finalize", json={})
+        assert final.status_code == 200, final.text
+        totals.append(Decimal(final.json()["advance_payments_total"]))
+    assert sum(totals) == Decimal(amount)
 
 
 async def test_year_only_nk_advance_cannot_be_omitted_from_derived_finalization(client_a_admin):

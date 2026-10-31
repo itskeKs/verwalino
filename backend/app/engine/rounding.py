@@ -6,8 +6,8 @@ that the rounded shares sum EXACTLY back to the total.  This is the core
 correctness guarantee of M3: "Sum of shares == total cost, no cent lost"
 (a formal BGH requirement; ADR-0005 section 4.2).
 
-EVERY distribution in the engine -- every key, every time split -- routes
-through this one function.  There is no other place money is rounded to cent.
+Cost distributions route through this function. Year-only advances use the
+explicit calendar-month rule below, with the remainder in December.
 
 Algorithm (ADR-0005, Entscheidung; Hamilton / Hare / Largest-Remainder):
 
@@ -37,6 +37,8 @@ result -> stable snapshot hash (ADR-0003).
 
 from __future__ import annotations
 
+from calendar import monthrange
+from datetime import date
 from decimal import Decimal, ROUND_FLOOR
 
 CENT = Decimal("0.01")
@@ -54,6 +56,31 @@ class DistributionError(ValueError):
 def _floor_to_cent(value: Decimal) -> Decimal:
     """Floor a Decimal to 2 places toward -inf (see module docstring)."""
     return value.quantize(CENT, rounding=ROUND_FLOOR)
+
+
+def annual_advance_share_for_period(
+    total: Decimal, year: int, period_start: date, period_end: date,
+) -> Decimal:
+    """Stable month shares; December reconciles the annual cent remainder.
+
+    Partial months use differences of cumulative day shares rounded down to
+    cents. Adjacent windows therefore reconcile even when they split a month.
+    Allocation is independent of other statements and finalization order.
+    """
+    if not period_start.year <= year <= period_end.year:
+        return Decimal("0.00")
+    total = total.quantize(CENT)
+    monthly = _floor_to_cent(total / 12)
+    first = period_start.month if year == period_start.year else 1
+    last = period_end.month if year == period_end.year else 12
+    result = Decimal("0.00")
+    for month in range(first, last + 1):
+        share = total - monthly * 11 if month == 12 else monthly
+        days = monthrange(year, month)[1]
+        before = period_start.day - 1 if (year, month) == (period_start.year, period_start.month) else 0
+        through = period_end.day if (year, month) == (period_end.year, period_end.month) else days
+        result += _floor_to_cent(share * through / days) - _floor_to_cent(share * before / days)
+    return result
 
 
 def distribute_amount(

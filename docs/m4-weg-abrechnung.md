@@ -54,11 +54,18 @@ privileged helper is added here.
 The previous-actuals preview and adoption use the preceding property period, including
 its scope boundaries, source digest and day-based cost proration. Paid Hausgeld is
 summed over the settlement's assigned months across calendar years using the ledger's
-sub-period filtering. Booked, active payments only are included; the existing handling
-of payments with a year but no month is narrowed in period-aware derivation: a
-year-only payment belongs exactly to the period **starting** in its assigned year.
-For an April property, year 2025 is included in 2025/2026 and excluded from
-2024/2025. Calendar-year results remain unchanged; ledger filtering is unchanged. Paid advances
+sub-period filtering. Booked, active payments only are included. Year-only
+Hausgeld had the same double-credit risk as NK when adjacent periods started
+in the same year, so both now share the calendar-month allocation: twelve equal
+month shares rounded down to cents, with the remaining cents in December.
+Each period credits only its covered months in each assigned year. For an
+April property, a year-only 1,200-euro payment for 2025 credits 300 euros to
+2024/2025 and 900 euros to 2025/2026; adjacent half-years credit 600 euros each.
+For 1,000 euros, January–November credit 83.33 euros each and December 83.37 euros.
+Shares are independent of draft/finalization order. Full calendar-year results
+are retained; split months use day-based cumulative cent boundaries so adjacent
+partial-month statements also reconcile. Explicit monthly assignments
+remain unchanged; ledger filtering is unchanged. Paid advances
 remain informational
 and do not change the Abrechnungsspitze calculation. Changing the start month never
 rewrites existing plans, settlement dates or finalized snapshots. The WEG statement

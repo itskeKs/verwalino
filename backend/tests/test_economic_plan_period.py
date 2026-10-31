@@ -252,7 +252,7 @@ async def test_identical_plan_period_stays_allowed(client_a_admin, april):
 
 
 @pytest.mark.parametrize("month", [1, 4])
-async def test_year_only_hausgeld_belongs_to_period_starting_in_assigned_year(client_a_admin, month):
+async def test_year_only_hausgeld_is_split_between_calendar_year_months(client_a_admin, month):
     api = client_a_admin
     data = await period_property(api, month=month)
     await booked(api, data, 2025, None, hausgeld=True)
@@ -266,7 +266,7 @@ async def test_year_only_hausgeld_belongs_to_period_starting_in_assigned_year(cl
         answer = await api.post(f"/api/weg-settlements/{run['id']}/paid-advances-derived")
         assert answer.status_code == 200, answer.text
         totals.append(Decimal(answer.json()[0]["paid_total"]))
-    assert totals == [Decimal("0.00"), Decimal("100.00")]
+    assert totals == ([Decimal("0.00"), Decimal("100.00")] if month == 1 else [Decimal("24.99"), Decimal("75.01")])
 
 
 async def test_weg_rejects_overlong_period(client_a_admin, april):
@@ -360,3 +360,20 @@ async def test_requested_dates_reach_scope_validation_unchanged(monkeypatch, mon
     service._audit = AsyncMock()
     result = await service.create_draft(uuid4(), year, date.fromisoformat(start), date.fromisoformat(end))
     assert (result.period_start.isoformat(), result.period_end.isoformat()) == (start, end)
+
+
+async def test_year_only_hausgeld_is_not_credited_twice_across_adjacent_periods(client_a_admin):
+    api = client_a_admin
+    data = await period_property(api, month=1)
+    await booked(api, data, 2025, None, hausgeld=True, amount="1200.00")
+    totals = []
+    for start, end in (("2025-01-01", "2025-06-30"), ("2025-07-01", "2025-12-31")):
+        plan = await finalized_plan(api, data, start, end)
+        run = await create(api, "/api/weg-settlements", {"property_id": data["property"]["id"],
+            "economic_plan_id": plan["id"], "period_start": start, "period_end": end})
+        answer = await api.post(f"/api/weg-settlements/{run['id']}/paid-advances-derived")
+        assert answer.status_code == 200, answer.text
+        total = Decimal(answer.json()[0]["paid_total"])
+        assert total == Decimal("600.00")
+        totals.append(total)
+    assert sum(totals) == Decimal("1200.00")
