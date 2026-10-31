@@ -157,7 +157,7 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 | `scripts/test-install.py`, `scripts/test-self-host.py`, `scripts/test-install-scenarios.py` | installer, portable stack and scenario-report contracts; fake downloads/Docker, no database |
 | `.github/workflows/release-image.yaml` | publishes/signs release platforms and installer assets; reusable main job publishes staging images without a release |
 | `infra/docker-compose.staging.yml`, `infra/Caddyfile.staging` | hosted staging project and crawler-blocking shared Caddy site; [operator runbook](docs/operations/staging-and-canary.md) |
-| `infra/docker-compose.hosted-proxy.yml`, `infra/Caddyfile.hosted` | opt-in hosted proxy mounts that preserve staging routing across production deploys |
+| `infra/docker-compose.hosted-proxy.yml`, `infra/Caddyfile.hosted` | opt-in shared wrapper; apply with the site overlay to preserve production, staging and website routing |
 | `scripts/deploy-server.sh`, `scripts/test-server-deploy.py` | strict production/staging/site forced-command targets and fake server contracts |
 | `.github/workflows/install-matrix.yaml` | nightly, manual and tag-triggered native install checks; reports retained for 90 days |
 | `scripts/` | dev, self-host, deploy, checks; `acceptance/` holds legacy browser scripts (being migrated, #54) |

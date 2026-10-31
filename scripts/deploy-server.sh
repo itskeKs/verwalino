@@ -78,7 +78,6 @@ locked=0
 checked_out=0 pinned=0
 prev_commit='' prev_tag='' prev_image='' digest_ref=''
 prev_site_sha=unknown caddy_container=''
-site_was_enabled=0
 
 main() {
     die() { printf 'deploy: %s\n' "$*" >&2; exit 1; }
@@ -190,10 +189,9 @@ main() {
             --mount "type=bind,src=$ROOT/config/Caddyfile.hosted,dst=/etc/caddy/Caddyfile,readonly" \
             --mount "type=bind,src=$APP/infra/Caddyfile,dst=/etc/caddy/Caddyfile.production,readonly" \
             --mount "type=bind,src=$APP/infra/Caddyfile.staging,dst=/etc/caddy/Caddyfile.staging,readonly" \
+            --mount "type=bind,src=$APP/infra/Caddyfile.site,dst=/etc/caddy/Caddyfile.site,readonly" \
             caddy:2.10.2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-        docker compose --project-name verwalino --env-file "$CONFIG" \
-            -f "$APP/infra/docker-compose.yml" -f "$APP/infra/docker-compose.hosted-proxy.yml" \
-            --profile https up -d --no-deps caddy
+        hosted_compose up -d --no-deps caddy
     }
 
     # Polls the loopback listener the installer publishes; true as soon as the app is ready.
@@ -214,11 +212,12 @@ main() {
 
     # Explicit files/project; never inherit a caller's Compose routing. Secret values
     # stay in the existing private env file and are not passed into the site container.
-    site_compose() {
+    hosted_compose() {
         VERWALINO_COOKIE_SECURE=true VERWALINO_COOKIE_NAME=__Host-hv_session \
         VERWALINO_ALLOWED_HOSTS="$(config_value VERWALINO_DOMAIN),localhost,127.0.0.1" \
         docker compose --project-name verwalino --env-file "$CONFIG" \
-            -f "$APP/infra/docker-compose.yml" -f "$APP/infra/docker-compose.site.yml" \
+            -f "$APP/infra/docker-compose.yml" -f "$APP/infra/docker-compose.hosted-proxy.yml" \
+            -f "$APP/infra/docker-compose.site.yml" \
             --profile https "$@"
     }
     site_caddy() {
@@ -267,7 +266,7 @@ main() {
         # Keep the commit in Config.Image for rollback discovery; pin recreation by digest.
         export VERWALINO_SITE_IMAGE="$SITE_REPO:$TAG@${digest_ref#*@}"
         step='recreate only site'
-        site_compose up -d --no-deps --force-recreate --pull never site
+        hosted_compose up -d --no-deps --force-recreate --pull never site
         step='site health check'
         wait_site || die 'site did not answer HTTP 200 within about 120 s.'
         step='done'
@@ -279,15 +278,14 @@ main() {
     mkdir "$LOGS/.deploy.lock" 2>/dev/null || die "another deploy is running (or a stale $LOGS/.deploy.lock needs operator review)."
     locked=1
     command -v docker >/dev/null || die 'docker is required.'
+    # Do not inherit caller-selected Compose routing for any target.
+    unset COMPOSE_FILE COMPOSE_PROJECT_NAME COMPOSE_PROFILES COMPOSE_ENV_FILES
     if [[ "$target" = site ]]; then deploy_site; exit 0; fi
     command -v git >/dev/null || die 'git is required.'
     command -v curl >/dev/null || die 'curl is required.'
     [[ -f "$CONFIG" && ! -L "$CONFIG" && -r "$CONFIG" && -w "$CONFIG" && -w "$(dirname "$CONFIG")" ]] \
         || die "the installer config $CONFIG must be a regular file this user can read and write, in a directory it can write to."
-    # Do not inherit caller-selected projects/profiles or a production image override.
-    unset COMPOSE_FILE COMPOSE_PROJECT_NAME COMPOSE_PROFILES COMPOSE_ENV_FILES
     if [[ "$target" = staging ]]; then deploy_staging; fi
-    if [[ -f "$ROOT/config/Caddyfile.hosted" ]] && site_caddy; then site_was_enabled=1; fi
     prev_image=$(config_value VERWALINO_IMAGE)
     prev_commit=$(git_app rev-parse --short HEAD)
     prev_tag=$(git_app describe --tags --exact-match 2>/dev/null || echo none)
@@ -321,12 +319,6 @@ main() {
         step='validate and restore hosted proxy extension'
         hosted_proxy
     fi
-    # The portable installer deliberately knows nothing about the hosted extension.
-    if [[ "$site_was_enabled" = 1 ]]; then
-        step='restore hosted Caddy extension'
-        site_compose up -d --no-deps caddy
-    fi
-
     step='health check'
     if ! wait_ready; then
         echo "app did not become ready within about 120 s; last 100 lines of its log:" >&2

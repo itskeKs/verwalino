@@ -471,13 +471,17 @@ class DeployTests(ServerCase):
                 self.assertIn(["pull", f"ghcr.io/itskeks/verwalino:{tag}"], pulls)
 
     def test_app_release_restores_the_operator_enabled_caddy_extension(self):
-        (self.srv / "config/Caddyfile.hosted").write_text("import /etc/caddy/Caddyfile.site\n")
+        (self.srv / "config/Caddyfile.hosted").write_text((ROOT / "infra/Caddyfile.hosted").read_text())
         result = self.deploy(FAKE_SITE_ENABLED="1")
         self.assertEqual(result.returncode, 0, result.stdout)
         compose = [c["args"] for c in self.calls("docker") if c["args"][0] == "compose"]
         restored = [a for a in compose if str(ROOT / "infra/docker-compose.site.yml") in a]
         self.assertEqual(len(restored), 1)
         self.assertEqual(restored[0][-4:], ["up", "-d", "--no-deps", "caddy"])
+        self.assertIn(str(ROOT / "infra/docker-compose.hosted-proxy.yml"), restored[0])
+        hosted = [a for a in compose if "up" in a and a[-1] == "caddy" and
+                  any(str(ROOT / f"infra/docker-compose.{name}.yml") in a for name in ("hosted-proxy", "site"))]
+        self.assertEqual(len(hosted), 1)
         self.assertLess(compose.index(next(a for a in compose if "migrate" in a)), compose.index(restored[0]))
 
     def disconnected_deploy(self, *, hangup=False, **env):
@@ -663,6 +667,9 @@ class DeployTests(ServerCase):
         self.assertLess(validation, overlay)
         self.assertIn("none", calls[validation])
         self.assertIn("--read-only", calls[validation])
+        for name in ("production", "staging", "site"):
+            self.assertTrue(any(f"dst=/etc/caddy/Caddyfile.{name},readonly" in arg for arg in calls[validation]))
+        self.assertIn(str(ROOT / "infra/docker-compose.site.yml"), calls[overlay])
         self.assertIn("--no-deps", calls[overlay])
         self.assertEqual(calls[overlay][-1], "caddy")
         self.assertTrue(any("app" == args[-1] and "up" in args for args in calls[:overlay]))
@@ -737,10 +744,15 @@ class StagingDeployTests(ServerCase):
     def test_invalid_staging_commands_are_usage_errors_before_any_call(self):
         for args in [("staging",), ("staging", "main"), ("staging", "a" * 7),
                      ("staging", "a" * 40, "extra"), ("staging", "v1.2.3;id"),
-                     ("staging", "sha-" + "a" * 40), ("staging", "../main")]:
+                     ("staging", "sha-" + "a" * 40), ("staging", "../main"),
+                     ("staging", "A" * 40), ("staging", "g" * 40), ("staging", "a" * 41),
+                     ("staging", self.SHA + "\n"), ("staging", "v01.2.3"),
+                     ("staging", "v1.2.3-rc.1"), ("staging", ""), ("STAGING", self.SHA)]:
             with self.subTest(args=args):
                 self.assertEqual(self.run_script(DEPLOY, *args).returncode, 2)
         self.assertEqual(self.calls(), [])
+        self.assertEqual(list((self.srv / "logs").iterdir()), [])
+        self.assertEqual(self.config.read_bytes(), self.production)
 
     def test_foreign_commit_pull_and_digest_failure_cannot_run_migrations(self):
         for env in ({"FAKE_NOT_ON_MAIN": "1"}, {"FAKE_MISSING_TAG": "1"},
@@ -809,7 +821,8 @@ class SiteDeployTests(ServerCase):
         for args in [("site",), ("site", "main"), ("site", "a" * 39), ("site", "g" * 40),
                      ("site", "A" * 40), ("site", SITE_SHA, "extra"), ("site " + SITE_SHA,),
                      ("site", SITE_SHA + ";id"), ("site", SITE_SHA + "\n"),
-                     ("site", "$(id)"), ("site", "--help"), ("app", SITE_SHA)]:
+                     ("site", "$(id)"), ("site", "--help"), ("app", SITE_SHA),
+                     ("site", "v1.2.3"), ("site", "a" * 41), ("site", ""), ("SITE", SITE_SHA)]:
             with self.subTest(args=args):
                 result = self.run_script(DEPLOY, *args)
                 self.assertEqual(result.returncode, 2)
@@ -918,6 +931,21 @@ class WorkflowTests(unittest.TestCase):
 
 @unittest.skipIf(yaml is None, "PyYAML is not installed")
 class StagingLayoutTests(unittest.TestCase):
+    def test_hosted_wrapper_imports_all_sites_with_separate_application_networks(self):
+        wrapper = (ROOT / "infra/Caddyfile.hosted").read_text()
+        imports = [line for line in wrapper.splitlines() if line.startswith("import ")]
+        self.assertEqual(imports, [f"import /etc/caddy/Caddyfile.{name}" for name in ("production", "staging", "site")])
+        proxy = yaml.safe_load((ROOT / "infra/docker-compose.hosted-proxy.yml").read_text())
+        site = yaml.safe_load((ROOT / "infra/docker-compose.site.yml").read_text())
+        self.assertEqual(set(proxy["services"]), {"caddy"})
+        for name in ("production", "staging"):
+            self.assertTrue(any(f":/etc/caddy/Caddyfile.{name}:ro" in mount for mount in proxy["services"]["caddy"]["volumes"]))
+        self.assertTrue(any(mount["target"] == "/etc/caddy/Caddyfile.site" and mount["read_only"]
+                            for mount in site["services"]["caddy"]["volumes"]))
+        self.assertEqual(site["services"]["site"]["networks"], ["site"])
+        self.assertEqual(site["services"]["caddy"]["networks"], ["proxy", "site"])
+        self.assertTrue(site["networks"]["site"]["internal"])
+
     def test_only_the_app_joins_the_shared_proxy_and_no_ports_are_published(self):
         compose = yaml.safe_load((ROOT / "infra/docker-compose.staging.yml").read_text())
         self.assertEqual(compose["name"], "verwalino-staging")

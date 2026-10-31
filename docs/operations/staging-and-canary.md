@@ -30,6 +30,11 @@ The staging service is deliberately named `staging-app`: Compose also registers
 service names in shared-network DNS. It must never register production's `app`
 name on the proxy network.
 
+The [public website](website-hosting.md) runs in the production project on its
+own internal `verwalino_site` network. Only Caddy and `site` join it. One hosted
+Caddy wrapper imports production, staging and site; both hosted overlays must
+be applied together so Caddy retains all snippets and both networks.
+
 The [Caddy snippet](../../infra/Caddyfile.staging) adds `X-Robots-Tag: noindex,
 nofollow` to responses and serves `/robots.txt` with `Disallow: /`. Application
 login remains required; robots controls discourage indexing, not access.
@@ -70,12 +75,17 @@ login remains required; robots controls discourage indexing, not access.
    The deploy script never sources this file as shell code.
 4. Copy `infra/Caddyfile.hosted` to `/srv/verwalino/config/Caddyfile.hosted`, readable
    by the operator. Its presence enables the hosted wrapper on production deploys.
-   It imports the unchanged production site and the staging snippet. After the
+   It imports the unchanged production site, staging and website snippets. After the
    installer finishes, deployment validates the wrapper in an isolated read-only
    Caddy container, then applies [the proxy overlay](../../infra/docker-compose.hosted-proxy.yml)
-   to **only production Caddy**. Complete this production deploy before checking
+   and [site overlay](../../infra/docker-compose.site.yml) together to **only production Caddy**.
+   Set website DNS and enable the site through [the website runbook](website-hosting.md),
+   which uses this same wrapper and the base/proxy/site compose prefix.
+   Complete this production deploy before checking
    public staging access. Keep the wrapper in place: production deploys reapply
-   the extension; the portable installer alone does not.
+   both extensions in one Caddy recreation; the portable installer alone does not.
+   After a manual installer start, reapply that three-file prefix with
+   `up -d --no-deps caddy`. Never replace the wrapper with a single extension.
 5. Run staging through the existing forced-command key, or rerun **Actions → Deploy
    staging** for the merged main commit. After success, create a staging admin:
 
@@ -107,13 +117,16 @@ The forced command accepts exactly:
 
 ```text
 deploy-server.sh vX.Y.Z
+deploy-server.sh site <40-lowercase-hex-sha>
 deploy-server.sh staging <40-lowercase-hex-sha|vX.Y.Z>
 ```
 
-Invalid grammar exits 2 before any external call. The existing `DEPLOY_*` secrets,
-key, user and pinned host key are reused. Deploy jobs share a concurrency group;
-the server also takes the existing common deploy lock. Running deploys are not
-cancelled.
+Stable tags have no suffix or leading zeroes. Invalid grammar exits 2 before any
+external call. The existing `DEPLOY_*` secrets, key, user and pinned host key are
+reused. Production and staging share `deploy-hosted-server`; the website uses
+`deploy-hosted-site` so a queued site deployment cannot replace a queued release.
+All three targets take the existing common server deploy lock. Running deploys
+are not cancelled.
 
 Staging resolves a fetched revision reachable from main, pulls its **`:sha-<sha>`
 image**, verifies a matching registry SHA-256 digest exists and uses that digest

@@ -28,15 +28,19 @@ flowchart LR
   browser[Internet] --> caddy[Caddy: ports 80 and 443]
   caddy -->|proxy network: app.verwalino.de| app[app:8000]
   app -->|backend network| db[(db)]
+  caddy -->|proxy network: staging.verwalino.de| staging[staging-app:8000]
+  staging -->|private staging backend| staging_db[(staging db)]
   caddy -->|internal site network: verwalino.de| site[site:8080]
 ```
 
 Only Caddy and `site` join `verwalino_site`, an internal Docker network without outbound internet routing.
-The app uses `proxy` and `backend`; db uses `backend`. The site cannot address app/db directly or read
+The app uses `proxy` and `backend`; db uses `backend`. Staging's app joins the shared `proxy` and its
+own private backend, as described in [the staging runbook](staging-and-canary.md). It never joins `site`.
+The site cannot address app/db directly or read
 host files, documents or credentials. Caddy remains a shared trust boundary: a compromised site can reach
 Caddy, whose public app routes still require app authentication and organization isolation.
 
-The operator imports `infra/Caddyfile.site` into the public Caddy configuration. Automatic HTTPS uses
+The operator-owned `Caddyfile.hosted` imports the production, staging and website snippets. Automatic HTTPS uses
 the same certificate volumes as the app. Both site hosts receive the app's HSTS, nosniff, frame denial,
 referrer policy, CSP and removal of the Server header, plus a restrictive Permissions-Policy.
 `www.verwalino.de` redirects to `https://verwalino.de{uri}` with status 308. Scripts and fonts are local;
@@ -46,19 +50,18 @@ return HTTP 404 with German or English error content; there is no SPA fallback.
 ## Enable the hosted extension once
 
 Prerequisites: the server checkout must contain the reviewed deploy script, image/compose extension and
-Caddy snippet from this change, normally through the first app release containing #24. A site deployment
+Caddy snippets from #24 and #25, normally through the first app release containing both. A site deployment
 never updates that checkout. If the first main-push deploy runs before setup, it fails closed; rerun the
 workflow after setup. The GHCR site package must be publicly readable (or use the operator's existing
 registry credential store). No new key or user is needed.
 
-DNS for `verwalino.de` and `www.verwalino.de` must point to the existing Caddy listener. The existing
+DNS for `verwalino.de`, `www.verwalino.de` and `staging.verwalino.de` must point to the existing Caddy listener. The existing
 private installer config must use `VERWALINO_MODE=https` and `VERWALINO_DOMAIN=app.verwalino.de`.
 Never add site settings to that strict installer config. Keep the tracked generic Caddyfile unchanged:
 
 ```sh
 cd /srv/verwalino/app
-cp infra/Caddyfile /srv/verwalino/config/Caddyfile.hosted
-printf '\nimport /etc/caddy/Caddyfile.site\n' >> /srv/verwalino/config/Caddyfile.hosted
+cp infra/Caddyfile.hosted /srv/verwalino/config/Caddyfile.hosted
 chmod 640 /srv/verwalino/config/Caddyfile.hosted
 ```
 
@@ -73,31 +76,36 @@ site_digest=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}
   grep -m1 -E '^ghcr\.io/itskeks/verwalino-site@sha256:[a-f0-9]{64}$')
 test -n "$site_digest"
 export VERWALINO_SITE_IMAGE="$site_tag@${site_digest#*@}"
+export VERWALINO_SERVER_ROOT=/srv/verwalino
 export VERWALINO_CONFIG=/srv/verwalino/config/.env.selfhost
 export VERWALINO_COOKIE_SECURE=true VERWALINO_COOKIE_NAME=__Host-hv_session
 export VERWALINO_ALLOWED_HOSTS=app.verwalino.de,localhost,127.0.0.1
 docker compose --project-name verwalino --env-file "$VERWALINO_CONFIG" \
-  -f infra/docker-compose.yml -f infra/docker-compose.site.yml --profile https \
+  -f infra/docker-compose.yml -f infra/docker-compose.hosted-proxy.yml \
+  -f infra/docker-compose.site.yml --profile https \
   up -d --no-deps site caddy
 ```
 
-The override replaces Caddy's config mount with the operator-owned file and mounts the reviewed snippet
-read-only. Neither mount is given to `site`. `--no-deps` leaves app/db alone; the first enable recreates
-Caddy to attach its additional network. Check HTTPS, the 308 redirect and the app after this operator step.
+Both overlays are required together: they mount the operator-owned wrapper and all three reviewed snippets
+read-only, and connect Caddy to `proxy` and `site`. No mount is given to `site`. `--no-deps` leaves app/db and
+staging alone; the first enable recreates Caddy to attach its additional network. Check HTTPS, the 308 redirect,
+the app and staging after this operator step. Enable staging separately with [its runbook](staging-and-canary.md).
 An omitted `VERWALINO_SITE_IMAGE` defaults to the published `main` tag for compose rendering, but use the
 SHA plus digest pin for actual starts. The forced deploy always supplies that pin itself.
 
 The portable installer deliberately uses only the base compose file. An app release through
-`deploy-server.sh vX.Y.Z` detects the enabled extension before starting the installer and reapplies the
-Caddy override afterward, without recreating site. After a **manual** `self-host.sh start`, reapply the same
-override with `up -d --no-deps caddy` before a site deploy. Reuse the installed app block when updating
-`Caddyfile.hosted` after an upstream Caddy configuration change.
+`deploy-server.sh vX.Y.Z` uses the presence of `config/Caddyfile.hosted` as the opt-in. After the installer,
+it validates the wrapper and all three snippets in an isolated read-only Caddy container, then reapplies both
+overlays in one Caddy recreation, without recreating site or staging. After a **manual** `self-host.sh start`,
+reapply the same three-file prefix with `up -d --no-deps caddy` before a site deploy. The production import
+reads the checked-out release's generic Caddyfile; keep all three imports when updating the wrapper.
 
 ## Deployment and rollback
 
 Main-push publication signs the image index after both platforms and their provenance/SBOMs are pushed.
 Deployment uses only `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` and `DEPLOY_KNOWN_HOSTS`, with strict
-host-key checking. The server accepts exactly `vX.Y.Z` or `site <40-lowercase-hex-sha>`; malformed commands
+host-key checking. The server accepts exactly `vX.Y.Z`, `site <40-lowercase-hex-sha>` or
+`staging <40-lowercase-hex-sha|vX.Y.Z>`, with stable tags having no suffix or leading zeroes. Malformed commands
 exit 2 before side effects. A missing operator file, HTTPS configuration or running Caddy on the site
 network refuses site deployment before pulling. Pull/digest/recreation/health failures exit nonzero.
 
@@ -124,7 +132,7 @@ deploy lock/log directory as the app; check that no operation runs before removi
 
 ## Troubleshooting and verification
 
-Use the compose prefix from setup (same explicit project, env file and both `-f` files) with `ps site caddy`
+Use the compose prefix from setup (same explicit project, env file and all three `-f` files) with `ps site caddy`
 or `logs --tail 100 site caddy`. The site has no host listener. The deploy health probe runs the existing
 Caddy image's BusyBox `wget -S -O /dev/null -T 2 http://site:8080/` through `docker exec` and requires the
 first HTTP status to be 200, retrying up to 24 times with three-second pauses. This covers Docker DNS,
@@ -135,7 +143,7 @@ If the site is refused as disabled, check `Caddyfile.hosted`, its import and Cad
 membership. If digest resolution fails, verify the package/tag is published and readable; app/db and the
 private config are untouched. If the site cannot start, check uid 10001 ownership of `/data` tmpfs and
 that the image binary has no low-port capability. If public HTTPS fails while internal HTTP succeeds,
-check Caddy's logs, DNS and certificates. A stale operator-owned app block must be reconciled manually.
+check Caddy's logs, DNS and certificates. Keep the operator wrapper's production, staging and site imports together.
 
 Local contracts (`make test-installer`) fake Docker and never access a database. Build with
 `docker buildx build --platform linux/amd64 -t verwalino-site:check website/`, then smoke-test that image

@@ -1,4 +1,5 @@
 # Apply to the production project only, after enabling the hosted wrapper.
+# Pair with docker-compose.site.yml to mount all imports and retain both networks.
 # The generic self-host installer and its Caddyfile stay unchanged.
 services:
   caddy:

@@ -947,7 +947,8 @@ It runs hosted mode and restricts SMTP to the single required `CANARY_EMAIL` via
 adds `noindex, nofollow` and disallows all crawlers in `/robots.txt`. Enable the
 [`Caddyfile.hosted`](infra/Caddyfile.hosted) wrapper and
 [proxy overlay](infra/docker-compose.hosted-proxy.yml) as described in the runbook so production releases
-preserve the staging site. The generic installer is unchanged.
+preserve staging and website routing together. The wrapper imports production, staging and site;
+production deploys apply both hosted overlays in one Caddy recreation. The generic installer is unchanged.
 
 [Deploy staging](.github/workflows/deploy-staging.yaml) runs on relevant main pushes, excluding website-only
 and docs-only changes. It first calls the main image job in [Release image](.github/workflows/release-image.yaml)
@@ -971,9 +972,10 @@ alert budget; GitHub scheduling delays and SMTP delivery remain external limits,
 ### Website container
 
 The public website is an independent static image, `ghcr.io/itskeks/verwalino-site:<git-sha>`.
-The hosted operator opts in with [infra/docker-compose.site.yml](infra/docker-compose.site.yml) in addition to
-the portable compose file and an operator-owned `config/Caddyfile.hosted` containing the existing app block
-plus `import /etc/caddy/Caddyfile.site`. The default compose file, Caddyfile and installer stay unchanged.
+The hosted operator opts in with [infra/docker-compose.hosted-proxy.yml](infra/docker-compose.hosted-proxy.yml)
+and [infra/docker-compose.site.yml](infra/docker-compose.site.yml) in addition to the portable compose file.
+The operator-owned `config/Caddyfile.hosted` is copied from [the hosted wrapper](infra/Caddyfile.hosted),
+importing the production, staging and site snippets together. The default compose file, Caddyfile and installer stay unchanged.
 The [website hosting runbook](docs/operations/website-hosting.md) gives the exact one-time setup and commands;
 the server needs a reviewed app release containing these deployment files before the first site deployment.
 
@@ -986,8 +988,9 @@ all capabilities dropped, no privilege escalation, no credentials or host mounts
 On pushes to `main` affecting `website/` or its workflow, [Website](.github/workflows/website.yml) first
 checks i18n, lint, the build and links; then publishes amd64/arm64 images tagged with the full SHA and `main`,
 attaches BuildKit provenance/SBOMs, signs the index with keyless cosign, and sends only `site <sha>`
-through the existing deploy key. PRs only run checks. Site and app deployment jobs share the
-`deploy-hosted-server` concurrency group; an active deployment is never cancelled. Site deploys use their own group (`deploy-hosted-site`), so a queued release and a queued site deploy never replace each other; the server lock serializes them.
+through the existing deploy key. PRs only run checks. Production and staging share `deploy-hosted-server`.
+Site deploys use their own group (`deploy-hosted-site`), so a queued release and a queued site deploy never
+replace each other; the server lock serializes all three targets. An active deployment is never cancelled.
 
 `scripts/deploy-server.sh site <sha>` refuses a disabled extension, pulls the SHA tag, requires a matching
 registry SHA-256 RepoDigest, recreates **only** `site` using `tag@digest`, and requires HTTP 200 on `/`
