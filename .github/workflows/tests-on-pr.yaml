@@ -72,6 +72,16 @@ jobs:
       - name: Installer contract tests
         run: make test-installer
 
+      - name: Validate hosted Caddy wrapper including site and staging
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE --security-opt no-new-privileges \
+            --env VERWALINO_DOMAIN=validation.invalid \
+            --mount "type=bind,src=$PWD/infra/Caddyfile.hosted,dst=/etc/caddy/Caddyfile,readonly" \
+            --mount "type=bind,src=$PWD/infra/Caddyfile,dst=/etc/caddy/Caddyfile.production,readonly" \
+            --mount "type=bind,src=$PWD/infra/Caddyfile.staging,dst=/etc/caddy/Caddyfile.staging,readonly" \
+            --mount "type=bind,src=$PWD/infra/Caddyfile.site,dst=/etc/caddy/Caddyfile.site,readonly" \
+            caddy:2.10.2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
       - name: Backend tests (pytest, whole suite)
         run: make test-backend
 

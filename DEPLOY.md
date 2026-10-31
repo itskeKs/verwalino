@@ -919,9 +919,11 @@ an IP-only entry does not match a host name in `DEPLOY_HOST`.
    `ssh chris@host vX.Y.Z`. **Actions → Deploy hosted server → Run workflow** with a `tag` redeploys any
    published tag; on the server, `/srv/verwalino/app/scripts/deploy-server.sh vX.Y.Z` does the same.
 3. [`scripts/deploy-server.sh`](scripts/deploy-server.sh) fetches tags and checks the tag out (it must exist and be
-   on `main`), pulls `ghcr.io/itskeks/verwalino:vX.Y.Z` and resolves its digest. If the operator's
-   `config/Caddyfile.hosted` exists, it validates that wrapper before backup, image pinning or the installer.
-   It then runs
+   on `main`). If the operator's `config/Caddyfile.hosted` exists, it validates that wrapper immediately
+   after checkout, before pulling the image, backup, image pinning or the installer. Validation uses
+   read-only mounts/root, no network, `--cap-drop ALL --cap-add NET_BIND_SERVICE` (required by the stock
+   binary's file capability) and `no-new-privileges`. Failure preserves the running Caddy configuration.
+   It then pulls `ghcr.io/itskeks/verwalino:vX.Y.Z`, resolves its digest and runs
    [`scripts/server-backup.sh`](scripts/server-backup.sh) as `pre-vX.Y.Z`, writes the digest to `VERWALINO_IMAGE`
    in the config, runs `scripts/self-host.sh start` (pull by digest, stop the app, migrate, start, wait for
    healthy) and polls `/api/health/ready` for up to 120 s. The run is logged to
@@ -952,26 +954,38 @@ adds `noindex, nofollow` and disallows all crawlers in `/robots.txt`. Enable the
 [proxy overlay](infra/docker-compose.hosted-proxy.yml) as described in the runbook so production releases
 preserve staging and website routing together. The wrapper imports production, staging and site;
 production deploys apply both hosted overlays in one Caddy recreation. The generic installer is unchanged.
+The staging import is unconditional: enable website/staging routes only once `staging.verwalino.de`
+resolves to this server. Use a separate SMTP account for staging. Before any Docker call, staging
+refuses with exit 2 if its session secret or any database password reuses a production secret from
+`VERWALINO_CONFIG` (normally `/srv/verwalino/config/.env.selfhost`).
 
-[Deploy staging](.github/workflows/deploy-staging.yaml) runs on relevant main pushes, excluding website-only
-and docs-only changes. It first calls the main image job in [Release image](.github/workflows/release-image.yaml)
-to publish `:main` and `:sha-<sha>` without a GitHub release, then sends `staging <sha>` with the existing key.
-The target verifies main ancestry and a registry digest, exports its own runtime files without moving the
+[Build main image](.github/workflows/build-main-image.yaml) runs on relevant main pushes, excluding website-only
+and docs-only changes. It publishes only `:sha-<sha>` with provenance, SBOMs and a keyless cosign signature.
+[Deploy staging](.github/workflows/deploy-staging.yaml) runs after that workflow succeeds for a main push
+in this repository and sends its completed SHA as `staging <sha>` with the existing key.
+[Release image](.github/workflows/release-image.yaml) remains for stable tags and installer bundles only.
+The target verifies main ancestry, exports its own runtime files and validates the hosted wrapper with
+that revision's snippets before image pulls or service operations. It then resolves a registry digest without moving the
 production checkout, migrates and recreates only staging, checks readiness and prints the previous successful
 SHA. To roll back staging, send `staging <previous-sha>` with the same key; an older image must be compatible
 with the migrated schema. There is no automatic schema downgrade or rollback.
 
 [Hosted canary](.github/workflows/canary.yaml) runs every 15 minutes against `https://app.verwalino.de`:
-login → create an unused property → read the fixed synthetic tenant ledger with an explicit scope → delete
+login → check leftover count → create an unused property → read the fixed synthetic tenant ledger with an explicit scope → delete
 its new property, including on ledger failure. Create its dedicated organization/user once with the admin
 CLI and prepare the fixture described in the runbook. A first failure files a `canary` issue via the existing
 scenario reporter, deduplicated under fingerprint `canary` while an issue is open. Later failing runs comment
 on that issue even if steps/errors change. German e-mail through the pinned mail action runs only after
 successful creation of a new canary issue.
+More than 10 `Canary Prüfung…` properties in its organization refuses the journey and alerts through
+that same path. Manually inspect/delete only unused synthetic leftovers as described in the runbook;
+preserve the fixed ledger fixture and retention rules.
 
 Additional secrets: `CANARY_EMAIL`, `CANARY_PASSWORD`, `ALERT_EMAIL` (`alarm@verwalino.de`), `ALERT_SMTP_URL` (TLS-required SMTP
 connection URL) and `ALERT_SMTP_FROM`. The five-minute job timeout gives a nominal **15 + 5 = 20 minute**
 alert budget; GitHub scheduling delays and SMTP delivery remain external limits, not a hard SLA.
+At 96 runs/day, plan about 2,900 runner minutes/month at the one-minute job billing minimum;
+the public repository is currently free, while private Actions would consume allowance/billable minutes.
 
 ### Website container
 
@@ -992,9 +1006,9 @@ all capabilities dropped, no privilege escalation, no credentials or host mounts
 On pushes to `main` affecting `website/` or its workflow, [Website](.github/workflows/website.yml) first
 checks i18n, lint, the build and links; then publishes amd64/arm64 images tagged with the full SHA and `main`,
 attaches BuildKit provenance/SBOMs, signs the index with keyless cosign, and sends only `site <sha>`
-through the existing deploy key. PRs only run checks. Production and staging share `deploy-hosted-server`.
-Site deploys use their own group (`deploy-hosted-site`), so a queued release and a queued site deploy never
-replace each other; the server lock serializes all three targets. An active deployment is never cancelled.
+through the existing deploy key. PRs only run checks. Production, staging and site use separate groups
+(`deploy-hosted-server`, `deploy-hosted-staging`, `deploy-hosted-site`), so queued runs cannot replace each other.
+The server lock refuses a concurrent deployment; retry after the active run finishes. An active deployment is never cancelled.
 
 `scripts/deploy-server.sh site <sha>` refuses a disabled extension, pulls the SHA tag, requires a matching
 registry SHA-256 RepoDigest, recreates **only** `site` using `tag@digest`, and requires HTTP 200 on `/`

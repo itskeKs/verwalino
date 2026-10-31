@@ -36,6 +36,8 @@ The [public website](website-hosting.md) runs in the production project on its
 own internal `verwalino_site` network. Only Caddy and `site` join it. One hosted
 Caddy wrapper imports production, staging and site; both hosted overlays must
 be applied together so Caddy retains all snippets and all three networks.
+The staging import is unconditional: enable website and staging routes only
+once `staging.verwalino.de` resolves to this server, even when enabling the website first.
 
 The [Caddy snippet](../../infra/Caddyfile.staging) adds `X-Robots-Tag: noindex,
 nofollow` to responses and serves `/robots.txt` with `Disallow: /`. Application
@@ -75,6 +77,10 @@ login remains required; robots controls discourage indexing, not access.
 
    Use Compose env-file quoting for SMTP credentials containing special characters.
    The deploy script never sources this file as shell code.
+   Before any Docker call it compares the session secret and all four database
+   passwords against the production config (`VERWALINO_CONFIG`, normally
+   `/srv/verwalino/config/.env.selfhost`); a reused secret exits 2 without printing it.
+   Use a **separate SMTP account for staging**, with its own credentials and sender.
    Before applying either hosted overlay, create the external network once:
 
    ```bash
@@ -91,6 +97,9 @@ login remains required; robots controls discourage indexing, not access.
    production site, staging and website snippets. Before backup, image pinning or
    installer migration/restart, deployment validates the wrapper in an isolated
    read-only Caddy container. Invalid configuration aborts before those side effects.
+   All capabilities are dropped, then only `NET_BIND_SERVICE` is added back:
+   the stock Caddy binary carries that file capability and cannot execute without
+   it in the bounding set. Networking remains disabled and `no-new-privileges` stays set.
    After the installer finishes, deployment applies [the proxy overlay](../../infra/docker-compose.hosted-proxy.yml)
    and [site overlay](../../infra/docker-compose.site.yml) together to **only production Caddy**.
    Set website DNS and enable the site through [the website runbook](website-hosting.md),
@@ -100,8 +109,9 @@ login remains required; robots controls discourage indexing, not access.
    both extensions in one Caddy recreation; the portable installer alone does not.
    After a manual installer start, reapply that three-file prefix with
    `up -d --no-deps caddy`. Never replace the wrapper with a single extension.
-5. Run staging through the existing forced-command key, or rerun **Actions → Deploy
-   staging** for the merged main commit. After success, create a staging admin:
+5. Run staging through the existing forced-command key, or rerun **Actions → Build
+   main image** for the merged main commit; success triggers **Deploy staging**.
+   After success, create a staging admin:
 
    ```bash
    # Operator terminal on the server; keep the password out of shell history.
@@ -120,12 +130,14 @@ login remains required; robots controls discourage indexing, not access.
 
 ## Main deploys and staging rollback
 
-[Deploy staging](../../.github/workflows/deploy-staging.yaml) runs on main pushes
+[Build main image](../../.github/workflows/build-main-image.yaml) runs on main pushes
 affecting backend, frontend, infrastructure, Docker build inputs or deploy
-workflow/script. Website-only and docs-only changes do not deploy. Its `image` job
-calls [Release image](../../.github/workflows/release-image.yaml), whose main job
-publishes both platforms as `:main` and `:sha-<full-sha>` without creating a release.
-SSH runs only after publishing succeeds. Production still deploys stable tags.
+workflow/script. Website-only and docs-only changes do not deploy. It publishes both
+platforms as **`:sha-<full-sha>` only**, with BuildKit provenance/SBOMs and a keyless
+cosign signature, without creating a release. [Deploy staging](../../.github/workflows/deploy-staging.yaml)
+runs only after that workflow succeeds for a main push in this repository, using
+the completed run's SHA. [Release image](../../.github/workflows/release-image.yaml)
+publishes stable tags and installer bundles only; production still deploys stable tags.
 
 The forced command accepts exactly:
 
@@ -139,13 +151,17 @@ Stable tags have no suffix or leading zeroes. Invalid grammar exits 2 before any
 external call. The existing `DEPLOY_*` secrets, key, user and pinned host key are
 reused. Production uses `deploy-hosted-server`, staging uses `deploy-hosted-staging`
 and the website uses `deploy-hosted-site`, so queued runs cannot replace each other.
-All three targets take the existing common server deploy lock. Running deploys
-are not cancelled. Image builds use `release-image-<ref_type>`:
-tag releases and branch builds never share a group. Tag builds remain serialized
+All three targets take the existing common server deploy lock; it **refuses** a
+second deployment instead of waiting. Retry the refused run after the active one
+finishes. Running deploys are not cancelled. Image builds use separate
+`release-image-tags` and `build-main-image` groups. Tag builds remain serialized
 because they also publish shared minor tags. A newer main image build may cancel
 an older main build; running tag builds are not cancelled.
 
-Staging resolves a fetched revision reachable from main, pulls its **`:sha-<sha>`
+Staging resolves a fetched revision reachable from main, exports its runtime files
+and validates the hosted wrapper with that revision's snippets before any image
+pull or staging service operation. Invalid configuration leaves production Caddy
+and both private env files untouched. It then pulls its **`:sha-<sha>`
 image**, verifies a matching registry SHA-256 digest exists and uses that digest
 for Compose. It exports only staging runtime files without moving the production
 checkout or changing its config. It starts the staging database, stops its app,
@@ -201,12 +217,17 @@ discovers the fixed lease, unit/property and the single readable MIET scope via
 the API; no resource IDs or extra secrets are needed. January 2026 is a fixed
 fixture period with no annual rollover maintenance.
 
-Every run performs: login → create an unused rental property → read the fixed
+Every run performs: login → check leftover count → create an unused rental property → read the fixed
 tenant's ledger with an explicit scope → delete **only its newly created property**.
 The fixed fixture is unchanged. Cleanup also runs on ledger failure; cleanup
 failure fails the canary. A lost create response can leave a synthetic
-`Canary Prüfung …` property: inspect and remove that unused row manually without
-changing retention rules.
+`Canary Prüfung …` property. More than **10** properties whose names start with
+`Canary Prüfung` in this organization refuses the journey before creation, reports
+`leftovers: CanaryLeftovers` and uses the same issue/e-mail alert path below.
+Sign in as the dedicated canary user, inspect these properties and manually delete
+only unused synthetic `Canary Prüfung …` records through the ordinary UI. Keep
+the fixed property/lease/scope, inspect the cleanup failure, then rerun the canary.
+Do not weaken retention rules or delete records in another organization.
 
 `python3 -B scripts/canary.py --dry-run` prints the journey without credentials,
 HTTP requests or a report. A real run reads environment credentials and writes
@@ -232,6 +253,9 @@ requires TLS for the documented URL schemes.
 
 [Hosted canary](../../.github/workflows/canary.yaml) runs at `*/15 * * * *` with a
 five-minute job timeout and a two-minute probe limit leaving time for alerts.
+That is **96 runs/day**, about **2,900 runner minutes/month** at GitHub's one-minute
+job billing minimum (before reruns or longer failures). The repository is public
+today; a private repository would consume its Actions allowance/billable minutes.
 On the **first failed run**, the [existing reporter](../../scripts/scenario_issues.py)
 opens one issue with `scenario`/`canary` labels and fingerprint `canary`. Its title
 and body identify the first failing step and error kind. Every later failing run

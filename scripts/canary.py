@@ -20,6 +20,8 @@ import uuid
 DEFAULT_URL = "https://app.verwalino.de"
 REQUEST_TIMEOUT = 10
 MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_LEFTOVER_PROPERTIES = 10
+PROPERTY_PREFIX = "Canary Prüfung"
 # An immutable synthetic fixture period; no yearly operator maintenance is needed.
 PERIOD = {"period_start": "2026-01-01", "period_end": "2026-01-31"}
 
@@ -109,6 +111,14 @@ def tenant_ledger(client):
         raise CanaryError("InvalidResponse") from None
 
 
+def check_leftovers(client):
+    rows = client.request("GET", "/api/properties")
+    if not isinstance(rows, list) or any(not isinstance(row, dict) or not isinstance(row.get("name"), str) for row in rows):
+        raise CanaryError("InvalidResponse")
+    if sum(row["name"].startswith(PROPERTY_PREFIX) for row in rows) > MAX_LEFTOVER_PROPERTIES:
+        raise CanaryError("CanaryLeftovers")
+
+
 def make_report(steps):
     return {
         "run": {"mode": "hosted", "finished": datetime.now(timezone.utc).isoformat(),
@@ -143,8 +153,9 @@ def journey(base_url, email, password):
 
     try:
         client = step("login", login)
+        step("leftovers", lambda: check_leftovers(client))
         created_id = step("create-property", lambda: identifier(client.request("POST", "/api/properties", {
-            "name": f"Canary Prüfung {uuid.uuid4()}", "management_type": "MIET",
+            "name": f"{PROPERTY_PREFIX} {uuid.uuid4()}", "management_type": "MIET",
         }, expected=201)))
         step("tenant-ledger", lambda: tenant_ledger(client))
     except CanaryError:
@@ -165,7 +176,7 @@ def main(argv=None):
     parser.add_argument("--dry-run", action="store_true", help="Print the journey without HTTP requests or a report")
     args = parser.parse_args(argv)
     if args.dry_run:
-        print("login → create unused property → read synthetic tenant ledger → delete created property")
+        print("login → check leftover limit → create unused property → read synthetic tenant ledger → delete created property")
         return 0
     report = journey(args.base_url, os.environ.get("CANARY_EMAIL"), os.environ.get("CANARY_PASSWORD"))
     args.report.parent.mkdir(parents=True, exist_ok=True)

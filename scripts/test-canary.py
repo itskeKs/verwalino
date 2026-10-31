@@ -29,12 +29,14 @@ class CanaryTests(unittest.TestCase):
     def setUp(self):
         self.calls = []
         self.fail_path = None
+        self.fail_method = None
         self.malformed_path = None
         self.bad_json = False
         self.no_cookie = False
         self.redirect = False
         self.ambiguous = False
         self.bad_ledger = False
+        self.properties = []
         case = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -58,7 +60,7 @@ class CanaryTests(unittest.TestCase):
                         self.send_response(401)
                         self.end_headers()
                         return
-                if self.path == case.fail_path:
+                if self.path == case.fail_path and case.fail_method in (None, self.command):
                     self.send_response(503)
                     self.end_headers()
                     self.wfile.write(b"private response including password fake-password")
@@ -68,6 +70,8 @@ class CanaryTests(unittest.TestCase):
                     result = {"user_id": "synthetic", "organization_id": "canary-org", "role": "OWNER_ADMIN"}
                 elif self.command == "POST" and self.path == "/api/properties":
                     status, result = 201, {"id": PROPERTY}
+                elif self.command == "GET" and self.path == "/api/properties":
+                    result = case.properties
                 elif self.path == "/api/leases":
                     result = [{"id": LEASE, "unit_id": UNIT}] * (2 if case.ambiguous else 1)
                 elif self.path == f"/api/units/{UNIT}":
@@ -115,7 +119,8 @@ class CanaryTests(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(report["scenarios"][0]["outcome"], "passed")
         self.assertEqual(self.calls[0][0:2], ("POST", "/api/auth/login"))
-        self.assertEqual(self.calls[1][2]["management_type"], "MIET")
+        self.assertEqual(self.calls[1][0:2], ("GET", "/api/properties"))
+        self.assertEqual(self.calls[2][2]["management_type"], "MIET")
         ledger = next(path for method, path, _ in self.calls if "/mietkonto/" in path)
         self.assertIn(f"accounting_scope_id={SCOPE}", ledger)
         self.assertIn("period_start=2026-01-01", ledger)
@@ -151,13 +156,38 @@ class CanaryTests(unittest.TestCase):
         self.assertNotIn("fake-password", json.dumps(report))
 
     def test_create_property_failure_reports_without_deleting_an_unknown_property(self):
-        self.fail_path = "/api/properties"
+        self.fail_path, self.fail_method = "/api/properties", "POST"
         status, report = self.run_canary()
         self.assertEqual(status, 1)
-        self.assertEqual([step["name"] for step in report["scenarios"][0]["steps"]], ["login", "create-property"])
+        self.assertEqual([step["name"] for step in report["scenarios"][0]["steps"]], ["login", "leftovers", "create-property"])
         self.assertEqual(report["scenarios"][0]["steps"][-1]["error"]["type"], "HTTP503")
-        self.assertEqual([call[:2] for call in self.calls], [("POST", "/api/auth/login"), ("POST", "/api/properties")])
+        self.assertEqual([call[:2] for call in self.calls], [
+            ("POST", "/api/auth/login"), ("GET", "/api/properties"), ("POST", "/api/properties"),
+        ])
         self.assertNotIn("fake-password", json.dumps(report))
+
+    def test_more_than_ten_leftovers_refuses_writes_and_reports_an_alertable_failure(self):
+        self.properties = [{"name": f"Canary Prüfung {number}"} for number in range(11)]
+        status, report = self.run_canary()
+        self.assertEqual(status, 1)
+        self.assertEqual([call[:2] for call in self.calls], [("POST", "/api/auth/login"), ("GET", "/api/properties")])
+        self.assertEqual(report["scenarios"][0]["steps"][-1], {
+            "name": "leftovers", "outcome": "failed", "error": {"type": "CanaryLeftovers"},
+        })
+
+    def test_ten_leftovers_and_unrelated_properties_still_allow_the_journey(self):
+        self.properties = [{"name": f"Canary Prüfung {number}"} for number in range(10)]
+        self.properties += [{"name": "Fixed synthetic fixture"}] * 20
+        status, report = self.run_canary()
+        self.assertEqual(status, 0)
+        self.assertEqual(self.calls[-1][:2], ("DELETE", f"/api/properties/{PROPERTY}"))
+
+    def test_unreadable_leftover_inventory_fails_closed_without_creating_a_property(self):
+        self.properties = {"unexpected": "shape"}
+        status, report = self.run_canary()
+        self.assertEqual(status, 1)
+        self.assertEqual(self.calls[-1][:2], ("GET", "/api/properties"))
+        self.assertEqual(report["scenarios"][0]["steps"][-1]["error"]["type"], "InvalidResponse")
 
     def test_redirects_are_not_followed_and_never_receive_credentials(self):
         self.redirect = True

@@ -15,8 +15,8 @@
 # from Caddy over the internal site network. No checkout, backup, migration or config write.
 # The previous site's SHA is printed for an explicit "site <previous-sha>" rollback.
 #
-# Steps: fetch tags and check out the tag -> pull ghcr.io/itskeks/verwalino:TAG and resolve
-# its digest -> validate optional hosted proxy -> backup (server-backup.sh) -> pin
+# Steps: fetch tags and check out the tag -> validate optional hosted proxy ->
+# pull ghcr.io/itskeks/verwalino:TAG and resolve its digest -> backup (server-backup.sh) -> pin
 # the digest in the installer config ->
 # "self-host.sh start" (pull, stop app, migrate, start, wait for healthy) -> poll
 # /api/health/ready for up to 120 s. The whole run is logged to
@@ -42,6 +42,7 @@ umask 027
 ROOT=${VERWALINO_SERVER_ROOT:-/srv/verwalino}
 APP=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 CONFIG=${VERWALINO_CONFIG:-$ROOT/config/.env.selfhost}
+PRODUCTION_CONFIG=$CONFIG
 LOGS=$ROOT/logs
 IMAGE_REPO=ghcr.io/itskeks/verwalino
 DIGEST_RE='^ghcr\.io/itskeks/verwalino@sha256:[a-f0-9]{64}$'
@@ -95,6 +96,9 @@ main() {
         if [[ "$rc" != 0 && "$target" = site ]]; then
             if [[ "$prev_site_sha" != unknown ]]; then printf 'deploy: rollback: site %s\n' "$prev_site_sha" >&2; fi
             printf 'deploy: FAILED at step "%s" (exit %s). Log: %s\n' "$step" "$rc" "$LOG" >&2
+        elif [[ "$rc" != 0 && "$target" = staging ]]; then
+            if [[ -n "$prev_commit" ]]; then printf 'deploy: rollback: staging %s (only if compatible with the migrated schema).\n' "$prev_commit" >&2; fi
+            printf 'deploy: FAILED at step "%s" (exit %s). Log: %s\n' "$step" "$rc" "$LOG" >&2
         elif [[ "$rc" != 0 ]]; then
             printf 'deploy: no automatic rollback. Before this run: tag %s, commit %s, image %s.\n' \
                 "${prev_tag:-unknown}" "${prev_commit:-unknown}" "${prev_image:-unknown}" >&2
@@ -145,21 +149,47 @@ main() {
         prev_image=$(config_value VERWALINO_IMAGE)
         prev_commit=$(config_value HV_RELEASE_ID)
         printf 'previous staging sha: %s; image: %s\n' "${prev_commit:-none}" "${prev_image:-none}"
+        step='check independent staging secrets'
+        if [[ ! -f "$PRODUCTION_CONFIG" || -L "$PRODUCTION_CONFIG" || ! -r "$PRODUCTION_CONFIG" ]]; then
+            printf 'deploy: cannot compare staging secrets: production config must be a readable regular file.\n' >&2
+            exit 2
+        fi
+        local key secret production_key production_secret
+        local secret_keys=(SESSION_SECRET MIGRATOR_PASSWORD APP_RW_PASSWORD APP_WORKER_PASSWORD APP_REVIEW_PASSWORD)
+        for key in "${secret_keys[@]}"; do
+            secret=$(config_value "$key")
+            if [[ ! "$secret" =~ ^[a-f0-9]{64}$ ]]; then
+                printf 'deploy: staging %s must contain one independent 64-character lowercase hex secret.\n' "$key" >&2
+                exit 2
+            fi
+            for production_key in "${secret_keys[@]}"; do
+                production_secret=$(sed -n "s/^$production_key=//p" "$PRODUCTION_CONFIG")
+                if [[ "$secret" = "$production_secret" ]]; then
+                    printf 'deploy: staging %s reuses a production secret; generate independent staging secrets.\n' "$key" >&2
+                    exit 2
+                fi
+            done
+        done
         step='resolve staging revision on main'
         git_app fetch --tags origin main
         if [[ "$TAG" =~ $TAG_RE ]]; then ref="refs/tags/$TAG"; fi
         staging_sha=$(git_app rev-parse --verify --quiet "$ref^{commit}") || die "staging revision $TAG does not exist."
         [[ "$staging_sha" =~ ^[a-f0-9]{40}$ ]] || die 'invalid staging commit SHA.'
         git_app merge-base --is-ancestor "$staging_sha" refs/remotes/origin/main || die "staging revision $TAG is not on main."
+        step='export staging runtime files'
+        mkdir -p "$ROOT/staging"
+        git_app archive "$staging_sha" infra/docker-compose.staging.yml infra/db/prod-init.sh \
+            infra/Caddyfile infra/Caddyfile.staging infra/Caddyfile.site | tar -x -C "$ROOT/staging"
+        # Postgres runs init scripts as another uid; undo the deploy user's umask.
+        chmod 755 "$ROOT/staging/infra/db" "$ROOT/staging/infra/db/prod-init.sh"
+        if [[ -f "$ROOT/config/Caddyfile.hosted" ]]; then
+            step='validate hosted proxy extension'
+            validate_hosted_proxy "$ROOT/staging/infra"
+        fi
         step='pull staging image'
         docker pull "$IMAGE_REPO:sha-$staging_sha"
         digest_ref=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$IMAGE_REPO:sha-$staging_sha" | grep -m1 -E "$DIGEST_RE" || true)
         [[ -n "$digest_ref" ]] || die 'no registry digest for staging after the pull.'
-        step='export staging runtime files'
-        mkdir -p "$ROOT/staging"
-        git_app archive "$staging_sha" infra/docker-compose.staging.yml infra/db/prod-init.sh | tar -x -C "$ROOT/staging"
-        # Postgres runs init scripts as another uid; undo the deploy user's umask.
-        chmod 755 "$ROOT/staging/infra/db" "$ROOT/staging/infra/db/prod-init.sh"
         step='validate staging compose'
         staging_compose config -q
         step='staging database'
@@ -191,12 +221,14 @@ main() {
     }
 
     validate_hosted_proxy() {
-        docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
-            --env "VERWALINO_DOMAIN=$(config_value VERWALINO_DOMAIN)" \
+        local runtime=${1:-$APP/infra}
+        # The stock binary's file capability must remain in the bounding set to exec.
+        docker run --rm --network none --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE --security-opt no-new-privileges \
+            --env "VERWALINO_DOMAIN=$(sed -n 's/^VERWALINO_DOMAIN=//p' "$PRODUCTION_CONFIG")" \
             --mount "type=bind,src=$ROOT/config/Caddyfile.hosted,dst=/etc/caddy/Caddyfile,readonly" \
-            --mount "type=bind,src=$APP/infra/Caddyfile,dst=/etc/caddy/Caddyfile.production,readonly" \
-            --mount "type=bind,src=$APP/infra/Caddyfile.staging,dst=/etc/caddy/Caddyfile.staging,readonly" \
-            --mount "type=bind,src=$APP/infra/Caddyfile.site,dst=/etc/caddy/Caddyfile.site,readonly" \
+            --mount "type=bind,src=$runtime/Caddyfile,dst=/etc/caddy/Caddyfile.production,readonly" \
+            --mount "type=bind,src=$runtime/Caddyfile.staging,dst=/etc/caddy/Caddyfile.staging,readonly" \
+            --mount "type=bind,src=$runtime/Caddyfile.site,dst=/etc/caddy/Caddyfile.site,readonly" \
             caddy:2.10.2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
     }
 
@@ -304,17 +336,17 @@ main() {
     git_app checkout --quiet --detach "refs/tags/$TAG"
     checked_out=1
 
+    # Fail before pulling, backup or installer reconciliation can change the running stack.
+    if [[ -f "$ROOT/config/Caddyfile.hosted" ]]; then
+        step='validate hosted proxy extension'
+        validate_hosted_proxy
+    fi
+
     step='pull the image'
     docker pull "$IMAGE_REPO:$TAG"
     digest_ref=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$IMAGE_REPO:$TAG" | grep -m1 -E "$DIGEST_RE" || true)
     [[ -n "$digest_ref" ]] || die "no registry digest for $IMAGE_REPO:$TAG after the pull."
     echo "image $digest_ref"
-
-    # File presence also supports first enablement before Caddy joins the site network.
-    if [[ -f "$ROOT/config/Caddyfile.hosted" ]]; then
-        step='validate hosted proxy extension'
-        validate_hosted_proxy
-    fi
 
     step='backup'
     # TODO(#57, #76): server-backup.sh is a minimal stand-in for the installer's backup command.

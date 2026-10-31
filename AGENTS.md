@@ -148,8 +148,9 @@ files with `rg -n` and line ranges.
   volumes or networks, delete volumes, or serve as a backend test database.
   Separately authorized Caddy validation may use only the reviewed Caddyfile as
   a read-only bind mount, with network `none`, no published ports, a read-only
-  root filesystem, all capabilities dropped and `no-new-privileges`, executing
-  only `caddy validate`. These exceptions do not authorize execution or deployment.
+  root filesystem, all capabilities dropped except `NET_BIND_SERVICE` (the caddy
+  binary carries that file capability; `--cap-drop ALL --cap-add NET_BIND_SERVICE`)
+  and `no-new-privileges`, executing only `caddy validate`. These exceptions do not authorize execution or deployment.
 - Never change a committed migration; never empty `downgrade()` to make tests pass. A new
   revision becomes the release target everywhere (`backend/app/deployment.py`, `DEPLOY.md`,
   upgrade tests); production moves only by a release.

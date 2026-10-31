@@ -3,8 +3,6 @@ name: Release image
 on:
   push:
     tags: ["v*"]
-  # Called by deploy-staging's filtered main push; publishing finishes before SSH.
-  workflow_call:
   workflow_dispatch:
     inputs:
       tag:
@@ -17,10 +15,10 @@ permissions:
   packages: write
   id-token: write
 
-# Keep tags serialized for shared minor tags, separate from main builds.
+# Keep tags serialized for shared minor tags.
 concurrency:
-  group: release-image-${{ github.ref_type }}
-  cancel-in-progress: ${{ github.ref_type == 'branch' }}
+  group: release-image-tags
+  cancel-in-progress: false
 
 defaults:
   run:
@@ -172,38 +170,3 @@ jobs:
             The installer assets are covered by SHA256SUMS, signed keylessly in
             SHA256SUMS.sigstore.json by this tag's release-image.yaml workflow.
             See DEPLOY.md at this tag for installation and manual verification.
-
-  main:
-    name: Publish main image without a release
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout main revision
-        uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push main image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ${{ env.IMAGE }}:main
-            ${{ env.IMAGE }}:sha-${{ github.sha }}
-          provenance: mode=max
-          sbom: true

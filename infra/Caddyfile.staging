@@ -13,10 +13,10 @@ staging.verwalino.de {
         -Server
     }
     handle /robots.txt {
-        respond <<ROBOTS 200
-User-agent: *
-Disallow: /
-ROBOTS
+        respond <<ROBOTS
+            User-agent: *
+            Disallow: /
+            ROBOTS 200
     }
     handle {
         reverse_proxy staging-app:8000

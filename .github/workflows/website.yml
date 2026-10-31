@@ -102,7 +102,7 @@ jobs:
     timeout-minutes: 10
     # Own group: GitHub keeps one pending entry per group, so sharing the app
     # release group would let a site push cancel a queued release (or vice
-    # versa). The server-side lock still serializes the two deploys.
+    # versa). The server-side lock refuses concurrent deploys.
     concurrency:
       group: deploy-hosted-site
       cancel-in-progress: false

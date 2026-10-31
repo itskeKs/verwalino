@@ -1,17 +1,10 @@
 name: Deploy staging
 
 on:
-  push:
+  workflow_run:
+    workflows: [Build main image]
+    types: [completed]
     branches: [main]
-    paths:
-      - backend/**
-      - frontend/**
-      - infra/**
-      - Dockerfile
-      - docker/**
-      - scripts/deploy-server.sh
-      - .github/workflows/deploy-staging.yaml
-      - .github/workflows/release-image.yaml
 
 permissions:
   contents: read
@@ -25,15 +18,12 @@ defaults:
     shell: bash
 
 jobs:
-  image:
-    uses: ./.github/workflows/release-image.yaml
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-
   deploy:
-    needs: image
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
@@ -42,7 +32,7 @@ jobs:
     steps:
       - name: Deploy staging over SSH
         env:
-          SHA: ${{ github.sha }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
