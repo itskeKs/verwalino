@@ -7,6 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader } from "../components/ui
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 
+const CONFIRM_TOKEN_KEY = "verwalino.signup-confirm-token";
+
 function SignupCard({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   return <main className="flex min-h-screen items-center justify-center bg-background p-4 sm:p-6">
     <Card className="w-full min-w-0 max-w-lg">
@@ -40,7 +42,7 @@ export function SignupPage() {
     inFlight.current = true;
     setBusy(true);
     try {
-      const answer = await api.post<{ message: string }>(receipt ? "/api/signup/resend" : "/api/signup", receipt ? { email } : {
+      const answer = await api.post<{ message: string }>(receipt ? "/api/signup/resend" : "/api/signup", receipt ? { email, website } : {
         organization_name: organization, admin_name: name, email, password, website,
       });
       setReceipt(answer.message);
@@ -79,7 +81,7 @@ export function SignupPage() {
 export function SignupConfirmPage({ onComplete = () => window.location.replace("/") }: { onComplete?: () => void }) {
   const deployment = useDeploymentMode();
   const [params, setParams] = useSearchParams();
-  const [token] = useState(() => params.get("token") ?? "");
+  const [token, setToken] = useState(() => params.get("token") ?? sessionStorage.getItem(CONFIRM_TOKEN_KEY) ?? "");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -87,8 +89,11 @@ export function SignupConfirmPage({ onComplete = () => window.location.replace("
   const completed = useRef(false);
 
   useEffect(() => {
-    // The token stays only in this component's memory until the user submits.
-    if (params.has("token")) setParams({}, { replace: true });
+    // Save before removing the query so reloading this tab keeps the link.
+    if (params.has("token")) {
+      sessionStorage.setItem(CONFIRM_TOKEN_KEY, params.get("token") ?? "");
+      setParams({}, { replace: true });
+    }
   }, [params, setParams]);
 
   async function confirm(event: FormEvent) {
@@ -99,10 +104,16 @@ export function SignupConfirmPage({ onComplete = () => window.location.replace("
     setError(null);
     try {
       await api.post("/api/signup/confirm", { token, password });
+      sessionStorage.removeItem(CONFIRM_TOKEN_KEY);
+      setToken("");
       completed.current = true;
       setPassword("");
       onComplete();
     } catch (failure) {
+      if (failure instanceof ApiError && failure.status === 403) {
+        sessionStorage.removeItem(CONFIRM_TOKEN_KEY);
+        setToken("");
+      }
       setError(failure instanceof ApiError ? failure.message : "Bestätigung derzeit nicht verfügbar. Bitte versuchen Sie es erneut.");
     } finally {
       inFlight.current = false;

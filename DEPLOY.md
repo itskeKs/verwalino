@@ -38,7 +38,9 @@ API method before body parsing or database access.
 
 Confirmation links use `/signup/confirm?token=…`. The page asks for the chosen password and
 posts `{token, password}` on explicit confirmation; there is no GET API side effect. The browser removes it from the URL before the
-POST and uses a no-referrer policy. The application strips the server query scope
+POST and uses a no-referrer policy. A tab-local `sessionStorage` entry keeps the
+token across reloads until success or a 403; retryable errors retain it. Passwords
+are never stored there. The application strips the server query scope
 for this page before the default Uvicorn access logger sees it; separately managed
 reverse proxies must also avoid recording confirmation query strings. Tokens contain 256 random bits; only SHA-256 hashes persist, and each
 link expires after 24 hours. Resending rotates the token and renews that lifetime,
@@ -47,13 +49,20 @@ cannot sign in. Confirmation creates the tenant and owner atomically and returns
 the normal session cookie. Existing addresses receive the identical generic 202
 without a new pending request or email. Password hashing/verification work is
 equivalent for allowed signup paths and SMTP runs only after the HTTP response.
-A changed duplicate form replaces pending credentials and invalidates earlier links,
-while preserving the send cooldown. Confirmation also requires the chosen password,
+A changed duplicate form replaces pending credentials while preserving the
+delivered token and its expiry during the send cooldown. A new mail submission
+rotates the token. Confirmation also requires the updated password,
 so a resent link cannot activate a password anonymously substituted by someone else.
 SMTP failure keeps the pending request,
 returns the same response and permits retry after the cooldown; SMTP acceptance
 is not proof of recipient delivery. No test submits to real SMTP: the test compose
 has no Mailpit service, so the hosted scenario reuses the captured SMTP double.
+Organization names are display names; multiple hosted tenants may share a name,
+and signup always creates a separate tenant. The admin CLI retains its existing
+name-reuse behavior. Successful confirmation deletes the pending signup data;
+the address can register again if its organization and user have been removed.
+Every 100th signup per worker opportunistically deletes at most 100 requests
+expired for more than seven days, in a separate best-effort transaction.
 
 ## Login lockout and proxy trust
 
@@ -103,12 +112,15 @@ WHERE key_kind = 'ip'
 ```
 
 These deletes reset only the chosen key and its escalation history. Hashes are
-scope-specific; signup uses separate `signup:` keys and the
+scope-specific; submit, resend and confirmation use `signup`, `signup_resend` and
+`signup_confirm` respectively, with the
 shared limiter/honeypot helpers described in
 [auth hardening](docs/architecture.md#43-loginsession-approach-recommendation-decision).
-Signup, resend and confirmation count attempts in that scope, including accepted
-submissions. Throttled signup/resend retain the generic 202; confirmation returns
-the generic 403. The hidden `website` field silently accepts bots without effects.
+Submit/resend count only their scoped IP buckets for flood protection; only failed
+confirmations count toward the confirm IP/email buckets. Five resends cannot lock
+an address out of confirmation. Throttled signup/resend retain the generic 202;
+confirmation returns the generic 403. The hidden `website` field silently accepts
+bots without effects on both signup and resend; confirmation has no honeypot.
 
 ## Portable Docker first installation
 
@@ -862,7 +874,7 @@ DB. Each source revision is accepted only when actually measured.
 | Parent references (accepted source 0140) | Replaces client-selected parent references with organization-bound composite foreign keys. Validates pending deferred checks and rejects existing invalid references without repair before replacing constraints. Adds a boolean-only, tenant-bound property existence check for scoped financial creation. Downgrade restores the original constraints and removes that check; an older runtime is not approved on this schema. |
 | Browser setup (accepted source 0141) | Adds the private singleton setup-token table and a token-gated, serialized first-organization function. Removes direct organization INSERT from app_rw; the migrator CLI shares the creation SQL. A populated token table blocks downgrade to avoid silently losing pending/consumed state. Existing organization/user/membership rows are preserved. |
 | 0142 (accepted source) | Adds global authentication throttle rows containing only scoped key hashes, failure windows, lockout expiry and escalation history, with narrow runtime DML. No existing rows or grants change. A populated table blocks downgrade to avoid losing lockouts. |
-| 0143 | Adds global pending/confirmed signup email reservations, hashed tokens, and narrow registration/provisioning functions. Existing tenant rows and ACLs remain unchanged; provisioning shares the setup bootstrap. A populated signup table refuses downgrade. |
+| 0143 | Adds global pending signup email reservations, hashed tokens, and narrow registration/provisioning functions. Signup creates separate tenants even with shared display names; the guarded bootstrap overload preserves CLI reuse. Successful provisioning deletes the request. Existing tenant rows and ACLs remain unchanged. A populated signup table refuses downgrade; an empty downgrade restores the original bootstrap exactly. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function

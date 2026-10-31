@@ -445,11 +445,11 @@ pending.
 
 **Hosted signup (revision 0143):** `POST /api/signup` accepts organization, admin
 name, normalized email, password and hidden `website`. `POST /api/signup/resend`
-accepts an email. Both return `202 {"message":"Wenn die Adresse frei ist, haben wir
+accepts an email and the same hidden `website` honeypot. Both return `202 {"message":"Wenn die Adresse frei ist, haben wir
 eine E-Mail geschickt"}` for fresh, existing, unknown, cooldown and throttled
 requests; existing users receive no mail and no request. The password is Argon2
 hashed in the app. The global `signup_request` row reserves the normalized email
-with a unique index retained across pending and confirmed states; it stores only
+with a unique index while pending; it stores only
 a SHA-256 token hash, names, timestamps and the pending password hash. Legacy
 organization accounts remain unchanged. A narrow `signup_email_registered(text)`
 definer includes inactive, memberless and ambiguous legacy email identities;
@@ -459,8 +459,9 @@ A fresh request submits a German SMTP confirmation link using the configured
 `HV_PUBLIC_URL`. Signup retries and resend share a row lock and a ten-minute
 cooldown. Resending replaces the hash and sets a new 24-hour expiry; an old link
 immediately becomes invalid. An identical double submit keeps the pending payload.
-A changed form replaces it and invalidates earlier links even inside the send
-cooldown.
+A changed form replaces names and credentials. During the send cooldown it keeps
+the delivered token and its expiry; token rotation and a new expiry happen only
+when a new mail is submitted. Confirmation proves the updated password.
 Allowed signup paths perform equivalent Argon2 hash/verify work; SMTP runs after
 the HTTP response body to avoid exposing address availability through its latency.
 Failure to submit mail retains the pending state
@@ -474,18 +475,21 @@ network mailbox, and exercises registration → email → confirmation → login
 verifies the chosen password against the token-bound pending hash (a dummy hash
 for absent/consumed tokens). This extra proof prevents activation of credentials
 chosen by someone who pre-registered or overwrote another person’s email, including
-when the mailbox owner uses resend. The pending hash is never locked before the
-organization lock: concurrent changed forms invalidate the old token and the
-function rechecks it under its own row lock. The handler then calls
+when the mailbox owner uses resend. The handler takes the organization lock before
+locking the pending row, then verifies the password while holding that row through
+provisioning. Concurrent form corrections cannot change credentials after password
+proof. It then calls
 `provision_organization(token text) RETURNS uuid`. This definer fixes
 `search_path=pg_catalog,pg_temp`, disables row security only within the function,
 and grants EXECUTE only to `app_rw` (plus the owner). It locks organizations and
 the request, compares all 32 digest bytes as setup does, rejects expired/confirmed
-requests and existing emails or organization names, and calls the shared
-`bootstrap_organization_admin` rather than duplicating tenant creation SQL.
-The name check prevents bootstrap from joining an existing tenant. Confirmation
-atomically creates organization, active user and OWNER_ADMIN membership, records
-`confirmed_at`, clears the request password hash, and returns 201 plus the normal
+requests and existing emails, and calls the shared five-argument
+`bootstrap_organization_admin(..., reuse_existing => false)`. Organization names
+are display names: hosted tenants may share them. Signup always creates a new
+organization and never joins one by name. The guarded four-argument invoker keeps
+the CLI/setup reuse semantics; both bootstrap overloads are owner-only.
+Confirmation atomically creates organization, active user and OWNER_ADMIN membership,
+deletes the pending request including its password hash and personal data, and returns 201 plus the normal
 session cookie. Before that transaction there is no login principal: login gives
 the usual generic 401. All invalid, used, expired, wrong/missing-password and throttled confirmations
 return `403 {"detail":"Bestätigung nicht möglich. Bitte fordern Sie einen neuen
@@ -494,15 +498,27 @@ Downgrade refuses retained requests; on an empty table it exactly removes the ne
 objects. Metadata, race, replay, expiry, isolation and round-trip tests cover this
 boundary.
 
-All three routes use `throttled("signup")`; accepted submissions also count toward
-the selected limits, so success cannot reset a mail flood. Failures commit their
-counter state before returning. A filled honeypot returns before writes or mail.
+Every 100th signup per worker schedules one separate transaction after the response
+to delete at most 100 requests expired for more than seven days, using
+`FOR UPDATE SKIP LOCKED`. Cleanup is best effort; no worker or scheduler is needed.
+Confirmed requests are deleted immediately, so removing an organization and its
+users allows the address to register again. Replaying a used token finds no row
+and receives the same generic refusal.
+
+Submit, resend and confirm use separate scopes: `signup`, `signup_resend` and
+`signup_confirm`. Submit/resend count only their scoped IP buckets for flood
+protection; they never record email failures. Only failed confirmations count
+toward the confirm IP/email buckets; successful confirmation does not increment
+them. Failures commit their counter state before returning. A filled honeypot on
+submit or resend returns before writes or mail; confirm has no honeypot.
 Every signup API method in selfhost returns the same 404 as an unknown route,
 before parsing or DB access. Hosted non-POST methods give 405. Signup routes are
 organization-free sweep exemptions with explicit reasons; the hosted isolation
 scenario verifies an existing signed-in tenant is unchanged by signup. The
-confirmation page removes the URL token, asks for the chosen password, never stores
-either secret, and posts only on explicit submit. StrictMode never submits twice. Server-side query stripping protects
+confirmation page saves the token in tab-local `sessionStorage` before removing
+it from the URL, so reloads retain it. It clears the token after success or a 403,
+keeps it on retryable errors, never stores the password, and posts only on explicit
+submit. StrictMode never submits twice. Server-side query stripping protects
 the default Uvicorn access log; upstream proxies must redact query strings too.
 GET requests never provision a tenant.
 
@@ -542,8 +558,9 @@ through verification and calls the returned attempt's `record_failure()` or
 increments and rollback of failed-login counters across concurrent workers.
 `Depends(throttled("login"))` supplies request metadata; its `check(session,
 email)` invokes this service with both keys and the deployment rules. Signup
-reuses `Depends(throttled("signup"))` and the same check/outcome contract;
-scopes are hashed into independent keys. `core/honeypot.py::honeypot_response`
+uses the same service with its three scopes, IP-only submit/resend admission and
+failure-only confirmation accounting; scopes are hashed into independent keys.
+`core/honeypot.py::honeypot_response`
 returns `None` for a missing/empty hidden field (default `website`, configurable
 per call), otherwise a success-shaped 200 with the caller's supplied body. The
 signup handler changes its status to 202 and returns it before any side effects.

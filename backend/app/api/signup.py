@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import logging
 import secrets
 import smtplib
@@ -26,7 +27,7 @@ from app.core.config import settings
 from app.core.db import get_session_factory
 from app.core.deployment_policy import get_deployment_policy
 from app.core.honeypot import honeypot_response
-from app.core.rate_limit import ThrottleRequest, throttled
+from app.core.rate_limit import ThrottleRequest, check_and_record, throttled
 from app.core.security import create_session_token, hash_password, verify_password
 from app.services import mail_service
 
@@ -36,6 +37,11 @@ REFUSED = "Bestätigung nicht möglich. Bitte fordern Sie einen neuen Link an."
 # Every newly issued token expires after 24 hours; sends share a ten-minute gap.
 TOKEN_LIFETIME = timedelta(hours=24)
 RESEND_INTERVAL = timedelta(minutes=10)
+# Best-effort cadence per worker; retained state and cleanup locks live in SQL.
+SIGNUP_CLEANUP_EVERY = 100
+SIGNUP_CLEANUP_BATCH = 100
+EXPIRED_RETENTION = timedelta(days=7)
+_signup_attempts = itertools.count(1)
 
 
 def require_signup() -> None:
@@ -93,6 +99,7 @@ router = APIRouter(prefix="/api/signup", tags=["signup"], route_class=SignupRout
 class EmailRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     email: str
+    website: str = Field(default="", max_length=2048)
 
     @field_validator("email", mode="before")
     @classmethod
@@ -104,7 +111,6 @@ class SignupRequest(EmailRequest):
     organization_name: str = Field(min_length=1, max_length=255)
     admin_name: str = Field(min_length=1, max_length=255)
     password: SecretStr
-    website: str = Field(default="", max_length=2048)
 
     @field_validator("organization_name", "admin_name", mode="before")
     @classmethod
@@ -133,19 +139,33 @@ async def send_confirmation(email: str, token: str) -> None:
         logger.warning("Signup confirmation submission failed")
 
 
+async def cleanup_expired_requests() -> None:
+    """Bounded privacy cleanup after the request transaction has committed."""
+    try:
+        async with get_session_factory()() as session, session.begin():
+            await session.execute(text("""DELETE FROM public.signup_request WHERE id IN (
+                SELECT id FROM public.signup_request
+                WHERE expires_at < clock_timestamp()-CAST(:retention AS interval)
+                ORDER BY expires_at,id LIMIT :batch FOR UPDATE SKIP LOCKED)"""),
+                {"retention": EXPIRED_RETENTION, "batch": SIGNUP_CLEANUP_BATCH})
+    except DBAPIError:
+        logger.warning("Signup request cleanup failed")
+
+
 async def accept_request(body: EmailRequest, throttle: ThrottleRequest, background: BackgroundTasks, *, new: SignupRequest | None = None) -> dict:
     token = None
     try:
         async with get_session_factory()() as session, session.begin():
-            attempt = await throttle.check(session, body.email)
+            # Submission/resend admission counts only the scoped IP flood bucket.
+            attempt = await check_and_record(session, throttle.scope, {"ip": throttle.ip},
+                get_deployment_policy().rate_limit_rules, request_id=throttle.request_id)
             # Existing and free emails perform the same password hashing work.
             password_hash = hash_password(new.password.get_secret_value()) if attempt.allowed and new is not None else None
             password_checked = False
             if attempt.allowed and not await session.scalar(
                 text("SELECT public.signup_email_registered(:email)"), {"email": body.email}
             ):
-                # Unique reservation is retained after confirmation. The upsert
-                # and row lock serialize double submits across app workers.
+                # The upsert and row lock serialize pending double submits.
                 candidate = secrets.token_hex(32)
                 digest = hashlib.sha256(candidate.encode()).digest()
                 if new is not None:
@@ -172,13 +192,12 @@ async def accept_request(body: EmailRequest, throttle: ThrottleRequest, backgrou
                         )
                         can_send = (pending['resent_at'] or pending['created_at']) + RESEND_INTERVAL <= now
                         if changed:
-                            # Bind every confirmation link to one intentional form
-                            # submission. A pre-registration must never preserve
-                            # another person's password after the owner signs up.
+                            # The delivered link stays usable during cooldown;
+                            # confirmation must prove this updated password.
                             await session.execute(text("""UPDATE public.signup_request SET organization_name=:org,
-                                admin_name=:name,password_hash=:password,token_hash=:digest,expires_at=:expires
+                                admin_name=:name,password_hash=:password
                                 WHERE id=:id"""), {"org": new.organization_name, "name": new.admin_name,
-                                    "password": password_hash, "digest": digest, "expires": now + TOKEN_LIFETIME,
+                                    "password": password_hash,
                                     "id": pending['id']})
                         if can_send:
                             await session.execute(text("""UPDATE public.signup_request SET token_hash=:digest,
@@ -197,6 +216,8 @@ async def accept_request(body: EmailRequest, throttle: ThrottleRequest, backgrou
         # Starlette sends the response body before running this task. SMTP
         # duration and recipient failures cannot reveal address availability.
         background.add_task(send_confirmation, body.email, token)
+    if new is not None and next(_signup_attempts) % SIGNUP_CLEANUP_EVERY == 0:
+        background.add_task(cleanup_expired_requests)
     return MESSAGE
 
 
@@ -210,29 +231,37 @@ async def signup(body: SignupRequest, background: BackgroundTasks, throttle: Thr
 
 
 @router.post("/resend", status_code=202)
-async def resend(body: EmailRequest, background: BackgroundTasks, throttle: ThrottleRequest = Depends(throttled("signup"))):
+async def resend(body: EmailRequest, background: BackgroundTasks, throttle: ThrottleRequest = Depends(throttled("signup_resend"))):
+    trap = honeypot_response({"website": body.website}, MESSAGE)
+    if trap is not None:
+        trap.status_code = 202
+        return trap
     return await accept_request(body, throttle, background)
 
 
 @router.post("/confirm", status_code=201, response_model=LoginResponse)
-async def confirm(body: ConfirmRequest, response: Response, throttle: ThrottleRequest = Depends(throttled("signup"))) -> LoginResponse:
+async def confirm(body: ConfirmRequest, response: Response, throttle: ThrottleRequest = Depends(throttled("signup_confirm"))) -> LoginResponse:
     token = body.token.get_secret_value()
     digest = hashlib.sha256(token.encode()).digest()
     principal = None
     try:
         async with get_session_factory()() as session, session.begin():
-            pending = (await session.execute(text("SELECT email_normalized,password_hash FROM public.signup_request WHERE token_hash=:digest"),
+            pending = (await session.execute(text("SELECT email_normalized FROM public.signup_request WHERE token_hash=:digest"),
                                              {"digest": digest})).mappings().one_or_none()
             email = pending['email_normalized'] if pending else None
             attempt = await throttle.check(session, email or "invalid-token@signup.invalid")
             password_matches = False
             if attempt.allowed:
+                # Same order as provisioning/bootstrap. Protect the password
+                # proof against a corrected form that preserves this token.
+                await session.execute(text("LOCK TABLE public.organization IN SHARE ROW EXCLUSIVE MODE"))
+                pending = (await session.execute(text("SELECT email_normalized,password_hash FROM public.signup_request WHERE token_hash=:digest FOR UPDATE"),
+                                                 {"digest": digest})).mappings().one_or_none()
                 password_matches = verify_password(body.password.get_secret_value(),
                     pending['password_hash'] if pending and pending['password_hash'] else _DUMMY_PASSWORD_HASH)
             if attempt.allowed and pending and pending['password_hash'] and password_matches:
                 # Password proof prevents pre-registration/overwrite takeover.
-                # Provision rechecks this same token hash under its row lock; a
-                # concurrent changed form invalidates it before any activation.
+                # The locked row binds both token and password through provision.
                 # Savepoint retains counters when provisioning is refused.
                 try:
                     async with session.begin_nested():
@@ -244,7 +273,8 @@ async def confirm(body: ConfirmRequest, response: Response, throttle: ThrottleRe
                     error.hide_parameters = True
                     if getattr(error.orig, "sqlstate", None) != "P0001":
                         raise
-            await attempt.record_failure()
+            if principal is None:
+                await attempt.record_failure()
     except DBAPIError as error:
         error.hide_parameters = True
         raise HTTPException(503, "Registrierung derzeit nicht verfügbar.") from None

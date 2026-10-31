@@ -9,8 +9,40 @@ depends_on = None
 
 def upgrade():
     op.execute('''
-    -- The unique reservation survives confirmation: pending and active signup
-    -- identities share one index without rewriting legacy organization accounts.
+    -- Explicit reuse keeps the four-argument CLI contract while signup always
+    -- creates a tenant. Neither bootstrap overload is callable by runtime roles.
+    CREATE FUNCTION public.bootstrap_organization_admin(
+      org_name text, admin_email text, admin_name text, password_hash text, reuse_existing boolean)
+    RETURNS uuid LANGUAGE plpgsql
+    SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+    DECLARE org uuid; actor uuid;
+    BEGIN
+      LOCK TABLE public.organization IN SHARE ROW EXCLUSIVE MODE;
+      IF reuse_existing THEN
+        SELECT id INTO org FROM public.organization WHERE name=org_name;
+      END IF;
+      IF org IS NULL THEN
+        INSERT INTO public.organization(name) VALUES (org_name) RETURNING id INTO org;
+      END IF;
+      INSERT INTO public."user"(organization_id,email,display_name,password_hash)
+        VALUES (org,lower(btrim(admin_email)),admin_name,password_hash) RETURNING id INTO actor;
+      INSERT INTO public.membership(organization_id,user_id,role)
+        VALUES (org,actor,'OWNER_ADMIN');
+      UPDATE public.setup_token SET used_at=COALESCE(used_at,clock_timestamp());
+      RETURN org;
+    END $$;
+    REVOKE ALL ON FUNCTION public.bootstrap_organization_admin(text,text,text,text,boolean) FROM PUBLIC;
+
+    CREATE OR REPLACE FUNCTION public.bootstrap_organization_admin(
+      org_name text, admin_email text, admin_name text, password_hash text)
+    RETURNS uuid LANGUAGE plpgsql
+    SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+    BEGIN
+      RETURN public.bootstrap_organization_admin(org_name,admin_email,admin_name,password_hash,true);
+    END $$;
+
+    -- Only pending requests reserve an email; existing users are checked by the
+    -- definer below without rewriting legacy organization accounts.
     CREATE TABLE public.signup_request (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       email_normalized text NOT NULL UNIQUE
@@ -55,13 +87,12 @@ def upgrade():
       END LOOP;
       IF difference<>0 OR pending.id IS NULL OR pending.confirmed_at IS NOT NULL
         OR pending.expires_at<=clock_timestamp() OR pending.password_hash IS NULL
-        OR public.signup_email_registered(pending.email_normalized)
-        OR EXISTS(SELECT 1 FROM public.organization WHERE name=pending.organization_name) THEN
+        OR public.signup_email_registered(pending.email_normalized) THEN
         RAISE EXCEPTION 'Signup refused';
       END IF;
       org := public.bootstrap_organization_admin(pending.organization_name,pending.email_normalized,
-                                                pending.admin_name,pending.password_hash);
-      UPDATE public.signup_request SET confirmed_at=clock_timestamp(),password_hash=NULL WHERE id=pending.id;
+                                                pending.admin_name,pending.password_hash,false);
+      DELETE FROM public.signup_request WHERE id=pending.id;
       RETURN org;
     EXCEPTION WHEN OTHERS THEN
       RAISE EXCEPTION 'Signup refused' USING ERRCODE='P0001';
@@ -82,4 +113,24 @@ def downgrade():
     DROP FUNCTION public.provision_organization(text);
     DROP FUNCTION public.signup_email_registered(text);
     DROP TABLE public.signup_request;
+    -- Restore revision 0141's exact implementation, settings and existing ACL.
+    CREATE OR REPLACE FUNCTION public.bootstrap_organization_admin(
+      org_name text, admin_email text, admin_name text, password_hash text)
+    RETURNS uuid LANGUAGE plpgsql
+    SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+    DECLARE org uuid; actor uuid;
+    BEGIN
+      LOCK TABLE public.organization IN SHARE ROW EXCLUSIVE MODE;
+      SELECT id INTO org FROM public.organization WHERE name=org_name;
+      IF org IS NULL THEN
+        INSERT INTO public.organization(name) VALUES (org_name) RETURNING id INTO org;
+      END IF;
+      INSERT INTO public."user"(organization_id,email,display_name,password_hash)
+        VALUES (org,lower(btrim(admin_email)),admin_name,password_hash) RETURNING id INTO actor;
+      INSERT INTO public.membership(organization_id,user_id,role)
+        VALUES (org,actor,'OWNER_ADMIN');
+      UPDATE public.setup_token SET used_at=COALESCE(used_at,clock_timestamp());
+      RETURN org;
+    END $$;
+    DROP FUNCTION public.bootstrap_organization_admin(text,text,text,text,boolean);
     ''')

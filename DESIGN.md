@@ -157,8 +157,10 @@ chosen “Passwort” with `current-password` autocomplete and a large full-widt
 “E-Mail bestätigen” button. The query token is removed immediately; no request is
 sent until explicit submit. The password proves that confirmation activates the
 user’s own registration, including after resend. Busy state says “Bestätigung läuft …”;
-duplicate submits and StrictMode never create a second POST. Neither secret enters
-browser storage. Success reloads the dashboard from the session cookie. Failure shows the German server refusal with `role="alert"`
+duplicate submits and StrictMode never create a second POST. The token is saved in
+tab-local `sessionStorage` before removing it from the URL, preserving reloads. It
+is cleared after success or a 403, and retained for retryable errors. The password
+never enters browser storage. Success reloads the dashboard from the session cookie. Failure shows the German server refusal with `role="alert"`
 and “Zur Registrierung”. The HTML uses a no-referrer policy. Inputs and receipt
 text must wrap without horizontal scrolling at 360 px.
 

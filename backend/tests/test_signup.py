@@ -31,7 +31,7 @@ async def test_signup_confirm_and_login_use_the_runtime_role(signup):
     assert response.json()['role'] == 'OWNER_ADMIN'
     assert 'HttpOnly' in response.headers['set-cookie']
     assert (await client.get('/api/auth/session')).json() == response.json()
-    assert await connection.scalar(text('SELECT password_hash IS NULL AND confirmed_at IS NOT NULL FROM signup_request'))
+    assert await connection.scalar(text('SELECT count(*) FROM signup_request')) == 0
     await client.post('/api/auth/logout')
     assert (await client.post('/api/auth/login', json={'email': BODY['email'], 'password': BODY['password']})).status_code == 200
 
@@ -82,6 +82,19 @@ async def test_honeypot_and_unknown_resend_have_no_signup_or_mail_side_effect(si
 
 
 @pytest.mark.asyncio
+async def test_resend_honeypot_preserves_the_delivered_link_and_cooldown(signup):
+    client, connection, mail = signup
+    await client.post('/api/signup', json=BODY)
+    token = confirmation_token(mail)
+    await connection.execute(text("UPDATE signup_request SET created_at=created_at-interval '11 minutes'"))
+    response = await client.post('/api/signup/resend', json={'email': BODY['email'], 'website': 'spam'})
+    assert (response.status_code, response.json()) == (202, MESSAGE)
+    assert len(mail.messages) == 1
+    assert await connection.scalar(text('SELECT resent_at IS NULL FROM signup_request'))
+    assert (await client.post('/api/signup/confirm', json={'token': token, 'password': BODY['password']})).status_code == 201
+
+
+@pytest.mark.asyncio
 async def test_existing_email_gets_identical_acceptance_without_mail_or_request(client_unauth, seed_data, signup_mail, monkeypatch):
     monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
     fresh = await client_unauth.post('/api/signup', json=BODY)
@@ -124,6 +137,15 @@ async def test_signup_function_has_fixed_security_metadata_and_narrow_grants(app
             WHERE p.oid=CAST(:signature AS regprocedure) AND a.grantee<>p.proowner"""), args)).all()
         assert grants == [('app_rw', 'EXECUTE', False)]
     assert not await app_rw_session.scalar(text("SELECT has_table_privilege(current_user,'organization','INSERT')"))
+    for name in ('bootstrap_organization_admin(text,text,text,text)',
+                 'bootstrap_organization_admin(text,text,text,text,boolean)'):
+        args = {'signature': 'public.' + name}
+        row = (await app_rw_session.execute(text('SELECT pg_get_userbyid(proowner),prosecdef,proconfig FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)'), args)).one()
+        assert tuple(row) == ('app_migrator', False, ['search_path=pg_catalog, pg_temp', 'row_security=off'])
+        grants = (await app_rw_session.execute(text("""SELECT a.grantee FROM pg_proc p
+            CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+            WHERE p.oid=CAST(:signature AS regprocedure) AND a.grantee<>p.proowner"""), args)).all()
+        assert grants == []
 
 
 def test_signup_migration_roundtrip_is_exact_and_refuses_retained_state(run_migrations):
@@ -170,10 +192,10 @@ async def test_concurrent_same_email_serializes_signup_and_confirmation(client_u
 
     async def pause_first_insert(session, statement, params=None, **kwargs):
         name = asyncio.current_task().get_name()
-        if name == 'signup-two' and 'INSERT INTO public.auth_throttle' in str(statement) and params['kind'] == 'email':
+        if name == 'signup-two' and 'INSERT INTO public.auth_throttle' in str(statement):
             contender.set()
         result = await original(session, statement, params, **kwargs)
-        if name == 'signup-one' and 'INSERT INTO public.auth_throttle' in str(statement) and params['kind'] == 'email':
+        if name == 'signup-one' and 'INSERT INTO public.auth_throttle' in str(statement) and params['kind'] == 'ip':
             admitted.set()
             await resume.wait()
         return result
@@ -197,7 +219,7 @@ async def test_concurrent_same_email_serializes_signup_and_confirmation(client_u
         assert sorted(r.status_code for r in replies) == [201, 403]
         with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
             cursor.execute('SELECT count(*) FROM signup_request WHERE email_normalized=%s', (body['email'],))
-            assert cursor.fetchone() == (1,)
+            assert cursor.fetchone() == (0,)
             cursor.execute('SELECT count(*) FROM "user" WHERE email=%s', (body['email'],))
             assert cursor.fetchone() == (1,)
             cursor.execute('SELECT count(*) FROM membership m JOIN "user" u ON u.id=m.user_id WHERE u.email=%s AND m.role=\'OWNER_ADMIN\'', (body['email'],))
@@ -213,6 +235,52 @@ async def test_concurrent_same_email_serializes_signup_and_confirmation(client_u
 
 
 @pytest.mark.asyncio
+async def test_concurrent_form_correction_cannot_change_credentials_after_password_proof(client_unauth, seed_data, signup_mail, monkeypatch):
+    import uuid
+    import psycopg2
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
+    body = BODY | {'email': f'proof-{uuid.uuid4().hex}@example.test', 'organization_name': f'Password proof {uuid.uuid4()}'}
+    assert (await client_unauth.post('/api/signup', json=body)).status_code == 202
+    token = confirmation_token(signup_mail)
+    verified, resume, contender = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    original = AsyncSession.scalar
+
+    async def pause_after_password_proof(session, statement, params=None, **kwargs):
+        if asyncio.current_task().get_name() == 'confirm-owner' and 'SELECT public.provision_organization' in str(statement):
+            verified.set()
+            await resume.wait()
+        if asyncio.current_task().get_name() == 'correct-form' and 'INSERT INTO public.signup_request' in str(statement):
+            contender.set()
+        return await original(session, statement, params, **kwargs)
+
+    monkeypatch.setattr(AsyncSession, 'scalar', pause_after_password_proof)
+    confirmation = asyncio.create_task(client_unauth.post('/api/signup/confirm', json={'token': token, 'password': body['password']}), name='confirm-owner')
+    correction = None
+    try:
+        await asyncio.wait_for(verified.wait(), 5)
+        correction = asyncio.create_task(client_unauth.post('/api/signup', json=body | {'password': 'Substituted-password-123'}), name='correct-form')
+        await asyncio.wait_for(contender.wait(), 5)
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(correction), 0.1)
+        resume.set()
+        confirmed, corrected = await asyncio.wait_for(asyncio.gather(confirmation, correction), 10)
+        assert confirmed.status_code == 201 and corrected.status_code == 202
+        assert (await client_unauth.post('/api/auth/login', json={'email': body['email'], 'password': body['password']})).status_code == 200
+        assert (await client_unauth.post('/api/auth/login', json={'email': body['email'], 'password': 'Substituted-password-123'})).status_code == 401
+    finally:
+        resume.set()
+        await asyncio.gather(*(task for task in (confirmation, correction) if task), return_exceptions=True)
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+            cursor.execute('DELETE FROM signup_request WHERE email_normalized=%s', (body['email'],))
+            cursor.execute('DELETE FROM membership WHERE user_id IN (SELECT id FROM "user" WHERE email=%s)', (body['email'],))
+            cursor.execute('DELETE FROM "user" WHERE email=%s', (body['email'],))
+            cursor.execute('DELETE FROM organization WHERE name=%s', (body['organization_name'],))
+
+
+@pytest.mark.asyncio
 async def test_signup_cannot_join_an_existing_organization_by_name(signup):
     client, connection, mail = signup
     await connection.execute(text('RESET ROLE'))
@@ -220,26 +288,119 @@ async def test_signup_cannot_join_an_existing_organization_by_name(signup):
     await connection.execute(text('SET LOCAL ROLE app_rw'))
     await client.post('/api/signup', json=BODY)
     response = await client.post('/api/signup/confirm', json={'token': confirmation_token(mail), 'password': BODY['password']})
-    assert (response.status_code, response.json()) == (403, REFUSED)
-    assert await connection.scalar(text('SELECT count(*) FROM organization')) == 1
-    assert await connection.scalar(text('SELECT count(*) FROM "user"')) == 0
-    assert await connection.scalar(text('SELECT confirmed_at IS NULL AND password_hash IS NOT NULL FROM signup_request'))
+    assert response.status_code == 201
+    assert await connection.scalar(text('SELECT count(*) FROM organization')) == 2
+    await connection.execute(text('RESET ROLE'))
+    assert await connection.scalar(text('SELECT count(*) FROM "user"')) == 1
 
 
 @pytest.mark.asyncio
-async def test_signup_resend_and_confirm_share_the_durable_limiter(signup):
+async def test_two_signup_owners_can_choose_the_same_organization_display_name(signup):
+    client, connection, mail = signup
+    organizations = []
+    for email in ('first@example.test', 'second@example.test'):
+        assert (await client.post('/api/signup', json=BODY | {'email': email})).status_code == 202
+        response = await client.post('/api/signup/confirm', json={'token': confirmation_token(mail), 'password': BODY['password']})
+        assert response.status_code == 201, response.text
+        organizations.append(response.json()['organization_id'])
+        await client.post('/api/auth/logout')
+    assert len(set(organizations)) == 2
+    assert await connection.scalar(text('SELECT count(*) FROM organization WHERE name=:name'), {'name': BODY['organization_name']}) == 2
+
+
+@pytest.mark.asyncio
+async def test_five_attacker_resends_do_not_block_the_owners_confirmation(signup):
+    client, connection, mail = signup
+    await client.post('/api/signup', json=BODY)
+    token = confirmation_token(mail)
+    for _ in range(5):
+        assert (await client.post('/api/signup/resend', json={'email': BODY['email']})).json() == MESSAGE
+    assert len(mail.messages) == 1
+    response = await client.post('/api/signup/confirm', json={'token': token, 'password': BODY['password']})
+    assert response.status_code == 201, response.text
+    assert await connection.scalar(text("SELECT count(*) FROM auth_throttle WHERE key_kind='email' AND failures>0")) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('path', ['/api/signup', '/api/signup/resend'])
+async def test_signup_and_resend_flood_limits_use_only_their_own_ip_scope(signup, path):
     from app.core.deployment_policy import get_deployment_policy
+    from app.core.rate_limit import key_hash
+    client, connection, mail = signup
+    for index in range(get_deployment_policy().rate_limit_rules.ip_failures + 1):
+        body = BODY | {'email': f'flood-{index}@example.test'} if path == '/api/signup' else {'email': BODY['email']}
+        assert (await client.post(path, json=body)).json() == MESSAGE
+    scope = 'signup' if path == '/api/signup' else 'signup_resend'
+    rows = (await connection.execute(text('SELECT key_kind,key_hash,locked_until FROM auth_throttle'))).all()
+    assert len(rows) == 1
+    assert rows[0].key_kind == 'ip' and rows[0].key_hash == key_hash(scope, 'ip', '127.0.0.1')
+    assert rows[0].locked_until is not None
+    if path == '/api/signup':
+        assert len(mail.messages) == get_deployment_policy().rate_limit_rules.ip_failures
+
+
+@pytest.mark.asyncio
+async def test_only_failed_confirmations_count_toward_the_confirm_scope(signup):
+    from app.core.deployment_policy import get_deployment_policy
+    from app.core.rate_limit import key_hash
     client, connection, mail = signup
     await client.post('/api/signup', json=BODY)
     token = confirmation_token(mail)
     for _ in range(get_deployment_policy().rate_limit_rules.email_failures):
-        assert (await client.post('/api/signup/resend', json={'email': BODY['email']})).json() == MESSAGE
-    await connection.execute(text("UPDATE signup_request SET created_at=created_at-interval '11 minutes'"))
-    assert (await client.post('/api/signup', json=BODY)).json() == MESSAGE
-    assert len(mail.messages) == 1
+        response = await client.post('/api/signup/confirm', json={'token': token, 'password': 'wrong'})
+        assert (response.status_code, response.json()) == (403, REFUSED)
     response = await client.post('/api/signup/confirm', json={'token': token, 'password': BODY['password']})
     assert (response.status_code, response.json()) == (403, REFUSED)
-    assert await connection.scalar(text("SELECT count(*) FROM auth_throttle WHERE locked_until IS NOT NULL")) == 1
+    assert await connection.scalar(text("SELECT locked_until IS NOT NULL FROM auth_throttle WHERE key_kind='email' AND key_hash=:key"),
+                                   {'key': key_hash('signup_confirm', 'email', BODY['email'])})
+
+
+@pytest.mark.asyncio
+async def test_confirmed_address_can_signup_again_after_its_organization_is_removed(signup):
+    client, connection, mail = signup
+    await client.post('/api/signup', json=BODY)
+    response = await client.post('/api/signup/confirm', json={'token': confirmation_token(mail), 'password': BODY['password']})
+    assert response.status_code == 201
+    await client.post('/api/auth/logout')
+    await connection.execute(text('RESET ROLE'))
+    await connection.execute(text('DELETE FROM membership'))
+    await connection.execute(text('DELETE FROM "user"'))
+    await connection.execute(text('DELETE FROM organization'))
+    await connection.execute(text('SET LOCAL ROLE app_rw'))
+    await client.post('/api/signup', json=BODY)
+    assert len(mail.messages) == 2
+    assert (await client.post('/api/signup/confirm', json={'token': confirmation_token(mail), 'password': BODY['password']})).status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_expired_pending_cleanup_is_batched_and_runs_after_the_request_transaction(signup, monkeypatch):
+    import itertools
+    from app.api import signup as signup_api
+    client, connection, mail = signup
+    await connection.execute(text("""INSERT INTO signup_request
+        (email_normalized,organization_name,admin_name,password_hash,token_hash,expires_at)
+        SELECT 'stale-'||n||'@example.test','Private organization','Private name','private hash',
+        sha256(n::text::bytea),clock_timestamp()-interval '8 days' FROM generate_series(1,105) n"""))
+    await connection.execute(text("""INSERT INTO signup_request
+        (email_normalized,organization_name,admin_name,password_hash,token_hash,expires_at)
+        VALUES ('recent@example.test','Recent','Recent','hash',sha256('recent'::bytea),clock_timestamp()-interval '6 days')"""))
+    transactions = []
+    from sqlalchemy.ext.asyncio import AsyncSession
+    original_begin = AsyncSession.begin
+    def track_begin(session):
+        transactions.append(session)
+        assert all(not previous.in_transaction() for previous in transactions[:-1])
+        return original_begin(session)
+    monkeypatch.setattr(AsyncSession, 'begin', track_begin)
+    monkeypatch.setattr(signup_api, '_signup_attempts', itertools.count(99), raising=False)
+    response = await client.post('/api/signup', json=BODY)
+    assert response.status_code == 202, response.text
+    assert await connection.scalar(text("SELECT count(*) FROM signup_request WHERE email_normalized LIKE 'stale-%'")) == 105
+    response = await client.post('/api/signup', json=BODY)
+    assert response.status_code == 202, response.text
+    assert await connection.scalar(text("SELECT count(*) FROM signup_request WHERE email_normalized LIKE 'stale-%'")) == 5
+    assert await connection.scalar(text("SELECT count(*) FROM signup_request WHERE email_normalized='recent@example.test'")) == 1
+    assert len(transactions) == 3 and transactions[1] is not transactions[2]
 
 
 @pytest.mark.asyncio
@@ -290,19 +451,16 @@ async def test_hosted_startup_requires_a_public_origin_and_smtp(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_owner_signup_replaces_preregistered_credentials_and_invalidates_old_links(signup):
+async def test_corrected_form_keeps_the_delivered_link_during_cooldown_and_requires_the_new_password(signup):
     client, connection, mail = signup
     attacker_password = 'Attacker-knows-this-password-123'
     await client.post('/api/signup', json=BODY | {'password': attacker_password, 'admin_name': 'Attacker'})
     attacker_token = confirmation_token(mail)
     assert (await client.post('/api/signup', json=BODY)).json() == MESSAGE
     assert len(mail.messages) == 1  # Changed payload must still respect the cooldown.
-    assert (await client.post('/api/signup/confirm', json={'token': attacker_token, 'password': BODY['password']})).json() == REFUSED
-    await connection.execute(text("UPDATE signup_request SET created_at=created_at-interval '11 minutes'"))
-    await client.post('/api/signup/resend', json={'email': BODY['email']})
-    owner_token = confirmation_token(mail)
-    assert owner_token != attacker_token
-    assert (await client.post('/api/signup/confirm', json={'token': owner_token, 'password': BODY['password']})).status_code == 201
+    assert await connection.scalar(text('SELECT admin_name FROM signup_request')) == BODY['admin_name']
+    assert (await client.post('/api/signup/confirm', json={'token': attacker_token, 'password': attacker_password})).json() == REFUSED
+    assert (await client.post('/api/signup/confirm', json={'token': attacker_token, 'password': BODY['password']})).status_code == 201
     await client.post('/api/auth/logout')
     assert (await client.post('/api/auth/login', json={'email': BODY['email'], 'password': attacker_password})).status_code == 401
     assert (await client.post('/api/auth/login', json={'email': BODY['email'], 'password': BODY['password']})).status_code == 200

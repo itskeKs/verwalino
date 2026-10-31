@@ -59,6 +59,13 @@ def signup_isolation(world, signup_mail):
         async with get_session_factory()() as session, session.begin():
             await session.execute(text('DELETE FROM signup_request WHERE email_normalized=:email'), {'email': body['email']})
     world.run(clean())
+    if created := world.data.get('signup_created_organization'):
+        import psycopg2
+        from tests.conftest import MIGRATOR_SYNC_URL
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+            cursor.execute('DELETE FROM membership WHERE organization_id=%s', (created,))
+            cursor.execute('DELETE FROM "user" WHERE organization_id=%s', (created,))
+            cursor.execute('DELETE FROM organization WHERE id=%s', (created,))
 
 
 @when('a visitor registers using the name of another organization')
@@ -69,13 +76,18 @@ def register_existing_name(world, signup_isolation):
 
 @when('the visitor follows the emailed confirmation link')
 def confirm_existing_name(world):
-    world.send(world.anonymous, 'POST', '/api/signup/confirm', json={'token': confirmation_token(world.data['signup_mail']), 'password': BODY['password']})
+    answer = world.send(world.anonymous, 'POST', '/api/signup/confirm', json={'token': confirmation_token(world.data['signup_mail']), 'password': BODY['password']})
+    if answer.status_code == 201:
+        world.data['signup_created_organization'] = answer.json()['organization_id']
 
 
-@then('the registration cannot claim that organization')
-def cannot_claim(world):
-    assert world.response.status_code == 403, world.describe_response()
-    assert world.look(world.anonymous, '/api/auth/session').status_code == 401
+@then('the registration creates a separate organization with the same name')
+def creates_separate_organization(world):
+    assert world.response.status_code == 201, world.describe_response()
+    session = world.look(world.anonymous, '/api/auth/session').json()
+    existing = world.look(world.administrator_of('Verwaltung Beta'), '/api/auth/session').json()
+    assert session['organization_id'] != existing['organization_id']
+    assert world.look(world.anonymous, '/api/organizations/me').json()['name'] == 'Verwaltung Beta'
 
 
 @then('the existing administrator stays in the original organization')

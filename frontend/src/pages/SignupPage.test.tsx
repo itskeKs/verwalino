@@ -10,11 +10,13 @@ import { AuthCtx } from "../auth/useAuth";
 const complete = vi.fn();
 const password = "A-long-signup-password-123";
 const message = "Wenn die Adresse frei ist, haben wir eine E-Mail geschickt";
+const tokenKey = "verwalino.signup-confirm-token";
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 beforeEach(() => {
   complete.mockReset();
+  sessionStorage.clear();
   vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url) => json(url === "/api/meta" ? { deployment_mode: "hosted", version: "0.1.0" } : { message })));
 });
 function open(path = "/signup") {
@@ -38,7 +40,7 @@ it("submits signup once, shows the generic receipt and requests a resend", async
   expect(JSON.parse(signup![1]!.body as string)).toMatchObject({ admin_name: "Erika Mustermann", email: "erika@example.test", password, website: "" });
   expect(screen.queryByLabelText("Passwort", { exact: true })).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Erneut senden" }));
-  expect(vi.mocked(fetch).mock.calls.find(([url]) => url === "/api/signup/resend")?.[1]).toMatchObject({ method: "POST", body: JSON.stringify({ email: "erika@example.test" }) });
+  expect(vi.mocked(fetch).mock.calls.find(([url]) => url === "/api/signup/resend")?.[1]).toMatchObject({ method: "POST", body: JSON.stringify({ email: "erika@example.test", website: "" }) });
   expect(await screen.findByRole("status")).toHaveTextContent(message);
 });
 it("explains mismatching passwords without submitting and preserves failed form input", async () => {
@@ -81,6 +83,34 @@ it("reports a refused confirmation and offers a new registration", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("Bestätigung nicht möglich");
   expect(screen.getByRole("link", { name: "Zur Registrierung" })).toHaveAttribute("href", "/signup");
   expect(complete).not.toHaveBeenCalled();
+  expect(sessionStorage.getItem(tokenKey)).toBeNull();
+});
+it("keeps the confirmation token through a reload and clears it after success", async () => {
+  const first = open("/signup/confirm?token=private-token");
+  await screen.findByLabelText("Passwort", { exact: true });
+  expect(sessionStorage.getItem(tokenKey)).toBe("private-token");
+  first.unmount();
+  open("/signup/confirm");
+  fireEvent.change(await screen.findByLabelText("Passwort", { exact: true }), { target: { value: password } });
+  await userEvent.click(screen.getByRole("button", { name: "E-Mail bestätigen" }));
+  await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+  expect(vi.mocked(fetch).mock.calls.find(([url]) => url === "/api/signup/confirm")?.[1]?.body).toBe(JSON.stringify({ token: "private-token", password }));
+  expect(sessionStorage.getItem(tokenKey)).toBeNull();
+});
+it.each([403, 503])("clears a refused token but retains it for a retryable failure (%s)", async (status) => {
+  vi.mocked(fetch).mockImplementation(async (url) => url === "/api/meta" ? json({ deployment_mode: "hosted" }) : json({ detail: "Bestätigung derzeit nicht verfügbar." }, status));
+  const first = open("/signup/confirm?token=private-token");
+  fireEvent.change(await screen.findByLabelText("Passwort", { exact: true }), { target: { value: password } });
+  expect(sessionStorage.getItem(tokenKey)).toBe("private-token");
+  await userEvent.click(screen.getByRole("button", { name: "E-Mail bestätigen" }));
+  await screen.findByRole("alert");
+  expect(sessionStorage.getItem(tokenKey)).toBe(status === 403 ? null : "private-token");
+  first.unmount();
+  open("/signup/confirm");
+  fireEvent.change(await screen.findByLabelText("Passwort", { exact: true }), { target: { value: password } });
+  await userEvent.click(screen.getByRole("button", { name: "E-Mail bestätigen" }));
+  const requests = vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/signup/confirm");
+  expect(JSON.parse(requests[1][1]!.body as string).token).toBe(status === 403 ? "" : "private-token");
 });
 it.each(["selfhost", "hosted"])("offers the login signup link only in hosted mode (%s)", async (mode) => {
   vi.mocked(fetch).mockImplementation(async (url) => json(url === "/api/meta" ? { deployment_mode: mode } : { required: false }));

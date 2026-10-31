@@ -51,5 +51,5 @@ Feature: Organization isolation
   Scenario: A public registration cannot claim an existing organization
     When a visitor registers using the name of another organization
     And the visitor follows the emailed confirmation link
-    Then the registration cannot claim that organization
+    Then the registration creates a separate organization with the same name
     And the existing administrator stays in the original organization
