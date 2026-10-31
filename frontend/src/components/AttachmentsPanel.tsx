@@ -1,4 +1,4 @@
-import { useUploadLimit } from "../lib/uploads";
+import { formatUploadLimit, useUploadLimit } from "../lib/uploads";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { archiveAttachment, attachmentDownloadUrl, listAttachments, listProperties, uploadAttachment } from "../api/endpoints";
 import { ApiError } from "../api/client";
@@ -115,7 +115,7 @@ function AttachmentContext({ propertyId, unitId, personId, canWrite }: Props) {
       setUploadError("Bitte ein Objekt auswählen."); return;
     }
     if (!file || file.size === 0) { setUploadError("Bitte eine nicht leere Dokumentdatei auswählen."); return; }
-    if (file.size > maxUploadBytes) { setUploadError("Die Dokumentdatei darf höchstens 25 MiB groß sein."); return; }
+    if (file.size > maxUploadBytes) { setUploadError(`Die Dokumentdatei darf höchstens ${formatUploadLimit(maxUploadBytes)} groß sein.`); return; }
     if (title.length > 255 || title.includes("\0")) { setUploadError("Der Dokumenttitel darf höchstens 255 Zeichen und kein Nullzeichen enthalten."); return; }
     mutationLock.current = true;
     setPending(true);
@@ -161,7 +161,7 @@ function AttachmentContext({ propertyId, unitId, personId, canWrite }: Props) {
 
   return <section className="card" aria-labelledby={headingId} style={{ marginBottom: "1.5rem" }}>
     <h2 id={headingId}>Dokumente</h2>
-    <p>Originale bleiben erhalten. Archivieren löscht keine Datei. Maximal 25 MiB je Dokument.</p>
+    <p>Originale bleiben erhalten. Archivieren löscht keine Datei. Maximal {formatUploadLimit(maxUploadBytes)} je Dokument.</p>
     {status && <p role="status">{status}</p>}
     {canWrite && <form onSubmit={upload} noValidate aria-label="Dokument hochladen" className="form-grid">
       {!propertyId && <>

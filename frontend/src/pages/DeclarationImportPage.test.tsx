@@ -1,4 +1,5 @@
 import { api } from "../api/client";
+import { formatUploadLimit, MAX_UPLOAD_BYTES } from "../lib/uploads";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -264,7 +265,7 @@ describe("Teilungserklärung upload wizard", () => {
     await screen.findByLabelText("PDF-Dateien auswählen");
 
     const input = screen.getByLabelText("PDF-Dateien auswählen");
-    const tooLarge = new File([new Uint8Array(25 * 1024 * 1024 + 1)], "gross.pdf", {
+    const tooLarge = new File([new Uint8Array(MAX_UPLOAD_BYTES + 1)], "gross.pdf", {
       type: "application/pdf",
     });
     fireEvent.change(input, {
@@ -277,24 +278,27 @@ describe("Teilungserklärung upload wizard", () => {
 
     expect(await screen.findByText(/nur PDF-Dateien/i)).toBeVisible();
     expect(screen.getByText(/„umbenannt\.pdf“ ist keine PDF-Datei/i)).toBeVisible();
-    expect(screen.getByText(/„gross\.pdf“ ist größer als maximal 25 MiB/i)).toBeVisible();
+    expect(screen.getByText((text) => text.includes(`„gross.pdf“ ist größer als maximal ${formatUploadLimit(MAX_UPLOAD_BYTES)}`))).toBeVisible();
     expect(uploadSpy).not.toHaveBeenCalled();
   });
 
   it("uses the backend metadata cap for file selection boundaries", async () => {
+    const metadata = { max_upload_bytes: 1_294_537 };
+    const formattedLimit = formatUploadLimit(metadata.max_upload_bytes);
     const get = api.get;
     vi.spyOn(api, "get").mockImplementation((url, options) => url === "/api/meta"
-      ? Promise.resolve({ max_upload_bytes: 4 }) : get(url, options));
+      ? Promise.resolve(metadata) : get(url, options));
     vi.spyOn(declarationApi, "createDeclarationImport").mockResolvedValue(pendingImport());
     renderImportRoute();
     const input = await screen.findByLabelText("PDF-Dateien auswählen");
     await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/meta", { cache: "no-store" }));
+    expect(await screen.findByText(`Erlaubt sind PDFs bis maximal ${formattedLimit} pro Datei. Die serverseitige Prüfung bleibt maßgeblich.`)).toBeVisible();
     fireEvent.change(input, { target: { files: [
-      new File(["%PDF"], "exakt.pdf", { type: "application/pdf" }),
-      new File(["%PDF-"], "darueber.pdf", { type: "application/pdf" }),
+      Object.defineProperty(new File(["%PDF"], "exakt.pdf", { type: "application/pdf" }), "size", { value: metadata.max_upload_bytes }),
+      Object.defineProperty(new File(["%PDF-"], "darueber.pdf", { type: "application/pdf" }), "size", { value: metadata.max_upload_bytes + 1 }),
     ] } });
     expect(screen.getByDisplayValue("exakt.pdf")).toBeVisible();
-    expect(screen.getByText(/„darueber\.pdf“ ist größer als maximal 25 MiB/i)).toBeVisible();
+    expect(screen.getByText(`„darueber.pdf“ ist größer als maximal ${formattedLimit}.`)).toBeVisible();
     expect(screen.queryByDisplayValue("darueber.pdf")).not.toBeInTheDocument();
   });
 

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { AttachmentsPanel } from "./AttachmentsPanel";
 import * as endpoints from "../api/endpoints";
 import { ApiError, uploadFormData } from "../api/client";
+import { formatUploadLimit } from "../lib/uploads";
 import type { Attachment, Property } from "../api/types";
 
 vi.mock("../api/endpoints", async (original) => ({
@@ -48,12 +49,16 @@ it("shows the backend storage quota refusal from the upload response to the memb
 });
 
 it("rejects attachments above the metadata cap before uploading", async () => {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ max_upload_bytes: 4 })));
+  const metadata = { max_upload_bytes: 1_294_537 };
+  const formattedLimit = formatUploadLimit(metadata.max_upload_bytes);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify(metadata)));
   render(<AttachmentsPanel propertyId="property" canWrite />);
   await screen.findByText("Keine Dokumente vorhanden.");
-  await draft();
+  expect(await screen.findByText(`Originale bleiben erhalten. Archivieren löscht keine Datei. Maximal ${formattedLimit} je Dokument.`)).toBeVisible();
+  const tooLarge = Object.defineProperty(new File(["%PDF-"], "gross.pdf", { type: "application/pdf" }), "size", { value: metadata.max_upload_bytes + 1 });
+  await userEvent.upload(screen.getByLabelText("Dokumentdatei"), tooLarge);
   fireEvent.click(screen.getByRole("button", { name: "Dokument hochladen" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("höchstens 25 MiB");
+  expect(await screen.findByRole("alert")).toHaveTextContent(`höchstens ${formattedLimit}`);
   expect(endpoints.uploadAttachment).not.toHaveBeenCalled();
 });
 

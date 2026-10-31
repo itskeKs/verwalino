@@ -5,12 +5,7 @@ import { Card, CardContent, CardHeader } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { useDeploymentMode } from "../auth/useDeploymentMode";
-
-function size(bytes: number): string {
-  const unit = bytes >= 1024 ** 3 ? "GiB" : "MiB";
-  const divisor = unit === "GiB" ? 1024 ** 3 : 1024 ** 2;
-  return `${(bytes / divisor).toLocaleString("de-DE", { maximumFractionDigits: 2 })} ${unit}`;
-}
+import { formatUploadLimit } from "../lib/uploads";
 
 export function OrganizationQuotaCard() {
   const { mode } = useDeploymentMode();
@@ -27,7 +22,7 @@ export function OrganizationQuotaCard() {
   }, [mode, revision]);
   if (mode !== "hosted" || quota?.plan === "unlimited") return null;
   const rows = quota ? [
-    { label: "Speicher", usage: quota.usage.storage_bytes, limit: quota.limits.storage_bytes, format: size },
+    { label: "Speicher", usage: quota.usage.storage_bytes, limit: quota.limits.storage_bytes, format: formatUploadLimit },
     { label: "Objekte", usage: quota.usage.properties, limit: quota.limits.properties, format: (n: number) => n.toLocaleString("de-DE") },
     { label: "Einheiten", usage: quota.usage.units, limit: quota.limits.units, format: (n: number) => n.toLocaleString("de-DE") },
   ] : [];
