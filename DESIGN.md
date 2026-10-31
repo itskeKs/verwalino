@@ -126,9 +126,10 @@ overlay, closes on link click or overlay click); from `md` it is static. `AppShe
 and `Topbar.css` exist but are imported nowhere; the shell is styled with utilities only.
 
 First-run setup opens when `GET /api/setup` reports `required: true`; the backend
-owns the deployment decision. In `hosted` mode it reports `required: false` and
-`/setup` redirects to login. While setup status loads, the existing "Lade..." state
-applies; if that check fails, login and signed-in pages stay available and setup
+owns the deployment decision. Required setup takes precedence over login and
+signup without requesting deployment metadata. In `hosted` mode it reports
+`required: false` and `/setup` redirects to login. While setup status loads, the
+existing "Lade..." state applies; if that check fails, login and signed-in pages stay available and setup
 requires a later successful app load. This changes route availability without
 adding visual elements.
 
@@ -140,6 +141,7 @@ A mistyped confirmation password shows “Passwort nicht korrekt. Bitte versuche
 and keeps the live token for another attempt (422). Invalid/expired/used links and
 throttling return 403 and clear it; success clears it too.
 Hosted login adds the text link “Konto erstellen”; selfhost login has no signup link.
+Login and signup show "Lade..." while metadata loads; metadata errors leave login available.
 
 Registration uses the setup pattern: centred `max-w-lg` kit `Card`, `p-4 sm:p-6`,
 `min-w-0`, a wrapping `h1` “Konto erstellen”, labelled `Input` controls at `h-11`,

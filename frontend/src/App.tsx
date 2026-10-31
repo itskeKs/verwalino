@@ -80,10 +80,23 @@ function PermissionRedirect({ to, parameter }: { to: string; parameter: "scopeId
   return <Navigate to={`${to}/${encodeURIComponent(params[parameter] ?? "")}`} replace />;
 }
 
+function PublicAuthRoutes() {
+  const deployment = useDeploymentMode();
+  const location = useLocation();
+
+  if (deployment.mode === null && !deployment.error) return <main className="p-6" role="status">Lade...</main>;
+
+  if (location.pathname === "/signup" || location.pathname === "/signup/confirm") {
+    if (deployment.mode !== "hosted") return <Navigate to="/login" replace />;
+    return location.pathname === "/signup/confirm" ? <SignupConfirmPage /> : <SignupPage />;
+  }
+
+  return <LoginPage signupEnabled={deployment.mode === "hosted"} />;
+}
+
 export function AppRoutes() {
   const { loading, session } = useAuth();
   const setup = useSetupStatus();
-  const deployment = useDeploymentMode();
   const location = useLocation();
 
   const setupRequired = !setup.error ? setup.required : false;
@@ -92,12 +105,6 @@ export function AppRoutes() {
     return (
       <div style={{ padding: "2rem", textAlign: "center" }}>Lade...</div>
     );
-  }
-
-  if (location.pathname === "/signup" || location.pathname === "/signup/confirm") {
-    if (deployment.mode === null && !deployment.error) return <main className="p-6" role="status">Lade...</main>;
-    if (deployment.mode !== "hosted") return <Navigate to="/login" replace />;
-    return location.pathname === "/signup/confirm" ? <SignupConfirmPage /> : <SignupPage />;
   }
 
   if (setupRequired) {
@@ -109,8 +116,8 @@ export function AppRoutes() {
 
   if (location.pathname === "/setup") return <Navigate to="/login" replace />;
 
-  if (!session) {
-    return <LoginPage signupEnabled={deployment.mode === "hosted"} />;
+  if (!session || location.pathname === "/signup" || location.pathname === "/signup/confirm") {
+    return <PublicAuthRoutes />;
   }
 
   const canWriteDeclarations = session.role === "OWNER_ADMIN" || session.role === "CLERK";
