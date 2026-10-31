@@ -124,11 +124,49 @@ overlay, closes on link click or overlay click); from `md` it is static. `AppShe
 and `Topbar.css` exist but are imported nowhere; the shell is styled with utilities only.
 
 First-run setup opens when `GET /api/setup` reports `required: true`; the backend
-owns the deployment decision. In `hosted` mode it reports `required: false` and
-`/setup` redirects to login. While setup status loads, the existing "Lade..." state
-applies; if that check fails, login and signed-in pages stay available and setup
+owns the deployment decision. Required setup takes precedence over login and
+signup without requesting deployment metadata. In `hosted` mode it reports
+`required: false` and `/setup` redirects to login. While setup status loads, the
+existing "Lade..." state applies; if that check fails, login and signed-in pages stay available and setup
 requires a later successful app load. This changes route availability without
 adding visual elements.
+
+### Hosted registration
+
+`/signup` and `/signup/confirm` are standalone pages, gated by confirmed hosted
+metadata. Selfhost and unavailable metadata redirect to login without submitting.
+A mistyped confirmation password shows “Passwort nicht korrekt. Bitte versuchen Sie es erneut.”
+and keeps the live token for another attempt (422). Invalid/expired/used links and
+throttling return 403 and clear it; success clears it too.
+Hosted login adds the text link “Konto erstellen”; selfhost login has no signup link.
+Login and signup show "Lade..." while metadata loads; metadata errors leave login available.
+
+Registration uses the setup pattern: centred `max-w-lg` kit `Card`, `p-4 sm:p-6`,
+`min-w-0`, a wrapping `h1` “Konto erstellen”, labelled `Input` controls at `h-11`,
+and one full-width large primary button. Fields are “Organisation”, “Name”,
+“E-Mail”, “Passwort” and “Passwort wiederholen”; passwords explain the 12–128
+character requirement. The honeypot is hidden from layout, assistive technology
+and keyboard focus. Busy forms retain their inputs and disable their fieldset.
+Errors use `role="alert"` and preserve inputs; password mismatch is explained
+before submitting. “Zur Anmeldung” remains available.
+
+On acceptance the form is replaced by the server's generic `role="status"` receipt:
+“Wenn die Adresse frei ist, haben wir eine E-Mail geschickt”. Passwords are cleared.
+A muted note explains checking spam and the ten-minute resend interval. The ghost
+button “Erneut senden” requests another link; it shows the same conditional receipt
+without claiming delivery. Failure keeps the receipt and offers retry.
+
+Confirmation uses the same card and heading “E-Mail bestätigen”. It asks for the
+chosen “Passwort” with `current-password` autocomplete and a large full-width
+“E-Mail bestätigen” button. The query token is removed immediately; no request is
+sent until explicit submit. The password proves that confirmation activates the
+user’s own registration, including after resend. Busy state says “Bestätigung läuft …”;
+duplicate submits and StrictMode never create a second POST. The token is saved in
+tab-local `sessionStorage` before removing it from the URL, preserving reloads. It
+is cleared after success or a 403, and retained for retryable errors. The password
+never enters browser storage. Success reloads the dashboard from the session cookie. Failure shows the German server refusal with `role="alert"`
+and “Zur Registrierung”. The HTML uses a no-referrer policy. Inputs and receipt
+text must wrap without horizontal scrolling at 360 px.
 
 ### Sidebar groups
 
@@ -442,11 +480,17 @@ synthetic browser-intercepted API responses, without starting a backend or acces
 | Dashboard | `/` | [`dashboard-desktop.png`](docs/assets/design/dashboard-desktop.png) | [`dashboard-360.png`](docs/assets/design/dashboard-360.png) |
 | List | `/objekte` | [`list-objekte-desktop.png`](docs/assets/design/list-objekte-desktop.png) | [`list-objekte-360.png`](docs/assets/design/list-objekte-360.png) |
 | Detail | `/objekte/:id` | [`detail-objekt-desktop.png`](docs/assets/design/detail-objekt-desktop.png) | [`detail-objekt-360.png`](docs/assets/design/detail-objekt-360.png) |
+| Hosted signup | `/signup` | [`signup-desktop.png`](docs/assets/design/signup-desktop.png) | [`signup-360.png`](docs/assets/design/signup-360.png) |
+| Signup confirmation, retryable password error | `/signup/confirm` | [`signup-confirm-desktop.png`](docs/assets/design/signup-confirm-desktop.png) | [`signup-confirm-360.png`](docs/assets/design/signup-confirm-360.png) |
+| Signup receipt | `/signup`, accepted request | — | [`signup-receipt-360.png`](docs/assets/design/signup-receipt-360.png) |
 | Form | `/objekte`, "+ Neues Objekt" | [`form-objekt-desktop.png`](docs/assets/design/form-objekt-desktop.png) | [`form-objekt-360.png`](docs/assets/design/form-objekt-360.png) |
 | Dialog | "Passwort ändern" in the topbar | [`dialog-password-desktop.png`](docs/assets/design/dialog-password-desktop.png) | [`dialog-password-360.png`](docs/assets/design/dialog-password-360.png) |
 
 <a href="docs/assets/design/list-objekte-desktop.png"><img src="docs/assets/design/list-objekte-desktop.png" alt="List page: Objekte" width="720"></a>
 <a href="docs/assets/design/dialog-password-desktop.png"><img src="docs/assets/design/dialog-password-desktop.png" alt="Dialog: Passwort ändern" width="720"></a>
+
+The signup images use the running frontend with synthetic hosted metadata and
+captured API responses (visual/360 px geometry checks, not end-to-end proof).
 
 The screenshots show the app as it is, including the deviations named above (legacy table, native file
 button, unstyled buttons on the dashboard task list, ASCII "Strasse").
