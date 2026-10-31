@@ -1,0 +1,42 @@
+# Hosted-only extension. Keep the portable stack and installer unchanged.
+# See docs/operations/website-hosting.md for operator opt-in and image pinning.
+services:
+  site:
+    image: ${VERWALINO_SITE_IMAGE:?set VERWALINO_SITE_IMAGE to ghcr.io/itskeks/verwalino-site:<sha>@sha256:<digest>}
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    # Caddy's background storage housekeeping needs /data even with TLS disabled.
+    tmpfs:
+      - /data:rw,noexec,nosuid,nodev,size=1m,uid=10001,gid=10001,mode=0700
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: "0.50"
+    networks: [site]
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    networks: [proxy, site]
+    volumes:
+      - type: bind
+        source: ${VERWALINO_SERVER_ROOT:-/srv/verwalino}/config/Caddyfile.hosted
+        target: /etc/caddy/Caddyfile
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./Caddyfile.site
+        target: /etc/caddy/Caddyfile.site
+        read_only: true
+        bind:
+          create_host_path: false
+
+networks:
+  site:
+    internal: true

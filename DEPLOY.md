@@ -117,7 +117,8 @@ are never stored there. The application strips the server query scope
 for this page before the default Uvicorn access logger sees it; separately managed
 reverse proxies must also avoid recording confirmation query strings. Tokens
 contain 244 random bits from two PostgreSQL UUIDs (pgcrypto is absent); only
-SHA-256 hashes persist, and each link expires after 24 hours. Resending rotates the token and renews that lifetime,
+SHA-256 hashes persist, and requests expire 24 hours after submission. Resending
+rotates the token while preserving the original expiry,
 with one send at most every ten minutes across signup and resend. Pending requests
 cannot sign in. Confirmation creates the tenant and owner atomically and returns
 the normal session cookie. Existing addresses receive the identical generic 202
@@ -1024,11 +1025,12 @@ EOF2
 rm ci_key.pub
 ```
 
-The workflow sends only the tag as the SSH command (`ssh chris@host v1.2.3`). The user's shell expands
-`$SSH_ORIGINAL_COMMAND` into arguments of the script, which accepts exactly one argument shaped like a release
-tag (`vX.Y.Z`, no suffix or leading zeroes) and exits 2 on anything else. `restrict` switches off forwarding, PTYs and
+The workflows send only a command string over SSH: `v1.2.3` for the app or `site <sha>` for the website.
+The user's shell expands `$SSH_ORIGINAL_COMMAND` into arguments of the script, which accepts exactly one release
+tag (`vX.Y.Z`, no suffix or leading zeroes), or exactly `site` and one 40-character lowercase hexadecimal commit
+SHA. Every other shape exits 2 before logging, locking or Docker work. `restrict` switches off forwarding, PTYs and
 agent. The user has sudo and Docker, so this key is as sensitive as the admin key: the forced command and the tag
-check are its only limits. Fill `DEPLOY_KNOWN_HOSTS` with the output of `ssh-keyscan -t ed25519 "$DEPLOY_HOST"`,
+grammar check are its only limits. Fill `DEPLOY_KNOWN_HOSTS` with the output of `ssh-keyscan -t ed25519 "$DEPLOY_HOST"`,
 where `DEPLOY_HOST` is exactly the host name or IP stored in that secret, after comparing the key with
 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server. `StrictHostKeyChecking=yes` matches that name;
 an IP-only entry does not match a host name in `DEPLOY_HOST`.
@@ -1052,6 +1054,41 @@ an IP-only entry does not match a host name in `DEPLOY_HOST`.
 
 Secrets of the workflow (repository secrets, names only): `DEPLOY_HOST`, `DEPLOY_USER` (the admin user),
 `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`. The token is read-only (`contents: read`) and the job uses no other secret.
+
+### Website container
+
+The public website is an independent static image, `ghcr.io/itskeks/verwalino-site:<git-sha>`.
+The hosted operator opts in with [infra/docker-compose.site.yml](infra/docker-compose.site.yml) in addition to
+the portable compose file and an operator-owned `config/Caddyfile.hosted` containing the existing app block
+plus `import /etc/caddy/Caddyfile.site`. The default compose file, Caddyfile and installer stay unchanged.
+The [website hosting runbook](docs/operations/website-hosting.md) gives the exact one-time setup and commands;
+the server needs a reviewed app release containing these deployment files before the first site deployment.
+
+Only Caddy publishes ports. It serves `app.verwalino.de` through the existing app network,
+`verwalino.de` through `site:8080` on the separate internal `site` network, and redirects
+`www.verwalino.de` to the apex with HTTP 308. The site has a read-only root, uid/gid 10001,
+all capabilities dropped, no privilege escalation, no credentials or host mounts, and only a 1 MiB
+`/data` tmpfs for Caddy housekeeping. Neither app nor db joins its network.
+
+On pushes to `main` affecting `website/` or its workflow, [Website](.github/workflows/website.yml) first
+checks i18n, lint, the build and links; then publishes amd64/arm64 images tagged only with the full SHA,
+attaches BuildKit provenance/SBOMs, signs the index with keyless cosign, and sends only `site <sha>`
+through the existing deploy key. PRs only run checks. Site deploys use their own concurrency group,
+`deploy-hosted-site`, separate from the app's `deploy-hosted-server`, so queued jobs never replace
+each other across the two groups; an active deployment is never cancelled. The shared server lock
+immediately refuses a concurrent deploy, which must be re-run after the active deploy finishes.
+
+`scripts/deploy-server.sh site <sha>` refuses a disabled extension, pulls the SHA tag, requires a matching
+registry SHA-256 RepoDigest, recreates **only** `site` using `tag@digest`, and requires HTTP 200 on `/`
+from the running Caddy container over the site network. It performs no checkout, backup, migration or
+private configuration write. As with app deployment, Docker verifies pulled content and the resolved digest
+pins recreation; the server does not independently verify cosign signatures. CI signing is separate.
+
+The log prints `previous site sha: <sha>` and `rollback: site <sha>` before recreation. Roll back by
+sending `site <previous-sha>` through the same key, or running that command on the server's script.
+There is no automatic rollback. The compose extension requires `VERWALINO_SITE_IMAGE`; set a SHA tag
+plus digest pin from the outset. Keep the previous image in GHCR. App releases preserve an already-enabled Caddy extension;
+manual portable-installer operations require reapplying the hosted Caddy override as described in the runbook.
 
 ### Backups
 
@@ -1105,7 +1142,7 @@ run `docker compose down -v` or delete the volumes.
 | Parent references (accepted source 0140) | Replaces client-selected parent references with organization-bound composite foreign keys. Validates pending deferred checks and rejects existing invalid references without repair before replacing constraints. Adds a boolean-only, tenant-bound property existence check for scoped financial creation. Downgrade restores the original constraints and removes that check; an older runtime is not approved on this schema. |
 | Browser setup (accepted source 0141) | Adds the private singleton setup-token table and a token-gated, serialized first-organization function. Removes direct organization INSERT from app_rw; the migrator CLI shares the creation SQL. A populated token table blocks downgrade to avoid silently losing pending/consumed state. Existing organization/user/membership rows are preserved. |
 | 0142 | Adds global authentication throttle rows containing only scoped key hashes, failure windows, lockout expiry, last lockout start and escalation history, with narrow runtime DML. No existing rows or grants change. A populated table blocks downgrade to avoid losing lockouts. |
-| Lease documents (accepted source 0143) | Allows retained built-in letter documents without a template row; the exact migration is preserved from #114. Downgrade refuses a null template reference. |
+| 0143 (accepted source) | Allows a nullable template reference for built-in lease contracts and handover originals. Existing rows, composite template foreign keys, RLS and immutable PDF snapshots remain intact. Downgrade refuses while an original has no template; it never deletes originals or creates substitute templates. |
 | 0144 (accepted source) | Adds private pending signup requests and token-bound SECURITY DEFINER functions; runtime roles have no direct request-table access. Successful confirmation atomically creates a separate tenant and deletes its request. Retained requests block downgrade. |
 | 0145 | Adds global password reset requests with 32-byte token digests, context-free definer issuance/confirmation and bounded cleanup; runtime table access is revoked. The T57 trigger path revokes sessions and consumes links on password changes/deactivation. Tokens expire after one hour; successful reset marks all outstanding links for that user used. Login, issuance and confirmation share the active-user/live-membership lookup. A populated downgrade refuses to discard retained reset state; an empty downgrade exactly removes the new table, index, trigger and functions and restores the previous login lookup verbatim. |
 

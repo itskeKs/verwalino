@@ -135,6 +135,15 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                     expected.rollback()
                 for revision in reversed(revisions):
                     revision.module.upgrade()
+                if starting_schema == '0142':
+                    nullable = text("SELECT is_nullable FROM information_schema.columns "
+                                    "WHERE table_name='letter_document' AND column_name='template_id'")
+                    assert connection.scalar(nullable) == 'YES'
+                    revision = graph.get_revision('0143').module
+                    revision.downgrade()
+                    assert connection.scalar(nullable) == 'NO'
+                    revision.upgrade()
+                    assert connection.scalar(nullable) == 'YES'
             assert old_rows() == before
             after_security = connection.execute(text("SELECT c.relname,c.relrowsecurity,c.relforcerowsecurity,c.relacl::text FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relname=ANY(:tables) ORDER BY c.relname"), {'tables': tables}).all()
             if starting_schema in ('0122', '0139', '0140', '0141', '0142', '0143', '0144'):

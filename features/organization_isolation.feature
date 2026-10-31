@@ -29,6 +29,11 @@ Feature: Organization isolation
       | person       |
       | bank account |
 
+  Scenario: Another organization's lease documents cannot be opened or created
+    Given a lease with a landlord, a tenant and a unit meter
+    When another organization's administrator requests its lease documents
+    Then the lease documents are reported as not found
+
   Scenario Outline: A <record> of another organization cannot be changed
     When the user tries to rename the <record> of "Verwaltung Beta" to "Taken over by Alpha"
     Then the change is refused

@@ -91,6 +91,11 @@ jobs:
       - name: Backend tests (pytest, whole suite)
         run: make test-backend
 
+      - name: Hosted API scenarios (Postgres and Mailpit)
+        env:
+          HV_DEPLOYMENT_MODE: hosted
+        run: make test-bdd-hosted
+
   frontend:
     name: Frontend (eslint, tsc, vitest)
     runs-on: ubuntu-latest

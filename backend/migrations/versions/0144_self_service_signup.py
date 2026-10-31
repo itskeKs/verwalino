@@ -90,8 +90,8 @@ def upgrade():
       IF pending.id IS NOT NULL THEN RETURN token; END IF;
       SELECT * INTO pending FROM public.signup_request
         WHERE email_normalized=lower(btrim(email)) FOR UPDATE;
-      -- A live request retains its original credentials and names, including
-      -- after cooldown. Mailbox proof must activate what the first sender chose.
+      -- A live request retains its original credentials and names until its
+      -- fixed expiry. An expired request accepts replacement details.
       IF pending.expires_at<=now_at THEN
         UPDATE public.signup_request SET organization_name=org_name,admin_name=$3,password_hash=$4,
           token_hash=sha256(convert_to(token,'UTF8')),created_at=now_at,
@@ -118,7 +118,7 @@ def upgrade():
         THEN RETURN NULL; END IF;
       token := replace(gen_random_uuid()::text||gen_random_uuid()::text,'-','');
       UPDATE public.signup_request SET token_hash=sha256(convert_to(token,'UTF8')),
-        resent_at=now_at,expires_at=now_at+interval '24 hours' WHERE id=pending.id;
+        resent_at=now_at WHERE id=pending.id;
       RETURN token;
     END $$;
     REVOKE ALL ON FUNCTION public.resend_signup(text) FROM PUBLIC,app_rw,app_worker,app_review;

@@ -45,6 +45,7 @@ import { AttachmentsPanel } from "../components/AttachmentsPanel";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { MeterPanel } from "../components/MeterPanel";
+import { LeaseDocuments } from "../components/LeaseDocuments";
 
 import { MasterDataDelete } from "../components/MasterDataDelete";
 
@@ -88,6 +89,7 @@ export function UnitDetailPage() {
   const [persons, setPersons] = useState<Person[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [meterRevision, setMeterRevision] = useState(0);
 
   // Ownership form
   const [showOwnerForm, setShowOwnerForm] = useState(false);
@@ -282,7 +284,7 @@ export function UnitDetailPage() {
       <AttachmentsPanel propertyId={property.id} unitId={unit.id} canWrite={canWriteOwnership} />
 
       {/* Ownership History */}
-      <MeterPanel key={unit.id} propertyId={property.id} unitId={unit.id} canWrite={canWriteOwnership} />
+      <MeterPanel key={`${unit.id}:${meterRevision}`} propertyId={property.id} unitId={unit.id} canWrite={canWriteOwnership} />
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <h2 style={{ margin: 0 }}>Eigentuemer-Historie</h2>
@@ -502,7 +504,7 @@ export function UnitDetailPage() {
       {leases.length === 0 ? (
         <p className="empty-hint">Keine Mietvertraege vorhanden.</p>
       ) : (
-        <div className="card">
+        <><div className="card overflow-x-auto">
           <table className="data-table">
             <thead>
               <tr>
@@ -546,6 +548,8 @@ export function UnitDetailPage() {
             </tbody>
           </table>
         </div>
+          {leases.map(la => <LeaseDocuments key={la.id} leaseId={la.id} propertyId={property.id} unitId={unit.id} tenantLabel={tenantProfileLabel(la.tenant_profile_id)} canWrite={canWriteOwnership} onReadingsSaved={() => setMeterRevision(value => value + 1)} />)}
+        </>
       )}
     </div>
   );

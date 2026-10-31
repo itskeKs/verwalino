@@ -513,7 +513,7 @@ the token inside PostgreSQL and returns it once for mail submission. pgcrypto is
 absent; two `gen_random_uuid()` values supply **244 random bits** (122 each),
 encoded as 64 hexadecimal characters. Callers cannot choose a token digest.
 `resend_signup(email) RETURNS text` enforces the shared ten-minute send cooldown
-and rotates the token with a fresh 24-hour expiry. A live pending request keeps
+and rotates the token without extending the original 24-hour request expiry. A live pending request keeps
 its first password hash and names even when a third party resubmits it; only an
 expired request can be replaced. Signup always creates a separate organization,
 including when its display name matches an existing tenant.
@@ -910,6 +910,16 @@ original sources and content-addressed storage reference are preserved;
 download checks current original-source/contact rights and the hash, without recalculation.
 Changing a template does not change any letters. Populated tables prevent lossy
 downgrade; dispatch is not part of circular letter issuance.
+
+Issue #37 reuses these tables for lease contracts and handover protocols, without a migration.
+`letter_document.body` stores a JSON text snapshot of inputs and rendered content, including
+original landlord source IDs for contracts and meter/reading IDs and exact values for handovers.
+Landlord export/processing access is rechecked on original retrieval. The existing checksum and
+immutable storage path preserve the issued PDF. Lease document routes under `/api/leases/{id}`
+authorize the specific lease independently of its active dates or finalized statements.
+The shared meter reading service writes protocol readings into `meter_reading`, using `period`
+for their source note, and refuses a value below the preceding reading day (including same-day
+values). Readings and the letter original commit together or roll back together.
 
 T49 adds the read-only `/api/reports/datev/{sources|preview}` path and
 `POST /api/reports/datev.csv`. `ReportService.property_period` shares the existing
