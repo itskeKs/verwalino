@@ -34,9 +34,9 @@ def refused_document(world):
 @when("the administrator adds a property and reads the organization quota")
 def change_only_own_usage(world):
     clients = [world.administrator_of(name) for name in ("Verwaltung Alpha", "Verwaltung Beta")]
-    before = [world.send(client, "GET", "/api/organization/quota").json()["usage"]["properties"] for client in clients]
+    before = [world.send(client, "GET", "/api/organizations/quota").json()["usage"]["properties"] for client in clients]
     create_property(world, "Verwaltung Alpha", "Zusätzliches Kontingentobjekt")
-    after = [world.send(client, "GET", "/api/organization/quota").json()["usage"]["properties"] for client in clients]
+    after = [world.send(client, "GET", "/api/organizations/quota").json()["usage"]["properties"] for client in clients]
     world.data["quota_property_counts"] = before, after
 
 

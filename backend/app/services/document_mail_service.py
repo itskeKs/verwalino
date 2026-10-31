@@ -223,7 +223,7 @@ class DocumentMailService:
         message_id = f"<{request_id}@{settings.smtp_from.rsplit('@', 1)[1]}>"
         payload = {"id": str(request_id), "person_id": str(person_id), "email": email,
                    "status": "prepared", "created_at": created, "completed_at": None,
-                   "content_sha256": digest, "storage_uri": stored.uri, "message_id": message_id}
+                   "content_sha256": digest, "storage_uri": stored.uri, "bytes": stored.byte_size, "message_id": message_id}
         # The receipt commits independently and can survive this request.
         # Preserve its original even if that commit's outcome is uncertain.
         retain_document(self.db, stored)

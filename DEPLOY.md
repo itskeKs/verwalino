@@ -93,7 +93,9 @@ storage, **25 MiB** per upload, **20 properties**, **200 units**, and **USD 0 pe
 calendar month (UTC)** for declaration extraction and knowledge Q&A. USD 0 disables
 model calls even when a provider key and the feature switches are configured.
 `quota_enforcement` selects this plan only in hosted mode. Selfhost has no plan
-checks; existing request/upload safety limits and declaration cost controls remain.
+checks and takes no organization-wide quota advisory or filesystem upload lock;
+per-file locks through transaction completion, atomic writes, existing request/upload
+safety limits and declaration cost controls remain.
 
 To change the hosted offer, edit the documented `FREE_PLAN` constants, run the
 quota/budget tests, rebuild, and restart both web and declaration worker processes
@@ -103,15 +105,18 @@ organization; per-organization overrides are a follow-up. Existing reviewed Q&A
 policies may further restrict calls; increasing the hosted monthly constant does
 not enable Q&A or relax those controls.
 
-Usage is derived: retained files under `HV_DOCUMENT_STORAGE_ROOT/<organization>`
-are summed once (including archived originals and generated PDFs), and database
+Usage is derived from database metadata: stored sizes from attachments, invoice
+versions, mandate/property documents, intake originals, letters and prepared mail
+receipts are summed once per storage URI, including archived and source-restricted
+originals. Uploads and quota reads never walk the storage directory. Database
 counts include every organization-owned property/unit, regardless of source
-grants. New files are checked before writing and removed on transaction rollback;
+grants. Hosted writes serialize quota admission within the organization. New files
+are checked before writing and removed on transaction rollback;
 already retained content is preserved. Mail originals are retained before their
 independently committed dispatch receipt, so a request rollback cannot remove a
 referenced PDF. Size/storage refusals return **413**, count
 refusals **409**, with German explanations. Authenticated members can read
-`GET /api/organization/quota`; the dashboard shows “Kontingent” and a warning at
+`GET /api/organizations/quota`; the dashboard shows “Kontingent” and a warning at
 90%. The unlimited plan is hidden.
 
 Monthly model costs reuse the Q&A reservation ledger and declaration extraction
@@ -127,9 +132,29 @@ continue to bound actual requests. Refusals return **409** with “Das monatlich
 KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den Betreiber.” Worker-side
 failures use `ORGANIZATION_AI_BUDGET_EXCEEDED`.
 
-Revision **0145** adds only a guarded aggregate function, because ordinary source
-RLS can hide rows and undercount usage. It adds no tables, stored counters, quota
-overrides or credentials. See [organization quotas](docs/architecture.md#organization-quotas).
+Before enabling hosted quotas on an existing document store, apply **0145** and
+run this one-time reconciliation for each existing organization, with its usual
+migrator connection and `HV_DOCUMENT_STORAGE_ROOT` available:
+
+```sh
+python -m app.admin_cli quota-recount --org <organization-uuid>
+```
+
+The command scans that organization's local originals under the hosted upload
+locks and appends their URI/byte metadata to the existing audit log. It does not
+change documents or old metadata, delete files, or start any services. Repeating
+it is safe and adds no identical reconciliation entries. Run it again after an
+operator restores files or investigates originals left by an interrupted write.
+New uploads need no recount; their owning document rows supply the size directly.
+
+Revision **0145** adds the guarded aggregate function because ordinary source RLS
+can hide rows and undercount usage, plus nullable, nonnegative `letter_document.size_bytes`
+for new letters (the only original table without size metadata). Prepared mail
+receipts use `bytes` in their existing JSON. Old letters/mail are covered by the
+reconciliation events. No tables, stored counters, quota overrides or credentials
+are added. Downgrade removes the function and reconstructible letter size column,
+leaving originals and reconciliation events intact. See
+[organization quotas](docs/architecture.md#organization-quotas).
 
 ## Hosted signup configuration
 
@@ -997,7 +1022,7 @@ DB. Each source revision is accepted only when actually measured.
 | 0142 (accepted source) | Adds global authentication throttle rows containing only scoped key hashes, failure windows, lockout expiry and escalation history, with narrow runtime DML. No existing rows or grants change. A populated table blocks downgrade to avoid losing lockouts. |
 | 0143 (accepted source) | Adds last-lockout timestamps for authentication escalation decay, global pending signup email reservations, hashed tokens, and narrow registration/provisioning functions. Signup creates separate tenants even with shared display names; the guarded bootstrap overload preserves CLI reuse. Successful provisioning deletes the request. Existing tenant rows and ACLs remain unchanged. Pending signups or retained last-lockout timestamps refuse downgrade; an empty downgrade restores the original bootstrap exactly. |
 | 0144 (accepted source) | Adds global password reset requests with 32-byte token digests, context-free definer issuance/confirmation and bounded cleanup; runtime table access is revoked. The T57 trigger path revokes sessions and consumes links on password changes/deactivation. Tokens expire after one hour; successful reset marks all outstanding links for that user used. A populated downgrade refuses to discard retained reset state; an empty downgrade exactly removes the new table, index, trigger and functions. |
-| 0145 | Adds a member-checked organization aggregate function for complete property/unit counts and monthly USD usage from existing ledgers. No table or retained-data change; downgrade removes only the function. Older runtimes do not enforce hosted quotas. |
+| 0145 | Adds a member-checked organization aggregate for deduplicated document bytes, complete property/unit counts and monthly USD usage. Adds nullable, nonnegative letter size metadata; old originals remain unchanged and `quota-recount` records legacy sizes in the existing audit log. Downgrade removes the function and reconstructible size column, preserving originals and events. Older runtimes do not enforce hosted quotas. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function

@@ -129,11 +129,11 @@ class LetterService:
             stored = await put_document(self.db, self.org, pdf, content_type="application/pdf")
             await self.db.execute(text("""INSERT INTO letter_document
                 (organization_id,template_id,property_id,person_id,tenant_profile_id,lease_agreement_id,
-                 request_id,as_of,recipient_name,subject,body,storage_uri,content_sha256)
-                VALUES (:org,:template,:property,:person,:tenant,:lease,:request,:day,:name,:subject,:body,:uri,:digest)"""),
+                 request_id,as_of,recipient_name,subject,body,storage_uri,content_sha256,size_bytes)
+                VALUES (:org,:template,:property,:person,:tenant,:lease,:request,:day,:name,:subject,:body,:uri,:digest,:bytes)"""),
                 {"org": self.org, "template": body.template_id, "property": body.property_id, "person": person_id,
                  "tenant": lease.tenant_profile_id, "lease": lease.id, "request": body.request_id, "day": body.as_of,
-                 "name": name, "subject": subject, "body": rendered_body, "uri": stored.uri, "digest": digest})
+                 "name": name, "subject": subject, "body": rendered_body, "uri": stored.uri, "digest": digest, "bytes": stored.byte_size})
         # Grant expiry is wall-clock based even while ACL/source locks are held.
         if not await self.db.scalar(text("SELECT letter_recipients_access(:org,:property,:day)"),
                 {"org": self.org, "property": body.property_id, "day": body.as_of}):

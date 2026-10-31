@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Iterator, Protocol, runtime_checkable
 from urllib.parse import quote
 
-from fastapi import HTTPException
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
@@ -212,7 +211,7 @@ class LocalFsDocumentStore:
         return self._resolve_key(key).exists()
 
     def organization_bytes(self, org_id: str) -> int:
-        """Count retained physical bytes once, including archived originals."""
+        """Inspect physical usage for offline administrative reconciliation only."""
         directory = self._resolve_key(org_id)
         if not directory.exists():
             return 0
@@ -341,34 +340,40 @@ async def put_document(session, org_id, data: bytes, *, content_type: str,
                        store: DocumentStore | None = None) -> StoredObjectRef:
     """Check before writing; keep only originals belonging to committed writes."""
     from app.core.quotas import get_quota_plan
-    from app.services.quota_service import lock_quota, require_quota
+    from app.services.quota_service import database_usage, lock_quota, require_quota
 
     active_store = store or get_store()
     plan = get_quota_plan()
     require_quota(0, "upload_bytes", len(data), plan=plan)
-    await lock_quota(session, org_id)
+    key = make_storage_key(str(org_id), compute_sha256(data))
+    if plan.storage_bytes is not None:
+        await lock_quota(session, org_id)
     if isinstance(active_store, LocalFsDocumentStore):
         # Keep a filesystem lock through rollback cleanup: the DB transaction
         # lock is released before SQLAlchemy's rollback callbacks execute.
+        # Unlimited organizations only serialize the same content-addressed file,
+        # so one rollback cannot delete a concurrent committed duplicate.
         locks = session.info.setdefault("storage_write_locks", {})
-        lock_key = (active_store._root, org_id)
+        hosted = plan.storage_bytes is not None
+        lock_key = (active_store._root, org_id if hosted else key)
         if lock_key not in locks:
-            lock_directory = active_store._root / ".upload-locks"
+            lock_directory = active_store._root / ".upload-locks" if hosted else active_store._root / ".file-locks" / str(org_id)
             lock_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-            handle = (lock_directory / str(org_id)).open("a+b")
+            lock_name = str(org_id) if hosted else key.rsplit("/", 1)[1] + ".lock"
+            handle = (lock_directory / lock_name).open("a+b")
             try:
                 await run_in_threadpool(fcntl.flock, handle, fcntl.LOCK_EX)
             except BaseException:
                 handle.close()
                 raise
             locks[lock_key] = handle
-    key = make_storage_key(str(org_id), compute_sha256(data))
     existed = active_store.exists(key)
     if plan.storage_bytes is not None:
-        if not isinstance(active_store, LocalFsDocumentStore):
-            raise HTTPException(503, "Speichernutzung nicht verfügbar.")
-        usage = await run_in_threadpool(active_store.organization_bytes, str(org_id))
-        require_quota(usage, "storage_bytes", 0 if existed else len(data), plan=plan)
+        # Prior writes in this transaction must be visible to the aggregate,
+        # including unflushed ORM metadata in multi-document operations.
+        await session.flush()
+        usage = await database_usage(session, org_id)
+        require_quota(usage["storage_bytes"], "storage_bytes", 0 if existed else len(data), plan=plan)
     if not existed and isinstance(active_store, LocalFsDocumentStore):
         transaction = session.sync_session.get_nested_transaction() or session.sync_session.get_transaction()
         session.info.setdefault("uncommitted_storage", []).append((active_store, key, transaction))

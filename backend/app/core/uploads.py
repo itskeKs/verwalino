@@ -57,7 +57,7 @@ class RequestBodyLimitMiddleware:
         if content_length is not None:
             try:
                 if int(content_length) > body_limit:
-                    await self._send_too_large(send)
+                    await self._send_too_large(send, body_limit)
                     return
             except ValueError:
                 pass
@@ -76,7 +76,7 @@ class RequestBodyLimitMiddleware:
                 body = message.get("body", b"")
                 total += len(body)
                 if total > body_limit:
-                    await self._send_too_large(send)
+                    await self._send_too_large(send, body_limit)
                     return
                 spool.write(body)
                 if not message.get("more_body", False):
@@ -144,8 +144,9 @@ class RequestBodyLimitMiddleware:
         )
 
     @staticmethod
-    async def _send_too_large(send: Send) -> None:
-        body = json.dumps({"detail": "Datei zu groß (maximal 25 MiB). Bitte wählen Sie eine kleinere Datei."}, ensure_ascii=False).encode()
+    async def _send_too_large(send: Send, body_limit: int) -> None:
+        limit = f"{body_limit / (1024 * 1024):g}".replace(".", ",")
+        body = json.dumps({"detail": f"Anfrage zu groß (maximal {limit} MiB). Bitte wählen Sie eine kleinere Datei."}, ensure_ascii=False).encode()
         await send(
             {
                 "type": "http.response.start",

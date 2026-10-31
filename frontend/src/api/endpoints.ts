@@ -155,7 +155,7 @@ export function getMyOrganization(): Promise<Organization> {
 }
 
 export function getOrganizationQuota(): Promise<OrganizationQuota> {
-  return api.get<OrganizationQuota>("/api/organization/quota");
+  return api.get<OrganizationQuota>("/api/organizations/quota");
 }
 
 export function createMandate(body: MandateCreate): Promise<Mandate> {

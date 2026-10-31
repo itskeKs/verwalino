@@ -236,7 +236,7 @@ PROBES: dict[str, Probe] = {
     "POST /api/meters/{meter_id}/readings": Probe(row("meter", meter_id="id"), body={"reading_date": "2026-01-01", "value": "1.0000"}),
     # app/api/organizations.py
     "GET /api/organizations/me": Probe(),
-    "GET /api/organization/quota": Probe(),
+    "GET /api/organizations/quota": Probe(),
     # app/api/owner_profiles.py
     "GET /api/owner-profiles": Probe(row("person", person_id="id"), status=200, because=EMPTY_FILTER),
     "GET /api/owner-profiles/page": Probe(),

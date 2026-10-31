@@ -125,6 +125,9 @@ belegt.” Errors show “Kontingent nicht verfügbar.” with retry; loading sh
 usage is available to every authenticated member, independently of source grants.
 The declaration-import failure `ORGANIZATION_AI_BUDGET_EXCEEDED` uses “Das
 monatliche KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den Betreiber.”
+Attachment upload errors with status 413 display the backend's German explanation,
+including “Speicherkontingent erschöpft …”, while preserving the file and title.
+The local 25 MiB file check remains in place.
 
 ### App shell
 

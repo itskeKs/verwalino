@@ -187,12 +187,16 @@ async def test_mail_parallel_replay_sends_once(client_a_admin, m7_seed, smtp):
 
 
 @pytest.mark.asyncio
-async def test_mail_retains_prepared_when_completion_commit_fails(client_a_admin, m7_seed, smtp, monkeypatch):
+async def test_mail_retains_prepared_when_completion_commit_fails(client_a_admin, m7_seed, smtp, monkeypatch, tmp_path):
     from app.services.document_mail_service import DocumentMailService
+    from app.core import storage
+    monkeypatch.setattr(storage, "_store", storage.LocalFsDocumentStore(tmp_path))
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
     await mutate(text("UPDATE person SET email='tenant@example.invalid' WHERE id=:person"), {"person": m7_seed["person_m7"]})
     notice = await issued_notice(client_a_admin, m7_seed)
     url = f"/api/mail/dunning/{notice['id']}"
     body = {"person_id": str(m7_seed["person_m7"]), "request_id": str(uuid.uuid4())}
+    before = (await client_a_admin.get("/api/organizations/quota")).json()["usage"]["storage_bytes"]
     original = DocumentMailService.record
 
     async def fail_completion(self, kind, document_id, action, payload):
@@ -210,6 +214,7 @@ async def test_mail_retains_prepared_when_completion_commit_fails(client_a_admin
     retained_pdf = await client_a_admin.get(f"{url}/{body['request_id']}/pdf")
     assert retained_pdf.status_code == 200, retained_pdf.text
     assert retained_pdf.content.startswith(b"%PDF-")
+    assert (await client_a_admin.get("/api/organizations/quota")).json()["usage"]["storage_bytes"] == before + len(retained_pdf.content)
     repeated = await client_a_admin.post(url, json=body)
     assert repeated.status_code == 200 and repeated.json()["status"] == "prepared"
     assert len(smtp.messages) == 1

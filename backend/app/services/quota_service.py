@@ -4,10 +4,8 @@ from decimal import Decimal
 
 from fastapi import HTTPException
 from sqlalchemy import text
-from starlette.concurrency import run_in_threadpool
 
 from app.core.quotas import check_quota, get_quota_plan
-from app.core.storage import get_store, LocalFsDocumentStore
 
 
 async def lock_quota(db, org_id, *, budget=False):
@@ -55,13 +53,6 @@ async def require_ai_budget(db, org_id, amount):
 async def quota_summary(db, org_id):
     plan = get_quota_plan()
     usage = await database_usage(db, org_id)
-    store = get_store()
-    if not isinstance(store, LocalFsDocumentStore):
-        raise HTTPException(503, "Speichernutzung nicht verfügbar.")
-    try:
-        usage["storage_bytes"] = await run_in_threadpool(store.organization_bytes, str(org_id))
-    except OSError:
-        raise HTTPException(503, "Speichernutzung nicht verfügbar.") from None
     limits = asdict(plan)
     limits.pop("name")
     limits["ai_budget_usd"] = str(plan.ai_budget_usd) if plan.ai_budget_usd is not None else None

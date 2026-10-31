@@ -17,7 +17,7 @@ function errorMessage(error: unknown): string {
       case 403: return "Keine Berechtigung für diese Dokumentaktion.";
       case 404: return "Dokument oder Zuordnung nicht verfügbar oder nicht zugänglich.";
       case 409: return "Dokument wurde bereits geändert oder seine Integrität konnte nicht bestätigt werden. Bitte Liste erneut laden.";
-      case 413: return "Die Dokumentdatei darf höchstens 25 MiB groß sein.";
+      case 413: return error.message;
       case 422: return "Ungültige Eingaben. Bitte Datei, Titel und Zuordnung prüfen.";
       default: return "Dokumentaktion fehlgeschlagen. Bitte erneut versuchen.";
     }

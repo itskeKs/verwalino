@@ -119,14 +119,18 @@ paid plans are deferred. Existing upload/body safety caps remain in both modes.
 
 Services enforce quotas before writes. `put_document` guards attachments,
 invoices and versions, mandate originals, declaration sources, intake uploads,
-and retained generated PDFs. It serializes writes, measures the organization's
-storage directory (all retained files, counted once), and cleans up only newly
+and retained generated PDFs. In hosted mode it serializes writes, queries stored
+document sizes in the database (deduplicated by storage URI), and cleans up only newly
 created originals when the owning database transaction rolls back. A filesystem
 lock remains held through rollback cleanup so a concurrent writer cannot reuse
-bytes being removed. Mail originals are retained before their independently
+bytes being removed. Selfhost skips both organization quota locks, retaining the
+store's atomic writes and locks for each individual original through transaction
+completion. Mail originals are retained before their independently
 committed dispatch receipt, so a request rollback cannot remove a referenced PDF.
 Archived and source-restricted files still consume space.
-The request-body middleware remains the first upload boundary. Size/storage
+The request-body middleware remains the first upload boundary and reports the
+route's actual raw-body cap (1.75 MiB for master import; 26 MiB for uploads,
+including the multipart envelope). File-content/storage
 returns 413 with “Datei zu groß (maximal 25 MiB). …” or
 “Speicherkontingent erschöpft (2 GiB). …”.
 
@@ -137,12 +141,19 @@ Objekte). …” or “Einheitenkontingent erschöpft (200 Einheiten). …”. A
 checks its whole delta before creating any destination rows. Retry receipts are
 resolved before quota checks, so successful replays remain idempotent.
 
-Revision 0145 adds only `organization_quota_usage`: a guarded SECURITY DEFINER
-aggregate, using the session organization and a live member. It returns counts
+Revision 0145 adds `organization_quota_usage`: a guarded SECURITY DEFINER
+aggregate, using the session organization and a live member. It returns byte/count
 and USD totals, never source identities/content. Ordinary source RLS may hide
 rows even within an organization, so application-side COUNT queries would be
-incorrect. No table, quota counter, override, or privileged application connection
-is introduced. The function also supports the existing isolated worker role.
+incorrect. Five original tables already carry `content_byte_size`; issued letters
+gain nullable, nonnegative `size_bytes`, and prepared mail uses `bytes` in its existing
+audit JSON. Archived originals and all versions count; duplicate references share
+one charge. Both upload admission and quota GET use this aggregate without filesystem
+enumeration. Legacy letters/mail and interrupted-write originals are reconciled
+once with the migrator's `quota-recount` CLI, which appends URI/byte audit metadata
+without changing retained originals. No table, quota counter, override, or privileged
+application connection is introduced. Downgrade removes only the function and
+reconstructible size column. The function also supports the existing isolated worker role.
 
 AI admission reuses `property_knowledge_query_run` and
 `declaration_extraction_run`. Each running extraction reserves its existing
@@ -158,7 +169,7 @@ Betreiber.” HTTP admission uses 409; workers record
 `ORGANIZATION_AI_BUDGET_EXCEEDED`. Existing feature switches and reviewed Q&A
 budgets remain additional requirements, not overrides of the hosted cap.
 
-Any authenticated member can read `GET /api/organization/quota`, including
+Any authenticated member can read `GET /api/organizations/quota`, including
 source-restricted and read-only members. It accepts no organization identifier.
 The dashboard renders storage/property/unit usage and limits, warns at 90%, and
 hides unlimited usage. Its isolation probe and executable scenarios cover the
