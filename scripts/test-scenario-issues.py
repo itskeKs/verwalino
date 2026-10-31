@@ -73,6 +73,19 @@ class ScenarioIssueTests(unittest.TestCase):
     def file(self, data, run=RUN, **kwargs):
         return reporter.file_failures(data, self.client, run_url=run, root=ROOT, output=self.output, **kwargs)
 
+    def test_canary_fingerprint_label_and_open_issue_deduplication(self):
+        row = scenario(feature="canary", scenario="Hosted canary", tags=["canary"],
+                       steps=[{"name": "tenant-ledger", "outcome": "failed", "error": {"type": "HTTP503"}}])
+        self.assertEqual(reporter.fingerprint(row, row["steps"][0])[0], "canary::tenant-ledger::HTTP503")
+        self.file(report(row))
+        self.file(report(row), run=RUN + "2")
+        self.assertEqual(len(self.client.issues), 1)
+        issue = self.client.issues[0]
+        self.assertIn("canary", issue["labels"])
+        self.assertIn("scripts/canary.py", issue["body"])
+        self.assertNotIn("make test-scenarios-report", issue["body"])
+        self.assertEqual(len(self.client.comments[1]), 1)
+
     def test_structured_exception_class_ignores_volatile_messages_but_step_changes_identity(self):
         first = scenario()
         second = deepcopy(first)

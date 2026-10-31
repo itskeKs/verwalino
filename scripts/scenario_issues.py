@@ -52,7 +52,10 @@ def step_text(step):
 
 
 def fingerprint(row, step):
-    readable = "::".join((row["feature"], row["scenario"], step_text(step), error_kind(step.get("error") or row.get("error"))))
+    parts = (row["feature"], row["scenario"], step_text(step), error_kind(step.get("error") or row.get("error")))
+    if row["feature"] == "canary":
+        parts = ("canary", parts[2], parts[3])
+    readable = "::".join(parts)
     return readable, digest(readable)
 
 
@@ -108,6 +111,9 @@ def issue_body(template, failure, run, run_url, date, source, templates):
     command_args = shlex.join(["-q", "-k", scenario_selector(row["scenario"], templates)])
     command = f"make test-scenarios-report PYTEST_ARGS={shlex.quote(command_args)}"
     artifacts = [f"scenarios-{run['mode']}-{date}", "scenarios.json", "summary.md", *sorted(failure["artifacts"])]
+    if row["feature"] == "canary":
+        command = "python3 scripts/canary.py  # CANARY_EMAIL and CANARY_PASSWORD from the operator's secret store"
+        artifacts = ["canary-report", "canary.json"]
     body = template.split("---", 2)[2].strip()
     replacements = {
         "Fingerprint: `<feature>::<scenario>::<step>::<error kind>`": (
@@ -235,7 +241,8 @@ def file_failures(report, client, *, run_url, root=ROOT, dry_run=False, output=N
             source, labels, templates = sources.get(failure["row"]["feature"], (failure["row"]["feature"], [], []))
             plan.append({
                 "action": "create", "title": f"Scenario failure: {failure['row']['scenario']}"[:240],
-                "body": issue_body(template, failure, run, run_url, date, source, templates), "labels": ["scenario", *labels],
+                "body": issue_body(template, failure, run, run_url, date, source, templates),
+                "labels": ["scenario", *(["canary"] if failure["row"]["feature"] == "canary" else labels)],
             })
         else:
             comments = client.list_comments(issue["number"])
