@@ -237,6 +237,17 @@ async def visible_snapshot(db, org, specs):
     return result
 
 
+def source_identity_maps(snapshot):
+    receipts = [event for event in snapshot.get("audit_event", [])
+                if event["action"] == "organization.import.completed"
+                and not (event.get("payload_diff") or {}).get("imported_receipt")]
+    result = {}
+    for event in sorted(receipts, key=lambda item: (datetime.fromisoformat(item["occurred_at"]), item["id"])):
+        for entity, identities in (event.get("payload_diff") or {}).get("source_ids", {}).items():
+            result.setdefault(entity, {}).update(identities)
+    return result
+
+
 async def create_export(db, auth, *, app_version):
     locked = await db.scalar(text("SELECT pg_try_advisory_xact_lock(hashtextextended(:key,0))"),
                              {"key": f"organization-export:{auth.organization_id}"})
@@ -253,6 +264,7 @@ async def create_export(db, auth, *, app_version):
     cleanup_expired_exports(now=now)
     specs = await inventory(db)
     snapshot = await visible_snapshot(db, auth.organization_id, specs)
+    source_ids_by_entity = source_identity_maps(snapshot)
     order = [n for n in ENTITY_ORDER if n in specs] + sorted(set(specs) - set(ENTITY_ORDER))
     manifest = {"format": FORMAT, "version": VERSION, "created": now.isoformat(),
                 "app_version": app_version,
@@ -278,10 +290,7 @@ async def create_export(db, auth, *, app_version):
                     if not rows:
                         raise HTTPException(404, "Organisation nicht gefunden.")
                     manifest["organization"] = {k: rows[0][k] for k in ("id", "name")}
-                source_ids = {}
-                for event in snapshot.get("audit_event", []):
-                    if event["action"] == "organization.import.completed" and not (event.get("payload_diff") or {}).get("imported_receipt"):
-                        source_ids.update((event.get("payload_diff") or {}).get("source_ids", {}).get(name, {}))
+                source_ids = source_ids_by_entity.get(name, {})
                 content = b"".join(json_bytes({**row, **({"source_id": source_ids.get(row["id"], row["id"])} if row.get("id") else {})}) + b"\n" for row in rows)
                 add_bytes(archive, f"entities/{name}.jsonl", content, hashes)
                 for row in rows:

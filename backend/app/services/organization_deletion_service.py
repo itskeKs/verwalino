@@ -1,7 +1,7 @@
 """Durable seven-day cooling-off and operator-only retention reconciliation."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 
@@ -108,6 +108,7 @@ async def run_deletion(db, org, *, now=None):
         retained.setdefault(item['entity'], []).append({
             'key': item['identity'], 'id': item['identity'].get('id'),
             'until': item['retention_until'].isoformat(), 'basis': item['legal_basis']})
+    person_ids = [item['id'] for item in retained.get('person', []) if date.fromisoformat(item['until']) >= now.date()]
     tables = (await db.execute(text('''SELECT c.relname,array_agg(a.attname ORDER BY k.ordinality) AS pk
       FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnamespace
       JOIN pg_constraint p ON p.conrelid=c.oid AND p.contype='p'
@@ -127,7 +128,7 @@ async def run_deletion(db, org, *, now=None):
             key = json_bytes({k: row[k] for k in keys})
             if key not in keep:
                 unretained_tables.add(name)
-            if key in keep and name not in {'user', 'membership'}:
+            if key in keep and name not in {'user', 'membership'} and (name != 'person' or row['id'] in person_ids):
                 hashes[(name, key)] = retained_hash(name, row)
                 if row.get('storage_uri'):
                     retained_uris.add(row['storage_uri'])
@@ -135,7 +136,6 @@ async def run_deletion(db, org, *, now=None):
                 if isinstance(payload, dict) and payload.get('storage_uri'):
                     retained_uris.add(payload['storage_uri'])
     # Person identity remains structurally stable, as ADR-0012 requires.
-    person_ids = [item['id'] for item in retained.get('person', [])]
     await db.execute(text('''UPDATE person SET processing_restricted=true,deletion_requested_at=:now
       WHERE organization_id=:org'''), {'org': org, 'now': now})
     await db.execute(text('''UPDATE person SET first_name='',last_name='Anonymisiert',company_name=NULL,

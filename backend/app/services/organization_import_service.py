@@ -379,7 +379,7 @@ async def import_organization(db, auth, source):
         counts = {name: len(rows) for name, rows in entities.items()}
         source_ids = {name: {id_map[name][r['id']]: r.get('source_id', r['id']) for r in rows if r.get('id')}
                       for name, rows in entities.items() if name in id_map}
-        await db.execute(text('''INSERT INTO audit_event(organization_id,actor_user_id,entity_type,entity_id,action,payload_diff)
-          VALUES (:org,:actor,'organization',:org,'organization.import.completed',CAST(:payload AS jsonb))'''),
+        await db.execute(text('''INSERT INTO audit_event(organization_id,actor_user_id,entity_type,entity_id,action,payload_diff,occurred_at)
+          VALUES (:org,:actor,'organization',:org,'organization.import.completed',CAST(:payload AS jsonb),clock_timestamp())'''),
           {'org': auth.organization_id, 'actor': auth.user_id, 'payload': json_bytes({'source_ids': source_ids, 'row_counts': counts}).decode()})
         return {'row_counts': counts, 'id_map': id_map}

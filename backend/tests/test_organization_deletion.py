@@ -255,3 +255,26 @@ def test_file_erasure_refuses_a_symlink_to_another_organization(tmp_path):
         assert store.get(original.uri) == b'foreign retained original'
     finally:
         set_store(previous)
+
+
+async def test_expired_personal_binding_is_anonymized_without_changing_voucher(rent_world, rent_db, export_store):
+    from app.services.organization_deletion_service import run_deletion
+    w = rent_world
+    vendor = await rent_db.scalar(text('INSERT INTO vendor(organization_id,person_id) VALUES (:org,:person) RETURNING id'), w)
+    category = await rent_db.scalar(text('SELECT id FROM cost_category WHERE plan_version=1 ORDER BY code LIMIT 1'))
+    await rent_db.execute(text('''INSERT INTO cost_entry(organization_id,property_id,cost_category_id,cost_category_plan_version,
+      vendor_id,invoice_date,service_period_from,service_period_to,gross_amount,tenant_apportionable,status,source)
+      VALUES (:org,:property,:category,1,:vendor,'2000-01-01','2000-01-01','2000-12-31',99,'UMLAGEFAEHIG','confirmed','MANUAL')'''), {**w, 'vendor': vendor, 'category': category})
+    await rent_db.commit()
+    before = (await rent_db.execute(text('SELECT row_to_json(t)::text FROM cost_entry t WHERE organization_id=:org'), w)).scalars().all()
+    await rent_db.rollback()
+    async with api_client(w) as api:
+        preview = await api.post('/api/organizations/deletion')
+        assert preview.status_code == 200, preview.text
+        assert preview.json()['retention']['erased']['person'] == 2
+        assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
+    async with rent_db.begin():
+        await run_deletion(rent_db, w['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
+    assert await rent_db.scalar(text('SELECT last_name FROM person WHERE id=:person'), w) == 'Anonymisiert'
+    assert (await rent_db.execute(text('SELECT row_to_json(t)::text FROM cost_entry t WHERE organization_id=:org'), w)).scalars().all() == before
+    await rent_db.rollback()

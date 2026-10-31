@@ -212,3 +212,16 @@ async def test_export_omits_read_only_sources_and_rechecks_download_authority(re
         revoked = await api.post(f"/api/property-data-domains/{domain}/grants/{permission}/revoke")
         assert revoked.status_code == 204, revoked.text
         assert (await api.get(f"/api/organizations/export/{response.headers['X-Export-ID']}")).status_code == 404
+
+
+def test_source_identity_uses_latest_local_receipt_and_ignores_imported_history():
+    from app.services.organization_export_service import source_identity_maps
+    def receipt(identity, created, source, *, imported=False):
+        return {'id': identity, 'occurred_at': created, 'action': 'organization.import.completed',
+                'payload_diff': {'source_ids': {'organization': {'target': source}}, 'imported_receipt': imported}}
+    snapshot = {'audit_event': [
+        receipt('a', '2026-10-31T12:00:00+00:00', 'latest'),
+        receipt('z', '2026-10-30T12:00:00+00:00', 'older'),
+        receipt('future', '2030-01-01T12:00:00+00:00', 'imported', imported=True),
+    ]}
+    assert source_identity_maps(snapshot)['organization'] == {'target': 'latest'}
