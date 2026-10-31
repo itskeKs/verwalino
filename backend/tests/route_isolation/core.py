@@ -78,6 +78,9 @@ async def core_seeded(isolated_batch_seed, rent_world, attachment_store, attachm
         "votes_yes": 3, "votes_no": 0, "votes_abstain": 0, "result": "ANGENOMMEN"})
     await created(api, f"/api/meetings/resolutions/{resolution['id']}/register")
 
+    exported = await api.post("/api/organizations/export")
+    assert exported.status_code == 200, exported.text
+
     # The two apply bodies carry the digest of organization B's own preview, known only at run time.
     BATCH_APPLY["expected_source_digest"] = (await created(sweep.client, "/api/dunning/batch/preview", json=BATCH))["source_digest"]
     IMPORT_APPLY["expected_digest"] = (await created(sweep.client, "/api/properties/import/preview", json=import_body()))["source_digest"]
@@ -134,6 +137,10 @@ IMPORT_APPLY = {**import_body(), "expected_digest": "", "request_id": str(uuid.u
 
 
 PROBES: dict[str, Probe] = {
+    "POST /api/organizations/export": Probe(),
+    "GET /api/organizations/export/{export_id}": Probe(
+        "SELECT id AS export_id FROM audit_event WHERE organization_id IS DISTINCT FROM :b "
+        "AND action='organization.export.created' ORDER BY id LIMIT 1"),
     # app/api/attachments.py
     "GET /api/attachments": Probe(row("property", property_id="id")),
     "GET /api/attachments/{attachment_id}": Probe(row("attachment", attachment_id="id")),

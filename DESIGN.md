@@ -129,6 +129,21 @@ Attachment upload errors with status 413 display the backend's German explanatio
 including “Speicherkontingent erschöpft …”, while preserving the file and title.
 The local 25 MiB file check remains in place.
 
+### Organization export
+
+The admin-only Users page starts with an “Organisationsdaten” kit card. Its muted
+paragraph explains that only released data/originals are included, restricted
+data may be missing, and the archive must be protected. “Daten exportieren” is a
+large outline button. It makes no request on mount, disables while preparing,
+and reads “Export wird vorbereitet …” while busy. Server errors appear unchanged
+in a German `role="alert"`; failure keeps the button available for retry and
+starts no download. Changing the organization, account or role cancels an active
+request. Successful responses download `verwalino-organisation.tar.gz`; there is
+no success claim about where the browser saved it. Text wraps at 360 px. Import
+and organization-deletion controls are pending their backend implementation.
+
+![Organization export on a narrow screen](docs/assets/design/organization-export-360.png)
+
 ### App shell
 
 `AppShell.tsx`: `flex h-screen overflow-hidden` = **Sidebar** (16 rem) + a column of **Topbar**

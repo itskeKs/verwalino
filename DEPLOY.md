@@ -147,6 +147,16 @@ it is safe and adds no identical reconciliation entries. Run it again after an
 operator restores files or investigates originals left by an interrupted write.
 New uploads need no recount; their owning document rows supply the size directly.
 
+Product-level organization exports use a separate private artifact directory and
+expire after 24 hours. They are not the paired disaster-recovery backup below.
+Run `python -m app.organization_export cleanup` regularly in the configured app
+environment to remove expired bytes even during periods without export requests.
+No database or original is changed by that command. Hosted operators must keep
+archive storage private and include transient archives in their deletion and
+backup-expiry procedures. Organization import/deletion and their operator worker
+are still pending #23; see [organization export](docs/operations/organization-export.md)
+for the current API, visibility limits and unresolved fresh-install acceptance.
+
 Revision **0145** adds the guarded aggregate function because ordinary source RLS
 can hide rows and undercount usage, plus nullable, nonnegative `letter_document.size_bytes`
 for new letters (the only original table without size metadata). Prepared mail

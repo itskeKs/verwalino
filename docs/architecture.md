@@ -175,6 +175,23 @@ The dashboard renders storage/property/unit usage and limits, warns at 90%, and
 hides unlimited usage. Its isolation probe and executable scenarios cover the
 session boundary; quota tests cover exact limits, refusals and rollback.
 
+### Organization portability
+
+The owner-administrator export API creates the documented
+[version-one product archive](operations/organization-export.md). It reads one
+statement snapshot through ordinary administrator RLS and column privileges,
+applies source export capabilities, and omits dependents whose required parent
+is not exported. It does not use the deployment backup format or a privileged
+read bypass. Creation commits its audit before streaming bytes; downloads
+revalidate visibility and the private artifacts have a 24-hour lifetime.
+
+Import and organization deletion remain pending #23. Transfer must resolve
+globally unique IDs, hidden private provenance and generated immutable document
+references. Deletion must follow
+[ADR-0012](adr/0012-gdpr-erasure-vs-gobd-retention.md): restrict bound people,
+anonymize only without a current retention binding, preserve originals and frozen
+records. This export increment changes no retention mechanism or schema.
+
 ## Current Declaration-of-Division Workflow (2026-08-29)
 
 For declarations of division, the application uses a **fixed,
