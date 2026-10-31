@@ -507,6 +507,12 @@ every nested object/list, dictionary key and metadata value:
   Structured personal/address fields are neutralized only in the erased
   person's entity context. Property addresses, dates, amounts (`12345.00`) and
   ordinary words (`a short note`, `Berlin`) survive.
+- Known residuals: a full name inside longer free text survives (`Brief an Hans
+  Müller`), as does a single name part (`Müller`, `Müller-Lüdenscheidt`) or a
+  name inside another word (`Müllerstraße 5`); phone numbers are matched only
+  from seven digits, and only in the stored formatting (a stored `030 1234567`
+  does not match `+49 30 1234567`); a retained person with the same full name as
+  an erased person, or a matching former-user email, is scrubbed as well.
 
 A voucher-bound person's own entries remain unchanged, but that context does
 not exempt another erased person's identifiers. Audit events about an entity

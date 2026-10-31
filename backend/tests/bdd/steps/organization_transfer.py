@@ -145,7 +145,7 @@ def missing_dependency_refusal(world):
 
 
 @when('the administrator inspects the import refusal in the browser')
-def browser_import_refusal(world, browser_world, empty_import_organization):
+def browser_import_refusal(world, browser_world, empty_import_organization, tmp_path):
     import uuid
     from playwright.async_api import expect
     from tests.test_organization_import import repack
@@ -189,7 +189,7 @@ def browser_import_refusal(world, browser_world, empty_import_organization):
             if width == 360:
                 await expect(page.locator('aside').filter(has=page.locator('nav'))).not_to_be_in_viewport()
             assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
-            await page.screenshot(path=f'/tmp/issue23-import-error-{label}.png', full_page=True)
+            await page.screenshot(path=tmp_path / f'import-error-{label}.png', full_page=True)
         assert await page.get_by_label('Exportarchiv').input_value()
         assert not browser_world.errors
     browser_world.run(operate())
