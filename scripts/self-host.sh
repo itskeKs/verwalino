@@ -1005,7 +1005,7 @@ update() {
     else
         update_candidate "$candidate" compose pull app
     fi
-    target=$(update_candidate "$candidate" image_target)
+    target=$(update_candidate "$candidate" image_target) || fail 'Cannot read the new image release target.'
     [[ "$target" =~ ^[0-9]{4}$ ]] || fail 'Cannot read the new image release target.'
     state=$(container_state db)
     if [[ "$state" != running\|* ]]; then

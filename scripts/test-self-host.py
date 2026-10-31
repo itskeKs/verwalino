@@ -98,6 +98,12 @@ if "--volume" in sys.argv:
     mount = sys.argv[sys.argv.index("--volume") + 1].rsplit(":", 1)[0]
     if not os.path.isabs(mount) or not os.path.isdir(mount):
         sys.exit("Invalid fake Docker bind source: " + repr(mount))
+# Like Compose interpolation: the caller's environment wins, --env-file fills the rest.
+if os.path.isfile(env_file):
+    with open(env_file) as config:
+        for line in config:
+            key, _, value = line.rstrip("\\n").partition("=")
+            if key.startswith("HV_SMTP_"): os.environ.setdefault(key, value)
 smtp_password = os.environ.get("HV_SMTP_PASSWORD", "")
 with open(os.environ["FAKE_DOCKER_LOG"], "a") as log:
     log.write(json.dumps({"args": sys.argv[1:], "image": os.environ.get("VERWALINO_IMAGE"), "secure": os.environ.get("VERWALINO_COOKIE_SECURE"), "hosts": os.environ.get("VERWALINO_ALLOWED_HOSTS"), "profiles": os.environ.get("COMPOSE_PROFILES"), "caller_secret_used": os.environ.get("MIGRATOR_PASSWORD") == "attacker", "config_image": config_image(os.environ["VERWALINO_CONFIG"]), "env_image": config_image(env_file), "env_mode": stat.S_IMODE(os.stat(env_file).st_mode) if os.path.exists(env_file) else None, "locked": os.path.isdir(os.environ["VERWALINO_CONFIG"] + ".lock"), "archive_digest": archive_digest,
@@ -1030,6 +1036,20 @@ os.execv("/bin/mv", ["mv", *sys.argv[1:]])
         self.assertFalse(any("pack" in c["args"] or "stop" in c["args"] for c in self.calls()))
         self.assertIn("VERWALINO_IMAGE=" + self.old_image + "\n", self.config.read_text())
 
+    def test_update_refuses_with_a_message_when_the_new_image_release_target_cannot_be_read(self):
+        self.update_setup()
+        before = self.config.read_bytes()
+        self.env["FAKE_IMAGE_TARGET"] = "missing"
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Cannot read the new image release target.", result.stderr)
+        self.assertTrue(any("pull" in c["args"] for c in self.calls()))
+        self.assertFalse(any(set(c["args"]) & {"stop", "pack", "pg_dump"} or c["args"][-1] == "migrate" for c in self.calls()))
+        self.assertEqual(self.update_archives(), [])
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertFalse(Path(str(self.config) + ".lock").exists())
+        self.assertEqual(list(self.base.glob(".env.verwalino-update.*")), [])
+
     def test_update_failed_writer_stop_reports_without_restoring_data(self):
         self.update_setup()
         self.env.update(FAKE_DOCKER_FAIL="stop", FAKE_FAIL_IMAGE=self.old_image)
@@ -1251,6 +1271,25 @@ os.execv("/bin/mv", ["mv", *sys.argv[1:]])
         self.assert_isolated([args])
         self.assertEqual(self.schema_state.read_text(), "0138")
         self.assertFalse((self.documents / "later.pdf").exists())
+
+    def test_update_manual_recovery_command_reads_mail_settings_from_the_file_not_the_caller(self):
+        self.update_setup()
+        self.smtp_config(SMTP)
+        self.env.update(FAKE_DOCKER_FAIL="migrate", FAKE_ROLLBACK_FAIL="pg_restore", FAKE_DIRTY_SCHEMA="0139")
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertNotEqual(result.returncode, 0)
+        command = next(line for line in result.stderr.splitlines() if line.startswith("env -u "))
+        self.assertNotIn(SMTP["HV_SMTP_PASSWORD"], result.stdout + result.stderr)
+        del self.env["FAKE_DOCKER_FAIL"], self.env["FAKE_ROLLBACK_FAIL"]
+        self.env.update(HV_SMTP_HOST="attacker.invalid", HV_SMTP_PORT="25", HV_SMTP_FROM="attacker@attacker.invalid",
+                        HV_SMTP_SECURITY="starttls", HV_SMTP_USERNAME="attacker", HV_SMTP_PASSWORD="wrong",
+                        HV_SMTP_TIMEOUT_SECONDS="5")
+        self.log.unlink()
+        launched = subprocess.run(shlex.split(command), env=self.env, text=True, capture_output=True, check=False, timeout=15)
+        app, = [c for c in self.calls() if "up" in c["args"] and c["args"][-1] == "app"]
+        self.assertEqual(app["smtp"], {key: value for key, value in SMTP.items() if key != "HV_SMTP_PASSWORD"})
+        self.assertTrue(app["smtp_password_matches"])
+        self.assertEqual(launched.returncode, 0, launched.stderr)
 
     def test_update_backup_failure_leaves_app_stopped_and_config_unchanged(self):
         self.update_setup()
