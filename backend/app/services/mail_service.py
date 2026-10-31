@@ -69,6 +69,28 @@ def send_pdf(config: Settings, *, recipient: str, subject: str, body: str,
     message["Date"] = formatdate(localtime=False)
     message.set_content(body)
     message.add_attachment(pdf, maintype="application", subtype="pdf", filename=filename)
+    _submit(config, message, sender, recipient)
+
+
+def send_signup_confirmation(config: Settings, *, recipient: str, link: str) -> None:
+    sender = validate_configuration(config)
+    recipient = validate_address(recipient)
+    message = EmailMessage()
+    message["From"] = sender
+    message["To"] = recipient
+    message["Subject"] = "Verwalino: E-Mail-Adresse bestätigen"
+    message["Date"] = formatdate(localtime=False)
+    message.set_content(
+        "Bitte bestätigen Sie Ihre E-Mail-Adresse, um Ihre Organisation in Verwalino anzulegen.\n\n"
+        f"{link}\n\n"
+        "Der Link ist einmalig gültig und läuft 24 Stunden nach der ursprünglichen Registrierungsanfrage ab.\n"
+        "Geben Sie zur Bestätigung das bei der Registrierung gewählte Passwort ein.\n"
+        "Wenn Sie diese Registrierung nicht selbst angefordert haben, ignorieren Sie diese E-Mail.\n"
+    )
+    _submit(config, message, sender, recipient)
+
+
+def _submit(config: Settings, message: EmailMessage, sender: str, recipient: str) -> None:
     context = ssl.create_default_context()
     if config.smtp_security == "tls":
         connection = smtplib.SMTP_SSL(config.smtp_host, config.smtp_port,

@@ -92,16 +92,35 @@ read-only, and connect Caddy to `proxy`, `staging-proxy` and `site`. Create the 
 No mount is given to `site`. `--no-deps` leaves app/db and
 staging alone; the first enable recreates Caddy to attach its additional networks. Check HTTPS, the 308 redirect,
 the app and staging after this operator step. Enable staging separately with [its runbook](staging-and-canary.md).
-An omitted `VERWALINO_SITE_IMAGE` defaults to the published `main` tag for compose rendering, but use the
-SHA plus digest pin for actual starts. The forced deploy always supplies that pin itself.
+An omitted or empty `VERWALINO_SITE_IMAGE` fails compose rendering with
+`set VERWALINO_SITE_IMAGE to ghcr.io/itskeks/verwalino-site:<sha>@sha256:<digest>`.
+Only full SHA tags are published; use the SHA plus digest pin for starts. The forced deploy supplies that pin itself.
 
 The portable installer deliberately uses only the base compose file. An app release through
 `deploy-server.sh vX.Y.Z` uses the presence of `config/Caddyfile.hosted` as the opt-in, including first
-enablement before Caddy is attached to the site network. Before backup, image pinning and the installer,
+enablement before Caddy is attached to the site network. It first recovers the existing site's image
+reference and refuses before checkout if that reference is unavailable. Before backup, image pinning and the installer,
 it validates the wrapper and all three snippets in an isolated read-only Caddy container. After the installer,
-it reapplies both overlays in one Caddy recreation, without recreating site or staging. After a **manual** `self-host.sh start`,
+it reapplies both overlays in one Caddy recreation, reusing the existing site's image reference without
+recreating site or staging. After a **manual** `self-host.sh start`,
 reapply the same three-file prefix with `up -d --no-deps caddy` before a site deploy. The production import
 reads the checked-out release's generic Caddyfile; keep all three imports when updating the wrapper.
+
+While the extension is enabled, `self-host.sh doctor` reports ports 80/443 as
+`Durch einen fremden Dienst belegt; mit ss -ltnp oder lsof -iTCP:80 den Dienst ermitteln und dessen Portfreigabe korrigieren.`
+(with `443` in the corresponding message). This is a false error: the ownership check expects only the
+base compose file in Caddy's `com.docker.compose.project.config_files` label, but the extension records
+all three compose files. Confirm Caddy owns the listeners using the compose prefix above.
+
+`self-host.sh stop` also uses only the base model, so it leaves `site` running. Stop it explicitly using
+the same setup environment and all three compose files:
+
+```sh
+docker compose --project-name verwalino --env-file "$VERWALINO_CONFIG" \
+  -f infra/docker-compose.yml -f infra/docker-compose.hosted-proxy.yml \
+  -f infra/docker-compose.site.yml --profile https \
+  stop site
+```
 
 ## Deployment and rollback
 
@@ -117,6 +136,15 @@ the site service with `--no-deps --force-recreate --pull never`. Docker validate
 the registry digest. Server-side cosign verification is absent, matching the existing app deploy; the
 workflow signs keylessly. Do not describe the deploy key as cryptographically restricted to main commits:
 its grammar limits repository/tag shape, while image publication permissions remain a trust boundary.
+
+For manual signature verification, use the selected SHA plus digest pin and the workflow's main-branch identity:
+
+```sh
+cosign verify \
+  --certificate-identity https://github.com/itskeKs/verwalino/.github/workflows/website.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "$VERWALINO_SITE_IMAGE"
+```
 
 Read `previous site sha: ...` in the deployment log. Roll back explicitly through the same forced command:
 

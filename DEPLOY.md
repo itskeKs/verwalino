@@ -10,9 +10,8 @@ explicitly to the container. Changing it requires restarting the backend.
 Both modes use the same image, authentication and organization isolation. `selfhost`
 offers token-gated first-run setup on an empty database. `hosted` suppresses setup:
 `GET /api/setup` reports `required: false`, every non-GET request returns the closed
-setup 404, and `/setup` redirects to login. Until hosted signup exists, operators use
-the existing admin CLI to bootstrap hosted organizations. Selecting hosted mode does
-not implement signup, quotas, password reset or legal pages. Login uses the
+setup 404, and `/setup` redirects to login. Hosted mode offers public signup with
+email confirmation; quotas, password reset and legal pages remain deferred. Login uses the
 selected rate-limit profile described below. The
 [policy table](docs/architecture.md#deployment-modes) records only decisions with
 implemented readers. Opt-in error tracking is configured separately below.
@@ -29,6 +28,56 @@ template; keep the populated `.env` private with mode 0600. Set the required
 `verwaltung.example.org`). Compose passes it as `HV_ALLOWED_HOSTS` and uses it
 in the Traefik router rules. The API healthcheck requests
 `http://127.0.0.1:8000/api/health/live` with that value as its `Host` header.
+
+## Hosted signup configuration
+
+For a separately managed hosted deployment, pass `HV_DEPLOYMENT_MODE=hosted`,
+`HV_PUBLIC_HOST=your-public-host.example` and the SMTP settings described
+under [outbound mail](#optional-document-smtp-t47-no-deployment-authorization).
+`HV_PUBLIC_HOST` is the public routing hostname, without scheme, port, credentials,
+path, query or fragment; signup links always use HTTPS. It is never inferred from
+request Host or forwarded headers. Keep
+`HV_ALLOWED_HOSTS` aligned with the public host. The ASGI startup check refuses
+hosted mode if this hostname or valid SMTP configuration is missing. Selfhost needs
+neither setting for setup/login and returns unknown-route 404 for every signup
+API method before body parsing or database access.
+
+Confirmation links use `/signup/confirm?token=…`. The page asks for the chosen password and
+posts `{token, password}` on explicit confirmation; there is no GET API side effect. The browser removes it from the URL before the
+POST and uses a no-referrer policy. A tab-local `sessionStorage` entry keeps the
+token across reloads until success or a 403; retryable errors retain it. Passwords
+are never stored there. The application strips the server query scope
+for this page before the default Uvicorn access logger sees it; separately managed
+reverse proxies must also avoid recording confirmation query strings. Tokens
+contain 244 random bits from two PostgreSQL UUIDs (pgcrypto is absent); only
+SHA-256 hashes persist, and requests expire 24 hours after submission. Resending
+rotates the token while preserving the original expiry,
+with one send at most every ten minutes across signup and resend. Pending requests
+cannot sign in. Confirmation creates the tenant and owner atomically and returns
+the normal session cookie. Existing addresses receive the identical generic 202
+without a new pending request or email. Password hashing/verification work is
+equivalent for allowed signup paths and SMTP runs only after the HTTP response.
+A live pending request keeps the first password hash and names, even after the
+cooldown; only an expired request can be replaced by a new submission. Resend
+rotates the token without changing credentials. A mistyped password on a live
+link returns a retryable 422 and preserves the token; invalid, used, expired or
+throttled confirmation returns the generic 403. Success refunds its limiter
+reservation, so only failed confirmations remain counted. Runtime roles cannot
+read or write `signup_request` directly; guarded SECURITY DEFINER functions issue,
+read, rotate, provision and clean up requests and refuse tenant-context calls.
+SMTP failure keeps the pending request,
+returns the same response and permits retry after the cooldown; SMTP acceptance
+is not proof of recipient delivery. Hosted signup acceptance submits over real SMTP
+to a digest-pinned Mailpit service in the test compose and CI backend job. Its shared
+BDD fixture reads back recipient, sender, subject and the link's token through the
+HTTP API, then confirms with the emailed token. Missing Mailpit fails acceptance;
+FakeSMTP remains in unit tests. See [test setup](features/README.md#running).
+Organization names are display names; multiple hosted tenants may share a name,
+and signup always creates a separate tenant. The admin CLI retains its existing
+name-reuse behavior. Successful confirmation deletes the pending signup data;
+the address can register again if its organization and user have been removed.
+Every 100th signup per worker opportunistically deletes at most 100 requests
+expired for more than seven days, in a separate best-effort transaction.
 
 ## Login lockout and proxy trust
 
@@ -94,10 +143,18 @@ Use any address in the affected /64 to unlock a native IPv6 key. An independentl
 locked IP must also be cleared or allowed to expire. No runtime unlock endpoint
 is exposed.
 
-These deletes reset only the chosen key and its escalation history.
+These deletes reset only the chosen key and its escalation history. Hashes are
+scope-specific; submit, resend and confirmation use `signup`, `signup_resend` and
+`signup_confirm` respectively, with the
+shared limiter/honeypot helpers described in
+[auth hardening](docs/architecture.md#43-loginsession-approach-recommendation-decision).
+Submit/resend count only their scoped IP buckets for flood protection; only failed
+confirmations count toward the confirm IP/email buckets. Five resends cannot lock
+an address out of confirmation. Throttled signup/resend retain the generic 202;
+confirmation returns the generic 403. The hidden `website` field silently accepts
+bots without effects on both signup and resend; confirmation has no honeypot.
 `downgrade()` of 0142 refuses while rows exist; operators must
 delete the `auth_throttle` rows first.
-Signup throttling arrives with #19.
 
 ## Install in one command
 
@@ -918,8 +975,9 @@ an IP-only entry does not match a host name in `DEPLOY_HOST`.
 2. When that run succeeds, [Deploy hosted server](.github/workflows/deploy.yaml) (`workflow_run`) calls
    `ssh chris@host vX.Y.Z`. **Actions → Deploy hosted server → Run workflow** with a `tag` redeploys any
    published tag; on the server, `/srv/verwalino/app/scripts/deploy-server.sh vX.Y.Z` does the same.
-3. [`scripts/deploy-server.sh`](scripts/deploy-server.sh) fetches tags and checks the tag out (it must exist and be
-   on `main`). If the operator's `config/Caddyfile.hosted` exists, it validates that wrapper immediately
+3. [`scripts/deploy-server.sh`](scripts/deploy-server.sh) first recovers the existing site image reference if
+   the operator's `config/Caddyfile.hosted` exists, refusing before checkout if it cannot. It fetches tags
+   and checks the tag out (it must exist and be on `main`). It validates that wrapper immediately
    after checkout, before pulling the image, backup, image pinning or the installer. Validation uses
    read-only mounts/root, no network, `--cap-drop ALL --cap-add NET_BIND_SERVICE` (required by the stock
    binary's file capability) and `no-new-privileges`. Failure preserves the running Caddy configuration.
@@ -1004,11 +1062,11 @@ all capabilities dropped, no privilege escalation, no credentials or host mounts
 `/data` tmpfs for Caddy housekeeping. Neither app nor db joins its network.
 
 On pushes to `main` affecting `website/` or its workflow, [Website](.github/workflows/website.yml) first
-checks i18n, lint, the build and links; then publishes amd64/arm64 images tagged with the full SHA and `main`,
+checks i18n, lint, the build and links; then publishes amd64/arm64 images tagged only with the full SHA,
 attaches BuildKit provenance/SBOMs, signs the index with keyless cosign, and sends only `site <sha>`
 through the existing deploy key. PRs only run checks. Production, staging and site use separate groups
 (`deploy-hosted-server`, `deploy-hosted-staging`, `deploy-hosted-site`), so queued runs cannot replace each other.
-The server lock refuses a concurrent deployment; retry after the active run finishes. An active deployment is never cancelled.
+The shared server lock immediately refuses a concurrent deployment; retry after the active run finishes. An active deployment is never cancelled.
 
 `scripts/deploy-server.sh site <sha>` refuses a disabled extension, pulls the SHA tag, requires a matching
 registry SHA-256 RepoDigest, recreates **only** `site` using `tag@digest`, and requires HTTP 200 on `/`
@@ -1018,8 +1076,8 @@ pins recreation; the server does not independently verify cosign signatures. CI 
 
 The log prints `previous site sha: <sha>` and `rollback: site <sha>` before recreation. Roll back by
 sending `site <previous-sha>` through the same key, or running that command on the server's script.
-There is no automatic rollback. A first install using `main` has no known previous SHA; use a SHA pin
-from the outset. Keep the previous image in GHCR. App releases preserve an already-enabled Caddy extension;
+There is no automatic rollback. The compose extension requires `VERWALINO_SITE_IMAGE`; set a SHA tag
+plus digest pin from the outset. Keep the previous image in GHCR. App releases preserve an already-enabled Caddy extension;
 manual portable-installer operations require reapplying the hosted Caddy override as described in the runbook.
 
 ### Backups
@@ -1059,11 +1117,11 @@ remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/s
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
 
-## Migration compatibility: 0029–0142
+## Migration compatibility: 0029–0144
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0142 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0144 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1074,12 +1132,15 @@ run `docker compose down -v` or delete the volumes.
 | Parent references (accepted source 0140) | Replaces client-selected parent references with organization-bound composite foreign keys. Validates pending deferred checks and rejects existing invalid references without repair before replacing constraints. Adds a boolean-only, tenant-bound property existence check for scoped financial creation. Downgrade restores the original constraints and removes that check; an older runtime is not approved on this schema. |
 | Browser setup (accepted source 0141) | Adds the private singleton setup-token table and a token-gated, serialized first-organization function. Removes direct organization INSERT from app_rw; the migrator CLI shares the creation SQL. A populated token table blocks downgrade to avoid silently losing pending/consumed state. Existing organization/user/membership rows are preserved. |
 | 0142 | Adds global authentication throttle rows containing only scoped key hashes, failure windows, lockout expiry, last lockout start and escalation history, with narrow runtime DML. No existing rows or grants change. A populated table blocks downgrade to avoid losing lockouts. |
+| 0143 | Allows a nullable template reference for built-in lease contracts and handover originals. Existing rows, composite template foreign keys, RLS and immutable PDF snapshots remain intact. Downgrade refuses while an original has no template; it never deletes originals or creates substitute templates. |
+| 0144 | Adds private pending signup requests and token-bound SECURITY DEFINER functions; runtime roles have no direct request-table access. Successful confirmation atomically creates a separate tenant and deletes its request. Retained requests block downgrade. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0142 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0142, 0139→0142 and accepted-source 0140→0142 and 0141→0142 rehearsals also
+0028→0144 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0144, 0139→0144 and accepted-source 0140→0144, 0141→0144 and
+0142→0144 and 0143→0144 rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT revocation;
 it does not prove live data validity or cross-version runtime compatibility.
 
@@ -1101,10 +1162,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0142**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0144**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0142**,
-**0122 → 0142**, **0139 → 0142**, **0140 → 0142**, **0141 → 0142**, or **0142 → 0142**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0144**,
+**0122 → 0144**, **0139 → 0144**, **0140 → 0144**, **0141 → 0144**, **0142 → 0144**, **0143 → 0144** (accepted source), or **0144 → 0144**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 

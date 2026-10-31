@@ -79,7 +79,7 @@ step='preparing'
 locked=0
 checked_out=0 pinned=0
 prev_commit='' prev_tag='' prev_image='' digest_ref=''
-prev_site_sha=unknown caddy_container=''
+prev_site_sha=unknown prev_site_image='' caddy_container=''
 
 main() {
     die() { printf 'deploy: %s\n' "$*" >&2; exit 1; }
@@ -217,7 +217,7 @@ main() {
         done
         export VERWALINO_ALLOWED_HOSTS="$VERWALINO_DOMAIN,localhost,127.0.0.1"
         export VERWALINO_COOKIE_SECURE=true VERWALINO_COOKIE_NAME=__Host-hv_session
-        hosted_compose up -d --no-deps caddy
+        VERWALINO_SITE_IMAGE=$prev_site_image hosted_compose up -d --no-deps caddy
     }
 
     validate_hosted_proxy() {
@@ -265,13 +265,13 @@ main() {
         [[ "$(docker inspect --format '{{with index .NetworkSettings.Networks "verwalino_site"}}enabled{{end}}' "$caddy_container")" = enabled ]]
     }
     previous_site() {
-        local container image sha
+        local container sha
         container=$(docker ps --all --quiet --filter label=com.docker.compose.project=verwalino \
             --filter label=com.docker.compose.service=site)
         [[ -n "$container" && "$container" != *$'\n'* ]] || return 0
-        image=$(docker inspect --format '{{.Config.Image}}' "$container")
-        sha=${image#"$SITE_REPO:"}; sha=${sha%%@*}
-        if [[ "$image" = "$SITE_REPO:"* && "$sha" =~ $SHA_RE ]]; then prev_site_sha=$sha; fi
+        prev_site_image=$(docker inspect --format '{{.Config.Image}}' "$container")
+        sha=${prev_site_image#"$SITE_REPO:"}; sha=${sha%%@*}
+        if [[ "$prev_site_image" = "$SITE_REPO:"* && "$sha" =~ $SHA_RE ]]; then prev_site_sha=$sha; fi
     }
     wait_site() {
         local attempt response status
@@ -324,6 +324,10 @@ main() {
     [[ -f "$CONFIG" && ! -L "$CONFIG" && -r "$CONFIG" && -w "$CONFIG" && -w "$(dirname "$CONFIG")" ]] \
         || die "the installer config $CONFIG must be a regular file this user can read and write, in a directory it can write to."
     if [[ "$target" = staging ]]; then deploy_staging; fi
+    if [[ -f "$ROOT/config/Caddyfile.hosted" ]]; then
+        previous_site
+        [[ -n "$prev_site_image" ]] || die 'cannot recover the existing site image for Caddy restoration.'
+    fi
     prev_image=$(config_value VERWALINO_IMAGE)
     prev_commit=$(git_app rev-parse --short HEAD)
     prev_tag=$(git_app describe --tags --exact-match 2>/dev/null || echo none)

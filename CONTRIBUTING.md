@@ -89,6 +89,17 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   `make test-backend`, `make test-bdd`, `make test-browser` and `make test-scenarios-report`
   acquire/release the lock themselves.
 
+Hosted signup acceptance sends real SMTP to the local Mailpit inbox. Start it once with
+`docker compose -f infra/docker-compose.declaration-test.yml up -d mailpit` and leave it
+running for other worktrees. `scripts/test-env.sh` (sourced by the Make targets) exports
+`HV_SMTP_HOST=127.0.0.1`, `HV_SMTP_PORT=1025`, `HV_SMTP_SECURITY=plain`,
+`HV_SMTP_FROM=verwaltung@example.invalid`, empty SMTP credentials, and
+`VERWALINO_MAILPIT_API=http://127.0.0.1:8025`. SMTP and the unauthenticated UI/API bind
+only to loopback. Run `make test-bdd-hosted` for signup acceptance; its fixture clears the
+shared inbox before each mail scenario, polls briefly, and fails if Mailpit is unavailable.
+CI provides the same digest-pinned Mailpit image in the backend job. The browser scenarios
+do not send mail and need no Mailpit container. Mail-service unit tests keep FakeSMTP.
+
 If the shared database holds a migration revision unknown to the checkout, the session fixture
 logs that revision, drops and recreates `public` with its runtime schema grants, preserves the
 cluster roles, and runs the existing upgrade rehearsals. Known revisions still downgrade to

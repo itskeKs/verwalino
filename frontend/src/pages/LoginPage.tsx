@@ -3,11 +3,12 @@
  */
 
 import { type FormEvent, useState } from "react";
+import { Link } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
 import { ApiError } from "../api/client";
 import "./LoginPage.css";
 
-export function LoginPage() {
+export function LoginPage({ signupEnabled = false }: { signupEnabled?: boolean }) {
   const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -71,6 +72,7 @@ export function LoginPage() {
         >
           {loading ? "..." : "Anmelden"}
         </button>
+        {signupEnabled && <Link className="link" to="/signup">Konto erstellen</Link>}
       </form>
     </div>
   );

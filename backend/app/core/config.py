@@ -76,6 +76,9 @@ class Settings(BaseSettings):
             raise ValueError("Dunning base interest rate must be an exact decimal")
         return value
 
+    # Public hostname shared with deployment routing; signup always links via HTTPS.
+    public_host: str | None = None
+
     # --- Outbound SMTP (disabled until explicitly configured) ---
     smtp_host: str | None = None
     smtp_port: int = Field(587, ge=1, le=65535)
