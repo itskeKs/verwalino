@@ -1,6 +1,6 @@
 # Feature status
 
-Current feature catalog of Verwalino by area. Status as of 2026-10-31, migration head `0142`.
+Current feature catalog of Verwalino by area. Status as of 2026-10-31, migration head `0143`.
 Status: ✅ implemented and reachable in the running app, 🟡 partial (reason given), ❌ not implemented.
 Short paths: `api/ services/ engine/ models/ workers/ core/` are under
 `backend/app/`, `pages/ components/ lib/` under `frontend/src/`; other paths are relative to the
@@ -56,7 +56,7 @@ stack's limits: declaration import/Q&A, SMTP and automatic invoice OCR are disab
 | Rent change with effective date | ✅ | `models/lease_rent_change.py`, `api/leases.py` (`/rent-changes`), `engine/mietkonto.py`, T23, T24, [usage](operations/tenancies-and-rent.md) |
 | Graduated (Staffel) / index rent | ✅ | `api/leases.py` (`/rent-changes/staffel`, `/rent-changes/index`), `engine/index_rent.py`, T43, T44, [usage](operations/tenancies-and-rent.md) |
 | Security deposit management | 🟡 target, paid and refunded tracked; no installments, no recording of interest credits | `engine/mietkonto.py` (`deposit_statement`), `api/payments.py` (`/deposits`), `pages/DepositsPage.tsx`, T25, [usage](operations/tenancies-and-rent.md) |
-| Lease template, handover protocol | ❌ only generic letter templates exist (see Documents, communication, reports) | – |
+| Lease template, handover protocol | ✅ lease-filled contract starting point with legal-review caveat; move-in/out protocol records unit readings and retains an immutable PDF | #37, `services/lease_document_service.py`, `components/LeaseDocuments.tsx`, [usage](operations/tasks-and-documents.md#lease-contracts-and-handovers-37) |
 
 ## Tenant ledger, bank and payments
 
@@ -137,7 +137,6 @@ stack's limits: declaration import/Q&A, SMTP and automatic invoice OCR are disab
 - Advance payments (People and tenancies): a lease has one combined advance; operating-cost and heating advances are not separate (#67).
 - Security deposit management (People and tenancies): no installments with due dates (#70) and no booking of interest credits (#38).
 - VAT-liable letting (People and tenancies): no VAT on rent, advances and statements for units with the VAT option (#71); no input VAT apportionment (#72).
-- Lease template, handover protocol (People and tenancies): neither a lease contract template nor a handover protocol exists; only generic letter templates (#37).
 - Bank retrieval PSD2/FinTS (Tenant ledger, bank and payments): no automatic bank statement retrieval; import is by CSV/CAMT file only (#40).
 - Inbox (Posteingang) with review chain (Vouchers and costs): worker service and upload-to-cost scenario are present; real-stack acceptance with ClamAV signatures remains pending ([#35](https://github.com/itskeKs/verwalino/issues/35), [runbook](operations/inbox-review-chain.md)).
 - Settlement period (Operating and heating cost statements): the property's period start month is stored but statements and economic plans do not use it; periods are not validated for length or overlap (#68).

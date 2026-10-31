@@ -5,10 +5,10 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,8 +32,65 @@ from app.repositories.tenant_profile_repo import TenantProfileRepository
 from app.models.lease_agreement import LeaseAgreement
 from app.models.lease_rent_change import LeaseRentChange
 from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
+from app.services.lease_document_service import LeaseDocumentService
+from app.services.meter_service import ReadingCreate
 
 router = APIRouter(prefix="/api/leases", tags=["leases"])
+
+
+class ContractRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    request_id: uuid.UUID
+    as_of: date
+    handover_date: date
+    agreements: str = Field(default='', max_length=10000)
+
+
+class HandoverReading(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    meter_id: uuid.UUID
+    value: str
+
+    @field_validator('value')
+    @classmethod
+    def valid_reading(cls, value):
+        return ReadingCreate._check_value(value)
+
+
+class HandoverKey(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    type: str = Field(min_length=1, max_length=100)
+    count: int = Field(ge=0, le=1000, strict=True)
+
+
+class HandoverRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    request_id: uuid.UUID
+    date: date
+    type: Literal['Einzug', 'Auszug']
+    parties: str = Field(min_length=1, max_length=4000)
+    readings: list[HandoverReading] = Field(default_factory=list, max_length=500)
+    keys: list[HandoverKey] = Field(default_factory=list, max_length=100)
+    notes: str = Field(default='', max_length=10000)
+    signatures: str = Field(min_length=1, max_length=4000)
+
+
+@router.get('/{lease_id}/documents')
+async def lease_documents(lease_id: uuid.UUID, auth: AuthContext = Depends(get_current_user),
+                          db: AsyncSession = Depends(get_live_member_db)):
+    return await LeaseDocumentService(db, auth).list_documents(lease_id)
+
+
+@router.post('/{lease_id}/contract', status_code=201)
+async def lease_contract(lease_id: uuid.UUID, body: ContractRequest, auth: AuthContext = Depends(require_write_dep),
+                         db: AsyncSession = Depends(get_live_writer_db, scope='function')):
+    return await LeaseDocumentService(db, auth).contract(lease_id, body)
+
+
+@router.post('/{lease_id}/handover', status_code=201)
+async def lease_handover(lease_id: uuid.UUID, body: HandoverRequest, auth: AuthContext = Depends(require_write_dep),
+                         db: AsyncSession = Depends(get_live_writer_db, scope='function')):
+    return await LeaseDocumentService(db, auth).handover(lease_id, body)
 
 
 class StaffelmieteCreate(BaseModel):

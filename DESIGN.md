@@ -284,6 +284,22 @@ typo of `btn--primary`), `badge--warning`, `form-hint`, `table-responsive`.
 
 ### Recurring composites
 
+- **Lease documents.** Each lease in unit detail offers “Mietvertrag erstellen” and a retained
+  document history. The kit dialog displays “Vorlage; rechtliche Prüfung erforderlich”, an issue
+  date, handover date and a clearly labelled free-text agreement block before saving. The PDF link
+  appears only after issuance succeeds. Inputs remain available after failure; readers see history
+  without creation actions. Labels and long names wrap inside the available width.
+  The “Übergabeprotokoll” kit dialog captures move-in/out, date, present parties, latest unit-meter
+  readings, repeatable key type/count rows, defects/notes and signature names. It explains that names
+  are not an electronic signature. Decimal inputs share the meter panel parser, including German
+  grouping (`1.234,5`). Prefills follow the selected handover date; explicit edits survive date changes.
+  Unchanged prefilled values reuse existing readings without adding duplicates.
+  Meter-load errors block saving with an explicit retry; a failed
+  save keeps inputs, and success reveals the retained PDF and refreshes the unit meter history.
+  Network and access failures use German feedback and preserve the draft.
+  “Briefe” lists the additional landlord/unit/lease placeholders and explains the single selected
+  original lease used for a recipient with multiple leases.
+
 - **Tables.** Legacy: `<div class="card paged-table"><table class="data-table">`. Kit:
   `Card > CardContent p-0 > div.overflow-x-auto > table.data-table` (`MandatePage.tsx`). First column is
   the `.link` to the detail page, last column holds row actions as `btn btn--small` ("Bearbeiten",
