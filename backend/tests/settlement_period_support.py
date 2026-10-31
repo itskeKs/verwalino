@@ -1,4 +1,22 @@
-"""Synthetic period fixtures using only the public HTTP API."""
+"""Synthetic period API fixtures with guarded disposable-data cleanup."""
+
+import pytest
+
+
+@pytest.fixture
+def period_data_cleanup():
+    """Release retained synthetic evidence before later migration rehearsals."""
+    try:
+        yield
+    finally:
+        from tests.bdd.world import target_url
+
+        if not target_url():
+            import psycopg2
+            from tests.conftest import MIGRATOR_SYNC_URL, clear_disposable_source_context
+
+            with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+                clear_disposable_source_context(cursor)
 
 
 async def create(client, path, payload):

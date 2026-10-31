@@ -1,8 +1,12 @@
 """Property periods, validation and frozen historical periods through the API."""
 from decimal import Decimal
 import pytest
+from tests.settlement_period_support import period_data_cleanup  # noqa: F401
 from tests.settlement_period_support import period_property, create, statement, booked
 from tests.financial_coverage_helpers import attest_fixture
+
+
+pytestmark = pytest.mark.usefixtures("period_data_cleanup")
 
 
 @pytest.fixture

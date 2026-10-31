@@ -1,11 +1,12 @@
 from decimal import Decimal
 from pytest_bdd import given, when, then
 from tests.settlement_period_support import period_property, booked, statement
+from tests.settlement_period_support import period_data_cleanup  # noqa: F401
 from tests.financial_coverage_helpers import attest_fixture
 
 
 @given("a mixed property with a tenancy and an April settlement start")
-def april_property(world):
+def april_property(world, period_data_cleanup):
     world.data["period_property"] = world.run(period_property(world.actor))
 
 

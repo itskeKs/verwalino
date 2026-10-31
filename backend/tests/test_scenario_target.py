@@ -100,7 +100,7 @@ def test_external_features_use_api_and_skip_isolation_and_fresh_setup(pytester, 
             str(backend / "tests/bdd/test_first_run_setup.py"),
             "--scenario-report", str(destination), "-q", "--tb=short",
         )
-        result.assert_outcomes(passed=2, skipped=13)
+        result.assert_outcomes(passed=2, skipped=14)
         assert users["nightly@example.test"] == "bootstrap-password"
         assert len(users) == 3
         assert calls.count("/api/users") == 2
@@ -110,7 +110,7 @@ def test_external_features_use_api_and_skip_isolation_and_fresh_setup(pytester, 
     assert report["run"]["target_url"] == url
     rows = report["scenarios"]
     isolation = [row for row in rows if row["feature"] == "Organization isolation"]
-    assert len(isolation) == 10
+    assert len(isolation) == 11
     assert all("two organizations" in row["error"]["message"] for row in isolation)
     setup = [row for row in rows if row["feature"] == "First run setup"]
     assert len(setup) == 3
