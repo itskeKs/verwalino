@@ -13,7 +13,7 @@ offers token-gated first-run setup on an empty database. `hosted` suppresses set
 `GET /api/setup` reports `required: false`, every non-GET request returns the closed
 setup 404, and `/setup` redirects to login. Hosted mode offers public registration
 at `/signup`; confirmation creates the organization and signs its owner in. The
-admin CLI remains available. Quotas, password reset and legal pages remain deferred.
+admin CLI remains available. Quotas and legal pages remain deferred. Password recovery is available in both modes when mail is configured.
 Login uses the selected rate-limit profile described below. The
 [policy table](docs/architecture.md#deployment-modes) records current readers and
 future consumers; error tracking's environment default is reserved for #16.
@@ -23,6 +23,36 @@ setup-token flow. Its manifest relies on the `selfhost` default; it does not for
 `HV_DEPLOYMENT_MODE` from the caller or accept it in `.env.selfhost`. Its HTTP/HTTPS
 `VERWALINO_MODE` is a separate transport choice. Use a separately managed deployment
 to run hosted mode; do not use the portable installer to start a hosted service.
+
+## Password recovery configuration
+
+Password recovery works in both deployment modes. Configure the existing SMTP
+settings and `HV_PUBLIC_URL` as a trusted HTTPS origin (HTTP only on loopback),
+using the same validation rules as hosted signup. Links never use the request Host.
+No new configuration key is required. The public `/api/meta` boolean
+`mail_available` reports only whether this configuration is usable, with no secrets
+or SMTP network probe. Login hides “Passwort vergessen?” when it is false or metadata
+is unavailable. Selfhost setup and login continue to work without mail.
+
+`POST /api/auth/password-reset` accepts `{email, website}` and returns the same
+202 conditional receipt for known, unknown, throttled and mail-unavailable requests.
+An unavailable configuration logs one WARNING per application process; subsequent
+requests remain generic. Known active, unambiguous accounts get a German link to
+`/passwort-zuruecksetzen?token=…`, valid once for one hour. Unknown addresses get no
+mail. Both paths perform the same Argon2 dummy hash and mail construction; SMTP
+submission runs after the response. Transport failure logs a generic warning and
+keeps the same receipt; SMTP acceptance does not prove delivery.
+
+The page saves the token in tab-local sessionStorage, removes it from the URL and
+POSTs only on explicit submit. Reset returns 204 without a cookie or automatic
+login. The user signs in with the new password; all old sessions and outstanding
+reset links are invalidated. A German confirmation email follows the committed
+reset. SMTP failure cannot undo that reset. Missing, expired, used, throttled and
+invalid-password confirmations return the same German 403 refusal. The server
+strips reset-page queries from its access log; upstream proxies must redact them
+too. Request throttling uses `password_reset` (all IP requests); confirmation uses
+`password_reset_confirm` (all IP requests, only failures on the token-bound user).
+Opaque wrong tokens share a dummy user bucket. Tests use captured SMTP only.
 
 ## Hosted signup configuration
 
@@ -386,9 +416,9 @@ former **0122** assumption was not a live measurement. The authorized release
 **0139** and is now the `current` release. The API, declaration worker, invoice
 worker and existing database were healthy after promotion; public HTTPS
 `/api/health/ready` returned 200 with verified TLS. The prepared code now targets
-**0143**; this does not change the recorded live release or authorize deployment.
-The release gate accepts only measured **0028 → 0143**, **0122 → 0143**,
-**0139 → 0143**, **0140 → 0143**, **0141 → 0143**, **0142 → 0143** (accepted sources), or **0143 → 0143**. Unknown,
+**0144**; this does not change the recorded live release or authorize deployment.
+The release gate accepts only measured **0028 → 0144**, **0122 → 0144**,
+**0139 → 0144**, **0140 → 0144**, **0141 → 0144**, **0142 → 0144**, **0143 → 0144** (accepted sources), or **0144 → 0144**. Unknown,
 missing, multiple or intermediate revisions fail before stopping writers or
 migrating. Historical feature notes below describe earlier boundaries; their
 statements about an unchanged helper or an inactive alpha are superseded by
@@ -861,8 +891,8 @@ Credential rotation is a separate operation with workers paused.
 | Dedicated human-review commands in API | `app_review` / `HV_DATABASE_URL_REVIEW` | Separate pool, no ordinary-role fallback |
 | One-shot migration/bootstrap | Privileged ops credentials only | Never injected into app/worker runtime |
 
-Before downtime, the new image checks its single head **0143**, the exact linear
-0029–0143 chain, the measured single DB revision and the isolated login/role
+Before downtime, the new image checks its single head **0144**, the exact linear
+0029–0144 chain, the measured single DB revision and the isolated login/role
 membership, ownership and schema/ACL prerequisites. Disposable non-consuming
 probes test each actual API/review/worker credential. The captured previous image
 must have exactly the measured DB head and every previous runtime must have the
@@ -873,11 +903,11 @@ The helper requires an existing `current` release and API container. Fresh
 installation is a separate procedure; this helper no longer initializes an empty
 DB. Each source revision is accepted only when actually measured.
 
-### Migration compatibility: 0029–0143
+### Migration compatibility: 0029–0144
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0143 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0144 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -888,13 +918,14 @@ DB. Each source revision is accepted only when actually measured.
 | Parent references (accepted source 0140) | Replaces client-selected parent references with organization-bound composite foreign keys. Validates pending deferred checks and rejects existing invalid references without repair before replacing constraints. Adds a boolean-only, tenant-bound property existence check for scoped financial creation. Downgrade restores the original constraints and removes that check; an older runtime is not approved on this schema. |
 | Browser setup (accepted source 0141) | Adds the private singleton setup-token table and a token-gated, serialized first-organization function. Removes direct organization INSERT from app_rw; the migrator CLI shares the creation SQL. A populated token table blocks downgrade to avoid silently losing pending/consumed state. Existing organization/user/membership rows are preserved. |
 | 0142 (accepted source) | Adds global authentication throttle rows containing only scoped key hashes, failure windows, lockout expiry and escalation history, with narrow runtime DML. No existing rows or grants change. A populated table blocks downgrade to avoid losing lockouts. |
-| 0143 | Adds last-lockout timestamps for authentication escalation decay, global pending signup email reservations, hashed tokens, and narrow registration/provisioning functions. Signup creates separate tenants even with shared display names; the guarded bootstrap overload preserves CLI reuse. Successful provisioning deletes the request. Existing tenant rows and ACLs remain unchanged. Pending signups or retained last-lockout timestamps refuse downgrade; an empty downgrade restores the original bootstrap exactly. |
+| 0143 (accepted source) | Adds last-lockout timestamps for authentication escalation decay, global pending signup email reservations, hashed tokens, and narrow registration/provisioning functions. Signup creates separate tenants even with shared display names; the guarded bootstrap overload preserves CLI reuse. Successful provisioning deletes the request. Existing tenant rows and ACLs remain unchanged. Pending signups or retained last-lockout timestamps refuse downgrade; an empty downgrade restores the original bootstrap exactly. |
+| 0144 | Adds global password reset requests with 32-byte token digests and a narrow atomic reset function. The existing T57 trigger revokes all sessions. Tokens expire after one hour; successful reset marks all outstanding links for that user used. A populated downgrade refuses to discard retained reset state; an empty downgrade exactly removes the new table, index and function. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0143 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0143, 0139→0143 and accepted-source 0140→0143, 0141→0143 and 0142→0143 rehearsals also
+0028→0144 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0144, 0139→0144 and accepted-source 0140→0144, 0141→0144, 0142→0144 and 0143→0144 rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT revocation;
 it does not prove live data validity or cross-version runtime compatibility.
 
@@ -921,9 +952,9 @@ or error logs. These host-local backups do not provide off-host disaster recover
 retention/off-host storage needs an operator decision before relying on it.
 
 Before migration, a failure can restart the captured API, then only the workers
-that previously existed, after rechecking the unchanged schema. On 0143→0143,
-the helper skips migration and may similarly restore the prior 0143 runtime.
-Once an older-to-0143 migration is attempted, any failure leaves `current` unchanged
+that previously existed, after rechecking the unchanged schema. On 0144→0144,
+the helper skips migration and may similarly restore the prior 0144 runtime.
+Once an older-to-0144 migration is attempted, any failure leaves `current` unchanged
 and stops only provably owned new runtime containers. It reports
 `MAINTENANCE REQUIRED` and keeps old writers stopped, even if the migration may
 have rolled back. Unknown ownership or failed stops also prohibit automatic
@@ -1051,7 +1082,7 @@ then the existing public TLS/security-header/session/login/traversal/upload-limi
 smoke. `current` changes atomically only after every gate succeeds; the previous
 pointer is persisted first. On failure the recovery policy above applies, with
 no automatic downgrade or volume deletion. The disposable CI verifier checks
-0143 and the invoice worker too; its execution remains separately authorized.
+0144 and the invoice worker too; its execution remains separately authorized.
 
 ## Operation and rollback
 
@@ -1079,7 +1110,7 @@ There is no automatic rollback after promotion. Before promotion, automatic
 runtime restoration requires the unchanged schema, matching previous image head,
 and successful cleanup of all owned replacement consumers. A cross-schema attempt
 requires maintenance/recovery as described above; never blindly start the 0122
-image on 0143. The same compatibility requirement applies to a manual rollback.
+image on 0144. The same compatibility requirement applies to a manual rollback.
 
 ## Optional GitLab deploy
 

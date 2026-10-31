@@ -267,7 +267,7 @@ def _chain_0131_projection(head):
     return projected
 
 
-async def test_revision_chain_0143_0131_0143_preserves_full_state_and_issued_pdf(rent_world):
+async def test_revision_chain_0144_0131_0144_preserves_full_state_and_issued_pdf(rent_world):
     """Rollback-only whole-chain rehearsal, not a production downgrade strategy."""
     import os
     from pathlib import Path
@@ -323,9 +323,9 @@ async def test_revision_chain_0143_0131_0143_preserves_full_state_and_issued_pdf
     config = Config()
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ['0143']
-    assert [r.revision for r in scripts.iterate_revisions('0143', '0131')] == [
-        f'{number:04}' for number in range(143, 131, -1)
+    assert scripts.get_heads() == ['0144']
+    assert [r.revision for r in scripts.iterate_revisions('0144', '0131')] == [
+        f'{number:04}' for number in range(144, 131, -1)
     ]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -381,7 +381,7 @@ async def test_revision_chain_0143_0131_0143_preserves_full_state_and_issued_pdf
                         historical.rollback()
                     return projected
 
-                assert version() == ('0143',)
+                assert version() == ('0144',)
                 original = _chain_snapshot(connection)
                 original_0131 = projection_0131()
                 assert original['data']['lease_agreement'] and original['data']['letter_document']
@@ -436,7 +436,7 @@ async def test_revision_chain_0143_0131_0143_preserves_full_state_and_issued_pdf
                 down = _chain_snapshot(connection)
                 down['data'].pop('alembic_version')
                 assert down == old
-                migrate('0143', downgrade=False)
+                migrate('0144', downgrade=False)
                 connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
                 assert _chain_snapshot(connection) == head
             finally:

@@ -1,4 +1,4 @@
-"""Public deployment metadata contains only the mode and application version."""
+"""Public metadata exposes only deployment facts and mail capability."""
 
 import pytest
 import httpx
@@ -8,7 +8,7 @@ from app.main import app
 
 
 @pytest.mark.parametrize("mode", ["selfhost", "hosted"])
-async def test_meta_is_public_and_contains_only_mode_and_version(monkeypatch, mode):
+async def test_meta_is_public_and_contains_only_deployment_facts_and_mail_capability(monkeypatch, mode):
     monkeypatch.setattr(settings, "deployment_mode", mode)
     monkeypatch.setattr(settings, "smtp_host", None)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:

@@ -52,9 +52,10 @@ the reason. `first_run_setup.feature` is selfhost-only; `hosted_setup.feature`
 checks that an empty hosted installation never offers setup.
 `self_service_signup.feature` is hosted-only and verifies the emailed confirmation
 and subsequent login. The test compose has no Mailpit service; the scenario reuses
-the existing fake SMTP capture transport, with no network or real email. Organization
-isolation scenarios run in both modes. Browser app processes inherit the selected
-mode too; `@browser` remains a separate opt-in tag.
+the existing fake SMTP capture transport, with no network or real email.
+`password_reset.feature` is untagged and verifies mailbox recovery and old-session
+revocation in both modes with the same capture double. Organization isolation
+scenarios run in both modes. Browser app processes inherit the selected mode too; `@browser` remains a separate opt-in tag.
 
 **CI integration:** the PR backend job currently runs the scenario suite with the
 default selfhost policy as part of `make test-backend`. A separate hosted matrix

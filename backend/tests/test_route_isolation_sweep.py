@@ -66,7 +66,7 @@ EXEMPT: dict[str, str] = {
     **{f"POST /api/auth/password-reset{suffix}": "organization-free mailbox proof; tested in password_reset.feature and test_password_reset.py"
        for suffix in ("", "/confirm")},
     **core.EXEMPT,
-    "GET /api/meta": "organization-free: public mode/version only, no database access or secrets; tested in test_meta.py",
+    "GET /api/meta": "organization-free: public mode/version/mail capability only, no database access or secrets; tested in test_meta.py",
     "GET /api/health": "organization-free: answers without a session and reads no organization data",
     "GET /api/health/live": "organization-free: answers without a session and reads no organization data",
     "GET /api/health/ready": "organization-free: answers without a session and reads no organization data",

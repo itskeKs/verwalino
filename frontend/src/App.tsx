@@ -12,6 +12,8 @@ import { AuthProvider } from "./auth/AuthContext";
 import { useAuth } from "./auth/useAuth";
 import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
+import { PasswordResetRequestPage } from "./pages/PasswordResetRequestPage";
+import { PasswordResetPage } from "./pages/PasswordResetPage";
 import { SignupPage, SignupConfirmPage } from "./pages/SignupPage";
 import { SetupPage } from "./pages/SetupPage";
 import { useSetupStatus } from "./auth/useSetupStatus";
@@ -92,6 +94,9 @@ export function AppRoutes() {
     return location.pathname === "/signup/confirm" ? <SignupConfirmPage /> : <SignupPage />;
   }
 
+  if (location.pathname === "/passwort-vergessen") return <PasswordResetRequestPage />;
+  if (location.pathname === "/passwort-zuruecksetzen") return <PasswordResetPage />;
+
   if (setupRequired) {
     return <Routes>
       <Route path="/setup" element={<SetupPage onClosed={setup.markClosed} />} />
@@ -102,7 +107,7 @@ export function AppRoutes() {
   if (location.pathname === "/setup") return <Navigate to="/login" replace />;
 
   if (!session) {
-    return <LoginPage signupEnabled={deployment.mode === "hosted"} />;
+    return <LoginPage signupEnabled={deployment.mode === "hosted"} mailAvailable={deployment.mailAvailable} />;
   }
 
   const canWriteDeclarations = session.role === "OWNER_ADMIN" || session.role === "CLERK";

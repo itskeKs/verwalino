@@ -94,8 +94,8 @@ The error-tracking environment setting and doctor are absent at this revision.
 organization limit or an isolation bypass: the same RLS, scoped API queries and
 [route sweep](#74a-route-sweep-backendteststest_route_isolation_sweeppy) apply in both modes.
 
-Unauthenticated `GET /api/meta` returns only `deployment_mode` and the FastAPI
-application `version`, with `Cache-Control: no-store`. It reads no tenant data or
+Unauthenticated `GET /api/meta` returns `deployment_mode`, the FastAPI
+application `version` and the configuration-only `mail_available` boolean, with `Cache-Control: no-store`. It reads no tenant data or
 secrets, so the route sweep explicitly exempts it. The frontend's
 `useDeploymentMode()` reads it once per app load (including StrictMode replay);
 the setup route opens only with a confirmed self-hosted mode and a positive setup
@@ -446,7 +446,7 @@ Hosted signup is described below; login uses the application limiter below. Roll
 changing the shared fixtures permanently; real portable-stack acceptance remains
 pending.
 
-**Hosted signup (revision 0143):** `POST /api/signup` accepts organization, admin
+**Hosted signup (accepted source revision 0143):** `POST /api/signup` accepts organization, admin
 name, normalized email, password and hidden `website`. `POST /api/signup/resend`
 accepts an email and the same hidden `website` honeypot. Both return `202 {"message":"Wenn die Adresse frei ist, haben wir
 eine E-Mail geschickt"}` for fresh, existing, unknown, cooldown and throttled
@@ -499,7 +499,7 @@ the usual generic 401. All invalid, used, expired, wrong/missing-password and th
 return `403 {"detail":"Bestätigung nicht möglich. Bitte fordern Sie einen neuen
 Link an."}`. The function converts any failure to one generic SQL exception.
 Downgrade refuses retained requests; on an empty table it exactly removes the new
-objects. Revision 0143 also adds `auth_throttle.last_lockout_at`, leaving the
+objects. Accepted source revision 0143 also adds `auth_throttle.last_lockout_at`, leaving the
 accepted 0142 migration unchanged; existing escalation history is anchored to its
 last update time. Downgrade refuses retained last-lockout timestamps as well as
 pending signups. Metadata, race, replay, expiry, isolation and round-trip tests cover this
@@ -529,7 +529,54 @@ submit. StrictMode never submits twice. Server-side query stripping protects
 the default Uvicorn access log; upstream proxies must redact query strings too.
 GET requests never provision a tenant.
 
-**Login hardening (revisions 0142–0143):** `POST /api/auth/login` checks the IP and
+**Mailbox password recovery (revision 0144):** Both deployment modes expose
+`POST /api/auth/password-reset` with `{email, website}`. It returns the generic
+202 conditional receipt for known, unknown, locked and mail-unavailable addresses.
+A filled honeypot returns the same receipt before side effects. Other requests
+perform equivalent Argon2 dummy hashing and mail construction outside transactions;
+only active, unambiguous principals get mail, submitted after the response body.
+SMTP and a trusted `HV_PUBLIC_URL` origin are required. The public metadata boolean
+`mail_available` exposes only configuration usability; login hides the recovery link
+without it. Missing configuration logs one WARNING per process, with no addresses.
+No SMTP probe or tenant data is exposed.
+
+The global `password_reset_request` table holds user/organization ids, a unique
+32-byte SHA-256 digest of a 256-bit random token, creation/one-hour expiry and
+nullable use time. It is global because recovery precedes tenant selection; only
+`app_rw` gets direct DML grants (the existing worker membership inherits them).
+A composite foreign key binds the request to the user's organization. No tenant
+privileges change. `reset_password_with_token(text,text) RETURNS uuid` is a narrow
+SECURITY DEFINER with fixed `search_path=pg_catalog,pg_temp`, `row_security=off`
+and EXECUTE granted only to `app_rw`. It takes the T57 ACL lock before row locks,
+compares all 32 digest bytes, checks expiry/use/active membership and atomically
+replaces the password hash. The existing T57 trigger advances `session_version`;
+all outstanding reset links for that user are marked used. It restores the caller's
+tenant setting and converts every failure to one generic SQL exception. Downgrade
+refuses retained reset state and otherwise exactly removes the new objects.
+
+`POST /api/auth/password-reset/confirm` takes `{token, password}`, enforces the
+existing 12–128 character policy and returns 204 without logging in or setting a
+cookie. All refusals are the same German 403. Every parsed confirmation does one
+Argon2 hash outside transactions, including absent, used and locked tokens; no
+email is accepted by this route. Scope `password_reset` counts IP requests;
+`password_reset_confirm` counts every IP request, but only failed confirmations
+against the token-bound user (a stable dummy bucket for opaque wrong tokens).
+Counters commit before refusals. A successful reset submits a German security
+notification after commit; failure to submit mail cannot roll back the password.
+The unchanged admin reset continues through its existing authorization and audit path.
+
+The recovery page reads `/passwort-zuruecksetzen?token=…`, saves the token in
+sessionStorage before replacing the query and POSTs on explicit submit only.
+It clears the token after success or a 403, retains it for retryable failures and
+never persists passwords. No GET changes the password. Server access logs strip
+this query, the SPA response uses no-store/no-referrer, and upstream proxies must
+redact queries too. Public reset routes are explicit isolation-sweep exemptions;
+`password_reset.feature` verifies request → captured mail → reset → old session
+invalid in both modes. Metadata, expiry/replay, limiter and round-trip tests guard
+the boundary. Retained digests/use timestamps currently persist until user deletion;
+there is no new cleanup job.
+
+**Login hardening (accepted source revisions 0142–0143):** `POST /api/auth/login` checks the IP and
 normalized email before looking up the password. Both failure thresholds use a
 fixed 15-minute window starting with the first failure. Selfhost locks after 20
 IP or 10 email failures for 15 minutes. Hosted locks after 10 IP or 5 email
