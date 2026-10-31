@@ -257,3 +257,36 @@ async def test_letters_migration_roundtrip_preserves_existing_data_and_security(
         engine.dispose()
     async with api_client(rent_world) as api:
         assert (await api.get(issued.json()[0]["pdf_url"])).content == original_pdf
+
+
+async def lease_landlord(api, world):
+    person = await api.post('/api/persons', json={
+        'first_name': 'Frida', 'last_name': 'Sonnenhof', 'street': 'Sonnenweg 8',
+        'zip_code': '12345', 'city': 'Teststadt',
+    })
+    assert person.status_code == 201, person.text
+    owner = await api.post('/api/owner-profiles', json={'person_id': person.json()['id']})
+    assert owner.status_code == 201, owner.text
+    history = await api.post('/api/ownership', json={
+        'unit_id': str(world['unit']), 'owner_profile_id': owner.json()['id'], 'valid_from': '2025-01-01',
+    })
+    assert history.status_code == 201, history.text
+    return person.json()
+
+
+async def test_letter_placeholders_include_lease_unit_and_original_landlord(rent_world):
+    w = rent_world
+    async with api_client(w) as api:
+        await lease_landlord(api, w)
+        template = await create_template(api, name='Vertragsdaten', subject='Einheit {{einheit.nummer}}',
+            body='{{vermieter.name}}\n{{vermieter.adresse}}\n{{mieter.name}}\n{{vertrag.beginn}}\n'
+                 '{{vertrag.ende}}\n{{vertrag.kaltmiete}}\n{{vertrag.vorauszahlung}}\n{{vertrag.kaution}}')
+        issued = await api.post('/api/letters/issue', json=issue_body(w, template))
+        assert issued.status_code == 201, issued.text
+        original = await api.get(issued.json()[0]['pdf_url'])
+        content = pdf_text(original.content)
+        for expected in ('Einheit 1', 'Frida Sonnenhof', 'Sonnenweg 8', 'Synthetic T23 tenant',
+                         '01.01.2026', 'Unbefristet', '700,00', '150,00', 'Nicht erfasst'):
+            assert expected in content
+        await mutate(text("UPDATE person SET processing_restricted=true WHERE id IN (SELECT person_id FROM owner_profile WHERE organization_id=:org)"), w)
+        assert (await api.get(issued.json()[0]['pdf_url'])).status_code == 409
