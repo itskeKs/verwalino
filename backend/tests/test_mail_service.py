@@ -20,7 +20,7 @@ from tests.test_scoped_dunning import grant, tenant_body
 @pytest.fixture(autouse=True)
 def isolate_smtp_configuration(monkeypatch):
     for name, field in Settings.model_fields.items():
-        if name.startswith("smtp_"):
+        if name.startswith("smtp_") or name == "mail_allowlist":
             monkeypatch.delenv(f"HV_{name.upper()}", raising=False)
             monkeypatch.setattr(settings, name, field.default)
 
@@ -102,6 +102,39 @@ def test_mail_transport_exact_pdf_tls_auth_and_no_delivery_claim(smtp):
     assert ("login", "synthetic", "fake-only") in smtp.calls
 
 
+@pytest.mark.parametrize("recipient,allowed", [
+    ("canary@example.invalid", True),
+    ("CANARY@example.invalid", False),
+    ("tenant@example.invalid", False),
+])
+def test_mail_allowlist_restricts_submission_before_connection(smtp, caplog, recipient, allowed):
+    from app.services.mail_service import send_pdf, MailConfigurationError
+    config = Settings(_env_file=None, smtp_host="127.0.0.1", smtp_from="v@example.invalid",
+                      smtp_security="plain", mail_allowlist="canary@example.invalid")
+    kwargs = dict(recipient=recipient, subject="Mahnung", body="Anbei", pdf=b"%PDF-x",
+                  filename="x.pdf", message_id="<x@example.invalid>")
+    if allowed:
+        send_pdf(config, **kwargs)
+        assert len(smtp.messages) == 1
+    else:
+        with pytest.raises(MailConfigurationError, match="Empfänger"):
+            send_pdf(config, **kwargs)
+        assert not smtp.calls
+        assert "WARNING" in caplog.text
+        assert recipient not in caplog.text
+
+
+@pytest.mark.parametrize("allowlist", ["", "bad", "a@example.invalid,b@example.invalid"])
+def test_invalid_mail_allowlist_fails_closed(smtp, allowlist):
+    from app.services.mail_service import send_pdf, MailConfigurationError
+    config = Settings(_env_file=None, smtp_host="127.0.0.1", smtp_from="v@example.invalid",
+                      smtp_security="plain", mail_allowlist=allowlist)
+    with pytest.raises(MailConfigurationError):
+        send_pdf(config, recipient="canary@example.invalid", subject="Mahnung", body="Anbei",
+                 pdf=b"%PDF-x", filename="x.pdf", message_id="<x@example.invalid>")
+    assert not smtp.calls
+
+
 @pytest.mark.parametrize("recipient", ["", "bad", "a@example.invalid\r\nBcc: x@example.invalid", "a@example.invalid,b@example.invalid"])
 def test_mail_transport_rejects_invalid_recipient_before_connection(smtp, recipient):
     from app.services.mail_service import send_pdf, MailConfigurationError
@@ -120,6 +153,18 @@ async def issued_notice(api, seed):
     result = await api.post(f"/api/dunning/{response.json()['id']}/issue")
     assert result.status_code == 200, result.text
     return result.json()
+
+
+@pytest.mark.asyncio
+async def test_mail_allowlist_denial_precedes_rendering_and_attempt_recording(client_a_admin, m7_seed, smtp, monkeypatch):
+    monkeypatch.setattr(settings, "mail_allowlist", "canary@example.invalid")
+    await mutate(text("UPDATE person SET email='tenant@example.invalid' WHERE id=:person"), {"person": m7_seed["person_m7"]})
+    notice = await issued_notice(client_a_admin, m7_seed)
+    url = f"/api/mail/dunning/{notice['id']}"
+    response = await client_a_admin.post(url, json={"person_id": str(m7_seed["person_m7"]), "request_id": str(uuid.uuid4())})
+    assert response.status_code == 422, response.text
+    assert not smtp.calls
+    assert (await client_a_admin.get(url)).json()["attempts"] == []
 
 
 @pytest.mark.asyncio

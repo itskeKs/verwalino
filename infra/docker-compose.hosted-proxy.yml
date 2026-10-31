@@ -1,0 +1,8 @@
+# Apply to the production project only, after enabling the hosted wrapper.
+# The generic self-host installer and its Caddyfile stay unchanged.
+services:
+  caddy:
+    volumes:
+      - ${VERWALINO_SERVER_ROOT:?set the hosted server root}/config/Caddyfile.hosted:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile.production:ro
+      - ./Caddyfile.staging:/etc/caddy/Caddyfile.staging:ro

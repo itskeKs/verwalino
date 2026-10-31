@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import re
+import logging
 import smtplib
 import ssl
 from email.message import EmailMessage
 from email.utils import formatdate
 
 from app.core.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class MailConfigurationError(ValueError):
@@ -43,10 +46,19 @@ def validate_configuration(config: Settings) -> str:
     return sender
 
 
+def validate_recipient(config: Settings, recipient: str) -> str:
+    recipient = validate_address(recipient)
+    if config.mail_allowlist is not None:
+        if recipient != validate_address(config.mail_allowlist):
+            logger.warning("Mail submission blocked by recipient allow-list")
+            raise MailConfigurationError("Empfänger ist für diese Installation nicht freigegeben")
+    return recipient
+
+
 def send_pdf(config: Settings, *, recipient: str, subject: str, body: str,
              pdf: bytes, filename: str, message_id: str) -> None:
     sender = validate_configuration(config)
-    recipient = validate_address(recipient)
+    recipient = validate_recipient(config, recipient)
     if not pdf.startswith(b"%PDF-"):
         raise MailConfigurationError("Nur ein gerendertes PDF darf versendet werden")
     message = EmailMessage()

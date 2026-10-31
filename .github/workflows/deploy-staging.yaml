@@ -1,0 +1,70 @@
+name: Deploy staging
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - backend/**
+      - frontend/**
+      - infra/**
+      - Dockerfile
+      - docker/**
+      - scripts/deploy-server.sh
+      - .github/workflows/deploy-staging.yaml
+      - .github/workflows/release-image.yaml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-main
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  image:
+    uses: ./.github/workflows/release-image.yaml
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+  deploy:
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: deploy-hosted-server
+      cancel-in-progress: false
+    steps:
+      - name: Deploy staging over SSH
+        env:
+          SHA: ${{ github.sha }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$SHA" =~ ^[a-f0-9]{40}$ ]]
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::The secret $name is not set."
+              exit 1
+            fi
+          done
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          ssh -T -i "$HOME/.ssh/deploy_key" -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o ConnectTimeout=20 -o ServerAliveInterval=30 \
+            "$DEPLOY_USER@$DEPLOY_HOST" "staging $SHA"
+      - name: Remove the key
+        if: always()
+        run: rm -f "$HOME/.ssh/deploy_key" "$HOME/.ssh/known_hosts"

@@ -84,6 +84,8 @@ class Settings(BaseSettings):
     smtp_username: str | None = None
     smtp_password: SecretStr | None = None
     smtp_timeout_seconds: int = Field(15, ge=1, le=60)
+    # Hosted staging: exactly one permitted recipient. None leaves mail unrestricted.
+    mail_allowlist: str | None = None
 
     # --- Document Storage ---
     document_storage_root: str = "/tmp/hv-documents"

@@ -1,0 +1,119 @@
+# Hosted operator extension, used alone; never feed this file to self-host.sh.
+name: verwalino-staging
+
+x-logging: &logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-operations: &operations
+  image: ${VERWALINO_IMAGE:?set the staging image digest}
+  profiles: [ops]
+  restart: "no"
+  user: "10001:10001"
+  read_only: true
+  tmpfs: [/tmp:rw,noexec,nosuid,size=128m]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  environment:
+    HV_DEPLOYMENT_MODE: hosted
+    HV_DATABASE_URL_SYNC: postgresql://app_migrator:${MIGRATOR_PASSWORD:?missing staging secret}@db:5432/hausverwaltung
+  networks: [backend]
+  logging: *logging
+
+services:
+  db:
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hausverwaltung
+      POSTGRES_USER: app_migrator
+      POSTGRES_PASSWORD: ${MIGRATOR_PASSWORD:?missing staging secret}
+      APP_RW_PASSWORD: ${APP_RW_PASSWORD:?missing staging secret}
+      APP_WORKER_PASSWORD: ${APP_WORKER_PASSWORD:?missing staging secret}
+      APP_REVIEW_PASSWORD: ${APP_REVIEW_PASSWORD:?missing staging secret}
+    volumes:
+      - pgdata_staging:/var/lib/postgresql/data
+      - ./db/prod-init.sh:/docker-entrypoint-initdb.d/10-app-roles.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U app_migrator -d hausverwaltung]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks: [backend]
+    logging: *logging
+
+  migrate:
+    <<: *operations
+    command: [alembic, upgrade, head]
+
+  bootstrap:
+    <<: *operations
+    entrypoint: [python, -m, app.admin_cli]
+    command: []
+
+  # The service name is also a network DNS alias: never shadow production's app.
+  staging-app:
+    image: ${VERWALINO_IMAGE:?set the staging image digest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      HV_DEPLOYMENT_MODE: hosted
+      HV_PUBLIC_HOST: staging.verwalino.de
+      HV_ALLOWED_HOSTS: staging.verwalino.de,localhost,127.0.0.1
+      HV_SESSION_COOKIE_NAME: __Host-hv_session
+      HV_SESSION_COOKIE_SECURE: "true"
+      HV_DATABASE_URL: postgresql+asyncpg://app_rw:${APP_RW_PASSWORD:?missing staging secret}@db:5432/hausverwaltung
+      HV_DATABASE_URL_REVIEW: postgresql+asyncpg://app_review:${APP_REVIEW_PASSWORD:?missing staging secret}@db:5432/hausverwaltung
+      HV_SESSION_SECRET: ${SESSION_SECRET:?missing staging secret}
+      HV_RELEASE_ID: ${HV_RELEASE_ID:?set the staging sha}
+      HV_SMTP_HOST: ${HV_SMTP_HOST:?missing staging SMTP host}
+      HV_SMTP_PORT: ${HV_SMTP_PORT:-587}
+      HV_SMTP_FROM: ${HV_SMTP_FROM:?missing staging sender}
+      HV_SMTP_SECURITY: ${HV_SMTP_SECURITY:-starttls}
+      HV_SMTP_USERNAME: ${HV_SMTP_USERNAME:-}
+      HV_SMTP_PASSWORD: ${HV_SMTP_PASSWORD:-}
+      HV_MAIL_ALLOWLIST: ${CANARY_EMAIL:?set the only permitted staging recipient}
+      HV_DOCUMENT_STORAGE_ROOT: /data/documents
+      HV_ENABLE_API_DOCS: "false"
+      HV_DECLARATION_IMPORT_ENABLED: "false"
+      HV_DECLARATION_QA_ENABLED: "false"
+      HV_INVOICE_EXTRACTION_ENABLED: "false"
+      WEB_CONCURRENCY: "2"
+      FORWARDED_ALLOW_IPS: ${VERWALINO_PROXY_SUBNET:?use the existing proxy subnet}
+    volumes:
+      - documents_staging:/data/documents
+    user: "10001:10001"
+    read_only: true
+    tmpfs: [/tmp:rw,noexec,nosuid,size=128m]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: 768m
+    cpus: "1.00"
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks:
+      backend:
+      proxy:
+        aliases: [staging-app]
+    logging: *logging
+
+networks:
+  backend:
+    internal: true
+  proxy:
+    external: true
+    name: verwalino_proxy
+
+volumes:
+  pgdata_staging:
+  documents_staging:

@@ -35,7 +35,7 @@ from app.services.render_names import settlement_render_names
 from app.services.settlement_pdf import render_settlement_pdf
 from app.services.meeting_service import MeetingService, invitation_short_notice
 from app.services.meeting_pdf import MeetingDisplayNames, render_invitation_pdf
-from app.services.mail_service import send_pdf, validate_address, validate_configuration, MailConfigurationError
+from app.services.mail_service import send_pdf, validate_configuration, validate_recipient, MailConfigurationError
 
 
 ENTITY = {"dunning": "dunning_notice", "settlement": "settlement_run", "invitation": "owners_meeting"}
@@ -210,7 +210,7 @@ class DocumentMailService:
         except MailConfigurationError as exc:
             raise HTTPException(503, str(exc)) from exc
         try:
-            email = validate_address(person.email)
+            email = validate_recipient(settings, person.email)
         except MailConfigurationError as exc:
             raise HTTPException(422, str(exc)) from exc
         pdf = await self.render(kind, document, person)
