@@ -21,23 +21,27 @@ containing date or a start year, and labels such as `2025` or `2025/2026`. The t
 monitor uses the same functions. No migration or rounding changes are required.
 
 `GET /api/properties/{property_id}/settlement-periods?year=2025` offers start years
-2023–2026 with labels and dates; without `year`, the reference is the current calendar
-year. The statement and batch forms adopt the offered dates and still permit free
-periods. A reversed or over-twelve-month period returns 422. Creation returns 409
+2023–2026 with labels and dates; without `year`, the offers are the three most
+recent completed property periods, newest first, starting with the period before
+the one containing today (`period_for_date`). The statement and batch forms adopt
+these dates and still permit free periods. A reversed or over-twelve-month period
+returns 422. Creation and finalization return 409
 only when the new period **straddles a boundary** of a visible finalized,
 non-superseded run for the same lease and type: the periods overlap, but neither
 fully contains the other. For finalized bounds `[a, b]` and new bounds `[s, e]`,
 this means `a < s <= b < e` or `s < a <= e < b`; overlap on a boundary day counts.
 Fully contained, fully containing and identical periods remain permitted, including
-periods sharing a start or end date. Batches apply the same rule and continue
-skipping identical existing runs. Drafts never block creation. Short transition
+periods sharing a start or end date. Mixed batches report straddling leases as
+per-lease errors, create the other drafts, and continue skipping identical existing
+runs. A batch consisting entirely of straddling leases retains the existing 409
+response. Drafts never block creation. Short transition
 periods remain possible after a property's start month changes. An
 inclusive period from 29 February 2024 through 28 February 2025 is twelve months
 and is accepted.
 
 **Current overlap limitation:** the check runs under the acting user's normal
 row-level security. Overlaps with runs in other accounting scopes that the user
-cannot see are not detected. The existing financial-input lock serializes creation,
+cannot see are not detected. The existing financial-input lock serializes creation and finalization,
 but does not widen visibility. Follow-up #95 must add a database constraint to enforce
 the rule across accounting scopes; this change adds neither a migration nor a
 privileged helper. This limitation also applies to economic plans and WEG runs.
@@ -54,11 +58,13 @@ retain its default period. The organization-bound month getter is deferred to
 **Other period rules and limitation:** economic plans honour explicit dates within
 the readable property period or exactly closing the gap from the last finalized
 plan to the next property period; scope-only clerks supply their own dates,
-subject to the same twelve-month and straddling checks. Year-only
+subject to the same twelve-month and straddling checks. Offered plan dates remain
+editable for mid-year scopes and gap-closing transitions. Year-only NK and
 Hausgeld payments belong to the period starting in the assigned year. See the
 [WEG period rules](m4-weg-abrechnung.md#property-settlement-periods-68). The economic
 plan deadline in `fristen_service.py` is still calendar-based for non-January
 properties and remains a follow-up; it is not changed by #68.
+The per-property year overview and Anlage V stay on the calendar year.
 
 Automatic form prefill only applies while both date fields are empty. A delayed
 period-offer response preserves dates the user has already entered; choosing an
@@ -680,9 +686,11 @@ Since phase 2 (T27), `POST /api/settlements/batch` supplements the single creati
 atomic batch run with property, inclusive period, and optional accounting scope. Only
 contracts of the authorized scope units that overlap the period are created via
 `create_draft`; active BK runs with identical contract/property/period/scope are skipped
-unchanged. Response: `created` and `skipped` with contract/run ID. The existing
-organization-wide financial lock serializes parallel batch runs; an error also rolls back
-the audit and already created drafts. Source/scope permissions are checked before an empty
+unchanged. Response: `created`, `skipped` with contract/run ID, and, when needed, `errors` with
+contract ID and the straddling-period message. A straddling lease does not roll back
+other eligible leases; an entirely conflicting batch retains 409. The existing
+organization-wide financial lock serializes parallel batch runs; other errors still
+roll back the audit and already created drafts. Source/scope permissions are checked before an empty
 response. No computation, coverage, or finalization, and no invented advance payments: new
 financial values stay `null`.
 Under `/abrechnungen`, "BK-Sammellauf" (BK batch run) guides through property, period, and

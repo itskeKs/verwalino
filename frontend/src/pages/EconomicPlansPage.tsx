@@ -106,16 +106,16 @@ export function EconomicPlansPage() {
               <input type="number" required value={form.plan_year}
                 onChange={(e) => setForm({ ...form, plan_year: parseInt(e.target.value, 10) || form.plan_year, period_start: "", period_end: "" })} />
             </label>
-            <SettlementPeriodSelect key={`${form.property_id}-${form.plan_year}`} propertyId={form.property_id} year={form.plan_year} freeDates={false}
+            <SettlementPeriodSelect key={`${form.property_id}-${form.plan_year}`} propertyId={form.property_id} year={form.plan_year}
               start={form.period_start} end={form.period_end}
               onSelect={period => setForm(current => ({ ...current, plan_year: period.year, period_start: period.period_start, period_end: period.period_end }))} />
             <label>
               Zeitraum von *
-              <Input type="date" required readOnly value={form.period_start} />
+              <Input type="date" required value={form.period_start} onChange={event => setForm({ ...form, period_start: event.target.value })} />
             </label>
             <label>
               Zeitraum bis *
-              <Input type="date" required readOnly value={form.period_end} />
+              <Input type="date" required value={form.period_end} onChange={event => setForm({ ...form, period_end: event.target.value })} />
             </label>
             <label>
               Rücklagenzuführung (Jahr)

@@ -324,7 +324,7 @@ export function SettlementsPage() {
                   {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </label>
-              <SettlementPeriodSelect key={`period-${batchForm.property_id}`} propertyId={batchForm.property_id} year={new Date().getFullYear() - 1}
+              <SettlementPeriodSelect key={`period-${batchForm.property_id}`} propertyId={batchForm.property_id}
                 start={batchForm.period_start} end={batchForm.period_end}
                 onSelect={period => changeBatchForm({ ...batchForm, period_start: period.period_start, period_end: period.period_end })} />
               <label>Zeitraum von *<input type="date" required value={batchForm.period_start} onChange={e => changeBatchForm({ ...batchForm, period_start: e.target.value })} /></label>
@@ -343,6 +343,9 @@ export function SettlementsPage() {
           </form>
           {batchError && <p role="alert" className="error-text">{batchError}</p>}
           {batchResult && <p role="status">{batchResult.created.length} Entwürfe angelegt · {batchResult.skipped.length} bereits vorhanden</p>}
+          {batchResult?.errors?.map(item => <p role="alert" className="error-text" key={item.lease_agreement_id}>
+            {getLeaseLabel(item.lease_agreement_id)}: {item.error}
+          </p>)}
         </section>
       )}
 
@@ -386,7 +389,7 @@ export function SettlementsPage() {
                 ))}
               </select>
             </label>
-            <SettlementPeriodSelect key={`period-${form.property_id}`} propertyId={form.property_id} year={new Date().getFullYear() - 1}
+            <SettlementPeriodSelect key={`period-${form.property_id}`} propertyId={form.property_id}
               start={form.period_start} end={form.period_end}
               onSelect={period => setForm(current => ({ ...current, period_start: period.period_start, period_end: period.period_end }))} />
             <label>

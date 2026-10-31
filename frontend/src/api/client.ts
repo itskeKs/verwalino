@@ -18,7 +18,6 @@ function financialInputMessage(detail: { blockers?: { code: string }[] }): strin
   const codes = detail.blockers?.map((blocker) => blocker.code) ?? [];
   if (codes.includes("linked_plan_not_current") || codes.includes("linked_plan_scope_mismatch")) return "Bitte einen aktuellen finalisierten Wirtschaftsplan für dasselbe Objekt und denselben Zeitraum verwenden.";
   if (codes.includes("derived_total_stale")) return "Zahlungen wurden geändert. Vorauszahlungen zuerst neu aus den Zahlungen ermitteln und anschließend die Datengrundlage bestätigen.";
-  if (codes.includes("unsupported_derived_subperiod")) return "Für diesen Teilzeitraum sind belegte manuelle Vorauszahlungen erforderlich. Jahreszahlungen können nicht automatisch zugeordnet werden.";
   if (codes.includes("owner_payment_coverage_missing")) return "Für jeden Eigentümer muss ein geprüfter Zahlungsbetrag angegeben sein, auch bei 0,00.";
   if (codes.includes("bank_balance_coverage_missing")) return "Bitte für jedes Objektkonto einen geprüften Kontostand angeben, auch bei 0,00.";
   return "Datengrundlage unvollständig oder geändert. Bitte Beträge und Zeitraum prüfen und die Vollständigkeit erneut bestätigen.";

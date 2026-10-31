@@ -818,6 +818,7 @@ export interface SettlementBatchCreate {
 export interface SettlementBatchResult {
   created: SettlementRun[];
   skipped: { lease_agreement_id: string; settlement_run_id: string }[];
+  errors?: { lease_agreement_id: string; error: string }[];
 }
 
 export interface AdvancePaymentsUpdate {

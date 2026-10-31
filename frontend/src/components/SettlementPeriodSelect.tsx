@@ -3,12 +3,11 @@ import { listSettlementPeriods } from "../api/endpoints";
 import type { SettlementPeriod } from "../api/types";
 
 /** Dates come from the backend's property-period function; free dates remain possible. */
-export function SettlementPeriodSelect({ propertyId, year, start, end, onSelect, freeDates = true }: {
+export function SettlementPeriodSelect({ propertyId, year, start, end, onSelect }: {
   propertyId: string;
-  year: number;
+  year?: number;
   start: string;
   end: string;
-  freeDates?: boolean;
   onSelect: (period: SettlementPeriod) => void;
 }) {
   const [periods, setPeriods] = useState<SettlementPeriod[]>([]);
@@ -36,7 +35,7 @@ export function SettlementPeriodSelect({ propertyId, year, start, end, onSelect,
         const period = periods.find(p => p.period_start === event.target.value);
         if (period) onSelect(period);
       }}>
-        <option value="">{freeDates ? "Freier Zeitraum" : "Zeitraum wählen"}</option>
+        <option value="">Freier Zeitraum</option>
         {periods.map(p => <option key={p.year} value={p.period_start}>{p.label}</option>)}
       </select>
     </label>

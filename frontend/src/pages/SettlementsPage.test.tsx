@@ -248,3 +248,31 @@ it.each([
   expect(screen.getByLabelText(`${label} von *`)).toHaveValue(field === "von" ? "2025-12-31" : "");
   expect(screen.getByLabelText(`${label} bis *`)).toHaveValue(field === "bis" ? "2025-12-31" : "");
 });
+
+it.each(["BK-Sammellauf", "+ Neue Abrechnung"])("prefills the backend's last ended November period in %s", async action => {
+  const original = vi.mocked(api.get).getMockImplementation()!;
+  vi.mocked(api.get).mockImplementation(async (url, options) => url.includes("/settlement-periods") ? [
+    { year: 2024, label: "2024/2025", period_start: "2024-11-01", period_end: "2025-10-31" },
+    { year: 2023, label: "2023/2024", period_start: "2023-11-01", period_end: "2024-10-31" },
+  ] : original(url, options));
+  show(); await screen.findByRole("option", { name: "Sonnenhof" });
+  fireEvent.click(screen.getByRole("button", { name: action }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Objekt *" }), { target: { value: "property-1" } });
+  await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/properties/property-1/settlement-periods"));
+  expect(screen.getByLabelText(action === "BK-Sammellauf" ? "Zeitraum von *" : "Abrechnungszeitraum von *")).toHaveValue("2024-11-01");
+  expect(screen.getByLabelText(action === "BK-Sammellauf" ? "Zeitraum bis *" : "Abrechnungszeitraum bis *")).toHaveValue("2025-10-31");
+  expect(screen.getAllByRole("option", { name: /^202\d\/202\d$/ })).toHaveLength(2);
+});
+
+it("shows a straddling lease error alongside successful batch drafts and existing skips", async () => {
+  const { submit, region } = await open();
+  vi.mocked(api.post).mockResolvedValueOnce({
+    created: [created[0]],
+    skipped: [{ lease_agreement_id: "lease-2", settlement_run_id: "run-2" }],
+    errors: [{ lease_agreement_id: "lease-3", error: "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags." }],
+  });
+  fireEvent.click(submit);
+  expect(await within(region).findByRole("status")).toHaveTextContent("1 Entwürfe angelegt · 1 bereits vorhanden");
+  expect(within(region).getByRole("alert")).toHaveTextContent("Wohnung 3 — Ada Mieter");
+  expect(within(region).getByRole("alert")).toHaveTextContent("Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags.");
+});

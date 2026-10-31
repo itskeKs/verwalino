@@ -1353,6 +1353,6 @@ export function getFristenContext(): Promise<{ requires_accounting_scope: boolea
   return api.get("/api/fristen/context");
 }
 
-export function listSettlementPeriods(propertyId: string, year: number) {
-  return api.get<import("./types").SettlementPeriod[]>(`/api/properties/${propertyId}/settlement-periods?year=${year}`);
+export function listSettlementPeriods(propertyId: string, year?: number) {
+  return api.get<import("./types").SettlementPeriod[]>(`/api/properties/${propertyId}/settlement-periods${year === undefined ? "" : `?year=${year}`}`);
 }
