@@ -94,10 +94,11 @@ organization limit or an isolation bypass: the same RLS, scoped API queries and
 Unauthenticated `GET /api/meta` returns only `deployment_mode` and the FastAPI
 application `version`, with `Cache-Control: no-store`. It reads no tenant data or
 secrets, so the route sweep explicitly exempts it. The frontend's
-`useDeploymentMode()` reads it once per app load (including StrictMode replay);
-the setup route opens only with a confirmed self-hosted mode and a positive setup
-status. If metadata is unavailable, login and signed-in pages remain available;
-reload after recovery to detect setup. Hosted login offers “Konto erstellen”; `/signup`
+`useDeploymentMode()` reads it for login and signup (reusing the request during
+StrictMode replay), after the initial setup check. Setup depends only on
+`GET /api/setup`; required setup takes precedence without requesting metadata.
+If the setup check fails, login and signed-in pages remain available; reload
+after recovery to detect setup. Hosted login offers “Konto erstellen”; `/signup`
 and `/signup/confirm` require confirmed hosted metadata and otherwise redirect to login.
 The self-host installer and token issuance remain unchanged: the portable manifest
 uses the default self-hosted policy and does not forward an arbitrary caller's environment.

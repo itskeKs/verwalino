@@ -82,10 +82,26 @@ function PermissionRedirect({ to, parameter }: { to: string; parameter: "scopeId
   return <Navigate to={`${to}/${encodeURIComponent(params[parameter] ?? "")}`} replace />;
 }
 
+function PublicAuthRoutes() {
+  const deployment = useDeploymentMode();
+  const location = useLocation();
+
+  if (deployment.mode === null && !deployment.error) return <main className="p-6" role="status">Lade...</main>;
+
+  if (location.pathname === "/signup" || location.pathname === "/signup/confirm") {
+    if (deployment.mode !== "hosted") return <Navigate to="/login" replace />;
+    return location.pathname === "/signup/confirm" ? <SignupConfirmPage /> : <SignupPage />;
+  }
+
+  if (location.pathname === "/passwort-vergessen") return <PasswordResetRequestPage />;
+  if (location.pathname === "/passwort-zuruecksetzen") return <PasswordResetPage />;
+
+  return <LoginPage signupEnabled={deployment.mode === "hosted"} mailAvailable={deployment.mailAvailable} />;
+}
+
 export function AppRoutes() {
   const { loading, session } = useAuth();
   const setup = useSetupStatus();
-  const deployment = useDeploymentMode();
   const location = useLocation();
 
   const setupRequired = !setup.error ? setup.required : false;
@@ -96,15 +112,6 @@ export function AppRoutes() {
     );
   }
 
-  if (location.pathname === "/signup" || location.pathname === "/signup/confirm") {
-    if (deployment.mode === null && !deployment.error) return <main className="p-6" role="status">Lade...</main>;
-    if (deployment.mode !== "hosted") return <Navigate to="/login" replace />;
-    return location.pathname === "/signup/confirm" ? <SignupConfirmPage /> : <SignupPage />;
-  }
-
-  if (location.pathname === "/passwort-vergessen") return <PasswordResetRequestPage />;
-  if (location.pathname === "/passwort-zuruecksetzen") return <PasswordResetPage />;
-
   if (setupRequired) {
     return <Routes>
       <Route path="/setup" element={<SetupPage onClosed={setup.markClosed} />} />
@@ -114,8 +121,14 @@ export function AppRoutes() {
 
   if (location.pathname === "/setup") return <Navigate to="/login" replace />;
 
-  if (!session) {
-    return <LoginPage signupEnabled={deployment.mode === "hosted"} mailAvailable={deployment.mailAvailable} />;
+  if (
+    !session ||
+    location.pathname === "/signup" ||
+    location.pathname === "/signup/confirm" ||
+    location.pathname === "/passwort-vergessen" ||
+    location.pathname === "/passwort-zuruecksetzen"
+  ) {
+    return <PublicAuthRoutes />;
   }
 
   const canWriteDeclarations = session.role === "OWNER_ADMIN" || session.role === "CLERK";
