@@ -9,6 +9,12 @@ Only voucher ancestry binds person fields: confirmed/adopted costs, booked
 payments, finalized settlements/plans and their lines, issued/quarantined dunning,
 retained invoice originals and issued letter documents. Configuration/evidence
 FK closure preserves structure but cannot extend these personal deadlines.
+
+Audit UPDATE/DELETE stays forbidden to runtime roles by grants and trigger.
+An actor_user_id-only UPDATE to NULL is allowed for any session for the user
+FK's ON DELETE SET NULL. An actual app_migrator login (current_user=session_user)
+may DELETE as before 0147; DELETE protection stays grant-based. Its other UPDATEs
+must have the allow-listed payload-only erasure shape in the cooling-off org.
 """
 from alembic import op
 from sqlalchemy import text
@@ -471,6 +477,13 @@ def _erasure_payloads(install):
         CREATE OR REPLACE FUNCTION public.guard_audit_event_payload() RETURNS trigger
           LANGUAGE plpgsql SET search_path=pg_catalog,pg_temp AS $$
     BEGIN
+      IF TG_OP='UPDATE' AND NEW.actor_user_id IS NULL
+        AND (to_jsonb(NEW)-'actor_user_id')=(to_jsonb(OLD)-'actor_user_id') THEN
+        RETURN NEW;
+      END IF;
+      IF TG_OP='DELETE' AND current_user='app_migrator' AND session_user='app_migrator' THEN
+        RETURN OLD;
+      END IF;
       RAISE EXCEPTION 'Audit events are immutable' USING ERRCODE='23514';
     END $$;
         REVOKE ALL ON FUNCTION public.guard_audit_event_payload() FROM PUBLIC,app_rw,app_worker,app_review;

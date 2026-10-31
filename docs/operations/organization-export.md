@@ -209,6 +209,13 @@ Every organization table carries the lifecycle trigger. Audit insertion,
 reset-token cleanup and lifecycle decisions are explicit exceptions inside the
 trigger; lifecycle UPDATE additionally uses the cancellation-only transition
 guard. The schema contract fails if a new organization table lacks the trigger.
+The guard is an immediate BEFORE trigger, not a deferred commit constraint.
+An SQL statement or flush rejected before the response starts returns 409.
+FastAPI commits the `get_db` dependency after sending the response: if writes
+remain unflushed until that commit and cooling-off has become visible, P0023
+rolls back the transaction and is logged, while the client already has its 2xx
+response. Only writes left unflushed until dependency teardown can encounter
+this commit-time case; an earlier successful statement is not checked again.
 This allows runtime operations that hold an exclusive ACL lock on one connection
 and attest through a second connection to complete. `/api/organizations/me` reads
 organization/lifecycle state only. Its `import_available` flag describes an
@@ -382,7 +389,7 @@ not an immutable field; a separate minimization policy remains an owner decision
 | `allocation_treatment_line` | `documentary_basis`, `expense_intent`, `markers`, `owner_distribution_key`, `tax_intent`, `tenant_distribution_key`, `tenant_treatment` | Retained source, scope or review evidence and its technical provenance. |
 | `allocation_treatment_review` | `financial_state`, `marker_policy`, `reason`, `request_digest`, `snapshot`, `snapshot_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `approved_fact_source` | `approved_value_json`, `field_key`, `printed_page`, `quote`, `section`, `status`, `subject_kind`, `value_fingerprint` | Retained source, scope or review evidence and its technical provenance. |
-| `assignment_proposal` | `method`, `reason`, `request_digest`, `state` | Retained source, scope or review evidence and its technical provenance. |
+| `assignment_proposal` | `blockers`, `method`, `reason`, `request_digest`, `state` | Retained source, scope or review evidence and its technical provenance; `blockers` is an array of structured blocker codes. |
 | `attachment` | `archive_reason`, `content_sha256`, `mime_type`, `original_filename`, `storage_backend`, `storage_uri`, `title` | Retained original content, metadata and storage identity. |
 | `audit_event` | `action`, `entity_type`, `prev_event_hash` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
 | `bank_account` | `account_type`, `bank_name`, `bic`, `iban`, `label` | Required account identity of retained financial records. |
@@ -442,12 +449,12 @@ not an immutable field; a separate minimization policy remains an owner decision
 | `payment` | `direction`, `note`, `payment_type`, `status` | Frozen voucher content, accounting classifications and computation provenance. |
 | `person` | `bank_name`, `bic`, `city`, `company_name`, `email`, `first_name`, `iban`, `last_name`, `phone`, `street`, `zip_code` | Identity fields survive only with an unexpired voucher binding; otherwise anonymized. |
 | `person_data_domain` | `label`, `reason_code` | Retained source, scope or review evidence and its technical provenance. |
-| `person_data_grant` | `reason_code` | Retained source, scope or review evidence and its technical provenance. |
+| `person_data_grant` | `capabilities`, `reason_code` | Retained source, scope or review evidence and its technical provenance; capability arrays contain authorization codes. |
 | `property` | `city`, `management_type`, `mea_scale_status`, `name`, `street`, `zip_code` | Required property identity/address and structural classifications. |
 | `property_assignment` | `assignment_type`, `status` | Structural type/status; editable identifiers and text are scrubbed. |
 | `property_creation_receipt` | `request_digest` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
 | `property_data_domain` | `label`, `reason` | Retained source, scope or review evidence and its technical provenance. |
-| `property_data_grant` | `reason` | Retained source, scope or review evidence and its technical provenance. |
+| `property_data_grant` | `capabilities`, `reason` | Retained source, scope or review evidence and its technical provenance; capability arrays contain authorization codes. |
 | `property_document` | `content_sha256`, `doc_type`, `mime_type`, `original_filename`, `storage_backend`, `storage_uri`, `title` | Retained original content, metadata and storage identity. |
 | `property_document_relation` | `relation_type`, `status` | Retained source, scope or review evidence and its technical provenance. |
 | `property_knowledge_query_run` | `error_code`, `model`, `outcome`, `provider`, `status` | Provider/model/status and structured error metadata; no question/answer text is stored here. |
@@ -462,7 +469,7 @@ not an immutable field; a separate minimization policy remains an owner decision
 | `runtime_budget_attestation` | `policy`, `policy_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `runtime_budget_review` | `policy`, `policy_digest`, `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `scope_control_event` | `mode` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
-| `scope_grant` | `reason` | Retained source, scope or review evidence and its technical provenance. |
+| `scope_grant` | `capabilities`, `reason` | Retained source, scope or review evidence and its technical provenance; capability arrays contain authorization codes. |
 | `scope_migration_exception` | `code`, `evidence` | Retained source, scope or review evidence and its technical provenance. |
 | `scope_payment_reconciliation` | `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `scope_payment_reconciliation_item` | `source_digest` | Retained source, scope or review evidence and its technical provenance. |
@@ -486,10 +493,26 @@ The owner decision of 2026-10-31 is implemented by the
 and [ADR-0012 §4](../adr/0012-gdpr-erasure-vs-gobd-retention.md#4-anonymization-anonymize).
 After person anonymization, the operator run replaces personal payload references
 with `Gelöscht`, including `mail_prepared.email` and `mail_prepared.person_id`
-inside `audit_event.payload_diff`. It covers names, addresses, phone and bank
-details for persons without a binding or with all bindings expired, plus former
-users' email addresses. Nested objects/lists and personal values embedded in free
-text are included. Voucher-bound person entries remain unchanged.
+inside `audit_event.payload_diff`. It covers persons without a binding or with
+all bindings expired, plus former users' email addresses. The walk includes
+every nested object/list, dictionary key and metadata value:
+
+- Whole string values matching an erased identity are replaced after case and
+  whitespace normalization, URL decoding, IBAN/phone formatting normalization,
+  and UUID normalization (with or without hyphens). Names are matched as full
+  names assembled from their parts, not individual name fragments.
+- Inside longer strings, only erased emails, IBANs, UUIDs and phone numbers are
+  replaced, with token boundaries. Full names are not substring patterns.
+- ZIP, city, street and house-number values are never global replacement tokens.
+  Structured personal/address fields are neutralized only in the erased
+  person's entity context. Property addresses, dates, amounts (`12345.00`) and
+  ordinary words (`a short note`, `Berlin`) survive.
+
+A voucher-bound person's own entries remain unchanged, but that context does
+not exempt another erased person's identifiers. Audit events about an entity
+in the mutable-text scrub set also neutralize its scrubbed column keys
+structurally, including meeting invitations/protocols, agenda titles/descriptions,
+notes and reasons; matching the text against a person record is unnecessary.
 
 The catalog inventory of retained event/receipt/batch/attempt JSON and text
 columns identifies these personal-content columns. These are scrubbed separately
@@ -505,8 +528,10 @@ from the survivor columns above:
 | `intake_batch` | `manifest` |
 | `intake_extraction_attempt`, `job_attempt`, `outbox_delivery_attempt` | `result` |
 
-The same inventory excludes technical enums, operations, request keys/digests,
-hashes, versions and status fields. `invoice_processing_attempt`,
+The same inventory classifies technical enums, operations, request keys/digests,
+hashes, versions and status fields as survivors. Within an eligible payload,
+these keys still participate in the recursive walk: a value or dictionary key
+that actually identifies an erased person is scrubbed. `invoice_processing_attempt`,
 `operation_receipt`, `outbox_event` and `property_creation_receipt` contain only
 such technical/structural fields. `mail_prepared` is an audit action, not a
 separate table. Its request/message identifiers, delivery state, preparation and
@@ -516,8 +541,12 @@ retention or original bytes.
 
 Only the actual `app_migrator` login with the transaction-local erasure flag can
 use the payload-only guard exception during the locked erasure. Rows, event
-types, IDs, actor structure and timestamps remain; DELETE is forbidden. Runtime
-roles retain no UPDATE/DELETE grants even with the flag. Changed JSON objects
+types, IDs, actor structure and timestamps remain during erasure. Outside that
+exception, only an actor-only UPDATE to NULL is permitted, preserving the user
+FK's `ON DELETE SET NULL`. An actual `app_migrator` login can still DELETE audit
+rows for operator/test cleanup as before 0147; runtime DELETE protection remains
+grant-based, with a trigger backstop. Runtime roles retain no UPDATE/DELETE
+grants even with the flag. Changed JSON objects
 record `_organization_erasure.scrubbed_at`; text fields use the neutral marker
 and the run's completion time. The integrity snapshot verifies the expected
 scrubbed row and records its post-scrub hash, preserving all non-payload fields.

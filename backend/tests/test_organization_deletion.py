@@ -9,6 +9,7 @@ import pytest_asyncio
 
 from sqlalchemy import text
 
+from app.services.organization_deletion_service import ERASURE_SCRUB_COLUMNS
 from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
 from tests.test_organization_export import export_store  # noqa: F401
 
@@ -87,6 +88,8 @@ async def test_registered_resolution_scrubs_retained_meeting_and_agenda_text(ren
         assert (await api.put(f'/api/meetings/{mid}', json={'protocol_text': private})).status_code == 200
         agenda = await api.post(f'/api/meetings/{mid}/agenda', json={'meeting_id': mid, 'title': private, 'description': private})
         assert agenda.status_code == 201, agenda.text
+        assert (await api.put(f"/api/meetings/agenda/{agenda.json()['id']}",
+                              json={'title': private, 'description': private})).status_code == 200
         resolution = await api.post('/api/meetings/resolutions', json={'meeting_id': mid,
             'agenda_item_id': agenda.json()['id'], 'wording': 'Retained legal wording',
             'votes_yes': 5, 'votes_no': 0, 'votes_abstain': 0, 'result': 'ANGENOMMEN'})
@@ -100,16 +103,17 @@ async def test_registered_resolution_scrubs_retained_meeting_and_agenda_text(ren
     meeting_text = (await rent_db.execute(text('SELECT protocol_text,invitation_text FROM owners_meeting WHERE id=:id'), {'id': mid})).one()
     agenda_text = (await rent_db.execute(text('SELECT title,description FROM agenda_item WHERE id=:id'), {'id': agenda.json()['id']})).one()
     wording = await rent_db.scalar(text('SELECT wording FROM resolution_register_entry WHERE id=:id'), {'id': entry.json()['id']})
+    audit_payloads = (await rent_db.execute(text('SELECT payload_diff FROM audit_event WHERE organization_id=:org'), w)).scalars().all()
     await rent_db.rollback()
     assert meeting_text == ('Gelöscht', 'Gelöscht')
     assert agenda_text == ('Gelöscht', 'Gelöscht')
     assert wording == 'Retained legal wording'
+    assert private not in json.dumps(audit_payloads, ensure_ascii=False)
 
 
 async def test_retained_text_inventory(rent_db):
     from pathlib import Path
     import re
-    from app.services.organization_deletion_service import ERASURE_SCRUB_COLUMNS
     # Include every possible FK-retained parent, not just immutable roots.
     # All textual/JSON columns participate, including titles, text and reasons.
     rows = (await rent_db.execute(text('''WITH RECURSIVE retained(entity) AS (
@@ -123,7 +127,8 @@ async def test_retained_text_inventory(rent_db):
       FROM retained r JOIN pg_class c ON c.oid=to_regclass('public.'||r.entity)
       JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
       JOIN pg_type typ ON typ.oid=a.atttypid
-      WHERE typ.typname IN ('text','varchar','json','jsonb')
+      WHERE typ.typname IN ('text','varchar','bpchar','json','jsonb')
+        OR typ.typelem IN ('text'::regtype,'varchar'::regtype,'bpchar'::regtype)
       ORDER BY r.entity,a.attname'''))).all()
     scrubbed = {(table, column) for table, columns in ERASURE_SCRUB_COLUMNS.items() for column in columns}
     scrubbed |= set((await rent_db.execute(text('''SELECT r.entity,unnest(organization_erasure_payload_columns(r.entity))
@@ -225,6 +230,119 @@ async def test_payload_scrub_preserves_typed_person_bindings_and_mail_metadata(c
         assert result['person_id'] == result['first_name'] == 'Gelöscht'
         assert {key: result[key] for key in payload if key not in {'person_id', 'first_name'}} == {
             key: value for key, value in payload.items() if key not in {'person_id', 'first_name'}}
+
+
+ERASED_PERSON = {'id': '57a02ec5-d33a-43f1-98f9-7e221da8d220', 'first_name': 'A',
+                 'last_name': 'Müller', 'email': 'private+test@example.invalid',
+                 'iban': 'DE89370400440532013000', 'phone': '+493012345678',
+                 'street': 'Hauptstraße 1', 'zip_code': '12345', 'city': 'Berlin'}
+
+
+@pytest.mark.parametrize('value', [
+    '12345.00', 'a short note', 'Berlin', 'Hauptstraße 1', '2026-01-23',
+    'A', 'Müller', 'a@example.invalid', 'XDE89370400440532013000X',
+    '157a02ec5d33a43f198f97e221da8d2200', '+4930123456789',
+])
+def test_payload_scrub_preserves_nonpersonal_values_and_identifier_neighbors(value):
+    from app.services.organization_deletion_service import payload_scrubber
+    scrub = payload_scrubber([ERASED_PERSON], [], [], datetime.now(timezone.utc))
+    payload = {'amount': value, 'property': {'street': value, 'city': value}, 'status': value}
+    assert scrub(payload) == payload
+
+
+@pytest.mark.parametrize('value', [
+    '  a   MÜLLER  ', 'PRIVATE+TEST@EXAMPLE.INVALID',
+    'private%2Btest%40example.invalid', 'DE89 3704 0044 0532 0130 00',
+    '57A02EC5D33A43F198F97E221DA8D220', '+49 (30) 1234-5678',
+])
+def test_payload_scrub_normalizes_whole_identifying_values(value):
+    from app.services.organization_deletion_service import payload_scrubber
+    scrub = payload_scrubber([ERASED_PERSON], [], [], datetime.now(timezone.utc))
+    assert scrub({'value': value})['value'] == 'Gelöscht'
+
+
+@pytest.mark.parametrize('value', [
+    'private+test@example.invalid', 'private%2Btest%40example.invalid',
+    'DE89 3704 0044 0532 0130 00', '57a02ec5-d33a-43f1-98f9-7e221da8d220',
+    '57a02ec5d33a43f198f97e221da8d220', '+49 (30) 1234-5678',
+])
+def test_payload_scrub_replaces_only_identifier_tokens_inside_text(value):
+    from app.services.organization_deletion_service import payload_scrubber
+    scrub = payload_scrubber([ERASED_PERSON], [], [], datetime.now(timezone.utc))
+    assert scrub('Contact: ' + value + '; a short note in Berlin, 12345.00') == (
+        'Contact: Gelöscht; a short note in Berlin, 12345.00')
+
+
+@pytest.mark.parametrize('field', ['id', 'request_id', 'message_id', 'counts'])
+def test_payload_scrub_walks_metadata_keys_and_values(field):
+    from app.services.organization_deletion_service import payload_scrubber
+    scrub = payload_scrubber([ERASED_PERSON], [], [], datetime.now(timezone.utc))
+    identifier = ERASED_PERSON['id']
+    payload = {field: {identifier: 2} if field == 'counts' else {'id': identifier}}
+    result = scrub(payload)
+    assert identifier not in json.dumps(result)
+    if field == 'counts':
+        assert result['counts']['Gelöscht'] == 2
+
+
+@pytest.mark.parametrize('value', [ERASED_PERSON['email'], 'A Müller'])
+def test_bound_person_context_still_scrubs_other_erased_identities(value):
+    from app.services.organization_deletion_service import payload_scrubber
+    bound = str(uuid.uuid4())
+    scrub = payload_scrubber([ERASED_PERSON], [bound], [], datetime.now(timezone.utc))
+    result = scrub({'person_id': bound, 'name': value}, bound)
+    assert result['person_id'] == bound
+    assert result['name'] == 'Gelöscht'
+
+
+def test_payload_scrub_walks_keys_even_inside_structured_personal_fields():
+    from app.services.organization_deletion_service import payload_scrubber
+    scrub = payload_scrubber([ERASED_PERSON], [], [], datetime.now(timezone.utc))
+    result = scrub({'person_id': ERASED_PERSON['id'], 'address': {ERASED_PERSON['id']: 'private'}})
+    assert ERASED_PERSON['id'] not in json.dumps(result)
+
+
+def test_payload_scrub_preserves_a_nested_property_address_in_a_person_event():
+    from app.services.organization_deletion_service import payload_scrubber
+    scrub = payload_scrubber([ERASED_PERSON], [], [], datetime.now(timezone.utc))
+    property_record = {'kind': 'property', 'id': str(uuid.uuid4()),
+                       'street': 'Hauptstraße 1', 'city': 'Berlin', 'zip': '12345'}
+    result = scrub({'person_id': ERASED_PERSON['id'], 'property': property_record})
+    assert result['property'] == property_record
+
+
+@pytest.mark.parametrize('value', [
+    'private%2Btest%40example.invalid', 'DE89%203704%200044%200532%200130%2000',
+    '57a02ec5d33a43f198f97e221da8d220', '%2B49%20%2830%29%201234-5678',
+])
+def test_payload_scrub_uses_decoded_boundaries_and_preserves_unrelated_encoding(value):
+    from app.services.organization_deletion_service import payload_scrubber
+    scrub = payload_scrubber([ERASED_PERSON], [], [], datetime.now(timezone.utc))
+    assert scrub('Contact%3A%20' + value + '%3B%20a%20short%20note') == (
+        'Contact%3A%20Gelöscht%3B%20a%20short%20note')
+
+
+@pytest.mark.parametrize('kind', [{'old': 'person', 'new': 'company'}, ['person']])
+def test_payload_scrub_accepts_structured_kind_metadata(kind):
+    from app.services.organization_deletion_service import payload_scrubber
+    scrub = payload_scrubber([ERASED_PERSON], [], [], datetime.now(timezone.utc))
+    result = scrub({'kind': kind, 'email': ERASED_PERSON['email']})
+    assert result['kind'] == kind
+    assert result['email'] == 'Gelöscht'
+
+
+@pytest.mark.parametrize('entity,column', [
+    (entity, column)
+    for entity, columns in ERASURE_SCRUB_COLUMNS.items()
+    for column in columns
+])
+def test_payload_scrub_structurally_neutralizes_every_entity_scrub_column(entity, column):
+    from app.services.organization_deletion_service import payload_scrubber
+    scrub = payload_scrubber([], [], [], datetime.now(timezone.utc))
+    payload = {'changes': [{column: {'old': 'Arbitrary private text', 'new': 'Other private text'}}]}
+    result = scrub(payload, entity_type=entity)
+    assert result['changes'][0][column] == {'old': 'Gelöscht', 'new': 'Gelöscht'}
+    assert scrub(payload, entity_type='property') == payload
 
 
 async def test_runtime_budget_review_completes_with_lifecycle_guard(rent_world, rent_db, export_store):
@@ -541,14 +659,16 @@ async def test_erasure_scrubs_mutable_retained_text_and_keeps_immutable_fields(r
                            ('knowledge_budget_policy', 'reason')]:
         rows = (await rent_db.execute(text(f'SELECT {columns} FROM {table} WHERE organization_id=:org'), w)).all()
         scrubbed[table] = rows
-    # The original administrative audit receipt remains immutable and disclosed.
+    # The administrative receipt retains structure and values except the reason
+    # column, which belongs to the same structural scrub set as its entity.
     audit_payloads = (await rent_db.execute(text("SELECT payload_diff FROM audit_event WHERE organization_id=:org AND action='knowledge.budget_policy_changed'"), w)).scalars().all()
     immutable_title = await rent_db.scalar(text('SELECT title FROM property_rule WHERE id=:rule'), params)
     immutable_quote = await rent_db.scalar(text('SELECT quote FROM approved_fact_source WHERE subject_id=:assignment'), params)
     await rent_db.rollback()
     for table, rows in scrubbed.items():
         assert rows and marker not in str(rows), (table, rows)
-    assert marker in str(audit_payloads)
+    assert marker not in str(audit_payloads)
+    assert any(payload['max_cost_usd'] == 1 and payload['reason'] == 'Gelöscht' for payload in audit_payloads)
     assert immutable_title == immutable_quote == marker
 
 
@@ -1031,7 +1151,8 @@ async def test_erasure_scrubs_expired_person_and_former_user_payloads_only(rent_
 
 
 @pytest.mark.parametrize('role', ['app_rw', 'app_review', 'app_worker'])
-async def test_runtime_cannot_update_audit_payload_even_with_erasure_flag(rent_world, rent_db, role):
+@pytest.mark.parametrize('statement', ["UPDATE audit_event SET payload_diff='{}'", 'DELETE FROM audit_event'])
+async def test_runtime_cannot_update_audit_payload_even_with_erasure_flag(rent_world, rent_db, role, statement):
     from sqlalchemy.exc import DBAPIError
     w = rent_world
     await rent_db.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.organization_erasure','on',true)"),
@@ -1040,15 +1161,15 @@ async def test_runtime_cannot_update_audit_payload_even_with_erasure_flag(rent_w
     try:
         with pytest.raises(DBAPIError) as refused:
             async with rent_db.begin_nested():
-                await rent_db.execute(text("UPDATE audit_event SET payload_diff='{}' WHERE organization_id=:org"), w)
+                await rent_db.execute(text(statement + ' WHERE organization_id=:org'), w)
         assert refused.value.orig.sqlstate == '42501'
     finally:
         await rent_db.execute(text('SET LOCAL SESSION AUTHORIZATION DEFAULT'))
         await rent_db.rollback()
 
 
-@pytest.mark.parametrize('mutation', ["payload_diff='{}'", "action='changed'", 'actor_user_id=NULL',
-                                    "occurred_at=now()+interval '1 day'", 'entity_id=NULL', 'prev_event_hash=NULL', 'DELETE'])
+@pytest.mark.parametrize('mutation', ["payload_diff='{}'", "action='changed'", "actor_user_id=NULL,action='changed'",
+                                    "occurred_at=now()+interval '1 day'", 'entity_id=NULL', 'prev_event_hash=NULL'])
 async def test_audit_guard_refuses_non_erasure_or_structural_changes(rent_world, rent_db, mutation):
     from sqlalchemy.exc import DBAPIError
     w = rent_world
@@ -1062,8 +1183,34 @@ async def test_audit_guard_refuses_non_erasure_or_structural_changes(rent_world,
           VALUES (:org,'cooling_off',now()-interval '1 day')'''), w)
         await rent_db.execute(text("SELECT set_config('app.current_org_id',:org,true)"), {'org': str(w['org'])})
         await rent_db.execute(text("SET LOCAL app.organization_erasure='on'"))
-    statement = 'DELETE FROM audit_event' if mutation == 'DELETE' else 'UPDATE audit_event SET ' + mutation
+    statement = 'UPDATE audit_event SET ' + mutation
     with pytest.raises(DBAPIError):
         async with rent_db.begin_nested():
             await rent_db.execute(text(statement + ' WHERE id=:id'), {'id': identity})
+    await rent_db.rollback()
+
+
+@pytest.mark.parametrize('session_role', ['app_migrator', 'app_rw', 'app_worker', 'app_review'])
+async def test_user_hard_delete_nulls_only_audit_actor_and_operator_can_delete_history(rent_world, rent_db, session_role):
+    w = rent_world
+    actor = await rent_db.scalar(text('''INSERT INTO "user"(organization_id,email,password_hash,display_name)
+      VALUES (:org,'hard-delete@example.invalid','synthetic','Synthetic') RETURNING id'''), w)
+    identity = await rent_db.scalar(text('''INSERT INTO audit_event(organization_id,actor_user_id,entity_type,
+      entity_id,action,payload_diff) VALUES (:org,:actor,'person',:person,'person.created',
+      '{"note":"preserved"}') RETURNING id'''), {**w, 'actor': actor})
+    before = await rent_db.scalar(text("SELECT to_jsonb(a)-'actor_user_id' FROM audit_event a WHERE id=:id"), {'id': identity})
+    # Model an authorized user deletion under each actual login. The FK action
+    # executes as the table owner even when session_user is a runtime role.
+    await rent_db.execute(text('''CREATE FUNCTION public.delete_audit_actor_probe(actor uuid) RETURNS void
+      LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS $$
+      DELETE FROM public."user" WHERE id=actor $$'''))
+    await rent_db.execute(text(f'SET LOCAL SESSION AUTHORIZATION {session_role}'))
+    try:
+        await rent_db.execute(text('SELECT public.delete_audit_actor_probe(:actor)'), {'actor': actor})
+    finally:
+        await rent_db.execute(text('SET LOCAL SESSION AUTHORIZATION DEFAULT'))
+    after = await rent_db.scalar(text('SELECT to_jsonb(a) FROM audit_event a WHERE id=:id'), {'id': identity})
+    assert after.pop('actor_user_id') is None
+    assert after == before
+    assert (await rent_db.execute(text('DELETE FROM audit_event WHERE id=:id'), {'id': identity})).rowcount == 1
     await rent_db.rollback()

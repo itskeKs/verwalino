@@ -139,8 +139,28 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                             return connection.execute(text('''SELECT p.proname,pg_get_functiondef(p.oid),p.proacl::text,
                               pg_get_userbyid(p.proowner) FROM pg_proc p WHERE p.oid IN (
                                 SELECT t.tgfoid FROM pg_trigger t WHERE NOT t.tgisinternal)
+                                OR (p.pronamespace='public'::regnamespace AND p.proname='guard_audit_event_payload')
                               ORDER BY p.proname''')).all()
                         original_triggers = trigger_definitions()
+                        # This guard is new in 0147, unlike the three preexisting
+                        # payload guards. Capture its expected base definition
+                        # with PostgreSQL's exact formatting/owner/ACL as well.
+                        with connection.begin_nested() as guard_baseline:
+                            connection.execute(text('''CREATE FUNCTION public.guard_audit_event_payload() RETURNS trigger
+          LANGUAGE plpgsql SET search_path=pg_catalog,pg_temp AS $$
+    BEGIN
+      IF TG_OP='UPDATE' AND NEW.actor_user_id IS NULL
+        AND (to_jsonb(NEW)-'actor_user_id')=(to_jsonb(OLD)-'actor_user_id') THEN
+        RETURN NEW;
+      END IF;
+      IF TG_OP='DELETE' AND current_user='app_migrator' AND session_user='app_migrator' THEN
+        RETURN OLD;
+      END IF;
+      RAISE EXCEPTION 'Audit events are immutable' USING ERRCODE='23514';
+    END $$;'''))
+                            connection.execute(text('REVOKE ALL ON FUNCTION public.guard_audit_event_payload() FROM PUBLIC,app_rw,app_worker,app_review'))
+                            audit_guard = next(row for row in trigger_definitions() if row[0] == 'guard_audit_event_payload')
+                            guard_baseline.rollback()
                     revision.module.upgrade()
                     if starting_schema == '0146' and revision.revision == '0147':
                         assert connection.scalar(text('''SELECT count(*) FROM pg_trigger
@@ -162,18 +182,37 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                         'guard_knowledge_budget_policy': "TG_OP='UPDATE' AND (to_jsonb(NEW)-'reason')=(to_jsonb(OLD)-'reason')",
                         'guard_property_source_security': "TG_OP='UPDATE' AND (to_jsonb(NEW)-'reason')=(to_jsonb(OLD)-'reason')",
                     }
+                    payload_guards = {'guard_audit_event_payload', 'protect_scope_evidence',
+                                      'protect_master_import_batch', 'protect_dunning_batch'}
                     expected = {}
-                    for name, definition, grants, owner in original_triggers:
+                    for name, definition, grants, owner in [*original_triggers, audit_guard]:
                         if name in exemptions:
                             clause = ("      IF current_user='app_migrator' AND session_user='app_migrator'\n"
                                       "        AND current_setting('app.organization_erasure',true)='on'\n"
                                       f"        AND {exemptions[name]} THEN\n"
                                       "        IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;\n"
                                       "      END IF;\n")
-                            assert definition.count('    BEGIN\n') == 1, name
-                            expected[name] = (definition.replace('    BEGIN\n', '    BEGIN\n' + clause, 1), grants, owner)
-                    actual = {name: (definition, grants, owner) for name, definition, grants, owner in trigger_definitions() if name in exemptions}
-                    assert set(expected) == set(exemptions)
+                        elif name in payload_guards:
+                            clause = """      IF current_user='app_migrator' AND session_user='app_migrator'
+        AND current_setting('app.organization_erasure',true)='on'
+        AND TG_TABLE_SCHEMA='public' AND TG_OP='UPDATE' THEN
+        IF public.organization_erasure_payload_columns(TG_TABLE_NAME) IS NOT NULL
+          AND (to_jsonb(NEW)-public.organization_erasure_payload_columns(TG_TABLE_NAME))
+            =(to_jsonb(OLD)-public.organization_erasure_payload_columns(TG_TABLE_NAME))
+          AND OLD.organization_id=NULLIF(current_setting('app.current_org_id',true),'')::uuid
+          AND EXISTS(SELECT 1 FROM public.organization_deletion d
+            WHERE d.organization_id=OLD.organization_id AND d.status='cooling_off') THEN
+          RETURN NEW;
+        END IF;
+      END IF;
+"""
+                        else:
+                            continue
+                        assert definition.count('    BEGIN\n') == 1, name
+                        expected[name] = (definition.replace('    BEGIN\n', '    BEGIN\n' + clause, 1), grants, owner)
+                    actual = {name: (definition, grants, owner) for name, definition, grants, owner in trigger_definitions()
+                              if name in set(exemptions) | payload_guards}
+                    assert set(expected) == set(exemptions) | payload_guards
                     assert actual == expected
                 if starting_schema == '0142':
                     nullable = text("SELECT is_nullable FROM information_schema.columns "

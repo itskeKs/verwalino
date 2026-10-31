@@ -72,18 +72,27 @@ operator erasure run of a deleted organization removes personal data from
 retained audit/receipt payloads for persons anonymized by that run (no binding or
 all personal retention bindings expired), and removes former users' email
 addresses. This deliberately supersedes decision 4's absolute audit immutability
-only for these personal payload fields. A voucher-bound person's payload entries
-and retained voucher/original content remain unchanged.
+only for these personal payload fields. A voucher-bound person's own retained
+identity and retained voucher/original content remain unchanged. That person's
+event context does not exempt references to other erased persons' identities.
 
-The exception permits **UPDATE of payload columns only**, inside the erasure
-transaction. The row, event/action, IDs, actor structure, timestamps and other
-metadata remain unchanged; DELETE is never permitted. Both `current_user` and
+The erasure exception permits **UPDATE of payload columns only**, inside the
+erasure transaction. The row, event/action, IDs, timestamps and other metadata
+remain unchanged. Both `current_user` and
 `session_user` must be `app_migrator`, and the transaction-local
 `app.organization_erasure` flag must be `on`. Runtime UPDATE/DELETE grants remain
-revoked. A runtime caller setting the flag receives no additional authority.
+revoked for `app_rw`, `app_worker` and `app_review`, with a trigger backstop. A
+runtime caller setting the flag receives no additional authority.
 There was no audit immutability trigger before migration 0147: the grant backstop
-was the mechanism. 0147 adds an operator guard without changing those grants;
-its downgrade removes that guard and restores the preceding schema.
+was the mechanism. 0147 adds an UPDATE guard without extending DELETE protection
+to the operator: an actual `app_migrator` login (`current_user = session_user`)
+may still DELETE for operator maintenance and test cleanup. DELETE protection
+stays grant-based as before 0147. The only other permitted UPDATE, for any
+session, changes **only `actor_user_id` to NULL**, so the existing user FK's
+`ON DELETE SET NULL` can preserve audit history when a user is hard-deleted.
+All other operator UPDATEs require the payload-only erasure shape above, scoped
+to the current organization in `cooling_off`. Downgrade removes the new guard
+and restores the preceding schema.
 
 Changed JSON payloads carry an `_organization_erasure.scrubbed_at` timestamp;
 personal payload references become the neutral marker `Gelöscht`, while actual

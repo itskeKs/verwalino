@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import uuid
+from urllib.parse import unquote
 
 from fastapi import HTTPException
 from sqlalchemy import text
@@ -53,71 +54,128 @@ def retained_hash(name, row):
 PERSONAL_FIELDS = frozenset({
     'person_id', 'email', 'recipient_email', 'email_address', 'name', 'full_name',
     'recipient_name', 'first_name', 'last_name', 'company_name', 'address',
-    'street', 'zip_code', 'postal_code', 'city', 'phone', 'telephone',
+    'street', 'house_number', 'zip', 'zip_code', 'postal_code', 'city', 'phone', 'telephone',
     'iban', 'bic', 'bank_name',
-})
-PAYLOAD_METADATA_FIELDS = frozenset({
-    'id', 'kind', 'status', 'created_at', 'completed_at', 'content_sha256',
-    'storage_uri', 'bytes', 'message_id', 'request_id', 'request_key',
-    'request_digest', 'operation', 'version', 'count', 'counts',
-    'error_code', 'processor_version',
 })
 
 
 def payload_scrubber(persons, retained_person_ids, user_emails, now):
-    """Capture pre-anonymization values; preserve explicitly bound subobjects."""
+    """Scrub structured personal fields and normalized identities, never fragments."""
     retained_ids = set(retained_person_ids)
     erased = {row['id'] for row in persons if row['id'] not in retained_ids}
-    values = {str(row[field]) for row in persons if row['id'] in erased
-              for field in PERSONAL_FIELDS | {'id'} if row.get(field)}
-    emails = {email for email in user_emails if email}
+    erased_people = [row for row in persons if row['id'] in erased]
+    emails = {str(email) for email in user_emails if email}
+    emails.update(row['email'] for row in erased_people if row.get('email'))
 
-    def pattern(tokens):
-        if not tokens:
+    def normalized(value):
+        return ' '.join(unquote(value).casefold().split())
+
+    names = {normalized(' '.join(str(row.get(part) or '') for part in ('first_name', 'last_name')))
+             for row in erased_people if row.get('first_name') and row.get('last_name')}
+    names.update(normalized(row['company_name']) for row in erased_people if row.get('company_name'))
+    whole_values = names | {normalized(value) for value in emails | erased}
+    ibans = {re.sub(r'\s', '', row['iban']).casefold() for row in erased_people if row.get('iban')}
+    uuids = {uuid.UUID(value).hex for value in erased}
+
+    def phone_digits(value):
+        if not re.fullmatch(r'\+?[\d\s()./-]+', value):
             return None
-        return re.compile(r'(?<!\w)(?:' + '|'.join(re.escape(v) for v in sorted(tokens, key=lambda v: (-len(v), v)))
-                          + r')(?!\w)', re.IGNORECASE)
+        digits = re.sub(r'\D', '', value)
+        return digits[2:] if digits.startswith('00') else digits
 
-    personal_pattern, email_pattern = pattern(values), pattern(emails)
+    phones = {phone_digits(row['phone']) for row in erased_people if row.get('phone')}
+    phones.discard(None)
+
+    patterns = [r'(?<![\w@.+%\-])' + re.escape(email) + r'(?![\w@+%\-]|\.[\w-])'
+                for email in sorted(emails)]
+    patterns += [r'(?<![\w])' + r'\s*'.join(re.escape(char) for char in iban) + r'(?![\w])'
+                 for iban in sorted(ibans)]
+    patterns += [r'(?<![\w])(?:' + re.escape(value) + '|' + re.escape(str(uuid.UUID(value))) + r')(?![\w])'
+                 for value in sorted(uuids)]
+    separator = r'[\s()./-]*'
+    patterns += [r'(?<![\w+])(?:\+|00)?' + separator.join(re.escape(digit) for digit in phone)
+                 + r'(?!\w|' + separator + r'\d)'
+                 for phone in sorted(phones) if len(phone) >= 7]
+    identifier_pattern = re.compile('|'.join(patterns), re.IGNORECASE) if patterns else None
     marker = 'Gelöscht'
+
+    def replace_identifiers(value):
+        if '%' not in value:
+            return identifier_pattern.sub(marker, value)
+        # Match decoded token boundaries, but replace only each identifier's
+        # original byte span. Unrelated URL encoding must survive verbatim.
+        decoded, spans = [], []
+        for token in re.finditer(r'((?:%[0-9a-fA-F]{2})+)|.', value, re.DOTALL):
+            source = token.group(1)
+            if source:
+                characters = bytes.fromhex(source.replace('%', '')).decode('utf-8', errors='surrogateescape')
+                start = token.start()
+                for char in characters:
+                    end = start + 3 * len(char.encode('utf-8', errors='surrogateescape'))
+                    decoded.append(char)
+                    spans.append((start, end))
+                    start = end
+            else:
+                decoded.append(token.group())
+                spans.append(token.span())
+        parts, start = [], 0
+        for match in identifier_pattern.finditer(''.join(decoded)):
+            left, right = spans[match.start()][0], spans[match.end() - 1][1]
+            parts.extend((value[start:left], marker))
+            start = right
+        return ''.join([*parts, value[start:]])
+
+    def unique_key(result, key):
+        candidate, suffix = key, 1
+        while candidate in result:
+            candidate = f'{key} {suffix}'
+            suffix += 1
+        return candidate
 
     def neutralize(value):
         if isinstance(value, dict):
-            return {key: neutralize(item) for key, item in value.items()}
+            result = {}
+            for key, item in value.items():
+                result[unique_key(result, scrub(key))] = neutralize(item)
+            return result
         if isinstance(value, list):
             return [neutralize(item) for item in value]
         return marker if value is not None else None
 
-    def scrub(value, context=None):
+    def scrub(value, context=None, *, entity_type=None):
         if isinstance(context, str):
             context = True if context in erased else False if context in retained_ids else None
         if isinstance(value, dict):
-            typed_person = value.get('kind') == 'person'
+            kind = value.get('kind')
+            typed_person = kind == 'person'
+            if isinstance(kind, str) and kind in {'property', 'unit', *ERASURE_SCRUB_COLUMNS}:
+                context = None  # A typed non-person object has its own fields.
             person = value.get('person_id', value.get('id') if typed_person else None)
             if isinstance(person, str) and person in erased:
                 context = True
             elif isinstance(person, str) and person in retained_ids:
                 context = False
             personal_fields = PERSONAL_FIELDS | {'id', 'key'} if typed_person else PERSONAL_FIELDS
+            entity_columns = ERASURE_SCRUB_COLUMNS.get(entity_type, ())
             result = {}
             for key, item in value.items():
-                new_key = key if key in personal_fields | PAYLOAD_METADATA_FIELDS else scrub(key, context)
                 # Several erased UUID dictionary keys must not collapse a map.
-                if new_key in result:
-                    new_key = f'{new_key} {len(result)}'
-                result[new_key] = (neutralize(item) if context is True and key in personal_fields
-                                   else item if key in PAYLOAD_METADATA_FIELDS
-                                   else scrub(item, context))
+                new_key = unique_key(result, scrub(key))
+                result[new_key] = (neutralize(item) if key in entity_columns or (context is True and key in personal_fields)
+                                   else scrub(item, context, entity_type=entity_type))
             if result != value:
                 result['_organization_erasure'] = {'scrubbed_at': now.isoformat()}
             return result
         if isinstance(value, list):
-            return [scrub(item, context) for item in value]
+            return [scrub(item, context, entity_type=entity_type) for item in value]
         if isinstance(value, str):
-            if email_pattern:
-                value = email_pattern.sub(marker, value)
-            if context is not False and personal_pattern:
-                value = personal_pattern.sub(marker, value)
+            decoded = normalized(value)
+            compact = re.sub(r'\s', '', decoded)
+            if (decoded in whole_values or compact in ibans or compact.replace('-', '') in uuids
+                    or phone_digits(decoded) in phones):
+                return marker
+            if identifier_pattern:
+                value = replace_identifiers(value)
         return value
 
     return scrub
@@ -143,7 +201,8 @@ async def scrub_retained_payloads(db, org, tables, hashes, scrub):
             if key not in hashes or retained_hash(name, row) != hashes[key]:
                 raise RuntimeError('Retained record changed before payload scrub')
             context = row.get('entity_id') if row.get('entity_type') == 'person' else None
-            changed = {column: scrub(row[column], context) for column in payload_columns if row[column] is not None}
+            changed = {column: scrub(row[column], context, entity_type=row.get('entity_type'))
+                       for column in payload_columns if row[column] is not None}
             changed = {column: value for column, value in changed.items() if value != row[column]}
             if not changed:
                 continue

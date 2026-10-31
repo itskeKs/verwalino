@@ -288,7 +288,7 @@ def browser_deletion_organization(world, signup_mail, monkeypatch):
     import uuid
     import psycopg2
     from app.core.config import settings
-    from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.conftest import MIGRATOR_SYNC_URL, clear_disposable_source_context
     from tests.signup_support import BODY, confirmation_token
 
     monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
@@ -301,17 +301,28 @@ def browser_deletion_organization(world, signup_mail, monkeypatch):
     try:
         yield body
     finally:
-        # Only this scenario's decision is removed, including after a UI failure.
-        # Immutable audit evidence remains in its separate synthetic organization.
+        # Reuse the guarded disposable-DB cleanup for retained originals; normal
+        # DELETE cannot remove immutable attachment/source evidence. The runner
+        # owns the shared DB lock. Remove this signup's organization as well,
+        # including when the UI failed before cancellation.
         with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+            org = answer.json()['organization_id']
             cursor.execute('DELETE FROM organization_deletion WHERE organization_id=%s',
-                           (answer.json()['organization_id'],))
+                           (org,))
+            clear_disposable_source_context(cursor)
+            for table in ('audit_event', 'membership', 'management_mandate', 'user'):
+                cursor.execute(f'DELETE FROM public."{table}" WHERE organization_id=%s', (org,))
+            cursor.execute('DELETE FROM organization WHERE id=%s', (org,))
+            cursor.execute('SELECT count(*) FROM organization WHERE id=%s', (org,))
+            assert cursor.fetchone() == (0,)
 
 
 @when('the administrator reviews and cancels deletion in the browser')
-def browser_lifecycle(browser_world, browser_deletion_organization):
+def browser_lifecycle(browser_world, browser_deletion_organization, tmp_path):
+    import os
     from tests.bdd.browser import ROOT
     from playwright.async_api import expect
+    screenshots = ROOT / 'docs/assets/design' if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1' else tmp_path
     async def operate():
         page = browser_world.page
         credentials = browser_deletion_organization
@@ -330,15 +341,15 @@ def browser_lifecycle(browser_world, browser_deletion_organization):
         await browser_world.visit('/users')
         await expect(page.get_by_role('button', name='Organisation löschen', exact=True)).to_be_visible()
         await page.set_viewport_size({'width': 1280, 'height': 1000})
-        await page.screenshot(path=ROOT / 'docs/assets/design/organization-data-desktop.png', full_page=True)
+        await page.screenshot(path=screenshots / 'organization-data-desktop.png', full_page=True)
         await page.get_by_role('button', name='Organisation löschen', exact=True).click()
         dialog = page.get_by_role('dialog', name='Organisation löschen', exact=True)
         await expect(dialog.get_by_role('button', name='Jetzt frischen Export erstellen', exact=True)).to_be_visible()
-        await page.screenshot(path=ROOT / 'docs/assets/design/organization-deletion-desktop.png', full_page=True)
+        await page.screenshot(path=screenshots / 'organization-deletion-desktop.png', full_page=True)
         await page.set_viewport_size({'width': 360, 'height': 844})
         await page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
         box = await dialog.bounding_box()
-        await page.screenshot(path=ROOT / 'docs/assets/design/organization-deletion-360.png', full_page=True)
+        await page.screenshot(path=screenshots / 'organization-deletion-360.png', full_page=True)
         assert box and box['y'] >= 0 and box['y'] + box['height'] <= 844, box
         export_box = await dialog.get_by_role('button', name='Jetzt frischen Export erstellen', exact=True).bounding_box()
         assert export_box and export_box['y'] >= 0 and export_box['y'] + export_box['height'] <= 844, export_box
@@ -350,10 +361,10 @@ def browser_lifecycle(browser_world, browser_deletion_organization):
         await expect(dialog).not_to_be_visible()
         banner = page.get_by_role('status').filter(has_text='schreibgeschützt')
         await expect(banner).to_be_visible()
-        await page.screenshot(path=ROOT / 'docs/assets/design/organization-cooling-off-360.png', full_page=True)
+        await page.screenshot(path=screenshots / 'organization-cooling-off-360.png', full_page=True)
         await page.get_by_role('button', name='Löschung widerrufen', exact=True).click()
         await expect(banner).not_to_be_visible()
-        await page.screenshot(path=ROOT / 'docs/assets/design/organization-export-360.png', full_page=True)
+        await page.screenshot(path=screenshots / 'organization-export-360.png', full_page=True)
     browser_world.run(operate())
 
 
