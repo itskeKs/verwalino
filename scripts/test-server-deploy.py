@@ -8,10 +8,12 @@ import json
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import tarfile
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -28,10 +30,12 @@ INSTALLER = ROOT / "scripts/self-host.sh"
 SCRIPTS = ("server-bootstrap.sh", "server-backup.sh", "deploy-server.sh")
 OLD_DIGEST = "ghcr.io/itskeks/verwalino@sha256:" + "b" * 64
 NEW_DIGEST = "ghcr.io/itskeks/verwalino@sha256:" + "a" * 64
+OLD_COMMIT = "abc1234"
+NEW_COMMIT = "0123456789abcdef"
 
 # One script serves as docker, git, curl and sleep; it logs every call and fails on demand.
 FAKE_TOOL = r'''#!/usr/bin/env python3
-import json, os, sys, tarfile
+import json, os, sys, tarfile, time
 tool = os.path.basename(sys.argv[0])
 args = sys.argv[1:]
 env = os.environ
@@ -61,6 +65,7 @@ if tool == "curl":
     sys.exit(0)
 
 if tool == "git":
+    head = env["FAKE_STATE"] + "/HEAD"
     rest = list(args)
     while rest and rest[0] in ("-c", "-C"):
         rest = rest[2:]
@@ -72,9 +77,11 @@ if tool == "git":
             sys.exit(1)
         out("0123456789abcdef\n")
     elif sub == "rev-parse":
-        out("abc1234\n")
+        out(open(head).read() + "\n")
     elif sub == "describe":
-        out("v0.0.9\n")
+        out("v0.0.9\n" if open(head).read() == "abc1234" else "v1.2.3\n")
+    elif sub == "checkout":
+        open(head, "w").write("0123456789abcdef" if rest[-1].startswith("refs/tags/") else rest[-1])
     elif sub == "status":
         out(env.get("FAKE_DIRTY", ""))
     elif sub == "merge-base" and env.get("FAKE_NOT_ON_MAIN"):
@@ -83,6 +90,16 @@ if tool == "git":
 
 # docker
 if args[0] == "compose":
+    if "migrate" in args and env.get("FAKE_PAUSE_MIGRATE"):
+        state = env["FAKE_STATE"]
+        open(state + "/migrating", "w").close()
+        deadline = time.monotonic() + 10
+        while not os.path.exists(state + "/resume"):
+            if time.monotonic() >= deadline:
+                sys.exit(18)
+            time.sleep(0.01)
+        # Exceed pipe buffers so a disconnected reader is observed before the deploy ends.
+        out("fake migration output\n" * 16384)
     if "exec" in args and "psql" in args:
         if any("SELECT count(*) FROM public.organization" in arg for arg in args):
             out(env.get("FAKE_ORGANIZATION_COUNT", "1") + "\n")
@@ -146,6 +163,7 @@ class ServerCase(unittest.TestCase):
         self.config = self.srv / "config/.env.selfhost"
         self.log = self.base / "calls.jsonl"
         (self.base / "state").mkdir()
+        (self.base / "state/HEAD").write_text(OLD_COMMIT)
         binary = self.base / "bin"
         binary.mkdir()
         for tool in ("docker", "git", "curl", "sleep"):
@@ -210,7 +228,11 @@ class BootstrapTests(unittest.TestCase):
         self.key.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExample0 admin@example\n")
 
     def run_script(self, *args):
-        return subprocess.run(["bash", str(BOOTSTRAP), *args], capture_output=True, text=True, timeout=15)
+        # Execute only argument validation, never the bootstrap or any host commands.
+        validation, boundary, _ = BOOTSTRAP.read_text().partition("\ncommand -v apt-get")
+        self.assertTrue(boundary, "bootstrap validation boundary must be explicit")
+        return subprocess.run(["bash", "-c", validation + "\nexit 99\n", BOOTSTRAP.name, *args],
+                              capture_output=True, text=True, timeout=15)
 
     def test_usage_requires_admin_user_and_key_file(self):
         for args in [(), ("admin",), ("admin", str(self.key), "host", "extra")]:
@@ -280,11 +302,15 @@ class BackupTests(ServerCase):
         for line in (target / "SHA256SUMS").read_text().splitlines():
             digest, filename = line.split()
             self.assertEqual(hashlib.sha256((target / filename).read_bytes()).hexdigest(), digest)
-        # Secrets and patient data are for the owner and the admin group only.
-        self.assertEqual(stat.S_IMODE(target.stat().st_mode) & 0o007, 0)
-        for path in target.iterdir():
-            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o640, path.name)
         self.assertFalse((self.srv / "backups/.lock").exists())
+
+    def test_backup_directories_and_files_are_owner_only(self):
+        result = self.run_script(BACKUP)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        [target] = (self.srv / "backups").iterdir()
+        for path in (self.srv / "backups", target, *target.iterdir()):
+            with self.subTest(path=path.name):
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700 if path.is_dir() else 0o600)
 
     def test_containers_are_found_by_compose_label_and_documents_are_mounted_read_only(self):
         self.assertEqual(self.run_script(BACKUP).returncode, 0)
@@ -383,11 +409,13 @@ class DeployTests(ServerCase):
     def assert_untouched(self):
         self.assertEqual(self.config.read_bytes(), self.before)
         self.assertEqual(list((self.srv / "backups").iterdir()), [])
+        self.assertEqual((self.base / "state/HEAD").read_text(), OLD_COMMIT)
 
     def test_exactly_one_strict_release_tag_is_accepted(self):
         for args in [(), ("",), (self.TAG, "extra"), ("v1; id",), ("v1.2.3;id",), ("v1.2.3 v1.2.4",), ("v1.2",),
                      ("latest",), ("1.2.3",), ("v1.2.3-",), ("v1.2.3\nfoo",), ("../v1.2.3",), ("-v1.2.3",),
-                     ("v1.2.3-rc 1",), ("v1.2.3$(id)",), ("v1.2.3`id`",), ("V1.2.3",)]:
+                     ("v1.2.3-rc 1",), ("v1.2.3$(id)",), ("v1.2.3`id`",), ("V1.2.3",),
+                     ("v1.2.3-rc.1",), ("v01.2.3",), ("v1.02.3",), ("v1.2.03",), ("v1.2.3-a..b",)]:
             with self.subTest(args=args):
                 # The tag comes from the arguments only, never from SSH_ORIGINAL_COMMAND.
                 result = self.run_script(DEPLOY, *args, SSH_ORIGINAL_COMMAND=self.TAG)
@@ -397,13 +425,58 @@ class DeployTests(ServerCase):
         self.assertEqual(self.log_files(), [])
         self.assert_untouched()
 
-    def test_valid_tags_with_and_without_prerelease_suffix_run(self):
-        for tag in (self.TAG, "v10.20.30", "v1.2.3-rc.1"):
+    def test_stable_tags_without_leading_zeroes_run(self):
+        for tag in (self.TAG, "v10.20.30", "v0.0.0"):
             with self.subTest(tag=tag):
                 result = self.deploy(tag)
                 self.assertEqual(result.returncode, 0, result.stdout)
                 pulls = [c["args"] for c in self.calls("docker") if c["args"][0] == "pull"]
                 self.assertIn(["pull", f"ghcr.io/itskeks/verwalino:{tag}"], pulls)
+
+    def disconnected_deploy(self, *, hangup=False, **env):
+        state = self.base / "state"
+        process = subprocess.Popen(["bash", str(DEPLOY), self.TAG],
+                                   env=dict(self.env, FAKE_PAUSE_MIGRATE="1", **env), cwd=self.base,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            deadline = time.monotonic() + 10
+            while not (state / "migrating").exists():
+                self.assertIsNone(process.poll(), "deploy exited before reaching migration")
+                self.assertLess(time.monotonic(), deadline, "deploy did not reach migration")
+                time.sleep(0.01)
+            process.stdout.close()
+            process.stdout = None
+            if hangup:
+                os.killpg(process.pid, signal.SIGHUP)
+            (state / "resume").touch()
+            _, stderr = process.communicate(timeout=15)
+            return process.returncode, stderr.decode()
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+
+    def test_closed_stdout_during_migration_keeps_the_final_status_and_releases_the_lock(self):
+        rc, stderr = self.disconnected_deploy()
+        self.assertFalse((self.srv / "logs/.deploy.lock").exists())
+        self.assertEqual(rc, 0, stderr)
+        [log] = self.log_files()
+        self.assertTrue(log.read_text().endswith(f"deploy {self.TAG} OK: {NEW_DIGEST}\n"))
+
+    def test_hangup_during_failed_migration_keeps_the_final_status_and_releases_the_lock(self):
+        rc, stderr = self.disconnected_deploy(hangup=True, FAKE_FAIL_COMPOSE="migrate")
+        self.assertFalse((self.srv / "logs/.deploy.lock").exists())
+        self.assertEqual(rc, 17, stderr)
+        [log] = self.log_files()
+        self.assertRegex(log.read_text().splitlines()[-1], r'^deploy: FAILED at step "install .*\(exit 17\)\. Log: ')
+
+    def test_failed_deploy_logs_are_private(self):
+        result = self.deploy(FAKE_HEALTH="never")
+        self.assertEqual(result.returncode, 1)
+        [log] = self.log_files()
+        for path, mode in ((log.parent, 0o750), (log, 0o640)):
+            with self.subTest(path=path.name):
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), mode)
 
     def test_every_git_call_trusts_the_checkout_explicitly(self):
         self.assertEqual(self.deploy().returncode, 0)
@@ -418,6 +491,7 @@ class DeployTests(ServerCase):
         git = [c["args"][4:] for c in self.calls("git")]
         self.assertIn(["fetch", "--tags", "origin"], git)
         self.assertIn(["checkout", "--quiet", "--detach", f"refs/tags/{self.TAG}"], git)
+        self.assertEqual((self.base / "state/HEAD").read_text(), NEW_COMMIT)
         self.assertLess(git.index(["fetch", "--tags", "origin"]), git.index(["checkout", "--quiet", "--detach", f"refs/tags/{self.TAG}"]))
 
         sequence = [(c["tool"], c["args"]) for c in self.calls() if c["tool"] in ("git", "docker", "curl")]
@@ -500,6 +574,7 @@ class DeployTests(ServerCase):
         self.assertIn(f"image {OLD_DIGEST}", result.stdout)
         self.assertIn("#76", result.stdout)
         self.assertEqual(self.calls("curl"), [])
+        self.assertEqual((self.base / "state/HEAD").read_text(), NEW_COMMIT)
         self.assertFalse(any(c["args"][:2] == ["compose", "--project-name"] and "up" in c["args"] and c["args"][-1] == "app"
                              for c in self.calls("docker")))
         self.assertFalse((self.srv / "logs/.deploy.lock").exists())

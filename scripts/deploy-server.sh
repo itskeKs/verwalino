@@ -30,8 +30,9 @@
 # must be able to read and write the config and create files in its directory: the installer
 # insists on mode 0600 and takes a lock directory next to it.
 set -euo pipefail
+trap '' PIPE HUP
 export LC_ALL=C
-umask 002
+umask 027
 
 ROOT=${VERWALINO_SERVER_ROOT:-/srv/verwalino}
 APP=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -39,18 +40,20 @@ CONFIG=${VERWALINO_CONFIG:-$ROOT/config/.env.selfhost}
 LOGS=$ROOT/logs
 IMAGE_REPO=ghcr.io/itskeks/verwalino
 DIGEST_RE='^ghcr\.io/itskeks/verwalino@sha256:[a-f0-9]{64}$'
-TAG_RE='^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$'
+TAG_RE='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 READY_ATTEMPTS=24   # 24 checks, 2 s timeout plus 3 s pause each: at most 117 s
 export VERWALINO_SERVER_ROOT=$ROOT VERWALINO_CONFIG=$CONFIG
 
 [[ $# -eq 1 && "$1" =~ $TAG_RE ]] || { echo 'Usage: deploy-server.sh vX.Y.Z (one release tag)' >&2; exit 2; }
 TAG=$1
 [[ -d "$LOGS" && -w "$LOGS" ]] || { echo "deploy: $LOGS is missing or not writable." >&2; exit 1; }
+chmod 750 "$LOGS"
 LOG=$LOGS/deploy-$(date -u +%Y%m%dT%H%M%SZ).log
 
 # State read by the EXIT trap, hence global.
 step='preparing'
 locked=0
+checked_out=0 pinned=0
 prev_commit='' prev_tag='' prev_image='' digest_ref=''
 
 main() {
@@ -61,13 +64,17 @@ main() {
     # shellcheck disable=SC2317
     on_exit() {
         local rc=$?
+        if [[ "$rc" != 0 && "$checked_out" = 1 && "$pinned" = 0 ]]; then
+            git_app checkout --quiet --detach "$prev_commit" || printf 'deploy: could not restore checkout %s.\n' "$prev_commit" >&2
+        fi
         if [[ "$locked" = 1 ]]; then rmdir "$LOGS/.deploy.lock"; fi
         if [[ "$rc" != 0 ]]; then
-            printf 'deploy: FAILED at step "%s" (exit %s). Log: %s\n' "$step" "$rc" "$LOG" >&2
             printf 'deploy: no automatic rollback. Before this run: tag %s, commit %s, image %s.\n' \
                 "${prev_tag:-unknown}" "${prev_commit:-unknown}" "${prev_image:-unknown}" >&2
             printf 'deploy: an older image is not a safe fallback once migrations ran; fix forward or restore the pre-deploy backup (#9, #76).\n' >&2
+            printf 'deploy: FAILED at step "%s" (exit %s). Log: %s\n' "$step" "$rc" "$LOG" >&2
         fi
+        exit "$rc"
     }
     trap on_exit EXIT
     trap 'exit 130' INT
@@ -87,6 +94,7 @@ main() {
         if [[ "$seen" != 1 ]]; then rm -f "$tmp"; rmdir "$CONFIG.lock"; die 'the config must contain exactly one VERWALINO_IMAGE line.'; fi
         chmod 600 "$tmp"
         mv -f "$tmp" "$CONFIG"
+        pinned=1
         rmdir "$CONFIG.lock"
     }
 
@@ -125,6 +133,7 @@ main() {
     git_app rev-parse --verify --quiet "refs/tags/$TAG^{commit}" >/dev/null || die "tag $TAG does not exist in the repository."
     git_app merge-base --is-ancestor "refs/tags/$TAG^{commit}" refs/remotes/origin/main || die "tag $TAG is not on main."
     git_app checkout --quiet --detach "refs/tags/$TAG"
+    checked_out=1
 
     step='pull the image'
     docker pull "$IMAGE_REPO:$TAG"
@@ -156,5 +165,6 @@ main() {
     exit 0  # an explicit exit makes bash 3.2 run the EXIT trap of this pipeline subshell too
 }
 
+# Drain the relay after stdout closes so tee can finish the log and main can run its EXIT trap.
 # One line on purpose: bash has parsed all of it before git checks out a different copy of this file.
-main 2>&1 | tee -a "$LOG"; exit "${PIPESTATUS[0]}"
+main 2>&1 | tee -a "$LOG" | { cat 2>/dev/null || cat >/dev/null; }; exit "${PIPESTATUS[0]}"

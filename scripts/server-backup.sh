@@ -23,7 +23,7 @@
 # the archive; a file stored in between is only an unreferenced extra.
 set -euo pipefail
 export LC_ALL=C
-umask 007
+umask 077
 
 ROOT=${VERWALINO_SERVER_ROOT:-/srv/verwalino}
 BACKUPS=$ROOT/backups
@@ -108,6 +108,7 @@ prune() {
 
 command -v docker >/dev/null || fail 'docker is required.'
 [[ -d "$BACKUPS" ]] || fail "$BACKUPS does not exist (see DEPLOY.md, Hosted server)."
+chmod 700 "$BACKUPS"
 [[ -f "$CONFIG" && ! -L "$CONFIG" && -r "$CONFIG" ]] || fail "installer config $CONFIG is missing or unreadable."
 mkdir "$BACKUPS/.lock" 2>/dev/null || fail "another backup is running (or a stale $BACKUPS/.lock needs operator review)."
 LOCKED=1
@@ -136,7 +137,7 @@ cat "$CONFIG" > "$WORK/config.env"
     printf 'image=%s\n' "$(sed -n 's/^VERWALINO_IMAGE=//p' "$CONFIG")"
 } > "$WORK/MANIFEST"
 (cd "$WORK" && sha256 db.dump documents.tar config.env MANIFEST > SHA256SUMS)
-chmod 640 "$WORK"/*
+chmod 600 "$WORK"/*
 
 mv "$WORK" "$BACKUPS/$name"
 WORK=""

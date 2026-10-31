@@ -219,7 +219,8 @@ remains a pre-merge gate; the local workflow/installer checks need no database.
 
 ## Hosted server
 
-The hosted service runs on one Debian/Ubuntu VPS: the [portable stack](#portable-docker-first-installation)
+The hosted service runs on Debian 13 (the hosted server); the bootstrap also accepts Ubuntu, untested.
+It uses the [portable stack](#portable-docker-first-installation)
 in HTTPS mode, updated by a GitHub workflow that logs in over a second SSH key of the admin user, restricted to
 the deploy script. Off-site encrypted backups and the restore drill belong to #42 and are not covered here.
 Placeholders: `SERVER_IP`, `verwaltung.example.org`; the admin user is called `chris` below.
@@ -249,12 +250,13 @@ Everything belongs to the admin user, who is also a member of `docker`; nothing 
 |---|---|---|
 | `/srv/verwalino/app` | 755 | checkout of this repository; the deploy script moves it to the release tag |
 | `/srv/verwalino/config` | **700** | `.env.selfhost` (**0600**, the installer insists), `deploy_key` (read-only GitHub deploy key for `git fetch`) and the installer's lock directory |
-| `/srv/verwalino/backups` | 700 | `<timestamp>[-label]/` backups |
-| `/srv/verwalino/logs` | 755 | `deploy-<timestamp>.log`, `backup.log` |
+| `/srv/verwalino/backups` | 700 | `<timestamp>[-label]/` backups (directories 0700, files 0600) |
+| `/srv/verwalino/logs` | 750 | `deploy-<timestamp>.log` (0640), `backup.log` |
 | `/srv/verwalino/data` | 755 | reserved and empty: the stack keeps its data in the Docker volumes `verwalino_pgdata` and `verwalino_documents`, under Docker's data root |
 
 ```bash
-sudo install -d -o chris -g chris /srv/verwalino /srv/verwalino/{app,logs,data}
+sudo install -d -o chris -g chris /srv/verwalino /srv/verwalino/{app,data}
+sudo install -d -o chris -g chris -m 750 /srv/verwalino/logs
 sudo install -d -o chris -g chris -m 700 /srv/verwalino/{config,backups}
 ssh-keygen -t ed25519 -N '' -C verwalino-server-readonly -f /srv/verwalino/config/deploy_key   # add the .pub as a read-only GitHub deploy key
 git clone -c core.sshCommand='ssh -i /srv/verwalino/config/deploy_key -o IdentitiesOnly=yes' \
@@ -291,10 +293,12 @@ rm ci_key.pub
 
 The workflow sends only the tag as the SSH command (`ssh chris@host v1.2.3`). The user's shell expands
 `$SSH_ORIGINAL_COMMAND` into arguments of the script, which accepts exactly one argument shaped like a release
-tag (`vX.Y.Z`, optionally `-suffix`) and exits 2 on anything else. `restrict` switches off forwarding, PTYs and
+tag (`vX.Y.Z`, no suffix or leading zeroes) and exits 2 on anything else. `restrict` switches off forwarding, PTYs and
 agent. The user has sudo and Docker, so this key is as sensitive as the admin key: the forced command and the tag
-check are its only limits. Fill `DEPLOY_KNOWN_HOSTS` with the output of `ssh-keyscan -t ed25519 SERVER_IP` after
-comparing it with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server.
+check are its only limits. Fill `DEPLOY_KNOWN_HOSTS` with the output of `ssh-keyscan -t ed25519 "$DEPLOY_HOST"`,
+where `DEPLOY_HOST` is exactly the host name or IP stored in that secret, after comparing the key with
+`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server. `StrictHostKeyChecking=yes` matches that name;
+an IP-only entry does not match a host name in `DEPLOY_HOST`.
 
 ### Deploy flow
 
@@ -310,7 +314,8 @@ comparing it with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the serv
    `/srv/verwalino/logs/deploy-<timestamp>.log`.
 4. On failure it prints the last 100 app log lines and the previous tag, commit and image, and exits non-zero.
    There is **no automatic rollback**: the schema may already be migrated, so starting an older image is not safe
-   (#9, #76). Fix forward with a new tag, or restore the pre-deploy backup.
+   (#9, #76). Before the digest is pinned, a failure restores the previous checkout. Fix forward with a new tag,
+   or restore the pre-deploy backup.
 
 Secrets of the workflow (repository secrets, names only): `DEPLOY_HOST`, `DEPLOY_USER` (the admin user),
 `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`. The token is read-only (`contents: read`) and the job uses no other secret.
@@ -320,7 +325,8 @@ Secrets of the workflow (repository secrets, names only): `DEPLOY_HOST`, `DEPLOY
 [`scripts/server-backup.sh`](scripts/server-backup.sh) writes `/srv/verwalino/backups/<UTC timestamp>[-label]/`:
 `db.dump` (`pg_dump` custom format), `documents.tar`, `config.env` (a copy of the config, secrets in clear:
 keep the directory private and encrypt before it leaves the server), `MANIFEST` and `SHA256SUMS`. It keeps the
-newest backup of each of the last 14 days and 8 weeks and the 10 newest `pre-<tag>` ones. Schedule it daily:
+newest unlabelled backup of each of the last 14 days and 8 weeks and the 10 newest backups with any label.
+`scripts/server-backup.sh manual` competes with `pre-<tag>` backups for those 10 places. Schedule it daily:
 
 ```bash
 echo '0 3 * * * chris /srv/verwalino/app/scripts/server-backup.sh >> /srv/verwalino/logs/backup.log 2>&1' |
@@ -346,8 +352,9 @@ docker image prune -af --filter until=720h                              # old re
 ```
 
 The scripts and the workflow are covered by `make test-installer` (`scripts/test-server-deploy.py`; Docker, git,
-curl and sleep are faked, nothing touches a real host). A stale `/srv/verwalino/logs/.deploy.lock` or
-`/srv/verwalino/backups/.lock` (a run was killed) is removed by hand once no deploy or backup is running. Never
+curl and sleep are faked, nothing touches a real host). After a cancelled or broken CI deploy, check for and
+remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/srv/verwalino/backups/.lock`
+(a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
 
 ## Existing alpha: `verwaltung.karat.immo`
