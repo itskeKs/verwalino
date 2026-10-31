@@ -1,0 +1,22 @@
+# Import at top level from the operator-owned Caddyfile.hosted.
+(site_headers) {
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy no-referrer
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+        -Server
+    }
+}
+
+verwalino.de {
+    import site_headers
+    reverse_proxy site:8080
+}
+
+www.verwalino.de {
+    import site_headers
+    redir https://verwalino.de{uri} 308
+}
