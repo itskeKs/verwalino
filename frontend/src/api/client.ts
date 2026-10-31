@@ -60,7 +60,8 @@ async function request<T>(
         if (typeof body.detail === "string") detail = body.detail;
         else if (body.detail.code === "financial_inputs_incomplete") {
           detail = financialInputMessage(body.detail);
-        } else detail = "Eingaben unvollständig oder ungültig. Bitte die angegebenen Felder prüfen.";
+        } else if (typeof body.detail.message === "string") detail = body.detail.message;
+        else detail = "Eingaben unvollständig oder ungültig. Bitte die angegebenen Felder prüfen.";
       }
     } catch {
       // ignore JSON parse errors on error responses

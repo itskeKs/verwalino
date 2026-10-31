@@ -252,7 +252,10 @@ class WegSettlementService:
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         if await self._runs.has_conflicting_period(run, sphere.id if sphere is not None else None):
-            raise HTTPException(409, "Abrechnungszeitraum überschneidet eine finalisierte WEG-Abrechnung dieses Objekts.")
+            raise HTTPException(409, {
+                "code": "settlement_period_conflict",
+                "message": "Abrechnungszeitraum überschneidet eine finalisierte WEG-Abrechnung dieses Objekts.",
+            })
         run = await self._runs.create(run)
         await self._audit.create(
             AuditEvent(
@@ -300,7 +303,10 @@ class WegSettlementService:
         scope_id = await FinancialScopeService(self._session, self._org_id, self._user_id).enter(run)
         computation_basis = await begin_computation(self._session, self._org_id, run, 'finalize')
         if await self._runs.has_conflicting_period(run, scope_id):
-            raise HTTPException(409, "Abrechnungszeitraum überschneidet eine finalisierte WEG-Abrechnung dieses Objekts.")
+            raise HTTPException(409, {
+                "code": "settlement_period_conflict",
+                "message": "Abrechnungszeitraum überschneidet eine finalisierte WEG-Abrechnung dieses Objekts.",
+            })
         extras = extras or WegComputeExtras()
         coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", extras)
         inp, result = await self._compute_weg_engine(run, extras)

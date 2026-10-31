@@ -1,4 +1,4 @@
-"""Largest-Remainder rounding -- the single place money is rounded (ADR-0005).
+"""Cost-distribution and year-only advance rounding rules (ADR-0005).
 
 `distribute_amount(total, weights)` distributes a cent-exact total over n
 addressees with non-negative exact weights, rounding each share to cent such
@@ -7,7 +7,10 @@ correctness guarantee of M3: "Sum of shares == total cost, no cent lost"
 (a formal BGH requirement; ADR-0005 section 4.2).
 
 Cost distributions route through this function. Year-only advances use the
-explicit calendar-month rule below, with the remainder in December.
+separate calendar-month rule below: floor monthly shares to cents, assign the
+annual remainder to December, and prorate boundary months by calendar days.
+Floored cumulative day-share differences make adjacent periods reconcile
+exactly, independently of draft or finalization order. Both rules live here.
 
 Algorithm (ADR-0005, Entscheidung; Hamilton / Hare / Largest-Remainder):
 

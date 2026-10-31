@@ -38,6 +38,11 @@ periods remain possible after a property's start month changes. An
 inclusive period from 29 February 2024 through 28 February 2025 is twelve months
 and is accepted.
 
+Period-conflict responses use `detail` objects with
+`code: "settlement_period_conflict"` and the unchanged German `message`.
+Mixed-batch errors retain their German `errors[].error` text and carry the same
+code in `errors[].code`.
+
 **Lease-change limitation:** the engine clips occupancy slices to the supplied
 statement window and apportions calendar-year costs between successive leases by
 actual occupancy days; vacancy is attributed to the owner. The persisted statement

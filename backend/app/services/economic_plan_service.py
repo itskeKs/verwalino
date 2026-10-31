@@ -349,7 +349,10 @@ class EconomicPlanService:
             # Defaults must also fit the admitted accounting scope.
             await scope.prepare_new(plan, accounting_scope_id)
         if await self._plans.has_conflicting_period(plan):
-            raise HTTPException(409, "Der Zeitraum überschneidet einen finalisierten Wirtschaftsplan dieses Objekts.")
+            raise HTTPException(409, {
+                "code": "plan_period_conflict",
+                "message": "Der Zeitraum überschneidet einen finalisierten Wirtschaftsplan dieses Objekts.",
+            })
         if prop is not None and not (property_start <= period_start <= period_end <= property_end):
             previous = await self._plans.last_finalized_before(property_id, period_start)
             if (previous is None or period_start != previous.period_end + timedelta(days=1)
@@ -406,7 +409,10 @@ class EconomicPlanService:
         plan = await self._get_draft_or_404(plan_id)
         computation_basis = await begin_computation(self._session, self._org_id, plan, 'finalize')
         if await self._plans.has_conflicting_period(plan):
-            raise HTTPException(409, "Der Zeitraum überschneidet einen finalisierten Wirtschaftsplan dieses Objekts.")
+            raise HTTPException(409, {
+                "code": "plan_period_conflict",
+                "message": "Der Zeitraum überschneidet einen finalisierten Wirtschaftsplan dieses Objekts.",
+            })
         inp, result = await self._compute_engine(plan, inputs)
 
         payload = {**build_plan_snapshot_payload(inp, result), **self._adopted_snapshot_inputs(plan, inputs)}

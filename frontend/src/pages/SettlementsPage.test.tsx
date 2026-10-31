@@ -269,7 +269,7 @@ it("shows a straddling lease error alongside successful batch drafts and existin
   vi.mocked(api.post).mockResolvedValueOnce({
     created: [created[0]],
     skipped: [{ lease_agreement_id: "lease-2", settlement_run_id: "run-2" }],
-    errors: [{ lease_agreement_id: "lease-3", error: "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags." }],
+    errors: [{ lease_agreement_id: "lease-3", code: "settlement_period_conflict", error: "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags." }],
   });
   fireEvent.click(submit);
   expect(await within(region).findByRole("status")).toHaveTextContent("1 Entwürfe angelegt · 1 bereits vorhanden");

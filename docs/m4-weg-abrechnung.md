@@ -51,10 +51,15 @@ runs](m3-abrechnungs-engine.md#property-settlement-periods-68): an inaccessible
 finalized document in another scope can remain undetected. No migration or
 privileged helper is added here.
 
+Period-conflict responses use structured `detail` objects with an unchanged
+German `message` and a stable `code`: `plan_period_conflict` for economic plans
+and `settlement_period_conflict` for WEG annual runs.
+
 The previous-actuals preview and adoption use the preceding property period, including
 its scope boundaries, source digest and day-based cost proration. Paid Hausgeld is
-summed over the settlement's assigned months across calendar years using the ledger's
-sub-period filtering. Booked, active payments only are included. Year-only
+summed over the settlement's assigned months across calendar years using
+the shared `derive_advance_total_for_period` calculation, also used by NK.
+Booked, active payments only are included. Year-only
 Hausgeld had the same double-credit risk as NK when adjacent periods started
 in the same year, so both now share the calendar-month allocation: twelve equal
 month shares rounded down to cents, with the remaining cents in December.

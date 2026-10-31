@@ -44,7 +44,10 @@ async def test_plan_finalization_rechecks_drafts_against_newly_finalized_period(
     second = await api.post(f"/api/economic-plans/{plans[1]['id']}/finalize", json=values)
     assert second.status_code == status, second.text
     if status == 409:
-        assert second.json()["detail"] == "Der Zeitraum überschneidet einen finalisierten Wirtschaftsplan dieses Objekts."
+        assert second.json()["detail"] == {
+            "code": "plan_period_conflict",
+            "message": "Der Zeitraum überschneidet einen finalisierten Wirtschaftsplan dieses Objekts.",
+        }
     assert (await api.get(f"/api/economic-plans/{plans[1]['id']}")).json()["status"] == ("draft" if status == 409 else "finalized")
 
 
@@ -76,7 +79,10 @@ async def test_weg_finalization_rechecks_drafts_against_newly_finalized_period(c
     second = await api.post(f"/api/weg-settlements/{runs[1]['id']}/finalize", json=values)
     assert second.status_code == status, second.text
     if status == 409:
-        assert second.json()["detail"] == "Abrechnungszeitraum überschneidet eine finalisierte WEG-Abrechnung dieses Objekts."
+        assert second.json()["detail"] == {
+            "code": "settlement_period_conflict",
+            "message": "Abrechnungszeitraum überschneidet eine finalisierte WEG-Abrechnung dieses Objekts.",
+        }
     assert (await api.get(f"/api/weg-settlements/{runs[1]['id']}")).json()["status"] == ("draft" if status == 409 else "finalized")
 
 
@@ -161,6 +167,11 @@ async def test_nonidentical_overlaps_with_finalized_plans_are_rejected(client_a_
     ):
         answer = await api.post("/api/economic-plans", json={**body, "period_start": start, "period_end": end})
         assert answer.status_code == status, answer.text
+        if status == 409:
+            assert answer.json()["detail"] == {
+                "code": "plan_period_conflict",
+                "message": "Der Zeitraum überschneidet einen finalisierten Wirtschaftsplan dieses Objekts.",
+            }
 
 
 @pytest.mark.parametrize("start,end", [("2025-04-01", "2026-04-01"),
@@ -308,6 +319,11 @@ async def test_weg_overlap_checks_only_finalized_runs_for_same_property(client_a
     ):
         answer = await api.post("/api/weg-settlements", json={**body, "period_start": start, "period_end": end})
         assert answer.status_code == status, answer.text
+        if status == 409:
+            assert answer.json()["detail"] == {
+                "code": "settlement_period_conflict",
+                "message": "Abrechnungszeitraum überschneidet eine finalisierte WEG-Abrechnung dieses Objekts.",
+            }
     await create(api, "/api/weg-settlements", {**body, "property_id": other["property"]["id"],
         "economic_plan_id": other_plan["id"], "period_start": "2025-08-01", "period_end": "2025-12-31"})
 

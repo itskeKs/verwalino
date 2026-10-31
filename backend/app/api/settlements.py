@@ -230,6 +230,7 @@ class SettlementBatchSkipped(BaseModel):
 
 class SettlementBatchError(BaseModel):
     lease_agreement_id: str
+    code: str
     error: str
 
 
@@ -355,7 +356,7 @@ async def create_settlement_batch(
         skipped=[SettlementBatchSkipped(
             lease_agreement_id=str(run.lease_agreement_id), settlement_run_id=str(run.id),
         ) for run in skipped],
-        errors=[SettlementBatchError(lease_agreement_id=str(lease_id), error=error)
+        errors=[SettlementBatchError(lease_agreement_id=str(lease_id), code=error["code"], error=error["message"])
                 for lease_id, error in errors],
     )
 

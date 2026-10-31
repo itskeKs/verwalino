@@ -53,6 +53,11 @@ async def test_nonidentical_overlaps_with_finalized_statements_are_rejected(clie
             body.pop("lease_agreement_id")
         answer = await api.post(path, json=body)
         assert answer.status_code == (200 if batch and status == 201 else status), answer.text
+        if status == 409:
+            assert answer.json()["detail"] == {
+                "code": "settlement_period_conflict",
+                "message": "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags.",
+            }
         if batch and status == 201:
             identical = (start, end) == ("2025-07-01", "2025-09-30")
             assert len(answer.json()["skipped" if identical else "created"]) == 1, answer.text
@@ -116,7 +121,10 @@ async def test_statement_finalization_rechecks_drafts_against_newly_finalized_pe
     second = await api.post(f"/api/settlements/{runs[1]['id']}/finalize", json={})
     assert second.status_code == status, second.text
     if status == 409:
-        assert second.json()["detail"] == "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags."
+        assert second.json()["detail"] == {
+            "code": "settlement_period_conflict",
+            "message": "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags.",
+        }
     assert (await api.get(f"/api/settlements/{runs[1]['id']}")).json()["status"] == ("draft" if status == 409 else "finalized")
 
 
@@ -241,6 +249,7 @@ async def test_batch_reports_straddling_lease_and_creates_others(client_a_admin,
     assert [item["lease_agreement_id"] for item in result["created"]] == [other_leases[1]["id"]]
     assert result["skipped"] == [{"lease_agreement_id": other_leases[0]["id"], "settlement_run_id": existing["id"]}]
     assert result["errors"] == [{"lease_agreement_id": data["lease"]["id"],
+        "code": "settlement_period_conflict",
         "error": "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags."}]
     repeated = await api.post("/api/settlements/batch", json=body)
     assert repeated.status_code == 200, repeated.text

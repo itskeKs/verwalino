@@ -81,7 +81,10 @@ ENGINE_VERSION = "m3.1.0"
 
 class SettlementPeriodConflict(HTTPException):
     def __init__(self):
-        super().__init__(409, "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags.")
+        super().__init__(409, {
+            "code": "settlement_period_conflict",
+            "message": "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags.",
+        })
 
 
 @dataclass
@@ -313,7 +316,7 @@ class SettlementService:
         period_start: date,
         period_end: date,
         accounting_scope_id: uuid.UUID | None = None,
-    ) -> tuple[list[SettlementRun], list[SettlementRun], list[tuple[uuid.UUID, str]]]:
+    ) -> tuple[list[SettlementRun], list[SettlementRun], list[tuple[uuid.UUID, dict[str, str]]]]:
         """Create missing lease drafts in the ambient, serialized transaction."""
         scope = FinancialScopeService(self._session, self._org_id, self._user_id)
         # Validate even an empty property/period before returning an empty batch.
