@@ -4,24 +4,34 @@ import io
 import json
 import tarfile
 import os
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
+import psycopg2
 
 from app.core.storage import LocalFsDocumentStore, get_store, set_store
 from sqlalchemy import event, text
 from sqlalchemy.orm import Session
+from tests.conftest import MIGRATOR_SYNC_URL, clear_disposable_source_context
 from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
 
 
 @pytest.fixture
-def export_store(tmp_path):
+def export_store(tmp_path, rent_world):
     previous = get_store()
     store = LocalFsDocumentStore(tmp_path / "documents")
     set_store(store)
-    yield store
-    set_store(previous)
+    try:
+        yield store
+    finally:
+        set_store(previous)
+        # Export fixtures retain originals and import receipts. Remove synthetic
+        # state through the disposable-DB guard, leaving downgrade guards intact.
+        with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection, connection.cursor() as cursor:
+            with connection:
+                clear_disposable_source_context(cursor)
 
 
 def unpack(content):

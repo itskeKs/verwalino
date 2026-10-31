@@ -4,17 +4,25 @@ import io
 import json
 import tarfile
 
+import pytest
 from pytest_bdd import given, when, then
 
 from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
+from tests.test_organization_export import export_store  # noqa: F401
+
+
+@pytest.fixture
+def export_client(world, rent_world, export_store):
+    source = api_client(rent_world)
+    try:
+        yield source
+    finally:
+        world.run(source.aclose())
 
 
 @given("a separate organization has rental records and an original for export")
-def export_organization(world, rent_world, monkeypatch, tmp_path):
-    from app.core import storage
-    monkeypatch.setattr(storage, "_store", storage.LocalFsDocumentStore(tmp_path / "originals"))
-    source = api_client(rent_world)
-    world.actor = source
+def export_organization(world, rent_world, export_client):
+    world.actor = export_client
     world.data["export_source"] = rent_world
     original = b"%PDF-1.4\n% Original for the portable archive\n%%EOF\n"
     answer = world.act("POST", "/api/attachments", data={"property_id": str(rent_world["property"])},
@@ -58,4 +66,3 @@ def archive_is_private(world):
         async with api_client(source, foreign=True) as foreign:
             return await foreign.get(f"/api/organizations/export/{world.data['export_id']}")
     assert world.run(refuse_foreign()).status_code == 404
-    world.run(world.actor.aclose())
