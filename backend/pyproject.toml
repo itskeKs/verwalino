@@ -2,6 +2,7 @@
 name = "hausverwaltung-backend"
 version = "0.1.0"
 description = "Backend for Hausverwaltungssoftware MVP"
+license = "AGPL-3.0-only"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115,<1",
@@ -19,6 +20,7 @@ dependencies = [
     "lxml>=5,<7",
     "openai>=3,<4",
     "tiktoken>=0.9,<1",
+    "sentry-sdk[fastapi]>=2.73,<3",
 ]
 
 [project.optional-dependencies]
@@ -44,7 +46,7 @@ ocr = [
 ]
 
 [build-system]
-requires = ["setuptools>=70"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
