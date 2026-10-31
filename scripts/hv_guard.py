@@ -18,7 +18,7 @@ import stat
 import subprocess
 import sys
 
-REPO = "/Users/keks/Developer/hausverwaltung"
+REPO = os.path.expanduser("~/Developer/hausverwaltung")
 TEST_COMPOSE = "infra/docker-compose.declaration-test.yml"
 GUARD_PATHS = (os.path.expanduser("~/.coddy/hooks"), os.path.expanduser("~/.coddy/hooks.json"))
 PROD_NAMES = ("hausverwaltung-db-1", "hausverwaltung-app-1", "hausverwaltung_pgdata",

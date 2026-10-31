@@ -84,7 +84,7 @@
     },
     "fresh_installation_section": {
       "exists": true,
-      "title": "Fresh installation: one-time preparation on Moon",
+      "title": "Fresh installation: one-time preparation on the alpha host",
       "key_points": [
         "Creates environment.example from reviewed commit",
         "Generates passwords with openssl rand",

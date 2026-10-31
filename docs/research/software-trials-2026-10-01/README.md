@@ -189,5 +189,5 @@ Neither product has been validated here as a complete professional SEV solution.
 - `fixtures.json`: planned synthetic portfolio and expected arithmetic.
 - `test-rent-receipts.csv`: two synthetic September receipts imported into CasaManager.
 - `exports/`: inspected budget PDFs, rental statement PDF, reserve CSV and immoGenio Excel exports; PDF text extractions aid review.
-- Credentials and screenshots are stored outside Git at `/Users/keks/.codex/workflow-state/artifacts/hausverwaltung-software-trials-2026-10-01/`; credential file `trial-credentials.json` has mode `0600`.
+- Credentials and screenshots are stored outside Git at `~/.codex/workflow-state/artifacts/hausverwaltung-software-trials-2026-10-01/`; credential file `trial-credentials.json` has mode `0600`.
 - Both authenticated browser tabs are retained for inspection. Test data and draft documents remain in the accounts. No subscriptions, paid orders, live bank connections or external tenant/vendor dispatches were initiated.

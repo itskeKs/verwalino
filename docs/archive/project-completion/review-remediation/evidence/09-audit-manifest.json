@@ -2,7 +2,7 @@
   "captured_at_utc": "2026-10-16T14:06:21.042944+00:00",
   "head": "aeee229b1bbb7415b35c5c05985a866d25a75210",
   "recorded_baseline_head": "aeee229b1bbb7415b35c5c05985a866d25a75210",
-  "interpreter": "/Users/keks/Developer/hausverwaltung/backend/.venv/bin/python",
+  "interpreter": "~/Developer/hausverwaltung/backend/.venv/bin/python",
   "python": "3.13.13 (main, Apr 14 2026, 14:23:36) [Clang 22.1.3 ]",
   "implementation_model_requirement": "mlx/qwen3.6-35b-a3b",
   "context_target_tokens": 65536,

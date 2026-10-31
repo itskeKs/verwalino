@@ -254,12 +254,126 @@ bash scripts/self-host.sh status
 bash scripts/self-host.sh stop
 ```
 
-There is deliberately no destroy, automatic update or backup command. Before
-an upgrade, plan a consistent backup of the stopped application's database,
-document volume and private config, and test restoring them together on a
-separate host. An older image is not a schema rollback. This feature does not
-authorize an alpha deployment, promote its schema gate, or supply a backup
-and disaster-recovery guarantee.
+There is deliberately no destroy or automatic update command. An older image
+is not a schema rollback. This feature does not authorize an alpha deployment
+or promote its schema gate.
+
+### Portable backup and restore
+
+```bash
+bash scripts/self-host.sh backup --out /private/backups
+# Without --out, the private output directory is <checkout>/backups/.
+bash scripts/self-host.sh stop
+bash scripts/self-host.sh restore /private/backups/verwalino-backup-20261030T120000Z.tar
+bash scripts/self-host.sh start
+```
+
+`backup` works with the app and database running. It writes one private (0600)
+`verwalino-backup-YYYYMMDDTHHMMSSZ.tar`, prints its absolute path and size in
+bytes, and never overwrites a same-named archive. Its three members are:
+
+- `db.dump`: a consistent PostgreSQL custom-format snapshot (`pg_dump -Fc`),
+  executed inside this installation's `db` container as `app_migrator`.
+- `documents.tar.gz`: the documents volume copied **after** the database dump.
+  A one-shot app-image helper overrides the web entrypoint, starts no dependent
+  services, and uses the existing project-owned documents volume. Concurrent
+  uploads can add later files; deletions between the dump and the documents copy
+  can leave restored database rows pointing at missing files. Run backup when no
+  one uploads or deletes documents. For a cold backup, stop the app first, then
+  start **only db** for the dump, leaving app/migration/bootstrap stopped. This
+  is not an atomic database/filesystem snapshot.
+- `manifest.json`: `format` (`verwalino-selfhost`), `format_version` (1),
+  `schema_head` (queried from `alembic_version` during backup), `app_image`
+  (configured image reference, including a digest when selected), `created_at`
+  (UTC), and `config_fingerprint`. The latter is SHA-256 over the five ordered
+  `KEY=value\n` settings `VERWALINO_MODE`, `VERWALINO_DOMAIN`, `VERWALINO_PORT`,
+  `VERWALINO_IMAGE`, `VERWALINO_PROXY_SUBNET`.
+
+The helper runs as root with only `CHOWN` and `DAC_OVERRIDE` added to the app's
+otherwise dropped capabilities, so it can access the private staging bind and
+restore app-owned files (UID/GID 10001). It uses the app image's Python; host
+Python is not required. An image without the document helpers fails with an
+update instruction. If rootless Docker or user-namespace remapping prevents host
+ownership changes, the helper warns; publication copies the archive privately
+if hard-linking is refused. The archive contains application data, including account
+and session data; protect it accordingly. Installation passwords, session signing
+secret and the private configuration file are **not** included. Neither are
+PostgreSQL roles/passwords, container images, Caddy state/certificates or external
+services. Keep the original `.env.selfhost` separately in a private encrypted
+backup; init must not regenerate credentials for an existing installation.
+Retain the reviewed checkout and the selected image, especially a mutable local
+build, so recovery has the required application and PostgreSQL tools.
+The default `<checkout>/backups/` directory is created with mode 0700. Git ignores
+`backups/`, `verwalino-backup-*.tar` and `.verwalino-backup.*`; output directly in
+the checkout root is refused. New custom output directories use mode 0700;
+existing directories keep their permissions.
+
+`restore FILE [--yes]` checks the private config and acquires the installer lock,
+then refuses running, restarting or paused app/migration/bootstrap containers
+with the `stop` command.
+It copies the input to private staging, requires all three regular archive members,
+checks the manifest marker and format version, and refuses a schema newer than
+the selected image's `app.deployment.TARGET`, read inside the helper container.
+Unknown/ambiguous heads,
+unsafe document paths, links, special files and invalid document archives are
+refused before the database starts. An older numeric schema head is allowed;
+`start` performs subsequent migrations. This portable restore check does not
+change the alpha's narrower `SUPPORTED` upgrade gate.
+
+A different configuration fingerprint emits a warning. Restore then asks you to
+type `restore`; `--yes` explicitly skips that prompt for automation. It starts
+**only db**, checks the dump's table of contents with `pg_restore --list`, creates
+`hausverwaltung_restore` with `createdb -T template0`, and imports via
+`pg_restore -U app_migrator -d hausverwaltung_restore --exit-on-error
+--single-transaction`. It queries that database's own `alembic_version` and
+requires exactly the manifest head. It then extracts, verifies and sets ownership
+of staged documents on the documents volume, before changing the old database
+or document contents. Allow free space for both databases and both document copies.
+An existing `hausverwaltung_restore` or `hausverwaltung_previous` is refused;
+inspect it and recover the intended live database before removing any leftover.
+Restore also refuses any `.restore-*` directory on the documents volume before
+creating the scratch database. Verify the live data, then remove the named
+directory, then retry; it may contain the only retained copy of previous documents.
+Before cutover, failures remove the scratch database and staged documents and
+leave old data untouched; all failures attempt to stop db and leave the app stopped.
+
+After staging succeeds, cutover renames `hausverwaltung` to
+`hausverwaltung_previous` (skipped if no live database exists) and
+`hausverwaltung_restore` to `hausverwaltung`, moves
+old document entries into `.restore-<id>/previous/` and staged entries into place
+on the same volume, then drops the previous database and deletes the previous
+documents only after the swap succeeds.
+If no live database existed, there is no previous database to drop.
+Failures before that drop attempt to rename the old database and move previous
+documents back, retain staged documents in `.restore-<id>/documents/`, and report
+the remaining database names and document directories with manual recovery SQL
+and move instructions if rollback fails; keep the app stopped until recovery is verified.
+If interruption happens after the previous database was dropped but before
+document cleanup, the restored database and documents remain live. Verify them,
+manually remove the retained `.restore-<id>` directory (including `previous/`)
+from the documents volume, then run `bash scripts/self-host.sh start`.
+Do not run the rollback SQL in this state. Avoid backups until the retained
+directory is removed: document archives include it while it remains on the volume.
+When no live database existed initially, an incomplete document swap rolls back
+to that absent-live state and retains the restored database as
+`hausverwaltung_restore`; a completed swap keeps the restored data live and
+requires the same directory cleanup and `start` if interrupted during cleanup.
+After success, db stops and the printed `start` command starts the restored installation.
+Use only trusted archives: PostgreSQL restoration executes SQL from the dump.
+
+Back up at least daily while the installation is in use and before a reviewed
+upgrade or destructive maintenance. Copy completed archives to a separate,
+access-controlled encrypted disk or another host; the local output directory
+alone is not disaster recovery. Off-site transfer, scheduling, retention and
+automatic updates are operator responsibilities. Periodically test recovery on
+a separate authorized installation with the original private config. Contract
+tests and a real PostgreSQL dump/archive/scratch-database restore round trip cover
+format and command behavior; a complete running self-host installation restore
+has not yet been accepted.
+Run the opt-in rehearsal with `make test-selfhost-format`: it sets
+`VERWALINO_FORMAT_TEST=1`, acquires `/tmp/verwalino-testdb.lock` itself and uses
+only its own scratch databases in `infra-postgres-1` at `127.0.0.1:55432`.
+Ordinary test runs skip it with a reason; it also skips when Docker is missing.
 
 AI declaration import/Q&A, SMTP and invoice OCR are disabled in this initial
 portable stack. Manual invoice review remains supported. The T10 worker is
@@ -270,7 +384,7 @@ need operator checks; do not treat the mock installer tests as
 proof of those behaviors. Run the portable tests without Docker using
 `cd backend && uv run python ../scripts/test-self-host.py`; the backend CI job
 runs these before pytest. Real Caddyfile validation and the complete portable
-stack smoke test require a separately authorized clean Docker host. Update/backup
+stack smoke test require a separately authorized clean Docker host. Update
 automation remains outstanding; this is not yet a general production release.
 
 ### Published image verification
@@ -366,6 +480,146 @@ The **first tag with installer assets, fresh-VM run and arm64 installation
 check remain acceptance steps for the maintainer**. This preparation does not
 close #7 or #12. Full `make test`
 remains a pre-merge gate; the local workflow/installer checks need no database.
+
+## Hosted server
+
+The hosted service runs on Debian 13 (the hosted server); the bootstrap also accepts Ubuntu, untested.
+It uses the [portable stack](#portable-docker-first-installation)
+in HTTPS mode, updated by a GitHub workflow that logs in over a second SSH key of the admin user, restricted to
+the deploy script. Off-site encrypted backups and the restore drill belong to #42 and are not covered here.
+Placeholders: `SERVER_IP`, `verwaltung.example.org`; the admin user is called `chris` below.
+
+### Bootstrap
+
+From a checkout, as root once (safe to repeat; it resets the firewall to exactly the rules below):
+
+```bash
+scp scripts/server-bootstrap.sh ~/.ssh/id_ed25519.pub root@SERVER_IP:
+ssh root@SERVER_IP 'bash server-bootstrap.sh chris id_ed25519.pub verwalino'
+```
+
+`server-bootstrap.sh ADMIN_USER PUBKEY_FILE [HOSTNAME]` installs the packages (`ufw`, `fail2ban`,
+`unattended-upgrades`, `cron`, `jq`, git), creates the admin user with passwordless sudo and the key(s) from
+the file, writes `/etc/ssh/sshd_config.d/10-hardening.conf` (no root, no passwords, `AllowUsers ADMIN_USER`),
+opens 22 (rate-limited), 80 and 443, installs Docker and Compose from Docker's repository, limits journald
+(500 MB, one month) and the Docker default log driver (`local`, 3 × 10 MB), adds 4 GiB swap when the host
+has none, and sets the time zone (`TIMEZONE`, default `Europe/Berlin`) and, if given, the host name. Afterwards
+only `ADMIN_USER` can log in.
+
+### Folders and ownership
+
+Everything belongs to the admin user, who is also a member of `docker`; nothing needs a second account.
+
+| Path | Mode | Holds |
+|---|---|---|
+| `/srv/verwalino/app` | 755 | checkout of this repository; the deploy script moves it to the release tag |
+| `/srv/verwalino/config` | **700** | `.env.selfhost` (**0600**, the installer insists), `deploy_key` (read-only GitHub deploy key for `git fetch`) and the installer's lock directory |
+| `/srv/verwalino/backups` | 700 | `<timestamp>[-label]/` backups (directories 0700, files 0600) |
+| `/srv/verwalino/logs` | 750 | `deploy-<timestamp>.log` (0640), `backup.log` |
+| `/srv/verwalino/data` | 755 | reserved and empty: the stack keeps its data in the Docker volumes `verwalino_pgdata` and `verwalino_documents`, under Docker's data root |
+
+```bash
+sudo install -d -o chris -g chris /srv/verwalino /srv/verwalino/{app,data}
+sudo install -d -o chris -g chris -m 750 /srv/verwalino/logs
+sudo install -d -o chris -g chris -m 700 /srv/verwalino/{config,backups}
+ssh-keygen -t ed25519 -N '' -C verwalino-server-readonly -f /srv/verwalino/config/deploy_key   # add the .pub as a read-only GitHub deploy key
+git clone -c core.sshCommand='ssh -i /srv/verwalino/config/deploy_key -o IdentitiesOnly=yes' \
+  git@github.com:itskeKs/verwalino.git /srv/verwalino/app
+```
+
+The repository is public, so an HTTPS remote works without the deploy key too. Initialise and start the stack once
+by hand with a [verified image digest](#published-image-verification):
+
+```bash
+cd /srv/verwalino/app; export VERWALINO_CONFIG=/srv/verwalino/config/.env.selfhost
+bash scripts/self-host.sh init --https verwaltung.example.org --image 'ghcr.io/itskeks/verwalino@sha256:<64-hex-digest>'
+bash scripts/self-host.sh start
+```
+
+Create the first organization as in the [first installation](#portable-docker-first-installation). The deploy
+script masks the setup token, so always run the first `start` in a terminal. To pull the image, make the GHCR
+package public (package settings → visibility) or run `docker login ghcr.io` once as `chris` with a `read:packages`
+token.
+
+### Deploy key
+
+Create a key pair that is used for nothing else and put the private half into the secret `DEPLOY_SSH_KEY`. On the
+server append the public half to the admin user's `authorized_keys`, restricted to the deploy script:
+
+```bash
+ssh-keygen -t ed25519 -N '' -C verwalino-ci -f ci_key && scp ci_key.pub chris@SERVER_IP:   # local
+# on the server, as chris:
+cat >> ~/.ssh/authorized_keys <<EOF2
+command="/srv/verwalino/app/scripts/deploy-server.sh \$SSH_ORIGINAL_COMMAND",restrict $(cat ci_key.pub)
+EOF2
+rm ci_key.pub
+```
+
+The workflow sends only the tag as the SSH command (`ssh chris@host v1.2.3`). The user's shell expands
+`$SSH_ORIGINAL_COMMAND` into arguments of the script, which accepts exactly one argument shaped like a release
+tag (`vX.Y.Z`, no suffix or leading zeroes) and exits 2 on anything else. `restrict` switches off forwarding, PTYs and
+agent. The user has sudo and Docker, so this key is as sensitive as the admin key: the forced command and the tag
+check are its only limits. Fill `DEPLOY_KNOWN_HOSTS` with the output of `ssh-keyscan -t ed25519 "$DEPLOY_HOST"`,
+where `DEPLOY_HOST` is exactly the host name or IP stored in that secret, after comparing the key with
+`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server. `StrictHostKeyChecking=yes` matches that name;
+an IP-only entry does not match a host name in `DEPLOY_HOST`.
+
+### Deploy flow
+
+1. Push `vX.Y.Z` ([release checklist](#maintainer-release-checklist)). `Release image` publishes and signs it.
+2. When that run succeeds, [Deploy hosted server](.github/workflows/deploy.yaml) (`workflow_run`) calls
+   `ssh chris@host vX.Y.Z`. **Actions → Deploy hosted server → Run workflow** with a `tag` redeploys any
+   published tag; on the server, `/srv/verwalino/app/scripts/deploy-server.sh vX.Y.Z` does the same.
+3. [`scripts/deploy-server.sh`](scripts/deploy-server.sh) fetches tags and checks the tag out (it must exist and be
+   on `main`), pulls `ghcr.io/itskeks/verwalino:vX.Y.Z` and resolves its digest, runs
+   [`scripts/server-backup.sh`](scripts/server-backup.sh) as `pre-vX.Y.Z`, writes the digest to `VERWALINO_IMAGE`
+   in the config, runs `scripts/self-host.sh start` (pull by digest, stop the app, migrate, start, wait for
+   healthy) and polls `/api/health/ready` for up to 120 s. The run is logged to
+   `/srv/verwalino/logs/deploy-<timestamp>.log`.
+4. On failure it prints the last 100 app log lines and the previous tag, commit and image, and exits non-zero.
+   There is **no automatic rollback**: the schema may already be migrated, so starting an older image is not safe
+   (#9, #76). Before the digest is pinned, a failure restores the previous checkout. Fix forward with a new tag,
+   or restore the pre-deploy backup.
+
+Secrets of the workflow (repository secrets, names only): `DEPLOY_HOST`, `DEPLOY_USER` (the admin user),
+`DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`. The token is read-only (`contents: read`) and the job uses no other secret.
+
+### Backups
+
+[`scripts/server-backup.sh`](scripts/server-backup.sh) writes `/srv/verwalino/backups/<UTC timestamp>[-label]/`:
+`db.dump` (`pg_dump` custom format), `documents.tar`, `config.env` (a copy of the config, secrets in clear:
+keep the directory private and encrypt before it leaves the server), `MANIFEST` and `SHA256SUMS`. It keeps the
+newest unlabelled backup of each of the last 14 days and 8 weeks and the 10 newest backups with any label.
+`scripts/server-backup.sh manual` competes with `pre-<tag>` backups for those 10 places. Schedule it daily:
+
+```bash
+echo '0 3 * * * chris /srv/verwalino/app/scripts/server-backup.sh >> /srv/verwalino/logs/backup.log 2>&1' |
+  sudo tee /etc/cron.d/verwalino-backup
+```
+
+These copies live on the same machine as the data, so they do not cover a lost server or disk. The script is a
+stand-in until the installer has `backup` and `restore` (#57) and `update` (#76); then it and the deploy script
+switch to them (marked `TODO` in both). Until then, restoring is manual work for the maintainer: stop the app, load
+`db.dump` with `pg_restore` into an empty database and unpack `documents.tar` into the volume, then rehearse it on
+a throwaway host (#42).
+
+### Runbook
+
+```bash
+cd /srv/verwalino/app; export VERWALINO_CONFIG=/srv/verwalino/config/.env.selfhost
+bash scripts/self-host.sh status                                        # containers
+docker logs --tail 100 "$(docker ps -q --filter label=com.docker.compose.service=app)"   # app log
+less /srv/verwalino/logs/deploy-*.log                                   # last deploys, newest name last
+docker restart "$(docker ps -q --filter label=com.docker.compose.service=app)"   # restart only the app
+scripts/server-backup.sh manual                                         # extra backup before risky work
+docker image prune -af --filter until=720h                              # old release images; running ones stay
+```
+
+The scripts and the workflow are covered by `make test-installer` (`scripts/test-server-deploy.py`; Docker, git,
+curl and sleep are faked, nothing touches a real host). After a cancelled or broken CI deploy, check for and
+remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/srv/verwalino/backups/.lock`
+(a run was killed) is removed by hand once no backup is running. Never
+run `docker compose down -v` or delete the volumes.
 
 ## Request IDs and optional error tracking
 
@@ -464,10 +718,16 @@ and miss unusual or unlabelled single-word names. Other unrecognized free text m
 keep exception messages structural and never intentionally log documents or
 request bodies.
 
-## Existing alpha: `verwaltung.karat.immo`
+## Existing alpha
 
-This alpha runs on Moon behind the existing Traefik Docker network and its
-`letsencrypt` resolver. Do not add Caddy, publish an app/database port, use
+The owner's alpha instance runs on Moon behind the existing Traefik Docker
+network and its `letsencrypt` resolver. Its public host name is not part of the
+repository: `docker-compose.prod.yml` and `deploy-production.sh` read
+**`HV_PUBLIC_HOST`** from the protected `shared/.env` or the invoking environment,
+which wins. `verify-production.sh` reads it only from its environment.
+It has no default; an unset, empty or malformed value (anything but
+lowercase letters, digits, dots and dashes) stops the helper before Docker is reached,
+and Compose refuses to render the stack without it. Do not add Caddy, publish an app/database port, use
 sudo, or modify an unrelated container or network. `chris` owns the deployment
 directory:
 
@@ -486,6 +746,14 @@ database/document backup is mandatory before schema changes. The authorized
 (`database.dump` and `documents.tar.gz`, both 0600; directory 0700). A future
 schema change needs its own authorized window and backup. Preserve both live
 volumes and the previous release.
+
+Containers carry the ownership label `io.verwalino.release=<release-id>`.
+Containers started before that key was introduced carry a vendor-prefixed key
+instead; the helper still reads it as a fallback when it captures the previous
+runtime and when it verifies a runtime restored from the previous release's
+Compose file, so the first deployment after the rename and its rollback keep
+working. Containers created by the new release are checked with the new key only.
+Drop the fallback once every alpha release in `releases/` uses the new key.
 
 ## Deployment boundary and accepted head
 
@@ -863,6 +1131,10 @@ mv -f "$tmp_env" "$root/shared/.env"
 unset migrator_password app_rw_password app_worker_password app_review_password session_secret
 ```
 
+Set `HV_PUBLIC_HOST=` in the same file to the public host name (for example
+`verwaltung.example.org`); the template leaves it blank on purpose. An existing
+`shared/.env` needs this one line added before the next deployment.
+
 Leave `APP_IMAGE=` blank in that file for the host-build flow. The helper
 builds exactly `hausverwaltung-alpha:<release-id>` from the reviewed source
 archive, scans it, then captures its Docker image ID. `APP_IMAGE` overrides are
@@ -1139,10 +1411,16 @@ this first identity through the privileged,
 one-shot bootstrap container:
 
 ```
-organization: Karat Hausverwaltung Alpha
-email:        admin@verwaltung.karat.immo
+organization: Hausverwaltung Alpha
+email:        admin@<HV_PUBLIC_HOST>
 name:         Alpha Admin
 ```
+
+On the existing alpha, the admin bootstrap is a no-op only while `HV_PUBLIC_HOST`
+equals the host used to create the existing `admin@<host>` e-mail.
+A different value creates a second organization, "Hausverwaltung Alpha", with a
+new OWNER_ADMIN, which the smoke check would not catch because
+`/api/organizations/me` only needs to return a non-empty organization name.
 
 The helper acquires the exclusive host deployment lock, verifies the provider
 setting, builds/scans the exact image and writes its protected SBOM. It then
