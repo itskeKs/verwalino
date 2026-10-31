@@ -301,12 +301,15 @@ def _upgrade_test_database(alembic_cfg):
     upgraded_parent_tables = rehearse_initial_upgrade('0140')  # accepted source
     command.upgrade(alembic_cfg, '0141')  # accepted source
     upgraded_setup_tables = rehearse_initial_upgrade('0141')  # accepted source
+    command.upgrade(alembic_cfg, '0142')  # accepted source
+    upgraded_throttle_tables = rehearse_initial_upgrade('0142')  # accepted source
     command.upgrade(alembic_cfg, "head")
-    return {'upgrade_0028_to_0142_tables': upgraded_0028_tables,
-            'upgrade_0122_to_0142_tables': upgraded_tables,
-            'upgrade_0139_to_0142_tables': upgraded_0139_tables,
-            'upgrade_0140_to_0142_tables': upgraded_parent_tables,
-            'upgrade_0141_to_0142_tables': upgraded_setup_tables}
+    return {'upgrade_0028_to_0143_tables': upgraded_0028_tables,
+            'upgrade_0122_to_0143_tables': upgraded_tables,
+            'upgrade_0139_to_0143_tables': upgraded_0139_tables,
+            'upgrade_0140_to_0143_tables': upgraded_parent_tables,
+            'upgrade_0141_to_0143_tables': upgraded_setup_tables,
+            'upgrade_0142_to_0143_tables': upgraded_throttle_tables}
 
 
 @pytest.fixture(scope="session", autouse=True)

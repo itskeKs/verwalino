@@ -148,7 +148,7 @@ error tracking is [off by default](DEPLOY.md#request-ids-and-optional-error-trac
 
 ## Status and roadmap
 
-The MVP for in-house use is complete; `main` targets migration `0142`.
+The MVP for in-house use is complete; `main` targets migration `0143`.
 The hosted instance is being set up on the hosted server (#6), using the portable
 installer and the [hosted deploy workflow](DEPLOY.md#hosted-server).
 Next: self-hosting ready → scenario evals → hosted offering → domain gaps.
@@ -161,7 +161,7 @@ See the [roadmap](docs/roadmap.md), [feature status](docs/feature-status.md), an
 | --- | --- |
 | Install and operate | [Deployment](DEPLOY.md), [operations](docs/operations/) |
 | Understand the architecture | [Architecture](docs/architecture.md), [ADRs](docs/adr/) |
-| Domain design (2026-06 drafts) | [Voucher flow](docs/m2-gobd-belegfluss.md), [operating costs](docs/m3-abrechnungs-engine.md), [WEG](docs/m4-weg-abrechnung.md), [payments](docs/m6-zahlungen-mietkonto.md), [domain reference](docs/domain-reference.md) |
+| Domain design (2026-06 drafts) | [Voucher flow](docs/m2-gobd-belegfluss.md), [operating costs](docs/m3-abrechnungs-engine.md), [WEG](docs/m4-weg-abrechnung.md), [payments](docs/m6-zahlungen-mietkonto.md) |
 | Manage passwords and users | [Users and access](docs/operations/users-and-access.md) |
 | Maintain master data | [Master data and selectors](docs/operations/selector-pages.md) |
 | Manage tenancies and rent | [Tenancies, rent changes, deposits, ownership](docs/operations/tenancies-and-rent.md) |
