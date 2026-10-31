@@ -165,8 +165,7 @@ services:
       - backend
       - traefik
     labels:
-      # Ownership label. Containers started before the io.verwalino.release rename carry
-      # a legacy key that deploy-production.sh still reads when it inspects them.
+      # Ownership label for the reviewed release.
       io.verwalino.release: ${HV_RELEASE_ID:?set HV_RELEASE_ID to the reviewed release identifier}
       traefik.enable: "true"
       traefik.docker.network: "traefik"

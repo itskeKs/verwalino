@@ -14,9 +14,9 @@ _EXPECTED_SCHEMES = {
 
 _PROFILE_ENV = "HV_DECLARATION_TEST_DATABASE_PROFILE"
 _LOCAL_PROFILE = "local"
-_GITLAB_CI_PROFILE = "gitlab-ci"
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1"})
-_GITLAB_CI_HOSTS = frozenset({"postgres"})
+# Service-name URLs must still enter the fail-closed guard on direct Alembic runs.
+_SERVICE_HOSTS = frozenset({"postgres"})
 
 
 def _refusal_message(env_name: str) -> str:
@@ -31,12 +31,9 @@ def _allowed_hosts_and_port() -> tuple[frozenset[str], int]:
     profile = os.environ.get(_PROFILE_ENV, _LOCAL_PROFILE)
     if profile == _LOCAL_PROFILE:
         return _LOCAL_HOSTS, 55432
-    if profile == _GITLAB_CI_PROFILE and os.environ.get("CI") == "true":
-        return _GITLAB_CI_HOSTS, 5432
-
     raise RuntimeError(
         "Refusing destructive tests: "
-        f"{_PROFILE_ENV} must be '{_LOCAL_PROFILE}' or '{_GITLAB_CI_PROFILE}' with CI=true."
+        f"{_PROFILE_ENV} must be '{_LOCAL_PROFILE}'."
     )
 
 
@@ -111,6 +108,6 @@ def is_disposable_database_candidate(value: str | None) -> bool:
     return (
         parsed.hostname in _LOCAL_HOSTS
         and port == 55432
-        or parsed.hostname in _GITLAB_CI_HOSTS
+        or parsed.hostname in _SERVICE_HOSTS
         and port == 5432
     )
