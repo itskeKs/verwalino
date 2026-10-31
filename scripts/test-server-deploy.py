@@ -36,6 +36,10 @@ OLD_DIGEST = "ghcr.io/itskeks/verwalino@sha256:" + "b" * 64
 NEW_DIGEST = "ghcr.io/itskeks/verwalino@sha256:" + "a" * 64
 OLD_COMMIT = "abc1234"
 NEW_COMMIT = "0123456789abcdef"
+SITE_SHA = "1" * 40
+PREVIOUS_SITE_SHA = "2" * 40
+SITE_REPO = "ghcr.io/itskeks/verwalino-site"
+SITE_DIGEST = SITE_REPO + "@sha256:" + "d" * 64
 
 # One script serves as docker, git, curl and sleep; it logs every call and fails on demand.
 FAKE_TOOL = r'''#!/usr/bin/env python3
@@ -44,7 +48,7 @@ tool = os.path.basename(sys.argv[0])
 args = sys.argv[1:]
 env = os.environ
 with open(env["FAKE_LOG"], "a") as log:
-    log.write(json.dumps({"tool": tool, "args": args}) + "\n")
+    log.write(json.dumps({"tool": tool, "args": args, "site_image": env.get("VERWALINO_SITE_IMAGE")}) + "\n")
 fail = env.get("FAKE_FAIL", "").split(",")
 
 
@@ -116,10 +120,18 @@ if args[0] == "compose":
 if args[0] == "pull":
     sys.exit(17 if "pull" in fail else 0)
 if args[0] == "image":
+    if "verwalino-site:" in args[-1]:
+        if not env.get("FAKE_NO_DIGEST"):
+            out(env.get("FAKE_SITE_DIGEST", "ghcr.io/itskeks/verwalino-site@sha256:" + "d" * 64) + "\n")
+        sys.exit(0)
     if not env.get("FAKE_NO_DIGEST"):
         out("other/repo@sha256:" + "c" * 64 + "\nghcr.io/itskeks/verwalino@sha256:" + "a" * 64 + "\n")
     sys.exit(0)
 if args[0] == "ps":
+    if "label=com.docker.compose.service=caddy" in args and env.get("FAKE_SITE_ENABLED"):
+        out("caddycontainer\n")
+    elif "label=com.docker.compose.service=site" in args and env.get("FAKE_SITE_ENABLED"):
+        out("sitecontainer\n")
     if "label=com.docker.compose.service=db" in args and not env.get("FAKE_NO_DB"):
         out("dbcontainer\n")
     elif "label=com.docker.compose.service=app" in args:
@@ -129,12 +141,23 @@ if args[0] == "volume":
     out("verwalino_documents\n" + ("other_documents\n" if env.get("FAKE_TWO_VOLUMES") else ""))
     sys.exit(0)
 if args[0] == "inspect":
+    if args[-1] == "caddycontainer":
+        out("enabled\n" if env.get("FAKE_SITE_ENABLED") == "1" else "\n")
+        sys.exit(0)
+    if args[-1] == "sitecontainer":
+        out(env.get("FAKE_PREVIOUS_SITE", "ghcr.io/itskeks/verwalino-site:" + "2" * 40 + "@sha256:" + "c" * 64) + "\n")
+        sys.exit(0)
     out("postgres:16-alpine@sha256:" + "d" * 64 + "\n")
     sys.exit(0)
 if args[0] == "exec" and "pg_dump" in args:
     if "pg_dump" in fail:
         sys.exit(17)
     sys.stdout.buffer.write(b"PGDMP fake custom dump")
+    sys.exit(0)
+if args[0] == "exec" and "wget" in args:
+    if env.get("FAKE_HEALTH") == "never" or counter("site-health") <= int(env.get("FAKE_HEALTH_FAILS", "0")):
+        sys.exit(1)
+    out(env.get("FAKE_SITE_STATUS", "  HTTP/1.1 200 OK\n"))
     sys.exit(0)
 if args[0] == "exec" and "pg_restore" in args:
     sys.stdin.buffer.read()
@@ -437,6 +460,16 @@ class DeployTests(ServerCase):
                 pulls = [c["args"] for c in self.calls("docker") if c["args"][0] == "pull"]
                 self.assertIn(["pull", f"ghcr.io/itskeks/verwalino:{tag}"], pulls)
 
+    def test_app_release_restores_the_operator_enabled_caddy_extension(self):
+        (self.srv / "config/Caddyfile.hosted").write_text("import /etc/caddy/Caddyfile.site\n")
+        result = self.deploy(FAKE_SITE_ENABLED="1")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        compose = [c["args"] for c in self.calls("docker") if c["args"][0] == "compose"]
+        restored = [a for a in compose if str(ROOT / "infra/docker-compose.site.yml") in a]
+        self.assertEqual(len(restored), 1)
+        self.assertEqual(restored[0][-4:], ["up", "-d", "--no-deps", "caddy"])
+        self.assertLess(compose.index(next(a for a in compose if "migrate" in a)), compose.index(restored[0]))
+
     def disconnected_deploy(self, *, hangup=False, **env):
         state = self.base / "state"
         process = subprocess.Popen(["bash", str(DEPLOY), self.TAG],
@@ -628,6 +661,107 @@ class DeployTests(ServerCase):
         self.assertEqual(self.calls(), [])
 
 
+class SiteDeployTests(ServerCase):
+    def setUp(self):
+        super().setUp()
+        self.install_config()
+        self.before = self.config.read_bytes()
+        (self.srv / "config/Caddyfile.hosted").write_text("import /etc/caddy/Caddyfile.site\n")
+        self.env["FAKE_SITE_ENABLED"] = "1"
+        self.log.unlink(missing_ok=True)
+
+    def deploy(self, **env):
+        return self.run_script(DEPLOY, "site", SITE_SHA, **env)
+
+    def assert_app_untouched(self):
+        self.assertEqual(self.config.read_bytes(), self.before)
+        self.assertEqual(list((self.srv / "backups").iterdir()), [])
+        self.assertEqual(self.calls("git"), [])
+        self.assertEqual(self.calls("curl"), [])
+        self.assertEqual((self.base / "state/HEAD").read_text(), OLD_COMMIT)
+
+    def test_site_pull_resolves_digest_recreates_only_site_and_checks_http_200(self):
+        result = self.deploy()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.calls("docker")
+        args = [c["args"] for c in calls]
+        pull = args.index(["pull", f"{SITE_REPO}:{SITE_SHA}"])
+        inspect = next(i for i, a in enumerate(args) if a[:2] == ["image", "inspect"])
+        up = next(i for i, a in enumerate(args) if a[0] == "compose" and "up" in a)
+        health = next(i for i, a in enumerate(args) if a[:2] == ["exec", "caddycontainer"])
+        self.assertLess(pull, inspect)
+        self.assertLess(inspect, up)
+        self.assertLess(up, health)
+        compose = args[up]
+        self.assertEqual(compose[1:3], ["--project-name", "verwalino"])
+        self.assertIn(str(ROOT / "infra/docker-compose.site.yml"), compose)
+        self.assertIn(str(ROOT / "infra/docker-compose.yml"), compose)
+        self.assertEqual(compose[-7:], ["up", "-d", "--no-deps", "--force-recreate", "--pull", "never", "site"])
+        self.assertEqual(calls[up]["site_image"], f"{SITE_REPO}:{SITE_SHA}@sha256:" + "d" * 64)
+        self.assertIn("http://site:8080/", args[health])
+        self.assertIn("-S", args[health])
+        self.assertIn(f"previous site sha: {PREVIOUS_SITE_SHA}", result.stdout)
+        self.assertIn(f"site {PREVIOUS_SITE_SHA}", result.stdout)
+        self.assert_app_untouched()
+        self.assertFalse((self.srv / "logs/.deploy.lock").exists())
+
+    def test_other_command_shapes_fail_before_any_side_effect(self):
+        for args in [("site",), ("site", "main"), ("site", "a" * 39), ("site", "g" * 40),
+                     ("site", "A" * 40), ("site", SITE_SHA, "extra"), ("site " + SITE_SHA,),
+                     ("site", SITE_SHA + ";id"), ("site", SITE_SHA + "\n"),
+                     ("site", "$(id)"), ("site", "--help"), ("app", SITE_SHA)]:
+            with self.subTest(args=args):
+                result = self.run_script(DEPLOY, *args)
+                self.assertEqual(result.returncode, 2)
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(list((self.srv / "logs").iterdir()), [])
+        self.assert_app_untouched()
+
+    def test_disabled_site_is_refused_before_pull(self):
+        for enabled in ("", "wrong-network"):
+            with self.subTest(enabled=enabled):
+                result = self.deploy(FAKE_SITE_ENABLED=enabled)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("site extension is not enabled", result.stdout)
+        self.assertFalse(any(c["args"][0] in ("pull", "compose") for c in self.calls("docker")))
+        self.assert_app_untouched()
+
+    def test_wrong_repository_missing_or_malformed_digest_never_recreates(self):
+        for value in ("", "other/repo@sha256:" + "d" * 64, SITE_REPO + "@sha256:bad", SITE_REPO + "@sha256:" + "G" * 64):
+            with self.subTest(digest=value):
+                result = self.deploy(FAKE_SITE_DIGEST=value)
+                self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertFalse(any(c["args"][0] == "compose" for c in self.calls("docker")))
+        self.assert_app_untouched()
+
+    def test_failed_pull_and_recreate_fail_without_touching_app(self):
+        for env in ({"FAKE_FAIL": "pull"}, {"FAKE_FAIL_COMPOSE": "up"}):
+            with self.subTest(env=env):
+                result = self.deploy(**env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"site {PREVIOUS_SITE_SHA}", result.stdout)
+                self.assertFalse((self.srv / "logs/.deploy.lock").exists())
+        self.assert_app_untouched()
+
+    def test_health_retries_and_non_200_or_unreachable_site_fails(self):
+        result = self.deploy(FAKE_HEALTH_FAILS="2")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(len(self.calls("sleep")), 2)
+        for env in ({"FAKE_HEALTH": "never"}, {"FAKE_SITE_STATUS": "  HTTP/1.1 301 Moved Permanently\n"}):
+            with self.subTest(env=env):
+                result = self.deploy(**env)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn('FAILED at step "site health check"', result.stdout)
+                self.assertIn(f"site {PREVIOUS_SITE_SHA}", result.stdout)
+        self.assert_app_untouched()
+
+    def test_previous_main_tag_is_reported_as_unavailable_for_sha_rollback(self):
+        result = self.deploy(FAKE_PREVIOUS_SITE=f"{SITE_REPO}:main")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("previous site sha: unknown", result.stdout)
+        self.assertNotIn("rollback: site main", result.stdout)
+
+
 @unittest.skipIf(yaml is None, "PyYAML is not installed")
 class WorkflowTests(unittest.TestCase):
     def setUp(self):
@@ -680,6 +814,57 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(ssh.rstrip().endswith('"$DEPLOY_USER@$DEPLOY_HOST" "$TAG"'), ssh)
         self.assertEqual(self.steps["Deploy over SSH"]["env"]["TAG"], "${{ steps.release.outputs.tag }}")
         self.assertEqual(self.steps["Remove the key"]["if"], "always()")
+
+
+@unittest.skipIf(yaml is None, "PyYAML is not installed")
+class WebsiteWorkflowTests(unittest.TestCase):
+    def setUp(self):
+        self.text = (ROOT / ".github/workflows/website.yml").read_text()
+        self.doc = yaml.safe_load(self.text)
+
+    def test_pull_requests_only_check_and_main_pushes_publish_then_deploy(self):
+        triggers = self.doc.get("on", self.doc.get(True))
+        self.assertEqual(set(triggers), {"pull_request", "push"})
+        self.assertEqual(triggers["push"]["branches"], ["main"])
+        for trigger in triggers.values():
+            self.assertEqual(trigger["paths"], ["website/**", ".github/workflows/website.yml"])
+        jobs = self.doc["jobs"]
+        self.assertEqual(jobs["build-push"]["needs"], "build")
+        self.assertEqual(jobs["deploy"]["needs"], "build-push")
+        for name in ("build-push", "deploy"):
+            self.assertEqual(jobs[name]["if"], "github.event_name == 'push' && github.ref == 'refs/heads/main'")
+        self.assertEqual([s["run"] for s in jobs["build"]["steps"] if "run" in s],
+                         ["npm ci", "npm run check:i18n", "npm run lint", "npm run build", "npm run check:links"])
+
+    def test_images_have_only_sha_and_main_tags_attestations_and_keyless_signing(self):
+        job = self.doc["jobs"]["build-push"]
+        self.assertEqual(job["permissions"], {"contents": "read", "packages": "write", "id-token": "write"})
+        steps = job["steps"]
+        build = next(s["with"] for s in steps if s.get("id") == "build")
+        self.assertEqual(build["context"], "website")
+        self.assertEqual(build["platforms"], "linux/amd64,linux/arm64")
+        self.assertTrue(build["push"])
+        self.assertEqual(build["tags"].splitlines(), ["${{ env.IMAGE }}:${{ github.sha }}", "${{ env.IMAGE }}:main"])
+        self.assertEqual(build["provenance"], "mode=max")
+        self.assertTrue(build["sbom"])
+        self.assertIn('cosign sign --yes "$IMAGE@$DIGEST"', self.text)
+
+    def test_deploy_uses_existing_secrets_forced_command_and_shared_lock(self):
+        job = self.doc["jobs"]["deploy"]
+        self.assertEqual(self.doc["permissions"], {"contents": "read"})
+        self.assertEqual(job["concurrency"], {"group": "deploy-hosted-server", "cancel-in-progress": False})
+        self.assertEqual(self.doc["concurrency"]["cancel-in-progress"], "${{ github.event_name == 'pull_request' }}")
+        self.assertNotIn("environment", job)
+        self.assertNotIn("permissions", job)
+        step, cleanup = job["steps"]
+        self.assertEqual(set(step["env"]), {"SHA", "DEPLOY_HOST", "DEPLOY_USER", "DEPLOY_SSH_KEY", "DEPLOY_KNOWN_HOSTS"})
+        for entry in job["steps"]:
+            self.assertNotIn("${{", entry.get("run", ""))
+            self.assertNotIn("uses", entry)
+        self.assertIn('"$DEPLOY_USER@$DEPLOY_HOST" "site $SHA"', step["run"])
+        self.assertIn("StrictHostKeyChecking=yes", step["run"])
+        self.assertIn("BatchMode=yes", step["run"])
+        self.assertEqual(cleanup["if"], "always()")
 
 
 if __name__ == "__main__":
