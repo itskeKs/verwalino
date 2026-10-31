@@ -19,6 +19,7 @@ import type {
   LoginRequest,
   LoginResponse,
   Organization,
+  OrganizationQuota,
   Mandate,
   MandateCreate,
   MandateUpdate,
@@ -151,6 +152,10 @@ export function changePassword(body: ChangePasswordRequest): Promise<void> {
 
 export function getMyOrganization(): Promise<Organization> {
   return api.get<Organization>("/api/organizations/me");
+}
+
+export function getOrganizationQuota(): Promise<OrganizationQuota> {
+  return api.get<OrganizationQuota>("/api/organization/quota");
 }
 
 export function createMandate(body: MandateCreate): Promise<Mandate> {

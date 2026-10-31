@@ -364,6 +364,17 @@ describe("Teilungserklärung upload wizard", () => {
     await waitFor(() => expect(pollSpy).toHaveBeenCalledTimes(2));
   });
 
+  it("explains the hosted monthly budget refusal in German", async () => {
+    vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(
+      pendingImport({ status: "FAILED", error_code: "ORGANIZATION_AI_BUDGET_EXCEEDED", error_message: "ORGANIZATION_AI_BUDGET_EXCEEDED" }),
+    );
+    vi.spyOn(declarationApi, "listDeclarationDocuments").mockResolvedValue([]);
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
+    renderImportRoute("/teilungserklaerung/import/import-1");
+    expect(await screen.findByText(/Das monatliche KI-Budget ist ausgeschöpft/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Erneut versuchen" })).toBeNull();
+  });
+
   it("restores uploaded documents from a draft URL and continues at the highest sequence", async () => {
     vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(pendingImport());
     vi.spyOn(declarationApi, "listDeclarationDocuments").mockResolvedValue([

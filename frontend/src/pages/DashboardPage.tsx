@@ -32,6 +32,7 @@ import {
 import type { Organization, DeadlineItem, DeadlineStatus, Task } from "../api/types";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { DashboardKpis } from "../components/DashboardKpis";
+import { OrganizationQuotaCard } from "../components/OrganizationQuotaCard";
 import { useAuth } from "../auth/useAuth";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
 import { Badge, type BadgeTone } from "../components/ui/badge";
@@ -177,6 +178,8 @@ function DashboardContent() {
       )}
 
       {masterError && <div role="alert">{masterError}</div>}
+
+      <OrganizationQuotaCard />
 
       {/* Stat tiles */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

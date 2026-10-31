@@ -113,6 +113,19 @@ carries `animate-in`/`fade-in` classes, but the `tailwindcss-animate` plugin is 
 
 ## Layout
 
+### Organization quota card
+
+The dashboard shows a kit `Card` named “Kontingent” for the hosted free plan,
+with a semantic `h2` and a responsive one/three-column definition list. It shows
+“Speicher”, “Objekte” and “Einheiten” as usage / limit, with German number
+formatting and binary storage units. At 90% or above, a warning `Badge` says
+“Fast ausgeschöpft” and the card says “Ihr Kontingent ist zu mindestens 90 %
+belegt.” Errors show “Kontingent nicht verfügbar.” with retry; loading shows
+“Kontingent wird geladen …”. Unlimited organizations have no card. Aggregate
+usage is available to every authenticated member, independently of source grants.
+The declaration-import failure `ORGANIZATION_AI_BUDGET_EXCEEDED` uses “Das
+monatliche KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den Betreiber.”
+
 ### App shell
 
 `AppShell.tsx`: `flex h-screen overflow-hidden` = **Sidebar** (16 rem) + a column of **Topbar**
@@ -410,6 +423,7 @@ stays valid when they are retaken.
 | Screen | Page | Desktop | 360 px |
 |---|---|---|---|
 | Dashboard | `/` | [`dashboard-desktop.png`](docs/assets/design/dashboard-desktop.png) | [`dashboard-360.png`](docs/assets/design/dashboard-360.png) |
+| Hosted dashboard quota | `/`, free plan at 90% | [`dashboard-quota-1280.png`](docs/assets/design/dashboard-quota-1280.png) | [`dashboard-quota-360.png`](docs/assets/design/dashboard-quota-360.png) |
 | List | `/objekte` | [`list-objekte-desktop.png`](docs/assets/design/list-objekte-desktop.png) | [`list-objekte-360.png`](docs/assets/design/list-objekte-360.png) |
 | Detail | `/objekte/:id` | [`detail-objekt-desktop.png`](docs/assets/design/detail-objekt-desktop.png) | [`detail-objekt-360.png`](docs/assets/design/detail-objekt-360.png) |
 | Hosted signup | `/signup` | [`signup-desktop.png`](docs/assets/design/signup-desktop.png) | [`signup-360.png`](docs/assets/design/signup-360.png) |
@@ -425,8 +439,9 @@ stays valid when they are retaken.
 <a href="docs/assets/design/list-objekte-desktop.png"><img src="docs/assets/design/list-objekte-desktop.png" alt="List page: Objekte" width="720"></a>
 <a href="docs/assets/design/dialog-password-desktop.png"><img src="docs/assets/design/dialog-password-desktop.png" alt="Dialog: Passwort ändern" width="720"></a>
 
-The signup and password recovery images use the running frontend with synthetic deployment metadata and
-captured API responses (visual/360 px geometry checks, not end-to-end proof).
+The hosted quota images use the running frontend with synthetic API responses.
+The signup and password recovery images use synthetic deployment metadata and
+captured API responses. These are visual/360 px geometry checks, not end-to-end proof.
 
 The screenshots show the app as it is, including the deviations named above (legacy table, native file
 button, unstyled buttons on the dashboard task list, ASCII "Strasse").

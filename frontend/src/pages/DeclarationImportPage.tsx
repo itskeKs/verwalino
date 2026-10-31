@@ -32,6 +32,7 @@ const RETRYABLE_FAILURE_CODES = new Set([
 ]);
 
 const FAILURE_MESSAGES: Record<string, string> = {
+  ORGANIZATION_AI_BUDGET_EXCEEDED: "Das monatliche KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den Betreiber.",
   JOB_PRINCIPAL_UNVERIFIED: "Für diesen älteren Auftrag ist kein bestätigter Auslöser gespeichert. Ein berechtigter Benutzer kann ihn erneut starten.",
   JOB_PERMISSION_CHANGED: "Die Berechtigung des auslösenden Benutzers gilt nicht mehr. Ein berechtigter Benutzer kann den Import erneut starten.",
   PROVIDER_TIMEOUT: "Zeitüberschreitung beim Dienstleister. Bitte versuchen Sie den Import erneut.",
