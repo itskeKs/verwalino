@@ -71,6 +71,16 @@ The date basis and a domain note are included in the response. Security deposit 
 payment types remain separately visible; no tax treatment is
 assumed. `TEILWEISE_PRUEFEN` remains its own flag. This is a
 verifiable basis, not a complete Anlage V or tax return.
+
+The **Anlage V** panel under **Berichte** maps this per-property year overview to
+form detail lines via `GET /api/reports/property-year/anlage-v`.
+`GET /api/reports/property-year/anlage-v.csv` exports the mapping as CSV. Both use
+the same property, year and optional accounting scope. This is a
+"Zuordnungshilfe, keine Steuerberatung"; "Zeilennummern je Formularjahr prüfen"
+(check line numbers for each form year). The mapping ignores the Umlagefähigkeit
+split and lists `NACHZAHLUNG` under "Nicht zugeordnet": a Nachzahlung can come from
+a tenant or an owner, so its origin needs separate review.
+
 The report requires full read/source permissions and, where applicable, an
 explicit homeowners' association (WEG)/MIET accounting scope covering the entire property and year. Missing
 classification or partial access is not output as a complete zero report.

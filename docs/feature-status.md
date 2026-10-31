@@ -128,7 +128,7 @@ stack's limits: declaration import/Q&A, SMTP and automatic invoice OCR are disab
 | Documents per property/unit/person | yes | ✅ "Dokumente" panel: upload, open, archive | `models/attachment.py`, `api/attachments.py`, `components/AttachmentsPanel.tsx`, T36, T37, [usage](operations/tasks-and-documents.md) |
 | Letter templates, dispatch by e-mail/letter | yes | ✅ placeholder templates produce one PDF per recipient; e-mail for settlement, dunning notice and invitation (SMTP disabled until configured) | `api/letters.py`, `services/letter_service.py`, `pages/LettersPage.tsx`, `api/mail.py`, `services/mail_service.py`, `components/MailDispatch.tsx`, T47, T48, [usage](operations/tasks-and-documents.md) |
 | Tenant portal | yes | ❌ | – |
-| Year overview per property (Anlage V) | yes | 🟡 income by payment type and expenses by category with CSV; no Anlage V line mapping | `api/reports.py` (`/property-year`, `/property-year.csv`), `services/report_service.py`, `pages/ReportsPage.tsx`, T38, T39, [usage](operations/statements.md) |
+| Year overview per property (Anlage V) | yes | ✅ income/expense overview plus default Anlage V mapping aid, unassigned/excluded items, exact reconciliation and separate CSV; tax review required | `api/reports.py` (`/property-year`, `/property-year.csv`, `/property-year/anlage-v`, `/property-year/anlage-v.csv`), `services/report_service.py`, `engine/anlage_v.py`, `pages/ReportsPage.tsx`, [M6 §6.12](m6-zahlungen-mietkonto.md#anlage-v-mapping-aid-34), T38, T39, #34, [usage](operations/statements.md) |
 | CSV/DATEV export | yes | ✅ CSV for payments, costs and year overview; DATEV EXTF batch with explicitly configured SKR03/SKR04 accounts | `api/payments.py` (`/export.csv`), `api/cost_entries.py` (`/export.csv`), `api/reports.py` (`/datev.csv`), `services/datev_export.py`, `components/DatevExport.tsx`, T39, T40, T49, [usage](operations/tasks-and-documents.md) |
 | GDPR (DSGVO) access/erasure | n/a | ✅ access on screen only | `api/dsgvo.py`, `services/dsgvo_service.py`, `components/DsgvoPanel.tsx` |
 
@@ -145,4 +145,4 @@ stack's limits: declaration import/Q&A, SMTP and automatic invoice OCR are disab
 - Maintenance reserve (Erhaltungsrücklage) (WEG): opening balance and withdrawals are manual inputs; no reserve ledger or bank-account tracking (#36).
 - Dunning fees and default interest (Dunning, deadlines, tasks): fees are fixed constants and interest needs a base rate typed per notice; neither is configurable per organization (#69).
 - Tenant portal (Documents, communication, reports): not built; planned right after the hosted launch (#41).
-- Year overview per property (Anlage V) (Documents, communication, reports): no Anlage V line mapping or form-ready output (#34).
+- Year overview per property (Anlage V) (Documents, communication, reports): mapping aid available; no automatic tax-year cash-outflow calculation, ownership allocation, organization overrides or ELSTER submission.

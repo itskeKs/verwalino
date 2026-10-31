@@ -14,6 +14,7 @@ from app.core.live_principal import get_live_member_db
 from app.core.rbac import ScopeCapability
 from app.core.storage import attachment_content_disposition
 from app.core.tenant import AuthContext, get_current_user
+from app.engine.anlage_v import AnlageVSummary, map_property_year
 from app.services.authorization_service import AuthorizationService
 from app.services.report_service import PropertyYearReport, ReportService
 from app.services.dashboard_kpi_service import DashboardKpis, DashboardKpiService
@@ -93,6 +94,50 @@ async def property_year_csv(
     await _require_year_export(db, auth, report)
     return Response(content, media_type='text/csv; charset=utf-8', headers={
         'Content-Disposition': attachment_content_disposition(f'objekt-jahresuebersicht-{year}.csv'),
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'private, no-store',
+    })
+
+
+@router.get('/property-year/anlage-v', response_model=AnlageVSummary)
+async def anlage_v_summary(
+    report: PropertyYearReport = Depends(property_year_report),
+) -> AnlageVSummary:
+    return map_property_year(report)
+
+
+def _render_anlage_v_csv(summary: AnlageVSummary) -> bytes:
+    output = io.StringIO(newline='')
+    writer = csv.writer(output, delimiter=';', lineterminator='\r\n')
+    writer.writerow(['Objekt', 'Jahr', 'Bereich', 'Zuordnung', 'Bezeichnung', 'Hinweis', 'Betrag (EUR)'])
+    name = _csv_text(summary.property_name)
+    for row in summary.lines:
+        writer.writerow([name, summary.year, row.section, 'Zugeordnet',
+                         _csv_text(row.label), _csv_text(row.note), _csv_money(row.amount)])
+    for row in summary.unmapped:
+        writer.writerow([name, summary.year, row.section, 'Nicht zugeordnet',
+                         _csv_text(f'{row.label} ({row.code})'), _csv_text(row.note), _csv_money(row.amount)])
+    for row in summary.reconciliation:
+        for label, amount in [('Zugeordnet gesamt', row.mapped_total),
+                              ('Nicht zugeordnet gesamt', row.unmapped_total),
+                              ('Jahresübersicht gesamt', row.report_total),
+                              ('Differenz', row.difference)]:
+            writer.writerow([name, summary.year, row.section, 'Abgleich', label, '', _csv_money(amount)])
+    writer.writerow([name, summary.year, '', 'Hinweis', '', _csv_text(summary.footnote), ''])
+    return output.getvalue().encode('utf-8-sig')
+
+
+@router.get('/property-year/anlage-v.csv')
+async def anlage_v_csv(
+    report: PropertyYearReport = Depends(property_year_report),
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+) -> Response:
+    await _require_year_export(db, auth, report)
+    content = _render_anlage_v_csv(map_property_year(report))
+    await _require_year_export(db, auth, report)
+    return Response(content, media_type='text/csv; charset=utf-8', headers={
+        'Content-Disposition': attachment_content_disposition(f'anlage-v-{report.year}.csv'),
         'X-Content-Type-Options': 'nosniff',
         'Cache-Control': 'private, no-store',
     })

@@ -334,6 +334,19 @@ typo of `btn--primary`), `badge--warning`, `form-hint`, `table-responsive`.
 
 ## States
 
+The property year overview at `/berichte` appends an "Anlage V" section using
+`Card`, `CardHeader`, `CardTitle`, `CardDescription` and `CardContent`. Its two
+section tables show German mapping labels, judgement notes and money as
+`1.234,56 €` from decimal strings. Tables scroll within their panel on narrow
+screens; notes wrap. "Nicht zugeordnet" lists source labels, codes, amounts and
+reasons, including explicit exclusions. The reconciliation table shows assigned,
+unassigned, original overview totals and differences without client arithmetic.
+The panel always states "Zuordnungshilfe, keine Steuerberatung"; zero mapped rows
+do not assert tax completeness. A real CSV link uses the same displayed selection
+and reports export errors inline. Loading and retry belong to the panel, leaving
+the overview visible; changing property, year or scope removes the old panel and
+suppresses late responses/downloads. The existing year-overview CSV stays separate.
+
 Every async region provides loading, empty, error and success copy using the patterns below.
 Failed requests preserve the user's input.
 
@@ -423,3 +436,19 @@ synthetic browser-intercepted API responses, without starting a backend or acces
 
 The screenshots show the app as it is, including the deviations named above (legacy table, native file
 button, unstyled buttons on the dashboard task list, ASCII "Strasse").
+
+### Property year mapping aid
+
+The report comparison uses the same synthetic property, 1,234.56 EUR rent, 150 EUR
+advances, 100.03 EUR water costs and 9,876.54 EUR unassigned metering costs on the
+disposable test database. These report captures use 1280 and 360 CSS px at 1x.
+The after images focus the new panel; the supplemental images show unassigned
+amounts, reconciliation and download. The reconciliation table scrolls horizontally
+within the card on narrow screens.
+
+| View | Before | After |
+| --- | --- | --- |
+| Desktop | [Year overview](docs/assets/design/reports-before-desktop.png) | [Anlage V](docs/assets/design/reports-after-desktop.png) |
+| 360 px | [Year overview](docs/assets/design/reports-before-360.png) | [Anlage V](docs/assets/design/reports-after-360.png) |
+| Desktop reconciliation | — | [Unassigned amounts and reconciliation](docs/assets/design/reports-after-desktop-reconciliation.png) |
+| 360 px reconciliation | — | [Unassigned amounts and reconciliation](docs/assets/design/reports-after-360-reconciliation.png) |
