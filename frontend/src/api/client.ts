@@ -24,6 +24,13 @@ function financialInputMessage(detail: { blockers?: { code: string }[] }): strin
   return "Datengrundlage unvollständig oder geändert. Bitte Beträge und Zeitraum prüfen und die Vollständigkeit erneut bestätigen.";
 }
 
+function withRequestId(response: Response, detail: string): string {
+  const requestId = response.headers.get("X-Request-ID");
+  return response.status >= 500 && requestId && /^[A-Za-z0-9._-]{8,128}$/.test(requestId)
+    ? `${detail} (Request-ID: ${requestId})`
+    : detail;
+}
+
 async function request<T>(
   url: string,
   options: RequestInit = {},
@@ -51,7 +58,7 @@ async function request<T>(
     } catch {
       // ignore JSON parse errors on error responses
     }
-    throw new ApiError(res.status, detail);
+    throw new ApiError(res.status, withRequestId(res, detail));
   }
 
   // 204 No Content has no body
@@ -119,7 +126,7 @@ export async function uploadFormData<T>(
     } catch {
       // ignore
     }
-    throw new ApiError(res.status, detail);
+    throw new ApiError(res.status, withRequestId(res, detail));
   }
 
   return res.json() as Promise<T>;

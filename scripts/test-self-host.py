@@ -969,6 +969,7 @@ class StackContractTests(unittest.TestCase):
         for key in ("HV_DECLARATION_IMPORT_ENABLED", "HV_DECLARATION_QA_ENABLED", "HV_INVOICE_EXTRACTION_ENABLED"):
             self.assertEqual(env[key], "false")
         self.assertEqual(env["FORWARDED_ALLOW_IPS"], "${VERWALINO_PROXY_SUBNET:?use self-host.sh}")
+        self.assertEqual(env["HV_RELEASE_ID"], "${HV_RELEASE_ID:-}")
         self.assertEqual(app["user"], "10001:10001")
         self.assertTrue(app["read_only"])
         self.assertEqual(app["cap_drop"], ["ALL"])

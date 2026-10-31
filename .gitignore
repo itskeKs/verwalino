@@ -36,6 +36,7 @@ build/
 
 # Logs
 *.log
+/report/
 
 # Lokale Dev-Tools (maschinenspezifisch)
 .claude/launch.json
