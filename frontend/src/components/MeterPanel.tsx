@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { createMeter, createMeterReading, listMeterReadings, listMeters, updateMeter } from "../api/endpoints";
 import type { Meter, MeterReading } from "../api/types";
+import { canonicalValue } from "../lib/utils";
 import { ApiError } from "../api/client";
 
 interface MeterPanelProps { propertyId: string; unitId?: string; canWrite: boolean }
@@ -9,13 +10,6 @@ type FormKind = "create" | "edit" | "reading" | null;
 const emptyMeter = { number: "", type: "KALTWASSER", location: "" };
 const emptyReading = { date: "", value: "", period: "" };
 
-function canonicalValue(input: string): string | null {
-  const match = /^(\d+)(?:[.,](\d{1,4}))?$/.exec(input.trim());
-  if (!match) return null;
-  const whole = match[1].replace(/^0+(?=\d)/, "");
-  if (whole.length > 10) return null;
-  return `${whole}.${(match[2] ?? "").padEnd(4, "0")}`;
-}
 function scaled(input: string): bigint | null {
   const value = canonicalValue(input);
   return value === null ? null : BigInt(value.replace(".", ""));
