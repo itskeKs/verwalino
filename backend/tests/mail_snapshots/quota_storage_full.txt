@@ -19,8 +19,8 @@ Speicher ansehen:
 https://verwaltung.example.de/einstellungen
 
 -- 
-Sie erhalten diese E-Mail, weil Sie Administrator der Organisation
-„Hausverwaltung Muster GmbH“ sind.
+Sie erhalten diese E-Mail, weil Sie die Organisation „Hausverwaltung
+Muster GmbH“ in Verwalino verwalten.
 
 Verwalino wird betrieben von fogu UG (haftungsbeschränkt), Im
 Großenbruch 34, 66583 Spiesen-Elversberg.

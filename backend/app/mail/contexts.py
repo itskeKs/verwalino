@@ -39,6 +39,7 @@ Paragraph = Annotated[str, StringConstraints(strict=True, min_length=1, max_leng
 MailLink = Annotated[str, StringConstraints(strict=True, min_length=1, max_length=2048), BeforeValidator(_clean), AfterValidator(_link)]
 PositiveInt = Annotated[int, Field(strict=True, gt=0)]
 Bytes = Annotated[int, Field(strict=True, ge=0)]
+Day = Annotated[date, Field(strict=True)]
 
 
 class MailContext(BaseModel):
@@ -109,7 +110,7 @@ class QuotaStorageWarning(MailContext):
     organization_name: Name
     used_bytes: Bytes
     limit_bytes: PositiveInt
-    percent: Annotated[int, Field(strict=True, ge=0)]
+    percent: Annotated[int, Field(strict=True, ge=0, le=100)]
     settings_link: MailLink
 
 
@@ -124,7 +125,7 @@ class QuotaStorageFull(MailContext):
 class AiBudgetExhausted(MailContext):
     kind = "ai_budget_exhausted"
     organization_name: Name
-    resets_on: date
+    resets_on: Day
     settings_link: MailLink
 
 
@@ -139,15 +140,15 @@ class ExportReady(MailContext):
 class OrganizationDeletionScheduled(MailContext):
     kind = "organization_deletion_scheduled"
     organization_name: Name
-    effective_on: date
+    effective_on: Day
     export_link: MailLink
-    cancel_until: date | None = None
+    cancel_until: Day | None = None
 
 
 class OrganizationDeleted(MailContext):
     kind = "organization_deleted"
     organization_name: Name
-    retention_until: date | Annotated[int, Field(strict=True, ge=2000, le=9999)]
+    retention_until: Day
 
 
 class OperatorAlert(MailContext):
@@ -163,7 +164,7 @@ class OperatorAlert(MailContext):
 class OperatorNotice(MailContext):
     kind = "operator_notice"
     title: Name
-    paragraphs: Annotated[list[Paragraph], Field(min_length=1, max_length=10)]
+    paragraphs: Annotated[tuple[Paragraph, ...], Field(min_length=1, max_length=10)]
     action_label: Name | None = None
     action_link: MailLink | None = None
 

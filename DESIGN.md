@@ -449,7 +449,7 @@ rule. A hidden preheader repeats the opening sentence for inbox previews.
 Body type is `'IBM Plex Sans', Arial, Helvetica, sans-serif`, 16 px / 1.6;
 headings are 24 px / 1.25, weight 700, in normal case. The uppercase eyebrow
 uses `'IBM Plex Mono', Consolas, 'Courier New', monospace`, 12 px, letter spacing
-`.065em`, in the accent colour. Fact rows use a two-column table and tabular
+`.065em`, in the accent colour. Fact rows use a two-column table, body type and tabular
 numbers. Header padding is 24 × 32 px, card padding 32 px, footer padding
 24 × 32 px. Below 480 px the outer and inner padding shrink and the button
 fills the available width. Dark mode uses `prefers-color-scheme` overrides;

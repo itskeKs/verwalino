@@ -2,7 +2,7 @@
 {% set eyebrow = 'DATENEXPORT' %}
 {% set heading = 'Ihr Datenexport steht bereit' %}
 {% set preheader = 'Das Exportarchiv für Ihre Organisation „' ~ mail.organization_name ~ '“ ist erstellt.' %}
-{% set paragraphs = [preheader, 'Der Link öffnet die Exportseite in Verwalino. Melden Sie sich dort als Administrator an, um das Archiv herunterzuladen. Der Link allein gewährt keinen Zugriff.'] %}
+{% set paragraphs = [preheader, 'Der Link öffnet die Exportseite in Verwalino. Melden Sie sich dort mit Ihrem Zugang an, um das Archiv herunterzuladen. Der Link allein gewährt keinen Zugriff.'] %}
 {% set facts = [('Archivgröße', mail.size_bytes|size), ('Verfügbar bis', mail.available_until|berlin_datetime ~ ' Uhr')] %}
 {% set action_label = 'Datenexport öffnen' %}
 {% set action_link = mail.export_link %}

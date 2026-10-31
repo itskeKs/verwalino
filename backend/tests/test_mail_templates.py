@@ -71,14 +71,14 @@ def test_html_escapes_names_but_plain_text_preserves_them():
 
 
 @pytest.mark.parametrize("kind", CONTEXT_TYPES)
-@pytest.mark.parametrize("control", ["\r", "\n", "\t", "\x00", "\x1f", "\x7f", "\x85", "\u2028"])
+@pytest.mark.parametrize("control", ["\r", "\n", "\t", "\x00", "\x1f", "\x7f", "\x85", "\u2028", "\u2029", "\u202e", "\u200b"])
 def test_all_string_fields_refuse_controls_even_at_edges(kind, control):
     context = SAMPLES[kind]
     for name, value in context.model_dump().items():
         if isinstance(value, str):
             with pytest.raises(ValidationError):
                 type(context)(**{**context.model_dump(), name: control + value})
-        elif isinstance(value, list):
+        elif isinstance(value, (list, tuple)):
             with pytest.raises(ValidationError):
                 type(context)(**{**context.model_dump(), name: [control + value[0]]})
 
@@ -156,8 +156,18 @@ def test_dates_sizes_masking_validity_and_optional_copy():
     changed = SAMPLES["password_changed"]
     assert "Alle bisherigen Sitzungen wurden beendet." in render_mail(changed).text
     assert "Alle bisherigen Sitzungen" not in render_mail(type(changed)(**{**changed.model_dump(), "sessions_revoked": False})).text
-    deleted = SAMPLES["organization_deleted"]
-    assert "2036" in render_mail(type(deleted)(**{**deleted.model_dump(), "retention_until": 2036})).text
+    assert "31.12.2036" in render_mail(SAMPLES["organization_deleted"]).text
+    with pytest.raises(ValidationError):
+        type(SAMPLES["organization_deleted"])(**{**SAMPLES["organization_deleted"].model_dump(), "retention_until": 0})
+    with pytest.raises(ValidationError):
+        type(SAMPLES["quota_storage_warning"])(**{**SAMPLES["quota_storage_warning"].model_dump(), "percent": 101})
+
+
+def test_encoded_words_cannot_reach_the_subject():
+    invitation = SAMPLES["user_invitation"]
+    smuggled = "Muster =?utf-8?b?DQpCY2M6IHZpY3RpbUBleGFtcGxlLmRlDQo=?="
+    with pytest.raises(ValueError, match="encoded words"):
+        render_mail(type(invitation)(**{**invitation.model_dump(), "organization_name": smuggled}))
 
 
 def test_operator_text_is_escaped_and_optional_action_is_rendered():

@@ -26,8 +26,8 @@ def _size(value: int) -> str:
     raise ValueError("Unreachable size unit")
 
 
-def _date(value: date | int) -> str:
-    return str(value) if isinstance(value, int) else value.strftime("%d.%m.%Y")
+def _date(value: date) -> str:
+    return value.strftime("%d.%m.%Y")
 
 
 def _wrap(value: str) -> str:
@@ -57,6 +57,7 @@ class RenderedMail:
     html: str
 
     def apply_to(self, message: EmailMessage) -> None:
+        """Fill a fresh, single-part message (policy.default); headers other than Subject stay."""
         if "Subject" in message:
             message.replace_header("Subject", self.subject)
         else:
@@ -71,8 +72,10 @@ def render_mail(context: MailContext, *, deployment_mode: DeploymentMode | str |
     mode = DeploymentMode(settings.deployment_mode if deployment_mode is None else deployment_mode)
     values = {"mail": context, "hosted": mode == DeploymentMode.HOSTED}
     subject = ENVIRONMENT.get_template(f"{context.kind}.subject.txt").render(**values).strip()
-    if not subject or any(c in subject for c in "\r\n"):
-        raise ValueError("Mail subjects must be a non-empty single line")
+    # A literal encoded word ("=?utf-8?b?...?=") would be decoded by the recipient's
+    # client, smuggling characters the context validation refused into the subject.
+    if not subject or any(c in subject for c in "\r\n") or "=?" in subject:
+        raise ValueError("Mail subjects must be a non-empty single line without encoded words")
     text = ENVIRONMENT.get_template(f"{context.kind}.txt").render(**values).strip() + "\n"
     html = ENVIRONMENT.get_template(f"{context.kind}.html").render(**values).strip() + "\n"
     return RenderedMail(subject=subject, text=text, html=html)
