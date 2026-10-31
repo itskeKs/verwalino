@@ -69,7 +69,18 @@ Usage notes and operational limits are linked in the documentation table below.
 ### Self-hosting
 
 Prerequisites: Linux or macOS, Bash, OpenSSL, Docker Engine 24 or later, and Compose 2.24 or later.
-From a checkout on a new host, run:
+
+**Install in one command** downloads the latest release, verifies its checksums and starts it
+(available once the first release with installer assets is published):
+
+```bash
+curl -fsSL https://github.com/itskeKs/verwalino/releases/latest/download/install.sh | bash -s --
+```
+
+See [Install in one command](DEPLOY.md#install-in-one-command) for HTTPS, a pinned version,
+checksum and signature verification, and offline bundles.
+
+**Or from a checkout** on a new host, run:
 
 ```bash
 bash scripts/self-host.sh init
