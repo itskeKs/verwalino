@@ -315,7 +315,7 @@ def late_credit_total(world, total):
 def open_lease_notice_draft(world, period_data_cleanup):
     data = world.run(period_property(world.actor, month=1))
     world.run(booked(world.actor, data, 2025, 7, amount="1234.56"))
-    run = world.run(create(world.actor, "/api/settlements", statement(data, "2025-01-01", "2025-06-30")))
+    run = world.run(create(world.actor, "/api/settlements", statement(data, "2025-01-01", "2025-12-31")))
     world.data.update(period_property=data, notice_run=run)
     compute_notice_draft(world)
 
@@ -325,7 +325,7 @@ def compute_notice_draft(world):
     answer = world.act("PATCH", f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
     assert answer.status_code == 200, world.describe_response()
     world.run(attest_fixture(world.actor, "settlement", run["id"], {
-        "advance_payments_total": "0.00", "advance_payments_source": "DERIVED"}))
+        "advance_payments_total": answer.json()["advance_payments_total"], "advance_payments_source": "DERIVED"}))
     answer = world.act("POST", f"/api/settlements/{run['id']}/compute", json={})
     assert answer.status_code == 200, world.describe_response()
 
