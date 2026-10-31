@@ -614,8 +614,8 @@ class PaymentService:
         return buckets(old_end) != buckets(new_end)
 
     async def lease_end_conflicts_finalized_credit(self, lease_id: uuid.UUID, last_day: date) -> bool:
-        """Protect only derived buckets changed by an end strictly inside their span."""
-        runs = await self._leases.finalized_derived_statements_containing(lease_id, last_day)
+        """Protect derived buckets changed by an end before the statement's last day."""
+        runs = await self._leases.finalized_derived_statements_ending_after(lease_id, last_day)
         if not runs:
             return False
         lease, inputs = await self._nk_advance_inputs(lease_id)
@@ -698,7 +698,7 @@ class PaymentService:
         return sum((uncredited_advance_total(inputs, AdvanceFilter(
             frozenset({"NK_VORAUSZAHLUNG"}), year, lease.id), lease.valid_from,
             db_exclusive_to_engine_inclusive(lease.valid_to), period_start=period_start, period_end=period_end)
-            for year in range(period_start.year, period_end.year + 1)), Decimal("0.00"))
+            for year in sorted({p.period_year for p in inputs if p.period_year is not None})), Decimal("0.00"))
 
     async def uncredited_nk_advance_total(
         self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date,

@@ -112,6 +112,6 @@ async def test_finalized_lease_locks_amounts_but_not_end(client_a_admin, lease_s
                 (str(uuid.uuid4()), str(lease_seed["org_a_id"]), lease_seed["property"], lease["id"], "a" * 64))
     response = await client_a_admin.patch(f"/api/leases/{lease['id']}", json={"base_rent": "550.00"})
     assert response.status_code == 409, response.text
-    response = await client_a_admin.patch(f"/api/leases/{lease['id']}", json={"valid_to": "2026-01-01"})
+    response = await client_a_admin.patch(f"/api/leases/{lease['id']}", json={"valid_to": "2025-12-31"})
     assert response.status_code == 200, response.text
-    assert response.json()["valid_to"] == "2026-01-01"
+    assert response.json()["valid_to"] == "2025-12-31"

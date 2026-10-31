@@ -104,7 +104,7 @@ def _pay(
     )
 
 
-def test_outside_lease_notice_belongs_only_to_each_statements_assigned_months():
+def test_outside_lease_notice_belongs_only_to_the_statement_containing_lease_start():
     payments = [_pay(1, PT_NK_VORAUSZAHLUNG, "1200.00", year=2024, lease=_U(50)),
         _pay(2, PT_NK_VORAUSZAHLUNG, "20.00", year=2024, month=6, lease=_U(50)),
         _pay(3, PT_NK_VORAUSZAHLUNG, "30.00", year=2024, month=12, lease=_U(50)),
@@ -112,11 +112,20 @@ def test_outside_lease_notice_belongs_only_to_each_statements_assigned_months():
     filt = AdvanceFilter(frozenset({PT_NK_VORAUSZAHLUNG}), 2024, _U(50))
     totals = [mietkonto.uncredited_advance_total(payments, filt, YEAR_START, None,
         period_start=start, period_end=end) for start, end in (
-            (date(2024, 1, 1), date(2024, 6, 30)), (date(2024, 7, 1), date(2024, 12, 31)))]
-    assert totals == [Decimal("620.00"), Decimal("630.00")]
+            (date(2024, 1, 1), date(2024, 12, 31)),
+            (YEAR_START, date(2025, 1, 1)), (date(2025, 1, 2), YEAR_END))]
+    assert totals == [Decimal("0.00"), Decimal("1250.00"), Decimal("0.00")]
     assert sum(totals) == Decimal("1250.00")
-    assert mietkonto.uncredited_advance_total(payments, filt, YEAR_START, None,
-        period_start=YEAR_START, period_end=YEAR_END) == Decimal("0.00")
+
+
+def test_outside_lease_notice_belongs_only_to_the_statement_containing_lease_end():
+    payments = [_pay(m, PT_NK_VORAUSZAHLUNG, "100.00", month=m, lease=_U(50)) for m in (2, 3, 7, 8)]
+    filt = AdvanceFilter(frozenset({PT_NK_VORAUSZAHLUNG}), 2025, _U(50))
+    totals = [mietkonto.uncredited_advance_total(payments, filt, date(2025, 3, 15), date(2025, 6, 30),
+        period_start=start, period_end=end) for start, end in (
+            (date(2025, 3, 15), date(2025, 3, 31)), (date(2025, 4, 1), date(2025, 6, 29)),
+            (date(2025, 6, 30), date(2025, 6, 30)), (date(2025, 7, 1), YEAR_END))]
+    assert totals == [Decimal("100.00"), Decimal("0.00"), Decimal("200.00"), Decimal("0.00")]
 
 
 @pytest.mark.parametrize("ptype,addressee", [("NK_VORAUSZAHLUNG", "lease"), ("HAUSGELD_VORSCHUSS", "owner")])

@@ -345,6 +345,7 @@ async def capture_notice(browser, request, stage):
         notice = page.get_by_text("Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: 1.234,56 €", exact=True)
         await page.get_by_role("heading", name="Berechnete Kostenpositionen").locator("..").scroll_into_view_if_needed()
         if stage == "after":
+            await expect(notice).to_have_count(1)
             await expect(notice).to_be_visible()
             await notice.scroll_into_view_if_needed()
         else:
@@ -357,12 +358,15 @@ async def capture_notice(browser, request, stage):
     assert not browser.errors
 
 
-@when("the manager shortens the tenancy to June and recomputes its statement")
+@when("the manager shortens the tenancy to June and creates a clipped statement")
 def shorten_notice_lease(world, browser_world, request):
     browser_world.run(capture_notice(browser_world, request, "before"))
     data = world.data["period_property"]
     answer = world.act("PATCH", f"/api/leases/{data['lease']['id']}", json={"valid_to": "2025-06-30"})
     assert answer.status_code == 200, world.describe_response()
+    run = world.run(create(world.actor, "/api/settlements", statement(data, "2025-01-01", "2025-12-31")))
+    assert (run["period_start"], run["period_end"]) == ("2025-01-01", "2025-06-30")
+    world.data["notice_run"] = run
     compute_notice_draft(world)
 
 

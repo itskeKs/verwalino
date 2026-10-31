@@ -122,8 +122,9 @@ credits 900 euros after an end on 30 September is entered. With January–14 Mar
 already crediting 245.16 euros of three 100-euro payments, an end on 20 March leaves
 54.84 euros, exactly 300 euros together. Identical finalized periods count once;
 superseded statements do not count again. A changed lease end is refused with a
-structured German HTTP 409 only when it falls strictly inside an active finalized
-DERIVED statement and changes one of its credit buckets. MANUAL statements do
+structured German HTTP 409 only when it falls before an active finalized
+DERIVED statement's last day and changes one of its credit buckets, including an
+end on or before that statement's start. MANUAL statements do
 not block date edits, and an end on the statement's last day is allowed.
 Legacy derived snapshots without per-year/month credits remain usable with fixed
 lease dates. After a date edit, a changed credit bucket within the legacy span
@@ -135,7 +136,9 @@ Active booked advances assigned entirely outside the lease remain credited at
 zero (including an assigned year before the lease begins). Their total appears
 as a non-financial notice line in draft and frozen statement lines, the API and
 the PDF: “Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: X €”.
-Only the share assigned to this statement's months is shown; year-only excluded
-totals are divided over their assigned year's months, and statement cuts within
-a month split that month's notice share by days. They do not alter statement
-costs, credited advances or the balance.
+Before-start months (and wholly before-start assigned years) appear on the statement
+containing the lease start; after-end months (and wholly after-end assigned years)
+appear on the statement containing the lease end. Each side appears once, including
+when the statements are clipped to the lease or split within a month. A statement
+containing both boundaries combines both totals. Other statements do not repeat
+the notice. It does not alter statement costs, credited advances or the balance.

@@ -191,7 +191,7 @@ first, preventing duplicate adjustments during reordering or corrections.
 Identical finalized periods count once and
 superseded runs do not count twice. `PATCH /api/leases/{id}` returns German,
 structured HTTP 409 (`lease_end_conflicts_finalized_statement`) if the proposed
-last occupied day falls strictly inside an active finalized DERIVED statement's span
+last occupied day falls before an active finalized DERIVED statement's last day
 and changes one of its advance-credit buckets. MANUAL statements do not block date edits;
 an end equal to the statement's last day is allowed. If a statement boundary splits a month, that
 month's share is prorated by its days using cumulative cent boundaries, so
@@ -214,14 +214,17 @@ properties and remains a follow-up; it is not changed by #68.
 The per-property year overview and Anlage V stay on the calendar year.
 
 Booked NK advances assigned entirely outside the lease's months or years remain
-uncredited. Only the share assigned to this statement's months is shown in a non-financial `SUBTOTAL` notice line in the
+uncredited. Their total is shown in a non-financial `SUBTOTAL` notice line in the
 draft, frozen snapshot, API response and PDF: “Nicht angerechnet: Zahlungen
 außerhalb des Mietverhältnisses: X €”. This includes manually assigned payments
 and payments left outside the tenancy by a later shortening. The notice does not
-change costs, credited advances or the balance. Month-assigned excluded payments
-belong to their assigned month; excluded year-only totals are split over that year's
-months. A cut inside a month divides its notice share by days, preventing repetition
-across adjacent statements. The structured amount is frozen in the snapshot;
+change costs, credited advances or the balance. Before-start months and wholly
+before-start years appear on the statement containing the lease start; after-end
+months and wholly after-end years appear on the statement containing the lease end.
+Each side appears once, even across calendar years or statement cuts within a month;
+other statements do not repeat it. A single statement containing both lease boundaries
+shows their combined total. This also works for a newly created lease-clipped statement.
+The structured amount is frozen in the snapshot;
 the API exposes it in the notice label.
 
 Legacy DERIVED snapshots without year/month credit buckets can still use fixed

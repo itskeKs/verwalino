@@ -73,15 +73,15 @@ class LeaseAgreementRepository(TenantRepository[LeaseAgreement]):
         ).limit(1)
         return await self._session.scalar(stmt) is not None
 
-    async def finalized_derived_statements_containing(self, lease_id: uuid.UUID, last_day: date):
-        """Active derived statements with the proposed end strictly inside their span."""
+    async def finalized_derived_statements_ending_after(self, lease_id: uuid.UUID, last_day: date):
+        """Active derived statements ending after the proposed last occupied day."""
         from app.models.settlement_run import SettlementRun
         stmt = select(SettlementRun).where(
             SettlementRun.organization_id == self._org_id,
             SettlementRun.lease_agreement_id == lease_id,
             SettlementRun.status == "finalized", SettlementRun.superseded_by_id.is_(None),
             SettlementRun.advance_payments_source == "DERIVED",
-            SettlementRun.period_start < last_day, SettlementRun.period_end > last_day,
+            SettlementRun.period_end > last_day,
         )
         return (await self._session.execute(stmt)).scalars().all()
 

@@ -323,8 +323,11 @@ Statement summaries display non-financial notice lines across both columns,
 without a second amount. Booked NK payments wholly outside the lease show
 “Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: X €”, with German
 money formatting. Drafts and finalized statements use their persisted lines;
-the PDF carries the same notice. Long notices wrap at 360 px.
-Captures before and after entering the lease end show the same draft at
+the PDF carries the same notice. Before-start payments appear on the statement
+containing the lease start; after-end payments appear on the statement containing
+the lease end, once each. Long notices wrap at 360 px.
+Captures show the open-tenancy draft before entering the lease end and a newly
+created lease-clipped statement afterwards at
 [1280 px before](docs/assets/settlement-period/statement-notice-before-1280.png),
 [1280 px after](docs/assets/settlement-period/statement-notice-after-1280.png),
 [360 px before](docs/assets/settlement-period/statement-notice-before-360.png) and

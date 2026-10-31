@@ -623,16 +623,18 @@ def uncredited_advance_total(
     payments: list[PaymentInput], filt: AdvanceFilter, lease_start: date, lease_end: date | None,
     *, period_start: date | None = None, period_end: date | None = None,
 ) -> Decimal:
-    """Notice share of outside-lease bookings assigned to this statement's months."""
+    """Place outside-lease bookings on the statement containing that lease boundary."""
     year_start, year_end = date(filt.year, 1, 1), date(filt.year, 12, 31)
-    start, end = period_start or year_start, period_end or year_end
+    start, end = period_start or date.min, period_end or date.max
     result = Decimal("0.00")
     for month in [*range(1, 13), None]:
         bucket = [p for p in payments if p.period_month == month]
         excluded = derive_advance_total(bucket, filt) - derive_advance_total_for_period(
             bucket, filt, year_start, year_end, lease_start=lease_start, lease_end=lease_end)
-        if month is None:
-            result += annual_advance_share_for_period(excluded, filt.year, start, end)
-        else:
-            result += monthly_advance_share_for_period(excluded, filt.year, month, start, end)
+        if not excluded:
+            continue
+        _, bucket_end = _month_bounds(filt.year, month) if month is not None else (year_start, year_end)
+        boundary = lease_start if bucket_end < lease_start else lease_end
+        if boundary is not None and start <= boundary <= end:
+            result += excluded
     return result

@@ -105,8 +105,8 @@ async def test_late_lease_end_preserves_all_booked_advances(client_a_admin, apri
 
 @pytest.mark.parametrize("source,month,end,status", [
     ("MANUAL", 3, "2025-03-14", 200),
-    ("DERIVED", 3, "2024-12-31", 200),
-    ("DERIVED", 3, "2025-01-01", 200),
+    ("DERIVED", 3, "2024-12-31", 409),
+    ("DERIVED", 3, "2025-01-01", 409),
     ("DERIVED", 3, "2025-02-14", 409),
     ("DERIVED", 3, "2025-03-14", 200),
     ("DERIVED", 3, "2025-03-31", 200),
@@ -115,7 +115,7 @@ async def test_late_lease_end_preserves_all_booked_advances(client_a_admin, apri
     ("DERIVED", 1, "2025-03-14", 200),
     ("DERIVED", None, "2025-03-14", 409),
 ])
-async def test_lease_end_only_protects_changed_derived_buckets_inside_finalized_span(
+async def test_lease_end_protects_changed_derived_buckets_before_finalized_end(
         client_a_admin, april, source, month, end, status):
     api = client_a_admin
     await booked(api, april, 2025, month)
@@ -140,6 +140,22 @@ async def test_december_move_out_can_be_entered_after_finalizing_the_year(client
     await _finalize_derived(client_a_admin, april, "2025-01-01", "2025-12-31", "1200.00")
     changed = await client_a_admin.patch(f"/api/leases/{april['lease']['id']}", json={"valid_to": "2025-12-31"})
     assert changed.status_code == 200, changed.text
+
+
+async def test_march_end_cannot_change_a_finalized_july_to_december_statement(client_a_admin, april):
+    api = client_a_admin
+    for month in range(1, 13):
+        await booked(api, april, 2025, month)
+    frozen = await _finalize_derived(api, april, "2025-07-01", "2025-12-31", "600.00")
+    lease_before = (await api.get(f"/api/leases/{april['lease']['id']}")).json()
+    answer = await api.patch(f"/api/leases/{april['lease']['id']}", json={"valid_to": "2025-03-31"})
+    assert answer.status_code == 409, answer.text
+    assert answer.json()["detail"]["code"] == "lease_end_conflicts_finalized_statement"
+    assert (await api.get(f"/api/leases/{april['lease']['id']}")).json() == lease_before
+    assert (await api.get(f"/api/settlements/{frozen['id']}")).json() == frozen
+    first = await _finalize_derived(api, april, "2025-01-01", "2025-03-31", "300.00")
+    middle = await _finalize_derived(api, april, "2025-04-01", "2025-06-30", "300.00")
+    assert sum(Decimal(run["advance_payments_total"]) for run in (first, middle, frozen)) == Decimal("1200.00")
 
 
 async def _finalize_derived(api, data, start, end, expected):
@@ -250,14 +266,15 @@ async def test_outside_lease_payments_are_visible_without_being_credited(client_
     # Unassigned payments retain their existing exclusion from statement sums.
     for year, month in ((2025, 2), (2025, 3), (2025, 7), (2024, None), (None, None)):
         await booked(api, data, year, month)
-    run = await create(api, "/api/settlements", statement(data, "2025-01-01", "2025-12-31"))
     assert (await api.patch(f"/api/leases/{data['lease']['id']}", json={"valid_to": "2025-06-30"})).status_code == 200
+    run = await create(api, "/api/settlements", statement(data, "2025-01-01", "2025-12-31"))
+    assert (run["period_start"], run["period_end"]) == ("2025-03-15", "2025-06-30")
     answer = await api.patch(f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
     assert answer.status_code == 200, answer.text
     assert Decimal(answer.json()["advance_payments_total"]) == Decimal("100.00")
     await attest_fixture(api, "settlement", run["id"], {
         "advance_payments_total": "100.00", "advance_payments_source": "DERIVED"})
-    notice = "Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: 100,00 €"
+    notice = "Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: 300,00 €"
     for action in ("compute", "finalize"):
         answer = await api.post(f"/api/settlements/{run['id']}/{action}", json={})
         assert answer.status_code == 200, answer.text
@@ -271,6 +288,28 @@ async def test_outside_lease_payments_are_visible_without_being_credited(client_
         key: Decimal(value) if key == "amount" else value
         for key, value in line.items() if key in {"line_type", "label", "sort_order", "amount"}
     }) for line in snapshot["result"]["lines"]])
+
+
+async def test_outside_lease_notice_appears_once_on_each_boundary_statement(client_a_admin, april):
+    api = client_a_admin
+    changed = await api.patch(f"/api/leases/{april['lease']['id']}", json={"valid_to": "2025-03-14"})
+    assert changed.status_code == 200, changed.text
+    april["lease"] = await create(api, "/api/leases", {
+        "unit_id": april["unit"]["id"], "tenant_profile_id": april["tenant"]["id"],
+        "valid_from": "2025-03-15", "valid_to": "2025-06-30",
+        "base_rent": "700.00", "advance_payment": "100.00"})
+    for year, month in ((2024, None), (2025, 2), (2025, 3), (2025, 7), (2025, 8), (2026, None)):
+        await booked(api, april, year, month)
+    for start, end, clipped, amount, notice in (
+        ("2025-03-15", "2025-03-15", ("2025-03-15", "2025-03-15"), "5.88", "200,00"),
+        ("2025-03-16", "2025-06-29", ("2025-03-16", "2025-06-29"), "94.12", None),
+        ("2025-06-30", "2025-06-30", ("2025-06-30", "2025-06-30"), "0.00", "300,00"),
+    ):
+        run = await _finalize_derived(api, april, start, end, amount)
+        assert (run["period_start"], run["period_end"]) == clipped
+        notices = [line["label"] for line in run["lines"] if line["label"].startswith("Nicht angerechnet:")]
+        assert notices == ([] if notice is None else [
+            f"Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: {notice} €"])
 
 
 @pytest.mark.parametrize("start,end,months,amount,expected", [

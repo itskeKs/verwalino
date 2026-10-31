@@ -83,10 +83,10 @@ Feature: Settlement period
       | monthly   | 300.00  |
 
   @browser
-  Scenario: A shortened tenancy shows uncredited payments in its statement
+  Scenario: A shortened tenancy shows uncredited payments in a newly clipped statement
     Given an administrator of "Verwaltung Alpha" is signed in
     And a computed draft with a July advance and an open tenancy
-    When the manager shortens the tenancy to June and recomputes its statement
+    When the manager shortens the tenancy to June and creates a clipped statement
     Then the uncredited payment notice is visible on desktop and mobile
 
   Scenario Outline: Either date of an occupant change splits only that unit's water share
