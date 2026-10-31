@@ -5,7 +5,7 @@ import { api } from "../api/client";
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 export function formatUploadLimit(bytes: number): string {
-  return `${(bytes / 1024 ** 2).toLocaleString("de-DE", { maximumFractionDigits: 6 })} MiB`;
+  return `${(bytes / 1024 ** 2).toLocaleString("de-DE", { maximumFractionDigits: 2 })} MiB`;
 }
 
 export function useUploadLimit() {

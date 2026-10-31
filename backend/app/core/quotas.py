@@ -15,7 +15,7 @@ from decimal import Decimal
 from typing import Literal
 
 from app.core.deployment_policy import get_deployment_policy
-from app.core.document_limits import MAX_UPLOAD_BYTES
+from app.core.document_limits import MAX_UPLOAD_BYTES, format_upload_limit
 
 QuotaKind = Literal["storage_bytes", "upload_bytes", "properties", "units", "ai_budget_usd"]
 
@@ -60,7 +60,7 @@ def check_quota(usage: int | Decimal, plan: QuotaPlan, kind: QuotaKind,
         return QuotaDecision(True)
     messages = {
         "storage_bytes": lambda: f"Speicherkontingent erschöpft ({_size(limit)}). Sie können keine weiteren Dokumente speichern.",
-        "upload_bytes": lambda: f"Datei zu groß (maximal {_size(limit)}). Bitte wählen Sie eine kleinere Datei.",
+        "upload_bytes": lambda: f"Datei zu groß (maximal {format_upload_limit(limit)}). Bitte wählen Sie eine kleinere Datei.",
         "properties": lambda: f"Objektkontingent erschöpft ({limit} Objekte). Sie können kein weiteres Objekt anlegen.",
         "units": lambda: f"Einheitenkontingent erschöpft ({limit} Einheiten). Sie können keine weitere Einheit anlegen.",
         "ai_budget_usd": lambda: "Das monatliche KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den Betreiber.",

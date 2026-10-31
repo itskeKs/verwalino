@@ -69,7 +69,7 @@ def shared_hosted_property_headroom(seed_data, request):
 
     usage = {"seed_data": seed_data, "peaks": {}}
     yield usage
-    # Keep at least two slots free after the extra-property regression scenario.
+    # Keep at least two slots free throughout the shared scenarios.
     minimum_headroom = 2
     problems = []
     for name, count in shared_property_counts(seed_data).items():

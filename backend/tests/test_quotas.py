@@ -13,6 +13,39 @@ from sqlalchemy import text
 from fastapi import HTTPException
 
 
+@pytest.mark.parametrize("limit, formatted", [
+    (25 * 1024**2, "25 MiB"),
+    (int(1.5 * 1024**2), "1,5 MiB"),
+    (1_294_537, "1,23 MiB"),
+    (int(1.125 * 1024**2), "1,13 MiB"),
+    (2 * 1024**3, "2.048 MiB"),
+])
+def test_upload_refusal_formats_the_cap_like_the_frontend(limit, formatted):
+    from app.core.quotas import FREE_PLAN, check_quota
+    decision = check_quota(0, replace(FREE_PLAN, upload_bytes=limit), "upload_bytes", limit + 1)
+    assert decision.code == "UPLOAD_TOO_LARGE"
+    assert decision.message == f"Datei zu groß (maximal {formatted}). Bitte wählen Sie eine kleinere Datei."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit, formatted", [(25 * 1024**2, "25 MiB"), (1_294_537, "1,23 MiB")])
+async def test_upload_413_formats_the_cap_like_the_frontend(limit, formatted):
+    import json
+    from app.core.uploads import RequestBodyLimitMiddleware
+    from tests.test_upload_limits import _run_asgi_app
+
+    async def forbidden(*args):
+        pytest.fail("Oversized upload reached the parser")
+
+    sent = await _run_asgi_app(RequestBodyLimitMiddleware(forbidden, max_body_bytes=limit),
+        path="/api/attachments", headers=[(b"content-length", str(limit + 1).encode())], messages=[])
+    assert sent[0]["status"] == 413
+    assert json.loads(sent[1]["body"])["detail"] == {
+        "code": "UPLOAD_TOO_LARGE",
+        "message": f"Anfrage zu groß (maximal {formatted}). Bitte wählen Sie eine kleinere Datei.",
+    }
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path", ["preview", "apply"])
 @pytest.mark.parametrize("content_length", [False, True])
@@ -421,7 +454,7 @@ async def test_selfhost_upload_safety_refusal_uses_the_actual_limit(monkeypatch)
     monkeypatch.setattr(settings, "deployment_mode", "selfhost")
     with pytest.raises(HTTPException) as error:
         await read_upload_limited(ChunkedUpload(b"abcde"), max_bytes=4)
-    assert error.value.detail == {"code": "UPLOAD_TOO_LARGE", "message": "Datei zu groß (maximal 4 Bytes). Bitte wählen Sie eine kleinere Datei."}
+    assert error.value.detail == {"code": "UPLOAD_TOO_LARGE", "message": "Datei zu groß (maximal 0 MiB). Bitte wählen Sie eine kleinere Datei."}
 
 
 @pytest.mark.asyncio
@@ -433,7 +466,7 @@ async def test_property_document_oversize_is_structured_and_uses_the_safety_limi
         await service.upload(uuid.uuid4(), b"%PDF-", original_filename="large.pdf",
                              mime_type="application/pdf", document_role="TEILUNGSERKLAERUNG", sequence_no=1)
     assert error.value.status_code == 413
-    assert error.value.detail == {"code": "UPLOAD_TOO_LARGE", "message": "Datei zu groß (maximal 4 Bytes). Bitte wählen Sie eine kleinere Datei."}
+    assert error.value.detail == {"code": "UPLOAD_TOO_LARGE", "message": "Datei zu groß (maximal 0 MiB). Bitte wählen Sie eine kleinere Datei."}
 
 
 @pytest.mark.asyncio

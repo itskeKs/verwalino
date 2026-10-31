@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { AttachmentsPanel } from "./AttachmentsPanel";
 import * as endpoints from "../api/endpoints";
 import { ApiError, uploadFormData } from "../api/client";
+import { formatUploadLimit } from "../lib/uploads";
 import type { Attachment, Property } from "../api/types";
 
 vi.mock("../api/endpoints", async (original) => ({
@@ -48,8 +49,8 @@ it("shows the backend storage quota refusal from the upload response to the memb
 });
 
 it("rejects attachments above the metadata cap before uploading", async () => {
-  const metadata = { max_upload_bytes: 1.5 * 1024 ** 2 };
-  const formattedLimit = `${(metadata.max_upload_bytes / 1024 ** 2).toLocaleString("de-DE")} MiB`;
+  const metadata = { max_upload_bytes: 1_294_537 };
+  const formattedLimit = formatUploadLimit(metadata.max_upload_bytes);
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify(metadata)));
   render(<AttachmentsPanel propertyId="property" canWrite />);
   await screen.findByText("Keine Dokumente vorhanden.");

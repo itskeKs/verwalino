@@ -1,5 +1,5 @@
 import { api } from "../api/client";
-import { MAX_UPLOAD_BYTES } from "../lib/uploads";
+import { formatUploadLimit, MAX_UPLOAD_BYTES } from "../lib/uploads";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -278,13 +278,13 @@ describe("Teilungserklärung upload wizard", () => {
 
     expect(await screen.findByText(/nur PDF-Dateien/i)).toBeVisible();
     expect(screen.getByText(/„umbenannt\.pdf“ ist keine PDF-Datei/i)).toBeVisible();
-    expect(screen.getByText((text) => text.includes(`„gross.pdf“ ist größer als maximal ${(MAX_UPLOAD_BYTES / 1024 ** 2).toLocaleString("de-DE")} MiB`))).toBeVisible();
+    expect(screen.getByText((text) => text.includes(`„gross.pdf“ ist größer als maximal ${formatUploadLimit(MAX_UPLOAD_BYTES)}`))).toBeVisible();
     expect(uploadSpy).not.toHaveBeenCalled();
   });
 
   it("uses the backend metadata cap for file selection boundaries", async () => {
-    const metadata = { max_upload_bytes: 1.5 * 1024 ** 2 };
-    const formattedLimit = `${(metadata.max_upload_bytes / 1024 ** 2).toLocaleString("de-DE")} MiB`;
+    const metadata = { max_upload_bytes: 1_294_537 };
+    const formattedLimit = formatUploadLimit(metadata.max_upload_bytes);
     const get = api.get;
     vi.spyOn(api, "get").mockImplementation((url, options) => url === "/api/meta"
       ? Promise.resolve(metadata) : get(url, options));

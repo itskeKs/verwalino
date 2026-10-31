@@ -81,7 +81,7 @@ It fills storage through the real upload API and verifies the German refusal. Fi
 database records use the ordinary services; signup mail uses local Mailpit.
 The organization-isolation feature reuses one set of property, person and bank
 account records per organization: its scenarios only read them or attempt refused
-foreign mutations. A quota regression scenario adds an extra Alpha property.
+foreign mutations. The session fixture enforces shared property headroom.
 At the end of a local hosted run, a guard requires at least two free property
 slots in each shared organization. It reports both final counts and peak counts
 with the scenario name, sampling before fixture cleanup can empty the tables.

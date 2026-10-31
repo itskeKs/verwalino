@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { InboxPage } from './InboxPage';
 import { IntakeBatchPage } from './IntakeBatchPage';
+import { formatUploadLimit } from '../lib/uploads';
 
 vi.mock('../auth/useAuth', () => ({ useAuth: () => ({ session: { role: 'CLERK' } }) }));
 vi.mock('../api/intake', async importOriginal => {
@@ -20,8 +21,8 @@ function page(path = '/posteingang') {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 it('rejects files above the metadata cap before creating an intake batch', async () => {
-  const metadata = { max_upload_bytes: 1.5 * 1024 ** 2 };
-  const formattedLimit = `${(metadata.max_upload_bytes / 1024 ** 2).toLocaleString('de-DE')} MiB`;
+  const metadata = { max_upload_bytes: 1_294_537 };
+  const formattedLimit = formatUploadLimit(metadata.max_upload_bytes);
   const fetch = vi.fn(async (url: string) => url === '/api/meta'
     ? json(metadata) : json({ items: [], next_cursor: null }));
   vi.stubGlobal('fetch', fetch);

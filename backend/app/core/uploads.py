@@ -10,6 +10,7 @@ from typing import Protocol
 
 from fastapi import HTTPException
 from dataclasses import replace
+from app.core.document_limits import format_upload_limit
 from app.core.quotas import MAX_UPLOAD_BYTES, check_quota, get_quota_plan
 
 
@@ -146,8 +147,7 @@ class RequestBodyLimitMiddleware:
 
     @staticmethod
     async def _send_too_large(send: Send, body_limit: int) -> None:
-        limit = f"{body_limit / (1024 * 1024):g}".replace(".", ",")
-        body = json.dumps({"detail": {"code": "UPLOAD_TOO_LARGE", "message": f"Anfrage zu groß (maximal {limit} MiB). Bitte wählen Sie eine kleinere Datei."}}, ensure_ascii=False).encode()
+        body = json.dumps({"detail": {"code": "UPLOAD_TOO_LARGE", "message": f"Anfrage zu groß (maximal {format_upload_limit(body_limit)}). Bitte wählen Sie eine kleinere Datei."}}, ensure_ascii=False).encode()
         await send(
             {
                 "type": "http.response.start",
