@@ -37,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.engine.canonical import canonical_json, sha256_hex
-from app.engine.periods import validate_settlement_period
+from app.engine.periods import validate_settlement_period, period_for_date
 from app.engine.rounding import DistributionError
 from app.engine.mietkonto import _money
 from app.services.lease_rent_change_service import LeaseRentChangeService
@@ -253,6 +253,22 @@ class SettlementService:
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
+    @staticmethod
+    def _lease_period(lease, start: date, end: date) -> tuple[date, date]:
+        """Intersect inclusive run dates with the stored half-open lease span."""
+        last = db_exclusive_to_engine_inclusive(lease.valid_to)
+        clipped = max(start, lease.valid_from), min(end, last) if last is not None else end
+        if clipped[0] > clipped[1]:
+            raise SettlementService._outside_lease()
+        return clipped
+
+    @staticmethod
+    def _outside_lease() -> HTTPException:
+        return HTTPException(422, {
+            "code": "settlement_period_outside_lease",
+            "message": "Der Abrechnungszeitraum muss innerhalb der Mietdauer liegen.",
+        })
+
     async def create_draft(
         self,
         property_id: uuid.UUID,
@@ -291,6 +307,14 @@ class SettlementService:
         await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(run, accounting_scope_id)
         # prepare_new holds the existing organization financial-input lock.
         self._validate_period(period_start, period_end)
+        clipped = self._lease_period(lease, period_start, period_end)
+        if clipped != (period_start, period_end):
+            from app.repositories.property_repo import PropertyRepository
+
+            prop = await PropertyRepository(self._session, self._org_id).get_by_id(property_id)
+            if prop is None or (period_start, period_end) != period_for_date(prop.fiscal_year_start_month, period_start):
+                raise self._outside_lease()
+        run.period_start, run.period_end = period_start, period_end = clipped
         if await self._runs.has_conflicting_period(run):
             raise SettlementPeriodConflict()
         run = await self._runs.create(run)
@@ -335,15 +359,17 @@ class SettlementService:
         existing = await self._runs.active_bk_for_period(
             property_id, period_start, period_end, scope_id,
         )
-        by_lease = {run.lease_agreement_id: run for run in existing}
+        by_period = {(run.lease_agreement_id, run.period_start, run.period_end): run for run in existing}
         created, skipped, errors = [], [], []
         for lease in leases:
-            if lease.id in by_lease:
-                skipped.append(by_lease[lease.id])
+            start, end = self._lease_period(lease, period_start, period_end)
+            existing_run = by_period.get((lease.id, start, end))
+            if existing_run is not None:
+                skipped.append(existing_run)
             else:
                 try:
                     created.append(await self.create_draft(
-                        property_id, lease.id, period_start, period_end,
+                        property_id, lease.id, start, end,
                         accounting_scope_id=scope_id,
                     ))
                 except SettlementPeriodConflict as exc:

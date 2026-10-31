@@ -141,7 +141,14 @@ def compute_bk_settlement(inp: SettlementInput) -> EngineResult:
             cells, heating_result = distribute_heating_position(pos)
             heating_costs.append(heating_result)
         else:
-            cells = distribute_position(pos, units, covers_by_unit)
+            # Balance the complete source once, independent of the run window.
+            # Keep all lease/vacancy boundaries so short runs select the same
+            # cent allocation as a full-service-period calculation.
+            source_covers = {u.id: build_unit_cover(
+                u.id, pos.service_period_from, pos.service_period_to, leases, owner_periods,
+            ) for u in units}
+            cells = distribute_position(pos, units, source_covers,
+                                        period_start=inp.period_start, period_end=inp.period_end)
         if not cells:
             continue
 

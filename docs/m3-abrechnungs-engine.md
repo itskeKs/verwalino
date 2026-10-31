@@ -43,16 +43,33 @@ Period-conflict responses use `detail` objects with
 Mixed-batch errors retain their German `errors[].error` text and carry the same
 code in `errors[].code`.
 
-**Lease-change limitation:** the engine clips occupancy slices to the supplied
-statement window and apportions calendar-year costs between successive leases by
-actual occupancy days; vacancy is attributed to the owner. The persisted statement
-period is still the supplied period: creation and batch creation do not clip it
-to the target lease's active span. Also, when a cost's service period extends beyond
-a manually shortened statement window, distribution reassigns the full source
-amount to the in-window slices rather than prorating the source amount first.
-Automatic lease-bounded statement dates with correct short-window cost proration
-remain follow-up work. The scenarios separately prove explicit short-period overlap
-protection and lease-change apportionment within a full calendar-year calculation.
+**Lease-bounded statements (#122):** a complete readable property-period request
+is intersected with the target lease's active span at creation. Batch creation
+intersects its selected period separately for each overlapping lease; repeats
+match the resulting clipped dates. Stored lease bounds are half-open
+`[valid_from, valid_to)`, so the inclusive statement ends on `valid_to - 1 day`.
+Free dates must be entirely inside the lease, including for scope-only clerks
+without property read access. A free period outside the lease, or a property
+period with no lease overlap, returns 422 with
+`code: "settlement_period_outside_lease"` and
+`message: "Der Abrechnungszeitraum muss innerhalb der Mietdauer liegen."`.
+The single-statement picker intersects offers with the selected lease, hides
+empty intersections and displays the clipped dates beside the period label.
+Changing the lease resets the dates; free dates and delayed-response protection
+remain available.
+
+**Short-window sources (#122):** time-based cost positions use actual service
+days (ADR-0004); there is no separate monthly cost-period type. The engine builds
+the complete service-period tenancy/vacancy cover and balances exact key × time
+weights once through `distribute_amount` (ADR-0005). A run selects only its
+intersection with each balanced cell. When a run cuts a cell, the rounding module
+uses the difference of floored cumulative day shares; the cell's last day retains
+its remaining cents. Adjacent windows therefore recover the complete source
+allocation, including vacancy attributed to the owner, independently of creation
+order. Full-service-period allocation is unchanged. A 3,650-euro annual source in
+2025 carries 900 euros in January–March; January–September and October–December
+carry 2,730 and 920 euros. External metering-service amounts remain explicit
+occupancy amounts; measured heating consumption is not estimated by days.
 
 **Current overlap limitation:** the check runs under the acting user's normal
 row-level security. Overlaps with runs in other accounting scopes that the user
@@ -87,7 +104,13 @@ do not depend on other drafts or finalization order; later statements cannot
 change earlier finalized shares. If a statement boundary splits a month, that
 month's share is prorated by its days using cumulative cent boundaries, so
 adjacent partial-month statements cannot credit that share twice. The NK finalization freshness check uses the
-same derivation. Explicit month assignments and ledger filtering are unchanged. See the
+same derivation. **Month-assigned advances (#136)** use the same cumulative day
+rule on their assigned calendar month: group the active booked payments by
+addressee, type and month, then credit only the days covered by the statement.
+For twelve 100-euro payments, January–14 March credits 245.16 euros and
+15 March–December credits 954.84 euros, exactly 1,200 euros together. Whole
+months and periods starting on the first remain unchanged. NK and paid Hausgeld
+share this engine rule; ledger filtering is unchanged. See the
 [WEG period rules](m4-weg-abrechnung.md#property-settlement-periods-68). The economic
 plan deadline in `fristen_service.py` is still calendar-based for non-January
 properties and remains a follow-up; it is not changed by #68.
@@ -402,7 +425,7 @@ exact_addressee = G * (wᵢ / Σw)            // key share of unit i
                     * factor_period        // time share of the addressee period on the item
 ```
 
-Both factors are chained **exactly** (unrounded); the **largest-remainder rounding applies once at the end** across all final addressee amounts of the item (ADR-0005, order discipline). Never round in between.
+Both factors are chained **exactly** (unrounded); the **largest-remainder rounding applies once at the end** across all final addressee amounts of the item's complete service-period cover (ADR-0005, order discipline). Never round in between. A short run then selects the balanced cells' covered days using the cumulative cent boundaries described above; it never normalizes the entire source amount onto a shorter cover.
 
 **Important — order of the distribution universes:** A cost item is usually distributed **across the whole property** (all units by key), not only across the settled unit. For a **single** tenant BK (`BK_MIETER`, one lease), only the part that falls to **this** unit and **this** tenant period is of interest. The engine therefore conceptually computes:
 

@@ -17,19 +17,16 @@ whose service period lies within the settlement period (the normal, correct
 case) sum(f) == 1, so sum(rounded cells) == effective total exactly and the
 section-9 invariant "sum over tenant+vacancy+other == G" holds by construction.
 
-ASSUMPTION (clearly marked): a cost position is expected to lie WITHIN the
-settlement period (you collect the period's costs).  A position whose service
-period extends *beyond* the settlement window is out of M3 scope (a fachliche
-cross-period question); the engine still distributes its full effective total
-across the in-window slices proportionally (distribute_amount normalizes by
-sum(weights)), which is documented, deterministic, and never loses a cent of
-the distributed total.
+The cover spans the complete source service period. A short run selects only
+its part of each balanced cell, using cumulative day shares from rounding.py.
+Adjacent windows retain the full source allocation, including vacancy cents.
 """
 
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import date
 from decimal import Decimal
 
 from app.engine.periods import (
@@ -38,7 +35,7 @@ from app.engine.periods import (
     overlap_days,
     time_factor,
 )
-from app.engine.rounding import DistributionError, distribute_amount
+from app.engine.rounding import DistributionError, distribute_amount, day_share_for_period
 from app.engine.types import (
     APPORTIONABLE_AMOUNT_REQUIRED,
     CostPositionInput,
@@ -144,6 +141,9 @@ def distribute_position(
     position: CostPositionInput,
     units: list[UnitInput],
     covers_by_unit: dict[uuid.UUID, list[CoverPeriod]],
+    *,
+    period_start: date | None = None,
+    period_end: date | None = None,
 ) -> list[Cell]:
     """Distribute one position over all (unit, slice) cells, rounded once.
 
@@ -151,7 +151,8 @@ def distribute_position(
     (EXTERNE_ABRECHNUNG / MANUELLER_BETRAG) assign the per-unit amount and then
     split it by time across that unit's slices; weighted keys build the
     key-share x time factor for every cell. The single Largest-Remainder pass
-    runs over the whole cell set so sum(amounts) == effective_total exactly.
+    runs over the complete source cover so sum(amounts) == effective_total
+    exactly. Optional inclusive run bounds then select each cell's day share.
     """
     key = position.tenant_distribution_key
     if key is None:
@@ -174,8 +175,15 @@ def distribute_position(
         # (that is the whole point of EXTERNE_ABRECHNUNG; section 2.5/5.2).
         _check_direct_sum(position, key, total)
         for ext in position.external_amounts:
+            covers = covers_by_unit.get(ext.unit_id, [])
+            if ext.period_from is None or ext.period_to is None:
+                # Undated provider amounts describe the selected run. Later
+                # tenancies outside it must not make that assignment ambiguous.
+                covers = [c for c in covers if overlap_days(
+                    c.start, c.end, period_start or sp_from, period_end or sp_to,
+                )]
             cover = _match_slice(
-                covers_by_unit.get(ext.unit_id, []),
+                covers,
                 ext.period_from,
                 ext.period_to,
             )
@@ -237,6 +245,16 @@ def distribute_position(
     for (unit_id, cover, exact_weight, base_share, base_total), amount in zip(
         cell_specs, rounded
     ):
+        source_cover = cover
+        start = max(cover.start, sp_from, period_start or sp_from)
+        end = min(cover.end, sp_to, period_end or sp_to)
+        if start > end:
+            continue
+        cover = replace(cover, start=start, end=end)
+        if key != "EXTERNE_ABRECHNUNG":
+            source_start, source_end = max(source_cover.start, sp_from), min(source_cover.end, sp_to)
+            amount = day_share_for_period(amount, source_start, source_end, start, end)
+            exact_weight *= time_factor(source_start, source_end, start, end)
         # time_days is the days of the SERVICE PERIOD this slice covered (the
         # numerator of the time factor), NOT the full slice length -- so the
         # rechenweg reads "<billed days>/<service-period days>" (BGH; matters

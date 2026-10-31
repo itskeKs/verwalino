@@ -271,7 +271,12 @@ free date entry. Statement and batch defaults use the backend's most recent
 completed property period; offers never include a period that has not ended.
 Automatic prefill requires both date fields to be empty, so a
 delayed offer never replaces user-entered dates. Explicitly choosing an offer sets
-both dates. Changing the property resets the period selection. Plan forms
+both dates. Single-statement offers intersect the property's dates with the
+selected lease's inclusive dates, omit empty intersections and show the actual
+span beside the label (e.g. `2025 · 01.01.2025 – 30.09.2025`). Changing the lease
+resets both date fields and loads its clipped offers. Batch offers retain the
+property dates; creation clips each lease separately. Changing the property
+resets the period selection. Plan forms
 use a start year and the same offers; their prefilled date controls remain editable
 for mid-year accounting scopes and gap-closing transition plans.
 Batch results show per-lease straddling errors with unit and tenant labels alongside
@@ -282,10 +287,14 @@ year dates. Forms constrain long selects to their grid cells at 360 px.
 
 Before/after property, statement and plan form captures, plus batch and WEG captures,
 are in [docs/assets/settlement-period/](docs/assets/settlement-period/), taken on
-the disposable database with synthetic records in "Test Hausverwaltung".
+the disposable database with synthetic records in "Test Hausverwaltung" and
+"Verwaltung Alpha" (lease-clipped statements).
 The `*-before-review-*` files preserve the prior statement and plan captures;
 their refreshed `*-after-*` files show completed November periods and editable
 plan dates. Batch captures show per-lease errors beside the actual result counts.
+The `statement-before-clipping-*` captures preserve the checked-in November-period
+baseline; refreshed `statement-after-*` captures show the selected lease's clipped
+span at 1280 px and 360 px.
 
 ### Permissions area
 

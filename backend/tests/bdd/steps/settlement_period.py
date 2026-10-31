@@ -3,6 +3,7 @@ from pytest_bdd import given, when, then
 from tests.settlement_period_support import period_property, booked, statement, create
 from tests.settlement_period_support import period_data_cleanup  # noqa: F401
 from tests.financial_coverage_helpers import attest_fixture
+from tests.bdd.steps.browser_common import browser_step
 
 
 @given("a mixed property with a tenancy and an April settlement start")
@@ -123,6 +124,73 @@ def former_tenant_calendar_statement(world):
     world.act("POST", "/api/settlements", json=statement(world.data["successive_tenants"]["A"], "2025-01-01", "2025-12-31"))
 
 
+@when("the manager creates a property-period statement for tenant A")
+def clipped_property_statement(world):
+    former_tenant_calendar_statement(world)
+
+
+@then("the created statement ends on 30 September")
+def clipped_property_dates(world):
+    assert world.response.status_code == 201, world.describe_response()
+    assert (world.response.json()["period_start"], world.response.json()["period_end"]) == ("2025-01-01", "2025-09-30")
+
+
+@when("the manager tries to create a free statement extending beyond tenant A's lease")
+def outside_lease_statement(world):
+    world.act("POST", "/api/settlements", json=statement(world.data["successive_tenants"]["A"], "2025-01-01", "2025-10-01"))
+
+
+@then("the statement is refused with a German lease-period error")
+def outside_lease_error(world):
+    assert world.response.status_code == 422, world.describe_response()
+    assert world.response.json()["detail"] == {
+        "code": "settlement_period_outside_lease",
+        "message": "Der Abrechnungszeitraum muss innerhalb der Mietdauer liegen.",
+    }
+
+
+@when("the manager opens the statement picker for tenant A")
+@browser_step
+async def open_lease_picker(browser_world):
+    data = browser_world.world.data["successive_tenants"]["A"]
+    browser_world.page.on("console", lambda message: browser_world.errors.append(message.text)
+                          if message.type == "error" else None)
+    await browser_world.visit("/abrechnungen")
+    await browser_world.page.get_by_role("button", name="+ Neue Abrechnung", exact=True).click()
+    await browser_world.select("Objekt *", data["property"]["id"])
+    await browser_world.select("Mietvertrag *", data["lease"]["id"])
+
+
+@then("the offered and selected statement period ends on 30 September at desktop and mobile widths")
+@browser_step
+async def clipped_picker_widths(browser_world, request):
+    from playwright.async_api import expect
+    from tests.bdd.report import artifact_directory, attach_artifact
+
+    page = browser_world.page
+    assert page.url.endswith("/abrechnungen")
+    assert await page.title() == "Hausverwaltung"
+    await expect(page.get_by_label("Abrechnungszeitraum von *", exact=True)).to_have_value("2025-01-01")
+    await expect(page.get_by_label("Abrechnungszeitraum bis *", exact=True)).to_have_value("2025-09-30")
+    picker = page.get_by_role("combobox", name="Abrechnungszeitraum", exact=True)
+    await expect(picker).to_contain_text("2025 · 01.01.2025 – 30.09.2025")
+    # Explicit selection restores the clipped offer after a free edit.
+    await page.get_by_label("Abrechnungszeitraum bis *", exact=True).fill("2025-08-31")
+    await picker.select_option("2025-01-01")
+    await expect(page.get_by_label("Abrechnungszeitraum bis *", exact=True)).to_have_value("2025-09-30")
+    directory = artifact_directory(request.node)
+    for width in (1280, 360):
+        await page.set_viewport_size({"width": width, "height": 1000})
+        if width == 360:
+            await page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+        await picker.scroll_into_view_if_needed()
+        assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        if directory:
+            capture = directory / f"statement-after-{width}.png"
+            await page.screenshot(path=str(capture), full_page=True, animations="disabled")
+            attach_artifact(request.node, capture)
+
+
 @when("the manager repeats A's January through September statement")
 def repeat_former_tenant_statement(world):
     world.data["repeated_tenant_statement"] = world.run(create(world.actor, "/api/settlements", {
@@ -154,7 +222,7 @@ def annual_operating_cost(world):
     assert answer.status_code == 200, world.describe_response()
 
 
-@when("the manager finalizes calendar-year calculations for both tenants")
+@when("the manager finalizes clipped property-period calculations for both tenants")
 def finalize_calendar_calculations(world):
     world.data["tenant_statements"] = {
         tenant: finalize_tenant_statement(world, data, "2025-01-01", "2025-12-31")

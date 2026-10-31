@@ -21,8 +21,8 @@ Feature: Settlement period
     And a calendar-year property where tenant A leaves on 30 September and tenant B moves in on 1 October
     When the manager finalizes statements for each tenant's occupied months
     Then A's statement covers January through September and B's covers October through December
-    When the manager tries to create a calendar-year statement for tenant A
-    Then the overlapping statement is refused
+    When the manager tries to create a free statement extending beyond tenant A's lease
+    Then the statement is refused with a German lease-period error
     When the manager repeats A's January through September statement
     Then the identical statement can be finalized again
 
@@ -30,8 +30,23 @@ Feature: Settlement period
     Given an administrator of "Verwaltung Alpha" is signed in
     And a calendar-year property where tenant A leaves on 30 September and tenant B moves in on 1 October
     And annual operating costs of 3650 euros for that unit
-    When the manager finalizes calendar-year calculations for both tenants
+    When the manager finalizes clipped property-period calculations for both tenants
     Then A pays 2730 euros for January through September and B pays 920 euros for October through December
+
+  Scenario: A property-period statement is clipped to the former tenant's lease
+    Given an administrator of "Verwaltung Alpha" is signed in
+    And a calendar-year property where tenant A leaves on 30 September and tenant B moves in on 1 October
+    When the manager creates a property-period statement for tenant A
+    Then the created statement ends on 30 September
+    When the manager tries to create a free statement extending beyond tenant A's lease
+    Then the statement is refused with a German lease-period error
+
+  @browser
+  Scenario: The statement picker offers the lease-bounded period on desktop and mobile
+    Given an administrator of "Verwaltung Alpha" is signed in
+    And a calendar-year property where tenant A leaves on 30 September and tenant B moves in on 1 October
+    When the manager opens the statement picker for tenant A
+    Then the offered and selected statement period ends on 30 September at desktop and mobile widths
 
 
   Scenario: A yearly advance is shared between adjacent statements without double credit

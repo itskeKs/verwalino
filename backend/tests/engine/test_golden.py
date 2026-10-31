@@ -14,6 +14,7 @@ Pure-function tests -- no DB, no server.
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
@@ -34,6 +35,75 @@ from app.engine.types import (
 
 YEAR_START = date(2025, 1, 1)
 YEAR_END = date(2025, 12, 31)
+
+
+@pytest.mark.parametrize("amount", ["3650.00", "1000.01", "-1000.01"])
+def test_short_windows_reconcile_successive_leases_and_owner_vacancy(amount):
+    from app.engine.distribution import distribute_position
+    from app.engine.periods import build_unit_cover
+
+    inp = TestGolden3TenantChange()._scenario(_U(21), Decimal("0.00"))
+    leases = [replace(inp.lease_periods[0], valid_to=date(2025, 9, 30)),
+              replace(inp.lease_periods[1], valid_from=date(2025, 10, 1))]
+    # A second unit is vacant all year, with an uneven area share.
+    units = [inp.units[0], replace(inp.units[0], id=_U(12), area=Decimal("37"))]
+    owners = [*inp.owner_periods, replace(inp.owner_periods[0], unit_id=_U(12))]
+    covers = {u.id: build_unit_cover(u.id, YEAR_START, YEAR_END, leases, owners) for u in units}
+    pos = replace(inp.cost_positions[0], gross_amount=Decimal(amount))
+    full = distribute_position(pos, units, covers)
+    windows = [(YEAR_START, date(2025, 9, 30)), (date(2025, 10, 1), YEAR_END)]
+    short = [c for start, end in windows for c in distribute_position(
+        pos, units, covers, period_start=start, period_end=end)]
+    assert sum(c.amount for c in short) == Decimal(amount)
+    for unit in units:
+        for lease in (None, _U(21), _U(22)):
+            assert sum(c.amount for c in short if c.unit_id == unit.id and c.cover.lease_agreement_id == lease) == sum(
+                c.amount for c in full if c.unit_id == unit.id and c.cover.lease_agreement_id == lease)
+
+
+def test_annual_source_in_explicit_ninety_day_window_costs_only_nine_hundred():
+    inp = TestGolden3TenantChange()._scenario(_U(21), Decimal("0.00"))
+    pos = replace(inp.cost_positions[0], gross_amount=Decimal("3650.00"))
+    result = compute_bk_settlement(replace(inp, period_end=date(2025, 3, 31), cost_positions=(pos,)))
+    assert result.total_cost == Decimal("900.00")
+    assert result.computation[0].time_share_total_days == 365
+
+
+def test_explicit_january_september_and_october_december_windows_keep_owner_case():
+    inp = TestGolden3TenantChange()._scenario(_U(21), Decimal("0.00"))
+    leases = (replace(inp.lease_periods[0], valid_to=date(2025, 9, 30)),
+              replace(inp.lease_periods[1], valid_from=date(2025, 10, 1)))
+    inp = replace(inp, lease_periods=leases, cost_positions=(replace(inp.cost_positions[0], gross_amount=Decimal("3650.00")),))
+    a = compute_bk_settlement(replace(inp, period_end=date(2025, 9, 30)))
+    b = compute_bk_settlement(replace(inp, target_lease_agreement_id=_U(22), period_start=date(2025, 10, 1)))
+    assert (a.total_cost, b.total_cost) == (Decimal("2730.00"), Decimal("920.00"))
+    assert a.total_cost + b.total_cost == Decimal("3650.00")
+
+
+def test_undated_external_amount_matches_only_the_clipped_run_occupancy():
+    inp = TestGolden3TenantChange()._scenario(_U(21), Decimal("0.00"))
+    pos = replace(inp.cost_positions[0], tenant_distribution_key="EXTERNE_ABRECHNUNG",
+                  external_amounts=(ExternalAmountInput(unit_id=inp.units[0].id, tenant_amount=Decimal("240.00")),))
+    result = compute_bk_settlement(replace(inp, period_end=date(2025, 6, 30), cost_positions=(pos,)))
+    assert result.total_cost == Decimal("240.00")
+
+
+@pytest.mark.parametrize("amount", ["1000.01", "-1000.01"])
+def test_many_short_windows_cutting_source_cells_reconcile_every_unit(amount):
+    from datetime import timedelta
+    from app.engine.distribution import distribute_position
+    from app.engine.periods import build_unit_cover
+
+    inp = TestGolden1FlaecheTrivial()._scenario(_U(21))
+    pos = replace(inp.cost_positions[0], gross_amount=Decimal(amount))
+    covers = {u.id: build_unit_cover(u.id, YEAR_START, YEAR_END, list(inp.lease_periods), list(inp.owner_periods)) for u in inp.units}
+    full = distribute_position(pos, list(inp.units), covers)
+    windows = [YEAR_START, date(2025, 3, 15), date(2025, 6, 23), date(2025, 12, 17), date(2026, 1, 1)]
+    short = [c for start, stop in zip(windows, windows[1:]) for c in distribute_position(
+        pos, list(inp.units), covers, period_start=start, period_end=stop - timedelta(days=1))]
+    for unit in inp.units:
+        assert sum(c.amount for c in short if c.unit_id == unit.id) == sum(c.amount for c in full if c.unit_id == unit.id)
+    assert sum(c.amount for c in short) == Decimal(amount)
 
 
 def _U(n: int) -> uuid.UUID:
