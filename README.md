@@ -84,6 +84,9 @@ signed in. There is no default password; the token expires after 24 hours, and
 `bash scripts/self-host.sh admin --org "Meine Hausverwaltung" --email admin@example.org`.
 For a new server with a domain, use `bash scripts/self-host.sh init --https <domain>`
 before the first start; DNS and public TCP ports 80/443 must be ready for Caddy.
+Back up with `bash scripts/self-host.sh backup [--out DIR]` and recover with `stop`, then
+`restore FILE [--yes]`; keep `.env.selfhost` separately
+([backup and restore](DEPLOY.md#portable-backup-and-restore)).
 
 The portable stack ships without AI import and AI Q&A, SMTP and automatic invoice
 OCR; manual voucher processing works. Database and documents live in named volumes:
@@ -154,6 +157,7 @@ See the [roadmap](docs/roadmap.md), [feature status](docs/feature-status.md), an
 | Process invoices and declarations | [Invoice extraction](docs/operations/invoice-extraction.md), [declaration imports](docs/operations/declaration-imports.md) |
 | Change Verwalino | [Contributing](CONTRIBUTING.md), [repository rules](AGENTS.md), [design contract](DESIGN.md), [executable scenarios](features/README.md) |
 | Track work | [Roadmap](docs/roadmap.md), [feature status](docs/feature-status.md) |
+| Work on the public website | [Website guide](website/README.md) |
 
 The whole map is [docs/README.md](docs/README.md).
 

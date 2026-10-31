@@ -1,0 +1,65 @@
+---
+import { t, type Locale } from "../i18n";
+import { pathFor, type Page } from "../content/routes";
+import Wordmark from "./Wordmark.astro";
+interface Props { locale: Locale; page: Page }
+const { locale, page } = Astro.props;
+const text = t(locale);
+---
+<header class="site-header">
+<div class="wrap header-grid">
+<a class="brand" href={pathFor(locale, "landing")} aria-label={text("brand.label")} >
+<Wordmark /></a>
+<div class="tools">
+<div class="language" role="group" aria-label={text("language.label")} >
+<a href={pathFor("de", page)} lang="de" hreflang="de" aria-current={locale === "de" ? "page" : undefined}>DE</a>
+<span aria-hidden="true">|</span>
+<a href={pathFor("en", page)} lang="en" hreflang="en" aria-current={locale === "en" ? "page" : undefined}>EN</a>
+</div>
+<button class="icon-button theme-toggle" type="button" aria-label={text("theme")}  aria-pressed="false">
+<svg viewBox="0 0 24 24" aria-hidden="true">
+<rect x="4" y="4" width="16" height="16"/>
+<path d="M12 4v16M12 4l8 16"/>
+</svg>
+</button>
+<button class="icon-button menu-toggle" type="button" aria-controls="navigation" aria-expanded="false" aria-label={text("menu")} data-open-label={text("menu")} data-close-label={text("menu.close")}>
+<svg viewBox="0 0 24 24" aria-hidden="true">
+<path d="M3 6h18M3 12h18M3 18h18"/>
+</svg>
+</button>
+</div>
+<nav id="navigation" class="navigation" aria-label={text("nav.label")} >
+<div class="nav-links">
+<a href={`${pathFor(locale, "landing")}#features`}>
+<span>{text("nav.features")}</span>
+</a>
+<a href={`${pathFor(locale, "landing")}#hosting`}>
+<span>{text("nav.hosting")}</span>
+</a>
+<a href={`${pathFor(locale, "landing")}#how`}>
+<span>{text("nav.how")}</span>
+</a>
+<a href={`${pathFor(locale, "landing")}#faq`}>
+<span>{text("nav.faq")}</span>
+</a>
+</div>
+<div class="ctas header-ctas">
+<a class="button primary" href={pathFor(locale, "signup")}>
+<span>{text("cta.start")}</span>
+<small>
+<span>{text("soon")}</span>
+</small>
+<svg viewBox="0 0 24 24" aria-hidden="true">
+<path d="M4 12h15M13 6l6 6-6 6"/>
+</svg>
+</a>
+<a class="button secondary" href={pathFor(locale, "selfhost")}>
+<span>{text("cta.self")}</span>
+<svg viewBox="0 0 24 24" aria-hidden="true">
+<path d="M4 12h15M13 6l6 6-6 6"/>
+</svg>
+</a>
+</div>
+</nav>
+</div>
+</header>

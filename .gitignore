@@ -17,6 +17,9 @@ htmlcov/
 .env
 .env.*
 !.env.example
+backups/
+verwalino-backup-*.tar
+.verwalino-backup.*
 
 # Node / Frontend (kommt in M0-Schritt 2)
 node_modules/
