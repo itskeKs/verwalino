@@ -142,3 +142,31 @@ def test_import_rejects_a_duplicate_category_before_the_module_can_be_used():
     result = subprocess.run([sys.executable, '-c', source], capture_output=True, text=True)
     assert result.returncode != 0
     assert 'Duplicate' in result.stderr
+
+
+def test_every_seeded_global_category_has_an_explicit_default_or_review_assignment():
+    import importlib
+
+    seed = importlib.import_module('migrations.versions.0005_cost_category').SEED_CATEGORIES
+    assert {row['code'] for row in seed} <= DEFAULT_CATEGORY_MAPPING.keys()
+
+
+def test_documentation_renders_the_complete_line_and_mapping_tables_without_drift():
+    from pathlib import Path
+
+    labels = {line.key: line.label for line in ANLAGE_V_LINES}
+    expected = {
+        'lines': [
+            '| Key | German detail label | Section |', '| --- | --- | --- |',
+            *(f'| `{line.key}` | {line.label} | {line.section} |' for line in ANLAGE_V_LINES),
+        ],
+        'mapping': [
+            '| Category / income code | German detail label | Judgement note |', '| --- | --- | --- |',
+            *(f'| `{row.code}` | {labels.get(row.line_key, "Nicht zugeordnet")} | {row.note} |'
+              for row in DEFAULT_CATEGORY_MAPPING.values()),
+        ],
+    }
+    document = (Path(__file__).resolve().parents[3] / 'docs/m6-zahlungen-mietkonto.md').read_text()
+    for table, rows in expected.items():
+        section = document.split(f'<!-- anlage-v-{table}:start -->\n', 1)[1].split(f'\n<!-- anlage-v-{table}:end -->', 1)[0]
+        assert section.splitlines() == rows
