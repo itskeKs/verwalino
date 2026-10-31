@@ -1,11 +1,16 @@
-"""Password recovery through HTTP and captured SMTP."""
+"""Password recovery through HTTP and real SMTP, read back from Mailpit."""
+import re
+from urllib.parse import parse_qs, urlsplit
+
 from pytest_bdd import given, then, when
-from tests.password_reset_support import MESSAGE, NEW_PASSWORD, reset_token
+
+from app.core.config import settings
+from tests.password_reset_support import MESSAGE, NEW_PASSWORD
 
 
-@given('password reset mail is captured')
-def captured_reset_mail(world, signup_mail):
-    world.data['reset_mail'] = signup_mail
+@given('a test mailbox for password recovery')
+def reset_mailbox(mailpit, monkeypatch):
+    monkeypatch.setattr(settings, 'public_host', 'signup.example.test')
 
 
 @when('the user requests a password reset link')
@@ -14,9 +19,38 @@ def request_reset(world):
     assert (answer.status_code, answer.json()) == (202, MESSAGE)
 
 
-@then('a password reset email is sent')
-def reset_mail_sent(world):
-    world.data['reset_token'] = reset_token(world.data['reset_mail'])
+def mailbox_message(world, mailpit, subject):
+    recipient = world.data['email']
+    message = mailpit.wait_for_message(recipient)
+    assert [address['Address'] for address in message['To']] == [recipient]
+    assert message['From']['Address'] == settings.smtp_from
+    assert message['Subject'] == subject
+    return message
+
+
+@then('the test mailbox receives a password reset email with the correct recipient, sender, subject and token link')
+def reset_mail_sent(world, mailpit):
+    message = mailbox_message(world, mailpit, 'Verwalino: Passwort zurücksetzen')
+    assert '1 Stunde' in message['Text']
+    match = re.search(r'https://\S+', message['Text'])
+    assert match, 'The password reset email must contain an HTTPS link'
+    link = urlsplit(match[0])
+    assert (link.scheme, link.netloc, link.path) == ('https', 'signup.example.test', '/passwort-zuruecksetzen')
+    query = parse_qs(link.query)
+    assert list(query) == ['token']
+    assert len(query['token']) == 1
+    token = query['token'][0]
+    assert re.fullmatch(r'[0-9a-f]{64}', token), 'The emailed link must contain the password reset token'
+    world.data['reset_token'] = token
+    # The next delivery must be the confirmation, not the already-read reset link.
+    mailpit.clear()
+
+
+@then('the test mailbox receives a password reset confirmation email')
+def reset_confirmation_sent(world, mailpit):
+    message = mailbox_message(world, mailpit, 'Verwalino: Passwort geändert')
+    assert 'Ihr Passwort wurde geändert' in message['Text']
+    assert 'Alle bisherigen Sitzungen wurden beendet' in message['Text']
 
 
 @when('the user submits a new password through the emailed link')
@@ -37,8 +71,8 @@ def revoked_reset_session(world):
 
 
 @when('the user submits the captured recovery link')
-def submit_captured_reset(world):
-    world.data['reset_token'] = reset_token(world.data['reset_mail'])
+def submit_captured_reset(world, mailpit):
+    reset_mail_sent(world, mailpit)
     submit_reset(world)
 
 

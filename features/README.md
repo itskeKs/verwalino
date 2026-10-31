@@ -72,7 +72,7 @@ polls for up to three seconds. It reads `/api/v1/messages` and
 token; confirmation then uses that emailed token. Missing configuration or an unreachable
 API fails the scenario with setup instructions, never skips it. The helper is reusable
 for other mail acceptance scenarios; FakeSMTP remains for mail-service unit tests.
-`password_reset.feature` is untagged and verifies mailbox recovery and old-session revocation in both modes with the SMTP capture double.
+`password_reset.feature` is untagged and verifies recovery through Mailpit, the emailed reset token, confirmation mail and old-session revocation in both modes.
 Organization isolation scenarios run in both modes. Browser app processes inherit the
 selected mode too; `@browser` remains a separate opt-in tag. Browser scenarios do not
 send mail, so only CI's backend job provisions the same digest-pinned Mailpit service.

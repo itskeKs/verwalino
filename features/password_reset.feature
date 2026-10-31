@@ -4,11 +4,12 @@ Feature: Password reset
 
   Scenario: A forgotten password is replaced through email
     Given a user who is signed in
-    And password reset mail is captured
+    And a test mailbox for password recovery
     When the user requests a password reset link
-    Then a password reset email is sent
+    Then the test mailbox receives a password reset email with the correct recipient, sender, subject and token link
     When the user submits a new password through the emailed link
     Then the password reset is accepted without signing in
+    And the test mailbox receives a password reset confirmation email
     And the old session is no longer valid
     And the user can sign in with the new password
     And the user can no longer sign in with the old password
