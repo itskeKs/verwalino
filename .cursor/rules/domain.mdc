@@ -33,5 +33,5 @@ not re-open the question.
   (no permanent preparation mode) and its admin UI becomes one coherent permissions area instead
   of five menu items (#33; implementation #73).
 - Tenant portal: planned right after the hosted launch, not last (#33, #41).
-- Roadmap order and open domain work: `docs/roadmap.md`; external reference software in
-  `docs/domain-reference.md` defines scope and flows, never design.
+- Roadmap order and open domain work: `docs/roadmap.md` and the domain issues define scope and
+  flows, never design.
