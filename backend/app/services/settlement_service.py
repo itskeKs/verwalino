@@ -375,13 +375,14 @@ class SettlementService:
             if existing_run is not None:
                 skipped.append((existing_run, reason))
             else:
-                if (start, end) != (period_start, period_end) and any(
-                    run.lease_agreement_id == lease.id and run.status == "draft"
-                    and run.period_start <= start and run.period_end >= end for run in existing
-                ):
-                    errors.append((lease.id, SettlementPeriodConflict(
+                overlapping = next((run for run in existing
+                    if run.lease_agreement_id == lease.id
+                    and run.period_start <= end and run.period_end >= start), None)
+                if overlapping is not None:
+                    conflict = SettlementPeriodConflict(
                         "Abrechnungszeitraum überschneidet einen bestehenden Entwurf dieses Mietvertrags."
-                    ).detail))
+                    ) if overlapping.status == "draft" else SettlementPeriodConflict()
+                    errors.append((lease.id, conflict.detail))
                     continue
                 try:
                     created.append(await self.create_draft(

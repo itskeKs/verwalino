@@ -33,7 +33,8 @@ period bounds are identical (repeat/correction runs). For finalized bounds
 shared starts or ends and overlap on a boundary day all conflict. Mixed batches
 report conflicting leases as per-lease errors, create the other drafts, and
 continue skipping identical existing runs. An entirely conflicting batch retains
-409. Drafts never block creation. Short transition
+409. Drafts do not block single-statement creation. Batches skip identical drafts
+and reject any other overlapping draft of the same lease. Short transition
 periods remain possible after a property's start month changes. An
 inclusive period from 29 February 2024 through 28 February 2025 is twelve months
 and is accepted.
@@ -48,9 +49,10 @@ is intersected with the target lease's active span at creation. Batch creation
 intersects its selected period separately for each overlapping lease; repeats
 match the resulting clipped dates. A finalized legacy run that already covers
 that clipped span is skipped with a German reason; partial overlaps remain batch
-errors and single creation retains the overlap 409. A wider legacy **draft** covering
-the clipped span causes a batch overlap error; only finalized covering runs receive
-this skip. Identical existing drafts are still skipped. Stored lease bounds are half-open
+errors and single creation retains the overlap 409. Any nonidentical **draft** overlap,
+whether covering, contained or partial, causes a batch overlap error; only finalized
+covering runs receive this skip. Identical existing drafts are still skipped, and a
+batch never creates another overlapping draft for that lease. Stored lease bounds are half-open
 `[valid_from, valid_to)`, so the inclusive statement ends on `valid_to - 1 day`.
 Free dates must be entirely inside the lease, including for scope-only clerks
 without property read access. A free period outside the lease, or a property
@@ -98,16 +100,20 @@ a short statement selects its balanced cells afterward.
 Area, heated area, units, MEA, persons and fixed manual amounts split by days through
 the central rounding module. Consumption quantities are measured over the property
 period. An interim reading on the outgoing tenant's last occupied day **or** the
-incoming tenant's first day denotes the same half-open boundary. More than one
-reading across these two dates is ambiguous and requires manual entry with a clear
-reason; no arbitrary reading is selected. Exact interim readings split its consumption;
+incoming tenant's first day denotes the same half-open boundary. Consistent duplicate
+readings across these dates or on the same day count as one counter value, selected
+in stable date/ID order. Conflicting values require manual entry with a clear
+reason. Property-period opening/closing readings never compete as interim readings.
+Exact interim readings split its consumption;
 missing interim readings split the known unit consumption by days, by analogy to
 §9b HeizkostenV. Other units need only their own period readings. Manual period
 consumption without interim readings uses the same day fallback, with a reason
 shown in suggestions and frozen in the automatic source snapshot. Interim readings
-are excluded from the nearest property-period start/end selection: a 14 December
+at a direct change between two leases are excluded from the nearest property-period
+start/end selection: a 14 December
 tenant-change reading cannot replace a missing year-end reading and manufacture a
-zero for the successor. Missing or ambiguous period quantities require manual input
+zero for the successor. Readings at a lease/vacancy boundary remain ordinary period
+reading candidates within the existing ±31-day tolerance. Missing or ambiguous period quantities require manual input
 with a reason; they are not estimated. Manual unit consumption always denotes the
 **whole property-year quantity**, including for clipped statements. Person counts
 are per-unit property-year weights and must be entered consistently in every run
@@ -587,7 +593,10 @@ user is the opening reading of the subsequent user. Without an interim reading, 
 unit-period consumption is split by degree-days if available, otherwise by days; the
 current engine has no degree-day inputs, so it uses days. Basic costs always split by
 days. This does not estimate missing unit-period consumption under §9a: missing or
-ambiguous period readings still require transparent manual values. A 10,000-euro pool
+ambiguous period readings still require transparent manual values. Heating suggestions
+retain independently measured slices when another slice cannot be resolved. A day-based
+slice shows the enclosing readings as its period or segment basis and explicitly states
+its day share; those readings are not presented as a direct slice measurement. A 10,000-euro pool
 with 70% consumption and the 600/400/1,000 quantities from §3 gives A/B/C
 3,221.92 / 1,778.08 / 5,000.00 euros, totaling exactly 10,000.00 euros. Vacancy
 retains the gross owner share; only for tenants, in the explicitly chosen

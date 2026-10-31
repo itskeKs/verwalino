@@ -125,14 +125,42 @@ async def test_nonidentical_overlaps_with_finalized_statements_are_rejected(clie
     await create(api, "/api/settlements", statement(april, "2026-04-01", "2026-12-31"))
 
 
-@pytest.mark.parametrize("batch", [False, True])
-async def test_overlapping_drafts_do_not_block_statement_creation(client_a_admin, april, batch):
+async def test_overlapping_drafts_do_not_block_single_statement_creation(client_a_admin, april):
     await create(client_a_admin, "/api/settlements", statement(april))
     body = statement(april, "2026-01-01", "2026-12-31")
-    if batch:
-        body.pop("lease_agreement_id")
-    answer = await client_a_admin.post("/api/settlements" + ("/batch" if batch else ""), json=body)
-    assert answer.status_code == (200 if batch else 201), answer.text
+    answer = await client_a_admin.post("/api/settlements", json=body)
+    assert answer.status_code == 201, answer.text
+
+
+@pytest.mark.parametrize("start,end", [
+    ("2025-04-01", "2026-03-31"),  # Covers the clipped span.
+    ("2025-04-01", "2025-06-30"),  # Contained in it.
+    ("2025-07-01", "2025-12-31"),  # Straddles its end.
+    ("2025-09-30", "2025-12-31"),  # Overlaps on the inclusive last day.
+])
+async def test_batch_refuses_any_nonidentical_draft_overlap_after_clipping(client_a_admin, april, start, end):
+    api = client_a_admin
+    await create(api, "/api/settlements", statement(april, start, end))
+    changed = await api.patch(f"/api/leases/{april['lease']['id']}", json={"valid_to": "2025-09-30"})
+    assert changed.status_code == 200, changed.text
+    body = statement(april)
+    body.pop("lease_agreement_id")
+    before = (await api.get("/api/settlements", params={"property_id": april['property']['id']})).json()
+    answer = await api.post("/api/settlements/batch", json=body)
+    assert answer.status_code == 409, answer.text
+    assert answer.json()["detail"] == {
+        "code": "settlement_period_conflict",
+        "message": "Abrechnungszeitraum überschneidet einen bestehenden Entwurf dieses Mietvertrags.",
+    }
+    assert (await api.get("/api/settlements", params={"property_id": april['property']['id']})).json() == before
+
+
+async def test_batch_refuses_partial_draft_overlap_without_clipping(client_a_admin, april):
+    await create(client_a_admin, "/api/settlements", statement(april))
+    body = statement(april, "2026-01-01", "2026-12-31")
+    body.pop("lease_agreement_id")
+    answer = await client_a_admin.post("/api/settlements/batch", json=body)
+    assert answer.status_code == 409, answer.text
 
 
 @pytest.mark.parametrize("batch", [False, True])

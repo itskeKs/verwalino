@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
-from app.engine.meter_consumption import MeterConsumptionError, MeterReadingInput, derive_consumption, split_consumption
+from app.engine.meter_consumption import MeterConsumptionError, MeterReadingInput, boundary_reading, derive_consumption, split_consumption
 from app.engine.periods import build_unit_cover, period_for_date, property_period_windows
 from app.engine.types import HeatingPositionInput, HeatingSliceInput, LeasePeriodInput, OwnerPeriodInput
 from app.repositories.meter_repo import MeterRepository, MeterReadingRepository
@@ -98,12 +98,6 @@ class HeatingInputService:
                 return {'id':str(r.id),'reading_date':r.reading_date.isoformat(),'value':f'{r.value:.4f}'}
 
             for index, cover in enumerate(covers):
-                # An interim reading at the end of the outgoing tenant's last
-                # day is also the incoming tenant's opening counter value.
-                opening = cover.start if cover.start==start else cover.start-timedelta(days=1)
-                readings = await repository.list_boundary_readings([matches[0].id],opening,cover.end) if len(matches)==1 else []
-                selected = [MeterReadingInput(r.id,r.reading_date,r.value) for r in readings
-                            if r.reading_date in {opening,cover.end}]
                 physical = unit.area if base_key=='AREA' else unit.heated_area if base_key=='HEATED_AREA' else None
                 item = {'unit_id':str(unit.id),'unit_label':unit.number,
                     'period_from':cover.start.isoformat(),'period_to':cover.end.isoformat(),
@@ -113,23 +107,26 @@ class HeatingInputService:
                     'consumption':None,'meter_id':None,'start_reading':None,'end_reading':None,'reason':None}
                 if len(matches)!=1:
                     item['reason']='Handeingabe erforderlich: kein eindeutig passender Einheitszähler.'
-                elif split_error is not None:
-                    item['reason']=split_error
                 else:
                     try:
-                        # No nearest-date interpolation for §9b occupant slices.
-                        if not any(r.reading_date==opening for r in selected) or not any(r.reading_date==cover.end for r in selected):
-                            raise MeterConsumptionError('Handeingabe erforderlich: exakte Grenz-/Zwischenablesung fehlt.')
-                        measured = derive_consumption(selected,opening,cover.end)
-                    except MeterConsumptionError as exc:
-                        if quantities:
+                        # Both dates at an occupant boundary denote one counter
+                        # value; period endpoints never compete as interim rows.
+                        opening_dates = {start} if cover.start == start else {cover.start-timedelta(days=1), cover.start} - {start, end}
+                        closing_dates = {end} if cover.end == end else {cover.end, cover.end+timedelta(days=1)} - {start, end}
+                        first = boundary_reading([r for r in period_readings if r.reading_date in opening_dates])
+                        last = boundary_reading([r for r in period_readings if r.reading_date in closing_dates])
+                        measured = derive_consumption([first, last], first.reading_date, last.reading_date)
+                    except MeterConsumptionError:
+                        if split_error is None:
+                            first, last, days = split.bases[index]
                             annual = split.measured
+                            label = 'Periodenbasis' if (first, last) == (annual.start_reading, annual.end_reading) else 'Abschnittsbasis'
                             item.update(consumption=str(quantities[index][2]),
-                                meter_id=str(matches[0].id), start_reading=reading(annual.start_reading),
-                                end_reading=reading(annual.end_reading),
-                                reason=split.reason)
+                                meter_id=str(matches[0].id), start_reading=reading(first),
+                                end_reading=reading(last),
+                                reason=f'{split.reason or "Aufteilung nach Tagen."} {label}: {first.reading_date} → {last.reading_date}; Tagesanteil {cover.days}/{days}.')
                         else:
-                            item['reason']=str(exc)
+                            item['reason']=split_error
                     else:
                         item.update(consumption=f'{measured.consumption:.4f}',meter_id=str(matches[0].id),
                             start_reading=reading(measured.start_reading),end_reading=reading(measured.end_reading))

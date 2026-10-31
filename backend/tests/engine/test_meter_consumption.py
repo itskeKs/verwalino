@@ -66,6 +66,49 @@ def test_december_interim_reading_cannot_replace_a_missing_period_end_reading():
                           START, END, changed_unit_covers(date(2026, 12, 15)))
 
 
+@pytest.mark.parametrize("lease_start,lease_end,rows", [
+    (date(2026, 1, 5), None, [(date(2026, 1, 5), "10"), (END, "1000")]),
+    (START, date(2026, 12, 20), [(START, "0"), (date(2026, 12, 20), "990")]),
+])
+def test_vacancy_boundary_readings_can_supply_the_period_quantity(lease_start, lease_end, rows):
+    from app.engine.meter_consumption import split_consumption
+    from app.engine.periods import build_unit_cover
+    from app.engine.types import LeasePeriodInput
+
+    unit = uuid4()
+    covers = build_unit_cover(unit, START, END, [
+        LeasePeriodInput(uuid4(), unit, uuid4(), lease_start, lease_end),
+    ], [])
+    result = split_consumption([reading(day, value) for day, value in rows], START, END, covers)
+    assert result.measured.consumption == Decimal(990)
+    assert sum(q for _, _, q in result.periods) == Decimal(990)
+    assert result.reason is None
+
+
+@pytest.mark.parametrize("change,interim,value", [
+    (date(2026, 1, 2), date(2026, 1, 2), "5"),
+    (date(2026, 12, 31), date(2026, 12, 30), "995"),
+])
+def test_period_endpoint_readings_do_not_compete_with_interim_readings(change, interim, value):
+    from app.engine.meter_consumption import split_consumption
+
+    result = split_consumption([reading(START, "0"), reading(interim, value), reading(END, "1000")],
+                               START, END, changed_unit_covers(change))
+    assert [q for _, _, q in result.periods] == [Decimal(value), Decimal(1000) - Decimal(value)]
+    assert result.reason is None
+
+
+@pytest.mark.parametrize("second_day", [date(2026, 9, 30), date(2026, 10, 1)])
+def test_consistent_interim_duplicates_have_one_counter_value(second_day):
+    from app.engine.meter_consumption import split_consumption
+
+    result = split_consumption([reading(START, "0"), reading(END, "1000"),
+                               reading(date(2026, 9, 30), "600"), reading(second_day, "600")],
+                              START, END, changed_unit_covers())
+    assert [q for _, _, q in result.periods] == [Decimal(600), Decimal(400)]
+    assert result.reason is None
+
+
 def test_exact_consumption_and_original_boundary_identity():
     first, last = reading(START, "100.0000"), reading(END, "250.1250")
     result = derive_consumption((last, first), START, END)
@@ -104,10 +147,9 @@ def test_equidistant_dates_are_not_arbitrarily_prioritized():
         derive_consumption(rows, START, END)
 
 
-def test_duplicate_boundary_day_is_ambiguous_even_for_equal_values():
+def test_consistent_period_boundary_duplicates_have_one_counter_value():
     rows = (reading(START, "10"), reading(START, "10"), reading(END, "40"))
-    with pytest.raises(MeterConsumptionError, match="Handeingabe"):
-        derive_consumption(rows, START, END)
+    assert derive_consumption(rows, START, END).consumption == Decimal(30)
 
 
 def test_one_reading_cannot_supply_both_boundaries():
