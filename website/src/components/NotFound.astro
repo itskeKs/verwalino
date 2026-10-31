@@ -1,0 +1,15 @@
+---
+import { t, type Locale } from '../i18n';
+import { pathFor } from '../content/routes';
+interface Props { locale: Locale }
+const { locale } = Astro.props;
+const text = t(locale);
+---
+<article class="document wrap">
+  <header class="document-head">
+    <p class="eyebrow">404</p>
+    <h1>{text('page.notfound.title')}</h1>
+    <p class="document-lead">{text('page.notfound.description')}</p>
+  </header>
+  <a class="button primary" href={pathFor(locale, 'landing')}>{text('page.home')} <span aria-hidden="true">→</span></a>
+</article>

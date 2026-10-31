@@ -1,8 +1,8 @@
-# Moon Alpha Deployment Implementation Plan
+# Alpha Host Deployment Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [ ]) syntax for tracking.
 
-**Goal:** Deploy the verified hardened image to moon.fogu.io and make it safely reachable at https://verwaltung.karat.immo.
+**Goal:** Deploy the verified hardened image to <host> and make it safely reachable at https://verwaltung.<customer>.immo.
 
 **Architecture:** Source is transferred into a new versioned release directory and built on the x86_64 host. A stable Compose project owns only this app's containers and volumes, while labels connect the app to the existing external Traefik network. Secrets live in one mode-0600 shared environment file and never enter the repository or image.
 
@@ -12,10 +12,10 @@
 
 ## Operational boundaries
 
-- The user explicitly authorized SSH and deployment to chris@moon.fogu.io.
+- The user explicitly authorized SSH and deployment to <user>@<host>.
 - Do not use sudo unless a read-only preflight proves it is unavoidable. The
   user is already in the docker group and the deployment root is under
-  /home/chris.
+  /home/<user>.
 - Do not stop, restart, reconfigure, prune, or inspect secret environments of
   foreign containers.
 - Do not change the central Traefik Compose project. Only attach the new app
@@ -49,15 +49,15 @@ work plus reviewed hardening changes. Do not deploy an unreviewed diff.
 Run:
 
 ~~~bash
-dig @1.1.1.1 +short A verwaltung.karat.immo
-dig @1.1.1.1 +short AAAA verwaltung.karat.immo
+dig @1.1.1.1 +short A verwaltung.<customer>.immo
+dig @1.1.1.1 +short AAAA verwaltung.<customer>.immo
 printf '' | openssl s_client \
-  -connect verwaltung.karat.immo:443 \
-  -servername verwaltung.karat.immo 2>/dev/null \
+  -connect verwaltung.<customer>.immo:443 \
+  -servername verwaltung.<customer>.immo 2>/dev/null \
   | openssl x509 -noout -subject -issuer
 ~~~
 
-Expected before deployment: A is 62.171.188.19, AAAA is empty, and the current
+Expected before deployment: A is <ip>, AAAA is empty, and the current
 certificate may still be TRAEFIK DEFAULT CERT.
 
 - [ ] **Step 3: Capture a non-secret remote baseline**
@@ -65,7 +65,7 @@ certificate may still be TRAEFIK DEFAULT CERT.
 Run:
 
 ~~~bash
-ssh -o BatchMode=yes chris@moon.fogu.io \
+ssh -o BatchMode=yes <user>@<host> \
   'docker ps --format "{{.Names}}|{{.Image}}|{{.Ports}}|{{.Status}}";
    docker network inspect traefik --format "{{.Name}} {{.Driver}}";
    ss -lnt;
@@ -81,10 +81,10 @@ remains. Save only names/ports/status for the post-deploy comparison.
 Run:
 
 ~~~bash
-ssh chris@moon.fogu.io \
+ssh <user>@<host> \
   'docker ps -a --format "{{.Names}}" | grep -E "^hausverwaltung-alpha-" || true;
-   test ! -e /home/chris/apps/hausverwaltung-alpha ||
-     find /home/chris/apps/hausverwaltung-alpha -maxdepth 2 -type f -name .env -prune -o -type f -print'
+   test ! -e /srv/<app> ||
+     find /srv/<app> -maxdepth 2 -type f -name .env -prune -o -type f -print'
 ~~~
 
 Expected for first deployment: no stack containers. If a deployment directory
@@ -117,11 +117,11 @@ run in the same controlled shell session or receive that exact validated value.
 Run with the resolved release ID:
 
 ~~~bash
-ssh chris@moon.fogu.io \
-  "install -d -m 700 /home/chris/apps/hausverwaltung-alpha;
-   install -d -m 700 /home/chris/apps/hausverwaltung-alpha/releases;
-   install -d -m 700 /home/chris/apps/hausverwaltung-alpha/shared;
-   install -d -m 700 /home/chris/apps/hausverwaltung-alpha/releases/$HV_RELEASE_ID"
+ssh <user>@<host> \
+  "install -d -m 700 /srv/<app>;
+   install -d -m 700 /srv/<app>/releases;
+   install -d -m 700 /srv/<app>/shared;
+   install -d -m 700 /srv/<app>/releases/$HV_RELEASE_ID"
 ~~~
 
 Do not use a glob or recursive deletion.
@@ -140,7 +140,7 @@ rsync -a --compress \
   --exclude='frontend/dist/' \
   --exclude='**/__pycache__/' \
   --exclude='backend/.pytest_cache/' \
-  ./ "chris@moon.fogu.io:/home/chris/apps/hausverwaltung-alpha/releases/$HV_RELEASE_ID/"
+  ./ "<user>@<host>:/srv/<app>/releases/$HV_RELEASE_ID/"
 ~~~
 
 Use the literal release ID. Do not use --delete. Verify remotely that no .env,
@@ -207,7 +207,7 @@ remote write:
 ~~~bash
 {
   printf 'COMPOSE_PROJECT_NAME=hausverwaltung-alpha\n'
-  printf 'APP_DOMAIN=verwaltung.karat.immo\n'
+  printf 'APP_DOMAIN=verwaltung.<customer>.immo\n'
   printf 'POSTGRES_DB=hausverwaltung\n'
   printf 'APP_IMAGE=hausverwaltung-alpha:%s\n' "$HV_RELEASE_ID"
   printf 'MIGRATOR_PASSWORD=%s\n' "$HV_MIGRATOR_PASSWORD"
@@ -219,10 +219,10 @@ remote write:
   printf 'SESSION_MAX_AGE_SECONDS=7200\n'
   printf 'WEB_CONCURRENCY=2\n'
   printf 'FORWARDED_ALLOW_IPS=172.21.0.0/16\n'
-} | ssh chris@moon.fogu.io '
+} | ssh <user>@<host> '
   set -eu
   umask 077
-  HV_ENV_TMP="$(mktemp /home/chris/apps/hausverwaltung-alpha/shared/.env.XXXXXX)"
+  HV_ENV_TMP="$(mktemp /srv/<app>/shared/.env.XXXXXX)"
   trap "rm -f -- $HV_ENV_TMP" EXIT HUP INT TERM
   dd of="$HV_ENV_TMP" status=none
   test "$(grep -c "^MIGRATOR_PASSWORD=" "$HV_ENV_TMP")" -eq 1
@@ -230,12 +230,12 @@ remote write:
   test "$(grep -c "^SESSION_SECRET=" "$HV_ENV_TMP")" -eq 1
   test "$(grep -c "^BASIC_AUTH_USERS=" "$HV_ENV_TMP")" -eq 1
   chmod 600 "$HV_ENV_TMP"
-  mv -f -- "$HV_ENV_TMP" /home/chris/apps/hausverwaltung-alpha/shared/.env
+  mv -f -- "$HV_ENV_TMP" /srv/<app>/shared/.env
   trap - EXIT HUP INT TERM
 '
 ~~~
 
-On moon this sets umask 077, writes a new temporary file inside the scoped
+On the alpha host this sets umask 077, writes a new temporary file inside the scoped
 shared directory, validates required variables exactly once, applies mode 0600,
 and atomically renames it to .env.
 
@@ -243,7 +243,7 @@ The resulting non-secret settings are:
 
 ~~~text
 COMPOSE_PROJECT_NAME=hausverwaltung-alpha
-APP_DOMAIN=verwaltung.karat.immo
+APP_DOMAIN=verwaltung.<customer>.immo
 POSTGRES_DB=hausverwaltung
 APP_IMAGE=hausverwaltung-alpha:$HV_RELEASE_ID
 SESSION_COOKIE_NAME=__Host-hv_session
@@ -258,17 +258,17 @@ SESSION_SECRET, and BASIC_AUTH_USERS. Expand the validated HV_RELEASE_ID while
 building the temporary file. Never display the file with cat or docker compose
 config after real secrets are present.
 
-### Task 4: Build, inspect, and scan on moon
+### Task 4: Build, inspect, and scan on the alpha host
 
 - [ ] **Step 1: Build the immutable release image**
 
 Run remotely from the versioned release:
 
 ~~~bash
-ssh chris@moon.fogu.io \
+ssh <user>@<host> \
   "docker build --pull \
     --tag hausverwaltung-alpha:$HV_RELEASE_ID \
-    /home/chris/apps/hausverwaltung-alpha/releases/$HV_RELEASE_ID"
+    /srv/<app>/releases/$HV_RELEASE_ID"
 ~~~
 
 Expected: frontend lint/tests/build and locked backend installation succeed.
@@ -278,7 +278,7 @@ Expected: frontend lint/tests/build and locked backend installation succeed.
 Run:
 
 ~~~bash
-ssh chris@moon.fogu.io \
+ssh <user>@<host> \
   "docker image inspect hausverwaltung-alpha:$HV_RELEASE_ID \
     --format '{{.Config.User}} {{json .Config.Entrypoint}}';
    docker run --rm --entrypoint python hausverwaltung-alpha:$HV_RELEASE_ID \
@@ -313,8 +313,8 @@ Run:
 ~~~bash
 docker compose \
   --project-name hausverwaltung-alpha \
-  --env-file /home/chris/apps/hausverwaltung-alpha/shared/.env \
-  -f "/home/chris/apps/hausverwaltung-alpha/releases/$HV_RELEASE_ID/docker-compose.prod.yml" \
+  --env-file /srv/<app>/shared/.env \
+  -f "/srv/<app>/releases/$HV_RELEASE_ID/docker-compose.prod.yml" \
   config --services
 ~~~
 
@@ -352,8 +352,8 @@ HV_DATABASE_URL_SYNC do not exist. Only variable names are printed.
 Use:
 
 ~~~text
-organization: Karat Hausverwaltung Alpha
-email: admin@verwaltung.karat.immo
+organization: <customer> Hausverwaltung Alpha
+email: admin@verwaltung.<customer>.immo
 display name: Alpha Admin
 ~~~
 
@@ -367,7 +367,7 @@ user.
 - [ ] **Step 1: Wait for a trusted certificate**
 
 Poll HTTPS with normal certificate verification for at most three minutes.
-Expected certificate SAN includes verwaltung.karat.immo, issuer is a trusted
+Expected certificate SAN includes verwaltung.<customer>.immo, issuer is a trusted
 Let's Encrypt chain, and the self-signed Traefik default certificate is gone.
 
 - [ ] **Step 2: Verify unauthenticated boundary**
@@ -376,7 +376,7 @@ Run:
 
 ~~~bash
 curl -sS -o /dev/null -w '%{http_code}\n' \
-  https://verwaltung.karat.immo/
+  https://verwaltung.<customer>.immo/
 ~~~
 
 Expected: 401 with WWW-Authenticate. HTTP redirects permanently to HTTPS.
@@ -403,7 +403,7 @@ GET /api/health/ready
 ~~~
 
 Expected: login 200, Secure/HttpOnly/SameSite cookie, session role OWNER_ADMIN,
-organization Karat Hausverwaltung Alpha, readiness 200. Remove the cookie jar
+organization <customer> Hausverwaltung Alpha, readiness 200. Remove the cookie jar
 with a trap.
 
 - [ ] **Step 5: Verify traversal and upload edge behavior publicly**
@@ -425,7 +425,7 @@ hausverwaltung-alpha containers are new.
 Atomically update:
 
 ~~~text
-/home/chris/apps/hausverwaltung-alpha/current
+/srv/<app>/current
 ~~~
 
 to the successful release directory. Record release ID, image ID, Alembic head,
