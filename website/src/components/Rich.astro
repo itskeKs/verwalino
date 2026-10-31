@@ -1,0 +1,6 @@
+---
+import { richParts } from '../i18n';
+interface Props { value: string }
+const { value } = Astro.props;
+---
+{richParts(value).map(part => part.code ? <code class="nowrap">{part.text}</code> : part.text)}
