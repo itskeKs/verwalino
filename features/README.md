@@ -245,12 +245,16 @@ target aborts with "target is not a fresh installation; refusing to write scenar
 data"; failed authentication or an unverifiable list also aborts. Start with a
 new disposable installation for each run, including reruns after a partial failure.
 
-**Isolation decision:** all ten scenarios of `organization_isolation.feature` are
+**External-target coverage:** all ten scenarios of `organization_isolation.feature` are
 skipped on external targets because only one bootstrap organization is configured.
 The three `first_run_setup.feature` scenarios are also skipped: they require a
 fresh installation, while the external target already has its bootstrap organization.
+The `inbox_review_chain.feature` scenario is in-process-only: it needs the
+in-process invoice worker and direct database fixtures, so the external nightly
+run skips it too.
 Each skipped scenario records its reason in the report. Local runs continue to
-exercise both organizations, all isolation scenarios and first-run setup.
+exercise both organizations, all isolation scenarios, first-run setup and the inbox
+review chain; PR CI retains this coverage through `make test-backend`.
 `make test-bdd`, `make test-browser` and `make test-scenarios-report` explicitly
 select the local stack even if target variables are inherited; use direct pytest
 for external targets.
@@ -289,6 +293,12 @@ services, LLM calls, routing mocks, or clock-dependent business dates are needed
 Scenarios use stable names derived from the scenario name, a 1440 × 1000 viewport,
 and an explicit 390 × 844 viewport for the existing phone cancellation journey.
 German control names are quoted where the step identifies a UI action.
+The organization-lifecycle journey signs up its own synthetic organization through
+the hosted API with the existing captured-SMTP fixture. It needs no Mailpit service
+and removes its synthetic organization on teardown, even after a UI failure,
+using the existing guarded test cleanup for retained originals. Screenshots go
+to pytest's temporary directory by default; set `VERWALINO_CAPTURE_DESIGN=1`
+explicitly to refresh the tracked images in `docs/assets/design/`.
 
 **Runner decision:** pytest-playwright keeps pytest-bdd, the API World and one Python
 step library instead of adding playwright-bdd and a second Node test runner.

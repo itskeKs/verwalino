@@ -330,7 +330,7 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
     scripts = ScriptDirectory.from_config(config)
     assert scripts.get_heads() == ['0149']
     assert [r.revision for r in scripts.iterate_revisions('0149', '0131')] == [
-        '0149', *[f'{number:04}' for number in range(146, 131, -1)]
+        f'{number:04}' for number in range(149, 131, -1)
     ]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -374,7 +374,7 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
                     assert transaction.is_active and connection.in_transaction()
                     assert version() == (target,)
                     stop, first = int(target), int(start[0])
-                    numbers = [n for n in (range(first - 1, stop - 1, -1) if downgrade else range(first + 1, stop + 1)) if n not in (147, 148)]
+                    numbers = [n for n in (range(first - 1, stop - 1, -1) if downgrade else range(first + 1, stop + 1))]
                     assert seen == [(f'{number:04}',) for number in numbers]
 
                 def projection_0131():

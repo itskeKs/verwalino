@@ -276,6 +276,9 @@ def _migrate_test_database(request):
         cursor.execute("SELECT to_regclass('public.declaration_review_receipt')")
         if cursor.fetchone()[0] is not None:
             cursor.execute("TRUNCATE public.declaration_review_receipt")
+        cursor.execute("SELECT to_regclass('public.organization_deletion')")
+        if cursor.fetchone()[0] is not None:
+            cursor.execute("TRUNCATE public.organization_deletion")
         cursor.execute("SELECT to_regclass('public.auth_throttle')")
         if cursor.fetchone()[0] is not None:
             cursor.execute("TRUNCATE public.auth_throttle")
@@ -309,8 +312,12 @@ def _upgrade_test_database(alembic_cfg):
     upgraded_signup_tables = rehearse_initial_upgrade('0144')  # accepted source
     command.upgrade(alembic_cfg, '0145')  # accepted source
     upgraded_reset_tables = rehearse_initial_upgrade('0145')  # accepted source
-    command.upgrade(alembic_cfg, '0146')
+    command.upgrade(alembic_cfg, '0146')  # accepted source
     upgraded_quota_tables = rehearse_initial_upgrade('0146')
+    command.upgrade(alembic_cfg, '0147')  # accepted source
+    upgraded_lifecycle_tables = rehearse_initial_upgrade('0147')
+    command.upgrade(alembic_cfg, '0148')  # accepted source
+    upgraded_retention_tables = rehearse_initial_upgrade('0148')
     command.upgrade(alembic_cfg, "head")
     return {'upgrade_0028_to_0149_tables': upgraded_0028_tables,
             'upgrade_0122_to_0149_tables': upgraded_tables,
@@ -321,7 +328,9 @@ def _upgrade_test_database(alembic_cfg):
             'upgrade_0143_to_0149_tables': upgraded_lease_tables,
             'upgrade_0144_to_0149_tables': upgraded_signup_tables,
             'upgrade_0145_to_0149_tables': upgraded_reset_tables,
-            'upgrade_0146_to_0149_tables': upgraded_quota_tables}  # accepted source
+            'upgrade_0146_to_0149_tables': upgraded_quota_tables,
+            'upgrade_0147_to_0149_tables': upgraded_lifecycle_tables,
+            'upgrade_0148_to_0149_tables': upgraded_retention_tables}  # accepted source
 
 
 @pytest.fixture(scope="session", autouse=True)

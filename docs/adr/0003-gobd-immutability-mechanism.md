@@ -64,3 +64,48 @@ The existing mechanism for `audit_event` (M0) is **revoked UPDATE/DELETE grants*
 2. Correction exclusively via a new version with `supersedes_id`/version chain; the original is retained and marked `superseded`.
 3. Voucher files are never deleted (only superseded); `retention_until` is the only anchor at which, after expiry, removal is decided at all (GDPR (DSGVO) linkage, voucher-flow doc §7).
 4. Every DB-enforced immutability is evidenced by a negative test that would fail without the trigger/grant.
+
+## Amendment — 2026-10-31: personal audit payloads during organization erasure
+
+Owner decision on [PR #119](https://github.com/itskeKs/verwalino/pull/119): the
+operator erasure run of a deleted organization removes personal data from
+retained audit/receipt payloads for persons anonymized by that run (no binding or
+all personal retention bindings expired), and removes former users' email
+addresses. This deliberately supersedes decision 4's absolute audit immutability
+only for these personal payload fields. A voucher-bound person's own retained
+identity and retained voucher/original content remain unchanged. That person's
+event context does not exempt references to other erased persons' identities.
+
+The erasure exception permits **UPDATE of payload columns only**, inside the
+erasure transaction. The row, event/action, IDs, timestamps and other metadata
+remain unchanged. Both `current_user` and
+`session_user` must be `app_migrator`, and the transaction-local
+`app.organization_erasure` flag must be `on`. Runtime UPDATE/DELETE grants remain
+revoked for `app_rw`, `app_worker` and `app_review`, with a trigger backstop. A
+runtime caller setting the flag receives no additional authority.
+There was no audit immutability trigger before migration 0147: the grant backstop
+was the mechanism. 0147 adds an UPDATE guard without extending DELETE protection
+to the operator: an actual `app_migrator` login (`current_user = session_user`)
+may still DELETE for operator maintenance and test cleanup. DELETE protection
+stays grant-based as before 0147. The only other permitted UPDATE, for any
+session, changes **only `actor_user_id` to NULL**, so the existing user FK's
+`ON DELETE SET NULL` can preserve audit history when a user is hard-deleted.
+All other operator UPDATEs require the payload-only erasure shape above, scoped
+to the current organization in `cooling_off`. Downgrade removes the new guard
+and restores the preceding schema.
+
+Changed JSON payloads carry an `_organization_erasure.scrubbed_at` timestamp;
+personal payload references become the neutral marker `Gelöscht`, while actual
+relational FKs stay intact. Erasure integrity checks compare the complete row
+against its expected scrubbed form and store the **post-scrub** row hash in the
+erasure retention snapshot. They do not certify the original personal payload as
+unchanged. This ADR defines no audit hash-chain algorithm; `prev_event_hash` is
+an optional historical field and is preserved, not recalculated. A scrub marker
+therefore identifies a deliberate payload discontinuity, never evidence that a
+pre-erasure payload or chain hash still matches the scrubbed bytes. Voucher and
+other immutable snapshot hashes remain unchanged.
+
+This exception applies only to organization erasure, not ordinary person edits,
+individual anonymization requests, event correction, or runtime maintenance.
+See [ADR-0012 §4](0012-gdpr-erasure-vs-gobd-retention.md#4-anonymization-anonymize)
+and the [operator rules](../operations/organization-export.md).

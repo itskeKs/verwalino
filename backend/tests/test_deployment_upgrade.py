@@ -26,12 +26,12 @@ def test_release_graph_is_exact_and_linear(tmp_path):
     assert deployment.release_head(graph) == '0149'
     (tmp_path / 'versions').mkdir()
     (tmp_path / 'versions' / 'unexpected.py').write_text(
-        "revision='0147'\ndown_revision=None\nbranch_labels=None\ndepends_on=None\n")
+        "revision='0150'\ndown_revision=None\nbranch_labels=None\ndepends_on=None\n")
     with pytest.raises(ValueError, match='release'):
         deployment.release_head(ScriptDirectory(str(tmp_path)))
 
 
-@pytest.mark.parametrize('schema', ['0028', '0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0149'])  # accepted sources plus target
+@pytest.mark.parametrize('schema', ['0028', '0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149'])  # accepted sources plus target
 def test_measured_release_schema_is_a_supported_upgrade_source(schema):
     assert deployment.supported_schema((schema,)) == schema
 
@@ -134,7 +134,86 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                     expected_security = connection.execute(text("SELECT c.relname,c.relrowsecurity,c.relforcerowsecurity,c.relacl::text FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relname=ANY(:tables) ORDER BY c.relname"), {'tables': tables}).all()
                     expected.rollback()
                 for revision in reversed(revisions):
+                    if starting_schema == '0146' and revision.revision == '0147':
+                        def trigger_definitions():
+                            return connection.execute(text('''SELECT p.proname,pg_get_functiondef(p.oid),p.proacl::text,
+                              pg_get_userbyid(p.proowner) FROM pg_proc p WHERE p.oid IN (
+                                SELECT t.tgfoid FROM pg_trigger t WHERE NOT t.tgisinternal)
+                                OR (p.pronamespace='public'::regnamespace AND p.proname='guard_audit_event_payload')
+                              ORDER BY p.proname''')).all()
+                        original_triggers = trigger_definitions()
+                        # This guard is new in 0147, unlike the three preexisting
+                        # payload guards. Capture its expected base definition
+                        # with PostgreSQL's exact formatting/owner/ACL as well.
+                        with connection.begin_nested() as guard_baseline:
+                            connection.execute(text('''CREATE FUNCTION public.guard_audit_event_payload() RETURNS trigger
+          LANGUAGE plpgsql SET search_path=pg_catalog,pg_temp AS $$
+    BEGIN
+      IF TG_OP='UPDATE' AND NEW.actor_user_id IS NULL
+        AND (to_jsonb(NEW)-'actor_user_id')=(to_jsonb(OLD)-'actor_user_id') THEN
+        RETURN NEW;
+      END IF;
+      IF TG_OP='DELETE' AND current_user='app_migrator' AND session_user='app_migrator' THEN
+        RETURN OLD;
+      END IF;
+      RAISE EXCEPTION 'Audit events are immutable' USING ERRCODE='23514';
+    END $$;'''))
+                            connection.execute(text('REVOKE ALL ON FUNCTION public.guard_audit_event_payload() FROM PUBLIC,app_rw,app_worker,app_review'))
+                            audit_guard = next(row for row in trigger_definitions() if row[0] == 'guard_audit_event_payload')
+                            guard_baseline.rollback()
                     revision.module.upgrade()
+                    if starting_schema == '0146' and revision.revision == '0147':
+                        assert connection.scalar(text('''SELECT count(*) FROM pg_trigger
+                          WHERE tgrelid='public.audit_event'::regclass AND NOT tgisinternal
+                          AND tgname='audit_event_immutable' AND (tgtype & 16)>0''')) == 1
+                        with connection.begin_nested() as rehearsal:
+                            revision.module.downgrade()
+                            assert trigger_definitions() == original_triggers
+                            assert connection.scalar(text("SELECT to_regprocedure('public.guard_audit_event_payload()')")) is None
+                            rehearsal.rollback()
+                if starting_schema == '0146':
+                    # The upgrade must preserve every byte outside the narrow
+                    # operator exemption, as well as owner and execute grants.
+                    exemptions = {
+                        'authorize_bound_financial_write': "TG_OP='DELETE'",
+                        'authorize_dunning_write': "TG_OP='DELETE'",
+                        'guard_financial_source_input': "TG_OP='DELETE'",
+                        'guard_strict_financial_resource': "TG_OP='DELETE'",
+                        'guard_knowledge_budget_policy': "TG_OP='UPDATE' AND (to_jsonb(NEW)-'reason')=(to_jsonb(OLD)-'reason')",
+                        'guard_property_source_security': "TG_OP='UPDATE' AND (to_jsonb(NEW)-'reason')=(to_jsonb(OLD)-'reason')",
+                    }
+                    payload_guards = {'guard_audit_event_payload', 'protect_scope_evidence',
+                                      'protect_master_import_batch', 'protect_dunning_batch'}
+                    expected = {}
+                    for name, definition, grants, owner in [*original_triggers, audit_guard]:
+                        if name in exemptions:
+                            clause = ("      IF current_user='app_migrator' AND session_user='app_migrator'\n"
+                                      "        AND current_setting('app.organization_erasure',true)='on'\n"
+                                      f"        AND {exemptions[name]} THEN\n"
+                                      "        IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;\n"
+                                      "      END IF;\n")
+                        elif name in payload_guards:
+                            clause = """      IF current_user='app_migrator' AND session_user='app_migrator'
+        AND current_setting('app.organization_erasure',true)='on'
+        AND TG_TABLE_SCHEMA='public' AND TG_OP='UPDATE' THEN
+        IF public.organization_erasure_payload_columns(TG_TABLE_NAME) IS NOT NULL
+          AND (to_jsonb(NEW)-public.organization_erasure_payload_columns(TG_TABLE_NAME))
+            =(to_jsonb(OLD)-public.organization_erasure_payload_columns(TG_TABLE_NAME))
+          AND OLD.organization_id=NULLIF(current_setting('app.current_org_id',true),'')::uuid
+          AND EXISTS(SELECT 1 FROM public.organization_deletion d
+            WHERE d.organization_id=OLD.organization_id AND d.status='cooling_off') THEN
+          RETURN NEW;
+        END IF;
+      END IF;
+"""
+                        else:
+                            continue
+                        assert definition.count('    BEGIN\n') == 1, name
+                        expected[name] = (definition.replace('    BEGIN\n', '    BEGIN\n' + clause, 1), grants, owner)
+                    actual = {name: (definition, grants, owner) for name, definition, grants, owner in trigger_definitions()
+                              if name in set(exemptions) | payload_guards}
+                    assert set(expected) == set(exemptions) | payload_guards
+                    assert actual == expected
                 if starting_schema == '0142':
                     nullable = text("SELECT is_nullable FROM information_schema.columns "
                                     "WHERE table_name='letter_document' AND column_name='template_id'")
@@ -146,7 +225,7 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                     assert connection.scalar(nullable) == 'YES'
             assert old_rows() == before
             after_security = connection.execute(text("SELECT c.relname,c.relrowsecurity,c.relforcerowsecurity,c.relacl::text FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relname=ANY(:tables) ORDER BY c.relname"), {'tables': tables}).all()
-            if starting_schema in ('0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145'):  # accepted sources
+            if starting_schema in ('0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148'):  # accepted sources
                 assert after_security == expected_security
             else:
                 before_by_name = {row.relname: row for row in security}
@@ -168,7 +247,7 @@ def rehearse_initial_upgrade(starting_schema='0122'):
         engine.dispose()
 
 
-@pytest.mark.parametrize('starting_schema', ['0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146'])  # accepted sources
+@pytest.mark.parametrize('starting_schema', ['0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148'])  # accepted sources
 def test_upgrade_to_0149_preserves_existing_rows_and_security(run_migrations, starting_schema):
     # The actual rehearsal ran before any retained domain-test originals existed.
     # Its SQL/data/security assertions fail fixture setup if preservation fails.

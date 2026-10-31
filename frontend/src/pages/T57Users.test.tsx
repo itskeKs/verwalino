@@ -9,7 +9,8 @@ import type { User } from "../api/types";
 
 vi.mock("../api/client", async (original) => ({ ...await original<typeof import("../api/client")>(), api: { get: vi.fn(), post: vi.fn(), patch: vi.fn() } }));
 let rows: (User & { role?: string | null })[];
-const reloads = () => vi.mocked(api.get).mock.calls.length;
+const usersCalls = () => vi.mocked(api.get).mock.calls.filter(([path]) => path.startsWith("/api/users/page?"));
+const reloads = () => usersCalls().length;
 function show(role = "OWNER_ADMIN", userId = "actor") {
   const content = (nextRole: string, nextUserId: string) => <AuthCtx.Provider value={{ loading: false, session: { role: nextRole, user_id: nextUserId, organization_id: "org" }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><UsersPage /></MemoryRouter></AuthCtx.Provider>;
   const view = render(content(role, userId));
@@ -22,7 +23,11 @@ async function open(name = "Benutzer bearbeiten") {
 beforeEach(() => {
   vi.resetAllMocks();
   rows = [{ id: "target/id", display_name: "Eva Beispiel", email: "eva@example.test", is_active: true, role: "CLERK" }];
-  vi.mocked(api.get).mockImplementation(async () => ({ items: rows, next_cursor: null }) as never);
+  vi.mocked(api.get).mockImplementation(async path => {
+    if (path === "/api/organizations/me") return { id: "org", name: "Testverwaltung", import_available: false, deletion: null } as never;
+    if (path.startsWith("/api/users/page?")) return { items: rows, next_cursor: null } as never;
+    throw new Error(`Unexpected GET ${path}`);
+  });
   vi.mocked(api.patch).mockResolvedValue({});
   vi.mocked(api.post).mockResolvedValue(undefined);
 });
@@ -31,7 +36,8 @@ afterEach(cleanup);
 it("loads only the existing page and sends changed role only, then reloads", async () => {
   show(); const dialog = await open();
   expect(within(dialog).getByText(/Eva Beispiel.*eva@example.test/)).toBeVisible();
-  expect(api.get).toHaveBeenCalledExactlyOnceWith("/api/users/page?q=", expect.anything());
+  expect(usersCalls()).toEqual([["/api/users/page?q=", expect.anything()]]);
+  expect(vi.mocked(api.get).mock.calls.filter(([path]) => path === "/api/organizations/me")).toEqual([["/api/organizations/me"]]);
   await userEvent.selectOptions(within(dialog).getByLabelText("Rolle"), "READ_ONLY");
   await userEvent.click(within(dialog).getByRole("button", { name: "Änderungen speichern" }));
   expect(api.patch).toHaveBeenCalledExactlyOnceWith("/api/users/target%2Fid", { role: "READ_ONLY" });

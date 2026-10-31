@@ -77,3 +77,16 @@ Feature: Organization isolation
     Then the password reset is accepted without signing in
     And the old session is no longer valid
     And the other organization's administrator remains signed in
+
+  Scenario: An organization archive cannot be downloaded by another organization
+    Given a separate organization has rental records and an original for export
+    When its administrator downloads the organization archive
+    Then the archive contains its rental records and the unchanged original
+    And the archive contains no credentials or data of the other organization
+
+  Scenario: Import and deletion cancellation affect only the destination organization
+    Given a separate organization has rental records and an original for export
+    When its administrator downloads the organization archive
+    And the archive is imported into an empty organization
+    And the destination administrator confirms and revokes deletion
+    Then the source organization still has its original records and session

@@ -3,7 +3,7 @@ from alembic import op
 from sqlalchemy import text
 
 revision = '0149'
-down_revision = '0146'
+down_revision = '0148'
 branch_labels = None
 depends_on = None
 PAYMENT_TYPES = "'KALTMIETE','NK_VORAUSZAHLUNG','HAUSGELD_VORSCHUSS','RUECKLAGENANTEIL','SONDERZAHLUNG','NACHZAHLUNG','KAUTION'"
@@ -74,6 +74,8 @@ def upgrade():
       AND property_financial_disclosure_access(organization_id,property_id,'read'));
     REVOKE ALL ON reserve_ledger_entry FROM PUBLIC,app_rw,app_worker,app_review;
     GRANT SELECT,INSERT ON reserve_ledger_entry TO app_rw;
+    CREATE TRIGGER a_organization_lifecycle BEFORE INSERT OR UPDATE OR DELETE ON reserve_ledger_entry
+      FOR EACH ROW EXECUTE FUNCTION public.organization_lifecycle_guard();
     CREATE TRIGGER a_lock_reserve_sources BEFORE INSERT OR UPDATE OR DELETE ON reserve_ledger_entry
       FOR EACH STATEMENT EXECUTE FUNCTION lock_strict_property_source_binding();
     CREATE TRIGGER a_reserve_financial_lock BEFORE INSERT OR UPDATE OR DELETE ON reserve_ledger_entry

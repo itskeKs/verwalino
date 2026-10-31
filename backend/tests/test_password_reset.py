@@ -34,15 +34,22 @@ def test_reset_migration_roundtrip_is_exact_and_refuses_retained_state(run_migra
         scripts.get_revision('0027').module.upgrade()
     previous_lookup_body = execute.call_args_list[0].args[0].split('AS $$')[1].split('$$;')[0]
     engine = create_engine(MIGRATOR_SYNC_URL)
+    def reset_snapshot(connection):
+        snapshot = _chain_snapshot(connection)
+        # 0147 owns this trigger. Recreating 0145's table alone legitimately
+        # loses it; every other trigger and all other snapshot fields stay exact.
+        snapshot['triggers'] = [row for row in snapshot['triggers']
+                                if not (row[0] == 'password_reset_request' and row[1] == 'a_organization_lifecycle')]
+        return snapshot
     try:
         with engine.connect() as connection, connection.begin() as transaction:
-            before = _chain_snapshot(connection)
+            before = reset_snapshot(connection)
             with Operations.context(MigrationContext.configure(connection)):
                 migration.downgrade()
                 assert connection.scalar(text("SELECT to_regclass('public.password_reset_request')")) is None
                 assert connection.scalar(text("SELECT prosrc FROM pg_proc WHERE oid='public.app_auth_lookup(text)'::regprocedure")) == previous_lookup_body
                 migration.upgrade()
-                assert _chain_snapshot(connection) == before
+                assert reset_snapshot(connection) == before
                 connection.execute(text("INSERT INTO organization(name) VALUES ('Reset roundtrip') RETURNING id"))
                 actor = connection.execute(text('''INSERT INTO "user"(organization_id,email,display_name,password_hash)
                     SELECT id,'reset-roundtrip@example.test','Reset','hash' FROM organization WHERE name='Reset roundtrip'
