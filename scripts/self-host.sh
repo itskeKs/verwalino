@@ -299,7 +299,7 @@ restore() {
     command -v openssl >/dev/null || fail 'OpenSSL is required for configuration fingerprints.'
     umask 077
     lock_config
-    running=$(compose ps --all --status running --status restarting --status paused --quiet app migrate bootstrap)
+    running=$(compose ps --all --status running --status restarting --status paused --quiet app migrate bootstrap inbox-worker)
     [[ -z "$running" ]] || fail 'Installation is running; first run: bash scripts/self-host.sh stop'
     TMP_DIR=$(mktemp -d "$(dirname "$CONFIG")/.env.verwalino-restore.XXXXXX")
     # Work on a private copy so a changed input cannot bypass verification.
