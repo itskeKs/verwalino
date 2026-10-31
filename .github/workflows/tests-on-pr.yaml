@@ -152,3 +152,6 @@ jobs:
 
       - name: Agent rule and Codex hook contracts
         run: make test-agent-rules
+
+      - name: Scenario failure filing contracts
+        run: make test-scenario-issues

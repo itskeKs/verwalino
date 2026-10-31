@@ -185,6 +185,33 @@ In M0 only the left core is relevant (auth, tenant context, org/user/mandates, R
 - **Immutable snapshots** for finalized settlements and approved vouchers (Section 3).
 - **Cost categories as versioned system data** (relevant from M2; model preparation in Section 5.4).
 
+### 1.3 Request correlation and error tracking
+
+The outermost application middleware validates `X-Request-ID` against
+`[A-Za-z0-9._-]{8,128}` or generates a UUID, stores it in request state and a
+resettable `ContextVar`, and echoes it on all HTTP responses, including perimeter
+errors and SPA/API fallback responses. Service, database and Uvicorn logs use
+the same `request_id` field; worker processing uses its durable job/import ID.
+Generic exceptions produce a safe JSON `detail` plus `request_id`; HTTP 5xx
+exceptions retain their detail and headers and add the ID. HTTP 4xx bodies stay
+unchanged. The existing API-client error message includes the header ID for 5xx.
+Starlette's server-error handler restores the request context and adds the ID
+header after the request middleware unwinds. Unhandled exceptions still propagate
+to the server or test transport after Starlette produces the error response.
+
+An empty tracker DSN leaves reporting disabled. When enabled, the Sentry-compatible
+FastAPI/Starlette integration sends error events with the request ID and the
+database-validated organization ID, never organization names. Error sampling is
+independent of tracing, which remains disabled. The release is `HV_RELEASE_ID`
+when supplied, otherwise the application version. Before sending, the pure
+scrubber removes bodies, user identities, frame locals and source snippets,
+and masks recognizable personal data, credentials and query values in messages
+and breadcrumbs. The same text filter protects formatted logs; SQLAlchemy hides
+bound parameters. No person directory is loaded: names are matched heuristically,
+so this is not a guarantee for arbitrary names or unrecognized free text.
+Transport tests stay offline. Configuration, hosted GlitchTip and log lookup are
+documented in [DEPLOY.md](../DEPLOY.md#request-ids-and-optional-error-tracking).
+
 ---
 
 ## 2. Organization isolation (I1 — the most important M0 decision)
