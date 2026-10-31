@@ -1,3 +1,4 @@
+@selfhost
 Feature: First run setup
   A fresh installation requires the one-time token shown to its operator before
   the first organization and administrator can be created in the browser.

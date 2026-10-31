@@ -55,6 +55,19 @@ describe("SetupPage", () => {
     expect(screen.queryByLabelText("Einrichtungs-Token")).not.toBeInTheDocument();
   });
 
+  it.each(["/", "/setup"])("opens required setup at %s when unrelated requests fail", async path => {
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      if (url === "/api/setup") return json({ required: true });
+      throw new TypeError("Unrelated request unavailable");
+    });
+    render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), logout: vi.fn() }}>
+      <MemoryRouter initialEntries={[path]}><AppRoutes /></MemoryRouter>
+    </AuthCtx.Provider>);
+    expect(await screen.findByRole("heading", { name: "Verwalino einrichten" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Anmelden" })).not.toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.every(([url]) => url === "/api/setup")).toBe(true);
+  });
+
   it("leaves setup through AppRoutes when another operator completes it", async () => {
     let checks = 0;
     vi.mocked(fetch).mockImplementation(async (_url, options) => {

@@ -22,6 +22,7 @@ from tests.bdd.browser import browser_app, browser_session, browser_world  # noq
 # Reused as-is: a throw-away user that may change its password without
 # touching the shared seed users (see tests/test_auth_password.py).
 from tests.setup_support import fresh_setup  # noqa: F401
+from app.core.deployment_policy import get_deployment_policy
 from tests.test_auth_password import password_identity as local_password_identity  # noqa: F401
 
 
@@ -103,8 +104,12 @@ def pytest_addoption(parser):
 
 
 def pytest_collection_modifyitems(config, items):
-    if target_url():
-        for item in items:
+    mode = get_deployment_policy().deployment_mode
+    for item in items:
+        for required_mode in ("selfhost", "hosted"):
+            if item.get_closest_marker(required_mode) and mode != required_mode:
+                item.add_marker(pytest.mark.skip(reason=f"Requires {required_mode} deployment; running in {mode}"))
+        if target_url():
             template = getattr(item.obj, "__scenario__", None)
             if template:
                 reason = {
@@ -113,10 +118,8 @@ def pytest_collection_modifyitems(config, items):
                 }.get(Path(template.feature.filename).name)
                 if reason:
                     item.add_marker(pytest.mark.skip(reason=reason))
-    if not config.getoption("--run-browser", default=False):
-        for item in items:
-            if item.get_closest_marker("browser"):
-                item.add_marker(pytest.mark.skip(reason="Use make test-browser to run browser journeys"))
+        if item.get_closest_marker("browser") and not config.getoption("--run-browser", default=False):
+            item.add_marker(pytest.mark.skip(reason="Use make test-browser to run browser journeys"))
 
 
 def pytest_bdd_step_error(feature, scenario, step, exception, **_):
