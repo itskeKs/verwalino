@@ -500,6 +500,23 @@ async def test_expired_pending_cleanup_is_batched_and_runs_after_the_request_tra
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('path', ['/api/signup', '/api/signup/resend'])
+async def test_mail_allowlist_refusal_keeps_the_generic_signup_response(signup, monkeypatch, caplog, path):
+    client, connection, mail = signup
+    if path == '/api/signup/resend':
+        await client.post('/api/signup', json=BODY)
+        await connection.execute(text("UPDATE signup_request SET created_at=created_at-interval '11 minutes'"))
+        mail.calls, mail.messages = [], []
+    monkeypatch.setattr(settings, 'mail_allowlist', 'canary@example.invalid')
+    response = await client.post(path, json=BODY if path == '/api/signup' else {'email': BODY['email']})
+    assert (response.status_code, response.json()) == (202, MESSAGE)
+    assert await connection.scalar(text('SELECT count(*) FROM signup_request')) == 1
+    assert not mail.calls and not mail.messages
+    assert 'Signup confirmation submission failed' in caplog.text
+    assert 'signup@example.test' not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_mail_submission_failure_preserves_pending_state_and_generic_response(signup):
     client, connection, mail = signup
     mail.error = TimeoutError('private SMTP diagnostics')

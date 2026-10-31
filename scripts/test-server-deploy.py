@@ -111,6 +111,8 @@ if tool == "git":
     sys.exit(0)
 
 # docker
+if args[:2] == ["network", "inspect"]:
+    sys.exit(17 if env.get("FAKE_MISSING_STAGING_NETWORK") else 0)
 if args[0] == "compose":
     if any(arg.endswith("/docker-compose.site.yml") for arg in args) and not env.get("VERWALINO_SITE_IMAGE"):
         out("set VERWALINO_SITE_IMAGE to ghcr.io/itskeks/verwalino-site:<sha>@sha256:<digest>\n")
@@ -685,6 +687,7 @@ class DeployTests(ServerCase):
         result = self.deploy(FAKE_SITE_ENABLED="wrong-network")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         calls = [call["args"] for call in self.calls("docker")]
+        self.assertEqual(calls[0], ["network", "inspect", "verwalino-staging_proxy"])
         validation = next(i for i, args in enumerate(calls) if "validate" in args)
         self.assertLess(validation, next(i for i, args in enumerate(calls) if args[0] == "pull"))
         sequence = self.calls()
@@ -709,6 +712,24 @@ class DeployTests(ServerCase):
         restored_call = next(call for call in self.calls("docker") if call["args"] == calls[overlay])
         self.assertEqual(restored_call["site_image"], f"{SITE_REPO}:{PREVIOUS_SITE_SHA}@sha256:" + "c" * 64)
         self.assertTrue(any("app" == args[-1] and "up" in args for args in calls[:overlay]))
+
+    def test_missing_staging_proxy_network_refuses_hosted_release_before_side_effects(self):
+        (self.srv / "config/Caddyfile.hosted").write_text("import /etc/caddy/Caddyfile.production\n")
+        result = self.deploy(FAKE_MISSING_STAGING_NETWORK="1", FAKE_SITE_ENABLED="1")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("verwalino-staging_proxy", result.stdout)
+        self.assertIn("docker network create --subnet", result.stdout)
+        self.assertEqual([call["args"] for call in self.calls("docker")],
+                         [["network", "inspect", "verwalino-staging_proxy"]])
+        self.assertEqual(self.calls("git"), [])
+        self.assertEqual(list((self.srv / "backups").iterdir()), [])
+        self.assert_untouched()
+        self.assertFalse((self.srv / "logs/.deploy.lock").exists())
+
+    def test_release_without_hosted_wrapper_does_not_require_the_staging_network(self):
+        result = self.deploy(FAKE_MISSING_STAGING_NETWORK="1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(any(call["args"][:1] == ["network"] for call in self.calls("docker")))
 
     def test_running_deploy_or_unusable_config_is_refused_without_touching_anything(self):
         (self.srv / "logs/.deploy.lock").mkdir()

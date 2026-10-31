@@ -158,7 +158,8 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 | `backend/tests/` | unit and API tests; `bdd/` binds scenarios, `bdd/browser.py` owns browser fixtures, `bdd/report.py` writes reports, `bdd/steps/browser_*.py` shares browser steps |
 | `features/` | API and `@browser` Gherkin scenarios (executable specs) |
 | `.github/workflows/nightly-scenarios.yaml` | nightly self-host scenarios, 90-day report artifacts and deduplicated failure issues; hosted mode pending #18 |
-| `.github/workflows/deploy-staging.yaml` | filtered main pushes: reusable main image job, then staging through the existing forced-command SSH key |
+| `.github/workflows/build-main-image.yaml` | filtered main pushes: publishes and signs SHA-only staging images without a release |
+| `.github/workflows/deploy-staging.yaml` | successful `Build main image` completion via `workflow_run`: deploys that run's main SHA through the existing forced-command SSH key |
 | `.github/workflows/canary.yaml`, `scripts/canary.py`, `scripts/test-canary.py` | 15-minute production API journey, sanitized reports, e-mail/issue alerts and fake HTTP contracts |
 | `frontend/src/` | `pages/`, `components/`, `api/`, `lib/` |
 | `website/` | bilingual static Astro site, checked multi-stage image and local Caddy file server |
@@ -168,7 +169,7 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 | `scripts/build-release-bundle.sh` | shared flat release payload/checksum assembly for releases and the install matrix |
 | `scripts/install-scenarios.sh` | four install journeys on disposable VMs; JSON/Markdown reports and failure artifacts |
 | `scripts/test-install.py`, `scripts/test-self-host.py`, `scripts/test-install-scenarios.py` | installer, portable stack and scenario-report contracts; fake downloads/Docker, no database |
-| `.github/workflows/release-image.yaml` | publishes/signs release platforms and installer assets; reusable main job publishes staging images without a release |
+| `.github/workflows/release-image.yaml` | stable tags only: publishes/signs release platforms and installer assets |
 | `infra/docker-compose.staging.yml`, `infra/Caddyfile.staging` | hosted staging project and crawler-blocking shared Caddy site; [operator runbook](docs/operations/staging-and-canary.md) |
 | `infra/docker-compose.hosted-proxy.yml`, `infra/Caddyfile.hosted` | opt-in shared wrapper; apply with the site overlay to preserve production, staging and website routing |
 | `scripts/deploy-server.sh`, `scripts/test-server-deploy.py` | strict production/staging/site forced-command targets and fake server contracts |

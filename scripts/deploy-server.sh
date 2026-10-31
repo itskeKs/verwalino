@@ -325,6 +325,10 @@ main() {
         || die "the installer config $CONFIG must be a regular file this user can read and write, in a directory it can write to."
     if [[ "$target" = staging ]]; then deploy_staging; fi
     if [[ -f "$ROOT/config/Caddyfile.hosted" ]]; then
+        if ! docker network inspect verwalino-staging_proxy >/dev/null 2>&1; then
+            printf 'deploy: external network verwalino-staging_proxy is required; create it with docker network create --subnet <dedicated-staging-proxy-subnet> verwalino-staging_proxy (use the unused subnet from .env.staging).\n' >&2
+            exit 2
+        fi
         previous_site
         [[ -n "$prev_site_image" ]] || die 'cannot recover the existing site image for Caddy restoration.'
     fi

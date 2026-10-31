@@ -1019,8 +1019,10 @@ an IP-only entry does not match a host name in `DEPLOY_HOST`.
 2. When that run succeeds, [Deploy hosted server](.github/workflows/deploy.yaml) (`workflow_run`) calls
    `ssh chris@host vX.Y.Z`. **Actions → Deploy hosted server → Run workflow** with a `tag` redeploys any
    published tag; on the server, `/srv/verwalino/app/scripts/deploy-server.sh vX.Y.Z` does the same.
-3. [`scripts/deploy-server.sh`](scripts/deploy-server.sh) first recovers the existing site image reference if
-   the operator's `config/Caddyfile.hosted` exists, refusing before checkout if it cannot. It fetches tags
+3. [`scripts/deploy-server.sh`](scripts/deploy-server.sh) first checks that the external network
+   `verwalino-staging_proxy` exists if the operator's `config/Caddyfile.hosted` exists; a missing network
+   exits 2 with its creation command before checkout, backup, pinning or service operations. It then
+   recovers the existing site image reference, refusing before checkout if it cannot. It fetches tags
    and checks the tag out (it must exist and be on `main`). It validates that wrapper immediately
    after checkout, before pulling the image, backup, image pinning or the installer. Validation uses
    read-only mounts/root, no network, `--cap-drop ALL --cap-add NET_BIND_SERVICE` (required by the stock
@@ -1049,7 +1051,9 @@ Staging is Compose project `verwalino-staging`, using
 [`infra/docker-compose.staging.yml`](infra/docker-compose.staging.yml) alone, its own database/backend network
 and volumes `pgdata_staging`/`documents_staging`. Its app and hosted Caddy share the dedicated external
 `verwalino-staging_proxy` network; production's app remains on `verwalino_proxy`.
-It runs hosted mode and restricts SMTP to the single required `CANARY_EMAIL` via `HV_MAIL_ALLOWLIST`.
+It runs hosted mode and restricts every SMTP submission (including document mail and signup confirmations)
+to the single required `CANARY_EMAIL` via `HV_MAIL_ALLOWLIST`, checked at the shared submission boundary
+before any SMTP connection. Empty/malformed allow-lists block all submissions; refusals log no address.
 [`infra/Caddyfile.staging`](infra/Caddyfile.staging) routes `staging.verwalino.de` to `staging-app:8000`,
 adds `noindex, nofollow` and disallows all crawlers in `/robots.txt`. Enable the
 [`Caddyfile.hosted`](infra/Caddyfile.hosted) wrapper and

@@ -46,19 +46,10 @@ def validate_configuration(config: Settings) -> str:
     return sender
 
 
-def validate_recipient(config: Settings, recipient: str) -> str:
-    recipient = validate_address(recipient)
-    if config.mail_allowlist is not None:
-        if recipient != validate_address(config.mail_allowlist):
-            logger.warning("Mail submission blocked by recipient allow-list")
-            raise MailConfigurationError("Empfänger ist für diese Installation nicht freigegeben")
-    return recipient
-
-
 def send_pdf(config: Settings, *, recipient: str, subject: str, body: str,
              pdf: bytes, filename: str, message_id: str) -> None:
     sender = validate_configuration(config)
-    recipient = validate_recipient(config, recipient)
+    recipient = validate_address(recipient)
     if not pdf.startswith(b"%PDF-"):
         raise MailConfigurationError("Nur ein gerendertes PDF darf versendet werden")
     message = EmailMessage()
@@ -91,6 +82,16 @@ def send_signup_confirmation(config: Settings, *, recipient: str, link: str) -> 
 
 
 def _submit(config: Settings, message: EmailMessage, sender: str, recipient: str) -> None:
+    recipient = validate_address(recipient)
+    if config.mail_allowlist is not None:
+        try:
+            allowed = validate_address(config.mail_allowlist)
+        except MailConfigurationError:
+            logger.warning("Mail submission blocked by invalid recipient allow-list")
+            raise
+        if recipient != allowed:
+            logger.warning("Mail submission blocked by recipient allow-list")
+            raise MailConfigurationError("Empfänger ist für diese Installation nicht freigegeben")
     context = ssl.create_default_context()
     if config.smtp_security == "tls":
         connection = smtplib.SMTP_SSL(config.smtp_host, config.smtp_port,

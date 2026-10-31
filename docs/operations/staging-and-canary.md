@@ -90,6 +90,9 @@ login remains required; robots controls discourage indexing, not access.
    Choose an unused private IPv4 subnet that does not overlap production, the
    host or other Docker networks, and use exactly that subnet in `.env.staging`.
    Both Compose projects reference this external network; neither creates it.
+   With the hosted wrapper enabled, release deployment checks the network before
+   checkout, backup, image pinning or service operations. A missing network exits
+   2 with the creation command; create it before retrying the deployment.
 4. Copy `infra/Caddyfile.hosted` to `/srv/verwalino/config/Caddyfile.hosted`, readable
    by the operator. Its presence enables the hosted wrapper on production deploys.
    This deliberately does not require Caddy to be on the site network already:
@@ -109,8 +112,10 @@ login remains required; robots controls discourage indexing, not access.
    both extensions in one Caddy recreation; the portable installer alone does not.
    After a manual installer start, reapply that three-file prefix with
    `up -d --no-deps caddy`. Never replace the wrapper with a single extension.
-5. Run staging through the existing forced-command key, or rerun **Actions → Build
-   main image** for the merged main commit; success triggers **Deploy staging**.
+5. Run staging through the existing forced-command key, or select **Actions → Build
+   main image** for the exact merged main commit you intend to deploy and rerun it;
+   success triggers **Deploy staging** for that run's original SHA. Rerunning an
+   older build deploys that older SHA, even if main has advanced.
    After success, create a staging admin:
 
    ```bash
@@ -160,7 +165,10 @@ an older main build; running tag builds are not cancelled.
 
 Staging resolves a fetched revision reachable from main, exports its runtime files
 and validates the hosted wrapper with that revision's snippets before any image
-pull or staging service operation. Invalid configuration leaves production Caddy
+pull or staging service operation. This checks main's `Caddyfile.staging`, but the
+live proxy mounts the snippets from the production release checkout. Staging
+routing changes therefore reach the live proxy only with a production release;
+a staging deployment does not apply them. Invalid configuration leaves production Caddy
 and both private env files untouched. It then pulls its **`:sha-<sha>`
 image**, verifies a matching registry SHA-256 digest exists and uses that digest
 for Compose. It exports only staging runtime files without moving the production
@@ -187,10 +195,13 @@ recreate staging from synthetic fixtures. Never delete production volumes.
 ## Mail boundary
 
 Staging supplies `HV_MAIL_ALLOWLIST` from its required `CANARY_EMAIL`. The mail
-service accepts **exactly that single bare mailbox**, compared exactly, before
-rendering or SMTP connection. Other recipients receive a German validation error
-and generate a WARNING without logging their address. Empty/malformed allow-lists
-fail closed. Unset `HV_MAIL_ALLOWLIST` retains existing mail behavior elsewhere.
+service accepts **exactly that single bare mailbox**, compared exactly, at the
+shared SMTP submission boundary before opening any SMTP connection. This covers
+document mail and signup confirmations, as well as future senders using that
+boundary. Refusals generate a WARNING without logging the address. Signup and
+resend keep their generic acceptance response; document mail records a failed
+submission receipt. Empty/malformed allow-lists fail closed.
+Unset `HV_MAIL_ALLOWLIST` retains existing mail behavior elsewhere.
 This is an application environment setting, not a portable installer config key.
 SMTP uses STARTTLS/TLS with certificate checks. The canary itself sends no app mail.
 
@@ -264,9 +275,9 @@ it never opens a second issue while that canary issue remains open. After the
 operator closes the incident, a later failure can create a new issue.
 
 The reporter prints `canary_issue_created=true|false` and emits it to
-`GITHUB_OUTPUT` only after successful filing. German owner e-mail runs only when
-that output is `true`, so a continuing outage generates one e-mail. Repeated
-failures, dry runs and failed issue creation do not send e-mail; inspect Actions
+`GITHUB_OUTPUT` only after successful filing. German owner e-mail runs only after
+the issue has been created and that output is `true`, so a continuing outage
+generates one e-mail. Repeated failures, dry runs and failed issue creation do not send e-mail; inspect Actions
 if filing fails. Sending mail now depends on successful issue creation.
 
 The intended budget is **15 + 5 = 20 minutes**, assuming scheduled runners start
@@ -280,7 +291,8 @@ Sanitized reports are retained for 14 days. Inspect Actions if an alert transpor
 
 `make test-installer` covers fake Docker/Git deployment contracts and the canary's
 fake HTTP server. `make test-scenario-issues` covers reporter deduplication.
-Targeted backend tests cover mail denial before rendering or an SMTP attempt.
+Targeted backend tests cover mail denial before any SMTP connection and generic
+signup responses or failed document receipts when submission is refused.
 Compose `config -q`, workflow YAML parsing/actionlint, lint, docs link checks and
 agent-rule tests validate the checked-in configuration. Live staging deployment,
 DNS/TLS provisioning and actual alert delivery remain the maintainer's work (#25).
