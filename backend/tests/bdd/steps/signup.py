@@ -1,14 +1,19 @@
-"""Hosted signup through HTTP with the existing captured SMTP transport."""
+"""Hosted signup through HTTP and real SMTP, read back from Mailpit."""
+import re
 import uuid
+from urllib.parse import parse_qs, urlsplit
+
 import pytest
 from pytest_bdd import given, then, when
-from tests.signup_support import BODY, MESSAGE, confirmation_token
+from app.core.config import settings
+from tests.signup_support import BODY, MESSAGE
 
 
-@given('a hosted signup form with captured confirmation mail')
-def hosted_signup(world, fresh_setup, signup_mail):
+@given('a hosted signup form with a test mailbox')
+def hosted_signup(world, fresh_setup, mailpit, monkeypatch):
     world.anonymous = fresh_setup[0]
-    world.data['signup_mail'] = signup_mail
+    world.data['mailpit'] = mailpit
+    monkeypatch.setattr(settings, 'public_host', 'signup.example.test')
 
 
 @when('the administrator registers a new organization')
@@ -17,11 +22,27 @@ def register(world):
     assert (answer.status_code, answer.json()) == (202, MESSAGE)
 
 
-@then('a confirmation email is sent')
+def emailed_token(world, recipient):
+    message = world.data['mailpit'].wait_for_message(recipient)
+    assert [address['Address'] for address in message['To']] == [recipient]
+    assert message['From']['Address'] == settings.smtp_from
+    assert message['Subject'] == 'Verwalino: E-Mail-Adresse bestätigen'
+    assert '24 Stunden' in message['Text']
+    match = re.search(r'https://\S+', message['Text'])
+    assert match, 'The confirmation email must contain an HTTPS link'
+    link = urlsplit(match[0])
+    assert (link.scheme, link.netloc, link.path) == ('https', 'signup.example.test', '/signup/confirm')
+    query = parse_qs(link.query)
+    assert list(query) == ['token']
+    assert len(query['token']) == 1
+    token = query['token'][0]
+    assert re.fullmatch(r'[0-9a-f]{64}', token), 'The emailed link must contain the confirmation token'
+    return token
+
+
+@then('the test mailbox receives a confirmation email with the correct recipient, sender, subject and token link')
 def email_sent(world):
-    mail = world.data['signup_mail']
-    assert len(mail.messages) == 1
-    world.data['signup_token'] = confirmation_token(mail)
+    world.data['signup_token'] = emailed_token(world, BODY['email'].strip().lower())
 
 
 @then('the unconfirmed administrator cannot sign in')
@@ -48,10 +69,11 @@ def sign_in_again(world):
 
 
 @pytest.fixture
-def signup_isolation(world, signup_mail):
+def signup_isolation(world, mailpit, monkeypatch):
     body = BODY | {'email': f'isolation-{uuid.uuid4().hex}@example.test', 'organization_name': 'Verwaltung Beta'}
     world.data['signup_isolation_body'] = body
-    world.data['signup_mail'] = signup_mail
+    world.data['mailpit'] = mailpit
+    monkeypatch.setattr(settings, 'public_host', 'signup.example.test')
     yield
     import psycopg2
     from tests.conftest import MIGRATOR_SYNC_URL
@@ -72,7 +94,8 @@ def register_existing_name(world, signup_isolation):
 
 @when('the visitor follows the emailed confirmation link')
 def confirm_existing_name(world):
-    answer = world.send(world.anonymous, 'POST', '/api/signup/confirm', json={'token': confirmation_token(world.data['signup_mail']), 'password': BODY['password']})
+    token = emailed_token(world, world.data['signup_isolation_body']['email'])
+    answer = world.send(world.anonymous, 'POST', '/api/signup/confirm', json={'token': token, 'password': BODY['password']})
     if answer.status_code == 201:
         world.data['signup_created_organization'] = answer.json()['organization_id']
 

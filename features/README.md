@@ -16,7 +16,8 @@ Rules for a feature file:
 
 - Plain English, user-level language: no ids, status codes, table names or JSON. Say "is not
   found", not "answers 404"; the step decides what that means.
-- Deterministic: no network, no LLM, no clock-dependent data.
+- Deterministic: no external network, no LLM, no clock-dependent data. Mail acceptance
+  uses only the disposable local Mailpit SMTP service and HTTP API described below.
 - Short: a handful of scenarios. If a scenario needs a long list of cases, it is a unit test.
 - One feature per file, named after the behaviour in `snake_case`: `bank_statement_import.feature`.
   The title line is `Feature: <same words>`; the paragraph under it states the rule in prose.
@@ -24,6 +25,18 @@ Rules for a feature file:
   nothing"). They become the test names and the names in failure reports.
 
 ## Running
+
+Start the shared test inbox once, without restarting the database:
+
+```sh
+docker compose -f infra/docker-compose.declaration-test.yml up -d mailpit
+```
+
+Leave Mailpit running for other worktrees. `scripts/test-env.sh` exports
+`HV_SMTP_HOST=127.0.0.1`, `HV_SMTP_PORT=1025`, `HV_SMTP_SECURITY=plain`,
+`HV_SMTP_FROM=verwaltung@example.invalid`, empty SMTP credentials, and
+`VERWALINO_MAILPIT_API=http://127.0.0.1:8025`. Both ports bind only to loopback;
+the inbox UI and API require no authentication. The Make targets source this file.
 
 ```sh
 # One shell owns the shared test database for this run.
@@ -52,15 +65,21 @@ the opposite mode with `Requires <mode> deployment; running in <other mode>` as
 the reason. `first_run_setup.feature` is selfhost-only; `hosted_setup.feature`
 checks that an empty hosted installation never offers setup.
 `self_service_signup.feature` is hosted-only and verifies the emailed confirmation
-and subsequent login. The test compose has no Mailpit service; the scenario reuses
-the existing fake SMTP capture transport, with no network or real email.
-`password_reset.feature` is untagged and verifies mailbox recovery and old-session
-revocation in both modes with the same capture double. Organization isolation
-and quota-summary scenarios run in both modes. `organization_quotas.feature` is
+and subsequent login through real SMTP to Mailpit. The shared `mailpit` fixture in
+`backend/tests/bdd/mailpit.py` clears the inbox before each requesting scenario and
+polls for up to three seconds. It reads `/api/v1/messages` and
+`/api/v1/message/{id}` to assert recipient, sender, subject and the confirmation link's
+token; confirmation then uses that emailed token. Missing configuration or an unreachable
+API fails the scenario with setup instructions, never skips it. The helper is reusable
+for other mail acceptance scenarios; FakeSMTP remains for mail-service unit tests.
+`password_reset.feature` is untagged and verifies recovery through Mailpit, the emailed reset token, confirmation mail and old-session revocation in both modes.
+Organization isolation and quota-summary scenarios run in both modes. `organization_quotas.feature` is
 hosted-only: it scales the storage allowance to a small deterministic payload,
 fills it through the real upload API, and verifies the German refusal. Files and
 database records use the ordinary services; no network or model call is involved.
-Browser app processes inherit the selected mode too; `@browser` remains a separate opt-in tag.
+Browser app processes inherit the
+selected mode too; `@browser` remains a separate opt-in tag. Browser scenarios do not
+send mail, so only CI's backend job provisions the same digest-pinned Mailpit service.
 
 **CI integration:** PR CI and the nightly run the selfhost mode. The nightly uses
 the self-host installer, which starts a selfhost server; changing the pytest

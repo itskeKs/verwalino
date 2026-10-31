@@ -97,10 +97,11 @@ organization limit or an isolation bypass: the same RLS, scoped API queries and
 Unauthenticated `GET /api/meta` returns only `deployment_mode` and the FastAPI
 application `version`, with `Cache-Control: no-store`. It reads no tenant data or
 secrets, so the route sweep explicitly exempts it. The frontend's
-`useDeploymentMode()` reads it once per app load (including StrictMode replay);
-the setup route opens only with a confirmed self-hosted mode and a positive setup
-status. If metadata is unavailable, login and signed-in pages remain available;
-reload after recovery to detect setup. Hosted login offers “Konto erstellen”; `/signup`
+`useDeploymentMode()` reads it for login and signup (reusing the request during
+StrictMode replay), after the initial setup check. Setup depends only on
+`GET /api/setup`; required setup takes precedence without requesting metadata.
+If the setup check fails, login and signed-in pages remain available; reload
+after recovery to detect setup. Hosted login offers “Konto erstellen”; `/signup`
 and `/signup/confirm` require confirmed hosted metadata and otherwise redirect to login.
 The self-host installer and token issuance remain unchanged: the portable manifest
 uses the default self-hosted policy and does not forward an arbitrary caller's environment.
@@ -613,10 +614,12 @@ requires SMTP and a valid `HV_PUBLIC_HOST`; confirmation links always use HTTPS
 and never derive their origin from request headers. The public routing hostname
 also configures deployment routing; no second public URL setting is introduced.
 Failed mail submission retains pending state and the generic response. The
-`self_service_signup.feature` journey uses the existing **FakeSMTP** capture double;
-Mailpit is not introduced. It verifies registration → email → confirmation → login
-without a real network mailbox. This is transport capture coverage, not a live
-SMTP delivery test.
+`self_service_signup.feature` journey submits over real SMTP to the digest-pinned
+Mailpit service in the test compose and CI backend job. A shared BDD fixture clears
+the inbox, reads messages over Mailpit's HTTP API, and checks recipient, sender,
+subject and the confirmation link's token before confirming with that emailed token.
+An unavailable Mailpit API fails acceptance; FakeSMTP remains in unit tests.
+See [test setup](../features/README.md#running).
 
 Every 100th signup per worker schedules one separate transaction after the response
 to delete at most 100 requests expired for more than seven days, using

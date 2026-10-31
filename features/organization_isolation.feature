@@ -62,7 +62,7 @@ Feature: Organization isolation
 
   Scenario: A password recovery link changes only the mailbox owner's account
     Given a user who is signed in
-    And password reset mail is captured
+    And a test mailbox for password recovery
     When the user requests a password reset link
     And the user submits the captured recovery link
     Then the password reset is accepted without signing in
