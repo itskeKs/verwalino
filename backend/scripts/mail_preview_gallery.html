@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Verwalino mail previews</title>
+  <style>
+    body { margin:24px; background:#F3F4F2; color:#232724; font:16px/1.6 Arial,sans-serif; }
+    a { color:#B62930; }
+    article { border-top:1px solid #D2D6D0; padding:24px 0; }
+    .parts { display:grid; grid-template-columns:minmax(0,600px) minmax(240px,1fr); gap:24px; }
+    iframe { width:100%; height:1200px; border:1px solid #D2D6D0; background:white; }
+    pre { white-space:pre-wrap; overflow-wrap:anywhere; margin:0; }
+    @media(max-width:850px) { .parts { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <h1>Verwalino mail previews</h1>
+  <p>Synthetic data · no database · no mail is sent. PNGs include light and dark schemes at 600 and 375 px.</p>
+  <nav><ul>
+{% for preview in previews %}
+    <li><a href="#{{ preview.stem }}">{{ preview.stem }}</a></li>
+{% endfor %}
+  </ul></nav>
+{% for preview in previews %}
+  <article id="{{ preview.stem }}">
+    <h2>{{ preview.subject }}</h2>
+    <p>{{ preview.stem }} · {{ preview.mode }} · <a href="{{ preview.stem }}.html">HTML</a> · <a href="{{ preview.stem }}.txt">Plain text</a></p>
+    <p>{% for width in [600, 375] %}{% for scheme in ['light', 'dark'] %}<a href="{{ preview.stem }}-{{ width }}-{{ scheme }}.png">{{ width }} {{ scheme }}</a> {% endfor %}{% endfor %}</p>
+    <div class="parts">
+      <iframe title="{{ preview.stem }}" src="{{ preview.stem }}.html" loading="lazy" sandbox></iframe>
+      <pre>{{ preview.text }}</pre>
+    </div>
+  </article>
+{% endfor %}
+</body>
+</html>

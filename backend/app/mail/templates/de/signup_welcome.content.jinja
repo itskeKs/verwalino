@@ -1,0 +1,11 @@
+{% set subject = 'Verwalino: Ihre Organisation ist eingerichtet' %}
+{% set eyebrow = 'KONTO' %}
+{% set heading = 'Ihre Organisation ist eingerichtet' %}
+{% set salutation = 'Guten Tag ' ~ mail.admin_name ~ ',' %}
+{% set preheader = 'Ihre Organisation „' ~ mail.organization_name ~ '“ ist in Verwalino eingerichtet.' %}
+{% set paragraphs = [preheader, 'Melden Sie sich an. Danach können Sie mit diesen Schritten beginnen:'] %}
+{% set steps = ['Objekt anlegen', 'Einheiten und Mietverhältnisse erfassen', 'Benutzer einladen'] %}
+{% set action_label = 'Bei Verwalino anmelden' %}
+{% set action_link = mail.login_link %}
+{% set notes = ['Bei Fragen wenden Sie sich an ' ~ brand.CONTACT ~ '.' if hosted else 'Bei Fragen wenden Sie sich an Ihre Verwaltung.'] %}
+{% set why = 'Sie erhalten diese E-Mail, weil Sie die Registrierung Ihrer Organisation bei Verwalino bestätigt haben.' %}
