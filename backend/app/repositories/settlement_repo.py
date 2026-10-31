@@ -153,7 +153,7 @@ class SettlementRunRepository(TenantRepository[SettlementRun]):
         return result.scalars().all()
 
     async def has_conflicting_period(self, run: SettlementRun, scope_id: uuid.UUID | None = None) -> bool:
-        """A visible finalized period straddles this run, without containment."""
+        """A visible finalized period overlaps this run with different bounds."""
         stmt = (self._base_query()
             .where(SettlementRun.property_id == run.property_id,
                 SettlementRun.lease_agreement_id == run.lease_agreement_id,
@@ -162,10 +162,8 @@ class SettlementRunRepository(TenantRepository[SettlementRun]):
                 SettlementRun.superseded_by_id.is_(None),
                 SettlementRun.period_start <= run.period_end,
                 SettlementRun.period_end >= run.period_start,
-                or_(and_(SettlementRun.period_start < run.period_start,
-                         SettlementRun.period_end < run.period_end),
-                    and_(SettlementRun.period_start > run.period_start,
-                         SettlementRun.period_end > run.period_end))))
+                or_(SettlementRun.period_start != run.period_start,
+                    SettlementRun.period_end != run.period_end)))
         if run.run_type == "WEG_JAHRESABRECHNUNG":
             binding = select(AccountingScopeBinding.id).where(
                 AccountingScopeBinding.organization_id == self._org_id,

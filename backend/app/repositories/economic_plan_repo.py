@@ -14,7 +14,7 @@ import uuid
 from datetime import date
 from typing import Sequence
 
-from sqlalchemy import and_, select, or_
+from sqlalchemy import select, or_
 
 from app.models.cost_category import CostCategory
 from app.models.cost_entry import CostEntry
@@ -46,17 +46,15 @@ class EconomicPlanRepository(TenantRepository[EconomicPlan]):
         return result.scalars().all()
 
     async def has_conflicting_period(self, plan: EconomicPlan) -> bool:
-        """A visible finalized period straddles this plan, without containment."""
+        """A visible finalized period overlaps this plan with different bounds."""
         stmt = (self._base_query()
             .where(EconomicPlan.property_id == plan.property_id,
                 EconomicPlan.status == "finalized",
                 EconomicPlan.superseded_by_id.is_(None),
                 EconomicPlan.period_start <= plan.period_end,
                 EconomicPlan.period_end >= plan.period_start,
-                or_(and_(EconomicPlan.period_start < plan.period_start,
-                         EconomicPlan.period_end < plan.period_end),
-                    and_(EconomicPlan.period_start > plan.period_start,
-                         EconomicPlan.period_end > plan.period_end))))
+                or_(EconomicPlan.period_start != plan.period_start,
+                    EconomicPlan.period_end != plan.period_end)))
         return (await self._session.execute(stmt.limit(1))).scalar_one_or_none() is not None
 
     async def last_finalized_before(self, property_id: uuid.UUID, day: date) -> EconomicPlan | None:

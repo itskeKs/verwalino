@@ -84,7 +84,7 @@ history). Update this page in the same PR whenever a feature's status changes.
 
 | Feature | Reference product | Status | Location |
 | --- | --- | --- | --- |
-| Property settlement period | yes | 🟡 month-based offers, statement/batch validation, plan dates and prior actuals, advances across years; overlaps that straddle a finalized period are rejected; contained/identical periods allowed within the acting user's visibility; cross-scope database constraint pending | `engine/periods.py`, `api/properties.py` (`/settlement-periods`), `pages/SettlementsPage.tsx`, issue #68 |
+| Property settlement period | yes | 🟡 month-based offers, statement/batch validation, plan dates and prior actuals, advances across years; all nonidentical overlaps with finalized periods rejected within the acting user's visibility; identical repeats allowed; automatic lease-bounded dates, short-window cost proration and cross-scope database constraint pending | `engine/periods.py`, `api/properties.py` (`/settlement-periods`), `pages/SettlementsPage.tsx`, issue #68 |
 | Operating cost statement per lease: compute, finalize, PDF, correction | yes | ✅ | `api/settlements.py`, `services/settlement_service.py`, `services/settlement_pdf.py` |
 | Keys area/MEA/units, pro rata, vacancy | yes | ✅ | `engine/distribution.py` |
 | Keys consumption/persons/external/manual | yes | ✅ inputs shown and sent with the database key names | `pages/SettlementDetailPage.tsx`, `lib/costVocabulary.ts`, T03 |

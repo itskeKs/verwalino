@@ -9,39 +9,50 @@ from tests.financial_coverage_helpers import attest_fixture
 pytestmark = pytest.mark.usefixtures("period_data_cleanup")
 
 
-async def period_draft_plans(api, data):
+RECHECK_PERIODS = [
+    (("2025-01-01", "2025-12-31"), ("2025-07-01", "2026-06-30"), 409),
+    (("2025-07-01", "2025-09-30"), ("2025-08-01", "2025-08-31"), 409),
+    (("2025-07-01", "2025-09-30"), ("2025-04-01", "2025-12-31"), 409),
+    (("2025-07-01", "2025-09-30"), ("2025-07-01", "2025-09-30"), 200),
+]
+
+
+async def period_draft_plans(api, data, first_period, second_period):
     first = await create(api, "/api/economic-plans", {
         "property_id": data["property"]["id"], "plan_year": 2025,
-        "period_start": "2025-01-01", "period_end": "2025-12-31",
+        "period_start": first_period[0], "period_end": first_period[1],
     })
-    changed = await api.put(f"/api/properties/{data['property']['id']}", json={"fiscal_year_start_month": 7})
+    changed = await api.put(f"/api/properties/{data['property']['id']}", json={"fiscal_year_start_month": int(second_period[0][5:7])})
     assert changed.status_code == 200, changed.text
     second = await create(api, "/api/economic-plans", {
         "property_id": data["property"]["id"], "plan_year": 2025,
-        "period_start": "2025-07-01", "period_end": "2026-06-30",
+        "period_start": second_period[0], "period_end": second_period[1],
     })
     return first, second
 
 
-async def test_plan_finalization_rechecks_drafts_against_newly_finalized_period(client_a_admin):
+@pytest.mark.parametrize("first_period,second_period,status", RECHECK_PERIODS)
+async def test_plan_finalization_rechecks_drafts_against_newly_finalized_period(client_a_admin, first_period, second_period, status):
     api = client_a_admin
     data = await period_property(api, month=1)
-    plans = await period_draft_plans(api, data)
+    plans = await period_draft_plans(api, data, first_period, second_period)
     values = {"planned_costs": [], "reserve_contribution_total": "0.00"}
     for plan in plans:
         await attest_fixture(api, "economic_plan", plan["id"], values)
     first = await api.post(f"/api/economic-plans/{plans[0]['id']}/finalize", json=values)
     assert first.status_code == 200, first.text
     second = await api.post(f"/api/economic-plans/{plans[1]['id']}/finalize", json=values)
-    assert second.status_code == 409, second.text
-    assert second.json()["detail"] == "Der Zeitraum überschneidet einen finalisierten Wirtschaftsplan dieses Objekts."
-    assert (await api.get(f"/api/economic-plans/{plans[1]['id']}")).json()["status"] == "draft"
+    assert second.status_code == status, second.text
+    if status == 409:
+        assert second.json()["detail"] == "Der Zeitraum überschneidet einen finalisierten Wirtschaftsplan dieses Objekts."
+    assert (await api.get(f"/api/economic-plans/{plans[1]['id']}")).json()["status"] == ("draft" if status == 409 else "finalized")
 
 
-async def test_weg_finalization_rechecks_drafts_against_newly_finalized_period(client_a_admin):
+@pytest.mark.parametrize("first_period,second_period,status", RECHECK_PERIODS)
+async def test_weg_finalization_rechecks_drafts_against_newly_finalized_period(client_a_admin, first_period, second_period, status):
     api = client_a_admin
     data = await period_property(api, month=1)
-    plans = await period_draft_plans(api, data)
+    plans = await period_draft_plans(api, data, first_period, second_period)
     plan_values = {"planned_costs": [], "reserve_contribution_total": "0.00"}
     await attest_fixture(api, "economic_plan", plans[0]["id"], plan_values)
     first_plan = await api.post(f"/api/economic-plans/{plans[0]['id']}/finalize", json=plan_values)
@@ -63,9 +74,10 @@ async def test_weg_finalization_rechecks_drafts_against_newly_finalized_period(c
     assert second_plan.status_code == 200, second_plan.text
     await attest_fixture(api, "settlement", runs[1]["id"], values)
     second = await api.post(f"/api/weg-settlements/{runs[1]['id']}/finalize", json=values)
-    assert second.status_code == 409, second.text
-    assert second.json()["detail"] == "Abrechnungszeitraum überschneidet eine finalisierte WEG-Abrechnung dieses Objekts."
-    assert (await api.get(f"/api/weg-settlements/{runs[1]['id']}")).json()["status"] == "draft"
+    assert second.status_code == status, second.text
+    if status == 409:
+        assert second.json()["detail"] == "Abrechnungszeitraum überschneidet eine finalisierte WEG-Abrechnung dieses Objekts."
+    assert (await api.get(f"/api/weg-settlements/{runs[1]['id']}")).json()["status"] == ("draft" if status == 409 else "finalized")
 
 
 @pytest.fixture
@@ -127,7 +139,7 @@ async def test_overlapping_plan_drafts_are_allowed(client_a_admin, april):
     assert short["period_end"] == "2025-12-31"
 
 
-async def test_only_straddling_finalized_plan_periods_are_rejected(client_a_admin, april):
+async def test_nonidentical_overlaps_with_finalized_plans_are_rejected(client_a_admin, april):
     api = client_a_admin
     await finalized_plan(api, april, "2025-07-01", "2025-09-30")
     body = {"property_id": april["property"]["id"], "plan_year": 2025,
@@ -137,12 +149,12 @@ async def test_only_straddling_finalized_plan_periods_are_rejected(client_a_admi
         ("2025-08-01", "2025-12-31", 409),
         ("2025-04-01", "2025-07-01", 409),
         ("2025-09-30", "2025-12-31", 409),
-        ("2025-08-01", "2025-08-31", 201),
-        ("2025-07-01", "2025-08-31", 201),
-        ("2025-08-01", "2025-09-30", 201),
-        ("2025-04-01", "2025-12-31", 201),
-        ("2025-07-01", "2025-12-31", 201),
-        ("2025-04-01", "2025-09-30", 201),
+        ("2025-08-01", "2025-08-31", 409),
+        ("2025-07-01", "2025-08-31", 409),
+        ("2025-08-01", "2025-09-30", 409),
+        ("2025-04-01", "2025-12-31", 409),
+        ("2025-07-01", "2025-12-31", 409),
+        ("2025-04-01", "2025-09-30", 409),
         ("2025-07-01", "2025-09-30", 201),
         ("2025-04-01", "2025-06-30", 201),
         ("2025-10-01", "2025-12-31", 201),
@@ -284,12 +296,12 @@ async def test_weg_overlap_checks_only_finalized_runs_for_same_property(client_a
         ("2025-08-01", "2025-12-31", 409),
         ("2025-04-01", "2025-07-01", 409),
         ("2025-09-30", "2025-12-31", 409),
-        ("2025-08-01", "2025-08-31", 201),
-        ("2025-07-01", "2025-08-31", 201),
-        ("2025-08-01", "2025-09-30", 201),
-        ("2025-04-01", "2025-12-31", 201),
-        ("2025-07-01", "2025-12-31", 201),
-        ("2025-04-01", "2025-09-30", 201),
+        ("2025-08-01", "2025-08-31", 409),
+        ("2025-07-01", "2025-08-31", 409),
+        ("2025-08-01", "2025-09-30", 409),
+        ("2025-04-01", "2025-12-31", 409),
+        ("2025-07-01", "2025-12-31", 409),
+        ("2025-04-01", "2025-09-30", 409),
         ("2025-07-01", "2025-09-30", 201),
         ("2025-04-01", "2025-06-30", 201),
         ("2025-10-01", "2025-12-31", 201),

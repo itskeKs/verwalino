@@ -26,7 +26,7 @@ the property's period offers.
 the period; the period offer needs property access. Missing plan dates return
 422 with "Abrechnungszeitraum angeben: Beginn und Ende", after pause, parent and
 accounting-scope checks. Explicit dates need no access to the property's start
-month; twelve-month and straddling validation still applies. The organization-bound
+month; twelve-month and overlap validation still applies. The organization-bound
 month getter is deferred to #95's migration. No migration is added here.
 
 When the property is readable, explicit dates must fit within its period, or bridge exactly the gap
@@ -37,15 +37,15 @@ the gap before the regular 1 April 2026–31 March 2027 plan. The transition can
 finalized and used for a WEG settlement. Reversed periods, periods longer than
 twelve months and dates outside these boundaries return 422.
 
-Creating a plan returns 409 only when its period **straddles a boundary** of a
-visible finalized, non-superseded plan for the same property: the periods overlap,
-but neither fully contains the other. For finalized bounds `[a, b]` and new bounds
-`[s, e]`, this means `a < s <= b < e` or `s < a <= e < b`, including overlap on a
-boundary day. Fully contained, fully containing and identical periods are allowed,
-including shared start or end dates, subject to the plan-date boundaries above.
-Drafts never block creation. WEG annual runs use the same twelve-month validation
-(422) and straddling-only rule (409), for their property, type and accounting
-context. Superseded documents do not block creation. Checks use normal
+Creating or finalizing a plan returns 409 when its period overlaps a visible
+finalized, non-superseded plan for the same property, unless both bounds are
+identical (repeat/correction plans). For finalized bounds `[a, b]` and new bounds
+`[s, e]`, the conflict predicate is
+`a <= e AND b >= s AND (a != s OR b != e)`. Contained and containing periods,
+shared starts or ends and overlap on a boundary day all conflict, subject to the
+plan-date boundaries above. Drafts never block creation. WEG annual runs use the
+same twelve-month validation (422) and overlap rule (409), at creation and
+finalization, for their property, type and accounting context. Superseded documents do not block creation. Checks use normal
 row-level security, with the same [cross-scope limitation (#95) as statement
 runs](m3-abrechnungs-engine.md#property-settlement-periods-68): an inaccessible
 finalized document in another scope can remain undetected. No migration or

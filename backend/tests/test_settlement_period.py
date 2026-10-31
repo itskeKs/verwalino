@@ -25,7 +25,7 @@ async def test_overlong_or_reversed_statement_is_rejected(client_a_admin, april,
 
 
 @pytest.mark.parametrize("batch", [False, True])
-async def test_only_straddling_finalized_statement_periods_are_rejected(client_a_admin, april, batch):
+async def test_nonidentical_overlaps_with_finalized_statements_are_rejected(client_a_admin, april, batch):
     api = client_a_admin
     run = await create(api, "/api/settlements", {
         **statement(april, "2025-07-01", "2025-09-30"), "advance_payments_total": "0.00"})
@@ -38,12 +38,12 @@ async def test_only_straddling_finalized_statement_periods_are_rejected(client_a
         ("2025-08-01", "2025-12-31", 409),  # Straddles the end.
         ("2025-04-01", "2025-07-01", 409),  # Inclusive boundary day.
         ("2025-09-30", "2025-12-31", 409),
-        ("2025-08-01", "2025-08-31", 201),  # Contained.
-        ("2025-07-01", "2025-08-31", 201),  # Shared start, contained.
-        ("2025-08-01", "2025-09-30", 201),  # Shared end, contained.
-        ("2025-04-01", "2025-12-31", 201),  # Containing.
-        ("2025-07-01", "2025-12-31", 201),  # Shared start, containing.
-        ("2025-04-01", "2025-09-30", 201),  # Shared end, containing.
+        ("2025-08-01", "2025-08-31", 409),  # Contained.
+        ("2025-07-01", "2025-08-31", 409),  # Shared start, contained.
+        ("2025-08-01", "2025-09-30", 409),  # Shared end, contained.
+        ("2025-04-01", "2025-12-31", 409),  # Containing.
+        ("2025-07-01", "2025-12-31", 409),  # Shared start, containing.
+        ("2025-04-01", "2025-09-30", 409),  # Shared end, containing.
         ("2025-07-01", "2025-09-30", 201),  # Identical; batch skips it.
         ("2025-04-01", "2025-06-30", 201),  # Adjacent.
         ("2025-10-01", "2025-12-31", 201),
@@ -95,12 +95,18 @@ async def test_reference_year_may_be_either_year_of_the_period(client_a_admin, a
     assert answer.status_code == 200, answer.text
 
 
-async def test_statement_finalization_rechecks_drafts_against_newly_finalized_period(client_a_admin):
+@pytest.mark.parametrize("start,end,status", [
+    ("2025-04-01", "2025-08-31", 409),
+    ("2025-08-01", "2025-08-31", 409),
+    ("2025-04-01", "2025-12-31", 409),
+    ("2025-07-01", "2025-09-30", 200),
+])
+async def test_statement_finalization_rechecks_drafts_against_newly_finalized_period(client_a_admin, start, end, status):
     api = client_a_admin
     data = await period_property(api, month=1)
     runs = [await create(api, "/api/settlements", {
         **statement(data, start, end), "advance_payments_total": "0.00",
-    }) for start, end in (("2025-01-01", "2025-12-31"), ("2025-07-01", "2026-06-30"))]
+    }) for start, end in (("2025-07-01", "2025-09-30"), (start, end))]
     for run in runs:
         await attest_fixture(api, "settlement", run["id"], {
             "advance_payments_total": "0.00", "advance_payments_source": "MANUAL",
@@ -108,9 +114,10 @@ async def test_statement_finalization_rechecks_drafts_against_newly_finalized_pe
     first = await api.post(f"/api/settlements/{runs[0]['id']}/finalize", json={})
     assert first.status_code == 200, first.text
     second = await api.post(f"/api/settlements/{runs[1]['id']}/finalize", json={})
-    assert second.status_code == 409, second.text
-    assert second.json()["detail"] == "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags."
-    assert (await api.get(f"/api/settlements/{runs[1]['id']}")).json()["status"] == "draft"
+    assert second.status_code == status, second.text
+    if status == 409:
+        assert second.json()["detail"] == "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags."
+    assert (await api.get(f"/api/settlements/{runs[1]['id']}")).json()["status"] == ("draft" if status == 409 else "finalized")
 
 
 @pytest.mark.parametrize("month", [1, 4])

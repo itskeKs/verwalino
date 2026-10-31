@@ -25,19 +25,29 @@ monitor uses the same functions. No migration or rounding changes are required.
 recent completed property periods, newest first, starting with the period before
 the one containing today (`period_for_date`). The statement and batch forms adopt
 these dates and still permit free periods. A reversed or over-twelve-month period
-returns 422. Creation and finalization return 409
-only when the new period **straddles a boundary** of a visible finalized,
-non-superseded run for the same lease and type: the periods overlap, but neither
-fully contains the other. For finalized bounds `[a, b]` and new bounds `[s, e]`,
-this means `a < s <= b < e` or `s < a <= e < b`; overlap on a boundary day counts.
-Fully contained, fully containing and identical periods remain permitted, including
-periods sharing a start or end date. Mixed batches report straddling leases as
-per-lease errors, create the other drafts, and continue skipping identical existing
-runs. A batch consisting entirely of straddling leases retains the existing 409
-response. Drafts never block creation. Short transition
+returns 422. Creation and finalization return 409 when the new period overlaps a
+visible finalized, non-superseded run for the same lease and type, unless both
+period bounds are identical (repeat/correction runs). For finalized bounds
+`[a, b]` and new bounds `[s, e]`, the conflict predicate is
+`a <= e AND b >= s AND (a != s OR b != e)`. Contained and containing periods,
+shared starts or ends and overlap on a boundary day all conflict. Mixed batches
+report conflicting leases as per-lease errors, create the other drafts, and
+continue skipping identical existing runs. An entirely conflicting batch retains
+409. Drafts never block creation. Short transition
 periods remain possible after a property's start month changes. An
 inclusive period from 29 February 2024 through 28 February 2025 is twelve months
 and is accepted.
+
+**Lease-change limitation:** the engine clips occupancy slices to the supplied
+statement window and apportions calendar-year costs between successive leases by
+actual occupancy days; vacancy is attributed to the owner. The persisted statement
+period is still the supplied period: creation and batch creation do not clip it
+to the target lease's active span. Also, when a cost's service period extends beyond
+a manually shortened statement window, distribution reassigns the full source
+amount to the in-window slices rather than prorating the source amount first.
+Automatic lease-bounded statement dates with correct short-window cost proration
+remain follow-up work. The scenarios separately prove explicit short-period overlap
+protection and lease-change apportionment within a full calendar-year calculation.
 
 **Current overlap limitation:** the check runs under the acting user's normal
 row-level security. Overlaps with runs in other accounting scopes that the user
@@ -58,7 +68,7 @@ retain its default period. The organization-bound month getter is deferred to
 **Other period rules and limitation:** economic plans honour explicit dates within
 the readable property period or exactly closing the gap from the last finalized
 plan to the next property period; scope-only clerks supply their own dates,
-subject to the same twelve-month and straddling checks. Offered plan dates remain
+subject to the same twelve-month and overlap checks. Offered plan dates remain
 editable for mid-year scopes and gap-closing transitions. Year-only NK and
 Hausgeld payments belong to the period starting in the assigned year. See the
 [WEG period rules](m4-weg-abrechnung.md#property-settlement-periods-68). The economic
@@ -687,7 +697,7 @@ atomic batch run with property, inclusive period, and optional accounting scope.
 contracts of the authorized scope units that overlap the period are created via
 `create_draft`; active BK runs with identical contract/property/period/scope are skipped
 unchanged. Response: `created`, `skipped` with contract/run ID, and, when needed, `errors` with
-contract ID and the straddling-period message. A straddling lease does not roll back
+contract ID and the overlap message. A conflicting lease does not roll back
 other eligible leases; an entirely conflicting batch retains 409. The existing
 organization-wide financial lock serializes parallel batch runs; other errors still
 roll back the audit and already created drafts. Source/scope permissions are checked before an empty

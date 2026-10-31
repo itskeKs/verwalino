@@ -1,6 +1,6 @@
 from decimal import Decimal
 from pytest_bdd import given, when, then
-from tests.settlement_period_support import period_property, booked, statement
+from tests.settlement_period_support import period_property, booked, statement, create
 from tests.settlement_period_support import period_data_cleanup  # noqa: F401
 from tests.financial_coverage_helpers import attest_fixture
 
@@ -70,3 +70,103 @@ def plan_period(world):
     assert world.response.status_code == 201, world.describe_response()
     plan = world.response.json()
     assert (plan["plan_year"], plan["period_start"], plan["period_end"]) == (2025, "2025-04-01", "2026-03-31")
+
+
+@given("a calendar-year property where tenant A leaves on 30 September and tenant B moves in on 1 October")
+def successive_tenants(world, period_data_cleanup):
+    data = world.run(period_property(world.actor, month=1))
+    changed = world.act("PATCH", f"/api/leases/{data['lease']['id']}", json={"valid_to": "2025-09-30"})
+    assert changed.status_code == 200, world.describe_response()
+    person = world.run(create(world.actor, "/api/persons", {"last_name": "Nachmieter B"}))
+    tenant = world.run(create(world.actor, "/api/tenant-profiles", {"person_id": person["id"]}))
+    lease = world.run(create(world.actor, "/api/leases", {
+        "unit_id": data["unit"]["id"], "tenant_profile_id": tenant["id"],
+        "valid_from": "2025-10-01", "base_rent": "700.00", "advance_payment": "100.00",
+    }))
+    world.data["successive_tenants"] = {"A": data, "B": {**data, "tenant": tenant, "lease": lease}}
+
+
+def finalize_tenant_statement(world, data, start, end):
+    run = world.run(create(world.actor, "/api/settlements", {
+        **statement(data, start, end), "advance_payments_total": "0.00",
+    }))
+    finalize_zero_advance_statement(world, run["id"])
+    return world.response.json()
+
+
+def finalize_zero_advance_statement(world, run_id):
+    world.run(attest_fixture(world.actor, "settlement", run_id, {
+        "advance_payments_total": "0.00", "advance_payments_source": "MANUAL",
+    }))
+    answer = world.act("POST", f"/api/settlements/{run_id}/finalize", json={})
+    assert answer.status_code == 200, world.describe_response()
+
+
+@when("the manager finalizes statements for each tenant's occupied months")
+def finalize_occupied_months(world):
+    tenants = world.data["successive_tenants"]
+    world.data["tenant_statements"] = {
+        "A": finalize_tenant_statement(world, tenants["A"], "2025-01-01", "2025-09-30"),
+        "B": finalize_tenant_statement(world, tenants["B"], "2025-10-01", "2025-12-31"),
+    }
+
+
+@then("A's statement covers January through September and B's covers October through December")
+def occupied_statement_dates(world):
+    runs = world.data["tenant_statements"]
+    assert (runs["A"]["period_start"], runs["A"]["period_end"]) == ("2025-01-01", "2025-09-30")
+    assert (runs["B"]["period_start"], runs["B"]["period_end"]) == ("2025-10-01", "2025-12-31")
+
+
+@when("the manager tries to create a calendar-year statement for tenant A")
+def former_tenant_calendar_statement(world):
+    world.act("POST", "/api/settlements", json=statement(world.data["successive_tenants"]["A"], "2025-01-01", "2025-12-31"))
+
+
+@when("the manager repeats A's January through September statement")
+def repeat_former_tenant_statement(world):
+    world.data["repeated_tenant_statement"] = world.run(create(world.actor, "/api/settlements", {
+        **statement(world.data["successive_tenants"]["A"], "2025-01-01", "2025-09-30"),
+        "advance_payments_total": "0.00",
+    }))
+
+
+@then("the identical statement can be finalized again")
+def finalize_repeated_statement(world):
+    run = world.data["repeated_tenant_statement"]
+    assert run["id"] != world.data["tenant_statements"]["A"]["id"]
+    finalize_zero_advance_statement(world, run["id"])
+
+
+@given("annual operating costs of 3650 euros for that unit")
+def annual_operating_cost(world):
+    categories = world.act("GET", "/api/cost-categories")
+    assert categories.status_code == 200, world.describe_response()
+    category = next(c for c in categories.json() if c["code"] == "GRUNDSTEUER")
+    entry = world.run(create(world.actor, "/api/cost-entries", {
+        "property_id": world.data["successive_tenants"]["A"]["property"]["id"],
+        "cost_category_id": category["id"], "invoice_date": "2025-01-01",
+        "service_period_from": "2025-01-01", "service_period_to": "2025-12-31",
+        "gross_amount": "3650.00", "tenant_distribution_key": "WOHNFLAECHE",
+        "tenant_apportionable": "UMLAGEFAEHIG",
+    }))
+    answer = world.act("POST", f"/api/cost-entries/{entry['id']}/confirm")
+    assert answer.status_code == 200, world.describe_response()
+
+
+@when("the manager finalizes calendar-year calculations for both tenants")
+def finalize_calendar_calculations(world):
+    world.data["tenant_statements"] = {
+        tenant: finalize_tenant_statement(world, data, "2025-01-01", "2025-12-31")
+        for tenant, data in world.data["successive_tenants"].items()
+    }
+
+
+@then("A pays 2730 euros for January through September and B pays 920 euros for October through December")
+def successive_tenant_shares(world):
+    for tenant, amount, days in (("A", "2730.00", 273), ("B", "920.00", 92)):
+        run = world.data["tenant_statements"][tenant]
+        assert Decimal(run["total_cost"]) == Decimal(amount)
+        line, = [line for line in run["lines"] if line["line_type"] == "COST"]
+        assert line["time_share_days"] == days
+        assert line["time_share_total_days"] == 365
