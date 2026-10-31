@@ -46,6 +46,38 @@ The development/test database remains exclusively `infra-postgres-1`:55432.
 A real portable first installation and TLS acceptance are still pending; details in
 [DEPLOY.md](../DEPLOY.md#portable-docker-first-installation).
 
+## Deployment modes
+
+One image supports `HV_DEPLOYMENT_MODE=selfhost|hosted`, defaulting to `selfhost`.
+`Settings` validates the enum when the process imports its configuration; any other
+value prevents startup and lists the allowed values. All backend decisions read
+the frozen `DeploymentPolicy` in `backend/app/core/deployment_policy.py`.
+The complete table below is checked against the dataclass by
+`backend/tests/test_deployment_policy.py`, alongside explicit snapshots of both modes.
+
+| Policy field | selfhost | hosted |
+| --- | --- | --- |
+| `deployment_mode` | `selfhost` | `hosted` |
+| `first_run_setup_enabled` | `true` | `false` |
+
+Current readers are scenario tag selection, reports and browser app processes
+(`deployment_mode`), and setup's `setup_required()` (`first_run_setup_enabled`).
+`GET /api/setup` returns `{"required": false}` in hosted mode even with no
+organizations, without opening a database connection. Every non-GET setup method
+returns the same 404 as a closed installation, before parsing its body. The admin
+CLI remains available in both modes; hosted signup and other hosted features are
+deferred. Policy fields are added when their consumers are implemented.
+
+The frontend relies on `GET /api/setup`'s `required` alone to open setup; the
+backend owns the deployment decision. While setup status loads, the existing
+"Lade..." state applies. If the setup check fails, login and signed-in pages
+remain available; a later successful app load can detect required setup.
+The same RLS, scoped API queries and
+[route sweep](#74a-route-sweep-backendteststest_route_isolation_sweeppy) apply in both modes.
+No branding or other hosted UI is added. The self-host installer and token
+issuance remain unchanged: the portable manifest uses the default self-hosted
+policy and does not forward an arbitrary caller's environment.
+
 ## Current Declaration-of-Division Workflow (2026-08-29)
 
 For declarations of division, the application uses a **fixed,
@@ -384,8 +416,9 @@ Role enforcement takes place in the authorization layer (policy check per endpoi
 - **MFA:** not mandatory for M0; note as a hardening option for M9 (back office with personal + financially relevant data).
 - **Audit:** login, logout, failed logins, role changes → `audit_event`.
 
-**First-run bootstrap (revision 0141):** `GET /api/setup` reports only whether
-there are no organizations. `POST /api/setup` is unauthenticated but requires
+**First-run bootstrap (revision 0141):** in self-hosted mode, `GET /api/setup` reports
+whether there are no organizations. In hosted mode it always reports no setup;
+see [Deployment modes](#deployment-modes). `POST /api/setup` is unauthenticated but requires
 the one-time installer token in its JSON body. A `SECURITY DEFINER`
 `setup_first_organization(token text, org_name text, admin_email text,
 admin_name text, password_hash text) RETURNS uuid` locks `organization`,

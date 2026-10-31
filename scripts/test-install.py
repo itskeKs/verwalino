@@ -58,6 +58,8 @@ elif name == "docker":
         print(os.environ.get("COMPOSE_VERSION", "2.24.0"))
     elif args == ["info"]:
         sys.exit(int(os.environ.get("DAEMON_FAIL", "0")))
+    elif args == ["info", "-f", "{{.ServerVersion}}"]:
+        print(os.environ.get("DOCKER_VERSION", "27.0.0"))
     elif "psql" in args:
         if any("SELECT count(*)" in arg for arg in args):
             print("0")
@@ -98,7 +100,7 @@ class InstallTests(unittest.TestCase):
         self.binary = self.base / "bin"
         self.binary.mkdir()
         # An isolated PATH prevents accidental use of real network/Docker/cosign tools.
-        for name in ("bash", "cat", "chmod", "cp", "dirname", "grep", "ln", "mkdir",
+        for name in ("awk", "bash", "cat", "chmod", "cp", "df", "dirname", "grep", "ln", "mkdir",
                      "mktemp", "mv", "openssl", "rm", "rmdir", "sed", "shasum", "stat"):
             target = shutil.which(name)
             self.assertIsNotNone(target, name)
@@ -403,7 +405,9 @@ class InstallTests(unittest.TestCase):
             if path.is_file():
                 self.assertNotIn(token.encode(), path.read_bytes())
         self.assertTrue(os.access(self.dest / "infra/db/prod-init.sh", os.X_OK))
-        calls = self.calls("docker")[2:]
+        # Skip the installer's and the doctor's host queries; every remaining call is project-scoped.
+        calls = [args for args in self.calls("docker")[2:]
+                 if args[0] != "info" and args != ["compose", "version", "--short"]]
         self.assertTrue(calls)
         for args in calls:
             self.assertEqual(args[args.index("--project-name") + 1], "verwalino")

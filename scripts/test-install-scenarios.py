@@ -25,7 +25,13 @@ with (base / "calls.jsonl").open("a") as log:
     log.write(json.dumps([name, args]) + "\n")
 def save():
     state_file.write_text(json.dumps(state))
-if name == "nc":
+if name == "nc" and "-z" in args:
+    # The doctor probes a port; only the dummy listener below answers.
+    try:
+        socket.create_connection((args[-2], int(args[-1])), timeout=1).close()
+    except OSError:
+        sys.exit(1)
+elif name == "nc":
     with socket.socket() as server:
         server.bind(("127.0.0.1", int(args[-1])))
         server.listen()
@@ -42,6 +48,8 @@ elif name == "docker":
         print("2.24.0")
     elif args == ["info"]:
         pass
+    elif args[:2] == ["info", "-f"]:
+        print("27.0.0" if "ServerVersion" in args[-1] else "/docker-data")
     elif args[0] in ("ps", "volume"):
         if os.environ.get("MATRIX_EXISTING"):
             print("existing-installation")
@@ -54,6 +62,9 @@ elif name == "docker":
         sys.exit("Unexpected Docker command")
     elif "logs" in args:
         print("synthetic compose logs")
+    elif "ps" in args and "--format" in args:
+        if state.get("running"):
+            print("running|" + ("" if args[-1] == "caddy" else "healthy") + "|" + args[-1] + "-id")
     elif "ps" in args:
         if "--quiet" in args or "-q" in args:
             if state.get("running") or (os.environ.get("MATRIX_BUSY_RUNNING") and "app" not in args):
@@ -112,7 +123,7 @@ class InstallScenarioTests(unittest.TestCase):
         self.base = Path(self.temp.name)
         self.bin = self.base / "bin"
         self.bin.mkdir()
-        for name in ("bash", "cat", "chmod", "cp", "dirname", "grep", "ln", "mkdir",
+        for name in ("awk", "bash", "cat", "chmod", "cp", "df", "dirname", "grep", "ln", "mkdir",
                      "mktemp", "mv", "openssl", "rm", "rmdir", "sed", "shasum", "stat"):
             (self.bin / name).symlink_to(shutil.which(name))
         (self.bin / "python3").symlink_to(sys.executable)

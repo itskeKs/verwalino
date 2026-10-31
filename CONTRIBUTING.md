@@ -19,13 +19,15 @@ Rules for coding agents, which apply to people too, are in [AGENTS.md](AGENTS.md
   instance.
 - Local app: run `scripts/dev-local.sh` from the repository root after installing both
   dependency sets. It starts the API on `:18000`, UI on `:13000`, and invoice worker
-  together, using only the test database on `:55432` and a separate
+  together, plus the inbox worker when its health check passes, using only the test database on `:55432` and a separate
   `/tmp/hv-dev-documents.*` storage folder by default (or an explicitly supplied
   `/tmp` `HV_DOCUMENT_STORAGE_ROOT`). It ensures the local test admin
-  `test@example.de` exists and prints its login when ready. Cleanup stops all three processes on Ctrl+C or partial startup
+  `test@example.de` exists and prints its login when ready. Cleanup stops every started process on Ctrl+C or partial startup
   failure without stopping PostgreSQL; originals in the printed folder are
   preserved. Do not run resetting backend tests during a UI acceptance run.
-  Worker operation: [DEPLOY.md](DEPLOY.md#invoice-worker-t10-alpha-active-since-2026-10-24).
+  Worker operation: [invoice worker](DEPLOY.md#invoice-worker-t10-alpha-active-since-2026-10-24)
+  and [inbox worker](DEPLOY.md#inbox-worker).
+  Inbox worker skipped: check ClamAV (clamscan and signatures), worker database access, document storage and German OCR; API and UI will continue.
 - Declarations of division (Teilungserklärungen): the dependency sets above include the
   operations tooling. Imports require **Human Approval** before creating canonical
   building, unit, or rule data; document content remains untrusted. See the

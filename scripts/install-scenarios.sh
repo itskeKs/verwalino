@@ -259,7 +259,7 @@ try:
     # children a deterministic tool PATH without cosign; release tests cover it.
     toolbin = work / "bin"
     toolbin.mkdir()
-    for name in ("bash", "cat", "chmod", "cp", "dirname", "grep", "ln", "mkdir", "mktemp", "mv",
+    for name in ("awk", "bash", "cat", "chmod", "cp", "df", "dirname", "grep", "ln", "mkdir", "mktemp", "mv",
                  "openssl", "rm", "rmdir", "sed", "sha256sum", "shasum", "stat", "docker", "curl", "nc"):
         if executable := shutil.which(name):
             (toolbin / name).symlink_to(executable)
