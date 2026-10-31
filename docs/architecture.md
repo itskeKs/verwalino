@@ -170,6 +170,8 @@ A fifth axis, distinct in domain terms, is the **segregation of funds** (SDD §4
 
 ### 1.1 System boundaries (M0)
 
+`website/` contains the independent static Astro public website, with German and English routes and no application backend dependency.
+
 ```
             ┌──────────────────────────────────────────────────────────┐
             │                  Responsive web app (React/TS)            │

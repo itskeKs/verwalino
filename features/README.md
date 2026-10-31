@@ -229,8 +229,8 @@ failures, always attempts normal stop, publishes the Markdown job summary, and
 uploads `report/` as `scenarios-selfhost-<UTC date>`.
 Download it from the workflow run's **Artifacts** area; retention is **90 days**.
 Artifacts are the history store; there is no dashboard or separate history database.
-The existing installer has no backup command, so the job only stops the disposable
-installation and the GitHub runner's lifecycle removes its storage.
+The job does not back up the disposable installation; it only stops it, and the
+GitHub runner's lifecycle removes its storage.
 
 Only `mode: [selfhost]` is implemented. Report metadata uses the same validated
 `HV_DEPLOYMENT_MODE` policy as scenario tag selection and defaults to `selfhost`;
