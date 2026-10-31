@@ -4,7 +4,8 @@ Verwalino is a property-management app for rental management, homeowners' associ
 individual unit management (SEV): FastAPI + SQLAlchemy async + Postgres with row-level security in
 `backend/`, React + Vite + TypeScript in `frontend/`. One image runs in two ways: self-hosted by
 anyone, and as a free hosted service run by fogu UG (haftungsbeschränkt), where every
-property-management company is one isolated organization. Licence AGPL-3.0; the repository is public.
+property-management company is one isolated organization. Licence AGPL-3.0; the repository is
+public. Never change its visibility without the owner's (Chris) explicit decision.
 Where it is going: [docs/roadmap.md](docs/roadmap.md). What exists: [docs/feature-status.md](docs/feature-status.md).
 Frontend design contract: [DESIGN.md](DESIGN.md). Human-facing workflow and commands: [CONTRIBUTING.md](CONTRIBUTING.md).
 

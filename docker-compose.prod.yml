@@ -73,7 +73,7 @@ services:
       HV_SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in the protected env file or invoking environment}
       HV_SESSION_COOKIE_NAME: __Host-hv_session
       HV_SESSION_COOKIE_SECURE: "true"
-      HV_ALLOWED_HOSTS: verwaltung.karat.immo
+      HV_ALLOWED_HOSTS: ${HV_PUBLIC_HOST:?set HV_PUBLIC_HOST in the protected env file or invoking environment}
       HV_ENABLE_API_DOCS: "false"
       HV_DOCUMENT_STORAGE_ROOT: /data/documents
       HV_INVOICE_EXTRACTION_ENABLED: ${HV_INVOICE_EXTRACTION_ENABLED:-true}
@@ -151,7 +151,7 @@ services:
     mem_limit: 768m
     cpus: "1.00"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/api/health/live', headers={'Host': 'verwaltung.karat.immo'}), timeout=2)\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/api/health/live', headers={'Host': '${HV_PUBLIC_HOST:?set HV_PUBLIC_HOST in the protected env file or invoking environment}'}), timeout=2)\""]
       interval: 10s
       timeout: 3s
       retries: 6
@@ -165,16 +165,18 @@ services:
       - backend
       - traefik
     labels:
-      com.karat.hausverwaltung.release: ${HV_RELEASE_ID:?set HV_RELEASE_ID to the reviewed release identifier}
+      # Ownership label. Containers started before the io.verwalino.release rename carry
+      # a legacy key that deploy-production.sh still reads when it inspects them.
+      io.verwalino.release: ${HV_RELEASE_ID:?set HV_RELEASE_ID to the reviewed release identifier}
       traefik.enable: "true"
       traefik.docker.network: "traefik"
-      traefik.http.routers.hausverwaltung-alpha.rule: "Host(`verwaltung.karat.immo`)"
+      traefik.http.routers.hausverwaltung-alpha.rule: "Host(`${HV_PUBLIC_HOST:?set HV_PUBLIC_HOST in the protected env file or invoking environment}`)"
       traefik.http.routers.hausverwaltung-alpha.entrypoints: "websecure"
       traefik.http.routers.hausverwaltung-alpha.tls: "true"
       traefik.http.routers.hausverwaltung-alpha.tls.certresolver: "letsencrypt"
       traefik.http.routers.hausverwaltung-alpha.service: "hausverwaltung-alpha"
       traefik.http.routers.hausverwaltung-alpha.middlewares: "hausverwaltung-alpha-security,hausverwaltung-alpha-buffer"
-      traefik.http.routers.hausverwaltung-alpha-login.rule: "Host(`verwaltung.karat.immo`) && Path(`/api/auth/login`)"
+      traefik.http.routers.hausverwaltung-alpha-login.rule: "Host(`${HV_PUBLIC_HOST:?set HV_PUBLIC_HOST in the protected env file or invoking environment}`) && Path(`/api/auth/login`)"
       traefik.http.routers.hausverwaltung-alpha-login.priority: "100"
       traefik.http.routers.hausverwaltung-alpha-login.entrypoints: "websecure"
       traefik.http.routers.hausverwaltung-alpha-login.tls: "true"
@@ -277,7 +279,7 @@ services:
       egress:
         gw_priority: 1
     labels:
-      com.karat.hausverwaltung.release: ${HV_RELEASE_ID:?set HV_RELEASE_ID to the reviewed release identifier}
+      io.verwalino.release: ${HV_RELEASE_ID:?set HV_RELEASE_ID to the reviewed release identifier}
 
   invoice-worker:
     image: ${APP_IMAGE:?set APP_IMAGE to an immutable image reference}
@@ -323,7 +325,7 @@ services:
     networks:
       - backend
     labels:
-      com.karat.hausverwaltung.release: ${HV_RELEASE_ID:?set HV_RELEASE_ID to the reviewed release identifier}
+      io.verwalino.release: ${HV_RELEASE_ID:?set HV_RELEASE_ID to the reviewed release identifier}
 
 volumes:
   pgdata:
