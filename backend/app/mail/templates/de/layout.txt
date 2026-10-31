@@ -1,0 +1,49 @@
+VERWALINO
+
+{{ copy.heading }}
+
+{{ copy.salutation|default('Guten Tag,') }}
+
+{% for paragraph in copy.paragraphs %}
+{{ paragraph|wrap_mail }}
+
+{% endfor %}
+{% for step in copy.steps|default([]) %}
+- {{ step }}
+{% if loop.last %}
+
+{% endif %}
+{% endfor %}
+{% for label, value in copy.facts|default([]) %}
+{{ label }}: {{ value }}
+{% if loop.last %}
+
+{% endif %}
+{% endfor %}
+{% if copy.action_link|default(none) %}
+{{ copy.action_label }}:
+{{ copy.action_link }}
+
+{% endif %}
+{% for label, link in copy.links|default([]) %}
+{{ label }}:
+{{ link }}
+
+{% endfor %}
+{% for note in copy.notes|default([]) %}
+{{ note|wrap_mail }}
+
+{% endfor %}
+-- 
+{{ copy.why|wrap_mail }}
+
+{% if hosted %}
+{{ ('Verwalino wird betrieben von ' ~ brand.OPERATOR ~ ', ' ~ brand.ADDRESS ~ '.')|wrap_mail }}
+{{ brand.CONTACT }}
+Impressum:
+{{ brand.IMPRINT_URL }}
+Datenschutz:
+{{ brand.PRIVACY_URL }}
+{% else %}
+{{ 'Diese E-Mail wurde von einer selbst betriebenen Verwalino-Installation versendet. Bei Fragen wenden Sie sich an die Verwaltung, die Ihnen den Zugang eingerichtet hat.'|wrap_mail }}
+{% endif %}

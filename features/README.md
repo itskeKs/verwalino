@@ -73,18 +73,23 @@ token; confirmation then uses that emailed token. Missing configuration or an un
 API fails the scenario with setup instructions, never skips it. The helper is reusable
 for other mail acceptance scenarios; FakeSMTP remains for mail-service unit tests.
 `password_reset.feature` is untagged and verifies recovery through Mailpit, the emailed reset token, confirmation mail and old-session revocation in both modes.
-Organization isolation and quota-summary scenarios run in both modes. `organization_quotas.feature` is
-hosted-only: it scales the storage allowance to a small deterministic payload,
-fills it through the real upload API, and verifies the German refusal. Files and
-database records use the ordinary services; no network or model call is involved.
+Organization isolation scenarios run in both modes. `organization_quotas.feature` is
+hosted-only: it signs up separate organizations for the exhausted property allowance,
+the scaled storage boundary and quota-usage isolation. A fixture checks shared Alpha/Beta
+usage before and after each quota scenario, including failures, and closes its own clients.
+It fills storage through the real upload API and verifies the German refusal. Files and
+database records use the ordinary services; signup mail uses local Mailpit.
+No external network or model call is involved.
 Browser app processes inherit the
 selected mode too; `@browser` remains a separate opt-in tag. Browser scenarios do not
 send mail, so only CI's backend job provisions the same digest-pinned Mailpit service.
 
-**CI integration:** PR CI and the nightly run the selfhost mode. The nightly uses
+**CI integration:** PR CI runs the selfhost backend suite, then the hosted API
+scenarios sequentially in the same backend job against the same disposable
+Postgres and Mailpit services. The nightly runs selfhost mode and uses
 the self-host installer, which starts a selfhost server; changing the pytest
 process's mode only selects tags and cannot change that server's policy. A
-CI/nightly run in both modes, including a server started with
+nightly run in both modes, including a server started with
 `HV_DEPLOYMENT_MODE=hosted`, is tracked in #103.
 
 ## How the step library is organised
@@ -232,7 +237,7 @@ target aborts with "target is not a fresh installation; refusing to write scenar
 data"; failed authentication or an unverifiable list also aborts. Start with a
 new disposable installation for each run, including reruns after a partial failure.
 
-**Isolation decision:** all nine examples of `organization_isolation.feature` are
+**Isolation decision:** all ten scenarios of `organization_isolation.feature` are
 skipped on external targets because only one bootstrap organization is configured.
 The three `first_run_setup.feature` scenarios are also skipped: they require a
 fresh installation, while the external target already has its bootstrap organization.
@@ -261,7 +266,7 @@ GitHub runner's lifecycle removes its storage.
 
 Only `mode: [selfhost]` is implemented. Report metadata uses the same validated
 `HV_DEPLOYMENT_MODE` policy as scenario tag selection and defaults to `selfhost`;
-the workflow sets it from its matrix. Running both modes in CI/nightly is tracked
+the workflow sets it from its matrix. Running both modes in the nightly is tracked
 in #103 and requires a hosted server in addition to the selfhost installation.
 **The self-host startup and full nightly integration are unverified until the first
 GitHub runner run.** Local checks parse the workflow and test the local runners;

@@ -25,6 +25,12 @@ describe("api client", () => {
     expect(error.technicalDetails).toContain("synthetic-source-id");
   });
 
+  it.each([false, true])("reads structured quota codes and preserves the German refusal (upload=%s)", async upload => {
+    vi.mocked(fetch).mockResolvedValue(response({ detail: { code: "QUOTA_STORAGE_EXCEEDED", message: "Speicherkontingent erschöpft (2 GiB). Sie können keine weiteren Dokumente speichern." } }, 413));
+    const pending = upload ? uploadFormData("/api/attachments", new FormData()) : api.post("/api/properties", {});
+    await expect(pending).rejects.toMatchObject({ status: 413, code: "QUOTA_STORAGE_EXCEEDED", message: "Speicherkontingent erschöpft (2 GiB). Sie können keine weiteren Dokumente speichern." });
+  });
+
   it("includes credentials for JSON requests", async () => {
     vi.mocked(fetch).mockResolvedValue(response({ ok: true }));
 
@@ -53,6 +59,16 @@ describe("api client", () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
 
     await expect(api.delete("/api/example")).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ["settlement_period_conflict", "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags."],
+    ["settlement_period_conflict", "Abrechnungszeitraum überschneidet eine finalisierte WEG-Abrechnung dieses Objekts."],
+    ["plan_period_conflict", "Der Zeitraum überschneidet einen finalisierten Wirtschaftsplan dieses Objekts."],
+  ])("keeps the German message of a coded period refusal (%s)", async (code, message) => {
+    vi.mocked(fetch).mockResolvedValue(response({ detail: { code, message } }, 409));
+
+    await expect(api.post("/api/settlements", {})).rejects.toMatchObject({ status: 409, message });
   });
 
   it.each([false, true])("shows the server request ID in existing error messages (upload=%s)", async (upload) => {

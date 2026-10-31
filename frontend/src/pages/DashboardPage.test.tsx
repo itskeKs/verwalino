@@ -5,12 +5,15 @@ import { AuthCtx } from "../auth/useAuth";
 import * as endpoints from "../api/endpoints";
 import { DashboardPage } from "./DashboardPage";
 import type { Task } from "../api/types";
+import { useDeploymentMode } from "../auth/useDeploymentMode";
+vi.mock("../auth/useDeploymentMode");
 vi.mock("../components/AccountingScopeSelector", () => ({ AccountingScopeSelector: ({ onChange }: { onChange: (id: string | null) => void }) => <select aria-label="Abrechnungskreis" onChange={e => onChange(e.target.value || null)}><option value="">Wählen</option><option value="scope">Kreis</option></select> }));
 const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
 const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const task: Task = { id: "task", organization_id: "org", created_by: "user", assigned_user_id: "user", title: "Morgen erledigen", note: "", due_date: iso(tomorrow), completed: false, property_id: null, unit_id: null, lease_agreement_id: null, property_name: null, unit_number: null, lease_label: null, assigned_user_name: "Anna", created_at: "2026-10-21", updated_at: "2026-10-21" };
 function show(role = "CLERK") { return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><DashboardPage /></MemoryRouter></AuthCtx.Provider>); }
 beforeEach(() => {
+  vi.mocked(useDeploymentMode).mockReturnValue({ mode: "hosted", error: false, mailAvailable: false });
   vi.spyOn(endpoints, "getOrganizationQuota").mockResolvedValue({ plan: "unlimited", usage: { storage_bytes: 0, properties: 0, units: 0, ai_budget_usd: "0" }, limits: { storage_bytes: null, upload_bytes: null, properties: null, units: null, ai_budget_usd: null } });
   vi.spyOn(endpoints, "getMyOrganization").mockResolvedValue({ id: "org", name: "Büro" });
   vi.spyOn(endpoints, "listProperties").mockResolvedValue([]);
@@ -100,7 +103,17 @@ it("shows hosted usage and a warning at exactly ninety percent for any member", 
   expect(card).toHaveTextContent("Ihr Kontingent ist zu mindestens 90 % belegt.");
 });
 
-it("hides unlimited quotas and never reports failed usage as zero", async () => {
+it("skips selfhost quota requests without loading or failure messages", async () => {
+  vi.mocked(useDeploymentMode).mockReturnValue({ mode: "selfhost", error: false, mailAvailable: false });
+  vi.mocked(endpoints.getOrganizationQuota).mockRejectedValue(new Error("offline"));
+  show();
+  expect(screen.queryByText("Kontingent wird geladen …")).toBeNull();
+  await screen.findByText(task.title);
+  expect(endpoints.getOrganizationQuota).not.toHaveBeenCalled();
+  expect(screen.queryByText("Kontingent nicht verfügbar.")).toBeNull();
+});
+
+it("hides unlimited quotas and never reports failed hosted usage as zero", async () => {
   show(); await screen.findByText(task.title);
   expect(screen.queryByRole("region", { name: "Kontingent" })).toBeNull();
   cleanup();

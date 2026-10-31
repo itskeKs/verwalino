@@ -280,7 +280,7 @@ async def test_revision_chain_0148_0131_0148_preserves_full_state_and_issued_pdf
     from sqlalchemy.exc import DBAPIError
 
     from tests.conftest import MIGRATOR_SYNC_URL
-    from tests.test_letters import create_template, issue_body
+    from tests.test_letters import contract_body, create_template, issue_body
 
     expected = ('127.0.0.1', 55432, 'hausverwaltung', 'app_migrator')
     for raw in (MIGRATOR_SYNC_URL, os.environ['HV_DATABASE_URL_SYNC']):
@@ -298,6 +298,11 @@ async def test_revision_chain_0148_0131_0148_preserves_full_state_and_issued_pdf
         pdf = await admin.get(pdf_url)
         assert pdf.status_code == 200 and pdf.content.startswith(b'%PDF')
         original_pdf = pdf.content
+        builtin = await admin.post(f"/api/leases/{w['lease']}/contract", json=contract_body())
+        assert builtin.status_code == 201 and builtin.json()['template_id'] is None, builtin.text
+        builtin_url = builtin.json()['pdf_url']
+        builtin_pdf = await admin.get(builtin_url)
+        assert builtin_pdf.status_code == 200
         bank = await admin.post('/api/bank-accounts', json={
             'property_id': str(w['property']), 'account_type': 'LAUFEND',
             'label': 'Synthetic chain bank', 'iban': 'DE89370400440532013000',
@@ -376,12 +381,25 @@ async def test_revision_chain_0148_0131_0148_preserves_full_state_and_issued_pdf
                     # The historical projection describes 0132–0139. Peel off
                     # the parent constraints and bootstrap additions within this savepoint.
                     with connection.begin_nested() as historical:
+                        connection.execute(text('TRUNCATE public.letter_document'))
                         migrate('0139', downgrade=True)
                         projected = _chain_0131_projection(_chain_snapshot(connection))
                         historical.rollback()
                     return projected
 
                 assert version() == ('0148',)
+                retained = _chain_snapshot(connection)
+                with pytest.raises(DBAPIError) as refusal:
+                    with connection.begin_nested():
+                        migrate('0142', downgrade=True)
+                assert refusal.value.orig.pgcode == '23502'
+                assert _chain_snapshot(connection) == retained
+                # Only this rollback-only rehearsal excludes template-less originals
+                # after proving 0143 refuses them; every retained row is restored below.
+                connection.execute(text('CREATE TEMP TABLE chain_templated_letters ON COMMIT DROP AS '
+                                        'SELECT * FROM public.letter_document WHERE template_id IS NOT NULL'))
+                connection.execute(text('TRUNCATE public.letter_document'))
+                connection.execute(text('INSERT INTO public.letter_document SELECT * FROM chain_templated_letters'))
                 original = _chain_snapshot(connection)
                 original_0131 = projection_0131()
                 assert original['data']['lease_agreement'] and original['data']['letter_document']
@@ -441,7 +459,7 @@ async def test_revision_chain_0148_0131_0148_preserves_full_state_and_issued_pdf
                 assert _chain_snapshot(connection) == head
             finally:
                 transaction.rollback()
-            assert _chain_snapshot(connection) == original
+            assert _chain_snapshot(connection) == retained
             assert connection.scalar(text(
                 'SELECT session_version FROM public."user" WHERE id=:id'
             ), {'id': w['reader']}) == generation
@@ -450,3 +468,5 @@ async def test_revision_chain_0148_0131_0148_preserves_full_state_and_issued_pdf
     async with api_client(w) as admin:
         restored = await admin.get(pdf_url)
         assert restored.status_code == 200 and restored.content == original_pdf
+        restored_builtin = await admin.get(builtin_url)
+        assert restored_builtin.status_code == 200 and restored_builtin.content == builtin_pdf.content

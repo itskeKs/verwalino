@@ -32,3 +32,18 @@ it.each(["WEG-Objekt *", "Wirtschaftsplan (Soll) *"])("explicitly labels %s with
     expect(select).toHaveValue(property.id);
   }
 });
+
+it("adopts the selected plan's April period", async () => {
+  vi.spyOn(api, "get").mockImplementation(async path => {
+    if (path === "/api/properties") return [{ id: "april", name: "Aprilhaus", management_type: "WEG" }] as never;
+    if (path === "/api/economic-plans") return [{ id: "plan", property_id: "april", plan_year: 2025, period_start: "2025-04-01", period_end: "2026-03-31", status: "finalized" }] as never;
+    return [] as never;
+  });
+  render(<MemoryRouter><WegSettlementsPage /></MemoryRouter>);
+  await screen.findByText("Keine WEG-Abrechnungen vorhanden.");
+  fireEvent.click(screen.getByRole("button", { name: "+ Neue WEG-Abrechnung" }));
+  fireEvent.change(screen.getByRole("combobox", { name: "WEG-Objekt *" }), { target: { value: "april" } });
+  fireEvent.change(screen.getByRole("combobox", { name: "Wirtschaftsplan (Soll) *" }), { target: { value: "plan" } });
+  expect(screen.getByLabelText("Zeitraum von *")).toHaveValue("2025-04-01");
+  expect(screen.getByLabelText("Zeitraum bis *")).toHaveValue("2026-03-31");
+});

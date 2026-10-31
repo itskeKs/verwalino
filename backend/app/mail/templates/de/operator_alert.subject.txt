@@ -1,0 +1,1 @@
+{% from "operator_alert.content.jinja" import subject with context %}{{ subject }}

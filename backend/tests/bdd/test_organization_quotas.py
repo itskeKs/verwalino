@@ -1,4 +1,4 @@
-"""Bind the hosted storage quota journey."""
+"""Bind the hosted quota boundary and isolation journeys."""
 from pathlib import Path
 from pytest_bdd import scenarios
 

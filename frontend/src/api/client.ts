@@ -6,12 +6,14 @@
 
 export class ApiError extends Error {
   status: number;
+  code?: string;
   technicalDetails?: string;
 
-  constructor(status: number, message: string, technicalDetails?: string) {
+  constructor(status: number, message: string, code?: string, technicalDetails?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = code;
     this.technicalDetails = technicalDetails;
   }
 }
@@ -25,7 +27,6 @@ function financialInputMessage(detail: { blockers?: { code: string }[] }): strin
   const codes = detail.blockers?.map((blocker) => blocker.code) ?? [];
   if (codes.includes("linked_plan_not_current") || codes.includes("linked_plan_scope_mismatch")) return "Bitte einen aktuellen finalisierten Wirtschaftsplan für dasselbe Objekt und denselben Zeitraum verwenden.";
   if (codes.includes("derived_total_stale")) return "Zahlungen wurden geändert. Vorauszahlungen zuerst neu aus den Zahlungen ermitteln und anschließend die Datengrundlage bestätigen.";
-  if (codes.includes("unsupported_derived_subperiod")) return "Für diesen Teilzeitraum sind belegte manuelle Vorauszahlungen erforderlich. Jahreszahlungen können nicht automatisch zugeordnet werden.";
   if (codes.includes("owner_payment_coverage_missing")) return "Für jeden Eigentümer muss ein geprüfter Zahlungsbetrag angegeben sein, auch bei 0,00.";
   if (codes.includes("bank_balance_coverage_missing")) return "Bitte für jedes Objektkonto einen geprüften Kontostand angeben, auch bei 0,00.";
   return "Datengrundlage unvollständig oder geändert. Bitte Beträge und Zeitraum prüfen und die Vollständigkeit erneut bestätigen.";
@@ -62,22 +63,25 @@ async function request<T>(
 
   if (!res.ok) {
     let detail = res.statusText;
+    let code: string | undefined;
     let technicalDetails: string | undefined;
     try {
       const body = await res.json();
       if (body.detail) {
+        if (typeof body.detail.code === "string") code = body.detail.code;
         if (typeof body.detail === "string") detail = body.detail;
         else if (typeof body.detail.message === "string") {
           detail = body.detail.message;
           technicalDetails = importDetails(body.detail);
         } else if (body.detail.code === "financial_inputs_incomplete") {
           detail = financialInputMessage(body.detail);
-        } else detail = "Eingaben unvollständig oder ungültig. Bitte die angegebenen Felder prüfen.";
+        }
+        else detail = "Eingaben unvollständig oder ungültig. Bitte die angegebenen Felder prüfen.";
       }
     } catch {
       // ignore JSON parse errors on error responses
     }
-    throw new ApiError(res.status, withRequestId(res, detail), technicalDetails);
+    throw new ApiError(res.status, withRequestId(res, detail), code, technicalDetails);
   }
 
   if (url === "/api/auth/login" || url === "/api/auth/logout") lastErrorRequestId = null;
@@ -136,10 +140,12 @@ export async function uploadFormData<T>(
 
   if (!res.ok) {
     let detail = res.statusText;
+    let code: string | undefined;
     let technicalDetails: string | undefined;
     try {
       const body = await res.json();
       if (body.detail) {
+        if (typeof body.detail.code === "string") code = body.detail.code;
         if (typeof body.detail === "string") detail = body.detail;
         else if (typeof body.detail.message === "string") {
           detail = body.detail.message;
@@ -151,7 +157,7 @@ export async function uploadFormData<T>(
     } catch {
       // ignore
     }
-    throw new ApiError(res.status, withRequestId(res, detail), technicalDetails);
+    throw new ApiError(res.status, withRequestId(res, detail), code, technicalDetails);
   }
 
   return res.json() as Promise<T>;

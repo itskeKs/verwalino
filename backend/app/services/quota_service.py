@@ -6,15 +6,19 @@ from fastapi import HTTPException
 from sqlalchemy import text
 
 from app.core.quotas import check_quota, get_quota_plan
+from app.repositories.mandate_document_repo import MandateDocumentRepository
 
 
 async def lock_quota(db, org_id, *, budget=False):
+    if get_quota_plan().name == "unlimited":
+        return False
     # Source authorization always takes the ACL first. All quota writers then
     # share one organization lock, retained until commit or rollback.
     await db.execute(text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
                      {"key": f"scope-acl:{org_id}"})
     await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
                      {"key": f"{'hosted-ai' if budget else 'organization-quota'}:{org_id}"})
+    return True
 
 
 async def database_usage(db, org_id):
@@ -25,7 +29,15 @@ def require_quota(usage, kind, delta, *, plan=None):
     decision = check_quota(usage, plan or get_quota_plan(), kind, delta)
     if not decision.allowed:
         raise HTTPException(413 if kind in {"storage_bytes", "upload_bytes"} else 409,
-                            decision.message)
+                            {"code": decision.code, "message": decision.message})
+
+
+async def require_document_storage(db, org_id, storage_key, byte_size, *, plan):
+    usage = await database_usage(db, org_id)
+    # Physical existence alone cannot deduplicate admission: a failed cleanup
+    # may have left bytes without any owning metadata or reconciliation entry.
+    references = await MandateDocumentRepository(db, org_id).count_storage_references(storage_key)
+    require_quota(usage["storage_bytes"], "storage_bytes", 0 if references else byte_size, plan=plan)
 
 
 async def require_counts(db, org_id, *, properties=0, units=0):

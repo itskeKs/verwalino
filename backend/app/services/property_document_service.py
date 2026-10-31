@@ -121,13 +121,8 @@ class PropertyDocumentService:
         sequence_no: int,
         store: DocumentStore | None = None,
     ) -> tuple[PropertyDocument, DeclarationImportDocument]:
-        if len(file_bytes) > settings.declaration_max_pdf_bytes:
-            from app.core.quotas import FREE_PLAN, check_quota
-            raise HTTPException(
-                status_code=413,
-                detail=check_quota(0, FREE_PLAN, "upload_bytes", len(file_bytes)).message
-                or f"Datei zu groß (maximal {settings.declaration_max_pdf_bytes} Bytes). Bitte wählen Sie eine kleinere Datei.",
-            )
+        from app.core.uploads import require_upload_size
+        require_upload_size(len(file_bytes), max_bytes=settings.declaration_max_pdf_bytes)
         if mime_type not in PDF_MIME_TYPES:
             raise HTTPException(status_code=422, detail="Only PDF documents are supported")
         if not file_bytes.startswith(b"%PDF-"):

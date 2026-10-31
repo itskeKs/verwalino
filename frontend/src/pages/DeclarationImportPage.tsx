@@ -11,6 +11,7 @@ import {
   uploadDeclarationDocument,
 } from "../api/endpoints";
 import { ApiError } from "../api/client";
+import { useUploadLimit } from "../lib/uploads";
 import type {
   DeclarationDocument,
   DeclarationDocumentRole,
@@ -18,7 +19,6 @@ import type {
   DeclarationImportMode,
 } from "../api/types";
 
-const MAX_PDF_BYTES = 25 * 1024 * 1024;
 const RETRYABLE_FAILURE_CODES = new Set([
   "PROVIDER_TIMEOUT",
   "PROVIDER_INCOMPLETE",
@@ -87,6 +87,7 @@ function uploadedItem(document: DeclarationDocument): UploadItem {
 }
 
 export function DeclarationImportPage() {
+  const maxUploadBytes = useUploadLimit();
   const { propertyId, importId } = useParams<{ propertyId: string; importId: string }>();
   const location = useLocation();
   const navigate = useNavigate();
@@ -173,7 +174,7 @@ export function DeclarationImportPage() {
         : file.name.toLowerCase().endsWith(".pdf");
       if (!isPdf) {
         errors.push(`Nur PDF-Dateien können hochgeladen werden: „${file.name}“ ist keine PDF-Datei.`);
-      } else if (file.size > MAX_PDF_BYTES) {
+      } else if (file.size > maxUploadBytes) {
         errors.push(`„${file.name}“ ist größer als maximal 25 MiB.`);
       } else {
         accepted.push({

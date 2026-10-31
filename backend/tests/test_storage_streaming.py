@@ -68,3 +68,59 @@ def test_attachment_header_uses_ascii_fallback_and_rfc5987_for_unicode_names():
     assert header.isascii()
     assert "filename*=UTF-8''" in header
     assert "%C3%BC" in header
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ending", ["close", "rollback", "savepoint"])
+async def test_failed_cleanup_releases_the_directory_lock_and_preserves_the_error(
+    store, monkeypatch, ending
+):
+    import errno
+    import os
+    import uuid
+    from contextlib import ExitStack
+    from types import SimpleNamespace
+    from sqlalchemy.orm import Session
+    from app.core import storage
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    org = uuid.uuid4()
+    key = storage.make_storage_key(str(org), storage.compute_sha256(b"uncommitted"))
+    store.put(key, b"uncommitted", content_type="application/pdf")
+    original = RuntimeError("database write failed")
+
+    def read_only_unlink(path, *args, **kwargs):
+        raise OSError(errno.EROFS, "Read-only file system")
+
+    monkeypatch.setattr(Path, "unlink", read_only_unlink)
+    session = Session()  # No bind: this exercises real transaction hooks without a DB.
+    session.begin()
+    await storage.lock_document_storage(SimpleNamespace(info=session.info), org, store)
+    handle = next(iter(session.info["storage_write_locks"].values()))
+    observed = None
+    try:
+        with ExitStack() as contexts:
+            contexts.enter_context(session)
+            if ending != "close":
+                contexts.enter_context(session.get_transaction())
+            if ending == "savepoint":
+                contexts.enter_context(session.begin_nested())
+            transaction = session.get_nested_transaction() or session.get_transaction()
+            session.info["uncommitted_storage"] = [(store, key, transaction)]
+            raise original
+    except BaseException as error:
+        observed = error
+    try:
+        os.fstat(handle)
+    except OSError as error:
+        assert error.errno == errno.EBADF
+        closed = True
+    else:
+        closed = False
+        os.close(handle)  # Keep the regression's red run from leaking its descriptor.
+    finally:
+        session.close()
+    assert closed, "Failed cleanup retained the organization directory lock"
+    assert observed is original
+    assert store.exists(key)  # Failed cleanup leaves the orphan for reconciliation.

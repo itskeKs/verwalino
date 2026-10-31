@@ -8,7 +8,7 @@ or exposes documents, secrets or backups are welcome and taken seriously.
 
 Do not open a public issue. Use GitHub's private report form:
 <https://github.com/itskeKs/verwalino/security/advisories/new>. If the form is not available to
-you, open an issue that says only "security report" with no detail and you will be contacted.
+you, email <security@verwalino.de> instead.
 
 Include what you can: the affected route, page or script, steps to reproduce, the version
 (git sha or image digest) and whether it affects the self-hosted stack, the hosted offering or

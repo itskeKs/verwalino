@@ -73,6 +73,13 @@ services:
       HV_ENABLE_API_DOCS: "false"
       HV_RELEASE_ID: ${HV_RELEASE_ID:-}
       HV_SUPPORT_URL: ${HV_SUPPORT_URL:-https://github.com/itskeKs/verwalino/issues}
+      HV_SMTP_HOST: ${HV_SMTP_HOST:-}
+      HV_SMTP_PORT: ${HV_SMTP_PORT:-587}
+      HV_SMTP_FROM: ${HV_SMTP_FROM:-}
+      HV_SMTP_SECURITY: ${HV_SMTP_SECURITY:-starttls}
+      HV_SMTP_USERNAME: ${HV_SMTP_USERNAME:-}
+      HV_SMTP_PASSWORD: ${HV_SMTP_PASSWORD:-}
+      HV_SMTP_TIMEOUT_SECONDS: ${HV_SMTP_TIMEOUT_SECONDS:-15}
       HV_DOCUMENT_STORAGE_ROOT: /data/documents
       HV_DECLARATION_IMPORT_ENABLED: "false"
       HV_DECLARATION_QA_ENABLED: "false"

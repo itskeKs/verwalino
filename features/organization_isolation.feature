@@ -29,6 +29,11 @@ Feature: Organization isolation
       | person       |
       | bank account |
 
+  Scenario: Another organization's lease documents cannot be opened or created
+    Given a lease with a landlord, a tenant and a unit meter
+    When another organization's administrator requests its lease documents
+    Then the lease documents are reported as not found
+
   Scenario Outline: A <record> of another organization cannot be changed
     When the user tries to rename the <record> of "Verwaltung Beta" to "Taken over by Alpha"
     Then the change is refused
@@ -39,6 +44,10 @@ Feature: Organization isolation
       | property     |
       | person       |
       | bank account |
+
+  Scenario: Another organization's settlement period offers are not disclosed
+    When the user opens the settlement period offers of "Verwaltung Beta"
+    Then the property is reported as not found
 
   Scenario: Signing in again keeps the session in the same organization
     When the administrator signs in again
@@ -68,10 +77,6 @@ Feature: Organization isolation
     Then the password reset is accepted without signing in
     And the old session is no longer valid
     And the other organization's administrator remains signed in
-
-  Scenario: Quota usage belongs only to the signed-in organization
-    When the administrator adds a property and reads the organization quota
-    Then only that organization's property usage has increased
 
   Scenario: An organization archive cannot be downloaded by another organization
     Given a separate organization has rental records and an original for export

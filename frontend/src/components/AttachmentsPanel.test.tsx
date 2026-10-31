@@ -33,9 +33,11 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 it("shows the backend storage quota refusal from the upload response to the member", async () => {
   const detail = "Speicherkontingent erschöpft (2 GiB). Bitte wenden Sie sich an den Betreiber.";
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ detail }), {
-    status: 413, headers: { "Content-Type": "application/json" },
-  }));
+  vi.spyOn(globalThis, "fetch").mockImplementation(async url => url === "/api/meta"
+    ? new Response(JSON.stringify({ max_upload_bytes: 25 * 1024 * 1024 }))
+    : new Response(JSON.stringify({ detail }), {
+      status: 413, headers: { "Content-Type": "application/json" },
+    }));
   vi.mocked(endpoints.uploadAttachment).mockImplementationOnce(() => uploadFormData("/api/attachments", new FormData()));
   render(<AttachmentsPanel propertyId="property" canWrite />);
   await screen.findByText("Keine Dokumente vorhanden.");
@@ -43,6 +45,16 @@ it("shows the backend storage quota refusal from the upload response to the memb
   expect(await screen.findByRole("alert")).toHaveTextContent(detail);
   expect(screen.getByLabelText("Dokumenttitel")).toHaveValue("Mein Vertrag");
   expect((screen.getByLabelText("Dokumentdatei") as HTMLInputElement).files?.[0]).toBe(file);
+});
+
+it("rejects attachments above the metadata cap before uploading", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ max_upload_bytes: 4 })));
+  render(<AttachmentsPanel propertyId="property" canWrite />);
+  await screen.findByText("Keine Dokumente vorhanden.");
+  await draft();
+  fireEvent.click(screen.getByRole("button", { name: "Dokument hochladen" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("höchstens 25 MiB");
+  expect(endpoints.uploadAttachment).not.toHaveBeenCalled();
 });
 
 it("loads, shows empty state, uploads the unit PDF and refreshes only after success", async () => {

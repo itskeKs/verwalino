@@ -11,8 +11,32 @@ branch_labels = None
 depends_on = None
 
 
+# Every persisted document key, including independently committed proof payloads.
+# UNION ALL preserves references with unknown sizes; only usage deduplicates bytes.
+STORAGE_REFERENCES = """
+    SELECT storage_uri::text AS uri,content_byte_size AS bytes FROM public.attachment WHERE organization_id=org
+    UNION ALL SELECT storage_uri,content_byte_size FROM public.invoice_document WHERE organization_id=org
+    UNION ALL SELECT storage_uri,content_byte_size FROM public.mandate_document WHERE organization_id=org
+    UNION ALL SELECT storage_uri,content_byte_size FROM public.property_document WHERE organization_id=org
+    UNION ALL SELECT storage_uri,content_byte_size FROM public.intake_original WHERE organization_id=org
+    UNION ALL SELECT storage_uri,size_bytes FROM public.letter_document WHERE organization_id=org
+    UNION ALL SELECT storage_uri,content_byte_size FROM public.visual_extract_artifact WHERE organization_id=org
+    UNION ALL SELECT payload->>'storage_uri',(payload->>'content_byte_size')::bigint
+      FROM public.visual_extract_attestation WHERE organization_id=org AND payload->>'storage_uri' IS NOT NULL
+    UNION ALL SELECT payload_diff->>'storage_uri',(payload_diff->>'bytes')::bigint
+      FROM public.audit_event WHERE organization_id=org AND action IN ('mail_prepared','quota_recount')
+        AND payload_diff->>'storage_uri' IS NOT NULL
+"""
+MEMBER_GUARD = """
+    IF session_user NOT IN ('app_rw','app_worker') OR org IS NULL
+      OR org IS DISTINCT FROM NULLIF(current_setting('app.current_org_id',true),'')::uuid
+      OR public.scope_actor_role(org) IS NULL THEN
+      RAISE EXCEPTION 'Current organization member required' USING ERRCODE='42501'; END IF;
+"""
+
+
 def upgrade():
-    op.execute("""
+    op.execute(f"""
     ALTER TABLE public.letter_document ADD COLUMN size_bytes bigint CHECK (size_bytes>=0);
     CREATE FUNCTION organization_quota_usage(org uuid) RETURNS jsonb
     LANGUAGE plpgsql VOLATILE SECURITY DEFINER
@@ -21,23 +45,12 @@ def upgrade():
       spent numeric;
       stored bigint;
     BEGIN
-      IF session_user NOT IN ('app_rw','app_worker') OR org IS NULL
-        OR org IS DISTINCT FROM NULLIF(current_setting('app.current_org_id',true),'')::uuid
-        OR public.scope_actor_role(org) IS NULL THEN
-        RAISE EXCEPTION 'Current organization member required' USING ERRCODE='42501'; END IF;
+      {MEMBER_GUARD}
       -- One physical original may have references in several document kinds.
       -- Legacy sizes are reconciled through append-only administrative events.
       SELECT COALESCE(sum(bytes),0) INTO stored FROM (
         SELECT uri,max(bytes) AS bytes FROM (
-          SELECT storage_uri AS uri,content_byte_size AS bytes FROM public.attachment WHERE organization_id=org
-          UNION ALL SELECT storage_uri,content_byte_size FROM public.invoice_document WHERE organization_id=org
-          UNION ALL SELECT storage_uri,content_byte_size FROM public.mandate_document WHERE organization_id=org
-          UNION ALL SELECT storage_uri,content_byte_size FROM public.property_document WHERE organization_id=org
-          UNION ALL SELECT storage_uri,content_byte_size FROM public.intake_original WHERE organization_id=org
-          UNION ALL SELECT storage_uri,size_bytes FROM public.letter_document WHERE organization_id=org
-          UNION ALL SELECT payload_diff->>'storage_uri',(payload_diff->>'bytes')::bigint
-            FROM public.audit_event WHERE organization_id=org AND action IN ('mail_prepared','quota_recount')
-              AND payload_diff->>'storage_uri' IS NOT NULL
+          {STORAGE_REFERENCES}
         ) originals GROUP BY uri
       ) unique_originals;
       -- Running imports reserve their full existing per-import ceiling. Unknown
@@ -63,9 +76,22 @@ def upgrade():
     END $$;
     REVOKE ALL ON FUNCTION organization_quota_usage(uuid) FROM PUBLIC;
     GRANT EXECUTE ON FUNCTION organization_quota_usage(uuid) TO app_rw;
+    CREATE FUNCTION organization_document_reference_count(org uuid,storage_key text) RETURNS bigint
+    LANGUAGE plpgsql VOLATILE SECURITY DEFINER
+    SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+    DECLARE references_count bigint;
+    BEGIN
+      {MEMBER_GUARD}
+      SELECT count(*) INTO references_count FROM ({STORAGE_REFERENCES}) originals WHERE uri=storage_key;
+      RETURN references_count;
+    END $$;
+    REVOKE ALL ON FUNCTION organization_document_reference_count(uuid,text) FROM PUBLIC;
+    GRANT EXECUTE ON FUNCTION organization_document_reference_count(uuid,text) TO app_rw;
+
     """)
 
 
 def downgrade():
+    op.execute("DROP FUNCTION organization_document_reference_count(uuid,text)")
     op.execute("DROP FUNCTION organization_quota_usage(uuid)")
     op.execute("ALTER TABLE public.letter_document DROP COLUMN IF EXISTS size_bytes")

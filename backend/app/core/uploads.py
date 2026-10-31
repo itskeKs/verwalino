@@ -9,9 +9,10 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from typing import Protocol
 
 from fastapi import HTTPException
+from dataclasses import replace
+from app.core.quotas import MAX_UPLOAD_BYTES, check_quota, get_quota_plan
 
 
-MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 UPLOAD_CHUNK_BYTES = 64 * 1024
 UPLOAD_SPOOL_MEMORY_BYTES = 64 * 1024
 # Multipart boundaries and form fields add overhead to the file payload.  The
@@ -146,7 +147,7 @@ class RequestBodyLimitMiddleware:
     @staticmethod
     async def _send_too_large(send: Send, body_limit: int) -> None:
         limit = f"{body_limit / (1024 * 1024):g}".replace(".", ",")
-        body = json.dumps({"detail": f"Anfrage zu groß (maximal {limit} MiB). Bitte wählen Sie eine kleinere Datei."}, ensure_ascii=False).encode()
+        body = json.dumps({"detail": {"code": "UPLOAD_TOO_LARGE", "message": f"Anfrage zu groß (maximal {limit} MiB). Bitte wählen Sie eine kleinere Datei."}}, ensure_ascii=False).encode()
         await send(
             {
                 "type": "http.response.start",
@@ -171,11 +172,17 @@ async def read_upload_limited(
             break
         total += len(chunk)
         if total > max_bytes:
-            from app.core.quotas import FREE_PLAN, check_quota
-            detail = check_quota(0, FREE_PLAN, "upload_bytes", total).message
-            raise HTTPException(status_code=413, detail=detail or f"Datei zu groß (maximal {max_bytes} Bytes). Bitte wählen Sie eine kleinere Datei.")
+            require_upload_size(total, max_bytes=max_bytes)
         chunks.append(chunk)
 
     if total == 0:
         raise HTTPException(status_code=422, detail="Empty file")
     return b"".join(chunks)
+
+
+def require_upload_size(size: int, *, max_bytes: int = MAX_UPLOAD_BYTES) -> None:
+    """Apply the existing safety cap using the active deployment's plan."""
+    plan = replace(get_quota_plan(), upload_bytes=max_bytes)
+    decision = check_quota(0, plan, "upload_bytes", size)
+    if not decision.allowed:
+        raise HTTPException(413, {"code": decision.code, "message": decision.message})

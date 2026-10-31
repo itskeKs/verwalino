@@ -1,0 +1,31 @@
+VERWALINO
+
+Ihre Organisation ist eingerichtet
+
+Guten Tag Erika Mustermann,
+
+Ihre Organisation „Hausverwaltung Muster GmbH“ ist in Verwalino
+eingerichtet.
+
+Melden Sie sich an. Danach können Sie mit diesen Schritten beginnen:
+
+- Objekt anlegen
+- Einheiten und Mietverhältnisse erfassen
+- Benutzer einladen
+
+Bei Verwalino anmelden:
+https://verwaltung.example.de/login
+
+Bei Fragen wenden Sie sich an hallo@verwalino.de.
+
+-- 
+Sie erhalten diese E-Mail, weil Sie die Registrierung Ihrer Organisation
+bei Verwalino bestätigt haben.
+
+Verwalino wird betrieben von fogu UG (haftungsbeschränkt), Im
+Großenbruch 34, 66583 Spiesen-Elversberg.
+hallo@verwalino.de
+Impressum:
+https://verwalino.de/impressum/
+Datenschutz:
+https://verwalino.de/datenschutz/

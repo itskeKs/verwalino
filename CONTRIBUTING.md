@@ -64,6 +64,8 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
 - **`make test`** — the whole run before a merge: agent-rule, scenario-filing and installer contracts, the backend
   suite (including the BDD scenarios), frontend vitest and typecheck. Needs the test database.
 - **`make lint`** — ruff over the backend, eslint and `tsc` over the frontend.
+- **`make mail-previews`** — synthetic transactional mail gallery and 600/375 px light/dark PNGs;
+  no database or SMTP ([workflow](docs/operations/mail-previews.md)).
 - **`make test-bdd`** — API scenarios in `features/` ([features/README.md](features/README.md)).
 - **`make test-browser`** — headless `@browser` scenarios; acquires the shared DB lock and
   owns/stops its local API and Vite stack. See [browser setup and runner](features/README.md#browser-features).
@@ -156,10 +158,13 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 | `features/` | API and `@browser` Gherkin scenarios (executable specs) |
 | `.github/workflows/nightly-scenarios.yaml` | nightly self-host scenarios, 90-day report artifacts and deduplicated failure issues; hosted mode pending #18 |
 | `frontend/src/` | `pages/`, `components/`, `api/`, `lib/` |
+| `website/` | bilingual static Astro site, checked multi-stage image and local Caddy file server |
+| `.github/workflows/website.yml` | website PR checks; main-push image publication/signing and forced-command site deploy |
+| `infra/docker-compose.site.yml`, `infra/Caddyfile.site` | optional hosted site network/hardening and public Caddy import; [runbook](docs/operations/website-hosting.md) |
 | `install.sh` | one-command release installer; checksum/signature checks and digest-pinned portable init/start |
 | `scripts/build-release-bundle.sh` | shared flat release payload/checksum assembly for releases and the install matrix |
 | `scripts/install-scenarios.sh` | four install journeys on disposable VMs; JSON/Markdown reports and failure artifacts |
-| `scripts/test-install.py`, `scripts/test-self-host.py`, `scripts/test-install-scenarios.py` | installer, portable stack and scenario-report contracts; fake downloads/Docker, no database |
+| `scripts/test-install.py`, `scripts/test-self-host.py`, `scripts/test-install-scenarios.py`, `scripts/test-server-deploy.py` | installer, portable stack, hosted app/site deploy and scenario-report contracts; fake downloads/Docker, no database |
 | `.github/workflows/release-image.yaml` | publishes/signs both image platforms, then signs checksums and attaches installer assets to a GitHub Release |
 | `.github/workflows/install-matrix.yaml` | nightly, manual and tag-triggered native install checks; reports retained for 90 days |
 | `scripts/` | dev, self-host, deploy, checks; `acceptance/` holds legacy browser scripts (being migrated, #54) |

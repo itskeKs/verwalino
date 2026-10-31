@@ -18,9 +18,12 @@ import subprocess
 import sys
 import tempfile
 
+from app.core.document_limits import MAX_UPLOAD_BYTES
+
 VERSION = 'visual-extract-v1'
-MAX_INPUT_BYTES = 25 * 1024 * 1024
-MAX_OUTPUT_BYTES = 25 * 1024 * 1024
+
+MAX_INPUT_BYTES = MAX_UPLOAD_BYTES
+MAX_OUTPUT_BYTES = MAX_UPLOAD_BYTES
 MAX_SELECTED_PAGES = 20
 MAX_EDGE = 3200
 MAX_TOTAL_PIXELS = 100_000_000

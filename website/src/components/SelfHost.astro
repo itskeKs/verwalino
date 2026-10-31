@@ -6,7 +6,7 @@ interface Props { locale: Locale }
 const { locale } = Astro.props;
 const text = t(locale);
 const sections = ['requirements', 'init', 'admin', 'https', 'backup', 'limits'] as const;
-const planned = ['installer', 'image', 'backup', 'update', 'setup', 'doctor', 'matrix'] as const;
+const planned = ['installer', 'image', 'update', 'setup', 'matrix'] as const;
 ---
 <article class="document wrap">
   <header class="document-head">

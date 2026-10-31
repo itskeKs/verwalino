@@ -94,8 +94,9 @@ The error-tracking environment setting and doctor are absent at this revision.
 organization limit or an isolation bypass: the same RLS, scoped API queries and
 [route sweep](#74a-route-sweep-backendteststest_route_isolation_sweeppy) apply in both modes.
 
-Unauthenticated `GET /api/meta` returns only `deployment_mode` and the FastAPI
-application `version`, with `Cache-Control: no-store`. It reads no tenant data or
+Unauthenticated `GET /api/meta` returns `deployment_mode`, the FastAPI application
+`version`, `mail_available` and the integer `max_upload_bytes` from
+`core/document_limits.py:MAX_UPLOAD_BYTES`, with `Cache-Control: no-store`. It reads no tenant data or
 secrets, so the route sweep explicitly exempts it. The frontend's
 `useDeploymentMode()` reads it for login and signup (reusing the request during
 StrictMode replay), after the initial setup check. Setup depends only on
@@ -114,24 +115,45 @@ uses the default self-hosted policy and does not forward an arbitrary caller's e
 2 GiB retained storage, 25 MiB per file, 20 properties, 200 units, USD 0 per
 calendar month (UTC). Selfhost selects unlimited through `quota_enforcement`.
 One shared plan applies to all hosted organizations; individual overrides and
-paid plans are deferred. Existing upload/body safety caps remain in both modes.
+paid plans are deferred. `core/document_limits.py:MAX_UPLOAD_BYTES` supplies
+the shared file safety cap to plans, upload readers, declaration defaults, intake
+inspection and visual input/output bounds. Existing upload/body safety caps remain
+in both modes. Declaration, intake and attachment file checks read the safety cap
+from public `/api/meta` through `useUploadLimit()`, in both modes, with a 25 MiB
+fallback while metadata is loading, unavailable or lacks a valid positive integer
+cap. This cap is independent of selfhost's unlimited quota metadata.
 
 Services enforce quotas before writes. `put_document` guards attachments,
 invoices and versions, mandate originals, declaration sources, intake uploads,
-and retained generated PDFs. In hosted mode it serializes writes, queries stored
+visual extracts and retained generated PDFs. In hosted mode it serializes writes, queries stored
 document sizes in the database (deduplicated by storage URI), and cleans up only newly
 created originals when the owning database transaction rolls back. A filesystem
 lock remains held through rollback cleanup so a concurrent writer cannot reuse
-bytes being removed. Selfhost skips both organization quota locks, retaining the
-store's atomic writes and locks for each individual original through transaction
-completion. Mail originals are retained before their independently
+bytes being removed. Selfhost skips quota advisory and all filesystem locks, retaining atomic writes
+and leaving failed-upload bytes for offline reconciliation. Hosted writes flock
+the shared organization directory inode through transaction cleanup. Web and
+worker containers coordinate on the same document volume without creating
+lock files that accumulate or enter backups. Mail originals are retained before their independently
 committed dispatch receipt, so a request rollback cannot remove a referenced PDF.
-Archived and source-restricted files still consume space.
+Archived and source-restricted files still consume space. Current original deletion
+is unreachable: classified mandates return 409, revision 0078 freezes unclassified
+mandates, attachment/invoice/letter retention triggers and `RESTRICT` foreign keys
+retain their originals, and no path deletes property documents or intake originals.
+The cleanup rule guards future accepted deletion paths (for example #23).
+Only hosted deletion holding both the organization quota and directory locks can
+queue unlink. The guarded `organization_document_reference_count(org, storage_key)`
+counts referencing rows across all document tables and retained mail/recount and
+visual-attestation receipts, including references with NULL sizes. Zero references
+permits unlink after the outer commit; byte aggregates never prove liveness.
+Selfhost removes the row only, without usage/reference queries or unlink.
+Rollback cancels removal; unlink failures log a warning and may leave an orphan
+for `quota-recount`. See [operations](../DEPLOY.md#hosted-organization-quotas).
 The request-body middleware remains the first upload boundary and reports the
 route's actual raw-body cap (1.75 MiB for master import; 26 MiB for uploads,
-including the multipart envelope). File-content/storage
-returns 413 with “Datei zu groß (maximal 25 MiB). …” or
-“Speicherkontingent erschöpft (2 GiB). …”.
+including the multipart envelope). File-content and upload-storage refusals
+return 413 with “Datei zu groß (maximal 25 MiB). …” or
+“Speicherkontingent erschöpft (2 GiB). …”. Visual-extract storage admission
+returns 409 with the same structured storage code and message.
 
 Canonical property/unit creation, atomic master import and declaration approval
 check complete organization counts under a transaction lock. Count refusals use
@@ -140,19 +162,23 @@ Objekte). …” or “Einheitenkontingent erschöpft (200 Einheiten). …”. A
 checks its whole delta before creating any destination rows. Retry receipts are
 resolved before quota checks, so successful replays remain idempotent.
 
-Revision 0146 adds `organization_quota_usage`: a guarded SECURITY DEFINER
-aggregate, using the session organization and a live member. It returns byte/count
-and USD totals, never source identities/content. Ordinary source RLS may hide
+Revision 0146 adds `organization_quota_usage` and
+`organization_document_reference_count`: guarded SECURITY DEFINER functions
+using the session organization and a live member. They return usage totals or
+a reference count, never source identities/content. Ordinary source RLS may hide
 rows even within an organization, so application-side COUNT queries would be
-incorrect. Five original tables already carry `content_byte_size`; issued letters
-gain nullable, nonnegative `size_bytes`, and prepared mail uses `bytes` in its existing
-audit JSON. Archived originals and all versions count; duplicate references share
+incorrect. Six document tables (including private visual artifacts) carry
+`content_byte_size`; issued letters gain nullable, nonnegative `size_bytes`,
+prepared mail uses `bytes` in its existing audit JSON, and visual attestations
+retain their payload sizes. Archived originals and all versions count; duplicate references share
 one charge. Both upload admission and quota GET use this aggregate without filesystem
 enumeration. Legacy letters/mail and interrupted-write originals are reconciled
 once with the migrator's `quota-recount` CLI, which appends URI/byte audit metadata
-without changing retained originals. No table, quota counter, override, or privileged
-application connection is introduced. Downgrade removes only the function and
-reconstructible size column. The function also supports the existing isolated worker role.
+without changing retained originals. Already sized live references are skipped
+so a subsequent unprotected deletion can still release its bytes. No table, quota counter, override, or privileged
+application connection is introduced. Downgrade removes only the two functions
+and reconstructible size column. The functions also support the existing isolated
+worker role.
 
 AI admission reuses `property_knowledge_query_run` and
 `declaration_extraction_run`. Each running extraction reserves its existing
@@ -601,7 +627,7 @@ the token inside PostgreSQL and returns it once for mail submission. pgcrypto is
 absent; two `gen_random_uuid()` values supply **244 random bits** (122 each),
 encoded as 64 hexadecimal characters. Callers cannot choose a token digest.
 `resend_signup(email) RETURNS text` enforces the shared ten-minute send cooldown
-and rotates the token with a fresh 24-hour expiry. A live pending request keeps
+and rotates the token without extending the original 24-hour request expiry. A live pending request keeps
 its first password hash and names even when a third party resubmits it; only an
 expired request can be replaced. Signup always creates a separate organization,
 including when its display name matches an existing tenant.
@@ -678,7 +704,10 @@ The global `password_reset_request` table holds user/organization ids, a unique
 precedes tenant selection. Runtime roles (including the inheriting worker) have
 no direct SELECT/DML privileges; a composite foreign key binds each request to
 the user's organization. `issue_password_reset(text) RETURNS text` finds exactly
-one active user by normalized email and generates the plaintext token inside
+one addressable account through `app_auth_lookup`: an active user with a matching
+organization/user membership and a login-supported role (`OWNER_ADMIN`, `CLERK`,
+`READ_ONLY`), unique by normalized email. Login, issuance and confirmation all use
+this lookup. Issuance generates the plaintext token inside
 PostgreSQL: 256 bits from pgcrypto's `gen_random_bytes(32)` when installed,
 otherwise two concatenated UUIDs with 244 random bits (selected at migration time). It consumes earlier pending
 links and stores only the digest. The plaintext is returned for mail construction.
@@ -694,7 +723,9 @@ advances `session_version`; an associated definer AFTER trigger consumes pending
 links on every password change or deactivation, including self-service and admin
 changes. The original T57 invoker function remains unchanged. Confirmation restores
 the empty tenant setting, returns the confirmed email solely for the notification,
-and converts failures to one generic SQL exception.
+and raises a generic SQL refusal only for expected invalid-token/account conditions.
+Unexpected database failures propagate as 500 responses, preserving the token for retry.
+Downgrade restores the preceding login lookup body verbatim.
 Downgrade refuses any retained reset state; an empty downgrade removes all new
 objects exactly (operator procedure in [DEPLOY.md](../DEPLOY.md)).
 
@@ -719,6 +750,8 @@ notification after commit; mail failure cannot roll back the password.
 Every 100th accepted reset request per process schedules a separate background
 transaction. A fixed-path, runtime-only cleanup definer deletes at most 100 rows
 with expiry or use time older than seven days using `SKIP LOCKED`.
+Revision 0145 materializes the selected batch once before deleting it: a nested-loop
+semi-join can rescan an `IN` subquery and otherwise exceed its inner limit.
 The cadence is best effort; retained security state remains in PostgreSQL.
 
 The recovery page reads `/passwort-zuruecksetzen?token=…`, saves the token in
@@ -991,6 +1024,32 @@ original sources and content-addressed storage reference are preserved;
 download checks current original-source/contact rights and the hash, without recalculation.
 Changing a template does not change any letters. Populated tables prevent lossy
 downgrade; dispatch is not part of circular letter issuance.
+
+Issue #125 adds `app/mail`: `render_mail(context, deployment_mode=…)` returns
+immutable subject, plain text and HTML, and `apply_to(EmailMessage)` attaches
+the alternatives without changing sender, recipient, date or message ID.
+Fifteen frozen Pydantic contexts provide one kind-to-class inventory; bounded
+strings reject controls, links require HTTPS (HTTP only on loopback), and times
+must be timezone-aware. Names reject MIME encoded words during context validation;
+rendering checks the final subject as well. Storage warning percentages are
+derived from byte counts, rounded to the nearest integer (halves up); export
+copy uses the supplied deadline in German date/time format. Jinja2 uses HTML autoescape and `StrictUndefined` with
+packaged, developer-only German templates and a shared website-brand layout.
+Unlike T48's user-editable placeholder text, these templates are executable
+developer code and are never loaded from user input or user paths. No generic
+transactional sender exists on `main` yet: #111/#115 can adopt the renderer in
+their signup/password senders after merge; document dispatch remains separate.
+The [preview workflow](operations/mail-previews.md) needs neither DB nor SMTP.
+
+Issue #37 reuses these tables for lease contracts and handover protocols, without a migration.
+`letter_document.body` stores a JSON text snapshot of inputs and rendered content, including
+original landlord source IDs for contracts and meter/reading IDs and exact values for handovers.
+Landlord export/processing access is rechecked on original retrieval. The existing checksum and
+immutable storage path preserve the issued PDF. Lease document routes under `/api/leases/{id}`
+authorize the specific lease independently of its active dates or finalized statements.
+The shared meter reading service writes protocol readings into `meter_reading`, using `period`
+for their source note, and refuses a value below the preceding reading day (including same-day
+values). Readings and the letter original commit together or roll back together.
 
 T49 adds the read-only `/api/reports/datev/{sources|preview}` path and
 `POST /api/reports/datev.csv`. `ReportService.property_period` shares the existing

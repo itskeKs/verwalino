@@ -281,6 +281,23 @@ describe("Teilungserklärung upload wizard", () => {
     expect(uploadSpy).not.toHaveBeenCalled();
   });
 
+  it("uses the backend metadata cap for file selection boundaries", async () => {
+    const get = api.get;
+    vi.spyOn(api, "get").mockImplementation((url, options) => url === "/api/meta"
+      ? Promise.resolve({ max_upload_bytes: 4 }) : get(url, options));
+    vi.spyOn(declarationApi, "createDeclarationImport").mockResolvedValue(pendingImport());
+    renderImportRoute();
+    const input = await screen.findByLabelText("PDF-Dateien auswählen");
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/meta", { cache: "no-store" }));
+    fireEvent.change(input, { target: { files: [
+      new File(["%PDF"], "exakt.pdf", { type: "application/pdf" }),
+      new File(["%PDF-"], "darueber.pdf", { type: "application/pdf" }),
+    ] } });
+    expect(screen.getByDisplayValue("exakt.pdf")).toBeVisible();
+    expect(screen.getByText(/„darueber\.pdf“ ist größer als maximal 25 MiB/i)).toBeVisible();
+    expect(screen.queryByDisplayValue("darueber.pdf")).not.toBeInTheDocument();
+  });
+
   it("uploads multiple PDFs, lets their metadata be changed, and gates start", async () => {
     vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(pendingImport());
     vi.spyOn(declarationApi, "listDeclarationDocuments").mockResolvedValue([]);

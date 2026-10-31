@@ -30,12 +30,13 @@ async def test_import_body_refusal_reports_its_actual_limit(path, content_length
         headers=[(b"content-length", str(limit + 1).encode())] if content_length else [],
         messages=[] if content_length else [{"type": "http.request", "body": b"x" * (limit + 1)}])
     assert sent[0]["status"] == 413
-    assert "maximal 1,75 MiB" in json.loads(sent[1]["body"])["detail"]
+    assert "maximal 1,75 MiB" in json.loads(sent[1]["body"])["detail"]["message"]
 
 
 @pytest.mark.asyncio
-async def test_quota_function_has_fixed_security_metadata_and_narrow_acl(app_rw_session):
-    signature = {"signature": "public.organization_quota_usage(uuid)"}
+@pytest.mark.parametrize("name", ["organization_quota_usage(uuid)", "organization_document_reference_count(uuid,text)"])
+async def test_quota_function_has_fixed_security_metadata_and_narrow_acl(app_rw_session, name):
+    signature = {"signature": "public." + name}
     security = (await app_rw_session.execute(text("""SELECT pg_get_userbyid(proowner) AS owner,prosecdef,proconfig
         FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)"""), signature)).one()
     assert security.owner == "app_migrator"
@@ -60,8 +61,9 @@ def test_quota_migration_downgrade_is_exact_and_preserves_original_metadata(run_
             restore = db.begin()
             try:
                 metadata = text("""SELECT pg_get_functiondef(oid),proacl::text,proconfig,proowner
-                    FROM pg_proc WHERE oid='organization_quota_usage(uuid)'::regprocedure""")
-                function = db.execute(metadata).one()
+                    FROM pg_proc WHERE oid IN ('organization_quota_usage(uuid)'::regprocedure,
+                        'organization_document_reference_count(uuid,text)'::regprocedure) ORDER BY proname""")
+                functions = db.execute(metadata).all()
                 columns = text("""SELECT column_name,data_type,is_nullable,column_default FROM information_schema.columns
                     WHERE table_schema='public' AND table_name='letter_document' AND column_name<>'size_bytes' ORDER BY ordinal_position""")
                 old_columns = db.execute(columns).all()
@@ -73,13 +75,14 @@ def test_quota_migration_downgrade_is_exact_and_preserves_original_metadata(run_
                 with Operations.context(MigrationContext.configure(db)):
                     migration.downgrade()
                     assert db.scalar(text("SELECT to_regprocedure('organization_quota_usage(uuid)')")) is None
+                    assert db.scalar(text("SELECT to_regprocedure('organization_document_reference_count(uuid,text)')")) is None
                     assert not db.scalar(text("""SELECT EXISTS(SELECT 1 FROM information_schema.columns
                         WHERE table_schema='public' AND table_name='letter_document' AND column_name='size_bytes')"""))
                     assert db.execute(columns).all() == old_columns
                     assert db.execute(originals).all() == old_rows
                     assert db.execute(guards).all() == old_guards
                     migration.upgrade()
-                assert db.execute(metadata).one() == function
+                assert db.execute(metadata).all() == functions
                 assert db.execute(guards).all() == old_guards
                 assert db.execute(originals).all() == old_rows
             finally:
@@ -90,14 +93,15 @@ def test_quota_migration_downgrade_is_exact_and_preserves_original_metadata(run_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("foreign_target", [False, True])
-async def test_quota_function_refuses_foreign_targets_and_nonmembers(rent_world, foreign_target):
+@pytest.mark.parametrize("sql", ["SELECT organization_quota_usage(:org)", "SELECT organization_document_reference_count(:org,'unknown')"])
+async def test_quota_function_refuses_foreign_targets_and_nonmembers(rent_world, foreign_target, sql):
     from sqlalchemy.exc import DBAPIError
     from app.core.db import get_tenant_session
     with pytest.raises(DBAPIError) as error:
         async with get_tenant_session(rent_world["org"]) as db:
             await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),
                 {"actor": str(rent_world["admin"] if foreign_target else rent_world["foreign_admin"])})
-            await db.scalar(text("SELECT organization_quota_usage(:org)"),
+            await db.scalar(text(sql),
                 {"org": rent_world["foreign_org"] if foreign_target else rent_world["org"]})
     assert error.value.orig.sqlstate == "42501"
 
@@ -116,6 +120,8 @@ async def test_selfhost_document_writes_take_no_organization_quota_locks(rent_wo
         result = await storage.put_document(db, rent_world["org"], b"selfhost", content_type="application/pdf", store=store)
     assert store.get(result.uri) == b"selfhost"
     assert not (tmp_path / ".upload-locks").exists()
+    assert not (tmp_path / ".file-locks").exists()
+    assert not db.info.get("storage_write_locks")
 
 
 @pytest.mark.asyncio
@@ -163,6 +169,29 @@ async def test_selfhost_duplicate_survives_the_creators_rollback(monkeypatch, tm
 
 
 @pytest.mark.asyncio
+async def test_hosted_storage_locks_the_shared_directory_without_creating_lock_files(monkeypatch, tmp_path):
+    import os
+    import stat
+    from types import SimpleNamespace
+    from sqlalchemy.orm import Session
+    from app.core import storage
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    store = storage.LocalFsDocumentStore(tmp_path)
+    session = Session()
+    session.begin()
+    try:
+        org = uuid.uuid4()
+        await storage.lock_document_storage(SimpleNamespace(info=session.info), org, store)
+        handle = next(iter(session.info["storage_write_locks"].values()))
+        metadata = os.fstat(handle if isinstance(handle, int) else handle.fileno())
+        assert stat.S_ISDIR(metadata.st_mode)
+        assert metadata.st_ino == (tmp_path / str(org)).stat().st_ino
+        assert list(tmp_path.rglob("*.*")) == []
+    finally:
+        session.close()
+
+
+@pytest.mark.asyncio
 async def test_usage_and_uploads_use_database_sizes_without_a_directory_walk(rent_world, monkeypatch, tmp_path):
     from app.core import storage
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
@@ -179,6 +208,7 @@ async def test_usage_and_uploads_use_database_sizes_without_a_directory_walk(ren
         summary = await api.get("/api/organizations/quota")
         assert summary.status_code == 200, summary.text
         assert summary.json()["usage"]["storage_bytes"] == 8
+        assert not (tmp_path / ".upload-locks").exists()
 
 
 @pytest.mark.asyncio
@@ -229,6 +259,24 @@ async def test_quota_recount_records_legacy_and_orphan_sizes_idempotently(rent_w
     assert store.get(key) == b"legacy"
 
 
+@pytest.mark.asyncio
+async def test_recount_does_not_add_permanent_charges_for_sized_live_rows(rent_world, rent_db, monkeypatch, tmp_path, capsys):
+    from app import admin_cli
+    from app.core import storage
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    monkeypatch.setattr(settings, "document_storage_root", str(tmp_path))
+    monkeypatch.setattr(storage, "_store", storage.LocalFsDocumentStore(tmp_path))
+    async with api_client(rent_world) as api:
+        response = await api.post("/api/attachments", data={"property_id": str(rent_world["property"])},
+            files={"file": ("a.pdf", b"%PDF-123", "application/pdf")})
+        assert response.status_code == 201, response.text
+        before = (await api.get("/api/organizations/quota")).json()["usage"]["storage_bytes"]
+        admin_cli.quota_recount(["--org", str(rent_world["org"])])
+        assert "Scanned 1 originals, 8 bytes" in capsys.readouterr().out
+        assert (await api.get("/api/organizations/quota")).json()["usage"]["storage_bytes"] == before
+    assert await rent_db.scalar(text("SELECT count(*) FROM audit_event WHERE organization_id=:org AND action='quota_recount'"), {"org": rent_world["org"]}) == 0
+
+
 @pytest.mark.parametrize("kind,limit,message", [
     ("storage_bytes", 2 * 1024**3, "Speicherkontingent erschöpft (2 GiB)."),
     ("upload_bytes", 25 * 1024**2, "Datei zu groß (maximal 25 MiB)."),
@@ -252,6 +300,253 @@ def test_environment_selects_the_quota_plan(monkeypatch, mode, plan):
     selected = get_quota_plan()
     assert selected.name == plan
     assert check_quota(10**15, selected, "properties", 1).allowed == (mode == "selfhost")
+
+
+@pytest.mark.parametrize("kind,code", [
+    ("storage_bytes", "QUOTA_STORAGE_EXCEEDED"),
+    ("properties", "QUOTA_PROPERTIES_EXCEEDED"),
+    ("units", "QUOTA_UNITS_EXCEEDED"),
+    ("upload_bytes", "UPLOAD_TOO_LARGE"),
+    ("ai_budget_usd", "ORGANIZATION_AI_BUDGET_EXCEEDED"),
+])
+def test_quota_refusals_include_a_stable_code(kind, code):
+    from app.core.quotas import FREE_PLAN
+    from app.services.quota_service import require_quota
+    with pytest.raises(HTTPException) as error:
+        require_quota(getattr(FREE_PLAN, kind), kind, 1, plan=FREE_PLAN)
+    assert error.value.detail["code"] == code
+    assert isinstance(error.value.detail["message"], str)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_delete_and_upload_follow_one_lock_order(rent_world, rent_db, monkeypatch, tmp_path):
+    import asyncio
+    from app.core import storage
+    from app.core.db import get_tenant_session
+    from app.models.property_document import PropertyDocument
+    from app.repositories.mandate_document_repo import MandateDocumentRepository
+    from app.services import mandate_document_service
+    from app.services.attachment_service import AttachmentService
+
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    store = storage.LocalFsDocumentStore(tmp_path)
+    monkeypatch.setattr(storage, "_store", store)
+    org, actor, ident = rent_world["org"], rent_world["admin"], uuid.uuid4()
+    content = b"%PDF-concurrent original"
+    digest = storage.compute_sha256(content)
+    key = storage.make_storage_key(str(org), digest)
+    store.put(key, content, content_type="application/pdf")
+    await rent_db.execute(text("""INSERT INTO property_document(id,organization_id,property_id,doc_type,
+        title,original_filename,mime_type,content_byte_size,content_sha256,storage_uri,storage_backend,page_count,uploaded_by)
+        VALUES (:id,:org,:property,'DECLARATION','Synthetic','source.pdf','application/pdf',:size,:hash,:uri,'LOCAL_FS',1,:admin)"""),
+        {**rent_world, "id": ident, "uri": key, "hash": digest, "size": len(content)})
+    # Same future accepted class as the transaction tests below: keep all
+    # retention triggers intact and restore the disposable grant in finally.
+    await rent_db.execute(text("TRUNCATE document_ref CASCADE"))
+    await rent_db.execute(text("GRANT DELETE ON property_document TO app_rw"))
+    await rent_db.commit()
+
+    class AcceptedPropertyRepository(MandateDocumentRepository):
+        model = PropertyDocument
+
+        async def get_by_id(self, document_id):
+            document = await super().get_by_id(document_id)
+            document.accounting_scope_id = None
+            return document
+
+    delete_has_quota, continue_delete, upload_started = (asyncio.Event() for _ in range(3))
+    pids = {}
+
+    async def pause_delete_before_directory_lock(*args):
+        delete_has_quota.set()
+        await continue_delete.wait()
+        return await storage.lock_document_storage(*args)
+
+    monkeypatch.setattr(mandate_document_service, "lock_document_storage", pause_delete_before_directory_lock)
+
+    async def identify(db, name):
+        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {"actor": str(actor)})
+        await db.execute(text("SET LOCAL lock_timeout='1s'"))
+        pids[name] = await db.scalar(text("SELECT pg_backend_pid()"))
+
+    async def delete():
+        async with get_tenant_session(org) as db:
+            await identify(db, "delete")
+            service = mandate_document_service.MandateDocumentService(db, org, actor)
+            service._repo = AcceptedPropertyRepository(db, org)
+            await service.delete(ident)
+
+    async def upload():
+        async with get_tenant_session(org) as db:
+            await identify(db, "upload")
+            upload_started.set()
+            await AttachmentService(db, org, actor).upload(rent_world["property"], content,
+                original_filename="replacement.pdf")
+
+    async def upload_is_blocked_by_delete():
+        while not await rent_db.scalar(text("SELECT :deleter=ANY(pg_blocking_pids(:uploader))"),
+            {"deleter": pids["delete"], "uploader": pids["upload"]}):
+            await asyncio.sleep(0.01)
+
+    tasks = [asyncio.create_task(delete())]
+    try:
+        await asyncio.wait_for(delete_has_quota.wait(), 2)
+        tasks.append(asyncio.create_task(upload()))
+        await asyncio.wait_for(upload_started.wait(), 2)
+        assert pids["delete"] != pids["upload"]
+        await asyncio.wait_for(upload_is_blocked_by_delete(), 2)
+        continue_delete.set()
+        await asyncio.wait_for(asyncio.gather(*tasks), 3)
+        assert await rent_db.scalar(text("SELECT count(*) FROM property_document WHERE id=:id"), {"id": ident}) == 0
+        assert await rent_db.scalar(text("SELECT count(*) FROM attachment WHERE organization_id=:org AND storage_uri=:key"),
+            {"org": org, "key": key}) == 1
+        async with api_client(rent_world) as api:
+            assert (await api.get("/api/organizations/quota")).json()["usage"]["storage_bytes"] == len(content)
+        assert store.get(key) == content
+        assert list(tmp_path.rglob("*.bin")) == [tmp_path / key]
+    finally:
+        continue_delete.set()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await rent_db.execute(text("REVOKE DELETE ON property_document FROM app_rw"))
+        await rent_db.commit()
+
+
+@pytest.mark.asyncio
+async def test_selfhost_upload_safety_refusal_uses_the_actual_limit(monkeypatch):
+    from app.core.uploads import read_upload_limited
+    from tests.test_upload_limits import ChunkedUpload
+    monkeypatch.setattr(settings, "deployment_mode", "selfhost")
+    with pytest.raises(HTTPException) as error:
+        await read_upload_limited(ChunkedUpload(b"abcde"), max_bytes=4)
+    assert error.value.detail == {"code": "UPLOAD_TOO_LARGE", "message": "Datei zu groß (maximal 4 Bytes). Bitte wählen Sie eine kleinere Datei."}
+
+
+@pytest.mark.asyncio
+async def test_property_document_oversize_is_structured_and_uses_the_safety_limit(monkeypatch):
+    from app.services.property_document_service import PropertyDocumentService
+    monkeypatch.setattr(settings, "declaration_max_pdf_bytes", 4)
+    service = PropertyDocumentService(None, uuid.uuid4(), uuid.uuid4())
+    with pytest.raises(HTTPException) as error:
+        await service.upload(uuid.uuid4(), b"%PDF-", original_filename="large.pdf",
+                             mime_type="application/pdf", document_role="TEILUNGSERKLAERUNG", sequence_no=1)
+    assert error.value.status_code == 413
+    assert error.value.detail == {"code": "UPLOAD_TOO_LARGE", "message": "Datei zu groß (maximal 4 Bytes). Bitte wählen Sie eine kleinere Datei."}
+
+
+@pytest.mark.asyncio
+async def test_selfhost_delete_never_reads_usage_or_unlinks_live_bytes(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from sqlalchemy.orm import Session
+    from app.core import storage
+    from app.services import mandate_document_service
+    from app.services.mandate_document_service import MandateDocumentService
+    monkeypatch.setattr(settings, "deployment_mode", "selfhost")
+    store = storage.LocalFsDocumentStore(tmp_path)
+    monkeypatch.setattr(storage, "_store", store)
+    org = uuid.uuid4()
+    content = b"shared original"
+    digest = storage.compute_sha256(content)
+    key = storage.make_storage_key(str(org), digest)
+    store.put(key, content, content_type="application/pdf")
+    # An unrelated concurrent deletion decreases usage, despite another live ref.
+    usage = AsyncMock(side_effect=[{"storage_bytes": 100}, {"storage_bytes": len(content)}])
+    monkeypatch.setattr(mandate_document_service, "database_usage", usage, raising=False)
+    with Session() as session:
+        session.begin()
+        proxy = SimpleNamespace(info=session.info, sync_session=session, flush=AsyncMock())
+        service = MandateDocumentService(proxy, org, uuid.uuid4())
+        service._repo.get_by_id = AsyncMock(return_value=SimpleNamespace(accounting_scope_id=None,
+            storage_uri=key, content_sha256=digest, storage_backend="LOCAL_FS", doc_type="SONSTIGES"))
+        service._repo.delete = AsyncMock()
+        service._audit.create = AsyncMock()
+        await service.delete(uuid.uuid4())
+        session.commit()
+        assert store.exists(key)
+        assert usage.await_count == 0
+        assert not session.info.get("storage_write_locks")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("remaining", [None, "mail_without_size", "letter_without_size", "other_document"])
+@pytest.mark.parametrize("rollback", [None, "outer", "savepoint", "released_savepoint"])
+async def test_accepted_unprotected_deletion_unlinks_only_the_last_committed_reference(
+    rent_world, rent_db, monkeypatch, tmp_path, remaining, rollback
+):
+    """Exercise a future accepted class using real rows, reference SQL and hooks.
+
+    Property documents have no DELETE retention trigger, but runtime DELETE is
+    revoked. Grant it only for this disposable fixture and restore it in finally.
+    Truncate synthetic registry dependants to model an unregistered legacy class;
+    no retention trigger is disabled and no current route accepts this deletion.
+    """
+    import json
+    from app.core import storage
+    from app.core.db import get_tenant_session
+    from app.models.property_document import PropertyDocument
+    from app.repositories.mandate_document_repo import MandateDocumentRepository
+    from app.services.mandate_document_service import MandateDocumentService
+    from tests.test_letters import create_template
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    store = storage.LocalFsDocumentStore(tmp_path)
+    monkeypatch.setattr(storage, "_store", store)
+    org, actor = rent_world["org"], rent_world["admin"]
+    content = b"unprotected source"
+    digest = storage.compute_sha256(content)
+    key = storage.make_storage_key(str(org), digest)
+    store.put(key, content, content_type="application/pdf")
+    ident = uuid.uuid4()
+    params = {**rent_world, "id": ident, "uri": key, "hash": digest, "size": len(content)}
+    for document_id in ([ident, uuid.uuid4()] if remaining == "other_document" else [ident]):
+        await rent_db.execute(text("""INSERT INTO property_document(id,organization_id,property_id,doc_type,
+            title,original_filename,mime_type,content_byte_size,content_sha256,storage_uri,storage_backend,page_count,uploaded_by)
+            VALUES (:id,:org,:property,'DECLARATION','Synthetic','source.pdf','application/pdf',:size,:hash,:uri,'LOCAL_FS',1,:admin)"""),
+            {**params, "id": document_id})
+    await rent_db.execute(text("TRUNCATE document_ref CASCADE"))
+    if remaining == "mail_without_size":
+        await rent_db.execute(text("""INSERT INTO audit_event(organization_id,entity_type,action,payload_diff)
+            VALUES (:org,'dunning_notice','mail_prepared',CAST(:payload AS jsonb))"""),
+            {"org": org, "payload": json.dumps({"storage_uri": key})})
+    await rent_db.commit()
+    if remaining == "letter_without_size":
+        async with api_client(rent_world) as api:
+            template = await create_template(api)
+        await rent_db.execute(text("""INSERT INTO letter_document(organization_id,template_id,property_id,person_id,
+            tenant_profile_id,lease_agreement_id,request_id,as_of,recipient_name,subject,body,storage_uri,content_sha256)
+            VALUES (:org,:template,:property,:person,:tenant,:lease,:id,'2026-06-01','Synthetic','Subject','Body',:uri,:hash)"""),
+            {**params, "template": uuid.UUID(template["id"])})
+    await rent_db.execute(text("GRANT DELETE ON property_document TO app_rw"))
+    await rent_db.commit()
+
+    class AcceptedPropertyRepository(MandateDocumentRepository):
+        model = PropertyDocument
+
+        async def get_by_id(self, document_id):
+            document = await super().get_by_id(document_id)
+            if document is not None:
+                document.accounting_scope_id = None
+            return document
+
+    try:
+        async with get_tenant_session(org) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {"actor": str(actor)})
+            service = MandateDocumentService(db, org, actor)
+            service._repo = AcceptedPropertyRepository(db, org)
+            nested = await db.begin_nested() if rollback in {"savepoint", "released_savepoint"} else None
+            await service.delete(ident)
+            assert store.get(key) == content
+            if nested:
+                await nested.commit() if rollback == "released_savepoint" else await nested.rollback()
+            if rollback in {"outer", "released_savepoint"}:
+                await db.rollback()
+        assert store.exists(key) == bool(remaining or rollback)
+        assert await rent_db.scalar(text("SELECT count(*) FROM property_document WHERE id=:id"), {"id": ident}) == bool(rollback)
+    finally:
+        await rent_db.execute(text("REVOKE DELETE ON property_document FROM app_rw"))
+        await rent_db.commit()
 
 
 @pytest.mark.asyncio
@@ -279,7 +574,7 @@ async def test_count_refusal_leaves_the_atomic_import_unchanged(rent_world, monk
         projected = await preview(api, command)
         refused = await apply(api, command, projected)
         assert refused.status_code == 409, refused.text
-        assert "kontingent erschöpft" in refused.json()["detail"]
+        assert "kontingent erschöpft" in refused.json()["detail"]["message"]
         assert await inventory(api) == before
 
 
@@ -317,7 +612,7 @@ async def test_upload_at_storage_limit_succeeds_then_refuses_without_rows_or_fil
         refused = await api.post("/api/attachments", data=upload["data"],
                                  files={"file": ("b.pdf", b"%PDF-456", "application/pdf")})
         assert refused.status_code == 413, refused.text
-        assert refused.json()["detail"].startswith("Speicherkontingent erschöpft")
+        assert refused.json()["detail"]["message"].startswith("Speicherkontingent erschöpft")
         assert sorted(tmp_path.rglob("*.bin")) == before
         listed = await api.get("/api/attachments", params=upload["data"])
         assert len(listed.json()["items"]) == 1
@@ -325,17 +620,67 @@ async def test_upload_at_storage_limit_succeeds_then_refuses_without_rows_or_fil
 
 
 @pytest.mark.asyncio
+async def test_an_unreferenced_existing_original_is_charged_on_upload(rent_world, monkeypatch, tmp_path):
+    from app.core import quotas, storage
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    monkeypatch.setattr(quotas, "FREE_PLAN", replace(quotas.FREE_PLAN, storage_bytes=8))
+    store = storage.LocalFsDocumentStore(tmp_path)
+    monkeypatch.setattr(storage, "_store", store)
+    orphan = b"%PDF-456"
+    key = storage.make_storage_key(str(rent_world["org"]), storage.compute_sha256(orphan))
+    store.put(key, orphan, content_type="application/pdf")
+    async with api_client(rent_world) as api:
+        data = {"property_id": str(rent_world["property"])}
+        first = await api.post("/api/attachments", data=data,
+            files={"file": ("live.pdf", b"%PDF-123", "application/pdf")})
+        assert first.status_code == 201, first.text
+        refused = await api.post("/api/attachments", data=data,
+            files={"file": ("orphan.pdf", orphan, "application/pdf")})
+        assert refused.status_code == 413, refused.text
+        assert refused.json()["detail"]["code"] == "QUOTA_STORAGE_EXCEEDED"
+        assert len((await api.get("/api/attachments", params=data)).json()["items"]) == 1
+        assert (await api.get("/api/organizations/quota")).json()["usage"]["storage_bytes"] == 8
+        assert store.get(key) == orphan
+        # A sized, live reference remains deduplicated at the limit.
+        duplicate = await api.post("/api/attachments", data=data,
+            files={"file": ("duplicate.pdf", b"%PDF-123", "application/pdf")})
+        assert duplicate.status_code == 201, duplicate.text
+        assert (await api.get("/api/organizations/quota")).json()["usage"]["storage_bytes"] == 8
+
+
+def test_intake_manifest_uses_the_shared_upload_limit(monkeypatch):
+    import importlib
+    from pydantic import ValidationError
+    from app.core import document_limits
+    from app.schemas import intake
+    item = {"client_item_key": "one", "filename": "one.pdf", "mime_type": "application/pdf",
+            "content_sha256": "a" * 64, "content_byte_size": 4}
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(document_limits, "MAX_UPLOAD_BYTES", 4)
+            importlib.reload(intake)
+            assert intake.IntakeManifestItem(**item).content_byte_size == 4
+            with pytest.raises(ValidationError):
+                intake.IntakeManifestItem(**{**item, "content_byte_size": 5})
+    finally:
+        importlib.reload(intake)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("nested", [False, True])
 async def test_database_failure_removes_new_bytes_and_preserves_committed_duplicates(
-        rent_world, tmp_path, nested):
+        rent_world, tmp_path, nested, monkeypatch):
     from app.core.db import get_tenant_session
     from app.core.storage import LocalFsDocumentStore, put_document
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
     store = LocalFsDocumentStore(tmp_path)
     async with get_tenant_session(rent_world["org"]) as db:
+        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {"actor": str(rent_world["admin"])})
         kept = await put_document(db, rent_world["org"], b"committed", content_type="application/pdf", store=store)
     before = sorted(tmp_path.rglob("*.bin"))
     with pytest.raises(RuntimeError, match="DB write failed"):
         async with get_tenant_session(rent_world["org"]) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {"actor": str(rent_world["admin"])})
             await put_document(db, rent_world["org"], b"committed", content_type="application/pdf", store=store)
             if nested:
                 async with db.begin_nested():
@@ -348,13 +693,15 @@ async def test_database_failure_removes_new_bytes_and_preserves_committed_duplic
 
 
 @pytest.mark.asyncio
-async def test_failed_database_statement_removes_the_new_original(rent_world, tmp_path):
+async def test_failed_database_statement_removes_the_new_original(rent_world, tmp_path, monkeypatch):
     from sqlalchemy.exc import DBAPIError
     from app.core.db import get_tenant_session
     from app.core.storage import LocalFsDocumentStore, put_document
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
     store = LocalFsDocumentStore(tmp_path)
     with pytest.raises(DBAPIError):
         async with get_tenant_session(rent_world["org"]) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {"actor": str(rent_world["admin"])})
             await put_document(db, rent_world["org"], b"not committed", content_type="application/pdf", store=store)
             await db.execute(text("SELECT 1/0"))
     assert list(tmp_path.rglob("*.bin")) == []
@@ -376,7 +723,7 @@ async def test_upload_service_checks_size_before_storing_any_bytes(rent_world, t
         async with get_tenant_session(rent_world["org"]) as db:
             await put_document(db, rent_world["org"], b"123456789", content_type="application/pdf", store=store)
     assert error.value.status_code == 413
-    assert error.value.detail.startswith("Datei zu groß")
+    assert error.value.detail["message"].startswith("Datei zu groß")
     assert sorted(tmp_path.rglob("*.bin")) == before
 
 
@@ -406,7 +753,7 @@ async def test_hosted_knowledge_is_off_by_default_without_a_provider_call(
         response = await client_a_admin.post(f"/api/properties/{approved_knowledge_graph.property_id}/knowledge/query",
                                             json={"question": "Heizkosten"})
         assert response.status_code == 409, response.text
-        assert response.json()["detail"].startswith("Das monatliche KI-Budget")
+        assert response.json()["detail"]["message"].startswith("Das monatliche KI-Budget")
         assert not provider.calls
     finally:
         app.dependency_overrides.pop(get_knowledge_provider, None)
@@ -498,7 +845,7 @@ async def test_hosted_declaration_start_refuses_before_creating_a_queue_receipt(
         assert uploaded.status_code == 201, uploaded.text
         refused = await api.post(root + "/start", headers={"Idempotency-Key": str(uuid.uuid4())})
         assert refused.status_code == 409, refused.text
-        assert refused.json()["detail"].startswith("Das monatliche KI-Budget")
+        assert refused.json()["detail"]["message"].startswith("Das monatliche KI-Budget")
         saved = (await api.get(root)).json()
         assert saved["status"] == "DRAFT"
         assert saved["command_receipt_id"] is None
@@ -543,7 +890,7 @@ async def test_concurrent_knowledge_calls_share_the_hosted_monthly_cap(
         assert entered in done, "Provider reservation did not complete"
         second = await client_a_admin.post(route, json={"question": "Heizkosten"})
         assert second.status_code == 409, second.text
-        assert second.json()["detail"].startswith("Das monatliche KI-Budget")
+        assert second.json()["detail"]["message"].startswith("Das monatliche KI-Budget")
         provider.release.set()
         assert (await first).status_code == 200
         assert len(provider.calls) == 1
