@@ -497,19 +497,42 @@ async def test_reset_cleanup_is_bounded_and_runs_after_the_request_transaction(p
             FROM "user" u CROSS JOIN generate_series(1,110) n WHERE u.email=:email'''), {'email': email})
         await session.execute(text('''INSERT INTO password_reset_request(user_id,organization_id,token_hash,expires_at)
             SELECT id,organization_id,sha256('recent'::bytea),clock_timestamp()-interval '6 days' FROM "user" WHERE email=:email'''), {'email': email})
-    transactions = []
+    transactions, cleanup_rows = [], []
     original = AsyncSession.begin
+    original_execute = AsyncSession.execute
     def track(session):
         assert all(not previous.in_transaction() for previous in transactions)
         transactions.append(session)
         return original(session)
+    async def track_cleanup(session, statement, *args, **kwargs):
+        result = await original_execute(session, statement, *args, **kwargs)
+        if str(statement) == 'SELECT public.cleanup_password_reset_requests()':
+            cleanup_rows.append(result.scalar_one())
+        return result
     monkeypatch.setattr(rate_limit, 'cleanup_due', lambda: False)
     monkeypatch.setattr(password_reset, '_reset_attempts', itertools.count(99), raising=False)
     with monkeypatch.context() as scoped:
         scoped.setattr(AsyncSession, 'begin', track)
+        scoped.setattr(AsyncSession, 'execute', track_cleanup)
         for _ in range(2):
             assert (await client_unauth.post('/api/auth/password-reset', json={'email': email})).status_code == 202
+    assert cleanup_rows == [100]
     async with reset_store() as session:
         assert await session.scalar(text('SELECT count(*) FROM password_reset_request')) == 13
         assert await session.scalar(text("SELECT count(*) FROM password_reset_request WHERE token_hash=sha256('recent'::bytea)")) == 1
     assert transactions[-1] is not transactions[-2]
+
+
+@pytest.mark.asyncio
+async def test_reset_cleanup_remains_bounded_with_alternative_query_plans(password_identity):
+    _, email = password_identity
+    async with reset_store() as session:
+        await session.execute(text('''INSERT INTO password_reset_request(user_id,organization_id,token_hash,expires_at)
+            SELECT id,organization_id,sha256(n::text::bytea),clock_timestamp()-interval '8 days'
+            FROM "user" CROSS JOIN generate_series(1,110) n WHERE email=:email'''), {'email': email})
+        # Exercise a legal plan independently of table statistics from earlier tests.
+        for setting in ('enable_hashjoin', 'enable_mergejoin', 'enable_hashagg', 'enable_material', 'enable_sort'):
+            await session.execute(text(f'SET LOCAL {setting}=off'))
+        removed = await session.scalar(text('SELECT public.cleanup_password_reset_requests()'))
+        assert removed == 100
+        assert await session.scalar(text('SELECT count(*) FROM password_reset_request')) == 10
