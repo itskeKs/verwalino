@@ -255,6 +255,18 @@ class TestOverlapDetection:
 
 
 class TestPropertyPeriods:
+    @pytest.mark.parametrize("end", [date(2025, 2, 27), date(2025, 2, 28)])
+    def test_leap_day_start_accepts_february_end_next_year(self, end):
+        from app.engine.periods import validate_settlement_period
+
+        validate_settlement_period(date(2024, 2, 29), end)
+
+    def test_leap_day_start_rejects_march_next_year(self):
+        from app.engine.periods import validate_settlement_period
+
+        with pytest.raises(ValueError, match="zwölf Monate"):
+            validate_settlement_period(date(2024, 2, 29), date(2025, 3, 1))
+
     @pytest.mark.parametrize("month", range(1, 13))
     def test_every_start_month_has_inclusive_twelve_month_bounds(self, month):
         from app.engine.periods import period_for_date, period_starting_in, period_label
