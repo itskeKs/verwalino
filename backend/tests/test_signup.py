@@ -37,6 +37,75 @@ async def test_signup_confirm_and_login_use_the_runtime_role(signup):
 
 
 @pytest.mark.asyncio
+async def test_signup_hashing_runs_outside_transactions_for_submit_and_confirmation(signup, monkeypatch):
+    from app.api import signup as signup_api
+    from app.core.deployment_policy import get_deployment_policy
+
+    client, connection, mail = signup
+    factory = signup_api.get_session_factory()
+    sessions, hashes = [], []
+
+    def tracked_session():
+        session = factory()
+        sessions.append(session)
+        return session
+
+    def outside_transaction(function):
+        def checked(*args):
+            assert sessions and all(not session.in_transaction() for session in sessions)
+            hashes.append(function.__name__)
+            return function(*args)
+        return checked
+
+    monkeypatch.setattr(signup_api, 'get_session_factory', lambda: tracked_session)
+    monkeypatch.setattr(signup_api, 'hash_password', outside_transaction(signup_api.hash_password))
+    monkeypatch.setattr(signup_api, 'verify_password', outside_transaction(signup_api.verify_password))
+    for _ in range(2):
+        assert (await client.post('/api/signup', json=BODY)).status_code == 202
+    token = confirmation_token(mail)
+    for _ in range(get_deployment_policy().rate_limit_rules.email_failures + 1):
+        assert (await client.post('/api/signup/confirm', json={'token': token, 'password': 'wrong'})).status_code == 403
+    assert hashes.count('hash_password') == 2
+    assert hashes.count('verify_password') == 2 + get_deployment_policy().rate_limit_rules.email_failures + 1
+    await connection.execute(text('DELETE FROM auth_throttle'))
+    assert (await client.post('/api/signup/confirm', json={'token': token, 'password': BODY['password']})).status_code == 201
+    assert (await client.post('/api/signup', json=BODY)).status_code == 202
+    assert (await client.post('/api/signup/confirm', json={'token': 'missing', 'password': BODY['password']})).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_confirmation_refuses_a_password_changed_between_check_and_record(signup, monkeypatch):
+    from contextlib import asynccontextmanager
+    from app.api import signup as signup_api
+    from app.core import rate_limit
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    client, connection, mail = signup
+    await client.post('/api/signup', json=BODY)
+    token = confirmation_token(mail)
+    replacement_hash = signup_api.hash_password('Replacement-password-123')
+    original = AsyncSession.begin
+    began = 0
+
+    @asynccontextmanager
+    async def change_before_record(session):
+        nonlocal began
+        began += 1
+        if began == 2:
+            await connection.execute(text('UPDATE signup_request SET password_hash=:hash'), {'hash': replacement_hash})
+        async with original(session) as transaction:
+            yield transaction
+
+    monkeypatch.setattr(AsyncSession, 'begin', change_before_record)
+    monkeypatch.setattr(rate_limit, 'cleanup_due', lambda: False)
+    response = await client.post('/api/signup/confirm', json={'token': token, 'password': BODY['password']})
+    assert (response.status_code, response.json()) == (403, REFUSED)
+    assert began == 2
+    assert await connection.scalar(text('SELECT count(*) FROM organization')) == 0
+    assert await connection.scalar(text("SELECT failures FROM auth_throttle WHERE key_kind='email'")) == 1
+
+
+@pytest.mark.asyncio
 async def test_double_submit_and_resend_share_a_persistent_ten_minute_cooldown(signup):
     client, connection, mail = signup
     first = await client.post('/api/signup', json=BODY)
@@ -166,7 +235,15 @@ def test_signup_migration_roundtrip_is_exact_and_refuses_retained_state(run_migr
             with Operations.context(MigrationContext.configure(connection)):
                 migration.downgrade()
                 assert connection.scalar(text("SELECT to_regclass('public.signup_request')")) is None
+                assert not connection.scalar(text("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='auth_throttle' AND column_name='last_lockout_at')"))
+                connection.execute(text("""INSERT INTO auth_throttle(key_kind,key_hash,window_start,lockouts,updated_at)
+                    VALUES ('email',sha256('legacy-lockout'::bytea),now(),2,now())"""))
                 migration.upgrade()
+                assert connection.scalar(text('SELECT last_lockout_at=updated_at FROM auth_throttle'))
+                with pytest.raises(DBAPIError, match='Cannot discard retained auth throttle state'):
+                    with connection.begin_nested():
+                        migration.downgrade()
+                connection.execute(text('DELETE FROM auth_throttle'))
                 assert _chain_snapshot(connection) == before
                 connection.execute(text("""INSERT INTO signup_request(email_normalized,organization_name,admin_name,password_hash,token_hash)
                     VALUES ('roundtrip@example.test','Synthetic','Admin','hash',sha256('token'::bytea))"""))
@@ -195,7 +272,7 @@ async def test_concurrent_same_email_serializes_signup_and_confirmation(client_u
         if name == 'signup-two' and 'INSERT INTO public.auth_throttle' in str(statement):
             contender.set()
         result = await original(session, statement, params, **kwargs)
-        if name == 'signup-one' and 'INSERT INTO public.auth_throttle' in str(statement) and params['kind'] == 'ip':
+        if name == 'signup-one' and 'INSERT INTO public.auth_throttle' in str(statement) and params['key_kind'] == 'ip':
             admitted.set()
             await resume.wait()
         return result
@@ -376,6 +453,7 @@ async def test_confirmed_address_can_signup_again_after_its_organization_is_remo
 async def test_expired_pending_cleanup_is_batched_and_runs_after_the_request_transaction(signup, monkeypatch):
     import itertools
     from app.api import signup as signup_api
+    from app.core import rate_limit
     client, connection, mail = signup
     await connection.execute(text("""INSERT INTO signup_request
         (email_normalized,organization_name,admin_name,password_hash,token_hash,expires_at)
@@ -392,6 +470,7 @@ async def test_expired_pending_cleanup_is_batched_and_runs_after_the_request_tra
         assert all(not previous.in_transaction() for previous in transactions[:-1])
         return original_begin(session)
     monkeypatch.setattr(AsyncSession, 'begin', track_begin)
+    monkeypatch.setattr(rate_limit, 'cleanup_due', lambda: False)
     monkeypatch.setattr(signup_api, '_signup_attempts', itertools.count(99), raising=False)
     response = await client.post('/api/signup', json=BODY)
     assert response.status_code == 202, response.text
@@ -400,7 +479,9 @@ async def test_expired_pending_cleanup_is_batched_and_runs_after_the_request_tra
     assert response.status_code == 202, response.text
     assert await connection.scalar(text("SELECT count(*) FROM signup_request WHERE email_normalized LIKE 'stale-%'")) == 5
     assert await connection.scalar(text("SELECT count(*) FROM signup_request WHERE email_normalized='recent@example.test'")) == 1
-    assert len(transactions) == 3 and transactions[1] is not transactions[2]
+    assert len(transactions) == 5
+    assert transactions[0] is transactions[1] and transactions[2] is transactions[3]
+    assert transactions[3] is not transactions[4]
 
 
 @pytest.mark.asyncio
