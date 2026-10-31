@@ -576,10 +576,16 @@ and miss unusual or unlabelled single-word names. Other unrecognized free text m
 keep exception messages structural and never intentionally log documents or
 request bodies.
 
-## Existing alpha: `verwaltung.karat.immo`
+## Existing alpha
 
-This alpha runs on Moon behind the existing Traefik Docker network and its
-`letsencrypt` resolver. Do not add Caddy, publish an app/database port, use
+The owner's alpha instance runs on Moon behind the existing Traefik Docker
+network and its `letsencrypt` resolver. Its public host name is not part of the
+repository: `docker-compose.prod.yml` and `deploy-production.sh` read
+**`HV_PUBLIC_HOST`** from the protected `shared/.env` or the invoking environment,
+which wins. `verify-production.sh` reads it only from its environment.
+It has no default; an unset, empty or malformed value (anything but
+lowercase letters, digits, dots and dashes) stops the helper before Docker is reached,
+and Compose refuses to render the stack without it. Do not add Caddy, publish an app/database port, use
 sudo, or modify an unrelated container or network. `chris` owns the deployment
 directory:
 
@@ -598,6 +604,14 @@ database/document backup is mandatory before schema changes. The authorized
 (`database.dump` and `documents.tar.gz`, both 0600; directory 0700). A future
 schema change needs its own authorized window and backup. Preserve both live
 volumes and the previous release.
+
+Containers carry the ownership label `io.verwalino.release=<release-id>`.
+Containers started before that key was introduced carry a vendor-prefixed key
+instead; the helper still reads it as a fallback when it captures the previous
+runtime and when it verifies a runtime restored from the previous release's
+Compose file, so the first deployment after the rename and its rollback keep
+working. Containers created by the new release are checked with the new key only.
+Drop the fallback once every alpha release in `releases/` uses the new key.
 
 ## Deployment boundary and accepted head
 
@@ -975,6 +989,10 @@ mv -f "$tmp_env" "$root/shared/.env"
 unset migrator_password app_rw_password app_worker_password app_review_password session_secret
 ```
 
+Set `HV_PUBLIC_HOST=` in the same file to the public host name (for example
+`verwaltung.example.org`); the template leaves it blank on purpose. An existing
+`shared/.env` needs this one line added before the next deployment.
+
 Leave `APP_IMAGE=` blank in that file for the host-build flow. The helper
 builds exactly `hausverwaltung-alpha:<release-id>` from the reviewed source
 archive, scans it, then captures its Docker image ID. `APP_IMAGE` overrides are
@@ -1251,10 +1269,16 @@ this first identity through the privileged,
 one-shot bootstrap container:
 
 ```
-organization: Karat Hausverwaltung Alpha
-email:        admin@verwaltung.karat.immo
+organization: Hausverwaltung Alpha
+email:        admin@<HV_PUBLIC_HOST>
 name:         Alpha Admin
 ```
+
+On the existing alpha, the admin bootstrap is a no-op only while `HV_PUBLIC_HOST`
+equals the host used to create the existing `admin@<host>` e-mail.
+A different value creates a second organization, "Hausverwaltung Alpha", with a
+new OWNER_ADMIN, which the smoke check would not catch because
+`/api/organizations/me` only needs to return a non-empty organization name.
 
 The helper acquires the exclusive host deployment lock, verifies the provider
 setting, builds/scans the exact image and writes its protected SBOM. It then

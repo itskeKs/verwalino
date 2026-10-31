@@ -996,7 +996,7 @@ class StackContractTests(unittest.TestCase):
         for expected in ("{$VERWALINO_DOMAIN}", "reverse_proxy app:8000", "max_size 30MB",
                          "Strict-Transport-Security", "Content-Security-Policy", "X-Content-Type-Options"):
             self.assertIn(expected, content)
-        self.assertNotIn("verwaltung.karat.immo", content)
+        self.assertNotRegex(content, r"(?m)^\s*[A-Za-z0-9.-]+\.[A-Za-z]{2,}\s*\{")
 
     def test_nested_config_secrets_are_excluded_from_image_context(self):
         self.assertIn("**/.env.*", (ROOT / ".dockerignore").read_text().splitlines())
