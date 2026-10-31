@@ -2,8 +2,8 @@
 
 ## Portable Docker first installation
 
-This path is independent of the existing alpha. `infra/docker-compose.yml`
-replaces the obsolete development-only :5433 database starter; development and
+`infra/docker-compose.yml` provides the portable stack and replaces the obsolete
+development-only :5433 database starter; development and
 backend tests still use **only** `infra/docker-compose.declaration-test.yml`
 and `scripts/test-env.sh`. Never run the portable stack as a test database or
 on the existing production Docker host. Agent execution of this stack or an
@@ -44,7 +44,7 @@ excluded recursively from Git and Docker build contexts. Do not run with shell
 tracing or print the environment/config in support logs.
 
 The Compose project is always **verwalino**, with project-owned `pgdata`,
-`documents`, `caddy_data` and `caddy_config` volumes, no external alpha volumes
+`documents`, `caddy_data` and `caddy_config` volumes, no externally owned volumes
 or networks. Only one portable installation per Docker context is supported.
 Keep the checkout and file paths stable: moving bind-mounted infrastructure
 files may cause Docker to recreate containers. An interrupted operation can
@@ -80,7 +80,7 @@ subnet (default `172.30.97.0/28`). If it conflicts with a host/VPN/Docker route,
 choose an unused aligned private /24 through /28 at init with
 `--proxy-subnet 192.168.240.0/28`. The script reports certificate provisioning
 as pending, not as a successful TLS/Internet reachability check. The stock
-Caddy configuration does not replicate Traefik's alpha login-rate middleware;
+Caddy configuration has no login-rate middleware;
 public rollout requires a separate abuse-protection review.
 
 On a database with no organization, `start` prints a `/setup` URL and a new
@@ -123,8 +123,8 @@ bash scripts/self-host.sh stop
 ```
 
 There is deliberately no destroy or automatic update command. An older image
-is not a schema rollback. This feature does not authorize an alpha deployment
-or promote its schema gate.
+is not a schema rollback. Version upgrades require a reviewed migration and
+recovery plan.
 
 ### Portable backup and restore
 
@@ -186,7 +186,8 @@ Unknown/ambiguous heads,
 unsafe document paths, links, special files and invalid document archives are
 refused before the database starts. An older numeric schema head is allowed;
 `start` performs subsequent migrations. This portable restore check does not
-change the alpha's narrower `SUPPORTED` upgrade gate.
+change the narrower `SUPPORTED` set used by the read-only deployment checks
+and upgrade rehearsals.
 
 A different configuration fingerprint emits a warning. Restore then asks you to
 type `restore`; `--yes` explicitly skips that prompt for automation. It starts
@@ -244,9 +245,8 @@ only its own scratch databases in `infra-postgres-1` at `127.0.0.1:55432`.
 Ordinary test runs skip it with a reason; it also skips when Docker is missing.
 
 AI declaration import/Q&A, SMTP and invoice OCR are disabled in this initial
-portable stack. Manual invoice review remains supported. The T10 worker is
-active on the existing alpha since 2026-10-24; portable worker integration is
-outside this installer's scope. The first tag publication and native arm64 image installation,
+portable stack, including the hosted server. Manual invoice review remains
+supported; worker integration is outside this installer's scope. The first tag publication and native arm64 image installation,
 complete clean-host setup/login/restart and real domain/TLS acceptance still
 need operator checks; do not treat the mock installer tests as
 proof of those behaviors. Run the portable tests without Docker using
@@ -341,7 +341,7 @@ remains a pre-merge gate; the local workflow/installer checks need no database.
 
 ## Hosted server
 
-The hosted service runs on Debian 13 (the hosted server); the bootstrap also accepts Ubuntu, untested.
+The hosted service runs on the Contabo server with Debian 13; the bootstrap also accepts Ubuntu, untested.
 It uses the [portable stack](#portable-docker-first-installation)
 in HTTPS mode, updated by a GitHub workflow that logs in over a second SSH key of the admin user, restricted to
 the deploy script. Off-site encrypted backups and the restore drill belong to #42 and are not covered here.
@@ -455,9 +455,9 @@ echo '0 3 * * * chris /srv/verwalino/app/scripts/server-backup.sh >> /srv/verwal
   sudo tee /etc/cron.d/verwalino-backup
 ```
 
-These copies live on the same machine as the data, so they do not cover a lost server or disk. The script is a
-stand-in until the installer has `backup` and `restore` (#57) and `update` (#76); then it and the deploy script
-switch to them (marked `TODO` in both). Until then, restoring is manual work for the maintainer: stop the app, load
+These copies live on the same machine as the data, so they do not cover a lost server or disk. The server scripts still use
+this separate backup format; integration with the installer's portable `backup`/`restore` and a future
+`update` (#76) remains pending (marked `TODO` in both). Restoring this format is manual work for the maintainer: stop the app, load
 `db.dump` with `pg_restore` into an empty database and unpack `documents.tar` into the volume, then rehearse it on
 a throwaway host (#42).
 
@@ -478,6 +478,97 @@ curl and sleep are faked, nothing touches a real host). After a cancelled or bro
 remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/srv/verwalino/backups/.lock`
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
+
+## Migration compatibility: 0029–0141
+
+| Revisions | Effect on existing data and runtime compatibility |
+| --- | --- |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0141 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
+| 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
+| 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
+| 0128–0129 | Extends dunning provenance with default empty levy IDs, default zero interest and nullable snapshots. Existing amounts survive; new levy/interest provenance blocks downgrade. |
+| 0130–0135 | Adds retained attachments, tasks, letters/PDF references, SEPA consent, immutable import and dunning batches. No original files are migrated. Most populated downgrades refuse; task downgrade drops its table. No blanket lossless rollback claim. |
+| 0136–0137 | Adds default-active bank/vendor lifecycle and nullable property facts plus stricter reference triggers and read-only deletion-reference functions. Non-default lifecycle/property facts prevent downgrade. |
+| 0138–0139 | Adds default-zero session generation and versioned auth functions, then grants only session validation to `app_review`. Positive generations block downgrade. An older runtime's unversioned auth does not enforce the new invalidations: **automatic 0122 runtime restoration on the new schema is unsafe**. |
+| Parent references (accepted source 0140) | Replaces client-selected parent references with organization-bound composite foreign keys. Validates pending deferred checks and rejects existing invalid references without repair before replacing constraints. Adds a boolean-only, tenant-bound property existence check for scoped financial creation. Downgrade restores the original constraints and removes that check; an older runtime is not approved on this schema. |
+| 0141 | Adds the private singleton setup-token table and a token-gated, serialized first-organization function. Removes direct organization INSERT from app_rw; the migrator CLI shares the creation SQL. A populated token table blocks downgrade to avoid silently losing pending/consumed state. Existing organization/user/membership rows are preserved. |
+
+DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
+and ACL locks with NOWAIT table locks. Contention or unexpected data/function
+definitions must abort, not trigger repair/deletion. A rollback-only synthetic
+0028→0141 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0141, 0139→0141 and accepted-source 0140→0141 rehearsals also
+compare existing ACLs, allowing only the explicit organization INSERT revocation;
+it does not prove live data validity or cross-version runtime compatibility.
+
+### Release-target checklist
+
+When adding a migration, update these together in the same release:
+
+1. Add a new revision; never edit a committed migration or remove its downgrade.
+2. Update `TARGET`, the explicitly reviewed source revisions in `SUPPORTED`, and
+   the exact linear graph check in `backend/app/deployment.py`.
+3. Update the accepted head below and the compatibility table above. Review
+   `scripts/self-host.sh` and its contract tests for release-specific assumptions;
+   the installer migrates to the selected image's Alembic head.
+4. Extend `backend/tests/test_deployment_upgrade.py` and its migration setup in
+   `backend/tests/conftest.py` to rehearse each supported source revision. Retain
+   document/archive coverage and representative older backup fixtures.
+5. Run the installer contracts, upgrade/session-review tests, `make lint` and
+   `make docs-check`; require the full `make test` gate before merging a release.
+
+## Deployment boundary and accepted head
+
+The reviewed code targets **0141**. `backend/app/deployment.py` retains `TARGET`,
+`SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
+by the migration rehearsals. Those checks accept measured **0028 → 0141**,
+**0122 → 0141**, **0139 → 0141**, **0140 → 0141**, or **0141 → 0141**; unknown,
+missing, multiple or intermediate revisions are rejected. These are code and
+rehearsal boundaries, not a measurement of a running installation.
+
+The portable installer and hosted workflow run the selected image's
+`alembic upgrade head`; they do not invoke the narrower `SUPPORTED` preflight.
+Before an upgrade, measure the installed schema, review compatibility and retain
+an independently verified database/document backup plus the private config and
+previous immutable image. No automatic downgrade or runtime rollback is provided.
+Retained attachments and financial provenance can deliberately prevent a lossy
+downgrade; never delete originals or disable guards to force it.
+
+Production changes require a separately authorized operator window. Editing this
+runbook, changing the target or passing local rehearsals does not authorize SSH,
+secret access, deployment or a production restore. A later release needs its own
+compatibility and recovery plan; an older image is not a schema rollback.
+
+### Recovery across schema versions
+
+Recovery requires a separately authorized window:
+
+1. Stop the API and any workers. Preserve the failed database/documents and the
+   pre-upgrade backup, especially uploads or writes made after the new API started.
+   Prefer a reviewed forward repair when it preserves those later writes.
+2. Verify the complete database/document pair and original private config. For
+   manual snapshot recovery, restore the dump with
+   `pg_restore --exit-on-error --single-transaction` into an operator-provided
+   **empty recovery destination** with the original separated roles. Never use
+   `--clean`, downgrade, reset or volume removal against the live installation.
+3. Restore documents using the matching backup format described above. For a
+   `documents.tar.gz` archive, the reviewed image's
+   `python -m app.deployment restore-documents <empty-staging-directory>` reads
+   gzip-compressed tar on stdin and refuses nonempty targets, links and traversal.
+   The hosted server's `documents.tar` is uncompressed and uses its manual
+   recovery procedure. Never promote failed staging output; verify referenced
+   originals, byte identity, source revision and role separation in recovery.
+4. Select an immutable runtime matching the recovered schema. Reconcile later
+   writes and accept recovery before switching storage/runtime. Start the API
+   and verify `/api/health/ready` before any workers. Never run old and new
+   consumers together.
+
+The synthetic dump/document rehearsal runs with
+`make test-backend PYTEST_ARGS="-q tests/test_deployment_upgrade.py"`, which owns
+the shared test DB lock. It restores only a unique synthetic schema in existing
+`infra-postgres-1` at `127.0.0.1:55432` and temporary synthetic document files;
+it does not prove a complete production restore.
 
 ## Request IDs and optional error tracking
 
@@ -576,67 +667,7 @@ and miss unusual or unlabelled single-word names. Other unrecognized free text m
 keep exception messages structural and never intentionally log documents or
 request bodies.
 
-## Existing alpha
-
-The owner's alpha instance runs on Moon behind the existing Traefik Docker
-network and its `letsencrypt` resolver. Its public host name is not part of the
-repository: `docker-compose.prod.yml` and `deploy-production.sh` read
-**`HV_PUBLIC_HOST`** from the protected `shared/.env` or the invoking environment,
-which wins. `verify-production.sh` reads it only from its environment.
-It has no default; an unset, empty or malformed value (anything but
-lowercase letters, digits, dots and dashes) stops the helper before Docker is reached,
-and Compose refuses to render the stack without it. Do not add Caddy, publish an app/database port, use
-sudo, or modify an unrelated container or network. `chris` owns the deployment
-directory:
-
-```
-/home/chris/apps/hausverwaltung-alpha/
-├── releases/<release-id>/    # reviewed source release + locally built image
-├── shared/.env               # host-only secrets, mode 0600
-├── shared/<release-id>.sbom.cdx.json  # CycloneDX SBOM, mode 0600
-└── current -> releases/...   # changed only after all deployment gates pass
-```
-
-The former explicit **no backups** decision is superseded: a verified, paired
-database/document backup is mandatory before schema changes. The authorized
-2026-10-24 upgrade created and verified the private pair at
-`shared/backups/f0d2c411d52a6e2c927ea2d346d0a5070cf53ec5-from-0028/`
-(`database.dump` and `documents.tar.gz`, both 0600; directory 0700). A future
-schema change needs its own authorized window and backup. Preserve both live
-volumes and the previous release.
-
-Containers carry the ownership label `io.verwalino.release=<release-id>`.
-Containers started before that key was introduced carry a vendor-prefixed key
-instead; the helper still reads it as a fallback when it captures the previous
-runtime and when it verifies a runtime restored from the previous release's
-Compose file, so the first deployment after the rename and its rollback keep
-working. Containers created by the new release are checked with the new key only.
-Drop the fallback once every alpha release in `releases/` uses the new key.
-
-## Deployment boundary and accepted head
-
-These procedures require an authorized operator window; editing this runbook
-does not itself authorize SSH, secret access or deployment. Before the
-2026-10-24 upgrade, the alpha database and running image were at **0028**; the
-former **0122** assumption was not a live measurement. The authorized release
-`f0d2c411d52a6e2c927ea2d346d0a5070cf53ec5` migrated the database to
-**0139** and is now the `current` release. The API, declaration worker, invoice
-worker and existing database were healthy after promotion; public HTTPS
-`/api/health/ready` returned 200 with verified TLS. The prepared code now targets
-**0141**; this does not change the recorded live release or authorize deployment.
-The release gate accepts only measured **0028 → 0141**, **0122 → 0141**,
-**0139 → 0141**, **0140 → 0141** (accepted source), or **0141 → 0141**. Unknown,
-missing, multiple or intermediate revisions fail before stopping writers or
-migrating. Historical feature notes below describe earlier boundaries; their
-statements about an unchanged helper or an inactive alpha are superseded by
-this verified deployment.
-
-The earlier phase-2 work was verified locally on the disposable test database
-through migration **0131**. Its former 0122 gate and authorization statements
-were superseded by the separately authorized 2026-10-24 alpha upgrade above.
-Retained attachments and financial provenance can deliberately prevent a
-lossy downgrade; do not delete originals or disable guards to force rollback.
-Any later promotion requires its own reviewed compatibility and backup plan.
+## Feature operating notes
 
 T43 adds a staffel generator using the existing append-only rent history; no
 migration or new environment setting is required. Local validation does not
@@ -651,7 +682,7 @@ The production gate and authorization boundary remain unchanged.
 T45 provides separate heating/hot-water pools and explicit tenant/WEG-owner
 context. T46 adds an opt-in internal BK calculation using unit-meter boundaries
 or explicit manual slice quantities; external statements remain the default.
-No new environment setting or migration is required (Alembic head remains 0131).
+No new environment setting or migration is required by these features.
 Saved draft intent, actual meter provenance and the PDF calculation are retained
 in the existing snapshot path; finalized originals are never recomputed.
 Missing/ambiguous readings fail closed rather than selecting an estimate.
@@ -666,14 +697,13 @@ day counts and interest amounts. Existing issued notices are not recalculated
 when configuration changes. The UI permits a deliberate rate entry when no
 default is configured. This documentation does not change any runtime setting.
 
-## Invoice worker (T10; alpha active since 2026-10-24)
+## Invoice worker (T10)
 
-The `invoice-worker` service is defined in the existing production Compose file
-and checked in `tests/test_invoice_extraction_worker.py`. The separately
-authorized 2026-10-24 alpha upgrade started it on the same immutable image as
-the API and declaration worker; its container passed health and release identity
-checks. The worker adds no migration of its own. The deployment helper includes
-its start, health/identity checks, cleanup and compatible runtime restoration.
+The `invoice-worker` service in `docker-compose.prod.yml` belongs to the owner's
+local production configuration and is covered by
+`tests/test_invoice_extraction_worker.py`. It adds no migration of its own.
+The portable stack, including the hosted server, does not start this worker;
+automatic invoice extraction is disabled there.
 
 The service uses the same immutable app image and existing `documents` volume,
 mounted **read-only**. It receives only `HV_DATABASE_URL_WORKER` (`app_worker`),
@@ -754,9 +784,8 @@ bytes with SHA-256 validation, not a rerendered template. No new credentials or
 environment settings. For synthetic UI acceptance use `scripts/dev-local.sh`
 with a fresh `/tmp` `HV_DOCUMENT_STORAGE_ROOT`, then
 `node scripts/acceptance/t48_letters_browser.cjs`; stop the launcher afterward.
-No email is sent by that script. This does not change the accepted **0122**
-production gate or authorize promoting **0123–0132**, deploying or operating on
-production data.
+No email is sent by that script. Production changes follow the
+[deployment boundary](#deployment-boundary-and-accepted-head).
 
 ## DATEV file export (T49)
 
@@ -772,7 +801,7 @@ incremental/deduplicated imports; repeated or overlapping imports require manual
 reconciliation. Never treat file download as successful DATEV processing.
 For synthetic Q1 acceptance use the existing local launcher with fresh `/tmp`
 storage and `node scripts/acceptance/t49_datev_browser.cjs`, then stop it. No
-production access, promotion, deployment or change to the **0122** gate is implied.
+production access, promotion or deployment is implied.
 
 ## Offline SEPA rent file (T50; local head 0133)
 
@@ -781,8 +810,7 @@ FORCE RLS, financial/ACL input locks and immutable consent identity. Downgrade
 refuses populated SEPA tables; never delete consent/history to force rollback.
 The actual rollback-transaction test checks 0133→0132→0133 against existing rows,
 RLS/ACLs, policies, triggers/functions and an unchanged issued letter PDF.
-This does not authorize promoting **0123–0133**, deployment or changing the
-accepted **0122** production gate.
+Deployment follows the [accepted head and recovery boundary](#deployment-boundary-and-accepted-head).
 
 No bank credentials, transmission process or payment booking is introduced.
 Configure actual creditor ID, bank agreement and externally retained signed tenant
@@ -807,8 +835,8 @@ Revision **0134** adds immutable, actor/org-scoped `master_import_batch` metadat
 with FORCE RLS and SELECT/INSERT-only application grants. Populated downgrade
 refuses removal; never erase import history to force rollback. The actual
 0134→0133→0134 rollback-transaction test compares existing data, relation rights,
-policies, triggers/functions and an unchanged issued letter PDF. This is not
-permission to promote **0123–0134**, deploy or change the accepted **0122** gate.
+policies, triggers/functions and an unchanged issued letter PDF. Production
+changes follow the [deployment boundary](#deployment-boundary-and-accepted-head).
 
 No new credentials or storage service. CSV inputs are UTF-8, semicolon-delimited,
 limited to 256 KiB/500 rows with a bounded JSON envelope. Preview never publishes
@@ -826,7 +854,7 @@ financial-input lock and booked-payment computation context. A selected scope mu
 cover the relevant complete lease history; incomplete coverage is not clipped.
 Synthetic UI acceptance uses the isolated local launcher and
 `node scripts/acceptance/t52_dashboard_kpis_browser.cjs`; stop it afterward.
-This does not authorize any production promotion or change the accepted 0122 gate.
+Production changes follow the [deployment boundary](#deployment-boundary-and-accepted-head).
 
 ## Selected dunning batches (T53; local head 0135)
 
@@ -835,8 +863,8 @@ Revision **0135**, after unchanged 0134, retains immutable actor/org/request-sco
 rewriting or deleting completed batches; a populated downgrade refuses removal.
 The protected 0135→0134→0135 test compares all existing rows, relation rights,
 policies, triggers/functions and an issued letter PDF inside an outer rollback.
-Do not erase history to force rollback. This does **not** authorize deployment or
-promotion of **0123–0135**, or change the accepted **0122** production gate.
+Do not erase history to force rollback. Production changes follow the
+[deployment boundary](#deployment-boundary-and-accepted-head).
 
 No new credentials or sending service. Preview/apply reuse live source/contact and
 MIET preparation rights, ACL → financial → request locks, and one HTTP transaction.
@@ -847,8 +875,7 @@ via `make test-browser`, which owns and stops its isolated local app stack.
 
 ## Previous-year plan proposals (T54; no new migration)
 
-Local head remains **0135**; this feature does not authorize any production
-promotion or change the accepted **0122** gate. Existing draft JSON retains
+This feature adds no migration beyond **0135**. Existing draft JSON retains
 `draft_inputs` and retained source identifiers/digest in `previous_actuals`;
 normal computation/finalization preserves that provenance and the existing
 coverage checks. No OCR worker, bank operation, mail or automatic finalization.
@@ -878,8 +905,8 @@ constraints are executed, not disabled. No new credentials or external operation
 
 The synthetic UI-only acceptance uses `scripts/dev-local.sh` with isolated `/tmp`
 storage and `node scripts/acceptance/t55_master_data_browser.cjs`; stop app/browser
-afterward. This does **not** authorize production deployment/promotion of
-**0123–0136** or change the accepted **0122** gate.
+afterward. Production changes follow the
+[deployment boundary](#deployment-boundary-and-accepted-head).
 
 ## User administration and session invalidation (T57; revisions 0138–0139)
 
@@ -903,8 +930,7 @@ definitions and other ACLs, including issued PDF bytes; the normal Alembic CLI
 round trip also passed. Authenticated generation is carried unchanged through
 short knowledge-query transactions and prior-year plan admission.
 
-This is **not** authorization to promote **0123–0139** to production or change the
-accepted production **0122** gate. No deployment was performed.
+Production changes follow the [deployment boundary](#deployment-boundary-and-accepted-head).
 
 ## Unused master deletion (T56; local head 0137)
 
@@ -919,178 +945,35 @@ existing rows/security objects and an issued letter's exact PDF bytes.
 Run `uv run pytest tests/test_master_delete.py` on the disposable test database.
 The UI acceptance uses the prescribed isolated launcher and
 `node scripts/acceptance/t56_master_delete_browser.cjs`; stop app/browser afterward.
-This does **not** authorize production promotion of **0123–0137** or change the
-accepted **0122** gate.
+Production changes follow the [deployment boundary](#deployment-boundary-and-accepted-head).
 
-## Fresh installation: one-time preparation on Moon
+## Declaration-worker network boundary
 
-Run as `chris` without sudo. The host must have Docker, Compose, `curl`,
-`openssl`, `flock`, and the existing external `traefik` network. This check must print
-exactly `172.21.0.0/16`; otherwise stop rather than changing proxy trust
-settings blindly:
+The portable stack, including the hosted server, has no declaration-worker
+service and disables import/Q&A. In the retained local production configuration,
+PostgreSQL stays on the internal `backend` network. Migration and bootstrap
+services attach only there; the API additionally attaches to the external
+`traefik` proxy network. The declaration worker alone additionally attaches to
+the project-local, non-internal `egress` network, without proxy attachment or a
+published host port. Its explicit Docker gateway priorities are `backend: 0`
+and `egress: 1`, keeping database traffic private and routing external traffic
+through the egress gateway.
 
-```sh
-docker network inspect traefik --format '{{(index .IPAM.Config 0).Subnet}}'
-```
+That worker uses the fixed `https://api.openai.com/v1` SDK origin. The extraction
+harness has no URL, browser or tool capability: provider calls use structured
+outputs. The optional `python -m app.workers.declaration_provider_smoke` command
+checks the configured primary/escalation model IDs through the non-billable
+Models API with a short timeout and one bounded SDK retry. It consumes no jobs
+and sends no prompt, PDF, document content or Responses API request. Its key is
+read only from the worker environment and never printed. This probe is not part
+of the portable installer or hosted deploy workflow.
 
-Before the host commands below, transfer only the public placeholder template
-from the reviewed commit. The release archive deliberately excludes `.env.*`,
-including `.env.example`; therefore it cannot supply that template implicitly.
-From the operator's reviewed checkout (not a developer's populated environment):
+Docker's non-internal network is **not** a domain firewall. The fixed client
+origin and tool-free harness prevent application-configured alternate destinations;
+host/network policy must add an egress allowlist when a strict network-level
+provider restriction is required.
 
-```sh
-set -eu
-reviewed_commit=REPLACE_WITH_REVIEWED_COMMIT
-template=$(mktemp "${TMPDIR:-/tmp}/hausverwaltung-template.XXXXXX")
-trap 'rm -f "$template"' EXIT HUP INT TERM
-git show "$reviewed_commit:.env.example" > "$template"
-ssh chris@moon.fogu.io 'set -eu; root=/home/chris/apps/hausverwaltung-alpha; install -d -m 700 "$root" "$root/releases" "$root/shared"; test ! -e "$root/shared/environment.example"; umask 077; cat > "$root/shared/environment.example"' < "$template"
-rm -f "$template"
-trap - EXIT HUP INT TERM
-```
-
-`environment.example` contains only reviewed public placeholders. Never transfer
-an actual `.env`, `.env.local` or `shared/.env`; do not print their contents.
-For a fresh installation only, create the host-only environment file; stop if it
-already exists rather than overwriting existing credentials:
-
-```sh
-root=/home/chris/apps/hausverwaltung-alpha
-install -d -m 700 "$root" "$root/releases" "$root/shared"
-test ! -e "$root/shared/.env"
-install -m 600 "$root/shared/environment.example" "$root/shared/.env"
-```
-
-Generate the five database/session values without entering a cleartext secret
-in shell history. The values exist only in the current shell and the mode-0600
-environment file; unset them immediately afterwards. This rewrites the blank
-placeholders instead of appending duplicate dotenv keys.
-
-```sh
-migrator_password=$(openssl rand -hex 32)
-app_rw_password=$(openssl rand -hex 32)
-app_worker_password=$(openssl rand -hex 32)
-app_review_password=$(openssl rand -hex 32)
-session_secret=$(openssl rand -hex 32)
-tmp_env=$(mktemp "$root/shared/.env.XXXXXX")
-chmod 600 "$tmp_env"
-while IFS= read -r line || [ -n "$line" ]; do
-  case "$line" in
-    MIGRATOR_PASSWORD=) printf 'MIGRATOR_PASSWORD=%s\n' "$migrator_password" ;;
-    APP_WORKER_PASSWORD=) printf 'APP_WORKER_PASSWORD=%s\n' "$app_worker_password" ;;
-    APP_REVIEW_PASSWORD=) printf 'APP_REVIEW_PASSWORD=%s\n' "$app_review_password" ;;
-    APP_RW_PASSWORD=) printf 'APP_RW_PASSWORD=%s\n' "$app_rw_password" ;;
-    SESSION_SECRET=) printf 'SESSION_SECRET=%s\n' "$session_secret" ;;
-    FORWARDED_ALLOW_IPS=*) printf 'FORWARDED_ALLOW_IPS=172.21.0.0/16\n' ;;
-    *) printf '%s\n' "$line" ;;
-  esac
-done < "$root/shared/.env" > "$tmp_env"
-mv -f "$tmp_env" "$root/shared/.env"
-unset migrator_password app_rw_password app_worker_password app_review_password session_secret
-```
-
-Set `HV_PUBLIC_HOST=` in the same file to the public host name (for example
-`verwaltung.example.org`); the template leaves it blank on purpose. An existing
-`shared/.env` needs this one line added before the next deployment.
-
-Leave `APP_IMAGE=` blank in that file for the host-build flow. The helper
-builds exactly `hausverwaltung-alpha:<release-id>` from the reviewed source
-archive, scans it, then captures its Docker image ID. `APP_IMAGE` overrides are
-rejected by the manual helper; there is no registry-pull deployment path.
-
-Declaration imports are enabled by default and the worker therefore requires a
-non-empty `HV_OPENAI_API_KEY` in this same mode-0600 host environment file.
-Store it as an unquoted `A-Z`/`a-z`/`0-9`/`.`/`_`/`-` token without an inline
-comment. Provision that server-side key before deploying; never add it to an
-archive or command line. If this alpha must run without declaration imports, set
-`HV_DECLARATION_IMPORT_ENABLED=false` explicitly. The API's deterministic
-browse/search features remain available in that mode, but the deployment and
-isolated verifier otherwise fail closed before starting runtime containers.
-
-## Upgrade of an existing installation
-
-Do not rerun the fresh-install password-generation loop or overwrite `shared/.env`.
-Before migration, verify in the authorized maintenance window that the
-existing database has the distinct `app_worker` and `app_review` logins and the
-protected `APP_WORKER_PASSWORD` and `APP_REVIEW_PASSWORD` settings. Fresh-volume
-init scripts do **not** run again on existing volumes. Follow the role prerequisites
-below with the stdin-only procedure; never reset populated volumes.
-The pre-upgrade read-only check found only `app_migrator` and `app_rw`, and
-neither new password key was present in `shared/.env`. Both new roles and
-protected random credentials were provisioned before the 2026-10-24 upgrade.
-For another existing installation, provision them before invoking the release
-helper. Retain those credentials with the paired backup for recovery. Do not
-rotate the existing `app_rw` or `app_migrator` passwords.
-
-Existing database-container environment may predate those keys. Merely editing
-`shared/.env` does not update it, and the deploy helper deliberately refuses an
-database-container replacement: it requires the existing healthy DB and never
-starts or reconciles that service. Runtime credential probes use the new release
-settings, independently of old DB-container environment. Resolve missing roles
-or credentials before release; do not use `app_rw` as a worker workaround.
-The provisioning procedure creates missing roles, but does not rotate passwords on
-existing roles. It was used as `chris` on Moon before the 0028 upgrade and can
-be rerun only when the role/credential prerequisite needs repair. The existing
-database container stays running. Run this in a private shell without tracing;
-no password is passed in a process argument or printed:
-
-```sh
-(
-set -eu
-umask 077
-root=/home/chris/apps/hausverwaltung-alpha
-env_file="$root/shared/.env"
-test -f "$env_file" && test ! -L "$env_file"
-test "$(stat -c '%a' "$env_file")" = 600
-exec 9>"$root/shared/deploy.lock"
-flock -n 9
-worker_count=$(grep -c '^APP_WORKER_PASSWORD=' "$env_file" || true)
-review_count=$(grep -c '^APP_REVIEW_PASSWORD=' "$env_file" || true)
-test "$worker_count" = "$review_count"
-case "$worker_count" in
-  0)
-    worker=$(openssl rand -hex 32)
-    review=$(openssl rand -hex 32)
-    test "${#worker}" -eq 64 && test "${#review}" -eq 64 && test "$worker" != "$review"
-    case "$worker$review" in *[!0-9a-f]*) exit 1 ;; esac
-    tmp=$(mktemp "$env_file.XXXXXX")
-    trap 'rm -f "$tmp"' EXIT
-    chmod 600 "$tmp"
-    cat "$env_file" > "$tmp"
-    printf '\nAPP_WORKER_PASSWORD=%s\nAPP_REVIEW_PASSWORD=%s\n' "$worker" "$review" >> "$tmp"
-    mv -f "$tmp" "$env_file"
-    tmp=
-    ;;
-  1)
-    worker=$(sed -n 's/^APP_WORKER_PASSWORD=//p' "$env_file")
-    review=$(sed -n 's/^APP_REVIEW_PASSWORD=//p' "$env_file")
-    ;;
-  *) exit 1 ;;
-esac
-test "${#worker}" -eq 64 && test "${#review}" -eq 64 && test "$worker" != "$review"
-case "$worker$review" in *[!0-9a-f]*) exit 1 ;; esac
-db_id=$(docker ps --no-trunc -q --filter label=com.docker.compose.project=hausverwaltung-alpha --filter label=com.docker.compose.service=db)
-test -n "$db_id" && test "$(printf '%s\n' "$db_id" | wc -l)" -eq 1
-docker exec -i "$db_id" psql -Xqv ON_ERROR_STOP=1 -U app_migrator -d hausverwaltung <<SQL
-BEGIN;
-SELECT pg_catalog.format('CREATE ROLE app_worker LOGIN PASSWORD %L INHERIT NOBYPASSRLS NOCREATEDB NOCREATEROLE', '$worker')
-WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='app_worker')
-\gexec
-SELECT pg_catalog.format('CREATE ROLE app_review LOGIN PASSWORD %L NOINHERIT NOBYPASSRLS NOCREATEDB NOCREATEROLE', '$review')
-WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='app_review')
-\gexec
-GRANT app_rw TO app_worker;
-GRANT CONNECT ON DATABASE hausverwaltung TO app_worker,app_review;
-COMMIT;
-SQL
-unset worker review
-)
-```
-
-If provisioning stops partway through, rerun it with the same protected keys;
-never generate replacements for a partly provisioned database. The release
-helper's disposable credential probes must pass before stopping writers.
-Credential rotation is a separate operation with workers paused.
+### Database role separation
 
 | Connection | Runtime role / setting | Boundary |
 | --- | --- | --- |
@@ -1099,243 +982,7 @@ Credential rotation is a separate operation with workers paused.
 | Dedicated human-review commands in API | `app_review` / `HV_DATABASE_URL_REVIEW` | Separate pool, no ordinary-role fallback |
 | One-shot migration/bootstrap | Privileged ops credentials only | Never injected into app/worker runtime |
 
-Before downtime, the new image checks its single head **0141**, the exact linear
-0029–0141 chain, the measured single DB revision and the isolated login/role
-membership, ownership and schema/ACL prerequisites. Disposable non-consuming
-probes test each actual API/review/worker credential. The captured previous image
-must have exactly the measured DB head and every previous runtime must have the
-same immutable image plus matching project/service/release labels. Unexpected
-running project containers fail closed. No roles or privileges are repaired.
-
-The helper requires an existing `current` release and API container. Fresh
-installation is a separate procedure; this helper no longer initializes an empty
-DB. Each source revision is accepted only when actually measured.
-
-### Migration compatibility: 0029–0141
-
-| Revisions | Effect on existing data and runtime compatibility |
-| --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0141 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
-| 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
-| 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
-| 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
-| 0128–0129 | Extends dunning provenance with default empty levy IDs, default zero interest and nullable snapshots. Existing amounts survive; new levy/interest provenance blocks downgrade. |
-| 0130–0135 | Adds retained attachments, tasks, letters/PDF references, SEPA consent, immutable import and dunning batches. No original files are migrated. Most populated downgrades refuse; task downgrade drops its table. No blanket lossless rollback claim. |
-| 0136–0137 | Adds default-active bank/vendor lifecycle and nullable property facts plus stricter reference triggers and read-only deletion-reference functions. Non-default lifecycle/property facts prevent downgrade. |
-| 0138–0139 | Adds default-zero session generation and versioned auth functions, then grants only session validation to `app_review`. Positive generations block downgrade. An older runtime's unversioned auth does not enforce the new invalidations: **automatic 0122 runtime restoration on the new schema is unsafe**. |
-| Parent references (accepted source 0140) | Replaces client-selected parent references with organization-bound composite foreign keys. Validates pending deferred checks and rejects existing invalid references without repair before replacing constraints. Adds a boolean-only, tenant-bound property existence check for scoped financial creation. Downgrade restores the original constraints and removes that check; an older runtime is not approved on this schema. |
-| 0141 | Adds the private singleton setup-token table and a token-gated, serialized first-organization function. Removes direct organization INSERT from app_rw; the migrator CLI shares the creation SQL. A populated token table blocks downgrade to avoid silently losing pending/consumed state. Existing organization/user/membership rows are preserved. |
-
-DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
-and ACL locks with NOWAIT table locks. Contention or unexpected data/function
-definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0141 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0141, 0139→0141 and accepted-source 0140→0141 rehearsals also
-compare existing ACLs, allowing only the explicit organization INSERT revocation;
-it does not prove live data validity or cross-version runtime compatibility.
-
-### Paired backup and recovery
-
-During the authorized maintenance window, the helper reserves a new private
-`shared/backups/<release-id>-from-<measured-revision>/` directory (0700; files
-0600). It stops captured declaration/invoice workers with a 130-second drain,
-then the API, and verifies they stopped. An absent old invoice worker is allowed.
-Leased work uses the existing fencing/recovery rules after restart. PostgreSQL
-stays running; all database clients other than the check itself must be gone.
-The operator must prevent other writers/restarts throughout this window and retain
-the previous source release, immutable image and protected credentials for recovery.
-
-It creates `database.dump` with PostgreSQL's custom-format `pg_dump` and
-`documents.tar.gz` from the stopped API's document mount, inherited read-only by
-a network-disabled container using the new immutable image. It checks the dump
-catalogue and reads every archive member including gzip integrity; links and
-unsafe paths are refused. It rechecks DB identity and quiescence before migration.
-Failed `.partial` files remain private and unusable. Both final files must exist
-and verify to form a recovery pair; never use a partial pair. Existing directories
-are never reused or overwritten. No credentials enter backup command arguments
-or error logs. These host-local backups do not provide off-host disaster recovery;
-retention/off-host storage needs an operator decision before relying on it.
-
-Before migration, a failure can restart the captured API, then only the workers
-that previously existed, after rechecking the unchanged schema. On 0141→0141,
-the helper skips migration and may similarly restore the prior 0141 runtime.
-Once an older-to-0141 migration is attempted, any failure leaves `current` unchanged
-and stops only provably owned new runtime containers. It reports
-`MAINTENANCE REQUIRED` and keeps old writers stopped, even if the migration may
-have rolled back. Unknown ownership or failed stops also prohibit automatic
-restoration. PostgreSQL, both live volumes and the backup remain intact.
-
-Recovery in a **separately authorized** window:
-
-1. Keep API and both workers stopped. Preserve the failed DB/documents as well
-   as the pre-upgrade pair, especially any uploads/writes after new API startup.
-   Prefer a reviewed forward repair when it preserves these later writes.
-2. For snapshot recovery, verify both complete backup files and restore the dump
-   with `pg_restore --exit-on-error --single-transaction` into an operator-provided
-   **empty recovery destination** with the original separated roles. Never run
-   `--clean`, downgrade, reset or volume removal against the live installation.
-3. Restore documents with the reviewed image's
-   `python -m app.deployment restore-documents <empty-staging-directory>` reading
-   `documents.tar.gz` on stdin. It refuses a nonempty target, links and traversal;
-   failed staging output must not be promoted. Check referenced originals and
-   byte identity, the recorded source revision and role separation in recovery.
-4. Select the immutable runtime whose head matches that recovered schema. Only
-   after recovery acceptance and reconciliation of later writes may the operator
-   switch storage/runtime/current. Start API and verify `/api/health/ready` before
-   the previously present workers. Never start old and new consumers together.
-
-Local synthetic restoration is reproducible with
-`source scripts/test-env.sh; cd backend; uv run pytest tests/test_deployment_upgrade.py`.
-It uses only a unique synthetic schema inside existing `infra-postgres-1` on
-127.0.0.1:55432 and temporary synthetic document files, not another database or
-production data. This task does not perform a production restore rehearsal.
-
-## Declaration-worker network boundary
-
-The PostgreSQL `backend` network remains internal. Database, migration and
-bootstrap services attach only there; the API attaches only to `backend` and
-the shared external `traefik` network. The declaration worker alone additionally
-attaches to the project-local, non-internal `egress` network. It has no Traefik
-attachment and no service publishes a host port. The worker uses the explicit
-Docker gateway priorities `backend: 0` and `egress: 1`, so its default route is
-the egress-network gateway while database traffic remains reachable over
-`backend`.
-
-This gives the worker DNS and HTTPS egress for the fixed
-`https://api.openai.com/v1` SDK origin. The extraction harness has no URL,
-browser, or tool capability: provider calls are structured-output/Models API
-calls only. When declaration imports are enabled, the deploy gate runs after
-the replacement API is healthy but before the consuming replacement worker is
-started. It uses a one-off `compose run --rm --no-deps` worker container with
-an explicit Python entrypoint override, so the normal worker loop never runs.
-That container makes the non-billable Models API lookup for the configured
-primary and escalation model IDs with a short timeout and one bounded SDK
-retry. It sends no prompt, PDF, document content, or Responses API request;
-the key is read solely from the worker container environment and is never
-printed. A smoke failure applies the compatibility/recovery policy above and prevents
-promotion.
-
-Docker's ordinary non-internal network is **not** a domain firewall. The fixed
-client origin and tool-free harness prevent application-configured alternate
-destinations, but host/network policy must add an egress allowlist if a strict
-network-level restriction to OpenAI is required. The isolated verifier checks
-the exact topology and decodes the worker's live default route from
-`/proc/net/route`, comparing it with the Docker egress gateway. It
-intentionally does not perform an external provider call with its placeholder
-key.
-
-## Manual release transfer and promotion
-
-Run the following from the reviewed worktree. The archive is deliberately
-created outside the archived tree. It excludes all dotenv files and local
-build/cache directories, so no deployment or developer secret crosses SSH.
-Substitute a stable reviewed release id (usually the commit SHA).
-
-```sh
-worktree=$PWD
-release_id=REPLACE_WITH_REVIEWED_COMMIT
-archive=$(mktemp "${TMPDIR:-/tmp}/hausverwaltung-alpha.XXXXXX")
-COPYFILE_DISABLE=1 tar -C "$worktree" \
-  --exclude=.git --exclude=.claude --exclude='.claude/**' \
-  --exclude='.DS_Store' --exclude='*/.DS_Store' \
-  --exclude='._*' --exclude='*/._*' \
-  --exclude='.env' --exclude='.env.*' \
-  --exclude='*/.env' --exclude='*/.env.*' \
-  --exclude='backend/.venv' --exclude='backend/.venv/**' \
-  --exclude='.hypothesis' --exclude='.hypothesis/**' \
-  --exclude='backend/.hypothesis' --exclude='backend/.hypothesis/**' \
-  --exclude='backend/*.egg-info' --exclude='backend/*.egg-info/**' \
-  --exclude='frontend/node_modules' --exclude='frontend/node_modules/**' \
-  --exclude='frontend/dist' --exclude='frontend/dist/**' \
-  --exclude='**/.pytest_cache' --exclude='**/.pytest_cache/**' \
-  --exclude='**/__pycache__' --exclude='**/__pycache__/**' \
-  --exclude='image.env' --exclude='sbom.cdx.json' \
-  -czf "$archive" .
-ssh chris@moon.fogu.io "set -eu; root=/home/chris/apps/hausverwaltung-alpha; \
-  install -d -m 700 \"\$root\" \"\$root/releases\" \"\$root/shared\"; \
-  test -f \"\$root/shared/.env\"; test \"\$(stat -c '%a' \"\$root/shared/.env\")\" = 600; \
-  test ! -e \"\$root/releases/$release_id\"; test ! -e \"\$root/releases/$release_id.tar.gz\""
-scp "$archive" "chris@moon.fogu.io:/home/chris/apps/hausverwaltung-alpha/releases/$release_id.tar.gz"
-rm -f "$archive"
-ssh -t chris@moon.fogu.io "set -eu; root=/home/chris/apps/hausverwaltung-alpha; \
-  release=\"\$root/releases/$release_id\"; archive=\"\$root/releases/$release_id.tar.gz\"; \
-  install -d -m 700 \"\$release\"; tar -xzf \"\$archive\" -C \"\$release\"; rm -f \"\$archive\"; \
-  DEPLOY_ROOT=\"\$root\" RELEASE_ID='$release_id' sh \"\$release/scripts/deploy-production.sh\""
-```
-
-The helper asks for the first application-admin password with terminal echo
-disabled. Save it in a password manager before continuing. It creates exactly
-this first identity through the privileged,
-one-shot bootstrap container:
-
-```
-organization: Hausverwaltung Alpha
-email:        admin@<HV_PUBLIC_HOST>
-name:         Alpha Admin
-```
-
-On the existing alpha, the admin bootstrap is a no-op only while `HV_PUBLIC_HOST`
-equals the host used to create the existing `admin@<host>` e-mail.
-A different value creates a second organization, "Hausverwaltung Alpha", with a
-new OWNER_ADMIN, which the smoke check would not catch because
-`/api/organizations/me` only needs to return a non-empty organization name.
-
-The helper acquires the exclusive host deployment lock, verifies the provider
-setting, builds/scans the exact image and writes its protected SBOM. It then
-executes the existing-installation preflight and paired backup above. All ops
-and runtime starts use `--no-deps`; there is no DB start/recreation. After the
-exact target revision check, the order is `bootstrap → app → API readiness →
-provider connectivity probe → worker → invoice-worker`. Both workers must pass
-health, immutable image and release identity checks before acceptance.
-
-It verifies closed host ports and isolated API/review/worker database roles,
-then the existing public TLS/security-header/session/login/traversal/upload-limit
-smoke. `current` changes atomically only after every gate succeeds; the previous
-pointer is persisted first. On failure the recovery policy above applies, with
-no automatic downgrade or volume deletion. The disposable CI verifier checks
-0141 and the invoice worker too; its execution remains separately authorized.
-
-## Operation and rollback
-
-The app has no host port. Traefik makes the static SPA, login page, and health
-endpoints public, while applying TLS, CSP/HSTS/clickjacking/MIME/referrer
-headers, a login rate limit, and a 30 MiB proxy body limit. Application data
-remains protected by the application session/authentication boundary and its
-database RLS controls. The app independently rejects individual files over 25
-MiB. `/tmp` is a noexec/nosuid 128 MiB tmpfs: enough for three concurrent 25
-MiB prevalidation spools and still below the 768 MiB app memory limit.
-
-The ordinary API connection uses `app_rw`; the declaration worker uses only
-`app_worker`. Only the API receives the separate `app_review` pool URL. Verify
-this separation and confirm no migrator URL leaked into either service:
-
-```sh
-root=/home/chris/apps/hausverwaltung-alpha
-release=$(readlink -f "$root/current")
-image="hausverwaltung-alpha:$(basename "$release")"
-APP_IMAGE="$image" HV_RELEASE_ID="$(basename "$release")" docker compose --project-name hausverwaltung-alpha \
-  --env-file "$root/shared/.env" -f "$release/docker-compose.prod.yml" ps
-```
-
-There is no automatic rollback after promotion. Before promotion, automatic
-runtime restoration requires the unchanged schema, matching previous image head,
-and successful cleanup of all owned replacement consumers. A cross-schema attempt
-requires maintenance/recovery as described above; never blindly start the 0122
-image on 0141. The same compatibility requirement applies to a manual rollback.
-
-## Optional GitLab deploy
-
-The GitLab deploy job stays disabled until `HV_ENABLE_CI_DEPLOY=true` on the
-protected default branch. It requires protected/masked `SSH_PRIVATE_KEY`,
-`SSH_KNOWN_HOSTS`, `DEPLOY_HOST`, `DEPLOY_USER`,
-and `HV_SMOKE_ADMIN_PASSWORD`. The admin password is passed to the remote
-helper only through standard input, never archive content or command
-arguments. CI first requires successful image build, Trivy scan and isolated
-container smoke; the remote helper repeats its host-build scan and full public
-smoke before promotion.
-
-
-### Worker role prerequisite for migration 0070
+## Worker role prerequisite for migration 0070
 
 Provision the separate `app_worker` login before upgrading an existing database.
 Fresh volumes use the reviewed `infra/db/prod-init.sh`; existing volumes do not
@@ -1353,7 +1000,6 @@ to tenant/source RLS. Only the worker can claim, renew and transition extraction
 leases. After migration, retain this role separation during rollback and pause
 workers before credential rotation. Source enforcement itself remains disabled.
 
-
 ## Isolated review runtime (0073)
 
 Provision the independent `app_review` login before migration 0073 on an existing
@@ -1363,8 +1009,8 @@ or grant app_rw/app_worker membership. The review role is NOINHERIT, owns no obj
 has no elevated flags, parent roles or delegates, and receives only explicit graph
 SELECT privileges and narrow review commands from the migration. Startup of a new
 volume includes it automatically. Existing database-service environment changes
-must be accounted for in the maintenance procedure; the deploy helper still refuses
-an unexpected replacement of the stable database container.
+must be accounted for in the maintenance procedure; editing a dotenv file alone
+does not update an existing database container.
 
 Only the API receives `HV_DATABASE_URL_REVIEW`; the extraction worker must never
 receive it. The two mutation endpoints use a separate pool with no fallback to
@@ -1373,8 +1019,8 @@ Read-only review views keep their ordinary connection. Local development uses th
 same dedicated setting, pointed at the dev-only app_review login from init.sql.
 
 The runtime checks actual session/current role, no membership edges, no elevated
-attributes or ownership, and no public-schema CREATE privilege. Both deployment
-helpers test the review connection from the API container. This separation protects
+attributes or ownership, and no public-schema CREATE privilege. The retained
+read-only runtime check also validates the review connection. This separation protects
 against arbitrary ordinary-runtime SQL; it does not protect against compromise of
 the API process or its dedicated review credential. Keep that credential server-side
 and rotate it independently. Source activation remains disabled by this release.

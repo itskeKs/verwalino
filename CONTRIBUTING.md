@@ -25,7 +25,7 @@ Rules for coding agents, which apply to people too, are in [AGENTS.md](AGENTS.md
   `test@example.de` exists and prints its login when ready. Cleanup stops all three processes on Ctrl+C or partial startup
   failure without stopping PostgreSQL; originals in the printed folder are
   preserved. Do not run resetting backend tests during a UI acceptance run.
-  Worker operation: [DEPLOY.md](DEPLOY.md#invoice-worker-t10-alpha-active-since-2026-10-24).
+  Worker operation: [DEPLOY.md](DEPLOY.md#invoice-worker-t10).
 - Declarations of division (Teilungserklärungen): the dependency sets above include the
   operations tooling. Imports require **Human Approval** before creating canonical
   building, unit, or rule data; document content remains untrusted. See the
@@ -129,7 +129,7 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 | `features/` | API and `@browser` Gherkin scenarios (executable specs) |
 | `.github/workflows/nightly-scenarios.yaml` | nightly self-host scenarios, 90-day report artifacts and deduplicated failure issues; hosted mode pending #18 |
 | `frontend/src/` | `pages/`, `components/`, `api/`, `lib/` |
-| `scripts/` | dev, self-host, deploy, checks; `acceptance/` holds legacy browser scripts (being migrated, #54) |
+| `scripts/` | dev, portable installer, hosted-server deploy/backup, checks; `acceptance/` holds legacy browser scripts (being migrated, #54) |
 | `scripts/scenario_issues.py`, `scripts/test-scenario-issues.py` | stdlib report consumer and fake-GitHub filing contracts; `@known-flaky` failures are excluded |
 | `DESIGN.md` | frontend design contract: tokens, layout, components, states, copy and formats; screenshots in `docs/assets/design/` |
 | `docs/` | architecture, domain pages (`m*.md`), ADRs, operations, roadmap, feature status |

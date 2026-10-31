@@ -131,7 +131,8 @@ error tracking is [off by default](DEPLOY.md#request-ids-and-optional-error-trac
 ## Status and roadmap
 
 The MVP for in-house use is complete; `main` targets migration `0141`.
-An alpha instance at migration `0139` runs for one property-management company.
+The hosted instance runs on the Contabo server using the portable installer and
+the [hosted deploy workflow](DEPLOY.md#hosted-server).
 Next: self-hosting ready → scenario evals → hosted offering → domain gaps.
 See the [roadmap](docs/roadmap.md), [feature status](docs/feature-status.md), and
 [open domain questions](https://github.com/itskeKs/verwalino/issues?q=is%3Aissue%20is%3Aopen%20label%3Aquestion).

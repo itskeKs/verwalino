@@ -1,13 +1,17 @@
 # Feature status
 
 Current feature catalog of Verwalino by area, compared with the reference product described in
-[domain-reference.md](domain-reference.md). Status as of 2026-10-30, migration head `0141`.
+[domain-reference.md](domain-reference.md). Status as of 2026-10-31, migration head `0141`.
 Status: ✅ implemented and reachable in the running app, 🟡 partial (reason given), ❌ not implemented.
 Reference product: whether the reference software offers the feature (yes/partial/no, n/a = not a
 reference feature). Short paths: `api/ services/ engine/ models/ workers/ core/` are under
 `backend/app/`, `pages/ components/ lib/` under `frontend/src/`; other paths are relative to the
 repository root. Task IDs (`T…`) are the historical task numbers of the former MVP task list (see git
 history). Update this page in the same PR whenever a feature's status changes.
+
+The hosted instance runs on the Contabo server through `scripts/self-host.sh`
+and the [hosted deploy workflow](../DEPLOY.md#hosted-server). It shares the portable
+stack's limits: declaration import/Q&A, SMTP and automatic invoice OCR are disabled.
 
 ## Access and organization
 
@@ -71,7 +75,7 @@ history). Update this page in the same PR whenever a feature's status changes.
 | Cost item entry/confirm | yes | ✅ database values with German labels | `api/cost_entries.py`, `pages/CostEntriesPage.tsx`, `lib/costVocabulary.ts`, T02 |
 | BetrKV cost categories | yes | ✅ fixed seeded set | `api/cost_categories.py`, migration `0005` |
 | Voucher upload, costs from voucher | yes | ✅ | `api/invoice_documents.py`, `pages/InvoiceDocumentDetailPage.tsx` |
-| OCR, e-invoice XML | yes | ✅ runs as the `invoice-worker` service in the production Compose file; automatic OCR is off in the portable stack | `workers/invoice_extraction.py`, `core/invoice_ocr.py`, `core/einvoice.py`, `docker-compose.prod.yml`, T10 |
+| OCR, e-invoice XML | yes | ✅ runs as the `invoice-worker` service in the owner's local production Compose file; automatic OCR is off in the portable and hosted stack | `workers/invoice_extraction.py`, `core/invoice_ocr.py`, `core/einvoice.py`, `docker-compose.prod.yml`, T10 |
 | Inbox (Posteingang) with review chain | partial | 🟡 API, pages and pipeline stages exist, but `workers/workflow_runner.py` (intake stages) is not started by any Compose service; end-to-end operation unverified | `api/intake_batches.py`, `workers/workflow_runner.py`, `workers/intake_extraction.py`, `pages/InboxPage.tsx` |
 | Clarification cases (Klärungsfälle) | no | ✅ | `api/exceptions.py`, `pages/ExceptionsPage.tsx` |
 | GoBD: immutability, reversal, correction | n/a | ✅ | `services/cost_entry_service.py` |

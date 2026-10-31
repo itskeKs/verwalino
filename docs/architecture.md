@@ -27,17 +27,20 @@ The dedicated healthcheck verifies local OCR, storage and DB role without queue 
 or a provider call. SIGTERM lets a running bounded extraction run out, without
 adopting results after an abort; the existing lease recovery applies.
 The local launcher manages API, UI and worker with a shared, isolated
-`/tmp` document storage and exclusively the test DB `:55432`. The approved,
-not yet activated production service uses only the internal network and a readable
-original volume; no provider, web, review or migrator credentials.
-Operating details and the unchanged production release limit: [DEPLOY.md](../DEPLOY.md).
+`/tmp` document storage and exclusively the test DB `:55432`. The owner's local
+production Compose service uses only the internal network and a readable original
+volume; no provider, web, review or migrator credentials. The portable and hosted
+stack does not start this worker and disables automatic extraction.
+Operating details and release boundaries: [DEPLOY.md](../DEPLOY.md).
 No schema/RLS change.
 
 ## Portable Operation (2026-10-23)
 
-`scripts/self-host.sh` and the repurposed `infra/docker-compose.yml` form, alongside
-the unchanged alpha, a separate first-installation path (project
-`verwalino`). Web app, private PostgreSQL DB and one-off migration/admin jobs
+`scripts/self-host.sh` and `infra/docker-compose.yml` provide the portable
+first-installation path (project `verwalino`). The hosted instance on the Contabo
+server uses the same installer in HTTPS mode; `scripts/deploy-server.sh` and
+`.github/workflows/deploy.yaml` deploy published release images with a backup
+before migration. Web app, private PostgreSQL DB and one-off migration/admin jobs
 use the existing image; only Ops receives migrator rights. The default is
 loopback HTTP; optionally Caddy takes over HTTPS on a separate proxy network.
 Secrets are generated locally and not loaded as shell code. AI, SMTP and
