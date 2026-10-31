@@ -1,0 +1,2 @@
+{% extends "layout.txt" %}
+{% import "signup_welcome.content.jinja" as copy with context %}

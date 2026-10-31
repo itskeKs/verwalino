@@ -1,0 +1,9 @@
+{% set subject = 'Verwalino: KI-Budget aufgebraucht' %}
+{% set eyebrow = 'KI-BUDGET' %}
+{% set heading = 'Ihr KI-Budget ist aufgebraucht' %}
+{% set preheader = 'Das KI-Budget Ihrer Organisation „' ~ mail.organization_name ~ '“ ist aufgebraucht.' %}
+{% set paragraphs = [preheader, 'Die Belegerkennung und Fragen zu Unterlagen sind bis zum ' ~ mail.resets_on|date_de ~ ' pausiert. Ab diesem Datum steht das Budget wieder bereit.', 'Alle anderen Funktionen von Verwalino können Sie weiterhin nutzen.'] %}
+{% set facts = [('Wieder verfügbar ab', mail.resets_on|date_de)] %}
+{% set action_label = 'Einstellungen ansehen' %}
+{% set action_link = mail.settings_link %}
+{% set why = 'Sie erhalten diese E-Mail, weil Sie die Organisation „' ~ mail.organization_name ~ '“ in Verwalino verwalten.' %}

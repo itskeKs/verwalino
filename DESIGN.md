@@ -460,6 +460,77 @@ or inline expressions, with the variants below. The inconsistencies are tracked 
 | Empty value | `—` (kit, newer pages), `-` (older tables), `–` (`BankTransactionsPage.tsx`) | `MandatePage.tsx`, `InvoiceDocumentsPage.tsx`, `BankTransactionsPage.tsx`, respectively |
 | Money input | accept `1234,56` and `1234.56`, send `1234.56` | `moneyInput`, `exactCents`, `normalizePlanAmount` (see above) |
 
+## E-Mail
+
+Transactional mail uses `backend/app/mail/` and the website brand. The shared
+HTML5 layout is a centred presentation table, at most 600 px wide, with inline
+styles, square corners and an Outlook conditional 600 px wrapper. The dark
+header carries the lowercase text wordmark **verwalino** and a subtle 3 px accent
+rule. A hidden preheader repeats the opening sentence for inbox previews.
+
+| Role | Light | Dark |
+| --- | --- | --- |
+| Outer background | `#F3F4F2` | `#1C2420` |
+| Content card | `#FFFFFF` | `#26312A` |
+| Card border / fact separators | `#D2D6D0` | `#435047` |
+| Main text | `#232724` | `#EFF1E9` |
+| Secondary text | `#555F57` | `#B4BFB4` |
+| Header band | `#17211B` | `#111A15` |
+| Wordmark | `#EFF1E9` | `#EFF1E9` |
+| Accent / button | `#B62930` | `#F18280` |
+| Button text | `#FFFFFF` | `#1C2420` |
+| Note box | `#E7EBE4` | `#2C382F` |
+| Note left border | `#7E8980` | `#7E8980` |
+
+Body type is `'IBM Plex Sans', Arial, Helvetica, sans-serif`, 16 px / 1.6;
+headings are 24 px / 1.25, weight 700, in normal case. The uppercase eyebrow
+uses `'IBM Plex Mono', Consolas, 'Courier New', monospace`, 12 px, letter spacing
+`.065em`, in the accent colour. Fact rows use a two-column table, body type and tabular
+numbers. Header padding is 24 × 32 px, card padding 32 px, footer padding
+24 × 32 px. Below 480 px the outer and inner padding shrink and the button
+fills the available width. Dark mode uses `prefers-color-scheme` overrides;
+base inline styles also work without stylesheet support.
+
+Each action is one table button with 14 × 24 px padding on its anchor, 16 px
+type, weight 600, and square corners. Directly underneath, the full wrapping
+URL follows “Falls die Schaltfläche nicht funktioniert, öffnen Sie diesen Link:”.
+Validity and security hints use a 14 px note box with a 3 px left border.
+Text/background pairs meet 4.5:1 contrast in both schemes.
+
+The 13 px / 1.5 footer sits outside the card. Every kind explains why the
+recipient receives it (“Sie erhalten diese E-Mail, weil …”). Hosted mail names
+“fogu UG (haftungsbeschränkt), Im Großenbruch 34, 66583 Spiesen-Elversberg”,
+`hallo@verwalino.de`, and the imprint/privacy links. Self-hosted mail says
+“Diese E-Mail wurde von einer selbst betriebenen Verwalino-Installation versendet.”
+and directs questions to the administration that provided access. It includes no
+fogu details or product-site links; deletion questions also go to that administration.
+The internal operator alert identifies automatic alerts of hosted operations.
+
+Subjects start with `Verwalino: ` and state the event or requested action.
+Use formal “Sie”, “Guten Tag,” or “Guten Tag <Name>,”, short concrete sentences,
+no marketing, exclamation marks or emoji, and no sign-off. Unverified-address
+mail contains no names, organization names or other free text. The new address
+in a change notice is masked, for example `m•••@example.de`.
+
+Every mail has a separately written plain-text alternative: `VERWALINO`, heading,
+body wrapped around 72 columns, links on their own line, `Label: Wert` facts and
+a `-- ` footer separator. It is never extracted from HTML. Dates use `31.10.2026`,
+times use Europe/Berlin (`31.10.2026, 14:05 Uhr`), binary sizes use `1,6 GiB`,
+and percentages use a normal space (`80 %`).
+
+There are no images, webfonts, remote stylesheets or other fetched resources.
+This avoids sending recipient IP addresses to a third party when a mail is
+opened, works offline and keeps self-hosted installations independent of the
+product website. Fonts fall back to the locally available stack.
+
+Run `make mail-previews` for the synthetic HTML/plain-text gallery and full-page
+600/375 px light/dark PNGs under `backend/build/mail-previews/`, without a database
+or SMTP. See the [preview workflow](docs/operations/mail-previews.md).
+Representative captures are listed below, including the
+[confirmation](docs/assets/design/mail/signup_confirmation-600-light.png),
+[reset in dark mode](docs/assets/design/mail/password_reset-600-dark.png), and
+[self-hosted footer](docs/assets/design/mail/signup_confirmation-selfhost-600-light.png).
+
 ## Screenshots
 
 Taken from the running dev stack of `scripts/dev-local.sh` (backend `:18000`, Vite `127.0.0.1:13000`) against the
@@ -510,3 +581,26 @@ within the card on narrow screens.
 | 360 px | [Year overview](docs/assets/design/reports-before-360.png) | [Anlage V](docs/assets/design/reports-after-360.png) |
 | Desktop reconciliation | — | [Unassigned amounts and reconciliation](docs/assets/design/reports-after-desktop-reconciliation.png) |
 | 360 px reconciliation | — | [Unassigned amounts and reconciliation](docs/assets/design/reports-after-360-reconciliation.png) |
+
+### Transactional mail
+
+Synthetic, database-free captures from `make mail-previews`, at 1× pixel density.
+
+| Kind | 600 px light | 600 px dark | 375 px light | 375 px dark |
+| --- | --- | --- | --- | --- |
+| `ai_budget_exhausted` | [600-light](docs/assets/design/mail/ai_budget_exhausted-600-light.png) | — | — | — |
+| `email_change_confirm` | [600-light](docs/assets/design/mail/email_change_confirm-600-light.png) | — | — | — |
+| `email_change_notice` | [600-light](docs/assets/design/mail/email_change_notice-600-light.png) | — | — | — |
+| `export_ready` | [600-light](docs/assets/design/mail/export_ready-600-light.png) | — | — | — |
+| `operator_alert` | [600-light](docs/assets/design/mail/operator_alert-600-light.png) | — | — | — |
+| `operator_notice` | [600-light](docs/assets/design/mail/operator_notice-600-light.png) | — | — | — |
+| `organization_deleted` | [600-light](docs/assets/design/mail/organization_deleted-600-light.png) | — | — | — |
+| `organization_deletion_scheduled` | [600-light](docs/assets/design/mail/organization_deletion_scheduled-600-light.png) | — | — | — |
+| `password_changed` | [600-light](docs/assets/design/mail/password_changed-600-light.png) | — | — | — |
+| `password_reset` | [600-light](docs/assets/design/mail/password_reset-600-light.png) | [600-dark](docs/assets/design/mail/password_reset-600-dark.png) | [375-light](docs/assets/design/mail/password_reset-375-light.png) | [375-dark](docs/assets/design/mail/password_reset-375-dark.png) |
+| `quota_storage_full` | [600-light](docs/assets/design/mail/quota_storage_full-600-light.png) | — | — | — |
+| `quota_storage_warning` | [600-light](docs/assets/design/mail/quota_storage_warning-600-light.png) | — | — | — |
+| `signup_confirmation` | [600-light](docs/assets/design/mail/signup_confirmation-600-light.png) | [600-dark](docs/assets/design/mail/signup_confirmation-600-dark.png) | [375-light](docs/assets/design/mail/signup_confirmation-375-light.png) | [375-dark](docs/assets/design/mail/signup_confirmation-375-dark.png) |
+| `signup_welcome` | [600-light](docs/assets/design/mail/signup_welcome-600-light.png) | — | — | — |
+| `user_invitation` | [600-light](docs/assets/design/mail/user_invitation-600-light.png) | — | — | — |
+| Self-hosted confirmation | [600-light](docs/assets/design/mail/signup_confirmation-selfhost-600-light.png) | — | — | — |

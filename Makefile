@@ -26,7 +26,7 @@ trap 'rmdir /tmp/verwalino-testdb.lock' EXIT
 endef
 
 .PHONY: help test test-agent-rules test-scenario-issues test-backend test-installer test-selfhost-format test-frontend test-bdd test-bdd-hosted test-browser test-scenarios-report typecheck lint lint-backend lint-frontend \
-        docs-check frontend-deps hooks check-testdb
+        docs-check mail-previews frontend-deps hooks check-testdb
 
 help: ## List the documented targets
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -101,6 +101,9 @@ lint-frontend: frontend/node_modules ## eslint over frontend/
 
 docs-check: ## Relative Markdown links and image paths resolve (docs/archive/ excluded)
 	python3 scripts/check_docs.py
+
+mail-previews: ## Render all mail templates, gallery and light/dark PNGs (no DB or SMTP)
+	cd backend && $(UV_LINT) python scripts/render_mail_previews.py
 
 # ---- setup -----------------------------------------------------------------
 

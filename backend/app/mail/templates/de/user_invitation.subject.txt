@@ -1,0 +1,1 @@
+{% from "user_invitation.content.jinja" import subject with context %}{{ subject }}
