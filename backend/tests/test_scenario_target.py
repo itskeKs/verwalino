@@ -84,10 +84,10 @@ def synthetic_target(properties=()):
         thread.join()
 
 
-def test_external_features_use_api_and_skip_isolation_and_fresh_setup(pytester, monkeypatch):
+def test_external_features_use_api_and_skip_local_only_scenarios(pytester, monkeypatch):
     backend = Path(__file__).resolve().parents[1]
     expected_counts = {}
-    for filename in ("organization_isolation", "first_run_setup", "password_change"):
+    for filename in ("organization_isolation", "first_run_setup", "inbox_review_chain", "password_change"):
         feature = FeatureParser(str(backend.parent / "features"), f"{filename}.feature").parse()
         # Each example row is a collected test; plain scenarios contribute one.
         expected_counts[feature.name] = sum(
@@ -95,7 +95,9 @@ def test_external_features_use_api_and_skip_isolation_and_fresh_setup(pytester, 
             for scenario in feature.scenarios.values()
         )
     expected_passed = expected_counts["Password change"]
-    expected_skipped = expected_counts["Organization isolation"] + expected_counts["First run setup"]
+    expected_skipped = sum(expected_counts[name] for name in (
+        "Organization isolation", "First run setup", "Inbox review chain",
+    ))
     monkeypatch.setenv("PYTHONPATH", str(backend))
     # Invalid DB settings make any accidental local fixture access fail loudly.
     for name in ("HV_DATABASE_URL", "HV_DATABASE_URL_MIGRATOR", "HV_DATABASE_URL_SYNC", "HV_DATABASE_URL_REVIEW"):
@@ -109,6 +111,7 @@ def test_external_features_use_api_and_skip_isolation_and_fresh_setup(pytester, 
             str(backend / "tests/bdd/test_password_change.py"),
             str(backend / "tests/bdd/test_organization_isolation.py"),
             str(backend / "tests/bdd/test_first_run_setup.py"),
+            str(backend / "tests/bdd/test_inbox_review_chain.py"),
             "--scenario-report", str(destination), "-q", "--tb=short",
         )
         result.assert_outcomes(passed=expected_passed, skipped=expected_skipped, failed=0, errors=0)
@@ -124,6 +127,7 @@ def test_external_features_use_api_and_skip_isolation_and_fresh_setup(pytester, 
     for feature_name, reason in (
         ("Organization isolation", "two organizations"),
         ("First run setup", "fresh installation"),
+        ("Inbox review chain", "needs the in-process invoice worker and direct database fixtures"),
     ):
         skipped = [row for row in rows if row["feature"] == feature_name]
         assert len(skipped) == expected_counts[feature_name]
