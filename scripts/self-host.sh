@@ -14,18 +14,52 @@ RESTORE_ACTIVE=0
 RESTORE_DOCUMENTS_STARTED=0
 RESTORE_LIVE_EXISTED=0
 RESTORE_SWAP_FINISHED=0
+UPDATE_DIR=""
+UPDATE_LOG=""
+UPDATE_ACTIVE=0
+UPDATE_PHASE=""
+UPDATE_PREVIOUS_IMAGE=""
+UPDATE_LOCAL_ID=""
+BACKUP_ARCHIVE=""
+BACKUP_SCHEMA=""
 # Mail is configured only through the private file, never the caller's environment.
 export HV_SMTP_HOST='' HV_SMTP_PORT='' HV_SMTP_FROM='' HV_SMTP_SECURITY=''
 export HV_SMTP_USERNAME='' HV_SMTP_PASSWORD='' HV_SMTP_TIMEOUT_SECONDS=''
 
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 cleanup() {
-    local status=$?
+    local status="${1:-$?}"
     trap '' PIPE
     set +e
-    # Let recovery finish if the original failure was a dropped connection or
-    # an interrupt; another signal must not interrupt the rename-back sequence.
     trap '' HUP INT TERM
+    if [[ "$status" != 0 && "$UPDATE_ACTIVE" = 1 ]]; then
+        UPDATE_ACTIVE=0
+        # Recovery must complete before releasing the installation lock.
+        update_rollback >> "$UPDATE_LOG" 2>&1
+    fi
+    if [[ -n "$UPDATE_PHASE" ]]; then
+        if [[ "$status" = 129 || "$status" = 130 || "$status" = 143 ]]; then
+            if stop_writers; then
+                printf 'Update interrupted before the switch; config and data unchanged; app stopped — run start.\n' >&2
+            else
+                printf 'Update interrupted before the switch; config and data unchanged; could not confirm app stopped — inspect status before running start.\n' >&2
+            fi
+        elif [[ "$status" != 0 && "$UPDATE_PHASE" = stopped ]]; then
+            printf 'Update failed before the switch; config and data unchanged; app stopped — run start.\n' >&2
+        fi
+    fi
+    restore_cleanup "$status"
+    [[ -z "$UPDATE_DIR" ]] || rm -rf "$UPDATE_DIR" || \
+        printf 'Could not remove private update directory %s; it contains a full config copy. Remove it after inspecting recovery.\n' "$UPDATE_DIR" >&2 || true
+    if [[ "$LOCKED" = 1 ]]; then
+        rmdir "$CONFIG.lock" || printf 'Could not release installation lock %s; verify no installer is active before removing it.\n' "$CONFIG.lock" >&2 || true
+    fi
+    if [[ -n "$UPDATE_LOG" ]]; then cat "$UPDATE_LOG" >&3 2>/dev/null || true; fi
+    return "$status"
+}
+
+restore_cleanup() {
+    local status="$1"
     if [[ "$status" != 0 && "$RESTORE_ACTIVE" = 1 ]]; then
         if [[ "$RESTORE_WINDOW" = 0 ]]; then
             if [[ "$RESTORE_SCRATCH" = 1 ]]; then
@@ -41,14 +75,13 @@ cleanup() {
     if [[ "$RESTORE_DB" = 1 ]]; then
         compose stop db || printf 'Could not stop db; run: bash scripts/self-host.sh stop\n' >&2 || true
     fi
-    [[ -z "$TMP_DIR" ]] || rm -rf "$TMP_DIR"
-    if [[ "$LOCKED" = 1 ]]; then rmdir "$CONFIG.lock"; fi
+    [[ -z "$TMP_DIR" ]] || rm -rf "$TMP_DIR" || printf 'Could not remove private staging directory %s.\n' "$TMP_DIR" >&2 || true
     return "$status"
 }
 trap cleanup EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'trap "" HUP INT TERM; exit 129' HUP
+trap 'trap "" HUP INT TERM; exit 130' INT
+trap 'trap "" HUP INT TERM; exit 143' TERM
 
 config_filename_valid() { [[ "${CONFIG##*/}" =~ ^\.env\.[a-zA-Z0-9._-]+$ ]]; }
 
@@ -65,6 +98,8 @@ Usage: bash scripts/self-host.sh COMMAND
   stop                          Stop containers without deleting data
   backup [--out DIR]            Archive the running database and documents
   restore FILE [--yes]          Replace data in a stopped installation
+  update [--image REGISTRY/IMAGE@sha256:DIGEST] [--yes]
+                                Back up, migrate and check; restore on failure
 Default: local HTTP on 127.0.0.1:18080; no AI, SMTP or extraction worker.
 Optional outbound mail: add HV_SMTP_HOST and HV_SMTP_FROM to the private config.
 HV_SMTP_PORT (587), HV_SMTP_SECURITY (starttls or tls; default starttls),
@@ -79,9 +114,15 @@ HV_DIAGNOSTICS_DIR is an API process setting for the per-host error buffer; see 
 HV_ERROR_TRACKING_* keys are not installer settings; see DEPLOY.md.
 Export HV_RELEASE_ID to label tracker releases (otherwise app version 0.1.0).
 Optional inbox-worker (profile inbox, ClamAV signatures): see DEPLOY.md.
-Start and stop also stop an existing inbox-worker; restart it after app readiness.
+Start, stop and update also stop an existing inbox-worker; restart it after app readiness.
 VERWALINO_CONFIG selects the private config file (default: .env.selfhost).
-No automatic update, downgrade or volume deletion is provided.
+Update requires --image for a digest installation; a local build is rebuilt.
+No unattended update, migration downgrade or volume deletion is provided.
+Update keeps its backup; rollback discards writes made after that snapshot.
+Update downtime includes backup; app writers stop first. Pause external writers.
+Successful local updates remove temporary update tags and older rollback tags.
+Update logs the switch and recovery in <config-directory>/logs/update-*.log.
+tmux/screen is optional; a closed output pipe does not interrupt recovery.
 Init/start refuse an occupied app port: choose a free --port or stop its listener.
 Backups exclude private config/secrets and certificates; keep config separately.
 Backup output defaults to the private checkout backups/ directory; the checkout root is refused.
@@ -164,7 +205,7 @@ validate_settings() {
     fi
 }
 lock_config() {
-    mkdir "$CONFIG.lock" 2>/dev/null || fail 'Another operation is running (or a stale .lock directory needs operator review).'
+    mkdir "$CONFIG.lock" 2>/dev/null || { printf 'Another operation is running (or a stale .lock directory needs operator review).\n' >&2; return 1; }
     LOCKED=1
 }
 load_config() {
@@ -209,12 +250,13 @@ config_environment() {
         value="${value%"${value##*[![:space:]]}"}"
         export "$key=$value"
     done
-    export VERWALINO_ALLOWED_HOSTS='localhost,127.0.0.1'
-    export VERWALINO_COOKIE_SECURE=false VERWALINO_COOKIE_NAME=hv_session
+    CONFIG_ENVIRONMENT=(VERWALINO_ALLOWED_HOSTS=localhost,127.0.0.1
+        VERWALINO_COOKIE_SECURE=false VERWALINO_COOKIE_NAME=hv_session)
     if [[ "$VERWALINO_MODE" = https ]]; then
-        export VERWALINO_ALLOWED_HOSTS="$VERWALINO_DOMAIN,localhost,127.0.0.1"
-        export VERWALINO_COOKIE_SECURE=true VERWALINO_COOKIE_NAME=__Host-hv_session
+        CONFIG_ENVIRONMENT=("VERWALINO_ALLOWED_HOSTS=$VERWALINO_DOMAIN,localhost,127.0.0.1"
+            VERWALINO_COOKIE_SECURE=true VERWALINO_COOKIE_NAME=__Host-hv_session)
     fi
+    export "${CONFIG_ENVIRONMENT[@]}"
     # Explicit files/projects and profiles must not inherit caller overrides.
     unset COMPOSE_FILE COMPOSE_PROJECT_NAME COMPOSE_PROFILES COMPOSE_ENV_FILES
 }
@@ -225,11 +267,15 @@ compose() {
         -f "$ROOT/infra/docker-compose.yml" "${profiles[@]}" "$@"
 }
 
+container_state() { compose ps --all --format '{{.State}}|{{.Health}}|{{.ID}}' "$1"; }
+
 stop_inbox_worker() {
     local container_id
-    container_id=$(compose ps --all --quiet inbox-worker)
+    container_id=$(compose ps --all --quiet inbox-worker) || return $?
     if [[ -n "$container_id" ]]; then compose stop inbox-worker; fi
 }
+
+stop_writers() { stop_inbox_worker && compose stop app migrate bootstrap; }
 
 config_fingerprint() {
     local key
@@ -244,6 +290,12 @@ archive_tool() {
     compose run --rm --no-deps -T --user 0:0 --cap-add CHOWN --cap-add DAC_OVERRIDE --entrypoint python \
         --env "BACKUP_OWNER=$(id -u):$(id -g)" --volume "$TMP_DIR:/backup" app -c "$(cat "$ROOT/backend/app/selfhost_backup.py")" \
         "$@" /backup /data/documents < /dev/null
+}
+
+image_target() {
+    docker run --rm --pull never --network none --read-only --user 10001:10001 \
+        --cap-drop ALL --security-opt no-new-privileges --entrypoint python "$VERWALINO_IMAGE" \
+        -c 'from app.deployment import TARGET; print(TARGET)' < /dev/null 2>/dev/null
 }
 
 doctor_report() {
@@ -280,7 +332,7 @@ doctor_disk() {
 doctor_container() {
     local service="$1" row state health id hint
     hint="Mit bash scripts/self-host.sh start starten; Protokolle: $doctor_logs $service"
-    if [[ "$doctor_compose_ready" != 1 ]] || ! row=$(compose ps --all --format '{{.State}}|{{.Health}}|{{.ID}}' "$service" 2>/dev/null); then
+    if [[ "$doctor_compose_ready" != 1 ]] || ! row=$(container_state "$service" 2>/dev/null); then
         doctor_report WARN "Container $service" "Status nicht prüfbar; Docker und Konfiguration prüfen. $hint"
         return
     fi
@@ -366,9 +418,7 @@ doctor_database() {
     elif ! docker image inspect "$VERWALINO_IMAGE" >/dev/null 2>&1; then
         # Diagnostics must not build or pull missing images.
         doctor_report WARN Migration 'Konfiguriertes Image fehlt; nach Backup mit bash scripts/self-host.sh start bereitstellen und doctor wiederholen.'
-    elif ! target=$(docker run --rm --pull never --network none --read-only --user 10001:10001 \
-        --cap-drop ALL --security-opt no-new-privileges --entrypoint python "$VERWALINO_IMAGE" \
-        -c 'from app.deployment import TARGET; print(TARGET)' < /dev/null 2>/dev/null) ||
+    elif ! target=$(image_target) ||
         [[ ! "$target" =~ ^[0-9]{4}$ ]]; then
         doctor_report WARN Migration 'Imageziel nicht lesbar; das konfigurierte Image bereitstellen und doctor wiederholen.'
     elif (( 10#$schema > 10#$target )); then
@@ -591,6 +641,15 @@ database_state() {
     database_sql "SELECT name || '=' || CASE WHEN EXISTS (SELECT 1 FROM pg_database WHERE datname=name) THEN 'present' ELSE 'absent' END FROM (VALUES ('hausverwaltung'), ('hausverwaltung_restore'), ('hausverwaltung_previous')) AS databases(name)"
 }
 
+restore_database_ready() {
+    local previous
+    previous=$(database_sql "SELECT 1 FROM pg_database WHERE datname='hausverwaltung_previous'") || return $?
+    [[ -z "$previous" ]] || {
+        printf 'hausverwaltung_previous already exists; keep the app stopped and inspect it alongside hausverwaltung and any .restore-* directory before recovery. Rename it back if the live database is absent, or remove it only after verifying which data to keep. Verify the live data, then remove any retained .restore-* directory, then retry restore or update.\n' >&2
+        return 1
+    }
+}
+
 recover_restore() {
     local state documents_state rollback_failed=0 restored_live=0
     state=$(database_state) || state=unknown
@@ -663,7 +722,7 @@ backup() {
     fi
     command -v openssl >/dev/null || fail 'OpenSSL is required for configuration fingerprints.'
     umask 077
-    lock_config
+    [[ "$LOCKED" = 1 ]] || lock_config
     [[ -d "$out" ]] || mkdir -p -m 700 "$out"
     out=$(cd "$out" && pwd -P)
     [[ "$out" != "$(cd "$ROOT" && pwd -P)" ]] || fail 'Backup output must not be the checkout root.'
@@ -685,66 +744,299 @@ backup() {
         ln "$TMP_DIR/publication.tar" "$archive" || fail 'Backup destination exists; nothing overwritten.'
     fi
     printf 'Backup: %s (%s bytes)\n' "$archive" "$(wc -c < "$archive" | tr -d ' ')"
+    BACKUP_ARCHIVE="$archive"
+    BACKUP_SCHEMA="$schema"
+}
+
+writers_stopped() {
+    local running
+    running=$(compose ps --all --status running --status restarting --status paused --quiet app migrate bootstrap inbox-worker) || return 1
+    [[ -z "$running" ]]
 }
 
 restore() {
-    local file="${1:-}" yes=0 running target confirmation schema restored_schema previous live
-    [[ -n "$file" && -f "$file" ]] || fail 'Usage: restore FILE [--yes]'
+    # Explicit cleanup also works when rollback runs inside Bash 3.2's EXIT trap.
+    local TMP_DIR='' RESTORE_DB=0 RESTORE_SCRATCH=0 RESTORE_WINDOW=0 RESTORE_ACTIVE=0 status=0
+    local RESTORE_DOCUMENTS_STARTED=0 RESTORE_LIVE_EXISTED=0 RESTORE_SWAP_FINISHED=0
+    restore_data "$@" || status=$?
+    # Standalone restore cleans up before EXIT too; a closed diagnostic pipe
+    # must not interrupt recovery or bypass the outer lock cleanup.
+    trap '' PIPE HUP INT TERM
+    restore_cleanup "$status" || :
+    return "$status"
+}
+
+restore_data() {
+    local file="${1:-}" yes=0 target confirmation schema restored_schema live
+    [[ -n "$file" && -f "$file" ]] || { printf 'Usage: restore FILE [--yes]\n' >&2; return 1; }
     shift
     if [[ "$#" != 0 ]]; then
-        [[ "$#" = 1 && "$1" = --yes ]] || fail 'Usage: restore FILE [--yes]'
+        [[ "$#" = 1 && "$1" = --yes ]] || { printf 'Usage: restore FILE [--yes]\n' >&2; return 1; }
         yes=1
     fi
-    command -v openssl >/dev/null || fail 'OpenSSL is required for configuration fingerprints.'
+    command -v openssl >/dev/null || { printf 'OpenSSL is required for configuration fingerprints.\n' >&2; return 1; }
     umask 077
-    lock_config
-    running=$(compose ps --all --status running --status restarting --status paused --quiet app migrate bootstrap inbox-worker)
-    [[ -z "$running" ]] || fail 'Installation is running; first run: bash scripts/self-host.sh stop'
-    TMP_DIR=$(mktemp -d "$(dirname "$CONFIG")/.env.verwalino-restore.XXXXXX")
+    [[ "$LOCKED" = 1 ]] || lock_config || return $?
+    writers_stopped || { printf 'Installation is running; first run: bash scripts/self-host.sh stop\n' >&2; return 1; }
+    TMP_DIR=$(mktemp -d "$(dirname "$CONFIG")/.env.verwalino-restore.XXXXXX") || return $?
     # Work on a private copy so a changed input cannot bypass verification.
-    cp "$file" "$TMP_DIR/archive.tar"
-    target=$(archive_tool target)
-    [[ "$target" =~ ^[0-9]{4}$ ]] || fail 'Cannot read the image release target.'
-    schema=$(archive_tool verify "$target" "$(config_fingerprint)")
-    archive_tool check-documents
+    cp "$file" "$TMP_DIR/archive.tar" || return $?
+    target=$(archive_tool target) || return $?
+    [[ "$target" =~ ^[0-9]{4}$ ]] || { printf 'Cannot read the image release target.\n' >&2; return 1; }
+    schema=$(archive_tool verify "$target" "$(config_fingerprint)") || return $?
+    archive_tool check-documents || return $?
     if [[ "$yes" = 0 ]]; then
         printf 'This replaces the application database and all documents. Type restore to confirm: ' >&2
-        IFS= read -r confirmation || fail 'Restore cancelled; use --yes for non-interactive restore.'
-        [[ "$confirmation" = restore ]] || fail 'Restore cancelled.'
+        IFS= read -r confirmation || { printf 'Restore cancelled; use --yes for non-interactive restore.\n' >&2; return 1; }
+        [[ "$confirmation" = restore ]] || { printf 'Restore cancelled.\n' >&2; return 1; }
     fi
     # Set before startup so cleanup stops db even after a readiness failure.
     RESTORE_DB=1
     RESTORE_ACTIVE=1
-    compose up -d --wait --wait-timeout 120 db
-    previous=$(database_sql "SELECT 1 FROM pg_database WHERE datname='hausverwaltung_previous'")
-    [[ -z "$previous" ]] || fail 'hausverwaltung_previous already exists; keep the app stopped and inspect it alongside hausverwaltung and any .restore-* directory before recovery. Rename it back if the live database is absent, or remove it only after verifying which data to keep. Verify the live data, then remove any retained .restore-* directory, then retry restore.'
-    compose exec -T db pg_restore --list < "$TMP_DIR/db.dump" > /dev/null
-    compose exec -T db createdb -U app_migrator -T template0 hausverwaltung_restore
+    compose up -d --wait --wait-timeout 120 db || return $?
+    restore_database_ready || return $?
+    compose exec -T db pg_restore --list < "$TMP_DIR/db.dump" > /dev/null || return $?
+    compose exec -T db createdb -U app_migrator -T template0 hausverwaltung_restore || return $?
     RESTORE_SCRATCH=1
     compose exec -T db pg_restore -U app_migrator -d hausverwaltung_restore \
-        --exit-on-error --single-transaction < "$TMP_DIR/db.dump"
+        --exit-on-error --single-transaction < "$TMP_DIR/db.dump" || return $?
     restored_schema=$(compose exec -T db psql -X --set ON_ERROR_STOP=1 -U app_migrator -d hausverwaltung_restore \
-        -Atc 'SELECT version_num FROM alembic_version')
-    [[ "$restored_schema" = "$schema" ]] || fail 'Restored database schema head does not match the manifest.'
-    archive_tool stage-documents
-    live=$(database_sql "SELECT 1 FROM pg_database WHERE datname='hausverwaltung'")
+        -Atc 'SELECT version_num FROM alembic_version') || return $?
+    [[ "$restored_schema" = "$schema" ]] || { printf 'Restored database schema head does not match the manifest.\n' >&2; return 1; }
+    archive_tool stage-documents || return $?
+    live=$(database_sql "SELECT 1 FROM pg_database WHERE datname='hausverwaltung'") || return $?
     if [[ -n "$live" ]]; then RESTORE_LIVE_EXISTED=1; fi
     RESTORE_WINDOW=1
     if [[ "$RESTORE_LIVE_EXISTED" = 1 ]]; then
-        database_sql 'ALTER DATABASE hausverwaltung RENAME TO hausverwaltung_previous'
+        database_sql 'ALTER DATABASE hausverwaltung RENAME TO hausverwaltung_previous' || return $?
     fi
-    database_sql 'ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung'
+    database_sql 'ALTER DATABASE hausverwaltung_restore RENAME TO hausverwaltung' || return $?
     RESTORE_DOCUMENTS_STARTED=1
-    archive_tool swap-documents
+    archive_tool swap-documents || return $?
     RESTORE_SWAP_FINISHED=1
     if [[ "$RESTORE_LIVE_EXISTED" = 1 ]]; then
-        database_sql 'DROP DATABASE hausverwaltung_previous'
+        database_sql 'DROP DATABASE hausverwaltung_previous' || return $?
     fi
-    archive_tool discard-documents
+    archive_tool discard-documents || return $?
     RESTORE_ACTIVE=0
-    compose stop db
+    compose stop db || return $?
     RESTORE_DB=0
     printf 'Restored database and documents. Next: bash scripts/self-host.sh start\n'
+}
+
+update_doctor() (
+    # Doctor owns its temporary directory, but not the parent's config lock.
+    TMP_DIR=''; UPDATE_DIR=''; UPDATE_LOG=''; LOCKED=0
+    trap cleanup EXIT
+    doctor
+)
+
+image_config() {
+    local image="$1" destination="$2" permissions
+    permissions=$(stat -c '%a' "$CONFIG" 2>/dev/null || stat -f '%Lp' "$CONFIG") || return 1
+    # UPDATE_DIR is beside CONFIG: publication is atomic on the same filesystem.
+    rm -f "$UPDATE_DIR/config.next" || return 1
+    awk -v image="$image" '/^VERWALINO_IMAGE=/ {$0="VERWALINO_IMAGE=" image} {print}' "$CONFIG" > "$UPDATE_DIR/config.next" || return 1
+    chmod "$permissions" "$UPDATE_DIR/config.next" || return 1
+    mv -f "$UPDATE_DIR/config.next" "$destination"
+}
+
+update_candidate() (
+    CONFIG="$UPDATE_DIR/.env.candidate"
+    export VERWALINO_IMAGE="$1"
+    shift
+    "$@"
+)
+
+app_health() {
+    # Compose waits up to 120 seconds for readiness on startup. Also probe both
+    # endpoints (including no-op updates), with an eight-second outer bound.
+    doctor_timeout compose exec -T app python -c "import urllib.request
+for endpoint in ('http://127.0.0.1:8000/api/health/live', 'http://127.0.0.1:8000/api/health/ready'):
+    with urllib.request.urlopen(endpoint, timeout=3) as response:
+        assert response.status == 200"
+}
+
+update_recovery() {
+    local service state
+    printf 'Rollback failed at %s. Installation state:\n' "$1" >&2
+    printf 'Configured image: %s\n' "$(sed -n 's/^VERWALINO_IMAGE=//p' "$CONFIG")" >&2
+    for service in app db; do
+        if state=$(container_state "$service"); then
+            printf '%s container state: %s\n' "$service" "${state:-not created}" >&2
+        else
+            printf '%s container state: unknown\n' "$service" >&2
+        fi
+    done
+    printf 'Database/documents: %s. Backup kept at %s\n' "$2" "$BACKUP_ARCHIVE" >&2
+    printf 'Recovery: keep the app stopped. Resolve the error and inspect any restore state above (DEPLOY.md, Portable update and recovery). Set VERWALINO_IMAGE=%s in the private config using an atomic write preserving its mode (0600 or 0400).\n' "$UPDATE_PREVIOUS_IMAGE" >&2
+    if [[ -n "$UPDATE_LOCAL_ID" ]]; then
+        printf 'Restore the retained local image: docker image tag %q verwalino:local\n' "$UPDATE_LOCAL_ID" >&2
+    fi
+    printf 'Then: VERWALINO_CONFIG=%q bash %q restore %q --yes\n' "$CONFIG" "$ROOT/scripts/self-host.sh" "$BACKUP_ARCHIVE" >&2
+    printf 'Only after restore succeeds, start the retained runtime without build or migration:\n' >&2
+    # Let Compose read private settings from the file, clearing caller overrides
+    # as load_config/config_environment do. Print no secret values.
+    printf '%q ' env -u COMPOSE_FILE -u COMPOSE_PROJECT_NAME -u COMPOSE_PROFILES -u COMPOSE_ENV_FILES \
+        -u VERWALINO_MODE -u VERWALINO_DOMAIN -u VERWALINO_PORT -u VERWALINO_IMAGE -u VERWALINO_PROXY_SUBNET \
+        -u MIGRATOR_PASSWORD -u APP_RW_PASSWORD -u APP_WORKER_PASSWORD -u APP_REVIEW_PASSWORD -u SESSION_SECRET \
+        -u HV_SMTP_HOST -u HV_SMTP_PORT -u HV_SMTP_FROM -u HV_SMTP_SECURITY \
+        -u HV_SMTP_USERNAME -u HV_SMTP_PASSWORD -u HV_SMTP_TIMEOUT_SECONDS \
+        "${CONFIG_ENVIRONMENT[@]}" \
+        docker compose --project-name verwalino --env-file "$CONFIG" -f "$ROOT/infra/docker-compose.yml" --profile ops >&2
+    if [[ "$VERWALINO_MODE" = https ]]; then printf '%q ' --profile https >&2; fi
+    printf '%q ' up -d --no-build --pull never --wait --wait-timeout 120 db app >&2
+    if [[ "$VERWALINO_MODE" = https ]]; then printf '%q ' caddy >&2; fi
+    printf '\nThen run doctor and both health probes before resuming writes.\n' >&2
+}
+
+update_rollback() {
+    printf 'Update failed; restoring the previous image and backup.\n' >&2
+    stop_writers && writers_stopped || { update_recovery 'stopping writers' 'not restored; do not restore while writers run'; return 1; }
+    image_config "$UPDATE_PREVIOUS_IMAGE" "$CONFIG" || { update_recovery 'config restoration' 'not restored'; return 1; }
+    export VERWALINO_IMAGE="$UPDATE_PREVIOUS_IMAGE"
+    if [[ -n "$UPDATE_LOCAL_ID" ]]; then
+        docker image tag "$UPDATE_LOCAL_ID" "$UPDATE_PREVIOUS_IMAGE" || { update_recovery 'local image restoration' 'not restored'; return 1; }
+    fi
+    restore "$BACKUP_ARCHIVE" --yes || { update_recovery restore 'snapshot restore did not complete; half-migrated data may remain; see restore diagnostics above'; return 1; }
+    if ! { compose up -d --wait --wait-timeout 120 db &&
+        compose up -d --no-deps --wait --wait-timeout 120 app && app_health; }; then
+        compose stop app || printf 'Could not stop the previous app after failed readiness.\n' >&2
+        update_recovery 'previous app readiness' 'restored from the backup'
+        return 1
+    fi
+    if [[ "$VERWALINO_MODE" = https ]]; then
+        compose up -d --no-deps caddy || { update_recovery 'previous proxy startup' 'restored from the backup'; return 1; }
+    fi
+    printf 'rolled back to %s, data from %s\n' "$UPDATE_PREVIOUS_IMAGE" "$BACKUP_ARCHIVE" >&2
+}
+
+update_image_cleanup() {
+    local retained="$1" tags tag
+    tags=$(docker image ls --filter 'reference=verwalino:update-*' --filter 'reference=verwalino:rollback-*' \
+        --format '{{.Repository}}:{{.Tag}}') || return $?
+    while IFS= read -r tag; do
+        case "$tag" in
+            verwalino:update-*) docker image rm "$tag" || return $? ;;
+            verwalino:rollback-*)
+                if [[ -n "$retained" && "$tag" != "$retained" ]]; then docker image rm "$tag" || return $?; fi ;;
+        esac
+    done <<< "$tags"
+}
+
+update_apply() {
+    local image="$1" candidate="$2" target="$3" rollback_tag="$4" schema
+    # Docker writes to the log, never a terminal pipe that can disappear.
+    # Every failure or interruption until acceptance restores the pair.
+    UPDATE_ACTIVE=1 UPDATE_PHASE=''
+    if [[ "$image" = verwalino:local ]]; then docker image tag "$candidate" "$image"; fi
+    image_config "$image" "$CONFIG"
+    export VERWALINO_IMAGE="$image"
+    compose run --rm --no-deps -T migrate
+    compose up -d --no-deps --wait --wait-timeout 120 app
+    app_health
+    schema=$(doctor_sql 'SELECT version_num FROM alembic_version')
+    [[ "$schema" = "$target" ]] || fail 'Migrated database does not match the new image release target.'
+    UPDATE_ACTIVE=0
+    if [[ "$VERWALINO_MODE" = https ]]; then compose up -d --no-deps caddy; fi
+    printf 'updated %s → %s, migrations %s → %s, backup kept at %s\n' "$UPDATE_PREVIOUS_IMAGE" "$image" "$BACKUP_SCHEMA" "$schema" "$BACKUP_ARCHIVE"
+    if [[ -n "$rollback_tag" || "$image" = verwalino:local ]]; then
+        update_image_cleanup "$rollback_tag" || printf 'WARN Update completed, but local image tag cleanup failed; inspect verwalino:update-* and rollback-* tags.\n' >&2
+    fi
+    update_doctor || fail 'Update completed, but doctor reported blockers; inspect the findings before resuming use.'
+}
+
+update() {
+    local image='' yes=0 confirmation candidate target schema state database rollback_tag=''
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in
+            --image)
+                [[ "$#" -ge 2 && -n "$2" && -z "$image" ]] || fail 'Usage: update [--image REGISTRY/IMAGE@sha256:DIGEST] [--yes]'
+                image="$2"; shift 2 ;;
+            --yes) yes=1; shift ;;
+            *) fail 'Usage: update [--image REGISTRY/IMAGE@sha256:DIGEST] [--yes]' ;;
+        esac
+    done
+    if [[ -z "$image" ]]; then
+        [[ "$VERWALINO_IMAGE" = verwalino:local ]] || fail 'Update requires --image with an explicit SHA-256 digest.'
+        image=verwalino:local
+    fi
+    validate_image "$image" || fail 'Use the local build or an explicit image SHA-256 digest.'
+    command -v openssl >/dev/null || fail 'OpenSSL is required for configuration fingerprints.'
+    lock_config
+    load_config
+    if ! update_doctor; then
+        state=$(container_state app) || state=''
+        if [[ "$state" = restarting\|* || "$state" = running\|unhealthy\|* ]]; then
+            fail 'Update refused: app is restarting or unhealthy. Run bash scripts/self-host.sh stop, then update.'
+        fi
+        fail 'Update refused: doctor reported blockers.'
+    fi
+    UPDATE_PREVIOUS_IMAGE="$VERWALINO_IMAGE"
+    if [[ "$image" = "$VERWALINO_IMAGE" && "$image" != verwalino:local ]]; then
+        state=$(container_state app)
+        if [[ "$state" = running\|* ]]; then
+            app_health || fail 'Current image failed health checks; no update attempted.'
+            printf 'No update needed; already using %s and healthy.\n' "$image"
+        else
+            printf 'No update needed; already using %s; app stopped — run start.\n' "$image"
+        fi
+        return
+    fi
+    if [[ "$yes" = 0 ]]; then
+        printf 'Update stops the app before backup; rollback replaces data with that snapshot. Pause external writers. Type update to confirm: ' >&2
+        IFS= read -r confirmation || fail 'Update cancelled; use --yes for non-interactive update.'
+        [[ "$confirmation" = update ]] || fail 'Update cancelled.'
+    fi
+    umask 077
+    UPDATE_DIR=$(mktemp -d "$(dirname "$CONFIG")/.env.verwalino-update.XXXXXX")
+    candidate="$image"
+    if [[ "$VERWALINO_IMAGE" = verwalino:local ]]; then
+        UPDATE_LOCAL_ID=$(docker image inspect --format '{{.Id}}' "$VERWALINO_IMAGE")
+        [[ "$UPDATE_LOCAL_ID" =~ ^sha256:[a-f0-9]{64}$ ]] || fail 'Cannot retain the previous local image.'
+        rollback_tag="verwalino:rollback-${UPDATE_DIR##*.}"
+        docker image tag "$UPDATE_LOCAL_ID" "$rollback_tag"
+        printf 'Previous local image retained: %s\n' "$UPDATE_LOCAL_ID"
+    fi
+    if [[ "$image" = verwalino:local ]]; then candidate="verwalino:update-${UPDATE_DIR##*.}"; fi
+    image_config "$candidate" "$UPDATE_DIR/.env.candidate"
+    if [[ "$image" = verwalino:local ]]; then
+        update_candidate "$candidate" compose build app
+    else
+        update_candidate "$candidate" compose pull app
+    fi
+    target=$(update_candidate "$candidate" image_target) || fail 'Cannot read the new image release target.'
+    [[ "$target" =~ ^[0-9]{4}$ ]] || fail 'Cannot read the new image release target.'
+    state=$(container_state db)
+    if [[ "$state" != running\|* ]]; then
+        compose up -d --wait --wait-timeout 120 db || fail 'Database not running; run start/doctor before updating.'
+    fi
+    schema=$(doctor_sql 'SELECT version_num FROM alembic_version') || fail 'Database not running or query failed; run start/doctor before updating.'
+    [[ "$schema" =~ ^[0-9]{4}$ ]] || fail 'Missing or ambiguous database schema head.'
+    (( 10#$target >= 10#$schema )) || fail 'Update refused: migration downgrades are not supported.'
+    state=$(database_state)
+    for database in hausverwaltung_previous hausverwaltung_restore; do
+        [[ "$state" != *"$database=present"* ]] || fail "$database ist noch vorhanden; Datenbestand und .restore-*-Verzeichnisse prüfen und die Datenbank nach Klärung manuell umbenennen oder entfernen; Update danach erneut starten."
+    done
+    TMP_DIR="$UPDATE_DIR/preflight"
+    mkdir "$TMP_DIR"
+    archive_tool check-documents
+    UPDATE_PHASE=stopping
+    stop_writers || fail 'Could not stop writers; config and data unchanged. Inspect status before restarting.'
+    writers_stopped || fail 'Writers remain active; update refused before backup. Inspect status.'
+    UPDATE_PHASE=stopped
+    backup
+    mkdir -p -m 700 "$(dirname "$CONFIG")/logs"
+    chmod 700 "$(dirname "$CONFIG")/logs"
+    UPDATE_LOG=$(mktemp "$(dirname "$CONFIG")/logs/update-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX.log")
+    trap '' PIPE
+    printf 'Update log: %s\n' "$UPDATE_LOG" 2>/dev/null || true
+    exec 3>&2
+    update_apply "$image" "$candidate" "$target" "$rollback_tag" >> "$UPDATE_LOG" 2>&1
+    # A closed terminal must not replace the update/rollback status with EPIPE.
+    cat "$UPDATE_LOG" 2>/dev/null || true
+    UPDATE_LOG=''
+    exec 3>&-
 }
 
 init_config() {
@@ -879,7 +1171,7 @@ case "$command" in
     init) init_config "$@"; exit 0 ;;
     doctor) [[ "$#" = 0 ]] || fail 'Dieser Befehl akzeptiert keine zusätzlichen Argumente.'; doctor; exit $? ;;
     start|status|stop) [[ "$#" = 0 ]] || fail 'This command accepts no additional arguments.' ;;
-    admin|diagnose|backup|restore) ;;
+    admin|diagnose|backup|restore|update) ;;
     *) usage >&2; fail 'Unknown command.' ;;
 esac
 load_config
@@ -920,6 +1212,7 @@ case "$command" in
     diagnose) diagnose "$@" ;;
     backup) backup "$@" ;;
     restore) restore "$@" ;;
+    update) update "$@" ;;
     status) compose ps ;;
     stop) lock_config; stop_inbox_worker; compose stop ;;
 esac
