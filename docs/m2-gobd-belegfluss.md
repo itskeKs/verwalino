@@ -2,10 +2,10 @@
 
 As of: 2026-06-01 · Version 0.1 (design, before implementation)
 References: [architecture.md](architecture.md) §3 (GoBD immutability), §5.4 (I2-bearing entities) · [archived roadmap](archive/roadmap.md) M2 · SDD v0.2 §5.3/§6.4, §6.5, §6.6, §7, §8/§9, §14, §15, §16
-Author: `engine-correctness` (Opus 4.8) · Status: **Draft for confirmation by the human — no application code, no migration, no commit**
+Status: **Draft for confirmation by the human — no application code, no migration, no commit**
 ADR for this document: [adr/0003-gobd-immutability-mechanism.md](adr/0003-gobd-immutability-mechanism.md)
 
-> This document builds on the foundations laid in `architecture.md` §3 and §5.4 and turns them into an **implementable** specification for M2 (costs & GoBD voucher flow). It makes the correctness- and architecture-critical decisions (immutability mechanics, version chain, state machine, storage abstraction) and hands a work-through checklist to `bulk-impl` (Opus 4.6).
+> This document builds on the foundations laid in `architecture.md` §3 and §5.4 and turns them into an **implementable** specification for M2 (costs & GoBD voucher flow). It makes the correctness- and architecture-critical decisions (immutability mechanics, version chain, state machine, storage abstraction) and hands a work-through checklist to the implementer.
 >
 > **Binding force:** The SDD (v0.2), the roadmap, `architecture.md` and ADRs 0001/0002 are the source of truth and remain **untouched**. This document is additive. Decisions that the human should confirm are marked **[DECISION]**; open SDD §18 items are marked **[OPEN]**.
 >
@@ -239,11 +239,11 @@ If a `confirmed` cost item has to be corrected (wrong amount, wrong category):
 
 ### 3.5 Interplay With Assisted PDF Import/OCR (SDD §8/§9) — Interface Only
 
-The **extraction implementation** (OCR/parsing) is done by `bulk-impl`; the M2 design only fixes the interplay:
+The **extraction implementation** (OCR/parsing) is done during implementation; the M2 design only fixes the interplay:
 - On upload, an `invoice_document` (file + SHA-256 stored) is created **immediately** in version state `active`, but **without** `released_at` (not yet released), together with a `cost_entry` in status `draft_extracted` carrying the extracted field suggestions.
 - The extraction is encapsulated behind a **narrow, swappable interface** (protocol) — exactly the pattern of `PdfRenderer` (`app/core/pdf.py`): `DocumentExtractor.extract(file_bytes, mime) -> ExtractionResult`. Default: a local OCR/parsing stub implementation; later swappable for an external service or a local model (SDD §16). E-invoice (M5) is a **second** implementation of the same interface (structured fields instead of OCR guessing, SDD §6.5) — so M5 docks on without a state machine change.
 - The extraction result (recognized fields + confidences + raw-text features) is stored as a **JSONB column `extraction_payload` on `invoice_document`**, **not** as a separate table. Rationale: 1:1 with the document, no lifecycle of its own, no cross-entity query needed; a separate table would be unnecessary normalization. *(If several extraction runs per document are to be compared later, this can be split out into a `document_extraction` table — then organization-scoped with RLS. Not needed for M2.)*
-- A confidence threshold decides the start status: low confidence / critical category → `needs_review` instead of `draft_extracted`. The exact threshold is a `bulk-impl` implementation question; **no** suggestion is ever automatically `confirmed` (SDD §9, §3 non-goal: "no automatic posting without approval").
+- A confidence threshold decides the start status: low confidence / critical category → `needs_review` instead of `draft_extracted`. The exact threshold is an implementation question; **no** suggestion is ever automatically `confirmed` (SDD §9, §3 non-goal: "no automatic posting without approval").
 
 ### 3.6 Approval Transaction (Atomic)
 
@@ -410,15 +410,15 @@ M2 does **not** change the concept laid down in M0/M1, but confirms and makes it
 ### 7.3 [OPEN] Retention Start Date Per Voucher Type (SDD §18)
 
 `retention_until` needs a relevant start date + 8 years. **Which date applies per voucher type (invoice date vs. end of the fiscal/calendar year vs. finalization date) is explicitly open in SDD §18** and is **not decided unilaterally** here. M2 keeps the field and the calculation interface ready; the concrete rule is to be clarified with a tax advisor/specialist lawyer (before M9 at the latest).
-- **Provisional default calculation for M2 tests, clearly marked as an assumption:** `retention_until = (end of the calendar year of `invoice_date`) + 8 years`. This is a conservative, common reading of the commercial/tax-law deadline calculation (the period begins with the end of the calendar year). **This assumption is provisional** and must be confirmed by the human/professional advisor — it appears here only so that `bulk-impl` has a testable function, not as a legal statement.
+- **Provisional default calculation for M2 tests, clearly marked as an assumption:** `retention_until = (end of the calendar year of `invoice_date`) + 8 years`. This is a conservative, common reading of the commercial/tax-law deadline calculation (the period begins with the end of the calendar year). **This assumption is provisional** and must be confirmed by the human/professional advisor — it appears here only so that the implementation has a testable function, not as a legal statement.
 
 > **No self-certification:** The retention logic is made transparent and auditable; its legal correctness in an individual case must be signed off professionally.
 
 ---
 
-## 8. Implementation Checklist for `bulk-impl` (Opus 4.6)
+## 8. Implementation checklist
 
-> Architecture/correctness decisions are made in this document + ADR-0003. `bulk-impl` implements them and **escalates** only on an open specification question (SDD §18, marked here with **[OPEN]**) or an unresolved **[DECISION]**. **Prerequisite: the human has confirmed (a) A-1 (chart of accounts global vs. per org) and (b) the open [DECISION] points.** Do not commit before then.
+> Architecture/correctness decisions are made in this document + ADR-0003. The implementer implements them and **escalates** only on an open specification question (SDD §18, marked here with **[OPEN]**) or an unresolved **[DECISION]**. **Prerequisite: the human has confirmed (a) A-1 (chart of accounts global vs. per org) and (b) the open [DECISION] points.** Do not commit before then.
 
 ### 8.1 Data Model + Migrations (Order Analogous to M0/M1)
 
@@ -438,7 +438,7 @@ M2 does **not** change the concept laid down in M0/M1, but confirms and makes it
 
 ### 8.3 Extraction Interface (PDF Import) — Scaffold + Stub Only
 
-- [ ] `DocumentExtractor` protocol (§3.5) + stub default (returns empty/partially filled `ExtractionResult` with confidences); the real OCR integration is a `bulk-impl` implementation, the interface is fixed here.
+- [ ] `DocumentExtractor` protocol (§3.5) + stub default (returns empty/partially filled `ExtractionResult` with confidences); the real OCR integration is an implementation task, the interface is fixed here.
 - [ ] Result → `invoice_document.extraction_payload` (JSONB) + prefilling of the `cost_entry` fields; start status by confidence (`draft_extracted`/`needs_review`); **never** automatically `confirmed`.
 
 ### 8.4 State Machine + Services
@@ -504,7 +504,7 @@ refuses to remove populated template/letter tables.
 
 ## 9. What This Document Deliberately Does NOT Decide
 
-- **Distribution/settlement logic (M3):** *how* a distribution key computes, pro rata periods from the service period, CO2/caretaker split. M2 stores only the selection/amounts/share fields; the engine is M3 (`engine-correctness`).
+- **Distribution/settlement logic (M3):** *how* a distribution key computes, pro rata periods from the service period, CO2/caretaker split. M2 stores only the selection/amounts/share fields; the engine is M3 (a correctness-critical design step).
 - **Settlement snapshots (`settlement_run`/`settlement_line`):** M3/M4 — the same immutability trigger (ADR-0003 §3) is reused there.
 - **E-invoice parsing (XRechnung/ZUGFeRD):** M5 — docks onto the state machine defined here as the second `DocumentExtractor` implementation.
 - **Retention start date per voucher type:** SDD §18, **[OPEN]**, to be clarified on the domain side (§7.3).

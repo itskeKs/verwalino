@@ -139,10 +139,11 @@ async def request_reset(body: ResetRequest, background: BackgroundTasks,
                 recipient_hash = rate_limit.key_hash('password_reset_recipient', 'email', body.email)
                 await session.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key,0))'),
                     {'key': 'reset-recipient:' + recipient_hash.hex()})
-                recipient_attempt = await check_and_record(session, 'password_reset_recipient',
-                    {'email': body.email}, RECIPIENT_RULES, request_id=throttle.request_id)
-                if recipient_attempt.allowed:
-                    token = await session.scalar(text('SELECT public.issue_password_reset(:email)'), {'email': body.email})
+                async with session.begin_nested() as reservation:
+                    recipient_attempt = await check_and_record(session, 'password_reset_recipient',
+                        {'email': body.email}, RECIPIENT_RULES, request_id=throttle.request_id)
+                    if recipient_attempt.allowed:
+                        token = await session.scalar(text('SELECT public.issue_password_reset(:email)'), {'email': body.email})
                     if token is not None:
                         await recipient_attempt.record_failure()
                         # Keep a partial count until a full quiet hour. This
@@ -150,11 +151,15 @@ async def request_reset(body: ResetRequest, background: BackgroundTasks,
                         await session.execute(text("""UPDATE public.auth_throttle
                             SET window_start=updated_at WHERE key_kind='email' AND key_hash=:key"""),
                             {'key': recipient_hash})
+                    else:
+                        # Admission reserves a count. Keep only issued mail;
+                        # rollback preserves earlier counts and active lockouts.
+                        await reservation.rollback()
     # Construct mail even for absent/locked recipients, without minting a token
     # in the app. SMTP runs only after the committed issuance and HTTP response.
     message = mail_service.build_password_reset(
         settings, recipient=body.email,
-        link=f"{(settings.public_url or '').rstrip('/')}/passwort-zuruecksetzen?token={token or '0' * 64}")
+        link=f"{mail_service.public_origin(settings) if available else ''}/passwort-zuruecksetzen?token={token or '0' * 64}")
     if token is not None:
         background.add_task(submit_mail, message)
     if rate_limit.cleanup_due():
@@ -176,9 +181,13 @@ async def confirm_reset(body: ConfirmRequest, background: BackgroundTasks,
         async with session.begin():
             # A token digest is opaque and needs no privileged pre-lookup.
             token_key = hashlib.sha256(token.encode()).hexdigest()
-            attempt = await throttle.check(session, token_key + '@password-reset.invalid')
+            rules = get_deployment_policy().rate_limit_rules
+            attempt = await check_and_record(session, throttle.scope,
+                {'email': token_key + '@password-reset.invalid'}, rules, request_id=throttle.request_id)
+            ip_attempt = await check_and_record(session, throttle.scope, {'ip': throttle.ip},
+                rules, request_id=throttle.request_id)
         async with session.begin():
-            if attempt.allowed:
+            if ip_attempt.allowed and attempt.allowed:
                 try:
                     async with session.begin_nested():
                         recipient = await session.scalar(text('SELECT public.reset_password_with_token(:token,:password_hash)'),
@@ -192,9 +201,8 @@ async def confirm_reset(body: ConfirmRequest, background: BackgroundTasks,
             if recipient is None:
                 await attempt.record_failure()
             else:
-                ip_attempt = await check_and_record(session, throttle.scope, {'ip': throttle.ip},
-                    attempt.rules, request_id=throttle.request_id)
-                await ip_attempt.record_failure()
+                await attempt.reset()
+            await ip_attempt.record_failure()
     if rate_limit.cleanup_due():
         await rate_limit.cleanup_stale(attempt.rules)
     if recipient is None:

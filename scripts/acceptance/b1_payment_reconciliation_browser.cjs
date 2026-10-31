@@ -27,7 +27,7 @@ const base='http://127.0.0.1:13000', output='/tmp/hv-b1-reconciliation-acceptanc
   const grant=await post(`/api/accounting-scopes/${scope.id}/grants`,{user_id:admin.id,capabilities:['read','prepare'],reason:'Synthetic review grant'},true);
   await post(`/api/accounting-scopes/${scope.id}/bindings`,{resource_type:'bank_account',resource_id:bank.id,reason:'Synthetic reviewed original bank'});
   const endpoint=`/api/accounting-scopes/${scope.id}/legacy-payments`;
-  await page.goto(base+'/berechtigungen/'+scope.id);await page.getByRole('button',{name:'Altzahlungen prüfen',exact:true}).click();
+  await page.goto(base+'/berechtigungen/teamrechte/'+scope.id);await page.getByRole('button',{name:'Altzahlungen prüfen',exact:true}).click();
   const selected=page.getByRole('checkbox',{name:'Zahlung Legacy QA bank 2025-06-01 auswählen',exact:true});await selected.waitFor();
   assert.equal(await page.getByRole('checkbox',{name:'Zahlung Legacy QA bank 2024-06-01 auswählen',exact:true}).isDisabled(),true);
   await page.getByText('Zeitraum, Mandat oder Zahlungsart passen nicht zum Kreis',{exact:true}).waitFor();await selected.check();await page.getByLabel('Begründung der Übernahme',{exact:true}).fill('Originalkonto und Buchungen geprüft');

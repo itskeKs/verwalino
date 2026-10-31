@@ -1,0 +1,87 @@
+---
+import '../styles/fonts.css';
+import displayFont from '@fontsource/barlow-condensed/files/barlow-condensed-latin-700-normal.woff2?url';
+import '../styles/global.css';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+import { t, type Locale } from '../i18n';
+import { noindexPages, pathFor, type Page } from '../content/routes';
+interface Props { locale: Locale; page: Page; title?: string; description?: string }
+const { locale, page, title = 'Verwalino', description } = Astro.props;
+const text = t(locale);
+const absolute = (path: string) => new URL(path, Astro.site).href;
+const canonical = absolute(pathFor(locale, page));
+---
+<!doctype html>
+<html lang={locale}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description ?? text('k.sub')} />
+    <link rel="preload" href={displayFont} as="font" type="font/woff2" crossorigin />
+    <link rel="icon" type="image/svg+xml" sizes="any" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+    <link rel="canonical" href={canonical} />
+    <link rel="alternate" hreflang="de" href={absolute(pathFor('de', page))} />
+    <link rel="alternate" hreflang="en" href={absolute(pathFor('en', page))} />
+    <link rel="alternate" hreflang="x-default" href={absolute(pathFor('de', page))} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Verwalino" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description ?? text('k.sub')} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:locale" content={locale === 'de' ? 'de_DE' : 'en_GB'} />
+    <meta property="og:locale:alternate" content={locale === 'de' ? 'en_GB' : 'de_DE'} />
+    <meta property="og:image" content={absolute(`/og/verwalino-${locale}.png`)} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={text('page.landing.title')} />
+    {noindexPages.includes(page) && <meta name="robots" content="noindex" />}
+    <script is:inline>
+      try {
+        const saved = localStorage.getItem('verwalino-theme');
+        if (saved === 'light' || saved === 'dark') document.documentElement.dataset.theme = saved;
+      } catch {}
+    </script>
+  </head>
+  <body>
+    <a class="skip" href="#main">{text('skip')}</a>
+    <Header locale={locale} page={page} />
+    <main id="main" tabindex="-1"><slot /></main>
+    <Footer locale={locale} page={page} />
+    <script>
+      const root = document.documentElement;
+      const theme = document.querySelector<HTMLButtonElement>('.theme-toggle');
+      const menu = document.querySelector<HTMLButtonElement>('.menu-toggle');
+      const navigation = document.getElementById('navigation');
+      const media = matchMedia('(prefers-color-scheme: dark)');
+      function isDark() { return (root.dataset.theme ?? (media.matches ? 'dark' : 'light')) === 'dark'; }
+      function syncTheme() { theme?.setAttribute('aria-pressed', String(isDark())); }
+      theme?.addEventListener('click', () => {
+        root.dataset.theme = isDark() ? 'light' : 'dark';
+        try { localStorage.setItem('verwalino-theme', root.dataset.theme); } catch {}
+        syncTheme();
+      });
+      media.addEventListener('change', syncTheme);
+      syncTheme();
+      function setMenu(open: boolean) {
+        navigation?.classList.toggle('open', open);
+        menu?.setAttribute('aria-expanded', String(open));
+        menu?.setAttribute('aria-label', (open ? menu.dataset.closeLabel : menu.dataset.openLabel) ?? '');
+      }
+      menu?.addEventListener('click', () => setMenu(menu.getAttribute('aria-expanded') === 'false'));
+      navigation?.querySelectorAll('a').forEach(link => link.addEventListener('click', () => setMenu(false)));
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && menu?.getAttribute('aria-expanded') === 'true') {
+          setMenu(false);
+          menu.focus();
+        }
+      });
+      matchMedia('(min-width: 820px)').addEventListener('change', () => setMenu(false));
+    </script>
+  </body>
+</html>

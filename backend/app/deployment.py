@@ -18,8 +18,8 @@ from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 
-TARGET = '0145'
-SUPPORTED = ('0028', '0122', '0139', '0140', '0141', '0142', '0143', '0144', TARGET)
+TARGET = '0146'
+SUPPORTED = ('0028', '0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', TARGET)
 
 
 def release_head(graph: ScriptDirectory) -> str:
@@ -124,14 +124,22 @@ def archive_documents(root: Path, stream) -> None:
 
 def _read_documents(stream, destination: Path | None) -> None:
     names = set()
+    files = set()
+    directories = set()
     with gzip.GzipFile(fileobj=stream, mode='rb') as compressed:
         with tarfile.open(fileobj=compressed, mode='r|') as archive:
             for member in archive:
                 path = PurePosixPath(member.name)
+                name = path.as_posix()
+                parents = {parent.as_posix() for parent in path.parents if parent.parts}
                 if (path.is_absolute() or '..' in path.parts or not path.parts
-                    or member.name in names or not (member.isfile() or member.isdir())):
+                    or any(part in ('', '.') for part in member.name.split('/'))
+                    or name in names or parents & files or (member.isfile() and name in directories)
+                    or not (member.isfile() or member.isdir())):
                     raise ValueError('unsafe document archive')
-                names.add(member.name)
+                names.add(name)
+                directories.update(parents)
+                (files if member.isfile() else directories).add(name)
                 target = destination.joinpath(*path.parts) if destination else None
                 if member.isdir():
                     if target:

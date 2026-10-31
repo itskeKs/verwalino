@@ -30,8 +30,8 @@ proposal. XML and embedded XML precede OCR. Outcome records carry processor
 version and source page numbers; these are extraction provenance, not accounting
 approval or per-field semantic proof.
 
-Runtime requires the existing OCR extras, Poppler and German Tesseract. Missing
-runtime dependencies yield `ocr_unavailable`. Queue admission is serialized per
+Runtime prerequisites are documented in the [development environment setup](../../CONTRIBUTING.md#development-environment).
+Missing runtime dependencies yield `ocr_unavailable`. Queue admission is serialized per
 organization, default 100 active documents (`HV_INVOICE_QUEUE_LIMIT`, 1–1000).
 Disabled extraction or full queues save the original with an explicit manual-review
 status and no new queue entry. Each worker handles one child at a time. This is not yet the shared fair-job
@@ -53,3 +53,13 @@ existing isolated `app_worker` login. Supply it through the worker secret store,
 as for declaration workers. The web service must not receive this credential.
 The CLI uses the worker connection and has no app_rw fallback; queue metadata
 commands reject the web login. Local worker tests likewise use the worker pool.
+
+## Upload and review
+
+Under **Belege** (vouchers), upload a synthetic invoice and open **Details**:
+„Gespeichert · wartet auf Verarbeitung“ (stored, awaiting processing) changes to „Felder vorbereitet · bitte
+prüfen“ (fields prepared, please review); amount and date appear without manually entering the results.
+The extraction books no costs and does not automatically approve any voucher.
+
+For the local launcher, worker CLI, and repeatable browser check, see
+[the invoice-worker runbook](../../DEPLOY.md#invoice-worker-t10).

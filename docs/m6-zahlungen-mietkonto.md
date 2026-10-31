@@ -4,7 +4,7 @@ Browser acceptance journeys for bank import/assignment, rent changes, deposits a
 
 As of: 2026-06-02 · Version 0.1 (design, before implementation)
 Reference: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2 §3 (non-goal: bank import), §5.4 (incoming payments — *note: the SDD numbers them §6.3/§6.7*), §6.3 (bank accounts), §6.7 (rent/payment management), §11 (PDF), §13 (`Payment`/`OpenItem`), §14 (chronology), §16, §17, §18 · [archived roadmap](archive/roadmap.md) M6 · [architecture.md](architecture.md) §2.6 (segregation of funds (Vermögenstrennung)), §5.1 (conventions), §5.3 (`bank_account` anchor), assumption A-4 · [m3-abrechnungs-engine.md](m3-abrechnungs-engine.md) §7 (`advance_payments_source` MANUAL→DERIVED) · [m4-weg-abrechnung.md](m4-weg-abrechnung.md) §2.4 (paid_advances, settlement balance (Abrechnungsspitze)) · ADRs: [0003](adr/0003-gobd-immutability-mechanism.md) (reused), [0005](adr/0005-rounding-largest-remainder.md) (reused), [0006](adr/0006-valid-to-convention.md) (reused), [0007](adr/0007-weg-settlement-balance-and-economic-plan.md) (monthly basis, balance) · **[0009-expected-actual-and-payment-receipt.md](adr/0009-expected-actual-and-payment-receipt.md) (new)** · **[0010-segregation-of-funds-payments.md](adr/0010-segregation-of-funds-payments.md) (new)**
-Author: `engine-correctness` (Opus 4.8) · Status: **Draft for confirmation by the human — no application code, no migration, no commit**
+Status: **Draft for confirmation by the human — no application code, no migration, no commit**
 
 > This document specifies **M6** (payments, tenant ledger, open items) down to the arithmetic. M6 is the point where the **flow of money** becomes real and the bridge `advance_payments_source: MANUAL → DERIVED` prepared in M3/M4 is closed: settlements are to be able to **derive the advance payment total from recorded payments** instead of maintaining it manually. **Manual remains as a fallback.**
 >
@@ -292,7 +292,7 @@ Payments are **booking vouchers** (GoBD, SDD §6.6/§17, 8-year retention). M6 a
 
 ## 6. Settlement integration (core) — which payment → which settlement quantity
 
-This is the most correctness-critical place in M6 and the reason why `engine-correctness` designs it. The bridge `advance_payments_source: MANUAL → DERIVED` is prepared in M3/M4; M6 defines **precisely** which payments flow into which settlement quantity — **without double counting, clearly delimited, manual as a fallback**.
+This is the most correctness-critical place in M6 and the reason why it is designed as a correctness-critical design step. The bridge `advance_payments_source: MANUAL → DERIVED` is prepared in M3/M4; M6 defines **precisely** which payments flow into which settlement quantity — **without double counting, clearly delimited, manual as a fallback**.
 
 ### 6.1 Basic principle: a pure derivation function, no matching
 
@@ -475,6 +475,155 @@ are fixed for spreadsheet programs. Texts prone to formula injection receive an
 apostrophe prefix, genuine negative amounts remain unchanged numerically. CSV and
 display do not change bookings, costs or histories; they do not replace a tax review.
 
+#### Anlage V mapping aid (#34)
+
+`GET /api/reports/property-year/anlage-v` applies the immutable default table in
+`engine/anlage_v.py` to that same authorized report. Its query is `property_id`,
+`year`, and the existing optional `accounting_scope_id`; it reuses the report
+dependency, complete-source checks, date basis and scope limitations. The response
+contains property/year/scope context, `lines` (key, German label, section, amount,
+judgement note), `unmapped` (source code, original label, section, amount, note),
+and `reconciliation` for income and expenses (mapped, unassigned, original total,
+difference). Money is always a decimal string with two places. The `/berichte`
+panel shows the server amounts as `1.234,56 €`, including zero lines, exclusions
+and unknown categories. A changed selection removes the old panel and download;
+loading, retry and export failures are shown inline without discarding the overview.
+
+The separate `GET /api/reports/property-year/anlage-v.csv` keeps the existing year
+CSV contract unchanged. It requires the same additional scope and source export
+permissions, rechecked after rendering. Its seven German columns are `Objekt`,
+`Jahr`, `Bereich`, `Zuordnung`, `Bezeichnung`, `Hinweis`, `Betrag (EUR)`. It includes
+mapped and unassigned rows, four reconciliation rows per section and the caveat.
+It uses the existing UTF-8 BOM, semicolon, CRLF, decimal comma and spreadsheet
+formula protection. Neither endpoint writes financial data.
+
+This is a **mapping aid, not tax advice**: the software says
+"Zuordnungshilfe, keine Steuerberatung" and "Zeilennummern je Formularjahr prüfen".
+The [official ELSTER 2025 instructions](https://www.elster.de/eportal/helpGlobal?themaGlobal=help_est_ufa_10_2025)
+group operating expenses under "Umgelegte Kosten" and "Nicht umgelegte Kosten",
+with a separate "Sonstige Kosten" group. The detailed water, lighting, caretaker,
+administration and similar rows below are mapping-aid detail labels, **not separate
+official numbered fields**. In particular, administration and bank fees must be
+reviewed within the official non-recovered operating-cost group rather than
+automatically copied into "Sonstige Kosten". The source allocability flag is not
+evidence of what was actually recovered from tenants. No automatic split between
+those official groups is made; no form-year line numbers are asserted.
+
+Rent is provisionally placed under residential rent; the report does not distinguish
+commercial/garage use, relatives, earlier-year receipts or advance rent. Those
+require review of the underlying records. Operating-cost advances remain income;
+recoverable expenses remain gross expenses. They are not netted or treated as
+non-taxable pass-through amounts. VAT is not extracted from gross costs or rent.
+AfA, interest, financing costs, separate VAT, other rental uses and earlier-year
+rent have no unambiguous source in this report: their zero rows mean **no mapped
+report amount**, not evidence of zero tax amounts. Invoice-date expenses do not
+establish tax-year cash outflow; maintenance may require capitalization or spreading.
+An aggregate WEG property overview is not an individual owner's return: ownership
+shares, private use and deductibility are not inferred. Existing SEV/scope guards
+remain in force; management types do not change.
+
+Booked deposits, Hausgeld advances, reserve receipts, owner special payments,
+reserve contributions recorded as costs and special levies are never assigned as
+rent or deductible expenses merely because they appear in the overview. They stay
+visible under "Nicht zugeordnet" with an exclusion/review note. Metering services,
+legal advice and unknown/historical payment types also stay unassigned when their
+category does not establish a sensible line. A later deposit appropriation or
+actual spending from reserves requires separate evidence, not reinterpretation of
+the deposit/contribution itself.
+
+The overview's existing exclusions remain unchanged: unbooked/draft payments,
+reversed originals and reversal rows, cancelled payments, raw bank transactions,
+unconfirmed and superseded costs, and records outside the selected property,
+calendar year and complete authorized scope do not enter the mapping. Every amount
+that does enter is counted once: **mapped + unassigned = original report total**
+for each section, including explicit exclusions in unassigned. Refunds/credits keep
+their signs. No redistribution or sub-cent rounding is needed; the source is already
+cent-exact. An inconsistent input total is refused. Tables are validated at import
+(duplicate categories cannot silently overwrite each other); organization-specific
+overrides and ELSTER submission remain follow-ups, with no migration in this change.
+
+##### Anlage V line catalog
+
+<!-- anlage-v-lines:start -->
+| Key | German detail label | Section |
+| --- | --- | --- |
+| `rent` | Mieteinnahmen für Wohnungen (ohne Umlagen) | Einnahmen |
+| `levies` | Einnahmen aus umgelegten Neben-/Betriebskosten (Umlagen) | Einnahmen |
+| `other_rent` | Einnahmen aus Vermietung von Garagen, Werbeflächen und anderen Räumen | Einnahmen |
+| `prior_rent` | Vereinnahmte Mieten für frühere Jahre / Vorauszahlungen | Einnahmen |
+| `vat` | Vereinnahmte Umsatzsteuer | Einnahmen |
+| `depreciation` | Absetzung für Abnutzung (AfA) | Werbungskosten |
+| `interest` | Schuldzinsen | Werbungskosten |
+| `financing` | Geldbeschaffungskosten | Werbungskosten |
+| `maintenance` | Erhaltungsaufwendungen | Werbungskosten |
+| `property_tax` | Grundsteuer | Werbungskosten |
+| `waste` | Straßenreinigung / Müllabfuhr | Werbungskosten |
+| `water` | Wasserversorgung / Entwässerung | Werbungskosten |
+| `lighting` | Hausbeleuchtung | Werbungskosten |
+| `heating` | Heizung / Warmwasser | Werbungskosten |
+| `chimney` | Schornsteinreinigung | Werbungskosten |
+| `insurance` | Hausversicherungen | Werbungskosten |
+| `caretaker` | Hauswart | Werbungskosten |
+| `cleaning` | Treppenreinigung | Werbungskosten |
+| `lift` | Fahrstuhl | Werbungskosten |
+| `administration` | Verwaltungskosten | Werbungskosten |
+| `other` | Sonstige Kosten | Werbungskosten |
+<!-- anlage-v-lines:end -->
+
+##### Default Anlage V category mapping
+
+`NACHZAHLUNG` uses the existing unassigned fallback rather than an entry in the
+default code table:
+
+| Income code | German detail label | Reason for review |
+| --- | --- | --- |
+| `NACHZAHLUNG` | Nicht zugeordnet | A Nachzahlung can come from a tenant or an owner; review its origin and supporting voucher separately. |
+
+The judgement notes in the default table below quote the German software text.
+A test renders the line catalog and default table from the code constants and
+compares this documentation exactly.
+
+<!-- anlage-v-mapping:start -->
+| Category / income code | German detail label | Judgement note |
+| --- | --- | --- |
+| `KALTMIETE` | Mieteinnahmen für Wohnungen (ohne Umlagen) | [§/fachlich] Wohnraummiete als Vorschlag; andere Nutzungen, Angehörige und Vorjahresmieten gesondert prüfen. |
+| `NK_VORAUSZAHLUNG` | Einnahmen aus umgelegten Neben-/Betriebskosten (Umlagen) | [§/fachlich] Laufende Umlagen; Abrechnungserstattungen und Nachzahlungen gesondert prüfen. |
+| `KAUTION` | Nicht zugeordnet | [§/fachlich] Ausgeschlossen: verwahrte Kaution, keine Miete; eine spätere Verrechnung ist gesondert zu prüfen. |
+| `HAUSGELD_VORSCHUSS` | Nicht zugeordnet | [§/fachlich] Ausgeschlossen: WEG-Eigentümervorschuss, keine Vermietungseinnahme. |
+| `RUECKLAGENANTEIL` | Nicht zugeordnet | [§/fachlich] Ausgeschlossen: Rücklagenzuführung, keine Vermietungseinnahme. |
+| `SONDERZAHLUNG` | Nicht zugeordnet | [§/fachlich] Nicht als Miete angesetzt: Eigentümer-Sonderzahlung; Verwendungszweck gesondert prüfen. |
+| `GRUNDSTEUER` | Grundsteuer | [§/fachlich] Nur vermietungsbezogene Grundsteuer; andere öffentliche Lasten prüfen. |
+| `KALTWASSER` | Wasserversorgung / Entwässerung | [§/fachlich] Vermietungsbezogene Wasserkosten; Abfluss und Umlage prüfen. |
+| `ENTWAESSERUNG` | Wasserversorgung / Entwässerung | [§/fachlich] Vermietungsbezogene Abwasserkosten; Abfluss und Umlage prüfen. |
+| `HEIZUNG_ZENTRAL` | Heizung / Warmwasser | [§/fachlich] Laufender Heizungsbetrieb; Investitionen und doppelte Erfassung ausschließen. |
+| `WARMWASSER_ZENTRAL` | Heizung / Warmwasser | [§/fachlich] Laufende Warmwasserkosten; doppelte Erfassung mit Heizung ausschließen. |
+| `MUELLBESEITIGUNG` | Straßenreinigung / Müllabfuhr | [§/fachlich] Laufende Müllabfuhr; Abfluss und Umlage prüfen. |
+| `STRASSENREINIGUNG` | Straßenreinigung / Müllabfuhr | [§/fachlich] Laufende Straßenreinigung; Abfluss und Umlage prüfen. |
+| `WINTERDIENST` | Straßenreinigung / Müllabfuhr | [§/fachlich] Winterdienst der Straßenreinigung zugeordnet; Leistungsumfang prüfen. |
+| `GEBAEUDEREINIGUNG` | Treppenreinigung | [§/fachlich] Treppenreinigung als Vorschlag; sonstige Gebäudereinigung gesondert prüfen. |
+| `GARTENPFLEGE` | Sonstige Kosten | [§/fachlich] Laufende Gartenpflege als sonstige Kosten; Neuanlage nicht automatisch abziehbar. |
+| `ALLGEMEINSTROM` | Hausbeleuchtung | [§/fachlich] Hausbeleuchtung als Vorschlag; andere Stromnutzung gesondert prüfen. |
+| `SCHORNSTEINREINIGUNG` | Schornsteinreinigung | [§/fachlich] Laufende Schornsteinreinigung; Abfluss und Umlage prüfen. |
+| `GEBAEUDEVERSICHERUNG` | Hausversicherungen | [§/fachlich] Gebäudeversicherung mit Vermietungsbezug; private Anteile prüfen. |
+| `HAFTPFLICHTVERSICHERUNG` | Hausversicherungen | [§/fachlich] Nur Haus- und Grundbesitzerhaftpflicht mit Vermietungsbezug. |
+| `AUFZUG` | Fahrstuhl | [§/fachlich] Betrieb und Wartung des Fahrstuhls; Ersatzinvestitionen gesondert prüfen. |
+| `WASCHRAUM` | Sonstige Kosten | [§/fachlich] Laufender Betrieb als sonstige Kosten; Anschaffungen gesondert prüfen. |
+| `HAUSMEISTER` | Hauswart | [§/fachlich] Hauswart als Vorschlag; Verwaltungs- und Reparaturanteile gesondert prüfen. |
+| `SONSTIGE_BK` | Sonstige Kosten | [§/fachlich] Sonstige laufende Kosten; Beleg, Vermietungsbezug und Umlage prüfen. |
+| `KABEL_BREITBAND` | Sonstige Kosten | [§/fachlich] Vermietungsbezogene Kosten; Vertragsgrundlage und Umlage gesondert prüfen. |
+| `MESSDIENST` | Nicht zugeordnet | [§/fachlich] Keine eindeutige Zuordnung: Wasser, Heizung oder Abrechnung; Doppelansatz vermeiden. |
+| `CO2_KOSTEN` | Heizung / Warmwasser | [§/fachlich] Heizungsbezogene CO₂-Kosten; Aufteilung und Doppelansatz mit Brennstoffkosten prüfen. |
+| `WEG_VERWALTERKOSTEN` | Verwaltungskosten | [§/fachlich] Verwaltung statt sonstige Kosten als Detailvorschlag; nur vermietungsbezogener Eigentümeranteil. |
+| `BUCHHALTUNG` | Verwaltungskosten | [§/fachlich] Vermietungsbezogene Buchhaltung als Verwaltung; private Steuerberatung nicht eingeschlossen. |
+| `EIGENTUEMERVERSAMMLUNG` | Verwaltungskosten | [§/fachlich] Verwaltungsbezug als Vorschlag; Vermietungsbezug und Eigentümeranteil prüfen. |
+| `BANKGEBUEHREN` | Verwaltungskosten | [§/fachlich] Laufende Kontoführung als Verwaltung; keine Geldbeschaffungskosten ohne Finanzierungsnachweis. |
+| `RECHTSBERATUNG` | Nicht zugeordnet | [§/fachlich] Keine eindeutige Zuordnung: Mietstreit, Erwerb oder privater Anlass; Beleg prüfen. |
+| `INSTANDHALTUNG` | Erhaltungsaufwendungen | [§/fachlich] Erhaltungsaufwand als Vorschlag; Herstellungskosten, 15-%-Grenze und Verteilung prüfen. |
+| `INSTANDSETZUNG` | Erhaltungsaufwendungen | [§/fachlich] Reparatur als Vorschlag; Herstellungskosten, 15-%-Grenze und Verteilung prüfen. |
+| `ERHALTUNGSRUECKLAGE` | Nicht zugeordnet | [§/fachlich] Ausgeschlossen: Rücklagenzuführung ist kein abziehbarer Erhaltungsaufwand; tatsächliche Verwendung zählt. |
+| `SONDERUMLAGE` | Nicht zugeordnet | [§/fachlich] Keine eindeutige Zuordnung: Mittelzuführung ohne Nachweis der tatsächlichen Verwendung. |
+<!-- anlage-v-mapping:end -->
+
 ### 6.13 List export (Phase 2, T40)
 
 The payment and cost lists export their complete filtered READ row set via
@@ -589,9 +738,9 @@ Golden test 5 + invariant I6-E together are the objective proof of the M6 exit: 
 
 ---
 
-## 8. Implementation checklist for `bulk-impl` (roadmap M6 → Opus 4.6)
+## 8. Implementation checklist
 
-> According to the roadmap model assignment, M6 goes to **`bulk-impl` (Opus 4.6)** — recording the flow of money is predominantly bulk engineering. **But:** the **settlement integration (§6) is correctness-critical** and is to be built as a **pure, tested derivation function**; in case of ambiguity in the DERIVED logic, the segregation-of-funds coherence or the GoBD mechanics, **escalate to `engine-correctness`** (per the `bulk-impl.md` escalation rule). Order as in M3/M4: **engine first (pure functions + tests), then persistence/trigger, then service, then API, finally PDF/display.** **Prerequisite:** the human has confirmed the [DECISION] items (§10) and ADR-0009/0010. No commit before that. **All 291 existing tests stay green** (additive).
+> Recording the flow of money in M6 is predominantly bulk engineering. **But:** the **settlement integration (§6) is correctness-critical** and is to be built as a **pure, tested derivation function**; in case of ambiguity in the DERIVED logic, the segregation-of-funds coherence or the GoBD mechanics, **escalate for a correctness review**. Order as in M3/M4: **engine first (pure functions + tests), then persistence/trigger, then service, then API, finally PDF/display.** **Prerequisite:** the human has confirmed the [DECISION] items (§10) and ADR-0009/0010. No commit before that. **All 291 existing tests stay green** (additive).
 
 ### 8.1 Engine as pure functions (first, highest test density)
 - [ ] `app/engine/mietkonto.py` (new, **deliberately separated** from `services`/`api`/`models` — SDD §16): no DB/HTTP/ORM imports; `Decimal`/`date`/dataclasses in/out.

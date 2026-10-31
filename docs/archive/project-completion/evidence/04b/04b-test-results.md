@@ -16,7 +16,7 @@ HV_DATABASE_URL_SYNC=postgresql://app_migrator:migrator_secret@127.0.0.1:55432/h
 ## Testausführung 1 (45 Tests)
 
 ```bash
-cd /Users/keks/Developer/hausverwaltung/backend
+cd $HOME/Developer/hausverwaltung/backend
 HV_DATABASE_URL="postgresql+asyncpg://app_rw:app_secret@127.0.0.1:55432/hausverwaltung" \
 HV_DATABASE_URL_MIGRATOR="postgresql+asyncpg://app_migrator:migrator_secret@127.0.0.1:55432/hausverwaltung" \
 HV_DATABASE_URL_SYNC="postgresql://app_migrator:migrator_secret@127.0.0.1:55432/hausverwaltung" \
@@ -34,7 +34,7 @@ USER="" HV_OPENAI_API_KEY="" \
 ## Testausführung 2 (46 Tests)
 
 ```bash
-cd /Users/keks/Developer/hausverwaltung/backend
+cd $HOME/Developer/hausverwaltung/backend
 HV_DATABASE_URL="postgresql+asyncpg://app_rw:app_secret@127.0.0.1:55432/hausverwaltung" \
 HV_DATABASE_URL_MIGRATOR="postgresql+asyncpg://app_migrator:migrator_secret@127.0.0.1:55432/hausverwaltung" \
 HV_DATABASE_URL_SYNC="postgresql://app_migrator:migrator_secret@127.0.0.1:55432/hausverwaltung" \

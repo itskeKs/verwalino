@@ -23,20 +23,37 @@ def signup_mail(monkeypatch):
     FakeSMTP.messages, FakeSMTP.calls, FakeSMTP.error = [], [], None
     monkeypatch.setattr("smtplib.SMTP", FakeSMTP)
     monkeypatch.setattr("smtplib.SMTP_SSL", lambda *_a, **_k: pytest.fail("Unexpected TLS transport"))
-    for name, value in {"public_url": "https://signup.example.test", "smtp_host": "127.0.0.1",
+    for name, value in {"public_host": "signup.example.test", "smtp_host": "127.0.0.1",
                         "smtp_port": 1025, "smtp_from": "verwaltung@example.invalid", "smtp_security": "plain",
                         "smtp_username": None, "smtp_password": None}.items():
         monkeypatch.setattr(settings, name, value, raising=False)
     return FakeSMTP
 
 
+class SignupInspection:
+    """Owner-only observations; HTTP sessions keep the restricted runtime role."""
+
+    def __init__(self, connection):
+        self.connection = connection
+
+    async def execute(self, statement, parameters=None):
+        await self.connection.execute(text('RESET ROLE'))
+        try:
+            return await self.connection.execute(statement, parameters or {})
+        finally:
+            await self.connection.execute(text('SET LOCAL ROLE app_rw'))
+
+    async def scalar(self, statement, parameters=None):
+        return (await self.execute(statement, parameters)).scalar()
+
+
 @pytest_asyncio.fixture
 async def signup(fresh_setup, signup_mail, monkeypatch):
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
     client, connection = fresh_setup
-    if await connection.scalar(text("SELECT to_regclass('public.signup_request')")):
-        await connection.execute(text("DELETE FROM public.signup_request"))
-    return client, connection, signup_mail
+    inspection = SignupInspection(connection)
+    await inspection.execute(text("DELETE FROM public.signup_request"))
+    return client, inspection, signup_mail
 
 
 def confirmation_token(mail):

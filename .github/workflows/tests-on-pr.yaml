@@ -1,7 +1,7 @@
 # Quality gate for pull requests and main: backend (ruff + pytest against
 # Postgres), frontend (eslint + tsc + vitest), Markdown links and agent rules.
 # Every step runs the same Makefile target a developer runs locally, so this
-# file only adds the CI environment (database service, toolchains, caches).
+# file only adds the CI environment (test services, toolchains, caches).
 
 name: Tests on PR
 
@@ -28,9 +28,25 @@ jobs:
     name: Backend (ruff, pytest)
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    services:
+      mailpit:
+        image: axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498
+        ports:
+          - 1025:1025
+          - 8025:8025
+        options: >-
+          --health-cmd="/mailpit readyz"
+          --health-interval=2s --health-timeout=2s --health-retries=15
     env:
       # uv run must never rewrite uv.lock in CI.
       UV_LOCKED: "1"
+      HV_SMTP_HOST: "127.0.0.1"
+      HV_SMTP_PORT: "1025"
+      HV_SMTP_SECURITY: "plain"
+      HV_SMTP_FROM: "verwaltung@example.invalid"
+      HV_SMTP_USERNAME: ""
+      HV_SMTP_PASSWORD: ""
+      VERWALINO_MAILPIT_API: "http://127.0.0.1:8025"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -152,3 +168,6 @@ jobs:
 
       - name: Agent rule and Codex hook contracts
         run: make test-agent-rules
+
+      - name: Scenario failure filing contracts
+        run: make test-scenario-issues

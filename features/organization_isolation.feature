@@ -47,16 +47,22 @@ Feature: Organization isolation
     Then the list shows the properties of "Verwaltung Alpha"
     And the list does not show the properties of "Verwaltung Beta"
 
-  @hosted
-  Scenario: A public registration cannot claim an existing organization
-    When a visitor registers using the name of another organization
-    And the visitor follows the emailed confirmation link
-    Then the registration creates a separate organization with the same name
-    And the existing administrator stays in the original organization
+  Scenario Outline: Another organization's Anlage V <view> is not accessible
+    When the user opens the Anlage V <view> for the property of "Verwaltung Beta"
+    Then the report is reported as not found
+
+    Examples:
+      | view     |
+      | summary  |
+      | download |
+
+  Scenario: Administrators share technical diagnostics without organization records
+    When the administrator downloads a diagnostics bundle
+    Then the bundle contains technical counts without either organization’s records
 
   Scenario: A password recovery link changes only the mailbox owner's account
     Given a user who is signed in
-    And password reset mail is captured
+    And a test mailbox for password recovery
     When the user requests a password reset link
     And the user submits the captured recovery link
     Then the password reset is accepted without signing in

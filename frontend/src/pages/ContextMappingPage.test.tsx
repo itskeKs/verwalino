@@ -13,7 +13,9 @@ it('keeps unknown revocation pinned after a newer activation and distinguishes r
     if (init?.method === 'POST') { requests.push({ url, init }); return requests.length === 1 ? json({}, 503) : json({ ...first, id: 'v2', revision_number: 2, state: 'revoked' }, 201); }
     return json({ receipt: first, current, master_current: true, can_prepare: true });
   }));
-  open(); fireEvent.change(await screen.findByLabelText('Begründung des Widerrufs'), { target: { value: 'Stop future reuse' } });
+  open();
+  expect(await screen.findByRole('link', { name: 'Abrechnungskreis öffnen' })).toHaveAttribute('href', '/berechtigungen/teamrechte/s');
+  fireEvent.change(await screen.findByLabelText('Begründung des Widerrufs'), { target: { value: 'Stop future reuse' } });
   fireEvent.click(screen.getByRole('checkbox')); fireEvent.click(screen.getByRole('button', { name: 'Zuordnung widerrufen' }));
   await screen.findByText(/Keine bestätigte Antwort/); current = { ...first, id: 'v3', revision_number: 3 };
   fireEvent.click(screen.getByRole('button', { name: 'Zuordnung neu laden' }));

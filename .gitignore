@@ -17,6 +17,9 @@ htmlcov/
 .env
 .env.*
 !.env.example
+backups/
+verwalino-backup-*.tar
+.verwalino-backup.*
 
 # Node / Frontend (kommt in M0-Schritt 2)
 node_modules/
@@ -33,8 +36,12 @@ build/
 
 # Logs
 *.log
+/report/
 
 # Lokale Dev-Tools (maschinenspezifisch)
 .claude/launch.json
 document_storage/
 .worktrees/
+
+# Manually shared private diagnostics
+/diagnostics/

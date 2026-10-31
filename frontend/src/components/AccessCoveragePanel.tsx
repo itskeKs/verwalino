@@ -27,10 +27,10 @@ function proposal(kind: string): [string,string] | null {
   if (["property","unit"].includes(kind)) return ["/gebaeudedaten-rechte","Datenbereich und Teamfreigaben prüfen"];
   if (kind === "person") return ["/kontaktdaten-rechte","Kontaktdaten-Freigaben prüfen"];
   if (kind === "property_document") return ["/altquellen","Herkunft und Quarantäne prüfen"];
-  if (kind === "declaration_import") return ["/quellenfreigaben","Quellenfreigaben prüfen"];
-  if (kind === "mandate_document") return ["/mandatsquarantaene","Mandatsquarantäne prüfen"];
-  if (kind === "dunning_notice") return ["/mahnquarantaene","Mahnungsquarantäne prüfen"];
-  if (["accounting_scope","bank_account","payment","cost_entry","settlement_run","economic_plan","member"].includes(kind)) return ["/berechtigungen","Abrechnungskreise und Teamfreigaben prüfen"];
+  if (kind === "declaration_import") return ["/berechtigungen/pruefungen/quellen","Quellenfreigaben prüfen"];
+  if (kind === "mandate_document") return ["/berechtigungen/pruefungen/mandate","Mandatsquarantäne prüfen"];
+  if (kind === "dunning_notice") return ["/berechtigungen/pruefungen/mahnungen","Mahnungsquarantäne prüfen"];
+  if (["accounting_scope","bank_account","payment","cost_entry","settlement_run","economic_plan","member"].includes(kind)) return ["/berechtigungen/teamrechte","Abrechnungskreise und Teamfreigaben prüfen"];
   return null;
 }
 

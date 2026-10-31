@@ -7,7 +7,7 @@
  * - If authenticated, shows the AppShell with routed content.
  */
 
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthContext";
 import { useAuth } from "./auth/useAuth";
 import { AppShell } from "./components/AppShell";
@@ -16,8 +16,8 @@ import { PasswordResetRequestPage } from "./pages/PasswordResetRequestPage";
 import { PasswordResetPage } from "./pages/PasswordResetPage";
 import { SignupPage, SignupConfirmPage } from "./pages/SignupPage";
 import { SetupPage } from "./pages/SetupPage";
-import { useSetupStatus } from "./auth/useSetupStatus";
 import { useDeploymentMode } from "./auth/useDeploymentMode";
+import { useSetupStatus } from "./auth/useSetupStatus";
 import { TasksPage } from "./pages/TasksPage";
 import { LettersPage } from "./pages/LettersPage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -75,19 +75,18 @@ import { DeclarationImportPage } from "./pages/DeclarationImportPage";
 import { DeclarationReviewPage } from "./pages/DeclarationReviewPage";
 import { PropertyKnowledgePage } from "./pages/PropertyKnowledgePage";
 
-export function AppRoutes() {
-  const { loading, session } = useAuth();
-  const setup = useSetupStatus();
+import { PermissionsLayout, PermissionsOverview, PermissionsReviews } from "./pages/PermissionsPage";
+
+function PermissionRedirect({ to, parameter }: { to: string; parameter: "scopeId" | "reviewId" }) {
+  const params = useParams();
+  return <Navigate to={`${to}/${encodeURIComponent(params[parameter] ?? "")}`} replace />;
+}
+
+function PublicAuthRoutes() {
   const deployment = useDeploymentMode();
   const location = useLocation();
 
-  const setupRequired = deployment.mode === "selfhost" && !setup.error ? setup.required : false;
-
-  if (loading || (!deployment.error && deployment.mode === null) || setupRequired === null) {
-    return (
-      <div style={{ padding: "2rem", textAlign: "center" }}>Lade...</div>
-    );
-  }
+  if (deployment.mode === null && !deployment.error) return <main className="p-6" role="status">Lade...</main>;
 
   if (location.pathname === "/signup" || location.pathname === "/signup/confirm") {
     if (deployment.mode !== "hosted") return <Navigate to="/login" replace />;
@@ -96,6 +95,22 @@ export function AppRoutes() {
 
   if (location.pathname === "/passwort-vergessen") return <PasswordResetRequestPage />;
   if (location.pathname === "/passwort-zuruecksetzen") return <PasswordResetPage />;
+
+  return <LoginPage signupEnabled={deployment.mode === "hosted"} mailAvailable={deployment.mailAvailable} />;
+}
+
+export function AppRoutes() {
+  const { loading, session } = useAuth();
+  const setup = useSetupStatus();
+  const location = useLocation();
+
+  const setupRequired = !setup.error ? setup.required : false;
+
+  if (loading || setupRequired === null) {
+    return (
+      <div style={{ padding: "2rem", textAlign: "center" }}>Lade...</div>
+    );
+  }
 
   if (setupRequired) {
     return <Routes>
@@ -106,8 +121,14 @@ export function AppRoutes() {
 
   if (location.pathname === "/setup") return <Navigate to="/login" replace />;
 
-  if (!session) {
-    return <LoginPage signupEnabled={deployment.mode === "hosted"} mailAvailable={deployment.mailAvailable} />;
+  if (
+    !session ||
+    location.pathname === "/signup" ||
+    location.pathname === "/signup/confirm" ||
+    location.pathname === "/passwort-vergessen" ||
+    location.pathname === "/passwort-zuruecksetzen"
+  ) {
+    return <PublicAuthRoutes />;
   }
 
   const canWriteDeclarations = session.role === "OWNER_ADMIN" || session.role === "CLERK";
@@ -164,20 +185,30 @@ export function AppRoutes() {
         <Route path="/beschluss-sammlung" element={<ResolutionRegisterPage />} />
         <Route path="/fristen" element={<FristenmonitorPage />} />
         <Route path="/users" element={<UsersPage />} />
-        <Route path="/mahnquarantaene" element={<DunningQuarantinePage />} />
-        <Route path="/mandatsquarantaene" element={<MandateQuarantinePage />} />
-        <Route path="/freigaben-vorbereiten" element={<AccessPreparationPage />} />
+        <Route path="/mahnquarantaene" element={<Navigate to="/berechtigungen/pruefungen/mahnungen" replace />} />
+        <Route path="/mandatsquarantaene" element={<Navigate to="/berechtigungen/pruefungen/mandate" replace />} />
+        <Route path="/freigaben-vorbereiten" element={<Navigate to="/berechtigungen/bestand" replace />} />
         <Route path="/altquellen" element={<SourceClassificationsPage />} />
         <Route path="/altquellen/:reviewId" element={<SourceClassificationsPage />} />
-        <Route path="/quellenfreigaben" element={<SourceAdmissionReviewsPage />} />
-        <Route path="/quellenfreigaben/:reviewId" element={<SourceAdmissionReviewsPage />} />
+        <Route path="/quellenfreigaben" element={<Navigate to="/berechtigungen/pruefungen/quellen" replace />} />
+        <Route path="/quellenfreigaben/:reviewId" element={<PermissionRedirect to="/berechtigungen/pruefungen/quellen" parameter="reviewId" />} />
         <Route path="/kontaktdaten-rechte" element={<PersonDataDomainsPage />} />
         <Route path="/kontaktdaten-rechte/:domainId" element={<PersonDataDomainsPage />} />
         <Route path="/gebaeudedaten-rechte" element={<PropertyDataDomainsPage />} />
         <Route path="/gebaeudedaten-rechte/:domainId" element={<PropertyDataDomainsPage />} />
-        <Route path="/berechtigungen" element={<AccountingScopesPage />} />
+        <Route path="/berechtigungen" element={<PermissionsLayout />}>
+          <Route index element={<PermissionsOverview />} />
+          <Route path="teamrechte" element={<AccountingScopesPage />} />
+          <Route path="teamrechte/:scopeId" element={<AccountingScopesPage />} />
+          <Route path="bestand" element={<AccessPreparationPage />} />
+          <Route path="pruefungen" element={<PermissionsReviews />} />
+          <Route path="pruefungen/quellen" element={<SourceAdmissionReviewsPage />} />
+          <Route path="pruefungen/quellen/:reviewId" element={<SourceAdmissionReviewsPage />} />
+          <Route path="pruefungen/mahnungen" element={<DunningQuarantinePage />} />
+          <Route path="pruefungen/mandate" element={<MandateQuarantinePage />} />
+        </Route>
         <Route path="/seitenauszuege" element={<VisualDisclosuresPage />} />
-        <Route path="/berechtigungen/:scopeId" element={<AccountingScopesPage />} />
+        <Route path="/berechtigungen/:scopeId" element={<PermissionRedirect to="/berechtigungen/teamrechte" parameter="scopeId" />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppShell>

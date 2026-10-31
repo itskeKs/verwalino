@@ -19,7 +19,10 @@ import time
 from urllib.request import urlopen
 
 import pytest
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError, async_playwright, expect
+from playwright.async_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError, async_playwright, expect
+
+from tests.bdd.report import artifact_directory, attach_artifact
+from tests.bdd.world import admin_credentials, target_url
 
 ROOT = Path(__file__).resolve().parents[3]
 BASE_URL = "http://127.0.0.1:13000"
@@ -37,8 +40,11 @@ def _stop(process):
 
 
 @pytest.fixture(scope="session")
-def browser_app(seed_data):
-    """Never attach to an existing stack; it might belong to another session."""
+def browser_app(seed_data, request):
+    """Use an explicit external target or own a guarded local stack."""
+    if target_url():
+        yield target_url()
+        return
     from app.core.config import settings
     from app.core.deployment_policy import get_deployment_policy
     from app.core.declaration_test_database import require_disposable_database_settings
@@ -67,8 +73,14 @@ def browser_app(seed_data):
         stack.callback(signal.signal, signal.SIGTERM, previous_handler)
         storage = stack.enter_context(tempfile.TemporaryDirectory(prefix="verwalino-browser-"))
         env["HV_DOCUMENT_STORAGE_ROOT"] = storage
-        for command, directory, url in commands:
-            log = stack.enter_context(tempfile.TemporaryFile(mode="w+"))
+        reporter = request.config.pluginmanager.getplugin("scenario-report")
+        for (command, directory, url), name in zip(commands, ("backend", "vite")):
+            if reporter:
+                log_directory = reporter.directory / "logs"
+                log_directory.mkdir(exist_ok=True)
+                log = stack.enter_context((log_directory / f"{name}.log").open("w+"))
+            else:
+                log = stack.enter_context(tempfile.TemporaryFile(mode="w+"))
             process = subprocess.Popen(command, cwd=directory, env=env, stdout=log, stderr=log, start_new_session=True)
             stack.callback(_stop, process)
             deadline = time.monotonic() + 30
@@ -82,12 +94,15 @@ def browser_app(seed_data):
             else:
                 log.seek(0)
                 pytest.fail(f"Browser app did not start: {url}\n{log.read()[-4000:]}")
-        yield
+        if reporter:
+            reporter.run["target_url"] = BASE_URL
+        yield BASE_URL
 
 
 class BrowserSession:
-    def __init__(self):
+    def __init__(self, base_url=BASE_URL):
         self.loop = asyncio.new_event_loop()
+        self.base_url = base_url
 
     def run(self, coroutine):
         return self.loop.run_until_complete(coroutine)
@@ -95,12 +110,13 @@ class BrowserSession:
     async def start(self, launch_args):
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(**{"channel": "chromium", **launch_args})
-        context = await self.browser.new_context(base_url=BASE_URL, viewport=VIEWPORT, service_workers="block")
+        context = await self.browser.new_context(base_url=self.base_url, viewport=VIEWPORT, service_workers="block")
         try:
             page = await context.new_page()
             await page.goto("/objekte")
-            await page.get_by_label("E-Mail", exact=True).fill("admin@alpha.de")
-            await page.get_by_label("Passwort", exact=True).fill("testpass1234")
+            email, password = admin_credentials()
+            await page.get_by_label("E-Mail", exact=True).fill(email)
+            await page.get_by_label("Passwort", exact=True).fill(password)
             await page.get_by_role("button", name="Anmelden", exact=True).click()
             await expect(page.get_by_role("link", name="Objekte", exact=True)).to_be_visible()
             self.auth = await context.storage_state()
@@ -116,7 +132,7 @@ class BrowserSession:
 
 @pytest.fixture(scope="session")
 def browser_session(browser_app, browser_type_launch_args):
-    session = BrowserSession()
+    session = BrowserSession(browser_app)
     try:
         session.run(session.start(browser_type_launch_args))
         yield session
@@ -134,12 +150,14 @@ class BrowserWorld:
     def run(self, coroutine):
         return self.session.run(coroutine)
 
-    async def start(self):
+    async def start(self, *, trace=False):
         self.context = await self.session.browser.new_context(
-            base_url=BASE_URL, viewport=VIEWPORT, storage_state=self.session.auth,
+            base_url=self.session.base_url, viewport=VIEWPORT, storage_state=self.session.auth,
             service_workers="block", locale="de-DE", timezone_id="Europe/Berlin",
         )
-        # Only the real local app is used; never call external services.
+        if trace:
+            await self.context.tracing.start(screenshots=True, snapshots=True, sources=True)
+        # Only the selected app origin is allowed; never call unrelated services.
         async def local_only(route):
             from urllib.parse import urlsplit
             url = urlsplit(route.request.url)
@@ -148,7 +166,8 @@ class BrowserWorld:
                 ("chrome", "resources"),
                 ("chrome-extension", "mhjfbmdgcfjbbpaeojofohoefgiehjai"),
             }
-            if (url.scheme == "http" and url.netloc == "127.0.0.1:13000") or internal_pdf_asset:
+            origin = urlsplit(self.session.base_url)
+            if (url.scheme, url.netloc) == (origin.scheme, origin.netloc) or internal_pdf_asset:
                 await route.continue_()
             else:
                 self.errors.append(f"External request: {route.request.url}")
@@ -181,11 +200,39 @@ class BrowserWorld:
 
 
 @pytest.fixture
-def browser_world(world, browser_session):
+def browser_world(world, browser_session, request):
     browser = BrowserWorld(browser_session, world)
-    browser.run(browser.start())
+    directory = artifact_directory(request.node)
     try:
+        browser.run(browser.start(trace=directory is not None))
         yield browser
         assert not browser.errors, browser.errors
     finally:
-        browser.run(browser.context.close())
+        try:
+            reporter = request.config.pluginmanager.getplugin("scenario-report")
+            failed = sys.exc_info()[0] is not None or (reporter and reporter.records[request.node.nodeid]["outcome"] == "failed")
+            if directory and hasattr(browser, "context"):
+                if failed:
+                    capture_errors = []
+                    if hasattr(browser, "page"):
+                        screenshot = directory / "screenshot.png"
+                        try:
+                            browser.run(browser.page.screenshot(path=str(screenshot), full_page=True))
+                            attach_artifact(request.node, screenshot)
+                        except PlaywrightError as error:
+                            capture_errors.append(f"Screenshot: {error}")
+                    trace = directory / "trace.zip"
+                    try:
+                        browser.run(browser.context.tracing.stop(path=str(trace)))
+                        attach_artifact(request.node, trace)
+                    except PlaywrightError as error:
+                        capture_errors.append(f"Trace: {error}")
+                    if capture_errors:
+                        diagnostic = directory / "capture-error.txt"
+                        diagnostic.write_text("\n".join(capture_errors) + "\n")
+                        attach_artifact(request.node, diagnostic)
+                else:
+                    browser.run(browser.context.tracing.stop())
+        finally:
+            if hasattr(browser, "context"):
+                browser.run(browser.context.close())

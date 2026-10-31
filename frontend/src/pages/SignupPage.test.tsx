@@ -97,7 +97,7 @@ it("keeps the confirmation token through a reload and clears it after success", 
   expect(vi.mocked(fetch).mock.calls.find(([url]) => url === "/api/signup/confirm")?.[1]?.body).toBe(JSON.stringify({ token: "private-token", password }));
   expect(sessionStorage.getItem(tokenKey)).toBeNull();
 });
-it.each([403, 503])("clears a refused token but retains it for a retryable failure (%s)", async (status) => {
+it.each([403, 422, 503])("clears a refused token but retains it for a retryable failure (%s)", async (status) => {
   vi.mocked(fetch).mockImplementation(async (url) => url === "/api/meta" ? json({ deployment_mode: "hosted" }) : json({ detail: "Bestätigung derzeit nicht verfügbar." }, status));
   const first = open("/signup/confirm?token=private-token");
   fireEvent.change(await screen.findByLabelText("Passwort", { exact: true }), { target: { value: password } });
@@ -122,4 +122,23 @@ it.each(["selfhost", "hosted"])("offers the login signup link only in hosted mod
 it("routes unauthenticated hosted visitors to the signup form", async () => {
   render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/signup"]}><AppRoutes /></MemoryRouter></AuthCtx.Provider>);
   expect(await screen.findByLabelText("Organisation")).toBeInTheDocument();
+});
+
+it("retries a mistyped password with the same confirmation token", async () => {
+  vi.mocked(fetch).mockImplementation(async (url, init) => {
+    if (url === "/api/meta") return json({ deployment_mode: "hosted" });
+    const body = JSON.parse(init!.body as string);
+    expect(body.token).toBe("private-token");
+    return body.password === password ? json({}) : json({ detail: "Passwort nicht korrekt. Bitte versuchen Sie es erneut." }, 422);
+  });
+  open("/signup/confirm?token=private-token");
+  const field = await screen.findByLabelText("Passwort", { exact: true });
+  fireEvent.change(field, { target: { value: "Mistyped-password-123" } });
+  await userEvent.click(screen.getByRole("button", { name: "E-Mail bestätigen" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Passwort nicht korrekt");
+  expect(sessionStorage.getItem(tokenKey)).toBe("private-token");
+  fireEvent.change(field, { target: { value: password } });
+  await userEvent.click(screen.getByRole("button", { name: "E-Mail bestätigen" }));
+  await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+  expect(sessionStorage.getItem(tokenKey)).toBeNull();
 });
