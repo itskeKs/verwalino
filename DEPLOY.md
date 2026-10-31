@@ -643,6 +643,111 @@ check remain acceptance steps for the maintainer**. This preparation does not
 close #7 or #12. Full `make test`
 remains a pre-merge gate; the local workflow/installer checks need no database.
 
+## Diagnostics and reporting a problem
+
+In **Benutzer**, an administrator can select **Problem melden**, read the disclosure,
+and choose **Diagnosepaket herunterladen**. Only `OWNER_ADMIN` can download
+`POST /api/admin/diagnostics`; `GET` on the same path supplies the configured support
+link. The response is an uncached attachment. Collection writes no server-side
+archive or report state; an INFO audit line `diagnostics_download` carries its request ID.
+Download first, review the archive, then manually attach it to an issue or email with
+steps, expected/actual behavior and the displayed request ID. Nothing is uploaded or
+sent automatically. The client remembers the last valid server-error ID in memory
+until reload or successful login/logout; it never adds it to the support URL.
+
+On a portable installation, use the existing app image without starting the stack:
+
+```sh
+bash scripts/self-host.sh diagnose
+bash scripts/self-host.sh diagnose --out /private/path/support
+```
+
+The default directory is `diagnostics/` beside `.env.selfhost` (or the selected private
+config). Newly created directories are mode 0700; existing directories keep their mode
+and must be writable. Archives are mode 0600, and the printed path names a
+`verwalino-diagnostics-<UTC>.tar.gz`. Default diagnostics directories are excluded from
+Git and image build contexts; keep a custom output directory private too. An existing
+same-second filename is never overwritten; retry with a new timestamp. Failed collection
+publishes no archive. Symlink output directories are refused.
+
+The shell wrapper only handles arguments, private output publication, `compose ps --all
+--format json`, the last 2,000 physical lines of `compose logs app`, and the one-shot
+`python -m app.diagnostics` invocation inside the app image. It reads the schema head
+with `compose exec db psql` as `app_migrator` and passes it via `--schema-head`;
+tenant counts still use `app_rw`. It does not start services,
+run migrations or invoke an upload service. Bundle collection,
+filtering and serialization live in Python. Installer contracts use fake Docker; this
+is not a claim of live-stack acceptance.
+
+| Member | Contains | Omits |
+| --- | --- | --- |
+| `manifest.json` | Format/time, application version, release target, recognized `HV_RELEASE_ID` and SHA-256 image digest when known | Image registry/name, arbitrary release text, host/user names |
+| `environment.json` | API: normalized deployment mode, application version and tenant-facing feature switches only. CLI: Python version, OS family, effective `HV_*` keys with type/length shapes and boolean switches; secret-like keys show only `<set>`/`<unset>` | API: global configuration shape. Both: configuration strings, URLs, paths and secrets |
+| `containers.json` | Known Compose service identifiers, state and health; `null` for API bundles | Container names/IDs, commands, ports, mounts, labels and raw Docker output |
+| `database.json` | CLI: supplied migration head and organization count. Both: numeric tenant-table counts with collection status and scope | API: installation-wide organization count and migration head (both `null`). Both: organization identifiers/names, rows, schema/driver error messages and connection details |
+| `errors.log` | Last 500 WARNING/ERROR/CRITICAL records: timestamp, severity, request ID and exception class when available | All free-form messages, traceback source/paths, SQL values, bodies, cookies, names, emails, addresses and credentials |
+| `README.txt` | Sharing instructions and collection limits | Installation/user data |
+
+Every source log line passes through `app.core.scrub.scrub_text`; only structural fields
+then survive. Raw messages are excluded even when a name or body has no recognizable
+pattern. Logs are bounded to 8,192 characters per source line and 2,000 source lines.
+UUID request IDs stay opaque; records whose other IDs are recognized as personal data
+or credentials by the scrubber are omitted. Keep personal data out of request IDs and
+release identifiers, since arbitrary names cannot be distinguished from opaque IDs. Recognized release IDs
+are Git hex revisions, UTC `YYYYMMDDTHHMMSSZ` stamps or semantic versions; other labels
+are omitted. Portable CLI bundles obtain a digest from the selected pinned image;
+API deployments may supply `HV_IMAGE_DIGEST=sha256:<64 hex digits>` when known.
+Local builds report an unknown digest rather than guessing.
+Client-selected request IDs that survive filtering pass through the bundle verbatim;
+do not put personal data in them (see [Request IDs and optional error tracking](#request-ids-and-optional-error-tracking), introduced in #84).
+`errors.log` supports correlation with the user's own logs, not replay of a failure.
+
+The API feature allowlist covers API documentation, financial computation, invoice
+extraction, declaration import and declaration Q&A. Deployment mode normalizes the
+existing error-tracking environment label: `selfhost` or `hosted` (including `hosted-*`);
+unrecognized labels produce `null` rather than exposing an operator's custom label.
+
+Database collection uses the runtime **app_rw** role in a read-only transaction, with
+five-second statement bounds. API counts use explicit organization filters and the authenticated organization/user
+RLS context. CLI counts aggregate RLS-visible rows across organizations without a user
+identity; stricter source/user policies may hide rows. Counts are diagnostic observations,
+not a data inventory. The organization count is collected only for the CLI.
+Unavailable metadata stays null/marked unavailable. The API keeps migration head
+`null`: the runtime role lacks SELECT on `alembic_version`, and API collection never
+probes it or changes grants. The installer supplies the head using its existing
+migrator access; the builder validates its format before inclusion.
+
+The API buffer is shared by workers on one host through `HV_DIAGNOSTICS_DIR`
+(default `/tmp/verwalino-diagnostics` inside the container), a private mode-0700
+directory. This is an API process setting, not an installer config key; custom
+deployments must give all web workers in ONE container the same directory; separate
+containers must not share it because PID-keyed files would collide or evict each other. Each worker appends
+structural records to its mode-0600 `<pid>.jsonl`, compacted to the latest 500.
+Separate `<pid>.<organization-id>.jsonl` reserves keep the latest 50 per organization;
+each reserve file is bounded to 50 records. Readers combine live workers' files,
+retain the latest 500 overall plus the latest 50 per organization, and remove dead
+workers' files. Only the authenticated organization's records enter its bundle;
+organization tags remain internal, and records without a validated organization
+are excluded. Disk failures can make records unavailable; no raw log fallback is used.
+This transient buffer is per host; hosted multi-host aggregation is out of scope.
+Container replacement clears the default temporary directory. Use the CLI for the
+bounded Docker history and container states.
+
+`HV_SUPPORT_URL` defaults to `https://github.com/itskeKs/verwalino/issues`. It accepts
+an HTTP(S) URL without credentials. Set it in the API process environment; portable
+Compose forwards an exported value (it is not a `.env.selfhost` key). The dialog opens
+the link only when selected, without attaching a bundle or adding request data.
+
+**Reproduction contract:** `test_seeded_request_failure_keeps_request_id_and_error_class`
+forces a test-only route to raise `RuntimeError`, captures the safe 500 response ID,
+builds the archive and finds that ID plus the error class in `errors.log`, with the
+private message absent. `test_api_bundle_correlates_seeded_failure_without_other_organization_logs`
+exercises the same path through the admin download and excludes another organization's
+failure. These deterministic tests establish correlation for a seeded failure. A report
+still needs the user's reproduction steps; the archive deliberately contains no data
+or request body to replay. Tests also iterate every tar member for forbidden fixture
+strings and exercise the installer with fake Docker.
+
 ## Hosted server
 
 The hosted service runs on Debian 13 (the hosted server); the bootstrap also accepts Ubuntu, untested.

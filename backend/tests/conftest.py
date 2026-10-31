@@ -316,6 +316,11 @@ def run_migrations(request=None):
 _test_app_rw_engine = None
 
 
+@pytest.fixture(autouse=True)
+def isolate_diagnostics_directory(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, 'diagnostics_dir', str(tmp_path / 'diagnostics'))
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def inject_test_engine(run_migrations):
     """Replace the app's DB engine with a fresh one per test function.

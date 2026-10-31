@@ -82,3 +82,16 @@ describe("api client", () => {
     await expect(pending).rejects.toMatchObject({ status: 409, message: "Conflict" });
   });
 });
+
+it('remembers only a valid server error request ID until login or logout', async () => {
+  vi.stubGlobal('fetch', vi.fn());
+  const { getLastErrorRequestId } = await import('./client');
+  const error = response({ detail: 'Internal Server Error' }, 500);
+  error.headers.set('X-Request-ID', 'last-failure-123456');
+  vi.mocked(fetch).mockResolvedValue(error);
+  await api.get('/api/example').catch(() => {});
+  expect(getLastErrorRequestId()).toBe('last-failure-123456');
+  vi.mocked(fetch).mockResolvedValue(response({}, 200));
+  await api.post('/api/auth/logout');
+  expect(getLastErrorRequestId()).toBeNull();
+});

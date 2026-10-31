@@ -63,6 +63,9 @@ if sys.argv[1:3] == ["compose", "version"]:
 if sys.argv[1] == "inspect":
     print(os.environ.get("FAKE_OWNER", os.environ["FAKE_CHECKOUT"] + "/infra/docker-compose.yml"))
     sys.exit(0)
+if "ps" in sys.argv and "--format" in sys.argv and sys.argv[-1] == "json":
+    print(json.dumps([{"Service": "app", "State": "running", "Health": "healthy", "Name": os.environ["SESSION_SECRET"]}]))
+    sys.exit(0)
 if "ps" in sys.argv and "--format" in sys.argv:
     service = sys.argv[-1]
     print(os.environ.get("FAKE_CONTAINER_" + service.upper(),
@@ -77,6 +80,17 @@ if "find" in sys.argv and "caddy" in sys.argv:
     sys.exit(0)
 if "ps" in sys.argv and sys.argv[-1] == "inbox-worker":
     print(os.environ.get("FAKE_INBOX_CONTAINER", ""))
+if "logs" in sys.argv:
+    secrets = " ".join(os.environ[key] for key in ("MIGRATOR_PASSWORD", "APP_RW_PASSWORD", "APP_WORKER_PASSWORD", "APP_REVIEW_PASSWORD", "SESSION_SECRET"))
+    print("2026-10-30 12:00:00,123 ERROR app.test request_id=installer-failure-123 RuntimeError: " + secrets)
+if "app.diagnostics" in sys.argv:
+    os.environ["HV_SESSION_SECRET"] = os.environ["SESSION_SECRET"]
+    import app.diagnostics as diagnostics
+    async def database():
+        return {"status": "available", "organization_count": 1, "row_counts": {"person": 23}}
+    diagnostics.collect_database = database
+    sys.argv = ["diagnostics"] + sys.argv[sys.argv.index("app.diagnostics") + 1:]
+    sys.exit(diagnostics.main())
 if "ps" in sys.argv and "--quiet" in sys.argv:
     state = os.environ.get("FAKE_STATE", "running")
     statuses = [sys.argv[i + 1] for i, arg in enumerate(sys.argv) if arg == "--status"]
@@ -119,6 +133,8 @@ if "psql" in sys.argv:
         name = statement.split("datname='")[1].split("'")[0]
         if name in databases:
             print("1")
+    elif statement == "SELECT version_num FROM public.alembic_version":
+        print("0141")
     elif statement == "SELECT version_num FROM alembic_version":
         print(os.environ.get("FAKE_RESTORED_SCHEMA" if "hausverwaltung_restore" in sys.argv else "FAKE_SCHEMA", "0139"))
     elif statement == "SELECT count(*) FROM public.organization":
@@ -1253,6 +1269,82 @@ elif name == "openssl":
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.base / "stdin").read_text(), password + "\n")
         self.assertNotIn(password, result.stdout + result.stderr + self.log.read_text())
+
+    def test_diagnose_uses_only_read_commands_and_writes_a_private_redacted_bundle(self):
+        config = self.init()
+        result = self.run_script("diagnose")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        path = Path(result.stdout.strip())
+        self.assertEqual(path.parent, self.base / "diagnostics")
+        self.assertRegex(path.name, r"^verwalino-diagnostics-.*\.tar\.gz$")
+        self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        with tarfile.open(path, "r:gz") as archive:
+            members = {member.name: archive.extractfile(member).read().decode() for member in archive}
+        self.assertEqual(len(members), 6)
+        for content in members.values():
+            for key in SECRETS:
+                self.assertNotIn(config[key], content)
+        self.assertIn("installer-failure-123", members["errors.log"])
+        self.assertIn("RuntimeError", members["errors.log"])
+        self.assertEqual(json.loads(members["database.json"])["migration_head"], "0141")
+        args = [call["args"] for call in self.calls()]
+        self.assertEqual(len(args), 4)
+        self.assertEqual(args[0][-4:], ["ps", "--all", "--format", "json"])
+        self.assertTrue(any(call[-6:] == ["logs", "--no-color", "--no-log-prefix", "--tail", "2000", "app"] for call in args))
+        build = next(call for call in args if "app.diagnostics" in call)
+        schema = next(call for call in args if "psql" in call)
+        self.assertEqual(schema[-8:], ["-U", "app_migrator", "-d", "hausverwaltung", "--set", "ON_ERROR_STOP=1", "-Atc", "SELECT version_num FROM public.alembic_version"])
+        self.assertEqual(build[build.index("--schema-head") + 1], "0141")
+        start = build.index("run")
+        self.assertEqual(build[start:start + 10], ["run", "--rm", "--no-deps", "-T", "--entrypoint", "python", "app", "-m", "app.diagnostics", "--containers-json"])
+        self.assert_isolated(args)
+
+    def test_diagnose_supports_out_and_never_leaves_a_bundle_after_failure(self):
+        self.init()
+        output = self.base / "support packages"
+        result = self.run_script("diagnose", "--out", str(output))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(Path(result.stdout.strip()).parent, output)
+        for command in ("ps", "logs", "app.diagnostics"):
+            self.env["FAKE_DOCKER_FAIL"] = command
+            failed = self.run_script("diagnose", "--out", str(self.base / command))
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertEqual(list((self.base / command).glob("*.tar.gz")), [])
+        for args in [("--out",), ("--out", ""), ("--unknown", "x")]:
+            self.assertNotEqual(self.run_script("diagnose", *args).returncode, 0)
+
+    def test_diagnose_writes_a_bundle_with_unavailable_metadata_when_database_is_down(self):
+        self.init()
+        self.env["FAKE_DOCKER_FAIL"] = "psql"
+        result = self.run_script("diagnose")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with tarfile.open(Path(result.stdout.strip()), "r:gz") as archive:
+            database = json.loads(archive.extractfile("database.json").read())
+        self.assertEqual(database["status"], "unavailable")
+        self.assertIsNone(database["migration_head"])
+        self.assertIsNone(database["organization_count"])
+        self.assertEqual(database["row_counts"], {})
+
+    def test_diagnose_preserves_an_existing_output_directory_mode(self):
+        self.init()
+        output = self.base / "existing"
+        output.mkdir(mode=0o755)
+        result = self.run_script("diagnose", "--out", str(output))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(Path(result.stdout.strip()).stat().st_mode), 0o600)
+
+    def test_diagnose_refuses_an_unwritable_existing_output_directory(self):
+        self.init()
+        output = self.base / "unwritable"
+        output.mkdir(mode=0o500)
+        self.addCleanup(output.chmod, 0o700)
+        result = self.run_script("diagnose", "--out", str(output))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Output directory is not writable", result.stderr)
+        self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o500)
+        self.assertEqual(self.calls(), [])
 
     def test_status_and_stop_are_non_destructive(self):
         self.init()

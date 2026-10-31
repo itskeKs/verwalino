@@ -3,7 +3,7 @@
 from decimal import Decimal
 from enum import StrEnum
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -49,6 +49,17 @@ class Settings(BaseSettings):
     # Compose replaces this with the single public alpha hostname.
     allowed_hosts: str = "localhost,127.0.0.1,test"
     enable_api_docs: bool = True
+
+    # Reports are attached manually; this URL only opens the operator's tracker.
+    support_url: HttpUrl = HttpUrl("https://github.com/itskeKs/verwalino/issues")
+    diagnostics_dir: str = "/tmp/verwalino-diagnostics"
+
+    @field_validator("support_url")
+    @classmethod
+    def support_url_has_no_credentials(cls, value: HttpUrl) -> HttpUrl:
+        if value.username or value.password:
+            raise ValueError("Support URL must not contain credentials")
+        return value
 
     # --- Optional errors-only tracker (empty DSN leaves reporting disabled) ---
     error_tracking_dsn: SecretStr = SecretStr("")

@@ -112,6 +112,9 @@ this is not yet a general production release. See
 image verification and selection, operation, backups, and the remaining
 acceptance limits.
 
+Administrators can download a redacted diagnostics bundle via **Problem melden** or
+`bash scripts/self-host.sh diagnose`; see [diagnostics](DEPLOY.md#diagnostics-and-reporting-a-problem).
+
 ### Local development
 
 `scripts/dev-local.sh` needs Poppler and Tesseract with the German language pack; see [CONTRIBUTING.md](CONTRIBUTING.md#development-environment).

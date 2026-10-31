@@ -39,3 +39,7 @@ Feature: Organization isolation
       | property     |
       | person       |
       | bank account |
+
+  Scenario: Administrators share technical diagnostics without organization records
+    When the administrator downloads a diagnostics bundle
+    Then the bundle contains technical counts without either organization’s records

@@ -56,6 +56,7 @@ Usage: bash scripts/self-host.sh COMMAND
        [--proxy-subnet PRIVATE_IPV4_CIDR]
   start                         Build/pull, migrate, start; print browser setup token if empty
   admin --org NAME --email EMAIL [--name NAME] [--password-stdin]
+  diagnose [--out DIR]           Write a redacted bundle beside the config in diagnostics/
   status                        Show this installation's containers
   doctor                        Diagnose setup; German hints, exit 1 on blockers
   stop                          Stop containers without deleting data
@@ -63,6 +64,8 @@ Usage: bash scripts/self-host.sh COMMAND
   restore FILE [--yes]          Replace data in a stopped installation
 Default: local HTTP on 127.0.0.1:18080; no AI, SMTP or extraction worker.
 Request IDs are always enabled; optional error tracking stays off.
+HV_SUPPORT_URL selects the manual report link (export it; not a private config key).
+HV_DIAGNOSTICS_DIR is an API process setting for the per-host error buffer; see DEPLOY.md.
 HV_ERROR_TRACKING_* keys are not installer settings; see DEPLOY.md.
 Export HV_RELEASE_ID to label tracker releases (otherwise app version 0.1.0).
 Optional inbox-worker (profile inbox, ClamAV signatures): see DEPLOY.md.
@@ -773,6 +776,25 @@ admin() {
         --org "$org" --email "$email" --name "$name" --password-stdin
 }
 
+diagnose() {
+    local out="${CONFIG%/*}/diagnostics" states destination schema_head
+    if [[ "$#" != 0 ]]; then [[ "$#" = 2 && "$1" = --out && -n "$2" ]] || fail 'Use diagnose [--out DIR].'; out="$2"; fi
+    [[ ! -L "$out" ]] || fail 'Symlink output directories are refused.'
+    umask 077
+    if [[ ! -e "$out" ]]; then mkdir -p "$out"; chmod 700 "$out"; fi
+    [[ -d "$out" ]] || fail 'Output path is not a directory.'
+    [[ -w "$out" ]] || fail 'Output directory is not writable.'
+    TMP_DIR=$(mktemp -d "$out/.diagnose.XXXXXX")
+    destination="$out/verwalino-diagnostics-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
+    states=$(compose ps --all --format json)
+    if ! schema_head=$(compose exec -T db psql --no-psqlrc -U app_migrator -d hausverwaltung --set ON_ERROR_STOP=1 -Atc 'SELECT version_num FROM public.alembic_version'); then
+        schema_head=''
+    fi
+    compose logs --no-color --no-log-prefix --tail 2000 app | compose run --rm --no-deps -T --entrypoint python app -m app.diagnostics --containers-json "$states" --schema-head "$schema_head" --image "$VERWALINO_IMAGE" > "$TMP_DIR/bundle"
+    ln "$TMP_DIR/bundle" "$destination"
+    printf '%s\n' "$destination"
+}
+
 prepare_setup() {
     local count token_hash issued
     SETUP_TOKEN=''
@@ -810,7 +832,7 @@ case "$command" in
     init) init_config "$@"; exit 0 ;;
     doctor) [[ "$#" = 0 ]] || fail 'Dieser Befehl akzeptiert keine zusätzlichen Argumente.'; doctor; exit $? ;;
     start|status|stop) [[ "$#" = 0 ]] || fail 'This command accepts no additional arguments.' ;;
-    admin|backup|restore) ;;
+    admin|diagnose|backup|restore) ;;
     *) usage >&2; fail 'Unknown command.' ;;
 esac
 load_config
@@ -848,6 +870,7 @@ case "$command" in
         fi
         ;;
     admin) admin "$@" ;;
+    diagnose) diagnose "$@" ;;
     backup) backup "$@" ;;
     restore) restore "$@" ;;
     status) compose ps ;;
