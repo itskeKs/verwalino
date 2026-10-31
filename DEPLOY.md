@@ -26,14 +26,17 @@ to run hosted mode; do not use the portable installer to start a hosted service.
 ## Login lockout and proxy trust
 
 Login failure limits come from the deployment policy, with a fixed 15-minute
-window: selfhost permits 20 failures per IP and 10 per normalized email before
-a 15-minute lockout; hosted permits 10 per IP and 5 per email before a 30-minute
-lockout. Repeated hosted lockouts double to at most 24 hours. Correct credentials
-are refused while either key is locked. Active lockouts are not extended by more
-attempts. Success clears only the email key and its escalation history, preserving
-IP failures. An attacker who knows an email can deliberately lock the victim out,
-with escalating hosted waits. The victim cannot clear an active lockout by logging
-in: they must wait or ask an operator to unlock it as described below.
+window: attempts reserve both counters before password verification. Selfhost
+permits 20 failures per IP and 10 per normalized email before a 15-minute
+lockout; hosted permits 10 per IP and 5 per email before a 30-minute lockout.
+Repeated hosted lockouts double to at most 24 hours. Correct credentials are
+refused while either key is locked or all attempts in its window are reserved.
+Active lockouts are not extended by more attempts. Success clears only the email
+key and its escalation history, preserving IP failures. An attacker who knows an
+email can deliberately lock the victim out with only 5 failures in strict mode,
+with escalating hosted waits. A locked IP also counts each refused attempt
+against the email key. The victim cannot clear an active lockout by logging in:
+they must wait or ask an operator to unlock it as described below.
 
 Escalation resets when the last lockout started strictly more than 24 hours ago
 (hosted) or more than one 15-minute window ago (selfhost), even with continuous
@@ -84,11 +87,10 @@ Use any address in the affected /64 to unlock a native IPv6 key. An independentl
 locked IP must also be cleared or allowed to expire. No runtime unlock endpoint
 is exposed.
 
-These deletes reset only the chosen key and its escalation history. Hashes are
-scope-specific; future signup (#19) will use separate `signup:` keys and the
-shared limiter/honeypot helpers described in
-[auth hardening](docs/architecture.md#43-loginsession-approach-recommendation-decision).
-Signup and its hidden form field are not exposed by this release.
+These deletes reset only the chosen key and its escalation history.
+`downgrade()` of 0142 refuses while rows exist; operators must
+delete the `auth_throttle` rows first.
+Signup throttling arrives with #19.
 
 ## Portable Docker first installation
 

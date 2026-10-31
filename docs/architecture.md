@@ -504,20 +504,16 @@ normal authentication response. Only this table receives new runtime DML grants
 DEFINER function, organization grant or tenant bypass. Downgrade refuses to discard
 retained throttle state, then removes the empty table and its indexes.
 
-`core/rate_limit.py::check_and_record(session, scope, keys, rules)` reads lock
-status without writing or taking row locks. The login handler commits that short
-transaction, including the principal lookup, before hashing. A second short
-transaction calls the returned attempt's `record_failure()` or `reset()`.
-Failure recording atomically upserts and locks keys in consistent order, then
-updates their counters under those locks; two parallel failures count once each,
-including when a concurrent success has deleted the email row since admission.
+`core/rate_limit.py::check_and_record(session, scope, keys, rules)` atomically
+reserves both counters with row-locked upserts in consistent key order. Admission
+refuses an active lock or a reserved count above its limit, so concurrent bursts
+cannot perform more real password checks than the limit. The login handler commits
+reservations and the principal lookup before hashing. A second short transaction
+finalizes a failure's lockout or refunds a successful reservation: the email key
+and its history are cleared, and the IP reservation is decremented while previous
+IP failures remain. Refusals from a locked IP also count against the email key.
 The handler commits outcomes before raising an HTTP refusal.
 `Depends(throttled("login"))` supplies request metadata and deployment rules.
-Future signup (#19) can reuse this service under the independent `signup` scope.
-`core/honeypot.py::honeypot_response` returns `None` for a missing/empty hidden
-field (default `website`, configurable per call), otherwise a success-shaped 200
-with the caller's supplied body. The future signup handler must return it before
-side effects. This helper has unit coverage and is wired to no route until #19.
 
 Every 100th login per worker runs best-effort cleanup in a separate transaction
 **after** the outcome commits. A single delete selects at most 1000 rows whose

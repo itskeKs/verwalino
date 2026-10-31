@@ -75,7 +75,8 @@ On first start, open the printed /setup URL and enter the one-time token (24 h).
 Another start replaces an unused token. The token is never stored in this file.
 The admin command is the alternative to browser setup.
 Login lockouts use the relaxed selfhost policy. Caddy's private proxy subnet
-supplies FORWARDED_ALLOW_IPS for client IP throttling; see DEPLOY.md for unlock SQL.
+supplies FORWARDED_ALLOW_IPS for client IP throttling; see DEPLOY.md for the
+admin_cli unlock command.
 HELP
 }
 
