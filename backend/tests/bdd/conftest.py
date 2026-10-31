@@ -146,7 +146,7 @@ from tests.bdd.steps.browser_bank import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_rent import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_dunning import *  # noqa: E402,F401,F403
 from tests.bdd.steps.login_lockout import *  # noqa: E402,F401,F403
-from tests.signup_support import signup_mail  # noqa: E402,F401
+from tests.bdd.mailpit import mailpit  # noqa: E402,F401
 from tests.bdd.steps.signup import signup_isolation  # noqa: E402,F401
 from tests.bdd.steps.signup import *  # noqa: E402,F401,F403
 from tests.bdd.steps.source_access import *  # noqa: E402,F401,F403

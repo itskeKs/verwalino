@@ -66,8 +66,11 @@ read or write `signup_request` directly; guarded SECURITY DEFINER functions issu
 read, rotate, provision and clean up requests and refuse tenant-context calls.
 SMTP failure keeps the pending request,
 returns the same response and permits retry after the cooldown; SMTP acceptance
-is not proof of recipient delivery. No test submits to real SMTP: the test compose
-has no Mailpit service, so the hosted scenario keeps the existing **FakeSMTP** capture double.
+is not proof of recipient delivery. Hosted signup acceptance submits over real SMTP
+to a digest-pinned Mailpit service in the test compose and CI backend job. Its shared
+BDD fixture reads back recipient, sender, subject and the link's token through the
+HTTP API, then confirms with the emailed token. Missing Mailpit fails acceptance;
+FakeSMTP remains in unit tests. See [test setup](features/README.md#running).
 Organization names are display names; multiple hosted tenants may share a name,
 and signup always creates a separate tenant. The admin CLI retains its existing
 name-reuse behavior. Successful confirmation deletes the pending signup data;
