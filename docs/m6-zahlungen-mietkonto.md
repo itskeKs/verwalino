@@ -507,8 +507,7 @@ official numbered fields**. In particular, administration and bank fees must be
 reviewed within the official non-recovered operating-cost group rather than
 automatically copied into "Sonstige Kosten". The source allocability flag is not
 evidence of what was actually recovered from tenants. No automatic split between
-those official groups is made. `docs/fachreferenz.md` is absent from this checkout;
-no form-year line numbers are asserted.
+those official groups is made; no form-year line numbers are asserted.
 
 Rent is provisionally placed under residential rent; the report does not distinguish
 commercial/garage use, relatives, earlier-year receipts or advance rent. Those
@@ -573,8 +572,16 @@ overrides and ELSTER submission remain follow-ups, with no migration in this cha
 
 ##### Default Anlage V category mapping
 
-The judgement notes below quote the German software text. A test renders both
-tables from the code constants and compares this documentation exactly.
+`NACHZAHLUNG` uses the existing unassigned fallback rather than an entry in the
+default code table:
+
+| Income code | German detail label | Reason for review |
+| --- | --- | --- |
+| `NACHZAHLUNG` | Nicht zugeordnet | A Nachzahlung can come from a tenant or an owner; review its origin and supporting voucher separately. |
+
+The judgement notes in the default table below quote the German software text.
+A test renders the line catalog and default table from the code constants and
+compares this documentation exactly.
 
 <!-- anlage-v-mapping:start -->
 | Category / income code | German detail label | Judgement note |

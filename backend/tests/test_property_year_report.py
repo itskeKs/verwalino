@@ -15,8 +15,10 @@ from app.main import app
 from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noqa: F401
 from tests.test_scope_grants import scope_fixture, bind
 from tests.test_scoped_account_statements import mutate
+from tests.test_scoped_dunning import grant
 
 pytestmark = pytest.mark.asyncio
+ANLAGE_V = '/api/reports/property-year/anlage-v'
 
 
 async def fixture(session, seed, *, bound=True, management_type='MISCH', whole=True,
@@ -367,3 +369,65 @@ async def test_existing_foreign_scope_is_not_disclosed(migrator_session, scope_s
     async with client(ids) as api:
         assert (await report(api, ids, accounting_scope_id=str(foreign['scope']))).status_code == 404
         assert (await report(api, ids, property_id=str(foreign['property']))).status_code == 404
+
+
+async def test_anlage_v_summary_keeps_unmapped_exclusions_and_reconciles_without_writes(migrator_session, scope_seed):
+    ids = await fixture(migrator_session, scope_seed)
+    await payment(migrator_session, ids, '1234.56')
+    await payment(migrator_session, ids, '150.00', kind='NK_VORAUSZAHLUNG')
+    await payment(migrator_session, ids, '1800.00', kind='KAUTION')
+    await cost(migrator_session, ids, '100.03', code='KALTWASSER')
+    await cost(migrator_session, ids, '20.00', code='ERHALTUNGSRUECKLAGE')
+    await ready(migrator_session, ids)
+    await grant(ids, ['read', 'export'])
+    before = await snapshot(ids)
+    async with client(ids) as api:
+        response = await api.get(ANLAGE_V, params=query(ids))
+        assert response.status_code == 200, response.text
+        summary = response.json()
+        assert (summary['property_id'], summary['year'], summary['accounting_scope_id']) == (
+            str(ids['property']), 2026, str(ids['scope']))
+        assert {row['code'] for row in summary['unmapped']} == {'KAUTION', 'ERHALTUNGSRUECKLAGE'}
+        assert [(row['mapped_total'], row['unmapped_total'], row['report_total'], row['difference'])
+                for row in summary['reconciliation']] == [
+                    ('1384.56', '1800.00', '3184.56', '0.00'), ('100.03', '20.00', '120.03', '0.00')]
+    assert await snapshot(ids) == before
+
+
+async def test_anlage_v_summary_foreign_unknown_and_unauthenticated_requests_keep_report_guards(migrator_session, scope_seed, seed_data):
+    ids = await fixture(migrator_session, scope_seed)
+    await ready(migrator_session, ids)
+    foreign = {'org': seed_data['org_b_id'], 'clerk': seed_data['user_b_admin_id']}
+    async with client(foreign) as api:
+        assert (await api.get(ANLAGE_V, params=query(ids))).status_code == 404
+        assert (await api.get(ANLAGE_V, params=query(ids, property_id=str(uuid.uuid4()), accounting_scope_id=str(uuid.uuid4())))).status_code == 404
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as api:
+        assert (await api.get(ANLAGE_V, params=query(ids))).status_code == 401
+    async with client(ids) as api:
+        assert (await api.get(ANLAGE_V, params=query(ids, year=0))).status_code == 422
+        assert (await api.get(ANLAGE_V, params=query(ids, accounting_scope_id=str(uuid.uuid4())))).status_code == 404
+        assert (await api.get(ANLAGE_V, params={'property_id': str(ids['property']), 'year': 2026})).status_code == 409
+
+
+async def test_read_access_is_enough_for_anlage_v_summary(migrator_session, scope_seed):
+    ids = await fixture(migrator_session, scope_seed)
+    await ready(migrator_session, ids)
+    await mutate(text("UPDATE membership SET role='READ_ONLY' WHERE organization_id=:org AND user_id=:clerk"), ids)
+    async with client(ids) as api:
+        assert (await api.get(ANLAGE_V, params=query(ids))).status_code == 200
+
+
+@pytest.mark.parametrize('change,expected', [('scope', 404), ('user', 401), ('unclassified', 409)])
+async def test_anlage_v_summary_reuses_live_authority_and_complete_sources(migrator_session, scope_seed, change, expected):
+    ids = await fixture(migrator_session, scope_seed)
+    await ready(migrator_session, ids)
+    await grant(ids, ['read', 'export'])
+    async with client(ids) as api:
+        assert (await api.get(ANLAGE_V, params=query(ids))).status_code == 200
+        statements = {
+            'scope': "UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE organization_id=:org AND scope_id=:scope AND user_id=:clerk AND revoked_at IS NULL",
+            'user': 'UPDATE "user" SET is_active=false WHERE id=:clerk',
+            'unclassified': "INSERT INTO bank_account(organization_id,property_id,account_type,label) VALUES (:org,:property,'LAUFEND','Unclassified')",
+        }
+        await mutate(text(statements[change]), ids)
+        assert (await api.get(ANLAGE_V, params=query(ids))).status_code == expected
