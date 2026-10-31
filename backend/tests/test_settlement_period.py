@@ -11,7 +11,7 @@ async def april(client_a_admin):
 
 
 @pytest.mark.parametrize("batch", [False, True])
-@pytest.mark.parametrize("start,end", [("2025-04-01", "2026-04-01"), ("2024-02-29", "2025-02-28"), ("2026-01-02", "2026-01-01")])
+@pytest.mark.parametrize("start,end", [("2025-04-01", "2026-04-01"), ("2024-02-29", "2025-03-01"), ("2026-01-02", "2026-01-01")])
 async def test_overlong_or_reversed_statement_is_rejected(client_a_admin, april, batch, start, end):
     body = statement(april, start, end)
     if batch:
@@ -21,19 +21,57 @@ async def test_overlong_or_reversed_statement_is_rejected(client_a_admin, april,
 
 
 @pytest.mark.parametrize("batch", [False, True])
-async def test_overlap_is_rejected_but_identical_and_short_adjacent_periods_work(client_a_admin, april, batch):
+async def test_only_straddling_finalized_statement_periods_are_rejected(client_a_admin, april, batch):
     api = client_a_admin
-    await create(api, "/api/settlements", statement(april))
-    # Identical periods are allowed; the batch's existing skip semantics remain.
-    identical = statement(april)
-    overlap = statement(april, "2026-01-01", "2026-12-31")
-    if batch:
-        identical.pop("lease_agreement_id")
-        overlap.pop("lease_agreement_id")
+    run = await create(api, "/api/settlements", {
+        **statement(april, "2025-07-01", "2025-09-30"), "advance_payments_total": "0.00"})
+    await attest_fixture(api, "settlement", run["id"], {"advance_payments_total": "0.00", "advance_payments_source": "MANUAL"})
+    finalized = await api.post(f"/api/settlements/{run['id']}/finalize", json={})
+    assert finalized.status_code == 200, finalized.text
     path = "/api/settlements" + ("/batch" if batch else "")
-    assert (await api.post(path, json=identical)).status_code in (200, 201)
-    assert (await api.post(path, json=overlap)).status_code == 409
+    for start, end, status in (
+        ("2025-04-01", "2025-08-31", 409),  # Straddles the start.
+        ("2025-08-01", "2025-12-31", 409),  # Straddles the end.
+        ("2025-04-01", "2025-07-01", 409),  # Inclusive boundary day.
+        ("2025-09-30", "2025-12-31", 409),
+        ("2025-08-01", "2025-08-31", 201),  # Contained.
+        ("2025-07-01", "2025-08-31", 201),  # Shared start, contained.
+        ("2025-08-01", "2025-09-30", 201),  # Shared end, contained.
+        ("2025-04-01", "2025-12-31", 201),  # Containing.
+        ("2025-07-01", "2025-12-31", 201),  # Shared start, containing.
+        ("2025-04-01", "2025-09-30", 201),  # Shared end, containing.
+        ("2025-07-01", "2025-09-30", 201),  # Identical; batch skips it.
+        ("2025-04-01", "2025-06-30", 201),  # Adjacent.
+        ("2025-10-01", "2025-12-31", 201),
+    ):
+        body = statement(april, start, end)
+        if batch:
+            body.pop("lease_agreement_id")
+        answer = await api.post(path, json=body)
+        assert answer.status_code == (200 if batch and status == 201 else status), answer.text
+        if batch and status == 201:
+            identical = (start, end) == ("2025-07-01", "2025-09-30")
+            assert len(answer.json()["skipped" if identical else "created"]) == 1, answer.text
     await create(api, "/api/settlements", statement(april, "2026-04-01", "2026-12-31"))
+
+
+@pytest.mark.parametrize("batch", [False, True])
+async def test_overlapping_drafts_do_not_block_statement_creation(client_a_admin, april, batch):
+    await create(client_a_admin, "/api/settlements", statement(april))
+    body = statement(april, "2026-01-01", "2026-12-31")
+    if batch:
+        body.pop("lease_agreement_id")
+    answer = await client_a_admin.post("/api/settlements" + ("/batch" if batch else ""), json=body)
+    assert answer.status_code == (200 if batch else 201), answer.text
+
+
+@pytest.mark.parametrize("batch", [False, True])
+async def test_leap_day_statement_accepts_twelve_month_period(client_a_admin, april, batch):
+    body = statement(april, "2024-02-29", "2025-02-28")
+    if batch:
+        body.pop("lease_agreement_id")
+    answer = await client_a_admin.post("/api/settlements" + ("/batch" if batch else ""), json=body)
+    assert answer.status_code == (200 if batch else 201), answer.text
 
 
 async def test_reference_year_may_be_either_year_of_the_period(client_a_admin, april):

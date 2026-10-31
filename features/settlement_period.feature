@@ -9,7 +9,8 @@ Feature: Settlement period
     When the manager chooses the offered statement period 2025/2026
     Then the draft covers 1 April 2025 through 31 March 2026
     And both booked advances are credited
-    When the manager tries to create an overlapping statement for that tenancy
+    When the manager finalizes the statement
+    And the manager tries to create an overlapping statement for that tenancy
     Then the overlapping statement is refused
     When the manager creates the property's economic plan for 2025
     Then the plan covers 1 April 2025 through 31 March 2026

@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP, localcontext
 
 from fastapi import HTTPException
@@ -32,7 +32,7 @@ from app.core.live_principal import require_live_principal
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.engine.periods import period_starting_in
+from app.engine.periods import period_starting_in, validate_settlement_period
 from app.engine.canonical import canonical_json, sha256_hex
 from app.engine.rounding import DistributionError
 from app.engine.snapshot import build_plan_snapshot_payload
@@ -306,8 +306,8 @@ class EconomicPlanService:
         self,
         property_id: uuid.UUID,
         plan_year: int,
-        period_start: date,
-        period_end: date,
+        period_start: date | None = None,
+        period_end: date | None = None,
         reserve_contribution_total: Decimal | None = None,
         monthly_due_day: int | None = None,
         management_mandate_id: uuid.UUID | None = None,
@@ -320,7 +320,13 @@ class EconomicPlanService:
             raise HTTPException(404, "Property not found")
         if not 1 <= plan_year <= 9998:
             raise HTTPException(422, "Plan year must be between 1 and 9998")
-        period_start, period_end = period_starting_in(prop.fiscal_year_start_month, plan_year)
+        property_start, property_end = period_starting_in(prop.fiscal_year_start_month, plan_year)
+        period_start = period_start if period_start is not None else property_start
+        period_end = period_end if period_end is not None else property_end
+        try:
+            validate_settlement_period(period_start, period_end)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
         plan = EconomicPlan(
             organization_id=self._org_id,
             property_id=property_id,
@@ -335,7 +341,12 @@ class EconomicPlanService:
         )
         await scope.prepare_new(plan, accounting_scope_id)
         if await self._plans.has_conflicting_period(plan):
-            raise HTTPException(409, "Der Zeitraum überschneidet einen aktiven Wirtschaftsplan dieses Objekts.")
+            raise HTTPException(409, "Der Zeitraum überschneidet einen finalisierten Wirtschaftsplan dieses Objekts.")
+        if not (property_start <= period_start <= period_end <= property_end):
+            previous = await self._plans.last_finalized_before(property_id, period_start)
+            if (previous is None or period_start != previous.period_end + timedelta(days=1)
+                    or period_end != property_start - timedelta(days=1)):
+                raise HTTPException(422, "Der Zeitraum muss im Objektzeitraum liegen oder die Übergangslücke vollständig schließen.")
         plan = await self._plans.create(plan)
         await self._audit.create(
             AuditEvent(

@@ -30,11 +30,15 @@ the gap before the regular 1 April 2026–31 March 2027 plan. The transition can
 finalized and used for a WEG settlement. Reversed periods, periods longer than
 twelve months and dates outside these boundaries return 422.
 
-Creating a plan returns 409 if its period overlaps a visible finalized,
-non-superseded plan for the property and the periods differ. Drafts may overlap;
-identical periods remain allowed. WEG annual runs use the same twelve-month
-validation (422) and finalized-only overlap rule (409), for their property and
-accounting context. Superseded documents do not block creation. Checks use normal
+Creating a plan returns 409 only when its period **straddles a boundary** of a
+visible finalized, non-superseded plan for the same property: the periods overlap,
+but neither fully contains the other. For finalized bounds `[a, b]` and new bounds
+`[s, e]`, this means `a < s <= b < e` or `s < a <= e < b`, including overlap on a
+boundary day. Fully contained, fully containing and identical periods are allowed,
+including shared start or end dates, subject to the plan-date boundaries above.
+Drafts never block creation. WEG annual runs use the same twelve-month validation
+(422) and straddling-only rule (409), for their property, type and accounting
+context. Superseded documents do not block creation. Checks use normal
 row-level security, with the same [cross-scope limitation (#95) as statement
 runs](m3-abrechnungs-engine.md#property-settlement-periods-68): an inaccessible
 finalized document in another scope can remain undetected. No migration or

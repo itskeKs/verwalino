@@ -284,7 +284,7 @@ class SettlementService:
         # prepare_new holds the existing organization financial-input lock.
         self._validate_period(period_start, period_end)
         if await self._runs.has_conflicting_period(run):
-            raise HTTPException(409, "Abrechnungszeitraum überschneidet eine aktive Abrechnung dieses Mietvertrags.")
+            raise HTTPException(409, "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags.")
         run = await self._runs.create(run)
 
         await self._audit.create(

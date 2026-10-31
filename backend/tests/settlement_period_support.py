@@ -47,3 +47,31 @@ async def booked(client, data, year, month, *, hausgeld=False, amount="100.00"):
     answer = await client.post(f"/api/payments/{payment['id']}/book")
     assert answer.status_code == 200, answer.text
     return payment
+
+
+async def finalized_plan(client, data, start, end):
+    from tests.financial_coverage_helpers import attest_fixture
+
+    plan = await create(client, "/api/economic-plans", {"property_id": data["property"]["id"],
+        "plan_year": int(start[:4]), "period_start": start, "period_end": end})
+    inputs = {"planned_costs": [{"category_code": "GARTENPFLEGE", "label": "Garten", "planned_amount": "1200.00"}],
+        "reserve_contribution_total": "0.00"}
+    await attest_fixture(client, "economic_plan", plan["id"], inputs)
+    answer = await client.post(f"/api/economic-plans/{plan['id']}/finalize", json=inputs)
+    assert answer.status_code == 200, answer.text
+    return answer.json()
+
+
+async def period_scope(client, data, start, user_id):
+    from uuid import uuid4
+
+    answer = await client.post("/api/accounting-scopes", headers={"Idempotency-Key": str(uuid4())},
+        json={"property_id": data["property"]["id"], "scope_type": "WEG",
+              "label": "Abrechnungskreis", "valid_from": start})
+    assert answer.status_code == 201, answer.text
+    scope_id = answer.json()["id"]
+    answer = await client.post(f"/api/accounting-scopes/{scope_id}/grants",
+        headers={"Idempotency-Key": str(uuid4())}, json={"user_id": str(user_id),
+            "capabilities": ["read", "prepare"], "reason": "Synthetic period fixture"})
+    assert answer.status_code == 201, answer.text
+    return scope_id

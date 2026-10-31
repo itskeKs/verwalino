@@ -1,6 +1,7 @@
 from decimal import Decimal
 from pytest_bdd import given, when, then
 from tests.settlement_period_support import period_property, booked, statement
+from tests.financial_coverage_helpers import attest_fixture
 
 
 @given("a mixed property with a tenancy and an April settlement start")
@@ -38,6 +39,15 @@ def credited(world):
     assert Decimal(answer.json()["advance_payments_total"]) == Decimal("200.00")
 
 
+@when("the manager finalizes the statement")
+def finalize_statement(world):
+    run_id = world.data["period_run"]["id"]
+    world.run(attest_fixture(world.actor, "settlement", run_id,
+        {"advance_payments_total": "200.00", "advance_payments_source": "DERIVED"}))
+    answer = world.act("POST", f"/api/settlements/{run_id}/finalize", json={})
+    assert answer.status_code == 200, world.describe_response()
+
+
 @when("the manager tries to create an overlapping statement for that tenancy")
 def overlapping_statement(world):
     world.act("POST", "/api/settlements", json=statement(world.data["period_property"], "2026-01-01", "2026-12-31"))
@@ -51,7 +61,7 @@ def refused(world):
 @when("the manager creates the property's economic plan for 2025")
 def create_plan(world):
     world.act("POST", "/api/economic-plans", json={"property_id": world.data["period_property"]["property"]["id"],
-        "plan_year": 2025, "period_start": "2025-01-01", "period_end": "2025-12-31"})
+        "plan_year": 2025})
 
 
 @then("the plan covers 1 April 2025 through 31 March 2026")

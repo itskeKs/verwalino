@@ -25,6 +25,8 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
+
+from app.engine.periods import validate_settlement_period
 from app.core.rbac import ScopeCapability
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -244,7 +246,13 @@ class WegSettlementService:
             status="draft",
             engine_version=ENGINE_VERSION,
         )
-        await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(run, accounting_scope_id)
+        sphere = await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(run, accounting_scope_id)
+        try:
+            validate_settlement_period(period_start, period_end)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if await self._runs.has_conflicting_period(run, sphere.id if sphere is not None else None):
+            raise HTTPException(409, "Abrechnungszeitraum überschneidet eine finalisierte WEG-Abrechnung dieses Objekts.")
         run = await self._runs.create(run)
         await self._audit.create(
             AuditEvent(

@@ -23,11 +23,15 @@ monitor uses the same functions. No migration or rounding changes are required.
 `GET /api/properties/{property_id}/settlement-periods?year=2025` offers start years
 2023–2026 with labels and dates; without `year`, the reference is the current calendar
 year. The statement and batch forms adopt the offered dates and still permit free
-periods. A reversed or over-twelve-month period returns 422. A non-identical overlap
-with a finalized, non-superseded run for the same lease and type that the acting
-user can see returns 409; identical periods remain permitted and batches continue
-skipping identical existing runs. Drafts are working state and may overlap. Short
-transition periods remain possible after a property's start month changes. An
+periods. A reversed or over-twelve-month period returns 422. Creation returns 409
+only when the new period **straddles a boundary** of a visible finalized,
+non-superseded run for the same lease and type: the periods overlap, but neither
+fully contains the other. For finalized bounds `[a, b]` and new bounds `[s, e]`,
+this means `a < s <= b < e` or `s < a <= e < b`; overlap on a boundary day counts.
+Fully contained, fully containing and identical periods remain permitted, including
+periods sharing a start or end date. Batches apply the same rule and continue
+skipping identical existing runs. Drafts never block creation. Short transition
+periods remain possible after a property's start month changes. An
 inclusive period from 29 February 2024 through 28 February 2025 is twelve months
 and is accepted.
 
