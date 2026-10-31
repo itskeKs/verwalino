@@ -17,10 +17,11 @@ def inject_test_engine():
     """No application engine is needed."""
 
 
-def test_report_records_steps_failures_skips_and_portable_artifacts(pytester, monkeypatch):
+@pytest.mark.parametrize("mode", ["selfhost", "hosted"])
+def test_report_records_steps_failures_skips_and_portable_artifacts(pytester, monkeypatch, mode):
     monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[1]))
     monkeypatch.setenv("GITHUB_SHA", "123abc")
-    monkeypatch.setenv("VERWALINO_SCENARIO_MODE", "selfhost")
+    monkeypatch.setenv("HV_DEPLOYMENT_MODE", mode)
     monkeypatch.delenv("VERWALINO_TARGET_URL", raising=False)
     pytester.makefile(".feature", tiny="""
         @contract
@@ -90,7 +91,7 @@ def test_report_records_steps_failures_skips_and_portable_artifacts(pytester, mo
     run = report["run"]
     assert {"started", "finished", "git_sha", "mode", "runner"} <= run.keys()
     assert run["started"] <= run["finished"]
-    assert (run["git_sha"], run["mode"]) == ("123abc", "selfhost")
+    assert (run["git_sha"], run["mode"]) == ("123abc", mode)
     assert "target_url" not in run
     assert not run.get("notes")
     scenarios = report["scenarios"]

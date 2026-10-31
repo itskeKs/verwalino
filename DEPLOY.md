@@ -1,5 +1,245 @@
 # Deployment
 
+## Deployment mode
+
+`HV_DEPLOYMENT_MODE` accepts exactly `selfhost` (default) or `hosted`. Invalid values
+stop the process at configuration initialization with the allowed values in the error.
+Set it in the backend process environment; a custom container deployment must pass it
+explicitly to the container. Changing it requires restarting the backend.
+
+Both modes use the same image, authentication and organization isolation. `selfhost`
+offers token-gated first-run setup on an empty database. `hosted` suppresses setup:
+`GET /api/setup` reports `required: false`, every non-GET request returns the closed
+setup 404, and `/setup` redirects to login. Until hosted signup exists, operators use
+the existing admin CLI to bootstrap hosted organizations. Selecting hosted mode does
+not implement signup, rate limiting, quotas, password reset or legal pages. The
+[policy table](docs/architecture.md#deployment-modes) records only decisions with
+implemented readers. Opt-in error tracking is configured separately below.
+
+The portable installer below is selfhost-only and unchanged, including `start`'s
+setup-token flow. Its manifest relies on the `selfhost` default; it does not forward
+`HV_DEPLOYMENT_MODE` from the caller or accept it in `.env.selfhost`. Its HTTP/HTTPS
+`VERWALINO_MODE` is a separate transport choice. Use a separately managed deployment
+to run hosted mode; do not use the portable installer to start a hosted service.
+
+## Install in one command
+
+For a **new** Linux server or macOS/Linux laptop with Bash, OpenSSL, Docker
+Engine/Desktop, Compose **v2 >= 2.24**, `curl` or `wget`, and `sha256sum` or
+`shasum`. Docker must already be running and accessible to your user. The
+script does not use sudo or install system packages. Choose a Docker context
+without an existing Verwalino installation; only one installation per context
+is supported. Do not run this on the existing alpha host.
+
+**Release preparation:** these commands work once the maintainer publishes the
+first stable tag with installer assets and enables anonymous repository/release
+and GHCR access. No published version or fresh-VM success is claimed here.
+
+On a laptop, open Docker Desktop first, then run:
+
+```bash
+curl -fsSL https://github.com/itskeKs/verwalino/releases/latest/download/install.sh | bash -s --
+```
+
+The default directory is `./verwalino`; the app listens only on
+`http://127.0.0.1:18080`. For a different directory/port, append
+`--dir "$HOME/apps/verwalino" --port 19080`. PostgreSQL has no published port.
+
+On a new server, point the domain's A/AAAA records at it (remove an unusable
+AAAA record), make TCP 80/443 reachable and ensure those ports are free:
+
+```bash
+curl -fsSL https://github.com/itskeKs/verwalino/releases/latest/download/install.sh | bash -s -- --https verwaltung.example.org
+```
+
+Caddy provisions HTTPS. Open the printed HTTPS `/setup` URL once DNS and
+certificate issuance are ready. Enter the separately printed one-time token,
+organization, administrator details and password twice to reach the dashboard.
+Keep the terminal output private: the token expires after 24 hours and is never
+saved by the installer. [Browser setup and operational limits](#portable-docker-first-installation)
+also apply to this path.
+
+The script checks prerequisites, resolves the latest stable tag through the
+GitHub API (without jq), and downloads that tag's assets. To pin a release,
+append `--version vX.Y.Z` with a real published version; prereleases and other
+tag formats are refused. It verifies **every payload file** against
+`SHA256SUMS`, including `install.sh` and `IMAGE_DIGEST`, before running the
+downloaded helper. If cosign is installed, it first verifies the checksum
+signature against the exact release workflow identity and GitHub OIDC issuer;
+failure stops installation. Without cosign it prints a manual verification
+command and continues with checksum verification. Checksums detect corruption;
+the signature authenticates the checksum file. The piped bootstrap itself runs
+before it can check its downloaded copy; use the manual path below to verify
+the script before executing it.
+
+The verified `IMAGE_DIGEST` pins the multi-platform GHCR image without a
+registry lookup. The script runs `scripts/self-host.sh init --image
+ghcr.io/itskeks/verwalino@sha256:…`, forwarding `--https`/`--port`, then `start`.
+If that release's helper advertises `doctor` in its help, the installer runs it
+after `init` creates the config and before `start`, stopping if it fails.
+All installation files and any temporary signature cache stay under `--dir`;
+the script does not send telemetry. Docker pulls images and creates the existing portable stack's
+volumes/networks as described below. It does not clone the source or build the
+application on the host.
+
+Init creates `.env.selfhost` with fresh secrets and mode 0600.
+A non-empty `--dir` (default `./verwalino`) without `.env.selfhost` is refused
+unless `--force` is given. An existing config blocks the installer before
+downloading anything. To retry a failed start, rerun with **the same `--version`
+and `--dir`**, plus `--force`; omit
+`--https` and `--port`. The existing config is kept byte for byte, and a
+different image digest is refused. This is a retry, not an upgrade mechanism.
+Use the installed helper for normal operations:
+
+```bash
+cd verwalino
+bash scripts/self-host.sh status
+bash scripts/self-host.sh start  # Also replaces a lost, unused setup token.
+bash scripts/self-host.sh stop   # Keeps all data.
+```
+
+### Release assets and manual verification
+
+Each stable GitHub Release carries flat assets; the installer arranges them
+into the directory layout the unchanged helper and Compose file require:
+
+| Release asset | Installed path | Verification |
+| --- | --- | --- |
+| `install.sh` | `install.sh` | SHA256SUMS |
+| `self-host.sh` | `scripts/self-host.sh` | SHA256SUMS |
+| `docker-compose.yml` | `infra/docker-compose.yml` | SHA256SUMS |
+| `Caddyfile` | `infra/Caddyfile` | SHA256SUMS |
+| `prod-init.sh` | `infra/db/prod-init.sh` (database role bootstrap bind mount) | SHA256SUMS |
+| `env.example` | `env.example` (reference only; not sourced or copied to config) | SHA256SUMS |
+| `IMAGE_DIGEST` | `IMAGE_DIGEST` (one `sha256:…` index digest) | SHA256SUMS |
+| `SHA256SUMS` | `SHA256SUMS` (seven flat payload names) | Keyless signature |
+| `SHA256SUMS.sigstore.json` | `SHA256SUMS.sigstore.json` | Sigstore certificate, signature and transparency proof for SHA256SUMS |
+
+On a connected machine, download and verify a chosen release before executing
+its installer. Install [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
+first; the blob verification follows [Sigstore's verification guide](https://docs.sigstore.dev/cosign/verifying/verify/).
+`v1.2.3` below is an example, not a claim of an existing release:
+
+```bash
+tag=v1.2.3  # Replace with a published stable release that has these assets.
+mkdir -p verwalino-bundle
+cd verwalino-bundle
+for file in install.sh self-host.sh docker-compose.yml Caddyfile prod-init.sh env.example IMAGE_DIGEST SHA256SUMS SHA256SUMS.sigstore.json; do
+  curl -fsSL -o "$file" "https://github.com/itskeKs/verwalino/releases/download/$tag/$file"
+done
+# On macOS, replace sha256sum -c below with shasum -a 256 -c.
+# The chain stops before execution if signature or checksum verification fails.
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity "https://github.com/itskeKs/verwalino/.github/workflows/release-image.yaml@refs/tags/$tag" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS &&
+sha256sum -c SHA256SUMS &&
+bash install.sh --version "$tag" --dir ../verwalino
+```
+
+To reuse local assets, add `--offline-bundle "$PWD"` to the final command.
+With cosign on PATH, offline verification also requires an independently
+trusted **`trusted_root.json`** in that bundle directory. Provision Sigstore's
+service keys/certificates on the connected machine through your trusted
+Sigstore tooling and transfer them alongside the verified assets. This is
+operator trust material, **not a release asset authenticated by its own
+checksum**. The installer supplies it with cosign's `--trusted-root` so
+verification does not fetch service keys. Missing trust material fails before
+cosign runs. The online path lets cosign obtain its trust roots online.
+
+`--offline-bundle DIR` with explicit `--version` uses local assets without API,
+asset or registry-discovery requests from the wrapper. The subsequent `start`
+still uses Compose's pull and needs registry access, including GHCR for the
+app and the PostgreSQL/optional Caddy image sources. The unchanged helper does
+not provide fully air-gapped image provisioning. The first
+release publication, anonymous downloads/pulls, fresh-VM setup/login/restart,
+and real domain/TLS run remain maintainer acceptance steps.
+
+## Install matrix
+
+[Install matrix](.github/workflows/install-matrix.yaml) runs at **04:00 UTC**
+(after the scenario nightly), through `workflow_dispatch`, and after a pushed
+`v*` tag. Tag runs build that tag's checkout independently; they do not wait for
+the release workflow or test published release assets. There is no PR trigger.
+Only `contents: read` is granted; no images, tags, releases or issues are published.
+
+The default matrix uses native **Ubuntu 22.04 and 24.04 amd64** runners.
+Set the repository variable `INSTALL_MATRIX_ARM64=true` to include native
+`ubuntu-24.04-arm`; leaving it unset avoids allocating that runner. Public
+repository standard runners are free; private repository usage may be billed
+under [GitHub's runner pricing](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+Debian 12 is a commented slot: a nested Docker daemon requires privileged mode,
+and sharing the Ubuntu host daemon would exercise its networking and bind mounts
+rather than a Debian Docker host. This matrix uses no privileged containers.
+
+Each job builds this checkout's image natively. Because `install.sh` pins the
+GHCR repository name and `start` pulls it, the disposable runner temporarily
+serves **its own TLS registry** as `ghcr.io` through `/etc/hosts` and a private
+Docker trust certificate. The build happens before that override (uv's base
+image comes from real GHCR). No credentials or real GHCR push are involved.
+The local manifest digest goes into `IMAGE_DIGEST`;
+`scripts/build-release-bundle.sh` supplies the same seven payloads and checksum
+manifest as the release job. Checkout bundles are deliberately unsigned and
+scenario children omit cosign from PATH; release signature verification remains
+covered by the existing installer contracts. This does not verify release signing,
+anonymous downloads, multi-platform publication or public TLS.
+
+`scripts/install-scenarios.sh` runs these four dependent scenarios in order:
+
+| Scenario | Pass criteria |
+| --- | --- |
+| Fresh install reaches setup | One `install.sh --version v0.0.0 --offline-bundle … --dir … --port …` command succeeds; `/api/health/ready` succeeds; `/api/setup` says `required: true`; `/setup` serves HTML; setup URL and token were printed. |
+| Second run is harmless | The same command refuses with the `--force` hint; retry with `--force` and no port option succeeds, every installed file is unchanged, readiness still succeeds. |
+| Busy port is refused | Stop the instance and occupy its app port with a dummy listener; new init and existing start both refuse with `Port … is already in use; choose a free --port or stop its listener.`; no installation containers run. |
+| Restart keeps data | Start, create an admin through the CLI with stdin password, log in, stop, remove containers without deleting named volumes, start again, then log in with the same credentials and user/organization identity and check the named documents volume. |
+
+The restart scenario proves that administrator and organization data survive
+container recreation and that the named documents volume still exists.
+
+An existing `verwalino` container or volume blocks the run before any installation
+operation. A failed scenario fails the job and skips dependent scenarios.
+Cleanup always terminates the dummy listener, calls the installed helper's
+`stop`, and removes the temporary installation directory. Data volumes and
+stopped containers survive until the disposable VM is discarded.
+Setup tokens, generated admin passwords and sessions are not put in the report.
+
+The Actions run contains **`install-<os>-<UTC date>`** artifacts retained for
+**90 days**, with `summary.md` also shown in the job summary. `scenarios.json`
+matches the nightly BDD reporter's shape: `{run, scenarios}`; run metadata has
+`started`, `finished`, `git_sha`, `mode` and `runner`. Every scenario has
+`feature: "install"`, `scenario`, `tags`, `steps`, `outcome`, `duration_s`,
+`error` and `artifacts`. Steps have `keyword`, `name`, `outcome`, `duration_s`
+and `error`; errors are null or `{type, message}`. Failed scenarios attach
+relative paths to helper `status` output and bounded, non-colored Compose logs.
+An unsuccessful artifact capture is recorded in the corresponding file.
+
+TODO matrix entries: **update N-1 → N** after #9 / PR #76 and **backup/restore
+round trip** after #10 / PR #57. They are not executed or counted as passing.
+The #15 reporter (`scripts/scenario_issues.py`, PR #89) is absent on this branch.
+Once available, the intended reporting step consumes this JSON and its uploaded
+artifacts with run URL/OS provenance in a separately authorized issue-writing
+context. No issue-filing step is active yet.
+
+To reproduce locally, use a **new disposable Linux VM**, with Bash 5, Python 3,
+OpenSSL, curl, netcat-openbsd, Docker and Compose v2 >= 2.24. Never use the
+production host or this project's test database. In the VM console, check out
+the revision to test and execute the workflow's native image build and
+runner-local TLS registry steps (substitute a private temporary directory for
+`RUNNER_TEMP`). Those steps export the checkout image's `DIGEST`. Then run:
+
+```bash
+DIGEST="$DIGEST" bash scripts/build-release-bundle.sh ./checkout-bundle
+printf '{}\n' > ./checkout-bundle/SHA256SUMS.sigstore.json
+bash scripts/install-scenarios.sh --version v0.0.0 \
+  --bundle ./checkout-bundle --report ./report
+```
+
+The command runs the four scenarios together against that VM's Docker daemon.
+Inspect `report/summary.md` and failure artifacts, then discard the VM. Do not
+reuse retained volumes as a fresh-install test. On the development machine,
+run only `python3 -B scripts/test-install-scenarios.py` or `make test-installer`:
+they use fake Docker/curl and need no database. The first real matrix run is
+still pending; local contracts do not establish real installation success.
+
 ## Portable Docker first installation
 
 This path is independent of the existing alpha. `infra/docker-compose.yml`
@@ -12,8 +252,9 @@ satisfy the narrow exceptions in `AGENTS.md` and the installed guard. Current
 checks use simulated Docker and static contracts; no real-container or complete
 installation test is claimed.
 
-Prerequisites: Linux or macOS with Bash (including macOS Bash 3.2), OpenSSL,
-Docker Engine/Desktop and Compose v2 >= 2.24. From a reviewed checkout:
+Prerequisites: Linux or macOS with Bash (including macOS Bash 3.2), OpenSSL, Docker Engine >= 24
+(or Docker Desktop with that engine) and Compose >= 2.24 (including later major releases).
+From a reviewed checkout:
 
 ```bash
 bash scripts/self-host.sh init
@@ -63,6 +304,9 @@ PostgreSQL has no published port and runs on an internal backend network.
 
 Default local mode publishes only **127.0.0.1:18080**, without secure-cookie
 requirements over HTTP. `init --port 19080` selects another loopback port.
+Init and start refuse an occupied app port with `Port … is already in use;
+choose a free --port or stop its listener.` before creating configuration or
+starting services. Start permits the app's own listener on a running instance.
 Do not expose this HTTP listener publicly or tunnel it as a production endpoint.
 For a new Internet-facing installation choose HTTPS at init instead:
 
@@ -125,6 +369,56 @@ bash scripts/self-host.sh stop
 There is deliberately no destroy or automatic update command. An older image
 is not a schema rollback. This feature does not authorize an alpha deployment
 or promote its schema gate.
+
+### Portable troubleshooting: start with doctor
+
+Run `bash scripts/self-host.sh doctor` first when installation or startup fails.
+It attempts every independent check, prints one German finding and a concrete
+next step per check, and ends with counts of `OK`, `WARN` and `FEHLER`.
+Exit **1** means at least one blocker (`FEHLER`); exit **0** means no blocker
+was detected, including runs with warnings. An unavailable dependent check is
+reported explicitly; a warning is not proof that the installation works.
+
+| Check | `FEHLER` (blocker) | `WARN` / next step |
+| --- | --- | --- |
+| Docker and Compose | Docker missing, daemon unreachable, engine below 24 or version unknown, Compose below 2.24 or version unknown | Install/update Docker and the Compose plugin; versions 2.24 and later, including 5.x, are supported. Check daemon access and Docker context |
+| Private configuration | Missing, symlink, unsafe filename, mode other than 0600/0400, incomplete or invalid keys/settings/secrets | Restore the original `.env.selfhost`; `chmod 600` it. Existing database credentials must not be regenerated |
+| Port occupancy | Foreign listener on the configured HTTP port, or on 80/443 in HTTPS mode | Install `ss`, `lsof` or `nc` when inspection is unavailable; identify conflicting services before changing their listeners |
+| Free disk | Less than **2 GiB** available | Less than **10 GiB**: free space before backups/updates. Both thresholds use binary GiB (1,048,576 KiB); exactly 2 GiB warns, exactly 10 GiB passes |
+| Containers (`db`, `app`, HTTPS `caddy`) | Restarting, unhealthy, dead or paused | Missing, exited, starting, missing healthcheck or status unavailable: use the printed `start` and scoped `logs` commands |
+| Migration state | Database revision newer than the configured image's release target | Behind: back up, then `start` migrates. Empty/missing version table: not initialized yet, run `start`. Unknown/ambiguous/query failure or unavailable image target: inspect config/image/logs |
+| First organization | — | Count zero: `bash scripts/self-host.sh admin --org NAME --email EMAIL`. An unreadable database/count also warns |
+| HTTPS domain and DNS | Invalid domain or no A/AAAA records | Missing DNS tools, unknown public host address or any address mismatch: compare A/AAAA and the public destination manually; proxies, NAT/elastic IPs and `/etc/hosts` can explain a mismatch. Check for stale AAAA records |
+| HTTPS local reachability | — | Cannot connect to 127.0.0.1:80/443 or `nc` unavailable: start Caddy, check port publishing and firewall |
+| HTTPS certificate | — | Caddy stopped, domain certificate absent/unreadable in `/data/caddy/certificates`, OpenSSL unavailable, TLS probe fails, invalid certificate or expiry within **14 days**: inspect Caddy logs, DNS and renewal access |
+
+Disk is measured with `df -Pk` at both the checkout and Docker's reported data
+root (`docker info -f '{{.DockerRootDir}}'`). An inaccessible Docker data root
+(common with Docker Desktop or a remote context) warns: inspect the Docker host
+or VM disk separately. Allow additional room for complete backup/restore copies.
+Port checks try `ss`, `lsof`, then `nc`. An existing listener is accepted as owned
+only when the running service belongs to this checkout's Compose file and
+publishes the expected port. HTTPS checks inspect ports 80/443; HTTP checks
+inspect the configured `VERWALINO_PORT`.
+
+DNS uses `getent` (A/AAAA), `dig`, or `host`, in that availability order. Public
+host addresses come from `ip` or `ifconfig`; private/NAT addresses cannot prove
+the public destination. The TLS probe uses SNI for `VERWALINO_DOMAIN` against
+127.0.0.1:443 and bounds the handshake to eight seconds. These are local checks;
+verify Internet reachability, firewall/NAT forwarding and browser trust from
+another host as well.
+
+Doctor does not repair settings, migrate, bootstrap users, build/pull images or
+start/stop the stack. Database queries and Caddy certificate listing require
+running services. Comparing migration revisions runs
+`from app.deployment import TARGET; print(TARGET)` in a temporary container from
+the configured local image, with Python as its entrypoint. The probe uses a
+non-root user and a read-only filesystem, mounts no volumes, adds no capabilities
+and has no network access. Missing or unreadable release-target metadata warns.
+Docker diagnostics use the current
+Docker context, which must refer to the same host as the checkout/port checks
+for those checks to describe one machine. After following a finding's next
+step, rerun doctor; use `status` and the printed `logs` commands for detail.
 
 ### Portable backup and restore
 
@@ -243,10 +537,10 @@ Run the opt-in rehearsal with `make test-selfhost-format`: it sets
 only its own scratch databases in `infra-postgres-1` at `127.0.0.1:55432`.
 Ordinary test runs skip it with a reason; it also skips when Docker is missing.
 
-AI declaration import/Q&A, SMTP and invoice OCR are disabled in this initial
-portable stack. Manual invoice review remains supported. The T10 worker is
-active on the existing alpha since 2026-10-24; portable worker integration is
-outside this installer's scope. The first tag publication and native arm64 image installation,
+Declaration import/Q&A, SMTP and the ordinary invoice worker are disabled in
+the default portable stack. The optional [inbox worker](#inbox-worker) processes
+intake documents locally; it requires scanner signatures and, for scans, German
+OCR. The T10 worker is active on the existing alpha since 2026-10-24. The first tag publication and native arm64 image installation,
 complete clean-host setup/login/restart and real domain/TLS acceptance still
 need operator checks; do not treat the mock installer tests as
 proof of those behaviors. Run the portable tests without Docker using
@@ -293,9 +587,9 @@ cosign verify \
 
 Proceed only after verification succeeds. Use that same digest with
 `bash scripts/self-host.sh init --image "$image@$digest"`, then the `start`
-and `admin` commands above. Remote tags are deliberately refused by the installer;
-it does not resolve tags or verify signatures for you. `vX.Y` is a discovery
-alias, not an automatic update mechanism.
+and `admin` commands above. `scripts/self-host.sh` refuses remote image tags;
+that helper does not resolve tags or verify signatures for you. `vX.Y` is a
+discovery alias, not an automatic update mechanism.
 
 On a **native 64-bit arm64** host (Apple Silicon or a 64-bit Raspberry Pi OS),
 run the same signature verification, then check the selected image:
@@ -331,13 +625,128 @@ in the PR. A local cross-platform build alone does not prove installation.
 3. Check the workflow succeeded, make the GHCR package public for anonymous
    pulls if necessary, and inspect both platforms, provenance/SBOMs and the
    signature at the summary's digest. Verify anonymously using the commands above.
-4. Copy the successful release tag and index digest into the examples in this
+4. Check the second job published a GitHub Release containing `install.sh`,
+   `self-host.sh`, `docker-compose.yml`, `Caddyfile`, `prod-init.sh`, `env.example`,
+   `IMAGE_DIGEST`, `SHA256SUMS` and `SHA256SUMS.sigstore.json`. Compare `IMAGE_DIGEST`
+   and the release notes with the image job's index digest. Verify the checksum
+   signature and all seven payload checksums as above; test anonymous asset
+   downloads after the repository/release is made public by the maintainer.
+5. On a fresh VM, run the one-line command through browser setup, sign-in and
+   stop/start persistence. Repeat with a real domain for DNS/TLS acceptance.
+   Record the tag, digest, host and result in the PR; fake-Docker contracts do
+   not prove this. Complete the native arm64 installation check above.
+6. Copy the successful release tag and index digest into the examples in this
    section.
-   Complete the native arm64 installation check above.
 
-The **first tag run and the arm64 installation check remain acceptance steps
-for the maintainer**. This preparation does not close #7. Full `make test`
+The **first tag with installer assets, fresh-VM run and arm64 installation
+check remain acceptance steps for the maintainer**. This preparation does not
+close #7 or #12. Full `make test`
 remains a pre-merge gate; the local workflow/installer checks need no database.
+
+## Diagnostics and reporting a problem
+
+In **Benutzer**, an administrator can select **Problem melden**, read the disclosure,
+and choose **Diagnosepaket herunterladen**. Only `OWNER_ADMIN` can download
+`POST /api/admin/diagnostics`; `GET` on the same path supplies the configured support
+link. The response is an uncached attachment. Collection writes no server-side
+archive or report state; an INFO audit line `diagnostics_download` carries its request ID.
+Download first, review the archive, then manually attach it to an issue or email with
+steps, expected/actual behavior and the displayed request ID. Nothing is uploaded or
+sent automatically. The client remembers the last valid server-error ID in memory
+until reload or successful login/logout; it never adds it to the support URL.
+
+On a portable installation, use the existing app image without starting the stack:
+
+```sh
+bash scripts/self-host.sh diagnose
+bash scripts/self-host.sh diagnose --out /private/path/support
+```
+
+The default directory is `diagnostics/` beside `.env.selfhost` (or the selected private
+config). Newly created directories are mode 0700; existing directories keep their mode
+and must be writable. Archives are mode 0600, and the printed path names a
+`verwalino-diagnostics-<UTC>.tar.gz`. Default diagnostics directories are excluded from
+Git and image build contexts; keep a custom output directory private too. An existing
+same-second filename is never overwritten; retry with a new timestamp. Failed collection
+publishes no archive. Symlink output directories are refused.
+
+The shell wrapper only handles arguments, private output publication, `compose ps --all
+--format json`, the last 2,000 physical lines of `compose logs app`, and the one-shot
+`python -m app.diagnostics` invocation inside the app image. It reads the schema head
+with `compose exec db psql` as `app_migrator` and passes it via `--schema-head`;
+tenant counts still use `app_rw`. It does not start services,
+run migrations or invoke an upload service. Bundle collection,
+filtering and serialization live in Python. Installer contracts use fake Docker; this
+is not a claim of live-stack acceptance.
+
+| Member | Contains | Omits |
+| --- | --- | --- |
+| `manifest.json` | Format/time, application version, release target, recognized `HV_RELEASE_ID` and SHA-256 image digest when known | Image registry/name, arbitrary release text, host/user names |
+| `environment.json` | API: normalized deployment mode, application version and tenant-facing feature switches only. CLI: Python version, OS family, effective `HV_*` keys with type/length shapes and boolean switches; secret-like keys show only `<set>`/`<unset>` | API: global configuration shape. Both: configuration strings, URLs, paths and secrets |
+| `containers.json` | Known Compose service identifiers, state and health; `null` for API bundles | Container names/IDs, commands, ports, mounts, labels and raw Docker output |
+| `database.json` | CLI: supplied migration head and organization count. Both: numeric tenant-table counts with collection status and scope | API: installation-wide organization count and migration head (both `null`). Both: organization identifiers/names, rows, schema/driver error messages and connection details |
+| `errors.log` | Last 500 WARNING/ERROR/CRITICAL records: timestamp, severity, request ID and exception class when available | All free-form messages, traceback source/paths, SQL values, bodies, cookies, names, emails, addresses and credentials |
+| `README.txt` | Sharing instructions and collection limits | Installation/user data |
+
+Every source log line passes through `app.core.scrub.scrub_text`; only structural fields
+then survive. Raw messages are excluded even when a name or body has no recognizable
+pattern. Logs are bounded to 8,192 characters per source line and 2,000 source lines.
+UUID request IDs stay opaque; records whose other IDs are recognized as personal data
+or credentials by the scrubber are omitted. Keep personal data out of request IDs and
+release identifiers, since arbitrary names cannot be distinguished from opaque IDs. Recognized release IDs
+are Git hex revisions, UTC `YYYYMMDDTHHMMSSZ` stamps or semantic versions; other labels
+are omitted. Portable CLI bundles obtain a digest from the selected pinned image;
+API deployments may supply `HV_IMAGE_DIGEST=sha256:<64 hex digits>` when known.
+Local builds report an unknown digest rather than guessing.
+Client-selected request IDs that survive filtering pass through the bundle verbatim;
+do not put personal data in them (see [Request IDs and optional error tracking](#request-ids-and-optional-error-tracking), introduced in #84).
+`errors.log` supports correlation with the user's own logs, not replay of a failure.
+
+The API feature allowlist covers API documentation, financial computation, invoice
+extraction, declaration import and declaration Q&A. Deployment mode normalizes the
+existing error-tracking environment label: `selfhost` or `hosted` (including `hosted-*`);
+unrecognized labels produce `null` rather than exposing an operator's custom label.
+
+Database collection uses the runtime **app_rw** role in a read-only transaction, with
+five-second statement bounds. API counts use explicit organization filters and the authenticated organization/user
+RLS context. CLI counts aggregate RLS-visible rows across organizations without a user
+identity; stricter source/user policies may hide rows. Counts are diagnostic observations,
+not a data inventory. The organization count is collected only for the CLI.
+Unavailable metadata stays null/marked unavailable. The API keeps migration head
+`null`: the runtime role lacks SELECT on `alembic_version`, and API collection never
+probes it or changes grants. The installer supplies the head using its existing
+migrator access; the builder validates its format before inclusion.
+
+The API buffer is shared by workers on one host through `HV_DIAGNOSTICS_DIR`
+(default `/tmp/verwalino-diagnostics` inside the container), a private mode-0700
+directory. This is an API process setting, not an installer config key; custom
+deployments must give all web workers in ONE container the same directory; separate
+containers must not share it because PID-keyed files would collide or evict each other. Each worker appends
+structural records to its mode-0600 `<pid>.jsonl`, compacted to the latest 500.
+Separate `<pid>.<organization-id>.jsonl` reserves keep the latest 50 per organization;
+each reserve file is bounded to 50 records. Readers combine live workers' files,
+retain the latest 500 overall plus the latest 50 per organization, and remove dead
+workers' files. Only the authenticated organization's records enter its bundle;
+organization tags remain internal, and records without a validated organization
+are excluded. Disk failures can make records unavailable; no raw log fallback is used.
+This transient buffer is per host; hosted multi-host aggregation is out of scope.
+Container replacement clears the default temporary directory. Use the CLI for the
+bounded Docker history and container states.
+
+`HV_SUPPORT_URL` defaults to `https://github.com/itskeKs/verwalino/issues`. It accepts
+an HTTP(S) URL without credentials. Set it in the API process environment; portable
+Compose forwards an exported value (it is not a `.env.selfhost` key). The dialog opens
+the link only when selected, without attaching a bundle or adding request data.
+
+**Reproduction contract:** `test_seeded_request_failure_keeps_request_id_and_error_class`
+forces a test-only route to raise `RuntimeError`, captures the safe 500 response ID,
+builds the archive and finds that ID plus the error class in `errors.log`, with the
+private message absent. `test_api_bundle_correlates_seeded_failure_without_other_organization_logs`
+exercises the same path through the admin download and excludes another organization's
+failure. These deterministic tests establish correlation for a seeded failure. A report
+still needs the user's reproduction steps; the archive deliberately contains no data
+or request body to replay. Tests also iterate every tar member for forbidden fixture
+strings and exercise the installer with fake Docker.
 
 ## Hosted server
 
@@ -665,6 +1074,71 @@ request can override or disable it; the notice freezes its rate, reference date,
 day counts and interest amounts. Existing issued notices are not recalculated
 when configuration changes. The UI permits a deliberate rate entry when no
 default is configured. This documentation does not change any runtime setting.
+
+## Inbox worker
+
+Both Compose files define `inbox-worker`, using the same app image, isolated
+`app_worker` connection (`HV_DATABASE_URL_WORKER`), `restart: unless-stopped`
+and worker entrypoint pattern as `invoice-worker`. `HV_WORKER_KIND=workflow_runner`
+selects the existing runner; `--all-organizations` schedules only its default
+intake inspection, internal delivery and logical extraction stages. It has no
+provider key/egress, exposed port, web/review role or migrator credential.
+Documents and ClamAV signatures are read-only; the root filesystem is read-only,
+capabilities are dropped and processing uses bounded temporary storage. The
+130-second stop grace period allows bounded processing to drain. The inbox
+container is capped at 4 GiB; the isolated inspector has a documented 3 GiB address
+space cap, accommodating the [official signature engine's memory requirements](https://docs.clamav.net/manual/Installing/Docker.html#memory-ram-requirements).
+Startup and
+`python -m app.workers.workflow_runner --healthcheck` fail closed when local
+scanner/storage or worker-role/queue access is unavailable. Healthchecks use
+`sigtool --info` to verify official archives without loading a second signature
+engine alongside a job; startup additionally scans a synthetic XML probe through
+the bounded inspector. Neither claims work. See the [flow and review commands](docs/operations/inbox-review-chain.md).
+
+The image includes ClamAV, Poppler and German Tesseract. **Before enabling the
+worker**, provision a host directory of official, current ClamAV signatures
+(using the host's `freshclam` installation), readable by uid 10001. Maintain
+updates on the host; the worker has no network updater. Set
+`HV_CLAMAV_DATABASE_DIR` to that absolute directory for Compose; the default is
+`./clamav` beside the Compose file. Compose refuses a missing bind source and
+the worker refuses an unusable signature database. Do not put signatures in the
+document volume or bypass scanning. This deployment path is documented in
+`.env.example`; the container receives `HV_CLAMAV_DATABASE_DIR=/var/lib/clamav`
+and `HV_DOCUMENT_STORAGE_ROOT=/data/documents`. For host development, export
+`HV_CLAMAV_DATABASE_DIR` pointing to the host's signature directory before
+launching `scripts/dev-local.sh` (otherwise `/var/lib/clamav` is used).
+
+Portable installations leave the worker **off by default**, under profile
+`inbox`. After the existing installer has completed migrations and app readiness,
+an operator can start just the worker from the reviewed checkout. For local HTTP:
+
+```bash
+VERWALINO_COOKIE_NAME=hv_session VERWALINO_COOKIE_SECURE=false \
+VERWALINO_ALLOWED_HOSTS=localhost,127.0.0.1 \
+HV_CLAMAV_DATABASE_DIR=/absolute/path/to/clamav \
+docker compose --env-file .env.selfhost -f infra/docker-compose.yml \
+  --profile inbox up -d --no-deps inbox-worker
+```
+
+For HTTPS use `VERWALINO_COOKIE_NAME=__Host-hv_session`,
+`VERWALINO_COOKIE_SECURE=true` and
+`VERWALINO_ALLOWED_HOSTS=your.domain,localhost,127.0.0.1` instead. Use the same
+private config, Docker context and reviewed image as the app. These commands
+are operator instructions, not authorization to run the portable or production
+stack in a development session. The installer deliberately clears caller
+profiles; `COMPOSE_PROFILES=inbox self-host.sh start` does not enable the worker.
+Do not add `HV_CLAMAV_DATABASE_DIR` to `.env.selfhost` (its key allowlist is strict).
+Installer `start` stops an existing inbox worker before migration; `stop` also
+stops it. The worker stays off until the operator restarts it after app readiness.
+Before migrations or upgrades outside the installer, stop it with the same
+Compose/config selection and `--profile inbox stop inbox-worker`.
+
+The production definition is not profiled; provision its signatures and start
+the service only as part of a separately reviewed deployment. Adding the service
+to a file does not start it on an existing deployment. The local launcher starts
+the invoice worker and, when its healthcheck passes, the inbox worker on the test
+DB; the inbox worker uses the host ClamAV installation.
+No new configuration switch or provider setting is introduced.
 
 ## Invoice worker (T10; alpha active since 2026-10-24)
 
@@ -1008,6 +1482,11 @@ browse/search features remain available in that mode, but the deployment and
 isolated verifier otherwise fail closed before starting runtime containers.
 
 ## Upgrade of an existing installation
+
+`deploy-production.sh` aborts if any project container outside `db`, `app`, `worker`
+and `invoice-worker` is running, so stop a running `inbox-worker` before deploying.
+Deploy and rollback do not move it to the new image; the operator restarts it on
+the intended image after app readiness.
 
 Do not rerun the fresh-install password-generation loop or overwrite `shared/.env`.
 Before migration, verify in the authorized maintenance window that the

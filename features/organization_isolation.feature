@@ -48,3 +48,7 @@ Feature: Organization isolation
       | view     |
       | summary  |
       | download |
+
+  Scenario: Administrators share technical diagnostics without organization records
+    When the administrator downloads a diagnostics bundle
+    Then the bundle contains technical counts without either organization’s records

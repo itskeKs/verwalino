@@ -1,0 +1,74 @@
+"""Deployment decisions remain explicit and reviewable in both modes."""
+
+from dataclasses import FrozenInstanceError, asdict
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+from app.core.config import Settings
+
+
+@pytest.mark.parametrize("mode, expected", [
+    ("selfhost", {
+        "deployment_mode": "selfhost",
+        "first_run_setup_enabled": True,
+    }),
+    ("hosted", {
+        "deployment_mode": "hosted",
+        "first_run_setup_enabled": False,
+    }),
+])
+def test_policy_table_matches_the_mode_snapshot(mode, expected):
+    from app.core.deployment_policy import DeploymentPolicy
+
+    policy = DeploymentPolicy.for_mode(Settings(_env_file=None, deployment_mode=mode).deployment_mode)
+    assert asdict(policy) == expected
+    with pytest.raises(FrozenInstanceError):
+        policy.first_run_setup_enabled = not policy.first_run_setup_enabled
+
+
+def test_unconfigured_installations_default_to_selfhost(monkeypatch):
+    monkeypatch.delenv("HV_DEPLOYMENT_MODE", raising=False)
+    assert Settings(_env_file=None).deployment_mode == "selfhost"
+
+
+@pytest.mark.parametrize("mode", ["hosted", "selfhost"])
+def test_mode_is_read_from_the_environment(monkeypatch, mode):
+    monkeypatch.setenv("HV_DEPLOYMENT_MODE", mode)
+    assert Settings(_env_file=None).deployment_mode == mode
+
+
+@pytest.mark.parametrize("mode", ["", "HOSTED", "self-host", "production", " hosted "])
+def test_invalid_mode_is_refused_with_the_allowed_values(monkeypatch, mode):
+    monkeypatch.setenv("HV_DEPLOYMENT_MODE", mode)
+    with pytest.raises(ValidationError, match="'selfhost' or 'hosted'") as error:
+        Settings(_env_file=None)
+    assert error.value.errors()[0]["loc"] == ("deployment_mode",)
+
+
+def test_architecture_documents_the_complete_policy_table():
+    from dataclasses import fields
+    from app.core.config import DeploymentMode
+    from app.core.deployment_policy import DeploymentPolicy
+
+    policies = [DeploymentPolicy.for_mode(mode) for mode in DeploymentMode]
+
+    def display(value):
+        return str(value).lower() if isinstance(value, bool) else str(value)
+
+    expected = [
+        "| Policy field | selfhost | hosted |",
+        "| --- | --- | --- |",
+        *(
+            "| " + " | ".join([
+                f"`{field.name}`",
+                *(f"`{display(getattr(policy, field.name))}`" for policy in policies),
+            ]) + " |"
+            for field in fields(DeploymentPolicy)
+        ),
+    ]
+    architecture = (Path(__file__).resolve().parents[2] / "docs/architecture.md").read_text()
+    section = architecture.split("## Deployment modes\n", 1)[1].split("\n## ", 1)[0]
+    actual = [line for line in section.splitlines() if line.startswith("|")]
+    assert actual == expected

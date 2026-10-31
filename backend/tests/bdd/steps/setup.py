@@ -4,6 +4,21 @@ from pytest_bdd import given, then, when
 from tests.setup_support import BODY
 
 
+@given("a fresh hosted installation")
+def fresh_hosted_installation(world, fresh_setup):
+    world.anonymous = fresh_setup[0]
+
+
+@then("the installation does not require setup")
+def setup_is_not_required(world):
+    assert world.look(world.anonymous, "/api/setup").json() == {"required": False}
+
+
+@then("first-run setup is not found")
+def setup_is_absent(world):
+    assert world.response.status_code == 404, world.describe_response()
+
+
 @given("a fresh installation with an unused setup token")
 def fresh_installation(world, fresh_setup):
     world.anonymous = fresh_setup[0]

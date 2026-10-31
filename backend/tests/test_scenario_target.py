@@ -102,7 +102,7 @@ def test_external_features_use_api_and_skip_isolation_and_fresh_setup(pytester, 
         )
         # Every isolation example and the fresh-installation scenarios skip against an
         # external target; the count grows with features/organization_isolation.feature.
-        result.assert_outcomes(passed=2, skipped=14)
+        result.assert_outcomes(passed=2, skipped=15)
         assert users["nightly@example.test"] == "bootstrap-password"
         assert len(users) == 3
         assert calls.count("/api/users") == 2
@@ -112,7 +112,7 @@ def test_external_features_use_api_and_skip_isolation_and_fresh_setup(pytester, 
     assert report["run"]["target_url"] == url
     rows = report["scenarios"]
     isolation = [row for row in rows if row["feature"] == "Organization isolation"]
-    assert len(isolation) == 11  # one row per isolation example, incl. the Anlage V probes
+    assert len(isolation) == 12  # one row per isolation example, incl. the Anlage V probes
     assert all("two organizations" in row["error"]["message"] for row in isolation)
     setup = [row for row in rows if row["feature"] == "First run setup"]
     assert len(setup) == 3

@@ -127,6 +127,66 @@ async def test_disabled_declaration_and_discovery_failure_are_safe(monkeypatch,c
     assert 'PRIVATE DISCOVERY DETAIL' not in caplog.text
 
 
+async def test_inbox_healthcheck_fails_closed_without_scanner(monkeypatch,caplog):
+    import logging
+    from app.workers import workflow_runner
+    logger_name='app.workers.workflow_runner'
+    monkeypatch.setattr(logging.getLogger(logger_name),'disabled',False)
+    caplog.set_level(logging.ERROR,logger=logger_name)
+    async def unavailable(stages):
+        raise RuntimeError('PRIVATE SCANNER DETAIL')
+    monkeypatch.setattr(workflow_runner,'check_readiness',unavailable)
+    assert await workflow_runner.main(['--healthcheck'])==1
+    assert 'readiness_failed' in caplog.text
+    assert 'PRIVATE SCANNER DETAIL' not in caplog.text
+
+
+async def test_inbox_healthcheck_checks_dependencies_without_claiming_jobs(monkeypatch):
+    from app.workers import workflow_runner
+    seen=[]
+    async def ready(stages):seen.extend(stages)
+    def forbidden(*args,**kwargs):raise AssertionError('Healthcheck must not build or run adapters')
+    monkeypatch.setattr(workflow_runner,'check_readiness',ready)
+    monkeypatch.setattr(workflow_runner,'build_adapters',forbidden)
+    assert await workflow_runner.main(['--healthcheck'])==0
+    assert seen==['intake_inspection','outbox','intake_extraction']
+
+
+async def test_inbox_stage_failure_is_parked_then_explicitly_retried_without_duplicate_work(worker_tenant,store,monkeypatch):
+    from app.core.intake_inspection import result
+    from app.workers import workflow
+    from app.workers.workflow_runner import WorkflowRunner,build_adapters
+    from tests.test_intake_batches import receive
+    api,ids=worker_tenant;org=ids['org_a_id']
+    batch,receipt=await receive(api,pdf_bytes())
+    real_process=workflow.process_once;failed=True
+    def inspector(data,mime):
+        if failed:raise RuntimeError('PRIVATE SCANNER FAILURE')
+        return result(data,'clean',mime=mime,pages=1)
+    async def inspection(factory,org):return await real_process(factory,org,inspector=inspector)
+    monkeypatch.setattr(workflow,'process_once',inspection)
+    async def organizations():return (org,)
+    runner=WorkflowRunner(organizations,build_adapters(['intake_inspection','outbox']))
+    assert (await runner.run_once()).code=='PROCESSED'
+    state=(await api.get('/api/intake-batches/'+batch['id'])).json()
+    assert state['items'][0]['error_code']=='inspector_failed' and state['counts']['failed']==1
+    # Failure notifications are durably delivered as skipped; they create no child.
+    assert (await runner.run_once()).stage=='outbox'
+    assert (await runner.run_once()).code=='IDLE'
+    assert (await api.get('/api/document-refs/page',params={'source_id':receipt['original_id']})).json()['items']==[]
+    failed=False
+    retried=await api.post('/api/intake-batches/retry',headers={'Idempotency-Key':str(uuid.uuid4())},json={
+        'job_id':receipt['job_id'],'expected_fence':state['items'][0]['fence'],'reason':'Scanner restored'})
+    assert retried.status_code==202,retried.text
+    assert (await runner.run_once()).stage=='intake_inspection'
+    assert (await runner.run_once()).stage=='outbox'
+    assert (await runner.run_once()).code=='IDLE'
+    refs=(await api.get('/api/document-refs/page',params={'source_id':receipt['original_id']})).json()['items']
+    assert len(refs)==1
+    assert len((await api.get('/api/logical-documents',params={'document_ref_id':refs[0]['id']})).json()['items'])==1
+    assert (await api.get('/api/cost-entries')).json()==[]
+
+
 async def test_cancelled_local_processor_drains_real_thread_before_next_tick(monkeypatch):
     import threading
     from app.workers.workflow_runner import WorkflowRunner,build_adapters

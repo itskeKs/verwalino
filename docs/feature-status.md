@@ -13,7 +13,11 @@ history). Update this page in the same PR whenever a feature's status changes.
 
 | Feature | Reference product | Status | Location |
 | --- | --- | --- | --- |
-| Browser first-run setup | n/a | ✅ one-time installer token, 24-hour expiry, atomic first organization/admin; real-stack acceptance pending | `api/setup.py`, `pages/SetupPage.tsx`, `scripts/self-host.sh`, issue #8 |
+| Deployment mode | n/a | ✅ validated selfhost/hosted policy, backend-owned setup gate; hosted features remain deferred | `core/config.py`, `core/deployment_policy.py`, issue #18 |
+| Browser first-run setup | n/a | ✅ selfhost-only, one-time installer token, 24-hour expiry, atomic first organization/admin; real-stack acceptance pending | `api/setup.py`, `pages/SetupPage.tsx`, `scripts/self-host.sh`, issue #8 |
+| Manual diagnostics reports | n/a | ✅ admin download and installer bundle with structural redacted logs; manual attachment only, fake-Docker acceptance | `diagnostics.py`, `api/diagnostics.py`, `pages/UsersPage.tsx`, `scripts/self-host.sh`, issue #17 |
+| One-command release installation | n/a | 🟡 installer and signed release-bundle workflow prepared; first release assets and fresh-VM setup/login/restart pending | `install.sh`, `.github/workflows/release-image.yaml`, [guide](../DEPLOY.md#install-in-one-command), issue #12 |
+| Install matrix | n/a | 🟡 four checkout-install scenarios and nightly/tag workflow prepared; first real matrix run, Debian, update and backup/restore pending; arm64 opt-in | `scripts/install-scenarios.sh`, `.github/workflows/install-matrix.yaml`, [coverage and reports](../DEPLOY.md#install-matrix), issue #13 |
 | Request IDs and opt-in error tracking | n/a | ✅ response/log correlation always enabled; API error events scrubbed before sending, tracking off by default | `core/request_id.py`, `core/logging.py`, `core/error_tracking.py`, `core/scrub.py`, `DEPLOY.md`, issue #16 |
 | Login/logout | yes | ✅ | `api/auth.py`, `pages/LoginPage.tsx` |
 | Create users | yes | ✅ admin-only form and user management | `api/users.py`, `pages/UsersPage.tsx`, T06, T57, [usage](operations/users-and-access.md) |
@@ -72,7 +76,7 @@ history). Update this page in the same PR whenever a feature's status changes.
 | BetrKV cost categories | yes | ✅ fixed seeded set | `api/cost_categories.py`, migration `0005` |
 | Voucher upload, costs from voucher | yes | ✅ | `api/invoice_documents.py`, `pages/InvoiceDocumentDetailPage.tsx` |
 | OCR, e-invoice XML | yes | ✅ runs as the `invoice-worker` service in the production Compose file; automatic OCR is off in the portable stack | `workers/invoice_extraction.py`, `core/invoice_ocr.py`, `core/einvoice.py`, `docker-compose.prod.yml`, T10 |
-| Inbox (Posteingang) with review chain | partial | 🟡 API, pages and pipeline stages exist, but `workers/workflow_runner.py` (intake stages) is not started by any Compose service; end-to-end operation unverified | `api/intake_batches.py`, `workers/workflow_runner.py`, `workers/intake_extraction.py`, `pages/InboxPage.tsx` |
+| Inbox (Posteingang) with review chain | partial | 🟡 `inbox-worker` configured in both Compose files (portable profile `inbox`); upload-to-cost scenario added; real-stack acceptance still requires a working ClamAV installation and signatures | [Operational flow](operations/inbox-review-chain.md), `workers/workflow_runner.py`, `pages/InboxPage.tsx`, [#35](https://github.com/itskeKs/verwalino/issues/35) |
 | Clarification cases (Klärungsfälle) | no | ✅ | `api/exceptions.py`, `pages/ExceptionsPage.tsx` |
 | GoBD: immutability, reversal, correction | n/a | ✅ | `services/cost_entry_service.py` |
 
@@ -133,7 +137,7 @@ history). Update this page in the same PR whenever a feature's status changes.
 - VAT-liable letting (People and tenancies): no VAT on rent, advances and statements for units with the VAT option (#71); no input VAT apportionment (#72).
 - Lease template, handover protocol (People and tenancies): neither a lease contract template nor a handover protocol exists; only generic letter templates (#37).
 - Bank retrieval PSD2/FinTS (Tenant ledger, bank and payments): no automatic bank statement retrieval; import is by CSV/CAMT file only (#40).
-- Inbox (Posteingang) with review chain (Vouchers and costs): intake pipeline stages are not started by any Compose service (`workers/workflow_runner.py`); verify end-to-end operation and add a worker service (#35).
+- Inbox (Posteingang) with review chain (Vouchers and costs): worker service and upload-to-cost scenario are present; real-stack acceptance with ClamAV signatures remains pending ([#35](https://github.com/itskeKs/verwalino/issues/35), [runbook](operations/inbox-review-chain.md)).
 - Settlement period (Operating and heating cost statements): the property's period start month is stored but statements and economic plans do not use it; periods are not validated for length or overlap (#68).
 - Maintenance reserve (Erhaltungsrücklage) (WEG): opening balance and withdrawals are manual inputs; no reserve ledger or bank-account tracking (#36).
 - Dunning fees and default interest (Dunning, deadlines, tasks): fees are fixed constants and interest needs a base rate typed per notice; neither is configurable per organization (#69).

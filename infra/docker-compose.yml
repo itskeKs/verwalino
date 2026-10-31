@@ -72,6 +72,7 @@ services:
       HV_ALLOWED_HOSTS: ${VERWALINO_ALLOWED_HOSTS:?use self-host.sh}
       HV_ENABLE_API_DOCS: "false"
       HV_RELEASE_ID: ${HV_RELEASE_ID:-}
+      HV_SUPPORT_URL: ${HV_SUPPORT_URL:-https://github.com/itskeKs/verwalino/issues}
       HV_DOCUMENT_STORAGE_ROOT: /data/documents
       HV_DECLARATION_IMPORT_ENABLED: "false"
       HV_DECLARATION_QA_ENABLED: "false"
@@ -98,6 +99,52 @@ services:
       retries: 12
       start_period: 15s
     networks: [backend, proxy]
+    logging: *logging
+
+  inbox-worker:
+    image: ${VERWALINO_IMAGE:?run self-host.sh init first}
+    profiles: ["inbox"]
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 130s
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    environment:
+      HV_WORKER_KIND: workflow_runner
+      HV_CLAMAV_DATABASE_DIR: /var/lib/clamav
+      HV_DATABASE_URL_WORKER: postgresql+asyncpg://app_worker:${APP_WORKER_PASSWORD:?missing secret}@db:5432/hausverwaltung
+      HV_DOCUMENT_STORAGE_ROOT: /data/documents
+      HV_DECLARATION_IMPORT_ENABLED: "false"
+      HV_INVOICE_EXTRACTION_ENABLED: "false"
+    volumes:
+      - documents:/data/documents:ro
+      - type: bind
+        source: ${HV_CLAMAV_DATABASE_DIR:-./clamav}
+        target: /var/lib/clamav
+        read_only: true
+        bind:
+          create_host_path: false
+    entrypoint: ["/usr/local/bin/worker-entrypoint.sh"]
+    command: ["--all-organizations"]
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 4g
+    cpus: "1.00"
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.workflow_runner", "--healthcheck"]
+      interval: 60s
+      timeout: 75s
+      retries: 3
+      start_period: 90s
+    networks: [backend]
     logging: *logging
 
   caddy:
