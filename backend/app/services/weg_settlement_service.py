@@ -630,6 +630,8 @@ class WegSettlementService:
             )
 
         ledger = await ReserveLedgerService(self._session, self._org_id, self._user_id).read(run)
+        if any(row['kind'] == 'UNASSIGNED' for row in ledger['entries']):
+            raise HTTPException(422, 'Bitte klären Sie alle Zahlungen ohne Planbezug vor der Berechnung.')
         if ledger.get('unlinked_payment_ids'):
             raise HTTPException(422, 'Bitte verknüpfen Sie alle Rücklagenentnahmen mit Kostenbeleg und Beschluss.')
         paid_reserve = {}
@@ -718,15 +720,15 @@ class WegSettlementService:
 
         # Object-wide reserve development lines (addressee NULL).
         dev = result.reserve
+        self._session.add(self._line(run, None, "RESERVE_OPENING",
+                                     "Erhaltungsruecklage Anfangsbestand", dev.opening_balance, sort,
+                                     note="Anfangsbestand laut Rücklagenbuch")); sort += 1
         if dev.late_cash_total:
             self._session.add(self._line(run, None, 'SUBTOTAL', 'Nachträgliche Buchungen zum abgeschlossenen Jahr',
                                          dev.late_cash_total, sort, note='Rücklagenbuch · ursprüngliche Wertstellung')); sort += 1
         if dev.overrides_total:
             self._session.add(self._line(run, None, 'SUBTOTAL', 'Begründete Rücklagenkorrekturen',
                                          dev.overrides_total, sort, note='Rücklagenbuch')); sort += 1
-        self._session.add(self._line(run, None, "RESERVE_OPENING",
-                                     "Erhaltungsruecklage Anfangsbestand", dev.opening_balance, sort,
-                                     note="Anfangsbestand laut Rücklagenbuch")); sort += 1
         self._session.add(self._line(run, None, "RESERVE_CONTRIBUTION",
                                      "Zufuehrung Erhaltungsruecklage (gesamt)", dev.contributions_total,
                                      sort)); sort += 1
@@ -776,6 +778,8 @@ class WegSettlementService:
         from app.repositories.property_repo import PropertyRepository  # noqa: F401
 
         ledger = await ReserveLedgerService(self._session, self._org_id, self._user_id).read(run)
+        if any(row['kind'] == 'UNASSIGNED' for row in ledger['entries']):
+            raise HTTPException(422, 'Bitte klären Sie alle Zahlungen ohne Planbezug vor der Berechnung.')
         if ledger.get('unlinked_payment_ids'):
             raise HTTPException(422, 'Bitte verknüpfen Sie alle Rücklagenentnahmen mit Kostenbeleg und Beschluss.')
         inp = VermoegensberichtInput(

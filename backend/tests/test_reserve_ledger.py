@@ -106,7 +106,7 @@ async def test_late_hausgeld_uses_frozen_plan_and_storno_amount_after_source_cha
     service = ReserveLedgerService(None, 'org', 'actor')
     service.repo = S(finalized=AsyncMock(return_value=[(frozen, None)]), current_scope=AsyncMock(return_value=None),
         plans=AsyncMock(return_value=[]), entries=AsyncMock(return_value=[]), payments=AsyncMock(return_value=[cash]),
-        owner_units=AsyncMock(return_value={'payer': {'a', 'b'} if storno else {'a'}}),
+        owner_units=AsyncMock(return_value={cash.id: {'a', 'b'} if storno else {'a'}}),
         cash_plans=AsyncMock(return_value=[replacement, original]))
     ledger = await service.read(run)
     assert ledger['late_cash_total'] == ('-50.00' if storno else '50.00')
@@ -210,7 +210,10 @@ async def test_finalized_year_freezes_cash_and_carries_closing_into_next_period(
         'owner_profile_id': w['owner_a'],
     }
     next_world = {**w, 'run': next_run}
-    await finalize(api, next_world)
+    next_result = await finalize(api, next_world)
+    lines = next_result['lines']
+    assert next(row['sort_order'] for row in lines if row['line_type'] == 'RESERVE_OPENING') < next(
+        row['sort_order'] for row in lines if row['label'] == 'Nachträgliche Buchungen zum abgeschlossenen Jahr')
     assert (await api.get(f'/api/weg-settlements/{next_run}/reserve-ledger')).json()['closing_balance'] == '26999.00'
     # A report for the issued year consumes the exact same frozen ledger.
     response = await api.post('/api/weg-settlements/asset-reports', json={
@@ -263,9 +266,9 @@ async def test_buyer_hausgeld_uses_unit_ratio_and_allows_attestation_compute_and
         assert response.status_code == 200, response.text
         assert response.json()['contributions_total'] == '50.00'
         assert next(row['amount'] for row in response.json()['entries'] if row.get('payment_id') == buyer_payment) == '50.00'
-        # Both parties may pay in the change month, even after the seller left.
-        for payer in ('seller', 'buyer'):
-            await payment(api, {**cash_world, 'owner_a': w[payer]}, '10.00', kind='HAUSGELD_VORSCHUSS', when='2026-07-15')
+        # Attribute each party's cash using ownership on its value date.
+        for payer, when in [('seller', '2026-06-30'), ('buyer', '2026-07-15')]:
+            await payment(api, {**cash_world, 'owner_a': w[payer]}, '10.00', kind='HAUSGELD_VORSCHUSS', when=when)
         values = {'paid_advances': [{'owner_profile_id': w[payer], 'paid_total': '0.00'} for payer in ('seller', 'buyer')]}
         await attest_fixture(api, 'settlement', run, values)
         for action in ('compute', 'finalize'):
@@ -282,9 +285,9 @@ async def test_buyer_hausgeld_uses_unit_ratio_and_allows_attestation_compute_and
         for action in ('compute', 'finalize'):
             response = await api.post(f'/api/weg-settlements/asset-reports/{report}/{action}', json=report_values)
             assert response.status_code == 200, response.text
-        # A former owner's arrears use the unit's cash-year plan, not the payer's line.
+        # The buyer's next-year cash uses the unit's current cash-year ratio.
         next_plan = await ownership_plan(api, w, 2027, reserve='1095.00')
-        await payment(api, {**cash_world, 'owner_a': w['seller']}, '100.00', kind='HAUSGELD_VORSCHUSS', when='2027-02-01')
+        await payment(api, cash_world, '100.00', kind='HAUSGELD_VORSCHUSS', when='2027-02-01')
         response = await api.post('/api/weg-settlements', json={
             'property_id': w['property'], 'economic_plan_id': next_plan,
             'period_start': '2027-01-01', 'period_end': '2027-12-31'})
@@ -296,7 +299,7 @@ async def test_buyer_hausgeld_uses_unit_ratio_and_allows_attestation_compute_and
 
 
 @pytest.mark.asyncio
-async def test_unknown_hausgeld_payer_is_rejected_at_booking(client_a_admin, seed_data):
+async def test_unknown_hausgeld_payer_is_accepted_and_listed_without_plan_assignment(client_a_admin, seed_data):
     api = client_a_admin
     w = await reserve_world(api, seed_data)
     person = await api.post('/api/persons', json={'first_name': 'Unknown', 'last_name': 'Synthetic payer'})
@@ -307,10 +310,96 @@ async def test_unknown_hausgeld_payer_is_rejected_at_booking(client_a_admin, see
         'amount': '100.00', 'value_date': '2025-08-05', 'payment_type': 'HAUSGELD_VORSCHUSS',
         'owner_profile_id': owner.json()['id'], 'period_year': 2025, 'period_month': 8})
     assert response.status_code == 201, response.text
-    response = await api.post(f"/api/payments/{response.json()['id']}/book")
-    assert response.status_code == 422, response.text
-    assert 'Einheit' in response.json()['detail']
-    assert (await api.get(f"/api/weg-settlements/{w['run']}/reserve-ledger")).status_code == 200
+    cash = response.json()['id']
+    response = await api.post(f'/api/payments/{cash}/book')
+    assert response.status_code == 200, response.text
+    ledger = (await api.get(f"/api/weg-settlements/{w['run']}/reserve-ledger")).json()
+    assert ledger['unlinked_payment_ids'] == [cash]
+    assert next(row for row in ledger['entries'] if row.get('payment_id') == cash)['kind'] == 'UNASSIGNED'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('known_owner', [False, True])
+async def test_hausgeld_booked_before_plan_stays_unassigned_until_resolved(client_a_admin, seed_data, migrator_session, known_owner):
+    api = client_a_admin
+    w = _seed_weg(seed_data)
+    if not known_owner:
+        person = await api.post('/api/persons', json={'first_name': 'Unknown', 'last_name': 'Synthetic payer'})
+        owner = await api.post('/api/owner-profiles', json={'person_id': person.json()['id']})
+        w['owner_a'] = owner.json()['id']
+    cash = await payment(api, w, '1300.00', kind='HAUSGELD_VORSCHUSS', when='2025-08-05')
+    response = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert response.status_code == 201, response.text
+    report = response.json()['id']
+    path = f'/api/weg-settlements/{report}/reserve-ledger'
+    ledger = (await api.get(path)).json()
+    assert ledger['unlinked_payment_ids'] == [cash]
+    assert next(row for row in ledger['entries'] if row.get('payment_id') == cash)['amount'] == '1300.00'
+    assert next(row for row in ledger['entries'] if row.get('payment_id') == cash)['kind'] == 'UNASSIGNED'
+    audit = await migrator_session.scalar(text("SELECT payload_diff FROM audit_event WHERE entity_id=CAST(:id AS uuid) AND action='payment.booked'"), {'id': cash})
+    assert audit['reserve_plan_unresolved'] is True
+    values = {'bank_balances': [
+        {'bank_account_id': w['bank_giro'], 'label': 'Girokonto', 'account_type': 'LAUFEND', 'balance': '1300.00'},
+        {'bank_account_id': w['bank_ruecklage'], 'label': 'Rücklagenkonto', 'account_type': 'RUECKLAGE', 'balance': '0.00'},
+    ], 'receivables': [], 'payables': []}
+    await attest_fixture(api, 'settlement', report, values)
+    blocked = await api.post(f'/api/weg-settlements/asset-reports/{report}/compute', json=values)
+    assert blocked.status_code == 422 and 'Planbezug' in blocked.text
+    await _create_and_finalize_plan(api, w)
+    ledger = (await api.get(path)).json()
+    if not known_owner:
+        assert ledger['unlinked_payment_ids'] == [cash]
+        assigned = await api.post(path + '/overrides', json={
+            'component': 'CONTRIBUTION', 'payment_id': cash, 'amount': '600.00',
+            'reason': 'Bank statement and unit assignment reviewed'})
+        assert assigned.status_code == 201, assigned.text
+        ledger = (await api.get(path)).json()
+        row = next(row for row in ledger['entries'] if row.get('payment_id') == cash)
+        assert row['reason'] == 'Bank statement and unit assignment reviewed'
+        duplicate = await api.post(path + '/overrides', json={
+            'component': 'CONTRIBUTION', 'payment_id': cash, 'amount': '600.00', 'reason': 'Duplicate'})
+        assert duplicate.status_code == 422
+        overlapping = await api.post('/api/weg-settlements/asset-reports', json={
+            'property_id': w['property'], 'period_start': '2025-07-01', 'period_end': '2025-12-31'})
+        assert overlapping.status_code == 201, overlapping.text
+        other = (await api.get(f"/api/weg-settlements/{overlapping.json()['id']}/reserve-ledger")).json()
+        assert other['unlinked_payment_ids'] == []
+        assert other['contributions_total'] == '600.00'
+    assert ledger['unlinked_payment_ids'] == []
+    assert ledger['contributions_total'] == '600.00'
+    await attest_fixture(api, 'settlement', report, values)
+    response = await api.post(f'/api/weg-settlements/asset-reports/{report}/compute', json=values)
+    assert response.status_code == 200, response.text
+    if not known_owner:
+        response = await api.post(f'/api/payments/{cash}/reverse', json={'note': 'Cancel reviewed assignment'})
+        assert response.status_code == 201, response.text
+        ledger = (await api.get(path)).json()
+        assert ledger['contributions_total'] == '0.00' and ledger['unlinked_payment_ids'] == []
+
+
+@pytest.mark.asyncio
+async def test_cash_ratio_excludes_units_owned_only_before_or_after_value_date(client_a_admin, seed_data, migrator_session):
+    from uuid import UUID
+    from types import SimpleNamespace
+    from app.engine.reserve_ledger import hausgeld_reserve_share
+    from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
+
+    api = client_a_admin
+    w = _seed_weg(seed_data)
+    cash = UUID(await payment(api, w, '1300.00', kind='HAUSGELD_VORSCHUSS', when='2025-08-05'))
+    await migrator_session.execute(text("""INSERT INTO ownership_history
+        (organization_id,unit_id,owner_profile_id,valid_from,valid_to)
+        VALUES (:org,:unit,:owner,'2000-01-01','2025-07-01'),
+               (:org,:unit,:owner,'2025-09-01',NULL)"""),
+        {'org': seed_data['org_a_id'], 'unit': w['u2'], 'owner': w['owner_a']})
+    units = await ReserveLedgerRepository(migrator_session, seed_data['org_a_id']).owner_units(
+        [SimpleNamespace(id=cash)])
+    assert units == {cash: {w['u1']}}
+    # Unequal unit ratios expose an accidental historical/future unit union.
+    planned = [{'unit_id': w['u1'], 'amount': '3600.00'}, {'unit_id': w['u2'], 'amount': '2400.00'}]
+    owners = [{'unit_id': w['u1'], 'annual_advance': '7100.00'}, {'unit_id': w['u2'], 'annual_advance': '5900.00'}]
+    assert hausgeld_reserve_share(Decimal('1300'), units[cash], planned, owners) == Decimal('659.15')
 
 
 @pytest.mark.asyncio
@@ -406,6 +495,10 @@ async def test_late_storno_and_hausgeld_keep_original_ratio_and_are_carried_once
             response = await api.post(f'/api/weg-settlements/asset-reports/{run}/{action}', json=values)
             assert response.status_code == 200, response.text
             assert next(row['amount'] for row in response.json()['lines'] if row['line_type'] == 'RESERVE_CLOSING') == '600.00'
+            if year == 2026:
+                lines = response.json()['lines']
+                assert next(row['sort_order'] for row in lines if row['line_type'] == 'RESERVE_OPENING') < next(
+                    row['sort_order'] for row in lines if row['label'] == 'Nachträgliche Buchungen zum abgeschlossenen Jahr')
     assert (await api.get(f"/api/weg-settlements/{w['run']}/reserve-ledger")).json()['closing_balance'] == '100.00'
 
 

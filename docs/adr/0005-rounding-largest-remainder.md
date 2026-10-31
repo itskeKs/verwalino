@@ -102,3 +102,11 @@ reserve total across receipts: cash arrives independently and a reversal must
 cancel its original component exactly. Do not redistribute fractions across
 payments with `distribute_amount`. Planning still uses largest remainder for
 owner/unit shares and monthly rates. See [M4](../m4-weg-abrechnung.md#maintenance-reserve-ledger-36).
+
+For `n` payments, the property sum can differ from the sum of their exact ratio
+components by up to `n × 0.005 €` (strictly less when no component is exactly a
+half-cent; HALF_UP can attain the bound at ties). At a reserve/Hausgeld ratio
+of `6000/13000`, twelve payments of 433.33 € produce 2,400.00 € of rounded reserve
+components, versus 2,399.98 € when their exact components are summed and rounded
+once. One hundred payments of 0.01 € produce 0.00 €, versus 0.46 € when summed
+before rounding. These differences are retained, not silently redistributed.

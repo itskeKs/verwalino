@@ -76,7 +76,6 @@ class ReserveLedgerService:
             raise HTTPException(422, 'Genau ein aktueller, finalisierter Wirtschaftsplan für diesen Zeitraum ist erforderlich.')
         plan = plans[0] if plans else None
         rows = plan_reserve_entries(plan.snapshot_payload, plan.reserve_contribution_total, plan.period_start) if plan else []
-        owner_units = await self.repo.owner_units(run)
         # Frozen ledgers identify consumed bookings, including earlier late cash.
         history = [r for r, _ in compatible if r.period_end < run.period_start]
         frozen_cash = {row['payment_id']: row for r in history
@@ -86,6 +85,7 @@ class ReserveLedgerService:
         start = min((r.period_start for r in history), default=run.period_start)
         entries = await self.repo.entries(run)
         funding = {entry.payment_id: entry for entry in entries if entry.component == 'FUNDING'}
+        assignments = {entry.payment_id: entry for entry in entries if entry.component == 'CONTRIBUTION' and entry.payment_id}
         contributions, withdrawals, overrides, late_cash = ZERO, ZERO, ZERO, ZERO
         unlinked = []
         payments = await self.repo.payments(run, start)
@@ -94,6 +94,7 @@ class ReserveLedgerService:
                 and ('reserve_ledger' in (r.snapshot_payload or {}) or p.booked_at > r.finalized_at)
                 for r in history))]
         payment_ids = {p.id for p in payments}
+        owner_units = await self.repo.owner_units(payments)
         cash_plans = await self.repo.cash_plans(run, start) if any(
             p.payment_type == 'HAUSGELD_VORSCHUSS' and (plan is None or p.value_date < run.period_start)
             for p in payments) else []
@@ -105,8 +106,11 @@ class ReserveLedgerService:
             if payment.payment_type == 'RUECKLAGENANTEIL':
                 actual = signed
             elif payment.payment_type == 'HAUSGELD_VORSCHUSS':
+                assignment = assignments.get(payment.id) or assignments.get(payment.reverses_id)
                 original = frozen_cash.get(str(payment.reverses_id))
-                if original and (original['kind'] == 'CONTRIBUTION' or original.get('component') == 'CONTRIBUTION'):
+                if assignment:
+                    actual = assignment.amount if assignment.payment_id == payment.id else -assignment.amount
+                elif original and (original['kind'] == 'CONTRIBUTION' or original.get('component') == 'CONTRIBUTION'):
                     # Later sales and corrected plans cannot change frozen cash.
                     actual = -Decimal(original['amount'])
                 else:
@@ -124,9 +128,13 @@ class ReserveLedgerService:
                             cash_plan.snapshot_payload, cash_plan.reserve_contribution_total, cash_plan.period_start)
                     planned = plan_rows[cash_plan.id] if cash_plan else []
                     payload = cash_plan.snapshot_payload if cash_plan else {'inputs': {'owner_periods': []}, 'result': {'owners': []}}
-                    units = owner_units.get(owner, set()) | {o['unit_id'] for o in payload['inputs']['owner_periods']
-                                                           if o['owner_profile_id'] == owner}
+                    units = owner_units.get(payment.id, set())
                     actual = hausgeld_reserve_share(signed, units, [r for r in planned if r['kind'] == 'PLANNED'], payload['result']['owners'])
+                if actual is None:
+                    unlinked.append(str(payment.id))
+                    rows.append({'kind': 'UNASSIGNED', 'date': str(payment.value_date), 'amount': format(signed, '.2f'),
+                                 'payment_id': str(payment.id), 'bank_account_id': str(payment.bank_account_id),
+                                 'owner_profile_id': owner})
             late = payment.value_date < run.period_start
             if actual is not None:
                 if late:
@@ -135,7 +143,9 @@ class ReserveLedgerService:
                     contributions += actual
                 rows.append({'kind': 'LATE_CASH' if late else 'CONTRIBUTION', **({'component': 'CONTRIBUTION'} if late else {}), 'date': str(payment.value_date), 'amount': format(actual, '.2f'),
                              'payment_id': str(payment.id), 'bank_account_id': str(payment.bank_account_id),
-                             'owner_profile_id': owner})
+                             'owner_profile_id': owner,
+                             **({'reason': assignment.reason, 'id': str(assignment.id)}
+                                if payment.payment_type == 'HAUSGELD_VORSCHUSS' and assignment else {})})
             link = funding.get(payment.reverses_id or payment.id)
             if payment.payment_type == 'RUECKLAGENENTNAHME':
                 amount = -signed
@@ -150,7 +160,7 @@ class ReserveLedgerService:
                 if link is None and not (payment.reversed_by_id in payment_ids or payment.reverses_id in payment_ids):
                     unlinked.append(str(payment.id))
         for entry in entries:
-            if entry.component == 'FUNDING' or not run.period_start <= entry.entry_date <= run.period_end:
+            if entry.payment_id or not run.period_start <= entry.entry_date <= run.period_end:
                 continue
             if entry.component == 'OPENING':
                 opening += entry.amount
@@ -193,6 +203,9 @@ class ReserveLedgerService:
             if any(e.payment_id == payment_id for e in await self.repo.entries(run)):
                 raise HTTPException(409, 'Diese Auszahlung ist bereits der Rücklage zugeordnet.')
             amount = ZERO
+        elif component == 'CONTRIBUTION' and payment_id and not any((cost_entry_id, register_entry_id)):
+            if not any(row['kind'] == 'UNASSIGNED' and row.get('payment_id') == str(payment_id) for row in ledger['entries']):
+                raise HTTPException(422, 'Bitte wählen Sie eine Zahlung ohne Planbezug.')
         elif any((payment_id, cost_entry_id, register_entry_id)):
             raise HTTPException(422, 'Belegverknüpfungen sind nur für eine finanzierte Entnahme zulässig.')
         entry = await self.repo.create(ReserveLedgerEntry(

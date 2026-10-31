@@ -405,7 +405,8 @@ async def test_retention_catalog_classifies_every_organization_table(rent_db):
     assert all(row['disposition'] in {'retain', 'conditional', 'delete', 'lifecycle', 'anonymize'} for row in classified)
     by_name = {row['entity']: row['disposition'] for row in classified}
     for name in ('person_data_domain', 'person_data_grant', 'property_data_domain', 'property_data_grant',
-                 'dunning_scope_context', 'property_source_admission', 'special_levy', 'special_levy_allocation'):
+                 'dunning_scope_context', 'property_source_admission', 'special_levy', 'special_levy_allocation',
+                 'reserve_ledger_entry'):
         assert by_name[name] == 'retain', name
     assert by_name['sepa_mandate'] == 'delete'
     await rent_db.execute(text('CREATE TRIGGER immutable_probe BEFORE DELETE ON sepa_mandate FOR EACH ROW EXECUTE FUNCTION protect_scope_evidence()'))

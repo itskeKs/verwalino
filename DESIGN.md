@@ -747,7 +747,10 @@ card with distinct planned (Soll) and cash (Ist) totals, opening, withdrawals,
 signed adjustments and closing. Late closed-year cash has its own signed total
 and “Nachträgliche Buchungen zum abgeschlossenen Jahr” rows with the original
 value dates. Rows show dates, movement types and funding
-references. The table scrolls within its card at 360 px; long reasons wrap.
+references. At 360 px the table fits its card without sideways scrolling;
+date and amount columns stay compact, while movement labels and reasons wrap.
+Computed WEG and asset-report lines place late cash after the opening balance
+and wrap long labels within their cells.
 Money uses German grouping/comma decimals with `€`, dates `DD.MM.YYYY`.
 
 “Korrektur erfassen” opens the existing accessible dialog. Staff choose a signed
@@ -758,6 +761,10 @@ change refreshes the ledger and invalidates the displayed coverage review;
 saving typed target-total overrides also refreshes the ledger. Finalized ledger
 snapshots have no correction action. Negative balances and missing funding
 links have explicit German feedback; unlinked cash payouts block computation.
+Hausgeld without a determinable reserve ratio appears as “Ohne Planbezug” with
+its full signed payment amount and blocks computation. A covering finalized plan
+or a reasoned, payment-specific contribution correction resolves it. The
+contribution dialog offers “Zahlung ohne Planbezug” for these entries.
 
 Payment capture offers “Rücklagenentnahme”, defaults its direction to “Ausgang”,
 and explains its neutral counterparty and subsequent ledger linkage. The payment

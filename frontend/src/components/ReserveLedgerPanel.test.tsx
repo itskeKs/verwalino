@@ -19,6 +19,37 @@ const ledger = { opening_balance: '20000.00', contributions_total: '1000.00', wi
   ] };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
+it('shows unassigned Hausgeld at its full amount and saves an audited payment assignment', async () => {
+  let assigned = false;
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') { assigned = true; return json({ id: 'assignment-1' }, 201); }
+    return json(assigned ? ledger : { ...ledger, unlinked_payment_ids: ['unknown-cash'],
+      entries: [{ kind: 'UNASSIGNED', date: '2025-08-05', amount: '1300.00', payment_id: 'unknown-cash' }] });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={() => {}} />);
+  await screen.findByText('Ohne Planbezug');
+  expect(screen.getByRole('alert')).toHaveTextContent('Planbezug');
+  expect(screen.getByText(/1\.300,00/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Korrektur erfassen' }));
+  fireEvent.change(screen.getByLabelText('Art'), { target: { value: 'CONTRIBUTION' } });
+  fireEvent.change(screen.getByLabelText('Zahlung ohne Planbezug'), { target: { value: 'unknown-cash' } });
+  fireEvent.change(screen.getByLabelText('Betrag *'), { target: { value: '600,00' } });
+  fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Beleg und Einheit geprüft' } });
+  fireEvent.click(screen.getByRole('button', { name: /^Speichern$/ }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+    body: JSON.stringify({ component: 'CONTRIBUTION', amount: '600.00', reason: 'Beleg und Einheit geprüft', payment_id: 'unknown-cash' }),
+  })));
+  await waitFor(() => expect(screen.queryByText('Ohne Planbezug')).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole('button', { name: 'Korrektur erfassen' }));
+  fireEvent.change(screen.getByLabelText('Betrag *'), { target: { value: '5,00' } });
+  fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Weitere Zuführung geprüft' } });
+  fireEvent.click(screen.getByRole('button', { name: /^Speichern$/ }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+    body: JSON.stringify({ component: 'CONTRIBUTION', amount: '5.00', reason: 'Weitere Zuführung geprüft' }),
+  })));
+});
+
 it('separates cash from planning and saves a reasoned signed correction', async () => {
   const changed = vi.fn();
   const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST'

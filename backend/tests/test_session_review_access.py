@@ -309,6 +309,29 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
         })
         assert bank.status_code == 201, bank.text
         bank_id = bank.json()['id']
+        scope = await admin.post('/api/accounting-scopes', json={
+            'property_id': str(w['property']), 'scope_type': 'MIET', 'label': 'Chain rental scope',
+            'valid_from': '2026-01-01', 'whole_property': True, 'units': [],
+        }, headers={'Idempotency-Key': str(uuid.uuid4())})
+        assert scope.status_code == 201, scope.text
+        scope_path = '/api/accounting-scopes/' + scope.json()['id']
+        grant = await admin.post(scope_path + '/grants', json={
+            'user_id': str(w['admin']), 'capabilities': ['read', 'prepare', 'confirm'], 'reason': 'Chain corpus access',
+        }, headers={'Idempotency-Key': str(uuid.uuid4())})
+        assert grant.status_code == 201, grant.text
+        binding = await admin.post(scope_path + '/bindings', json={
+            'resource_type': 'bank_account', 'resource_id': bank_id, 'reason': 'Chain bank evidence',
+        })
+        assert binding.status_code == 201, binding.text
+        payment = await admin.post('/api/payments', json={
+            'bank_account_id': bank_id, 'direction': 'IN', 'amount': '700.00',
+            'value_date': '2026-02-01', 'payment_type': 'KALTMIETE',
+            'tenant_profile_id': str(w['tenant']), 'lease_agreement_id': str(w['lease']),
+            'period_year': 2026, 'period_month': 2,
+        })
+        assert payment.status_code == 201, payment.text
+        booked = await admin.post('/api/payments/' + payment.json()['id'] + '/book')
+        assert booked.status_code == 200, booked.text
         ended_bank = await admin.patch(f'/api/bank-accounts/{bank_id}', json={'is_active': False})
         assert ended_bank.status_code == 200 and ended_bank.json()['is_active'] is False
         vendor = await admin.post('/api/vendors', json={'person_id': issued.json()[0]['person_id']})
@@ -390,12 +413,32 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
                 assert version() == ('0149',)
                 retained = _chain_snapshot(connection)
                 generation = connection.scalar(text('SELECT session_version FROM public."user" WHERE id=:id'), {'id': w['reader']})
-                # The test owns this disposable state. Neutralize reserve rows and
-                # their payment/binding corpus only inside this rollback-only TX,
-                # just like the populated letter/SEPA tables below. Never skip the
-                # historical chain because an earlier test retained reserve cash.
-                connection.execute(text('TRUNCATE public.reserve_ledger_entry,public.payment CASCADE'))
+                # Neutralize only 0149 evidence and its direct dependents in this
+                # rollback-only migrator TX. Keep all legacy payment/binding rows
+                # throughout the chain; FK checks remain enabled during cleanup.
+                cleanup_tables = ('reserve_ledger_entry', 'scope_payment_reconciliation_item',
+                                  'accounting_scope_binding', 'payment')
+                for table in cleanup_tables:
+                    connection.execute(text(f'ALTER TABLE public.{table} DISABLE TRIGGER USER'))
+                connection.execute(text('DELETE FROM public.reserve_ledger_entry'))
+                connection.execute(text("""DELETE FROM public.scope_payment_reconciliation_item
+                    WHERE binding_id IN (SELECT b.id FROM public.accounting_scope_binding b
+                      JOIN public.payment p ON p.organization_id=b.organization_id AND p.id=b.payment_id
+                      WHERE p.payment_type='RUECKLAGENENTNAHME')"""))
+                connection.execute(text("""DELETE FROM public.accounting_scope_binding
+                    WHERE payment_id IN (SELECT id FROM public.payment WHERE payment_type='RUECKLAGENENTNAHME')"""))
+                connection.execute(text("DELETE FROM public.payment WHERE payment_type='RUECKLAGENENTNAHME'"))
+                for table in cleanup_tables:
+                    connection.execute(text(f'ALTER TABLE public.{table} ENABLE TRIGGER USER'))
                 without_reserves = _chain_snapshot(connection)
+                corpus = {
+                    table: [row for row in retained['data'][table] if row['organization_id'] == str(w['org'])]
+                    for table in ('payment', 'accounting_scope_binding')
+                }
+                assert all(corpus.values())
+                for table, rows in corpus.items():
+                    assert [row for row in without_reserves['data'][table]
+                            if row['organization_id'] == str(w['org'])] == rows
                 with pytest.raises(DBAPIError) as refusal:
                     with connection.begin_nested():
                         migrate('0142', downgrade=True)
@@ -464,6 +507,8 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
                 migrate('0149', downgrade=False)
                 connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
                 assert _chain_snapshot(connection) == head
+                for table, rows in corpus.items():
+                    assert [row for row in head['data'][table] if row['organization_id'] == str(w['org'])] == rows
             finally:
                 transaction.rollback()
             assert _chain_snapshot(connection) == retained

@@ -626,12 +626,27 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   the payment multiplied by the UNIT's frozen annual reserve share divided
   by its total annual Hausgeld (all co-owner plan lines combined), rounded
   `ROUND_HALF_UP` once per movement, a deliberate ADR-0005 exception. Historical
-  ownership maps the payer to the unit, including buyers and former owners
-  paying arrears. For several units, their plan volumes are combined.
+  ownership at the payment's value date maps the payer to the unit, including
+  buyers and former owners paying with a value date in their ownership period.
+  Only units owned on that date have their plan volumes combined.
+  For `n` payments, rounding differs from the sum of exact components by at most
+  `n × 0.005 €`, strictly less without exact half-cent ties (HALF_UP attains the
+  bound at ties). At a ratio of `6000/13000`, `12 × 433.33 €` gives `2,400.00 €`
+  versus `2,399.98 €` when summed before rounding; `100 × 0.01 €` gives `0.00 €`
+  versus `0.46 €`. Fractions are not redistributed between receipts.
   A separately booked reserve payment must represent additional cash, not a
-  second classification of the same combined receipt. An owner without any unit
-  in an available cash-year plan receives a clear 422 at payment booking, never
-  during attestation or computation; unmatched historical bookings allocate zero. The property/account and selected financial scope
+  second classification of the same combined receipt. Without a determinable
+  ratio (no usable finalized plan, no dated unit assignment or no positive annual
+  Hausgeld denominator) at booking,
+  the payment is accepted with `reserve_plan_unresolved` in its booking audit.
+  Unresolved cash appears as “Ohne Planbezug” with its full signed payment amount,
+  is excluded from reserve totals and blocks computation. Finalizing a covering
+  plan resolves it only if the payer has a dated unit assignment and a positive
+  annual Hausgeld denominator. Otherwise staff must use “Korrektur erfassen” →
+  “Gebuchte Zuführung”, select “Zahlung ohne Planbezug”, and enter the reviewed
+  reserve component and reason. This append-only, payment-linked correction
+  resolves that booking; an unrelated total adjustment cannot clear it.
+  The property/account and selected financial scope
   filter the source payments.
 - `RUECKLAGENENTNAHME` is a counterparty-neutral payout type; it cannot be
   assigned to a tenant, owner or lease. Every booked payout reduces cash.
@@ -656,6 +671,21 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   ratio. A Storno of frozen Hausgeld negates the recorded original contribution
   exactly, even after later acquisitions or plan corrections. Late payouts still require funding
   evidence before computation.
+  **Legacy cutoff limitation:** a year finalized before this feature has no
+  frozen payment IDs or reserve allocation for its receipts. Original cash booked
+  on or before that year's `finalized_at` is excluded from automatic late cash;
+  a Storno booked afterwards retains the old value date and is included once in
+  the first open ledger. Its original is not added alongside it, and a Hausgeld
+  Storno uses the available value-period plan rather than an unavailable frozen
+  cash component. Operators must compare the imported closing balance, original
+  booking and Storno against the bank evidence before attesting inputs. If the
+  imported balance already includes the reversal, append an opposite signed
+  “Sonstige Korrektur” in the open year for the automatically counted component,
+  naming both payment IDs and the bank evidence in the mandatory reason. If it
+  does not, retain the signed late component and correct only any documented
+  allocation difference. Never edit the historical snapshot or book the original
+  a second time. Automatic exclusion/manual queuing of these legacy Storni is
+  not implemented.
 - Opening comes from the immediately preceding finalized reserve snapshot;
   a gap blocks automatic carry-over. Same-period report/settlement reuse requires
   the exact accounting scope. Prior-year scopes must be readable and either the

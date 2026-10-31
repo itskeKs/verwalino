@@ -342,16 +342,18 @@ class PaymentService:
                 detail=f"Cannot book from status '{payment.status}'",
             )
 
+        reserve_plan_unresolved = False
         if payment.payment_type == 'HAUSGELD_VORSCHUSS':
+            from app.engine.reserve_ledger import hausgeld_reserve_share, plan_reserve_entries
             from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
             await FinancialScopeService(self._session, self._org_id, self._user_id).enter(payment)
             reserves = ReserveLedgerRepository(self._session, self._org_id)
+            reserve_plan_unresolved = True
             for plan in (await reserves.payment_plans(payment))[:1]:
-                units = (await reserves.owner_units(payment)).get(str(payment.owner_profile_id), set())
-                units |= {o['unit_id'] for o in plan.snapshot_payload['inputs']['owner_periods']
-                          if o['owner_profile_id'] == str(payment.owner_profile_id)}
-                if not units.intersection(o['unit_id'] for o in plan.snapshot_payload['result']['owners']):
-                    raise HTTPException(422, 'Dem Zahlenden ist keine Einheit im Wirtschaftsplan zugeordnet.')
+                units = (await reserves.owner_units([payment])).get(payment.id, set())
+                planned = plan_reserve_entries(plan.snapshot_payload, plan.reserve_contribution_total, plan.period_start)
+                reserve_plan_unresolved = hausgeld_reserve_share(
+                    payment.amount, units, planned, plan.snapshot_payload['result']['owners']) is None
 
         now = datetime.now(timezone.utc)
         payment.status = "booked"
@@ -372,6 +374,7 @@ class PaymentService:
                     "amount": str(payment.amount),
                     "payment_type": payment.payment_type,
                     "retention_until": str(payment.retention_until),
+                    **({'reserve_plan_unresolved': True} if reserve_plan_unresolved else {}),
                 },
             )
         )

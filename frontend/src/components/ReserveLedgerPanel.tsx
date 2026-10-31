@@ -7,7 +7,7 @@ const euro = (amount: string) => new Intl.NumberFormat('de-DE', { style: 'curren
 const day = (value: string) => value.split('-').reverse().join('.');
 const labels: Record<string, string> = { PLANNED: 'Geplant (Soll)', CONTRIBUTION: 'Gebuchte Zuführung', WITHDRAWAL: 'Finanzierte Entnahme',
   OVERRIDE: 'Begründete Korrektur', OPENING: 'Anfangsbestand', ADJUSTMENT: 'Sonstige Korrektur', FUNDING: 'Finanzierte Entnahme verknüpfen',
-  LATE_CASH: 'Nachträgliche Buchungen zum abgeschlossenen Jahr' };
+  LATE_CASH: 'Nachträgliche Buchungen zum abgeschlossenen Jahr', UNASSIGNED: 'Ohne Planbezug' };
 
 export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, disabled = false, refreshKey = 0 }: {
   runId: string; propertyId: string; status: string; onChanged: () => void; disabled?: boolean; refreshKey?: number;
@@ -53,10 +53,11 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, disab
     }
     const body: ReserveOverride = { component, amount: component === 'FUNDING' ? '0.00' : normalized, reason: reason.trim() };
     if (component === 'FUNDING') Object.assign(body, { payment_id: payment, cost_entry_id: cost, register_entry_id: register });
+    else if (component === 'CONTRIBUTION' && payment) body.payment_id = payment;
     setSaving(true);
     try {
       await addReserveOverride(runId, body);
-      setOpen(false); setAmount(''); setReason(''); setVersion(v => v + 1); onChanged();
+      setOpen(false); setAmount(''); setReason(''); setPayment(''); setVersion(v => v + 1); onChanged();
     } catch (err) { setFormError(err instanceof Error ? err.message : 'Korrektur konnte nicht gespeichert werden.'); }
     finally { setSaving(false); }
   }
@@ -69,7 +70,8 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, disab
     {ledger && <>
       {ledger.frozen && <p>Finalisierter Rücklagenstand · unveränderbarer Snapshot{ledger.booking_basis === 'LEGACY_SNAPSHOT' ? ' (historische manuelle Erfassung)' : ''}.</p>}
       {ledger.overdrawn && <p role="alert" className="error-text">Die Rücklage ist überzogen. Bitte prüfen Sie die Finanzierung und die Belege.</p>}
-      {!!ledger.unlinked_payment_ids?.length && <p role="alert">Für {ledger.unlinked_payment_ids.length} Rücklagenzahlungen fehlen Kostenbeleg und Beschluss. Bitte verknüpfen Sie diese vor der Berechnung.</p>}
+      {ledger.entries.some(entry => entry.kind === 'UNASSIGNED') && <p role="alert">Zahlungen ohne Planbezug sind noch nicht der Rücklage zugeordnet. Bitte ergänzen Sie einen finalisierten Wirtschaftsplan oder erfassen Sie eine begründete Zuordnung vor der Berechnung.</p>}
+      {!!ledger.unlinked_payment_ids?.some(id => !ledger.entries.some(entry => entry.payment_id === id && entry.kind === 'UNASSIGNED')) && <p role="alert">Für Rücklagenentnahmen fehlen Kostenbeleg und Beschluss. Bitte verknüpfen Sie diese vor der Berechnung.</p>}
       <dl className="form-grid">
         {([['Anfangsbestand', ledger.opening_balance], ['Geplante Zuführung (Soll)', ledger.planned_contributions_total],
           ['Tatsächliche Zuführung (Ist)', ledger.contributions_total], ['Entnahmen', ledger.withdrawals_total],
@@ -78,8 +80,8 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, disab
           ['Endbestand', ledger.closing_balance]] as const).map(([label, value]) =>
           <div key={label}><dt>{label}</dt><dd style={{ margin: 0, fontFamily: 'var(--mono)' }}>{value === null ? 'Historisch nicht erfasst' : euro(value)}</dd></div>)}
       </dl>
-      <div className="table-scroll" style={{ overflowX: 'auto' }}>
-        <table className="data-table" style={{ minWidth: '32rem' }}><thead><tr><th>Datum</th><th>Art / Beleg</th><th>Betrag</th></tr></thead>
+      <div>
+        <table className="data-table reserve-ledger-table"><thead><tr><th>Datum</th><th>Art / Beleg</th><th>Betrag</th></tr></thead>
           <tbody>{ledger.entries.map((entry, index) => <tr key={entry.id ?? `${entry.kind}-${entry.date}-${index}`}>
             <td style={{ whiteSpace: 'nowrap' }}>{day(entry.date)}</td>
             <td>{labels[entry.kind] ?? entry.kind}{entry.component && ` · ${labels[entry.component] ?? entry.component}`}
@@ -98,9 +100,15 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, disab
       <DialogTitle>Rücklagenkorrektur</DialogTitle>
       <DialogDescription>Erfassen Sie eine begründete Differenz. Positive Entnahmen vermindern den Bestand; sonstige Korrekturen werden mit Vorzeichen addiert.</DialogDescription>
       <form onSubmit={save}><fieldset disabled={saving || disabled} className="form-grid" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
-        <label>Art<select aria-label="Art" value={component} onChange={e => setComponent(e.target.value as ReserveComponent)}>
+        <label>Art<select aria-label="Art" value={component} onChange={e => { setComponent(e.target.value as ReserveComponent); setPayment(''); }}>
           {(['ADJUSTMENT', 'OPENING', 'CONTRIBUTION', 'WITHDRAWAL', 'FUNDING'] as const).map(kind => <option key={kind} value={kind}>{labels[kind]}</option>)}
         </select></label>
+        {component === 'CONTRIBUTION' && ledger?.entries.some(entry => entry.kind === 'UNASSIGNED') &&
+          <label>Zahlung ohne Planbezug<select value={payment} onChange={e => setPayment(e.target.value)}>
+            <option value="">Allgemeine Zuführungskorrektur</option>
+            {ledger.entries.filter(entry => entry.kind === 'UNASSIGNED').map(entry =>
+              <option key={entry.payment_id} value={entry.payment_id}>{day(entry.date)} · {euro(entry.amount)} · {entry.payment_id?.slice(0, 8)}</option>)}
+          </select></label>}
         {component === 'FUNDING' ? sources ? <>
           <label>Gebuchte Auszahlung *<select aria-label="Gebuchte Auszahlung *" required value={payment} onChange={e => setPayment(e.target.value)}><option value="">Bitte wählen</option>{sources.payments.map(p => <option key={p.id} value={p.id}>{day(p.value_date)} · {euro(p.amount)} · {p.note ?? p.id.slice(0, 8)}</option>)}</select></label>
           <label>Bestätigter Kostenbeleg *<select aria-label="Bestätigter Kostenbeleg *" required value={cost} onChange={e => setCost(e.target.value)}><option value="">Bitte wählen</option>{sources.costs.map(c => <option key={c.id} value={c.id}>{c.document_number ?? c.id.slice(0, 8)} · {euro(c.gross_amount)}</option>)}</select></label>

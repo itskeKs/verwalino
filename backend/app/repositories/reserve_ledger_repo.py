@@ -26,7 +26,7 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
             (SettlementRun.organization_id == ReserveLedgerEntry.organization_id)
             & (SettlementRun.id == ReserveLedgerEntry.settlement_run_id)).where(
             ReserveLedgerEntry.property_id == run.property_id,
-            or_(ReserveLedgerEntry.component == 'FUNDING', and_(
+            or_(ReserveLedgerEntry.payment_id.is_not(None), and_(
                 SettlementRun.period_start == run.period_start, SettlementRun.period_end == run.period_end)))
             .order_by(ReserveLedgerEntry.entry_date, ReserveLedgerEntry.id))).all())
 
@@ -59,15 +59,22 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
             EconomicPlan.period_start <= run.period_end, EconomicPlan.period_end >= start)
             .order_by(EconomicPlan.superseded_by_id.is_not(None), EconomicPlan.period_start.desc(), EconomicPlan.id))).all())
 
-    async def owner_units(self, subject):
-        # Historical owners remain attributable when they pay arrears after a sale.
-        rows = await self._session.execute(select(OwnershipHistory.owner_profile_id, OwnershipHistory.unit_id)
+    async def owner_units(self, payments):
+        """Resolve all payers' units at their individual cash value dates in one query."""
+        if not payments:
+            return {}
+        rows = await self._session.execute(select(Payment.id, OwnershipHistory.unit_id)
+            .join(OwnershipHistory, (OwnershipHistory.organization_id == Payment.organization_id)
+                  & (OwnershipHistory.owner_profile_id == Payment.owner_profile_id)
+                  & (OwnershipHistory.valid_from <= Payment.value_date)
+                  & or_(OwnershipHistory.valid_to.is_(None), OwnershipHistory.valid_to > Payment.value_date))
             .join(Unit, (Unit.organization_id == OwnershipHistory.organization_id)
                   & (Unit.id == OwnershipHistory.unit_id)).where(
-                OwnershipHistory.organization_id == self._org_id, Unit.property_id == subject.property_id))
+                Payment.organization_id == self._org_id, Payment.id.in_([p.id for p in payments]),
+                Unit.property_id == Payment.property_id))
         result = {}
-        for owner, unit in rows:
-            result.setdefault(str(owner), set()).add(str(unit))
+        for payment, unit in rows:
+            result.setdefault(payment, set()).add(str(unit))
         return result
 
     async def finalized(self, run):

@@ -58,6 +58,7 @@ def upgrade():
       FOREIGN KEY(organization_id,cost_entry_id) REFERENCES cost_entry(organization_id,id),
       FOREIGN KEY(organization_id,register_entry_id) REFERENCES resolution_register_entry(organization_id,id),
       CHECK((component='FUNDING' AND payment_id IS NOT NULL AND cost_entry_id IS NOT NULL AND register_entry_id IS NOT NULL AND amount=0)
+         OR (component='CONTRIBUTION' AND payment_id IS NOT NULL AND cost_entry_id IS NULL AND register_entry_id IS NULL)
          OR (component<>'FUNDING' AND payment_id IS NULL AND cost_entry_id IS NULL AND register_entry_id IS NULL)),
       UNIQUE(organization_id,payment_id));
     CREATE INDEX ix_reserve_property_date ON reserve_ledger_entry(organization_id,property_id,entry_date);
@@ -121,6 +122,18 @@ def upgrade():
             ON r.organization_id=e.organization_id AND r.id=e.resolution_id WHERE e.organization_id=NEW.organization_id
             AND e.id=NEW.register_entry_id AND e.property_id=parent.property_id AND r.result='ANGENOMMEN') THEN
           RAISE EXCEPTION 'Reserve funding requires coherent booked cost and registered resolution' USING ERRCODE='23514'; END IF;
+      ELSIF NEW.payment_id IS NOT NULL THEN
+        SELECT * INTO cash FROM public.payment WHERE organization_id=NEW.organization_id AND id=NEW.payment_id;
+        IF cash.property_id IS DISTINCT FROM parent.property_id OR cash.status<>'booked'
+          OR cash.payment_type<>'HAUSGELD_VORSCHUSS'
+          OR NOT public.financial_scope_access(NEW.organization_id,'payment',cash.id,'read')
+          OR NOT (cash.value_date BETWEEN parent.period_start AND parent.period_end OR EXISTS(
+            SELECT 1 FROM public.settlement_run r WHERE r.organization_id=parent.organization_id
+              AND r.property_id=parent.property_id AND r.status='finalized' AND r.superseded_by_id IS NULL
+              AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT')
+              AND cash.value_date BETWEEN r.period_start AND r.period_end
+              AND r.period_end<parent.period_start AND cash.booked_at>r.finalized_at)) THEN
+          RAISE EXCEPTION 'Reserve assignment requires a readable booked Hausgeld payment in this cash period' USING ERRCODE='23514'; END IF;
       END IF;
       RETURN NEW;
     END $$;

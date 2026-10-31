@@ -138,8 +138,11 @@ def visible_late_cash(world, reserve_scenario, browser_world, request):
                     # Capture the shared panel with all dated rows at each width.
                     await panel.scroll_into_view_if_needed()
                     filename = directory / f'{prefix}-{stage}-{width}.png'
-                    await page.screenshot(path=str(filename), full_page=True)
+                    await page.screenshot(path=str(filename), full_page=False)
                     attach_artifact(request.node, filename)
+                table = panel.locator('table')
+                assert await table.evaluate('(table) => table.scrollWidth <= table.parentElement.clientWidth')
+                assert await table.locator('td').evaluate_all('(cells) => cells.every(cell => cell.scrollWidth <= cell.clientWidth)')
 
     browser_world.run(inspect('before'))
     cash = create(world, '/api/payments', {'bank_account_id': w['bank_giro'], 'direction': 'IN',

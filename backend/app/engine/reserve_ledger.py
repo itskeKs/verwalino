@@ -47,11 +47,11 @@ def hausgeld_reserve_share(signed, unit_ids, planned, plan_owners):
 
     A payer with several units uses their combined plan volumes. Round each cash
     booking HALF_UP independently so a Storno cancels the original exactly.
-    Unknown historical bookings cannot block computation; booking validates new ones.
+    Missing unit/plan coverage or a nonpositive denominator remains unassigned.
     """
     reserve = sum((Decimal(row['amount']) for row in planned if row['unit_id'] in unit_ids), Decimal(0))
     advance = sum((Decimal(row['annual_advance']) for row in plan_owners if row['unit_id'] in unit_ids), Decimal(0))
-    return money(signed * reserve / advance) if advance > 0 else Decimal('0.00')
+    return money(signed * reserve / advance) if advance > 0 else None
 
 
 def planned_reserve_entries(total, cells, period_start):

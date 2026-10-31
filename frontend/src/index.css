@@ -895,8 +895,19 @@ code {
 /* Frozen identifiers and long German titles must remain readable on phones. */
 .settlement-detail { min-width: 0; overflow-wrap: anywhere; }
 .settlement-detail .info-table { table-layout: fixed; }
+.reserve-ledger-table { table-layout: fixed; }
+.reserve-ledger-table th:first-child { width: 6.5rem; }
+.reserve-ledger-table th:last-child { width: 8rem; }
+.reserve-ledger-table td { overflow-wrap: anywhere; }
 @media (max-width: 768px) {
   .settlement-detail .info-table td:first-child { width: 45%; }
+  .reserve-ledger-table th:first-child { width: 5.25rem; }
+  .reserve-ledger-table th:last-child { width: 6rem; }
+  .reserve-ledger-table th,
+  .reserve-ledger-table td { padding: 0.5rem 0.25rem; }
+  .settlement-detail .data-table { table-layout: fixed; }
+  .settlement-detail .data-table th,
+  .settlement-detail .data-table td { overflow-wrap: anywhere; }
 }
 
 /* Bounded master-data lists retain table columns inside the mobile viewport. */

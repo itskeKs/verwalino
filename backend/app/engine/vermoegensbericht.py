@@ -53,12 +53,6 @@ def build_vermoegensbericht(inp: VermoegensberichtInput) -> AssetReportResult:
     )
 
     lines: list[AssetReportLine] = []
-    if inp.reserve.late_cash_total:
-        lines.append(AssetReportLine(line_type='SUBTOTAL', label='Nachträgliche Buchungen zum abgeschlossenen Jahr',
-            amount=inp.reserve.late_cash_total, sort_order=-2, is_manual=False, note='Rücklagenbuch · ursprüngliche Wertstellung'))
-    if inp.reserve.overrides_total:
-        lines.append(AssetReportLine(line_type='SUBTOTAL', label='Begründete Rücklagenkorrekturen',
-            amount=inp.reserve.overrides_total, sort_order=-1, is_manual=True, note='Rücklagenbuch'))
     sort_order = 0
 
     # ----- Reserve development (automatic; m4 section 3.3 / 6.2) -----
@@ -73,6 +67,14 @@ def build_vermoegensbericht(inp: VermoegensberichtInput) -> AssetReportResult:
         )
     )
     sort_order += 1
+    if inp.reserve.late_cash_total:
+        lines.append(AssetReportLine(line_type='SUBTOTAL', label='Nachträgliche Buchungen zum abgeschlossenen Jahr',
+            amount=inp.reserve.late_cash_total, sort_order=sort_order, is_manual=False, note='Rücklagenbuch · ursprüngliche Wertstellung'))
+        sort_order += 1
+    if inp.reserve.overrides_total:
+        lines.append(AssetReportLine(line_type='SUBTOTAL', label='Begründete Rücklagenkorrekturen',
+            amount=inp.reserve.overrides_total, sort_order=sort_order, is_manual=True, note='Rücklagenbuch'))
+        sort_order += 1
     lines.append(
         AssetReportLine(
             line_type="RESERVE_CONTRIBUTION",
