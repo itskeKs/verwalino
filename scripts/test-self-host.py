@@ -229,7 +229,8 @@ if "psql" in sys.argv:
         if name in databases:
             print("1")
     elif statement == "SELECT version_num FROM public.alembic_version":
-        print("0141")
+        from app.deployment import TARGET
+        print(TARGET)
     elif statement == "SELECT version_num FROM alembic_version":
         with open(os.environ["FAKE_SCHEMA_STATE"]) as schema:
             print(os.environ.get("FAKE_RESTORED_SCHEMA" if "hausverwaltung_restore" in sys.argv else "FAKE_SCHEMA", schema.read()))
@@ -1975,7 +1976,7 @@ os.execv("/bin/mv", ["mv", *sys.argv[1:]])
                 self.assertNotIn(config[key], content)
         self.assertIn("installer-failure-123", members["errors.log"])
         self.assertIn("RuntimeError", members["errors.log"])
-        self.assertEqual(json.loads(members["database.json"])["migration_head"], "0141")
+        self.assertEqual(json.loads(members["database.json"])["migration_head"], RELEASE_TARGET)
         args = [call["args"] for call in self.calls()]
         self.assertEqual(len(args), 4)
         self.assertEqual(args[0][-4:], ["ps", "--all", "--format", "json"])
@@ -1983,7 +1984,7 @@ os.execv("/bin/mv", ["mv", *sys.argv[1:]])
         build = next(call for call in args if "app.diagnostics" in call)
         schema = next(call for call in args if "psql" in call)
         self.assertEqual(schema[-8:], ["-U", "app_migrator", "-d", "hausverwaltung", "--set", "ON_ERROR_STOP=1", "-Atc", "SELECT version_num FROM public.alembic_version"])
-        self.assertEqual(build[build.index("--schema-head") + 1], "0141")
+        self.assertEqual(build[build.index("--schema-head") + 1], RELEASE_TARGET)
         start = build.index("run")
         self.assertEqual(build[start:start + 10], ["run", "--rm", "--no-deps", "-T", "--entrypoint", "python", "app", "-m", "app.diagnostics", "--containers-json"])
         self.assert_isolated(args)

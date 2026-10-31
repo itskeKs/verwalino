@@ -43,7 +43,7 @@ def test_every_bundle_member_excludes_personal_data_and_config_values(private_lo
         log_lines=lines,
         containers=[{'Service': 'app', 'State': 'running', 'Health': 'healthy',
                      'Name': 'Müller, Jürgen', 'Command': 'url-password', 'Publishers': private}],
-        database={'migration_head': '0142', 'organization_count': 2, 'row_counts': {'person': 37}},
+        database={'migration_head': '0143', 'organization_count': 2, 'row_counts': {'person': 37}},
         now=datetime(2026, 10, 30, tzinfo=timezone.utc),
     ))
     assert set(members) == {'manifest.json', 'environment.json', 'containers.json', 'database.json', 'errors.log', 'README.txt'}
@@ -57,7 +57,7 @@ def test_every_bundle_member_excludes_personal_data_and_config_values(private_lo
     assert json.loads(members['containers.json']) == [{'service': 'app', 'state': 'running', 'health': 'healthy'}]
     manifest = json.loads(members['manifest.json'])
     assert manifest['app_version'] == '0.1.0'
-    assert manifest['release_target'] == '0142'
+    assert manifest['release_target'] == '0143'
     assert manifest['created_at'] == '2026-10-30T00:00:00+00:00'
     assert manifest['image_digest'] is None
     assert 'request_id=failure-123456' in members['errors.log']
@@ -156,7 +156,7 @@ async def test_migration_head_is_read_when_app_role_has_permission():
             assert unavailable['status'] == 'available'
             async with engine.begin() as connection:
                 await connection.execute(text('GRANT SELECT ON alembic_version TO app_rw'))
-            assert (await collect_database())['migration_head'] == '0142'
+            assert (await collect_database())['migration_head'] == '0143'
         finally:
             async with engine.begin() as connection:
                 await connection.execute(text('GRANT SELECT ON alembic_version TO app_rw' if previous else
