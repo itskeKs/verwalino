@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import auth, organizations, users, mandates, intake_batches, intake_items, exceptions, invoice_reviews, context_decisions, allocation_proposals, allocation_treatments, allocation_adoptions, duplicate_comparisons
-from app.api import context_mappings, setup, signup
+from app.api import context_mappings, setup, signup, password_reset
 from app.api import properties, units, persons, ownership, leases
 from app.api import owner_profiles, tenant_profiles, vendors
 from app.api import cost_categories, cost_entries, invoice_documents, document_refs, logical_documents, extraction_revisions, source_partitions, visual_extracts, visual_disclosures
@@ -31,6 +31,7 @@ from app.core import health
 from app.core.static_files import resolve_spa_file
 from app.core.uploads import RequestBodyLimitMiddleware
 from app.core.config import settings
+from app.services import mail_service
 from app.core.deployment_policy import get_deployment_policy
 
 @asynccontextmanager
@@ -56,6 +57,7 @@ app.add_middleware(signup.ConfirmationLinkPrivacyMiddleware)
 app.include_router(auth.router)
 app.include_router(setup.router)
 app.include_router(signup.router)
+app.include_router(password_reset.router)
 app.include_router(organizations.router)
 app.include_router(users.router)
 app.include_router(accounting_scopes.router)
@@ -136,11 +138,12 @@ app.include_router(property_knowledge.router)
 
 
 @app.get("/api/meta")
-async def meta(response: Response) -> dict[str, str]:
+async def meta(response: Response) -> dict[str, str | bool]:
     """Public deployment facts only; no settings or organization data."""
     policy = get_deployment_policy()
     response.headers["Cache-Control"] = "no-store"
-    return {"deployment_mode": policy.deployment_mode, "version": app.version}
+    return {"deployment_mode": policy.deployment_mode, "version": app.version,
+            "mail_available": mail_service.password_reset_available(settings)}
 
 
 @app.get("/api/health/live")
@@ -178,4 +181,4 @@ if _frontend_dist and os.path.isdir(_frontend_dist):
             raise HTTPException(status_code=404, detail="Not Found")
         return FileResponse(resolve_spa_file(_frontend_dist, full_path), headers={
             "Referrer-Policy": "no-referrer", "Cache-Control": "no-store",
-        } if full_path == "signup/confirm" else None)
+        } if full_path in {"signup/confirm", "passwort-zuruecksetzen"} else None)

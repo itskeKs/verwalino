@@ -8,7 +8,6 @@ import secrets
 import smtplib
 from collections.abc import Callable
 from datetime import timedelta
-from urllib.parse import urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -54,10 +53,7 @@ def validate_signup_configuration() -> None:
     """Fail startup before offering signup with unusable confirmation links."""
     if not get_deployment_policy().self_service_signup_enabled:
         return
-    url = urlsplit(settings.public_url or "")
-    if (url.scheme not in {"https", "http"} or not url.hostname or url.username or url.password
-        or url.query or url.fragment or url.path not in {"", "/"}
-        or (url.scheme != "https" and url.hostname not in {"localhost", "127.0.0.1", "::1"})):
+    if not mail_service.valid_public_origin(settings.public_url):
         raise ValueError("Hosted signup requires HV_PUBLIC_URL (HTTPS origin; HTTP only on loopback)")
     mail_service.validate_configuration(settings)
 
@@ -69,7 +65,7 @@ class ConfirmationLinkPrivacyMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope["path"] == "/signup/confirm":
+        if scope["type"] == "http" and scope["path"] in {"/signup/confirm", "/passwort-zuruecksetzen"}:
             # Mutate the original scope used by Uvicorn's access logger too.
             # No server handler consumes this query; the SPA reads window.location.
             scope["query_string"] = b""

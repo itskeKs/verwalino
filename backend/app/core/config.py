@@ -61,7 +61,7 @@ class Settings(BaseSettings):
             raise ValueError("Dunning base interest rate must be an exact decimal")
         return value
 
-    # Public origin for hosted confirmation links; never derive it from Host.
+    # Public origin for signup and password recovery links; never derive it from Host.
     public_url: str | None = None
 
     # --- Outbound SMTP (disabled until explicitly configured) ---

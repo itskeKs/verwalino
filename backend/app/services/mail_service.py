@@ -102,3 +102,61 @@ def _submit(config: Settings, message: EmailMessage, sender: str, recipient: str
         # QUIT failure cannot negate the already observed positive DATA reply.
         if not accepted:
             raise
+
+
+def valid_public_origin(value: str | None) -> bool:
+    """One trusted-origin rule for every mailbox link."""
+    from urllib.parse import urlsplit
+    try:
+        url = urlsplit(value or '')
+        return bool(url.scheme in {'https', 'http'} and url.hostname and not url.username and not url.password
+                    and not url.query and not url.fragment and url.path in {'', '/'}
+                    and (url.scheme == 'https' or url.hostname in {'localhost', '127.0.0.1', '::1'}))
+    except ValueError:
+        return False
+
+
+def password_reset_available(config: Settings) -> bool:
+    """Public capability only: SMTP and a trusted link origin must be usable."""
+    try:
+        validate_configuration(config)
+    except MailConfigurationError:
+        return False
+    return valid_public_origin(config.public_url)
+
+
+def _password_message(config: Settings, recipient: str, subject: str, body: str) -> EmailMessage:
+    # Pure construction also runs for unknown addresses; validation and SMTP
+    # happen only in the post-response submission task.
+    message = EmailMessage()
+    try:
+        sender = validate_address(config.smtp_from)
+    except MailConfigurationError:
+        sender = ''
+    message['From'] = sender
+    message['To'] = recipient
+    message['Subject'] = subject
+    message['Date'] = formatdate(localtime=False)
+    message.set_content(body)
+    return message
+
+
+def build_password_reset(config: Settings, *, recipient: str, link: str) -> EmailMessage:
+    return _password_message(config, recipient, 'Verwalino: Passwort zurücksetzen',
+        'Sie haben einen Link zum Zurücksetzen Ihres Passworts angefordert.\n\n'
+        f'{link}\n\n'
+        'Der Link ist einmalig gültig und läuft nach 1 Stunde ab.\n'
+        'Wenn Sie diese Anfrage nicht selbst gestellt haben, ignorieren Sie diese E-Mail.\n')
+
+
+def build_password_changed(config: Settings, *, recipient: str) -> EmailMessage:
+    return _password_message(config, recipient, 'Verwalino: Passwort geändert',
+        'Ihr Passwort wurde geändert. Alle bisherigen Sitzungen wurden beendet.\n'
+        'Wenn das nicht Sie waren, fordern Sie sofort einen neuen Link zum Zurücksetzen '
+        'Ihres Passworts an und wenden Sie sich an Ihre Verwaltung.\n')
+
+
+def submit_password_mail(config: Settings, message: EmailMessage) -> None:
+    sender = validate_configuration(config)
+    recipient = validate_address(str(message['To']))
+    _submit(config, message, sender, recipient)

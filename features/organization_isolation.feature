@@ -53,3 +53,12 @@ Feature: Organization isolation
     And the visitor follows the emailed confirmation link
     Then the registration creates a separate organization with the same name
     And the existing administrator stays in the original organization
+
+  Scenario: A password recovery link changes only the mailbox owner's account
+    Given a user who is signed in
+    And password reset mail is captured
+    When the user requests a password reset link
+    And the user submits the captured recovery link
+    Then the password reset is accepted without signing in
+    And the old session is no longer valid
+    And the other organization's administrator remains signed in
