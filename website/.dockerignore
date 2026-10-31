@@ -1,0 +1,13 @@
+*
+!package.json
+!package-lock.json
+!astro.config.mjs
+!tsconfig.json
+!Caddyfile
+!src/
+!src/**
+!public/
+!public/**
+!scripts/
+!scripts/check-i18n.mjs
+!scripts/check-links.mjs
