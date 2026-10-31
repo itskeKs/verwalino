@@ -273,6 +273,18 @@ def test_payload_scrub_replaces_only_identifier_tokens_inside_text(value):
         'Contact: Gelöscht; a short note in Berlin, 12345.00')
 
 
+@pytest.mark.parametrize('phone,value', [
+    ('0', '0.00'), ('0', '0'), ('000', '0'), ('-', '-'), ('-', '/'), ('( )', '.'),
+    ('0000', '00.00'), ('1234', '12.34'), ('1234', '1234'), ('1234', '12/34'), ('12 34 56', '123456'),
+])
+def test_payload_scrub_ignores_placeholder_phones_shorter_than_seven_digits(phone, value):
+    from app.services.organization_deletion_service import payload_scrubber
+    person = dict(ERASED_PERSON, phone=phone)
+    scrub = payload_scrubber([person], [], [], datetime.now(timezone.utc))
+    assert scrub({'fee_amount': value, 'note': 'Betrag ' + value})['fee_amount'] == value
+    assert scrub({'fee_amount': value, 'note': 'Betrag ' + value})['note'] == 'Betrag ' + value
+
+
 @pytest.mark.parametrize('field', ['id', 'request_id', 'message_id', 'counts'])
 def test_payload_scrub_walks_metadata_keys_and_values(field):
     from app.services.organization_deletion_service import payload_scrubber

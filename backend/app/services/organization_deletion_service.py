@@ -83,8 +83,11 @@ def payload_scrubber(persons, retained_person_ids, user_emails, now):
         digits = re.sub(r'\D', '', value)
         return digits[2:] if digits.startswith('00') else digits
 
-    phones = {phone_digits(row['phone']) for row in erased_people if row.get('phone')}
-    phones.discard(None)
+    # Phone is free text; placeholders such as "0" or "-" must never match
+    # amounts, codes or separators, so only numbers of at least seven digits
+    # count as identifiers (whole values and embedded tokens alike).
+    phones = {digits for digits in (phone_digits(row['phone']) for row in erased_people if row.get('phone'))
+              if digits and len(digits) >= 7}
 
     patterns = [r'(?<![\w@.+%\-])' + re.escape(email) + r'(?![\w@+%\-]|\.[\w-])'
                 for email in sorted(emails)]
