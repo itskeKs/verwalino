@@ -8,7 +8,7 @@ export const operator = {
   country: 'Deutschland',
   director: 'Christian Kunkel',
   email: 'hello@fogu.app',
-  phone: '+49 173 5348137',
+  court: 'Amtsgericht Krefeld',
   register: 'HRB 15557',
   vat: 'DE305418362',
   authority: 'Unabhängiges Datenschutzzentrum Saarland',

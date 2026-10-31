@@ -45,6 +45,8 @@ registration is not open.
 - `src/pages/[...path].astro`: generates the ordinary routes. The two small error-page entries
   reuse the same component and layout; German builds to `404.html`, English to `en/404/index.html`.
 - `src/layouts/Site.astro`: shared header, footer, metadata, local fonts and vanilla controls.
+- `public/theme.js`, `public/controls.js`: external local scripts for theme and menu;
+  the hosting CSP needs no inline script allowance.
 - `src/styles/`: the approved Kontor Signal tokens, square geometry and responsive rules.
 - `src/content/operator.ts`: supplied provider details for the final legal notice.
 - `src/content/repository.ts`: shared public GitHub repository URL.
@@ -77,7 +79,8 @@ npm run check:links
 fetches external URLs. It accepts an optional
 directory argument for fixtures. It reads the built canonical origin, so it also checks absolute
 internal URLs after a build with a custom `SITE_URL`. CI runs these checks using Node 22 for
-changes to this directory or its workflow. CI builds and checks files; no deployment is configured.
+changes to this directory or its workflow. PRs run checks; a main push also builds, publishes and
+signs the site image, then deploys it through the existing hosted forced-command key.
 
 From the repository root, `make lint` and `make docs-check` remain the existing gates.
 The website does not change backend or app behaviour; `make test` is unaffected.
@@ -111,7 +114,10 @@ images. Review and commit the resulting `public/og/` PNGs.
 
 ## Legal publication boundary
 
-The legal notice contains the supplied final provider data. Its English translation states that
+The legal notice contains the final fogu UG (haftungsbeschränkt) provider data supplied in #26:
+address, managing director, register court/number, VAT ID, email and supervisory authority.
+The earlier telephone number was not supplied in that decision and is omitted.
+Its English translation states that
 the German version is authoritative. Privacy, terms of use and the Article 28 GDPR data processing
 agreement are **unreviewed drafts**. Each begins with a visible warning and uses only bracketed
 placeholders under its section headings. The boxed checklist at the end of **each draft page**
@@ -129,49 +135,34 @@ self-hosting page and footer link to it using the shared URL in `src/content/rep
 `DEPLOY.md` in the repository contains the full self-hosting guide. The public container image
 and clean-host installation are not yet released.
 
-## Deploy static files
+## Container deployment
 
-Upload the contents of `dist/` to any static host. Configure missing paths to return an HTTP 404
-with `404.html`, and missing paths below `/en/` to return `en/404/index.html`. Do not use an SPA
-fallback to the home page. The public origin is `https://verwalino.de`; hosting and DNS still need
-to be configured separately. Build for this origin before uploading. The draft pages remain visible drafts
-until reviewed; a successful build is not approval to launch the hosted service.
+The [Website workflow](../.github/workflows/website.yml) publishes
+`ghcr.io/itskeks/verwalino-site:<full-git-sha>` and `:main` on matching main pushes. It builds
+amd64 and arm64, attaches BuildKit provenance/SBOMs and signs the index with keyless cosign.
+The build stage runs every check above. The final image uses the pinned Caddy 2.10.2 static
+binary on pinned Alpine, serves only `dist/` as uid 10001 on port 8080, and has no Node/npm or sources.
 
-Example Caddy configuration for `verwalino.de` on a separate static host (replace the root):
+The hosted operator enables [the optional compose override](../infra/docker-compose.site.yml)
+and imports [the public Caddy snippet](../infra/Caddyfile.site) from an operator-owned config.
+Caddy proxies the apex to the closed site container and redirects `www` with 308. The site has
+its own internal network, a read-only root, dropped capabilities, no privilege escalation,
+no published ports, host mounts or credentials, and a 1 MiB `/data` tmpfs for Caddy housekeeping. Scripts and fonts
+are local; inline scripts are forbidden. Astro's inline styles remain permitted.
 
-```caddyfile
-verwalino.de {
-    root * /srv/verwalino-website/dist
-    encode zstd gzip
-    header {
-        X-Content-Type-Options "nosniff"
-        Referrer-Policy "no-referrer"
-        X-Frame-Options "DENY"
-        Permissions-Policy "camera=(), microphone=(), geolocation=()"
-        Strict-Transport-Security "max-age=31536000"
-        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
-    }
-    try_files {path} {path}/index.html =404
-    file_server
-    handle_errors {
-        @english path /en /en/*
-        handle @english {
-            rewrite * /en/404/index.html
-            file_server
-        }
-        handle {
-            rewrite * /404.html
-            file_server
-        }
-    }
-}
-```
+See [hosted deployment](../DEPLOY.md#website-container) and the
+[website hosting runbook](../docs/operations/website-hosting.md) for setup, exact network layout,
+digest verification, troubleshooting and `site <previous-sha>` rollback. Site deployments recreate
+only the site container and probe HTTP 200 over its network. The generic installer is unchanged.
+The server's reviewed deployment files and operator opt-in must exist before CI can deploy;
+this change does not perform that rollout.
 
-The inline allowances cover Astro's inlined styles and the tiny theme/menu scripts. All resources
-still originate from this site. This is a deployment example, not an applied server configuration.
+Missing paths return HTTP 404 using `404.html`, or `en/404/index.html` under `/en/`, without an
+SPA fallback. The public origin is `https://verwalino.de`. Legal draft pages remain visibly
+marked until #26 review; a successful build does not approve opening hosted registration.
 
 ## Deferred operator work
 
-DNS and static-host setup, hosted registration and quotas, public image/installer
-release, portable clean-host acceptance and final legal review remain outside this website task.
-The self-hosting page lists the planned release tools separately from the commands available today.
+DNS, enabling the hosted extension, hosted registration and quotas, public app image/installer
+release, portable clean-host acceptance and final legal review remain operator work.
+The self-hosting page lists planned release tools separately from commands available today.

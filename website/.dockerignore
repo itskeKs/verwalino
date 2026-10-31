@@ -11,3 +11,6 @@
 !scripts/
 !scripts/check-i18n.mjs
 !scripts/check-links.mjs
+**/.env*
+**/node_modules
+**/.git
