@@ -11,7 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.storage import DocumentStore, compute_sha256, get_store, make_storage_key
+from app.core.storage import DocumentStore, compute_sha256, get_store, put_document
 from app.models.audit_event import AuditEvent
 from app.models.declaration_import import DeclarationImportDocument
 from app.models.property_document import PropertyDocument
@@ -121,11 +121,8 @@ class PropertyDocumentService:
         sequence_no: int,
         store: DocumentStore | None = None,
     ) -> tuple[PropertyDocument, DeclarationImportDocument]:
-        if len(file_bytes) > settings.declaration_max_pdf_bytes:
-            raise HTTPException(
-                status_code=413,
-                detail=f"File too large (max {settings.declaration_max_pdf_bytes} bytes)",
-            )
+        from app.core.uploads import require_upload_size
+        require_upload_size(len(file_bytes), max_bytes=settings.declaration_max_pdf_bytes)
         if mime_type not in PDF_MIME_TYPES:
             raise HTTPException(status_code=422, detail="Only PDF documents are supported")
         if not file_bytes.startswith(b"%PDF-"):
@@ -145,10 +142,8 @@ class PropertyDocumentService:
                 {'org': self._org_id, 'job': import_id}):
             raise HTTPException(status_code=404, detail="Declaration import not found")
         active_store = store or get_store()
-        sha256 = compute_sha256(file_bytes)
-        stored = active_store.put(
-            make_storage_key(str(self._org_id), sha256), file_bytes, content_type=mime_type
-        )
+        stored = await put_document(self._session, self._org_id, file_bytes,
+                                    content_type=mime_type, store=active_store)
         document = await self._documents.create(
             PropertyDocument(
                 organization_id=self._org_id,

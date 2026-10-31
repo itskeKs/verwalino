@@ -18,8 +18,8 @@ from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 
-TARGET = '0145'
-SUPPORTED = ('0028', '0122', '0139', '0140', '0141', '0142', '0143', '0144', TARGET)
+TARGET = '0146'
+SUPPORTED = ('0028', '0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', TARGET)
 
 
 def release_head(graph: ScriptDirectory) -> str:

@@ -17,7 +17,7 @@ from tests.test_meters_api import new_meter
 from tests.test_rent_changes import rent_db, rent_world  # noqa: F401
 
 EXEMPT = {
-    "GET /api/meta": "organization-free public deployment mode, version and mail capability only; covered by test_deployment_policy.py",
+    "GET /api/meta": "organization-free deployment facts and file safety cap only; covered by test_deployment_policy.py",
     **{f"{method} /api/signup{suffix}": "organization-free hosted signup; pending identity and atomic new-tenant creation covered by self_service_signup.feature and test_signup.py"
        for suffix in ("", "/confirm", "/resend")
        for method in ("POST", "GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT")},
@@ -246,6 +246,7 @@ PROBES: dict[str, Probe] = {
     "POST /api/meters/{meter_id}/readings": Probe(row("meter", meter_id="id"), body={"reading_date": "2026-01-01", "value": "1.0000"}),
     # app/api/organizations.py
     "GET /api/organizations/me": Probe(),
+    "GET /api/organizations/quota": Probe(),
     # app/api/owner_profiles.py
     "GET /api/owner-profiles": Probe(row("person", person_id="id"), status=200, because=EMPTY_FILTER),
     "GET /api/owner-profiles/page": Probe(),

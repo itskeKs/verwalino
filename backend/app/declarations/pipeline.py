@@ -1154,8 +1154,15 @@ class DeclarationPipeline:
     async def _start_run(self, lease: WorkerLease) -> uuid.UUID:
         async with self._tenant_session_factory(lease.organization_id) as session:
             repo = DeclarationImportRepository(session, lease.organization_id)
-            if await repo.lock_current_lease(lease, {"PREFLIGHT"}) is None:
+            imported = await repo.lock_current_lease(lease, {"PREFLIGHT"})
+            if imported is None:
                 raise PipelineFailure("LEASE_LOST")
+            from app.services.quota_service import require_ai_budget
+            from fastapi import HTTPException
+            try:
+                await require_ai_budget(session, lease.organization_id, imported.max_cost_usd)
+            except HTTPException as error:
+                raise PipelineFailure("ORGANIZATION_AI_BUDGET_EXCEEDED") from error
             run = DeclarationExtractionRun(
                 organization_id=lease.organization_id,
                 import_id=lease.import_id,

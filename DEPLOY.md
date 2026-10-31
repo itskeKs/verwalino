@@ -11,7 +11,7 @@ Both modes use the same image, authentication and organization isolation. `selfh
 offers token-gated first-run setup on an empty database. `hosted` suppresses setup:
 `GET /api/setup` reports `required: false`, every non-GET request returns the closed
 setup 404, and `/setup` redirects to login. Hosted mode offers public signup with
-email confirmation; quotas and legal pages remain deferred. Password recovery is available
+email confirmation and enforces the quotas described below; legal pages remain deferred. Password recovery is available
 in both modes when mail is configured. Login uses the
 selected rate-limit profile described below. The
 [policy table](docs/architecture.md#deployment-modes) records only decisions with
@@ -81,7 +81,7 @@ most 100 rows whose expiry or use time is older than seven days. A materialized
 CTE selects and locks that batch once with `FOR UPDATE SKIP LOCKED`, so deletion
 cannot rescan the limited selection.
 
-Revision 0145 downgrade refuses while **any** reset rows remain, including used
+Accepted source revision 0145 downgrade refuses while **any** reset rows remain, including used
 rows. For an intentional rollback, stop reset traffic/workers, connect using the
 operator's migrator credential store, and explicitly invalidate/delete the reset
 state before running the normal downgrade:
@@ -95,6 +95,114 @@ COMMIT;
 
 This invalidates every outstanding recovery link; users must request fresh links
 after an upgrade. Normal retention cleanup does not clear recent rows for rollback.
+
+## Hosted organization quotas
+
+`backend/app/core/quotas.py` defines `FREE_PLAN`: **2 GiB** retained document
+storage, **25 MiB** per upload, **20 properties**, **200 units**, and **USD 0 per
+calendar month (UTC)** for declaration extraction and knowledge Q&A. USD 0 disables
+model calls even when a provider key and the feature switches are configured.
+`quota_enforcement` selects this plan only in hosted mode. Selfhost has no plan
+checks and takes no organization-wide quota advisory or filesystem upload lock;
+atomic writes, existing request/upload safety limits and declaration cost controls
+remain. Hosted writes lock the organization storage directory inode, shared by
+web and worker containers, until transaction cleanup finishes. No lock files
+are created, accumulated or included in document backups.
+Selfhost creates no filesystem lock files and retains failed-upload bytes for
+offline reconciliation rather than risking a concurrent committed duplicate.
+
+The shared 25 MiB file safety cap is
+`backend/app/core/document_limits.py:MAX_UPLOAD_BYTES`; upload readers, declaration
+defaults, intake inspection and visual input/output bounds derive from it.
+
+To change the hosted offer, edit the documented `FREE_PLAN` constants, run the
+quota/budget tests, rebuild, and restart both web and declaration worker processes
+from the same release. No new environment tuning keys, paid plans, billing, or
+self-service plan changes are introduced. One plan applies to every hosted
+organization; per-organization overrides are a follow-up. Existing reviewed Q&A
+policies may further restrict calls; increasing the hosted monthly constant does
+not enable Q&A or relax those controls.
+
+Usage is derived from database metadata: stored sizes from attachments, invoice
+versions, mandate/property documents, intake originals, letters, visual extracts
+(including independently committed attestations) and prepared mail receipts are
+summed once per storage URI, including archived and source-restricted
+originals. Uploads and quota reads never walk the storage directory. Database
+counts include every organization-owned property/unit, regardless of source
+grants. Hosted writes serialize quota admission within the organization. New files
+are checked before writing and, in hosted mode, removed on transaction rollback;
+cleanup failures log a warning, preserve the original error and release the directory
+lock. An existing file is admitted at zero additional bytes only when the guarded
+reference index already retains it; an unreferenced orphan is charged its full upload
+size on reuse. Already retained content is preserved. Mail originals are retained before their
+independently committed dispatch receipt, so a request rollback cannot remove a
+referenced PDF. File-size and upload-storage refusals return **413**; visual-extract
+storage admission and count refusals return **409**, with a structured `detail.code`
+and German `detail.message`.
+Codes are `QUOTA_STORAGE_EXCEEDED`, `QUOTA_PROPERTIES_EXCEEDED`,
+`QUOTA_UNITS_EXCEEDED` and `UPLOAD_TOO_LARGE` (also used by the body safety cap). Authenticated members can read
+`GET /api/organizations/quota`; the dashboard shows “Kontingent” and a warning at
+90%. Selfhost skips the quota request and renders no quota/loading/error card.
+
+Original deletion is **not reachable through current user workflows**. Classified
+mandate originals return 409 and must be archived with a reason; unclassified
+mandate originals are frozen in quarantine by revision 0078. Attachment, invoice
+and letter retention triggers, revoked DELETE grants and `RESTRICT` foreign keys
+also retain originals. No current path deletes property documents or intake
+originals. These guards remain unchanged.
+
+The cleanup rule guards **future accepted deletion paths**, such as the import
+and deletion work in #23. Only hosted deletion holding both the organization
+quota lock and the shared directory lock may queue a local unlink. After the row
+is deleted, `organization_document_reference_count(org, storage_key)` counts
+all retained references, including source-restricted rows, NULL-sized legacy
+letters/mail and visual artifacts/attestations; sizes never decide liveness.
+Only zero references permits unlink, and only after the outer commit. Selfhost
+deletes the row only: it neither reads usage/references nor queues an unlink.
+Rollback cancels removal. Post-commit unlink is best effort: a failure logs a
+warning and leaves bytes for operator reconciliation. A process crash between
+commit and unlink can likewise leave an orphan; `quota-recount` accounts for
+those bytes. No background deletion or retention override is added.
+
+Monthly model costs reuse the Q&A reservation ledger and declaration extraction
+runs. Running imports reserve their entire existing per-import ceiling; completed
+runs use their recorded cost. Active or expired Q&A reservations retain their
+worst-case charge until trustworthy final accounting. A shared organization lock
+serializes admission across properties, processes, and both features. Crashed
+work can therefore conservatively consume the allowance until reconciled by the
+existing worker lifecycle; restarting does not reset it. Calendar-month accounting
+includes work that crosses into the current month. Old-month reservations whose
+leases expired before this month do not consume the new month's allowance. Existing per-call/token limits
+continue to bound actual requests. Refusals return **409** with “Das monatliche
+KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den Betreiber.” Worker-side
+and HTTP refusals use `ORGANIZATION_AI_BUDGET_EXCEEDED`.
+
+Before enabling hosted quotas on an existing document store, apply **0146** and
+run this one-time reconciliation for each existing organization, with its usual
+migrator connection and `HV_DOCUMENT_STORAGE_ROOT` available:
+
+```sh
+python -m app.admin_cli quota-recount --org <organization-uuid>
+```
+
+The command scans that organization's local originals under the hosted upload
+locks and appends URI/byte metadata only for originals without an existing sized
+document or mail reference. This avoids permanently charging deletable live rows
+through the append-only audit log. Legacy/orphan recount entries are retained
+references and remain charged; the command never overrides retention. It does not
+change documents or old metadata, delete files, or start any services. Repeating
+it is safe and adds no identical reconciliation entries. Run it again after an
+operator restores files or investigates originals left by an interrupted write.
+New uploads need no recount; their owning document rows supply the size directly.
+
+Revision **0146** adds the guarded aggregate function because ordinary source RLS
+can hide rows and undercount usage, plus nullable, nonnegative `letter_document.size_bytes`
+for new letters (the only original table without size metadata). Prepared mail
+receipts use `bytes` in their existing JSON. Old letters/mail are covered by the
+reconciliation events. No tables, stored counters, quota overrides or credentials
+are added. Downgrade removes the function and reconstructible letter size column,
+leaving originals and reconciliation events intact. See
+[organization quotas](docs/architecture.md#organization-quotas).
 
 ## Hosted signup configuration
 
@@ -1171,11 +1279,11 @@ remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/s
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
 
-## Migration compatibility: 0029–0145
+## Migration compatibility: 0029–0146
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0145 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0146 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1188,14 +1296,15 @@ run `docker compose down -v` or delete the volumes.
 | 0142 | Adds global authentication throttle rows containing only scoped key hashes, failure windows, lockout expiry, last lockout start and escalation history, with narrow runtime DML. No existing rows or grants change. A populated table blocks downgrade to avoid losing lockouts. |
 | 0143 (accepted source) | Allows a nullable template reference for built-in lease contracts and handover originals. Existing rows, composite template foreign keys, RLS and immutable PDF snapshots remain intact. Downgrade refuses while an original has no template; it never deletes originals or creates substitute templates. |
 | 0144 (accepted source) | Adds private pending signup requests and token-bound SECURITY DEFINER functions; runtime roles have no direct request-table access. Successful confirmation atomically creates a separate tenant and deletes its request. Retained requests block downgrade. |
-| 0145 | Adds global password reset requests with 32-byte token digests, context-free definer issuance/confirmation and bounded cleanup; runtime table access is revoked. The T57 trigger path revokes sessions and consumes links on password changes/deactivation. Tokens expire after one hour; successful reset marks all outstanding links for that user used. Login, issuance and confirmation share the active-user/live-membership lookup. Because that lookup now filters inactive users and unsupported roles itself, an address that is active in one organization and deactivated or memberless in another is no longer ambiguous: login and reset both resolve to the active account. A populated downgrade refuses to discard retained reset state; an empty downgrade exactly removes the new table, index, trigger and functions and restores the previous login lookup verbatim. |
+| 0145 (accepted source) | Adds global password reset requests with 32-byte token digests, context-free definer issuance/confirmation and bounded cleanup; runtime table access is revoked. The T57 trigger path revokes sessions and consumes links on password changes/deactivation. Tokens expire after one hour; successful reset marks all outstanding links for that user used. Login, issuance and confirmation share the active-user/live-membership lookup. Because that lookup now filters inactive users and unsupported roles itself, an address that is active in one organization and deactivated or memberless in another is no longer ambiguous: login and reset both resolve to the active account. A populated downgrade refuses to discard retained reset state; an empty downgrade exactly removes the new table, index, trigger and functions and restores the previous login lookup verbatim. |
+| 0146 | Adds member-checked organization usage and reference-count functions for deduplicated document bytes (including visual extracts), complete property/unit counts and monthly USD usage. Adds nullable, nonnegative letter size metadata; old originals remain unchanged and `quota-recount` records legacy sizes in the existing audit log. Downgrade removes the functions and reconstructible size column, preserving originals and events. Older runtimes do not enforce hosted quotas. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0145 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0145, 0139→0145 and accepted-source 0140→0145, 0141→0145 and
-0142→0145, 0143→0145 and 0144→0145 (accepted source) rehearsals also
+0028→0146 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0146, 0139→0146 and accepted-source 0140→0146, 0141→0146 and
+0142→0146, 0143→0146, 0144→0146 and 0145→0146 (accepted source) rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT revocation;
 it does not prove live data validity or cross-version runtime compatibility.
 
@@ -1217,10 +1326,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0145**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0146**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0145**,
-**0122 → 0145**, **0139 → 0145**, **0140 → 0145**, **0141 → 0145**, **0142 → 0145**, **0143 → 0145**, **0144 → 0145** (accepted source), or **0145 → 0145**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0146**,
+**0122 → 0146**, **0139 → 0146**, **0140 → 0146**, **0141 → 0146**, **0142 → 0146**, **0143 → 0146**, **0144 → 0146**, **0145 → 0146** (accepted source), or **0146 → 0146**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 

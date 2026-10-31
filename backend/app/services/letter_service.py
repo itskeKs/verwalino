@@ -11,13 +11,14 @@ from fastapi import HTTPException
 from sqlalchemy import text
 
 from app.core.pdf import render_pdf
-from app.core.storage import compute_sha256, get_store, make_storage_key
+from app.core.storage import compute_sha256, get_store, put_document
 from app.repositories.lease_agreement_repo import LeaseAgreementRepository
 from app.repositories.property_repo import PropertyRepository
 from app.repositories.unit_repo import UnitRepository
 from app.core.temporal import db_exclusive_to_api_inclusive
 from app.services.financial_scope_service import FinancialScopeService
 from app.services.property_master_service import require_property_master
+from app.services.quota_service import lock_quota
 
 TOKENS = {"mieter.name", "mieter.adresse", "objekt.name", "objekt.adresse", "datum",
           "vermieter.name", "vermieter.adresse", "einheit.nummer", "einheit.lage", "einheit.flaeche",
@@ -156,16 +157,16 @@ class LetterService:
 
     async def save_original(self, *, template_id, lease, person, prop, request_id, as_of, subject, body, pdf):
         digest = compute_sha256(pdf)
-        stored = get_store().put(make_storage_key(str(self.org), digest), pdf, content_type='application/pdf')
+        stored = await put_document(self.db, self.org, pdf, content_type='application/pdf')
         row = (await self.db.execute(text("""INSERT INTO letter_document
             (organization_id,template_id,property_id,person_id,tenant_profile_id,lease_agreement_id,
-             request_id,as_of,recipient_name,subject,body,storage_uri,content_sha256)
-            VALUES (:org,:template,:property,:person,:tenant,:lease,:request,:day,:name,:subject,:body,:uri,:digest)
+             request_id,as_of,recipient_name,subject,body,storage_uri,content_sha256,size_bytes)
+            VALUES (:org,:template,:property,:person,:tenant,:lease,:request,:day,:name,:subject,:body,:uri,:digest,:bytes)
             RETURNING *"""),
             {'org': self.org, 'template': template_id, 'property': prop.id, 'person': person.id,
              'tenant': lease.tenant_profile_id, 'lease': lease.id, 'request': request_id, 'day': as_of,
              'name': person.company_name or f'{person.first_name} {person.last_name}'.strip(),
-             'subject': subject, 'body': body, 'uri': stored.uri, 'digest': digest})).mappings().one()
+             'subject': subject, 'body': body, 'uri': stored.uri, 'digest': digest, 'bytes': stored.byte_size})).mappings().one()
         await self.check_document(row)
         return document_out(row)
 
@@ -184,6 +185,7 @@ class LetterService:
 
     async def issue(self, body):
         await self._lock()
+        await lock_quota(self.db, self.org)
         await self.db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
                               {"key": f"letter:{self.org}:{body.request_id}"})
         template = (await self.db.execute(text("SELECT * FROM letter_template WHERE organization_id=:org AND id=:id FOR SHARE"),

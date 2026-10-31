@@ -187,12 +187,31 @@ async def test_mail_parallel_replay_sends_once(client_a_admin, m7_seed, smtp):
 
 
 @pytest.mark.asyncio
-async def test_mail_retains_prepared_when_completion_commit_fails(client_a_admin, m7_seed, smtp, monkeypatch):
+@pytest.mark.parametrize("already_retained", [False, True], ids=["new-original", "deduplicated-original"])
+async def test_mail_retains_prepared_when_completion_commit_fails(client_a_admin, m7_seed, smtp, monkeypatch, tmp_path, already_retained):
     from app.services.document_mail_service import DocumentMailService
+    from app.core import storage
+    monkeypatch.setattr(storage, "_store", storage.LocalFsDocumentStore(tmp_path))
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
     await mutate(text("UPDATE person SET email='tenant@example.invalid' WHERE id=:person"), {"person": m7_seed["person_m7"]})
     notice = await issued_notice(client_a_admin, m7_seed)
     url = f"/api/mail/dunning/{notice['id']}"
     body = {"person_id": str(m7_seed["person_m7"]), "request_id": str(uuid.uuid4())}
+    original_render = DocumentMailService.render
+    pdf = None
+
+    async def unique_pdf(self, *args):
+        nonlocal pdf
+        if pdf is None:
+            # Keep a real PDF, distinct from metadata retained by earlier tests.
+            pdf = await original_render(self, *args) + f"\n% retention {uuid.uuid4()}\n".encode()
+        return pdf
+
+    monkeypatch.setattr(DocumentMailService, "render", unique_pdf)
+    if already_retained:
+        accepted = await client_a_admin.post(url, json={**body, "request_id": str(uuid.uuid4())})
+        assert accepted.status_code == 200 and accepted.json()["status"] == "accepted"
+    before = (await client_a_admin.get("/api/organizations/quota")).json()["usage"]["storage_bytes"]
     original = DocumentMailService.record
 
     async def fail_completion(self, kind, document_id, action, payload):
@@ -203,13 +222,20 @@ async def test_mail_retains_prepared_when_completion_commit_fails(client_a_admin
     monkeypatch.setattr(DocumentMailService, "record", fail_completion)
     with pytest.raises(RuntimeError, match="synthetic commit outage"):
         await client_a_admin.post(url, json=body)
-    assert len(smtp.messages) == 1
+    assert len(smtp.messages) == 1 + already_retained
     retained = await client_a_admin.get(url)
     assert retained.status_code == 200, retained.text
-    assert retained.json()["attempts"][0]["status"] == "prepared"
+    attempt = next(row for row in retained.json()["attempts"] if row["id"] == body["request_id"])
+    assert attempt["status"] == "prepared"
+    retained_pdf = await client_a_admin.get(f"{url}/{body['request_id']}/pdf")
+    assert retained_pdf.status_code == 200, retained_pdf.text
+    assert retained_pdf.content.startswith(b"%PDF-")
+    assert retained_pdf.content == pdf
+    added_bytes = 0 if already_retained else len(retained_pdf.content)
+    assert (await client_a_admin.get("/api/organizations/quota")).json()["usage"]["storage_bytes"] == before + added_bytes
     repeated = await client_a_admin.post(url, json=body)
     assert repeated.status_code == 200 and repeated.json()["status"] == "prepared"
-    assert len(smtp.messages) == 1
+    assert len(smtp.messages) == 1 + already_retained
 
 
 @pytest.mark.asyncio

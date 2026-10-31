@@ -26,6 +26,7 @@ from app.repositories.declaration_review_repo import DeclarationReviewRepository
 from app.repositories.property_knowledge_repo import PropertyKnowledgeRepository
 from app.repositories.property_repo import PropertyRepository
 from app.repositories.unit_repo import UnitRepository
+from app.services.quota_service import lock_quota, require_counts
 
 
 class DeclarationApprovalService:
@@ -94,6 +95,7 @@ class DeclarationApprovalService:
                        for grant in audience.grants):
                 raise HTTPException(422, "Explicit publisher read, prepare and approve grant required")
 
+        await lock_quota(self._session, self._organization_id)
         candidates = await self._reviews.lock_all_candidates(import_id)
         evidence = await self._reviews.lock_evidence_for([candidate.id for candidate in candidates])
         issues = await self._reviews.issues_for_import(import_id, for_update=True)
@@ -128,6 +130,9 @@ class DeclarationApprovalService:
         except ApprovalConflict as exc:
             raise _conflict(exc.code) from exc
 
+        await require_counts(self._session, self._organization_id,
+                             properties=plan.summary['properties_created'],
+                             units=plan.summary['units_created'])
         approved_at = datetime.now(timezone.utc)
         if audience is not None:
             domain, publisher_grant_id = await domain_service.prepare_new_audience(plan.property_id, audience)

@@ -610,3 +610,18 @@ async def test_reset_cleanup_is_bounded_and_runs_after_the_request_transaction(p
             JOIN "user" u ON u.id=r.user_id WHERE u.email=:email'''), {'email': email}) == 13
         assert await session.scalar(text('''SELECT count(*) FROM password_reset_request r JOIN "user" u ON u.id=r.user_id WHERE u.email=:email AND token_hash=sha256('recent'::bytea)'''), {'email': email}) == 1
     assert transactions[-1] is not transactions[-2]
+
+
+@pytest.mark.asyncio
+async def test_reset_cleanup_remains_bounded_with_alternative_query_plans(password_identity):
+    _, email = password_identity
+    async with reset_store() as session:
+        await session.execute(text('''INSERT INTO password_reset_request(user_id,organization_id,token_hash,expires_at)
+            SELECT id,organization_id,sha256(n::text::bytea),clock_timestamp()-interval '8 days'
+            FROM "user" CROSS JOIN generate_series(1,110) n WHERE email=:email'''), {'email': email})
+        # Exercise a legal plan independently of table statistics from earlier tests.
+        for setting in ('enable_hashjoin', 'enable_mergejoin', 'enable_hashagg', 'enable_material', 'enable_sort'):
+            await session.execute(text(f'SET LOCAL {setting}=off'))
+        removed = await session.scalar(text('SELECT public.cleanup_password_reset_requests()'))
+        assert removed == 100
+        assert await session.scalar(text('SELECT count(*) FROM password_reset_request')) == 10

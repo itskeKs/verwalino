@@ -6,7 +6,7 @@ import { FristenmonitorPage } from "./FristenmonitorPage";
 import { getMyOrganization, getFristenContext, listTasks, listFristen, listPersons, listProperties } from "../api/endpoints";
 import type { DeadlineItem } from "../api/types";
 
-vi.mock("../api/endpoints", () => ({ getMyOrganization: vi.fn(), getFristenContext: vi.fn(), listTasks: vi.fn(), listFristen: vi.fn(), listPersons: vi.fn(), listProperties: vi.fn() }));
+vi.mock("../api/endpoints", () => ({ getOrganizationQuota: vi.fn(async () => ({ plan: "unlimited" })), getMyOrganization: vi.fn(), getFristenContext: vi.fn(), listTasks: vi.fn(), listFristen: vi.fn(), listPersons: vi.fn(), listProperties: vi.fn() }));
 vi.mock("../components/AccountingScopeSelector", () => ({ AccountingScopeSelector: () => null }));
 vi.mock("../auth/useAuth", () => ({ useAuth: () => ({ session: null }) }));
 afterEach(cleanup);

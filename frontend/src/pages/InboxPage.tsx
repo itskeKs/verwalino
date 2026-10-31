@@ -1,3 +1,4 @@
+import { useUploadLimit } from '../lib/uploads';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
@@ -5,6 +6,7 @@ import { fileDigest, intakeApi, intakeMime, type IntakeCreate, type IntakeHeader
 import { SearchChoice } from '../components/SearchChoice';
 
 function NewIntake() {
+  const maxUploadBytes = useUploadLimit();
   const navigate = useNavigate();
   const [files, setFiles] = useState<File[]>([]);
   const [scope, setScope] = useState<{ id: string; label: string } | null>(null);
@@ -19,7 +21,7 @@ function NewIntake() {
   async function submit() {
     if (busy) return;
     setError(null);
-    if (!files.length || files.length > 100 || files.some(file => !file.size || file.name.length > 255 || file.size > 25 * 1024 * 1024 || !intakeMime(file))) {
+    if (!files.length || files.length > 100 || files.some(file => !file.size || file.name.length > 255 || file.size > maxUploadBytes || !intakeMime(file))) {
       setError('Bitte 1 bis 100 PDF-, XML-, PNG- oder JPEG-Dateien mit jeweils höchstens 25 MiB auswählen. Leere Dateien sind nicht möglich.'); return;
     }
     setBusy(true);

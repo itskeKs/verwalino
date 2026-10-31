@@ -19,6 +19,20 @@ function page(path = '/posteingang') {
 }
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
+it('rejects files above the metadata cap before creating an intake batch', async () => {
+  const fetch = vi.fn(async (url: string) => url === '/api/meta'
+    ? json({ max_upload_bytes: 4 }) : json({ items: [], next_cursor: null }));
+  vi.stubGlobal('fetch', fetch);
+  page();
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/meta', expect.anything()));
+  fireEvent.change(screen.getByLabelText('Dateien auswählen'), { target: { files: [
+    new File(['%PDF-'], 'gross.pdf', { type: 'application/pdf' }),
+  ] } });
+  fireEvent.click(screen.getByRole('button', { name: 'Stapel einreichen' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('höchstens 25 MiB');
+  expect(fetch.mock.calls.every(call => (call as unknown[])[1] === undefined || ((call as unknown[])[1] as RequestInit).method !== 'POST')).toBe(true);
+});
+
 it('replays uncertain batch creation with its exact key before separate file requests', async () => {
   const creations: RequestInit[] = []; const uploads: FormData[] = [];
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {

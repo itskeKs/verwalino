@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import tempfile
+import json
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from typing import Protocol
 
 from fastapi import HTTPException
+from dataclasses import replace
+from app.core.quotas import MAX_UPLOAD_BYTES, check_quota, get_quota_plan
 
 
-MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 UPLOAD_CHUNK_BYTES = 64 * 1024
 UPLOAD_SPOOL_MEMORY_BYTES = 64 * 1024
 # Multipart boundaries and form fields add overhead to the file payload.  The
@@ -56,7 +58,7 @@ class RequestBodyLimitMiddleware:
         if content_length is not None:
             try:
                 if int(content_length) > body_limit:
-                    await self._send_too_large(send)
+                    await self._send_too_large(send, body_limit)
                     return
             except ValueError:
                 pass
@@ -75,7 +77,7 @@ class RequestBodyLimitMiddleware:
                 body = message.get("body", b"")
                 total += len(body)
                 if total > body_limit:
-                    await self._send_too_large(send)
+                    await self._send_too_large(send, body_limit)
                     return
                 spool.write(body)
                 if not message.get("more_body", False):
@@ -143,15 +145,17 @@ class RequestBodyLimitMiddleware:
         )
 
     @staticmethod
-    async def _send_too_large(send: Send) -> None:
+    async def _send_too_large(send: Send, body_limit: int) -> None:
+        limit = f"{body_limit / (1024 * 1024):g}".replace(".", ",")
+        body = json.dumps({"detail": {"code": "UPLOAD_TOO_LARGE", "message": f"Anfrage zu groß (maximal {limit} MiB). Bitte wählen Sie eine kleinere Datei."}}, ensure_ascii=False).encode()
         await send(
             {
                 "type": "http.response.start",
                 "status": 413,
-                "headers": [(b"content-length", b"0")],
+                "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
             }
         )
-        await send({"type": "http.response.body", "body": b""})
+        await send({"type": "http.response.body", "body": body})
 
 
 async def read_upload_limited(
@@ -168,11 +172,17 @@ async def read_upload_limited(
             break
         total += len(chunk)
         if total > max_bytes:
-            raise HTTPException(
-                status_code=413, detail=f"File too large (max {max_bytes} bytes)"
-            )
+            require_upload_size(total, max_bytes=max_bytes)
         chunks.append(chunk)
 
     if total == 0:
         raise HTTPException(status_code=422, detail="Empty file")
     return b"".join(chunks)
+
+
+def require_upload_size(size: int, *, max_bytes: int = MAX_UPLOAD_BYTES) -> None:
+    """Apply the existing safety cap using the active deployment's plan."""
+    plan = replace(get_quota_plan(), upload_bytes=max_bytes)
+    decision = check_quota(0, plan, "upload_bytes", size)
+    if not decision.allowed:
+        raise HTTPException(413, {"code": decision.code, "message": decision.message})

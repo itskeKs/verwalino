@@ -3,7 +3,8 @@
 Design (m2-gobd-belegfluss.md section 5, SDD section 16):
   - Thin, **swappable** abstraction behind a Protocol (same pattern as pdf.py).
   - Default: LocalFsDocumentStore (filesystem, content-addressed by SHA-256).
-  - No delete() in the protocol -- documents are never deleted (GoBD).
+  - Retained originals are immutable; unprotected, unreferenced bytes may only
+    be removed after their metadata deletion commits.
   - Later: S3DocumentStore with Object-Lock/WORM.
 
 Content-addressing: path = <root>/<org_id>/<sha256[:2]>/<sha256>.bin
@@ -15,6 +16,8 @@ Content-addressing: path = <root>/<org_id>/<sha256[:2]>/<sha256>.bin
 from __future__ import annotations
 
 import hashlib
+import fcntl
+import logging
 import os
 import stat
 import tempfile
@@ -24,7 +27,13 @@ from pathlib import Path
 from typing import Iterator, Protocol, runtime_checkable
 from urllib.parse import quote
 
+from sqlalchemy import event
+from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
+
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -43,8 +52,8 @@ class DocumentStore(Protocol):
     """Protocol for document storage backends.
 
     Implementations must be stateless and thread-safe.
-    Deliberately NO delete() -- documents are never deleted in Phase 1 (GoBD).
-    A later retention-governed removal (M9) is a separate, privileged operation.
+    Removal is restricted to originals whose unprotected last reference was
+    successfully deleted; this is not a retention override.
     """
 
     def put(self, key: str, data: bytes, *, content_type: str) -> StoredObjectRef:
@@ -61,6 +70,10 @@ class DocumentStore(Protocol):
 
     def exists(self, key: str) -> bool:
         """Check if a key exists in the store."""
+        ...
+
+    def remove_unreferenced(self, key: str) -> None:
+        """Unlink only after an unprotected last-reference deletion commits."""
         ...
 
     def iter_chunks(self, key: str, *, chunk_size: int = 64 * 1024) -> Iterator[bytes]:
@@ -205,6 +218,23 @@ class LocalFsDocumentStore:
     def exists(self, key: str) -> bool:
         return self._resolve_key(key).exists()
 
+    def organization_bytes(self, org_id: str) -> int:
+        """Inspect physical usage for offline administrative reconciliation only."""
+        directory = self._resolve_key(org_id)
+        if not directory.exists():
+            return 0
+        return sum(path.stat().st_size for path in directory.rglob("*") if path.is_file())
+
+    def discard_uncommitted(self, key: str) -> None:
+        """Remove only an upload tracked as newly created by a failed transaction."""
+        self._resolve_key(key).unlink(missing_ok=True)
+
+    def remove_unreferenced(self, key: str) -> None:
+        path = self._resolve_key(key)
+        path.unlink(missing_ok=True)
+        if path.parent.exists():
+            self._fsync_parent_directory(path.parent)
+
     def iter_chunks(self, key: str, *, chunk_size: int = 64 * 1024) -> Iterator[bytes]:
         """Yield a stored document without loading it fully into memory."""
         if chunk_size <= 0:
@@ -273,6 +303,142 @@ def set_store(store: DocumentStore) -> None:
     """Replace the active store (useful for testing or backend swap)."""
     global _store
     _store = store
+
+
+def retain_document(session, reference: StoredObjectRef) -> None:
+    """Keep an original once an independent commit may reference it."""
+    pending = session.info.get("uncommitted_storage")
+    if pending is not None:
+        session.info["uncommitted_storage"] = [item for item in pending if item[1] != reference.uri]
+
+
+def open_storage_lock(store: LocalFsDocumentStore, org_id) -> int:
+    """Lock the shared organization directory without creating lock files.
+
+    The directory inode is shared by web/worker containers mounting the same
+    document volume. Private /tmp files would not coordinate those containers;
+    deleting lock files would strand waiters on stale inodes.
+    """
+    directory = store._resolve_key(str(org_id))
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+
+
+async def lock_document_storage(session, org_id, store: DocumentStore) -> bool:
+    from app.core.quotas import get_quota_plan
+    if get_quota_plan().name == "unlimited" or not isinstance(store, LocalFsDocumentStore):
+        return False
+    locks = session.info.setdefault("storage_write_locks", {})
+    lock_key = (store._root, org_id)
+    if lock_key not in locks:
+        handle = open_storage_lock(store, org_id)
+        try:
+            await run_in_threadpool(fcntl.flock, handle, fcntl.LOCK_EX)
+        except BaseException:
+            os.close(handle)
+            raise
+        locks[lock_key] = handle
+    return True
+
+
+def remove_document_after_commit(session, store: DocumentStore, key: str) -> None:
+    """Queue only after the repository accepted an unprotected last-ref delete."""
+    transaction = session.sync_session.get_nested_transaction() or session.sync_session.get_transaction()
+    session.info.setdefault("deleted_storage", []).append((store, key, transaction))
+
+
+@event.listens_for(Session, "after_commit")
+def _commit_storage(session):
+    pending = session.info.get("uncommitted_storage", [])
+    nested = session.get_nested_transaction()
+    if nested is not None:
+        session.info["uncommitted_storage"] = [
+            (store, key, nested.parent if transaction is nested else transaction)
+            for store, key, transaction in pending
+        ]
+    else:
+        session.info.pop("uncommitted_storage", None)
+    removals = session.info.pop("deleted_storage", [])
+    if nested is not None:
+        session.info["deleted_storage"] = [
+            (store, key, nested.parent if transaction is nested else transaction)
+            for store, key, transaction in removals
+        ]
+    else:
+        for store, key, _transaction in removals:
+            try:
+                store.remove_unreferenced(key)
+            except Exception:
+                logger.warning("Post-commit document removal failed for %s; original retained for reconciliation", key, exc_info=True)
+
+
+@event.listens_for(Session, "after_soft_rollback")
+def _rollback_storage(session, previous_transaction):
+    if previous_transaction.parent is not None and not previous_transaction.nested:
+        previous_transaction = previous_transaction.parent
+    pending = session.info.pop("uncommitted_storage", [])
+    keep = []
+    for store, key, transaction in pending:
+        if transaction is previous_transaction:
+            _discard_uncommitted(store, key)
+        else:
+            keep.append((store, key, transaction))
+    if keep:
+        session.info["uncommitted_storage"] = keep
+    session.info["deleted_storage"] = [
+        item for item in session.info.get("deleted_storage", [])
+        if item[2] is not previous_transaction
+    ]
+
+
+def _discard_uncommitted(store, key):
+    try:
+        store.discard_uncommitted(key)
+    except Exception:
+        logger.warning("Rollback document removal failed for %s; original retained for reconciliation", key, exc_info=True)
+
+
+@event.listens_for(Session, "after_transaction_end")
+def _close_storage(session, transaction):
+    # Session.close also rolls back, without emitting after_soft_rollback.
+    if transaction.parent is None:
+        session.info.pop("deleted_storage", None)
+        try:
+            for store, key, _transaction in session.info.pop("uncommitted_storage", []):
+                _discard_uncommitted(store, key)
+        finally:
+            for handle in session.info.pop("storage_write_locks", {}).values():
+                os.close(handle)
+
+
+async def put_document(session, org_id, data: bytes, *, content_type: str,
+                       store: DocumentStore | None = None) -> StoredObjectRef:
+    """Check before writing; keep only originals belonging to committed writes."""
+    from app.core.quotas import get_quota_plan
+    from app.services.quota_service import lock_quota, require_document_storage, require_quota
+
+    active_store = store or get_store()
+    plan = get_quota_plan()
+    require_quota(0, "upload_bytes", len(data), plan=plan)
+    key = make_storage_key(str(org_id), compute_sha256(data))
+    if plan.storage_bytes is not None:
+        await lock_quota(session, org_id)
+    # DB locks release before rollback callbacks; retain the hosted filesystem
+    # lock through cleanup so a committed duplicate cannot lose its bytes.
+    await lock_document_storage(session, org_id, active_store)
+    session.info["deleted_storage"] = [
+        item for item in session.info.get("deleted_storage", []) if item[1] != key
+    ]
+    existed = active_store.exists(key)
+    if plan.storage_bytes is not None:
+        # Prior writes in this transaction must be visible to the aggregate,
+        # including unflushed ORM metadata in multi-document operations.
+        await session.flush()
+        await require_document_storage(session, org_id, key, len(data), plan=plan)
+    if plan.storage_bytes is not None and not existed and isinstance(active_store, LocalFsDocumentStore):
+        transaction = session.sync_session.get_nested_transaction() or session.sync_session.get_transaction()
+        session.info.setdefault("uncommitted_storage", []).append((active_store, key, transaction))
+    return await run_in_threadpool(active_store.put, key, data, content_type=content_type)
 
 
 def verify_document_integrity(

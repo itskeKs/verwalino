@@ -8,8 +8,8 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from starlette.concurrency import run_in_threadpool
 
-from app.core.storage import compute_sha256, get_store, make_storage_key
-from app.core.uploads import MAX_UPLOAD_BYTES
+from app.core.storage import compute_sha256, get_store, make_storage_key, put_document
+from app.core.uploads import MAX_UPLOAD_BYTES, require_upload_size
 from app.models.attachment import Attachment
 from app.models.audit_event import AuditEvent
 from app.repositories.attachment_repo import AttachmentRepository
@@ -100,8 +100,7 @@ class AttachmentService:
                      unit_id=None, lease_agreement_id=None, person_id=None):
         if not file_bytes:
             raise HTTPException(422, "Empty file")
-        if len(file_bytes) > MAX_UPLOAD_BYTES:
-            raise HTTPException(413, "File too large")
+        require_upload_size(len(file_bytes), max_bytes=MAX_UPLOAD_BYTES)
         filename = original_filename or ""
         if (not filename.strip() or len(filename) > 255 or filename in {".", ".."}
                 or any(c in filename for c in "/\\")
@@ -115,7 +114,7 @@ class AttachmentService:
         mime = self.detected_mime(file_bytes)
         key = make_storage_key(str(self.org_id), digest)
         try:
-            ref = await run_in_threadpool(get_store().put, key, file_bytes, content_type=mime)
+            ref = await put_document(self.db, self.org_id, file_bytes, content_type=mime, store=get_store())
         except (OSError, ValueError) as exc:
             raise HTTPException(503, "Document storage unavailable") from exc
         if ref.uri != key or ref.sha256 != digest or ref.byte_size != len(file_bytes):

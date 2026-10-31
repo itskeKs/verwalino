@@ -2,7 +2,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, ForeignKeyConstraint, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, ForeignKeyConstraint, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -39,5 +39,6 @@ class LetterDocument(Base, UUIDPrimaryKeyMixin):
     body: Mapped[str] = mapped_column(Text)
     storage_uri: Mapped[str] = mapped_column(Text)
     content_sha256: Mapped[str] = mapped_column(String(64))
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # Issued documents have no mutable updated_at timestamp.
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
