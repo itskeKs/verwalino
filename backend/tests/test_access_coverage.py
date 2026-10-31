@@ -157,14 +157,19 @@ async def test_capture_waits_for_live_admin_and_migration_retains_snapshots(migr
                         migration.downgrade()
                 point = db.begin_nested()
                 try:
-                    db.execute(text('TRUNCATE access_coverage_review,access_coverage_snapshot CASCADE'))
-                    db.execute(text('TRUNCATE source_security_transition,source_security_authorization,property_source_security'))
+                    # A completed route sweep must leave no lifecycle decision.
+                    assert not db.scalar(text('SELECT EXISTS(SELECT 1 FROM organization_deletion)'))
+                    # Rehearsing every later downgrade requires an empty domain
+                    # graph, including immutable batches and live SEPA consent
+                    # from preceding suites. Use the guarded synthetic reset,
+                    # entirely inside this savepoint, then restore it below.
+                    from tests.conftest import clear_disposable_source_context
+                    with db.connection.cursor() as cursor:
+                        clear_disposable_source_context(cursor)
                     proposal_migration = importlib.import_module('migrations.versions.0084_access_grant_proposals')
-                    db.execute(text('TRUNCATE runtime_budget_review,runtime_budget_attestation CASCADE'))
                     from pathlib import Path
                     from alembic.script import ScriptDirectory
                     versions = ScriptDirectory(str(Path(__file__).resolve().parents[1] / 'migrations'))
-                    db.execute(text('TRUNCATE document_ref CASCADE'))
                     for revision in versions.iterate_revisions('head', '0088'):
                         revision.module.downgrade()
                     importlib.import_module('migrations.versions.0088_runtime_budget_review').downgrade()

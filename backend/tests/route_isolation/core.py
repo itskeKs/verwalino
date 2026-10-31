@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from sqlalchemy import text
 
 from tests.route_isolation import Probe, row
 from tests.test_attachments import attachment_pdf, attachment_store, created_attachment  # noqa: F401
@@ -86,6 +87,13 @@ async def core_seeded(isolated_batch_seed, rent_world, attachment_store, attachm
     # The two apply bodies carry the digest of organization B's own preview, known only at run time.
     BATCH_APPLY["expected_source_digest"] = (await created(sweep.client, "/api/dunning/batch/preview", json=BATCH))["source_digest"]
     IMPORT_APPLY["expected_digest"] = (await created(sweep.client, "/api/properties/import/preview", json=import_body()))["source_digest"]
+    try:
+        yield
+    finally:
+        # This sweep owns a throwaway B organization. Its successful own-org
+        # deletion probe must not leave a decision for later migration rehearsals.
+        async with sweep.engine.begin() as connection:
+            await connection.execute(text('DELETE FROM organization_deletion WHERE organization_id=:b'), {'b': sweep.b})
 
 
 # Raw SQL for probes whose ids must come from one organization (the sweep only guarantees "not B").

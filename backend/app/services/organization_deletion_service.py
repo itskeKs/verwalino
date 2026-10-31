@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
+import uuid
 
 from fastapi import HTTPException
 from sqlalchemy import text
@@ -19,8 +20,24 @@ NOTICE = ('Nach der Löschung ist keine Anmeldung mehr möglich; aufbewahrungspf
           'Maßgeblich sind die unten angegebenen Aufbewahrungsfristen. '
           'Erstellen Sie unmittelbar vor der Bestätigung einen neuen Export.')
 
+# Mutable configuration retained for structural/delete-privilege reasons, not
+# frozen voucher content. Canonical rule/fact fields remain guard-protected.
+ERASURE_SCRUB_COLUMNS = {
+    'letter_template': ('name', 'subject', 'body'),
+    'property_assignment': ('stable_key', 'designation', 'location', 'description', 'details_json'),
+    'property_legal_reference': ('district', 'cadastral_district', 'field_number', 'parcel', 'sheet', 'details_json'),
+    'property_rule': ('search_text',),
+    'property_rule_source': ('printed_page', 'section', 'quote', 'field_path'),
+    'approved_fact_source': ('search_text',),
+    'knowledge_budget_policy': ('reason',),
+    'property_source_security': ('reason',),
+}
+
 
 def retained_hash(name, row):
+    scrubbed = set(ERASURE_SCRUB_COLUMNS.get(name, ()))
+    if scrubbed:
+        row = {k: v for k, v in row.items() if k not in scrubbed | {'updated_at', 'search_vector'}}
     if name == 'person':
         row = {k: v for k, v in row.items() if k not in {'processing_restricted', 'deletion_requested_at', 'anonymized_at', 'updated_at'}}
     return hashlib.sha256(json_bytes(row)).hexdigest()
@@ -32,8 +49,11 @@ async def lifecycle_lock(db, org):
 
 
 async def audit(db, org, actor, action):
-    return await db.scalar(text('''INSERT INTO audit_event(organization_id,actor_user_id,entity_type,entity_id,action)
-      VALUES (:org,:actor,'organization',:org,:action) RETURNING id'''), {'org': org, 'actor': actor, 'action': action})
+    identity = uuid.uuid4()
+    await db.execute(text('''INSERT INTO audit_event(id,organization_id,actor_user_id,entity_type,entity_id,action)
+      VALUES (:id,:org,:actor,'organization',:org,:action)'''),
+      {'id': identity, 'org': org, 'actor': actor, 'action': action})
+    return identity
 
 
 async def deletion_status(db, org):
@@ -100,6 +120,9 @@ async def run_deletion(db, org, *, now=None):
     state = (await db.execute(text('SELECT * FROM organization_deletion WHERE organization_id=:org FOR UPDATE'), {'org': org})).mappings().one_or_none()
     if not state or state['status'] != 'cooling_off' or state['execute_after'] > now:
         return False
+    # Transaction-local and useful only for an actual operator login. Every
+    # immutability/evidence trigger still runs without an erasure exception.
+    await db.execute(text("SET LOCAL app.organization_erasure = 'on'"))
     store = get_store()
     if not isinstance(store, LocalFsDocumentStore):
         raise RuntimeError('Local document storage required for erasure')
@@ -148,6 +171,17 @@ async def run_deletion(db, org, *, now=None):
     await db.execute(text('''UPDATE "user" SET email=id::text||'@deleted.invalid',display_name='Gelöscht',
         password_hash='!',is_active=false WHERE organization_id=:org'''), {'org': org})
     await db.execute(text('DELETE FROM password_reset_request WHERE organization_id=:org'), {'org': org})
+    for name, columns in ERASURE_SCRUB_COLUMNS.items():
+        assignments = []
+        for column in columns:
+            # Multiple sources can share rule/document/page. NULL paths retain
+            # their rows without colliding on the location uniqueness constraint.
+            value = ('NULL' if (name, column) == ('property_rule_source', 'field_path') else
+                     "'{}'::jsonb" if column == 'details_json' else
+                     "'Gelöscht '||id::text" if column == 'stable_key' else 'CAST(:marker AS text)')
+            assignments.append(f'"{column}"={value}')
+        await db.execute(text(f'UPDATE public."{name}" SET ' + ','.join(assignments) + ' WHERE organization_id=:org'),
+                         {'org': org, 'marker': 'Gelöscht'})
     # Dependency order is obtained from real FKs. Retained parent closure means
     # only wholly unretained branches are removed. A guard failure rolls back.
     from app.services.organization_import_service import foreign_keys

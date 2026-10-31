@@ -2,6 +2,9 @@
 import argparse
 import asyncio
 import logging
+import sys
+from dataclasses import dataclass, field
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -12,9 +15,15 @@ from app.services.organization_deletion_service import erase_unretained_files, r
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class ErasureResult:
+    completed: int = 0
+    failed: list[UUID] = field(default_factory=list)
+
+
 async def run():
     engine = create_async_engine(settings.database_url_migrator)
-    completed = 0
+    result = ErasureResult()
     try:
         async with AsyncSession(engine) as db:
             async with db.begin():
@@ -30,12 +39,13 @@ async def run():
                     async with db.begin():
                         await db.execute(text("SELECT set_config('app.current_org_id',:org,true)"), {'org': str(org)})
                         erased = await run_deletion(db, org)
-                    completed += bool(erased)
+                    result.completed += bool(erased)
                     async with db.begin():
                         await retry_file_cleanup(db, org)
             except Exception:
+                result.failed.append(org)
                 logger.exception('Organization erasure failed; retry on the next run: %s', org)
-        return completed
+        return result
     finally:
         await engine.dispose()
 
@@ -58,7 +68,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['organization-deletion-run'])
     parser.parse_args()
-    print(f'Organizations erased: {asyncio.run(run())}')
+    result = asyncio.run(run())
+    print(f'Organizations erased: {result.completed}')
+    if result.failed:
+        print('Organizations failed: ' + ', '.join(map(str, result.failed)), file=sys.stderr)
+        raise SystemExit(1)
 
 
 if __name__ == '__main__':

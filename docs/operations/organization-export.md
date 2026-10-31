@@ -211,9 +211,10 @@ former-owner access path; only the operator can retrieve them during retention.
 | Confirmed costs, booked payments, finalized settlements/plans and their lines, issued dunning | Retain unchanged; explicit retention date or ADR-0012's provisional calendar-year-end + eight years |
 | Saved originals (including attachments/issued letters), registry entries | Retain unchanged with original bytes; existing immutable-original guards stay in place |
 | Audit, immutable source/security/allocation/computation evidence, resolution register | Retain unchanged; no privilege or trigger bypass for erasure |
-| Required parent/profile/lease/ownership/property/bank dependencies | Retain through the latest dependent deadline, including live name fallback; bound persons are processing-restricted |
+| Required parent/profile/lease/ownership/property/bank dependencies | Preserve structural rows/FKs through the latest dependent deadline; only voucher ancestry binds a person's readable fields |
 | Persons without a binding or with every known binding expired | Preserve IDs/structural references; neutralize all ADR-0012 contact/address/bank fields and mark anonymized |
 | Users and organization label | Preserve account IDs for audit references; neutralize contacts/credentials, deactivate everyone and neutralize the organization label |
+| Mutable retained configuration text | Replace with `Gelöscht` or empty JSON; keep IDs/FKs, and replace assignment stable keys with `Gelöscht <row UUID>` to preserve uniqueness |
 | Other unretained mutable rows, drafts, notes | Delete in dependency order; any database guard failure rolls back the transaction |
 | Unreferenced document files and transient exports | Remove only after successful database commit; never remove retained URIs |
 
@@ -223,7 +224,7 @@ policies and enabled DELETE triggers. Missing keys are unclassified and stop the
 plan. Reviewed authorization/locking triggers do not imply immutable content;
 unknown DELETE triggers conservatively retain their table. Conditional financial
 guards keep confirmed/booked/finalized/issued rows (and adopted costs or quarantined
-dunning history). Other delete-protected tables are retained verbatim, then the
+dunning history). Other delete-protected rows keep their structure and guarded content; mutable configuration text is minimized as listed below. The
 planner closes over required foreign-key ancestors. The schema contract checks
 every organization table, including newly created tables and newly attached guards.
 Live `sepa_creditor`/`sepa_mandate` configuration is a deliberate mutable-consent
@@ -242,11 +243,52 @@ reason text, labels, identities, capabilities and source/context references:
 | `property_source_admission` | `protect_property_source_admission`: insert only |
 | `special_levy`, `special_levy_allocation` | `guard_special_levy`: append only; allocation basis frozen at creation |
 
-None permits erasure-time rewriting of personal content. Anonymization changes
-only the ADR-0012 person contact/address/bank category where no current retention
-dependency requires it, and account contacts/credentials. Structural identifiers
-remain. No immutable domain, grant, source receipt or levy is rewritten to simulate
-anonymization.
+These guards remain unchanged. Their references preserve a person's row and FKs,
+but do **not** justify retaining readable person master data. Person deadlines
+propagate separately from structural retention, starting only at confirmed or
+adopted costs, booked payments, finalized settlements/plans and their lines,
+issued or quarantined dunning, retained invoice originals and issued letter
+documents. The closure follows their actual ancestors, plus the existing legacy
+WEG/plan ownership fallback. Only a person reached from one of these voucher
+categories with an unexpired voucher deadline remains verbatim and restricted.
+Every other person is anonymized, including persons referenced by domains,
+grants, dunning contexts or levy allocations. A new configuration reference
+cannot extend an expired voucher's personal deadline. No immutable domain,
+grant, source receipt or levy is rewritten.
+
+The operator sets `SET LOCAL app.organization_erasure = 'on'` inside the erasure
+transaction. Four authorization functions allow DELETE only when both
+`current_user` **and** `session_user` are `app_migrator` and that flag is on:
+`authorize_bound_financial_write`, `authorize_dunning_write`,
+`guard_financial_source_input`, `guard_strict_financial_resource`.
+The login check matters because these functions are `SECURITY DEFINER`.
+`app_rw` cannot use the flag to acquire authority. `authorize_bound_payment_write`
+fires only on UPDATE; erasure never updates payments, so it needs no exemption.
+Declaration effect/review guards already admit their migration owner. Other
+authorization-bearing DELETE guards also protect immutable evidence and are
+left intact; their rows are retained.
+
+The mutable policy guards `guard_knowledge_budget_policy` and
+`guard_property_source_security` additionally admit a **reason-only UPDATE**
+under the same operator checks; all other columns must be identical. Their
+DELETE refusals and all financial/evidence immutability guards remain effective.
+Migration 0147 replaces these six function bodies and removes the exact inserted
+clauses on downgrade, restoring the previous definitions, ownership and grants.
+No trigger is disabled. The setting expires with the transaction.
+
+The following mutable retained fields are scrubbed. Hash verification excludes
+these intended changes and their derived search vectors; other retained content
+still has to match its pre-erasure hash.
+
+| Table | Scrubbed columns |
+| --- | --- |
+| `letter_template` | `name`, `subject`, `body` |
+| `property_assignment` | `stable_key`, `designation`, `location`, `description`, `details_json` |
+| `property_legal_reference` | `district`, `cadastral_district`, `field_number`, `parcel`, `sheet`, `details_json` |
+| `property_rule` | `search_text` (and generated `search_vector`) |
+| `property_rule_source` | `printed_page`, `section`, `quote`; `field_path` becomes NULL so sources on the same page remain distinct rows without a key collision |
+| `approved_fact_source` | `search_text` (and generated `search_vector`) |
+| `knowledge_budget_policy`, `property_source_security` | `reason` only |
 
 Retention keys, legal bases, deadlines and content hashes are persisted in the
 deletion record. Active-bound person processing flags may change; expired-bound personal fields are
@@ -255,7 +297,9 @@ Retained voucher and
 source contents do not. The CLI retries post-commit file cleanup for completed
 organizations on every invocation, so an interrupted cleanup is recoverable.
 Each organization has its own session/transaction. A failure logs its organization
-ID, rolls back its database work and continues with the next organization. A failed
+ID, rolls back its database work and continues with the next organization. The
+CLI prints the completion count and failed organization IDs separately and exits **1** if
+any organization or post-commit cleanup failed (otherwise **0**). A failed
 database erasure stays due in `cooling_off`; rerun `organization-deletion-run` to
 retry it, or cancel through the existing owner-admin action before erasure commits.
 Database failure never deletes files. Storage errors before commit refuse the
@@ -264,7 +308,85 @@ Expiry does not automatically purge immutable evidence: that remains a separate
 operator/legal decision under [ADR-0012](../adr/0012-gdpr-erasure-vs-gobd-retention.md).
 Its provisional retention durations still require the documented domain sign-off.
 
-### Personal data remaining in immutable audit payloads
+### Owner decision: personal content remaining in immutable evidence
+
+In addition to voucher/original content and the audit payloads below, these exact
+table/column pairs can retain personal text or JSON in guarded evidence. Their
+immutable columns cannot be scrubbed. The resolution register's mutable legal
+annotation is distinguished below. IDs, hashes, fixed enums and numeric/date fields are omitted
+from this content inventory. A table entry lists each surviving column of that
+table explicitly; it does not authorize rewriting any of them.
+
+| Table | Guarded personal-content columns remaining verbatim |
+| --- | --- |
+| `person_data_domain` | `label`, `reason_code` |
+| `person_data_grant` | `reason_code` |
+| `property_data_domain`, `property_data_grant` | `reason` (`property_data_domain.label` also remains) |
+| `accounting_scope` | `label` |
+| `accounting_scope_binding`, `scope_grant`, `scope_control_event` | `reason` |
+| `dunning_scope_context`, `dunning_quarantine_disposition` | `reason` |
+| `invoice_review_revision` | `seller_name`, `document_number`, `reason` |
+| `property_rule` | `stable_key`, `topic`, `title`, `summary`, `scope_json`, `effect_json` |
+| `approved_fact_source` | `field_key`, `approved_value_json`, `printed_page`, `section`, `quote` |
+| `access_coverage_snapshot` | `manifest` |
+| `access_disposition_acceptance` | `assessment`, `reason` |
+| `access_grant_proposal`, `access_grant_acceptance` | `changes` (proposal), `results` (acceptance) |
+| `source_security_transition` | `reason` |
+| `scope_migration_exception` | `evidence` |
+| `scope_payment_reconciliation` | `reason` |
+| `runtime_budget_review` | `reason`, `policy` |
+| `runtime_budget_attestation` | `policy` |
+| `property_source_admission_review`, `property_source_classification` | `reason` |
+| `coverage_declaration` | `values`, `source_document_ids`, `reason` |
+| `financial_computation_attestation`, `financial_computation_receipt` | `state` |
+| `allocation_correction` | `impact_snapshot`, `reason` |
+| `allocation_correction_completion` | `basis`, `reason` |
+| `allocation_correction_context`, `allocation_correction_impact` | `context` (context), `snapshot` (impact) |
+| `allocation_proposal` | `reason` |
+| `allocation_proposal_line` | `description`, `category_code`, `category_label` |
+| `allocation_set` | `duplicate_snapshot`, `reason` |
+| `allocation_treatment_line` | `documentary_basis`, `markers` |
+| `allocation_treatment_review` | `snapshot`, `reason` |
+| `assignment_proposal` | `blockers`, `reason` |
+| `context_decision` | `snapshot`, `quotation`, `xml_path`, `comparison_note` |
+| `duplicate_comparison` | `evidence`, `reason` |
+| `duplicate_exception_dependency` | `cause`, `evidence` |
+| `exception_case`, `exception_dependency` | `cause` |
+| `exception_case_event` | `reason` |
+| `exception_completion` | `basis`, `dispositions`, `comparisons`, `reason` |
+| `extraction_revision` | `payload` |
+| `field_evidence` | `field_name`, `value`, `bbox`, `quotation`, `xml_path` |
+| `intake_batch` | `manifest` |
+| `intake_item` | `client_item_key`, `filename` |
+| `intake_extraction_attempt` | `result` |
+| `intake_extraction_retry`, `intake_retry_receipt` | `reason` |
+| `declaration_import_pass` | `safe_metadata` |
+| `declaration_review_context`, `declaration_review_receipt` | `prior_resolutions` (context), `response` (receipt) |
+| `dunning_batch`, `master_import_batch`, `job_attempt`, `outbox_delivery_attempt` | `result` |
+| `logical_document`, `mapping_version`, `source_partition_revision` | `reason` (`mapping_version.identifier_value` and `source_basis` also remain) |
+| `visual_disclosure_event`, `visual_extract_artifact` | `reason` (`visual_extract_artifact.renderer_profile` also remains) |
+| `visual_extract_attestation` | `payload` |
+| `resolution_register_entry` | `location`, `wording` |
+
+`resolution_register_entry.challenge_annotation` also remains as part of the
+retained legal register (ADR-0011). Its guard **does allow** setting, updating and
+clearing this legal challenge/repeal annotation; it is not an immutable column.
+Erasure preserves this legal evidence category, including annotations, rather
+than treating it as ordinary configuration. Whether its personal content needs
+a separate minimization policy remains an owner/domain decision alongside the
+immutable payloads listed here.
+
+Original-document titles, filenames, deed references, archive/scope reasons,
+invoice extraction payloads and issued-letter recipient/subject/body also remain
+as part of their retained originals. Their exact pairs are
+`attachment.title`, `attachment.original_filename`, `attachment.archive_reason`,
+`invoice_document.original_filename`, `invoice_document.extraction_payload`,
+`mandate_document.title`, `mandate_document.original_filename`,
+`mandate_document.scope_reason`, `mandate_document.archive_reason`,
+`property_document.title`, `property_document.deed_reference`,
+`property_document.original_filename`, `letter_document.recipient_name`,
+`letter_document.subject`, `letter_document.body`. Retained structural UUIDs
+continue to link this evidence to anonymized person rows.
 
 Organization erasure retains `audit_event` unchanged, including `payload_diff`.
 In particular, `mail_prepared` stores the recipient's **email address** and

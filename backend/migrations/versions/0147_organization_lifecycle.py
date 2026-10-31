@@ -4,6 +4,11 @@ At READ COMMITTED, a write before cooling-off becomes visible is allowed.
 Once cooling-off commits, every later statement is refused. In-flight writes
 are not drained: the lookup uses statement visibility, without advisory locks
 or transaction-local caching that could hide a newly committed state.
+
+Only voucher ancestry binds person fields: confirmed/adopted costs, booked
+payments, finalized settlements/plans and their lines, issued/quarantined dunning,
+retained invoice originals and issued letter documents. Configuration/evidence
+FK closure preserves structure but cannot extend these personal deadlines.
 """
 from alembic import op
 from sqlalchemy import text
@@ -80,11 +85,13 @@ def upgrade():
     ''')
 
     _registration_adapter(True)
+    _erasure_authorization(True)
     _lifecycle()
     _auth_filter(True)
 
 
 def downgrade():
+    _erasure_authorization(False)
     _registration_adapter(False)
     _auth_filter(False)
     op.execute('''
@@ -187,7 +194,7 @@ def _lifecycle():
       DROP TABLE IF EXISTS pg_temp.organization_retention_work;
       CREATE TEMP TABLE organization_retention_work(
         entity text NOT NULL,identity jsonb NOT NULL,retention_until date NOT NULL,legal_basis text NOT NULL,
-        PRIMARY KEY(entity,identity)) ON COMMIT DROP;
+        person_until date, PRIMARY KEY(entity,identity)) ON COMMIT DROP;
       FOR tab IN SELECT entity relname,pk,retain_when FROM public.organization_retention_catalog()
         WHERE disposition IN ('retain','conditional') LOOP
         SELECT string_agg(format('%L,t.%I',col,col),',') INTO key_sql FROM unnest(tab.pk) col;
@@ -197,15 +204,18 @@ def _lifecycle():
             GREATEST(NULLIF(to_jsonb(t)->>'invoice_date','')::date,NULLIF(to_jsonb(t)->>'service_period_to','')::date),NULLIF(to_jsonb(t)->>'issue_date','')::date,
             NULLIF(to_jsonb(t)->>'value_date','')::date,NULLIF(to_jsonb(t)->>'created_at','')::timestamptz::date,
             NULLIF(to_jsonb(t)->>'registered_at','')::timestamptz::date,CURRENT_DATE))::integer+8,12,31))$sql$;
-        EXECUTE format('INSERT INTO pg_temp.organization_retention_work SELECT %L,%s,%s,%L
+        EXECUTE format('INSERT INTO pg_temp.organization_retention_work SELECT %L,%s,%s,%L,%s
           FROM public.%I t WHERE t.organization_id=$1 AND (%s)',tab.relname,key_sql,deadline,
-          'GoBD / ADR-0003 / ADR-0012: voucher, original or delete-protected evidence',tab.relname,tab.retain_when) USING org;
+          'GoBD / ADR-0003 / ADR-0012: voucher, original or delete-protected evidence',
+          CASE WHEN tab.relname IN ('cost_entry','payment','settlement_run','settlement_line',
+            'economic_plan','economic_plan_line','dunning_notice','invoice_document','letter_document')
+            THEN deadline ELSE 'NULL::date' END,tab.relname,tab.retain_when) USING org;
       END LOOP;
       -- Legacy WEG/plan rendering resolves every historical owner of the
       -- property through ownership_history, a semantic edge without a run FK.
       INSERT INTO pg_temp.organization_retention_work AS existing
         SELECT 'ownership_history',jsonb_build_object('id',h.id),max(w.retention_until),
-          'ADR-0012: permanent legacy owner-name fallback'
+          'ADR-0012: permanent legacy owner-name fallback',max(w.person_until)
         FROM public.ownership_history h JOIN public.unit u ON u.id=h.unit_id AND u.organization_id=h.organization_id
         JOIN (SELECT organization_id,id,property_id FROM public.settlement_run WHERE status='finalized' AND run_type='WEG_JAHRESABRECHNUNG'
           UNION ALL SELECT organization_id,id,property_id FROM public.economic_plan WHERE status='finalized') r
@@ -213,7 +223,8 @@ def _lifecycle():
         JOIN pg_temp.organization_retention_work w ON w.entity IN ('settlement_run','economic_plan')
           AND w.identity=jsonb_build_object('id',r.id)
         WHERE h.organization_id=org GROUP BY h.id
-        ON CONFLICT(entity,identity) DO UPDATE SET retention_until=GREATEST(existing.retention_until,EXCLUDED.retention_until);
+        ON CONFLICT(entity,identity) DO UPDATE SET retention_until=GREATEST(existing.retention_until,EXCLUDED.retention_until),
+          person_until=GREATEST(existing.person_until,EXCLUDED.person_until);
       -- Retain required ancestors (including live fallback display names), with
       -- the latest dependent deadline. No immutable record is rewritten.
       LOOP
@@ -235,12 +246,18 @@ def _lifecycle():
           SELECT string_agg(format('c.%I=p.%I',fk.child_cols[i],fk.parent_cols[i]),' AND ') INTO join_sql
             FROM generate_subscripts(fk.child_cols,1) i;
           EXECUTE format('INSERT INTO pg_temp.organization_retention_work AS existing
-            SELECT %L,%s,max(w.retention_until),%L FROM public.%I c
+            SELECT %L,%s,max(CASE WHEN %L=''person'' THEN w.person_until ELSE w.retention_until END),%L,
+              max(w.person_until) FROM public.%I c
             JOIN pg_temp.organization_retention_work w ON w.entity=%L AND to_jsonb(c) @> w.identity
-            JOIN public.%I p ON %s WHERE c.organization_id=$1 GROUP BY %s
-            ON CONFLICT(entity,identity) DO UPDATE SET retention_until=EXCLUDED.retention_until
-              WHERE existing.retention_until<EXCLUDED.retention_until',fk.parent,parent_key,
-            'ADR-0012: required dependency of retained evidence',fk.child,fk.child,fk.parent,join_sql,parent_key) USING org;
+            JOIN public.%I p ON %s WHERE c.organization_id=$1
+              AND (%L<>''person'' OR w.person_until IS NOT NULL) GROUP BY %s
+            ON CONFLICT(entity,identity) DO UPDATE SET
+              retention_until=GREATEST(existing.retention_until,EXCLUDED.retention_until),
+              person_until=GREATEST(existing.person_until,EXCLUDED.person_until)
+              WHERE existing.retention_until<EXCLUDED.retention_until
+                OR existing.person_until IS DISTINCT FROM GREATEST(existing.person_until,EXCLUDED.person_until)',
+            fk.parent,parent_key,fk.parent,'ADR-0012: required dependency of retained voucher or evidence',
+            fk.child,fk.child,fk.parent,join_sql,fk.parent,parent_key) USING org;
           GET DIAGNOSTICS altered=ROW_COUNT; changes:=changes+altered;
         END LOOP;
         EXIT WHEN changes=0;
@@ -319,6 +336,37 @@ def _registration_adapter(install):
         assert definition.count(source) == 1
         definition = definition.replace(source, target)
     op.execute(definition)
+
+
+def _erasure_authorization(install):
+    # SECURITY DEFINER sets current_user to the function owner even for app_rw.
+    # Require the actual login too. Only DELETE capability checks, or a reason-
+    # only UPDATE of mutable policy configuration, receive an exemption.
+    # Reversing this exact insertion restores the previous bodies verbatim.
+    checks = {
+        'authorize_bound_financial_write': "TG_OP='DELETE'",
+        'authorize_dunning_write': "TG_OP='DELETE'",
+        'guard_financial_source_input': "TG_OP='DELETE'",
+        'guard_strict_financial_resource': "TG_OP='DELETE'",
+        'guard_knowledge_budget_policy': "TG_OP='UPDATE' AND (to_jsonb(NEW)-'reason')=(to_jsonb(OLD)-'reason')",
+        'guard_property_source_security': "TG_OP='UPDATE' AND (to_jsonb(NEW)-'reason')=(to_jsonb(OLD)-'reason')",
+    }
+    for function, operation in checks.items():
+        definition = op.get_bind().scalar(text('SELECT pg_get_functiondef(CAST(:name AS regprocedure))'),
+                                          {'name': f'public.{function}()'})
+        anchor = '    BEGIN\n'
+        exemption = ("      IF current_user='app_migrator' AND session_user='app_migrator'\n"
+                     "        AND current_setting('app.organization_erasure',true)='on'\n"
+                     f"        AND {operation} THEN\n"
+                     "        IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;\n"
+                     "      END IF;\n")
+        before, after = anchor, anchor + exemption
+        # This branch's pre-release 0147 had no erasure exemption yet.
+        if not install and exemption not in definition:
+            continue
+        source, target = (before, after) if install else (after, before)
+        assert definition.count(source) == 1, function
+        op.execute(definition.replace(source, target, 1))
 
 
 def _auth_filter(install):

@@ -134,7 +134,19 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                     expected_security = connection.execute(text("SELECT c.relname,c.relrowsecurity,c.relforcerowsecurity,c.relacl::text FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relname=ANY(:tables) ORDER BY c.relname"), {'tables': tables}).all()
                     expected.rollback()
                 for revision in reversed(revisions):
+                    if starting_schema == '0146' and revision.revision == '0147':
+                        def trigger_definitions():
+                            return connection.execute(text('''SELECT p.proname,pg_get_functiondef(p.oid),p.proacl::text,
+                              pg_get_userbyid(p.proowner) FROM pg_proc p WHERE p.oid IN (
+                                SELECT t.tgfoid FROM pg_trigger t WHERE NOT t.tgisinternal)
+                              ORDER BY p.proname''')).all()
+                        original_triggers = trigger_definitions()
                     revision.module.upgrade()
+                    if starting_schema == '0146' and revision.revision == '0147':
+                        with connection.begin_nested() as rehearsal:
+                            revision.module.downgrade()
+                            assert trigger_definitions() == original_triggers
+                            rehearsal.rollback()
             assert old_rows() == before
             after_security = connection.execute(text("SELECT c.relname,c.relrowsecurity,c.relforcerowsecurity,c.relacl::text FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relname=ANY(:tables) ORDER BY c.relname"), {'tables': tables}).all()
             if starting_schema in ('0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147'):  # accepted sources
