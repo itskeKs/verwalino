@@ -206,7 +206,7 @@ describe("permissions area", () => {
 
   it("shows all three review lists with loaded counts in one section", async () => {
     renderRoutes("/berechtigungen/pruefungen", "OWNER_ADMIN");
-    for (const label of ["Geladene Quellenfreigaben: 0", "Geladene Mahnungen: 0", "Geladene Mandatsunterlagen: 0"]) {
+    for (const label of ["Quellenfreigaben: 0 geladen", "Mahnungen: 0 geladen", "Mandatsunterlagen: 0 geladen"]) {
       expect(await screen.findByText(label)).toBeVisible();
     }
   });
