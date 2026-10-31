@@ -2,6 +2,7 @@
 name = "hausverwaltung-backend"
 version = "0.1.0"
 description = "Backend for Hausverwaltungssoftware MVP"
+license = "AGPL-3.0-only"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115,<1",
@@ -19,6 +20,7 @@ dependencies = [
     "lxml>=5,<7",
     "openai>=3,<4",
     "tiktoken>=0.9,<1",
+    "sentry-sdk[fastapi]>=2.73,<3",
 ]
 
 [project.optional-dependencies]
@@ -35,6 +37,7 @@ dev = [
     "hypothesis>=6,<7",
     "ruff>=0.8,<1",
     "pytest-bdd>=8,<9",
+    "pytest-playwright>=0.7,<1",
 ]
 ocr = [
     "pytesseract>=0.3,<1",
@@ -43,7 +46,7 @@ ocr = [
 ]
 
 [build-system]
-requires = ["setuptools>=70"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
@@ -52,6 +55,11 @@ include = ["app*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "browser: browser journeys (opt in with --run-browser)",
+    "selfhost: scenario requires the self-hosted deployment policy",
+    "hosted: scenario requires the hosted deployment policy",
+]
 
 [tool.ruff]
 # Gate introduced with the dev workflow (Makefile `lint`, scripts/checks.sh, CI).

@@ -4,6 +4,7 @@ import { ApiError } from "../api/client";
 import { useAuth } from "../auth/useAuth";
 import { usePagedList } from "../hooks/usePagedList";
 import { ListSearch, MoreResults } from "../components/ListSearch";
+import { SourceSecurityNotice } from "../components/SourceSecurityNotice";
 
 import { sourceClassificationApi } from "../api/endpoints";
 import type { SourceClassificationCommand as ReviewCommand, PendingSourceClassification as PendingSource, SourceClassificationReceipt as Receipt } from "../api/types";
@@ -96,7 +97,8 @@ export function SourceClassificationsPage() {
   const { session } = useAuth();
   const canWrite = session?.role === "OWNER_ADMIN";
   return <div className="paged-list source-admission-review min-w-0"><h1>Altquellen prüfen</h1>
-    <p>Diese Einstufung bereitet die spätere Zugriffskontrolle vor. Sie ist noch nicht aktiviert; auch eine hier dokumentierte Sperre schränkt den bisherigen Zugriff noch nicht ein. Unklare Herkunft wird nicht nachträglich ergänzt.</p>
+    <p>Hier dokumentieren Sie die Freigabe oder Sperre von Altquellen. Unklare Herkunft wird nicht nachträglich ergänzt.</p>
+    {canWrite && <SourceSecurityNotice key={session.organization_id} />}
     {reviewId ? <><Link to="/altquellen">Zur Liste der Altquellen</Link><ReceiptDetail key={reviewId} reviewId={reviewId} /></> :
       canWrite ? <PendingReviews /> : <p>Die Einstufung erfordert Administratorrechte und ausdrückliche Rechte am Datenbereich.</p>}
   </div>;

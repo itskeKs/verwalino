@@ -18,15 +18,18 @@ from __future__ import annotations
 
 import argparse
 import sys
-import uuid
 
 import psycopg2
 
 from app.core.config import settings
+from app.core.rate_limit import key_hash
 from app.core.security import hash_password, normalize_email, validate_new_password
 
 
 def main() -> None:
+    if sys.argv[1:2] == ["unlock"]:
+        unlock(sys.argv[2:])
+        return
     ap = argparse.ArgumentParser(description="Create an organization + OWNER_ADMIN user.")
     ap.add_argument("--org", required=True, help="Organization name")
     ap.add_argument("--email", required=True, help="Admin login email")
@@ -53,15 +56,7 @@ def main() -> None:
     conn.autocommit = False
     try:
         cur = conn.cursor()
-        cur.execute("SELECT id FROM organization WHERE name = %s", (args.org,))
-        row = cur.fetchone()
-        org_id = row[0] if row else str(uuid.uuid4())
-        if not row:
-            cur.execute(
-                "INSERT INTO organization (id, name) VALUES (%s, %s)",
-                (org_id, args.org),
-            )
-
+        cur.execute("LOCK TABLE public.organization IN SHARE ROW EXCLUSIVE MODE", ())
         cur.execute(
             'SELECT id FROM public."user" '
             "WHERE pg_catalog.lower(pg_catalog.btrim(email)) = %s",
@@ -72,18 +67,38 @@ def main() -> None:
             conn.rollback()
             return
 
-        user_id = str(uuid.uuid4())
         cur.execute(
-            'INSERT INTO "user" (id, organization_id, email, password_hash, display_name) '
-            "VALUES (%s, %s, %s, %s, %s)",
-            (user_id, org_id, email, hash_password(password), args.name),
-        )
-        cur.execute(
-            "INSERT INTO membership (id, organization_id, user_id, role) VALUES (%s, %s, %s, %s)",
-            (str(uuid.uuid4()), org_id, user_id, "OWNER_ADMIN"),
+            "SELECT public.bootstrap_organization_admin(%s,%s,%s,%s)",
+            (args.org, email, args.name, hash_password(password)),
         )
         conn.commit()
         print(f"Created organization '{args.org}' and OWNER_ADMIN '{email}'.")
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def unlock(arguments: list[str]) -> None:
+    """Delete exactly one login key using the configured migrator connection."""
+    ap = argparse.ArgumentParser(prog="admin_cli unlock", description="Clear a login throttle key as the migrator.")
+    keys = ap.add_mutually_exclusive_group(required=True)
+    keys.add_argument("--email", help="Login email (normalized like the app)")
+    keys.add_argument("--ip", help="Client IP (native IPv6 shares a /64; unknown addresses use 'invalid')")
+    args = ap.parse_args(arguments)
+    kind, value = ("email", args.email) if args.email is not None else ("ip", args.ip)
+    try:
+        digest = key_hash("login", kind, value)
+    except ValueError as error:
+        ap.error(str(error))
+    conn = psycopg2.connect(settings.database_url_sync)
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM public.auth_throttle WHERE key_kind=%s AND key_hash=%s", (kind, digest))
+            removed = cursor.rowcount
+        conn.commit()
+        print(f"Removed {removed} login throttle row(s).")
     except Exception:
         conn.rollback()
         raise

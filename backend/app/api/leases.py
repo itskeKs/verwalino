@@ -27,6 +27,8 @@ from app.core.temporal import (
     inclusive_last_day_to_db_exclusive,
 )
 from app.repositories.lease_agreement_repo import LeaseAgreementRepository
+from app.repositories.unit_repo import UnitRepository
+from app.repositories.tenant_profile_repo import TenantProfileRepository
 from app.models.lease_agreement import LeaseAgreement
 from app.models.lease_rent_change import LeaseRentChange
 from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
@@ -103,6 +105,12 @@ async def create_lease(
     db: AsyncSession = Depends(get_live_writer_db),
 ):
     repo = LeaseAgreementRepository(db, auth.organization_id)
+    unit_id = uuid.UUID(body.unit_id)
+    tenant_profile_id = uuid.UUID(body.tenant_profile_id)
+    if await UnitRepository(db, auth.organization_id).get_by_id(unit_id) is None:
+        raise HTTPException(404, "Unit not found")
+    if await TenantProfileRepository(db, auth.organization_id).get_by_id(tenant_profile_id) is None:
+        raise HTTPException(404, "Tenant profile not found")
     # API write edge (ADR-0006): the user enters the INCLUSIVE last occupied day
     # ("endet 30.06." -> 2025-06-30); storage is HALF-OPEN [valid_from, valid_to)
     # so persist the EXCLUSIVE bound (last day + 1). valid_from is already the
@@ -110,8 +118,8 @@ async def create_lease(
     # what lets "A bis 30.06." + "B ab 01.07." coexist without a false EXCLUDE 409.
     la = LeaseAgreement(
         id=uuid.uuid4(),
-        unit_id=uuid.UUID(body.unit_id),
-        tenant_profile_id=uuid.UUID(body.tenant_profile_id),
+        unit_id=unit_id,
+        tenant_profile_id=tenant_profile_id,
         valid_from=body.valid_from,
         valid_to=inclusive_last_day_to_db_exclusive(body.valid_to),
         base_rent=Decimal(body.base_rent),

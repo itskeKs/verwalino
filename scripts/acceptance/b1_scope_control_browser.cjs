@@ -28,7 +28,7 @@ const base = 'http://127.0.0.1:13000', output = '/tmp/hv-b1-control-acceptance';
     const bankData = { property_id: property.id, accounting_scope_id: scope.id, account_type: 'LAUFEND', label: 'Control QA bank' };
     const bank = await post('/api/bank-accounts', bankData);
     const original = await (await page.request.get(base + '/api/bank-accounts/' + bank.id)).json();
-    await page.goto(base + '/berechtigungen/' + scope.id);
+    await page.goto(base + '/berechtigungen/teamrechte/' + scope.id);
     await page.getByText('Bereichsbezogene Finanzaktionen nach bestehenden Rechten aktiv', { exact: true }).waitFor();
     await page.getByText(/keine vollständige Buchungssperre/).waitFor();
     const reason = page.getByLabel('Begründung der Betriebsänderung', { exact: true });

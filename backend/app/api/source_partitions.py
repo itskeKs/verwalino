@@ -36,5 +36,7 @@ async def history(document_ref_id:uuid.UUID,partition_id:uuid.UUID,auth:AuthCont
 @router.post('/{document_ref_id}/partition',status_code=201)
 async def review(document_ref_id:uuid.UUID,body:PartitionReview,idempotency_key:uuid.UUID=Header(),expected:uuid.UUID|None=Depends(expected_revision),
                  auth:AuthContext=Depends(get_current_user),db:AsyncSession=Depends(get_live_writer_db)):
-    return await IntakeService(db,auth).call('SELECT review_source_partition(:org,:ref,:request,:expected,CAST(:selected AS uuid[]),:reason,:acknowledged)',
+    service=IntakeService(db,auth)
+    await service.require_parents('logical_document',body.logical_document_ids)
+    return await service.call('SELECT review_source_partition(:org,:ref,:request,:expected,CAST(:selected AS uuid[]),:reason,:acknowledged)',
         ref=document_ref_id,request=idempotency_key,expected=expected,selected=body.logical_document_ids,reason=body.reason,acknowledged=body.visual_pages_reviewed)

@@ -18,8 +18,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
-const { chromium } = require(process.env.HV_PLAYWRIGHT_PACKAGE
-  || '/Users/keks/.npm/_npx/420ff84f11983ee5/node_modules/playwright');
+const { chromium } = require(process.env.HV_PLAYWRIGHT_PACKAGE || 'playwright');
 const base = 'http://127.0.0.1:13000';
 const prefix = `T42 ${Date.now().toString(36)} ${randomUUID().slice(0, 8)}`;
 const propertyName = `${prefix} MIET`;
@@ -304,7 +303,7 @@ let browser;
       .getByText('Bereichsbezogene Finanzaktionen nach bestehenden Rechten aktiv', { exact: true }).waitFor();
   }
   // Reproduce the real formerly-409 context, not a mocked financial response.
-  await page.goto(base + '/berechtigungen');
+  await page.goto(base + '/berechtigungen/teamrechte');
   await scopeControlReady();
   await field(page.getByRole('group', { name: 'Objekt', exact: true }), 'Objekte durchsuchen').fill(propertyName);
   await selectLabel(page, 'Objekt', propertyName);

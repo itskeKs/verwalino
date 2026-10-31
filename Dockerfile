@@ -3,7 +3,8 @@
 # Digests below were resolved as multi-platform manifest lists on 2026-08-27.
 # Keep them pinned: a tag is not an immutable deployment input.
 
-FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS frontend
+# Only static assets reach runtime; run frontend checks without target emulation.
+FROM --platform=$BUILDPLATFORM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS frontend
 WORKDIR /fe
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
@@ -34,7 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libcairo2 libgdk-pixbuf-2.0-0 libffi8 \
       libbrotli1 libexpat1 libpcre2-8-0 libssh2-1 perl-base \
       fonts-dejavu-core shared-mime-info \
-      poppler-utils qpdf tesseract-ocr tesseract-ocr-deu \
+      poppler-utils qpdf tesseract-ocr tesseract-ocr-deu clamav \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.12 \
     && rm -rf /usr/local/lib/python3.12/site-packages/pip \

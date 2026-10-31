@@ -4,7 +4,7 @@ import uuid
 import pytest
 from sqlalchemy import text
 from tests.test_financial_scope_boundary import worker_tenant,scope_seed  # noqa: F401
-from tests.test_invoice_source_custody import store,fixture
+from tests.test_invoice_source_custody import store,fixture,foreign_fixture
 from tests.test_scoped_account_statements import client,mutate
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_intake_extraction_worker import source
@@ -28,6 +28,24 @@ async def prepared(api,ids,scoped=False):
 def command(partition,extraction,scope,previous=None,key=None,reason='Manually selected after source review'):
     return dict(json={'partition_revision_id':partition['id'],'extraction_revision_id':extraction['id'],'scope_id':str(scope),'reason':reason},
         headers={'Idempotency-Key':key or str(uuid.uuid4()),'If-Match':'"'+(previous or 'none')+'"'})
+
+
+@pytest.mark.parametrize('field', ['partition_revision_id','extraction_revision_id'])
+async def test_foreign_and_unknown_evidence_parents_create_no_assignment(migrator_session,scope_seed,store,field):
+    ids=await fixture(migrator_session,scope_seed)
+    foreign=await foreign_fixture(migrator_session)
+    async with client(ids) as api,client(foreign) as other:
+        _,child,partition,extraction=await prepared(api,ids)
+        _,_,foreign_partition,foreign_extraction=await prepared(other,foreign)
+        parent=foreign_partition['id'] if field=='partition_revision_id' else foreign_extraction['id']
+        replies=[]
+        for invalid in (parent,str(uuid.uuid4())):
+            body=command(partition,extraction,ids['scope']);body['json'][field]=invalid
+            reply=await api.post('/api/logical-documents/'+child['id']+'/assignment-proposals',**body)
+            assert reply.status_code==404,reply.text
+            replies.append(reply.json())
+        assert replies[0]==replies[1]
+    assert await read_value('SELECT count(*) FROM assignment_proposal WHERE organization_id=:org',ids)==0
 
 
 async def test_manual_proposal_pins_source_and_replays_historical_revision(migrator_session,scope_seed,store):

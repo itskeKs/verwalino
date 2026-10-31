@@ -2,7 +2,7 @@
 
 As of: 2026-06-01 · Version 0.1 (design, before implementation)
 Reference: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2 · [archived roadmap](archive/roadmap.md)
-Author: `engine-correctness` (Opus 4.8) · Status: **Draft for confirmation by the human — no code yet, no commit**
+Status: **Draft for confirmation by the human — no code yet, no commit**
 
 > **Historical note:** The following sections document the
 > M0 design state of 2026-06-01. They are not the status of today's
@@ -27,27 +27,75 @@ The dedicated healthcheck verifies local OCR, storage and DB role without queue 
 or a provider call. SIGTERM lets a running bounded extraction run out, without
 adopting results after an abort; the existing lease recovery applies.
 The local launcher manages API, UI and worker with a shared, isolated
-`/tmp` document storage and exclusively the test DB `:55432`. The approved,
-not yet activated production service uses only the internal network and a readable
-original volume; no provider, web, review or migrator credentials.
-Operating details and the unchanged production release limit: [DEPLOY.md](../DEPLOY.md).
+`/tmp` document storage and exclusively the test DB `:55432`. The owner's local
+production Compose service uses only the internal network and a readable original
+volume; no provider, web, review or migrator credentials. The portable and hosted
+stack does not start this worker and disables automatic extraction.
+Operating details and release boundaries: [DEPLOY.md](../DEPLOY.md).
 No schema/RLS change.
 
 ## Portable Operation (2026-10-23)
 
-`scripts/self-host.sh` and the repurposed `infra/docker-compose.yml` form, alongside
-the unchanged alpha, a separate first-installation path (project
-`verwalino`). Web app, private PostgreSQL DB and one-off migration/admin jobs
+`scripts/self-host.sh` and `infra/docker-compose.yml` provide the portable
+first-installation path (project `verwalino`). The hosted instance on the Contabo
+server uses the same installer in HTTPS mode; `scripts/deploy-server.sh` and
+`.github/workflows/deploy.yaml` deploy published release images with a backup
+before migration. Web app, private PostgreSQL DB and one-off migration/admin jobs
 use the existing image; only Ops receives migrator rights. The default is
 loopback HTTP; optionally Caddy takes over HTTPS on a separate proxy network.
 Secrets are generated locally and not loaded as shell code. AI, SMTP and
 invoice OCR are disabled here. The explicit `update` command stops app writers,
+one-off migration/admin jobs and any existing optional inbox worker,
 backs up database/documents, migrates and checks readiness, automatically restoring
 the previous image and backup on failure. See
 [portable update and recovery](../DEPLOY.md#portable-update-and-recovery).
 The development/test database remains exclusively `infra-postgres-1`:55432.
 A real portable first installation and TLS acceptance are still pending; details in
 [DEPLOY.md](../DEPLOY.md#portable-docker-first-installation).
+
+## Deployment modes
+
+One image supports `HV_DEPLOYMENT_MODE=selfhost|hosted`, defaulting to `selfhost`.
+`Settings` validates the enum when the process imports its configuration; any other
+value prevents startup and lists the allowed values. All backend decisions read
+the frozen `DeploymentPolicy` in `backend/app/core/deployment_policy.py`.
+The complete table below is checked against the dataclass by
+`backend/tests/test_deployment_policy.py`, alongside explicit snapshots of both modes.
+
+| Policy field | selfhost | hosted |
+| --- | --- | --- |
+| `deployment_mode` | `selfhost` | `hosted` |
+| `first_run_setup_enabled` | `true` | `false` |
+| `rate_limit_profile` | `relaxed` | `strict` |
+| `rate_limit_rules.ip_failures` | `20` | `10` |
+| `rate_limit_rules.email_failures` | `10` | `5` |
+| `rate_limit_rules.window_minutes` | `15` | `15` |
+| `rate_limit_rules.lockout_minutes` | `15` | `30` |
+| `rate_limit_rules.lockout_multiplier` | `1` | `2` |
+| `rate_limit_rules.max_lockout_minutes` | `15` | `1440` |
+| `rate_limit_rules.lockout_decay_minutes` | `15` | `1440` |
+| `rate_limit_rules.cleanup_every` | `100` | `100` |
+| `rate_limit_rules.cleanup_batch_size` | `1000` | `1000` |
+
+Current readers are scenario tag selection, reports and browser app processes
+(`deployment_mode`), setup's `setup_required()` (`first_run_setup_enabled`) and
+login (`rate_limit_profile` and its frozen `RateLimitRules`, included in the drift
+check above).
+`GET /api/setup` returns `{"required": false}` in hosted mode even with no
+organizations, without opening a database connection. Every non-GET setup method
+returns the same 404 as a closed installation, before parsing its body. The admin
+CLI remains available in both modes; hosted signup and other hosted features are
+deferred. Policy fields are added when their consumers are implemented.
+
+The frontend relies on `GET /api/setup`'s `required` alone to open setup; the
+backend owns the deployment decision. While setup status loads, the existing
+"Lade..." state applies. If the setup check fails, login and signed-in pages
+remain available; a later successful app load can detect required setup.
+The same RLS, scoped API queries and
+[route sweep](#74a-route-sweep-backendteststest_route_isolation_sweeppy) apply in both modes.
+No branding or other hosted UI is added. The self-host installer and token
+issuance remain unchanged: the portable manifest uses the default self-hosted
+policy and does not forward an arbitrary caller's environment.
 
 ## Current Declaration-of-Division Workflow (2026-08-29)
 
@@ -112,7 +160,7 @@ and [RouterEval](https://aclanthology.org/2025.findings-emnlp.208.pdf) supports
 the decision to measure and compare variants; it does not replace
 representative domain labels.
 
-> This document covers M0 (and the preparatory data model for M1). It makes the load-bearing architecture decisions that can hardly be retrofitted later (organization isolation, GoBD immutability). It contains **no** application code and **no** migration implementation — only design, rationale, and an actionable scaffolding plan for `bulk-impl`.
+> This document covers M0 (and the preparatory data model for M1). It makes the load-bearing architecture decisions that can hardly be retrofitted later (organization isolation, GoBD immutability). It contains **no** application code and **no** migration implementation — only design, rationale, and an actionable scaffolding plan for the implementer.
 >
 > **Binding status:** The SDD (v0.2) and the roadmap are the source of domain truth and remain untouched. Where this document goes beyond the SDD, this is marked as an *assumption* or *open item*. Points the human must decide are marked **[DECISION]**. The associated Architecture Decision Records are in [adr/](adr/).
 
@@ -140,6 +188,8 @@ A fifth axis, distinct in domain terms, is the **segregation of funds** (SDD §4
 ## 1. Architecture overview
 
 ### 1.1 System boundaries (M0)
+
+`website/` contains the independent static Astro public website, with German and English routes and no application backend dependency.
 
 ```
             ┌──────────────────────────────────────────────────────────┐
@@ -176,7 +226,7 @@ A fifth axis, distinct in domain terms, is the **segregation of funds** (SDD §4
         └──────────────────────────┘      └──────────────────────────────┘
 ```
 
-In M0 only the left core is relevant (auth, tenant context, org/user/mandates, RLS foundation). The PDF rendering pipeline and object storage are set up as an **infrastructure skeleton** (roadmap M0), but filled with domain content only from M2/M3. This document describes the voucher storage and snapshot concept (Section 3) completely in advance, because it is an invariant and shapes the data model — the actual voucher implementation is M2 (`engine-correctness` delivers the in-depth GoBD voucher storage design there, roadmap model assignment).
+In M0 only the left core is relevant (auth, tenant context, org/user/mandates, RLS foundation). The PDF rendering pipeline and object storage are set up as an **infrastructure skeleton** (roadmap M0), but filled with domain content only from M2/M3. This document describes the voucher storage and snapshot concept (Section 3) completely in advance, because it is an invariant and shapes the data model — the actual voucher implementation is M2 (the in-depth GoBD voucher storage design is delivered there as a correctness-critical design step).
 
 ### 1.2 Architecture principles (from SDD §16, made concrete here)
 
@@ -185,6 +235,53 @@ In M0 only the left core is relevant (auth, tenant context, org/user/mandates, R
 - **Settlement logic separated** from UI and PDF layout (only takes effect from M3, but the layer model sets it up from M0).
 - **Immutable snapshots** for finalized settlements and approved vouchers (Section 3).
 - **Cost categories as versioned system data** (relevant from M2; model preparation in Section 5.4).
+
+### 1.3 Request correlation and error tracking
+
+The outermost application middleware validates `X-Request-ID` against
+`[A-Za-z0-9._-]{8,128}` or generates a UUID, stores it in request state and a
+resettable `ContextVar`, and echoes it on all HTTP responses, including perimeter
+errors and SPA/API fallback responses. Service, database and Uvicorn logs use
+the same `request_id` field; worker processing uses its durable job/import ID.
+Generic exceptions produce a safe JSON `detail` plus `request_id`; HTTP 5xx
+exceptions retain their detail and headers and add the ID. HTTP 4xx bodies stay
+unchanged. The existing API-client error message includes the header ID for 5xx.
+Starlette's server-error handler restores the request context and adds the ID
+header after the request middleware unwinds. Unhandled exceptions still propagate
+to the server or test transport after Starlette produces the error response.
+
+Explicit diagnostics use `app.diagnostics.build_bundle`: six fixed tar members with
+allowlisted metadata, configuration shapes, RLS-visible numeric counts and scrubbed
+structural error records. `POST /api/admin/diagnostics` requires `OWNER_ADMIN`, returns
+an uncached attachment and logs a correlated INFO audit line; `GET` supplies the support
+URL. A bounded transient logging handler retains no free text or LogRecord, partitions
+records by the validated organization, and reads a shared per-host JSONL buffer across
+web workers. The latest 500 records overall and at least the latest 50 per organization
+are retained; dead workers' files are pruned on read. Multi-host aggregation is out of scope.
+The API sets authenticated organization/user context for read-only app_rw counts;
+the CLI aggregates RLS-visible installation counts through the same role. Counts also
+use explicit organization filters alongside transaction-local RLS context. Missing
+migration-read privileges yield a null head; the API never probes this table. The installer
+supplies its schema head through migrator `psql` and passes Docker states/logs into
+the same Python builder. API metadata omits the global organization count and config
+shape, exposing only normalized deployment mode, version and tenant-facing switches.
+There is no upload route,
+automatic sending, stored report or new migration. The seeded-500 correlation contract
+and privacy/collection limits are documented in
+[DEPLOY.md](../DEPLOY.md#diagnostics-and-reporting-a-problem).
+
+An empty tracker DSN leaves reporting disabled. When enabled, the Sentry-compatible
+FastAPI/Starlette integration sends error events with the request ID and the
+database-validated organization ID, never organization names. Error sampling is
+independent of tracing, which remains disabled. The release is `HV_RELEASE_ID`
+when supplied, otherwise the application version. Before sending, the pure
+scrubber removes bodies, user identities, frame locals and source snippets,
+and masks recognizable personal data, credentials and query values in messages
+and breadcrumbs. The same text filter protects formatted logs; SQLAlchemy hides
+bound parameters. No person directory is loaded: names are matched heuristically,
+so this is not a guarantee for arbitrary names or unrecognized free text.
+Transport tests stay offline. Configuration, hosted GlitchTip and log lookup are
+documented in [DEPLOY.md](../DEPLOY.md#request-ids-and-optional-error-tracking).
 
 ---
 
@@ -223,7 +320,7 @@ The invariant must not be bypassable by accident. It is enforced at three comple
 - A `USING` policy for reading and a `WITH CHECK` policy for writing bind each row to the active organization, which is set as a session variable (GUC):
 
   ```sql
-  -- Concept (implementation in M0 by bulk-impl, only the form here):
+  -- Concept (implementation in M0, only the form here):
   CREATE POLICY org_isolation ON <table>
     USING      (organization_id = current_setting('app.current_org_id')::uuid)
     WITH CHECK (organization_id = current_setting('app.current_org_id')::uuid);
@@ -273,7 +370,7 @@ Segregation of funds is **not** implemented in M0 as a second RLS axis (that wou
 
 ## 3. GoBD immutability (I2) and interlocking with the GDPR (DSGVO) erasure obligation
 
-> Note on depth: M0 anchors the concept in the data model. The *in-depth* GoBD voucher storage specification is planned as a separate step in M2 (`engine-correctness`, roadmap model assignment). This section establishes the load-bearing structure so that M1/M2 can build on it.
+> Note on depth: M0 anchors the concept in the data model. The *in-depth* GoBD voucher storage specification is planned as a separate, correctness-critical design step in M2. This section establishes the load-bearing structure so that M1/M2 can build on it.
 
 ### 3.1 What must be immutable (SDD §6.6, §14, §16)
 
@@ -357,6 +454,105 @@ Role enforcement takes place in the authorization layer (policy check per endpoi
 - **Tenant binding:** The user's `organization_id` lives in the server-side session and is the *only* source for the tenant context (Section 2.3, Level 2). No org switch via request parameter.
 - **MFA:** not mandatory for M0; note as a hardening option for M9 (back office with personal + financially relevant data).
 - **Audit:** login, logout, failed logins, role changes → `audit_event`.
+
+**First-run bootstrap (accepted source revision 0141):** in self-hosted mode, `GET /api/setup` reports
+whether there are no organizations. In hosted mode it always reports no setup;
+see [Deployment modes](#deployment-modes). `POST /api/setup` is unauthenticated but requires
+the one-time installer token in its JSON body. A `SECURITY DEFINER`
+`setup_first_organization(token text, org_name text, admin_email text,
+admin_name text, password_hash text) RETURNS uuid` locks `organization`,
+checks global emptiness, compares every byte of the SHA-256 token hash, and
+rejects missing, consumed or 24-hour-old tokens with one generic error. It uses
+`search_path=pg_catalog,pg_temp` and `row_security=off`; only `app_rw` receives
+EXECUTE, with no PUBLIC grant. Direct organization INSERT is revoked from
+`app_rw`. The private global singleton `setup_token` table grants no runtime
+read/write access. The function creates organization, Argon2-hashed admin and
+OWNER_ADMIN membership atomically and consumes the token. Hashing stays in
+the app. The migrator CLI shares an invoker-only creation function, retains
+its canonical-email duplicate check and invalidates pending tokens.
+
+`self-host.sh start` checks the migrated DB and rotates an unused token under
+the same organization lock, printing plaintext once to the terminal only after
+readiness. The token never enters a URL/config/application log. Setup returns
+the existing signed HttpOnly session cookie on 201; a closed setup returns the
+unknown-route 404 for every non-GET method, token failures 403, validation failures
+422. Request validation trims the token and organization/admin names and rejects
+control characters in those fields before database writes. SQL parameter hiding
+applies only to caught setup errors, leaving other routes' diagnostics unchanged.
+The router sends an unclaimed installation to the German setup form, then reloads the dashboard
+from the cookie; a closed setup URL redirects to login. A failed initial setup
+status request is logged to the console and leaves login and signed-in routes
+available; a later successful app load still detects an unclaimed installation.
+Signup remains deferred to #19; login uses the application limiter below. Rollback-only tests provision an empty synthetic database without
+changing the shared fixtures permanently; real portable-stack acceptance remains
+pending.
+
+**Login hardening (revision 0142):** `POST /api/auth/login` checks the IP and
+normalized email before looking up the password. Both failure thresholds use a
+fixed 15-minute window starting with the first failure. Selfhost locks after 20
+IP or 10 email failures for 15 minutes. Hosted locks after 10 IP or 5 email
+failures for 30 minutes; each repeated lockout doubles to a maximum of 24 hours.
+Expiry starts a fresh failure window. Success deletes only the email counter
+and its escalation history; IP failures survive successful logins. Attempts
+during an active lockout count as failures without extending it. The Nth failure
+starts the lock; the following request is refused even with a correct password.
+
+This deliberately trades resistance to guessing for targeted denial of service:
+an attacker who knows an email can lock it, repeatedly and with escalating hosted
+waits. The victim cannot clear an active lockout by logging in, even with the
+correct password. They must wait or ask an operator to use the migrator CLI
+`python -m app.admin_cli unlock --email ADDRESS` (or `--ip ADDRESS` for an
+independently locked IP); see [operator guidance](../DEPLOY.md#login-lockout-and-proxy-trust).
+Escalation decays on failures based on `last_lockout_at`, independently of traffic
+and cleanup: the count resets when the last lockout is strictly older than
+24 hours in hosted mode or the 15-minute window in selfhost mode. Exactly at the
+boundary history is retained. Each new lockout records its start time.
+
+Unknown email, wrong password and lockout all return the identical
+`401 {"detail":"Invalid credentials"}` body and headers, without `Retry-After`
+or a session cookie. The German login UI is unchanged. Every attempt runs one
+Argon2 verification outside database transactions. Unknown and locked identities
+use the dummy hash; an active lockout still skips the principal lookup. A WARNING
+records only scope, key kind, HMAC key hash and a server-generated request id
+(or the request-state id if available), never raw emails or IPs.
+
+`auth_throttle` is global because authentication precedes tenant selection. It
+stores key kind, HMAC-SHA256 of `scope:normalized_key`, window start, failure
+count, lockout expiry, repeated-lockout count, last lockout start and update time.
+The pepper is HMAC-SHA256 of `verwalino-auth-throttle`, keyed by the existing
+`HV_SESSION_SECRET`; no new setting is required. Rotating that secret clears
+effective throttling state by changing every key; old rows age out through cleanup.
+Email normalization reuses `normalize_email`. IPv4 uses its canonical address;
+IPv4-mapped IPv6 maps to IPv4. Native IPv6 is grouped by canonical /64 network
+address, preventing interface-address rotation from bypassing the IP limit.
+Unparsable client addresses share the constant `invalid` key and receive the
+normal authentication response. Only this table receives new runtime DML grants
+(`app_rw`; existing worker membership inherits them). There is no new SECURITY
+DEFINER function, organization grant or tenant bypass. Downgrade refuses to discard
+retained throttle state, then removes the empty table and its indexes.
+
+`core/rate_limit.py::check_and_record(session, scope, keys, rules)` atomically
+reserves both counters with row-locked upserts in consistent key order. Admission
+refuses an active lock or a reserved count above its limit, so concurrent bursts
+cannot perform more real password checks than the limit. The login handler commits
+reservations and the principal lookup before hashing. A second short transaction
+finalizes a failure's lockout or refunds a successful reservation: the email key
+and its history are cleared, and the IP reservation is decremented while previous
+IP failures remain. Refusals from a locked IP also count against the email key.
+The handler commits outcomes before raising an HTTP refusal.
+`Depends(throttled("login"))` supplies request metadata and deployment rules.
+
+Every 100th login per worker runs best-effort cleanup in a separate transaction
+**after** the outcome commits. A single delete selects at most 1000 rows whose
+`updated_at` is over one day old, using `ctid`, `LIMIT` and `FOR UPDATE SKIP LOCKED`.
+Local lock and statement timeouts bound database waiting; a cleanup failure cannot
+undo the login outcome. Cadence and batch size are constants in `RateLimitRules`.
+Only cadence is local to the worker; security state is in PostgreSQL. The injectable
+clock makes expiry and cleanup tests deterministic.
+The IP comes exclusively from `request.client`: the direct peer or Uvicorn's
+resolved address when `FORWARDED_ALLOW_IPS` trusts that peer. The application never
+reparses `X-Forwarded-For`. The container entrypoint enables this middleware;
+the portable Caddy stack supplies its private proxy subnet.
 
 **Implemented T57 path:** Signed cookies carry user/organization and,
 for a positive generation, `sv`. The runtime checks active membership and the current
@@ -590,7 +786,7 @@ Only the fields that anchor the immutability/snapshot concept in the model are l
 - **`settlement_line`**: per addressee/category; belongs to the snapshot of the `settlement_run`; all amounts `NUMERIC(14,2)`.
 - Audit trail (`audit_event`) — already in M0 (Section 5.2), used intensively from M2.
 
-> This preview is **not** part of the M0 implementation. It is here so that the M0 structural decisions (UUID PKs, `organization_id`, `NUMERIC`, status/version fields, RLS table list) are consistent with the later model family and `bulk-impl` does not have to rebuild anything in M2.
+> This preview is **not** part of the M0 implementation. It is here so that the M0 structural decisions (UUID PKs, `organization_id`, `NUMERIC`, status/version fields, RLS table list) are consistent with the later model family and nothing has to be rebuilt in M2.
 
 ---
 
@@ -632,17 +828,17 @@ The SDD (§16) leaves the backend open: **Python/FastAPI** vs. **Node.js/NestJS*
 
 **Short rationale:** The value-determining and riskiest part of this product is the **correct, audit-proof settlement with exact decimal arithmetic** (M3 is the largest, riskiest chunk according to the roadmap). Python offers the least “friction” here: `Decimal` is first class (no permanent float-avoidance regime necessary), Alembic versions **RLS policies and triggers as clean, reviewable migration steps** (central for enforcing I1/I2), and the XRechnung/EN-16931 ecosystem (M5) is more mature. The main disadvantage — two languages in the stack instead of one — weighs less for a correctness-critical financial/legal product than consistent money/decimal safety and the RLS/migration handling.
 
-> **[DECISION]:** Backend Python/FastAPI (recommended) vs. Node/NestJS. Secondary, if FastAPI is chosen: ORM/migrations combination **SQLAlchemy + Alembic** (recommended because of fine RLS/DDL control) vs. a higher-level alternative. **Please confirm before `bulk-impl` scaffolds — nothing is committed yet.**
+> **[DECISION]:** Backend Python/FastAPI (recommended) vs. Node/NestJS. Secondary, if FastAPI is chosen: ORM/migrations combination **SQLAlchemy + Alembic** (recommended because of fine RLS/DDL control) vs. a higher-level alternative. **Please confirm before scaffolding starts — nothing is committed yet.**
 
 > **Important (independent of the backend):** Whatever is chosen, these points are non-negotiable: (1) money as a decimal type, never float; (2) RLS + `FORCE` + app role without `BYPASSRLS`; (3) transaction-local setting of the tenant context (`SET LOCAL`/`set_config(... is_local => true)`); (4) migrations with explicitly versioned RLS policies/triggers.
 
 ---
 
-## 7. Scaffolding plan for `bulk-impl` (M0 implementation)
+## 7. Scaffolding plan (M0 implementation)
 
 Goal: meet the M0 exit — “Two organizations can be created and are guaranteed not to see any of each other's data; roles take effect.” Actionable checklist. **Prerequisite: stack confirmation by the human (Section 6). No commit before then.**
 
-> This checklist is written for `bulk-impl` (Opus 4.6, bulk engineering). Architecture/data model decisions have already been made in this document; `bulk-impl` implements them and escalates only if an open specification question (SDD §18) or an organization isolation/GoBD design question arises (per the `bulk-impl.md` escalation rule).
+> This checklist is written for the implementer. Architecture/data model decisions have already been made in this document; the implementer implements them and escalates for a correctness review only if an open specification question (SDD §18) or an organization isolation/GoBD design question arises.
 
 ### 7.1 Project structure (proposal, FastAPI variant)
 
@@ -704,6 +900,10 @@ An automated test that **prevents accidentally unprotected tables** (level-3 gat
 
 ### 7.4 The concrete isolation test (`test_tenant_isolation.py`) — core of the M0 exit
 
+Every client-supplied parent ID, including a parent changed by PATCH or PUT, is resolved through the session's organization-scoped repository or session before writing or checking overlaps/conflicts. Foreign and unknown parents return an identical 404 response, so neither existence nor an overlap is disclosed. Composite foreign keys `(organization_id, parent_id) → parent(organization_id, id)` enforce parent ownership as defence in depth, because PostgreSQL foreign-key checks bypass RLS. The parent-constraint migration rejects existing invalid references before replacing the affected constraints; it never repairs data silently.
+
+Financial creation checks PAUSED mode first, then organization ownership of property and mandate, then the exact accounting scope. Its property repository uses `financial_property_exists`, a boolean-only definer constrained to the current organization and a live member, so an accounting PREPARE grant does not also require property master read access. Property data visibility remains governed by its existing policies. Asset-report bank balances and payment transaction links use their organization-scoped repositories before financial validation or writes.
+
 Setup (fixtures): test DB; **two organizations** `org_a`, `org_b`; one user with a role each; one `management_mandate` each; one sample row each in at least one tenant table. Two API clients, each logged in as a user of the respective org (real login flow, real tenant context).
 
 Minimum assertions:
@@ -716,6 +916,16 @@ Minimum assertions:
 6. **RBAC takes effect (`test_rbac.py`):** `READ_ONLY` may read but not create/change (→ 403); `CLERK` may operate but not manage users/roles (→ 403); `OWNER_ADMIN` may do everything in their org. Within the own org, combined with the isolation from 1–5.
 
 > If tests 1–6 pass, the M0 exit criterion is objectively demonstrated: two orgs, guaranteed data separation (at API **and** DB level), roles take effect.
+
+### 7.4a Route sweep (`backend/tests/test_route_isolation_sweep.py`)
+
+Tests 1–6 cover selected resources; the sweep covers every API route. It enumerates the routes FastAPI registers (`fastapi.routing.iter_route_contexts`, so routes of included routers count) and fails, naming the route, for any route that is neither swept nor exempt. A swept route has a probe in the table of its area module in `backend/tests/route_isolation/` (`core`, `finance`, `documents`, `access`): SQL that picks a record of another organization, plus body, query or headers where the generated request would not reach the route. Exempt routes are listed with their reason in `EXEMPT` of the test (health, login, logout, password change, plus the organization-free setup exemptions from `route_isolation/core.py`). Signed in as an administrator of organization B, the sweep sends each probe with the other organization's ids and once more with ids that exist nowhere:
+
+- a request carrying another organization's ids answers 404 (another status only with the reason written in the probe) and exactly what the unknown ids answer, so the answer cannot reveal that the record exists; a write carrying them is never accepted;
+- no answer contains an id of another organization's record that the request did not send;
+- after a write no row of another organization changed (row count and newest row version per table of `TENANT_TABLES`).
+
+Limits: a probe does not combine an own parent with a foreign child id, and foreign data that leaks without an id (a name, a sum in a report) is not detected. Run it with `make test-backend PYTEST_ARGS="-q tests/test_route_isolation_sweep.py"`.
 
 ### 7.5 App shell & infrastructure (in parallel, roadmap M0)
 
@@ -862,7 +1072,7 @@ compares all old data/security objects and byte-identical issued PDFs.
 
 ## 10. What this document deliberately does NOT decide
 
-- Concrete settlement/distribution logic (M3/M4) — a separate `engine-correctness` step.
+- Concrete settlement/distribution logic (M3/M4) — a separate correctness-critical design step.
 - In-depth GoBD voucher storage design (M2) — only the load-bearing structure here.
 - PDF layouts (SDD §18, open).
 - Final choice of the immutability enforcement mechanism (trigger vs. grants vs. frozen table) — detail in M2.

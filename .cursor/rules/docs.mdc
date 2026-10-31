@@ -6,6 +6,8 @@ alwaysApply: true
 # Documentation contract
 
 - Write project artifacts in English; quote German software text verbatim.
+- [DESIGN.md](../../DESIGN.md) is the frontend design contract; visual changes follow it and
+  update it in the same PR.
 - Update documentation in the same PR, stating exactly what the code does:
 
 | When you change … | Update |
@@ -14,12 +16,13 @@ alwaysApply: true
 | A feature's status | Its row in `docs/feature-status.md` |
 | Deployment, installation or configuration keys | `DEPLOY.md`, `.env.example` and `scripts/self-host.sh` help |
 | An architectural decision binding future work | A new ADR under `docs/adr/` |
+| The look of the frontend: tokens, layout, components, states, copy or formats | `DESIGN.md` and its screenshots in `docs/assets/design/` |
 | A file, route, key or command rename | Every mention; `git grep -n '<old>'` returns no stale mentions outside `docs/archive/` |
 
 - Read `docs/domain-reference.md` selectively with `rg -n` for product workflows.
 - `docs/archive/` is legacy: do not read, edit or treat it as rules unless the user
   asks for a specific question.
-- Keep paired rule bodies and activation equivalent; use quoted block lists for
-  Claude `paths` and Cursor `globs`. No Claude `paths` means Cursor
-  `alwaysApply: true`. Run `make test-agent-rules` after rule or hook changes
-  and `make docs-check` for relative links.
+- Rules Sync: change `.claude/rules/<topic>.md` and `.cursor/rules/<topic>.mdc` together with
+  equivalent bodies; use quoted block lists for Claude `paths` and Cursor `globs`. No Claude
+  `paths` means Cursor `alwaysApply: true`. `CLAUDE.md` stays a symlink to `AGENTS.md`. Run
+  `make test-agent-rules` after rule or hook changes and `make docs-check` for relative links.

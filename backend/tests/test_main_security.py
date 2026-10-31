@@ -17,13 +17,13 @@ def test_production_settings_parse_exact_host_and_disable_docs():
     production = Settings(
         session_cookie_name="__Host-hv_session",
         session_cookie_secure=True,
-        allowed_hosts="verwaltung.karat.immo",
+        allowed_hosts="verwaltung.example.org",
         enable_api_docs=False,
     )
 
     assert production.session_cookie_name == "__Host-hv_session"
     assert production.session_cookie_secure is True
-    assert production.allowed_host_list == ["verwaltung.karat.immo"]
+    assert production.allowed_host_list == ["verwaltung.example.org"]
     assert production.docs_url is None
     assert production.openapi_url is None
 
@@ -107,6 +107,29 @@ async def test_liveness_does_not_depend_on_database():
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spa", [False, True])
+async def test_wrong_api_methods_stay_method_not_allowed_with_or_without_spa(tmp_path, monkeypatch, spa):
+    import app.main as main_module
+
+    (tmp_path / "index.html").write_text("safe spa")
+    original_app, original_dist = main_module.app, main_module._frontend_dist
+    try:
+        with monkeypatch.context() as environment:
+            if spa:
+                environment.setenv("HV_FRONTEND_DIST", str(tmp_path))
+            else:
+                environment.delenv("HV_FRONTEND_DIST", raising=False)
+            importlib.reload(main_module)
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main_module.app), base_url="http://test") as client:
+                for method in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "TRACE", "CONNECT"):
+                    response = await client.request(method, "/api/health/live")
+                    assert response.status_code == 405, (method, response.text)
+                    assert response.headers["allow"] == "GET"
+    finally:
+        main_module.app, main_module._frontend_dist = original_app, original_dist
 
 
 @pytest.mark.asyncio

@@ -35,7 +35,7 @@ cleanup() {
     fi
     if [[ -n "$UPDATE_PHASE" ]]; then
         if [[ "$status" = 129 || "$status" = 130 || "$status" = 143 ]]; then
-            if compose stop app; then
+            if stop_writers; then
                 printf 'Update interrupted before the switch; config and data unchanged; app stopped — run start.\n' >&2
             else
                 printf 'Update interrupted before the switch; config and data unchanged; could not confirm app stopped — inspect status before running start.\n' >&2
@@ -85,8 +85,9 @@ usage() {
 Usage: bash scripts/self-host.sh COMMAND
   init [--https DOMAIN] [--port PORT] [--image REGISTRY/IMAGE@sha256:DIGEST]
        [--proxy-subnet PRIVATE_IPV4_CIDR]
-  start                         Build/pull, migrate, then start the application
+  start                         Build/pull, migrate, start; print browser setup token if empty
   admin --org NAME --email EMAIL [--name NAME] [--password-stdin]
+  diagnose [--out DIR]           Write a redacted bundle beside the config in diagnostics/
   status                        Show this installation's containers
   doctor                        Diagnose setup; German hints, exit 1 on blockers
   stop                          Stop containers without deleting data
@@ -95,21 +96,40 @@ Usage: bash scripts/self-host.sh COMMAND
   update [--image REGISTRY/IMAGE@sha256:DIGEST] [--yes]
                                 Back up, migrate and check; restore on failure
 Default: local HTTP on 127.0.0.1:18080; no AI, SMTP or extraction worker.
+Request IDs are always enabled; optional error tracking stays off.
+HV_SUPPORT_URL selects the manual report link (export it; not a private config key).
+HV_DIAGNOSTICS_DIR is an API process setting for the per-host error buffer; see DEPLOY.md.
+HV_ERROR_TRACKING_* keys are not installer settings; see DEPLOY.md.
+Export HV_RELEASE_ID to label tracker releases (otherwise app version 0.1.0).
+Optional inbox-worker (profile inbox, ClamAV signatures): see DEPLOY.md.
+Start, stop and update also stop an existing inbox-worker; restart it after app readiness.
 VERWALINO_CONFIG selects the private config file (default: .env.selfhost).
 Update requires --image for a digest installation; a local build is rebuilt.
 No unattended update, migration downgrade or volume deletion is provided.
 Update keeps its backup; rollback discards writes made after that snapshot.
 Update downtime includes backup; app writers stop first. Pause external writers.
 Successful local updates remove temporary update tags and older rollback tags.
+Init/start refuse an occupied app port: choose a free --port or stop its listener.
 Backups exclude private config/secrets and certificates; keep config separately.
 Backup output defaults to the private checkout backups/ directory; the checkout root is refused.
 Restore stages the database and documents before replacing the stopped installation.
 Leftover .restore-* directories require checking live data and removing the directory before retrying.
+On first start, open the printed /setup URL and enter the one-time token (24 h).
+Another start replaces an unused token. The token is never stored in this file.
+The admin command is the alternative to browser setup.
+Login lockouts use the relaxed selfhost policy. Caddy's private proxy subnet
+supplies FORWARDED_ALLOW_IPS for client IP throttling; see DEPLOY.md for the
+admin_cli unlock command.
 HELP
 }
 
 validate_port() {
     [[ "$1" =~ ^[1-9][0-9]{3,4}$ ]] && (( 10#$1 >= 1024 && 10#$1 <= 65535 ))
+}
+check_port() {
+    if (exec 3<>"/dev/tcp/127.0.0.1/$VERWALINO_PORT") 2>/dev/null; then
+        fail "Port $VERWALINO_PORT is already in use; choose a free --port or stop its listener."
+    fi
 }
 validate_domain() {
     local domain="$1" label
@@ -205,6 +225,14 @@ compose() {
 }
 
 container_state() { compose ps --all --format '{{.State}}|{{.Health}}|{{.ID}}' "$1"; }
+
+stop_inbox_worker() {
+    local container_id
+    container_id=$(compose ps --all --quiet inbox-worker) || return $?
+    if [[ -n "$container_id" ]]; then compose stop inbox-worker; fi
+}
+
+stop_writers() { stop_inbox_worker && compose stop app migrate bootstrap; }
 
 config_fingerprint() {
     local key
@@ -670,7 +698,7 @@ backup() {
 
 writers_stopped() {
     local running
-    running=$(compose ps --all --status running --status restarting --status paused --quiet app migrate bootstrap) || return 1
+    running=$(compose ps --all --status running --status restarting --status paused --quiet app migrate bootstrap inbox-worker) || return 1
     [[ -z "$running" ]]
 }
 
@@ -810,7 +838,7 @@ update_recovery() {
 
 update_rollback() {
     printf 'Update failed; restoring the previous image and backup.\n' >&2
-    compose stop app migrate bootstrap && writers_stopped || { update_recovery 'stopping writers' 'not restored; do not restore while writers run'; return 1; }
+    stop_writers && writers_stopped || { update_recovery 'stopping writers' 'not restored; do not restore while writers run'; return 1; }
     image_config "$UPDATE_PREVIOUS_IMAGE" "$CONFIG" || { update_recovery 'config restoration' 'not restored'; return 1; }
     export VERWALINO_IMAGE="$UPDATE_PREVIOUS_IMAGE"
     if [[ -n "$UPDATE_LOCAL_ID" ]]; then
@@ -915,7 +943,7 @@ update() {
     restore_database_ready
     archive_tool check-documents
     UPDATE_PHASE=stopping
-    compose stop app || fail 'Could not stop app; config and data unchanged. Inspect status before restarting.'
+    stop_writers || fail 'Could not stop writers; config and data unchanged. Inspect status before restarting.'
     writers_stopped || fail 'Writers remain active; update refused before backup. Inspect status.'
     UPDATE_PHASE=stopped
     backup
@@ -962,6 +990,7 @@ init_config() {
         printf 'Existing configuration kept: %s\n' "$CONFIG"
         return
     fi
+    check_port
     command -v openssl >/dev/null || fail 'OpenSSL is required to generate secrets.'
     [[ -d "$(dirname "$CONFIG")" ]] || fail 'Configuration parent directory must already exist.'
     umask 077
@@ -1013,6 +1042,52 @@ admin() {
         --org "$org" --email "$email" --name "$name" --password-stdin
 }
 
+diagnose() {
+    local out="${CONFIG%/*}/diagnostics" states destination schema_head
+    if [[ "$#" != 0 ]]; then [[ "$#" = 2 && "$1" = --out && -n "$2" ]] || fail 'Use diagnose [--out DIR].'; out="$2"; fi
+    [[ ! -L "$out" ]] || fail 'Symlink output directories are refused.'
+    umask 077
+    if [[ ! -e "$out" ]]; then mkdir -p "$out"; chmod 700 "$out"; fi
+    [[ -d "$out" ]] || fail 'Output path is not a directory.'
+    [[ -w "$out" ]] || fail 'Output directory is not writable.'
+    TMP_DIR=$(mktemp -d "$out/.diagnose.XXXXXX")
+    destination="$out/verwalino-diagnostics-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
+    states=$(compose ps --all --format json)
+    if ! schema_head=$(compose exec -T db psql --no-psqlrc -U app_migrator -d hausverwaltung --set ON_ERROR_STOP=1 -Atc 'SELECT version_num FROM public.alembic_version'); then
+        schema_head=''
+    fi
+    compose logs --no-color --no-log-prefix --tail 2000 app | compose run --rm --no-deps -T --entrypoint python app -m app.diagnostics --containers-json "$states" --schema-head "$schema_head" --image "$VERWALINO_IMAGE" > "$TMP_DIR/bundle"
+    ln "$TMP_DIR/bundle" "$destination"
+    printf '%s\n' "$destination"
+}
+
+prepare_setup() {
+    local count token_hash issued
+    SETUP_TOKEN=''
+    count=$(compose exec -T db psql --no-psqlrc -U app_migrator -d hausverwaltung \
+        --set ON_ERROR_STOP=1 -Atc 'SELECT count(*) FROM public.organization')
+    [[ "$count" =~ ^[0-9]+$ ]] || fail 'Could not determine whether setup is required.'
+    [[ "$count" = 0 ]] || return 0
+    command -v openssl >/dev/null || fail 'OpenSSL is required to generate the setup token.'
+    SETUP_TOKEN=$(openssl rand -hex 32) || fail 'Setup token generation failed.'
+    [[ "$SETUP_TOKEN" =~ ^[a-f0-9]{64}$ ]] || fail 'Invalid random setup token.'
+    token_hash=$(printf '%s' "$SETUP_TOKEN" | openssl dgst -sha256)
+    token_hash="${token_hash##* }"
+    [[ "$token_hash" =~ ^[a-f0-9]{64}$ ]] || fail 'Setup token hashing failed.'
+    # Only the digest reaches psql, its arguments or Docker. Recheck under the
+    # same organization lock as browser setup and CLI bootstrap before rotating.
+    issued=$(printf '%s\n' "BEGIN;
+LOCK TABLE public.organization IN SHARE ROW EXCLUSIVE MODE;
+INSERT INTO public.setup_token(token_hash)
+SELECT decode('$token_hash','hex') WHERE NOT EXISTS(SELECT 1 FROM public.organization)
+ON CONFLICT (singleton) DO UPDATE
+SET token_hash=EXCLUDED.token_hash,created_at=clock_timestamp(),used_at=NULL
+RETURNING singleton;
+COMMIT;" | compose exec -T db psql --no-psqlrc -U app_migrator -d hausverwaltung \
+        --set ON_ERROR_STOP=1 -qAt)
+    [[ "$issued" = t ]] || fail 'Setup token was not issued; retry start to recheck the installation.'
+}
+
 command="${1:-help}"
 [[ "$#" = 0 ]] || shift
 if [[ "$command" != doctor ]]; then
@@ -1023,7 +1098,7 @@ case "$command" in
     init) init_config "$@"; exit 0 ;;
     doctor) [[ "$#" = 0 ]] || fail 'Dieser Befehl akzeptiert keine zusätzlichen Argumente.'; doctor; exit $? ;;
     start|status|stop) [[ "$#" = 0 ]] || fail 'This command accepts no additional arguments.' ;;
-    admin|backup|restore|update) ;;
+    admin|diagnose|backup|restore|update) ;;
     *) usage >&2; fail 'Unknown command.' ;;
 esac
 load_config
@@ -1031,28 +1106,40 @@ command -v docker >/dev/null || fail 'Docker with Compose v2 is required.'
 case "$command" in
     start)
         lock_config
+        # A repeat start may own the listening port already. An unrelated
+        # listener must fail before pulling, migrating or starting the database.
+        if [[ -z "$(compose ps --status running --quiet app)" ]]; then check_port; fi
         if [[ "$VERWALINO_IMAGE" = verwalino:local ]]; then
             compose build app
         else
             compose pull app
         fi
         compose up -d --wait --wait-timeout 120 db
-        # Do not run migrations alongside an already running web writer.
+        # Do not run migrations alongside an already running writer.
+        stop_inbox_worker
         compose stop app
         compose run --rm --no-deps -T migrate
+        prepare_setup
         compose up -d --no-deps --wait --wait-timeout 120 app
         if [[ "$VERWALINO_MODE" = https ]]; then
             compose up -d --no-deps caddy
-            printf 'App ready; Caddy certificate provisioning may still be pending: https://%s\n' "$VERWALINO_DOMAIN"
+            APP_URL="https://$VERWALINO_DOMAIN"
+            printf 'App ready; Caddy certificate provisioning may still be pending: %s\n' "$APP_URL"
         else
-            printf 'App ready: http://127.0.0.1:%s\n' "$VERWALINO_PORT"
+            APP_URL="http://127.0.0.1:$VERWALINO_PORT"
+            printf 'App ready: %s\n' "$APP_URL"
         fi
-        printf 'Create the first admin with: bash scripts/self-host.sh admin --org NAME --email EMAIL\n'
+        if [[ -n "$SETUP_TOKEN" ]]; then
+            printf 'Browser setup: %s/setup\nSetup token: %s\nValid once for 24 hours. Another start replaces this token.\n' "$APP_URL" "$SETUP_TOKEN"
+            unset SETUP_TOKEN
+            printf 'CLI alternative: bash scripts/self-host.sh admin --org NAME --email EMAIL\n'
+        fi
         ;;
     admin) admin "$@" ;;
+    diagnose) diagnose "$@" ;;
     backup) backup "$@" ;;
     restore) restore "$@" ;;
     update) update "$@" ;;
     status) compose ps ;;
-    stop) lock_config; compose stop ;;
+    stop) lock_config; stop_inbox_worker; compose stop ;;
 esac

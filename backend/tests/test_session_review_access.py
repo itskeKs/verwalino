@@ -267,7 +267,7 @@ def _chain_0131_projection(head):
     return projected
 
 
-async def test_revision_chain_0139_0131_0139_preserves_full_state_and_issued_pdf(rent_world):
+async def test_revision_chain_0142_0131_0142_preserves_full_state_and_issued_pdf(rent_world):
     """Rollback-only whole-chain rehearsal, not a production downgrade strategy."""
     import os
     from pathlib import Path
@@ -323,9 +323,9 @@ async def test_revision_chain_0139_0131_0139_preserves_full_state_and_issued_pdf
     config = Config()
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ['0139']
-    assert [r.revision for r in scripts.iterate_revisions('0139', '0131')] == [
-        f'{number:04}' for number in range(139, 131, -1)
+    assert scripts.get_heads() == ['0142']
+    assert [r.revision for r in scripts.iterate_revisions('0142', '0131')] == [
+        f'{number:04}' for number in range(142, 131, -1)
     ]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -372,8 +372,18 @@ async def test_revision_chain_0139_0131_0139_preserves_full_state_and_issued_pdf
                     numbers = range(first - 1, stop - 1, -1) if downgrade else range(first + 1, stop + 1)
                     assert seen == [(f'{number:04}',) for number in numbers]
 
-                assert version() == ('0139',)
+                def projection_0131():
+                    # The historical projection describes 0132–0139. Peel off
+                    # the parent constraints and bootstrap additions within this savepoint.
+                    with connection.begin_nested() as historical:
+                        migrate('0139', downgrade=True)
+                        projected = _chain_0131_projection(_chain_snapshot(connection))
+                        historical.rollback()
+                    return projected
+
+                assert version() == ('0142',)
                 original = _chain_snapshot(connection)
+                original_0131 = projection_0131()
                 assert original['data']['lease_agreement'] and original['data']['letter_document']
                 generation = connection.scalar(text(
                     'SELECT session_version FROM public."user" WHERE id=:id'
@@ -419,14 +429,14 @@ async def test_revision_chain_0139_0131_0139_preserves_full_state_and_issued_pdf
                 connection.execute(text('TRUNCATE public.letter_document,public.letter_template'))
                 connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
                 head = _chain_snapshot(connection)
-                old = _chain_0131_projection(head)
+                old = projection_0131()
                 # Neutralization must not touch a single pre-0132 column/row.
-                assert old == _chain_0131_projection(original)
+                assert old == original_0131
                 migrate('0131', downgrade=True)
                 down = _chain_snapshot(connection)
                 down['data'].pop('alembic_version')
                 assert down == old
-                migrate('0139', downgrade=False)
+                migrate('0142', downgrade=False)
                 connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
                 assert _chain_snapshot(connection) == head
             finally:

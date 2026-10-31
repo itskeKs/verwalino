@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import closing
 from urllib.parse import urlparse
 
 
@@ -14,9 +15,9 @@ _EXPECTED_SCHEMES = {
 
 _PROFILE_ENV = "HV_DECLARATION_TEST_DATABASE_PROFILE"
 _LOCAL_PROFILE = "local"
-_GITLAB_CI_PROFILE = "gitlab-ci"
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1"})
-_GITLAB_CI_HOSTS = frozenset({"postgres"})
+# Service-name URLs must still enter the fail-closed guard on direct Alembic runs.
+_SERVICE_HOSTS = frozenset({"postgres"})
 
 
 def _refusal_message(env_name: str) -> str:
@@ -31,12 +32,9 @@ def _allowed_hosts_and_port() -> tuple[frozenset[str], int]:
     profile = os.environ.get(_PROFILE_ENV, _LOCAL_PROFILE)
     if profile == _LOCAL_PROFILE:
         return _LOCAL_HOSTS, 55432
-    if profile == _GITLAB_CI_PROFILE and os.environ.get("CI") == "true":
-        return _GITLAB_CI_HOSTS, 5432
-
     raise RuntimeError(
         "Refusing destructive tests: "
-        f"{_PROFILE_ENV} must be '{_LOCAL_PROFILE}' or '{_GITLAB_CI_PROFILE}' with CI=true."
+        f"{_PROFILE_ENV} must be '{_LOCAL_PROFILE}'."
     )
 
 
@@ -95,6 +93,48 @@ def require_disposable_database_settings(settings: object) -> tuple[str, str, st
     return migrator_url, app_rw_url, migrator_sync_url
 
 
+def require_disposable_database_reset_url(sync_url: str) -> str:
+    """Authorize a local schema reset without opening a database connection."""
+    from app.core.config import settings
+
+    if os.environ.get("VERWALINO_TEST_DB") != "1":
+        raise RuntimeError("Refusing test database reset: requires VERWALINO_TEST_DB=1")
+
+    _, _, validated_url = require_disposable_database_settings(settings)
+    refusal = (
+        "Refusing test database reset: requires the validated app_migrator URL "
+        "for localhost:55432/hausverwaltung"
+    )
+    try:
+        parsed = urlparse(sync_url)
+        port = parsed.port
+    except ValueError as error:
+        raise RuntimeError(refusal) from error
+    if (
+        sync_url != validated_url
+        or parsed.hostname not in _LOCAL_HOSTS
+        or port != 55432
+        or parsed.path != "/hausverwaltung"
+        or parsed.username != "app_migrator"
+    ):
+        raise RuntimeError(refusal)
+    return sync_url
+
+
+def reset_foreign_test_database(sync_url: str) -> None:
+    """Empty only the explicitly opted-in local test DB, preserving its roles."""
+    import psycopg2
+
+    validated_url = require_disposable_database_reset_url(sync_url)
+    with closing(psycopg2.connect(validated_url)) as connection, connection, connection.cursor() as cursor:
+        # Migrations create no other schemas. Recreate public with the PostgreSQL
+        # defaults and runtime USAGE; table grants are restored by migrations.
+        cursor.execute("DROP SCHEMA public CASCADE")
+        cursor.execute("CREATE SCHEMA public AUTHORIZATION pg_database_owner")
+        cursor.execute("GRANT USAGE ON SCHEMA public TO PUBLIC")
+        cursor.execute("GRANT USAGE ON SCHEMA public TO app_rw, app_worker, app_review")
+
+
 def is_disposable_database_candidate(value: str | None) -> bool:
     """Identify the direct Alembic path that must use test-only validation."""
     if os.environ.get(_PROFILE_ENV) is not None:
@@ -111,6 +151,6 @@ def is_disposable_database_candidate(value: str | None) -> bool:
     return (
         parsed.hostname in _LOCAL_HOSTS
         and port == 55432
-        or parsed.hostname in _GITLAB_CI_HOSTS
+        or parsed.hostname in _SERVICE_HOSTS
         and port == 5432
     )

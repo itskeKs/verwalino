@@ -16,6 +16,14 @@ class IntakeService:
     def __init__(self,db,auth):
         self.db,self.auth=db,auth
 
+    async def require_parents(self,table,parent_ids):
+        ids=set(parent_ids)
+        if not ids:return
+        visible=set((await self.db.scalars(text(
+            f'SELECT id FROM {table} WHERE organization_id=:org AND id=ANY(CAST(:ids AS uuid[]))'),
+            {'org':self.auth.organization_id,'ids':list(ids)})).all())
+        if visible!=ids:raise HTTPException(404,'Intake parent inaccessible')
+
     async def call(self,sql,**params):
         try:
             return await self.db.scalar(text(sql),{'org':self.auth.organization_id,**params})
