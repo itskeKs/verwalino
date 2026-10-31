@@ -23,9 +23,14 @@ NOTICE = ('Nach der Löschung ist keine Anmeldung mehr möglich; aufbewahrungspf
 # Mutable configuration retained for structural/delete-privilege reasons, not
 # frozen voucher content. Canonical rule/fact fields remain guard-protected.
 ERASURE_SCRUB_COLUMNS = {
+    'tenant_profile': ('notes',),
+    'lease_agreement': ('notes',),
+    'vendor': ('notes', 'tax_id', 'vat_id'),
+    'owner_profile': ('notes',),
     'letter_template': ('name', 'subject', 'body'),
+    'property_document': ('deed_reference',),
     'property_assignment': ('stable_key', 'designation', 'location', 'description', 'details_json'),
-    'property_legal_reference': ('district', 'cadastral_district', 'field_number', 'parcel', 'sheet', 'details_json'),
+    'property_legal_reference': ('reference_type', 'district', 'cadastral_district', 'field_number', 'parcel', 'sheet', 'details_json'),
     'property_rule': ('search_text',),
     'property_rule_source': ('printed_page', 'section', 'quote', 'field_path'),
     'approved_fact_source': ('search_text',),
@@ -263,11 +268,18 @@ from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 
+class ErasureFileCleanupError(RuntimeError):
+    """The database erasure committed, but its file cleanup needs a retry."""
+
+
 @event.listens_for(Session, 'after_commit')
 def _erase_files_after_commit(session):
     if session.get_nested_transaction() is None:
         for org, uris in session.info.pop('organization_erasure_files', []):
-            erase_unretained_files(org, uris)
+            try:
+                erase_unretained_files(org, uris)
+            except Exception as exc:
+                raise ErasureFileCleanupError(str(org)) from exc
 
 
 @event.listens_for(Session, 'after_soft_rollback')

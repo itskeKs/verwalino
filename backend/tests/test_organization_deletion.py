@@ -28,6 +28,72 @@ async def isolate_erasure_decisions(rent_db):
                                  {'baseline': baseline})
 
 
+async def assert_no_person_marker(db, org, marker):
+    tables = (await db.execute(text('''SELECT c.relname FROM pg_class c
+      JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r'
+      AND EXISTS(SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid
+        AND a.attname='organization_id' AND NOT a.attisdropped)'''))).scalars().all()
+    for name in tables:
+        rows = (await db.execute(text(f'SELECT to_jsonb(t)::text FROM public."{name}" t WHERE organization_id=:org'),
+                                 {'org': org})).scalars().all()
+        assert all(marker not in row for row in rows), name
+
+
+async def test_draft_dunning_dependencies_erase_person_text(rent_world, rent_db, export_store):
+    from app.services.organization_deletion_service import run_deletion
+    w = rent_world
+    marker = 'PrivateDunningPerson'
+    for table in ('person', 'tenant_profile', 'lease_agreement'):
+        column = 'first_name' if table == 'person' else 'notes'
+        await rent_db.execute(text(f'UPDATE {table} SET {column}=:marker WHERE organization_id=:org'),
+                              {**w, 'marker': marker})
+    scope = await rent_db.scalar(text('''INSERT INTO accounting_scope(organization_id,property_id,scope_type,
+      label,valid_from,whole_property,origin,created_by) VALUES (:org,:property,'MIET',
+      'Rental scope','2026-01-01',true,'REVIEWED',:admin) RETURNING id'''), w)
+    notice = uuid.uuid4()
+    await rent_db.execute(text('''INSERT INTO dunning_scope_context(organization_id,dunning_notice_id,scope_id,
+      lease_agreement_id,period_start,period_end,created_by,reason) VALUES (:org,:notice,:scope,:lease,
+      '2026-01-01','2026-12-31',:admin,'Reviewed rental dunning')'''), {**w, 'notice': notice, 'scope': scope})
+    await rent_db.execute(text('''INSERT INTO dunning_notice(id,organization_id,tenant_profile_id,level,
+      issue_date,due_date,principal_amount,fee_amount,total_amount,status)
+      VALUES (:notice,:org,:tenant,1,'2026-01-01','2026-02-01',99,0,99,'draft')'''), {**w, 'notice': notice})
+    await rent_db.commit()
+    async with api_client(w) as api:
+        assert (await api.post('/api/organizations/deletion')).status_code == 200
+        assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
+    async with rent_db.begin():
+        assert await run_deletion(rent_db, w['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
+    try:
+        assert await rent_db.scalar(text('SELECT anonymized_at FROM person WHERE id=:person'), w)
+        for table, key in (('lease_agreement', 'lease'), ('tenant_profile', 'tenant')):
+            assert await rent_db.scalar(text(f'SELECT notes FROM {table} WHERE id=:id'), {'id': w[key]}) == 'Gelöscht'
+        assert await rent_db.scalar(text('SELECT count(*) FROM dunning_scope_context WHERE dunning_notice_id=:notice'), {'notice': notice}) == 1
+        await assert_no_person_marker(rent_db, w['org'], marker)
+    finally:
+        await rent_db.rollback()
+
+
+async def test_retained_text_inventory(rent_db):
+    from app.services.organization_deletion_service import ERASURE_SCRUB_COLUMNS
+    rows = (await rent_db.execute(text('''WITH retained AS MATERIALIZED
+      (SELECT * FROM organization_retention_catalog() WHERE disposition='retain'
+       OR entity IN ('tenant_profile','lease_agreement','vendor','owner_profile')) SELECT r.entity,a.attname,
+      (SELECT string_agg(DISTINCT p.proname,', ' ORDER BY p.proname) FROM pg_trigger t
+       JOIN pg_proc p ON p.oid=t.tgfoid WHERE t.tgrelid=c.oid AND NOT t.tgisinternal
+       AND (t.tgtype & 16)>0 AND t.tgenabled<>'D') AS guards
+      FROM retained r JOIN pg_class c ON c.oid=to_regclass('public.'||r.entity)
+      JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
+      JOIN pg_type typ ON typ.oid=a.atttypid
+      WHERE typ.typname IN ('text','varchar','json','jsonb')
+      AND a.attname ~ '(notes|note|comment|description|remark|tax_id|vat_id|reference)'
+      ORDER BY r.entity,a.attname'''))).all()
+    # Both are insert-only scope evidence; their guards reject content updates.
+    guarded = {('allocation_proposal_line', 'description'), ('context_decision', 'comparison_note')}
+    mutable = {(table, column) for table, column, _ in rows} - guarded
+    scrubbed = {(table, column) for table, columns in ERASURE_SCRUB_COLUMNS.items() for column in columns}
+    assert mutable <= scrubbed, mutable - scrubbed
+
+
 async def test_runtime_budget_review_completes_with_lifecycle_guard(rent_world, rent_db, export_store):
     from sqlalchemy import event
     from app.core.db import get_review_session_factory
@@ -296,7 +362,7 @@ async def test_erasure_scrubs_mutable_retained_text_and_keeps_immutable_fields(r
       jsonb_build_object('personal',CAST(:marker AS text)),:job) RETURNING id'''), {**w, 'job': job, 'marker': marker})
     params = {**w, 'job': job, 'marker': marker, 'assignment': assignment}
     await rent_db.execute(text('''INSERT INTO property_legal_reference(organization_id,property_id,reference_type,
-      district,cadastral_district,field_number,parcel,sheet,details_json,source_import_id) VALUES (:org,:property,'OTHER',
+      district,cadastral_district,field_number,parcel,sheet,details_json,source_import_id) VALUES (:org,:property,CAST(:marker AS text),
       CAST(:marker AS text),CAST(:marker AS text),CAST(:marker AS text),CAST(:marker AS text),CAST(:marker AS text),
       jsonb_build_object('personal',CAST(:marker AS text)),:job)'''), params)
     rule = await rent_db.scalar(text('''INSERT INTO property_rule(organization_id,property_id,stable_key,topic,title,
@@ -307,8 +373,8 @@ async def test_erasure_scrubs_mutable_retained_text_and_keeps_immutable_fields(r
     original = b'%PDF-1.4 synthetic retained declaration'
     stored = export_store.put(f"{w['org']}/declaration.pdf", original, content_type='application/pdf')
     document = await rent_db.scalar(text('''INSERT INTO property_document(organization_id,property_id,doc_type,
-      original_filename,mime_type,content_byte_size,content_sha256,storage_uri,storage_backend,page_count,uploaded_by)
-      VALUES (:org,:property,'DECLARATION','synthetic.pdf','application/pdf',:size,:digest,:uri,'LOCAL_FS',1,:admin) RETURNING id'''),
+      original_filename,mime_type,content_byte_size,content_sha256,storage_uri,storage_backend,page_count,uploaded_by,deed_reference)
+      VALUES (:org,:property,'DECLARATION','synthetic.pdf','application/pdf',:size,:digest,:uri,'LOCAL_FS',1,:admin,:marker) RETURNING id'''),
       {**params, 'size': len(original), 'digest': hashlib.sha256(original).hexdigest(), 'uri': stored.uri})
     params.update(rule=rule, document=document)
     await rent_db.execute(text('''INSERT INTO property_rule_source(organization_id,property_id,property_rule_id,
@@ -334,7 +400,8 @@ async def test_erasure_scrubs_mutable_retained_text_and_keeps_immutable_fields(r
     scrubbed = {}
     for table, columns in [('letter_template', 'name,subject,body'),
                            ('property_assignment', 'designation,location,description,details_json'),
-                           ('property_legal_reference', 'district,cadastral_district,field_number,parcel,sheet,details_json'),
+                           ('property_legal_reference', 'reference_type,district,cadastral_district,field_number,parcel,sheet,details_json'),
+                           ('property_document', 'deed_reference'),
                            ('property_rule', 'search_text,search_vector'),
                            ('property_rule_source', 'printed_page,section,quote,field_path'),
                            ('approved_fact_source', 'search_text,search_vector'),
@@ -390,7 +457,7 @@ def test_cli_reports_failure_with_nonzero_exit_and_organization_ids(monkeypatch,
     from app import organization_deletion as cli
     failed = uuid.uuid4()
     async def mixed_result():
-        return SimpleNamespace(completed=1, failed=[failed])
+        return SimpleNamespace(completed=1, failed=[failed], cleanup_pending=[])
     monkeypatch.setattr(cli, 'run', mixed_result)
     monkeypatch.setattr('sys.argv', ['organization_deletion', 'organization-deletion-run'])
     with pytest.raises(SystemExit) as stopped:
@@ -399,6 +466,49 @@ def test_cli_reports_failure_with_nonzero_exit_and_organization_ids(monkeypatch,
     output = capsys.readouterr()
     assert 'Organizations erased: 1' in output.out
     assert str(failed) in output.err
+
+
+@pytest.mark.parametrize('failure_point', ['after_commit', 'retry'])
+async def test_cli_counts_committed_erasure_with_pending_cleanup_once(rent_world, rent_db, export_store, monkeypatch, failure_point):
+    from app import organization_deletion as cli
+    from app.services import organization_deletion_service as service
+    w = rent_world
+    async with api_client(w) as api:
+        assert (await api.post('/api/organizations/deletion')).status_code == 200
+        assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
+    await rent_db.execute(text("UPDATE organization_deletion SET execute_after=now()-interval '1 day' WHERE organization_id=:org"), w)
+    await rent_db.commit()
+    original = service.erase_unretained_files
+    def fail_cleanup(*args):
+        raise OSError('Synthetic cleanup failure')
+    target = service if failure_point == 'after_commit' else cli
+    monkeypatch.setattr(target, 'erase_unretained_files', fail_cleanup)
+    result = await cli.run()
+    assert result.completed == 1
+    assert result.failed == []
+    assert result.cleanup_pending == [w['org']]
+    assert await rent_db.scalar(text('SELECT status FROM organization_deletion WHERE organization_id=:org'), w) == 'deleted_pending_retention'
+    await rent_db.rollback()
+    monkeypatch.setattr(target, 'erase_unretained_files', original)
+    retried = await cli.run()
+    assert retried.completed == 0
+    assert retried.failed == retried.cleanup_pending == []
+
+
+def test_cli_reports_pending_cleanup_with_nonzero_exit(monkeypatch, capsys):
+    from app import organization_deletion as cli
+    org = uuid.uuid4()
+    async def pending_result():
+        return cli.ErasureResult(completed=1, cleanup_pending=[org])
+    monkeypatch.setattr(cli, 'run', pending_result)
+    monkeypatch.setattr('sys.argv', ['organization_deletion', 'organization-deletion-run'])
+    with pytest.raises(SystemExit) as stopped:
+        cli.main()
+    assert stopped.value.code == 1
+    output = capsys.readouterr()
+    assert 'Organizations erased: 1' in output.out
+    assert 'Organizations failed:' not in output.err
+    assert f'Organizations erased, file cleanup pending/retry: {org}' in output.err
 
 
 async def test_overdue_failed_deletion_can_still_be_cancelled(rent_world, rent_db, export_store):
@@ -517,7 +627,7 @@ async def test_legacy_finalized_plan_keeps_owner_name_history(rent_world, rent_d
     from app.services.organization_deletion_service import run_deletion
     from app.services.render_names import _owner_names_map
     w = rent_world
-    owner = await rent_db.scalar(text('INSERT INTO owner_profile(organization_id,person_id) VALUES (:org,:person) RETURNING id'), w)
+    owner = await rent_db.scalar(text("INSERT INTO owner_profile(organization_id,person_id,notes) VALUES (:org,:person,'PrivateOwnerNotes') RETURNING id"), w)
     await rent_db.execute(text("INSERT INTO ownership_history(organization_id,unit_id,owner_profile_id,valid_from) VALUES (:org,:unit,:owner,'2020-01-01')"), {**w, 'owner': owner})
     await rent_db.execute(text('''INSERT INTO economic_plan(organization_id,property_id,plan_year,period_start,period_end,
       reserve_contribution_total,status,engine_version,snapshot_payload,snapshot_sha256)
@@ -531,8 +641,13 @@ async def test_legacy_finalized_plan_keeps_owner_name_history(rent_world, rent_d
         assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
     async with rent_db.begin():
         await run_deletion(rent_db, w['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
-    assert await _owner_names_map(rent_db, w['org'], w['property']) == before
-    await rent_db.rollback()
+    try:
+        assert await _owner_names_map(rent_db, w['org'], w['property']) == before
+        assert await rent_db.scalar(text('SELECT notes FROM owner_profile WHERE id=:owner'), {'owner': owner}) == 'Gelöscht'
+        await assert_no_person_marker(rent_db, w['org'], 'PrivateOwnerNotes')
+    finally:
+        await rent_db.rollback()
+
 
 
 async def test_unused_sepa_consent_does_not_bind_person_to_retention(rent_world, rent_db, export_store):
@@ -674,7 +789,10 @@ async def test_expired_personal_binding_is_anonymized_without_changing_voucher(r
             json={'person_id': str(w['person']), 'reason_code': 'INITIAL_SETUP'},
             headers={'Idempotency-Key': str(uuid.uuid4())})
         assert domain.status_code == 201, domain.text
-    vendor = await rent_db.scalar(text('INSERT INTO vendor(organization_id,person_id) VALUES (:org,:person) RETURNING id'), w)
+    marker = 'PrivateVendorPerson'
+    await rent_db.execute(text('UPDATE person SET first_name=:marker WHERE id=:person'), {**w, 'marker': marker})
+    vendor = await rent_db.scalar(text('''INSERT INTO vendor(organization_id,person_id,notes,tax_id,vat_id)
+      VALUES (:org,:person,:marker,:marker,:marker) RETURNING id'''), {**w, 'marker': marker})
     category = await rent_db.scalar(text('SELECT id FROM cost_category WHERE plan_version=1 ORDER BY code LIMIT 1'))
     await rent_db.execute(text('''INSERT INTO cost_entry(organization_id,property_id,cost_category_id,cost_category_plan_version,
       vendor_id,invoice_date,service_period_from,service_period_to,gross_amount,tenant_apportionable,status,source)
@@ -689,6 +807,10 @@ async def test_expired_personal_binding_is_anonymized_without_changing_voucher(r
         assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
     async with rent_db.begin():
         await run_deletion(rent_db, w['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
-    assert await rent_db.scalar(text('SELECT last_name FROM person WHERE id=:person'), w) == 'Anonymisiert'
-    assert (await rent_db.execute(text('SELECT row_to_json(t)::text FROM cost_entry t WHERE organization_id=:org'), w)).scalars().all() == before
-    await rent_db.rollback()
+    try:
+        assert await rent_db.scalar(text('SELECT last_name FROM person WHERE id=:person'), w) == 'Anonymisiert'
+        assert (await rent_db.execute(text('SELECT row_to_json(t)::text FROM cost_entry t WHERE organization_id=:org'), w)).scalars().all() == before
+        assert (await rent_db.execute(text('SELECT notes,tax_id,vat_id FROM vendor WHERE id=:vendor'), {'vendor': vendor})).one() == ('Gelöscht', 'Gelöscht', 'Gelöscht')
+        await assert_no_person_marker(rent_db, w['org'], marker)
+    finally:
+        await rent_db.rollback()

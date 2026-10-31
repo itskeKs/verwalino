@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.core.config import settings
-from app.services.organization_deletion_service import erase_unretained_files, run_deletion
+from app.services.organization_deletion_service import ErasureFileCleanupError, erase_unretained_files, run_deletion
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 class ErasureResult:
     completed: int = 0
     failed: list[UUID] = field(default_factory=list)
+    cleanup_pending: list[UUID] = field(default_factory=list)
 
 
 async def run():
@@ -32,6 +33,7 @@ async def run():
                 organizations = (await db.execute(text('''SELECT organization_id FROM organization_deletion
                   WHERE status IN ('cooling_off','deleted_pending_retention') ORDER BY organization_id'''))).scalars().all()
         for org in organizations:
+            erased = False
             try:
                 # A fresh session also isolates a failed after-commit file
                 # cleanup; neither failure can poison the next organization.
@@ -39,12 +41,23 @@ async def run():
                     async with db.begin():
                         await db.execute(text("SELECT set_config('app.current_org_id',:org,true)"), {'org': str(org)})
                         erased = await run_deletion(db, org)
-                    result.completed += bool(erased)
-                    async with db.begin():
-                        await retry_file_cleanup(db, org)
+            except ErasureFileCleanupError:
+                result.completed += bool(erased)
+                result.cleanup_pending.append(org)
+                logger.exception('Organization erased, file cleanup pending; retry on the next run: %s', org)
+                continue
             except Exception:
                 result.failed.append(org)
                 logger.exception('Organization erasure failed; retry on the next run: %s', org)
+                continue
+            result.completed += bool(erased)
+            try:
+                async with AsyncSession(engine) as db:
+                    async with db.begin():
+                        await retry_file_cleanup(db, org)
+            except Exception:
+                result.cleanup_pending.append(org)
+                logger.exception('Organization erased, file cleanup pending; retry on the next run: %s', org)
         return result
     finally:
         await engine.dispose()
@@ -72,6 +85,9 @@ def main():
     print(f'Organizations erased: {result.completed}')
     if result.failed:
         print('Organizations failed: ' + ', '.join(map(str, result.failed)), file=sys.stderr)
+    if result.cleanup_pending:
+        print('Organizations erased, file cleanup pending/retry: ' + ', '.join(map(str, result.cleanup_pending)), file=sys.stderr)
+    if result.failed or result.cleanup_pending:
         raise SystemExit(1)
 
 

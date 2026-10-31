@@ -282,13 +282,24 @@ still has to match its pre-erasure hash.
 
 | Table | Scrubbed columns |
 | --- | --- |
+| `tenant_profile`, `lease_agreement`, `owner_profile` | `notes` |
+| `vendor` | `notes`, `tax_id`, `vat_id` |
 | `letter_template` | `name`, `subject`, `body` |
+| `property_document` | `deed_reference` (mutable metadata; the original file is unchanged) |
 | `property_assignment` | `stable_key`, `designation`, `location`, `description`, `details_json` |
-| `property_legal_reference` | `district`, `cadastral_district`, `field_number`, `parcel`, `sheet`, `details_json` |
+| `property_legal_reference` | `reference_type`, `district`, `cadastral_district`, `field_number`, `parcel`, `sheet`, `details_json` |
 | `property_rule` | `search_text` (and generated `search_vector`) |
 | `property_rule_source` | `printed_page`, `section`, `quote`; `field_path` becomes NULL so sources on the same page remain distinct rows without a key collision |
 | `approved_fact_source` | `search_text` (and generated `search_vector`) |
 | `knowledge_budget_policy`, `property_source_security` | `reason` only |
+
+Editable profile, lease, vendor and owner fields are scrubbed even when their rows
+must survive as dependencies of immutable evidence or expired vouchers. Their
+free text and identifiers are not themselves frozen voucher content. The catalog
+inventory also checks retained text/varchar/JSON columns whose names contain
+`notes`, `note`, `comment`, `description`, `remark`, `tax_id`, `vat_id` or `reference`.
+`allocation_proposal_line.description` and `context_decision.comparison_note`
+are guarded insert-only evidence and remain unchanged.
 
 Retention keys, legal bases, deadlines and content hashes are persisted in the
 deletion record. Active-bound person processing flags may change; expired-bound personal fields are
@@ -298,7 +309,9 @@ source contents do not. The CLI retries post-commit file cleanup for completed
 organizations on every invocation, so an interrupted cleanup is recoverable.
 Each organization has its own session/transaction. A failure logs its organization
 ID, rolls back its database work and continues with the next organization. The
-CLI prints the completion count and failed organization IDs separately and exits **1** if
+CLI counts a committed erasure once, including when file cleanup fails. It reports
+these IDs as **erased, file cleanup pending/retry**, separately from failed database
+erasures, and exits **1** if
 any organization or post-commit cleanup failed (otherwise **0**). A failed
 database erasure stays due in `cooling_off`; rerun `organization-deletion-run` to
 retry it, or cancel through the existing owner-admin action before erasure commits.
@@ -376,14 +389,14 @@ than treating it as ordinary configuration. Whether its personal content needs
 a separate minimization policy remains an owner/domain decision alongside the
 immutable payloads listed here.
 
-Original-document titles, filenames, deed references, archive/scope reasons,
+Original-document titles, filenames, archive/scope reasons,
 invoice extraction payloads and issued-letter recipient/subject/body also remain
 as part of their retained originals. Their exact pairs are
 `attachment.title`, `attachment.original_filename`, `attachment.archive_reason`,
 `invoice_document.original_filename`, `invoice_document.extraction_payload`,
 `mandate_document.title`, `mandate_document.original_filename`,
 `mandate_document.scope_reason`, `mandate_document.archive_reason`,
-`property_document.title`, `property_document.deed_reference`,
+`property_document.title`,
 `property_document.original_filename`, `letter_document.recipient_name`,
 `letter_document.subject`, `letter_document.body`. Retained structural UUIDs
 continue to link this evidence to anonymized person rows.
