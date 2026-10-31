@@ -148,7 +148,7 @@ error tracking is [off by default](DEPLOY.md#request-ids-and-optional-error-trac
 
 ## Status and roadmap
 
-The MVP for in-house use is complete; this release targets migration `0146`.
+The MVP for in-house use is complete; this release targets migration `0147`.
 The hosted instance is being set up on the hosted server (#6), using the portable
 installer and the [hosted deploy workflow](DEPLOY.md#hosted-server).
 Next: self-hosting ready → scenario evals → hosted offering → domain gaps.

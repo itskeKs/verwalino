@@ -100,7 +100,7 @@ async def inventory(db):
           SELECT 1 FROM pg_attribute org WHERE org.attrelid=c.oid AND org.attname='organization_id'))
       GROUP BY c.oid,c.relname ORDER BY c.relname"""))).mappings().all()
     # Password-reset links are global authentication infrastructure, never data.
-    return {r["name"]: r for r in rows if r["name"] != "password_reset_request"}
+    return {r["name"]: r for r in rows if r["name"] not in {"password_reset_request", "organization_deletion"}}
 
 
 def export_predicate(name, columns):
@@ -278,7 +278,11 @@ async def create_export(db, auth, *, app_version):
                     if not rows:
                         raise HTTPException(404, "Organisation nicht gefunden.")
                     manifest["organization"] = {k: rows[0][k] for k in ("id", "name")}
-                content = b"".join(json_bytes(row) + b"\n" for row in rows)
+                source_ids = {}
+                for event in snapshot.get("audit_event", []):
+                    if event["action"] == "organization.import.completed" and not (event.get("payload_diff") or {}).get("imported_receipt"):
+                        source_ids.update((event.get("payload_diff") or {}).get("source_ids", {}).get(name, {}))
+                content = b"".join(json_bytes({**row, **({"source_id": source_ids.get(row["id"], row["id"])} if row.get("id") else {})}) + b"\n" for row in rows)
                 add_bytes(archive, f"entities/{name}.jsonl", content, hashes)
                 for row in rows:
                     if name == "audit_event" and row["action"] == "mail_prepared":
@@ -378,6 +382,6 @@ async def download_export(db, auth, export_id):
             # Full values, not only IDs: a changed/restricted row invalidates the
             # old download. The administrator can request a current export.
             available = {json_bytes(row) for row in visible}
-            if any(json_bytes(row) not in available for row in expected):
+            if any(json_bytes({k: v for k, v in row.items() if k != "source_id"}) not in available for row in expected):
                 raise HTTPException(404, "Export nicht mehr verfügbar. Bitte erstellen Sie einen neuen Export.")
     return path

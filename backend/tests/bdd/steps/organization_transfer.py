@@ -66,3 +66,77 @@ def archive_is_private(world):
         async with api_client(source, foreign=True) as foreign:
             return await foreign.get(f"/api/organizations/export/{world.data['export_id']}")
     assert world.run(refuse_foreign()).status_code == 404
+
+
+@pytest.fixture
+async def empty_import_organization(rent_db, rent_world):
+    from tests.test_organization_import import import_target
+    # Reuse the same fixture implementation; all product operations use HTTP.
+    return await import_target.__wrapped__(rent_db, rent_world)
+
+
+@when('the archive is imported into an empty organization')
+def import_archive(world, empty_import_organization):
+    from tests.test_organization_import import repack
+    async def restore():
+        async with api_client(empty_import_organization) as target:
+            return await target.post('/api/organizations/import', files={'file': ('organization.tar.gz', repack(world.data['export_files']))})
+    answer = world.run(restore())
+    assert answer.status_code == 200, answer.text
+    world.data['import_result'] = answer.json()
+    world.data['import_target'] = empty_import_organization
+
+
+@then('the imported organization has equal entity counts and normalized content')
+def import_equals_source(world):
+    from app.services.organization_archive import json_bytes
+    source = world.data['export_files']
+    async def export_target():
+        async with api_client(world.data['import_target']) as target:
+            return await target.post('/api/organizations/export')
+    answer = world.run(export_target())
+    assert answer.status_code == 200, answer.text
+    from tests.test_organization_export import unpack
+    target = unpack(answer.content)
+    # Account credentials/custody and operation audit are deliberately local.
+    # Every domain entity is compared after reversing its transfer identity map.
+    mapping = world.data['import_result']['id_map']
+    from app.services.organization_import_service import remap
+    reverse = {v: k for values in mapping.values() for k, v in values.items()}
+    for name, count in json.loads(source['manifest.json'])['row_counts'].items():
+        actual_count = json.loads(target['manifest.json'])['row_counts'][name]
+        assert actual_count == count + (1 if name == 'audit_event' else 0), name
+        if name in {'user', 'membership', 'audit_event'}:
+            continue
+        original = [json.loads(line) for line in source[f'entities/{name}.jsonl'].splitlines()]
+        restored = [remap(json.loads(line), reverse) for line in target[f'entities/{name}.jsonl'].splitlines()]
+        assert len(restored) == count, name
+        def normalize(rows):
+            return sorted(json_bytes({k: v for k, v in row.items() if k not in {'created_by', 'storage_uri', 'registered_at'}}) for row in rows)
+        assert hashlib.sha256(b''.join(normalize(original))).digest() == hashlib.sha256(b''.join(normalize(restored))).digest(), name
+
+
+@when('a required person is removed from the archive before import')
+def missing_person(world, empty_import_organization):
+    from tests.test_organization_import import repack
+    files = dict(world.data['export_files'])
+    files['entities/person.jsonl'] = b''
+    manifest = json.loads(files['manifest.json'])
+    manifest['row_counts']['person'] = 0
+    files['manifest.json'] = json.dumps(manifest).encode()
+    async def restore():
+        async with api_client(empty_import_organization) as target:
+            return await target.post('/api/organizations/import', files={'file': ('organization.tar.gz', repack(files))})
+    world.data['missing_import'] = world.run(restore())
+    world.data['import_target'] = empty_import_organization
+
+
+@then('the import lists missing dependencies and writes nothing')
+def missing_dependency_refusal(world):
+    answer = world.data['missing_import']
+    assert answer.status_code == 422, answer.text
+    assert any(item['entity'] == 'person' and item['count'] == 2 for item in answer.json()['detail']['missing_dependencies'])
+    async def properties():
+        async with api_client(world.data['import_target']) as target:
+            return await target.get('/api/properties')
+    assert world.run(properties()).json() == []

@@ -47,7 +47,7 @@ async def test_admin_exports_visible_rows_without_credentials_or_foreign_data(re
         files = unpack(response.content)
         manifest = json.loads(files["manifest.json"])
         assert manifest["format"] == "verwalino-organization-export"
-        assert manifest["version"] == 1
+        assert manifest["version"] == 2
         assert manifest["organization"]["id"] == str(w["org"])
         assert manifest["row_counts"]["property"] == 2
         for name, digest in manifest["sha256"].items():

@@ -1,4 +1,4 @@
-"""Version one of the portable product archive, independent of DB backups."""
+"""Version two of the portable product archive, independent of DB backups."""
 from __future__ import annotations
 
 import hashlib
@@ -10,7 +10,7 @@ from decimal import Decimal
 from uuid import UUID
 
 FORMAT = "verwalino-organization-export"
-VERSION = 1
+VERSION = 2
 # Stable product order. Additional visible provenance follows alphabetically.
 ENTITY_ORDER = (
     "organization", "management_mandate", "property", "unit", "person",
@@ -24,10 +24,10 @@ ENTITY_ORDER = (
     "user", "membership", "audit_event",
 )
 SECRET_COLUMNS = frozenset({"password_hash", "token_hash", "token", "lease_token", "session_version"})
-README = """# Verwalino organization export, version 1
+README = """# Verwalino organization export, version 2
 
 Canonical data is UTF-8 JSON Lines in entities/<entity>.jsonl. Each line is one
-row; UUIDs are strings, exact decimal amounts are strings, dates and timestamps
+row; source_id preserves its original identity across imports. Version-one imports use id\nas the source identity. UUIDs are strings, exact decimal amounts are strings, dates and timestamps
 use ISO 8601. manifest.json gives the entity order, row counts, schema head and
 SHA-256 digest of every other member. It cannot hash itself. documents/<UUID>
 contains original bytes; manifest.documents links each file to its entity.

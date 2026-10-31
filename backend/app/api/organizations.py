@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -122,3 +122,15 @@ async def get_my_org(
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
     return OrgOut(id=str(org.id), name=org.name)
+
+
+async def get_import_db(auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db, scope="function")):
+    await require_live_principal(db, auth, writer=True, exclusive=True, administrator=True)
+    return db
+
+
+@router.post("/import")
+async def import_archive(file: UploadFile = File(...), auth: AuthContext = Depends(require_admin_dep),
+                         db: AsyncSession = Depends(get_import_db)):
+    from app.services.organization_import_service import import_organization
+    return await import_organization(db, auth, file.file)
