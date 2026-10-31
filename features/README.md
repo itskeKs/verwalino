@@ -182,7 +182,7 @@ target aborts with "target is not a fresh installation; refusing to write scenar
 data"; failed authentication or an unverifiable list also aborts. Start with a
 new disposable installation for each run, including reruns after a partial failure.
 
-**Isolation decision:** all nine examples of `organization_isolation.feature` are
+**Isolation decision:** all ten scenarios of `organization_isolation.feature` are
 skipped on external targets because only one bootstrap organization is configured.
 The three `first_run_setup.feature` scenarios are also skipped: they require a
 fresh installation, while the external target already has its bootstrap organization.
