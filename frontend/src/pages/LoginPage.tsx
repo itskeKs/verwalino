@@ -8,7 +8,7 @@ import { useAuth } from "../auth/useAuth";
 import { ApiError } from "../api/client";
 import "./LoginPage.css";
 
-export function LoginPage({ signupEnabled = false }: { signupEnabled?: boolean }) {
+export function LoginPage({ signupEnabled = false, mailAvailable = false }: { signupEnabled?: boolean; mailAvailable?: boolean }) {
   const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -72,6 +72,7 @@ export function LoginPage({ signupEnabled = false }: { signupEnabled?: boolean }
         >
           {loading ? "..." : "Anmelden"}
         </button>
+        {mailAvailable && <Link className="link" to="/passwort-vergessen">Passwort vergessen?</Link>}
         {signupEnabled && <Link className="link" to="/signup">Konto erstellen</Link>}
       </form>
     </div>

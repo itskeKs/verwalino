@@ -168,6 +168,31 @@ never enters browser storage. Success reloads the dashboard from the session coo
 and “Zur Registrierung”. The HTML uses a no-referrer policy. Inputs and receipt
 text must wrap without horizontal scrolling at 360 px.
 
+### Password recovery
+
+Login shows “Passwort vergessen?” only when public metadata confirms mail is
+available, in either mode. `/passwort-vergessen` uses the same centred `max-w-lg`
+kit card and `h-11` labelled inputs as signup, with “E-Mail” and a honeypot hidden
+from layout, keyboard and assistive technology. “Link anfordern” submits once;
+busy state disables the fieldset and says “Anfrage läuft …”. The form becomes a
+conditional `role="status"` receipt that does not claim an account exists or mail
+was delivered. It explains the one-hour expiry and checking spam. Failed requests
+preserve the address and show `role="alert"`. “Zur Anmeldung” stays available.
+
+`/passwort-zuruecksetzen` uses the same card, with “Neues Passwort”, “Passwort
+wiederholen”, a 12–128 character hint and “Passwort speichern”. Password mismatch
+is explained before submitting. The query token moves to tab-local sessionStorage
+and is removed from the URL; reloads keep it and no GET or effect submits it.
+Success clears passwords and stored token, shows “Ihr Passwort wurde geändert.
+Alle bisherigen Sitzungen wurden beendet.” and a “Zur Anmeldung” link that reloads
+authentication state. There is no automatic login. A 403 clears the token; retryable
+errors and policy 422 responses retain it. Password length is validated by the
+backend in Unicode code points; “Das Passwort muss zwischen 12 und 128 Zeichen
+lang sein.” appears in the alert without browser UTF-16 length constraints. A
+malformed request address shows “Bitte geben Sie eine gültige E-Mail-Adresse ein.”
+and preserves the entered address. Errors offer “Neuen Link anfordern”. Fields retain useful inputs,
+use `new-password` autocomplete and remain labelled and usable at 360 px.
+
 ### Sidebar groups
 
 Source: `GROUPS` in `Sidebar.tsx`. Active item `bg-sidebar-accent text-sidebar-accent-foreground`,
@@ -580,13 +605,17 @@ synthetic browser-intercepted API responses, without starting a backend or acces
 | Hosted signup | `/signup` | [`signup-desktop.png`](docs/assets/design/signup-desktop.png) | [`signup-360.png`](docs/assets/design/signup-360.png) |
 | Signup confirmation, retryable password error | `/signup/confirm` | [`signup-confirm-desktop.png`](docs/assets/design/signup-confirm-desktop.png) | [`signup-confirm-360.png`](docs/assets/design/signup-confirm-360.png) |
 | Signup receipt | `/signup`, accepted request | — | [`signup-receipt-360.png`](docs/assets/design/signup-receipt-360.png) |
+| Password reset request | `/passwort-vergessen` | [`password-reset-request-1280.png`](docs/assets/design/password-reset-request-1280.png) | [`password-reset-request-360.png`](docs/assets/design/password-reset-request-360.png) |
+| Password reset | `/passwort-zuruecksetzen` | [`password-reset-1280.png`](docs/assets/design/password-reset-1280.png) | [`password-reset-360.png`](docs/assets/design/password-reset-360.png) |
+| Reset receipt | `/passwort-vergessen`, accepted request | — | [`password-reset-receipt-360.png`](docs/assets/design/password-reset-receipt-360.png) |
+| Reset success | `/passwort-zuruecksetzen`, accepted reset | — | [`password-reset-success-360.png`](docs/assets/design/password-reset-success-360.png) |
 | Form | `/objekte`, "+ Neues Objekt" | [`form-objekt-desktop.png`](docs/assets/design/form-objekt-desktop.png) | [`form-objekt-360.png`](docs/assets/design/form-objekt-360.png) |
 | Dialog | "Passwort ändern" in the topbar | [`dialog-password-desktop.png`](docs/assets/design/dialog-password-desktop.png) | [`dialog-password-360.png`](docs/assets/design/dialog-password-360.png) |
 
 <a href="docs/assets/design/list-objekte-desktop.png"><img src="docs/assets/design/list-objekte-desktop.png" alt="List page: Objekte" width="720"></a>
 <a href="docs/assets/design/dialog-password-desktop.png"><img src="docs/assets/design/dialog-password-desktop.png" alt="Dialog: Passwort ändern" width="720"></a>
 
-The signup images use the running frontend with synthetic hosted metadata and
+The signup and password recovery images use the running frontend with synthetic deployment metadata and
 captured API responses (visual/360 px geometry checks, not end-to-end proof).
 
 The screenshots show the app as it is, including the deviations named above (legacy table, native file

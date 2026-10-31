@@ -27,7 +27,7 @@ async def test_administrator_downloads_matching_manifest_and_audit_line(client_a
     assert response.headers['Cache-Control'] == 'no-store'
     members = unpack_bundle(response.content)
     assert json.loads(members['manifest.json'])['app_version'] == app.version
-    assert json.loads(members['manifest.json'])['release_target'] == '0144'
+    assert json.loads(members['manifest.json'])['release_target'] == '0145'
     assert json.loads(members['containers.json']) is None
     database = json.loads(members['database.json'])
     assert database['scope'] == 'organization'

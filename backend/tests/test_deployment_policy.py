@@ -100,11 +100,26 @@ def test_rate_limit_rules_match_the_selected_profile(mode, expected):
 
 
 @pytest.mark.parametrize('mode', ['selfhost', 'hosted'])
-async def test_public_metadata_returns_only_mode_and_version_without_caching(client_unauth, monkeypatch, mode):
+async def test_public_metadata_returns_only_mode_version_and_mail_capability_without_caching(client_unauth, monkeypatch, mode):
     from app.core.config import settings
     from app.main import app
     monkeypatch.setattr(settings, 'deployment_mode', mode)
+    monkeypatch.setattr(settings, 'smtp_host', None)
     response = await client_unauth.get('/api/meta')
     assert response.status_code == 200
-    assert response.json() == {'deployment_mode': mode, 'version': app.version}
+    assert response.json() == {'deployment_mode': mode, 'version': app.version, 'mail_available': False}
     assert response.headers['cache-control'] == 'no-store'
+    assert 'set-cookie' not in response.headers
+
+
+@pytest.mark.parametrize('host,available', [('signup.example.test', True), (None, False),
+    ('user:password@example.test', False), ('http://example.test', False)])
+async def test_meta_reports_only_usable_mail_configuration(client_unauth, signup_mail, monkeypatch, host, available):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, 'public_host', host)
+    response = await client_unauth.get('/api/meta')
+    assert response.json()['mail_available'] is available
+    assert set(response.json()) == {'deployment_mode', 'version', 'mail_available'}
+
+
+from tests.signup_support import signup_mail  # noqa: E402,F401

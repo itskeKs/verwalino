@@ -57,7 +57,7 @@ PDF, PNG, and JPEG files detected by their signature; other content
 is offered as a download. A failed database operation rolls back
 metadata and audit but does not delete possibly shared
 original bytes. Rollback restrictions are documented under
-[migration compatibility](../../DEPLOY.md#migration-compatibility-00290144).
+[migration compatibility](../../DEPLOY.md#migration-compatibility-00290145).
 
 The „Dokumente“ (documents) section is available in property, unit, and person.
 For persons, an accessible property is deliberately selected for an upload;
