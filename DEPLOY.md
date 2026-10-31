@@ -950,7 +950,7 @@ On pushes to `main` affecting `website/` or its workflow, [Website](.github/work
 checks i18n, lint, the build and links; then publishes amd64/arm64 images tagged with the full SHA and `main`,
 attaches BuildKit provenance/SBOMs, signs the index with keyless cosign, and sends only `site <sha>`
 through the existing deploy key. PRs only run checks. Site and app deployment jobs share the
-`deploy-hosted-server` concurrency group; an active deployment is never cancelled.
+`deploy-hosted-server` concurrency group; an active deployment is never cancelled. Site deploys use their own group (`deploy-hosted-site`), so a queued release and a queued site deploy never replace each other; the server lock serializes them.
 
 `scripts/deploy-server.sh site <sha>` refuses a disabled extension, pulls the SHA tag, requires a matching
 registry SHA-256 RepoDigest, recreates **only** `site` using `tag@digest`, and requires HTTP 200 on `/`

@@ -98,9 +98,11 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Serialize with app releases too; never interrupt an active server deploy.
+    # Own group: GitHub keeps one pending entry per group, so sharing the app
+    # release group would let a site push cancel a queued release (or vice
+    # versa). The server-side lock still serializes the two deploys.
     concurrency:
-      group: deploy-hosted-server
+      group: deploy-hosted-site
       cancel-in-progress: false
     steps:
       - name: Deploy over SSH
