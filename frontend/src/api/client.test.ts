@@ -13,6 +13,12 @@ describe("api client", () => {
     vi.stubGlobal("fetch", vi.fn());
   });
 
+  it.each([false, true])("reads structured quota codes and preserves the German refusal (upload=%s)", async upload => {
+    vi.mocked(fetch).mockResolvedValue(response({ detail: { code: "QUOTA_STORAGE_EXCEEDED", message: "Speicherkontingent erschöpft (2 GiB). Sie können keine weiteren Dokumente speichern." } }, 413));
+    const pending = upload ? uploadFormData("/api/attachments", new FormData()) : api.post("/api/properties", {});
+    await expect(pending).rejects.toMatchObject({ status: 413, code: "QUOTA_STORAGE_EXCEEDED", message: "Speicherkontingent erschöpft (2 GiB). Sie können keine weiteren Dokumente speichern." });
+  });
+
   it("includes credentials for JSON requests", async () => {
     vi.mocked(fetch).mockResolvedValue(response({ ok: true }));
 

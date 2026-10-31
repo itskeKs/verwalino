@@ -121,10 +121,15 @@ with a semantic `h2` and a responsive one/three-column definition list. It shows
 formatting and binary storage units. At 90% or above, a warning `Badge` says
 “Fast ausgeschöpft” and the card says “Ihr Kontingent ist zu mindestens 90 %
 belegt.” Errors show “Kontingent nicht verfügbar.” with retry; loading shows
-“Kontingent wird geladen …”. Unlimited organizations have no card. Aggregate
+“Kontingent wird geladen …”. The card waits for deployment metadata and requests
+usage only in hosted mode. Selfhost renders no quota, loading or error card and
+never requests the aggregate. Aggregate
 usage is available to every authenticated member, independently of source grants.
 The declaration-import failure `ORGANIZATION_AI_BUDGET_EXCEEDED` uses “Das
 monatliche KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den Betreiber.”
+Quota refusals carry a stable `detail.code` and German `detail.message`. The shared
+API client reads the code for JSON and multipart refusals, exposes it on `ApiError`,
+and preserves the German message in existing error surfaces.
 Attachment upload errors with status 413 display the backend's German explanation,
 including “Speicherkontingent erschöpft …”, while preserving the file and title.
 The local 25 MiB file check remains in place.

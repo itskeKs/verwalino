@@ -28,7 +28,7 @@ def another_document(world):
 @then("the upload is refused with the German storage quota message")
 def refused_document(world):
     assert world.response.status_code == 413, world.describe_response()
-    assert world.response.json()["detail"].startswith("Speicherkontingent erschöpft")
+    assert world.response.json()["detail"]["message"].startswith("Speicherkontingent erschöpft")
 
 
 @when("the administrator adds a property and reads the organization quota")

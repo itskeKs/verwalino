@@ -122,11 +122,19 @@ and retained generated PDFs. In hosted mode it serializes writes, queries stored
 document sizes in the database (deduplicated by storage URI), and cleans up only newly
 created originals when the owning database transaction rolls back. A filesystem
 lock remains held through rollback cleanup so a concurrent writer cannot reuse
-bytes being removed. Selfhost skips both organization quota locks, retaining the
-store's atomic writes and locks for each individual original through transaction
-completion. Mail originals are retained before their independently
+bytes being removed. Selfhost skips quota advisory and all filesystem locks, retaining atomic writes
+and leaving failed-upload bytes for offline reconciliation. Hosted writes flock
+the shared organization directory inode through transaction cleanup. Web and
+worker containers coordinate on the same document volume without creating
+lock files that accumulate or enter backups. Mail originals are retained before their independently
 committed dispatch receipt, so a request rollback cannot remove a referenced PDF.
-Archived and source-restricted files still consume space.
+Archived and source-restricted files still consume space. Accepted unprotected
+deletions unlink only after commit and only when the guarded aggregate decreases,
+proving the last organization/content-hash reference is gone. Shared and classified
+originals remain retained. Revision 0078 also freezes unclassified mandate
+originals in quarantine; neither current mandate class permits deletion. The
+cleanup rule preserves these guards. Rollback cancels removal; unlink failures log a warning
+and may leave an orphan for `quota-recount`. See [operations](../DEPLOY.md#hosted-organization-quotas).
 The request-body middleware remains the first upload boundary and reports the
 route's actual raw-body cap (1.75 MiB for master import; 26 MiB for uploads,
 including the multipart envelope). File-content/storage
@@ -150,7 +158,8 @@ audit JSON. Archived originals and all versions count; duplicate references shar
 one charge. Both upload admission and quota GET use this aggregate without filesystem
 enumeration. Legacy letters/mail and interrupted-write originals are reconciled
 once with the migrator's `quota-recount` CLI, which appends URI/byte audit metadata
-without changing retained originals. No table, quota counter, override, or privileged
+without changing retained originals. Already sized live references are skipped
+so a subsequent unprotected deletion can still release its bytes. No table, quota counter, override, or privileged
 application connection is introduced. Downgrade removes only the function and
 reconstructible size column. The function also supports the existing isolated worker role.
 

@@ -4,6 +4,11 @@ The hosted free allowance is 2 GiB retained storage, 25 MiB per upload,
 20 properties, 200 units and USD 0 per calendar month (UTC) for model calls.
 Change FREE_PLAN in code to change the hosted offer; per-organization overrides
 and paid plans are deliberately deferred. None means unlimited, including AI.
+
+Lock order for writers: source ACL / financial-input locks first, organization
+quota advisory lock next, then property rows (SHARE or UPDATE), then the hosted
+filesystem lock. Keep filesystem locks through post-commit/rollback cleanup.
+Selfhost skips quota advisory and filesystem locks.
 """
 from dataclasses import dataclass
 from decimal import Decimal
@@ -24,7 +29,8 @@ class QuotaPlan:
     ai_budget_usd: Decimal | None
 
 
-FREE_PLAN = QuotaPlan("free", 2 * 1024**3, 25 * 1024**2, 20, 200, Decimal("0"))
+MAX_UPLOAD_BYTES = 25 * 1024**2
+FREE_PLAN = QuotaPlan("free", 2 * 1024**3, MAX_UPLOAD_BYTES, 20, 200, Decimal("0"))
 UNLIMITED_PLAN = QuotaPlan("unlimited", None, None, None, None, None)
 
 
@@ -43,6 +49,7 @@ def _size(value: int) -> str:
 class QuotaDecision:
     allowed: bool
     message: str | None = None
+    code: str | None = None
 
 
 def check_quota(usage: int | Decimal, plan: QuotaPlan, kind: QuotaKind,
@@ -58,4 +65,11 @@ def check_quota(usage: int | Decimal, plan: QuotaPlan, kind: QuotaKind,
         "units": lambda: f"Einheitenkontingent erschöpft ({limit} Einheiten). Sie können keine weitere Einheit anlegen.",
         "ai_budget_usd": lambda: "Das monatliche KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den Betreiber.",
     }
-    return QuotaDecision(False, messages[kind]())
+    codes = {
+        "storage_bytes": "QUOTA_STORAGE_EXCEEDED",
+        "upload_bytes": "UPLOAD_TOO_LARGE",
+        "properties": "QUOTA_PROPERTIES_EXCEEDED",
+        "units": "QUOTA_UNITS_EXCEEDED",
+        "ai_budget_usd": "ORGANIZATION_AI_BUDGET_EXCEEDED",
+    }
+    return QuotaDecision(False, messages[kind](), codes[kind])

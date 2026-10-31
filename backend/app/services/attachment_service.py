@@ -9,7 +9,7 @@ from sqlalchemy import text
 from starlette.concurrency import run_in_threadpool
 
 from app.core.storage import compute_sha256, get_store, make_storage_key, put_document
-from app.core.uploads import MAX_UPLOAD_BYTES
+from app.core.uploads import MAX_UPLOAD_BYTES, require_upload_size
 from app.models.attachment import Attachment
 from app.models.audit_event import AuditEvent
 from app.repositories.attachment_repo import AttachmentRepository
@@ -100,10 +100,7 @@ class AttachmentService:
                      unit_id=None, lease_agreement_id=None, person_id=None):
         if not file_bytes:
             raise HTTPException(422, "Empty file")
-        if len(file_bytes) > MAX_UPLOAD_BYTES:
-            from app.core.quotas import FREE_PLAN
-            from app.services.quota_service import require_quota
-            require_quota(0, "upload_bytes", len(file_bytes), plan=FREE_PLAN)
+        require_upload_size(len(file_bytes), max_bytes=MAX_UPLOAD_BYTES)
         filename = original_filename or ""
         if (not filename.strip() or len(filename) > 255 or filename in {".", ".."}
                 or any(c in filename for c in "/\\")

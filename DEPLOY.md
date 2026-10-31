@@ -101,8 +101,12 @@ calendar month (UTC)** for declaration extraction and knowledge Q&A. USD 0 disab
 model calls even when a provider key and the feature switches are configured.
 `quota_enforcement` selects this plan only in hosted mode. Selfhost has no plan
 checks and takes no organization-wide quota advisory or filesystem upload lock;
-per-file locks through transaction completion, atomic writes, existing request/upload
-safety limits and declaration cost controls remain.
+atomic writes, existing request/upload safety limits and declaration cost controls
+remain. Hosted writes lock the organization storage directory inode, shared by
+web and worker containers, until transaction cleanup finishes. No lock files
+are created, accumulated or included in document backups.
+Selfhost creates no filesystem lock files and retains failed-upload bytes for
+offline reconciliation rather than risking a concurrent committed duplicate.
 
 To change the hosted offer, edit the documented `FREE_PLAN` constants, run the
 quota/budget tests, rebuild, and restart both web and declaration worker processes
@@ -118,13 +122,29 @@ receipts are summed once per storage URI, including archived and source-restrict
 originals. Uploads and quota reads never walk the storage directory. Database
 counts include every organization-owned property/unit, regardless of source
 grants. Hosted writes serialize quota admission within the organization. New files
-are checked before writing and removed on transaction rollback;
+are checked before writing and, in hosted mode, removed on transaction rollback;
 already retained content is preserved. Mail originals are retained before their
 independently committed dispatch receipt, so a request rollback cannot remove a
 referenced PDF. Size/storage refusals return **413**, count
-refusals **409**, with German explanations. Authenticated members can read
+refusals **409**, with a structured `detail.code` and German `detail.message`.
+Codes are `QUOTA_STORAGE_EXCEEDED`, `QUOTA_PROPERTIES_EXCEEDED`,
+`QUOTA_UNITS_EXCEEDED` and `UPLOAD_TOO_LARGE` (also used by the body safety cap). Authenticated members can read
 `GET /api/organizations/quota`; the dashboard shows “Kontingent” and a warning at
-90%. The unlimited plan is hidden.
+90%. Selfhost skips the quota request and renders no quota/loading/error card.
+
+An accepted deletion of an **unprotected original** removes its row and,
+only after commit, its local file when the guarded aggregate confirms that the
+last reference to that organization/content hash is gone. Shared originals
+(including source-restricted documents and retained mail/recount references) stay
+until their last reference is removed. Classified mandate originals still reject
+deletion and must be archived with a reason. Unclassified mandate originals are
+also frozen in quarantine by revision 0078, so neither current mandate class
+can reach cleanup. These retention guards are unchanged; the cleanup rule does
+not authorize a new deletable class. Their bytes remain retained. A
+rolled-back deletion never unlinks bytes. Post-commit unlink is best effort: a
+failure logs a warning and leaves bytes for operator reconciliation. A process
+crash between commit and unlink can likewise leave an orphan; `quota-recount`
+accounts for those bytes. No background deletion or retention override is added.
 
 Monthly model costs reuse the Q&A reservation ledger and declaration extraction
 runs. Running imports reserve their entire existing per-import ceiling; completed
@@ -137,7 +157,7 @@ includes work that crosses into the current month. Old-month reservations whose
 leases expired before this month do not consume the new month's allowance. Existing per-call/token limits
 continue to bound actual requests. Refusals return **409** with “Das monatliche
 KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den Betreiber.” Worker-side
-failures use `ORGANIZATION_AI_BUDGET_EXCEEDED`.
+and HTTP refusals use `ORGANIZATION_AI_BUDGET_EXCEEDED`.
 
 Before enabling hosted quotas on an existing document store, apply **0146** and
 run this one-time reconciliation for each existing organization, with its usual
@@ -148,7 +168,10 @@ python -m app.admin_cli quota-recount --org <organization-uuid>
 ```
 
 The command scans that organization's local originals under the hosted upload
-locks and appends their URI/byte metadata to the existing audit log. It does not
+locks and appends URI/byte metadata only for originals without an existing sized
+document or mail reference. This avoids permanently charging deletable live rows
+through the append-only audit log. Legacy/orphan recount entries are retained
+references and remain charged; the command never overrides retention. It does not
 change documents or old metadata, delete files, or start any services. Repeating
 it is safe and adds no identical reconciliation entries. Run it again after an
 operator restores files or investigates originals left by an interrupted write.

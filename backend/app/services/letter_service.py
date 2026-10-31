@@ -15,6 +15,7 @@ from app.repositories.lease_agreement_repo import LeaseAgreementRepository
 from app.repositories.property_repo import PropertyRepository
 from app.services.financial_scope_service import FinancialScopeService
 from app.services.property_master_service import require_property_master
+from app.services.quota_service import lock_quota
 
 TOKENS = {"mieter.name", "mieter.adresse", "objekt.name", "objekt.adresse", "datum"}
 PLACEHOLDER = re.compile(r"{{\s*([a-z.]+)\s*}}")
@@ -82,6 +83,7 @@ class LetterService:
 
     async def issue(self, body):
         await self._lock()
+        await lock_quota(self.db, self.org)
         await self.db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
                               {"key": f"letter:{self.org}:{body.request_id}"})
         template = (await self.db.execute(text("SELECT * FROM letter_template WHERE organization_id=:org AND id=:id FOR SHARE"),

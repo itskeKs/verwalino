@@ -6,13 +6,17 @@
 
 export class ApiError extends Error {
   status: number;
+  code?: string;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = code;
   }
 }
+
+const quotaCodes = new Set(["QUOTA_STORAGE_EXCEEDED", "QUOTA_PROPERTIES_EXCEEDED", "QUOTA_UNITS_EXCEEDED", "UPLOAD_TOO_LARGE", "ORGANIZATION_AI_BUDGET_EXCEEDED"]);
 
 function financialInputMessage(detail: { blockers?: { code: string }[] }): string {
   const codes = detail.blockers?.map((blocker) => blocker.code) ?? [];
@@ -55,18 +59,22 @@ async function request<T>(
 
   if (!res.ok) {
     let detail = res.statusText;
+    let code: string | undefined;
     try {
       const body = await res.json();
       if (body.detail) {
         if (typeof body.detail === "string") detail = body.detail;
-        else if (body.detail.code === "financial_inputs_incomplete") {
+        else if (quotaCodes.has(body.detail.code) && typeof body.detail.message === "string") {
+          code = body.detail.code;
+          detail = body.detail.message;
+        } else if (body.detail.code === "financial_inputs_incomplete") {
           detail = financialInputMessage(body.detail);
         } else detail = "Eingaben unvollständig oder ungültig. Bitte die angegebenen Felder prüfen.";
       }
     } catch {
       // ignore JSON parse errors on error responses
     }
-    throw new ApiError(res.status, withRequestId(res, detail));
+    throw new ApiError(res.status, withRequestId(res, detail), code);
   }
 
   if (url === "/api/auth/login" || url === "/api/auth/logout") lastErrorRequestId = null;
@@ -125,18 +133,22 @@ export async function uploadFormData<T>(
 
   if (!res.ok) {
     let detail = res.statusText;
+    let code: string | undefined;
     try {
       const body = await res.json();
       if (body.detail) {
         if (typeof body.detail === "string") detail = body.detail;
-        else if (body.detail.code === "financial_inputs_incomplete") {
+        else if (quotaCodes.has(body.detail.code) && typeof body.detail.message === "string") {
+          code = body.detail.code;
+          detail = body.detail.message;
+        } else if (body.detail.code === "financial_inputs_incomplete") {
           detail = financialInputMessage(body.detail);
         } else detail = "Eingaben unvollständig oder ungültig. Bitte die angegebenen Felder prüfen.";
       }
     } catch {
       // ignore
     }
-    throw new ApiError(res.status, withRequestId(res, detail));
+    throw new ApiError(res.status, withRequestId(res, detail), code);
   }
 
   return res.json() as Promise<T>;

@@ -302,12 +302,15 @@ async def test_attachment_commit_visible_at_http_start(client_a_admin, attachmen
 
 
 @pytest.mark.parametrize('preexisting', [False, True])
-async def test_attachment_failed_audit_removes_new_bytes_and_keeps_existing_originals(
-        client_a_admin, attachment_world, attachment_store, attachment_pdf, monkeypatch, seed_data, preexisting):
+@pytest.mark.parametrize('mode', ['hosted', 'selfhost'])
+async def test_attachment_failed_audit_rolls_back_metadata_and_obeys_mode_cleanup(
+        client_a_admin, attachment_world, attachment_store, attachment_pdf, monkeypatch, seed_data, preexisting, mode):
     import psycopg2
     from contextlib import closing
     from tests.conftest import MIGRATOR_SYNC_URL
     from app.repositories.audit_repo import AuditRepository
+    from app.core.config import settings
+    monkeypatch.setattr(settings, 'deployment_mode', mode)
     key = make_storage_key(str(seed_data['org_a_id']), sha256(attachment_pdf).hexdigest())
     if preexisting:
         attachment_store.put(key, attachment_pdf, content_type='application/pdf')
@@ -325,8 +328,9 @@ async def test_attachment_failed_audit_removes_new_bytes_and_keeps_existing_orig
         assert cursor.fetchone()[0] == 0
         cursor.execute("SELECT count(*) FROM audit_event WHERE entity_type='attachment' AND payload_diff->>'property_id'=%s", (attachment_world['property'],))
         assert cursor.fetchone()[0] == 0
-    assert attachment_store.exists(key) == preexisting
-    if preexisting:
+    retained = preexisting or mode == 'selfhost'
+    assert attachment_store.exists(key) == retained
+    if retained:
         assert attachment_store.get(key) == attachment_pdf
 
 

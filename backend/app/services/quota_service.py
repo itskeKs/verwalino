@@ -9,6 +9,8 @@ from app.core.quotas import check_quota, get_quota_plan
 
 
 async def lock_quota(db, org_id, *, budget=False):
+    if get_quota_plan().name == "unlimited":
+        return
     # Source authorization always takes the ACL first. All quota writers then
     # share one organization lock, retained until commit or rollback.
     await db.execute(text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
@@ -25,7 +27,7 @@ def require_quota(usage, kind, delta, *, plan=None):
     decision = check_quota(usage, plan or get_quota_plan(), kind, delta)
     if not decision.allowed:
         raise HTTPException(413 if kind in {"storage_bytes", "upload_bytes"} else 409,
-                            decision.message)
+                            {"code": decision.code, "message": decision.message})
 
 
 async def require_counts(db, org_id, *, properties=0, units=0):

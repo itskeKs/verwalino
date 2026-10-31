@@ -17,7 +17,9 @@ rows directly. Idempotent on the user email (aborts if it already exists).
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import fcntl
+import os
 import sys
 import uuid
 
@@ -114,7 +116,8 @@ def unlock(arguments: list[str]) -> None:
 
 def quota_recount(arguments: list[str]) -> None:
     """Record legacy physical sizes without changing retained document metadata."""
-    from app.core.storage import LocalFsDocumentStore
+    from app.core.quotas import get_quota_plan
+    from app.core.storage import LocalFsDocumentStore, open_storage_lock
 
     ap = argparse.ArgumentParser(prog="admin_cli quota-recount", description="Reconcile retained local document sizes as the migrator.")
     ap.add_argument("--org", required=True, type=uuid.UUID, help="Organization UUID")
@@ -127,19 +130,38 @@ def quota_recount(arguments: list[str]) -> None:
             cursor.execute("SELECT id FROM public.organization WHERE id=%s", (org,))
             if cursor.fetchone() is None:
                 ap.error("Organization not found")
-            cursor.execute("SELECT pg_advisory_xact_lock_shared(hashtextextended(%s,0))", (f"scope-acl:{org}",))
-            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (f"organization-quota:{org}",))
-            directory = store._root / ".upload-locks"
-            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-            with (directory / org).open("a+b") as handle:
-                fcntl.flock(handle, fcntl.LOCK_EX)
+            hosted = get_quota_plan().name != "unlimited"
+            if hosted:
+                cursor.execute("SELECT pg_advisory_xact_lock_shared(hashtextextended(%s,0))", (f"scope-acl:{org}",))
+                cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (f"organization-quota:{org}",))
+            with ExitStack() as cleanup:
+                if hosted:
+                    handle = open_storage_lock(store, org)
+                    cleanup.callback(os.close, handle)
+                    fcntl.flock(handle, fcntl.LOCK_EX)
+                # The migrator can see source-restricted references. Recount
+                # must not freeze sized live originals as permanent audit charges.
+                cursor.execute("""SELECT storage_uri FROM (
+                    SELECT storage_uri FROM public.attachment WHERE organization_id=%(org)s
+                    UNION ALL SELECT storage_uri FROM public.invoice_document WHERE organization_id=%(org)s
+                    UNION ALL SELECT storage_uri FROM public.mandate_document WHERE organization_id=%(org)s
+                    UNION ALL SELECT storage_uri FROM public.property_document WHERE organization_id=%(org)s
+                    UNION ALL SELECT storage_uri FROM public.intake_original WHERE organization_id=%(org)s
+                    UNION ALL SELECT storage_uri FROM public.letter_document WHERE organization_id=%(org)s AND size_bytes IS NOT NULL
+                    UNION ALL SELECT payload_diff->>'storage_uri' FROM public.audit_event
+                        WHERE organization_id=%(org)s AND action='mail_prepared' AND payload_diff->>'bytes' IS NOT NULL
+                ) sized""", {"org": org})
+                sized = {row[0] for row in cursor.fetchall()}
                 originals = []
                 total = 0
+                scanned = 0
                 for path in store._resolve_key(org).rglob("*.bin"):
                     key = path.relative_to(store._root).as_posix()
                     size = store._resolve_key(key).stat().st_size
-                    originals.append((org, org, Json({"storage_uri": key, "bytes": size})))
+                    if key not in sized:
+                        originals.append((org, org, Json({"storage_uri": key, "bytes": size})))
                     total += size
+                    scanned += 1
                 if originals:
                     execute_values(cursor, """INSERT INTO public.audit_event(organization_id,entity_type,entity_id,action,payload_diff)
                         SELECT v.org::uuid,'organization',v.entity::uuid,'quota_recount',v.payload::jsonb
@@ -149,7 +171,7 @@ def quota_recount(arguments: list[str]) -> None:
                             AND a.payload_diff->>'storage_uri'=v.payload::jsonb->>'storage_uri'
                             AND a.payload_diff->>'bytes'=v.payload::jsonb->>'bytes')""", originals)
                 conn.commit()
-                print(f"Reconciled {len(originals)} originals, {total} bytes for {org}.")
+                print(f"Reconciled {scanned} originals, {total} bytes for {org}.")
     except BaseException:
         conn.rollback()
         raise
