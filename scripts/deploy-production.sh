@@ -164,8 +164,8 @@ resolve_public_host() {
     public_host=$(dotenv_value HV_PUBLIC_HOST)
   fi
   case "$public_host" in
-    ''|*[!A-Za-z0-9.-]*|.*|-*|*..*|*.|*-)
-      echo "HV_PUBLIC_HOST must name the public host (letters, digits, dots, dashes) in the protected env file" >&2
+    ''|*[!A-Za-z0-9.-]*|.*|-*|*..*|*.|*-|*[A-Z]*)
+      echo "HV_PUBLIC_HOST must name the public host (lowercase letters, digits, dots, dashes) in the protected env file" >&2
       return 1
       ;;
   esac

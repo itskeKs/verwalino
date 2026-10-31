@@ -221,11 +221,11 @@ remains a pre-merge gate; the local workflow/installer checks need no database.
 
 The owner's alpha instance runs on Moon behind the existing Traefik Docker
 network and its `letsencrypt` resolver. Its public host name is not part of the
-repository: `docker-compose.prod.yml`, `deploy-production.sh` and
-`verify-production.sh` read it from **`HV_PUBLIC_HOST`**, a required setting in
-the protected `shared/.env` (or the invoking environment, which wins, as with
-Compose). It has no default; an unset, empty or malformed value (anything but
-letters, digits, dots and dashes) stops the helper before Docker is reached,
+repository: `docker-compose.prod.yml` and `deploy-production.sh` read
+**`HV_PUBLIC_HOST`** from the protected `shared/.env` or the invoking environment,
+which wins. `verify-production.sh` reads it only from its environment.
+It has no default; an unset, empty or malformed value (anything but
+lowercase letters, digits, dots and dashes) stops the helper before Docker is reached,
 and Compose refuses to render the stack without it. Do not add Caddy, publish an app/database port, use
 sudo, or modify an unrelated container or network. `chris` owns the deployment
 directory:
@@ -918,11 +918,11 @@ email:        admin@<HV_PUBLIC_HOST>
 name:         Alpha Admin
 ```
 
-On an installation that already has this admin (the existing alpha) the step
-changes nothing, so the organization name is only used for a first-time
-bootstrap. The final smoke check therefore requires `/api/organizations/me` to
-return a non-empty organization name for the logged-in admin rather than one
-fixed name.
+On the existing alpha, the admin bootstrap is a no-op only while `HV_PUBLIC_HOST`
+equals the host used to create the existing `admin@<host>` e-mail.
+A different value creates a second organization, "Hausverwaltung Alpha", with a
+new OWNER_ADMIN, which the smoke check would not catch because
+`/api/organizations/me` only needs to return a non-empty organization name.
 
 The helper acquires the exclusive host deployment lock, verifies the provider
 setting, builds/scans the exact image and writes its protected SBOM. It then

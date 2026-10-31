@@ -4,8 +4,8 @@
 # starts without ever touching a real Docker daemon.
 set -eu
 
-# Never inherit real developer provider/smoke credentials into the fake CLI.
-unset HV_OPENAI_API_KEY HV_SMOKE_ADMIN_PASSWORD
+# Never inherit real developer provider/smoke credentials or public host into the fake CLI.
+unset HV_OPENAI_API_KEY HV_SMOKE_ADMIN_PASSWORD HV_PUBLIC_HOST
 
 if [ "$(basename "$0")" = sleep ]; then exit 0; fi
 
@@ -537,7 +537,7 @@ done
 
 # The public host has no default: a missing or malformed value must stop the
 # helper before Docker is reached, whatever else the env file holds.
-for host_case in missing empty unsafe invalid-label; do
+for host_case in missing empty unsafe invalid-label uppercase; do
   host_root="$tmpdir/host-$host_case-root"
   mkdir -p "$host_root/releases/test" "$host_root/shared"
   case "$host_case" in
@@ -545,10 +545,25 @@ for host_case in missing empty unsafe invalid-label; do
     empty) printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' 'HV_PUBLIC_HOST=' > "$host_root/shared/.env" ;;
     unsafe) printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' "HV_PUBLIC_HOST=a.example.org')+exec('x" > "$host_root/shared/.env" ;;
     invalid-label) printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' 'HV_PUBLIC_HOST=.example.org' > "$host_root/shared/.env" ;;
+    uppercase) printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' 'HV_PUBLIC_HOST=Verwaltung.Example.ORG' > "$host_root/shared/.env" ;;
   esac
   chmod 600 "$host_root/shared/.env"
   : > "$host_root/releases/test/docker-compose.prod.yml"
   : > "$tmpdir/host-$host_case-docker.log"
+  if [ "$host_case" = uppercase ]; then
+    if PATH="$tmpdir/bin:$PATH" \
+      FAKE_DOCKER_LOG="$tmpdir/host-$host_case-docker.log" \
+      APP_IMAGE=example.invalid/verwalino@sha256:fake \
+      HV_VERIFY_COMPOSE_FILE="$host_root/releases/test/docker-compose.prod.yml" \
+      HV_DECLARATION_IMPORT_ENABLED=false HV_PUBLIC_HOST=Verwaltung.Example.ORG \
+      sh "$script_dir/verify-production.sh" >"$tmpdir/host-$host_case-verify-output" 2>&1; then
+      fail 'verification unexpectedly accepted uppercase HV_PUBLIC_HOST'
+    fi
+    grep -Fq 'HV_PUBLIC_HOST must be a plain host name' "$tmpdir/host-$host_case-verify-output" || \
+      fail 'uppercase HV_PUBLIC_HOST did not return the fail-closed verification error'
+    [ ! -s "$tmpdir/host-$host_case-docker.log" ] || \
+      fail 'uppercase HV_PUBLIC_HOST reached Docker before the verification gate failed'
+  fi
   if printf '%s\n' "$admin_password" | \
     PATH="$tmpdir/bin:$PATH" \
     FAKE_DOCKER_LOG="$tmpdir/host-$host_case-docker.log" \
@@ -565,7 +580,7 @@ for host_case in missing empty unsafe invalid-label; do
 done
 
 # Each case uses only the fake CLI, synthetic archives and a private release root.
-for scenario in wrong-source ambiguous-source release-head previous-head roles credentials competing backup-exists busy quiescent-changed backup documents dump-check archive-check migrate target app-start app-health api-ready provider-smoke worker-start worker-health invoice-start invoice-health no-invoice no-invoice-restore restore-compatible cleanup-stop-fail cleanup-discovery-fail foreign-container success success-0028 success-0139 success-0140; do
+for scenario in wrong-source ambiguous-source release-head previous-head roles credentials competing backup-exists busy quiescent-changed backup documents dump-check archive-check migrate target app-start app-health api-ready provider-smoke worker-start worker-health invoice-start invoice-health no-invoice no-invoice-restore restore-compatible cleanup-stop-fail cleanup-discovery-fail foreign-container success success-0028 success-0139 success-0140 env-host-precedence; do
   case_root="$tmpdir/$scenario"
   mkdir -p "$case_root/releases/test/infra/db" "$case_root/releases/old" "$case_root/shared"
   printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' 'HV_PUBLIC_HOST=verwaltung.example.org' > "$case_root/shared/.env"
@@ -601,10 +616,21 @@ for scenario in wrong-source ambiguous-source release-head previous-head roles c
     no-invoice) FAKE_NO_PREVIOUS_INVOICE=1 ;;
     restore-compatible) FAKE_SCHEMA=0141; FAKE_PREVIOUS_HEAD=0141; FAKE_WORKER_UP_FAIL=1 ;;
     foreign-container) FAKE_NEW_LABEL=foreign; FAKE_APP_UP_FAIL=1 ;;
+    env-host-precedence)
+      printf '%s\n' 'HV_OPENAI_API_KEY=fake_provider_key' 'HV_PUBLIC_HOST=file.example.org' > "$case_root/shared/.env"
+      FAKE_FAILURE=api-ready
+      ;;
   esac
   outcome=0
-  printf '%s\n' "$admin_password" | PATH="$tmpdir/bin:$PATH" \
-    DEPLOY_ROOT="$case_root" RELEASE_ID=test sh "$deploy_script" >"$case_root/output" 2>&1 || outcome=$?
+  (
+    if [ "$scenario" = env-host-precedence ]; then export HV_PUBLIC_HOST=env.example.org; fi
+    printf '%s\n' "$admin_password" | PATH="$tmpdir/bin:$PATH" \
+      DEPLOY_ROOT="$case_root" RELEASE_ID=test sh "$deploy_script"
+  ) >"$case_root/output" 2>&1 || outcome=$?
+  if [ "$scenario" = env-host-precedence ]; then
+    grep -Fq "headers={'Host': 'env.example.org'}" "$FAKE_DOCKER_LOG" || \
+      fail 'invoking HV_PUBLIC_HOST did not override the env file in the Compose readiness probe'
+  fi
   case "$scenario" in
     success|success-0028|success-0139|success-0140|no-invoice)
       [ "$outcome" -eq 0 ] || { cat "$case_root/output" >&2; fail "$scenario failed"; }
@@ -668,7 +694,7 @@ ASSERT_ORDER
   ! grep -Eq 'stopped:db-id| down |volume rm|alembic downgrade|up -d.* db' "$FAKE_DOCKER_LOG" || fail 'database/volume mutation in runtime handling'
   ! grep -Fq "$admin_password" "$FAKE_DOCKER_LOG" || fail 'admin secret in CLI arguments'
 done
-printf '%s\n' 'deploy-production: 33 upgrade/backup/worker/recovery scenarios passed'
+printf '%s\n' 'deploy-production: 35 upgrade/backup/worker/recovery scenarios passed'
 
 assert_gateway_basic_auth_removed
 assert_admin_password_handling

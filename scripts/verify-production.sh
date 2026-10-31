@@ -11,8 +11,8 @@ set -eu
 # below, so accept a plain host name only.
 : "${HV_PUBLIC_HOST:?set HV_PUBLIC_HOST to the public host name under test}"
 case "$HV_PUBLIC_HOST" in
-  *[!A-Za-z0-9.-]*)
-    echo "HV_PUBLIC_HOST must be a plain host name (letters, digits, dots, dashes)" >&2
+  *[!A-Za-z0-9.-]*|*[A-Z]*)
+    echo "HV_PUBLIC_HOST must be a plain host name (lowercase letters, digits, dots, dashes)" >&2
     exit 2
     ;;
 esac

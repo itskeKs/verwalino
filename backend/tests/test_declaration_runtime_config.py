@@ -416,6 +416,14 @@ def test_gitlab_backend_jobs_opt_into_the_disposable_profile_and_ocr_runtime() -
     assert "pip-audit --no-deps --disable-pip" in backend_audit["script"][0]
 
 
+def test_gitlab_container_smoke_exports_the_required_public_host() -> None:
+    pipeline = yaml.safe_load(GITLAB_CI_PATH.read_text(encoding="utf-8"))
+    assert any(
+        step.startswith("export ") and "HV_PUBLIC_HOST=verwaltung.example.org" in step.split()
+        for step in pipeline["container-smoke"]["script"]
+    )
+
+
 @pytest.mark.asyncio
 async def test_healthcheck_reads_only_global_organization_id_and_cleans_tempfile(
     tmp_path: Path,
