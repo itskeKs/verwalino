@@ -24,6 +24,7 @@ TOKENS = {"mieter.name", "mieter.adresse", "objekt.name", "objekt.adresse", "dat
           "vertrag.beginn", "vertrag.ende", "vertrag.kaltmiete", "vertrag.vorauszahlung",
           "vertrag.kaution", "vertrag.uebergabe", "vertrag.vereinbarungen"}
 PLACEHOLDER = re.compile(r"{{\s*([a-z.]+)\s*}}")
+LETTER_PAYLOAD_FORMAT = 'verwalino.letter.v1'
 
 
 def validate_template(value: str) -> str:
@@ -49,20 +50,40 @@ def saved_payload(body):
         payload = json.loads(body)
     except (ValueError, TypeError):
         return {}
-    return payload if isinstance(payload, dict) and payload.get('document_type') in ('lease_contract', 'handover', 'letter') else {}
+    if (not isinstance(payload, dict) or payload.get('format') != LETTER_PAYLOAD_FORMAT
+            or payload.get('document_type') not in ('lease_contract', 'handover', 'letter')
+            or not isinstance(payload.get('text'), str)):
+        return {}
+    sources = payload.get('landlord_sources', [])
+    if not isinstance(sources, list):
+        return {}
+    for source in sources:
+        if not isinstance(source, dict):
+            return {}
+        try:
+            for key in ('id', 'organization_id', 'unit_id', 'owner_profile_id', 'person_id'):
+                uuid.UUID(source[key])
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return {}
+    return payload
 
 
 def replace_tokens(template, values):
     return PLACEHOLDER.sub(lambda match: values[match.group(1)], template)
 
 
-def render_letter(name, postal_address, subject, body, issued_on):
+def render_letter(name, postal_address, subject, body, issued_on, meter_rows=None):
     safe = lambda value: html.escape(value).replace("\n", "<br>")
+    meters = ''
+    if meter_rows:
+        rows = ''.join('<tr>' + ''.join(f'<td>{safe(value)}</td>' for value in row) + '</tr>' for row in meter_rows)
+        meters = '<h2>Zählerstände</h2><table><thead><tr><th>Zähler</th><th>Typ</th><th>Stand</th></tr></thead><tbody>' + rows + '</tbody></table>'
     return render_pdf(f'''<!doctype html><html lang="de"><meta charset="utf-8">
     <style>@page {{size:A4;margin:25mm}} body {{font:11pt sans-serif;line-height:1.5}}
-    h1 {{font-size:15pt}} .text {{overflow-wrap:anywhere}}</style>
+    h1 {{font-size:15pt}} h2 {{font-size:12pt}} .text,td {{overflow-wrap:anywhere}}
+    table {{width:100%;border-collapse:collapse;table-layout:fixed}} th,td {{text-align:left;border:1px solid #bbb;padding:5px}} tr {{break-inside:avoid}}</style>
     <p>{safe(name)}<br>{safe(postal_address)}</p><p>{issued_on.strftime('%d.%m.%Y')}</p>
-    <h1>{safe(subject)}</h1><div class="text">{safe(body)}</div></html>''')
+    <h1>{safe(subject)}</h1><div class="text">{safe(body)}</div>{meters}</html>''')
 
 
 def document_out(row):
@@ -206,7 +227,8 @@ class LetterService:
             subject = replace_tokens(template["subject"], values)
             rendered_body = replace_tokens(template["body"], values)
             pdf = render_letter(name, address(person), subject, rendered_body, body.as_of)
-            saved_body = json.dumps({'document_type': 'letter', 'landlord_sources': sources, 'text': rendered_body}) if sources else rendered_body
+            saved_body = json.dumps({'format': LETTER_PAYLOAD_FORMAT, 'document_type': 'letter',
+                                     'landlord_sources': sources, 'text': rendered_body})
             await self.save_original(template_id=body.template_id, lease=lease, person=person, prop=prop,
                 request_id=body.request_id, as_of=body.as_of, subject=subject, body=saved_body, pdf=pdf)
         # Grant expiry is wall-clock based even while ACL/source locks are held.

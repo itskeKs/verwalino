@@ -4,7 +4,7 @@ import uuid
 from datetime import date
 from typing import Sequence
 
-from sqlalchemy import Select, and_, func, or_
+from sqlalchemy import Select, and_, func, or_, select
 
 from app.models.meter import Meter, MeterReading
 from app.models.property import Property
@@ -46,6 +46,16 @@ class MeterRepository(TenantRepository[Meter]):
 
 class MeterReadingRepository(TenantRepository[MeterReading]):
     model = MeterReading
+
+    async def preceding_value(self, meter_id, reading_date):
+        day = select(func.max(MeterReading.reading_date)).where(
+            MeterReading.organization_id == self._org_id,
+            MeterReading.meter_id == meter_id, MeterReading.reading_date <= reading_date,
+        ).scalar_subquery()
+        return await self._session.scalar(select(func.max(MeterReading.value)).where(
+            MeterReading.organization_id == self._org_id,
+            MeterReading.meter_id == meter_id, MeterReading.reading_date == day,
+        ))
 
     async def list_boundary_readings(
         self, meter_ids: Sequence[uuid.UUID], period_start: date, period_end: date,
