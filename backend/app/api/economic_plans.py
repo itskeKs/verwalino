@@ -48,8 +48,8 @@ class EconomicPlanCreate(BaseModel):
     accounting_scope_id: uuid.UUID | None = None
     property_id: str
     plan_year: int
-    period_start: date
-    period_end: date
+    period_start: date | None = None
+    period_end: date | None = None
     reserve_contribution_total: str | None = None
     monthly_due_day: int | None = None
     management_mandate_id: str | None = None

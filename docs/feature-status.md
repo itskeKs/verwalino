@@ -1,6 +1,6 @@
 # Feature status
 
-Current feature catalog of Verwalino by area. Status as of 2026-10-31, migration head `0143`.
+Current feature catalog of Verwalino by area. Status as of 2026-10-31, migration head `0144`.
 Status: ✅ implemented and reachable in the running app, 🟡 partial (reason given), ❌ not implemented.
 Short paths: `api/ services/ engine/ models/ workers/ core/` are under
 `backend/app/`, `pages/ components/ lib/` under `frontend/src/`; other paths are relative to the
@@ -10,6 +10,11 @@ history). Update this page in the same PR whenever a feature's status changes.
 The hosted instance is being set up on the hosted server (#6) through `scripts/self-host.sh`
 and the [hosted deploy workflow](../DEPLOY.md#hosted-server). It shares the portable
 stack's limits: declaration import/Q&A, SMTP and automatic invoice OCR are disabled.
+
+The bilingual public website has a separate image and main-push publish/sign/deploy workflow (#24),
+with an optional closed container behind Caddy. Operator enablement and the first live rollout are
+pending; registration stays closed and legal review remains with #26. See the
+[website hosting runbook](operations/website-hosting.md).
 
 ## Access and organization
 
@@ -22,7 +27,8 @@ stack's limits: declaration import/Q&A, SMTP and automatic invoice OCR are disab
 | Install matrix | 🟡 four checkout-install scenarios and nightly/tag workflow prepared; first real matrix run, Debian, update and backup/restore pending; arm64 opt-in | `scripts/install-scenarios.sh`, `.github/workflows/install-matrix.yaml`, [coverage and reports](../DEPLOY.md#install-matrix), issue #13 |
 | Request IDs and opt-in error tracking | ✅ response/log correlation always enabled; API error events scrubbed before sending, tracking off by default | `core/request_id.py`, `core/logging.py`, `core/error_tracking.py`, `core/scrub.py`, `DEPLOY.md`, issue #16 |
 | Login/logout | ✅ | `api/auth.py`, `pages/LoginPage.tsx` |
-| Login rate limiting | ✅ persisted IP/email lockout, mode-specific limits, hosted escalation, generic failures; atomic attempt reservations | `core/rate_limit.py`, `core/deployment_policy.py`, issue #20 |
+| Login rate limiting | ✅ persisted IP/email lockout, mode-specific limits, hosted escalation, generic failures; atomic attempt reservations; shared signup limiter and active signup honeypot | `core/rate_limit.py`, `core/deployment_policy.py`, issue #20 |
+| Self-service signup | ✅ hosted only, captured confirmation email, 24-hour single-use token, atomic tenant/owner creation, durable cooldown and generic responses | `api/signup.py`, `pages/SignupPage.tsx`, issue #19 |
 | Create users | ✅ admin-only form and user management | `api/users.py`, `pages/UsersPage.tsx`, T06, T57, [usage](operations/users-and-access.md) |
 | Roles admin/clerk/read-only | ✅ admin can change role and deactivate; write buttons hidden for read-only | `core/rbac.py` (`OWNER_ADMIN`, `CLERK`, `READ_ONLY`), T57, [usage](operations/users-and-access.md) |
 | Change password | ✅ own change and admin reset, sessions revoked | `api/auth.py` (`POST /api/auth/password`), `api/users.py` (`/reset-password`), `components/Topbar.tsx`, T14, T57, [usage](operations/users-and-access.md) |
@@ -87,6 +93,7 @@ stack's limits: declaration import/Q&A, SMTP and automatic invoice OCR are disab
 
 | Feature | Status | Location |
 | --- | --- | --- |
+| Property settlement period | 🟡 month-based offers, statement/batch validation, plan dates and prior actuals, advances across years; all nonidentical overlaps with finalized periods rejected within the acting user's visibility; identical repeats allowed; automatic lease-bounded dates, short-window cost proration and cross-scope database constraint pending | `engine/periods.py`, `api/properties.py` (`/settlement-periods`), `pages/SettlementsPage.tsx`, issue #68 |
 | Operating cost statement per lease: compute, finalize, PDF, correction | ✅ | `api/settlements.py`, `services/settlement_service.py`, `services/settlement_pdf.py` |
 | Keys area/MEA/units, pro rata, vacancy | ✅ | `engine/distribution.py` |
 | Keys consumption/persons/external/manual | ✅ inputs shown and sent with the database key names | `pages/SettlementDetailPage.tsx`, `lib/costVocabulary.ts`, T03 |
@@ -126,6 +133,7 @@ stack's limits: declaration import/Q&A, SMTP and automatic invoice OCR are disab
 | --- | --- | --- |
 | Documents per property/unit/person | ✅ "Dokumente" panel: upload, open, archive | `models/attachment.py`, `api/attachments.py`, `components/AttachmentsPanel.tsx`, T36, T37, [usage](operations/tasks-and-documents.md) |
 | Letter templates, dispatch by e-mail/letter | ✅ placeholder templates produce one PDF per recipient; e-mail for settlement, dunning notice and invitation (SMTP disabled until configured) | `api/letters.py`, `services/letter_service.py`, `pages/LettersPage.tsx`, `api/mail.py`, `services/mail_service.py`, `components/MailDispatch.tsx`, T47, T48, [usage](operations/tasks-and-documents.md) |
+| Transactional mail templates | templates ready, senders pending: 15 typed German text/HTML templates with hosted/self-hosted footers | `app/mail/`, #125; sender adoption #111/#115; [previews](operations/mail-previews.md) |
 | Tenant portal | ❌ | – |
 | Year overview per property (Anlage V) | ✅ income/expense overview plus default Anlage V mapping aid, unassigned/excluded items, exact reconciliation and separate CSV; tax review required | `api/reports.py` (`/property-year`, `/property-year.csv`, `/property-year/anlage-v`, `/property-year/anlage-v.csv`), `services/report_service.py`, `engine/anlage_v.py`, `pages/ReportsPage.tsx`, [M6 §6.12](m6-zahlungen-mietkonto.md#anlage-v-mapping-aid-34), T38, T39, #34, [usage](operations/statements.md) |
 | CSV/DATEV export | ✅ CSV for payments, costs and year overview; DATEV EXTF batch with explicitly configured SKR03/SKR04 accounts | `api/payments.py` (`/export.csv`), `api/cost_entries.py` (`/export.csv`), `api/reports.py` (`/datev.csv`), `services/datev_export.py`, `components/DatevExport.tsx`, T39, T40, T49, [usage](operations/tasks-and-documents.md) |
@@ -139,7 +147,7 @@ stack's limits: declaration import/Q&A, SMTP and automatic invoice OCR are disab
 - VAT-liable letting (People and tenancies): no VAT on rent, advances and statements for units with the VAT option (#71); no input VAT apportionment (#72).
 - Bank retrieval PSD2/FinTS (Tenant ledger, bank and payments): no automatic bank statement retrieval; import is by CSV/CAMT file only (#40).
 - Inbox (Posteingang) with review chain (Vouchers and costs): worker service and upload-to-cost scenario are present; real-stack acceptance with ClamAV signatures remains pending ([#35](https://github.com/itskeKs/verwalino/issues/35), [runbook](operations/inbox-review-chain.md)).
-- Settlement period (Operating and heating cost statements): the property's period start month is stored but statements and economic plans do not use it; periods are not validated for length or overlap (#68).
+- Settlement period (Operating and heating cost statements): overlaps with runs or plans outside the acting user's visible accounting scopes are not detected; a follow-up database constraint is still needed. Identical periods remain allowed (#68).
 - Maintenance reserve (Erhaltungsrücklage) (WEG): opening balance and withdrawals are manual inputs; no reserve ledger or bank-account tracking (#36).
 - Dunning fees and default interest (Dunning, deadlines, tasks): fees are fixed constants and interest needs a base rate typed per notice; neither is configurable per organization (#69).
 - Tenant portal (Documents, communication, reports): not built; planned right after the hosted launch (#41).

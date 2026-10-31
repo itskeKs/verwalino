@@ -22,6 +22,9 @@ UPDATE_PREVIOUS_IMAGE=""
 UPDATE_LOCAL_ID=""
 BACKUP_ARCHIVE=""
 BACKUP_SCHEMA=""
+# Mail is configured only through the private file, never the caller's environment.
+export HV_SMTP_HOST='' HV_SMTP_PORT='' HV_SMTP_FROM='' HV_SMTP_SECURITY=''
+export HV_SMTP_USERNAME='' HV_SMTP_PASSWORD='' HV_SMTP_TIMEOUT_SECONDS=''
 
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 cleanup() {
@@ -98,6 +101,13 @@ Usage: bash scripts/self-host.sh COMMAND
   update [--image REGISTRY/IMAGE@sha256:DIGEST] [--yes]
                                 Back up, migrate and check; restore on failure
 Default: local HTTP on 127.0.0.1:18080; no AI, SMTP or extraction worker.
+Optional outbound mail: add HV_SMTP_HOST and HV_SMTP_FROM to the private config.
+HV_SMTP_PORT (587), HV_SMTP_SECURITY (starttls or tls; default starttls),
+HV_SMTP_USERNAME/HV_SMTP_PASSWORD (together), HV_SMTP_TIMEOUT_SECONDS (15; 1-60).
+SMTP port range: 1-65535. Mail settings need no re-init; see DEPLOY.md.
+SMTP values must not contain $ (Compose interpolation).
+Host and sender are trimmed; whitespace-only values are invalid.
+Invalid mail settings also block stop/status until corrected.
 Request IDs are always enabled; optional error tracking stays off.
 HV_SUPPORT_URL selects the manual report link (export it; not a private config key).
 HV_DIAGNOSTICS_DIR is an API process setting for the per-host error buffer; see DEPLOY.md.
@@ -121,6 +131,8 @@ Leftover .restore-* directories require checking live data and removing the dire
 On first start, open the printed /setup URL and enter the one-time token (24 h).
 Another start replaces an unused token. The token is never stored in this file.
 The admin command is the alternative to browser setup.
+Public signup requires a separate hosted deployment with HV_PUBLIC_HOST and SMTP;
+the portable selfhost installer does not enable it.
 Login lockouts use the relaxed selfhost policy. Caddy's private proxy subnet
 supplies FORWARDED_ALLOW_IPS for client IP throttling; see DEPLOY.md for the
 admin_cli unlock command.
@@ -164,6 +176,8 @@ validate_subnet() {
     (( (number >> 24) == 10 || (number >> 20) == 2753 || (number >> 16) == 49320 ))
 }
 validate_settings() {
+    local smtp_port="${HV_SMTP_PORT:-587}" smtp_timeout="${HV_SMTP_TIMEOUT_SECONDS:-15}"
+    local key
     validate_port "$VERWALINO_PORT" || fail 'Port must be between 1024 and 65535.'
     validate_image "$VERWALINO_IMAGE" || fail 'Use the local build or an explicit image SHA-256 digest.'
     validate_subnet "$VERWALINO_PROXY_SUBNET" || fail 'Proxy subnet must be an aligned private IPv4 /24 through /28.'
@@ -172,6 +186,23 @@ validate_settings() {
         https) validate_domain "$VERWALINO_DOMAIN" || fail 'HTTPS requires a lowercase DNS hostname, without scheme or port.' ;;
         *) fail 'Unknown installation mode.' ;;
     esac
+    for key in HV_SMTP_HOST HV_SMTP_PORT HV_SMTP_FROM HV_SMTP_SECURITY HV_SMTP_USERNAME HV_SMTP_PASSWORD HV_SMTP_TIMEOUT_SECONDS; do
+        [[ "${!key}" != *'$'* ]] || fail "$key darf kein \$ enthalten (Compose-Interpolation)."
+    done
+    [[ "$HV_SMTP_HOST" =~ [^[:space:]] && "$HV_SMTP_FROM" =~ [^[:space:]] || -z "$HV_SMTP_HOST" && -z "$HV_SMTP_FROM" ]] ||
+        fail 'HV_SMTP_HOST und HV_SMTP_FROM müssen gemeinsam gesetzt oder beide leer sein.'
+    case "${HV_SMTP_SECURITY:-starttls}" in
+        starttls|tls) ;;
+        *) fail 'HV_SMTP_SECURITY muss starttls oder tls sein; plain ist nicht erlaubt.' ;;
+    esac
+    [[ -n "$HV_SMTP_USERNAME" && -n "$HV_SMTP_PASSWORD" || -z "$HV_SMTP_USERNAME" && -z "$HV_SMTP_PASSWORD" ]] ||
+        fail 'HV_SMTP_USERNAME und HV_SMTP_PASSWORD müssen gemeinsam gesetzt oder beide leer sein.'
+    if [[ ! "$smtp_port" =~ ^[0-9]{1,5}$ ]] || (( 10#$smtp_port < 1 || 10#$smtp_port > 65535 )); then
+        fail 'HV_SMTP_PORT muss eine ganze Zahl zwischen 1 und 65535 sein.'
+    fi
+    if [[ ! "$smtp_timeout" =~ ^[0-9]{1,2}$ ]] || (( 10#$smtp_timeout < 1 || 10#$smtp_timeout > 60 )); then
+        fail 'HV_SMTP_TIMEOUT_SECONDS muss eine ganze Zahl zwischen 1 und 60 sein.'
+    fi
 }
 lock_config() {
     mkdir "$CONFIG.lock" 2>/dev/null || { printf 'Another operation is running (or a stale .lock directory needs operator review).\n' >&2; return 1; }
@@ -197,6 +228,7 @@ read_config() {
         key="${line%%=*}"; value="${line#*=}"
         case "$key" in
             VERWALINO_MODE|VERWALINO_DOMAIN|VERWALINO_PORT|VERWALINO_IMAGE|VERWALINO_PROXY_SUBNET|MIGRATOR_PASSWORD|APP_RW_PASSWORD|APP_WORKER_PASSWORD|APP_REVIEW_PASSWORD|SESSION_SECRET) ;;
+            HV_SMTP_HOST|HV_SMTP_PORT|HV_SMTP_FROM|HV_SMTP_SECURITY|HV_SMTP_USERNAME|HV_SMTP_PASSWORD|HV_SMTP_TIMEOUT_SECONDS) ;;
             *) fail 'Unknown configuration key.' ;;
         esac
         [[ "$seen" != *"|$key|"* ]] || fail 'Duplicate configuration key.'
@@ -211,6 +243,13 @@ read_config() {
     done
 }
 config_environment() {
+    local key value
+    for key in HV_SMTP_HOST HV_SMTP_FROM; do
+        value="${!key}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%"${value##*[![:space:]]}"}"
+        export "$key=$value"
+    done
     CONFIG_ENVIRONMENT=(VERWALINO_ALLOWED_HOSTS=localhost,127.0.0.1
         VERWALINO_COOKIE_SECURE=false VERWALINO_COOKIE_NAME=hv_session)
     if [[ "$VERWALINO_MODE" = https ]]; then
@@ -568,6 +607,11 @@ doctor() {
         config_valid=1
         config_environment
         doctor_report OK Einstellungen 'Konfiguration vollständig und gültig; Geheimnisse beim Bearbeiten beibehalten.'
+        if [[ -n "$HV_SMTP_HOST" && -n "$HV_SMTP_FROM" ]]; then
+            printf 'Mail: konfiguriert (%s:%s, %s)\n' "$HV_SMTP_HOST" "${HV_SMTP_PORT:-587}" "${HV_SMTP_SECURITY:-starttls}"
+        else
+            printf 'Mail: aus\n'
+        fi
     else
         doctor_report FEHLER Einstellungen 'Konfiguration unvollständig oder ungültig; Originaldatei wiederherstellen bzw. Werte gemäß DEPLOY.md korrigieren, bestehende Geheimnisse nicht neu erzeugen.'
     fi

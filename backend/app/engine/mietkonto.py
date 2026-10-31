@@ -44,7 +44,7 @@ from datetime import date
 from decimal import Decimal
 
 from app.engine.periods import day_count
-from app.engine.rounding import CENT, distribute_amount
+from app.engine.rounding import CENT, annual_advance_share_for_period, distribute_amount
 
 # Payment-type vocabulary (m6 section 1.3). Kept here as the engine's view of
 # the controlled vocabulary; the DB CHECK in migration 0016 is the source of
@@ -557,3 +557,26 @@ def derive_advance_total(
             continue
         total += p.amount
     return _money(total)
+
+
+def derive_advance_total_for_period(
+    payments: list[PaymentInput],
+    filt: AdvanceFilter,
+    period_start: date,
+    period_end: date,
+) -> Decimal:
+    """Assigned monthly advances plus the period's share of year-only advances.
+
+    Each assigned year is split into twelve months by the rounding module;
+    the statement containing December gets that year's remaining cents.
+    Existing lifecycle, type and addressee filters apply to both sums.
+    """
+    if not period_start.year <= filt.year <= period_end.year:
+        return Decimal("0.00")
+    first = period_start.month if filt.year == period_start.year else 1
+    last = period_end.month if filt.year == period_end.year else 12
+    monthly = derive_advance_total([
+        p for p in payments if p.period_month is not None and first <= p.period_month <= last
+    ], filt)
+    yearly = derive_advance_total([p for p in payments if p.period_month is None], filt)
+    return monthly + annual_advance_share_for_period(yearly, filt.year, period_start, period_end)

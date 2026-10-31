@@ -48,7 +48,7 @@ Precise algorithm (for **every** split of a total amount `G` (cent-exact) across
 6. Result cᵢ = fᵢ (+0,01 if awarded).   IT HOLDS: Σcᵢ == G  (exact).
 ```
 
-This mechanic is implemented **once** as a pure function (`distribute_amount(total, weights) -> list[Decimal]`, m3 doc §4/§10) and is used by **every** distribution key and by the time-share split. There is no other place where money is rounded to the cent.
+This mechanic is implemented **once** as a pure function (`distribute_amount(total, weights) -> list[Decimal]`, m3 doc §4/§10) and is used by **every** distribution key and by the time-share split. The separate rule for year-only advance payments is documented in the amendment below.
 
 **Order for combined distribution (time × key):** First multiply the **exact** (unrounded) value across all stages, **then round+balance once at the end** — never round in between (otherwise rounding errors accumulate). That means: the time share (ADR-0004) and the distribution weight are chained exactly; the largest-remainder rounding applies to the **final** set of `settlement_line` amounts per cost item.
 
@@ -74,3 +74,20 @@ This mechanic is implemented **once** as a pure function (`distribute_amount(tot
 4. The remainder allocation is **deterministic** (reproducible tie-break), so that snapshots are stable/hashable.
 
 > **[OPEN/§18]:** Whether a particular type of settlement or a lease prescribes a **deviating** rounding rule (e.g. commercial per item without remainder balancing, with a difference knowingly accepted) must be examined from the domain side. The default of this ADR is the arithmetically exact variant (largest remainder); deviations would be a deliberate domain determination. **No self-certification.**
+
+## Amendment — 2026-10-31: year-only advance payments
+
+Cost distributions continue to use largest remainder. Year-only NK and Hausgeld
+advances use a second rule: divide the assigned annual amount into twelve calendar
+month shares, floor each to the cent, and assign the annual remainder to December.
+For 1,000.00 euros, January–November receive 83.33 euros each and December 83.37 euros.
+Boundary months are prorated by calendar days using the difference between the
+floored cumulative share through the last covered day and the floored cumulative
+share before the first covered day.
+
+This differs from ranking recipients by their fractional remainders because the
+monthly allocation must remain fixed across independently calculated periods.
+Adjacent periods therefore reconcile exactly, even when they split a month,
+regardless of draft or finalization order. Both rules live in
+`backend/app/engine/rounding.py`: `distribute_amount` for costs and
+`annual_advance_share_for_period` for year-only advances.

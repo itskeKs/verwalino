@@ -66,6 +66,7 @@ The complete table below is checked against the dataclass by
 | --- | --- | --- |
 | `deployment_mode` | `selfhost` | `hosted` |
 | `first_run_setup_enabled` | `true` | `false` |
+| `self_service_signup_enabled` | `false` | `true` |
 | `rate_limit_profile` | `relaxed` | `strict` |
 | `rate_limit_rules.ip_failures` | `20` | `10` |
 | `rate_limit_rules.email_failures` | `10` | `5` |
@@ -77,25 +78,34 @@ The complete table below is checked against the dataclass by
 | `rate_limit_rules.cleanup_every` | `100` | `100` |
 | `rate_limit_rules.cleanup_batch_size` | `1000` | `1000` |
 
-Current readers are scenario tag selection, reports and browser app processes
-(`deployment_mode`), setup's `setup_required()` (`first_run_setup_enabled`) and
-login (`rate_limit_profile` and its frozen `RateLimitRules`, included in the drift
-check above).
+Current readers are `/api/meta` (`deployment_mode`), setup's `setup_required()`
+(`first_run_setup_enabled`), signup (`self_service_signup_enabled`) and login
+(`rate_limit_profile` and its frozen `RateLimitRules`, included in the drift check above).
 `GET /api/setup` returns `{"required": false}` in hosted mode even with no
 organizations, without opening a database connection. Every non-GET setup method
-returns the same 404 as a closed installation, before parsing its body. The admin
-CLI remains available in both modes; hosted signup and other hosted features are
-deferred. Policy fields are added when their consumers are implemented.
+returns the same 404 as a closed installation, before parsing its body. Hosted
+organization creation uses mailbox-confirmed signup; the admin CLI remains
+available in both modes.
 
-The frontend relies on `GET /api/setup`'s `required` alone to open setup; the
-backend owns the deployment decision. While setup status loads, the existing
-"Lade..." state applies. If the setup check fails, login and signed-in pages
-remain available; a later successful app load can detect required setup.
-The same RLS, scoped API queries and
+Other fields reserve decisions for their named consumers, not implemented features:
+error tracking #16, the doctor's organization-count warning #11,
+quotas #22, support links #17 and hosted legal links #24/#26.
+The error-tracking environment setting and doctor are absent at this revision.
+`multi_organization_expected` describes an operational expectation, never an
+organization limit or an isolation bypass: the same RLS, scoped API queries and
 [route sweep](#74a-route-sweep-backendteststest_route_isolation_sweeppy) apply in both modes.
-No branding or other hosted UI is added. The self-host installer and token
-issuance remain unchanged: the portable manifest uses the default self-hosted
-policy and does not forward an arbitrary caller's environment.
+
+Unauthenticated `GET /api/meta` returns only `deployment_mode` and the FastAPI
+application `version`, with `Cache-Control: no-store`. It reads no tenant data or
+secrets, so the route sweep explicitly exempts it. The frontend's
+`useDeploymentMode()` reads it for login and signup (reusing the request during
+StrictMode replay), after the initial setup check. Setup depends only on
+`GET /api/setup`; required setup takes precedence without requesting metadata.
+If the setup check fails, login and signed-in pages remain available; reload
+after recovery to detect setup. Hosted login offers “Konto erstellen”; `/signup`
+and `/signup/confirm` require confirmed hosted metadata and otherwise redirect to login.
+The self-host installer and token issuance remain unchanged: the portable manifest
+uses the default self-hosted policy and does not forward an arbitrary caller's environment.
 
 ## Current Declaration-of-Division Workflow (2026-08-29)
 
@@ -483,9 +493,90 @@ The router sends an unclaimed installation to the German setup form, then reload
 from the cookie; a closed setup URL redirects to login. A failed initial setup
 status request is logged to the console and leaves login and signed-in routes
 available; a later successful app load still detects an unclaimed installation.
-Signup remains deferred to #19; login uses the application limiter below. Rollback-only tests provision an empty synthetic database without
+Hosted signup is described below; login uses the application limiter below. Rollback-only tests provision an empty synthetic database without
 changing the shared fixtures permanently; real portable-stack acceptance remains
 pending.
+
+**Hosted signup (revision 0144):** `POST /api/signup` accepts organization, admin
+name, normalized email, password and hidden `website`. Signup and `/api/signup/resend`
+return the same generic 202 for fresh, existing, unknown, cooldown and throttled
+requests. The honeypot silently returns that response without side effects.
+Existing identities, including inactive and ambiguous legacy accounts, get no mail.
+Argon2 hashing runs outside database transactions.
+
+`signup_request` is global pending identity state, with no tenant yet. It stores
+names, normalized email, a non-null password hash, timestamps and a SHA-256 token
+digest. It has no confirmed state: successful confirmation deletes the row.
+Runtime roles have no direct SELECT/INSERT/UPDATE/DELETE privileges. All runtime
+access uses owner-owned SECURITY DEFINER functions with
+`search_path=pg_catalog,pg_temp`, `row_security=off` and EXECUTE granted only to
+`app_rw` (plus the owner); tests guard ownership, settings and exact ACLs.
+
+`request_signup(email, org_name, admin_name, password_hash) RETURNS text` generates
+the token inside PostgreSQL and returns it once for mail submission. pgcrypto is
+absent; two `gen_random_uuid()` values supply **244 random bits** (122 each),
+encoded as 64 hexadecimal characters. Callers cannot choose a token digest.
+`resend_signup(email) RETURNS text` enforces the shared ten-minute send cooldown
+and rotates the token without extending the original 24-hour request expiry. A live pending request keeps
+its first password hash and names even when a third party resubmits it; only an
+expired request can be replaced. Signup always creates a separate organization,
+including when its display name matches an existing tenant.
+
+`signup_confirmation(token)` returns only the token-bound, unexpired email/hash
+snapshot needed for Argon2 verification outside a transaction.
+`provision_organization(token, password_hash) RETURNS uuid` revalidates that exact
+snapshot under the organization and request locks, checks token digest, expiry
+and existing identity, then calls the owner-only bootstrap overload with
+`reuse_existing=false`. It atomically creates organization, active user and
+OWNER_ADMIN membership and deletes the pending row. Request, resend, snapshot,
+cleanup and provisioning refuse access whenever `app.current_org_id` is set, so
+an injected authenticated tenant session cannot provision. Runtime organization
+INSERT remains forbidden; the four-argument CLI/setup bootstrap keeps its reuse
+semantics and owner-only invoker ACL.
+
+Confirmation returns 201 and the normal session cookie. Invalid, expired, consumed,
+changed-proof and throttled confirmations return the same generic 403. A mistyped
+password for a live admitted token returns a retryable 422; the browser retains
+the token in session storage and clears it only on 403 or success. Failed confirms
+remain counted; success calls the shared limiter's `reset()` to refund admission.
+Downgrade refuses retained signup requests and otherwise removes the new objects
+exactly. The released 0142 auth-throttle migration remains unchanged.
+
+Mail uses the shared SMTP transport after the HTTP response body. Hosted startup
+requires SMTP and a valid `HV_PUBLIC_HOST`; confirmation links always use HTTPS
+and never derive their origin from request headers. The public routing hostname
+also configures deployment routing; no second public URL setting is introduced.
+Failed mail submission retains pending state and the generic response. The
+`self_service_signup.feature` journey submits over real SMTP to the digest-pinned
+Mailpit service in the test compose and CI backend job. A shared BDD fixture clears
+the inbox, reads messages over Mailpit's HTTP API, and checks recipient, sender,
+subject and the confirmation link's token before confirming with that emailed token.
+An unavailable Mailpit API fails acceptance; FakeSMTP remains in unit tests.
+See [test setup](../features/README.md#running).
+
+Every 100th signup per worker schedules one separate transaction after the response
+to delete at most 100 requests expired for more than seven days, using
+`FOR UPDATE SKIP LOCKED`. Cleanup is best effort; no worker or scheduler is needed.
+Confirmed requests are deleted immediately, so removing an organization and its
+users allows the address to register again. Replaying a used token finds no row
+and receives the same generic refusal.
+
+Submit, resend and confirm use separate scopes: `signup`, `signup_resend` and
+`signup_confirm`. Submit/resend count only their scoped IP buckets for flood
+protection; they never record email failures. Only failed confirmations count
+toward the confirm IP/email buckets; successful confirmation does not increment
+them. Failures commit their counter state before returning. A filled honeypot on
+submit or resend returns before writes or mail; confirm has no honeypot.
+Every signup API method in selfhost returns the same 404 as an unknown route,
+before parsing or DB access. Hosted non-POST methods give 405. Signup routes are
+organization-free sweep exemptions with explicit reasons; the hosted isolation
+scenario verifies an existing signed-in tenant is unchanged by signup. The
+confirmation page saves the token in tab-local `sessionStorage` before removing
+it from the URL, so reloads retain it. It clears the token after success or a 403,
+keeps it on retryable errors, never stores the password, and posts only on explicit
+submit. StrictMode never submits twice. Server-side query stripping protects
+the default Uvicorn access log; upstream proxies must redact query strings too.
+GET requests never provision a tenant.
 
 **Login hardening (revision 0142):** `POST /api/auth/login` checks the IP and
 normalized email before looking up the password. Both failure thresholds use a
@@ -541,8 +632,14 @@ and its history are cleared, and the IP reservation is decremented while previou
 IP failures remain. Refusals from a locked IP also count against the email key.
 The handler commits outcomes before raising an HTTP refusal.
 `Depends(throttled("login"))` supplies request metadata and deployment rules.
+Signup uses the same reserve/hash/outcome phases under its three independent scopes,
+with IP-only submit/resend accounting and failure-only confirmation accounting
+(success refunds the admission reservation).
+`core/honeypot.py::honeypot_response` returns `None` for a missing/empty hidden
+field (default `website`, configurable per call), otherwise a success-shaped 200
+with the caller's supplied body. Signup and resend return it as a 202 before side effects.
 
-Every 100th login per worker runs best-effort cleanup in a separate transaction
+Every 100th login or signup limiter attempt per worker runs best-effort cleanup in a separate transaction
 **after** the outcome commits. A single delete selects at most 1000 rows whose
 `updated_at` is over one day old, using `ctid`, `LIMIT` and `FOR UPDATE SKIP LOCKED`.
 Local lock and statement timeouts bound database waiting; a cleanup failure cannot
@@ -741,6 +838,22 @@ download checks current original-source/contact rights and the hash, without rec
 Changing a template does not change any letters. Populated tables prevent lossy
 downgrade; dispatch is not part of circular letter issuance.
 
+Issue #125 adds `app/mail`: `render_mail(context, deployment_mode=…)` returns
+immutable subject, plain text and HTML, and `apply_to(EmailMessage)` attaches
+the alternatives without changing sender, recipient, date or message ID.
+Fifteen frozen Pydantic contexts provide one kind-to-class inventory; bounded
+strings reject controls, links require HTTPS (HTTP only on loopback), and times
+must be timezone-aware. Names reject MIME encoded words during context validation;
+rendering checks the final subject as well. Storage warning percentages are
+derived from byte counts, rounded to the nearest integer (halves up); export
+copy uses the supplied deadline in German date/time format. Jinja2 uses HTML autoescape and `StrictUndefined` with
+packaged, developer-only German templates and a shared website-brand layout.
+Unlike T48's user-editable placeholder text, these templates are executable
+developer code and are never loaded from user input or user paths. No generic
+transactional sender exists on `main` yet: #111/#115 can adopt the renderer in
+their signup/password senders after merge; document dispatch remains separate.
+The [preview workflow](operations/mail-previews.md) needs neither DB nor SMTP.
+
 Issue #37 reuses these tables for lease contracts and handover protocols, without a migration.
 `letter_document.body` stores a JSON text snapshot of inputs and rendered content, including
 original landlord source IDs for contracts and meter/reading IDs and exact values for handovers.
@@ -929,7 +1042,7 @@ Minimum assertions:
 
 ### 7.4a Route sweep (`backend/tests/test_route_isolation_sweep.py`)
 
-Tests 1–6 cover selected resources; the sweep covers every API route. It enumerates the routes FastAPI registers (`fastapi.routing.iter_route_contexts`, so routes of included routers count) and fails, naming the route, for any route that is neither swept nor exempt. A swept route has a probe in the table of its area module in `backend/tests/route_isolation/` (`core`, `finance`, `documents`, `access`): SQL that picks a record of another organization, plus body, query or headers where the generated request would not reach the route. Exempt routes are listed with their reason in `EXEMPT` of the test (health, login, logout, password change, plus the organization-free setup exemptions from `route_isolation/core.py`). Signed in as an administrator of organization B, the sweep sends each probe with the other organization's ids and once more with ids that exist nowhere:
+Tests 1–6 cover selected resources; the sweep covers every API route. It enumerates the routes FastAPI registers (`fastapi.routing.iter_route_contexts`, so routes of included routers count) and fails, naming the route, for any route that is neither swept nor exempt. A swept route has a probe in the table of its area module in `backend/tests/route_isolation/` (`core`, `finance`, `documents`, `access`): SQL that picks a record of another organization, plus body, query or headers where the generated request would not reach the route. Exempt routes are listed with their reason in `EXEMPT` of the test (health, public mode/version metadata, login, logout, password change, plus the organization-free signup and setup exemptions from `route_isolation/core.py`). Signed in as an administrator of organization B, the sweep sends each probe with the other organization's ids and once more with ids that exist nowhere:
 
 - a request carrying another organization's ids answers 404 (another status only with the reason written in the probe) and exactly what the unknown ids answer, so the answer cannot reveal that the record exists; a write carrying them is never accepted;
 - no answer contains an id of another organization's record that the request did not send;

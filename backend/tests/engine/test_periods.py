@@ -252,3 +252,47 @@ class TestOverlapDetection:
         ]
         cover = build_unit_cover(unit, date(2025, 1, 1), date(2025, 12, 31), adjacent, owners)
         assert [c.kind for c in cover] == [KIND_TENANT, KIND_TENANT]
+
+
+class TestPropertyPeriods:
+    @pytest.mark.parametrize("end", [date(2025, 2, 27), date(2025, 2, 28)])
+    def test_leap_day_start_accepts_february_end_next_year(self, end):
+        from app.engine.periods import validate_settlement_period
+
+        validate_settlement_period(date(2024, 2, 29), end)
+
+    def test_leap_day_start_rejects_march_next_year(self):
+        from app.engine.periods import validate_settlement_period
+
+        with pytest.raises(ValueError, match="zwölf Monate"):
+            validate_settlement_period(date(2024, 2, 29), date(2025, 3, 1))
+
+    @pytest.mark.parametrize("month", range(1, 13))
+    def test_every_start_month_has_inclusive_twelve_month_bounds(self, month):
+        from app.engine.periods import period_for_date, period_starting_in, period_label
+
+        start, end = period_starting_in(month, 2025)
+        assert start == date(2025, month, 1)
+        assert end == date.fromordinal(date(2026, month, 1).toordinal() - 1)
+        assert period_for_date(month, start) == (start, end)
+        assert period_for_date(month, end) == (start, end)
+        assert period_label(start, end) == ("2025" if month == 1 else "2025/2026")
+
+    def test_february_contains_leap_day_and_wraps_in_january(self):
+        from app.engine.periods import period_for_date
+
+        expected = (date(2024, 2, 1), date(2025, 1, 31))
+        assert period_for_date(2, date(2024, 2, 29)) == expected
+        assert period_for_date(2, date(2025, 1, 1)) == expected
+
+    def test_march_period_ends_on_leap_day(self):
+        from app.engine.periods import period_starting_in
+
+        assert period_starting_in(3, 2023) == (date(2023, 3, 1), date(2024, 2, 29))
+
+    def test_december_and_january_belong_to_the_same_period(self):
+        from app.engine.periods import period_for_date
+
+        expected = (date(2025, 12, 1), date(2026, 11, 30))
+        assert period_for_date(12, date(2025, 12, 31)) == expected
+        assert period_for_date(12, date(2026, 1, 1)) == expected

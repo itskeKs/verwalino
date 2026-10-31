@@ -13,6 +13,95 @@ Status: **Draft for confirmation by the human — no application code, no migrat
 
 ---
 
+## Property settlement periods (#68)
+
+`property.fiscal_year_start_month` defines twelve months from the first of that month;
+January remains the default. `engine/periods.py` supplies pure inclusive bounds for a
+containing date or a start year, and labels such as `2025` or `2025/2026`. The tenant-statement deadline
+monitor uses the same functions. No migration is required.
+
+`GET /api/properties/{property_id}/settlement-periods?year=2025` offers start years
+2023–2026 with labels and dates; without `year`, the offers are the three most
+recent completed property periods, newest first, starting with the period before
+the one containing today (`period_for_date`). The statement and batch forms adopt
+these dates and still permit free periods. A reversed or over-twelve-month period
+returns 422. Creation and finalization return 409 when the new period overlaps a
+visible finalized, non-superseded run for the same lease and type, unless both
+period bounds are identical (repeat/correction runs). For finalized bounds
+`[a, b]` and new bounds `[s, e]`, the conflict predicate is
+`a <= e AND b >= s AND (a != s OR b != e)`. Contained and containing periods,
+shared starts or ends and overlap on a boundary day all conflict. Mixed batches
+report conflicting leases as per-lease errors, create the other drafts, and
+continue skipping identical existing runs. An entirely conflicting batch retains
+409. Drafts never block creation. Short transition
+periods remain possible after a property's start month changes. An
+inclusive period from 29 February 2024 through 28 February 2025 is twelve months
+and is accepted.
+
+Period-conflict responses use `detail` objects with
+`code: "settlement_period_conflict"` and the unchanged German `message`.
+Mixed-batch errors retain their German `errors[].error` text and carry the same
+code in `errors[].code`.
+
+**Lease-change limitation:** the engine clips occupancy slices to the supplied
+statement window and apportions calendar-year costs between successive leases by
+actual occupancy days; vacancy is attributed to the owner. The persisted statement
+period is still the supplied period: creation and batch creation do not clip it
+to the target lease's active span. Also, when a cost's service period extends beyond
+a manually shortened statement window, distribution reassigns the full source
+amount to the in-window slices rather than prorating the source amount first.
+Automatic lease-bounded statement dates with correct short-window cost proration
+remain follow-up work. The scenarios separately prove explicit short-period overlap
+protection and lease-change apportionment within a full calendar-year calculation.
+
+**Current overlap limitation:** the check runs under the acting user's normal
+row-level security. Overlaps with runs in other accounting scopes that the user
+cannot see are not detected. The existing financial-input lock serializes creation and finalization,
+but does not widen visibility. Follow-up #95 must add a database constraint to enforce
+the rule across accounting scopes; this change adds neither a migration nor a
+privileged helper. This limitation also applies to economic plans and WEG runs.
+
+**Property access limitation:** a user without property read access must enter
+the period; the period offer needs property access. Financial creation checks
+pause mode, parents and accounting scope before resolving or validating the
+period. A scope-only clerk can create drafts with explicit dates without reading
+the property's start month. Missing plan dates return 422 with
+"Abrechnungszeitraum angeben: Beginn und Ende". Users who can read the property
+retain its default period. The organization-bound month getter is deferred to
+#95's migration; no migration is added here.
+
+**Other period rules and limitation:** economic plans honour explicit dates within
+the readable property period or exactly closing the gap from the last finalized
+plan to the next property period; scope-only clerks supply their own dates,
+subject to the same twelve-month and overlap checks. Offered plan dates remain
+editable for mid-year scopes and gap-closing transitions. Year-only NK and
+Hausgeld advances are split across the twelve months of their assigned calendar
+year. A statement credits only the months it covers in that year, including
+months in the second calendar year of a non-calendar period. The rounding module
+floors each monthly share to cents and assigns the remainder to December, so
+the last period covering that year receives the remaining cents. For 1,200 euros,
+January–June and July–December credit 600 euros each; April–December credits
+900 euros. For 1,000 euros, January–November credit 83.33 euros each and December
+83.37 euros. A full calendar year still credits the full amount. Month shares
+do not depend on other drafts or finalization order; later statements cannot
+change earlier finalized shares. If a statement boundary splits a month, that
+month's share is prorated by its days using cumulative cent boundaries, so
+adjacent partial-month statements cannot credit that share twice. The NK finalization freshness check uses the
+same derivation. Explicit month assignments and ledger filtering are unchanged. See the
+[WEG period rules](m4-weg-abrechnung.md#property-settlement-periods-68). The economic
+plan deadline in `fristen_service.py` is still calendar-based for non-January
+properties and remains a follow-up; it is not changed by #68.
+The per-property year overview and Anlage V stay on the calendar year.
+
+Automatic form prefill only applies while both date fields are empty. A delayed
+period-offer response preserves dates the user has already entered; choosing an
+offered period explicitly still sets both dates.
+
+Derived tenant advances use the assigned payment months across both calendar years;
+the reference year may be any year touched by the period. Changing the property
+setting only changes future suggestions; stored runs and finalized snapshots retain
+their dates, amounts and hashes.
+
 ## 0. Scope, exit criterion, connection to M0–M2
 
 **M3 exit (roadmap):** "An operating cost statement (BK-Abrechnung) for a mixed-use property with a tenant change is **reproducibly correct** and **formally complete**." This criterion is the objective yardstick. "Reproducibly correct" is demonstrated by the **synthetic golden tests** (§9) with **hand-calculated expected results**; "formally complete" by the mandatory BGH disclosures in `settlement_line`/PDF (§8).
@@ -624,9 +713,11 @@ Since phase 2 (T27), `POST /api/settlements/batch` supplements the single creati
 atomic batch run with property, inclusive period, and optional accounting scope. Only
 contracts of the authorized scope units that overlap the period are created via
 `create_draft`; active BK runs with identical contract/property/period/scope are skipped
-unchanged. Response: `created` and `skipped` with contract/run ID. The existing
-organization-wide financial lock serializes parallel batch runs; an error also rolls back
-the audit and already created drafts. Source/scope permissions are checked before an empty
+unchanged. Response: `created`, `skipped` with contract/run ID, and, when needed, `errors` with
+contract ID and the overlap message. A conflicting lease does not roll back
+other eligible leases; an entirely conflicting batch retains 409. The existing
+organization-wide financial lock serializes parallel batch runs; other errors still
+roll back the audit and already created drafts. Source/scope permissions are checked before an empty
 response. No computation, coverage, or finalization, and no invented advance payments: new
 financial values stay `null`.
 Under `/abrechnungen`, "BK-Sammellauf" (BK batch run) guides through property, period, and
