@@ -252,7 +252,7 @@ need operator checks; do not treat the mock installer tests as
 proof of those behaviors. Run the portable tests without Docker using
 `cd backend && uv run python ../scripts/test-self-host.py`; the backend CI job
 runs these before pytest. Real Caddyfile validation and the complete portable
-stack smoke test require a separately authorized clean Docker host. Update/backup
+stack smoke test require a separately authorized clean Docker host. Update
 automation remains outstanding; this is not yet a general production release.
 
 ### Published image verification
