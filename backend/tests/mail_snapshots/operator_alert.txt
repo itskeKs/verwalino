@@ -1,0 +1,33 @@
+VERWALINO
+
+Eine Betriebsprüfung ist fehlgeschlagen
+
+Guten Tag,
+
+Die Prüfung „Anmeldung und Dokumentabruf“ ist in der Umgebung
+„hosted-eu“ fehlgeschlagen.
+
+Die synthetische Betriebsprüfung konnte das Testdokument nach der
+Anmeldung nicht abrufen. Der Abruf wurde mit HTTP 503 beantwortet.
+
+Prüfung: Anmeldung und Dokumentabruf
+Umgebung: hosted-eu
+Zeitpunkt: 31.10.2026, 14:05 Uhr
+
+Prüflauf öffnen:
+https://betrieb.example.de/runs/2026-10-31-1305
+
+Issue öffnen:
+https://betrieb.example.de/issues/42
+
+-- 
+Sie erhalten diese E-Mail, weil Sie automatische Alarme des gehosteten
+Verwalino-Betriebs empfangen.
+
+Verwalino wird betrieben von fogu UG (haftungsbeschränkt), Im
+Großenbruch 34, 66583 Spiesen-Elversberg.
+hallo@verwalino.de
+Impressum:
+https://verwalino.de/impressum/
+Datenschutz:
+https://verwalino.de/datenschutz/

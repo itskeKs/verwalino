@@ -1,0 +1,9 @@
+{% set subject = 'Verwalino: Speicher zu ' ~ mail.percent ~ ' % belegt' %}
+{% set eyebrow = 'SPEICHER' %}
+{% set heading = 'Ihr Speicher wird knapp' %}
+{% set preheader = 'Der Speicher Ihrer Organisation „' ~ mail.organization_name ~ '“ ist zu ' ~ mail.percent ~ ' % belegt.' %}
+{% set paragraphs = [preheader, 'Bei 100 % werden neue Uploads abgelehnt. Ihre vorhandenen Dokumente bleiben erhalten und zugänglich.'] %}
+{% set facts = [('Belegt', mail.used_bytes|size ~ ' von ' ~ mail.limit_bytes|size), ('Auslastung', mail.percent ~ ' %')] %}
+{% set action_label = 'Speicher ansehen' %}
+{% set action_link = mail.settings_link %}
+{% set why = 'Sie erhalten diese E-Mail, weil Sie Administrator der Organisation „' ~ mail.organization_name ~ '“ sind.' %}

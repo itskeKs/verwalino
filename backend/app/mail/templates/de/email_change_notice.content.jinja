@@ -1,0 +1,9 @@
+{% set subject = 'Verwalino: Ihre E-Mail-Adresse wurde geändert' %}
+{% set eyebrow = 'SICHERHEIT' %}
+{% set heading = 'Ihre E-Mail-Adresse wurde geändert' %}
+{% set preheader = 'Die E-Mail-Adresse für Ihre Anmeldung bei Verwalino wurde geändert.' %}
+{% set paragraphs = [preheader, 'Wenn Sie diese Änderung nicht selbst vorgenommen haben, fordern Sie sofort ein neues Passwort an und wenden Sie sich an Ihre Verwaltung.'] %}
+{% set facts = [('Neue Adresse', mail.masked_address), ('Geändert am', mail.changed_at|berlin_datetime ~ ' Uhr')] %}
+{% set action_label = 'Neues Passwort anfordern' %}
+{% set action_link = mail.reset_request_link %}
+{% set why = 'Sie erhalten diese E-Mail an Ihre bisherige Adresse, weil Ihre Anmeldeadresse bei Verwalino geändert wurde.' %}

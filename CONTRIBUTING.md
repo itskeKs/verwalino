@@ -64,6 +64,8 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
 - **`make test`** — the whole run before a merge: agent-rule, scenario-filing and installer contracts, the backend
   suite (including the BDD scenarios), frontend vitest and typecheck. Needs the test database.
 - **`make lint`** — ruff over the backend, eslint and `tsc` over the frontend.
+- **`make mail-previews`** — synthetic transactional mail gallery and 600/375 px light/dark PNGs;
+  no database or SMTP ([workflow](docs/operations/mail-previews.md)).
 - **`make test-bdd`** — API scenarios in `features/` ([features/README.md](features/README.md)).
 - **`make test-browser`** — headless `@browser` scenarios; acquires the shared DB lock and
   owns/stops its local API and Vite stack. See [browser setup and runner](features/README.md#browser-features).

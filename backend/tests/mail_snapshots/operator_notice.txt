@@ -1,0 +1,26 @@
+VERWALINO
+
+Geplante Wartung am 3. November
+
+Guten Tag,
+
+Am 3. November 2026 wird Verwalino zwischen 20:00 und 20:30 Uhr
+gewartet.
+
+Während dieser Zeit kann die Anmeldung kurzzeitig nicht verfügbar sein.
+Speichern Sie Ihre Eingaben vor Beginn der Wartung.
+
+Betriebshinweis ansehen:
+https://betrieb.example.de/hinweise/wartung-2026-11-03
+
+-- 
+Sie erhalten diese E-Mail, weil der Betreiber Ihrer
+Verwalino-Installation Sie über den Betrieb informiert.
+
+Verwalino wird betrieben von fogu UG (haftungsbeschränkt), Im
+Großenbruch 34, 66583 Spiesen-Elversberg.
+hallo@verwalino.de
+Impressum:
+https://verwalino.de/impressum/
+Datenschutz:
+https://verwalino.de/datenschutz/

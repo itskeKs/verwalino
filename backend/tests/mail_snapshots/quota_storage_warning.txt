@@ -1,0 +1,29 @@
+VERWALINO
+
+Ihr Speicher wird knapp
+
+Guten Tag,
+
+Der Speicher Ihrer Organisation „Hausverwaltung Muster GmbH“ ist zu 80 %
+belegt.
+
+Bei 100 % werden neue Uploads abgelehnt. Ihre vorhandenen Dokumente
+bleiben erhalten und zugänglich.
+
+Belegt: 1,6 GiB von 2 GiB
+Auslastung: 80 %
+
+Speicher ansehen:
+https://verwaltung.example.de/einstellungen
+
+-- 
+Sie erhalten diese E-Mail, weil Sie Administrator der Organisation
+„Hausverwaltung Muster GmbH“ sind.
+
+Verwalino wird betrieben von fogu UG (haftungsbeschränkt), Im
+Großenbruch 34, 66583 Spiesen-Elversberg.
+hallo@verwalino.de
+Impressum:
+https://verwalino.de/impressum/
+Datenschutz:
+https://verwalino.de/datenschutz/

@@ -737,6 +737,19 @@ download checks current original-source/contact rights and the hash, without rec
 Changing a template does not change any letters. Populated tables prevent lossy
 downgrade; dispatch is not part of circular letter issuance.
 
+Issue #125 adds `app/mail`: `render_mail(context, deployment_mode=…)` returns
+immutable subject, plain text and HTML, and `apply_to(EmailMessage)` attaches
+the alternatives without changing sender, recipient, date or message ID.
+Fifteen frozen Pydantic contexts provide one kind-to-class inventory; bounded
+strings reject controls, links require HTTPS (HTTP only on loopback), and times
+must be timezone-aware. Jinja2 uses HTML autoescape and `StrictUndefined` with
+packaged, developer-only German templates and a shared website-brand layout.
+Unlike T48's user-editable placeholder text, these templates are executable
+developer code and are never loaded from user input or user paths. No generic
+transactional sender exists on `main` yet: #111/#115 can adopt the renderer in
+their signup/password senders after merge; document dispatch remains separate.
+The [preview workflow](operations/mail-previews.md) needs neither DB nor SMTP.
+
 Issue #37 reuses these tables for lease contracts and handover protocols, without a migration.
 `letter_document.body` stores a JSON text snapshot of inputs and rendered content, including
 original landlord source IDs for contracts and meter/reading IDs and exact values for handovers.
