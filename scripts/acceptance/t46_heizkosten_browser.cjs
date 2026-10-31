@@ -287,7 +287,7 @@ async function selectCode(scope, label, code) {
     }
   }
   assert.equal(meters.length, 4); assert.equal(readings.length, 8);
-  await page.goto(base + '/berechtigungen');
+  await page.goto(base + '/berechtigungen/teamrechte');
   const propertyGroup = page.getByRole('group', { name: 'Objekt', exact: true });
   await field(propertyGroup, 'Objekte durchsuchen').fill(propertyName);
   await selectLabel(page, 'Objekt', propertyName);

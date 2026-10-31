@@ -13,6 +13,16 @@ implementation acceptance.
 
 ## Scope and evidence rules
 
+Verwalino's property year overview now provides an Anlage V mapping aid (#34),
+documented with its default category table in
+[M6 §6.12](m6-zahlungen-mietkonto.md#anlage-v-mapping-aid-34). It preserves the
+overview's date basis and organization/source permissions, lists exclusions and
+unknown categories explicitly, reconciles every cent to the overview and offers a
+separate CSV. The detailed expense labels require review against the official
+form-year groups; no tax deduction, owner allocation, cash-outflow date, complete
+return or ELSTER submission is inferred. This implementation does not change the
+reference-software evidence levels below.
+
 The user authorized navigation and synthetic test records. All main navigation
 areas were inspected. Representative creation journeys were exercised to a
 verified saved result, a draft, a missing-data boundary or an explicit external

@@ -118,15 +118,9 @@ const GROUPS: NavGroup[] = [
     label: "Erweitert",
     adminOnly: true,
     items: [
-      { to: "/quellenfreigaben", label: "Quellenfreigaben", icon: FileText },
       { to: "/altquellen", label: "Altquellen", icon: FileText },
       { to: "/berechtigungen", label: "Berechtigungen", icon: KeyRound },
-      { to: "/freigaben-vorbereiten", label: "Freigaben vorbereiten", icon: KeyRound },
-      { to: "/mahnquarantaene", label: "Mahnquarantäne", icon: KeyRound },
-      { to: "/mandatsquarantaene", label: "Mandatsquarantäne", icon: KeyRound },
       { to: "/seitenauszuege", label: "Seitenauszüge", icon: FileText },
-      { to: "/kontaktdaten-rechte", label: "Kontaktdaten-Rechte", icon: KeyRound },
-      { to: "/gebaeudedaten-rechte", label: "Gebäudedaten-Rechte", icon: KeyRound },
     ],
   },
 ];

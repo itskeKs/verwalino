@@ -64,6 +64,33 @@ def test_clamav_failure_and_limits_are_fail_closed(monkeypatch):
     assert inspection.scan_malware(b'x')=='timeout'
 
 
+def test_scanner_readiness_verifies_official_archives_without_loading_the_engine(monkeypatch,tmp_path):
+    monkeypatch.setenv('HV_CLAMAV_DATABASE_DIR',str(tmp_path))
+    for name in ('main.cvd','daily.cld'):(tmp_path/name).write_bytes(b'synthetic archive')
+    monkeypatch.setattr(inspection.shutil,'which',lambda name:'/trusted/'+name)
+    calls=[]
+    def run(args,**kwargs):
+        calls.append(args)
+        assert kwargs['check'] and kwargs['timeout']<=10
+        assert 'USER' not in kwargs['env']
+        return subprocess.CompletedProcess(args,0)
+    monkeypatch.setattr(inspection.subprocess,'run',run)
+    inspection.check_scanner_readiness()
+    assert calls==[['/trusted/clamscan','--version'],
+                  ['/trusted/sigtool','--quiet','--info='+str(tmp_path/'main.cvd')],
+                  ['/trusted/sigtool','--quiet','--info='+str(tmp_path/'daily.cld')]]
+    def invalid(*args,**kwargs):raise subprocess.CalledProcessError(2,args[0])
+    monkeypatch.setattr(inspection.subprocess,'run',invalid)
+    with pytest.raises(subprocess.CalledProcessError):inspection.check_scanner_readiness()
+
+
+def test_scanner_readiness_rejects_missing_signatures_before_any_job(monkeypatch,tmp_path):
+    monkeypatch.setenv('HV_CLAMAV_DATABASE_DIR',str(tmp_path))
+    monkeypatch.setattr(inspection.shutil,'which',lambda name:'/trusted/'+name)
+    monkeypatch.setattr(inspection.subprocess,'run',lambda *a,**k:subprocess.CompletedProcess(a,0))
+    with pytest.raises(RuntimeError,match='scanner_database_unavailable'):inspection.check_scanner_readiness()
+
+
 def test_isolated_inspection_has_explicit_missing_scanner_outcome(monkeypatch):
     monkeypatch.setenv('PATH','/nonexistent-hv-inspection-fixture')
     result=inspection.run_isolated_inspection(pdf_bytes(),'application/pdf')

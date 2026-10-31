@@ -11,6 +11,7 @@ import time
 
 import pytest
 
+from app.core.deployment_policy import get_deployment_policy
 from tests.bdd.world import target_url
 
 
@@ -77,7 +78,7 @@ class ScenarioReport:
             previous.unlink()
         self.run = {
             "started": _now(), "finished": None, "git_sha": _git_sha(),
-            "mode": os.environ.get("VERWALINO_SCENARIO_MODE", "selfhost"),
+            "mode": get_deployment_policy().deployment_mode,
             "runner": f"github-actions:{os.environ['GITHUB_RUN_ID']}" if os.environ.get("GITHUB_RUN_ID") else "local",
         }
         if url := target_url():

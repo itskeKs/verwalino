@@ -125,9 +125,10 @@ export function PersonDataDomainsPage() {
   const { domainId } = useParams();
   if (session?.role !== "OWNER_ADMIN") return <p className="error-text">Zugriff nur für Inhaber/Admin.</p>;
   return <div className="paged-list scope-setup"><h1>Kontaktdaten-Rechte</h1>
-    <p>Vorbereitung: Diese Freigaben beschränken den bisherigen Zugriff noch nicht. Die Zugriffskontrolle für Kontaktdaten ist noch nicht aktiviert.</p>
+    <p>Diese Freigaben bestimmen bei aktivem Quellschutz den gemeinsamen Zugriff auf Kontaktdaten. Den aktuellen Zustand und die nächsten Schritte finden Sie unter Berechtigungen.</p>
     <p>Objektfreigaben und Verwaltungsrollen gewähren keine automatische Kontaktfreigabe.</p>
-    <p>Finanzielle Berechtigungen werden separat in den <Link to="/berechtigungen">Abrechnungsbereichen</Link> verwaltet.</p>
+    <p><Link to="/berechtigungen">Berechtigungen</Link></p>
+    <p>Finanzielle Berechtigungen werden separat in den <Link to="/berechtigungen/teamrechte">Abrechnungsbereichen</Link> verwaltet.</p>
     {domainId ? <DomainGrants key={domainId} domainId={domainId} /> : <DomainList />}
   </div>;
 }

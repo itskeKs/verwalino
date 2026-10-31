@@ -37,6 +37,29 @@ cd backend && uv run --locked --extra dev --extra ops --extra ocr pytest tests/b
 The API specs also run as part of the whole suite (`pytest` collects `tests/`).
 Browser scenarios are skipped unless `--run-browser` is supplied; use the target below.
 
+### Deployment modes
+
+`HV_DEPLOYMENT_MODE` selects the same validated backend policy for scenarios as for
+the application. It defaults to `selfhost`; invalid values fail before collection.
+Run the selfhost API suite with `make test-bdd`. Run `@hosted` scenarios locally
+with `make test-bdd-hosted` (equivalent to `HV_DEPLOYMENT_MODE=hosted make test-bdd`);
+the application under test runs with `HV_DEPLOYMENT_MODE=hosted`. Both targets own the
+shared database lock; do not wrap them in another lock acquisition.
+
+An untagged scenario holds in both modes. Tag a feature or scenario `@selfhost` or
+`@hosted` only when its claim depends on that mode. The BDD collection hook skips
+the opposite mode with `Requires <mode> deployment; running in <other mode>` as
+the reason. `first_run_setup.feature` is selfhost-only; `hosted_setup.feature`
+checks that an empty hosted installation never offers setup. Organization
+isolation scenarios run in both modes. Browser app processes inherit the selected
+mode too; `@browser` remains a separate opt-in tag.
+
+**CI integration:** PR CI and the nightly run the selfhost mode. The nightly uses
+the self-host installer, which starts a selfhost server; changing the pytest
+process's mode only selects tags and cannot change that server's policy. A
+CI/nightly run in both modes, including a server started with
+`HV_DEPLOYMENT_MODE=hosted`, is tracked in #103.
+
 ## How the step library is organised
 
 - `features/<name>.feature` - the spec.
@@ -209,10 +232,10 @@ Artifacts are the history store; there is no dashboard or separate history datab
 The job does not back up the disposable installation; it only stops it, and the
 GitHub runner's lifecycle removes its storage.
 
-Only `mode: [selfhost]` is implemented. The matrix has a marked slot for hosted
-mode after the deployment-mode switch in **#18**; it contains no inactive hosted
-execution path. Report metadata defaults to `mode=selfhost`; the workflow sets
-`VERWALINO_SCENARIO_MODE` from its matrix. Hosted execution remains pending #18.
+Only `mode: [selfhost]` is implemented. Report metadata uses the same validated
+`HV_DEPLOYMENT_MODE` policy as scenario tag selection and defaults to `selfhost`;
+the workflow sets it from its matrix. Running both modes in CI/nightly is tracked
+in #103 and requires a hosted server in addition to the selfhost installation.
 **The self-host startup and full nightly integration are unverified until the first
 GitHub runner run.** Local checks parse the workflow and test the local runners;
 they do not start the self-host stack.

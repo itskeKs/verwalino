@@ -12,6 +12,7 @@ import type { ApprovalPreview, DeclarationApprovalRequest, DeclarationCandidate,
 import { useAuth } from "../auth/useAuth";
 import { ApprovalSummary } from "../components/declarations/ApprovalSummary";
 import { ReviewGroup } from "../components/declarations/ReviewGroup";
+import { SourceSecurityNotice } from "../components/SourceSecurityNotice";
 
 const GROUPS = [
   ["Stammdaten", "master"],
@@ -247,7 +248,8 @@ function DeclarationReviewImportPage({ importId }: { importId: string | undefine
         >
           {canPrepareAudience && <fieldset className="declaration-publication-audience" disabled={approvalPending || approvalAttempted}>
             <legend>Gebäudedatenrechte vorbereiten</legend>
-            <p>Die Rechte werden mit der Übernahme gespeichert. Die Zugriffsbeschränkung ist noch nicht aktiviert.</p>
+            <p>Die Rechte werden mit der Übernahme gespeichert.</p>
+            <SourceSecurityNotice key={session.organization_id} />
             <label className="declaration-publication-choice"><input type="checkbox" checked={audienceEnabled} onChange={(event) => setAudienceEnabled(event.target.checked)} /><span>Für mich Lesen, Bearbeiten, Freigeben und Exportieren vorbereiten</span></label>
             {audienceEnabled && <>
               <div className="declaration-publication-field"><label htmlFor="publication-audience-label">Bezeichnung</label><input id="publication-audience-label" value={audienceLabel} maxLength={255} onChange={(event) => setAudienceLabel(event.target.value)} /></div>

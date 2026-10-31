@@ -69,7 +69,18 @@ Usage notes and operational limits are linked in the documentation table below.
 ### Self-hosting
 
 Prerequisites: Linux or macOS, Bash, OpenSSL, Docker Engine 24 or later, and Compose 2.24 or later.
-From a checkout on a new host, run:
+
+**Install in one command** downloads the latest release, verifies its checksums and starts it
+(available once the first release with installer assets is published):
+
+```bash
+curl -fsSL https://github.com/itskeKs/verwalino/releases/latest/download/install.sh | bash -s --
+```
+
+See [Install in one command](DEPLOY.md#install-in-one-command) for HTTPS, a pinned version,
+checksum and signature verification, and offline bundles.
+
+**Or from a checkout** on a new host, run:
 
 ```bash
 bash scripts/self-host.sh init
@@ -91,13 +102,18 @@ If setup or startup fails, run `bash scripts/self-host.sh doctor` first; it prin
 exits 1 on blockers ([diagnostics](DEPLOY.md#portable-troubleshooting-start-with-doctor)).
 
 The portable stack ships without AI import and AI Q&A, SMTP and automatic invoice
-OCR; manual voucher processing works. Database and documents live in named volumes:
+OCR; manual voucher processing works. An optional inbox worker (compose profile `inbox`)
+processes intake documents locally; see [DEPLOY.md](DEPLOY.md#inbox-worker) and the
+[inbox review chain](docs/operations/inbox-review-chain.md). Database and documents live in named volumes:
 back up the private configuration, database, and documents together. A signed
 multi-arch image on `ghcr.io/itskeks/verwalino` is prepared but not published yet;
 this is not yet a general production release. See
 [portable installation](DEPLOY.md#portable-docker-first-installation) for HTTPS,
 image verification and selection, operation, backups, and the remaining
 acceptance limits.
+
+Administrators can download a redacted diagnostics bundle via **Problem melden** or
+`bash scripts/self-host.sh diagnose`; see [diagnostics](DEPLOY.md#diagnostics-and-reporting-a-problem).
 
 ### Local development
 
@@ -133,7 +149,8 @@ error tracking is [off by default](DEPLOY.md#request-ids-and-optional-error-trac
 ## Status and roadmap
 
 The MVP for in-house use is complete; `main` targets migration `0141`.
-An alpha instance at migration `0139` runs for one property-management company.
+The hosted instance is being set up on the hosted server (#6), using the portable
+installer and the [hosted deploy workflow](DEPLOY.md#hosted-server).
 Next: self-hosting ready → scenario evals → hosted offering → domain gaps.
 See the [roadmap](docs/roadmap.md), [feature status](docs/feature-status.md), and
 [open domain questions](https://github.com/itskeKs/verwalino/issues?q=is%3Aissue%20is%3Aopen%20label%3Aquestion).
