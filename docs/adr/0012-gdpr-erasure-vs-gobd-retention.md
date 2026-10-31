@@ -74,7 +74,16 @@ PII fields are replaced by **neutral, deterministic placeholders**; `id` and all
 
 Placeholders: `last_name := "Anonymisiert"` (German for "anonymized"), remaining plain-text fields `""`/neutral, bank/contact fields `NULL`. The anonymization is **idempotent** (calling it again changes nothing).
 
-> **[§18/domain]** The **exact anonymization depth** (is neutralizing the `person` fields enough, or must, e.g., plain-text traces in `audit_event.payload_diff` / note fields / `snapshot_payload` be handled as well?) must be clarified from a domain perspective. M9 anonymizes the `person` master data; **frozen snapshots are deliberately not touched** (they are voucher components under retention — precisely why a bound person is not anonymized). Note/free-text fields of other entities are recorded as possible PII remainder, but are **not** part of this MVP mechanic.
+**Owner decision, 2026-10-31 (organization erasure):** personal audit/receipt
+payload fields of persons anonymized by the erasure run, including expired
+bindings, and former users' email addresses are scrubbed as well. The audit row,
+event, actor structure and timestamps remain. The narrow immutability exception
+and hash treatment are defined in the
+[ADR-0003 amendment](0003-gobd-immutability-mechanism.md#amendment--2026-10-31-personal-audit-payloads-during-organization-erasure).
+This resolves the audit-payload question for organization erasure. M9's individual
+person operation still anonymizes master data only; **frozen voucher snapshots
+remain untouched**. Other retained original/evidence content follows the
+[operator inventory](../operations/organization-export.md).
 
 ### 5. Purge after retention expiry
 

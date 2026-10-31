@@ -13,6 +13,20 @@ describe("api client", () => {
     vi.stubGlobal("fetch", vi.fn());
   });
 
+  it.each(["json", "upload"])("keeps import diagnostics outside the German message for %s", async mode => {
+    vi.mocked(fetch).mockResolvedValue(response({ detail: {
+      code: "IMPORT_INTEGRITY_REFUSAL",
+      message: "Im Archiv fehlen benötigte Abhängigkeiten.",
+      missing_dependencies: [{ entity: "person_data_domain", source_ids: ["synthetic-source-id"], count: 1 }],
+    } }, 422));
+    const error = await (mode === "json" ? api.post("/api/organizations/import") : uploadFormData("/api/organizations/import", new FormData())).catch(reason => reason);
+    if (!(error instanceof ApiError)) throw new Error("Expected an API refusal");
+    expect(error.message).toBe("Im Archiv fehlen benötigte Abhängigkeiten.");
+    expect(error.code).toBe("IMPORT_INTEGRITY_REFUSAL");
+    expect(error.technicalDetails).toContain("person_data_domain");
+    expect(error.technicalDetails).toContain("synthetic-source-id");
+  });
+
   it.each([false, true])("reads structured quota codes and preserves the German refusal (upload=%s)", async upload => {
     vi.mocked(fetch).mockResolvedValue(response({ detail: { code: "QUOTA_STORAGE_EXCEEDED", message: "Speicherkontingent erschöpft (2 GiB). Sie können keine weiteren Dokumente speichern." } }, 413));
     const pending = upload ? uploadFormData("/api/attachments", new FormData()) : api.post("/api/properties", {});
