@@ -203,7 +203,7 @@ structured error kinds, never credentials, cookies, response bodies or money dat
 | --- | --- |
 | `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS` | Existing forced-command deployment path |
 | `CANARY_EMAIL`, `CANARY_PASSWORD` | Dedicated production canary login |
-| `ALERT_EMAIL` | Owner's alert recipient |
+| `ALERT_EMAIL` | Alert recipient: `alarm@verwalino.de` (the owner's role address) |
 | `ALERT_SMTP_URL` | Workflow-only SMTP connection: `smtp+starttls://USER:PASSWORD@HOST:587` or `smtps://USER:PASSWORD@HOST:465`; URL-encode credentials |
 | `ALERT_SMTP_FROM` | SMTP-authorized alert sender |
 

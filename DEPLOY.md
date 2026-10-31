@@ -965,7 +965,7 @@ CLI and prepare the fixture described in the runbook. A first failure sends Germ
 mail action and files a `canary` issue via the existing scenario reporter, deduplicated per
 `canary::<step>::<error kind>` while an issue is open.
 
-Additional secrets: `CANARY_EMAIL`, `CANARY_PASSWORD`, `ALERT_EMAIL`, `ALERT_SMTP_URL` (TLS-required SMTP
+Additional secrets: `CANARY_EMAIL`, `CANARY_PASSWORD`, `ALERT_EMAIL` (`alarm@verwalino.de`), `ALERT_SMTP_URL` (TLS-required SMTP
 connection URL) and `ALERT_SMTP_FROM`. The five-minute job timeout gives a nominal **15 + 5 = 20 minute**
 alert budget; GitHub scheduling delays and SMTP delivery remain external limits, not a hard SLA.
 
