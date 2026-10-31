@@ -116,7 +116,8 @@ carries `animate-in`/`fade-in` classes, but the `tailwindcss-animate` plugin is 
 The dashboard shows a kit `Card` named “Kontingent” for the hosted free plan,
 with a semantic `h2` and a responsive one/three-column definition list. It shows
 “Speicher”, “Objekte” and “Einheiten” as usage / limit, with German number
-formatting and binary storage units. At 90% or above, a warning `Badge` says
+formatting and MiB/GiB storage units, using the shared upload-cap formatter. At 90% or
+above, a warning `Badge` says
 “Fast ausgeschöpft” and the card says “Ihr Kontingent ist zu mindestens 90 %
 belegt.” Errors show “Kontingent nicht verfügbar.” with retry; loading shows
 “Kontingent wird geladen …”. The card waits for deployment metadata and requests
@@ -130,8 +131,13 @@ API client reads the code for JSON and multipart refusals, exposes it on `ApiErr
 and preserves the German message in existing error surfaces.
 Attachment upload errors with status 413 display the backend's German explanation,
 including “Speicherkontingent erschöpft …”, while preserving the file and title.
-Declaration, intake and attachment file checks read the public metadata file cap,
-with 25 MiB as the fallback while metadata is loading or unavailable.
+Declaration, intake and attachment file checks, hints and validation messages read
+the public metadata file cap. They and the quota card display MiB, or GiB from
+1 GiB upwards, through `formatUploadLimit` in `frontend/src/lib/uploads.ts`: at
+most two decimal places, trailing zeros dropped, German decimal comma and
+thousands separator (`25 MiB`, `1,5 GiB`, `2 GiB`). Backend 413 upload refusals
+and the storage refusal use the same format through `format_upload_limit`. The
+fallback is 25 MiB while metadata is loading or unavailable.
 
 ### Organization export
 
@@ -496,7 +502,7 @@ typo of `btn--primary`), `badge--warning`, `form-hint`, `table-responsive`.
   `select` with an empty option ("Alle Objekte", "Bitte wählen"), the current selection survives new
   searches, errors as `role="alert"`, "Weitere laden" for more pages.
 - **Upload.** Native `<input type="file">` (the browser's own button text is visible) in a `.form-grid`
-  form: `AttachmentsPanel.tsx` (documents, 25 MiB limit stated in the copy), `MasterImport.tsx` (CSV with
+  form: `AttachmentsPanel.tsx` (documents, metadata upload limit stated in the copy), `MasterImport.tsx` (CSV with
   preview table and row errors), the mandate upload in `MandateDetailPage.tsx`. These forms have no drag
   and drop or progress bar; controls are disabled while requests run. CSV import and attachments report
   outcomes in `role="status"` lines. `DeclarationImportPage.tsx` renders a `<progress>` for processing,

@@ -25,6 +25,8 @@ from tests.setup_support import fresh_setup  # noqa: F401
 from app.core.deployment_policy import get_deployment_policy
 from tests.test_auth_password import password_identity as local_password_identity  # noqa: F401
 
+_SHARED_HOSTED_USAGE = pytest.StashKey[dict | None]()
+
 
 @pytest.fixture(scope="session", autouse=True)
 def run_migrations(request):
@@ -56,8 +58,62 @@ async def bdd_loop():
     return asyncio.get_running_loop()
 
 
+@pytest.fixture(scope="session")
+def shared_hosted_property_headroom(seed_data, request):
+    """Diagnose shared fixture growth before a later scenario hits the free cap."""
+    if target_url() or not get_deployment_policy().quota_enforcement:
+        yield None
+        return
+
+    from app.core.quotas import FREE_PLAN
+
+    usage = {"seed_data": seed_data, "peaks": {}}
+    yield usage
+    # Keep at least two slots free throughout the shared scenarios.
+    minimum_headroom = 2
+    problems = []
+    for name, count in shared_property_counts(seed_data).items():
+        peak, scenario = usage["peaks"].get(name, (count, "session teardown"))
+        message = (f"Shared hosted BDD properties: {name}: peak {peak}/{FREE_PLAN.properties}, "
+                   f"end {count}/{FREE_PLAN.properties}; peak scenario: {scenario}; "
+                   f"requires at least {minimum_headroom} free slots.")
+        request.config.pluginmanager.get_plugin("terminalreporter").write_line(message)
+        if FREE_PLAN.properties - max(peak, count) < minimum_headroom:
+            problems.append(message)
+    assert not problems, "\n".join(problems) + (
+        "\nReuse fixture records or isolate property-heavy scenarios in their own organization."
+    )
+
+
+def shared_property_counts(seed_data):
+    import psycopg2
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    counts = {}
+    with psycopg2.connect(MIGRATOR_SYNC_URL, options="-c statement_timeout=5000") as connection, connection.cursor() as cursor:
+        for name, org_id in (("Verwaltung Alpha", seed_data["org_a_id"]),
+                             ("Verwaltung Beta", seed_data["org_b_id"])):
+            cursor.execute("SELECT count(*) FROM property WHERE organization_id = %s", (str(org_id),))
+            counts[name] = cursor.fetchone()[0]
+    return counts
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item):
+    yield
+    usage = item.stash.get(_SHARED_HOSTED_USAGE, None)
+    if usage is not None and "fresh_setup" not in item.funcargs["request"].fixturenames:
+        # Sample before function-fixture cleanup can truncate retained evidence.
+        # Fresh-installation scenarios hold a rollback-only TRUNCATE and do not
+        # use the shared records; another connection would wait for teardown.
+        for name, count in shared_property_counts(usage["seed_data"]).items():
+            if count > usage["peaks"].get(name, (-1, ""))[0]:
+                usage["peaks"][name] = count, item.name
+
+
 @pytest.fixture
-def world(bdd_loop, request):
+def world(bdd_loop, request, shared_hosted_property_headroom):
+    request.node.stash[_SHARED_HOSTED_USAGE] = shared_hosted_property_headroom
     if target_url():
         admin = httpx.AsyncClient(base_url=target_url(), timeout=60)
         anonymous = httpx.AsyncClient(base_url=target_url(), timeout=60)

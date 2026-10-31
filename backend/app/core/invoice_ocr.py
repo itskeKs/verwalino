@@ -18,6 +18,7 @@ import tempfile
 import time
 
 from app.core.einvoice import EInvoiceExtractor
+from app.core.document_limits import MAX_UPLOAD_BYTES
 from app.core.pdf_extraction import PdfTextExtractor
 
 PROCESSOR_VERSION = "invoice-local-v1"
@@ -64,7 +65,7 @@ def ocr_page(pdf_path: Path, page: int, directory: Path) -> str:
 
 def extract_invoice(data: bytes, mime_type: str) -> dict:
     """Child-process entry point; synchronous and independently testable."""
-    if len(data) > 25 * 1024 * 1024:
+    if len(data) > MAX_UPLOAD_BYTES:
         return outcome("unsupported", "file_size_limit")
     is_pdf = data.startswith(b"%PDF") or mime_type in {"application/pdf", "application/x-pdf"}
     if not is_pdf:
@@ -161,4 +162,4 @@ if __name__ == "__main__":
         import resource
         resource.setrlimit(resource.RLIMIT_AS, (1024 ** 3, 1024 ** 3))
     # This is a private IPC result, never an operational log.
-    print(json.dumps(extract_invoice(sys.stdin.buffer.read(25 * 1024 * 1024 + 1), sys.argv[1])))
+    print(json.dumps(extract_invoice(sys.stdin.buffer.read(MAX_UPLOAD_BYTES + 1), sys.argv[1])))

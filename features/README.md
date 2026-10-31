@@ -79,6 +79,14 @@ the scaled storage boundary and quota-usage isolation. A fixture checks shared A
 usage before and after each quota scenario, including failures, and closes its own clients.
 It fills storage through the real upload API and verifies the German refusal. Files and
 database records use the ordinary services; signup mail uses local Mailpit.
+The organization-isolation feature reuses one set of property, person and bank
+account records per organization: its scenarios only read them or attempt refused
+foreign mutations. The session fixture enforces shared property headroom.
+At the end of a local hosted run, a guard requires at least two free property
+slots in each shared organization. It reports both final counts and peak counts
+with the scenario name, sampling before fixture cleanup can empty the tables.
+Fresh-installation scenarios use an isolated rollback-only transaction and are
+excluded from shared-count sampling.
 No external network or model call is involved.
 Browser app processes inherit the
 selected mode too; `@browser` remains a separate opt-in tag. Browser scenarios do not
