@@ -139,10 +139,28 @@ and reads “Export wird vorbereitet …” while busy. Server errors appear unc
 in a German `role="alert"`; failure keeps the button available for retry and
 starts no download. Changing the organization, account or role cancels an active
 request. Successful responses download `verwalino-organisation.tar.gz`; there is
-no success claim about where the browser saved it. Text wraps at 360 px. Import
-and organization-deletion controls are pending their backend implementation.
+no success claim about where the browser saved it. Text wraps at 360 px.
+The card loads the organization status to offer “Daten importieren” only for an
+empty organization, with labelled archive input and German refusal details;
+a refusal preserves the file. Import reports the processed archive row count.
+“Organisation löschen” opens a scrollable kit dialog with retained entity
+counts/deadlines, erasure categories, the German no-login/operator-retention
+notice and a prominent fresh-export recommendation/button immediately before
+confirmation. Exact typed organization name enables the destructive confirmation.
+During the seven-day cooling-off every signed-in page shows a wrapping status
+banner with the deadline; only the owner-admin sees “Löschung widerrufen”.
+Import and new deletion actions are hidden during cooling-off. The export and
+banner cancellation remain available. Dialog/button text wraps at 360 px.
 
-![Organization export on a narrow screen](docs/assets/design/organization-export-360.png)
+![Organization data controls on a narrow screen](docs/assets/design/organization-export-360.png)
+
+![Organization data controls on desktop](docs/assets/design/organization-data-desktop.png)
+
+![Deletion preview on desktop](docs/assets/design/organization-deletion-desktop.png)
+
+![Deletion preview on a narrow screen](docs/assets/design/organization-deletion-360.png)
+
+![Cooling-off banner on a narrow screen](docs/assets/design/organization-cooling-off-360.png)
 
 ### App shell
 

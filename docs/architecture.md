@@ -1328,3 +1328,27 @@ compares all old data/security objects and byte-identical issued PDFs.
 - PDF layouts (SDD §18, open).
 - Final choice of the immutability enforcement mechanism (trigger vs. grants vs. frozen table) — detail in M2.
 - Calendar/schedule (roadmap: needs team size/velocity).
+
+
+## Organization transfer and erasure
+
+[Organization export/import](operations/organization-export.md) is a product
+archive, separate from PostgreSQL backup/restore. Version 2 adds durable source
+identities; version 1 remains importable. Export remains within administrator
+RLS. Import validates hashes, schema ancestry and dependencies before inserting
+into an empty tenant in one transaction. Admission exposes only emptiness and
+supplied-ID collisions; it does not export or restore private provenance.
+Ordinary RLS and native original-registration validation remain authoritative.
+
+Migration 0147 adds organization-deletion state and a single retention-plan
+function used by the aggregate preview and operator execution. Runtime callers
+receive counts/deadlines; only operator maintenance can retrieve the complete
+retention-key list. [ADR-0012](adr/0012-gdpr-erasure-vs-gobd-retention.md) controls
+restriction versus anonymization. Immutable vouchers, originals and audit
+evidence plus required dependencies are retained, with hashes checked at erasure.
+Revision 0148 also reconciles expired person bindings in the preview; operator
+erasure anonymizes those personal fields while preserving immutable originals.
+Seven-day cooling-off is enforced in both HTTP authentication and database write
+triggers. Final erasure invalidates every account/session; retained records have
+an operator-only path described in [DEPLOY.md](../DEPLOY.md#organization-erasure-and-retained-record-access).
+Files are cleaned only after the database commit, with retry on later CLI runs.

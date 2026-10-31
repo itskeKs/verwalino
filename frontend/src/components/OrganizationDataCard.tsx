@@ -1,11 +1,32 @@
-import { useEffect, useRef, useState } from "react";
-import { api } from "../api/client";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, uploadFormData } from "../api/client";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader } from "./ui/card";
+
+import { Input } from "./ui/input";
+import { OrganizationDeletion } from "./OrganizationDeletion";
+import { lifecycleChanged, type OrganizationLifecycle } from "../api/organizationLifecycle";
 
 export function OrganizationDataCard() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [organization, setOrganization] = useState<OrganizationLifecycle | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const refresh = useCallback(() => { void api.get<OrganizationLifecycle>("/api/organizations/me").then(setOrganization).catch(() => setError("Organisationsstatus konnte nicht geladen werden.")); }, []);
+  useEffect(() => { refresh(); window.addEventListener("organization-lifecycle-changed", refresh); return () => window.removeEventListener("organization-lifecycle-changed", refresh); }, [refresh]);
+  async function restore() {
+    if (!file || importing) return;
+    const data = new FormData(); data.append("file", file);
+    setImporting(true); setError(null); setResult(null);
+    try {
+      const response = await uploadFormData<{ row_counts: Record<string, number> }>("/api/organizations/import", data);
+      setResult(`Import abgeschlossen: ${Object.values(response.row_counts).reduce((sum, count) => sum + count, 0).toLocaleString("de-DE")} Datensätze aus dem Archiv verarbeitet.`);
+      refresh(); lifecycleChanged();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Der Import ist fehlgeschlagen."); }
+    finally { setImporting(false); }
+  }
   const active = useRef<AbortController | null>(null);
   useEffect(() => () => { active.current?.abort(); }, []);
 
@@ -34,14 +55,23 @@ export function OrganizationDataCard() {
     }
   }
 
-  return <Card role="region" aria-labelledby="organization-data-title" aria-busy={busy}>
+  return <Card role="region" aria-labelledby="organization-data-title" aria-busy={busy || importing}>
     <CardHeader><h2 id="organization-data-title" className="text-base font-semibold">Organisationsdaten</h2></CardHeader>
     <CardContent className="space-y-4">
       <p className="text-sm text-muted-foreground">Der Export enthält die für Sie freigegebenen Daten und Originaldokumente. Daten mit eingeschränkten Freigaben können fehlen. Bewahren Sie das Archiv geschützt auf.</p>
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      <Button type="button" variant="outline" size="lg" disabled={busy} onClick={() => void download()}>
+      {error && <p role="alert" className="break-words text-sm text-destructive">{error}</p>}
+      {result && <p role="status">{result}</p>}
+      <div className="flex flex-wrap gap-3">
+      <Button type="button" variant="outline" size="lg" disabled={busy || importing} onClick={() => void download()}>
         {busy ? "Export wird vorbereitet …" : "Daten exportieren"}
       </Button>
+      {organization && organization.deletion?.status !== "cooling_off" && <OrganizationDeletion changed={refresh} download={download} exporting={busy} />}
+      </div>
+      {organization?.import_available && organization.deletion?.status !== "cooling_off" && <div className="space-y-3 border-t pt-4">
+        <p className="text-sm text-muted-foreground">Importieren Sie ein Verwalino-Exportarchiv in diese leere Organisation. Fehlende Abhängigkeiten oder ungültige Prüfsummen verhindern den gesamten Import.</p>
+        <label className="block space-y-2 text-sm">Exportarchiv<Input type="file" accept=".tar.gz,application/gzip" onChange={event => setFile(event.target.files?.[0] ?? null)} disabled={importing} /></label>
+        <Button type="button" variant="outline" size="lg" disabled={!file || importing || busy} onClick={() => void restore()}>{importing ? "Import wird ausgeführt …" : "Daten importieren"}</Button>
+      </div>}
     </CardContent>
   </Card>;
 }

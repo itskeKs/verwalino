@@ -59,7 +59,12 @@ async function request<T>(
       const body = await res.json();
       if (body.detail) {
         if (typeof body.detail === "string") detail = body.detail;
-        else if (body.detail.code === "financial_inputs_incomplete") {
+        else if (typeof body.detail.message === "string") {
+          detail = body.detail.message;
+          if (Array.isArray(body.detail.missing_dependencies)) {
+            detail += " " + body.detail.missing_dependencies.map((item: { entity: string; source_ids: string[]; count: number }) => `${item.entity}: ${item.count} (${item.source_ids.join(", ")})`).join("; ");
+          }
+        } else if (body.detail.code === "financial_inputs_incomplete") {
           detail = financialInputMessage(body.detail);
         } else detail = "Eingaben unvollständig oder ungültig. Bitte die angegebenen Felder prüfen.";
       }
@@ -129,7 +134,12 @@ export async function uploadFormData<T>(
       const body = await res.json();
       if (body.detail) {
         if (typeof body.detail === "string") detail = body.detail;
-        else if (body.detail.code === "financial_inputs_incomplete") {
+        else if (typeof body.detail.message === "string") {
+          detail = body.detail.message;
+          if (Array.isArray(body.detail.missing_dependencies)) {
+            detail += " " + body.detail.missing_dependencies.map((item: { entity: string; source_ids: string[]; count: number }) => `${item.entity}: ${item.count} (${item.source_ids.join(", ")})`).join("; ");
+          }
+        } else if (body.detail.code === "financial_inputs_incomplete") {
           detail = financialInputMessage(body.detail);
         } else detail = "Eingaben unvollständig oder ungültig. Bitte die angegebenen Felder prüfen.";
       }

@@ -1,7 +1,7 @@
 # Feature status
 
 Current feature catalog of Verwalino by area, compared with the reference product described in
-[domain-reference.md](domain-reference.md). Status as of 2026-10-31, migration head `0146`.
+[domain-reference.md](domain-reference.md). Status as of 2026-10-31, migration head `0148`.
 Status: ✅ implemented and reachable in the running app, 🟡 partial (reason given), ❌ not implemented.
 Reference product: whether the reference software offers the feature (yes/partial/no, n/a = not a
 reference feature). Short paths: `api/ services/ engine/ models/ workers/ core/` are under
@@ -19,7 +19,7 @@ stack's limits: declaration import/Q&A, SMTP and automatic invoice OCR are disab
 | --- | --- | --- | --- |
 | Deployment mode | n/a | ✅ validated selfhost/hosted policy, public mode/version/mail-capability metadata, setup/signup gates; remaining hosted features deferred | `core/config.py`, `core/deployment_policy.py`, issue #18 |
 | Organization quotas | n/a | ✅ hosted free constants (2 GiB, 25 MiB/upload, 20 properties, 200 units), atomic write refusals, usage card; model calls disabled by default, shared monthly USD cap over existing ledgers; overrides deferred | `core/quotas.py`, `services/quota_service.py`, `components/OrganizationQuotaCard.tsx`, issue #22 |
-| Organization export/import and deletion | n/a | 🟡 owner-admin export API and Users-page action: JSONL, verified originals, CSV companions, current RLS/export authority, private expiring artifacts; import, large background jobs, deletion and fresh-install acceptance pending | `api/organizations.py`, `services/organization_export_service.py`, `components/OrganizationDataCard.tsx`, [format and limits](operations/organization-export.md), issue #23 |
+| Organization export/import and deletion | n/a | 🟡 owner-admin archive v2 export/import with remapping and atomic refusals; preview, fresh export, seven-day read-only deletion/cancel and operator erasure; protected historical evidence adapters and real fresh-install acceptance remain | `api/organizations.py`, `services/organization_export_service.py`, `services/organization_import_service.py`, `services/organization_deletion_service.py`, `components/OrganizationDataCard.tsx`, [format and limits](operations/organization-export.md), issue #23 |
 | Browser first-run setup | n/a | ✅ selfhost-only, one-time installer token, 24-hour expiry, atomic first organization/admin; real-stack acceptance pending | `api/setup.py`, `pages/SetupPage.tsx`, `scripts/self-host.sh`, issue #8 |
 | Manual diagnostics reports | n/a | ✅ admin download and installer bundle with structural redacted logs; manual attachment only, fake-Docker acceptance | `diagnostics.py`, `api/diagnostics.py`, `pages/UsersPage.tsx`, `scripts/self-host.sh`, issue #17 |
 | One-command release installation | n/a | 🟡 installer and signed release-bundle workflow prepared; first release assets and fresh-VM setup/login/restart pending | `install.sh`, `.github/workflows/release-image.yaml`, [guide](../DEPLOY.md#install-in-one-command), issue #12 |
@@ -151,3 +151,11 @@ stack's limits: declaration import/Q&A, SMTP and automatic invoice OCR are disab
 - Dunning fees and default interest (Dunning, deadlines, tasks): fees are fixed constants and interest needs a base rate typed per notice; neither is configurable per organization (#69).
 - Tenant portal (Documents, communication, reports): not built; planned right after the hosted launch (#41).
 - Year overview per property (Anlage V) (Documents, communication, reports): mapping aid available; no automatic tax-year cash-outflow calculation, ownership allocation, organization overrides or ELSTER submission.
+
+
+Organization lifecycle (#23): archive v2 with v1 import, consistent ID remapping,
+empty-tenant admission and atomic refusal, retention preview/fresh-export offer,
+typed confirmation, seven-day read-only cooling-off/cancel, and operator erasure
+are implemented. Historical protected scope/evidence restoration can still be
+refused under current integrity rules. A real fresh-install import is maintainer
+acceptance; local validation uses two synthetic organizations in the test DB.

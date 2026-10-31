@@ -7,6 +7,7 @@ import tarfile
 import pytest
 from pytest_bdd import given, when, then
 
+from tests.bdd.browser import browser_world  # noqa: F401
 from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
 from tests.test_organization_export import export_store  # noqa: F401
 
@@ -223,3 +224,47 @@ def source_unchanged(world):
             properties = await client.get('/api/properties')
             assert properties.status_code == 200 and len(properties.json()) == 2
     world.run(source())
+
+
+@when('the administrator reviews and cancels deletion in the browser')
+def browser_lifecycle(browser_world):
+    from playwright.async_api import expect
+    async def operate():
+        page = browser_world.page
+        await browser_world.visit('/users')
+        await expect(page.get_by_role('button', name='Organisation löschen', exact=True)).to_be_visible()
+        await page.set_viewport_size({'width': 1280, 'height': 1000})
+        await page.screenshot(path='/tmp/issue23-organization-desktop.png', full_page=True)
+        await page.get_by_role('button', name='Organisation löschen', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Organisation löschen', exact=True)
+        await expect(dialog.get_by_role('button', name='Jetzt frischen Export erstellen', exact=True)).to_be_visible()
+        await page.screenshot(path='/tmp/issue23-deletion-desktop.png', full_page=True)
+        await page.set_viewport_size({'width': 360, 'height': 844})
+        await page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        box = await dialog.bounding_box()
+        assert box and box['y'] >= 0 and box['y'] + box['height'] <= 844
+        await page.screenshot(path='/tmp/issue23-deletion-360.png', full_page=True)
+        assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+        organization = await page.request.get('/api/organizations/me')
+        name = (await organization.json())['name']
+        await dialog.get_by_label('Organisationsname zur Bestätigung').fill(name)
+        await dialog.get_by_role('button', name='Löschung bestätigen', exact=True).click()
+        await expect(dialog).not_to_be_visible()
+        banner = page.get_by_role('status').filter(has_text='schreibgeschützt')
+        await expect(banner).to_be_visible()
+        await page.screenshot(path='/tmp/issue23-cooling-off-360.png', full_page=True)
+        await page.get_by_role('button', name='Löschung widerrufen', exact=True).click()
+        await expect(banner).not_to_be_visible()
+        await page.screenshot(path='/tmp/issue23-organization-360.png', full_page=True)
+    browser_world.run(operate())
+
+
+@then('the organization controls fit desktop and phone width')
+def browser_lifecycle_geometry(browser_world):
+    from playwright.async_api import expect
+    async def verify():
+        page = browser_world.page
+        assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+        await expect(page.get_by_role('button', name='Organisation löschen', exact=True)).to_be_visible()
+        assert not browser_world.errors
+    browser_world.run(verify())

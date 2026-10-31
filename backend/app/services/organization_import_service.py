@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import hashlib
+import gzip
 import json
 import logging
+import sys
 import tarfile
 import tempfile
 import uuid
+import zlib
 from contextlib import contextmanager
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
 
 from alembic.script import ScriptDirectory
@@ -28,11 +31,24 @@ MAX_ARCHIVE_BYTES = MAX_UPLOAD_BYTES
 MAX_METADATA_BYTES = 32 * 1024**2
 MAX_DOCUMENT_BYTES = 64 * 1024**2
 MAX_EXPANDED_BYTES = 512 * 1024**2
+MAX_MEMBERS = 10_000
+MAX_ROWS = 20_000
+MAX_JSON_ROW_BYTES = 2 * 1024**2
+MAX_DECODED_METADATA_BYTES = 64 * 1024**2
 logger = logging.getLogger(__name__)
 
 
 def refuse(message, **details):
     raise HTTPException(422, {'message': message, **details})
+
+
+def _metadata_size(value):
+    size = sys.getsizeof(value)
+    if isinstance(value, dict):
+        size += sum(_metadata_size(k) + _metadata_size(v) for k, v in value.items())
+    elif isinstance(value, list):
+        size += sum(_metadata_size(item) for item in value)
+    return size
 
 
 @contextmanager
@@ -41,29 +57,60 @@ def read_archive(source):
     if source.tell() > MAX_ARCHIVE_BYTES:
         refuse('Das Archiv überschreitet die Importgrenze von 25 MiB.')
     source.seek(0)
+    gzip_header = source.read(10)
+    if len(gzip_header) != 10 or gzip_header[:3] != b'\x1f\x8b\x08' or gzip_header[3] != 0:
+        refuse('Der Komprimierungskopf des Produktarchivs ist ungültig.')
+    source.seek(0)
     with tempfile.TemporaryDirectory(prefix='organization-import-') as directory:
         members, total, metadata = {}, 0, 0
         try:
-            with tarfile.open(fileobj=source, mode='r:gz') as archive:
-                for member in archive:
+            # Official v1/v2 exports use plain regular headers. Decode each
+            # fixed-size header before reading payloads: tarfile's extended-header
+            # decoder can otherwise allocate attacker-declared PAX/GNU sizes.
+            with gzip.GzipFile(fileobj=source, mode='rb') as compressed:
+                while True:
+                    header = compressed.read(512)
+                    if len(header) != 512:
+                        refuse('Das Exportarchiv ist unvollständig.')
+                    if header == bytes(512):
+                        if compressed.read(512) != bytes(512):
+                            refuse('Das Archivende ist beschädigt.')
+                        while tail := compressed.read(64 * 1024):
+                            total += len(tail)
+                            if total > MAX_EXPANDED_BYTES or any(tail):
+                                refuse('Das Archiv enthält unzulässige Nachlaufdaten.')
+                        break
+                    member = tarfile.TarInfo.frombuf(header, encoding='utf-8', errors='strict')
                     path = PurePosixPath(member.name)
-                    if (not member.isfile() or member.name in members or path.is_absolute()
+                    if (member.type not in (tarfile.REGTYPE, tarfile.AREGTYPE) or member.size < 0
+                        or member.name in members or path.is_absolute()
                         or any(p in {'', '.', '..'} for p in member.name.split('/')) or '\\' in member.name):
                         refuse('Das Archiv enthält unzulässige Dateieinträge.')
-                    total += member.size
+                    if len(members) >= MAX_MEMBERS:
+                        refuse('Das Archiv enthält zu viele Dateien (maximal 10.000).')
+                    total += member.size + 512
                     document = member.name.startswith('documents/')
                     if document and member.size > MAX_DOCUMENT_BYTES:
                         refuse('Ein Original überschreitet die Importgrenze von 64 MiB.')
                     metadata += 0 if document else member.size
                     if total > MAX_EXPANDED_BYTES or metadata > MAX_METADATA_BYTES:
                         refuse('Das entpackte Archiv überschreitet die Importgrenze.')
+                    if member.name == 'manifest.json' and member.size > MAX_JSON_ROW_BYTES:
+                        refuse('Das Inhaltsverzeichnis überschreitet die Importgrenze.')
                     destination = Path(directory) / str(len(members))
-                    digest = hashlib.sha256()
-                    stream = archive.extractfile(member)
+                    digest, remaining = hashlib.sha256(), member.size
                     with destination.open('xb') as output:
-                        while chunk := stream.read(64 * 1024):
+                        while remaining:
+                            chunk = compressed.read(min(64 * 1024, remaining))
+                            if not chunk:
+                                refuse('Eine Archivdatei ist unvollständig.')
+                            remaining -= len(chunk)
                             digest.update(chunk)
                             output.write(chunk)
+                    padding = (-member.size) % 512
+                    if len(compressed.read(padding)) != padding:
+                        refuse('Eine Archivdatei ist unvollständig.')
+                    total += padding
                     members[member.name] = (destination, digest.hexdigest())
             manifest = json.loads(members['manifest.json'][0].read_bytes())
             if manifest['format'] != FORMAT or type(manifest['version']) is not int or manifest['version'] not in (1, 2):
@@ -77,19 +124,32 @@ def read_archive(source):
             for name, digest in manifest['sha256'].items():
                 if digest != members[name][1]:
                     refuse('Die Prüfsumme einer Archivdatei stimmt nicht.')
-            entities = {}
+            entities, row_count, decoded_bytes = {}, 0, 0
             for name in manifest['entity_order']:
                 if name in entities:
                     refuse('Das Archiv enthält doppelte Entitäten.')
-                rows = [json.loads(line, parse_float=Decimal) for line in
-                        members[f'entities/{name}.jsonl'][0].read_bytes().splitlines()]
-                if len(rows) != manifest['row_counts'][name] or any(not isinstance(row, dict) for row in rows):
+                rows = []
+                with members[f'entities/{name}.jsonl'][0].open('rb') as lines:
+                    while line := lines.readline(MAX_JSON_ROW_BYTES + 1):
+                        if len(line) > MAX_JSON_ROW_BYTES:
+                            refuse('Eine Datenzeile überschreitet die Importgrenze von 2 MiB.')
+                        row_count += 1
+                        if row_count > MAX_ROWS:
+                            refuse('Das Archiv enthält zu viele Datensätze (maximal 20.000).')
+                        row = json.loads(line, parse_float=Decimal)
+                        decoded_bytes += _metadata_size(row)
+                        if decoded_bytes > MAX_DECODED_METADATA_BYTES:
+                            refuse('Die eingelesenen Metadaten überschreiten die Arbeitsspeichergrenze.')
+                        if not isinstance(row, dict):
+                            refuse('Eine Archivzeile enthält keinen Datensatz.')
+                        rows.append(row)
+                if len(rows) != manifest['row_counts'][name]:
                     refuse('Die Datensatzzahl im Archiv stimmt nicht.')
                 entities[name] = rows
             if len(entities.get('organization', [])) != 1:
                 refuse('Das Archiv muss genau eine Organisation enthalten.')
             yield manifest, entities, members
-        except (KeyError, ValueError, TypeError, tarfile.TarError, EOFError, UnicodeError) as exc:
+        except (KeyError, ValueError, TypeError, tarfile.TarError, EOFError, UnicodeError, RecursionError, InvalidOperation, gzip.BadGzipFile, zlib.error) as exc:
             refuse('Das Exportarchiv ist beschädigt oder unvollständig.')
 
 

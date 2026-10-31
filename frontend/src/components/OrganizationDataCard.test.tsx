@@ -1,15 +1,18 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { api, ApiError } from "../api/client";
+import { api, ApiError, uploadFormData } from "../api/client";
 import { OrganizationDataCard } from "./OrganizationDataCard";
 
 vi.mock("../api/client", async original => ({ ...await original<typeof import("../api/client")>(),
-  api: { getBlob: vi.fn() } }));
+  api: { getBlob: vi.fn(), get: vi.fn(), post: vi.fn() }, uploadFormData: vi.fn() }));
 
 beforeEach(() => {
   vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:organization"), revokeObjectURL: vi.fn() }));
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
   vi.mocked(api.getBlob).mockReset();
+  vi.mocked(api.get).mockReset().mockResolvedValue({ id: "org", name: "Verwaltung", import_available: false, deletion: null });
+  vi.mocked(api.post).mockReset();
+  vi.mocked(uploadFormData).mockReset();
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -43,4 +46,29 @@ it("blocks repeated requests and ignores a result after unmount", async () => {
   view.unmount();
   await act(async () => { complete(new Blob(["late"])); });
   expect(HTMLAnchorElement.prototype.click).not.toHaveBeenCalled();
+});
+
+it("offers import only for an empty organization and keeps the selected file on refusal", async () => {
+  vi.mocked(api.get).mockResolvedValue({ id: "org", name: "Verwaltung", import_available: true, deletion: null });
+  vi.mocked(uploadFormData).mockRejectedValue(new ApiError(422, "Fehlende Abhängigkeiten: person (2)."));
+  render(<OrganizationDataCard />);
+  const input = await screen.findByLabelText("Exportarchiv");
+  const file = new File(["archive"], "organisation.tar.gz", { type: "application/gzip" });
+  fireEvent.change(input, { target: { files: [file] } });
+  fireEvent.click(screen.getByRole("button", { name: "Daten importieren" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Fehlende Abhängigkeiten");
+  expect((input as HTMLInputElement).files?.[0]).toBe(file);
+});
+
+it("shows retention, strongly suggests a fresh export and requires the exact organization name", async () => {
+  vi.mocked(api.get).mockResolvedValue({ id: "org", name: "Lange Verwaltung GmbH", import_available: false, deletion: null });
+  vi.mocked(api.post).mockResolvedValue({ status: "requested", organization_name: "Lange Verwaltung GmbH", notice: "Nach der Löschung ist keine Anmeldung mehr möglich; aufbewahrungspflichtige Unterlagen bleiben für acht Jahre beim Betreiber.", retention: { retained: { audit_event: { count: 4, until: "2034-12-31" } }, erased: { person: 2 }, erased_fields: ["Ungebundene Personendaten"] } });
+  render(<OrganizationDataCard />);
+  fireEvent.click(await screen.findByRole("button", { name: "Organisation löschen" }));
+  const confirm = await screen.findByRole("button", { name: "Löschung bestätigen" });
+  expect(confirm).toBeDisabled();
+  expect(screen.getByText(/Nach der Löschung ist keine Anmeldung/)).toBeVisible();
+  fireEvent.change(screen.getByLabelText("Organisationsname zur Bestätigung"), { target: { value: "Lange Verwaltung GmbH" } });
+  expect(confirm).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Jetzt frischen Export erstellen" })).toBeVisible();
 });

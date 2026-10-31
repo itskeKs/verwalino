@@ -18,3 +18,8 @@ Feature: Organization deletion
     And the administrator confirms the exact organization name
     And the operator executes deletion after seven days
     Then the original remains unchanged and the former owner cannot sign in
+
+  @browser
+  Scenario: Organization lifecycle controls work at desktop and phone width
+    When the administrator reviews and cancels deletion in the browser
+    Then the organization controls fit desktop and phone width
