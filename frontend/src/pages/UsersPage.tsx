@@ -8,6 +8,7 @@ import { createUser, resetUserPassword, updateUser } from "../api/endpoints";
 import { api, ApiError, getLastErrorRequestId } from "../api/client";
 import { Button } from "../components/ui/button";
 import type { User, UserRole } from "../api/types";
+import { OrganizationDataCard } from "../components/OrganizationDataCard";
 
 const roles: { value: UserRole; label: string }[] = [
   { value: "CLERK", label: "Sachbearbeiter" },
@@ -262,5 +263,5 @@ function UserAdministration({ actorId }: { actorId: string }) {
 export function UsersPage() {
   const { session } = useAuth();
   return <div className="paged-list"><h1>Benutzer</h1>{session?.role === "OWNER_ADMIN"
-    ? <><p><Link to="/berechtigungen">Berechtigungen verwalten</Link></p><UserAdministration key={`${session.organization_id}:${session.user_id}:${session.role}`} actorId={session.user_id} /></> : <p className="error-text">Zugriff nur für Inhaber/Admin.</p>}</div>;
+    ? <><OrganizationDataCard key={`${session.organization_id}:${session.user_id}:${session.role}`} /><p><Link to="/berechtigungen">Berechtigungen verwalten</Link></p><UserAdministration key={`${session.organization_id}:${session.user_id}:${session.role}`} actorId={session.user_id} /></> : <p className="error-text">Zugriff nur für Inhaber/Admin.</p>}</div>;
 }

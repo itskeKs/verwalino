@@ -133,6 +133,52 @@ including “Speicherkontingent erschöpft …”, while preserving the file and
 Declaration, intake and attachment file checks read the public metadata file cap,
 with 25 MiB as the fallback while metadata is loading or unavailable.
 
+### Organization export
+
+The admin-only Users page starts with an “Organisationsdaten” kit card. Its muted
+paragraph explains that only released data/originals are included, restricted
+data may be missing, and the archive must be protected. “Daten exportieren” is a
+large outline button. It makes no request on mount, disables while preparing,
+and reads “Export wird vorbereitet …” while busy. Server errors appear unchanged
+in a German `role="alert"`; failure keeps the button available for retry and
+starts no download. Changing the organization, account or role cancels an active
+request. Successful responses download `verwalino-organisation.tar.gz`; there is
+no success claim about where the browser saved it. Text wraps at 360 px.
+The card loads the lightweight organization/lifecycle status to offer
+“Daten importieren” to owner-administrators outside cooling-off. Its copy explains
+that only an empty destination is accepted; the import request checks admission.
+The labelled archive input preserves the file on refusal. German error copy stays
+in the alert; raw entity names, source IDs and counts appear only in a collapsed
+“Technische Details” disclosure with wrapping text. Import reports the processed
+archive row count.
+Structured import refusal codes are read from `ApiError.code` and appear as
+“Fehlercode: …” in that same disclosure, alongside any entity/source diagnostics.
+The German alert text and selected archive remain available for retry.
+“Organisation löschen” opens a scrollable kit dialog with retained entity
+counts/deadlines, erasure categories, the German no-login/operator-retention
+notice and a prominent fresh-export recommendation/button immediately before
+confirmation. Exact typed organization name enables the destructive confirmation.
+During the seven-day cooling-off every signed-in page shows a wrapping status
+banner with the earliest execution time (“frühestens ab”); only the owner-admin
+sees “Löschung widerrufen”. Cancellation remains possible until actual execution,
+including when a due operator run has failed.
+Import and new deletion actions are hidden during cooling-off. The export and
+banner cancellation remain available. Dialog/button text wraps at 360 px.
+
+![Organization data controls on a narrow screen](docs/assets/design/organization-export-360.png)
+
+![Organization data controls on desktop](docs/assets/design/organization-data-desktop.png)
+
+![Deletion preview on desktop](docs/assets/design/organization-deletion-desktop.png)
+
+![Deletion preview on a narrow screen](docs/assets/design/organization-deletion-360.png)
+
+![Cooling-off banner on a narrow screen](docs/assets/design/organization-cooling-off-360.png)
+
+![Import refusal with technical details on desktop](docs/assets/design/organization-import-error-desktop.png)
+
+![Import refusal with technical details on a narrow screen](docs/assets/design/organization-import-error-360.png)
+
 ### App shell
 
 `AppShell.tsx`: `flex h-screen overflow-hidden` = **Sidebar** (16 rem) + a column of **Topbar**

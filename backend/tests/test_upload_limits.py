@@ -69,7 +69,8 @@ async def _run_asgi_app(
 
 
 @pytest.mark.asyncio
-async def test_request_body_limit_rejects_oversized_content_length_before_app():
+@pytest.mark.parametrize("path", ["/api/invoice-documents/upload", "/api/organizations/import"])
+async def test_request_body_limit_rejects_oversized_content_length_before_app(path):
     called = False
 
     async def downstream(scope, receive, send):
@@ -80,7 +81,7 @@ async def test_request_body_limit_rejects_oversized_content_length_before_app():
         RequestBodyLimitMiddleware(downstream, max_body_bytes=4),
         headers=[(b"content-length", b"5")],
         messages=[],
-        path="/api/invoice-documents/upload",
+        path=path,
     )
 
     assert called is False

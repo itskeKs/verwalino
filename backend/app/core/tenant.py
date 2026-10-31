@@ -68,6 +68,16 @@ async def get_current_user(request: Request) -> AuthContext:
     async with get_session_factory()() as session:
         async with session.begin():
             role = await validate_session_principal(session, user_id, organization_id, session_version)
+            if role is not None:
+                await set_tenant_context(session, organization_id)
+                await session.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {"actor": str(user_id)})
+                deletion = await session.scalar(text("SELECT status FROM organization_deletion WHERE organization_id=:org"), {"org": organization_id})
+                if deletion == "deleted_pending_retention":
+                    role = None
+                elif deletion == "cooling_off" and request.method not in {"GET", "HEAD", "OPTIONS"} and request.url.path not in {
+                    "/api/organizations/deletion/cancel", "/api/organizations/export", "/api/auth/logout"
+                }:
+                    raise HTTPException(409, "Ihre Organisation ist während der siebentägigen Widerrufsfrist schreibgeschützt.")
     if role is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

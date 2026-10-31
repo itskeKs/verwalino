@@ -64,6 +64,22 @@ app.add_middleware(RequestIdMiddleware)
 app.add_exception_handler(StarletteHTTPException, http_error)
 app.add_exception_handler(Exception, unhandled_error)
 
+
+# A write authenticated just before cooling-off may reach the native guard.
+# Keep that race a German conflict response; preserve normal error handling
+# for every unrelated database failure.
+from sqlalchemy.exc import DBAPIError
+
+
+async def organization_read_only_error(request, exc):
+    if getattr(exc.orig, 'sqlstate', None) == 'P0023':
+        return await http_error(request, HTTPException(409,
+            'Ihre Organisation ist während der Löschung schreibgeschützt.'))
+    raise exc
+
+
+app.add_exception_handler(DBAPIError, organization_read_only_error)
+
 # Invoice extraction runs in the durable worker after upload commits.
 
 # --- Routers ---

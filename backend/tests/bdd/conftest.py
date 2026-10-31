@@ -153,4 +153,5 @@ from tests.bdd.steps.signup import signup_isolation  # noqa: E402,F401
 from tests.bdd.steps.signup import *  # noqa: E402,F401,F403
 from tests.bdd.steps.password_reset import *  # noqa: E402,F401,F403
 from tests.bdd.steps.quotas import *  # noqa: E402,F401,F403
+from tests.bdd.steps.organization_transfer import *  # noqa: E402,F401,F403
 from tests.bdd.steps.source_access import *  # noqa: E402,F401,F403

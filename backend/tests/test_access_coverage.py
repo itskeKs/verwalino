@@ -159,18 +159,21 @@ async def test_capture_waits_for_live_admin_and_migration_retains_snapshots(migr
                 letters_before = db.execute(text('SELECT to_jsonb(d) FROM letter_document d ORDER BY id')).scalars().all()
                 templates_before = db.execute(text('SELECT to_jsonb(t) FROM letter_template t ORDER BY id')).scalars().all()
                 try:
-                    # Earlier scenarios may have issued immutable originals. This guarded
-                    # synthetic cleanup is confined to the rollback-only rehearsal.
+                    # A completed route sweep must leave no lifecycle decision.
+                    assert not db.scalar(text('SELECT EXISTS(SELECT 1 FROM organization_deletion)'))
+                    # Rehearsing every later downgrade requires an empty domain
+                    # graph, including immutable batches and live SEPA consent
+                    # from preceding suites. Use the guarded synthetic reset,
+                    # entirely inside this savepoint, then restore it below.
                     from tests.conftest import clear_disposable_source_context
-                    clear_disposable_source_context(db.connection.cursor())
+                    with db.connection.cursor() as cursor:
+                        clear_disposable_source_context(cursor)
                     db.execute(text('TRUNCATE access_coverage_review,access_coverage_snapshot CASCADE'))
                     db.execute(text('TRUNCATE source_security_transition,source_security_authorization,property_source_security'))
                     proposal_migration = importlib.import_module('migrations.versions.0084_access_grant_proposals')
-                    db.execute(text('TRUNCATE runtime_budget_review,runtime_budget_attestation CASCADE'))
                     from pathlib import Path
                     from alembic.script import ScriptDirectory
                     versions = ScriptDirectory(str(Path(__file__).resolve().parents[1] / 'migrations'))
-                    db.execute(text('TRUNCATE document_ref CASCADE'))
                     for revision in versions.iterate_revisions('head', '0088'):
                         revision.module.downgrade()
                     importlib.import_module('migrations.versions.0088_runtime_budget_review').downgrade()
