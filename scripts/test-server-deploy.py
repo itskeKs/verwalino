@@ -1,4 +1,6 @@
-"""Hosted-server script contracts; Docker, git, curl and sleep are faked, nothing leaves the temp dir.
+"""Hosted-server contracts; service operations, git fetch, curl and sleep are faked.
+
+Real git archive only reads local inputs; Docker is always faked.
 
 Run in backend/ with uv run python ../scripts/test-server-deploy.py.
 """
@@ -43,12 +45,15 @@ SITE_DIGEST = SITE_REPO + "@sha256:" + "d" * 64
 
 # One script serves as docker, git, curl and sleep; it logs every call and fails on demand.
 FAKE_TOOL = r'''#!/usr/bin/env python3
-import json, os, sys, tarfile, time
+import io, json, os, sys, tarfile, time
 tool = os.path.basename(sys.argv[0])
 args = sys.argv[1:]
 env = os.environ
 with open(env["FAKE_LOG"], "a") as log:
-    log.write(json.dumps({"tool": tool, "args": args, "site_image": env.get("VERWALINO_SITE_IMAGE")}) + "\n")
+    entry = {"tool": tool, "args": args, "site_image": env.get("VERWALINO_SITE_IMAGE")}
+    if tool == "docker" and args[:1] == ["compose"]:
+        entry.update(image=env.get("VERWALINO_IMAGE"), release_id=env.get("HV_RELEASE_ID"))
+    log.write(json.dumps(entry) + "\n")
 fail = env.get("FAKE_FAIL", "").split(",")
 
 
@@ -83,7 +88,7 @@ if tool == "git":
     if sub == "rev-parse" and "--verify" in rest:
         if env.get("FAKE_MISSING_TAG"):
             sys.exit(1)
-        out("0123456789abcdef\n")
+        out(env.get("FAKE_REVISION", "0123456789abcdef") + "\n")
     elif sub == "rev-parse":
         out(open(head).read() + "\n")
     elif sub == "describe":
@@ -94,9 +99,20 @@ if tool == "git":
         out(env.get("FAKE_DIRTY", ""))
     elif sub == "merge-base" and env.get("FAKE_NOT_ON_MAIN"):
         sys.exit(1)
+    elif sub == "archive":
+        if env.get("FAKE_REAL_ARCHIVE"):
+            os.execv(env["REAL_GIT"], [env["REAL_GIT"], "-C", env["FAKE_ROOT"], "archive", "HEAD", *rest[2:]])
+        with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as archive:
+            for name in rest[2:]:
+                data = open(os.path.join(env["FAKE_ROOT"], name), "rb").read()
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                archive.addfile(info, io.BytesIO(data))
     sys.exit(0)
 
 # docker
+if args[:2] == ["network", "inspect"]:
+    sys.exit(17 if env.get("FAKE_MISSING_STAGING_NETWORK") else 0)
 if args[0] == "compose":
     if any(arg.endswith("/docker-compose.site.yml") for arg in args) and not env.get("VERWALINO_SITE_IMAGE"):
         out("set VERWALINO_SITE_IMAGE to ghcr.io/itskeks/verwalino-site:<sha>@sha256:<digest>\n")
@@ -122,6 +138,8 @@ if args[0] == "compose":
     sys.exit(0)
 if args[0] == "pull":
     sys.exit(17 if "pull" in fail else 0)
+if args[0] == "run" and "validate" in args:
+    sys.exit(17 if "validate" in fail else 0)
 if args[0] == "image":
     if "verwalino-site:" in args[-1]:
         if not env.get("FAKE_NO_DIGEST"):
@@ -202,7 +220,7 @@ class ServerCase(unittest.TestCase):
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("VERWALINO_", "FAKE_", "COMPOSE_", "SSH_"))}
         self.env.update(PATH=f"{binary}:{os.environ['PATH']}", VERWALINO_SERVER_ROOT=str(self.srv),
                         VERWALINO_CONFIG=str(self.config), FAKE_LOG=str(self.log),
-                        FAKE_STATE=str(self.base / "state"))
+                        FAKE_STATE=str(self.base / "state"), FAKE_ROOT=str(ROOT))
 
     def install_config(self, image=OLD_DIGEST):
         """Create the installer config the way a maintainer does."""
@@ -464,22 +482,28 @@ class DeployTests(ServerCase):
                 self.assertIn(["pull", f"ghcr.io/itskeks/verwalino:{tag}"], pulls)
 
     def test_app_release_restores_the_operator_enabled_caddy_extension(self):
-        (self.srv / "config/Caddyfile.hosted").write_text("import /etc/caddy/Caddyfile.site\n")
+        (self.srv / "config/Caddyfile.hosted").write_text((ROOT / "infra/Caddyfile.hosted").read_text())
         result = self.deploy(FAKE_SITE_ENABLED="1")
         self.assertEqual(result.returncode, 0, result.stdout)
         compose = [c["args"] for c in self.calls("docker") if c["args"][0] == "compose"]
         restored = [a for a in compose if str(ROOT / "infra/docker-compose.site.yml") in a]
         self.assertEqual(len(restored), 1)
         self.assertEqual(restored[0][-4:], ["up", "-d", "--no-deps", "caddy"])
+        self.assertIn(str(ROOT / "infra/docker-compose.hosted-proxy.yml"), restored[0])
+        hosted = [a for a in compose if "up" in a and a[-1] == "caddy" and
+                  any(str(ROOT / f"infra/docker-compose.{name}.yml") in a for name in ("hosted-proxy", "site"))]
+        self.assertEqual(len(hosted), 1)
         restored_call = next(c for c in self.calls("docker") if c["args"] == restored[0])
         self.assertEqual(restored_call["site_image"], f"{SITE_REPO}:{PREVIOUS_SITE_SHA}@sha256:" + "c" * 64)
         self.assertLess(compose.index(next(a for a in compose if "migrate" in a)), compose.index(restored[0]))
 
     def test_enabled_extension_without_a_site_image_refuses_app_release_before_changes(self):
         (self.srv / "config/Caddyfile.hosted").write_text("import /etc/caddy/Caddyfile.site\n")
-        result = self.deploy(FAKE_SITE_ENABLED="1", FAKE_PREVIOUS_SITE="")
-        self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertIn("cannot recover the existing site image", result.stdout)
+        for enabled in ("1", "wrong-network", ""):
+            with self.subTest(enabled=enabled):
+                result = self.deploy(FAKE_SITE_ENABLED=enabled, FAKE_PREVIOUS_SITE="")
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("cannot recover the existing site image", result.stdout)
         self.assertFalse(any(c["args"][0] in ("pull", "compose") for c in self.calls("docker")))
         self.assertFalse(any("checkout" in c["args"] for c in self.calls("git")))
         self.assert_untouched()
@@ -657,6 +681,56 @@ class DeployTests(ServerCase):
         for text in (result.stdout, result.stderr, self.log_files()[0].read_text()):
             self.assertIsNone(re.search(r"Setup token: [a-f0-9]{64}", text))
 
+    def test_enabled_hosted_proxy_is_validated_and_reapplied_after_the_installer(self):
+        (self.srv / "config/Caddyfile.hosted").write_text("import /etc/caddy/Caddyfile.production\nimport /etc/caddy/Caddyfile.staging\n")
+        # The site exists, but Caddy has not yet joined its network on first enablement.
+        result = self.deploy(FAKE_SITE_ENABLED="wrong-network")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = [call["args"] for call in self.calls("docker")]
+        self.assertEqual(calls[0], ["network", "inspect", "verwalino-staging_proxy"])
+        validation = next(i for i, args in enumerate(calls) if "validate" in args)
+        self.assertLess(validation, next(i for i, args in enumerate(calls) if args[0] == "pull"))
+        sequence = self.calls()
+        checkout = next(i for i, call in enumerate(sequence) if call["tool"] == "git" and "checkout" in call["args"])
+        validate = next(i for i, call in enumerate(sequence) if call["tool"] == "docker" and "validate" in call["args"])
+        self.assertLess(checkout, validate)
+        self.assertEqual(calls[validation][:12], [
+            "run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL",
+            "--cap-add", "NET_BIND_SERVICE", "--security-opt", "no-new-privileges", "--env",
+        ])
+        migration = next(i for i, args in enumerate(calls) if "migrate" in args)
+        self.assertLess(validation, migration)
+        overlay = next(i for i, args in enumerate(calls) if str(ROOT / "infra/docker-compose.hosted-proxy.yml") in args)
+        self.assertLess(validation, overlay)
+        self.assertIn("none", calls[validation])
+        self.assertIn("--read-only", calls[validation])
+        for name in ("production", "staging", "site"):
+            self.assertTrue(any(f"dst=/etc/caddy/Caddyfile.{name},readonly" in arg for arg in calls[validation]))
+        self.assertIn(str(ROOT / "infra/docker-compose.site.yml"), calls[overlay])
+        self.assertIn("--no-deps", calls[overlay])
+        self.assertEqual(calls[overlay][-1], "caddy")
+        restored_call = next(call for call in self.calls("docker") if call["args"] == calls[overlay])
+        self.assertEqual(restored_call["site_image"], f"{SITE_REPO}:{PREVIOUS_SITE_SHA}@sha256:" + "c" * 64)
+        self.assertTrue(any("app" == args[-1] and "up" in args for args in calls[:overlay]))
+
+    def test_missing_staging_proxy_network_refuses_hosted_release_before_side_effects(self):
+        (self.srv / "config/Caddyfile.hosted").write_text("import /etc/caddy/Caddyfile.production\n")
+        result = self.deploy(FAKE_MISSING_STAGING_NETWORK="1", FAKE_SITE_ENABLED="1")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("verwalino-staging_proxy", result.stdout)
+        self.assertIn("docker network create --subnet", result.stdout)
+        self.assertEqual([call["args"] for call in self.calls("docker")],
+                         [["network", "inspect", "verwalino-staging_proxy"]])
+        self.assertEqual(self.calls("git"), [])
+        self.assertEqual(list((self.srv / "backups").iterdir()), [])
+        self.assert_untouched()
+        self.assertFalse((self.srv / "logs/.deploy.lock").exists())
+
+    def test_release_without_hosted_wrapper_does_not_require_the_staging_network(self):
+        result = self.deploy(FAKE_MISSING_STAGING_NETWORK="1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(any(call["args"][:1] == ["network"] for call in self.calls("docker")))
+
     def test_running_deploy_or_unusable_config_is_refused_without_touching_anything(self):
         (self.srv / "logs/.deploy.lock").mkdir()
         result = self.deploy()
@@ -673,6 +747,154 @@ class DeployTests(ServerCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("must be a regular file", result.stdout)
         self.assertEqual(self.calls(), [])
+
+    def test_invalid_hosted_caddyfile_aborts_before_backup_pinning_or_installer(self):
+        (self.srv / "config/Caddyfile.hosted").write_text("invalid config\n")
+        result = self.deploy(FAKE_FAIL="validate", FAKE_SITE_ENABLED="1")
+        self.assertEqual(result.returncode, 17, result.stdout + result.stderr)
+        self.assert_untouched()
+        self.assertFalse(any(call["args"][0] == "compose" for call in self.calls("docker")))
+        self.assertFalse((self.srv / "logs/.deploy.lock").exists())
+
+
+class StagingDeployTests(ServerCase):
+    SHA = "0123456789abcdef" * 2 + "01234567"
+
+    def setUp(self):
+        super().setUp()
+        self.install_config()
+        self.production = self.config.read_bytes()
+        self.staging = self.srv / "config/.env.staging"
+        self.staging.write_text(f"VERWALINO_IMAGE={OLD_DIGEST}\nHV_RELEASE_ID=old-staging-sha\n" + "".join(
+            f"{key}={'e' * 64}\n" for key in
+            ("SESSION_SECRET", "MIGRATOR_PASSWORD", "APP_RW_PASSWORD", "APP_WORKER_PASSWORD", "APP_REVIEW_PASSWORD")))
+        self.staging.chmod(0o600)
+        self.env["FAKE_REVISION"] = self.SHA
+
+    def deploy(self, ref=None, **env):
+        return self.run_script(DEPLOY, "staging", ref or self.SHA, **env)
+
+    def test_real_staging_export_is_readable_and_traversable_by_postgres_under_umask_027(self):
+        result = self.deploy(FAKE_REAL_ARCHIVE="1", REAL_GIT=shutil.which("git"))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        exported = self.srv / "staging/infra/db/prod-init.sh"
+        self.assertEqual(stat.S_IMODE(exported.stat().st_mode), 0o755)
+        self.assertTrue(exported.parent.stat().st_mode & stat.S_IXOTH)
+
+    def test_staging_pins_main_image_and_runs_only_its_project_without_checkout_or_backup(self):
+        result = self.deploy()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("previous staging sha: old-staging-sha", result.stdout)
+        self.assertIn(["pull", f"ghcr.io/itskeks/verwalino:sha-{self.SHA}"],
+                      [call["args"] for call in self.calls("docker")])
+        self.assertEqual(self.config.read_bytes(), self.production)
+        self.assertEqual((self.base / "state/HEAD").read_text(), OLD_COMMIT)
+        self.assertFalse(any("checkout" in call["args"] for call in self.calls("git")))
+        self.assertEqual(list((self.srv / "backups").iterdir()), [])
+        self.assertIn(f"VERWALINO_IMAGE={NEW_DIGEST}", self.staging.read_text())
+        self.assertIn(f"HV_RELEASE_ID={self.SHA}", self.staging.read_text())
+        self.assertEqual(stat.S_IMODE(self.staging.stat().st_mode), 0o600)
+        calls = [call["args"] for call in self.calls("docker") if call["args"][0] == "compose"]
+        for args in calls:
+            self.assertEqual(args[1:5], ["--project-name", "verwalino-staging", "--env-file", str(self.staging)])
+            self.assertIn(str(self.srv / "staging/infra/docker-compose.staging.yml"), args)
+        for call in self.calls("docker"):
+            if call["args"][0] == "compose":
+                self.assertEqual(call["image"], NEW_DIGEST)
+                self.assertEqual(call["release_id"], self.SHA)
+        def at(verb):
+            return next(i for i, args in enumerate(calls) if verb in args)
+        self.assertLess(at("stop"), at("migrate"))
+        self.assertEqual(calls[at("stop")][-1], "staging-app")
+        self.assertLess(at("migrate"), next(i for i, args in enumerate(calls) if "--force-recreate" in args))
+        self.assertLess(at("migrate"), at("exec"))
+
+    def test_release_tag_is_resolved_to_its_main_sha_image(self):
+        result = self.deploy("v1.2.3")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(["pull", f"ghcr.io/itskeks/verwalino:sha-{self.SHA}"],
+                      [call["args"] for call in self.calls("docker")])
+
+    def test_staging_validates_exported_proxy_before_pulling_or_starting_anything(self):
+        (self.srv / "config/Caddyfile.hosted").write_text((ROOT / "infra/Caddyfile.hosted").read_text())
+        result = self.deploy()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.calls("docker")
+        validation = calls[0]["args"]
+        self.assertIn("validate", validation)
+        self.assertIn("NET_BIND_SERVICE", validation)
+        self.assertIn("VERWALINO_DOMAIN=verwaltung.example.org", validation)
+        for name in ("Caddyfile", "Caddyfile.staging", "Caddyfile.site"):
+            self.assertTrue(any(f"src={self.srv}/staging/infra/{name}," in arg for arg in validation))
+        self.assertEqual(self.config.read_bytes(), self.production)
+
+    def test_invalid_staging_proxy_stops_before_pull_migration_or_config_change(self):
+        (self.srv / "config/Caddyfile.hosted").write_text("invalid config\n")
+        before = self.staging.read_bytes()
+        result = self.deploy(FAKE_FAIL="validate")
+        self.assertEqual(result.returncode, 17, result.stdout + result.stderr)
+        self.assertEqual(len(self.calls("docker")), 1)
+        self.assertIn("validate", self.calls("docker")[0]["args"])
+        self.assertEqual(self.staging.read_bytes(), before)
+        self.assertEqual(self.config.read_bytes(), self.production)
+        self.assertEqual(list((self.srv / "backups").iterdir()), [])
+
+    def test_copied_production_secrets_are_refused_before_any_docker_call(self):
+        original = self.staging.read_text()
+        production = self.config_values()
+        for key in ("SESSION_SECRET", "MIGRATOR_PASSWORD", "APP_RW_PASSWORD", "APP_WORKER_PASSWORD", "APP_REVIEW_PASSWORD"):
+            with self.subTest(key=key):
+                self.staging.write_text(re.sub(rf"^{key}=.*$", f"{key}={production[key]}", original, flags=re.M))
+                result = self.deploy()
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(key, result.stdout)
+                self.assertIn("production", result.stdout)
+                self.assertNotIn(production[key], result.stdout)
+                self.assertEqual(self.calls("docker"), [])
+        self.staging.write_bytes(self.production)
+        result = self.deploy()
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(self.calls("docker"), [])
+
+    def test_database_password_cannot_reuse_a_different_production_role_password(self):
+        self.staging.write_text(re.sub(r"^MIGRATOR_PASSWORD=.*$",
+                                      f"MIGRATOR_PASSWORD={self.config_values()['APP_RW_PASSWORD']}",
+                                      self.staging.read_text(), flags=re.M))
+        result = self.deploy()
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(self.calls("docker"), [])
+
+    def test_invalid_staging_commands_are_usage_errors_before_any_call(self):
+        for args in [("staging",), ("staging", "main"), ("staging", "a" * 7),
+                     ("staging", "a" * 40, "extra"), ("staging", "v1.2.3;id"),
+                     ("staging", "sha-" + "a" * 40), ("staging", "../main"),
+                     ("staging", "A" * 40), ("staging", "g" * 40), ("staging", "a" * 41),
+                     ("staging", self.SHA + "\n"), ("staging", "v01.2.3"),
+                     ("staging", "v1.2.3-rc.1"), ("staging", ""), ("STAGING", self.SHA)]:
+            with self.subTest(args=args):
+                self.assertEqual(self.run_script(DEPLOY, *args).returncode, 2)
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(list((self.srv / "logs").iterdir()), [])
+        self.assertEqual(self.config.read_bytes(), self.production)
+
+    def test_foreign_commit_pull_and_digest_failure_cannot_run_migrations(self):
+        for env in ({"FAKE_NOT_ON_MAIN": "1"}, {"FAKE_MISSING_TAG": "1"},
+                    {"FAKE_FAIL": "pull"}, {"FAKE_NO_DIGEST": "1"}):
+            with self.subTest(env=env):
+                before = self.staging.read_bytes()
+                result = self.deploy(**env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.staging.read_bytes(), before)
+                self.assertFalse(any("migrate" in call["args"] for call in self.calls("docker")))
+                self.assertEqual(self.config.read_bytes(), self.production)
+
+    def test_failed_migration_does_not_start_the_app_or_report_success(self):
+        result = self.deploy(FAKE_FAIL_COMPOSE="migrate")
+        self.assertEqual(result.returncode, 17, result.stdout + result.stderr)
+        self.assertNotIn("--force-recreate", str(self.calls("docker")))
+        self.assertIn("rollback: staging old-staging-sha", result.stdout)
+        self.assertNotIn("restore the pre-deploy backup", result.stdout)
+        self.assertFalse((self.srv / "logs/.deploy.lock").exists())
 
 
 class SiteDeployTests(ServerCase):
@@ -723,7 +945,8 @@ class SiteDeployTests(ServerCase):
         for args in [("site",), ("site", "main"), ("site", "a" * 39), ("site", "g" * 40),
                      ("site", "A" * 40), ("site", SITE_SHA, "extra"), ("site " + SITE_SHA,),
                      ("site", SITE_SHA + ";id"), ("site", SITE_SHA + "\n"),
-                     ("site", "$(id)"), ("site", "--help"), ("app", SITE_SHA)]:
+                     ("site", "$(id)"), ("site", "--help"), ("app", SITE_SHA),
+                     ("site", "v1.2.3"), ("site", "a" * 41), ("site", ""), ("SITE", SITE_SHA)]:
             with self.subTest(args=args):
                 result = self.run_script(DEPLOY, *args)
                 self.assertEqual(result.returncode, 2)
@@ -828,6 +1051,133 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(ssh.rstrip().endswith('"$DEPLOY_USER@$DEPLOY_HOST" "$TAG"'), ssh)
         self.assertEqual(self.steps["Deploy over SSH"]["env"]["TAG"], "${{ steps.release.outputs.tag }}")
         self.assertEqual(self.steps["Remove the key"]["if"], "always()")
+
+
+@unittest.skipIf(yaml is None, "PyYAML is not installed")
+class StagingLayoutTests(unittest.TestCase):
+    def test_hosted_wrapper_imports_all_sites_with_separate_application_networks(self):
+        wrapper = (ROOT / "infra/Caddyfile.hosted").read_text()
+        imports = [line for line in wrapper.splitlines() if line.startswith("import ")]
+        self.assertEqual(imports, [f"import /etc/caddy/Caddyfile.{name}" for name in ("production", "staging", "site")])
+        proxy = yaml.safe_load((ROOT / "infra/docker-compose.hosted-proxy.yml").read_text())
+        site = yaml.safe_load((ROOT / "infra/docker-compose.site.yml").read_text())
+        self.assertEqual(set(proxy["services"]), {"caddy"})
+        for name in ("production", "staging"):
+            self.assertTrue(any(f":/etc/caddy/Caddyfile.{name}:ro" in mount for mount in proxy["services"]["caddy"]["volumes"]))
+        self.assertTrue(any(mount["target"] == "/etc/caddy/Caddyfile.site" and mount["read_only"]
+                            for mount in site["services"]["caddy"]["volumes"]))
+        self.assertEqual(site["services"]["site"]["networks"], ["site"])
+        self.assertEqual(site["services"]["caddy"]["networks"], ["proxy", "site"])
+        self.assertTrue(site["networks"]["site"]["internal"])
+
+    def test_only_the_app_joins_the_shared_proxy_and_no_ports_are_published(self):
+        compose = yaml.safe_load((ROOT / "infra/docker-compose.staging.yml").read_text())
+        self.assertEqual(compose["name"], "verwalino-staging")
+        self.assertEqual(set(compose["volumes"]), {"pgdata_staging", "documents_staging"})
+        self.assertEqual(compose["networks"]["proxy"], {"external": True, "name": "verwalino-staging_proxy"})
+        self.assertTrue(compose["networks"]["backend"]["internal"])
+        for name, service in compose["services"].items():
+            self.assertNotIn("ports", service, name)
+            self.assertEqual("proxy" in service["networks"], name == "staging-app")
+        self.assertNotIn("app", compose["services"], "the shared proxy must never receive a second app DNS alias")
+        env = compose["services"]["staging-app"]["environment"]
+        self.assertEqual(env["HV_DEPLOYMENT_MODE"], "hosted")
+        self.assertEqual(env["HV_PUBLIC_HOST"], "staging.verwalino.de")
+        self.assertIn("${CANARY_EMAIL:?", env["HV_MAIL_ALLOWLIST"])
+
+    def test_main_push_builds_before_ssh_and_docs_do_not_trigger_it(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-staging.yaml").read_text())
+        image = yaml.safe_load((ROOT / ".github/workflows/build-main-image.yaml").read_text())
+        trigger = image.get("on", image.get(True))["push"]
+        self.assertEqual(trigger["branches"], ["main"])
+        self.assertTrue({"backend/**", "frontend/**", "infra/**", "Dockerfile"} <= set(trigger["paths"]))
+        self.assertNotIn("website/**", trigger["paths"])
+        self.assertNotIn("docs/**", trigger["paths"])
+        self.assertEqual(workflow.get("on", workflow.get(True)), {
+            "workflow_run": {"workflows": [image["name"]], "types": ["completed"], "branches": ["main"]},
+        })
+        self.assertEqual(set(workflow["jobs"]), {"deploy"})
+        deploy = workflow["jobs"]["deploy"]
+        for required in ("github.event.workflow_run.conclusion == 'success'",
+                         "github.event.workflow_run.event == 'push'",
+                         "github.event.workflow_run.head_repository.full_name == github.repository"):
+            self.assertIn(required, deploy["if"])
+        self.assertEqual(deploy["steps"][0]["env"]["SHA"], "${{ github.event.workflow_run.head_sha }}")
+        self.assertEqual(deploy["concurrency"], {"group": "deploy-hosted-staging", "cancel-in-progress": False})
+        script = deploy["steps"][0]["run"]
+        for required in ('"staging $SHA"', "StrictHostKeyChecking=yes", "BatchMode=yes", "umask 077"):
+            self.assertIn(required, script)
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
+        release = yaml.safe_load((ROOT / ".github/workflows/release-image.yaml").read_text())
+        self.assertEqual(set(release["jobs"]), {"release", "installer"})
+        self.assertNotIn("workflow_call", release.get("on", release.get(True)))
+        main = image["jobs"]["main"]
+        build = next(step for step in main["steps"] if "docker/build-push-action@" in step.get("uses", ""))
+        self.assertIn(":sha-${{ github.sha }}", build["with"]["tags"])
+        self.assertEqual(build["with"]["tags"].strip(), "${{ env.IMAGE }}:sha-${{ github.sha }}")
+        self.assertEqual(main["permissions"], {"contents": "read", "packages": "write", "id-token": "write"})
+        self.assertIn('cosign sign --yes "$IMAGE@$DIGEST"', "\n".join(step.get("run", "") for step in main["steps"]))
+        self.assertFalse(any("action-gh-release" in step.get("uses", "") for step in main["steps"]))
+
+    def test_release_and_main_image_builds_have_separate_concurrency_groups(self):
+        release = yaml.safe_load((ROOT / ".github/workflows/release-image.yaml").read_text())
+        main = yaml.safe_load((ROOT / ".github/workflows/build-main-image.yaml").read_text())
+        self.assertEqual(release["concurrency"], {
+            "group": "release-image-tags", "cancel-in-progress": False,
+        })
+        self.assertNotEqual(release["concurrency"]["group"], main["concurrency"]["group"])
+
+    def test_reusable_workflow_callers_grant_every_permission_requested_by_callee_jobs(self):
+        ranks = {"none": 0, "read": 1, "write": 2}
+        for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
+            workflow = yaml.safe_load(path.read_text())
+            for name, caller in workflow["jobs"].items():
+                uses = caller.get("uses", "")
+                if not uses.startswith("./.github/workflows/"):
+                    continue
+                callee = yaml.safe_load((ROOT / uses[2:]).read_text())
+                granted = caller.get("permissions", workflow.get("permissions", {}))
+                for job in callee["jobs"].values():
+                    for scope, level in job.get("permissions", callee.get("permissions", {})).items():
+                        with self.subTest(workflow=path.name, caller=name, scope=scope):
+                            self.assertGreaterEqual(ranks[granted.get(scope, "none")], ranks[level])
+
+    def test_ci_validates_the_full_hosted_caddy_wrapper_with_the_required_capability(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/tests-on-pr.yaml").read_text())
+        steps = [step for job in workflow["jobs"].values() for step in job.get("steps", [])]
+        validation = next(step["run"] for step in steps if "caddy validate" in step.get("run", ""))
+        for required in ("--network none", "--read-only", "--cap-drop ALL", "--cap-add NET_BIND_SERVICE",
+                         "--security-opt no-new-privileges", "VERWALINO_DOMAIN=validation.invalid"):
+            self.assertIn(required, validation)
+        for source, target in (("Caddyfile.hosted", "Caddyfile"), ("Caddyfile", "Caddyfile.production"),
+                               ("Caddyfile.staging", "Caddyfile.staging"), ("Caddyfile.site", "Caddyfile.site")):
+            self.assertIn(f"/infra/{source},dst=/etc/caddy/{target},readonly", validation)
+
+    def test_robots_response_has_a_real_disallow_line(self):
+        caddy = (ROOT / "infra/Caddyfile.staging").read_text()
+        # Caddy takes arguments after the closing marker, never after the opener.
+        self.assertRegex(caddy, r"respond <<ROBOTS\n[ \t]*User-agent: \*\n[ \t]*Disallow: /\n[ \t]*ROBOTS 200\n")
+
+    def test_compose_network_declarations_keep_staging_off_productions_trusted_proxy(self):
+        def config(file):
+            return yaml.safe_load((ROOT / "infra" / file).read_text())
+
+        staging = config("docker-compose.staging.yml")
+        hosted = config("docker-compose.yml")
+        caddy_networks = set(hosted["services"]["caddy"]["networks"])
+        for overlay in ("docker-compose.hosted-proxy.yml", "docker-compose.site.yml"):
+            extra = config(overlay)
+            caddy_networks.update(extra["services"]["caddy"]["networks"])
+            hosted["networks"].update(extra["networks"])
+        staging_networks = {staging["networks"][key]["name"]
+                            for key in staging["services"]["staging-app"]["networks"] if key == "proxy"}
+        self.assertNotIn("verwalino_proxy", staging_networks)
+        self.assertIn("verwalino-staging_proxy", staging_networks)
+        caddy_networks = {hosted["networks"][key].get("name", f"verwalino_{key}") for key in caddy_networks}
+        self.assertEqual(caddy_networks, {"verwalino_proxy", "verwalino-staging_proxy", "verwalino_site"})
+        app_networks = {hosted["networks"][key].get("name", f"verwalino_{key}")
+                        for key in hosted["services"]["app"]["networks"]}
+        self.assertTrue(staging_networks.isdisjoint(app_networks))
 
 
 @unittest.skipIf(yaml is None, "PyYAML is not installed")

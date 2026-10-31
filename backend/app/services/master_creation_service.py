@@ -20,6 +20,7 @@ from app.repositories.person_repo import PersonRepository
 from app.models.property import Property
 from app.models.unit import Unit
 from app.models.person import Person
+from app.services.quota_service import require_counts
 
 class PropertyFacts(BaseModel):
     construction_year: StrictInt | None = Field(default=None, ge=1, le=9999)
@@ -104,6 +105,7 @@ async def create_property(db, auth, body: PropertyCreate, idempotency_key=None):
             if saved is None:
                 raise HTTPException(404, 'Property not accessible')
             return saved
+    await require_counts(db, auth.organization_id, properties=1)
     property_id = uuid.uuid4()
     if body.data_audience is not None:
         await PropertyDataDomainService(db, auth).prepare_new_audience(property_id, body.data_audience)
@@ -131,6 +133,7 @@ async def create_unit(db, auth, body: UnitCreate):
         raise HTTPException(404, "Property not found")
     await require_property_master(db, auth.organization_id, uuid.UUID(body.property_id))
     _validate_usage_type(body.usage_type)
+    await require_counts(db, auth.organization_id, units=1)
     repo = UnitRepository(db, auth.organization_id)
     mea = _parse_mea_numerator(body.mea) if body.mea is not None else None
     if mea is not None:

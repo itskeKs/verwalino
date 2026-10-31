@@ -33,6 +33,7 @@ from app.core import health
 from app.core.static_files import resolve_spa_file
 from app.core.uploads import RequestBodyLimitMiddleware
 from app.core.config import settings
+from app.core.document_limits import MAX_UPLOAD_BYTES
 from app.services import mail_service
 from app.core.deployment_policy import get_deployment_policy
 from app.core.logging import configure_logging
@@ -151,11 +152,12 @@ app.include_router(property_knowledge.router)
 
 
 @app.get("/api/meta")
-async def meta(response: Response) -> dict[str, str | bool]:
+async def meta(response: Response) -> dict[str, str | bool | int]:
     """Public deployment facts only; no settings or organization data."""
     response.headers["Cache-Control"] = "no-store"
     return {"deployment_mode": get_deployment_policy().deployment_mode, "version": app.version,
-            "mail_available": mail_service.password_reset_available(settings)}
+            "mail_available": mail_service.password_reset_available(settings),
+            "max_upload_bytes": MAX_UPLOAD_BYTES}
 
 
 @app.get("/api/health/live")

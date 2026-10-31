@@ -281,6 +281,23 @@ describe("Teilungserklärung upload wizard", () => {
     expect(uploadSpy).not.toHaveBeenCalled();
   });
 
+  it("uses the backend metadata cap for file selection boundaries", async () => {
+    const get = api.get;
+    vi.spyOn(api, "get").mockImplementation((url, options) => url === "/api/meta"
+      ? Promise.resolve({ max_upload_bytes: 4 }) : get(url, options));
+    vi.spyOn(declarationApi, "createDeclarationImport").mockResolvedValue(pendingImport());
+    renderImportRoute();
+    const input = await screen.findByLabelText("PDF-Dateien auswählen");
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/meta", { cache: "no-store" }));
+    fireEvent.change(input, { target: { files: [
+      new File(["%PDF"], "exakt.pdf", { type: "application/pdf" }),
+      new File(["%PDF-"], "darueber.pdf", { type: "application/pdf" }),
+    ] } });
+    expect(screen.getByDisplayValue("exakt.pdf")).toBeVisible();
+    expect(screen.getByText(/„darueber\.pdf“ ist größer als maximal 25 MiB/i)).toBeVisible();
+    expect(screen.queryByDisplayValue("darueber.pdf")).not.toBeInTheDocument();
+  });
+
   it("uploads multiple PDFs, lets their metadata be changed, and gates start", async () => {
     vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(pendingImport());
     vi.spyOn(declarationApi, "listDeclarationDocuments").mockResolvedValue([]);
@@ -362,6 +379,17 @@ describe("Teilungserklärung upload wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Erneut versuchen" }));
     await waitFor(() => expect(declarationApi.retryDeclarationImport).toHaveBeenCalledWith("import-1", expect.any(String)));
     await waitFor(() => expect(pollSpy).toHaveBeenCalledTimes(2));
+  });
+
+  it("explains the hosted monthly budget refusal in German", async () => {
+    vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(
+      pendingImport({ status: "FAILED", error_code: "ORGANIZATION_AI_BUDGET_EXCEEDED", error_message: "ORGANIZATION_AI_BUDGET_EXCEEDED" }),
+    );
+    vi.spyOn(declarationApi, "listDeclarationDocuments").mockResolvedValue([]);
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
+    renderImportRoute("/teilungserklaerung/import/import-1");
+    expect(await screen.findByText(/Das monatliche KI-Budget ist ausgeschöpft/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Erneut versuchen" })).toBeNull();
   });
 
   it("restores uploaded documents from a draft URL and continues at the highest sequence", async () => {

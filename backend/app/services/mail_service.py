@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import re
+import logging
 import smtplib
 import ssl
 from email.message import EmailMessage
 from email.utils import formatdate
 
 from app.core.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class MailConfigurationError(ValueError):
@@ -79,6 +82,16 @@ def send_signup_confirmation(config: Settings, *, recipient: str, link: str) -> 
 
 
 def _submit(config: Settings, message: EmailMessage, sender: str, recipient: str) -> None:
+    recipient = validate_address(recipient)
+    if config.mail_allowlist is not None:
+        try:
+            allowed = validate_address(config.mail_allowlist)
+        except MailConfigurationError:
+            logger.warning("Mail submission blocked by invalid recipient allow-list")
+            raise
+        if recipient != allowed:
+            logger.warning("Mail submission blocked by recipient allow-list")
+            raise MailConfigurationError("Empfänger ist für diese Installation nicht freigegeben")
     context = ssl.create_default_context()
     if config.smtp_security == "tls":
         connection = smtplib.SMTP_SSL(config.smtp_host, config.smtp_port,

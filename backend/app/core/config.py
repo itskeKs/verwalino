@@ -6,6 +6,8 @@ from enum import StrEnum
 from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
+from app.core.document_limits import MAX_UPLOAD_BYTES
+
 
 class DeploymentMode(StrEnum):
     SELFHOST = "selfhost"
@@ -87,6 +89,8 @@ class Settings(BaseSettings):
     smtp_username: str | None = None
     smtp_password: SecretStr | None = None
     smtp_timeout_seconds: int = Field(15, ge=1, le=60)
+    # Hosted staging: exactly one permitted recipient. None leaves mail unrestricted.
+    mail_allowlist: str | None = None
 
     # --- Document Storage ---
     document_storage_root: str = "/tmp/hv-documents"
@@ -98,7 +102,7 @@ class Settings(BaseSettings):
 
     # --- Declaration import / PDF preflight ---
     declaration_import_enabled: bool = False
-    declaration_max_pdf_bytes: int = 25 * 1024 * 1024
+    declaration_max_pdf_bytes: int = MAX_UPLOAD_BYTES
     declaration_max_documents: int = 10
     declaration_max_pages: int = 500
     declaration_ocr_dpi: int = 180

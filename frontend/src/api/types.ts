@@ -18,6 +18,12 @@ export interface Organization {
   name: string;
 }
 
+export interface OrganizationQuota {
+  plan: "free" | "unlimited";
+  usage: { storage_bytes: number; properties: number; units: number; ai_budget_usd: string };
+  limits: { storage_bytes: number | null; upload_bytes: number | null; properties: number | null; units: number | null; ai_budget_usd: string | null };
+}
+
 export interface Mandate {
   id: string;
   mandate_type: "WEG" | "MIET" | "SEV";

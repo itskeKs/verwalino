@@ -35,6 +35,8 @@ class DeploymentPolicy:
     self_service_signup_enabled: bool
     # Login consumes the mode-specific throttling rules.
     rate_limit_profile: Literal["relaxed", "strict"]
+    # Selects the shared hosted free plan or unlimited self-hosted usage.
+    quota_enforcement: bool
 
     @property
     def rate_limit_rules(self) -> RateLimitRules:
@@ -51,12 +53,14 @@ _POLICIES = {
         first_run_setup_enabled=True,
         self_service_signup_enabled=False,
         rate_limit_profile="relaxed",
+        quota_enforcement=False,
     ),
     DeploymentMode.HOSTED: DeploymentPolicy(
         deployment_mode=DeploymentMode.HOSTED,
         first_run_setup_enabled=False,
         self_service_signup_enabled=True,
         rate_limit_profile="strict",
+        quota_enforcement=True,
     ),
 }
 

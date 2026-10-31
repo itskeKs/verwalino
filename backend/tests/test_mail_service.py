@@ -20,7 +20,7 @@ from tests.test_scoped_dunning import grant, tenant_body
 @pytest.fixture(autouse=True)
 def isolate_smtp_configuration(monkeypatch):
     for name, field in Settings.model_fields.items():
-        if name.startswith("smtp_"):
+        if name.startswith("smtp_") or name == "mail_allowlist":
             monkeypatch.delenv(f"HV_{name.upper()}", raising=False)
             monkeypatch.setattr(settings, name, field.default)
 
@@ -36,7 +36,7 @@ class FakeSMTP:
     calls = []
     error = None
 
-    def __init__(self, host, port, *, timeout):
+    def __init__(self, host, port, *, timeout, context=None):
         self.calls.append(("connect", host, port, timeout))
 
     def __enter__(self):
@@ -68,6 +68,7 @@ def smtp(monkeypatch):
     FakeSMTP.calls = []
     FakeSMTP.error = None
     monkeypatch.setattr("smtplib.SMTP", FakeSMTP)
+    monkeypatch.setattr("smtplib.SMTP_SSL", FakeSMTP)
     monkeypatch.setattr(settings, "smtp_host", "127.0.0.1", raising=False)
     monkeypatch.setattr(settings, "smtp_port", 1025, raising=False)
     monkeypatch.setattr(settings, "smtp_from", "verwaltung@example.invalid", raising=False)
@@ -102,6 +103,69 @@ def test_mail_transport_exact_pdf_tls_auth_and_no_delivery_claim(smtp):
     assert ("login", "synthetic", "fake-only") in smtp.calls
 
 
+@pytest.fixture(params=["send_pdf", "send_signup_confirmation", "submit_password_mail"])
+def mail_sender(request):
+    from app.services import mail_service
+    kwargs = (dict(subject="Mahnung", body="Anbei", pdf=b"%PDF-x", filename="x.pdf",
+                   message_id="<x@example.invalid>") if request.param == "send_pdf"
+              else dict(link="https://staging.example.invalid/signup/confirm?token=synthetic"))
+
+    def send(config, recipient):
+        if request.param == "submit_password_mail":
+            message = mail_service.build_password_reset(config, recipient=recipient, link=kwargs["link"])
+            mail_service.submit_password_mail(config, message)
+            return
+        getattr(mail_service, request.param)(config, recipient=recipient, **kwargs)
+
+    return send
+
+
+@pytest.mark.parametrize("security", ["plain", "tls"])
+@pytest.mark.parametrize("recipient,allowed", [
+    ("canary@example.invalid", True),
+    ("CANARY@example.invalid", False),
+    ("tenant@example.invalid", False),
+])
+def test_mail_allowlist_restricts_submission_before_connection(smtp, caplog, mail_sender, security, recipient, allowed):
+    from app.services.mail_service import MailConfigurationError
+    config = Settings(_env_file=None, smtp_host="127.0.0.1", smtp_from="v@example.invalid",
+                      smtp_security=security, mail_allowlist="canary@example.invalid")
+    if allowed:
+        mail_sender(config, recipient)
+        assert len(smtp.messages) == 1
+        assert smtp.messages[0][2] == [recipient]
+    else:
+        with pytest.raises(MailConfigurationError, match="Empfänger"):
+            mail_sender(config, recipient)
+        assert not smtp.calls and not smtp.messages
+        assert "WARNING" in caplog.text
+        assert recipient not in caplog.text
+
+
+@pytest.mark.parametrize("allowlist", ["", "bad", "a@example.invalid,b@example.invalid"])
+def test_invalid_mail_allowlist_fails_closed(smtp, mail_sender, caplog, allowlist):
+    from app.services.mail_service import MailConfigurationError
+    config = Settings(_env_file=None, smtp_host="127.0.0.1", smtp_from="v@example.invalid",
+                      smtp_security="plain", mail_allowlist=allowlist)
+    with pytest.raises(MailConfigurationError):
+        mail_sender(config, "canary@example.invalid")
+    assert not smtp.calls and not smtp.messages
+    assert "WARNING" in caplog.text
+    assert "canary@example.invalid" not in caplog.text
+    if allowlist:
+        assert allowlist not in caplog.text
+
+
+def test_submit_enforces_allowlist_for_any_sender_before_connection(smtp):
+    from email.message import EmailMessage
+    from app.services.mail_service import _submit, MailConfigurationError
+    config = Settings(_env_file=None, smtp_host="127.0.0.1", smtp_from="v@example.invalid",
+                      smtp_security="plain", mail_allowlist="canary@example.invalid")
+    with pytest.raises(MailConfigurationError):
+        _submit(config, EmailMessage(), config.smtp_from, "tenant@example.invalid")
+    assert not smtp.calls and not smtp.messages
+
+
 @pytest.mark.parametrize("recipient", ["", "bad", "a@example.invalid\r\nBcc: x@example.invalid", "a@example.invalid,b@example.invalid"])
 def test_mail_transport_rejects_invalid_recipient_before_connection(smtp, recipient):
     from app.services.mail_service import send_pdf, MailConfigurationError
@@ -120,6 +184,19 @@ async def issued_notice(api, seed):
     result = await api.post(f"/api/dunning/{response.json()['id']}/issue")
     assert result.status_code == 200, result.text
     return result.json()
+
+
+@pytest.mark.asyncio
+async def test_mail_allowlist_denial_returns_a_failed_receipt_without_smtp(client_a_admin, m7_seed, smtp, monkeypatch):
+    monkeypatch.setattr(settings, "mail_allowlist", "canary@example.invalid")
+    await mutate(text("UPDATE person SET email='tenant@example.invalid' WHERE id=:person"), {"person": m7_seed["person_m7"]})
+    notice = await issued_notice(client_a_admin, m7_seed)
+    url = f"/api/mail/dunning/{notice['id']}"
+    response = await client_a_admin.post(url, json={"person_id": str(m7_seed["person_m7"]), "request_id": str(uuid.uuid4())})
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "failed"
+    assert not smtp.calls and not smtp.messages
+    assert (await client_a_admin.get(url)).json()["attempts"] == [response.json()]
 
 
 @pytest.mark.asyncio
@@ -187,12 +264,31 @@ async def test_mail_parallel_replay_sends_once(client_a_admin, m7_seed, smtp):
 
 
 @pytest.mark.asyncio
-async def test_mail_retains_prepared_when_completion_commit_fails(client_a_admin, m7_seed, smtp, monkeypatch):
+@pytest.mark.parametrize("already_retained", [False, True], ids=["new-original", "deduplicated-original"])
+async def test_mail_retains_prepared_when_completion_commit_fails(client_a_admin, m7_seed, smtp, monkeypatch, tmp_path, already_retained):
     from app.services.document_mail_service import DocumentMailService
+    from app.core import storage
+    monkeypatch.setattr(storage, "_store", storage.LocalFsDocumentStore(tmp_path))
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
     await mutate(text("UPDATE person SET email='tenant@example.invalid' WHERE id=:person"), {"person": m7_seed["person_m7"]})
     notice = await issued_notice(client_a_admin, m7_seed)
     url = f"/api/mail/dunning/{notice['id']}"
     body = {"person_id": str(m7_seed["person_m7"]), "request_id": str(uuid.uuid4())}
+    original_render = DocumentMailService.render
+    pdf = None
+
+    async def unique_pdf(self, *args):
+        nonlocal pdf
+        if pdf is None:
+            # Keep a real PDF, distinct from metadata retained by earlier tests.
+            pdf = await original_render(self, *args) + f"\n% retention {uuid.uuid4()}\n".encode()
+        return pdf
+
+    monkeypatch.setattr(DocumentMailService, "render", unique_pdf)
+    if already_retained:
+        accepted = await client_a_admin.post(url, json={**body, "request_id": str(uuid.uuid4())})
+        assert accepted.status_code == 200 and accepted.json()["status"] == "accepted"
+    before = (await client_a_admin.get("/api/organizations/quota")).json()["usage"]["storage_bytes"]
     original = DocumentMailService.record
 
     async def fail_completion(self, kind, document_id, action, payload):
@@ -203,13 +299,20 @@ async def test_mail_retains_prepared_when_completion_commit_fails(client_a_admin
     monkeypatch.setattr(DocumentMailService, "record", fail_completion)
     with pytest.raises(RuntimeError, match="synthetic commit outage"):
         await client_a_admin.post(url, json=body)
-    assert len(smtp.messages) == 1
+    assert len(smtp.messages) == 1 + already_retained
     retained = await client_a_admin.get(url)
     assert retained.status_code == 200, retained.text
-    assert retained.json()["attempts"][0]["status"] == "prepared"
+    attempt = next(row for row in retained.json()["attempts"] if row["id"] == body["request_id"])
+    assert attempt["status"] == "prepared"
+    retained_pdf = await client_a_admin.get(f"{url}/{body['request_id']}/pdf")
+    assert retained_pdf.status_code == 200, retained_pdf.text
+    assert retained_pdf.content.startswith(b"%PDF-")
+    assert retained_pdf.content == pdf
+    added_bytes = 0 if already_retained else len(retained_pdf.content)
+    assert (await client_a_admin.get("/api/organizations/quota")).json()["usage"]["storage_bytes"] == before + added_bytes
     repeated = await client_a_admin.post(url, json=body)
     assert repeated.status_code == 200 and repeated.json()["status"] == "prepared"
-    assert len(smtp.messages) == 1
+    assert len(smtp.messages) == 1 + already_retained
 
 
 @pytest.mark.asyncio

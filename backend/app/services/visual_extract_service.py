@@ -11,7 +11,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.core.db import get_review_tenant_session
-from app.core.storage import get_store, make_storage_key
+from app.core.storage import get_store, put_document, retain_document
 from app.core.visual_extract import run_isolated_visual_extract, MAX_INPUT_BYTES
 from app.services.intake_service import IntakeService
 
@@ -50,8 +50,13 @@ class VisualExtractService(IntakeService):
             prepared['page_start'], prepared['page_end'], prepared['verified_page_count'])
         if rendered.status != 'succeeded':
             raise HTTPException(422, {'code': 'VISUAL_EXTRACT_UNAVAILABLE', 'reason': rendered.error_code})
-        stored = await run_in_threadpool(store.put, make_storage_key(str(self.auth.organization_id), rendered.content_sha256),
-                                        rendered.pdf_bytes, content_type='application/pdf')
+        try:
+            stored = await put_document(self.db, self.auth.organization_id, rendered.pdf_bytes,
+                                        content_type='application/pdf', store=store)
+        except HTTPException as error:
+            if isinstance(error.detail, dict) and error.detail.get('code') == 'QUOTA_STORAGE_EXCEEDED':
+                raise HTTPException(409, error.detail) from error
+            raise
         if stored.sha256 != rendered.content_sha256 or stored.byte_size != rendered.content_byte_size:
             raise HTTPException(409, 'Stored derivative integrity mismatch')
         # Verify storage readback before trusted attestation; store metadata alone
@@ -63,6 +68,8 @@ class VisualExtractService(IntakeService):
         payload.update(content_sha256=rendered.content_sha256, content_byte_size=rendered.content_byte_size,
                        output_page_count=rendered.output_page_count, renderer_profile=rendered.renderer_profile,
                        storage_uri=stored.uri, storage_backend=stored.backend, storage_version=stored.version)
+        # The proof commits independently and may survive the request's rollback.
+        retain_document(self.db, stored)
         async with get_review_tenant_session(self.auth.organization_id) as review:
             await review.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor': str(self.auth.user_id)})
             proof = await IntakeService(review, self.auth).call(

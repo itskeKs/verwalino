@@ -16,13 +16,14 @@ from app.services.authorization_service import AuthorizationService
 
 from fastapi import HTTPException
 
-from app.core.storage import compute_sha256, get_store, make_storage_key
-from app.core.uploads import MAX_UPLOAD_BYTES
+from app.core.storage import get_store, lock_document_storage, make_storage_key, put_document, remove_document_after_commit
+from app.core.uploads import MAX_UPLOAD_BYTES, require_upload_size
 from app.models.audit_event import AuditEvent
 from app.models.mandate_document import MandateDocument
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.mandate_document_repo import MandateDocumentRepository
 from app.repositories.mandate_repo import MandateRepository
+from app.services.quota_service import lock_quota
 
 DOC_TYPES = frozenset(
     {"VERWALTERVERTRAG", "BANKKONTO", "VOLLMACHT", "VERSICHERUNG", "SONSTIGES"}
@@ -61,8 +62,7 @@ class MandateDocumentService:
             )
         if not file_bytes:
             raise HTTPException(status_code=422, detail="Empty file")
-        if len(file_bytes) > MAX_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail="File too large (max 25 MB)")
+        require_upload_size(len(file_bytes), max_bytes=MAX_UPLOAD_BYTES)
 
         await self._require_mandate(mandate_id)
         if accounting_scope_id is None and scope_reason is not None:
@@ -81,9 +81,7 @@ class MandateDocumentService:
                 {"org": self._org_id, "scope": accounting_scope_id}):
             raise HTTPException(404, "Document scope not accessible")
 
-        sha = compute_sha256(file_bytes)
-        key = make_storage_key(str(self._org_id), sha)
-        ref = get_store().put(key, file_bytes, content_type=mime_type)
+        ref = await put_document(self._session, self._org_id, file_bytes, content_type=mime_type)
 
         doc = MandateDocument(
             organization_id=self._org_id,
@@ -131,12 +129,22 @@ class MandateDocumentService:
         return await self._repo.get_by_id(doc_id)
 
     async def delete(self, doc_id: uuid.UUID) -> None:
+        quota_locked = await lock_quota(self._session, self._org_id)
         doc = await self._repo.get_by_id(doc_id)
         if doc is None:
             raise HTTPException(status_code=404, detail="Document not found")
         if doc.accounting_scope_id is not None:
             raise HTTPException(409, "Classified originals must be archived with a reason")
+        store = get_store()
+        directory_locked = await lock_document_storage(self._session, self._org_id, store) if quota_locked else False
         await self._repo.delete(doc)
+        # Future accepted deletion classes may unlink only under both hosted
+        # locks. Reference counts include unknown sizes and source-hidden rows.
+        if (quota_locked and directory_locked
+                and doc.storage_backend == "LOCAL_FS"
+                and doc.storage_uri == make_storage_key(str(self._org_id), doc.content_sha256)
+                and await self._repo.count_storage_references(doc.storage_uri) == 0):
+            remove_document_after_commit(self._session, store, doc.storage_uri)
         await self._audit.create(
             AuditEvent(
                 actor_user_id=self._user_id,
@@ -177,4 +185,5 @@ class MandateDocumentService:
 
     @staticmethod
     def read_bytes(storage_uri: str) -> bytes:
+        from app.core.storage import get_store
         return get_store().get(storage_uri)

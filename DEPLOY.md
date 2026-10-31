@@ -11,7 +11,7 @@ Both modes use the same image, authentication and organization isolation. `selfh
 offers token-gated first-run setup on an empty database. `hosted` suppresses setup:
 `GET /api/setup` reports `required: false`, every non-GET request returns the closed
 setup 404, and `/setup` redirects to login. Hosted mode offers public signup with
-email confirmation; quotas and legal pages remain deferred. Password recovery is available
+email confirmation and enforces the quotas described below; legal pages remain deferred. Password recovery is available
 in both modes when mail is configured. Login uses the
 selected rate-limit profile described below. The
 [policy table](docs/architecture.md#deployment-modes) records only decisions with
@@ -81,7 +81,7 @@ most 100 rows whose expiry or use time is older than seven days. A materialized
 CTE selects and locks that batch once with `FOR UPDATE SKIP LOCKED`, so deletion
 cannot rescan the limited selection.
 
-Revision 0145 downgrade refuses while **any** reset rows remain, including used
+Accepted source revision 0145 downgrade refuses while **any** reset rows remain, including used
 rows. For an intentional rollback, stop reset traffic/workers, connect using the
 operator's migrator credential store, and explicitly invalidate/delete the reset
 state before running the normal downgrade:
@@ -95,6 +95,114 @@ COMMIT;
 
 This invalidates every outstanding recovery link; users must request fresh links
 after an upgrade. Normal retention cleanup does not clear recent rows for rollback.
+
+## Hosted organization quotas
+
+`backend/app/core/quotas.py` defines `FREE_PLAN`: **2 GiB** retained document
+storage, **25 MiB** per upload, **20 properties**, **200 units**, and **USD 0 per
+calendar month (UTC)** for declaration extraction and knowledge Q&A. USD 0 disables
+model calls even when a provider key and the feature switches are configured.
+`quota_enforcement` selects this plan only in hosted mode. Selfhost has no plan
+checks and takes no organization-wide quota advisory or filesystem upload lock;
+atomic writes, existing request/upload safety limits and declaration cost controls
+remain. Hosted writes lock the organization storage directory inode, shared by
+web and worker containers, until transaction cleanup finishes. No lock files
+are created, accumulated or included in document backups.
+Selfhost creates no filesystem lock files and retains failed-upload bytes for
+offline reconciliation rather than risking a concurrent committed duplicate.
+
+The shared 25 MiB file safety cap is
+`backend/app/core/document_limits.py:MAX_UPLOAD_BYTES`; upload readers, declaration
+defaults, intake inspection and visual input/output bounds derive from it.
+
+To change the hosted offer, edit the documented `FREE_PLAN` constants, run the
+quota/budget tests, rebuild, and restart both web and declaration worker processes
+from the same release. No new environment tuning keys, paid plans, billing, or
+self-service plan changes are introduced. One plan applies to every hosted
+organization; per-organization overrides are a follow-up. Existing reviewed Q&A
+policies may further restrict calls; increasing the hosted monthly constant does
+not enable Q&A or relax those controls.
+
+Usage is derived from database metadata: stored sizes from attachments, invoice
+versions, mandate/property documents, intake originals, letters, visual extracts
+(including independently committed attestations) and prepared mail receipts are
+summed once per storage URI, including archived and source-restricted
+originals. Uploads and quota reads never walk the storage directory. Database
+counts include every organization-owned property/unit, regardless of source
+grants. Hosted writes serialize quota admission within the organization. New files
+are checked before writing and, in hosted mode, removed on transaction rollback;
+cleanup failures log a warning, preserve the original error and release the directory
+lock. An existing file is admitted at zero additional bytes only when the guarded
+reference index already retains it; an unreferenced orphan is charged its full upload
+size on reuse. Already retained content is preserved. Mail originals are retained before their
+independently committed dispatch receipt, so a request rollback cannot remove a
+referenced PDF. File-size and upload-storage refusals return **413**; visual-extract
+storage admission and count refusals return **409**, with a structured `detail.code`
+and German `detail.message`.
+Codes are `QUOTA_STORAGE_EXCEEDED`, `QUOTA_PROPERTIES_EXCEEDED`,
+`QUOTA_UNITS_EXCEEDED` and `UPLOAD_TOO_LARGE` (also used by the body safety cap). Authenticated members can read
+`GET /api/organizations/quota`; the dashboard shows “Kontingent” and a warning at
+90%. Selfhost skips the quota request and renders no quota/loading/error card.
+
+Original deletion is **not reachable through current user workflows**. Classified
+mandate originals return 409 and must be archived with a reason; unclassified
+mandate originals are frozen in quarantine by revision 0078. Attachment, invoice
+and letter retention triggers, revoked DELETE grants and `RESTRICT` foreign keys
+also retain originals. No current path deletes property documents or intake
+originals. These guards remain unchanged.
+
+The cleanup rule guards **future accepted deletion paths**, such as the import
+and deletion work in #23. Only hosted deletion holding both the organization
+quota lock and the shared directory lock may queue a local unlink. After the row
+is deleted, `organization_document_reference_count(org, storage_key)` counts
+all retained references, including source-restricted rows, NULL-sized legacy
+letters/mail and visual artifacts/attestations; sizes never decide liveness.
+Only zero references permits unlink, and only after the outer commit. Selfhost
+deletes the row only: it neither reads usage/references nor queues an unlink.
+Rollback cancels removal. Post-commit unlink is best effort: a failure logs a
+warning and leaves bytes for operator reconciliation. A process crash between
+commit and unlink can likewise leave an orphan; `quota-recount` accounts for
+those bytes. No background deletion or retention override is added.
+
+Monthly model costs reuse the Q&A reservation ledger and declaration extraction
+runs. Running imports reserve their entire existing per-import ceiling; completed
+runs use their recorded cost. Active or expired Q&A reservations retain their
+worst-case charge until trustworthy final accounting. A shared organization lock
+serializes admission across properties, processes, and both features. Crashed
+work can therefore conservatively consume the allowance until reconciled by the
+existing worker lifecycle; restarting does not reset it. Calendar-month accounting
+includes work that crosses into the current month. Old-month reservations whose
+leases expired before this month do not consume the new month's allowance. Existing per-call/token limits
+continue to bound actual requests. Refusals return **409** with “Das monatliche
+KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den Betreiber.” Worker-side
+and HTTP refusals use `ORGANIZATION_AI_BUDGET_EXCEEDED`.
+
+Before enabling hosted quotas on an existing document store, apply **0146** and
+run this one-time reconciliation for each existing organization, with its usual
+migrator connection and `HV_DOCUMENT_STORAGE_ROOT` available:
+
+```sh
+python -m app.admin_cli quota-recount --org <organization-uuid>
+```
+
+The command scans that organization's local originals under the hosted upload
+locks and appends URI/byte metadata only for originals without an existing sized
+document or mail reference. This avoids permanently charging deletable live rows
+through the append-only audit log. Legacy/orphan recount entries are retained
+references and remain charged; the command never overrides retention. It does not
+change documents or old metadata, delete files, or start any services. Repeating
+it is safe and adds no identical reconciliation entries. Run it again after an
+operator restores files or investigates originals left by an interrupted write.
+New uploads need no recount; their owning document rows supply the size directly.
+
+Revision **0146** adds the guarded aggregate function because ordinary source RLS
+can hide rows and undercount usage, plus nullable, nonnegative `letter_document.size_bytes`
+for new letters (the only original table without size metadata). Prepared mail
+receipts use `bytes` in their existing JSON. Old letters/mail are covered by the
+reconciliation events. No tables, stored counters, quota overrides or credentials
+are added. Downgrade removes the function and reconstructible letter size column,
+leaving originals and reconciliation events intact. See
+[organization quotas](docs/architecture.md#organization-quotas).
 
 ## Hosted signup configuration
 
@@ -1211,12 +1319,13 @@ EOF2
 rm ci_key.pub
 ```
 
-The workflows send only a command string over SSH: `v1.2.3` for the app or `site <sha>` for the website.
-The user's shell expands `$SSH_ORIGINAL_COMMAND` into arguments of the script, which accepts exactly one release
-tag (`vX.Y.Z`, no suffix or leading zeroes), or exactly `site` and one 40-character lowercase hexadecimal commit
-SHA. Every other shape exits 2 before logging, locking or Docker work. `restrict` switches off forwarding, PTYs and
-agent. The user has sudo and Docker, so this key is as sensitive as the admin key: the forced command and the tag
-grammar check are its only limits. Fill `DEPLOY_KNOWN_HOSTS` with the output of `ssh-keyscan -t ed25519 "$DEPLOY_HOST"`,
+The workflows send only a command string over SSH: `v1.2.3` for production, `site <sha>` for the website,
+or `staging <sha|vX.Y.Z>` for staging. The user's shell expands `$SSH_ORIGINAL_COMMAND` into arguments
+of the script. It accepts exactly one stable release tag (`vX.Y.Z`, no suffix or leading zeroes),
+`site <40-lowercase-hex-sha>`, or `staging <40-lowercase-hex-sha|vX.Y.Z>`. Every other shape exits 2
+before logging, locking or Docker work. `restrict` switches off forwarding, PTYs and agent. The user has
+sudo and Docker, so this key is as sensitive as the admin key: the forced command and strict grammar
+are its only limits. Fill `DEPLOY_KNOWN_HOSTS` with the output of `ssh-keyscan -t ed25519 "$DEPLOY_HOST"`,
 where `DEPLOY_HOST` is exactly the host name or IP stored in that secret, after comparing the key with
 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server. `StrictHostKeyChecking=yes` matches that name;
 an IP-only entry does not match a host name in `DEPLOY_HOST`.
@@ -1227,8 +1336,15 @@ an IP-only entry does not match a host name in `DEPLOY_HOST`.
 2. When that run succeeds, [Deploy hosted server](.github/workflows/deploy.yaml) (`workflow_run`) calls
    `ssh chris@host vX.Y.Z`. **Actions → Deploy hosted server → Run workflow** with a `tag` redeploys any
    published tag; on the server, `/srv/verwalino/app/scripts/deploy-server.sh vX.Y.Z` does the same.
-3. [`scripts/deploy-server.sh`](scripts/deploy-server.sh) fetches tags and checks the tag out (it must exist and be
-   on `main`), pulls `ghcr.io/itskeks/verwalino:vX.Y.Z` and resolves its digest, runs
+3. [`scripts/deploy-server.sh`](scripts/deploy-server.sh) first checks that the external network
+   `verwalino-staging_proxy` exists if the operator's `config/Caddyfile.hosted` exists; a missing network
+   exits 2 with its creation command before checkout, backup, pinning or service operations. It then
+   recovers the existing site image reference, refusing before checkout if it cannot. It fetches tags
+   and checks the tag out (it must exist and be on `main`). It validates that wrapper immediately
+   after checkout, before pulling the image, backup, image pinning or the installer. Validation uses
+   read-only mounts/root, no network, `--cap-drop ALL --cap-add NET_BIND_SERVICE` (required by the stock
+   binary's file capability) and `no-new-privileges`. Failure preserves the running Caddy configuration.
+   It then pulls `ghcr.io/itskeks/verwalino:vX.Y.Z`, resolves its digest and runs
    [`scripts/server-backup.sh`](scripts/server-backup.sh) as `pre-vX.Y.Z`, writes the digest to `VERWALINO_IMAGE`
    in the config, runs `scripts/self-host.sh start` (pull by digest, stop the app, migrate, start, wait for
    healthy) and polls `/api/health/ready` for up to 120 s. The run is logged to
@@ -1241,12 +1357,66 @@ an IP-only entry does not match a host name in `DEPLOY_HOST`.
 Secrets of the workflow (repository secrets, names only): `DEPLOY_HOST`, `DEPLOY_USER` (the admin user),
 `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`. The token is read-only (`contents: read`) and the job uses no other secret.
 
+### Staging and hosted canary
+
+The hosted-only [staging and canary runbook](docs/operations/staging-and-canary.md)
+covers first enablement, independent credentials, synthetic fixtures, alerts and rollback.
+The maintainer sets DNS `staging.verwalino.de`, the private `.env.staging` file and repository secrets;
+the first real deployment and alert-delivery checks remain operator work (#25).
+
+Staging is Compose project `verwalino-staging`, using
+[`infra/docker-compose.staging.yml`](infra/docker-compose.staging.yml) alone, its own database/backend network
+and volumes `pgdata_staging`/`documents_staging`. Its app and hosted Caddy share the dedicated external
+`verwalino-staging_proxy` network; production's app remains on `verwalino_proxy`.
+It runs hosted mode and restricts every SMTP submission (including document mail and signup confirmations)
+to the single required `CANARY_EMAIL` via `HV_MAIL_ALLOWLIST`, checked at the shared submission boundary
+before any SMTP connection. Empty/malformed allow-lists block all submissions; refusals log no address.
+[`infra/Caddyfile.staging`](infra/Caddyfile.staging) routes `staging.verwalino.de` to `staging-app:8000`,
+adds `noindex, nofollow` and disallows all crawlers in `/robots.txt`. Enable the
+[`Caddyfile.hosted`](infra/Caddyfile.hosted) wrapper and
+[proxy overlay](infra/docker-compose.hosted-proxy.yml) as described in the runbook so production releases
+preserve staging and website routing together. The wrapper imports production, staging and site;
+production deploys apply both hosted overlays in one Caddy recreation. The generic installer is unchanged.
+The staging import is unconditional: enable website/staging routes only once `staging.verwalino.de`
+resolves to this server. Use a separate SMTP account for staging. Before any Docker call, staging
+refuses with exit 2 if its session secret or any database password reuses a production secret from
+`VERWALINO_CONFIG` (normally `/srv/verwalino/config/.env.selfhost`).
+
+[Build main image](.github/workflows/build-main-image.yaml) runs on relevant main pushes, excluding website-only
+and docs-only changes. It publishes only `:sha-<sha>` with provenance, SBOMs and a keyless cosign signature.
+[Deploy staging](.github/workflows/deploy-staging.yaml) runs after that workflow succeeds for a main push
+in this repository and sends its completed SHA as `staging <sha>` with the existing key.
+[Release image](.github/workflows/release-image.yaml) remains for stable tags and installer bundles only.
+The target verifies main ancestry, exports its own runtime files and validates the hosted wrapper with
+that revision's snippets before image pulls or service operations. It then resolves a registry digest without moving the
+production checkout, migrates and recreates only staging, checks readiness and prints the previous successful
+SHA. To roll back staging, send `staging <previous-sha>` with the same key; an older image must be compatible
+with the migrated schema. There is no automatic schema downgrade or rollback.
+
+[Hosted canary](.github/workflows/canary.yaml) runs every 15 minutes against `https://app.verwalino.de`:
+login → check leftover count → create an unused property → read the fixed synthetic tenant ledger with an explicit scope → delete
+its new property, including on ledger failure. Create its dedicated organization/user once with the admin
+CLI and prepare the fixture described in the runbook. A first failure files a `canary` issue via the existing
+scenario reporter, deduplicated under fingerprint `canary` while an issue is open. Later failing runs comment
+on that issue even if steps/errors change. German e-mail through the pinned mail action runs only after
+successful creation of a new canary issue.
+More than 10 `Canary Prüfung…` properties in its organization refuses the journey and alerts through
+that same path. Manually inspect/delete only unused synthetic leftovers as described in the runbook;
+preserve the fixed ledger fixture and retention rules.
+
+Additional secrets: `CANARY_EMAIL`, `CANARY_PASSWORD`, `ALERT_EMAIL` (`alarm@verwalino.de`), `ALERT_SMTP_URL` (TLS-required SMTP
+connection URL) and `ALERT_SMTP_FROM`. The five-minute job timeout gives a nominal **15 + 5 = 20 minute**
+alert budget; GitHub scheduling delays and SMTP delivery remain external limits, not a hard SLA.
+At 96 runs/day, plan about 2,900 runner minutes/month at the one-minute job billing minimum;
+the public repository is currently free, while private Actions would consume allowance/billable minutes.
+
 ### Website container
 
 The public website is an independent static image, `ghcr.io/itskeks/verwalino-site:<git-sha>`.
-The hosted operator opts in with [infra/docker-compose.site.yml](infra/docker-compose.site.yml) in addition to
-the portable compose file and an operator-owned `config/Caddyfile.hosted` containing the existing app block
-plus `import /etc/caddy/Caddyfile.site`. The default compose file, Caddyfile and installer stay unchanged.
+The hosted operator opts in with [infra/docker-compose.hosted-proxy.yml](infra/docker-compose.hosted-proxy.yml)
+and [infra/docker-compose.site.yml](infra/docker-compose.site.yml) in addition to the portable compose file.
+The operator-owned `config/Caddyfile.hosted` is copied from [the hosted wrapper](infra/Caddyfile.hosted),
+importing the production, staging and site snippets together. The default compose file, Caddyfile and installer stay unchanged.
 The [website hosting runbook](docs/operations/website-hosting.md) gives the exact one-time setup and commands;
 the server needs a reviewed app release containing these deployment files before the first site deployment.
 
@@ -1259,10 +1429,9 @@ all capabilities dropped, no privilege escalation, no credentials or host mounts
 On pushes to `main` affecting `website/` or its workflow, [Website](.github/workflows/website.yml) first
 checks i18n, lint, the build and links; then publishes amd64/arm64 images tagged only with the full SHA,
 attaches BuildKit provenance/SBOMs, signs the index with keyless cosign, and sends only `site <sha>`
-through the existing deploy key. PRs only run checks. Site deploys use their own concurrency group,
-`deploy-hosted-site`, separate from the app's `deploy-hosted-server`, so queued jobs never replace
-each other across the two groups; an active deployment is never cancelled. The shared server lock
-immediately refuses a concurrent deploy, which must be re-run after the active deploy finishes.
+through the existing deploy key. PRs only run checks. Production, staging and site use separate groups
+(`deploy-hosted-server`, `deploy-hosted-staging`, `deploy-hosted-site`), so queued runs cannot replace each other.
+The shared server lock immediately refuses a concurrent deployment; retry after the active run finishes. An active deployment is never cancelled.
 
 `scripts/deploy-server.sh site <sha>` refuses a disabled extension, pulls the SHA tag, requires a matching
 registry SHA-256 RepoDigest, recreates **only** `site` using `tag@digest`, and requires HTTP 200 on `/`
@@ -1313,11 +1482,11 @@ remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/s
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
 
-## Migration compatibility: 0029–0145
+## Migration compatibility: 0029–0146
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0145 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0146 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1330,14 +1499,15 @@ run `docker compose down -v` or delete the volumes.
 | 0142 | Adds global authentication throttle rows containing only scoped key hashes, failure windows, lockout expiry, last lockout start and escalation history, with narrow runtime DML. No existing rows or grants change. A populated table blocks downgrade to avoid losing lockouts. |
 | 0143 (accepted source) | Allows a nullable template reference for built-in lease contracts and handover originals. Existing rows, composite template foreign keys, RLS and immutable PDF snapshots remain intact. Downgrade refuses while an original has no template; it never deletes originals or creates substitute templates. |
 | 0144 (accepted source) | Adds private pending signup requests and token-bound SECURITY DEFINER functions; runtime roles have no direct request-table access. Successful confirmation atomically creates a separate tenant and deletes its request. Retained requests block downgrade. |
-| 0145 | Adds global password reset requests with 32-byte token digests, context-free definer issuance/confirmation and bounded cleanup; runtime table access is revoked. The T57 trigger path revokes sessions and consumes links on password changes/deactivation. Tokens expire after one hour; successful reset marks all outstanding links for that user used. Login, issuance and confirmation share the active-user/live-membership lookup. Because that lookup now filters inactive users and unsupported roles itself, an address that is active in one organization and deactivated or memberless in another is no longer ambiguous: login and reset both resolve to the active account. A populated downgrade refuses to discard retained reset state; an empty downgrade exactly removes the new table, index, trigger and functions and restores the previous login lookup verbatim. |
+| 0145 (accepted source) | Adds global password reset requests with 32-byte token digests, context-free definer issuance/confirmation and bounded cleanup; runtime table access is revoked. The T57 trigger path revokes sessions and consumes links on password changes/deactivation. Tokens expire after one hour; successful reset marks all outstanding links for that user used. Login, issuance and confirmation share the active-user/live-membership lookup. Because that lookup now filters inactive users and unsupported roles itself, an address that is active in one organization and deactivated or memberless in another is no longer ambiguous: login and reset both resolve to the active account. A populated downgrade refuses to discard retained reset state; an empty downgrade exactly removes the new table, index, trigger and functions and restores the previous login lookup verbatim. |
+| 0146 | Adds member-checked organization usage and reference-count functions for deduplicated document bytes (including visual extracts), complete property/unit counts and monthly USD usage. Adds nullable, nonnegative letter size metadata; old originals remain unchanged and `quota-recount` records legacy sizes in the existing audit log. Downgrade removes the functions and reconstructible size column, preserving originals and events. Older runtimes do not enforce hosted quotas. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0145 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0145, 0139→0145 and accepted-source 0140→0145, 0141→0145 and
-0142→0145, 0143→0145 and 0144→0145 (accepted source) rehearsals also
+0028→0146 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0146, 0139→0146 and accepted-source 0140→0146, 0141→0146 and
+0142→0146, 0143→0146, 0144→0146 and 0145→0146 (accepted source) rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT revocation;
 it does not prove live data validity or cross-version runtime compatibility.
 
@@ -1359,10 +1529,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0145**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0146**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0145**,
-**0122 → 0145**, **0139 → 0145**, **0140 → 0145**, **0141 → 0145**, **0142 → 0145**, **0143 → 0145**, **0144 → 0145** (accepted source), or **0145 → 0145**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0146**,
+**0122 → 0146**, **0139 → 0146**, **0140 → 0146**, **0141 → 0146**, **0142 → 0146**, **0143 → 0146**, **0144 → 0146**, **0145 → 0146** (accepted source), or **0146 → 0146**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 

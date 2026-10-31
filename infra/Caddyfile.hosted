@@ -1,0 +1,4 @@
+# Operator-only wrapper, enabled by /srv/verwalino/config/Caddyfile.hosted.
+import /etc/caddy/Caddyfile.production
+import /etc/caddy/Caddyfile.staging
+import /etc/caddy/Caddyfile.site

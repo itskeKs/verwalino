@@ -73,8 +73,9 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   Markdown and failure artifacts in `report/`. See [reports and external targets](features/README.md#scenario-reports-and-nightly-runs).
 - **`make test-agent-rules`** — paired bodies/activation, the `CLAUDE.md` symlink and Codex hook
   contracts; Python stdlib, no database or backend dependencies. Run after changing rules or the adapter.
-- **`make test-installer`** — release-download, install-scenario reporting and portable
-  self-host contracts; fake curl/wget, Docker and cosign, no network downloads or database.
+- **`make test-installer`** — release-download, install-scenario reporting, portable
+  self-host/hosted deploy contracts and canary tests; fake curl/wget, Docker and cosign,
+  plus a local fake HTTP server, no network downloads or database.
   `python3 -B scripts/test-install.py` and `python3 -B scripts/test-install-scenarios.py`
   also run standalone with stdlib only.
 - **`make test-scenario-issues`** — scenario failure fingerprints, deduplication and regression
@@ -157,6 +158,9 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 | `backend/tests/` | unit and API tests; `bdd/` binds scenarios, `bdd/browser.py` owns browser fixtures, `bdd/report.py` writes reports, `bdd/steps/browser_*.py` shares browser steps |
 | `features/` | API and `@browser` Gherkin scenarios (executable specs) |
 | `.github/workflows/nightly-scenarios.yaml` | nightly self-host scenarios, 90-day report artifacts and deduplicated failure issues; hosted mode pending #18 |
+| `.github/workflows/build-main-image.yaml` | filtered main pushes: publishes and signs SHA-only staging images without a release |
+| `.github/workflows/deploy-staging.yaml` | successful `Build main image` completion via `workflow_run`: deploys that run's main SHA through the existing forced-command SSH key |
+| `.github/workflows/canary.yaml`, `scripts/canary.py`, `scripts/test-canary.py` | 15-minute production API journey, sanitized reports, e-mail/issue alerts and fake HTTP contracts |
 | `frontend/src/` | `pages/`, `components/`, `api/`, `lib/` |
 | `website/` | bilingual static Astro site, checked multi-stage image and local Caddy file server |
 | `.github/workflows/website.yml` | website PR checks; main-push image publication/signing and forced-command site deploy |
@@ -164,8 +168,11 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 | `install.sh` | one-command release installer; checksum/signature checks and digest-pinned portable init/start |
 | `scripts/build-release-bundle.sh` | shared flat release payload/checksum assembly for releases and the install matrix |
 | `scripts/install-scenarios.sh` | four install journeys on disposable VMs; JSON/Markdown reports and failure artifacts |
-| `scripts/test-install.py`, `scripts/test-self-host.py`, `scripts/test-install-scenarios.py`, `scripts/test-server-deploy.py` | installer, portable stack, hosted app/site deploy and scenario-report contracts; fake downloads/Docker, no database |
-| `.github/workflows/release-image.yaml` | publishes/signs both image platforms, then signs checksums and attaches installer assets to a GitHub Release |
+| `scripts/test-install.py`, `scripts/test-self-host.py`, `scripts/test-install-scenarios.py` | installer, portable stack and scenario-report contracts; fake downloads/Docker, no database |
+| `.github/workflows/release-image.yaml` | stable tags only: publishes/signs release platforms and installer assets |
+| `infra/docker-compose.staging.yml`, `infra/Caddyfile.staging` | hosted staging project and crawler-blocking shared Caddy site; [operator runbook](docs/operations/staging-and-canary.md) |
+| `infra/docker-compose.hosted-proxy.yml`, `infra/Caddyfile.hosted` | opt-in shared wrapper; apply with the site overlay to preserve production, staging and website routing |
+| `scripts/deploy-server.sh`, `scripts/test-server-deploy.py` | strict production/staging/site forced-command targets and fake server contracts |
 | `.github/workflows/install-matrix.yaml` | nightly, manual and tag-triggered native install checks; reports retained for 90 days |
 | `scripts/` | dev, self-host, deploy, checks; `acceptance/` holds legacy browser scripts (being migrated, #54) |
 | `scripts/scenario_issues.py`, `scripts/test-scenario-issues.py` | stdlib report consumer and fake-GitHub filing contracts; `@known-flaky` failures are excluded |

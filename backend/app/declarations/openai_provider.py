@@ -594,6 +594,10 @@ class OpenAiDeclarationProvider:
         output_type: type[T],
         max_output_tokens: int,
     ) -> ProviderCallResult[T]:
+        from app.core.quotas import check_quota, get_quota_plan
+        decision = check_quota(0, get_quota_plan(), "ai_budget_usd", Decimal("0.000001"))
+        if not decision.allowed:
+            raise ProviderFailure("ORGANIZATION_AI_BUDGET_EXCEEDED", False, decision.message)
         self._validate_output_allowance(max_output_tokens)
         self._require_model_rate(model)
         self._require_client()

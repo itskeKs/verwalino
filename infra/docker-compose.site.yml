@@ -1,4 +1,5 @@
 # Hosted-only extension. Keep the portable stack and installer unchanged.
+# Pair with docker-compose.hosted-proxy.yml for the shared hosted Caddy wrapper.
 # See docs/operations/website-hosting.md for operator opt-in and image pinning.
 services:
   site:

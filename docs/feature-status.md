@@ -1,6 +1,6 @@
 # Feature status
 
-Current feature catalog of Verwalino by area. Status as of 2026-10-31, migration head `0145`.
+Current feature catalog of Verwalino by area. Status as of 2026-10-31, migration head `0146`.
 Status: ✅ implemented and reachable in the running app, 🟡 partial (reason given), ❌ not implemented.
 Short paths: `api/ services/ engine/ models/ workers/ core/` are under
 `backend/app/`, `pages/ components/ lib/` under `frontend/src/`; other paths are relative to the
@@ -21,10 +21,12 @@ pending; registration stays closed and legal review remains with #26. See the
 | Feature | Status | Location |
 | --- | --- | --- |
 | Deployment mode | ✅ validated selfhost/hosted policy, public mode/version/mail-capability metadata, setup/signup gates; remaining hosted features deferred | `core/config.py`, `core/deployment_policy.py`, issue #18 |
+| Organization quotas | ✅ hosted free constants (2 GiB, 25 MiB/upload, 20 properties, 200 units), atomic write refusals, usage card; model calls disabled by default, shared monthly USD cap over existing ledgers; overrides deferred | `core/quotas.py`, `services/quota_service.py`, `components/OrganizationQuotaCard.tsx`, issue #22 |
 | Browser first-run setup | ✅ selfhost-only, one-time installer token, 24-hour expiry, atomic first organization/admin; real-stack acceptance pending | `api/setup.py`, `pages/SetupPage.tsx`, `scripts/self-host.sh`, issue #8 |
 | Manual diagnostics reports | ✅ admin download and installer bundle with structural redacted logs; manual attachment only, fake-Docker acceptance | `diagnostics.py`, `api/diagnostics.py`, `pages/UsersPage.tsx`, `scripts/self-host.sh`, issue #17 |
 | One-command release installation | 🟡 installer and signed release-bundle workflow prepared; first release assets and fresh-VM setup/login/restart pending | `install.sh`, `.github/workflows/release-image.yaml`, [guide](../DEPLOY.md#install-in-one-command), issue #12 |
 | Install matrix | 🟡 four checkout-install scenarios and nightly/tag workflow prepared; first real matrix run, Debian, update and backup/restore pending; arm64 opt-in | `scripts/install-scenarios.sh`, `.github/workflows/install-matrix.yaml`, [coverage and reports](../DEPLOY.md#install-matrix), issue #13 |
+| Hosted staging and canary | 🟡 isolated staging/deploy-on-main, restricted mail, 15-minute production API canary and dual failure alerts implemented; first deploy, DNS, secrets and live alert checks pending | `infra/docker-compose.staging.yml`, `scripts/deploy-server.sh`, `scripts/canary.py`, [runbook](operations/staging-and-canary.md), issue #25 |
 | Request IDs and opt-in error tracking | ✅ response/log correlation always enabled; API error events scrubbed before sending, tracking off by default | `core/request_id.py`, `core/logging.py`, `core/error_tracking.py`, `core/scrub.py`, `DEPLOY.md`, issue #16 |
 | Login/logout | ✅ | `api/auth.py`, `pages/LoginPage.tsx` |
 | Login rate limiting | ✅ persisted IP/email lockout, mode-specific limits, hosted escalation, generic failures; atomic attempt reservations; shared signup limiter and active signup honeypot | `core/rate_limit.py`, `core/deployment_policy.py`, issue #20 |

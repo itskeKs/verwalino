@@ -17,9 +17,14 @@ rows directly. Idempotent on the user email (aborts if it already exists).
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
+import fcntl
+import os
 import sys
+import uuid
 
 import psycopg2
+from psycopg2.extras import Json, execute_values
 
 from app.core.config import settings
 from app.core.rate_limit import key_hash
@@ -29,6 +34,9 @@ from app.core.security import hash_password, normalize_email, validate_new_passw
 def main() -> None:
     if sys.argv[1:2] == ["unlock"]:
         unlock(sys.argv[2:])
+        return
+    if sys.argv[1:2] == ["quota-recount"]:
+        quota_recount(sys.argv[2:])
         return
     ap = argparse.ArgumentParser(description="Create an organization + OWNER_ADMIN user.")
     ap.add_argument("--org", required=True, help="Organization name")
@@ -100,6 +108,74 @@ def unlock(arguments: list[str]) -> None:
         conn.commit()
         print(f"Removed {removed} login throttle row(s).")
     except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def quota_recount(arguments: list[str]) -> None:
+    """Record legacy physical sizes without changing retained document metadata."""
+    from app.core.quotas import get_quota_plan
+    from app.core.storage import LocalFsDocumentStore, open_storage_lock
+
+    ap = argparse.ArgumentParser(prog="admin_cli quota-recount", description="Reconcile retained local document sizes as the migrator.")
+    ap.add_argument("--org", required=True, type=uuid.UUID, help="Organization UUID")
+    args = ap.parse_args(arguments)
+    org = str(args.org)
+    store = LocalFsDocumentStore(settings.document_storage_root)
+    conn = psycopg2.connect(settings.database_url_sync)
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT id FROM public.organization WHERE id=%s", (org,))
+            if cursor.fetchone() is None:
+                ap.error("Organization not found")
+            hosted = get_quota_plan().name != "unlimited"
+            if hosted:
+                cursor.execute("SELECT pg_advisory_xact_lock_shared(hashtextextended(%s,0))", (f"scope-acl:{org}",))
+                cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (f"organization-quota:{org}",))
+            with ExitStack() as cleanup:
+                if hosted:
+                    handle = open_storage_lock(store, org)
+                    cleanup.callback(os.close, handle)
+                    fcntl.flock(handle, fcntl.LOCK_EX)
+                # The migrator can see source-restricted references. Recount
+                # must not freeze sized live originals as permanent audit charges.
+                cursor.execute("""SELECT storage_uri FROM (
+                    SELECT storage_uri FROM public.attachment WHERE organization_id=%(org)s
+                    UNION ALL SELECT storage_uri FROM public.invoice_document WHERE organization_id=%(org)s
+                    UNION ALL SELECT storage_uri FROM public.mandate_document WHERE organization_id=%(org)s
+                    UNION ALL SELECT storage_uri FROM public.property_document WHERE organization_id=%(org)s
+                    UNION ALL SELECT storage_uri FROM public.intake_original WHERE organization_id=%(org)s
+                    UNION ALL SELECT storage_uri FROM public.visual_extract_artifact WHERE organization_id=%(org)s
+                    UNION ALL SELECT payload->>'storage_uri' FROM public.visual_extract_attestation
+                        WHERE organization_id=%(org)s AND payload->>'content_byte_size' IS NOT NULL
+                    UNION ALL SELECT storage_uri FROM public.letter_document WHERE organization_id=%(org)s AND size_bytes IS NOT NULL
+                    UNION ALL SELECT payload_diff->>'storage_uri' FROM public.audit_event
+                        WHERE organization_id=%(org)s AND action='mail_prepared' AND payload_diff->>'bytes' IS NOT NULL
+                ) sized""", {"org": org})
+                sized = {row[0] for row in cursor.fetchall()}
+                originals = []
+                total = 0
+                scanned = 0
+                for path in store._resolve_key(org).rglob("*.bin"):
+                    key = path.relative_to(store._root).as_posix()
+                    size = store._resolve_key(key).stat().st_size
+                    if key not in sized:
+                        originals.append((org, org, Json({"storage_uri": key, "bytes": size})))
+                    total += size
+                    scanned += 1
+                if originals:
+                    execute_values(cursor, """INSERT INTO public.audit_event(organization_id,entity_type,entity_id,action,payload_diff)
+                        SELECT v.org::uuid,'organization',v.entity::uuid,'quota_recount',v.payload::jsonb
+                        FROM (VALUES %s) v(org,entity,payload)
+                        WHERE NOT EXISTS(SELECT 1 FROM public.audit_event a
+                          WHERE a.organization_id=v.org::uuid AND a.action='quota_recount'
+                            AND a.payload_diff->>'storage_uri'=v.payload::jsonb->>'storage_uri'
+                            AND a.payload_diff->>'bytes'=v.payload::jsonb->>'bytes')""", originals)
+                conn.commit()
+                print(f"Scanned {scanned} originals, {total} bytes for {org}.")
+    except BaseException:
         conn.rollback()
         raise
     finally:

@@ -18,8 +18,11 @@ import subprocess
 import sys
 from xml.parsers import expat
 
+from app.core.document_limits import MAX_UPLOAD_BYTES
+
 VERSION = 'intake-inspection-v1'
-MAX_BYTES = 25 * 1024 * 1024
+
+MAX_BYTES = MAX_UPLOAD_BYTES
 MAX_PAGES = 200
 MAX_PIXELS = 20_000_000
 MAX_TEXT = 1_000_000

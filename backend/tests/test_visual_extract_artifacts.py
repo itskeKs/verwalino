@@ -26,6 +26,75 @@ async def basis(api, ids):
     return ref, original, first, whole, body
 
 
+@pytest.mark.parametrize('full', [False, True])
+async def test_hosted_visual_extract_uses_storage_admission_and_accounts_bytes(
+    migrator_session, scope_seed, store, monkeypatch, full
+):
+    from dataclasses import replace
+    from app.core import quotas
+    from app.core.config import settings
+    from app.core.db import get_tenant_session
+    monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
+    ids = await fixture(migrator_session, scope_seed)
+    async with client(ids) as api:
+        _, _, first, _, body = await basis(api, ids)
+        async with get_tenant_session(ids['org']) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor': str(ids['clerk'])})
+            before = await db.scalar(text('SELECT organization_quota_usage(:org)'), ids)
+        if full:
+            monkeypatch.setattr(quotas, 'FREE_PLAN', replace(quotas.FREE_PLAN, storage_bytes=before['storage_bytes']))
+        reply = await api.post('/api/logical-documents/' + first['id'] + '/visual-extracts',
+            json=body, headers={'Idempotency-Key': str(uuid.uuid4())})
+        if full:
+            assert reply.status_code == 409, reply.text
+            assert reply.json()['detail']['code'] == 'QUOTA_STORAGE_EXCEEDED'
+            assert await read_value('SELECT count(*) FROM visual_extract_artifact WHERE organization_id=:org', ids) == 0
+        else:
+            assert reply.status_code == 201, reply.text
+            async with get_tenant_session(ids['org']) as db:
+                await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor': str(ids['clerk'])})
+                after = await db.scalar(text('SELECT organization_quota_usage(:org)'), ids)
+                key = await read_value('SELECT storage_uri FROM visual_extract_artifact WHERE id=:target',
+                    {**ids, 'target': uuid.UUID(reply.json()['id'])})
+                assert await db.scalar(text('SELECT organization_document_reference_count(:org,:key)'),
+                                       {**ids, 'key': key}) == 2  # Artifact and its independently retained proof.
+            assert after['storage_bytes'] == before['storage_bytes'] + reply.json()['content_byte_size']
+
+
+async def test_hosted_visual_extract_proof_retains_bytes_after_request_rollback(
+    migrator_session, scope_seed, store, monkeypatch
+):
+    from fastapi import HTTPException
+    from app.core.config import settings
+    from app.core.db import get_tenant_session
+    from app.services.intake_service import IntakeService
+    monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
+    ids = await fixture(migrator_session, scope_seed)
+    original_call = IntakeService.call
+
+    async def fail_completion(self, sql, **params):
+        if sql.startswith('SELECT complete_visual_extract('):
+            raise HTTPException(409, 'Synthetic failure after independently committed proof')
+        return await original_call(self, sql, **params)
+
+    async with client(ids) as api:
+        _, _, first, _, body = await basis(api, ids)
+        before = store.organization_bytes(str(ids['org']))
+        monkeypatch.setattr(IntakeService, 'call', fail_completion)
+        reply = await api.post('/api/logical-documents/' + first['id'] + '/visual-extracts',
+            json=body, headers={'Idempotency-Key': str(uuid.uuid4())})
+        assert reply.status_code == 409, reply.text
+    assert await read_value('SELECT count(*) FROM visual_extract_artifact WHERE organization_id=:org', ids) == 0
+    proof = await read_value('SELECT payload FROM visual_extract_attestation WHERE organization_id=:org', ids)
+    assert hashlib.sha256(store.get(proof['storage_uri'])).hexdigest() == proof['content_sha256']
+    async with get_tenant_session(ids['org']) as db:
+        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor': str(ids['clerk'])})
+        usage = await db.scalar(text('SELECT organization_quota_usage(:org)'), ids)
+        assert usage['storage_bytes'] == before + proof['content_byte_size']
+        assert await db.scalar(text('SELECT organization_document_reference_count(:org,:key)'),
+                               {**ids, 'key': proof['storage_uri']}) == 1
+
+
 async def test_foreign_and_unknown_partitions_create_no_visual_extract(migrator_session,scope_seed,store):
     ids=await fixture(migrator_session,scope_seed)
     foreign=await foreign_fixture(migrator_session)

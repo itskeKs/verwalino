@@ -1,3 +1,4 @@
+import { useUploadLimit } from "../lib/uploads";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { archiveAttachment, attachmentDownloadUrl, listAttachments, listProperties, uploadAttachment } from "../api/endpoints";
 import { ApiError } from "../api/client";
@@ -7,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./ui/dial
 type Props = { canWrite: boolean; unitId?: string } & (
   { propertyId: string; personId?: string } | { propertyId?: undefined; personId: string }
 );
-const MAX_BYTES = 25 * 1024 * 1024;
+
 const INLINE_TYPES = new Set(["application/pdf", "image/png", "image/jpeg"]);
 
 function errorMessage(error: unknown): string {
@@ -17,7 +18,7 @@ function errorMessage(error: unknown): string {
       case 403: return "Keine Berechtigung für diese Dokumentaktion.";
       case 404: return "Dokument oder Zuordnung nicht verfügbar oder nicht zugänglich.";
       case 409: return "Dokument wurde bereits geändert oder seine Integrität konnte nicht bestätigt werden. Bitte Liste erneut laden.";
-      case 413: return "Die Dokumentdatei darf höchstens 25 MiB groß sein.";
+      case 413: return error.message;
       case 422: return "Ungültige Eingaben. Bitte Datei, Titel und Zuordnung prüfen.";
       default: return "Dokumentaktion fehlgeschlagen. Bitte erneut versuchen.";
     }
@@ -31,6 +32,7 @@ export function AttachmentsPanel(props: Props) {
 }
 
 function AttachmentContext({ propertyId, unitId, personId, canWrite }: Props) {
+  const maxUploadBytes = useUploadLimit();
   const headingId = useId();
   const alive = useRef(false);
   const listVersion = useRef(0);
@@ -113,7 +115,7 @@ function AttachmentContext({ propertyId, unitId, personId, canWrite }: Props) {
       setUploadError("Bitte ein Objekt auswählen."); return;
     }
     if (!file || file.size === 0) { setUploadError("Bitte eine nicht leere Dokumentdatei auswählen."); return; }
-    if (file.size > MAX_BYTES) { setUploadError("Die Dokumentdatei darf höchstens 25 MiB groß sein."); return; }
+    if (file.size > maxUploadBytes) { setUploadError("Die Dokumentdatei darf höchstens 25 MiB groß sein."); return; }
     if (title.length > 255 || title.includes("\0")) { setUploadError("Der Dokumenttitel darf höchstens 255 Zeichen und kein Nullzeichen enthalten."); return; }
     mutationLock.current = true;
     setPending(true);

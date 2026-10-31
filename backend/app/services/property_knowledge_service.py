@@ -749,6 +749,8 @@ async def query_property_knowledge(
         prepared = await service.prepare_question(property_id, question)
         if not prepared.hits:
             return service._not_documented_answer()
+    from app.services.quota_service import require_quota
+    require_quota(0, "ai_budget_usd", Decimal("0.000001"))
     if provider is None and provider_factory is not None:
         try:
             provider = provider_factory()
@@ -786,6 +788,8 @@ async def query_property_knowledge(
             reserved_cost = _stored_cost(_configured_cost(
                 estimate.input_tokens, settings.declaration_qa_max_output_tokens,
             ))
+            from app.services.quota_service import require_ai_budget
+            await require_ai_budget(session, organization_id, reserved_cost)
             repository = PropertyKnowledgeQueryRepository(session, organization_id)
             provider_name, model = _provider_identity(provider)
             reservation = await repository.reserve_query(

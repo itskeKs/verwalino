@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from app.core.config import settings
 from app.core.db import get_review_tenant_session
-from app.core.storage import get_store,make_storage_key
+from app.core.storage import put_document
 
 
 class IntakeService:
@@ -86,7 +86,7 @@ class IntakeService:
             raise HTTPException(422,'Received bytes or MIME differ from the manifest')
         if target['receipt'] is not None:
             return target['receipt']
-        stored=get_store().put(make_storage_key(str(self.auth.organization_id),digest),data,content_type=mime)
+        stored=await put_document(self.db,self.auth.organization_id,data,content_type=mime)
         if stored.sha256!=digest or stored.byte_size!=len(data):
             raise HTTPException(409,'Stored original integrity mismatch')
         original=uuid.uuid4()
