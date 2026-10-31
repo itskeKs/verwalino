@@ -39,7 +39,10 @@ is unavailable. Selfhost setup and login continue to work without mail.
 An unavailable configuration logs one WARNING per application process; subsequent
 requests remain generic. Known active, unambiguous accounts get a German link to
 `/passwort-zuruecksetzen?token=…`, valid once for one hour. Unknown addresses get no
-mail. Both paths perform the same Argon2 dummy hash and mail construction; SMTP
+mail. Each new link consumes earlier pending links. A separate recipient limiter
+allows at most three issued mails per normalized address per hour, across IPs;
+unknown or unavailable recipients do not count. Both paths perform the same
+Argon2 dummy hash and mail construction; SMTP
 submission runs after the response. Transport failure logs a generic warning and
 keeps the same receipt; SMTP acceptance does not prove delivery.
 
@@ -47,12 +50,41 @@ The page saves the token in tab-local sessionStorage, removes it from the URL an
 POSTs only on explicit submit. Reset returns 204 without a cookie or automatic
 login. The user signs in with the new password; all old sessions and outstanding
 reset links are invalidated. A German confirmation email follows the committed
-reset. SMTP failure cannot undo that reset. Missing, expired, used, throttled and
-invalid-password confirmations return the same German 403 refusal. The server
+reset. SMTP failure cannot undo that reset. Self-service/admin password changes
+and deactivation also consume pending links. Missing, expired, used and throttled
+tokens return the same German 403 refusal. Body/policy errors return a German 422
+before token lookup and do not count as confirmation failures; the page retains
+the token for correction. Password bounds are 12–128 Unicode code points. The server
 strips reset-page queries from its access log; upstream proxies must redact them
 too. Request throttling uses `password_reset` (all IP requests); confirmation uses
-`password_reset_confirm` (all IP requests, only failures on the token-bound user).
-Opaque wrong tokens share a dummy user bucket. Tests use captured SMTP only.
+`password_reset_confirm` (all well-formed IP requests, failures keyed by SHA-256
+of the token); `password_reset_recipient` counts issued mails only. The latter
+keeps partial counts until a full hour without an issued mail and locks for one
+hour after the third, without extending that lock on refusals.
+Tests use captured SMTP only.
+
+Runtime roles cannot read or write `password_reset_request` directly. Issuance
+and confirmation use fixed-path SECURITY DEFINER functions that refuse any
+non-empty organization context. Tokens are generated in PostgreSQL: 32 random
+bytes (256 bits) when pgcrypto is installed at migration time, otherwise two concatenated random
+UUIDs (244 random bits). Only the SHA-256 digest is stored. Every 100th accepted
+request per process schedules a separate background transaction deleting at
+most 100 rows whose expiry or use time is older than seven days.
+
+Revision 0144 downgrade refuses while **any** reset rows remain, including used
+rows. For an intentional rollback, stop reset traffic/workers, connect using the
+operator's migrator credential store, and explicitly invalidate/delete the reset
+state before running the normal downgrade:
+
+```sql
+BEGIN;
+LOCK TABLE public.password_reset_request IN ACCESS EXCLUSIVE MODE;
+DELETE FROM public.password_reset_request;
+COMMIT;
+```
+
+This invalidates every outstanding recovery link; users must request fresh links
+after an upgrade. Normal retention cleanup does not clear recent rows for rollback.
 
 ## Hosted signup configuration
 
@@ -919,7 +951,7 @@ DB. Each source revision is accepted only when actually measured.
 | Browser setup (accepted source 0141) | Adds the private singleton setup-token table and a token-gated, serialized first-organization function. Removes direct organization INSERT from app_rw; the migrator CLI shares the creation SQL. A populated token table blocks downgrade to avoid silently losing pending/consumed state. Existing organization/user/membership rows are preserved. |
 | 0142 (accepted source) | Adds global authentication throttle rows containing only scoped key hashes, failure windows, lockout expiry and escalation history, with narrow runtime DML. No existing rows or grants change. A populated table blocks downgrade to avoid losing lockouts. |
 | 0143 (accepted source) | Adds last-lockout timestamps for authentication escalation decay, global pending signup email reservations, hashed tokens, and narrow registration/provisioning functions. Signup creates separate tenants even with shared display names; the guarded bootstrap overload preserves CLI reuse. Successful provisioning deletes the request. Existing tenant rows and ACLs remain unchanged. Pending signups or retained last-lockout timestamps refuse downgrade; an empty downgrade restores the original bootstrap exactly. |
-| 0144 | Adds global password reset requests with 32-byte token digests and a narrow atomic reset function. The existing T57 trigger revokes all sessions. Tokens expire after one hour; successful reset marks all outstanding links for that user used. A populated downgrade refuses to discard retained reset state; an empty downgrade exactly removes the new table, index and function. |
+| 0144 | Adds global password reset requests with 32-byte token digests, context-free definer issuance/confirmation and bounded cleanup; runtime table access is revoked. The T57 trigger path revokes sessions and consumes links on password changes/deactivation. Tokens expire after one hour; successful reset marks all outstanding links for that user used. A populated downgrade refuses to discard retained reset state; an empty downgrade exactly removes the new table, index, trigger and functions. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function

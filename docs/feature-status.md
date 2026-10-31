@@ -20,7 +20,7 @@ history). Update this page in the same PR whenever a feature's status changes.
 | Self-service signup | n/a | ✅ hosted only, captured confirmation email, 24-hour single-use token, atomic tenant/owner creation, durable cooldown and generic responses | `api/signup.py`, `pages/SignupPage.tsx`, issue #19 |
 | Create users | yes | ✅ admin-only form and user management | `api/users.py`, `pages/UsersPage.tsx`, T06, T57 |
 | Roles admin/clerk/read-only | yes | ✅ admin can change role and deactivate; write buttons hidden for read-only | `core/rbac.py` (`OWNER_ADMIN`, `CLERK`, `READ_ONLY`), T57 |
-| Password recovery | n/a | ✅ both modes, captured reset and confirmation mail, one-hour single-use token, all sessions revoked; link hidden without SMTP/public origin | `api/password_reset.py`, `pages/PasswordResetPage.tsx`, issue #21 |
+| Password recovery | n/a | ✅ both modes, captured reset and confirmation mail, one-hour single-use token, tenant-context containment, three mails/address/hour, sessions and links revoked on password changes/deactivation, bounded retention; link hidden without SMTP/public origin | `api/password_reset.py`, `pages/PasswordResetPage.tsx`, issue #21 |
 | Change password | yes | ✅ own change and admin reset, sessions revoked | `api/auth.py` (`POST /api/auth/password`), `api/users.py` (`/reset-password`), `components/Topbar.tsx`, T14, T57 |
 | Management mandates with documents | no | ✅ edit/end, bound definition protected | `api/mandates.py`, `pages/MandateDetailPage.tsx`, T55 |
 | Source governance (scopes, approvals, quarantines) | no | ✅ non-blocking in the default mode `PREPARATION`; menu entries grouped under the admin-only "Erweitert" group | `services/financial_scope_service.py`, `components/Sidebar.tsx`, T11 |

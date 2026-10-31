@@ -48,3 +48,20 @@ it.each([403, 503])("handles a refusal or retryable failure (%s)", async (status
   expect(sessionStorage.getItem(tokenKey)).toBe(status === 403 ? null : "private-token");
   expect(screen.getByRole("link", { name: "Neuen Link anfordern" })).toHaveAttribute("href", "/passwort-vergessen");
 });
+it("shows backend policy errors and retains the token for a corrected Unicode password", async () => {
+  const detail = "Das Passwort muss zwischen 12 und 128 Zeichen lang sein.";
+  vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ detail }), { status: 422 }));
+  open();
+  for (const label of ["Neues Passwort", "Passwort wiederholen"]) {
+    const input = screen.getByLabelText(label, { exact: true });
+    expect(input).not.toHaveAttribute("minlength");
+    expect(input).not.toHaveAttribute("maxlength");
+    fireEvent.change(input, { target: { value: "😀".repeat(6) } });
+  }
+  await userEvent.click(screen.getByRole("button", { name: "Passwort speichern" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(detail);
+  expect(sessionStorage.getItem(tokenKey)).toBe("private-token");
+  fill();
+  await userEvent.click(screen.getByRole("button", { name: "Passwort speichern" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Ihr Passwort wurde geändert");
+});

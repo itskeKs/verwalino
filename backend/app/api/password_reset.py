@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import logging
-import secrets
 import smtplib
 from collections.abc import Callable
 
@@ -16,20 +16,25 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from starlette.concurrency import run_in_threadpool
 
-from app.api.auth import LoginRequest
 from app.core import rate_limit
-from app.core.auth_db import lookup_login_principal
 from app.core.config import settings
-from app.core.db import get_session_factory, set_tenant_context
-from app.core.deployment_policy import get_deployment_policy
+from app.core.db import get_session_factory
+from app.core.deployment_policy import RateLimitRules, get_deployment_policy
 from app.core.honeypot import honeypot_response
 from app.core.rate_limit import ThrottleRequest, check_and_record, throttled
-from app.core.security import hash_password, normalize_email, validate_new_password
+from app.core.security import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, hash_password, normalize_email, validate_new_password
 from app.services import mail_service
 
 logger = logging.getLogger(__name__)
 MESSAGE = {'message': 'Wenn ein Konto zu dieser Adresse besteht, erhalten Sie eine E-Mail zum Zurücksetzen Ihres Passworts.'}
 REFUSED = 'Zurücksetzen nicht möglich. Bitte fordern Sie einen neuen Link an.'
+PASSWORD_POLICY = f'Das Passwort muss zwischen {MIN_PASSWORD_LENGTH} und {MAX_PASSWORD_LENGTH} Zeichen lang sein.'
+ADDRESS_FORMAT = 'Bitte geben Sie eine gültige E-Mail-Adresse ein.'
+# Three issued mails per address; one hour after the third before a new window.
+RECIPIENT_RULES = RateLimitRules(3, 3, 60, 60, 1, 60, 60, 100, 100)
+# Like signup, retention cleanup is best effort after every 100th request.
+RESET_CLEANUP_EVERY = 100
+_reset_attempts = itertools.count(1)
 # Configuration is deployment-wide; one warning per process avoids a log flood.
 _warned_unavailable = False
 
@@ -40,16 +45,22 @@ class ResetRoute(APIRoute):
         async def handle(request: Request) -> Response:
             try:
                 response = await handler(request)
-            except RequestValidationError:
-                # Malformed bodies cannot bypass the IP request budget.
-                scope = 'password_reset_confirm' if request.url.path.endswith('/confirm') else 'password_reset'
-                throttle = await throttled(scope)(request)
-                await run_in_threadpool(hash_password, 'password-reset-validation-dummy')
-                async with get_session_factory()() as session, session.begin():
-                    attempt = await check_and_record(session, scope, {'ip': throttle.ip},
-                        get_deployment_policy().rate_limit_rules, request_id=throttle.request_id)
-                    await attempt.record_failure()
-                response = JSONResponse(status_code=403, content={'detail': REFUSED})
+            except RequestValidationError as error:
+                if request.url.path.endswith('/confirm'):
+                    # Shape/policy is public information, independent of token state.
+                    detail = PASSWORD_POLICY if any(
+                        item['loc'][:2] == ('body', 'password') for item in error.errors()
+                    ) else 'Eingaben ungültig. Bitte prüfen Sie den Link und die Felder.'
+                else:
+                    # Malformed request bodies still pay the IP request budget.
+                    throttle = await throttled('password_reset')(request)
+                    await run_in_threadpool(hash_password, 'password-reset-validation-dummy')
+                    async with get_session_factory()() as session, session.begin():
+                        attempt = await check_and_record(session, throttle.scope, {'ip': throttle.ip},
+                            get_deployment_policy().rate_limit_rules, request_id=throttle.request_id)
+                        await attempt.record_failure()
+                    detail = ADDRESS_FORMAT
+                response = JSONResponse(status_code=422, content={'detail': detail})
             except HTTPException as error:
                 response = JSONResponse(status_code=error.status_code, content={'detail': error.detail})
             response.headers['Cache-Control'] = 'no-store'
@@ -76,12 +87,29 @@ class ConfirmRequest(BaseModel):
     token: SecretStr = Field(max_length=256)
     password: SecretStr
 
+    @field_validator('password')
+    @classmethod
+    def valid_password(cls, value: SecretStr) -> SecretStr:
+        validate_new_password(value.get_secret_value())
+        return value
+
 
 async def submit_mail(message) -> None:
     try:
         await run_in_threadpool(mail_service.submit_password_mail, settings, message)
     except (mail_service.MailConfigurationError, smtplib.SMTPException, OSError):
         logger.warning('Password reset mail submission failed')
+
+
+async def cleanup_expired_requests() -> None:
+    """Bounded definer cleanup in a separate post-response transaction."""
+    try:
+        async with get_session_factory()() as session, session.begin():
+            await session.execute(text("SET LOCAL lock_timeout='100ms'"))
+            await session.execute(text("SET LOCAL statement_timeout='1s'"))
+            await session.execute(text('SELECT public.cleanup_password_reset_requests()'))
+    except DBAPIError:
+        logger.warning('Password reset request cleanup failed')
 
 
 @router.post('', status_code=202)
@@ -96,27 +124,43 @@ async def request_reset(body: ResetRequest, background: BackgroundTasks,
     if not available and not _warned_unavailable:
         _warned_unavailable = True
         logger.warning('Password reset unavailable: configure SMTP and a trusted public URL')
+    token = None
     async with get_session_factory()() as session:
         async with session.begin():
             attempt = await check_and_record(session, throttle.scope, {'ip': throttle.ip},
                 get_deployment_policy().rate_limit_rules, request_id=throttle.request_id)
-            principal = await lookup_login_principal(session, body.email)
-        # Same expensive work for existing, absent and throttled addresses. SMTP
-        # is deferred until after the response; it cannot reveal mailbox presence.
+        # Same expensive work for existing, absent and throttled addresses.
         await run_in_threadpool(hash_password, 'password-reset-request-dummy')
-        token = secrets.token_hex(32)
-        digest = hashlib.sha256(token.encode()).digest()
-        message = mail_service.build_password_reset(
-            settings, recipient=body.email,
-            link=f"{(settings.public_url or '').rstrip('/')}/passwort-zuruecksetzen?token={token}")
         async with session.begin():
             await attempt.record_failure()
-            if available and attempt.allowed and principal and principal.is_active:
-                await session.execute(text('''INSERT INTO public.password_reset_request(user_id,organization_id,token_hash)
-                    VALUES (:user,:org,:digest)'''), {'user': principal.user_id, 'org': principal.organization_id, 'digest': digest})
-                background.add_task(submit_mail, message)
+            if available and attempt.allowed:
+                # Serialize admission plus issuance across processes/IPs; the
+                # limiter persists only the scoped normalized-address hash.
+                recipient_hash = rate_limit.key_hash('password_reset_recipient', 'email', body.email)
+                await session.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key,0))'),
+                    {'key': 'reset-recipient:' + recipient_hash.hex()})
+                recipient_attempt = await check_and_record(session, 'password_reset_recipient',
+                    {'email': body.email}, RECIPIENT_RULES, request_id=throttle.request_id)
+                if recipient_attempt.allowed:
+                    token = await session.scalar(text('SELECT public.issue_password_reset(:email)'), {'email': body.email})
+                    if token is not None:
+                        await recipient_attempt.record_failure()
+                        # Keep a partial count until a full quiet hour. This
+                        # conservative rolling cap cannot burst at a window edge.
+                        await session.execute(text("""UPDATE public.auth_throttle
+                            SET window_start=updated_at WHERE key_kind='email' AND key_hash=:key"""),
+                            {'key': recipient_hash})
+    # Construct mail even for absent/locked recipients, without minting a token
+    # in the app. SMTP runs only after the committed issuance and HTTP response.
+    message = mail_service.build_password_reset(
+        settings, recipient=body.email,
+        link=f"{(settings.public_url or '').rstrip('/')}/passwort-zuruecksetzen?token={token or '0' * 64}")
+    if token is not None:
+        background.add_task(submit_mail, message)
     if rate_limit.cleanup_due():
         await rate_limit.cleanup_stale(attempt.rules)
+    if next(_reset_attempts) % RESET_CLEANUP_EVERY == 0:
+        background.add_task(cleanup_expired_requests)
     return MESSAGE
 
 
@@ -124,39 +168,28 @@ async def request_reset(body: ResetRequest, background: BackgroundTasks,
 async def confirm_reset(body: ConfirmRequest, background: BackgroundTasks,
                         throttle: ThrottleRequest = Depends(throttled('password_reset_confirm'))):
     token = body.token.get_secret_value()
-    password = body.password.get_secret_value()
-    try:
-        LoginRequest.login_password_is_bounded(password)
-        validate_new_password(password)
-        valid_password = True
-    except ValueError:
-        valid_password = False
-    # Every parsed confirmation pays for a new hash, even absent/used/locked
+    # Every policy-valid confirmation pays for a hash, even absent/used/locked
     # tokens. Hashing never holds a DB transaction or a row/ACL lock.
-    password_hash = await run_in_threadpool(hash_password, password if valid_password else 'password-reset-confirm-dummy')
-    changed = None
+    password_hash = await run_in_threadpool(hash_password, body.password.get_secret_value())
+    recipient = None
     async with get_session_factory()() as session:
         async with session.begin():
-            pending = (await session.execute(text('SELECT user_id,organization_id FROM public.password_reset_request WHERE token_hash=:digest'),
-                {'digest': hashlib.sha256(token.encode()).digest()})).mappings().one_or_none()
-            # Opaque wrong tokens have no user. All such attempts share a dummy
-            # bucket; retained expired/used tokens continue to count on their user.
-            user_key = str(pending['user_id']) if pending else 'invalid-token'
-            attempt = await throttle.check(session, user_key + '@password-reset.invalid')
+            # A token digest is opaque and needs no privileged pre-lookup.
+            token_key = hashlib.sha256(token.encode()).hexdigest()
+            attempt = await throttle.check(session, token_key + '@password-reset.invalid')
         async with session.begin():
-            if attempt.allowed and valid_password:
+            if attempt.allowed:
                 try:
                     async with session.begin_nested():
-                        changed = await session.scalar(text('SELECT public.reset_password_with_token(:token,:password_hash)'),
+                        recipient = await session.scalar(text('SELECT public.reset_password_with_token(:token,:password_hash)'),
                             {'token': token, 'password_hash': password_hash})
-                        await set_tenant_context(session, pending['organization_id'])
-                        email = await session.scalar(text('SELECT email FROM public."user" WHERE id=:user'), {'user': changed})
                 except DBAPIError as error:
                     error.hide_parameters = True
                     if getattr(error.orig, 'sqlstate', None) != 'P0001':
                         raise
-            # IP counts requests, including success; only refusals count on users.
-            if changed is None:
+            # IP counts valid-body requests, including success; only refusals
+            # count against the opaque token key.
+            if recipient is None:
                 await attempt.record_failure()
             else:
                 ip_attempt = await check_and_record(session, throttle.scope, {'ip': throttle.ip},
@@ -164,7 +197,7 @@ async def confirm_reset(body: ConfirmRequest, background: BackgroundTasks,
                 await ip_attempt.record_failure()
     if rate_limit.cleanup_due():
         await rate_limit.cleanup_stale(attempt.rules)
-    if changed is None:
+    if recipient is None:
         raise HTTPException(403, REFUSED)
-    background.add_task(submit_mail, mail_service.build_password_changed(settings, recipient=email))
+    background.add_task(submit_mail, mail_service.build_password_changed(settings, recipient=recipient))
     return Response(status_code=204)

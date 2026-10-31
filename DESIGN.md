@@ -182,7 +182,11 @@ and is removed from the URL; reloads keep it and no GET or effect submits it.
 Success clears passwords and stored token, shows “Ihr Passwort wurde geändert.
 Alle bisherigen Sitzungen wurden beendet.” and a “Zur Anmeldung” link that reloads
 authentication state. There is no automatic login. A 403 clears the token; retryable
-errors retain it. Errors offer “Neuen Link anfordern”. Fields retain useful inputs,
+errors and policy 422 responses retain it. Password length is validated by the
+backend in Unicode code points; “Das Passwort muss zwischen 12 und 128 Zeichen
+lang sein.” appears in the alert without browser UTF-16 length constraints. A
+malformed request address shows “Bitte geben Sie eine gültige E-Mail-Adresse ein.”
+and preserves the entered address. Errors offer “Neuen Link anfordern”. Fields retain useful inputs,
 use `new-password` autocomplete and remain labelled and usable at 360 px.
 
 ### Sidebar groups
