@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react';
 import { api, ApiError } from '../api/client';
 import type { LetterDocument } from '../api/letters';
-import type { Meter } from '../api/types';
+import type { Meter, MeterReading } from '../api/types';
 import { listMeters, listMeterReadings } from '../api/endpoints';
+import { canonicalValue } from '../lib/utils';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
@@ -44,11 +45,15 @@ export function LeaseDocuments({ leaseId, propertyId, unitId, tenantLabel, canWr
   const [signatures, setSignatures] = useState('');
   const [notes, setNotes] = useState('');
   const [keys, setKeys] = useState<{ type: string; count: string }[]>([]);
-  const [meters, setMeters] = useState<(Meter & { value: string })[]>([]);
+  const [meters, setMeters] = useState<(Meter & { value: string | null; readings: MeterReading[] })[]>([]);
   const [meterLoading, setMeterLoading] = useState(false);
   const [meterError, setMeterError] = useState<string | null>(null);
 
   function changed() { requestId.current = null; }
+
+  function prefilledValue(meter: { readings: MeterReading[] }) {
+    return meter.readings.find(reading => !handoverDate || reading.reading_date <= handoverDate)?.value ?? null;
+  }
 
   async function loadMeters() {
     setMeterLoading(true); setMeterError(null);
@@ -56,13 +61,13 @@ export function LeaseDocuments({ leaseId, propertyId, unitId, tenantLabel, canWr
       const items = await listMeters(propertyId, unitId);
       const rows = await Promise.all(items.map(async meter => {
         const readings = await listMeterReadings(meter.id);
-        const latest = [...readings].sort((a, b) => {
+        const ordered = [...readings].sort((a, b) => {
           const day = b.reading_date.localeCompare(a.reading_date);
           if (day) return day;
           const first = BigInt(a.value.replace('.', '')), second = BigInt(b.value.replace('.', ''));
           return first < second ? 1 : first > second ? -1 : a.id.localeCompare(b.id);
-        })[0];
-        return { ...meter, value: latest?.value.replace('.', ',') ?? '' };
+        });
+        return { ...meter, value: null, readings: ordered };
       }));
       setMeters(rows);
     } catch (error) { setMeterError(failure(error)); }
@@ -72,13 +77,18 @@ export function LeaseDocuments({ leaseId, propertyId, unitId, tenantLabel, canWr
   async function submitHandover(event: React.FormEvent) {
     event.preventDefault();
     if (mutationLock.current || !canWrite || meterLoading || meterError) return;
+    const readings = meters.map(meter => ({ meter_id: meter.id, value: canonicalValue(meter.value ?? prefilledValue(meter) ?? '') }));
+    if (readings.some(reading => reading.value === null)) {
+      setError('Bitte nichtnegative Zählerstände mit höchstens zehn Ganzzahl- und vier Nachkommastellen eingeben.');
+      return;
+    }
     mutationLock.current = true; setSaving(true); setError(null);
     try {
       requestId.current ??= crypto.randomUUID();
       const row = await api.post<LetterDocument>(`/api/leases/${encodeURIComponent(leaseId)}/handover`, {
         request_id: requestId.current, date: handoverDate, type, parties, signatures, notes,
         keys: keys.map(key => ({ type: key.type, count: Number(key.count) })),
-        readings: meters.map(meter => ({ meter_id: meter.id, value: meter.value.trim().replace(',', '.') })),
+        readings: readings.filter((reading, index) => reading.value !== prefilledValue(meters[index])),
       });
       setDocuments(previous => [row, ...previous.filter(item => item.id !== row.id)]);
       setHandoverOpen(false); onReadingsSaved();
@@ -150,7 +160,7 @@ export function LeaseDocuments({ leaseId, propertyId, unitId, tenantLabel, canWr
             {meterLoading && <p role="status">Zählerstände werden geladen…</p>}
             {meterError && <div><p role="alert" className="error-text">{meterError}</p><Button type="button" variant="outline" onClick={() => { void loadMeters(); }}>Zähler erneut laden</Button></div>}
             {!meterLoading && !meterError && meters.length === 0 && <p>Dieser Einheit sind keine Zähler zugeordnet.</p>}
-            {meters.map((meter, index) => <div className="grid gap-2 break-words" key={meter.id}><Label htmlFor={`${leaseId}-${meter.id}`}>Zählerstand {meter.meter_number}</Label><span className="text-sm text-muted-foreground">{meter.meter_type} · {meter.location}</span><Input id={`${leaseId}-${meter.id}`} inputMode="decimal" required value={meter.value} onChange={event => { changed(); setMeters(previous => previous.map((row, i) => i === index ? { ...row, value: event.target.value } : row)); }} /></div>)}
+            {meters.map((meter, index) => <div className="grid gap-2 break-words" key={meter.id}><Label htmlFor={`${leaseId}-${meter.id}`}>Zählerstand {meter.meter_number}</Label><span className="text-sm text-muted-foreground">{meter.meter_type} · {meter.location}</span><Input id={`${leaseId}-${meter.id}`} inputMode="decimal" required value={meter.value ?? prefilledValue(meter)?.replace('.', ',') ?? ''} onChange={event => { changed(); setMeters(previous => previous.map((row, i) => i === index ? { ...row, value: event.target.value } : row)); }} /></div>)}
             <fieldset className="min-w-0 space-y-3"><legend className="font-medium">Schlüssel</legend>
               {keys.map((key, index) => <div className="grid gap-2 rounded-md border border-border p-3" key={index}>
                 <Label htmlFor={`${leaseId}-key-${index}`}>Schlüsselart {index + 1}</Label><Input id={`${leaseId}-key-${index}`} required maxLength={100} value={key.type} onChange={event => { changed(); setKeys(previous => previous.map((row, i) => i === index ? { ...row, type: event.target.value } : row)); }} />

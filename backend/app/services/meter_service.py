@@ -79,10 +79,7 @@ class MeterReadingService:
             raise HTTPException(404, 'Zähler nicht zugänglich')
         await require_property_master(self.db, self.org, meter.property_id, capability='prepare')
         repo = MeterReadingRepository(self.db, self.org)
-        preceding = await repo.preceding_value(meter_id, body.reading_date)
         value = Decimal(body.value)
-        if preceding is not None and value < preceding:
-            raise HTTPException(422, 'Zählerstand darf nicht kleiner als die vorherige Ablesung sein.')
         reading = await repo.create(MeterReading(organization_id=self.org, meter_id=meter_id,
             reading_date=body.reading_date, value=value, period=body.period))
         return reading_out(reading)

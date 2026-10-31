@@ -68,7 +68,15 @@ it("posts a German reading as an exact decimal string", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Stand speichern" }));
   await waitFor(() => expect(endpoints.createMeterReading).toHaveBeenCalledWith("meter", { reading_date: "2026-12-31", value: "250.1250", period: "2026" }));
 });
-it.each(["", "-1", "NaN", "Infinity", "1.00001", "10000000000", "1e3"])("rejects invalid reading %s without posting", async value => {
+it("posts a grouped German reading as an exact decimal string", async () => {
+  show(); await readingForm();
+  fireEvent.change(screen.getByLabelText("Zählerstand *", { exact: true }), { target: { value: "1.234,5" } });
+  fireEvent.click(screen.getByRole("button", { name: "Stand speichern" }));
+  await waitFor(() => expect(endpoints.createMeterReading).toHaveBeenCalledWith("meter", {
+    reading_date: "2026-12-31", value: "1234.5000", period: null,
+  }));
+});
+it.each(["", "-1", "NaN", "Infinity", "1.00001", "10000000000", "1e3", "1.23,4", "1,234.5"])("rejects invalid reading %s without posting", async value => {
   show(); await readingForm();
   fireEvent.change(screen.getByLabelText("Zählerstand *", { exact: true }), { target: { value } });
   fireEvent.click(screen.getByRole("button", { name: "Stand speichern" }));

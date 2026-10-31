@@ -13,9 +13,8 @@ adds a reading from `reading_date`, `value`, and optionally `period`.
 Measured values are non-negative, exact decimal strings with at most ten integer
 and four decimal places; responses always contain four decimal places.
 Existing readings are not overwritten, identical reading days are allowed.
-A newly recorded value below the maximum reading on the nearest preceding reading day
-(including the same day) is refused. Backdated readings remain possible; this check does not
-retroactively rewrite existing readings or validate a successor reading.
+The general reading route accepts decreases, including a lower reading after an earlier typo.
+Readings are append-only; the consumption rules below flag decreases for review.
 Org isolation and property master permissions apply to lists, single retrieval, and writing;
 read permission alone allows no change, PAUSED receives only the permitted read paths.
 Write paths use live role checks, financial lock, and commit before HTTP success.
@@ -46,10 +45,14 @@ settlements yield 30/70 EUR including reload and finalization.
 
 ## Handover protocols (#37)
 
-The lease's **Übergabeprotokoll** form prefills every unit meter from its latest reading day
-(the highest value on a tied day). Saving calls the same reading service as
+The lease's **Übergabeprotokoll** form prefills every unit meter from its latest reading day on or before
+the selected handover date (the highest value on a tied day). Unchanged prefills are omitted from the submitted readings;
+the protocol reuses the latest available reading on or before its date without adding a row.
+A meter without an available reading requires an explicit value. Saving changed values calls the same reading service as
 `POST /api/meters/{id}/readings`, with the protocol date and the source note
 `Übergabeprotokoll YYYY-MM-DD` in the existing `meter_reading.period` column.
+Only this handover path refuses a value below the maximum on the nearest preceding reading day
+(including the same day). Backdated protocols do not validate successor readings.
 The readings remain visible in the ordinary meter history and available to consumption
 calculation; there is no separate protocol-only reading store. The protocol PDF snapshots
 numbers, types, values and reading IDs in the existing letter original, so later meter-description

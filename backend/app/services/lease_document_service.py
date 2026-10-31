@@ -1,4 +1,4 @@
-"""Lease documents reuse editable letter templates and retained letter originals."""
+"""Built-in lease documents reuse the letter renderer and retained originals."""
 import json
 from decimal import Decimal
 
@@ -10,9 +10,9 @@ from app.repositories.person_repo import PersonRepository
 from app.repositories.property_repo import PropertyRepository
 from app.repositories.tenant_profile_repo import TenantProfileRepository
 from app.repositories.unit_repo import UnitRepository
-from app.repositories.meter_repo import MeterRepository
+from app.repositories.meter_repo import MeterRepository, MeterReadingRepository
 from app.services.letter_service import LETTER_PAYLOAD_FORMAT, LetterService, document_out, render_letter, replace_tokens, saved_payload
-from app.services.meter_service import MeterReadingService, ReadingCreate
+from app.services.meter_service import MeterReadingService, ReadingCreate, reading_out
 from app.services.property_master_service import require_property_master
 
 LEGAL_CAVEAT = 'Vorlage; rechtliche Prüfung erforderlich'
@@ -46,6 +46,23 @@ Freitext: Befristungsgrund, Nutzung und sonstige Vertragsbedingungen
 Ort, Datum: ____________________
 Unterschrift Vermieter: ____________________
 Unterschrift Mieter: ____________________"""
+
+HANDOVER_TEMPLATE = """{{protokoll.art}} am {{datum}}
+{{objekt.name}}
+{{objekt.adresse}}
+Einheit {{einheit.nummer}}
+
+Anwesende Parteien:
+{{protokoll.parteien}}
+
+Schlüssel:
+{{protokoll.schluessel}}
+
+Mängel / Notizen:
+{{protokoll.notizen}}
+
+Unterschriften (Namen; keine elektronische Signatur):
+{{protokoll.unterschriften}}"""
 
 
 class LeaseDocumentService:
@@ -98,33 +115,19 @@ class LeaseDocumentService:
         await self.letters.check_document(row)
         return document_out(row)
 
-    async def template(self, name, subject, body):
-        await self.db.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key,0))'),
-                              {'key': f'lease-template:{self.org}:{name}'})
-        params = {'org': self.org, 'name': name}
-        template = (await self.db.execute(text('''SELECT * FROM letter_template
-            WHERE organization_id=:org AND name=:name ORDER BY created_at,id LIMIT 1 FOR SHARE'''), params)).mappings().first()
-        if template is None:
-            template = (await self.db.execute(text('''INSERT INTO letter_template(organization_id,name,subject,body)
-                VALUES (:org,:name,:subject,:body) RETURNING *'''), {**params, 'subject': subject, 'body': body})).mappings().one()
-        return template
-
     async def contract(self, lease_id, body):
         lease, unit, person, prop = await self.context(lease_id, write=True)
         existing = await self.replay(lease, body, 'lease_contract')
         if existing:
             return existing
-        template = await self.template('Mietvertrag', 'Mietvertrag · Einheit {{einheit.nummer}}', CONTRACT_TEMPLATE)
         values, sources = await self.letters.variables(lease, person, prop, body.as_of, landlords=True,
             handover_date=body.handover_date, agreements=body.agreements)
-        subject = replace_tokens(template['subject'], values)
-        rendered = replace_tokens(template['body'], values)
-        if not rendered.startswith(LEGAL_CAVEAT):
-            rendered = LEGAL_CAVEAT + '\n\n' + rendered
+        subject = replace_tokens('Mietvertrag · Einheit {{einheit.nummer}}', values)
+        rendered = replace_tokens(CONTRACT_TEMPLATE, values)
         payload = {'format': LETTER_PAYLOAD_FORMAT, 'document_type': 'lease_contract', 'input': body.model_dump(mode='json'),
                    'landlord_sources': sources, 'variables': values, 'text': rendered}
         pdf = render_letter(values['mieter.name'], values['mieter.adresse'], subject, rendered, body.as_of)
-        return await self.letters.save_original(template_id=template['id'], lease=lease, person=person, prop=prop,
+        return await self.letters.save_original(template_id=None, lease=lease, person=person, prop=prop,
             request_id=body.request_id, as_of=body.as_of, subject=subject, body=json.dumps(payload, ensure_ascii=False), pdf=pdf)
 
     async def handover(self, lease_id, body):
@@ -141,27 +144,36 @@ class LeaseDocumentService:
                 raise HTTPException(404, 'Zähler der Einheit nicht zugänglich')
             submitted[meter.id] = meter
         meters = await repo.list_by_unit(unit.id)
-        if len(submitted) != len(body.readings) or set(submitted) != {meter.id for meter in meters}:
+        if len(submitted) != len(body.readings) or not set(submitted) <= {meter.id for meter in meters}:
             raise HTTPException(422, 'Bitte jeden Zähler der Einheit genau einmal ablesen.')
         values = {reading.meter_id: reading.value for reading in body.readings}
         rows = []
         service = MeterReadingService(self.db, self.auth)
+        reading_repo = MeterReadingRepository(self.db, self.org)
         for meter in sorted(meters, key=lambda m: m.id):
-            reading = await service.record(meter.id, ReadingCreate(reading_date=body.date,
-                value=values[meter.id], period=f'Übergabeprotokoll {body.date.isoformat()}'))
+            await repo.get_by_id_for_update(meter.id)
+            preceding = await reading_repo.preceding_reading(meter.id, body.date)
+            if meter.id in values:
+                if preceding is not None and Decimal(values[meter.id]) < preceding.value:
+                    raise HTTPException(422, 'Zählerstand darf nicht kleiner als die vorherige Ablesung sein.')
+                reading = await service.record(meter.id, ReadingCreate(reading_date=body.date,
+                    value=values[meter.id], period=f'Übergabeprotokoll {body.date.isoformat()}'))
+            elif preceding is not None:
+                reading = reading_out(preceding)
+            else:
+                raise HTTPException(422, 'Bitte jeden Zähler ohne vorhandene Ablesung zur Übergabe ablesen.')
             rows.append({'meter_id': str(meter.id), 'reading_id': reading['id'], 'number': meter.meter_number,
                          'type': meter.meter_type, 'value': reading['value']})
-        template = await self.template('Übergabeprotokoll', 'Übergabeprotokoll', 'Übergabeprotokoll zur Einheit {{einheit.nummer}}')
-        subject = f'Übergabeprotokoll · {body.type} · Einheit {unit.number}'
-        rendered = (f'{body.type} am {body.date.strftime("%d.%m.%Y")}\n'
-            f'{prop.name}\n{prop.street}\n{prop.zip_code} {prop.city}\nEinheit {unit.number}\n\n'
-            f'Anwesende Parteien:\n{body.parties}\n\nSchlüssel:\n' +
-            ('\n'.join(f'{key.type}: {key.count}' for key in body.keys) or 'Keine Schlüssel erfasst') +
-            f'\n\nMängel / Notizen:\n{body.notes or "Keine Angaben"}\n\n'
-            f'Unterschriften (Namen; keine elektronische Signatur):\n{body.signatures}')
+        variables = {'protokoll.art': body.type, 'datum': body.date.strftime('%d.%m.%Y'),
+            'objekt.name': prop.name, 'objekt.adresse': f'{prop.street}\n{prop.zip_code} {prop.city}',
+            'einheit.nummer': unit.number, 'protokoll.parteien': body.parties,
+            'protokoll.schluessel': '\n'.join(f'{key.type}: {key.count}' for key in body.keys) or 'Keine Schlüssel erfasst',
+            'protokoll.notizen': body.notes or 'Keine Angaben', 'protokoll.unterschriften': body.signatures}
+        subject = replace_tokens('Übergabeprotokoll · {{protokoll.art}} · Einheit {{einheit.nummer}}', variables)
+        rendered = replace_tokens(HANDOVER_TEMPLATE, variables)
         meter_rows = [(r['number'], r['type'], f"{Decimal(r['value']):,.4f}".replace(',', '_').replace('.', ',').replace('_', '.')) for r in rows]
         pdf = render_letter(person.company_name or f'{person.first_name} {person.last_name}'.strip(),
             f'{person.street}\n{person.zip_code} {person.city}'.strip(), subject, rendered, body.date, meter_rows)
         payload = {'format': LETTER_PAYLOAD_FORMAT, 'document_type': 'handover', 'input': body.model_dump(mode='json'), 'meters': rows, 'text': rendered}
-        return await self.letters.save_original(template_id=template['id'], lease=lease, person=person, prop=prop,
+        return await self.letters.save_original(template_id=None, lease=lease, person=person, prop=prop,
             request_id=body.request_id, as_of=body.date, subject=subject, body=json.dumps(payload, ensure_ascii=False), pdf=pdf)

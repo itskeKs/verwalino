@@ -120,9 +120,9 @@ documents). Creation requires a live writing role plus property prepare and orig
 export permissions. Readers can open authorized originals. Ended leases and leases with
 finalized statements remain eligible for move-out protocols; existing statements are unchanged.
 
-The first contract issuance saves the editable **Mietvertrag** letter template. Subsequent
-issuances use that organization's saved template, editable under **Briefe**. Additional
-plain-text variables are `{{vermieter.name}}`, `{{vermieter.adresse}}`,
+Contracts and handover protocols render built-in bodies through the shared letter renderer.
+They neither select nor create editable letter templates; a circular named **Mietvertrag**
+does not affect a contract. General circulars also support the plain-text variables `{{vermieter.name}}`, `{{vermieter.adresse}}`,
 `{{einheit.nummer}}`, `{{einheit.lage}}`, `{{einheit.flaeche}}`, `{{vertrag.beginn}}`,
 `{{vertrag.ende}}`, `{{vertrag.kaltmiete}}`, `{{vertrag.vorauszahlung}}`,
 `{{vertrag.kaution}}`, `{{vertrag.uebergabe}}` and `{{vertrag.vereinbarungen}}`.
@@ -139,18 +139,20 @@ require checking and completion before use. Ownership does not prove who is lega
 There is no claim of legal completeness and no electronic signature.
 
 The handover form captures date, move-in/move-out, present parties, one reading for every unit
-meter (prefilled from its latest dated readings), key types/counts, defects/notes and signature
-names. It stores ordinary readings with the source note **“Übergabeprotokoll YYYY-MM-DD”**;
+meter (prefilled from readings on or before the selected date), key types/counts, defects/notes and signature
+names. German grouped values such as `1.234,5` are accepted exactly. Unchanged prefills reuse
+existing readings without adding duplicates. Changed values store ordinary readings with the source note **“Übergabeprotokoll YYYY-MM-DD”**;
 see [meter rules](meters.md). A failed reading or PDF render rolls back the complete submission.
 Requests allow up to 500 meter readings and 100 key types with counts from 0 to 1,000.
 Parties and signature names accept 4,000 characters each; notes and contract agreements 10,000 each.
 A unit without meters produces a protocol without a meter table. A successful save exposes the
 original PDF link and refreshes the unit meter panel. Failed saves preserve the form inputs.
 
-No migration or new table is used. Editable templates remain in `letter_template`; originals
+Revision 0142 makes the existing template reference nullable for built-in documents; no new
+table is used. General circular templates remain in `letter_template`; originals
 remain in `letter_document`, linked to the lease, tenant and property. Its existing `body` text
 column holds a JSON snapshot of the submitted data and rendered text; protocol meter snapshots
-include the new reading IDs, numbers, types and exact values. `storage_uri` and `content_sha256`
+include reused or new reading IDs, numbers, types and exact values. `storage_uri` and `content_sha256`
 retain the existing immutable, hash-verified PDF. Contract snapshots additionally retain landlord
 source IDs; current export and processing restrictions are rechecked before listing, replay or
 download. Retries of an unchanged request return the same original and add no readings.

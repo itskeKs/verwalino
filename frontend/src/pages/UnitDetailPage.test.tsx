@@ -188,12 +188,63 @@ it("prefills handover meters, preserves failed inputs and saves a move-out for a
   expect(within(dialog).getByLabelText('Zählerstand W37')).toHaveValue('99,5');
   expect(screen.queryByRole('link', { name: /Auszug.*PDF öffnen/ })).not.toBeInTheDocument();
   refused = false;
-  fireEvent.change(within(dialog).getByLabelText('Zählerstand W37'), { target: { value: '1234,5678' } });
+  fireEvent.change(within(dialog).getByLabelText('Zählerstand W37'), { target: { value: '1.234,5678' } });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Protokoll und Ablesungen speichern' }));
   expect(await screen.findByRole('link', { name: /Auszug.*PDF öffnen/ })).toBeVisible();
   const payload = JSON.parse(posts().at(-1)![1].body);
   expect(payload).toMatchObject({ date: '2026-02-01', type: 'Auszug', parties: 'Frida und Ada', readings: [{ meter_id: 'meter', value: '1234.5678' }] });
   expect(fetchMock.mock.calls.filter(([url, options]) => url.endsWith('/readings') && options?.method === 'POST')).toHaveLength(0);
+});
+
+it.each([null, '0100,00'])("omits an unchanged prefilled handover reading (%s)", async value => {
+  fetchMock.mockImplementation(async (url: string, options?: RequestInit) => {
+    if (url.startsWith('/api/meters?')) return new Response(JSON.stringify([{ id: 'meter', meter_number: 'W37', meter_type: 'KALTWASSER' }]), { status: 200 });
+    if (url === '/api/meters/meter/readings') return new Response(JSON.stringify([{ id: 'reading', reading_date: '2026-01-01', value: '100.0000' }]), { status: 200 });
+    if (url.endsWith('/handover') && options?.method === 'POST') return new Response(JSON.stringify({
+      id: 'protocol', subject: 'Übergabeprotokoll', pdf_url: '/api/letters/documents/protocol/pdf',
+    }), { status: 201 });
+    return new Response('[]', { status: 200 });
+  });
+  show();
+  fireEvent.click(await screen.findByRole('button', { name: 'Übergabeprotokoll' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Übergabeprotokoll' });
+  const reading = await within(dialog).findByLabelText('Zählerstand W37');
+  expect(reading).toHaveValue('100,0000');
+  if (value !== null) fireEvent.change(reading, { target: { value } });
+  fireEvent.change(within(dialog).getByLabelText('Übergabedatum'), { target: { value: '2026-02-01' } });
+  fireEvent.change(within(dialog).getByLabelText('Unterschriften (Namen)'), { target: { value: 'Frida; Ada' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Protokoll und Ablesungen speichern' }));
+  await screen.findByRole('link', { name: /PDF öffnen/ });
+  expect(JSON.parse(posts().at(-1)![1].body).readings).toEqual([]);
+});
+
+it("prefills a backdated handover from its preceding reading day", async () => {
+  fetchMock.mockImplementation(async (url: string, options?: RequestInit) => {
+    if (url.startsWith('/api/meters?')) return new Response(JSON.stringify([{ id: 'meter', meter_number: 'W37', meter_type: 'KALTWASSER' }]), { status: 200 });
+    if (url === '/api/meters/meter/readings') return new Response(JSON.stringify([
+      { id: 'january', reading_date: '2026-01-01', value: '100.0000' },
+      { id: 'march', reading_date: '2026-03-01', value: '300.0000' },
+    ]), { status: 200 });
+    if (url.endsWith('/handover') && options?.method === 'POST') return new Response(JSON.stringify({
+      id: 'protocol', subject: 'Übergabeprotokoll', pdf_url: '/api/letters/documents/protocol/pdf',
+    }), { status: 201 });
+    return new Response('[]', { status: 200 });
+  });
+  show();
+  fireEvent.click(await screen.findByRole('button', { name: 'Übergabeprotokoll' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Übergabeprotokoll' });
+  const reading = await within(dialog).findByLabelText('Zählerstand W37');
+  expect(reading).toHaveValue('300,0000');
+  fireEvent.change(within(dialog).getByLabelText('Übergabedatum'), { target: { value: '2026-02-01' } });
+  expect(reading).toHaveValue('100,0000');
+  fireEvent.change(reading, { target: { value: '250,5' } });
+  fireEvent.change(within(dialog).getByLabelText('Übergabedatum'), { target: { value: '2026-02-02' } });
+  expect(reading).toHaveValue('250,5');
+  fireEvent.change(reading, { target: { value: '100,0000' } });
+  fireEvent.change(within(dialog).getByLabelText('Unterschriften (Namen)'), { target: { value: 'Frida; Ada' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Protokoll und Ablesungen speichern' }));
+  await screen.findByRole('link', { name: /PDF öffnen/ });
+  expect(JSON.parse(posts().at(-1)![1].body).readings).toEqual([]);
 });
 
 it("ends an existing lease without resending unchanged monetary fields", async () => {

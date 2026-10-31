@@ -702,7 +702,7 @@ elif name == "openssl":
 
     def test_restore_refuses_newer_unknown_or_foreign_archives_before_starting_db(self):
         config = self.init()
-        for changes, message in [({"schema_head": "0142"}, "newer"),
+        for changes, message in [({"schema_head": f"{int(RELEASE_TARGET) + 1:04d}"}, "newer"),
                                  ({"schema_head": "unknown"}, "schema"),
                                  ({"format": "foreign"}, "manifest"),
                                  ({"format_version": 2}, "format")]:

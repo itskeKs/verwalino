@@ -312,7 +312,10 @@ async def test_lease_contract_uses_template_variables_and_retains_original(rent_
                          'Synthetic T23 tenant', 'Einheit 1', '700,00', '150,00',
                          '02.01.2026', 'Gartenmitbenutzung'):
             assert expected in content
-        template = next(t for t in (await api.get('/api/letters/templates')).json() if t['name'] == 'Mietvertrag')
+        assert (await api.get('/api/letters/templates')).json() == []
+        from app.services.lease_document_service import CONTRACT_TEMPLATE
+        template = await create_template(api, name='Eigene Vertragsvorlage',
+            subject='Mietvertrag · Einheit {{einheit.nummer}}', body=CONTRACT_TEMPLATE)
         circular = await api.post('/api/letters/issue', json=issue_body(w, template, as_of='2026-01-01'))
         assert circular.status_code == 201, circular.text
         circular_text = pdf_text((await api.get(circular.json()[0]['pdf_url'])).content)
@@ -328,6 +331,47 @@ async def test_lease_contract_uses_template_variables_and_retains_original(rent_
         assert conflict.status_code == 409, conflict.text
         listing = await api.get(f"/api/leases/{w['lease']}/documents")
         assert listing.status_code == 200 and row in listing.json()
+
+
+async def test_lease_contract_ignores_a_circular_template_named_mietvertrag(rent_world):
+    async with api_client(rent_world) as api:
+        template = await create_template(api, name='Mietvertrag', subject='Rundschreiben', body='Termin für die Hausversammlung')
+        response = await api.post(f"/api/leases/{rent_world['lease']}/contract", json=contract_body())
+        assert response.status_code == 201, response.text
+        content = pdf_text((await api.get(response.json()['pdf_url'])).content)
+        assert 'Monatliche Kaltmiete (Originalvertrag)' in content
+        assert 'Hausversammlung' not in content
+        assert (await api.get('/api/letters/templates')).json() == [template]
+        assert response.json()['template_id'] is None
+
+
+async def test_handover_does_not_create_an_unused_letter_template(rent_world):
+    async with api_client(rent_world) as api:
+        response = await api.post(f"/api/leases/{rent_world['lease']}/handover", json=handover_body())
+        assert response.status_code == 201, response.text
+        assert (await api.get('/api/letters/templates')).json() == []
+        assert response.json()['template_id'] is None
+
+
+async def test_builtin_original_prevents_a_downgrade_that_requires_templates(rent_world, rent_db):
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from alembic.script import ScriptDirectory
+    from sqlalchemy.exc import IntegrityError
+
+    async with api_client(rent_world) as api:
+        response = await api.post(f"/api/leases/{rent_world['lease']}/contract", json=contract_body())
+        assert response.status_code == 201, response.text
+        original = (await api.get(response.json()['pdf_url'])).content
+
+        def downgrade(connection):
+            with Operations.context(MigrationContext.configure(connection)):
+                ScriptDirectory('migrations').get_revision('0142').module.downgrade()
+
+        with pytest.raises(IntegrityError):
+            async with rent_db.begin_nested():
+                await (await rent_db.connection()).run_sync(downgrade)
+        assert (await api.get(response.json()['pdf_url'])).content == original
 
 
 async def test_lease_contract_refuses_foreign_lease_and_readers(rent_world):
@@ -395,6 +439,32 @@ async def test_handover_records_exact_readings_and_replays_without_duplicates(re
         assert payload['meters'][0]['reading_id'] == readings[-1]['id']
         await mutate(text("UPDATE meter SET meter_number='CHANGED' WHERE id=:id"), {'id': meter['id']})
         assert (await api.get(row['pdf_url'])).content == original.content
+
+
+async def test_handover_reuses_an_omitted_prefilled_reading_without_a_duplicate(rent_world, rent_db):
+    import json
+    w = rent_world
+    async with api_client(w) as api:
+        meter = await unit_meter(api, w)
+        original = (await api.get(f"/api/meters/{meter['id']}/readings")).json()
+        body = handover_body()
+        response = await api.post(f"/api/leases/{w['lease']}/handover", json=body)
+        assert response.status_code == 201, response.text
+        row = response.json()
+        assert (await api.get(f"/api/meters/{meter['id']}/readings")).json() == original
+        saved = (await rent_db.execute(text('SELECT body FROM letter_document WHERE id=:id'), {'id': row['id']})).scalar_one()
+        assert json.loads(saved)['meters'][0]['reading_id'] == original[0]['id']
+        assert '100,0000' in pdf_text((await api.get(row['pdf_url'])).content)
+        assert (await api.post(f"/api/leases/{w['lease']}/handover", json=body)).json() == row
+
+
+async def test_handover_requires_input_when_no_reading_exists_on_or_before_its_date(rent_world):
+    w = rent_world
+    async with api_client(w) as api:
+        await unit_meter(api, w)
+        response = await api.post(f"/api/leases/{w['lease']}/handover", json=handover_body(date='2025-12-31'))
+        assert response.status_code == 422, response.text
+        assert (await api.get(f"/api/leases/{w['lease']}/documents")).json() == []
 
 
 async def test_handover_lower_reading_rolls_back_every_reading_and_document(rent_world):
@@ -480,12 +550,12 @@ async def test_lease_document_keeps_original_landlord_export_and_processing_chec
         assert (await api.get(url)).status_code == 409
 
 
-async def test_handover_rejects_missing_duplicate_and_foreign_unit_meters(rent_world):
+async def test_handover_rejects_duplicate_and_foreign_unit_meters(rent_world):
     w = rent_world
     async with api_client(w) as api, api_client(w, foreign=True) as foreign:
         meter = await unit_meter(api, w)
         foreign_meter = await unit_meter(foreign, {**w, 'unit': w['foreign_unit'], 'property': w['foreign_property']})
-        for readings, status in (([], 422), ([{'meter_id': meter['id'], 'value': '100'}] * 2, 422),
+        for readings, status in (([{'meter_id': meter['id'], 'value': '100'}] * 2, 422),
                                  ([{'meter_id': foreign_meter['id'], 'value': '100'}], 404)):
             response = await api.post(f"/api/leases/{w['lease']}/handover", json=handover_body(readings=readings))
             assert response.status_code == status, response.text

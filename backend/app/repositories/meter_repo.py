@@ -47,15 +47,10 @@ class MeterRepository(TenantRepository[Meter]):
 class MeterReadingRepository(TenantRepository[MeterReading]):
     model = MeterReading
 
-    async def preceding_value(self, meter_id, reading_date):
-        day = select(func.max(MeterReading.reading_date)).where(
-            MeterReading.organization_id == self._org_id,
+    async def preceding_reading(self, meter_id, reading_date):
+        return await self._session.scalar(self._base_query().where(
             MeterReading.meter_id == meter_id, MeterReading.reading_date <= reading_date,
-        ).scalar_subquery()
-        return await self._session.scalar(select(func.max(MeterReading.value)).where(
-            MeterReading.organization_id == self._org_id,
-            MeterReading.meter_id == meter_id, MeterReading.reading_date == day,
-        ))
+        ).order_by(MeterReading.reading_date.desc(), MeterReading.value.desc(), MeterReading.id).limit(1))
 
     async def list_boundary_readings(
         self, meter_ids: Sequence[uuid.UUID], period_start: date, period_end: date,

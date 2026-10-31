@@ -112,15 +112,15 @@ async def test_meter_readings_are_exact_ordered_append_only_and_survive_patch(cl
 
 
 @pytest.mark.asyncio
-async def test_meter_refuses_a_reading_below_its_preceding_reading(client_a_admin, meter_world):
+async def test_meter_accepts_a_lower_reading_after_an_append_only_typo(client_a_admin, meter_world):
     meter = await new_meter(client_a_admin, meter_world, unit_id=meter_world['unit'])
     path = f"/api/meters/{meter['id']}/readings"
-    first = await client_a_admin.post(path, json={'reading_date': '2026-01-01', 'value': '100'})
+    first = await client_a_admin.post(path, json={'reading_date': '2026-01-01', 'value': '12555'})
     assert first.status_code == 201, first.text
-    response = await client_a_admin.post(path, json={'reading_date': '2026-01-02', 'value': '99.9999'})
-    assert response.status_code == 422, response.text
-    assert 'Zählerstand' in response.text
-    assert len((await client_a_admin.get(path)).json()) == 1
+    response = await client_a_admin.post(path, json={'reading_date': '2026-01-02', 'value': '125.55'})
+    assert response.status_code == 201, response.text
+    assert response.json()['value'] == '125.5500'
+    assert [row['value'] for row in (await client_a_admin.get(path)).json()] == ['12555.0000', '125.5500']
 
 
 @pytest.mark.asyncio
