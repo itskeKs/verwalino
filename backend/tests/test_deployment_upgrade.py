@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.core.declaration_test_database import require_disposable_database_settings
 
 
-@pytest.mark.parametrize('heads', [(), ('0028', '0122'), ('0122', '0139', '0140'), ('0138',), ('garbage',)])
+@pytest.mark.parametrize('heads', [(), ('0028', '0122'), ('0122', '0139', '0140', '0141'), ('0138',), ('garbage',)])
 def test_reject_unknown_or_ambiguous_database_version(heads):
     with pytest.raises(ValueError, match='schema'):
         deployment.supported_schema(heads)

@@ -43,7 +43,7 @@ def test_every_bundle_member_excludes_personal_data_and_config_values(private_lo
         log_lines=lines,
         containers=[{'Service': 'app', 'State': 'running', 'Health': 'healthy',
                      'Name': 'Müller, Jürgen', 'Command': 'url-password', 'Publishers': private}],
-        database={'migration_head': '0141', 'organization_count': 2, 'row_counts': {'person': 37}},
+        database={'migration_head': '0142', 'organization_count': 2, 'row_counts': {'person': 37}},
         now=datetime(2026, 10, 30, tzinfo=timezone.utc),
     ))
     assert set(members) == {'manifest.json', 'environment.json', 'containers.json', 'database.json', 'errors.log', 'README.txt'}

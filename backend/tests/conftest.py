@@ -276,6 +276,9 @@ def _migrate_test_database(request):
         cursor.execute("SELECT to_regclass('public.declaration_review_receipt')")
         if cursor.fetchone()[0] is not None:
             cursor.execute("TRUNCATE public.declaration_review_receipt")
+        cursor.execute("SELECT to_regclass('public.auth_throttle')")
+        if cursor.fetchone()[0] is not None:
+            cursor.execute("TRUNCATE public.auth_throttle")
 
     command.downgrade(alembic_cfg, "base")
     return _upgrade_test_database(alembic_cfg)
@@ -297,7 +300,7 @@ def _upgrade_test_database(alembic_cfg):
     command.upgrade(alembic_cfg, '0140')  # accepted source
     upgraded_parent_tables = rehearse_initial_upgrade('0140')  # accepted source
     command.upgrade(alembic_cfg, '0141')  # accepted source
-    upgraded_setup_tables = rehearse_initial_upgrade('0141')
+    upgraded_setup_tables = rehearse_initial_upgrade('0141')  # accepted source
     command.upgrade(alembic_cfg, "head")
     return {'upgrade_0028_to_0142_tables': upgraded_0028_tables,
             'upgrade_0122_to_0142_tables': upgraded_tables,
@@ -342,6 +345,10 @@ async def inject_test_engine(run_migrations):
     override_worker_engine(worker_engine)
     review_engine = create_async_engine(make_url(APP_RW_URL).set(username='app_review',password='review_secret'), pool_pre_ping=True)
     override_review_engine(review_engine)
+    # Each test owns synthetic throttle state. The restart tests open new app
+    # sessions within one test, so durability remains exercised.
+    async with _test_app_rw_engine.begin() as connection:
+        await connection.execute(text("DELETE FROM public.auth_throttle"))
     yield
     await review_engine.dispose()
     override_review_engine(None)

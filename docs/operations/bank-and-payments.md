@@ -138,7 +138,7 @@ and interest are not charged interest. Example: 700 EUR, base 2.50%, 60 days →
 days, base/annual interest rate, and amounts are saved and shown in detail/PDF;
 later configuration or payment changes do not recalculate the issued dunning notice.
 Rollback restrictions are documented under
-[migration compatibility](../../DEPLOY.md#migration-compatibility-00290141).
+[migration compatibility](../../DEPLOY.md#migration-compatibility-00290142).
 Issuance alone confirms no receipt. The real UI/PDF flow
 is repeatable with [the dunning interest browser feature](../../features/dunning_interest.feature)
 using `make test-browser`.

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select, text
 
+from app.core import rate_limit
 from app.core.auth_db import lookup_login_principal, validate_session_principal
 from app.core.live_principal import require_live_principal
 from app.core.config import settings
@@ -21,6 +22,7 @@ from app.core.security import (
     verify_password,
 )
 from app.core.tenant import AuthContext, get_current_user
+from app.core.rate_limit import ThrottleRequest, throttled
 from app.models.user import User
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -77,16 +79,30 @@ def _set_session_cookie(response: Response, token: str) -> None:
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(body: LoginRequest, response: Response):
+async def login(body: LoginRequest, response: Response, throttle: ThrottleRequest = Depends(throttled("login"))):
     """Authenticate with the narrow app_rw lookup function only."""
     async with get_session_factory()() as session:
         async with session.begin():
-            principal = await lookup_login_principal(session, body.email)
+            attempt = await throttle.check(session, body.email)
+            principal = await lookup_login_principal(session, body.email) if attempt.allowed else None
 
-    # Always verify one Argon2 hash so unknown identities have no cheap path.
-    password_hash = principal.password_hash if principal is not None else _DUMMY_PASSWORD_HASH
-    password_matches = verify_password(body.password, password_hash)
-    if principal is None or not password_matches or not principal.is_active or principal.role not in {"OWNER_ADMIN", "CLERK", "READ_ONLY"}:
+        # Every failure path pays for one hash, with no transaction/row lock held.
+        password_hash = principal.password_hash if principal is not None else _DUMMY_PASSWORD_HASH
+        password_matches = verify_password(body.password, password_hash)
+        authenticated = bool(principal is not None and password_matches and principal.is_active
+                             and principal.role in {"OWNER_ADMIN", "CLERK", "READ_ONLY"})
+        async with session.begin():
+            if authenticated:
+                await attempt.reset()
+            else:
+                await attempt.record_failure()
+
+    if rate_limit.cleanup_due():
+        await rate_limit.cleanup_stale(attempt.rules)
+
+    # Raise only after committing lockout state; an HTTP refusal must not roll
+    # back failure finalization. Reservations already committed before hashing.
+    if not authenticated:
         raise _invalid_credentials()
 
     token = create_session_token(principal.user_id, principal.organization_id, principal.session_version)

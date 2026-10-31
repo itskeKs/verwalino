@@ -6,6 +6,7 @@ from pathlib import Path
 import threading
 
 import pytest
+from pytest_bdd.parser import FeatureParser
 
 pytest_plugins = ["pytester"]
 
@@ -85,6 +86,16 @@ def synthetic_target(properties=()):
 
 def test_external_features_use_api_and_skip_isolation_and_fresh_setup(pytester, monkeypatch):
     backend = Path(__file__).resolve().parents[1]
+    expected_counts = {}
+    for filename in ("organization_isolation", "first_run_setup", "password_change"):
+        feature = FeatureParser(str(backend.parent / "features"), f"{filename}.feature").parse()
+        # Each example row is a collected test; plain scenarios contribute one.
+        expected_counts[feature.name] = sum(
+            sum(len(examples.examples) for examples in scenario.examples) or 1
+            for scenario in feature.scenarios.values()
+        )
+    expected_passed = expected_counts["Password change"]
+    expected_skipped = expected_counts["Organization isolation"] + expected_counts["First run setup"]
     monkeypatch.setenv("PYTHONPATH", str(backend))
     # Invalid DB settings make any accidental local fixture access fail loudly.
     for name in ("HV_DATABASE_URL", "HV_DATABASE_URL_MIGRATOR", "HV_DATABASE_URL_SYNC", "HV_DATABASE_URL_REVIEW"):
@@ -100,23 +111,28 @@ def test_external_features_use_api_and_skip_isolation_and_fresh_setup(pytester, 
             str(backend / "tests/bdd/test_first_run_setup.py"),
             "--scenario-report", str(destination), "-q", "--tb=short",
         )
-        # Every isolation example and the fresh-installation scenarios skip against an
-        # external target; the count grows with features/organization_isolation.feature.
-        result.assert_outcomes(passed=2, skipped=16)
+        result.assert_outcomes(passed=expected_passed, skipped=expected_skipped, failed=0, errors=0)
         assert users["nightly@example.test"] == "bootstrap-password"
-        assert len(users) == 3
-        assert calls.count("/api/users") == 2
+        assert len(users) == 1 + expected_passed
+        assert calls.count("/api/users") == expected_passed
         assert calls[:2] == ["/api/auth/login", "/api/properties"]
         assert calls.count("/api/properties") == 1
     report = json.loads((destination / "scenarios.json").read_text())
     assert report["run"]["target_url"] == url
     rows = report["scenarios"]
-    isolation = [row for row in rows if row["feature"] == "Organization isolation"]
-    assert len(isolation) == 13  # one row per isolation example, including lease documents
-    assert all("two organizations" in row["error"]["message"] for row in isolation)
-    setup = [row for row in rows if row["feature"] == "First run setup"]
-    assert len(setup) == 3
-    assert all(row["outcome"] == "skipped" and "fresh installation" in row["error"]["message"] for row in setup)
+    assert len(rows) == sum(expected_counts.values())
+    for feature_name, reason in (
+        ("Organization isolation", "two organizations"),
+        ("First run setup", "fresh installation"),
+    ):
+        skipped = [row for row in rows if row["feature"] == feature_name]
+        assert len(skipped) == expected_counts[feature_name]
+        assert all(row["outcome"] == "skipped" and reason in row["error"]["message"] for row in skipped)
+    password_changes = [row for row in rows if row["feature"] == "Password change"]
+    assert len(password_changes) == expected_passed
+    assert all(row["outcome"] == "passed" and row["error"] is None for row in password_changes)
+    outcomes = result.parseoutcomes()
+    assert outcomes["passed"] + outcomes["skipped"] == len(rows)
 
 
 @pytest.mark.parametrize("properties", [[{"id": "existing-property"}], {"unexpected": "response"}])
