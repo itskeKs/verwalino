@@ -386,7 +386,7 @@ def test_missing_interim_reading_splits_known_unit_consumption_by_days():
         list(inp.lease_periods),
         list(inp.owner_periods),
     )
-    quantities = split_consumption(readings, inp.period_start, inp.period_end, covers)
+    quantities = split_consumption(readings, inp.period_start, inp.period_end, covers).periods
     assert sum(q for _, _, q in quantities) == D(1000)
     assert quantities[0][2] / D(1000) == D(273) / D(365)
     readings.append(MeterReadingInput(uid(102), date(2025, 9, 30), D(600)))
@@ -394,8 +394,38 @@ def test_missing_interim_reading_splits_known_unit_consumption_by_days():
         q
         for _, _, q in split_consumption(
             readings, inp.period_start, inp.period_end, covers
-        )
+        ).periods
     ] == [D(600), D(400)]
+
+
+@pytest.mark.parametrize("interim", [False, True])
+def test_december_consumption_source_does_not_charge_the_departed_tenant(interim):
+    inp = example()
+    if interim:
+        inp = replace(inp, units=(replace(inp.units[0], consumption_periods=(
+            (inp.period_start, date(2025, 9, 30), D(600)),
+            (date(2025, 10, 1), inp.period_end, D(400)),
+        )), inp.units[1]))
+    pos = replace(inp.cost_positions[0], gross_amount=D(100), service_period_from=date(2025, 12, 1))
+    amounts = []
+    for lease in inp.lease_periods:
+        full = replace(inp, cost_positions=(pos,), target_lease_agreement_id=lease.lease_agreement_id)
+        clipped = replace(full, period_start=max(inp.period_start, lease.valid_from),
+                          period_end=min(inp.period_end, lease.valid_to or inp.period_end))
+        assert compute_bk_settlement(full).total_cost == compute_bk_settlement(clipped).total_cost
+        amounts.append(compute_bk_settlement(full).total_cost)
+    assert amounts == [D("0.00"), D("50.00"), D("50.00")]
+
+
+def test_half_year_consumption_invoices_keep_their_own_cost_periods():
+    inp = example()
+    positions = (
+        replace(inp.cost_positions[0], gross_amount=D(600), service_period_to=date(2025, 6, 30)),
+        replace(inp.cost_positions[0], cost_entry_id=uid(6), gross_amount=D(400), service_period_from=date(2025, 7, 1)),
+    )
+    amounts = [compute_bk_settlement(replace(inp, cost_positions=positions,
+        target_lease_agreement_id=uid(n))).total_cost for n in (11, 12, 13)]
+    assert amounts == [D("400.00"), D("100.00"), D("500.00")]
 
 
 def test_in_period_snapshot_bytes_match_f3869e1_for_963_runs():

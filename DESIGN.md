@@ -615,6 +615,11 @@ Representative captures are listed below, including the
 
 ## Screenshots
 
+Settlement structured inputs state that manual consumption and person counts refer
+to the entire property settlement year, including for clipped lease statements.
+Consumption suggestions display a day-fallback reason beside the actual reading
+basis when an interim measurement is missing.
+
 Taken from the running dev stack of `scripts/dev-local.sh` (backend `:18000`, Vite `127.0.0.1:13000`) against the
 disposable test database with synthetic data (organisation "Muster Hausverwaltung", fictitious addresses, persons and
 amounts). Desktop is 1280 px wide at 1x; the 360 px images are 2x. File names are fixed so the table

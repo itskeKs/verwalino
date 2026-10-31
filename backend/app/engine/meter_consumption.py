@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, localcontext
 from uuid import UUID
 
@@ -28,6 +28,13 @@ class MeterConsumption:
     consumption: Decimal
     start_reading: MeterReadingInput
     end_reading: MeterReadingInput
+
+
+@dataclass(frozen=True)
+class MeterConsumptionSplit:
+    measured: MeterConsumption
+    periods: tuple[tuple[date, date, Decimal], ...]
+    reason: str | None
 
 
 def _nearest(readings: Sequence[MeterReadingInput], boundary: date) -> MeterReadingInput:
@@ -74,17 +81,26 @@ def split_consumption(readings, start, end, covers):
     Only this unit's boundaries participate; another unit needs no interim reading.
     Each segment's last occupant receives the exact quantity remainder.
     """
-    measured = derive_consumption(readings, start, end)
-    by_day = {}
-    for row in readings:
-        by_day.setdefault(row.reading_date, []).append(row)
+    boundaries = [(c.end, c.end + timedelta(days=1)) for c in covers[:-1]]
+    interim_dates = {day for pair in boundaries for day in pair}
+    # A tenant-change measurement cannot establish the property's opening or
+    # closing quantity. Missing period readings require manual input, never 0.
+    period_readings = [r for r in readings if r.reading_date not in interim_dates
+                       or r.reading_date in {start, end}]
+    try:
+        measured = derive_consumption(period_readings, start, end)
+    except MeterConsumptionError as exc:
+        raise MeterConsumptionError(f"Periodenablesung: {exc}") from exc
     cuts = [(start, measured.start_reading)]
-    from datetime import timedelta
-
-    for cover in covers[:-1]:
-        rows = by_day.get(cover.end, [])
+    reason = None
+    for last_day, first_day in boundaries:
+        rows = [r for r in readings if r.reading_date in {last_day, first_day}]
+        if len(rows) > 1:
+            raise MeterConsumptionError("Handeingabe erforderlich: Zwischenablesung an der Mietgrenze ist mehrdeutig.")
         if len(rows) == 1:
-            cuts.append((cover.end + timedelta(days=1), rows[0]))
+            cuts.append((first_day, rows[0]))
+        else:
+            reason = "Zwischenablesung fehlt: Aufteilung des Einheitsverbrauchs nach Tagen."
     cuts.append((end + timedelta(days=1), measured.end_reading))
     amounts = [Decimal(0) for _ in covers]
     with localcontext() as context:
@@ -103,4 +119,4 @@ def split_consumption(readings, start, end, covers):
                 part = left if j == len(participants) - 1 else quantity * days / (b-a).days
                 amounts[i] += part
                 left -= part
-    return tuple((c.start, c.end, amount) for c, amount in zip(covers, amounts))
+    return MeterConsumptionSplit(measured, tuple((c.start, c.end, amount) for c, amount in zip(covers, amounts)), reason)

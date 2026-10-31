@@ -164,10 +164,11 @@ def distribute_position(
     sp_from = position.service_period_from
     sp_to = position.service_period_to
     if key == "VERBRAUCH" and allocation_period is not None:
-        # Delimit the source once to the property year, then use annual unit
-        # quantities and the complete property-year occupant cover.
+        # Annual quantities set building-wide weights; the invoice alone
+        # delimits its cost pool and the within-unit occupant split.
         total = day_share_for_period(total, sp_from, sp_to, *allocation_period)
-        sp_from, sp_to = allocation_period
+        sp_from = max(sp_from, allocation_period[0])
+        sp_to = min(sp_to, allocation_period[1])
 
     # Build (cover, exact-weight, base_share, base_total) per cell.
     cell_specs: list[tuple[uuid.UUID, CoverPeriod, Decimal, Decimal | None, Decimal | None]] = []
@@ -229,7 +230,7 @@ def distribute_position(
             w = weights[unit.id]
             key_share = w / weight_sum
             unit_covers = covers_by_unit.get(unit.id, [])
-            quantities = [sum((quantity * time_factor(a, b, c.start, c.end)
+            quantities = [sum((quantity * time_factor(a, b, max(c.start, sp_from), min(c.end, sp_to))
                               for a, b, quantity in unit.consumption_periods), Decimal(0))
                           for c in unit_covers] if key == "VERBRAUCH" else []
             quantity_total = sum(quantities, Decimal(0))

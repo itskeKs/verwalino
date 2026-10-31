@@ -88,10 +88,12 @@ class HeatingInputService:
             period_readings = await repository.list_boundary_readings(
                 [matches[0].id], start, end, include_interim=True) if len(matches)==1 else []
             period_readings = [MeterReadingInput(r.id,r.reading_date,r.value) for r in period_readings]
+            split_error = None
             try:
-                quantities = split_consumption(period_readings, start, end, covers)
-            except MeterConsumptionError:
-                quantities = ()
+                split = split_consumption(period_readings, start, end, covers)
+                quantities = split.periods
+            except MeterConsumptionError as exc:
+                split_error = str(exc)
             def reading(r):
                 return {'id':str(r.id),'reading_date':r.reading_date.isoformat(),'value':f'{r.value:.4f}'}
 
@@ -111,6 +113,8 @@ class HeatingInputService:
                     'consumption':None,'meter_id':None,'start_reading':None,'end_reading':None,'reason':None}
                 if len(matches)!=1:
                     item['reason']='Handeingabe erforderlich: kein eindeutig passender Einheitszähler.'
+                elif split_error is not None:
+                    item['reason']=split_error
                 else:
                     try:
                         # No nearest-date interpolation for §9b occupant slices.
@@ -119,11 +123,11 @@ class HeatingInputService:
                         measured = derive_consumption(selected,opening,cover.end)
                     except MeterConsumptionError as exc:
                         if quantities:
-                            annual = derive_consumption(period_readings, start, end)
+                            annual = split.measured
                             item.update(consumption=str(quantities[index][2]),
                                 meter_id=str(matches[0].id), start_reading=reading(annual.start_reading),
                                 end_reading=reading(annual.end_reading),
-                                reason='Zwischenablesung fehlt: Aufteilung des Einheitsverbrauchs nach Tagen.')
+                                reason=split.reason)
                         else:
                             item['reason']=str(exc)
                     else:

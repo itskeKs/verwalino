@@ -115,7 +115,8 @@ and optionally `accounting_scope_id`; the response contains `created` and `skipp
 (with lease/run ID). Existing active BK runs for the same lease, period,
 and scope are skipped unchanged, even if already finalized. A finalized legacy
 run covering the lease's clipped span is also skipped, with a German `reason` in
-the skipped item. Partial overlaps retain the structured conflict; single creation
+the skipped item. A wider legacy draft covering that clipped span causes an overlap
+error; only finalized covering runs receive this skip. Partial overlaps retain the structured conflict; single creation
 keeps its overlap 409.
 The shared financial lock prevents duplicate parallel batch runs; errors
 roll back all new drafts and audit rows. Org, source, and

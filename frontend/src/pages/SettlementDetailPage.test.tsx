@@ -455,6 +455,23 @@ describe("T31 meter consumption prefill", () => {
     expect(screen.getAllByText(/Zählerbasis:/)).toHaveLength(2);
     expect(api.getConsumptionSuggestions).toHaveBeenCalledWith("run-1");
   });
+  it("explains the property-year basis for manual consumption and persons in a clipped run", async () => {
+    vi.mocked(api.getSettlement).mockResolvedValue({ ...consumptionDraft, period_end: "2025-09-30" });
+    vi.mocked(api.listCostEntries).mockResolvedValue([
+      createCostEntry({ tenant_distribution_key: "VERBRAUCH" }),
+      createCostEntry({ id: "persons", tenant_distribution_key: "PERSONENZAHL" }),
+    ]);
+    await showConsumption();
+    expect(screen.getByText("Verbrauch der Einheit im gesamten Objekt-Abrechnungsjahr eingeben, auch bei gekürztem Mietzeitraum." )).toBeVisible();
+    expect(screen.getByText("Personenzahlen je Einheit für das gesamte Objekt-Abrechnungsjahr in allen zugehörigen Abrechnungen gleich eingeben." )).toBeVisible();
+  });
+  it("shows a day fallback reason alongside the actual meter basis", async () => {
+    vi.mocked(api.getConsumptionSuggestions).mockResolvedValue(consumptionRows.map(row => ({
+      ...row, reason: "Zwischenablesung fehlt: Aufteilung des Einheitsverbrauchs nach Tagen.",
+    })));
+    await showConsumption();
+    expect(await screen.findAllByText(/Zwischenablesung fehlt:/)).toHaveLength(2);
+  });
   it("does not echo automatic prefill as manual input", async () => {
     const first = await showConsumption();
     await waitFor(() => expect(first).toHaveValue("30.0000"));

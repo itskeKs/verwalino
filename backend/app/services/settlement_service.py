@@ -45,7 +45,7 @@ from app.services.lease_rent_change_service import LeaseRentChangeService
 from app.services.heating_input_service import HeatingConfig, HeatingSliceOverride, HeatingInputService, property_period_run
 from app.engine.settlement import EngineValidationError, compute_bk_settlement
 from app.engine.snapshot import build_snapshot_payload
-from app.engine.meter_consumption import MeterReadingInput, MeterConsumptionError, derive_consumption, split_consumption
+from app.engine.meter_consumption import MeterReadingInput, MeterConsumptionError, split_consumption
 from app.repositories.meter_repo import MeterRepository, MeterReadingRepository
 from app.services.render_names import (
     DISPLAY_NAMES_KEY,
@@ -81,10 +81,10 @@ ENGINE_VERSION = "m3.1.0"
 
 
 class SettlementPeriodConflict(HTTPException):
-    def __init__(self):
+    def __init__(self, message="Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags."):
         super().__init__(409, {
             "code": "settlement_period_conflict",
-            "message": "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags.",
+            "message": message,
         })
 
 
@@ -375,6 +375,14 @@ class SettlementService:
             if existing_run is not None:
                 skipped.append((existing_run, reason))
             else:
+                if (start, end) != (period_start, period_end) and any(
+                    run.lease_agreement_id == lease.id and run.status == "draft"
+                    and run.period_start <= start and run.period_end >= end for run in existing
+                ):
+                    errors.append((lease.id, SettlementPeriodConflict(
+                        "Abrechnungszeitraum überschneidet einen bestehenden Entwurf dieses Mietvertrags."
+                    ).detail))
+                    continue
                 try:
                     created.append(await self.create_draft(
                         property_id, lease.id, start, end,
@@ -383,7 +391,7 @@ class SettlementService:
                 except SettlementPeriodConflict as exc:
                     errors.append((lease.id, exc.detail))
         if errors and not created and not skipped:
-            raise SettlementPeriodConflict()
+            raise HTTPException(409, errors[0][1])
         return created, skipped, errors
 
     async def set_advance_payments(
@@ -741,9 +749,9 @@ class SettlementService:
             else:
                 meter = matches[0]
                 try:
-                    measured = derive_consumption(by_meter.get(meter.id, ()), run.period_start, run.period_end)
                     covers = build_unit_cover(unit.id, run.period_start, run.period_end, leases, [])
-                    periods = split_consumption(by_meter[meter.id], run.period_start, run.period_end, covers)
+                    split = split_consumption(by_meter.get(meter.id, ()), run.period_start, run.period_end, covers)
+                    measured, periods = split.measured, split.periods
                 except MeterConsumptionError as exc:
                     item["reason"] = str(exc)
                 else:
@@ -754,7 +762,8 @@ class SettlementService:
                         item["interim_readings"] = [boundary(r) for r in by_meter[meter.id]
                                                    if run.period_start < r.reading_date < run.period_end]
                     item.update(consumption=f"{measured.consumption:.4f}", meter_id=str(meter.id),
-                                start_reading=boundary(measured.start_reading), end_reading=boundary(measured.end_reading))
+                                start_reading=boundary(measured.start_reading), end_reading=boundary(measured.end_reading),
+                                reason=split.reason)
             candidates.append(item)
         return candidates
 
@@ -822,11 +831,10 @@ class SettlementService:
             run.property_id, min(allocation_run.period_start, run.period_start),
             max(allocation_run.period_end, run.period_end)
         )
-        # Consumption pools belong to the property year. Time-based positions
-        # outside this statement have no selected cells and need no extras.
+        # Annual consumption weights do not widen invoice service periods.
+        # Sources outside this statement need no manual quantities or extras.
         configured_heating = {c.cost_entry_id for c in extras.heating_inputs}
         entries = [(e,c) for e,c in entries if e.id in configured_heating
-                   or e.tenant_distribution_key == "VERBRAUCH"
                    or (e.service_period_from <= run.period_end and e.service_period_to >= run.period_start)]
 
         heating_configs = {c.cost_entry_id:c for c in extras.heating_inputs}
@@ -850,6 +858,8 @@ class SettlementService:
             for unit in units:
                 metric = metric_by_unit.get(unit.id)
                 if metric is not None and metric.consumption is not None:
+                    # Manual unit quantities describe the property year,
+                    # including when this lease's statement is clipped.
                     value = metric.consumption
                     if not value.is_finite() or value < 0:
                         raise HTTPException(422, f"Handeingabe VERBRAUCH für Einheit {unit.number} muss endlich und nichtnegativ sein.")

@@ -104,7 +104,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Batch run per property | ✅ drafts for all leases, existing ones skipped | `api/settlements.py` (`POST /batch`), `pages/SettlementsPage.tsx`, T27, [usage](operations/statements.md) |
 | Suggestion for a new advance payment | ✅ accepting appends a rent change | `api/settlements.py` (`/advance-proposal`), `pages/SettlementDetailPage.tsx` ("Vorauszahlungsvorschlag"), T28, [usage](operations/statements.md) |
 | Heating costs per HeizkostenV | ✅ full-period basic/consumption split, interim/day split within unit, or external billing | `engine/heizkosten.py`, `engine/heating_settlement.py`, `services/heating_input_service.py`, `components/HeatingInputs.tsx`, T45, T46, [usage](operations/statements.md) |
-| Consumption from meters | ✅ prefilled from readings, manual entry otherwise | `engine/meter_consumption.py`, `api/settlements.py` (`/consumption-suggestions`, `/heating-consumption`), T31, [usage](operations/meters.md) |
+| Consumption from meters | ✅ property-year weights with invoice-period pools; either occupant-boundary date accepted, ambiguous readings require manual input, missing interim readings use days with a reason | `engine/meter_consumption.py`, `api/settlements.py` (`/consumption-suggestions`, `/heating-consumption`), T31, [usage](operations/meters.md) |
 
 ## WEG (homeowners' association)
 

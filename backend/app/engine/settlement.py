@@ -197,7 +197,10 @@ def compute_bk_settlement(inp: SettlementInput) -> EngineResult:
             # cent allocation as a full-service-period calculation.
             allocation_period = (period_for_date(inp.property.fiscal_year_start_month, inp.period_start)
                                  if pos.tenant_distribution_key == "VERBRAUCH" else None)
-            cover_start, cover_end = allocation_period or (pos.service_period_from, pos.service_period_to)
+            cover_start, cover_end = pos.service_period_from, pos.service_period_to
+            if allocation_period is not None:
+                cover_start = max(cover_start, allocation_period[0])
+                cover_end = min(cover_end, allocation_period[1])
             source_covers = {u.id: build_unit_cover(
                 u.id, cover_start, cover_end, leases, owner_periods,
             ) for u in units}

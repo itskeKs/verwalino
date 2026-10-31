@@ -1713,7 +1713,10 @@ async def test_meter_consumption_suggestions_show_all_units_and_actual_readings(
                                    ("u3", "10.0000", "110.0000"), ("u4", "40.0000", "140.0000")]:
         row = rows[metered_m3[key]]
         assert row["consumption"] == quantity
-        assert row["reason"] is None
+        if key in {"u1", "u3"}:
+            assert "Tagen" in row["reason"]
+        else:
+            assert row["reason"] is None
         assert row["meter_id"]
         assert row["unit_label"] == key[-1]
         assert row["start_reading"]["reading_date"] == "2025-01-01"
@@ -2031,14 +2034,15 @@ async def test_heiz_explicit_noncapture_deducts_only_heating(heiz_world):
 
 
 @pytest.mark.asyncio
-async def test_heiz_nutzerwechsel_uses_intermediate_reading_not_day_estimate(heiz_world,rent_db):
+@pytest.mark.parametrize("interim_day", ["2026-06-30", "2026-07-01"])
+async def test_heiz_nutzerwechsel_uses_intermediate_reading_not_day_estimate(heiz_world,rent_db,interim_day):
     w=heiz_world
     await rent_db.execute(text("UPDATE lease_agreement SET valid_to='2026-07-01' WHERE id=:lease"),w)
     for meter,value in [(w['meters'][0],'140'),(w['meters'][2],'101')]:
         await rent_db.execute(text("""INSERT INTO meter_reading
             (id,organization_id,meter_id,reading_date,value,period)
-            VALUES (:id,:org,:meter,'2026-06-30',:value,'2026')"""),
-            {**w,'id':uuid.uuid4(),'meter':meter,'value':Decimal(value)})
+            VALUES (:id,:org,:meter,:day,:value,'2026')"""),
+            {**w,'id':uuid.uuid4(),'meter':meter,'day':date.fromisoformat(interim_day),'value':Decimal(value)})
     await rent_db.commit()
     async with api_client(w) as api:
         incoming=await api.post('/api/leases',json={'unit_id':str(w['unit']),
@@ -2236,21 +2240,23 @@ async def test_free_window_uses_each_overlapping_property_year(client_a_admin, m
     result = await client_a_admin.post(f'/api/settlements/{run}/compute', json=_extras_for_exit(w))
     assert result.status_code == 200, result.text
     water = [row for row in result.json()['lines'] if row['cost_category_code']=='KALTWASSER']
-    assert sum(Decimal(row['amount']) for row in water) == Decimal('150.82')
+    # The Jan–Dec source contributes 40% once across the two property years.
+    assert sum(Decimal(row['amount']) for row in water) == Decimal('240.00')
     external = [row for row in result.json()['lines'] if row['cost_category_code']=='HEIZUNG_ZENTRAL']
     assert len(external) == 1 and external[0]['amount'] == '300.00'
 
 
 @pytest.mark.asyncio
-async def test_water_interim_reading_changes_only_the_units_lease_split(client_a_admin, metered_m3):
+@pytest.mark.parametrize("interim_day", ["2025-06-30", "2025-07-01"])
+async def test_water_interim_reading_changes_only_the_units_lease_split(client_a_admin, metered_m3, interim_day):
     import psycopg2
     w = metered_m3
     with psycopg2.connect(SYNC_URL) as conn, conn.cursor() as cursor:
         cursor.execute("""INSERT INTO meter_reading
             (id,organization_id,meter_id,reading_date,value,period)
-            SELECT %s,organization_id,id,'2025-06-30',110,'2025'
+            SELECT %s,organization_id,id,%s,110,'2025'
             FROM meter WHERE unit_id=%s AND meter_type='KALTWASSER'""",
-            (str(uuid.uuid4()), w['u1']))
+            (str(uuid.uuid4()), interim_day, w['u1']))
     extras = _extras_for_exit(w)
     extras['unit_metrics'] = []
     amounts = []
@@ -2264,3 +2270,40 @@ async def test_water_interim_reading_changes_only_the_units_lease_split(client_a
         assert water['time_share_days'] is None
         amounts.append(Decimal(water['amount']))
     assert sum(amounts) == Decimal('180.00')
+
+
+@pytest.mark.asyncio
+async def test_clipped_manual_water_quantity_is_the_property_year_weight(client_a_admin, metered_m3):
+    w = metered_m3
+    run = await _create_run(client_a_admin, w, 'lease_a', '0.00')
+    result = await client_a_admin.post(f'/api/settlements/{run}/compute', json=_extras_for_exit(w))
+    assert result.status_code == 200, result.text
+    assert result.json()['period_end'] == '2025-06-30'
+    water = _water_line(result.json())
+    assert water['amount'] == '89.26'
+    assert Decimal(water['distribution_base_share']) == Decimal(30)
+    assert Decimal(water['distribution_base_total']) == Decimal(100)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("second_day", ["2026-06-30", "2026-07-01"])
+async def test_heating_suggestions_refuse_multiple_readings_at_the_occupant_boundary(heiz_world, rent_db, second_day):
+    w = heiz_world
+    await rent_db.execute(text("UPDATE lease_agreement SET valid_to='2026-07-01' WHERE id=:lease"), w)
+    for day, value in (("2026-06-30", "140"), (second_day, "150")):
+        await rent_db.execute(text("""INSERT INTO meter_reading
+            (id,organization_id,meter_id,reading_date,value,period)
+            VALUES (:id,:org,:meter,:day,:value,'2026')"""),
+            {**w, 'id':uuid.uuid4(), 'meter':w['meters'][0], 'day':date.fromisoformat(day), 'value':Decimal(value)})
+    await rent_db.commit()
+    async with api_client(w) as api:
+        incoming = await api.post('/api/leases', json={'unit_id':str(w['unit']),
+            'tenant_profile_id':str(w['tenant']), 'valid_from':'2026-07-01',
+            'base_rent':'700.00', 'advance_payment':'150.00'})
+        assert incoming.status_code == 201, incoming.text
+        candidates = await api.get(f"/api/settlements/{w['run']}/heating-consumption", params={
+            'cost_entry_id':str(w['heat']), 'meter_type':'HEIZUNG', 'base_key':'AREA'})
+        assert candidates.status_code == 200, candidates.text
+        own = [r for r in candidates.json() if r['unit_id'] == str(w['unit'])]
+        assert len(own) == 2
+        assert all(r['consumption'] is None and 'mehrdeutig' in r['reason'] for r in own)

@@ -15,6 +15,57 @@ def reading(day, value):
     return MeterReadingInput(id=uuid4(), reading_date=day, value=Decimal(value))
 
 
+def changed_unit_covers(change=date(2026, 10, 1)):
+    from datetime import timedelta
+    from app.engine.periods import build_unit_cover
+    from app.engine.types import LeasePeriodInput
+
+    unit = uuid4()
+    return build_unit_cover(unit, START, END, [
+        LeasePeriodInput(uuid4(), unit, uuid4(), START, change - timedelta(days=1)),
+        LeasePeriodInput(uuid4(), unit, uuid4(), change, None),
+    ], [])
+
+
+@pytest.mark.parametrize("day", [date(2026, 9, 30), date(2026, 10, 1)])
+def test_either_date_at_the_lease_boundary_denotes_the_same_counter_value(day):
+    from app.engine.meter_consumption import split_consumption
+
+    result = split_consumption([reading(START, "0"), reading(day, "600"), reading(END, "1000")],
+                               START, END, changed_unit_covers())
+    assert [q for _, _, q in result.periods] == [Decimal(600), Decimal(400)]
+    assert result.reason is None
+
+
+@pytest.mark.parametrize("days", [[], [date(2026, 9, 29)]])
+def test_missing_exact_interim_boundary_has_an_explicit_day_fallback_reason(days):
+    from app.engine.meter_consumption import split_consumption
+
+    result = split_consumption([reading(START, "0"), reading(END, "1000"),
+                                *[reading(day, "600") for day in days]], START, END, changed_unit_covers())
+    assert +result.periods[0][2] == Decimal(1000) * 273 / 365
+    assert sum(q for _, _, q in result.periods) == Decimal(1000)
+    assert "Tagen" in result.reason
+
+
+@pytest.mark.parametrize("second_day", [date(2026, 9, 30), date(2026, 10, 1)])
+def test_multiple_readings_at_the_same_boundary_refuse_an_arbitrary_split(second_day):
+    from app.engine.meter_consumption import split_consumption
+
+    with pytest.raises(MeterConsumptionError, match="Zwischenablesung.*mehrdeutig"):
+        split_consumption([reading(START, "0"), reading(END, "1000"),
+                           reading(date(2026, 9, 30), "600"), reading(second_day, "601")],
+                          START, END, changed_unit_covers())
+
+
+def test_december_interim_reading_cannot_replace_a_missing_period_end_reading():
+    from app.engine.meter_consumption import split_consumption
+
+    with pytest.raises(MeterConsumptionError, match="Perioden.*Handeingabe|Handeingabe.*Perioden"):
+        split_consumption([reading(START, "0"), reading(date(2026, 12, 14), "950")],
+                          START, END, changed_unit_covers(date(2026, 12, 15)))
+
+
 def test_exact_consumption_and_original_boundary_identity():
     first, last = reading(START, "100.0000"), reading(END, "250.1250")
     result = derive_consumption((last, first), START, END)

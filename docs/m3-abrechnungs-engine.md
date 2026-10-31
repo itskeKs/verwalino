@@ -48,7 +48,9 @@ is intersected with the target lease's active span at creation. Batch creation
 intersects its selected period separately for each overlapping lease; repeats
 match the resulting clipped dates. A finalized legacy run that already covers
 that clipped span is skipped with a German reason; partial overlaps remain batch
-errors and single creation retains the overlap 409. Stored lease bounds are half-open
+errors and single creation retains the overlap 409. A wider legacy **draft** covering
+the clipped span causes a batch overlap error; only finalized covering runs receive
+this skip. Identical existing drafts are still skipped. Stored lease bounds are half-open
 `[valid_from, valid_to)`, so the inclusive statement ends on `valid_to - 1 day`.
 Free dates must be entirely inside the lease, including for scope-only clerks
 without property read access. A free period outside the lease, or a property
@@ -87,16 +89,29 @@ finalized snapshots remain frozen.
 
 ### Full-property allocation and within-unit splitting (#122)
 
-Every building allocation uses the full configured property settlement period,
-its cost pool and its unit quantities, independently of the lease's statement window.
-A short statement selects the unit's balanced tenant/vacancy cells afterward.
+Building-wide consumption weights use unit quantities from the full configured
+property settlement period, independently of the lease's statement window. Each
+source's cost pool retains its invoice service period, intersected with the property
+period when it crosses that boundary. A source outside the lease's statement window
+contributes zero. The unit's tenant/vacancy split is restricted to that source period;
+a short statement selects its balanced cells afterward.
 Area, heated area, units, MEA, persons and fixed manual amounts split by days through
 the central rounding module. Consumption quantities are measured over the property
-period. Exact interim readings at that unit's occupant changes split its consumption;
+period. An interim reading on the outgoing tenant's last occupied day **or** the
+incoming tenant's first day denotes the same half-open boundary. More than one
+reading across these two dates is ambiguous and requires manual entry with a clear
+reason; no arbitrary reading is selected. Exact interim readings split its consumption;
 missing interim readings split the known unit consumption by days, by analogy to
 §9b HeizkostenV. Other units need only their own period readings. Manual period
-consumption without interim readings uses the same day fallback. Missing or
-ambiguous period quantities still require manual input.
+consumption without interim readings uses the same day fallback, with a reason
+shown in suggestions and frozen in the automatic source snapshot. Interim readings
+are excluded from the nearest property-period start/end selection: a 14 December
+tenant-change reading cannot replace a missing year-end reading and manufacture a
+zero for the successor. Missing or ambiguous period quantities require manual input
+with a reason; they are not estimated. Manual unit consumption always denotes the
+**whole property-year quantity**, including for clipped statements. Person counts
+are per-unit property-year weights and must be entered consistently in every run
+belonging to that property year.
 
 For two units using 1,000 units each and a 1,000-euro water pool, A (January–September),
 B (October–December), and C (all year) receive 373.97 / 126.03 / 500.00 euros with
@@ -111,6 +126,10 @@ property-year boundary select from each full property-year allocation separately
 advance payments are deducted once. The frozen `inputs.property_periods` retain
 the separate quantities, cost pools and selected results. External provider amounts
 still apply once to the selected statement.
+
+For a December-only water invoice of 100 euros with the same annual unit weights,
+A receives 0.00 euros and B/C receive 50.00 euros each. Two half-year invoices of
+600/400 euros yield A/B/C 400.00 / 100.00 / 500.00 euros with the day fallback.
 
 **Current overlap limitation:** the check runs under the acting user's normal
 row-level security. Overlaps with runs in other accounting scopes that the user
@@ -394,7 +413,11 @@ The distribution mathematics is identical to 2.2 (weight = number of persons in 
 
 ### 2.4 `VERBRAUCH` (consumption-based)
 
-Weight = measured consumption of the unit in the settlement period, determined from `meter`/`meter_reading` (M1: date, reading, period) as the **difference** (end reading − start reading) of the relevant period. Mathematics as in 2.2 (weight = consumption quantity). Special cases:
+Weight = measured consumption of the unit in the configured property settlement period,
+including for a clipped lease statement, determined from `meter`/`meter_reading` (M1:
+date, reading, period) as the **difference** (end reading − start reading). Each invoice
+retains its service-period cost pool (§3). Mathematics as in 2.2 (weight = consumption
+quantity). Special cases:
 
 - **Meter replacement / missing reading** in the period: **[OPEN/§18]** — estimation/substitute procedure is a professional matter (HeizkostenV/metering-service logic) and **not** automatic in M3. Provisionally: for `VERBRAUCH`, the engine requires complete, plausible start/end readings for each participating unit; if anything is missing → escalation, no silent estimation.
 - **Heating/hot water** do **not** run through the `VERBRAUCH` key in phase 1, but through `EXTERNE_ABRECHNUNG` (prepared externally in compliance with HeizkostenV, SDD §6.9/§7.1, §5 of this document). `VERBRAUCH` is intended for own meters (e.g., cold water) that the system maintains itself (SDD §6.2.1).
