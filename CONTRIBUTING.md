@@ -7,6 +7,9 @@ Rules for coding agents, which apply to people too, are in [AGENTS.md](AGENTS.md
 
 - Python with [uv](https://docs.astral.sh/uv/), Node 22, Docker (for the test database only).
 - Backend dependencies: `cd backend && uv sync --extra dev --extra ops --extra ocr`.
+  The local launcher `scripts/dev-local.sh` requires Poppler (`pdftoppm`) and
+  Tesseract with the German language pack (`deu`); its worker health check aborts
+  startup if any is missing.
 - Browser setup (once, and after Playwright lock updates):
   `cd backend && uv run --locked --extra dev playwright install chromium`.
 - Frontend dependencies: `cd frontend && npm ci` (`make frontend-deps` does it when needed).
@@ -14,7 +17,21 @@ Rules for coding agents, which apply to people too, are in [AGENTS.md](AGENTS.md
   `infra-postgres-1` on `127.0.0.1:55432` (in-memory, recreated on restart);
   `source scripts/test-env.sh` sets the connection variables. Never point tests at the production
   instance.
-- Local app: `scripts/dev-local.sh`. Self-hosting: [DEPLOY.md](DEPLOY.md) and `scripts/self-host.sh`.
+- Local app: run `scripts/dev-local.sh` from the repository root after installing both
+  dependency sets. It starts the API on `:18000`, UI on `:13000`, and invoice worker
+  together, using only the test database on `:55432` and a separate
+  `/tmp/hv-dev-documents.*` storage folder by default (or an explicitly supplied
+  `/tmp` `HV_DOCUMENT_STORAGE_ROOT`). It ensures the local test admin
+  `test@example.de` exists and prints its login when ready. Cleanup stops all three processes on Ctrl+C or partial startup
+  failure without stopping PostgreSQL; originals in the printed folder are
+  preserved. Do not run resetting backend tests during a UI acceptance run.
+  Worker operation: [DEPLOY.md](DEPLOY.md#invoice-worker-t10-alpha-active-since-2026-10-24).
+- Declarations of division (Teilungserklärungen): the dependency sets above include the
+  operations tooling. Imports require **Human Approval** before creating canonical
+  building, unit, or rule data; document content remains untrusted. See the
+  [declaration-import runbook](docs/operations/declaration-imports.md) for operation,
+  data protection, local tests, and the deliberately blocked live evaluation.
+- Self-hosting: [DEPLOY.md](DEPLOY.md) and `scripts/self-host.sh`.
 - Enable the commit gate once per clone: `make hooks`.
 
 ## Agent host setup

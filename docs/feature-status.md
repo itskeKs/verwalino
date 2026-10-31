@@ -16,53 +16,53 @@ history). Update this page in the same PR whenever a feature's status changes.
 | Browser first-run setup | n/a | ✅ one-time installer token, 24-hour expiry, atomic first organization/admin; real-stack acceptance pending | `api/setup.py`, `pages/SetupPage.tsx`, `scripts/self-host.sh`, issue #8 |
 | Request IDs and opt-in error tracking | n/a | ✅ response/log correlation always enabled; API error events scrubbed before sending, tracking off by default | `core/request_id.py`, `core/logging.py`, `core/error_tracking.py`, `core/scrub.py`, `DEPLOY.md`, issue #16 |
 | Login/logout | yes | ✅ | `api/auth.py`, `pages/LoginPage.tsx` |
-| Create users | yes | ✅ admin-only form and user management | `api/users.py`, `pages/UsersPage.tsx`, T06, T57 |
-| Roles admin/clerk/read-only | yes | ✅ admin can change role and deactivate; write buttons hidden for read-only | `core/rbac.py` (`OWNER_ADMIN`, `CLERK`, `READ_ONLY`), T57 |
-| Change password | yes | ✅ own change and admin reset, sessions revoked | `api/auth.py` (`POST /api/auth/password`), `api/users.py` (`/reset-password`), `components/Topbar.tsx`, T14, T57 |
-| Management mandates with documents | no | ✅ edit/end, bound definition protected | `api/mandates.py`, `pages/MandateDetailPage.tsx`, T55 |
+| Create users | yes | ✅ admin-only form and user management | `api/users.py`, `pages/UsersPage.tsx`, T06, T57, [usage](operations/users-and-access.md) |
+| Roles admin/clerk/read-only | yes | ✅ admin can change role and deactivate; write buttons hidden for read-only | `core/rbac.py` (`OWNER_ADMIN`, `CLERK`, `READ_ONLY`), T57, [usage](operations/users-and-access.md) |
+| Change password | yes | ✅ own change and admin reset, sessions revoked | `api/auth.py` (`POST /api/auth/password`), `api/users.py` (`/reset-password`), `components/Topbar.tsx`, T14, T57, [usage](operations/users-and-access.md) |
+| Management mandates with documents | no | ✅ edit/end, bound definition protected | `api/mandates.py`, `pages/MandateDetailPage.tsx`, T55, [usage](operations/selector-pages.md) |
 | Source governance (scopes, approvals, quarantines) | no | ✅ non-blocking in the default mode `PREPARATION`; menu entries grouped under the admin-only "Erweitert" group | `services/financial_scope_service.py`, `components/Sidebar.tsx`, T11 |
-| Dashboard | yes | ✅ deadlines, due tasks, monthly rent and vacancy KPIs | `pages/DashboardPage.tsx`, `components/DashboardKpis.tsx`, `api/reports.py` (`/dashboard-kpis`), `services/dashboard_kpi_service.py`, T42, T52 |
+| Dashboard | yes | ✅ deadlines, due tasks, monthly rent and vacancy KPIs | `pages/DashboardPage.tsx`, `components/DashboardKpis.tsx`, `api/reports.py` (`/dashboard-kpis`), `services/dashboard_kpi_service.py`, T42, T52, [usage](operations/bank-and-payments.md) |
 
 ## Properties and units
 
 | Feature | Reference product | Status | Location |
 | --- | --- | --- | --- |
-| Create/edit property (rental/WEG/SEV/mixed) | yes | ✅ including reference-protected deletion | `api/properties.py`, `pages/PropertiesPage.tsx`, T56 |
-| Year built, total area | yes | ✅ optional, stored explicitly | `models/property.py` (`construction_year`, `total_area`), `pages/PropertyDetailPage.tsx`, T55 |
+| Create/edit property (rental/WEG/SEV/mixed) | yes | ✅ including reference-protected deletion | `api/properties.py`, `pages/PropertiesPage.tsx`, T56, [usage](operations/selector-pages.md) |
+| Year built, total area | yes | ✅ optional, stored explicitly | `models/property.py` (`construction_year`, `total_area`), `pages/PropertyDetailPage.tsx`, T55, [usage](operations/selector-pages.md) |
 | Photos | yes | ❌ | – |
 | Units (type, area, heated area) | yes | ✅ | `api/units.py`, `pages/PropertyDetailPage.tsx` |
 | Record MEA (co-ownership share) | yes | ✅ scale confirmed by hand ("MEA-Skala bestätigen") or via declaration import; units need a confirmed scale (409 otherwise) | `api/properties.py` (`POST /{id}/mea-scale/confirm`), `api/units.py`, `pages/PropertyDetailPage.tsx`, T05 |
 | Declaration of division (Teilungserklärung) import (AI, review) | no | ✅ needs feature flag and OpenAI key | `api/declaration_imports.py`, `workers/declaration_import.py`, `pages/DeclarationImportPage.tsx` |
 | Property knowledge with sources | no | ✅ | `services/property_knowledge_service.py`, `pages/PropertyKnowledgePage.tsx` |
-| Meters, meter readings | yes | ✅ | `api/meters.py`, `models/meter.py`, `components/MeterPanel.tsx`, T29, T30 |
-| Master data CSV import | yes | ✅ template, preview, atomic creation of properties/units/contacts | `services/master_import_service.py`, `api/properties.py` (`/import/*`), `components/MasterImport.tsx`, T51 |
+| Meters, meter readings | yes | ✅ | `api/meters.py`, `models/meter.py`, `components/MeterPanel.tsx`, T29, T30, [usage](operations/meters.md) |
+| Master data CSV import | yes | ✅ template, preview, atomic creation of properties/units/contacts | `services/master_import_service.py`, `api/properties.py` (`/import/*`), `components/MasterImport.tsx`, T51, [usage](operations/tasks-and-documents.md) |
 
 ## People and tenancies
 
 | Feature | Reference product | Status | Location |
 | --- | --- | --- | --- |
 | Contacts, tenant/owner profile | yes | ✅ | `api/persons.py`, `api/tenant_profiles.py`, `api/owner_profiles.py`, `pages/PersonDetailPage.tsx` |
-| Vendors | yes | ✅ edit/end with contact source right | `api/vendors.py`, T55 |
-| Ownership with share | yes | ✅ end ownership ("Eigentum beenden") and new owner from the next day | `api/ownership.py` (`PATCH /{id}`), `pages/UnitDetailPage.tsx`, T26 |
+| Vendors | yes | ✅ edit/end with contact source right | `api/vendors.py`, T55, [usage](operations/selector-pages.md) |
+| Ownership with share | yes | ✅ end ownership ("Eigentum beenden") and new owner from the next day | `api/ownership.py` (`PATCH /{id}`), `pages/UnitDetailPage.tsx`, T26, [usage](operations/tenancies-and-rent.md) |
 | Create lease (base rent, operating cost advance, deposit) | yes | ✅ | `api/leases.py`, `pages/UnitDetailPage.tsx` |
 | Change/end lease, tenant change | yes | ✅ end and note always editable; amounts locked (409) once payments are booked or a settlement is final | `api/leases.py` (`PATCH /{id}`), `pages/UnitDetailPage.tsx`, T04 |
-| Rent change with effective date | yes | ✅ | `models/lease_rent_change.py`, `api/leases.py` (`/rent-changes`), `engine/mietkonto.py`, T23, T24 |
-| Graduated (Staffel) / index rent | yes | ✅ | `api/leases.py` (`/rent-changes/staffel`, `/rent-changes/index`), `engine/index_rent.py`, T43, T44 |
-| Security deposit management | partial | 🟡 target, paid and refunded tracked; no installments, no recording of interest credits | `engine/mietkonto.py` (`deposit_statement`), `api/payments.py` (`/deposits`), `pages/DepositsPage.tsx`, T25 |
+| Rent change with effective date | yes | ✅ | `models/lease_rent_change.py`, `api/leases.py` (`/rent-changes`), `engine/mietkonto.py`, T23, T24, [usage](operations/tenancies-and-rent.md) |
+| Graduated (Staffel) / index rent | yes | ✅ | `api/leases.py` (`/rent-changes/staffel`, `/rent-changes/index`), `engine/index_rent.py`, T43, T44, [usage](operations/tenancies-and-rent.md) |
+| Security deposit management | partial | 🟡 target, paid and refunded tracked; no installments, no recording of interest credits | `engine/mietkonto.py` (`deposit_statement`), `api/payments.py` (`/deposits`), `pages/DepositsPage.tsx`, T25, [usage](operations/tenancies-and-rent.md) |
 | Lease template, handover protocol | yes | ❌ only generic letter templates exist (see Documents, communication, reports) | – |
 
 ## Tenant ledger, bank and payments
 
 | Feature | Reference product | Status | Location |
 | --- | --- | --- | --- |
-| Bank accounts | yes | ✅ edit/end, historical references kept | `api/bank_accounts.py`, `pages/BankAccountsPage.tsx`, T55 |
+| Bank accounts | yes | ✅ edit/end, historical references kept | `api/bank_accounts.py`, `pages/BankAccountsPage.tsx`, T55, [usage](operations/selector-pages.md) |
 | Expected charges (Sollstellung) for rent/operating costs, day-accurate | yes | ✅ derived live, including rent history | `engine/mietkonto.py` (`tenant_expected_charges`) |
 | Record, book, reverse payment | yes | ✅ drafts editable | `api/payments.py`, `pages/PaymentDetailPage.tsx`, T07 |
 | Tenant/owner ledger (Mietkonto), open items | yes | ✅ | `api/payments.py` (`/mietkonto/*`, `/open-items`), `pages/MietkontoPage.tsx`, `pages/OpenItemsPage.tsx` |
-| Bank statement import CSV/CAMT | partial | ✅ CSV (generic plus DKB profiles) and CAMT.053 (.001.02/.08, XML/ZIP), preview, duplicate detection | `engine/bank_import.py`, `services/bank_import_service.py`, `api/bank_accounts.py` (`POST /{id}/imports`), `pages/BankTransactionsPage.tsx`, T15–T19 |
+| Bank statement import CSV/CAMT | partial | ✅ CSV (generic plus DKB profiles) and CAMT.053 (.001.02/.08, XML/ZIP), preview, duplicate detection | `engine/bank_import.py`, `services/bank_import_service.py`, `api/bank_accounts.py` (`POST /{id}/imports`), `pages/BankTransactionsPage.tsx`, T15–T19, [usage](operations/bank-and-payments.md) |
 | Bank retrieval PSD2/FinTS | yes | ❌ | – |
-| Match suggestions, split booking | yes | ✅ apply suggestion, split, ignore | `engine/bank_matching.py`, `api/bank_transactions.py` (`/assign`, `/ignore`), `pages/BankTransactionsPage.tsx`, T20–T22 |
-| SEPA direct debit | yes | ✅ pain.008 for monthly rent, creditor ID and tenant mandates | `services/sepa_export.py`, `api/sepa.py`, `components/SepaExport.tsx`, T50 |
+| Match suggestions, split booking | yes | ✅ apply suggestion, split, ignore | `engine/bank_matching.py`, `api/bank_transactions.py` (`/assign`, `/ignore`), `pages/BankTransactionsPage.tsx`, T20–T22, [usage](operations/bank-and-payments.md) |
+| SEPA direct debit | yes | ✅ pain.008 for monthly rent, creditor ID and tenant mandates | `services/sepa_export.py`, `api/sepa.py`, `components/SepaExport.tsx`, T50, [usage](operations/tasks-and-documents.md) |
 
 ## Vouchers and costs
 
@@ -84,44 +84,44 @@ history). Update this page in the same PR whenever a feature's status changes.
 | Keys area/MEA/units, pro rata, vacancy | yes | ✅ | `engine/distribution.py` |
 | Keys consumption/persons/external/manual | yes | ✅ inputs shown and sent with the database key names | `pages/SettlementDetailPage.tsx`, `lib/costVocabulary.ts`, T03 |
 | Advance payments from payments | yes | ✅ any period, including across the year boundary | `services/settlement_service.py` (`set_advance_payments_derived`), `services/payment_service.py` (`derive_nk_advance_total_for_period`), `api/settlements.py` (`/advance-payments-derived`), T08 |
-| Batch run per property | yes | ✅ drafts for all leases, existing ones skipped | `api/settlements.py` (`POST /batch`), `pages/SettlementsPage.tsx`, T27 |
-| Suggestion for a new advance payment | yes | ✅ accepting appends a rent change | `api/settlements.py` (`/advance-proposal`), `pages/SettlementDetailPage.tsx` ("Vorauszahlungsvorschlag"), T28 |
-| Heating costs per HeizkostenV | yes | ✅ internal basic/consumption split or external billing | `engine/heizkosten.py`, `engine/heating_settlement.py`, `services/heating_input_service.py`, `components/HeatingInputs.tsx`, T45, T46 |
-| Consumption from meters | yes | ✅ prefilled from readings, manual entry otherwise | `engine/meter_consumption.py`, `api/settlements.py` (`/consumption-suggestions`, `/heating-consumption`), T31 |
+| Batch run per property | yes | ✅ drafts for all leases, existing ones skipped | `api/settlements.py` (`POST /batch`), `pages/SettlementsPage.tsx`, T27, [usage](operations/statements.md) |
+| Suggestion for a new advance payment | yes | ✅ accepting appends a rent change | `api/settlements.py` (`/advance-proposal`), `pages/SettlementDetailPage.tsx` ("Vorauszahlungsvorschlag"), T28, [usage](operations/statements.md) |
+| Heating costs per HeizkostenV | yes | ✅ internal basic/consumption split or external billing | `engine/heizkosten.py`, `engine/heating_settlement.py`, `services/heating_input_service.py`, `components/HeatingInputs.tsx`, T45, T46, [usage](operations/statements.md) |
+| Consumption from meters | yes | ✅ prefilled from readings, manual entry otherwise | `engine/meter_consumption.py`, `api/settlements.py` (`/consumption-suggestions`, `/heating-consumption`), T31, [usage](operations/meters.md) |
 
 ## WEG (homeowners' association)
 
 | Feature | Reference product | Status | Location |
 | --- | --- | --- | --- |
 | Economic plan, Hausgeld expected amounts, PDF | no | ✅ | `api/economic_plans.py`, `services/payment_service.py`, `services/wirtschaftsplan_pdf.py` |
-| Economic plan prefilled from the previous year | no | ✅ preview, then draft from last year's actual costs per category | `api/economic_plans.py` (`/previous/preview`, `/previous`), `components/PreviousPlan.tsx`, T54 |
+| Economic plan prefilled from the previous year | no | ✅ preview, then draft from last year's actual costs per category | `api/economic_plans.py` (`/previous/preview`, `/previous`), `components/PreviousPlan.tsx`, T54, [usage](operations/statements.md) |
 | Annual settlement, PDF | no | ✅ | `api/weg_settlements.py`, `services/weg_jahresabrechnung_pdf.py` |
 | Adopt paid Hausgeld | no | ✅ | `api/weg_settlements.py` (`/paid-advances-derived`), `services/weg_settlement_service.py` (`derive_paid_advances`), `pages/WegSettlementDetailPage.tsx`, T09 |
 | Maintenance reserve (Erhaltungsrücklage) | no | 🟡 opening balance and withdrawals are manual inputs; no reserve ledger | `engine/weg.py`, `pages/WegSettlementDetailPage.tsx` |
 | Asset report (Vermögensbericht) § 28 Abs. 4 WEG | no | ✅ | `engine/vermoegensbericht.py`, `services/vermoegensbericht_pdf.py`, `pages/AssetReportsPage.tsx` |
-| Special levy (Sonderumlage) | no | ✅ distributed by MEA as owner expected amount `SONDERZAHLUNG`, appears in the owner ledger and can be dunned | `models/special_levy.py`, `api/special_levies.py`, `services/special_levy_service.py`, `pages/SpecialLeviesPage.tsx`, T32, T33 |
-| Mid-year owner change | no | ✅ annual settlement is day-accurate per owner | `api/ownership.py`, `services/weg_settlement_service.py`, T26 |
+| Special levy (Sonderumlage) | no | ✅ distributed by MEA as owner expected amount `SONDERZAHLUNG`, appears in the owner ledger and can be dunned | `models/special_levy.py`, `api/special_levies.py`, `services/special_levy_service.py`, `pages/SpecialLeviesPage.tsx`, T32, T33, [usage](operations/weg.md) |
+| Mid-year owner change | no | ✅ annual settlement is day-accurate per owner | `api/ownership.py`, `services/weg_settlement_service.py`, T26, [usage](operations/tenancies-and-rent.md) |
 | Owners' meeting, minutes, resolution register | no | ✅ | `api/meetings.py`, `pages/MeetingDetailPage.tsx`, `pages/ResolutionRegisterPage.tsx` |
-| Meeting invitation as PDF | no | ✅ one page per owner, hint for less than three weeks' notice (§ 24 Abs. 4 WEG) | `api/meetings.py` (`/{id}/invitation.pdf`), `services/meeting_pdf.py`, T34 |
+| Meeting invitation as PDF | no | ✅ one page per owner, hint for less than three weeks' notice (§ 24 Abs. 4 WEG) | `api/meetings.py` (`/{id}/invitation.pdf`), `services/meeting_pdf.py`, T34, [usage](operations/weg.md) |
 
 ## Dunning, deadlines, tasks
 
 | Feature | Reference product | Status | Location |
 | --- | --- | --- | --- |
 | Dunning notice, 3 levels, fee, PDF | partial | ✅ | `api/dunning.py`, `engine/dunning.py`, `services/dunning_pdf.py` |
-| Default interest, selected dunning run | yes | ✅ interest at base rate + 5 pp (§ 288 Abs. 1 BGB) shown on the PDF; preview of arrears above a threshold, selected ones become drafts in one step | `engine/dunning.py`, `services/dunning_batch_service.py`, `api/dunning.py` (`/batch/preview`, `/batch`), `components/DunningBatch.tsx`, T35, T53 |
+| Default interest, selected dunning run | yes | ✅ interest at base rate + 5 pp (§ 288 Abs. 1 BGB) shown on the PDF; preview of arrears above a threshold, selected ones become drafts in one step | `engine/dunning.py`, `services/dunning_batch_service.py`, `api/dunning.py` (`/batch/preview`, `/batch`), `components/DunningBatch.tsx`, T35, T53, [usage](operations/bank-and-payments.md) |
 | Deadline monitor (Fristenmonitor) | partial | ✅ derived | `api/fristen.py`, `engine/fristen.py`, `pages/FristenmonitorPage.tsx` |
-| Tasks, follow-ups | yes | ✅ create from property and unit, due tasks on the dashboard | `models/task.py`, `api/tasks.py`, `services/task_service.py`, `pages/TasksPage.tsx`, T41, T42 |
+| Tasks, follow-ups | yes | ✅ create from property and unit, due tasks on the dashboard | `models/task.py`, `api/tasks.py`, `services/task_service.py`, `pages/TasksPage.tsx`, T41, T42, [usage](operations/tasks-and-documents.md) |
 
 ## Documents, communication, reports
 
 | Feature | Reference product | Status | Location |
 | --- | --- | --- | --- |
-| Documents per property/unit/person | yes | ✅ "Dokumente" panel: upload, open, archive | `models/attachment.py`, `api/attachments.py`, `components/AttachmentsPanel.tsx`, T36, T37 |
-| Letter templates, dispatch by e-mail/letter | yes | ✅ placeholder templates produce one PDF per recipient; e-mail for settlement, dunning notice and invitation (SMTP disabled until configured) | `api/letters.py`, `services/letter_service.py`, `pages/LettersPage.tsx`, `api/mail.py`, `services/mail_service.py`, `components/MailDispatch.tsx`, T47, T48 |
+| Documents per property/unit/person | yes | ✅ "Dokumente" panel: upload, open, archive | `models/attachment.py`, `api/attachments.py`, `components/AttachmentsPanel.tsx`, T36, T37, [usage](operations/tasks-and-documents.md) |
+| Letter templates, dispatch by e-mail/letter | yes | ✅ placeholder templates produce one PDF per recipient; e-mail for settlement, dunning notice and invitation (SMTP disabled until configured) | `api/letters.py`, `services/letter_service.py`, `pages/LettersPage.tsx`, `api/mail.py`, `services/mail_service.py`, `components/MailDispatch.tsx`, T47, T48, [usage](operations/tasks-and-documents.md) |
 | Tenant portal | yes | ❌ | – |
-| Year overview per property (Anlage V) | yes | 🟡 income by payment type and expenses by category with CSV; no Anlage V line mapping | `api/reports.py` (`/property-year`, `/property-year.csv`), `services/report_service.py`, `pages/ReportsPage.tsx`, T38, T39 |
-| CSV/DATEV export | yes | ✅ CSV for payments, costs and year overview; DATEV EXTF batch with explicitly configured SKR03/SKR04 accounts | `api/payments.py` (`/export.csv`), `api/cost_entries.py` (`/export.csv`), `api/reports.py` (`/datev.csv`), `services/datev_export.py`, `components/DatevExport.tsx`, T39, T40, T49 |
+| Year overview per property (Anlage V) | yes | 🟡 income by payment type and expenses by category with CSV; no Anlage V line mapping | `api/reports.py` (`/property-year`, `/property-year.csv`), `services/report_service.py`, `pages/ReportsPage.tsx`, T38, T39, [usage](operations/statements.md) |
+| CSV/DATEV export | yes | ✅ CSV for payments, costs and year overview; DATEV EXTF batch with explicitly configured SKR03/SKR04 accounts | `api/payments.py` (`/export.csv`), `api/cost_entries.py` (`/export.csv`), `api/reports.py` (`/datev.csv`), `services/datev_export.py`, `components/DatevExport.tsx`, T39, T40, T49, [usage](operations/tasks-and-documents.md) |
 | GDPR (DSGVO) access/erasure | n/a | ✅ access on screen only | `api/dsgvo.py`, `services/dsgvo_service.py`, `components/DsgvoPanel.tsx` |
 
 ## Gaps
