@@ -22,7 +22,7 @@ async def prepared_financial(api,seed,kind):
     elif kind=='weg':
         data['economic_plan_id']=await _create_and_finalize_plan(api,seed);body=weg_values(seed)
     else:
-        body={'reserve_opening_balance':'0.00','reserve_withdrawals_total':'0.00','reserve_contributions_total':'0.00',
+        body={'reserve_override_reason':'Reviewed synthetic reserve totals','reserve_opening_balance':'0.00','reserve_withdrawals_total':'0.00','reserve_contributions_total':'0.00',
           'bank_balances':[{'bank_account_id':seed[key],'label':'Synthetic bank','account_type':account_type,'balance':'0.00'}
             for key,account_type in [('bank_giro','LAUFEND'),('bank_ruecklage','RUECKLAGE')]],'receivables':[],'payables':[]}
     response=await api.post(endpoint,json=data);assert response.status_code==201,response.text
@@ -266,6 +266,9 @@ async def test_computation_evidence_is_immutable_manifested_and_roundtrips(clien
                     db.execute(text("DELETE FROM "+table+" WHERE organization_id=:org"),{"org":m4_seed["org_a_id"]})
             followup=importlib.import_module('migrations.versions.0116_correction_followup_completions')
             with pytest.raises(DBAPIError,match="Retain trusted"),db.begin_nested():
+                # Detach the later revision's dependency inside this rollback-only rehearsal.
+                db.execute(text('DROP TRIGGER recheck_computation ON reserve_ledger_entry'))
+                importlib.import_module('migrations.versions.0149_maintenance_reserve_ledger').patch_source_digest(reverse=True)
                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
                 importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
@@ -283,6 +286,9 @@ async def test_computation_evidence_is_immutable_manifested_and_roundtrips(clien
             definition=db.scalar(text("SELECT pg_get_functiondef(CAST(:signature AS regprocedure))"),{"signature":signature})
             point=db.begin_nested()
             try:
+                # Detach the later revision's dependency inside this rollback-only rehearsal.
+                db.execute(text('DROP TRIGGER recheck_computation ON reserve_ledger_entry'))
+                importlib.import_module('migrations.versions.0149_maintenance_reserve_ledger').patch_source_digest(reverse=True)
                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
                 importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
@@ -305,6 +311,8 @@ async def test_computation_evidence_is_immutable_manifested_and_roundtrips(clien
                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
                 importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').upgrade()
+                importlib.import_module('migrations.versions.0149_maintenance_reserve_ledger').patch_source_digest()
+                db.execute(text('CREATE CONSTRAINT TRIGGER recheck_computation AFTER INSERT OR UPDATE OR DELETE ON reserve_ledger_entry DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION recheck_transaction_computations()'))
                 assert definition==db.scalar(text("SELECT pg_get_functiondef(CAST(:signature AS regprocedure))"),{"signature":signature})
                 for role in ("app_rw","app_worker","app_review"):
                     assert not db.scalar(text("SELECT has_function_privilege(:role,\u0027financial_computation_state(uuid,text,uuid)\u0027,\u0027EXECUTE\u0027)"),{"role":role})

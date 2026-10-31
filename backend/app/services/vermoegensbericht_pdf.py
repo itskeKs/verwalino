@@ -27,7 +27,7 @@ _CSS = (Path(__file__).resolve().parent.parent / "templates" / "weg_abrechnung.c
 
 _RESERVE_TYPES = ("RESERVE_OPENING", "RESERVE_CONTRIBUTION", "RESERVE_WITHDRAWAL", "RESERVE_CLOSING")
 # Line types whose value is a manual Verwalter-Angabe (ADR-0008).
-_MANUAL_TYPES = ("RESERVE_OPENING", "RESERVE_WITHDRAWAL", "BANK_BALANCE", "RECEIVABLE", "PAYABLE")
+_MANUAL_TYPES = ("BANK_BALANCE", "RECEIVABLE", "PAYABLE")
 
 
 @dataclass
@@ -73,7 +73,7 @@ def build_vermoegensbericht_html(
     recv_rows = []
     pay_rows = []
     for ln in ordered:
-        if ln.line_type in _RESERVE_TYPES:
+        if ln.line_type in _RESERVE_TYPES or (ln.line_type == 'SUBTOTAL' and ln.note == 'Rücklagenbuch'):
             cls = "closing" if ln.line_type == "RESERVE_CLOSING" else ""
             reserve_rows.append(_row(ln, cls))
         elif ln.line_type == "BANK_BALANCE":
@@ -133,9 +133,8 @@ def build_vermoegensbericht_html(
   <div class="disclaimer">
     Hinweis (ADR-0008, [§18/fachlich]): Der <strong>Stand der
     Erhaltungsruecklage</strong> ist aus der Entwicklung (Anfangsbestand +
-    Zufuehrungen - Entnahmen = Endbestand) abgeleitet. Die mit
-    <em>(Verwalter-Angabe)</em> gekennzeichneten Werte (Anfangsbestand und
-    Entnahmen der Ruecklage, Bankkonten-Stichtagssalden,
+    Zufuehrungen - Entnahmen ± Korrekturen = Endbestand) abgeleitet. Die mit
+    <em>(Verwalter-Angabe)</em> gekennzeichneten Werte (Bankkonten-Stichtagssalden,
     Forderungen/Verbindlichkeiten) sind <strong>manuelle Angaben der
     Verwaltung</strong> und <strong>kein automatischer Buchungssaldo</strong>
     (kein Bankabgleich in dieser Ausbaustufe). Vollstaendigkeit und Eignung fuer

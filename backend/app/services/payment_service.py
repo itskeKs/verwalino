@@ -118,6 +118,24 @@ class PaymentService:
 
     async def _require_deposit_sources(self, payment: Payment) -> None:
         """A deposit must be attributable to its visible contract, tenant and account."""
+        if payment.payment_type == 'RUECKLAGENENTNAHME':
+            from app.repositories.accounting_scope_repo import AccountingScopeRepository
+            from app.repositories.property_repo import PropertyRepository
+            account = await self._accounts.get_by_id(payment.bank_account_id)
+            if account is None:
+                raise HTTPException(404, 'Bankkonto nicht gefunden.')
+            scope_id = await FinancialScopeService(self._session, self._org_id, self._user_id).enter(account)
+            if scope_id:
+                sphere = await AccountingScopeRepository(self._session, self._org_id).get_by_id(scope_id)
+                if sphere is None or sphere.scope_type != 'WEG':
+                    raise HTTPException(422, 'Rücklagenentnahmen benötigen einen WEG-Abrechnungskreis.')
+            else:
+                prop = await PropertyRepository(self._session, self._org_id).get_by_id(account.property_id)
+                if prop is None or prop.management_type not in ('WEG', 'MISCH'):
+                    raise HTTPException(422, 'Rücklagenentnahmen benötigen ein WEG-Objekt.')
+        if payment.payment_type == 'RUECKLAGENENTNAHME' and (
+                payment.direction != 'OUT' or payment.tenant_profile_id or payment.owner_profile_id or payment.lease_agreement_id):
+            raise HTTPException(422, 'Eine Rücklagenentnahme ist eine Auszahlung ohne Mieter- oder Eigentümerzuordnung.')
         if payment.payment_type != "KAUTION":
             return
         if payment.lease_agreement_id is None:

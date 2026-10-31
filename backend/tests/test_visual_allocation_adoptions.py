@@ -406,7 +406,7 @@ async def test_visual_mapping_and_actual_financial_followup_keep_source_semantic
         created=await api.post('/api/weg-settlements/asset-reports',json={'property_id':str(ids['property']),'accounting_scope_id':str(ids['scope']),'period_start':'2026-01-01','period_end':'2026-12-31'})
         assert created.status_code==201,created.text
         target=created.json()['id'];url='/api/weg-settlements/asset-reports/'+target
-        values={'reserve_opening_balance':'0.00','reserve_withdrawals_total':'0.00','reserve_contributions_total':'0.00',
+        values={'reserve_override_reason':'Reviewed synthetic reserve totals','reserve_opening_balance':'0.00','reserve_withdrawals_total':'0.00','reserve_contributions_total':'0.00',
           'bank_balances':[{'bank_account_id':str(ids['bank']),'label':'Synthetic visual source account','account_type':'LAUFEND','balance':'0.00'}],'receivables':[],'payables':[]}
         await declare(api,target,values,old['source_document_id'])
         computed=await api.post(url+'/compute',json=values);assert computed.status_code==200,computed.text

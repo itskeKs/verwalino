@@ -64,7 +64,7 @@ async def test_weg_finalization_rechecks_drafts_against_newly_finalized_period(c
         "property_id": data["property"]["id"], "economic_plan_id": plan["id"],
         "period_start": plan["period_start"], "period_end": plan["period_end"],
     }) for plan in plans]
-    values = {"reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
+    values = {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
         "paid_advances": [{"owner_profile_id": data["owner"]["id"], "paid_total": "0.00"}]}
     await attest_fixture(api, "settlement", runs[0]["id"], values)
     first = await api.post(f"/api/weg-settlements/{runs[0]['id']}/finalize", json=values)
@@ -114,7 +114,7 @@ async def test_plan_transition_closes_gap_after_start_month_change(client_a_admi
     # The gap plan can supply the actual WEG settlement for precisely those days.
     run = await create(api, "/api/weg-settlements", {"property_id": data["property"]["id"],
         "economic_plan_id": transition["id"], "period_start": "2026-01-01", "period_end": "2026-03-31"})
-    values = {"reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
+    values = {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
         "paid_advances": [{"owner_profile_id": data["owner"]["id"], "paid_total": "0.00"}]}
     await attest_fixture(api, "settlement", run["id"], values)
     result = await api.post(f"/api/weg-settlements/{run['id']}/finalize", json=values)
@@ -297,7 +297,7 @@ async def test_weg_overlap_checks_only_finalized_runs_for_same_property(client_a
         **body, "period_start": "2025-08-01", "period_end": "2025-12-31"})
     other = await period_property(api)
     other_plan = await finalized_plan(api, other, "2025-04-01", "2026-03-31")
-    values = {"reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
+    values = {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
         "paid_advances": [{"owner_profile_id": april["owner"]["id"], "paid_total": "0.00"}]}
     await attest_fixture(api, "settlement", run["id"], values)
     result = await api.post(f"/api/weg-settlements/{run['id']}/finalize", json=values)
@@ -334,7 +334,7 @@ async def test_weg_overlap_does_not_cross_accounting_contexts(client_a_admin, ap
     body = {"property_id": april["property"]["id"], "economic_plan_id": plan["id"],
         "period_start": "2025-04-01", "period_end": "2026-03-31"}
     run = await create(api, "/api/weg-settlements", body)
-    values = {"reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
+    values = {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
         "paid_advances": [{"owner_profile_id": april["owner"]["id"], "paid_total": "0.00"}]}
     await attest_fixture(api, "settlement", run["id"], values)
     response = await api.post(f"/api/weg-settlements/{run['id']}/finalize", json=values)

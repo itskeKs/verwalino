@@ -57,8 +57,11 @@ class FinancialInputPolicy:
 
     def validate_values(self, subject, values, kind):
         values = normalize_values(values)
-        if any(value is None for value in values.values()):
+        reserve_fields = {'reserve_opening_balance', 'reserve_withdrawals_total', 'reserve_contributions_total'}
+        if any(value is None for key, value in values.items() if key not in reserve_fields):
             incomplete("missing_input", self.component(subject, kind))
+        if any(values.get(key) is not None for key in reserve_fields) and not values.get('reserve_override_reason', '').strip():
+            raise HTTPException(422, 'Manuelle Rücklagenwerte benötigen eine Begründung.')
         if kind != "economic_plan" and subject.run_type == "BK_MIETER":
             if subject.advance_payments_total is None:
                 incomplete("unknown_advance_payments", "advance_payments")
@@ -111,6 +114,13 @@ class FinancialInputPolicy:
                 raise HTTPException(404, "Source document not found")
         await self.repo.lock_sources()
         await self.validate_scope_coverage(subject, kind, values)
+        if kind == 'settlement' and subject.run_type in ('WEG_JAHRESABRECHNUNG', 'VERMOEGENSBERICHT'):
+            from types import SimpleNamespace
+            from app.services.reserve_ledger_service import ReserveLedgerService
+            typed = SimpleNamespace(**{key: Decimal(value) if key in (
+                'reserve_opening_balance', 'reserve_withdrawals_total', 'reserve_contributions_total') and value is not None else value
+                for key, value in values.items()})
+            await ReserveLedgerService(self.session, self.org_id, self.user_id).apply_typed_overrides(subject, typed)
         revision = await self.source_revision(subject)
         previous = await self.repo.latest(subject.id, kind)
         if previous and previous.values == values and previous.source_revision == revision and previous.reason == reason and previous.attestor_id == self.user_id and previous.source_document_ids == source_document_ids:

@@ -8,6 +8,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it("keeps missing reserve/account values blank and sends an explicitly reviewed zero", async () => {
   const bodies: Record<string, unknown>[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/reserve-ledger')) return json({ opening_balance: '0.00', contributions_total: '0.00', withdrawals_total: '0.00', overrides_total: '0.00', closing_balance: '0.00', planned_contributions_total: '0.00', entries: [], frozen: false, overdrawn: false, booking_basis: 'CASH' });
     if (url === "/api/properties") return json([{ id: "property-1", name: "Synthetic house" }]);
     if (url.startsWith("/api/bank-accounts")) return json([{ id: "bank-1", label: "Giro", account_type: "LAUFEND" }]);
     if (init?.method === "POST") {
@@ -22,11 +23,12 @@ it("keeps missing reserve/account values blank and sends an explicitly reviewed 
   expect(opening).toHaveValue(""); expect(bank).toHaveValue("");
   fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
   await waitFor(() => expect(bodies).toHaveLength(1));
-  expect(bodies[0]).toMatchObject({ reserve_opening_balance: "", bank_balances: [{ balance: "" }] });
+  expect(bodies[0]).toMatchObject({ reserve_opening_balance: null, bank_balances: [{ balance: "" }] });
   for (const input of [opening, bank, screen.getByLabelText("Rücklage Zuführung"), screen.getByLabelText("Rücklage Entnahmen")]) {
     fireEvent.change(input, { target: { value: "0.00" } });
   }
   fireEvent.change(screen.getByLabelText("Grundlage der Prüfung"), { target: { value: "Complete records, no movements" } });
+  fireEvent.change(screen.getByLabelText('Begründung der Rücklagenwerte'), { target: { value: 'Geprüfter Nullbestand' } });
   fireEvent.click(screen.getByRole("checkbox"));
   fireEvent.click(screen.getByRole("button", { name: "Datengrundlage speichern" }));
   await screen.findByRole("status");

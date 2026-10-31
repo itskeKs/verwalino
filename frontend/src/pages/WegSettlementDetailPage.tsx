@@ -1,3 +1,4 @@
+import { ReserveLedgerPanel } from "../components/ReserveLedgerPanel";
 import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
 import { FinancialCorrectionControls, PlanSuccessorSelector } from "../components/FinancialCorrectionControls";
 /**
@@ -40,6 +41,9 @@ export function WegSettlementDetailPage() {
   const [paidValues, setPaidValues] = useState<Record<string, string>>({});
   const [opening, setOpening] = useState("");
   const [withdrawals, setWithdrawals] = useState("");
+  const [reserveReason, setReserveReason] = useState("");
+  const [ledgerVersion, setLedgerVersion] = useState(0);
+  const [ledgerRefresh, setLedgerRefresh] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -56,7 +60,7 @@ export function WegSettlementDetailPage() {
     let active = true;
     pageGeneration.current += 1; setBusy(false);
     setLoading(true); setRun(null); setError(null); setActionError(null);
-    setPaidOwners([]); setPaidValues({}); setOpening(''); setWithdrawals('');
+    setPaidOwners([]); setPaidValues({}); setOpening(''); setWithdrawals(''); setReserveReason('');
     Promise.all([getWegRun(runId), listProperties(), listOwnerProfiles(), listPersons()])
       .then(async ([r, pr, op, per]) => {
         if (!active) return;
@@ -85,7 +89,7 @@ export function WegSettlementDetailPage() {
   }
 
   function req(): WegComputeRequest {
-    return { reserve_opening_balance: opening, reserve_withdrawals_total: withdrawals, paid_advances: paidOwners.map((id) => ({ owner_profile_id: id, paid_total: paidValues[id] ?? "" })) };
+    return { reserve_opening_balance: opening || null, reserve_withdrawals_total: withdrawals || null, reserve_override_reason: reserveReason, paid_advances: paidOwners.map((id) => ({ owner_profile_id: id, paid_total: paidValues[id] ?? "" })) };
   }
 
   async function run_(fn: () => Promise<WegRun>) {
@@ -94,7 +98,7 @@ export function WegSettlementDetailPage() {
     setActionError(null);
     try {
       const result = await fn();
-      if (pageGeneration.current === current) setRun(result);
+      if (pageGeneration.current === current) { setRun(result); setLedgerRefresh(v => v + 1); }
     } catch (err) {
       if (pageGeneration.current === current) setActionError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -176,9 +180,12 @@ export function WegSettlementDetailPage() {
         </tbody></table>
       </div>
 
+      <ReserveLedgerPanel key={run.id} runId={run.id} propertyId={run.property_id} status={run.status} disabled={busy || planBusy} refreshKey={ledgerRefresh}
+        onChanged={() => { setLedgerVersion(v => v + 1); setRun({ ...run, lines: [], total_cost: null, balance: null }); }} />
       {isDraft && (
         <fieldset disabled={busy || planBusy} className="card" style={{ marginBottom: "1rem" }}>
-          <h2>Rücklage & Berechnung</h2>
+          <h2>Berechnung & begründete Rücklagenwerte</h2>
+          <p>Leere Rücklagenfelder verwenden das Rücklagenbuch. Eingetragene Gesamtwerte werden bei der Prüfung als begründete Korrektur übernommen.</p>
           {paidOwners.map((id) => <label key={id}>Tatsächlich gezahltes Hausgeld · {ownerName(id)}
             <input inputMode="decimal" placeholder="Unbekannt" value={paidValues[id] ?? ""} onChange={(e) => setPaidValues({ ...paidValues, [id]: e.target.value })} />
           </label>)}
@@ -195,7 +202,10 @@ export function WegSettlementDetailPage() {
               <input type="text" inputMode="decimal" placeholder="0.00" value={withdrawals} onChange={(e) => setWithdrawals(e.target.value)} />
             </label>
           </div>
-      {run.status === "draft" && <FinancialCoverageReview kind="settlement" subjectId={run.id} values={req()} />}
+          <label>Begründung der Rücklagenwerte
+            <textarea value={reserveReason} maxLength={2000} onChange={e => setReserveReason(e.target.value)} />
+          </label>
+      {run.status === "draft" && <FinancialCoverageReview key={ledgerVersion} kind="settlement" subjectId={run.id} values={req()} onSaved={() => setLedgerRefresh(v => v + 1)} />}
           <div className="form-actions" style={{ marginTop: "1rem" }}>
             <button className="btn btn--primary" disabled={busy} onClick={() => runId && run_(() => computeWegRun(runId, req()))}>
               {busy ? "Berechnen..." : "Berechnen"}

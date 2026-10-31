@@ -60,6 +60,7 @@ const PAYMENT_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: "KAUTION", label: "Kaution" },
   { value: "HAUSGELD_VORSCHUSS", label: "Hausgeld-Vorschuss" },
   { value: "RUECKLAGENANTEIL", label: "Ruecklagenanteil" },
+  { value: "RUECKLAGENENTNAHME", label: "Rücklagenentnahme" },
   { value: "SONDERZAHLUNG", label: "Sonder-/Nachzahlung" },
 ];
 
@@ -69,6 +70,7 @@ const PAYMENT_TYPE_LABELS: Record<string, string> = {
   KAUTION: "Kaution",
   HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
   RUECKLAGENANTEIL: "Ruecklagenanteil",
+  RUECKLAGENENTNAHME: "Rücklagenentnahme",
   SONDERZAHLUNG: "Sonder-/Nachzahlung",
 };
 
@@ -403,6 +405,7 @@ export function PaymentsPage() {
                   setForm({
                     ...form,
                     payment_type: e.target.value,
+                    direction: e.target.value === 'RUECKLAGENENTNAHME' ? 'OUT' : form.direction,
                     // Clear counterparty when switching between tenant/owner types
                     tenant_profile_id: null,
                     owner_profile_id: null,
@@ -455,7 +458,7 @@ export function PaymentsPage() {
                 }
               />
             </label>
-            {isTenantType ? (
+            {form.payment_type === 'RUECKLAGENENTNAHME' ? <p>Auszahlung aus der Rücklage. Verknüpfen Sie anschließend Kostenbeleg und Beschluss im Rücklagenbuch.</p> : isTenantType ? (
               <label>
                 Mieter
                 <select

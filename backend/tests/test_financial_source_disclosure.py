@@ -127,7 +127,7 @@ async def test_each_pdf_family_checks_source_export_before_render(client_a_admin
             renderer = 'app.api.weg_settlements.render_weg_jahresabrechnung_pdf'
         else:
             endpoint = '/api/weg-settlements/asset-reports'
-            values = {'reserve_opening_balance':'0.00','reserve_withdrawals_total':'0.00','reserve_contributions_total':'0.00',
+            values = {'reserve_override_reason':'Reviewed synthetic reserve totals','reserve_opening_balance':'0.00','reserve_withdrawals_total':'0.00','reserve_contributions_total':'0.00',
                 'receivables':[],'payables':[], 'bank_balances':[
                     {'bank_account_id':m4_seed['bank_giro'],'label':'Giro','account_type':'LAUFEND','balance':'0.00'},
                     {'bank_account_id':m4_seed['bank_ruecklage'],'label':'Reserve','account_type':'RUECKLAGE','balance':'0.00'}]}
@@ -173,10 +173,19 @@ async def test_disclosure_migration_retains_strict_state_and_roundtrips(seed_dat
                     with db.begin_nested(): migration.downgrade()
                 savepoint = db.begin_nested()
                 try:
+                    # Preserve later reserve rows; detach/recreate only the policies
+                    # that reference this historical function, within this savepoint.
+                    reserve_policies = db.execute(text("SELECT policyname,cmd,qual,with_check FROM pg_policies WHERE tablename='reserve_ledger_entry' ORDER BY policyname")).all()
+                    for name, *_ in reserve_policies:
+                        db.execute(text(f'DROP POLICY {name} ON reserve_ledger_entry'))
                     db.execute(text('TRUNCATE property_source_security'))
                     migration.downgrade()
                     assert db.scalar(text("SELECT to_regprocedure('property_financial_disclosure_access(uuid,uuid,text)')")) is None
                     migration.upgrade()
+                    for name, command, using, check in reserve_policies:
+                        clauses = (f' USING ({using})' if using else '') + (f' WITH CHECK ({check})' if check else '')
+                        db.execute(text(f'CREATE POLICY {name} ON reserve_ledger_entry FOR {command}{clauses}'))
+                    assert db.execute(text("SELECT policyname,cmd,qual,with_check FROM pg_policies WHERE tablename='reserve_ledger_entry' ORDER BY policyname")).all() == reserve_policies
                     assert db.scalar(text("SELECT count(*) FROM pg_policy WHERE polname='financial_source_disclosure' AND NOT polpermissive")) == 5
                     assert not db.scalar(text("SELECT has_function_privilege('app_rw','property_complete_graph_actor_access(uuid,uuid,uuid,text,boolean)','EXECUTE')"))
                     for function in ['property_complete_graph_actor_access(uuid,uuid,uuid,text,boolean)',

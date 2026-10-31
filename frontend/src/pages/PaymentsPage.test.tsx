@@ -49,6 +49,13 @@ it("explicitly names Eigentuemer after switching to an owner payment type", asyn
   fireEvent.change(type, { target: { value: "HAUSGELD_VORSCHUSS" } });
   expectExplicitSelect("Eigentuemer");
 });
+it('offers a reserve withdrawal without an owner or tenant counterparty', async () => {
+  await openCreate();
+  fireEvent.change(expectExplicitSelect('Zahlungstyp *'), { target: { value: 'RUECKLAGENENTNAHME' } });
+  expect(screen.getByLabelText('Zahlungstyp *', { exact: true })).toHaveValue('RUECKLAGENENTNAHME');
+  expect(screen.queryByLabelText('Eigentuemer', { exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Mieter', { exact: true })).not.toBeInTheDocument();
+});
 it.each(["IN", "OUT"])("supports KAUTION %s through the existing payment fields", async direction => {
   await openCreate();
   fireEvent.change(expectExplicitSelect("Bankkonto *"), { target: { value: "deposit-account" } });

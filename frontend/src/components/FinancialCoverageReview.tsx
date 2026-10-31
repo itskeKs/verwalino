@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api/client";
 
-export function FinancialCoverageReview({ kind, subjectId, values }: {
+export function FinancialCoverageReview({ kind, subjectId, values, onSaved }: {
   kind: "settlement" | "economic_plan"; subjectId: string; values: object;
+  onSaved?: () => void;
 }) {
   const [reason, setReason] = useState("");
   const [confirmedValues, setConfirmedValues] = useState<string | null>(null);
@@ -43,6 +44,7 @@ export function FinancialCoverageReview({ kind, subjectId, values }: {
       await api.post("/api/financial-input-coverage", { subject_kind: kind, subject_id: subjectId,
         values, reason, confirmed_complete: true, source_document_ids: selectedSources });
       setSavedValues(fingerprint);
+      onSaved?.();
     } catch (err) { setError(err instanceof ApiError ? err.message : String(err)); }
     finally { setBusy(false); }
   }

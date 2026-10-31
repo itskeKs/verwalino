@@ -290,6 +290,7 @@ def build_weg_snapshot_payload(
 
     return {
         "engine_version": inp.engine_version,
+        "reserve_ledger": inp.reserve_ledger,
         "run_type": "WEG_JAHRESABRECHNUNG",
         "period": {
             "start": inp.period_start.isoformat(),
@@ -356,6 +357,8 @@ def build_weg_snapshot_payload(
             "reserve": {
                 "opening_balance": _m(inp.reserve.opening_balance),
                 "withdrawals_total": _m(inp.reserve.withdrawals_total),
+                "contributions_total": _m(inp.reserve.contributions_total),
+                "overrides_total": _m(inp.reserve.overrides_total),
             },
         },
         "computation": [
@@ -422,6 +425,7 @@ def build_weg_snapshot_payload(
                 "contributions_total": _m(result.reserve.contributions_total),
                 "withdrawals_total": _m(result.reserve.withdrawals_total),
                 "closing_balance": _m(result.reserve.closing_balance),
+                "overrides_total": _m(result.reserve.overrides_total),
             },
             "cost_total": _m(result.cost_total),
             "reserve_contributions_total": _m(result.reserve_contributions_total),
@@ -507,6 +511,7 @@ def build_asset_report_payload(
     """Canonical snapshot for a Vermoegensbericht (m4 section 6.5)."""
     return {
         "engine_version": inp.engine_version,
+        "reserve_ledger": inp.reserve_ledger,
         "run_type": "VERMOEGENSBERICHT",
         "period": {
             "start": inp.period_start.isoformat(),
@@ -521,6 +526,7 @@ def build_asset_report_payload(
             "reserve": {
                 "opening_balance": _m(inp.reserve.opening_balance),
                 "withdrawals_total": _m(inp.reserve.withdrawals_total),
+                "overrides_total": _m(inp.reserve.overrides_total),
             },
             "reserve_contributions_total": _m(inp.reserve_contributions_total),
             "bank_balances": [
@@ -547,6 +553,7 @@ def build_asset_report_payload(
                 "contributions_total": _m(result.reserve.contributions_total),
                 "withdrawals_total": _m(result.reserve.withdrawals_total),
                 "closing_balance": _m(result.reserve.closing_balance),
+                "overrides_total": _m(result.reserve.overrides_total),
             },
             "lines": [
                 {

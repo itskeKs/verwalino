@@ -42,7 +42,7 @@ _KEY_LABELS = {
 }
 
 # Object-wide reserve development line types (not per-owner).
-_RESERVE_DEV_TYPES = ("RESERVE_OPENING", "RESERVE_WITHDRAWAL", "RESERVE_CLOSING")
+_RESERVE_DEV_TYPES = ("RESERVE_OPENING", "RESERVE_WITHDRAWAL", "RESERVE_CLOSING", "SUBTOTAL")
 
 
 @dataclass

@@ -114,7 +114,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Economic plan prefilled from the previous year | ✅ preview, then draft from last year's actual costs per category | `api/economic_plans.py` (`/previous/preview`, `/previous`), `components/PreviousPlan.tsx`, T54, [usage](operations/statements.md) |
 | Annual settlement, PDF | ✅ | `api/weg_settlements.py`, `services/weg_jahresabrechnung_pdf.py` |
 | Adopt paid Hausgeld | ✅ | `api/weg_settlements.py` (`/paid-advances-derived`), `services/weg_settlement_service.py` (`derive_paid_advances`), `pages/WegSettlementDetailPage.tsx`, T09 |
-| Maintenance reserve (Erhaltungsrücklage) | 🟡 opening balance and withdrawals are manual inputs; no reserve ledger | `engine/weg.py`, `pages/WegSettlementDetailPage.tsx` |
+| Maintenance reserve (Erhaltungsrücklage) | ✅ cash ledger, separate plan shares, linked payouts, audited corrections and frozen annual carry-over | `engine/reserve_ledger.py`, `services/reserve_ledger_service.py`, `components/ReserveLedgerPanel.tsx` |
 | Asset report (Vermögensbericht) § 28 Abs. 4 WEG | ✅ | `engine/vermoegensbericht.py`, `services/vermoegensbericht_pdf.py`, `pages/AssetReportsPage.tsx` |
 | Special levy (Sonderumlage) | ✅ distributed by MEA as owner expected amount `SONDERZAHLUNG`, appears in the owner ledger and can be dunned | `models/special_levy.py`, `api/special_levies.py`, `services/special_levy_service.py`, `pages/SpecialLeviesPage.tsx`, T32, T33, [usage](operations/weg.md) |
 | Mid-year owner change | ✅ annual settlement is day-accurate per owner | `api/ownership.py`, `services/weg_settlement_service.py`, T26, [usage](operations/tenancies-and-rent.md) |
@@ -151,7 +151,7 @@ pending; registration stays closed and legal review remains with #26. See the
 - Bank retrieval PSD2/FinTS (Tenant ledger, bank and payments): no automatic bank statement retrieval; import is by CSV/CAMT file only (#40).
 - Inbox (Posteingang) with review chain (Vouchers and costs): worker service and upload-to-cost scenario are present; real-stack acceptance with ClamAV signatures remains pending ([#35](https://github.com/itskeKs/verwalino/issues/35), [runbook](operations/inbox-review-chain.md)).
 - Settlement period (Operating and heating cost statements): overlaps with runs or plans outside the acting user's visible accounting scopes are not detected; a follow-up database constraint is still needed. Identical periods remain allowed (#68).
-- Maintenance reserve (Erhaltungsrücklage) (WEG): opening balance and withdrawals are manual inputs; no reserve ledger or bank-account tracking (#36).
+- Maintenance reserve investment remains outside scope; ledger cash movements are not automatic bank reconciliation (#36).
 - Dunning fees and default interest (Dunning, deadlines, tasks): fees are fixed constants and interest needs a base rate typed per notice; neither is configurable per organization (#69).
 - Tenant portal (Documents, communication, reports): not built; planned right after the hosted launch (#41).
 - Year overview per property (Anlage V) (Documents, communication, reports): mapping aid available; no automatic tax-year cash-outflow calculation, ownership allocation, organization overrides or ELSTER submission.

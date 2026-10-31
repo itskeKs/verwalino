@@ -1088,6 +1088,7 @@ export type PaymentType =
   | "KAUTION"
   | "HAUSGELD_VORSCHUSS"
   | "RUECKLAGENANTEIL"
+  | "RUECKLAGENENTNAHME"
   | "SONDERZAHLUNG";
 
 export type PaymentStatus = "draft" | "booked" | "cancelled";
@@ -1292,8 +1293,9 @@ export interface PaidAdvanceIn {
 }
 
 export interface WegComputeRequest {
-  reserve_opening_balance: string;
-  reserve_withdrawals_total: string;
+  reserve_opening_balance?: string | null;
+  reserve_withdrawals_total?: string | null;
+  reserve_override_reason?: string;
   paid_advances: PaidAdvanceIn[];
 }
 
@@ -1311,15 +1313,40 @@ export interface AssetItemIn {
 }
 
 export interface AssetReportComputeRequest {
-  reserve_opening_balance: string;
-  reserve_withdrawals_total: string;
-  reserve_contributions_total: string;
+  reserve_opening_balance?: string | null;
+  reserve_withdrawals_total?: string | null;
+  reserve_contributions_total?: string | null;
+  reserve_override_reason?: string;
   bank_balances: { bank_account_id: string; label: string; account_type: BankAccountType; balance: string }[];
   receivables: AssetItemIn[];
   payables: AssetItemIn[];
 }
 
 // --- M8 Meetings & Beschluss-Sammlung ---
+export type ReserveComponent = 'OPENING' | 'CONTRIBUTION' | 'WITHDRAWAL' | 'ADJUSTMENT' | 'FUNDING';
+export interface ReserveOverride {
+  component: ReserveComponent;
+  amount: string;
+  reason: string;
+  payment_id?: string;
+  cost_entry_id?: string;
+  register_entry_id?: string;
+}
+export interface ReserveLedger {
+  unlinked_payment_ids?: string[];
+  opening_balance: string;
+  contributions_total: string;
+  withdrawals_total: string;
+  overrides_total: string;
+  closing_balance: string;
+  planned_contributions_total: string | null;
+  overdrawn: boolean;
+  frozen: boolean;
+  booking_basis: string;
+  entries: { kind: string; component?: ReserveComponent; date: string; amount: string; reason?: string;
+    id?: string; payment_id?: string; cost_entry_id?: string; register_entry_id?: string; unit_id?: string; unit_number?: string; owner_profile_id?: string }[];
+}
+
 
 export type MeetingStatus = "PLANNED" | "HELD";
 export type MeetingType = "ORDENTLICH" | "AUSSERORDENTLICH";

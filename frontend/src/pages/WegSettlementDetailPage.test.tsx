@@ -38,6 +38,7 @@ function frozenLine(id: string, owner: string, amount: string): WegLine {
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 function install(runs: WegRun[] = [draft()], ownersReply: (id: string) => Response | Promise<Response> = () => json([seller, buyer])) {
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/reserve-ledger')) return json({ opening_balance: '0.00', contributions_total: '0.00', withdrawals_total: '0.00', overrides_total: '0.00', closing_balance: '0.00', planned_contributions_total: '0.00', entries: [], frozen: false, overdrawn: false, booking_basis: 'CASH' });
     if (url === "/api/properties") return json([property]);
     if (url === "/api/owner-profiles") return json(profiles);
     if (url === "/api/persons") return json(people);
@@ -82,12 +83,13 @@ it("uses both coverage owners despite seller-only plan lines and sends two expli
   fireEvent.change(buyerInput, { target: { value: "0" } });
   fireEvent.change(screen.getByRole("textbox", { name: "Rücklagen-Anfangsbestand" }), { target: { value: "0" } });
   fireEvent.change(screen.getByRole("textbox", { name: "Rücklagen-Entnahmen (Jahr)" }), { target: { value: "0" } });
+  fireEvent.change(screen.getByLabelText('Begründung der Rücklagenwerte'), { target: { value: 'Geprüfter Import' } });
   fireEvent.change(screen.getByRole("textbox", { name: "Grundlage der Prüfung" }), { target: { value: "Beide Eigentümer und Kontoauszüge vollständig geprüft" } });
   fireEvent.click(screen.getByRole("checkbox", { name: "Alle angezeigten Beträge und Listen sind vollständig geprüft, einschließlich bestätigter Nullbeträge." }));
   fireEvent.click(screen.getByRole("button", { name: "Datengrundlage speichern" }));
   await screen.findByRole("status");
   const coverage = fetchMock.mock.calls.find(([url]) => url === "/api/financial-input-coverage")!;
-  const values = { reserve_opening_balance: "0", reserve_withdrawals_total: "0", paid_advances: [
+  const values = { reserve_opening_balance: "0", reserve_withdrawals_total: "0", reserve_override_reason: 'Geprüfter Import', paid_advances: [
     { owner_profile_id: seller, paid_total: "0" }, { owner_profile_id: buyer, paid_total: "0" },
   ] };
   expect(JSON.parse(coverage[1]!.body as string)).toMatchObject({ subject_kind: "settlement", subject_id: runId, values });

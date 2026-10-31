@@ -1,3 +1,4 @@
+import { ReserveLedgerPanel } from "../components/ReserveLedgerPanel";
 import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
 import { FinancialCorrectionControls } from "../components/FinancialCorrectionControls";
 /**
@@ -40,6 +41,9 @@ export function AssetReportDetailPage() {
   const [opening, setOpening] = useState("");
   const [contributions, setContributions] = useState("");
   const [withdrawals, setWithdrawals] = useState("");
+  const [reserveReason, setReserveReason] = useState("");
+  const [ledgerVersion, setLedgerVersion] = useState(0);
+  const [ledgerRefresh, setLedgerRefresh] = useState(0);
   const [receivables, setReceivables] = useState<AssetItemIn[]>([]);
   const [payables, setPayables] = useState<AssetItemIn[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,7 +60,7 @@ export function AssetReportDetailPage() {
     let active = true;
     pageGeneration.current += 1; setBusy(false);
     setLoading(true); setRun(null); setError(null); setActionError(null);
-    setAccounts([]); setBalances({}); setOpening(''); setContributions(''); setWithdrawals(''); setReceivables([]); setPayables([]);
+    setAccounts([]); setBalances({}); setOpening(''); setContributions(''); setWithdrawals(''); setReserveReason(''); setReceivables([]); setPayables([]);
     Promise.all([getWegRun(runId), listProperties()])
       .then(async ([r, pr]) => {
         const accounts = await listBankAccounts(r.property_id);
@@ -73,9 +77,10 @@ export function AssetReportDetailPage() {
 
   function req(): AssetReportComputeRequest {
     return {
-      reserve_opening_balance: opening,
-      reserve_withdrawals_total: withdrawals,
-      reserve_contributions_total: contributions,
+      reserve_opening_balance: opening || null,
+      reserve_override_reason: reserveReason,
+      reserve_withdrawals_total: withdrawals || null,
+      reserve_contributions_total: contributions || null,
       bank_balances: accounts.map((account) => ({ bank_account_id: account.id, label: account.label, account_type: account.account_type, balance: balances[account.id] ?? "" })),
       receivables: receivables,
       payables: payables,
@@ -88,7 +93,7 @@ export function AssetReportDetailPage() {
     setActionError(null);
     try {
       const result = await fn();
-      if (pageGeneration.current === current) setRun(result);
+      if (pageGeneration.current === current) { setRun(result); setLedgerRefresh(v => v + 1); }
     } catch (err) {
       if (pageGeneration.current === current) setActionError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -157,11 +162,13 @@ export function AssetReportDetailPage() {
         </tbody></table>
       </div>
 
+      <ReserveLedgerPanel key={`ledger-${run.id}`} runId={run.id} propertyId={run.property_id} status={run.status} disabled={busy} refreshKey={ledgerRefresh}
+        onChanged={() => { setLedgerVersion(v => v + 1); setRun({ ...run, lines: [] }); }} />
       {isDraft && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Vermögenswerte erfassen</h2>
           <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
-            Erhaltungsrücklage automatisch (Anfang + Zuführung − Entnahme = Ende). Bitte alle Kontostände zum Stichtag prüfen.
+            Die Erhaltungsrücklage stammt aus dem Rücklagenbuch. Leere Rücklagenfelder übernehmen dessen Werte. Manuelle Gesamtwerte benötigen eine Begründung. Bitte alle Kontostände zum Stichtag prüfen.
             Forderungen/Verbindlichkeiten sind manuelle Verwalter-Angaben (kein Buchungssaldo).
           </p>
           <div className="form-grid">
@@ -175,12 +182,15 @@ export function AssetReportDetailPage() {
               <input type="text" inputMode="decimal" placeholder="0.00" value={withdrawals} onChange={(e) => setWithdrawals(e.target.value)} />
             </label>
           </div>
+          <label>Begründung der Rücklagenwerte
+            <textarea value={reserveReason} maxLength={2000} onChange={e => setReserveReason(e.target.value)} />
+          </label>
           {accounts.map((account) => <label key={account.id}>Kontostand · {account.label}
             <input inputMode="decimal" placeholder="Unbekannt" value={balances[account.id] ?? ""} onChange={(e) => setBalances({ ...balances, [account.id]: e.target.value })} />
           </label>)}
           {itemEditor(receivables, setReceivables, "Forderungen")}
           {itemEditor(payables, setPayables, "Verbindlichkeiten")}
-      {run.status === "draft" && <FinancialCoverageReview kind="settlement" subjectId={run.id} values={req()} />}
+      {run.status === "draft" && <FinancialCoverageReview key={ledgerVersion} kind="settlement" subjectId={run.id} values={req()} onSaved={() => setLedgerRefresh(v => v + 1)} />}
           <div className="form-actions" style={{ marginTop: "1rem" }}>
             <button className="btn btn--primary" disabled={busy} onClick={() => runId && run_(() => computeAssetReport(runId, req()))}>
               {busy ? "Berechnen..." : "Berechnen"}

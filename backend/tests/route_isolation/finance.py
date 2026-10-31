@@ -107,8 +107,8 @@ PERIOD = {"period_start": "2025-01-01", "period_end": "2025-12-31"}
 NO_MATCH = "a filter by another organization's id matches nothing"
 
 PLAN_INPUTS = {"planned_costs": [], "reserve_contribution_total": "0.00"}
-WEG_INPUTS = {"reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00", "paid_advances": []}
-REPORT_INPUTS = {"reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
+WEG_INPUTS = {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00", "paid_advances": []}
+REPORT_INPUTS = {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
                  "reserve_contributions_total": "0.00", "bank_balances": [], "receivables": [], "payables": []}
 PAYMENT = {"direction": "IN", "amount": "10.00", "value_date": "2025-02-03", "payment_type": "KALTMIETE"}
 CREDITOR = {"creditor_id": "DE98ZZZ09999999999", "name": "Isolation", "country": "DE", "town": "Teststadt",
@@ -241,6 +241,9 @@ PROBES: dict[str, Probe] = {
     "GET /api/weg-settlements/{run_id}": Probe(run(WEG)),
     "GET /api/weg-settlements/{run_id}/economic-plan-successor": Probe(run(WEG)),
     "GET /api/weg-settlements/{run_id}/input-owners": Probe(run(WEG)),
+    "GET /api/weg-settlements/{run_id}/reserve-ledger": Probe(run(WEG)),
+    "POST /api/weg-settlements/{run_id}/reserve-ledger/overrides": Probe(run(WEG), body={
+        'component': 'ADJUSTMENT', 'amount': '1.00', 'reason': 'Foreign reserve probe'}),
     "GET /api/weg-settlements/{run_id}/pdf": Probe(run(WEG)),
     "PATCH /api/weg-settlements/{run_id}/economic-plan": Probe(
         run(WEG, "x.id AS run_id, x.economic_plan_id AS expected_plan_id, x.economic_plan_id AS successor_id"),

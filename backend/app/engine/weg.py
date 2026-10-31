@@ -478,6 +478,8 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
 
     # The complete set of owners = those with cost cells ∪ those with a plan
     # advance (an owner with a plan but zero cost still gets a Spitze = -plan).
+    if inp.reserve_paid_contributions is not None:
+        owner_reserve = {item.owner_profile_id: item.plan_advance_total for item in inp.reserve_paid_contributions}
     all_owner_ids = set(owner_cost_lines) | set(plan_by_owner)
 
     owners: list[OwnerResult] = []
@@ -509,13 +511,14 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
     # Reserve development (m4 section 3.3) -- fail-loud invariant.
     opening = _money(inp.reserve.opening_balance)
     withdrawals = _money(inp.reserve.withdrawals_total)
-    contributions = _money(reserve_contrib_total)
-    closing = _money(opening + contributions - withdrawals)
+    contributions = _money(inp.reserve.contributions_total if inp.reserve.contributions_total is not None else reserve_contrib_total)
+    closing = _money(opening + contributions - withdrawals + inp.reserve.overrides_total)
     reserve_dev = ReserveDevelopment(
         opening_balance=opening,
         contributions_total=contributions,
         withdrawals_total=withdrawals,
         closing_balance=closing,
+        overrides_total=inp.reserve.overrides_total,
     )
 
     return WegResult(

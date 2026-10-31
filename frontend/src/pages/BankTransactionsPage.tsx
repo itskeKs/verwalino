@@ -262,6 +262,7 @@ function AccountTransactions({ id }: { id: string }) {
 const PAYMENT_TYPES: Record<BankAssignmentLine["payment_type"], string> = {
   KALTMIETE: "Kaltmiete", NK_VORAUSZAHLUNG: "NK-Vorauszahlung", KAUTION: "Kaution",
   HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss", RUECKLAGENANTEIL: "Rücklagenanteil",
+  RUECKLAGENENTNAHME: "Rücklagenentnahme",
   SONDERZAHLUNG: "Sonder-/Nachzahlung", NACHZAHLUNG: "Nachzahlung",
 };
 const TENANT_TYPES = new Set(["KALTMIETE", "NK_VORAUSZAHLUNG", "KAUTION"]);

@@ -319,18 +319,17 @@ class OwnerAdvanceInput:
 
 @dataclass(frozen=True)
 class ReserveInput:
-    """Inputs for the Erhaltungsruecklage development (m4 section 3.3).
+    """Frozen reserve development supplied by the cash ledger.
 
-    `opening_balance` and `withdrawals` are MANUALLY captured in M4 (no booking
-    logic yet; [F4-4/F4-5]). The contributions come from the reserve_relevant
-    cost positions (computed, not supplied here). The closing balance is derived
-    and the development invariant (opening + contributions - withdrawals ==
-    closing) is checked fail-loud by the engine.
+    Explicit contributions replace the legacy pure-engine cost-position source.
+    Opening/withdrawal adjustments and signed other corrections remain separate.
     """
 
     opening_balance: Decimal = Decimal("0.00")
-    # Total withdrawals from the reserve in the period (manual, m4 section 3.3).
+    # Cash withdrawals including reasoned component adjustments.
     withdrawals_total: Decimal = Decimal("0.00")
+    contributions_total: Decimal | None = None
+    overrides_total: Decimal = Decimal("0.00")
 
 
 @dataclass(frozen=True)
@@ -358,6 +357,8 @@ class WegSettlementInput:
     paid_advances: tuple[OwnerAdvanceInput, ...] = ()
     economic_plan_id: uuid.UUID | None = None
     engine_version: str = "m4.1.0"
+    reserve_paid_contributions: tuple[OwnerAdvanceInput, ...] | None = None
+    reserve_ledger: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -442,6 +443,7 @@ class VermoegensberichtInput:
     receivables: tuple[AssetItemInput, ...] = ()
     payables: tuple[AssetItemInput, ...] = ()
     engine_version: str = "m4.1.0"
+    reserve_ledger: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -469,7 +471,6 @@ class OwnerCostStep:
     exact_share: Decimal
     rounded_amount: Decimal
     note: str = ""
-
 
 @dataclass(frozen=True)
 class OwnerResult:
@@ -507,6 +508,7 @@ class ReserveDevelopment:
     contributions_total: Decimal
     withdrawals_total: Decimal
     closing_balance: Decimal
+    overrides_total: Decimal = Decimal("0.00")
 
 
 @dataclass(frozen=True)

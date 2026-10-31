@@ -130,7 +130,7 @@ def _seed_weg(seed_data):
     return {**seed_data, **{k: (str(v) if isinstance(v, uuid.UUID) else v) for k, v in ids.items()}}
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def m4_seed(seed_data):
     return _seed_weg(seed_data)
 
@@ -802,17 +802,15 @@ class TestM4WegSettlementE2E:
         assert spitze[m4_seed["owner_a"]] == "-3600.00"
         assert spitze[m4_seed["owner_b"]] == "-2400.00"
 
-        # Reserve contribution per owner (separate, NOT in OWNER_COST_TOTAL):
-        #   A 6000*600/1000 = 3600 ; B = 2400.
+        # A reserve cost position is not cash: no owner has paid a contribution.
         res_owner = {ln["addressee_owner_profile_id"]: ln["amount"]
                      for ln in lines if ln["line_type"] == "RESERVE_CONTRIBUTION"
                      and ln["addressee_owner_profile_id"] is not None}
-        assert res_owner[m4_seed["owner_a"]] == "3600.00"
-        assert res_owner[m4_seed["owner_b"]] == "2400.00"
+        assert res_owner == {}
 
-        # Reserve development (object-wide): 20000 + 6000 - 8000 = 18000.
+        # Cash development: 20000 opening + 0 paid - 8000 override = 12000.
         closing = next(ln for ln in lines if ln["line_type"] == "RESERVE_CLOSING")
-        assert closing["amount"] == "18000.00"
+        assert closing["amount"] == "12000.00"
         opening = next(ln for ln in lines if ln["line_type"] == "RESERVE_OPENING")
         assert opening["amount"] == "20000.00"
 
@@ -935,7 +933,7 @@ class TestM4VermoegensberichtE2E:
         assert report.status_code == 201, report.text
         run_id = report.json()["id"]
         before = await migrator_session.scalar(text("SELECT to_jsonb(r)::text FROM settlement_run r WHERE id=:id"), {"id": run_id})
-        body = {"reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
+        body = {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
                 "reserve_contributions_total": "0.00", "receivables": [], "payables": [], "bank_balances": [
                     {"bank_account_id": visible_bank["id"], "label": "Visible", "account_type": "LAUFEND", "balance": "0.00"},
                 ]}
@@ -961,7 +959,7 @@ class TestM4VermoegensberichtE2E:
         assert resp.status_code == 201, resp.text
         run_id = resp.json()["id"]
         body = {
-            "reserve_opening_balance": "20000.00",
+            "reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "20000.00",
             "reserve_withdrawals_total": "8000.00",
             "reserve_contributions_total": "6000.00",
             "bank_balances": [
@@ -993,7 +991,7 @@ class TestM4VermoegensberichtE2E:
         })
         run_id = resp.json()["id"]
         body = {
-            "reserve_opening_balance": "1000.00", "reserve_withdrawals_total": "0.00",
+            "reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "1000.00", "reserve_withdrawals_total": "0.00",
             "reserve_contributions_total": "0.00", "receivables": [], "payables": [],
             "bank_balances": [
                 {"bank_account_id": m4_seed["bank_giro"], "label": "Giro", "account_type": "LAUFEND", "balance": "500.00"},

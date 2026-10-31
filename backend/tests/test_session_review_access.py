@@ -267,7 +267,7 @@ def _chain_0131_projection(head):
     return projected
 
 
-async def test_revision_chain_0146_0131_0146_preserves_full_state_and_issued_pdf(rent_world):
+async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf(rent_world):
     """Rollback-only whole-chain rehearsal, not a production downgrade strategy."""
     import os
     from pathlib import Path
@@ -328,9 +328,9 @@ async def test_revision_chain_0146_0131_0146_preserves_full_state_and_issued_pdf
     config = Config()
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ['0146']
-    assert [r.revision for r in scripts.iterate_revisions('0146', '0131')] == [
-        f'{number:04}' for number in range(146, 131, -1)
+    assert scripts.get_heads() == ['0149']
+    assert [r.revision for r in scripts.iterate_revisions('0149', '0131')] == [
+        '0149', *[f'{number:04}' for number in range(146, 131, -1)]
     ]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -374,7 +374,7 @@ async def test_revision_chain_0146_0131_0146_preserves_full_state_and_issued_pdf
                     assert transaction.is_active and connection.in_transaction()
                     assert version() == (target,)
                     stop, first = int(target), int(start[0])
-                    numbers = range(first - 1, stop - 1, -1) if downgrade else range(first + 1, stop + 1)
+                    numbers = [n for n in (range(first - 1, stop - 1, -1) if downgrade else range(first + 1, stop + 1)) if n not in (147, 148)]
                     assert seen == [(f'{number:04}',) for number in numbers]
 
                 def projection_0131():
@@ -387,76 +387,88 @@ async def test_revision_chain_0146_0131_0146_preserves_full_state_and_issued_pdf
                         historical.rollback()
                     return projected
 
-                assert version() == ('0146',)
+                assert version() == ('0149',)
                 retained = _chain_snapshot(connection)
-                with pytest.raises(DBAPIError) as refusal:
-                    with connection.begin_nested():
-                        migrate('0142', downgrade=True)
-                assert refusal.value.orig.pgcode == '23502'
-                assert _chain_snapshot(connection) == retained
-                # Only this rollback-only rehearsal excludes template-less originals
-                # after proving 0143 refuses them; every retained row is restored below.
-                connection.execute(text('CREATE TEMP TABLE chain_templated_letters ON COMMIT DROP AS '
-                                        'SELECT * FROM public.letter_document WHERE template_id IS NOT NULL'))
-                connection.execute(text('TRUNCATE public.letter_document'))
-                connection.execute(text('INSERT INTO public.letter_document SELECT * FROM chain_templated_letters'))
-                original = _chain_snapshot(connection)
-                original_0131 = projection_0131()
-                assert original['data']['lease_agreement'] and original['data']['letter_document']
-                generation = connection.scalar(text(
-                    'SELECT session_version FROM public."user" WHERE id=:id'
-                ), {'id': w['reader']})
-                assert generation > 0
-                with pytest.raises(DBAPIError, match='would resurrect invalidated sessions'):
-                    with connection.begin_nested():
-                        migrate('0131', downgrade=True)
-                assert _chain_snapshot(connection) == original
+                generation = connection.scalar(text('SELECT session_version FROM public."user" WHERE id=:id'), {'id': w['reader']})
+                reserve_evidence = connection.scalar(text("SELECT EXISTS(SELECT 1 FROM reserve_ledger_entry) OR EXISTS(SELECT 1 FROM payment WHERE payment_type='RUECKLAGENENTNAHME')"))
+                if reserve_evidence:
+                    # Retained reserve evidence deliberately makes the older graph
+                    # unreachable. Preserve all rows/security/PDFs on refusal. The
+                    # empty-0149 round trip is rehearsed by the deployment fixture;
+                    # this test exercises the older chain when run independently.
+                    with pytest.raises(DBAPIError, match='Retain reserve'):
+                        with connection.begin_nested():
+                            migrate('0146', downgrade=True)
+                    assert _chain_snapshot(connection) == retained
+                else:
+                    with pytest.raises(DBAPIError) as refusal:
+                        with connection.begin_nested():
+                            migrate('0142', downgrade=True)
+                    assert refusal.value.orig.pgcode == '23502'
+                    assert _chain_snapshot(connection) == retained
+                    # Only this rollback-only rehearsal excludes template-less originals
+                    # after proving 0143 refuses them; every retained row is restored below.
+                    connection.execute(text('CREATE TEMP TABLE chain_templated_letters ON COMMIT DROP AS '
+                                            'SELECT * FROM public.letter_document WHERE template_id IS NOT NULL'))
+                    connection.execute(text('TRUNCATE public.letter_document'))
+                    connection.execute(text('INSERT INTO public.letter_document SELECT * FROM chain_templated_letters'))
+                    original = _chain_snapshot(connection)
+                    original_0131 = projection_0131()
+                    assert original['data']['lease_agreement'] and original['data']['letter_document']
+                    generation = connection.scalar(text(
+                        'SELECT session_version FROM public."user" WHERE id=:id'
+                    ), {'id': w['reader']})
+                    assert generation > 0
+                    with pytest.raises(DBAPIError, match='would resurrect invalidated sessions'):
+                        with connection.begin_nested():
+                            migrate('0131', downgrade=True)
+                    assert _chain_snapshot(connection) == original
 
-                # The only counter reset admitted by the invoker trigger; no
-                # password, active flag, user deletion or trigger bypass involved.
-                connection.execute(text('UPDATE public."user" SET session_version=0 WHERE session_version<>0'))
-                for retained_fact in ('bank_account', 'vendor', 'property'):
-                    with connection.begin_nested() as scenario:
-                        connection.execute(text('UPDATE public.property SET construction_year=NULL,total_area=NULL'))
-                        for table in ('bank_account', 'vendor'):
-                            connection.execute(text(f'UPDATE public.{table} SET is_active=true WHERE NOT is_active'))
-                        if retained_fact == 'property':
-                            connection.execute(text('UPDATE public.property SET construction_year=1984,total_area=1234.56 WHERE id=:id'), {'id': w['property']})
-                        else:
-                            record_id = bank_id if retained_fact == 'bank_account' else vendor_id
-                            connection.execute(text(f'UPDATE public.{retained_fact} SET is_active=false WHERE id=:id'), {'id': record_id})
-                        connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
-                        guarded = _chain_snapshot(connection)
-                        with pytest.raises(DBAPIError, match='Cannot remove populated T55 lifecycle or property facts'):
-                            with connection.begin_nested():
-                                migrate('0131', downgrade=True)
-                        assert _chain_snapshot(connection) == guarded
-                        scenario.rollback()
-                connection.execute(text('UPDATE public.property SET construction_year=NULL,total_area=NULL '
-                                        'WHERE construction_year IS NOT NULL OR total_area IS NOT NULL'))
-                for table in ('bank_account', 'vendor'):
-                    connection.execute(text(f'UPDATE public.{table} SET is_active=true WHERE NOT is_active'))
-                connection.execute(text('TRUNCATE public.sepa_mandate,public.sepa_creditor,'
-                                        'public.master_import_batch,public.dunning_batch'))
-                connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
-                with_letters = _chain_snapshot(connection)
-                with pytest.raises(DBAPIError, match='Cannot remove populated letter tables'):
-                    with connection.begin_nested():
-                        migrate('0131', downgrade=True)
-                assert _chain_snapshot(connection) == with_letters
-                connection.execute(text('TRUNCATE public.letter_document,public.letter_template'))
-                connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
-                head = _chain_snapshot(connection)
-                old = projection_0131()
-                # Neutralization must not touch a single pre-0132 column/row.
-                assert old == original_0131
-                migrate('0131', downgrade=True)
-                down = _chain_snapshot(connection)
-                down['data'].pop('alembic_version')
-                assert down == old
-                migrate('0146', downgrade=False)
-                connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
-                assert _chain_snapshot(connection) == head
+                    # The only counter reset admitted by the invoker trigger; no
+                    # password, active flag, user deletion or trigger bypass involved.
+                    connection.execute(text('UPDATE public."user" SET session_version=0 WHERE session_version<>0'))
+                    for retained_fact in ('bank_account', 'vendor', 'property'):
+                        with connection.begin_nested() as scenario:
+                            connection.execute(text('UPDATE public.property SET construction_year=NULL,total_area=NULL'))
+                            for table in ('bank_account', 'vendor'):
+                                connection.execute(text(f'UPDATE public.{table} SET is_active=true WHERE NOT is_active'))
+                            if retained_fact == 'property':
+                                connection.execute(text('UPDATE public.property SET construction_year=1984,total_area=1234.56 WHERE id=:id'), {'id': w['property']})
+                            else:
+                                record_id = bank_id if retained_fact == 'bank_account' else vendor_id
+                                connection.execute(text(f'UPDATE public.{retained_fact} SET is_active=false WHERE id=:id'), {'id': record_id})
+                            connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
+                            guarded = _chain_snapshot(connection)
+                            with pytest.raises(DBAPIError, match='Cannot remove populated T55 lifecycle or property facts'):
+                                with connection.begin_nested():
+                                    migrate('0131', downgrade=True)
+                            assert _chain_snapshot(connection) == guarded
+                            scenario.rollback()
+                    connection.execute(text('UPDATE public.property SET construction_year=NULL,total_area=NULL '
+                                            'WHERE construction_year IS NOT NULL OR total_area IS NOT NULL'))
+                    for table in ('bank_account', 'vendor'):
+                        connection.execute(text(f'UPDATE public.{table} SET is_active=true WHERE NOT is_active'))
+                    connection.execute(text('TRUNCATE public.sepa_mandate,public.sepa_creditor,'
+                                            'public.master_import_batch,public.dunning_batch'))
+                    connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
+                    with_letters = _chain_snapshot(connection)
+                    with pytest.raises(DBAPIError, match='Cannot remove populated letter tables'):
+                        with connection.begin_nested():
+                            migrate('0131', downgrade=True)
+                    assert _chain_snapshot(connection) == with_letters
+                    connection.execute(text('TRUNCATE public.letter_document,public.letter_template'))
+                    connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
+                    head = _chain_snapshot(connection)
+                    old = projection_0131()
+                    # Neutralization must not touch a single pre-0132 column/row.
+                    assert old == original_0131
+                    migrate('0131', downgrade=True)
+                    down = _chain_snapshot(connection)
+                    down['data'].pop('alembic_version')
+                    assert down == old
+                    migrate('0149', downgrade=False)
+                    connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
+                    assert _chain_snapshot(connection) == head
             finally:
                 transaction.rollback()
             assert _chain_snapshot(connection) == retained

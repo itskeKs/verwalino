@@ -309,16 +309,19 @@ def _upgrade_test_database(alembic_cfg):
     upgraded_signup_tables = rehearse_initial_upgrade('0144')  # accepted source
     command.upgrade(alembic_cfg, '0145')  # accepted source
     upgraded_reset_tables = rehearse_initial_upgrade('0145')  # accepted source
+    command.upgrade(alembic_cfg, '0146')
+    upgraded_quota_tables = rehearse_initial_upgrade('0146')
     command.upgrade(alembic_cfg, "head")
-    return {'upgrade_0028_to_0146_tables': upgraded_0028_tables,
-            'upgrade_0122_to_0146_tables': upgraded_tables,
-            'upgrade_0139_to_0146_tables': upgraded_0139_tables,
-            'upgrade_0140_to_0146_tables': upgraded_parent_tables,
-            'upgrade_0141_to_0146_tables': upgraded_setup_tables,
-            'upgrade_0142_to_0146_tables': upgraded_throttle_tables,
-            'upgrade_0143_to_0146_tables': upgraded_lease_tables,
-            'upgrade_0144_to_0146_tables': upgraded_signup_tables,
-            'upgrade_0145_to_0146_tables': upgraded_reset_tables}  # accepted source
+    return {'upgrade_0028_to_0149_tables': upgraded_0028_tables,
+            'upgrade_0122_to_0149_tables': upgraded_tables,
+            'upgrade_0139_to_0149_tables': upgraded_0139_tables,
+            'upgrade_0140_to_0149_tables': upgraded_parent_tables,
+            'upgrade_0141_to_0149_tables': upgraded_setup_tables,
+            'upgrade_0142_to_0149_tables': upgraded_throttle_tables,
+            'upgrade_0143_to_0149_tables': upgraded_lease_tables,
+            'upgrade_0144_to_0149_tables': upgraded_signup_tables,
+            'upgrade_0145_to_0149_tables': upgraded_reset_tables,
+            'upgrade_0146_to_0149_tables': upgraded_quota_tables}  # accepted source
 
 
 @pytest.fixture(scope="session", autouse=True)

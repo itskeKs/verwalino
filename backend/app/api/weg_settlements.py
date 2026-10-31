@@ -13,12 +13,14 @@ from __future__ import annotations
 import uuid
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import DBAPIError
 
 from app.core.rbac import ScopeCapability
 from app.repositories.coverage_declaration_repo import CoverageDeclarationRepository
@@ -44,6 +46,7 @@ from app.services.weg_settlement_service import (
     WegComputeExtras,
     WegSettlementService,
 )
+from app.services.reserve_ledger_service import ReserveLedgerService
 
 router = APIRouter(prefix="/api/weg-settlements", tags=["weg-settlements"])
 
@@ -74,8 +77,9 @@ class PaidAdvanceIn(BaseModel):
 
 
 class WegComputeRequest(BaseModel):
-    reserve_opening_balance: str
-    reserve_withdrawals_total: str
+    reserve_opening_balance: str | None = None
+    reserve_withdrawals_total: str | None = None
+    reserve_override_reason: str = Field(default='', max_length=2000)
     paid_advances: list[PaidAdvanceIn]
 
 
@@ -100,9 +104,10 @@ class AssetItemIn(BaseModel):
 
 
 class AssetReportComputeRequest(BaseModel):
-    reserve_opening_balance: str
-    reserve_withdrawals_total: str
-    reserve_contributions_total: str
+    reserve_opening_balance: str | None = None
+    reserve_withdrawals_total: str | None = None
+    reserve_contributions_total: str | None = None
+    reserve_override_reason: str = Field(default='', max_length=2000)
     bank_balances: list[BankBalanceIn]
     receivables: list[AssetItemIn]
     payables: list[AssetItemIn]
@@ -143,9 +148,14 @@ class WegRunOut(BaseModel):
     lines: list[WegLineOut] = []
 
 
-def _dec(value: str, field: str) -> Decimal:
+def _dec(value: str | None, field: str) -> Decimal | None:
+    if value is None:
+        return None
     try:
-        return Decimal(value)
+        result = Decimal(value)
+        if not result.is_finite():
+            raise ValueError('finite amount required')
+        return result
     except (InvalidOperation, ValueError):
         raise HTTPException(status_code=422, detail=f"Invalid decimal for {field}: {value}")
 
@@ -154,6 +164,7 @@ def _weg_extras(body: WegComputeRequest | None) -> WegComputeExtras:
     if body is None:
         return WegComputeExtras()
     return WegComputeExtras(
+        reserve_override_reason=body.reserve_override_reason,
         reserve_opening_balance=_dec(body.reserve_opening_balance, "reserve_opening_balance"),
         reserve_withdrawals_total=_dec(body.reserve_withdrawals_total, "reserve_withdrawals_total"),
         paid_advances=[
@@ -170,6 +181,7 @@ def _report_inputs(body: AssetReportComputeRequest | None) -> AssetReportInputs:
     if body is None:
         return AssetReportInputs()
     return AssetReportInputs(
+        reserve_override_reason=body.reserve_override_reason,
         reserve_opening_balance=_dec(body.reserve_opening_balance, "reserve_opening_balance"),
         reserve_withdrawals_total=_dec(body.reserve_withdrawals_total, "reserve_withdrawals_total"),
         reserve_contributions_total=_dec(body.reserve_contributions_total, "reserve_contributions_total"),
@@ -227,6 +239,40 @@ def _run_out(run: SettlementRun, lines: list[SettlementLine]) -> WegRunOut:
 # ---------------------------------------------------------------------------
 # Shared read endpoints (both run types)
 # ---------------------------------------------------------------------------
+class ReserveOverrideRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    component: Literal['OPENING', 'CONTRIBUTION', 'WITHDRAWAL', 'ADJUSTMENT', 'FUNDING']
+    amount: Decimal = Field(max_digits=14, decimal_places=2, allow_inf_nan=False)
+    reason: str = Field(min_length=1, max_length=2000)
+    payment_id: uuid.UUID | None = None
+    cost_entry_id: uuid.UUID | None = None
+    register_entry_id: uuid.UUID | None = None
+
+
+@router.get('/{run_id}/reserve-ledger')
+async def reserve_ledger(run_id: uuid.UUID, auth: AuthContext = Depends(get_current_user),
+                         db: AsyncSession = Depends(get_db)):
+    service = ReserveLedgerService(db, auth.organization_id, auth.user_id)
+    run = await service.subject(run_id)
+    return await service.read(run)
+
+
+@router.post('/{run_id}/reserve-ledger/overrides', status_code=201)
+async def reserve_override(run_id: uuid.UUID, body: ReserveOverrideRequest,
+                           auth: AuthContext = Depends(require_write_dep), db: AsyncSession = Depends(get_db, scope='function')):
+    service = ReserveLedgerService(db, auth.organization_id, auth.user_id)
+    run = await service.subject(run_id, write=True)
+    try:
+        entry = await service.add(run, **body.model_dump())
+    except DBAPIError as exc:
+        code = getattr(exc.orig, 'sqlstate', None)
+        if code in {'23514', '23505', '23503'}:
+            raise HTTPException(409 if code == '23505' else 422,
+                'Bitte prüfen Sie Rücklagenzeitraum, Auszahlung, Kostenbetrag und Beschlussverknüpfung.') from None
+        raise
+    return {'id': str(entry.id)}
+
+
 @router.get("", response_model=list[WegRunOut])
 async def list_weg_runs(
     property_id: uuid.UUID | None = None,

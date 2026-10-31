@@ -689,3 +689,30 @@ Synthetic, database-free captures from `make mail-previews`, at 1× pixel densit
 | `signup_welcome` | [600-light](docs/assets/design/mail/signup_welcome-600-light.png) | — | — | — |
 | `user_invitation` | [600-light](docs/assets/design/mail/user_invitation-600-light.png) | — | — | — |
 | Self-hosted confirmation | [600-light](docs/assets/design/mail/signup_confirmation-selfhost-600-light.png) | — | — | — |
+
+### Maintenance reserve ledger
+
+WEG annual settlement and asset-report details share `ReserveLedgerPanel`, a
+card with distinct planned (Soll) and cash (Ist) totals, opening, withdrawals,
+signed adjustments and closing. Rows show dates, movement types and funding
+references. The table scrolls within its card at 360 px; long reasons wrap.
+Money uses German grouping/comma decimals with `€`, dates `DD.MM.YYYY`.
+
+“Korrektur erfassen” opens the existing accessible dialog. Staff choose a signed
+component adjustment or a funded payout, supply its mandatory reason, and save.
+Funded payouts select the existing booking, confirmed cost and registered
+resolution. The dialog preserves useful inputs after refusal. A successful
+change refreshes the ledger and invalidates the displayed coverage review;
+saving typed target-total overrides also refreshes the ledger. Finalized ledger
+snapshots have no correction action. Negative balances and missing funding
+links have explicit German feedback; unlinked cash payouts block computation.
+
+Payment capture offers “Rücklagenentnahme”, defaults its direction to “Ausgang”,
+and explains its neutral counterparty and subsequent ledger linkage. The payment
+detail and bank-assignment vocabulary use the same German name. This type does
+not create a tenant or owner receivable.
+
+Desktop and 360 px before/after captures, including the narrow correction dialog
+and payout detail, are in [the reserve ledger gallery](docs/assets/reserve-ledger/).
+All records and account/owner names there are synthetic and were created only on
+the disposable development database.

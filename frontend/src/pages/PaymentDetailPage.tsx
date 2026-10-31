@@ -50,6 +50,7 @@ const PAYMENT_TYPE_LABELS: Record<string, string> = {
   KAUTION: "Kaution",
   HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
   RUECKLAGENANTEIL: "Ruecklagenanteil",
+  RUECKLAGENENTNAHME: "Rücklagenentnahme",
   SONDERZAHLUNG: "Sonder-/Nachzahlung",
 };
 
