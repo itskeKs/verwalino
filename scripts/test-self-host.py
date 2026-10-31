@@ -70,6 +70,8 @@ if "port" in sys.argv:
 if "find" in sys.argv and "caddy" in sys.argv:
     print(os.environ.get("FAKE_CERTIFICATE", "/data/caddy/certificates/acme/verwaltung.example.org/verwaltung.example.org.crt"))
     sys.exit(0)
+if "ps" in sys.argv and sys.argv[-1] == "inbox-worker":
+    print(os.environ.get("FAKE_INBOX_CONTAINER", ""))
 if "ps" in sys.argv and "--quiet" in sys.argv:
     state = os.environ.get("FAKE_STATE", "running")
     statuses = [sys.argv[i + 1] for i, arg in enumerate(sys.argv) if arg == "--status"]
@@ -1223,6 +1225,36 @@ elif name == "openssl":
         self.assert_isolated([c["args"] for c in self.calls()])
         self.assertEqual(before, self.config.read_bytes())
 
+    def test_start_stops_existing_inbox_worker_before_migration(self):
+        self.init()
+        self.env["FAKE_INBOX_CONTAINER"] = "existing-inbox-worker"
+        result = self.run_script("start")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [c["args"] for c in self.calls()]
+        stopped = next(i for i, args in enumerate(calls) if args[-2:] == ["stop", "inbox-worker"])
+        migrated = next(i for i, args in enumerate(calls) if "migrate" in args)
+        self.assertLess(stopped, migrated)
+        self.assertFalse(any("up" in args and args[-1] == "inbox-worker" for args in calls))
+        self.assert_isolated(calls)
+
+    def test_stop_includes_existing_inbox_worker_and_default_services(self):
+        self.init()
+        self.env["FAKE_INBOX_CONTAINER"] = "existing-inbox-worker"
+        result = self.run_script("stop")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [c["args"] for c in self.calls()]
+        self.assertTrue(any(args[-2:] == ["stop", "inbox-worker"] for args in calls))
+        self.assertTrue(any(args[-1] == "stop" for args in calls))
+        self.assert_isolated(calls)
+
+    def test_absent_inbox_worker_is_not_stopped_or_started(self):
+        self.init()
+        for command in ("start", "stop"):
+            result = self.run_script(command)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [c["args"] for c in self.calls()]
+        self.assertFalse(any("inbox-worker" in args and ("stop" in args or "up" in args) for args in calls))
+
     def test_random_generation_failure_leaves_no_partial_config_or_lock(self):
         openssl = self.base / "bin" / "openssl"
         openssl.write_text("#!/bin/sh\nexit 19\n")
@@ -1290,7 +1322,7 @@ class StackContractTests(unittest.TestCase):
 
     def test_project_network_and_volume_isolation(self):
         self.assertEqual(self.stack["name"], "verwalino")
-        self.assertEqual(set(self.stack["services"]), {"db", "app", "migrate", "bootstrap", "caddy"})
+        self.assertEqual(set(self.stack["services"]), {"db", "app", "migrate", "bootstrap", "caddy", "inbox-worker"})
         for config in self.stack["volumes"].values():
             self.assertFalse(config and (config.get("external") or config.get("name")))
         self.assertTrue(self.stack["networks"]["backend"]["internal"])
@@ -1300,6 +1332,23 @@ class StackContractTests(unittest.TestCase):
                          ["127.0.0.1:${VERWALINO_PORT:?missing port}:8000"])
         self.assertEqual(self.stack["services"]["caddy"]["profiles"], ["https"])
         self.assertEqual(self.stack["services"]["caddy"]["networks"], ["proxy"])
+
+    def test_inbox_worker_is_opt_in_and_has_only_local_worker_authority(self):
+        worker = self.stack["services"]["inbox-worker"]
+        self.assertEqual(worker["profiles"], ["inbox"])
+        self.assertEqual(worker["image"], self.stack["services"]["app"]["image"])
+        self.assertEqual(worker["restart"], "unless-stopped")
+        self.assertEqual(worker["environment"]["HV_WORKER_KIND"], "workflow_runner")
+        self.assertIn("app_worker:", worker["environment"]["HV_DATABASE_URL_WORKER"])
+        self.assertNotIn("HV_DATABASE_URL", worker["environment"])
+        self.assertNotIn("HV_DATABASE_URL_REVIEW", worker["environment"])
+        self.assertNotIn("HV_OPENAI_API_KEY", worker["environment"])
+        self.assertEqual(worker["networks"], ["backend"])
+        self.assertNotIn("ports", worker)
+        self.assertIn("documents:/data/documents:ro", worker["volumes"])
+        self.assertTrue(worker["read_only"])
+        self.assertEqual(worker["cap_drop"], ["ALL"])
+        self.assertIn("--healthcheck", worker["healthcheck"]["test"])
 
     def test_no_privileged_or_external_service_credentials_in_app(self):
         app = self.stack["services"]["app"]

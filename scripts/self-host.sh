@@ -65,6 +65,8 @@ Default: local HTTP on 127.0.0.1:18080; no AI, SMTP or extraction worker.
 Request IDs are always enabled; optional error tracking stays off.
 HV_ERROR_TRACKING_* keys are not installer settings; see DEPLOY.md.
 Export HV_RELEASE_ID to label tracker releases (otherwise app version 0.1.0).
+Optional inbox-worker (profile inbox, ClamAV signatures): see DEPLOY.md.
+Start and stop also stop an existing inbox-worker; restart it after app readiness.
 VERWALINO_CONFIG selects the private config file (default: .env.selfhost).
 No automatic update, downgrade or volume deletion is provided.
 Backups exclude private config/secrets and certificates; keep config separately.
@@ -170,6 +172,12 @@ compose() {
     if [[ "$VERWALINO_MODE" = https ]]; then profiles+=(--profile https); fi
     docker compose --project-name verwalino --env-file "$CONFIG" \
         -f "$ROOT/infra/docker-compose.yml" "${profiles[@]}" "$@"
+}
+
+stop_inbox_worker() {
+    local container_id
+    container_id=$(compose ps --all --quiet inbox-worker)
+    if [[ -n "$container_id" ]]; then compose stop inbox-worker; fi
 }
 
 config_fingerprint() {
@@ -634,7 +642,7 @@ restore() {
     command -v openssl >/dev/null || fail 'OpenSSL is required for configuration fingerprints.'
     umask 077
     lock_config
-    running=$(compose ps --all --status running --status restarting --status paused --quiet app migrate bootstrap)
+    running=$(compose ps --all --status running --status restarting --status paused --quiet app migrate bootstrap inbox-worker)
     [[ -z "$running" ]] || fail 'Installation is running; first run: bash scripts/self-host.sh stop'
     TMP_DIR=$(mktemp -d "$(dirname "$CONFIG")/.env.verwalino-restore.XXXXXX")
     # Work on a private copy so a changed input cannot bypass verification.
@@ -809,7 +817,8 @@ case "$command" in
             compose pull app
         fi
         compose up -d --wait --wait-timeout 120 db
-        # Do not run migrations alongside an already running web writer.
+        # Do not run migrations alongside an already running writer.
+        stop_inbox_worker
         compose stop app
         compose run --rm --no-deps -T migrate
         prepare_setup
@@ -832,5 +841,5 @@ case "$command" in
     backup) backup "$@" ;;
     restore) restore "$@" ;;
     status) compose ps ;;
-    stop) lock_config; compose stop ;;
+    stop) lock_config; stop_inbox_worker; compose stop ;;
 esac

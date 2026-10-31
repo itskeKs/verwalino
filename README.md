@@ -91,7 +91,9 @@ If setup or startup fails, run `bash scripts/self-host.sh doctor` first; it prin
 exits 1 on blockers ([diagnostics](DEPLOY.md#portable-troubleshooting-start-with-doctor)).
 
 The portable stack ships without AI import and AI Q&A, SMTP and automatic invoice
-OCR; manual voucher processing works. Database and documents live in named volumes:
+OCR; manual voucher processing works. An optional inbox worker (compose profile `inbox`)
+processes intake documents locally; see [DEPLOY.md](DEPLOY.md#inbox-worker) and the
+[inbox review chain](docs/operations/inbox-review-chain.md). Database and documents live in named volumes:
 back up the private configuration, database, and documents together. A signed
 multi-arch image on `ghcr.io/itskeks/verwalino` is prepared but not published yet;
 this is not yet a general production release. See
