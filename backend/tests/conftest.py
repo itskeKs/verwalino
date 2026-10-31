@@ -167,11 +167,11 @@ def migrate_test_database(request):
             known_revision = None
         if known_revision is None:
             reset_foreign_test_database(MIGRATOR_SYNC_URL)
-            capture_manager = request.config.pluginmanager.getplugin("capturemanager")
-            with capture_manager.global_and_fixture_disabled():
-                request.config.get_terminal_writer().line(
-                    f"test database held foreign migration head {revision}; reset to empty before upgrading"
-                )
+            notice = f"test database held foreign migration head {revision}; reset to empty before upgrading"
+            if request is not None:
+                capture_manager = request.config.pluginmanager.getplugin("capturemanager")
+                with capture_manager.global_and_fixture_disabled():
+                    request.config.get_terminal_writer().line(notice)
             return _upgrade_test_database(alembic_cfg)
 
     # This harness is already restricted to the disposable test database above.
@@ -295,7 +295,7 @@ def _upgrade_test_database(alembic_cfg):
 
 
 @pytest.fixture(scope="session", autouse=True)
-def run_migrations(request):
+def run_migrations(request=None):
     # Migration CLI logging must not disable the already imported HTTP app's
     # loggers or replace its scrubber/formatter inside this shared test process,
     # including later migration rehearsals during the session.
