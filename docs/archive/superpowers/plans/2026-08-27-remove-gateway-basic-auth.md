@@ -70,7 +70,7 @@ For Compose validation, supply temporary non-empty `MIGRATOR_PASSWORD`, `APP_RW_
 ### Task 3: Verify and deploy the routing-only release
 
 **Files:**
-- Verify: all changed files and deployed Moon state
+- Verify: all changed files and deployed alpha-host state
 
 - [ ] **Step 1: Run the full local gates**
 
@@ -78,7 +78,7 @@ Run the deploy regression probe, shell syntax checks, Compose rendering and labe
 
 - [ ] **Step 2: Deploy through the hardened release workflow**
 
-Transfer a new source release to `/home/chris/apps/hausverwaltung-alpha/releases/`, atomically remove the obsolete `BASIC_AUTH_USERS` line from the mode-0600 remote `.env`, and invoke the updated deploy helper with only the existing application-admin password through hidden standard input. Do not touch unrelated containers, networks, volumes, or databases.
+Transfer a new source release to `/srv/<app>/releases/`, atomically remove the obsolete `BASIC_AUTH_USERS` line from the mode-0600 remote `.env`, and invoke the updated deploy helper with only the existing application-admin password through hidden standard input. Do not touch unrelated containers, networks, volumes, or databases.
 
 - [ ] **Step 3: Verify the public boundary**
 

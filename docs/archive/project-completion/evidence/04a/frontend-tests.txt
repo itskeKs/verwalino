@@ -3,7 +3,7 @@
 > vitest run
 
 
-[1m[30m[46m RUN [49m[39m[22m [36mv4.1.11 [39m[90m/Users/keks/Developer/hausverwaltung/frontend[39m
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.11 [39m[90m~/Developer/hausverwaltung/frontend[39m
 
  [32m✓[39m src/components/intake/ExceptionCompletionPanel.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[33m 1529[2mms[22m[39m
    [33m[2m✓[22m[39m shows every connected source, pair and retained disposition and requires explicit acknowledgement [33m 429[2mms[22m[39m

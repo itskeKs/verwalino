@@ -4,7 +4,7 @@ execution: done-local
 checked: 2026-10-12
 
 ## Workspace und Grenzen
-Workspace `/Users/keks/Developer/hausverwaltung`, HEAD
+Workspace `~/Developer/hausverwaltung`, HEAD
 `aeee229b1bbb7415b35c5c05985a866d25a75210`. Historisch akzeptierte Basis `dee9657`,
 Migration 0122; tatsächlicher Test-DB-Head 0123. Keine Migration verändert, kein
 Deployment/Commit/Push, keine Produktions-/Parityfreigabe.
@@ -113,7 +113,7 @@ Historische Läufe mit denselben Rollen/DB, Host localhost, `-v --tb=short`:
   **130 passed**, Exit 0, 188.60s, keine Skips; Happy Path, Failure/Retry,
   Rechte, historische Ketten und Worker-Unterbrechung geprüft.
   [Matrixlog](../evidence/04a/relevant-tests-corrected.txt).
-- Unverändertes Frontend, `PATH=/Users/keks/.local/share/mise/installs/node/22.23.1/bin:$PATH`:
+- Unverändertes Frontend, `PATH=$HOME/.local/share/mise/installs/node/22.23.1/bin:$PATH`:
   `npm test` **318/318**, `npm run lint` und `npm run build` Exit 0;
   Bundlegrößenwarnung. [Tests](../evidence/04a/frontend-tests.txt),
   [Lint](../evidence/04a/frontend-lint.txt), [Build](../evidence/04a/frontend-build.txt).
