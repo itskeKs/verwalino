@@ -7,6 +7,7 @@ created for that organization.
 
 from __future__ import annotations
 
+import pytest
 from pytest_bdd import given, parsers, then, when
 
 from tests.bdd.steps.records import (
@@ -27,12 +28,22 @@ def known_organizations(world, first, second):
     world.administrator_of(second)
 
 
+@pytest.fixture(scope="module")
+def organization_records():
+    # Isolation scenarios read records or attempt refused foreign mutations.
+    # One set per feature leaves quota headroom for later hosted scenarios.
+    return {}
+
+
 @given("each organization has a property, a person and a bank account of its own")
-def organizations_have_records(world):
-    for organization in world.organizations:
-        home = create_property(world, organization, f"{organization} property")
-        create_person(world, organization, f"{organization} person")
-        create_bank_account(world, organization, f"{organization} bank account", property_id=home.id)
+def organizations_have_records(world, organization_records):
+    if not organization_records:
+        for organization in world.organizations:
+            home = create_property(world, organization, f"{organization} property")
+            create_person(world, organization, f"{organization} person")
+            create_bank_account(world, organization, f"{organization} bank account", property_id=home.id)
+        organization_records.update(world.records)
+    world.records.update(organization_records)
 
 
 @when(parsers.parse("the user lists the {kinds}"))

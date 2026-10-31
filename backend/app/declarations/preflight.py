@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
 
+from app.core.document_limits import MAX_UPLOAD_BYTES
+
 
 _PDF_TRAILING_WHITESPACE = b" \t\r\n\x0b\x0c\x00"
 _ACTIVE_ACTIONS = {
@@ -217,7 +219,7 @@ class PdfPreflight:
     def __init__(
         self,
         *,
-        max_pdf_bytes: int = 25 * 1024 * 1024,
+        max_pdf_bytes: int = MAX_UPLOAD_BYTES,
         max_pages: int = 500,
         text_min_chars: int = 40,
         ocr_dpi: int = 180,
