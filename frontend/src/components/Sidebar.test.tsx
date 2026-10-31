@@ -5,6 +5,18 @@ import { AuthCtx } from "../auth/useAuth";
 import { Sidebar } from "./Sidebar";
 
 afterEach(cleanup);
+it("groups permissions under one active admin entry", () => {
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role: "OWNER_ADMIN" }, login: vi.fn(), logout: vi.fn() }}>
+    <MemoryRouter initialEntries={["/berechtigungen/bestand"]}><Sidebar open onClose={vi.fn()} /></MemoryRouter>
+  </AuthCtx.Provider>);
+  expect(screen.getAllByRole("link", { name: "Berechtigungen" })).toHaveLength(1);
+  expect(screen.getByRole("link", { name: "Berechtigungen" })).toHaveAttribute("aria-current", "page");
+  for (const name of ["Quellenfreigaben", "Freigaben vorbereiten", "Mahnquarantäne", "Mandatsquarantäne", "Kontaktdaten-Rechte", "Gebäudedaten-Rechte"]) {
+    expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
+  }
+  expect(screen.getByRole("link", { name: "Altquellen" })).toHaveAttribute("href", "/altquellen");
+  expect(screen.getByRole("link", { name: "Seitenauszüge" })).toHaveAttribute("href", "/seitenauszuege");
+});
 it.each(["READ_ONLY", "CLERK", "OWNER_ADMIN"])("shows the active Berichte navigation link for %s", role => {
   const onClose = vi.fn();
   render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() }}>

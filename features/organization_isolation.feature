@@ -40,6 +40,15 @@ Feature: Organization isolation
       | person       |
       | bank account |
 
+  Scenario Outline: Another organization's Anlage V <view> is not accessible
+    When the user opens the Anlage V <view> for the property of "Verwaltung Beta"
+    Then the report is reported as not found
+
+    Examples:
+      | view     |
+      | summary  |
+      | download |
+
   Scenario: Administrators share technical diagnostics without organization records
     When the administrator downloads a diagnostics bundle
     Then the bundle contains technical counts without either organization’s records

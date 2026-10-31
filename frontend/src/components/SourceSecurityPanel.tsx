@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api/client";
 
-type Mode = "PREPARATION" | "ENFORCED" | "PAUSED";
+import { sourceSecurityLabels as names, type SourceSecurityMode as Mode } from "../lib/sourceSecurity";
 export interface ActivationDecision { id: string; snapshot_id: string; manifest_digest: string; assessment_digest: string }
 interface Receipt { id: string; target_mode: Mode; changed_at: string; reason: string }
 interface Status { mode: Mode; changed_at: string | null; last_transition: Receipt | null }
 interface Evidence { current: boolean; reviewed: boolean; blocker_count: number; active_work_count: number; acceptance: ActivationDecision | null; manifest_digest: string; assessment_digest: string }
-const names: Record<Mode, string> = { PREPARATION: "Vorbereitung", ENFORCED: "Zugriffsregeln aktiv", PAUSED: "Aktionen pausiert" };
 const path = "/api/access-preparation/source-security";
 
 export function SourceSecurityPanel({ decision }: { decision: ActivationDecision | null }) {

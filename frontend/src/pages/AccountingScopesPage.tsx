@@ -65,7 +65,7 @@ function CreateScope({ onCreated }: { onCreated: () => void }) {
     try { setCreated(await api.post<Scope>("/api/accounting-scopes", body, { headers: key.headers(body) })); onCreated(); }
     catch (e) { setError(String(e)); } finally { setBusy(false); }
   }
-  if (created) return <p role="status">Bereich angelegt: <Link to={`/berechtigungen/${created.id}`}>{created.label} – Teamrechte verwalten</Link></p>;
+  if (created) return <p role="status">Bereich angelegt: <Link to={`/berechtigungen/teamrechte/${created.id}`}>{created.label} – Teamrechte verwalten</Link></p>;
   return <form onSubmit={submit} className="card">
     <h2>Bereich anlegen</h2>
     <p>Objekt, Zeitraum und Einheiten werden verbindlich festgelegt. Teamrechte erteilen Sie anschließend ausdrücklich.</p>
@@ -91,7 +91,7 @@ function ScopeList() {
     <ListSearch label="Bereiche suchen" onSearch={page.setQuery} />
     {page.error && <p role="alert" className="error-text">{page.error}</p>}
     <div className="card paged-table"><table className="data-table"><thead><tr><th>Bereich</th><th>Art</th><th>Gültigkeit</th></tr></thead><tbody>
-      {page.items.map(item => <tr key={item.id}><td><Link to={`/berechtigungen/${item.id}`}>{item.label}</Link></td><td>{item.scope_type}</td><td>{item.valid_from} – {item.valid_to || "offen"}</td></tr>)}
+      {page.items.map(item => <tr key={item.id}><td><Link to={`/berechtigungen/teamrechte/${item.id}`}>{item.label}</Link></td><td>{item.scope_type}</td><td>{item.valid_from} – {item.valid_to || "offen"}</td></tr>)}
     </tbody></table></div>
     <MoreResults available={!!page.nextCursor} loading={page.loading} onMore={() => void page.loadMore()} />
   </>;
@@ -127,7 +127,7 @@ function ScopeGrants({ scopeId }: { scopeId: string }) {
     catch (e) { setError(String(e)); } finally { setBusy(false); }
   }
   return <>
-    <Link to="/berechtigungen">Zurück zu den Bereichen</Link>
+    <Link to="/berechtigungen/teamrechte">Alle Teamrechte</Link>
     {scope && <><h2>{scope.label} ({scope.scope_type})</h2><p>Gültig {scope.valid_from} bis {scope.valid_to || "offen"} · <Link to={`/objekte/${scope.property_id}`}>Objekt anzeigen</Link></p></>}
     {scopeError && <p role="alert" className="error-text">{scopeError}</p>}
     <form className="card" onSubmit={submit}><h2>Teamfreigabe erteilen</h2>
@@ -152,8 +152,8 @@ export function AccountingScopesPage() {
   const { session } = useAuth();
   const { scopeId } = useParams();
   if (session?.role !== "OWNER_ADMIN") return <p className="error-text">Zugriff nur für Inhaber/Admin.</p>;
-  return <div className="paged-list scope-setup"><h1>Bereiche und Teamrechte</h1>
-    <p>Vorbereitung: Die Zugriffsbeschränkung für den Teambetrieb ist noch nicht aktiviert. SEV-Bereiche können vorbereitet, Finanzdaten dort noch nicht zugeordnet werden.</p>
+  return <div className="paged-list scope-setup"><h2>Teamrechte</h2>
+    <p>Erteilen Sie Teamrechte ausdrücklich je Abrechnungskreis. Für Objektdaten und Quellen prüfen Sie zusätzlich die Gebäudedaten-Rechte. SEV-Bereiche können vorbereitet, Finanzdaten dort noch nicht zugeordnet werden.</p>
     <ScopeControl />
     {scopeId ? <ScopeGrants key={scopeId} scopeId={scopeId} /> : <ScopeList />}
   </div>;

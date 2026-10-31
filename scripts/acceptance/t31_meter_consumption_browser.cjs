@@ -304,7 +304,7 @@ async function selectCode(scope, label, code) {
   const originalCounts = { leases: leases.length, meters: meters.length, readings: readings.flat().length };
   assert.deepEqual(originalCounts, { leases: 2, meters: 2, readings: 4 });
 
-  await page.goto(base + '/berechtigungen');
+  await page.goto(base + '/berechtigungen/teamrechte');
   const propertyGroup = page.getByRole('group', { name: 'Objekt', exact: true });
   await field(propertyGroup, 'Objekte durchsuchen').fill(propertyName);
   await selectLabel(page, 'Objekt', propertyName);

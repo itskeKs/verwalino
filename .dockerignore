@@ -29,7 +29,6 @@ infra/
 **/.env.*
 
 # CI / compose -- not needed inside the image
-.gitlab-ci.yml
 docker-compose*.yml
 scripts/
 

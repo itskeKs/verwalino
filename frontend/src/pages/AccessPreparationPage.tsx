@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
+import { sourceSecurityLabels } from "../lib/sourceSecurity";
 import type { AccessPreparation } from "../api/types";
 import { useAuth } from "../auth/useAuth";
 import { RuntimeBudgetPanel } from "../components/RuntimeBudgetPanel";
@@ -21,12 +22,12 @@ const groups: { title: string; metrics: Metric[]; to: string; action: string }[]
     ["originals_total", "Originale insgesamt"], ["bound_originals_without_review_record", "Zugeordnet, ohne Prüfvermerk"],
     ["originals_quarantined", "In Quarantäne"], ["unbound_originals_unknown_uploader", "Nicht zugeordnet, Herkunft unbekannt"],
   ] },
-  { title: "Finanzzuordnung", to: "/berechtigungen", action: "Abrechnungskreise und Zuordnungen prüfen", metrics: [
+  { title: "Finanzzuordnung", to: "/berechtigungen/teamrechte", action: "Abrechnungskreise und Zuordnungen prüfen", metrics: [
     ["bank_accounts_without_scope", "Konten ohne Abrechnungskreis"], ["payments_without_scope", "Zahlungen ohne Abrechnungskreis"],
     ["cost_entries_without_scope", "Kosten ohne Abrechnungskreis"], ["settlements_without_scope", "Abrechnungen ohne Abrechnungskreis"],
     ["economic_plans_without_scope", "Wirtschaftspläne ohne Abrechnungskreis"],
   ] },
-  { title: "Weitere Altbestände", to: "/berechtigungen", action: "Vorbereitete Bereiche ansehen", metrics: [
+  { title: "Weitere Altbestände", to: "/berechtigungen/teamrechte", action: "Vorbereitete Bereiche ansehen", metrics: [
     ["dunning_without_context", "Mahnungen ohne geprüften Ursprung"], ["mandate_originals_without_scope", "Mandatsunterlagen ohne Abrechnungskreis"],
   ] },
 ];
@@ -50,7 +51,7 @@ function Inventory() {
     setData(null); setError(null); setPending(true); setRevision(value => value + 1);
   };
   return <div className="space-y-6">
-    <header><h1>Freigaben vorbereiten</h1>
+    <header><h2>Bestand prüfen</h2>
       <p>Bestandsübersicht für die ausdrückliche Prüfung von Datenbereichen, Quellen und Teamrechten.</p>
     </header>
     <SourceSecurityPanel decision={decision} />
@@ -60,12 +61,12 @@ function Inventory() {
       <p>Ein bekannter privater Ersteller kann seinen Kontakt weiterhin lesen. Ein gemeinsamer Datenbereich braucht ausdrückliche Lesefreigaben. Prüfvermerke bei Originalen ersetzen keine aktuelle Quellenprüfung.</p>
       <p>Alte Mahnungen benötigen eine gesonderte Prüfung ihres Ursprungs. Unzugeordnete Mandatsunterlagen bleiben in Quarantäne. Die Übersicht ändert keine Originale.</p>
     </div>
-    <p><Link className="link" to="/mandatsquarantaene">Mandatsquarantäne prüfen</Link> · <Link className="link" to="/mahnquarantaene">Alte Mahnungen prüfen</Link></p>
+    <p><Link className="link" to="/berechtigungen/pruefungen/mandate">Mandatsquarantäne prüfen</Link> · <Link className="link" to="/berechtigungen/pruefungen/mahnungen">Alte Mahnungen prüfen</Link></p>
     <button className="btn" type="button" onClick={refresh} disabled={pending}>Bestand aktualisieren</button>
     {pending && <p role="status">Bestand wird geprüft…</p>}
     {error && <p className="error-text" role="alert">{error}</p>}
     {data && <>
-      <p>Stand: {new Date(data.generated_at).toLocaleString("de-DE")} · Modus beim Bestandsabruf: {{ PREPARATION: "Vorbereitung", ENFORCED: "Eingeschränkt", PAUSED: "Aktionen pausiert" }[data.mode]}</p>
+      <p>Stand: {new Date(data.generated_at).toLocaleString("de-DE")} · Modus beim Bestandsabruf: {sourceSecurityLabels[data.mode]}</p>
       <p>Die Kategorien können sich überschneiden. Finanzzahlen enthalten auch Entwürfe und aufbewahrte Einträge.</p>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {groups.map(group => <section className="card min-w-0 space-y-3" key={group.title}>

@@ -25,7 +25,7 @@ Rules for coding agents, which apply to people too, are in [AGENTS.md](AGENTS.md
   `test@example.de` exists and prints its login when ready. Cleanup stops every started process on Ctrl+C or partial startup
   failure without stopping PostgreSQL; originals in the printed folder are
   preserved. Do not run resetting backend tests during a UI acceptance run.
-  Worker operation: [invoice worker](DEPLOY.md#invoice-worker-t10-alpha-active-since-2026-10-24)
+  Worker operation: [invoice worker](DEPLOY.md#invoice-worker-t10)
   and [inbox worker](DEPLOY.md#inbox-worker).
   Inbox worker skipped: check ClamAV (clamscan and signatures), worker database access, document storage and German OCR; API and UI will continue.
 - Declarations of division (Teilungserklärungen): the dependency sets above include the

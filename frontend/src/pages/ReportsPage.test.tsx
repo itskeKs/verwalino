@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import * as endpoints from "../api/endpoints";
 import { api, ApiError } from "../api/client";
-import type { Property, PropertyYearReport } from "../api/types";
+import type { AnlageVSummary, Property, PropertyYearReport } from "../api/types";
 import { ReportsPage } from "./ReportsPage";
 import { AuthCtx } from "../auth/useAuth";
 
@@ -18,11 +18,22 @@ const report: PropertyYearReport = {
   footnote: "Serverhinweis: keine vollständige Steuererklärung und keine steuerliche Einordnung.",
 };
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
+const anlageV: AnlageVSummary = {
+  property_id: "p1", property_name: "Sonnenhof", year: 2026, accounting_scope_id: null,
+  lines: [{ key: "rent", label: "Mieteinnahmen für Wohnungen (ohne Umlagen)", section: "Einnahmen", amount: "1234.56", note: "[§/fachlich] Wohnraummiete und Zufluss prüfen." },
+    { key: "water", label: "Wasserversorgung / Entwässerung", section: "Werbungskosten", amount: "100.03", note: "[§/fachlich] Abfluss prüfen." }],
+  unmapped: [{ code: "UNKNOWN", label: "Unbekannte Kosten mit einem sehr langen deutschen Namen", section: "Werbungskosten", amount: "-0.01", note: "[§/fachlich] Keine eindeutige Zuordnung." }],
+  reconciliation: [{ section: "Einnahmen", mapped_total: "1234.56", unmapped_total: "0.00", report_total: "1234.56", difference: "0.00" },
+    { section: "Werbungskosten", mapped_total: "100.03", unmapped_total: "-0.01", report_total: "100.02", difference: "0.00" }],
+  footnote: "Zuordnungshilfe, keine Steuerberatung. Zeilennummern je Formularjahr prüfen.",
+};
 let click: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   vi.spyOn(endpoints, "listProperties").mockResolvedValue([property("p1", "Sonnenhof"), property("p2", "Parkhof")]);
   vi.spyOn(endpoints, "getPropertyYearReport").mockResolvedValue(report);
   vi.spyOn(endpoints, "getPropertyYearReportCsv").mockResolvedValue(new Blob(["server CSV"], { type: "text/csv" }));
+  vi.spyOn(endpoints, "getAnlageVSummary").mockResolvedValue(anlageV);
+  vi.spyOn(endpoints, "getAnlageVSummaryCsv").mockResolvedValue(new Blob(["Anlage V CSV"], { type: "text/csv" }));
   vi.spyOn(api, "get").mockResolvedValue({ items: [{ id: "scope1", property_id: "p1", label: "Sonnenhof Jahreskreis", scope_type: "MIET", valid_from: "2026-01-01", valid_to: "2026-12-31" }], next_cursor: null });
   vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:report"), revokeObjectURL: vi.fn() }));
   click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
@@ -38,6 +49,77 @@ async function choose() {
 async function load() { const user = await choose(); await user.click(screen.getByRole("button", { name: "Übersicht anzeigen" })); await screen.findByRole("table", { name: "Einnahmen" }); return user; }
 
 describe("Objekt-Jahresübersicht", () => {
+  it("shows Anlage V lines, unassigned amounts and server reconciliation with German euro formatting", async () => {
+    render(<ReportsPage />); await load();
+    const panel = await screen.findByRole("region", { name: "Anlage V" });
+    expect(within(panel).getByText("Mieteinnahmen für Wohnungen (ohne Umlagen)")).toBeVisible();
+    expect(within(panel).getAllByText("1.234,56 €").length).toBeGreaterThan(0);
+    expect(within(panel).getAllByText("-0,01 €").length).toBeGreaterThan(0);
+    expect(within(panel).getByText(anlageV.unmapped[0].label)).toBeVisible();
+    expect(within(panel).getByText("Zuordnungshilfe, keine Steuerberatung")).toBeVisible();
+    expect(within(panel).getByRole("table", { name: "Abgleich mit der Jahresübersicht" })).toBeVisible();
+    expect(endpoints.getAnlageVSummary).toHaveBeenCalledWith({ property_id: "p1", year: 2026 });
+  });
+  it("downloads the separate Anlage V CSV with the displayed scope", async () => {
+    render(<ReportsPage />); const user = await choose();
+    await user.selectOptions(screen.getByLabelText("Abrechnungskreis"), "scope1");
+    await user.click(screen.getByRole("button", { name: "Übersicht anzeigen" }));
+    const link = await screen.findByRole("link", { name: "Anlage V als CSV herunterladen" });
+    expect(link).toHaveAttribute("href", "/api/reports/property-year/anlage-v.csv?property_id=p1&year=2026&accounting_scope_id=scope1");
+    expect(endpoints.getAnlageVSummary).toHaveBeenCalledWith({ property_id: "p1", year: 2026, accounting_scope_id: "scope1" });
+    await user.click(link);
+    await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
+    expect(endpoints.getAnlageVSummaryCsv).toHaveBeenCalledWith({ property_id: "p1", year: 2026, accounting_scope_id: "scope1" });
+    expect((click.mock.instances[0] as HTMLAnchorElement).download).toBe("anlage-v-2026.csv");
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:report");
+  });
+  it("keeps the overview when Anlage V fails and retries without changing the selection", async () => {
+    vi.mocked(endpoints.getAnlageVSummary).mockRejectedValueOnce(new Error("Zuordnung nicht erreichbar"));
+    render(<ReportsPage />); const user = await load();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Zuordnung nicht erreichbar");
+    expect(screen.getByRole("table", { name: "Einnahmen" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Anlage V erneut laden" }));
+    expect(await screen.findByRole("link", { name: "Anlage V als CSV herunterladen" })).toBeVisible();
+  });
+  it("clears a pending Anlage V response and its download when the year changes", async () => {
+    const pending = deferred<AnlageVSummary>();
+    vi.mocked(endpoints.getAnlageVSummary).mockReturnValueOnce(pending.promise);
+    render(<ReportsPage />); await load();
+    expect(await screen.findByRole("status")).toHaveTextContent("Anlage V wird geladen");
+    fireEvent.change(screen.getByLabelText("Jahr *"), { target: { value: "2027" } });
+    await act(async () => pending.resolve(anlageV));
+    expect(screen.queryByRole("region", { name: "Anlage V" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Anlage V als CSV herunterladen" })).toBeNull();
+  });
+  it("shows empty-year and unassigned empty states without claiming a completed tax return", async () => {
+    vi.mocked(endpoints.getAnlageVSummary).mockResolvedValue({ ...anlageV, lines: anlageV.lines.map(row => ({ ...row, amount: "0.00" })), unmapped: [],
+      reconciliation: anlageV.reconciliation.map(row => ({ ...row, mapped_total: "0.00", unmapped_total: "0.00", report_total: "0.00", difference: "0.00" })) });
+    render(<ReportsPage />); await load();
+    expect(await screen.findByText("Keine Beträge im Zeitraum vorhanden.")).toBeVisible();
+    expect(screen.getByText("Keine nicht zugeordneten Beträge vorhanden.")).toBeVisible();
+  });
+  it.each(["property", "year", "scope", "unmount"])("discards a late Anlage V download after %s", async kind => {
+    const pending = deferred<Blob>(); vi.mocked(endpoints.getAnlageVSummaryCsv).mockReturnValueOnce(pending.promise);
+    const view = render(<ReportsPage />); const user = await load();
+    const link = await screen.findByRole("link", { name: "Anlage V als CSV herunterladen" });
+    act(() => { fireEvent.click(link); fireEvent.click(link); });
+    expect(endpoints.getAnlageVSummaryCsv).toHaveBeenCalledTimes(1);
+    if (kind === "unmount") view.unmount();
+    if (kind === "property") await user.selectOptions(screen.getByLabelText("Objekt *"), "p2");
+    if (kind === "year") fireEvent.change(screen.getByLabelText("Jahr *"), { target: { value: "2027" } });
+    if (kind === "scope") await user.selectOptions(screen.getByLabelText("Abrechnungskreis"), "scope1");
+    await act(async () => pending.resolve(new Blob(["CSV"])));
+    expect(click).not.toHaveBeenCalled(); expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+  it("keeps Anlage V visible after export denial and permits retry", async () => {
+    vi.mocked(endpoints.getAnlageVSummaryCsv).mockRejectedValueOnce(new ApiError(404, "Export nicht zugänglich"));
+    render(<ReportsPage />); const user = await load();
+    const link = await screen.findByRole("link", { name: "Anlage V als CSV herunterladen" });
+    await user.click(link);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Export nicht zugänglich");
+    expect(screen.getByRole("table", { name: "Anlage V Einnahmen" })).toBeVisible();
+    await user.click(link); await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
+  });
   it("does not fetch reports initially or on selection; renders exact income, expenses, totals, bases and server footnote", async () => {
     render(<ReportsPage />);
     const user = await choose();
