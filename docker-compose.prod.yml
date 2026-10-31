@@ -73,7 +73,7 @@ services:
       HV_SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in the protected env file or invoking environment}
       HV_SESSION_COOKIE_NAME: __Host-hv_session
       HV_SESSION_COOKIE_SECURE: "true"
-      HV_ALLOWED_HOSTS: verwaltung.karat.immo
+      HV_ALLOWED_HOSTS: ${HV_PUBLIC_HOST:?set HV_PUBLIC_HOST in the protected env file or invoking environment}
       HV_ENABLE_API_DOCS: "false"
       HV_DOCUMENT_STORAGE_ROOT: /data/documents
       HV_INVOICE_EXTRACTION_ENABLED: ${HV_INVOICE_EXTRACTION_ENABLED:-true}
@@ -151,7 +151,7 @@ services:
     mem_limit: 768m
     cpus: "1.00"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/api/health/live', headers={'Host': 'verwaltung.karat.immo'}), timeout=2)\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/api/health/live', headers={'Host': '${HV_PUBLIC_HOST:?set HV_PUBLIC_HOST in the protected env file or invoking environment}'}), timeout=2)\""]
       interval: 10s
       timeout: 3s
       retries: 6
@@ -165,16 +165,18 @@ services:
       - backend
       - traefik
     labels:
-      com.karat.hausverwaltung.release: ${HV_RELEASE_ID:?set HV_RELEASE_ID to the reviewed release identifier}
+      # Ownership label. Containers started before the io.verwalino.release rename carry
+      # a legacy key that deploy-production.sh still reads when it inspects them.
+      io.verwalino.release: ${HV_RELEASE_ID:?set HV_RELEASE_ID to the reviewed release identifier}
       traefik.enable: "true"
       traefik.docker.network: "traefik"
-      traefik.http.routers.hausverwaltung-alpha.rule: "Host(`verwaltung.karat.immo`)"
+      traefik.http.routers.hausverwaltung-alpha.rule: "Host(`${HV_PUBLIC_HOST:?set HV_PUBLIC_HOST in the protected env file or invoking environment}`)"
       traefik.http.routers.hausverwaltung-alpha.entrypoints: "websecure"
       traefik.http.routers.hausverwaltung-alpha.tls: "true"
       traefik.http.routers.hausverwaltung-alpha.tls.certresolver: "letsencrypt"
       traefik.http.routers.hausverwaltung-alpha.service: "hausverwaltung-alpha"
       traefik.http.routers.hausverwaltung-alpha.middlewares: "hausverwaltung-alpha-security,hausverwaltung-alpha-buffer"
-      traefik.http.routers.hausverwaltung-alpha-login.rule: "Host(`verwaltung.karat.immo`) && Path(`/api/auth/login`)"
+      traefik.http.routers.hausverwaltung-alpha-login.rule: "Host(`${HV_PUBLIC_HOST:?set HV_PUBLIC_HOST in the protected env file or invoking environment}`) && Path(`/api/auth/login`)"
       traefik.http.routers.hausverwaltung-alpha-login.priority: "100"
       traefik.http.routers.hausverwaltung-alpha-login.entrypoints: "websecure"
       traefik.http.routers.hausverwaltung-alpha-login.tls: "true"
@@ -277,7 +279,7 @@ services:
       egress:
         gw_priority: 1
     labels:
-      com.karat.hausverwaltung.release: ${HV_RELEASE_ID:?set HV_RELEASE_ID to the reviewed release identifier}
+      io.verwalino.release: ${HV_RELEASE_ID:?set HV_RELEASE_ID to the reviewed release identifier}
 
   invoice-worker:
     image: ${APP_IMAGE:?set APP_IMAGE to an immutable image reference}
@@ -315,6 +317,58 @@ services:
       timeout: 15s
       retries: 3
       start_period: 15s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - backend
+    labels:
+      io.verwalino.release: ${HV_RELEASE_ID:?set HV_RELEASE_ID to the reviewed release identifier}
+
+  inbox-worker:
+    image: ${APP_IMAGE:?set APP_IMAGE to an immutable image reference}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 130s
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    environment:
+      HV_WORKER_KIND: workflow_runner
+      HV_CLAMAV_DATABASE_DIR: /var/lib/clamav
+      HV_DATABASE_URL_WORKER: postgresql+asyncpg://app_worker:${APP_WORKER_PASSWORD}@db:5432/hausverwaltung
+      HV_DOCUMENT_STORAGE_ROOT: /data/documents
+      HV_DECLARATION_IMPORT_ENABLED: "false"
+      HV_INVOICE_EXTRACTION_ENABLED: "false"
+    volumes:
+      - documents:/data/documents:ro
+      - type: bind
+        source: ${HV_CLAMAV_DATABASE_DIR:-./clamav}
+        target: /var/lib/clamav
+        read_only: true
+        bind:
+          create_host_path: false
+    entrypoint: ["/usr/local/bin/worker-entrypoint.sh"]
+    command: ["--all-organizations"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    user: "10001:10001"
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 4g
+    cpus: "1.00"
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.workflow_runner", "--healthcheck"]
+      interval: 60s
+      timeout: 75s
+      retries: 3
+      start_period: 90s
     logging:
       driver: local
       options:

@@ -46,6 +46,38 @@ The development/test database remains exclusively `infra-postgres-1`:55432.
 A real portable first installation and TLS acceptance are still pending; details in
 [DEPLOY.md](../DEPLOY.md#portable-docker-first-installation).
 
+## Deployment modes
+
+One image supports `HV_DEPLOYMENT_MODE=selfhost|hosted`, defaulting to `selfhost`.
+`Settings` validates the enum when the process imports its configuration; any other
+value prevents startup and lists the allowed values. All backend decisions read
+the frozen `DeploymentPolicy` in `backend/app/core/deployment_policy.py`.
+The complete table below is checked against the dataclass by
+`backend/tests/test_deployment_policy.py`, alongside explicit snapshots of both modes.
+
+| Policy field | selfhost | hosted |
+| --- | --- | --- |
+| `deployment_mode` | `selfhost` | `hosted` |
+| `first_run_setup_enabled` | `true` | `false` |
+
+Current readers are scenario tag selection, reports and browser app processes
+(`deployment_mode`), and setup's `setup_required()` (`first_run_setup_enabled`).
+`GET /api/setup` returns `{"required": false}` in hosted mode even with no
+organizations, without opening a database connection. Every non-GET setup method
+returns the same 404 as a closed installation, before parsing its body. The admin
+CLI remains available in both modes; hosted signup and other hosted features are
+deferred. Policy fields are added when their consumers are implemented.
+
+The frontend relies on `GET /api/setup`'s `required` alone to open setup; the
+backend owns the deployment decision. While setup status loads, the existing
+"Lade..." state applies. If the setup check fails, login and signed-in pages
+remain available; a later successful app load can detect required setup.
+The same RLS, scoped API queries and
+[route sweep](#74a-route-sweep-backendteststest_route_isolation_sweeppy) apply in both modes.
+No branding or other hosted UI is added. The self-host installer and token
+issuance remain unchanged: the portable manifest uses the default self-hosted
+policy and does not forward an arbitrary caller's environment.
+
 ## Current Declaration-of-Division Workflow (2026-08-29)
 
 For declarations of division, the application uses a **fixed,
@@ -138,6 +170,8 @@ A fifth axis, distinct in domain terms, is the **segregation of funds** (SDD §4
 
 ### 1.1 System boundaries (M0)
 
+`website/` contains the independent static Astro public website, with German and English routes and no application backend dependency.
+
 ```
             ┌──────────────────────────────────────────────────────────┐
             │                  Responsive web app (React/TS)            │
@@ -182,6 +216,53 @@ In M0 only the left core is relevant (auth, tenant context, org/user/mandates, R
 - **Settlement logic separated** from UI and PDF layout (only takes effect from M3, but the layer model sets it up from M0).
 - **Immutable snapshots** for finalized settlements and approved vouchers (Section 3).
 - **Cost categories as versioned system data** (relevant from M2; model preparation in Section 5.4).
+
+### 1.3 Request correlation and error tracking
+
+The outermost application middleware validates `X-Request-ID` against
+`[A-Za-z0-9._-]{8,128}` or generates a UUID, stores it in request state and a
+resettable `ContextVar`, and echoes it on all HTTP responses, including perimeter
+errors and SPA/API fallback responses. Service, database and Uvicorn logs use
+the same `request_id` field; worker processing uses its durable job/import ID.
+Generic exceptions produce a safe JSON `detail` plus `request_id`; HTTP 5xx
+exceptions retain their detail and headers and add the ID. HTTP 4xx bodies stay
+unchanged. The existing API-client error message includes the header ID for 5xx.
+Starlette's server-error handler restores the request context and adds the ID
+header after the request middleware unwinds. Unhandled exceptions still propagate
+to the server or test transport after Starlette produces the error response.
+
+Explicit diagnostics use `app.diagnostics.build_bundle`: six fixed tar members with
+allowlisted metadata, configuration shapes, RLS-visible numeric counts and scrubbed
+structural error records. `POST /api/admin/diagnostics` requires `OWNER_ADMIN`, returns
+an uncached attachment and logs a correlated INFO audit line; `GET` supplies the support
+URL. A bounded transient logging handler retains no free text or LogRecord, partitions
+records by the validated organization, and reads a shared per-host JSONL buffer across
+web workers. The latest 500 records overall and at least the latest 50 per organization
+are retained; dead workers' files are pruned on read. Multi-host aggregation is out of scope.
+The API sets authenticated organization/user context for read-only app_rw counts;
+the CLI aggregates RLS-visible installation counts through the same role. Counts also
+use explicit organization filters alongside transaction-local RLS context. Missing
+migration-read privileges yield a null head; the API never probes this table. The installer
+supplies its schema head through migrator `psql` and passes Docker states/logs into
+the same Python builder. API metadata omits the global organization count and config
+shape, exposing only normalized deployment mode, version and tenant-facing switches.
+There is no upload route,
+automatic sending, stored report or new migration. The seeded-500 correlation contract
+and privacy/collection limits are documented in
+[DEPLOY.md](../DEPLOY.md#diagnostics-and-reporting-a-problem).
+
+An empty tracker DSN leaves reporting disabled. When enabled, the Sentry-compatible
+FastAPI/Starlette integration sends error events with the request ID and the
+database-validated organization ID, never organization names. Error sampling is
+independent of tracing, which remains disabled. The release is `HV_RELEASE_ID`
+when supplied, otherwise the application version. Before sending, the pure
+scrubber removes bodies, user identities, frame locals and source snippets,
+and masks recognizable personal data, credentials and query values in messages
+and breadcrumbs. The same text filter protects formatted logs; SQLAlchemy hides
+bound parameters. No person directory is loaded: names are matched heuristically,
+so this is not a guarantee for arbitrary names or unrecognized free text.
+Transport tests stay offline. Configuration, hosted GlitchTip and log lookup are
+documented in [DEPLOY.md](../DEPLOY.md#request-ids-and-optional-error-tracking).
 
 ---
 
@@ -355,8 +436,9 @@ Role enforcement takes place in the authorization layer (policy check per endpoi
 - **MFA:** not mandatory for M0; note as a hardening option for M9 (back office with personal + financially relevant data).
 - **Audit:** login, logout, failed logins, role changes → `audit_event`.
 
-**First-run bootstrap (revision 0141):** `GET /api/setup` reports only whether
-there are no organizations. `POST /api/setup` is unauthenticated but requires
+**First-run bootstrap (revision 0141):** in self-hosted mode, `GET /api/setup` reports
+whether there are no organizations. In hosted mode it always reports no setup;
+see [Deployment modes](#deployment-modes). `POST /api/setup` is unauthenticated but requires
 the one-time installer token in its JSON body. A `SECURITY DEFINER`
 `setup_first_organization(token text, org_name text, admin_email text,
 admin_name text, password_hash text) RETURNS uuid` locks `organization`,

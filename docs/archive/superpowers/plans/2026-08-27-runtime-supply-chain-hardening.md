@@ -278,7 +278,7 @@ Extend **backend/tests/test_main_security.py** to construct Settings with:
 Settings(
     session_cookie_name="__Host-hv_session",
     session_cookie_secure=True,
-    allowed_hosts="verwaltung.karat.immo",
+    allowed_hosts="verwaltung.<customer>.immo",
     enable_api_docs=False,
 )
 ~~~
@@ -299,7 +299,7 @@ def allowed_host_list(self) -> list[str]:
 ~~~
 
 Build FastAPI with conditional docs/openapi URLs and add TrustedHostMiddleware
-using allowed_host_list. Production Compose sets only verwaltung.karat.immo.
+using allowed_host_list. Production Compose sets only verwaltung.<customer>.immo.
 
 - [ ] **Step 3: Run main/auth tests**
 
@@ -438,7 +438,7 @@ Define two routers on the app:
 ~~~yaml
 traefik.enable: "true"
 traefik.docker.network: "traefik"
-traefik.http.routers.hausverwaltung-alpha.rule: "Host(\`verwaltung.karat.immo\`)"
+traefik.http.routers.hausverwaltung-alpha.rule: "Host(\`verwaltung.<customer>.immo\`)"
 traefik.http.routers.hausverwaltung-alpha.entrypoints: "websecure"
 traefik.http.routers.hausverwaltung-alpha.tls: "true"
 traefik.http.routers.hausverwaltung-alpha.tls.certresolver: "letsencrypt"
@@ -512,14 +512,14 @@ Add distinct jobs for:
 - manual deploy using SSH_KNOWN_HOSTS rather than live ssh-keyscan.
 
 The deploy job uses an immutable commit tag, runs migrate once, starts app,
-waits for readiness, and retains the previous tag. Do not place the moon host,
+waits for readiness, and retains the previous tag. Do not place the alpha host,
 SSH key, Basic Auth password, or application credentials in the repository.
 
 - [ ] **Step 3: Rewrite DEPLOY.md and .env.example**
 
 Document:
 
-- domain verwaltung.karat.immo and existing Traefik network/resolver,
+- domain verwaltung.<customer>.immo and existing Traefik network/resolver,
 - URL-safe secret generation with openssl rand -hex 32,
 - bcrypt Basic Auth verifier generation over stdin with
   httpd:2.4-alpine@sha256:1b766f17b84026429b7cb243317b142921b24432336e798bc881c43f45ed9567,
@@ -572,7 +572,7 @@ Run:
 ~~~bash
 rg -n 'ports:|HV_DATABASE_URL_MIGRATOR|HV_DATABASE_URL_SYNC|APP_PORT' \
   docker-compose.prod.yml docker/entrypoint.sh DEPLOY.md
-rg -n 'change-me|10zolotarev|verwaltung\.fogu\.io' \
+rg -n 'change-me|10zolotarev|<host>' \
   . --glob '!frontend/node_modules/**' --glob '!backend/.venv/**'
 ~~~
 

@@ -17,6 +17,7 @@ from tests.test_meters_api import new_meter
 from tests.test_rent_changes import rent_db, rent_world  # noqa: F401
 
 EXEMPT = {
+    "POST /api/admin/diagnostics": "binary download: no client-supplied IDs; decoded bundle, current-org counts, process log isolation and roles covered in test_admin_diagnostics.py and organization_isolation.feature",
     "GET /api/setup": "organization-free boolean only; fresh/closed states covered by first_run_setup.feature and test_setup.py",
     "POST /api/setup": "exists only before any organization; token-gated creation covered by first_run_setup.feature and test_setup.py",
     **{f"{method} /api/setup": "organization-free method refusal; closed setup returns 404, tested in test_setup.py"
@@ -132,6 +133,7 @@ IMPORT_APPLY = {**import_body(), "expected_digest": "", "request_id": str(uuid.u
 
 PROBES: dict[str, Probe] = {
     "GET /api/properties/{property_id}/settlement-periods": Probe(row("property", property_id="id"), query={"year": 2025}),
+    "GET /api/admin/diagnostics": Probe(),
     # app/api/attachments.py
     "GET /api/attachments": Probe(row("property", property_id="id")),
     "GET /api/attachments/{attachment_id}": Probe(row("attachment", attachment_id="id")),

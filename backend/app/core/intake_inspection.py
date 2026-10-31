@@ -25,10 +25,32 @@ MAX_PIXELS = 20_000_000
 MAX_TEXT = 1_000_000
 TOTAL_SECONDS = 90
 SCAN_SECONDS = 60
+# Current official signatures need more than 1 GiB; containers reserve 4 GiB.
+# https://docs.clamav.net/manual/Installing/Docker.html#memory-ram-requirements
+INSPECTOR_MEMORY_BYTES = 3 * 1024**3
 
 
 def child_environment():
-    return {key:value for key,value in os.environ.items() if key in {'PATH','LANG','LC_ALL','TMPDIR'}}
+    return {key:value for key,value in os.environ.items() if key in {'PATH','LANG','LC_ALL','TMPDIR','HV_CLAMAV_DATABASE_DIR'}}
+
+
+def scanner_database_dir():
+    return Path(os.environ.get('HV_CLAMAV_DATABASE_DIR','/var/lib/clamav'))
+
+
+def check_scanner_readiness():
+    """Verify official archives without loading a second signature engine."""
+    scanner,tool=shutil.which('clamscan'),shutil.which('sigtool')
+    if not scanner or not tool:raise RuntimeError('scanner_unavailable')
+    subprocess.run([scanner,'--version'],check=True,stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,timeout=10,env=child_environment())
+    directory=scanner_database_dir()
+    for name in ('main','daily','bytecode'):
+        archives=[directory/(name+suffix) for suffix in ('.cvd','.cld') if (directory/(name+suffix)).is_file()]
+        if not archives and name!='bytecode':raise RuntimeError('scanner_database_unavailable')
+        for archive in archives:
+            subprocess.run([tool,'--quiet','--info='+str(archive)],check=True,
+                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=10,env=child_environment())
 
 
 def result(data, status, code=None, *, mime=None, pages=None):
@@ -42,7 +64,7 @@ def scan_malware(data: bytes) -> str:
     if scanner is None:
         return 'unavailable'
     try:
-        completed=subprocess.run([scanner,'--no-summary','--max-filesize=25M','--max-scansize=100M',
+        completed=subprocess.run([scanner,'--database='+str(scanner_database_dir()),'--no-summary','--max-filesize=25M','--max-scansize=100M',
             '--max-recursion=10','--max-files=100','--alert-exceeds-max=yes','--alert-encrypted=yes','-'],
             input=data,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
             timeout=SCAN_SECONDS,env=child_environment())
@@ -217,5 +239,5 @@ if __name__=='__main__':
     signal.alarm(TOTAL_SECONDS)
     if sys.platform=='linux':
         import resource
-        resource.setrlimit(resource.RLIMIT_AS,(1024**3,1024**3))
+        resource.setrlimit(resource.RLIMIT_AS,(INSPECTOR_MEMORY_BYTES,INSPECTOR_MEMORY_BYTES))
     print(json.dumps(inspect_document(sys.stdin.buffer.read(MAX_BYTES+1),sys.argv[1])))

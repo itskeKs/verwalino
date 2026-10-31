@@ -32,3 +32,6 @@ infra/
 .gitlab-ci.yml
 docker-compose*.yml
 scripts/
+
+# Local diagnostics never enter image build contexts
+/diagnostics/

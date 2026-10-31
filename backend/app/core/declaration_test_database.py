@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import closing
 from urllib.parse import urlparse
 
 
@@ -93,6 +94,48 @@ def require_disposable_database_settings(settings: object) -> tuple[str, str, st
                 f"for {env_name} does not match its required disposable URL"
             )
     return migrator_url, app_rw_url, migrator_sync_url
+
+
+def require_disposable_database_reset_url(sync_url: str) -> str:
+    """Authorize a local schema reset without opening a database connection."""
+    from app.core.config import settings
+
+    if os.environ.get("VERWALINO_TEST_DB") != "1":
+        raise RuntimeError("Refusing test database reset: requires VERWALINO_TEST_DB=1")
+
+    _, _, validated_url = require_disposable_database_settings(settings)
+    refusal = (
+        "Refusing test database reset: requires the validated app_migrator URL "
+        "for localhost:55432/hausverwaltung"
+    )
+    try:
+        parsed = urlparse(sync_url)
+        port = parsed.port
+    except ValueError as error:
+        raise RuntimeError(refusal) from error
+    if (
+        sync_url != validated_url
+        or parsed.hostname not in _LOCAL_HOSTS
+        or port != 55432
+        or parsed.path != "/hausverwaltung"
+        or parsed.username != "app_migrator"
+    ):
+        raise RuntimeError(refusal)
+    return sync_url
+
+
+def reset_foreign_test_database(sync_url: str) -> None:
+    """Empty only the explicitly opted-in local test DB, preserving its roles."""
+    import psycopg2
+
+    validated_url = require_disposable_database_reset_url(sync_url)
+    with closing(psycopg2.connect(validated_url)) as connection, connection, connection.cursor() as cursor:
+        # Migrations create no other schemas. Recreate public with the PostgreSQL
+        # defaults and runtime USAGE; table grants are restored by migrations.
+        cursor.execute("DROP SCHEMA public CASCADE")
+        cursor.execute("CREATE SCHEMA public AUTHORIZATION pg_database_owner")
+        cursor.execute("GRANT USAGE ON SCHEMA public TO PUBLIC")
+        cursor.execute("GRANT USAGE ON SCHEMA public TO app_rw, app_worker, app_review")
 
 
 def is_disposable_database_candidate(value: str | None) -> bool:

@@ -43,3 +43,7 @@ Feature: Organization isolation
   Scenario: Another organization's settlement period offers are not disclosed
     When the user opens the settlement period offers of "Verwaltung Beta"
     Then the property is reported as not found
+
+  Scenario: Administrators share technical diagnostics without organization records
+    When the administrator downloads a diagnostics bundle
+    Then the bundle contains technical counts without either organization’s records
