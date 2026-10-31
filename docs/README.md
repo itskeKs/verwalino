@@ -11,7 +11,7 @@ Start with the project overview, then choose a page for the task at hand.
 
 | Operate | Purpose |
 | --- | --- |
-| [Deployment](../DEPLOY.md) | Portable installation, alpha operation, worker setup, backup, and release boundaries. |
+| [Deployment](../DEPLOY.md) | Portable installation, hosted-server operation, worker setup, backup, and release boundaries. |
 | [Declaration imports](operations/declaration-imports.md) | Reviewable extraction, building knowledge, workers, privacy, and local evaluation. |
 | [Invoice extraction](operations/invoice-extraction.md) | Upload review, extraction queue, OCR limits, retry, and rollback. |
 | [Invoice/cost linking](operations/invoice-cost-linking.md) | Source-link reconciliation, immutable originals, and rollout constraints. |

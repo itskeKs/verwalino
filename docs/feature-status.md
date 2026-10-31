@@ -1,13 +1,17 @@
 # Feature status
 
 Current feature catalog of Verwalino by area, compared with the reference product described in
-[domain-reference.md](domain-reference.md). Status as of 2026-10-30, migration head `0141`.
+[domain-reference.md](domain-reference.md). Status as of 2026-10-31, migration head `0141`.
 Status: ✅ implemented and reachable in the running app, 🟡 partial (reason given), ❌ not implemented.
 Reference product: whether the reference software offers the feature (yes/partial/no, n/a = not a
 reference feature). Short paths: `api/ services/ engine/ models/ workers/ core/` are under
 `backend/app/`, `pages/ components/ lib/` under `frontend/src/`; other paths are relative to the
 repository root. Task IDs (`T…`) are the historical task numbers of the former MVP task list (see git
 history). Update this page in the same PR whenever a feature's status changes.
+
+The hosted instance is being set up on the hosted server (#6) through `scripts/self-host.sh`
+and the [hosted deploy workflow](../DEPLOY.md#hosted-server). It shares the portable
+stack's limits: declaration import/Q&A, SMTP and automatic invoice OCR are disabled.
 
 ## Access and organization
 

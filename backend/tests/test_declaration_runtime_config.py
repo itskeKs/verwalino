@@ -23,7 +23,6 @@ ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = ROOT / "docker-compose.prod.yml"
 ENV_EXAMPLE_PATH = ROOT / ".env.example"
 WORKER_ENTRYPOINT_PATH = ROOT / "docker/worker-entrypoint.sh"
-GITLAB_CI_PATH = ROOT / ".gitlab-ci.yml"
 README_PATH = ROOT / "README.md"
 DECLARATION_RUNBOOK_PATH = ROOT / "docs" / "operations" / "declaration-imports.md"
 ARCHITECTURE_PATH = ROOT / "docs" / "architecture.md"
@@ -402,26 +401,6 @@ def test_runtime_example_and_entrypoint_keep_secrets_at_boundaries() -> None:
         '#!/bin/sh\nset -eu\n\nexec python -m app.workers."${HV_WORKER_KIND:-declaration_import}" "$@"\n'
     )
     assert WORKER_ENTRYPOINT_PATH.stat().st_mode & 0o111
-
-
-def test_gitlab_backend_jobs_opt_into_the_disposable_profile_and_ocr_runtime() -> None:
-    pipeline = yaml.safe_load(GITLAB_CI_PATH.read_text(encoding="utf-8"))
-    backend_test = pipeline["backend-test"]
-    backend_audit = pipeline["backend-audit"]
-
-    assert backend_test["variables"]["HV_DECLARATION_TEST_DATABASE_PROFILE"] == "gitlab-ci"
-    assert "uv sync --locked --extra dev --extra ops --extra ocr" in backend_test["script"][0]
-    assert "uv export --locked --no-dev --extra ops --extra ocr" in backend_audit["script"][0]
-    assert "--no-emit-project" in backend_audit["script"][0]
-    assert "pip-audit --no-deps --disable-pip" in backend_audit["script"][0]
-
-
-def test_gitlab_container_smoke_exports_the_required_public_host() -> None:
-    pipeline = yaml.safe_load(GITLAB_CI_PATH.read_text(encoding="utf-8"))
-    assert any(
-        step.startswith("export ") and "HV_PUBLIC_HOST=verwaltung.example.org" in step.split()
-        for step in pipeline["container-smoke"]["script"]
-    )
 
 
 @pytest.mark.asyncio

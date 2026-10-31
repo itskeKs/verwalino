@@ -11,7 +11,6 @@ import pytest
 
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
-GITLAB_CI_PROFILE = "gitlab-ci"
 LOCAL_PROFILE = "local"
 EXPECTED_USERS = {
     "HV_DATABASE_URL": "app_rw",
@@ -53,7 +52,7 @@ def _url(
 
 
 DISPOSABLE_ENV = {env_name: _url(env_name) for env_name in EXPECTED_USERS}
-GITLAB_CI_ENV = {
+SERVICE_DATABASE_ENV = {
     env_name: _url(env_name, host="postgres", port=5432)
     for env_name in EXPECTED_USERS
 }
@@ -68,8 +67,7 @@ def _profiled_environment(
     overrides: dict[str, str | None], *, profile: str | None = LOCAL_PROFILE, ci: str | None = None
 ) -> dict[str, str]:
     env = os.environ.copy()
-    # Guard subprocesses must remain local-safe even when this suite itself is
-    # executed by GitLab, whose predefined CI variable is inherited.
+    # Guard subprocesses must remain local-safe even when CI variables are inherited.
     env.pop("CI", None)
     env.pop("HV_DECLARATION_TEST_DATABASE_PROFILE", None)
     env.update(DISPOSABLE_ENV)
@@ -129,6 +127,7 @@ def test_collection_refuses_a_missing_database_url(env_name: str) -> None:
     [
         lambda env_name: _url(env_name, port=5433),
         lambda env_name: _url(env_name, host="database.example.test"),
+        lambda env_name: _url(env_name, database="other"),
         lambda env_name: _url(env_name, username="unexpected_role"),
     ],
 )
@@ -137,6 +136,17 @@ def test_collection_refuses_non_disposable_database_urls(
     invalid_url,
 ) -> None:
     result = _collect_with({env_name: invalid_url(env_name)})
+
+    assert result.returncode != 0
+    assert "Refusing destructive tests" in result.stderr
+    assert "app_secret" not in result.stderr
+    assert "migrator_secret" not in result.stderr
+
+
+def test_collection_refuses_an_async_scheme_for_the_sync_database_url() -> None:
+    result = _collect_with({
+        "HV_DATABASE_URL_SYNC": _url("HV_DATABASE_URL_SYNC", scheme="postgresql+asyncpg"),
+    })
 
     assert result.returncode != 0
     assert "Refusing destructive tests" in result.stderr
@@ -217,62 +227,19 @@ def test_collection_accepts_all_disposable_database_urls() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_collection_accepts_only_explicit_gitlab_ci_database_profile() -> None:
-    result = _collect_with(
-        GITLAB_CI_ENV,
-        profile=GITLAB_CI_PROFILE,
-        ci="true",
-    )
-
-    assert result.returncode == 0, result.stderr
-
-
-@pytest.mark.parametrize(
-    "profile,ci",
-    [
-        (None, None),
-        (GITLAB_CI_PROFILE, None),
-        (GITLAB_CI_PROFILE, "false"),
-        (LOCAL_PROFILE, "true"),
-    ],
-)
-def test_collection_refuses_gitlab_urls_without_exact_ci_profile(
-    profile: str | None,
-    ci: str | None,
+@pytest.mark.parametrize("profile", [None, LOCAL_PROFILE, "ci", "unknown"])
+@pytest.mark.parametrize("ci", [None, "false", "true"])
+def test_collection_refuses_service_database_urls_even_in_ci(
+    profile: str | None, ci: str | None,
 ) -> None:
-    result = _collect_with(GITLAB_CI_ENV, profile=profile, ci=ci)
+    result = _collect_with(SERVICE_DATABASE_ENV, profile=profile, ci=ci)
 
     assert result.returncode != 0
     assert "Refusing destructive tests" in result.stderr
 
 
-@pytest.mark.parametrize(
-    "env_name,invalid_url",
-    [
-        ("HV_DATABASE_URL", _url("HV_DATABASE_URL", host="localhost", port=5432)),
-        ("HV_DATABASE_URL_MIGRATOR", _url("HV_DATABASE_URL_MIGRATOR", port=55432)),
-        ("HV_DATABASE_URL_SYNC", _url("HV_DATABASE_URL_SYNC", database="other")),
-        ("HV_DATABASE_URL", _url("HV_DATABASE_URL", username="app_migrator")),
-        ("HV_DATABASE_URL_SYNC", _url("HV_DATABASE_URL_SYNC", query="sslmode=disable")),
-        ("HV_DATABASE_URL_MIGRATOR", _url("HV_DATABASE_URL_MIGRATOR", fragment="x")),
-        (
-            "HV_DATABASE_URL_SYNC",
-            _url(
-                "HV_DATABASE_URL_SYNC",
-                host="postgres",
-                port=5432,
-                scheme="postgresql+asyncpg",
-            ),
-        ),
-    ],
-)
-def test_collection_refuses_gitlab_profile_url_variants(
-    env_name: str,
-    invalid_url: str,
-) -> None:
-    urls = dict(GITLAB_CI_ENV)
-    urls[env_name] = invalid_url
-    result = _collect_with(urls, profile=GITLAB_CI_PROFILE, ci="true")
+def test_direct_alembic_refuses_service_database_urls_without_a_profile() -> None:
+    result = _alembic_current_with(SERVICE_DATABASE_ENV, profile=None, ci="true")
 
     assert result.returncode != 0
     assert "Refusing destructive tests" in result.stderr
