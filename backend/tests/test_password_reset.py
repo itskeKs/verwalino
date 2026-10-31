@@ -27,7 +27,7 @@ def test_reset_migration_roundtrip_is_exact_and_refuses_retained_state(run_migra
     from sqlalchemy import create_engine
     from tests.conftest import MIGRATOR_SYNC_URL
     from tests.test_session_review_access import _chain_snapshot
-    migration = ScriptDirectory('migrations').get_revision('0144').module
+    migration = ScriptDirectory('migrations').get_revision('0145').module
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.connect() as connection, connection.begin() as transaction:
@@ -102,7 +102,10 @@ async def test_unknown_address_is_identical_and_does_the_same_hash_and_mail_cons
     monkeypatch.setattr(password_reset.mail_service, 'build_password_reset', built)
     known = await client_unauth.post('/api/auth/password-reset', json={'email': email})
     unknown = await client_unauth.post('/api/auth/password-reset', json={'email': 'unknown@example.test'})
-    assert (known.status_code, known.content, known.headers.raw) == (unknown.status_code, unknown.content, unknown.headers.raw)
+    assert (known.status_code, known.content) == (unknown.status_code, unknown.content)
+    # The shared middleware assigns a distinct correlation ID to each request.
+    assert {key: value for key, value in known.headers.items() if key != 'x-request-id'} == {
+        key: value for key, value in unknown.headers.items() if key != 'x-request-id'}
     assert len(signup_mail.messages) == 1
     assert len(hashes) == len(messages) == 2
     assert 'cache-control' in known.headers and known.headers['cache-control'] == 'no-store'

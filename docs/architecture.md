@@ -492,7 +492,7 @@ Hosted signup is described below; login uses the application limiter below. Roll
 changing the shared fixtures permanently; real portable-stack acceptance remains
 pending.
 
-**Hosted signup (revision 0144):** `POST /api/signup` accepts organization, admin
+**Hosted signup (accepted source revision 0144):** `POST /api/signup` accepts organization, admin
 name, normalized email, password and hidden `website`. Signup and `/api/signup/resend`
 return the same generic 202 for fresh, existing, unknown, cooldown and throttled
 requests. The honeypot silently returns that response without side effects.
@@ -571,7 +571,7 @@ submit. StrictMode never submits twice. Server-side query stripping protects
 the default Uvicorn access log; upstream proxies must redact query strings too.
 GET requests never provision a tenant.
 
-**Mailbox password recovery (revision 0144):** Both deployment modes expose
+**Mailbox password recovery (revision 0145):** Both deployment modes expose
 `POST /api/auth/password-reset` with `{email, website}`. It returns the generic
 202 conditional receipt for known, unknown, locked and mail-unavailable addresses.
 A filled honeypot returns the same receipt before side effects. Other requests

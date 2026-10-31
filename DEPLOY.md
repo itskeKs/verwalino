@@ -78,7 +78,7 @@ UUIDs (244 random bits). Only the SHA-256 digest is stored. Every 100th accepted
 request per process schedules a separate background transaction deleting at
 most 100 rows whose expiry or use time is older than seven days.
 
-Revision 0144 downgrade refuses while **any** reset rows remain, including used
+Revision 0145 downgrade refuses while **any** reset rows remain, including used
 rows. For an intentional rollback, stop reset traffic/workers, connect using the
 operator's migrator credential store, and explicitly invalidate/delete the reset
 state before running the normal downgrade:
@@ -1084,11 +1084,11 @@ remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/s
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
 
-## Migration compatibility: 0029–0144
+## Migration compatibility: 0029–0145
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0144 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0145 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1100,15 +1100,15 @@ run `docker compose down -v` or delete the volumes.
 | Browser setup (accepted source 0141) | Adds the private singleton setup-token table and a token-gated, serialized first-organization function. Removes direct organization INSERT from app_rw; the migrator CLI shares the creation SQL. A populated token table blocks downgrade to avoid silently losing pending/consumed state. Existing organization/user/membership rows are preserved. |
 | 0142 | Adds global authentication throttle rows containing only scoped key hashes, failure windows, lockout expiry, last lockout start and escalation history, with narrow runtime DML. No existing rows or grants change. A populated table blocks downgrade to avoid losing lockouts. |
 | Lease documents (accepted source 0143) | Allows retained built-in letter documents without a template row; the exact migration is preserved from #114. Downgrade refuses a null template reference. |
-| 0144 | Adds private pending signup requests and token-bound SECURITY DEFINER functions; runtime roles have no direct request-table access. Successful confirmation atomically creates a separate tenant and deletes its request. Retained requests block downgrade. |
-| 0144 | Adds global password reset requests with 32-byte token digests, context-free definer issuance/confirmation and bounded cleanup; runtime table access is revoked. The T57 trigger path revokes sessions and consumes links on password changes/deactivation. Tokens expire after one hour; successful reset marks all outstanding links for that user used. A populated downgrade refuses to discard retained reset state; an empty downgrade exactly removes the new table, index, trigger and functions. |
+| 0144 (accepted source) | Adds private pending signup requests and token-bound SECURITY DEFINER functions; runtime roles have no direct request-table access. Successful confirmation atomically creates a separate tenant and deletes its request. Retained requests block downgrade. |
+| 0145 | Adds global password reset requests with 32-byte token digests, context-free definer issuance/confirmation and bounded cleanup; runtime table access is revoked. The T57 trigger path revokes sessions and consumes links on password changes/deactivation. Tokens expire after one hour; successful reset marks all outstanding links for that user used. A populated downgrade refuses to discard retained reset state; an empty downgrade exactly removes the new table, index, trigger and functions. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0144 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0144, 0139→0144 and accepted-source 0140→0144, 0141→0144 and
-0142→0144 and 0143→0144 rehearsals also
+0028→0145 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0145, 0139→0145 and accepted-source 0140→0145, 0141→0145 and
+0142→0145, 0143→0145 and 0144→0145 (accepted source) rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT revocation;
 it does not prove live data validity or cross-version runtime compatibility.
 
@@ -1130,10 +1130,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0144**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0145**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0144**,
-**0122 → 0144**, **0139 → 0144**, **0140 → 0144**, **0141 → 0144**, **0142 → 0144**, **0143 → 0144** (accepted source), or **0144 → 0144**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0145**,
+**0122 → 0145**, **0139 → 0145**, **0140 → 0145**, **0141 → 0145**, **0142 → 0145**, **0143 → 0145**, **0144 → 0145** (accepted source), or **0145 → 0145**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 
