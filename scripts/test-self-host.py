@@ -1396,5 +1396,37 @@ class StackContractTests(unittest.TestCase):
         self.assertIn("**/.env.*", (ROOT / ".dockerignore").read_text().splitlines())
 
 
+class ReleaseBundleTests(unittest.TestCase):
+    def test_release_assembly_covers_payloads_and_compose_bind_mounts(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/release-image.yaml").read_text())
+        bundle = workflow["jobs"]["installer"]
+        self.assertEqual(bundle["needs"], "release")
+        self.assertEqual(bundle["permissions"], {"contents": "write", "id-token": "write"})
+        step = next(step for step in bundle["steps"] if step.get("id") == "bundle")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for path in ("install.sh", "scripts/self-host.sh", "infra/docker-compose.yml",
+                         "infra/Caddyfile", "infra/db/prod-init.sh", ".env.example"):
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((ROOT / path).read_bytes())
+            digest = "sha256:" + "a" * 64
+            result = subprocess.run(["bash", "-euo", "pipefail", "-c", step["run"]],
+                                    cwd=root, env=dict(os.environ, DIGEST=digest),
+                                    text=True, capture_output=True, check=False, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            assets = root / "release-assets"
+            self.assertEqual((assets / "IMAGE_DIGEST").read_text(), digest + "\n")
+            lines = (assets / "SHA256SUMS").read_text().splitlines()
+            self.assertEqual(len(lines), 7)
+            self.assertEqual({line.split("  ")[1] for line in lines}, {
+                "install.sh", "self-host.sh", "docker-compose.yml", "Caddyfile",
+                "prod-init.sh", "env.example", "IMAGE_DIGEST"})
+            for line in lines:
+                checksum, name = line.split("  ")
+                self.assertEqual(checksum, hashlib.sha256((assets / name).read_bytes()).hexdigest())
+            self.assertEqual((assets / "prod-init.sh").read_bytes(), (ROOT / "infra/db/prod-init.sh").read_bytes())
+
+
 if __name__ == "__main__":
     unittest.main()

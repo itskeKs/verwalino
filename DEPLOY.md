@@ -22,6 +22,138 @@ setup-token flow. Its manifest relies on the `selfhost` default; it does not for
 `VERWALINO_MODE` is a separate transport choice. Use a separately managed deployment
 to run hosted mode; do not use the portable installer to start a hosted service.
 
+## Install in one command
+
+For a **new** Linux server or macOS/Linux laptop with Bash, OpenSSL, Docker
+Engine/Desktop, Compose **v2 >= 2.24**, `curl` or `wget`, and `sha256sum` or
+`shasum`. Docker must already be running and accessible to your user. The
+script does not use sudo or install system packages. Choose a Docker context
+without an existing Verwalino installation; only one installation per context
+is supported. Do not run this on the existing alpha host.
+
+**Release preparation:** these commands work once the maintainer publishes the
+first stable tag with installer assets and enables anonymous repository/release
+and GHCR access. No published version or fresh-VM success is claimed here.
+
+On a laptop, open Docker Desktop first, then run:
+
+```bash
+curl -fsSL https://github.com/itskeKs/verwalino/releases/latest/download/install.sh | bash -s --
+```
+
+The default directory is `./verwalino`; the app listens only on
+`http://127.0.0.1:18080`. For a different directory/port, append
+`--dir "$HOME/apps/verwalino" --port 19080`. PostgreSQL has no published port.
+
+On a new server, point the domain's A/AAAA records at it (remove an unusable
+AAAA record), make TCP 80/443 reachable and ensure those ports are free:
+
+```bash
+curl -fsSL https://github.com/itskeKs/verwalino/releases/latest/download/install.sh | bash -s -- --https verwaltung.example.org
+```
+
+Caddy provisions HTTPS. Open the printed HTTPS `/setup` URL once DNS and
+certificate issuance are ready. Enter the separately printed one-time token,
+organization, administrator details and password twice to reach the dashboard.
+Keep the terminal output private: the token expires after 24 hours and is never
+saved by the installer. [Browser setup and operational limits](#portable-docker-first-installation)
+also apply to this path.
+
+The script checks prerequisites, resolves the latest stable tag through the
+GitHub API (without jq), and downloads that tag's assets. To pin a release,
+append `--version vX.Y.Z` with a real published version; prereleases and other
+tag formats are refused. It verifies **every payload file** against
+`SHA256SUMS`, including `install.sh` and `IMAGE_DIGEST`, before running the
+downloaded helper. If cosign is installed, it first verifies the checksum
+signature against the exact release workflow identity and GitHub OIDC issuer;
+failure stops installation. Without cosign it prints a manual verification
+command and continues with checksum verification. Checksums detect corruption;
+the signature authenticates the checksum file. The piped bootstrap itself runs
+before it can check its downloaded copy; use the manual path below to verify
+the script before executing it.
+
+The verified `IMAGE_DIGEST` pins the multi-platform GHCR image without a
+registry lookup. The script runs `scripts/self-host.sh init --image
+ghcr.io/itskeks/verwalino@sha256:…`, forwarding `--https`/`--port`, then `start`.
+If that release's helper advertises `doctor` in its help, the installer runs it
+after `init` creates the config and before `start`, stopping if it fails.
+All installation files and any temporary signature cache stay under `--dir`;
+the script does not send telemetry. Docker pulls images and creates the existing portable stack's
+volumes/networks as described below. It does not clone the source or build the
+application on the host.
+
+Init creates `.env.selfhost` with fresh secrets and mode 0600.
+A non-empty `--dir` (default `./verwalino`) without `.env.selfhost` is refused
+unless `--force` is given. An existing config blocks the installer before
+downloading anything. To retry a failed start, rerun with **the same `--version`
+and `--dir`**, plus `--force`; omit
+`--https` and `--port`. The existing config is kept byte for byte, and a
+different image digest is refused. This is a retry, not an upgrade mechanism.
+Use the installed helper for normal operations:
+
+```bash
+cd verwalino
+bash scripts/self-host.sh status
+bash scripts/self-host.sh start  # Also replaces a lost, unused setup token.
+bash scripts/self-host.sh stop   # Keeps all data.
+```
+
+### Release assets and manual verification
+
+Each stable GitHub Release carries flat assets; the installer arranges them
+into the directory layout the unchanged helper and Compose file require:
+
+| Release asset | Installed path | Verification |
+| --- | --- | --- |
+| `install.sh` | `install.sh` | SHA256SUMS |
+| `self-host.sh` | `scripts/self-host.sh` | SHA256SUMS |
+| `docker-compose.yml` | `infra/docker-compose.yml` | SHA256SUMS |
+| `Caddyfile` | `infra/Caddyfile` | SHA256SUMS |
+| `prod-init.sh` | `infra/db/prod-init.sh` (database role bootstrap bind mount) | SHA256SUMS |
+| `env.example` | `env.example` (reference only; not sourced or copied to config) | SHA256SUMS |
+| `IMAGE_DIGEST` | `IMAGE_DIGEST` (one `sha256:…` index digest) | SHA256SUMS |
+| `SHA256SUMS` | `SHA256SUMS` (seven flat payload names) | Keyless signature |
+| `SHA256SUMS.sigstore.json` | `SHA256SUMS.sigstore.json` | Sigstore certificate, signature and transparency proof for SHA256SUMS |
+
+On a connected machine, download and verify a chosen release before executing
+its installer. Install [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
+first; the blob verification follows [Sigstore's verification guide](https://docs.sigstore.dev/cosign/verifying/verify/).
+`v1.2.3` below is an example, not a claim of an existing release:
+
+```bash
+tag=v1.2.3  # Replace with a published stable release that has these assets.
+mkdir -p verwalino-bundle
+cd verwalino-bundle
+for file in install.sh self-host.sh docker-compose.yml Caddyfile prod-init.sh env.example IMAGE_DIGEST SHA256SUMS SHA256SUMS.sigstore.json; do
+  curl -fsSL -o "$file" "https://github.com/itskeKs/verwalino/releases/download/$tag/$file"
+done
+# On macOS, replace sha256sum -c below with shasum -a 256 -c.
+# The chain stops before execution if signature or checksum verification fails.
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity "https://github.com/itskeKs/verwalino/.github/workflows/release-image.yaml@refs/tags/$tag" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS &&
+sha256sum -c SHA256SUMS &&
+bash install.sh --version "$tag" --dir ../verwalino
+```
+
+To reuse local assets, add `--offline-bundle "$PWD"` to the final command.
+With cosign on PATH, offline verification also requires an independently
+trusted **`trusted_root.json`** in that bundle directory. Provision Sigstore's
+service keys/certificates on the connected machine through your trusted
+Sigstore tooling and transfer them alongside the verified assets. This is
+operator trust material, **not a release asset authenticated by its own
+checksum**. The installer supplies it with cosign's `--trusted-root` so
+verification does not fetch service keys. Missing trust material fails before
+cosign runs. The online path lets cosign obtain its trust roots online.
+
+`--offline-bundle DIR` with explicit `--version` uses local assets without API,
+asset or registry-discovery requests from the wrapper. The subsequent `start`
+still uses Compose's pull and needs registry access, including GHCR for the
+app and the PostgreSQL/optional Caddy image sources. The unchanged helper does
+not provide fully air-gapped image provisioning. The first
+release publication, anonymous downloads/pulls, fresh-VM setup/login/restart,
+and real domain/TLS run remain maintainer acceptance steps.
+
 ## Portable Docker first installation
 
 This path is independent of the existing alpha. `infra/docker-compose.yml`
@@ -366,9 +498,9 @@ cosign verify \
 
 Proceed only after verification succeeds. Use that same digest with
 `bash scripts/self-host.sh init --image "$image@$digest"`, then the `start`
-and `admin` commands above. Remote tags are deliberately refused by the installer;
-it does not resolve tags or verify signatures for you. `vX.Y` is a discovery
-alias, not an automatic update mechanism.
+and `admin` commands above. `scripts/self-host.sh` refuses remote image tags;
+that helper does not resolve tags or verify signatures for you. `vX.Y` is a
+discovery alias, not an automatic update mechanism.
 
 On a **native 64-bit arm64** host (Apple Silicon or a 64-bit Raspberry Pi OS),
 run the same signature verification, then check the selected image:
@@ -404,12 +536,22 @@ in the PR. A local cross-platform build alone does not prove installation.
 3. Check the workflow succeeded, make the GHCR package public for anonymous
    pulls if necessary, and inspect both platforms, provenance/SBOMs and the
    signature at the summary's digest. Verify anonymously using the commands above.
-4. Copy the successful release tag and index digest into the examples in this
+4. Check the second job published a GitHub Release containing `install.sh`,
+   `self-host.sh`, `docker-compose.yml`, `Caddyfile`, `prod-init.sh`, `env.example`,
+   `IMAGE_DIGEST`, `SHA256SUMS` and `SHA256SUMS.sigstore.json`. Compare `IMAGE_DIGEST`
+   and the release notes with the image job's index digest. Verify the checksum
+   signature and all seven payload checksums as above; test anonymous asset
+   downloads after the repository/release is made public by the maintainer.
+5. On a fresh VM, run the one-line command through browser setup, sign-in and
+   stop/start persistence. Repeat with a real domain for DNS/TLS acceptance.
+   Record the tag, digest, host and result in the PR; fake-Docker contracts do
+   not prove this. Complete the native arm64 installation check above.
+6. Copy the successful release tag and index digest into the examples in this
    section.
-   Complete the native arm64 installation check above.
 
-The **first tag run and the arm64 installation check remain acceptance steps
-for the maintainer**. This preparation does not close #7. Full `make test`
+The **first tag with installer assets, fresh-VM run and arm64 installation
+check remain acceptance steps for the maintainer**. This preparation does not
+close #7 or #12. Full `make test`
 remains a pre-merge gate; the local workflow/installer checks need no database.
 
 ## Hosted server

@@ -15,6 +15,7 @@ history). Update this page in the same PR whenever a feature's status changes.
 | --- | --- | --- | --- |
 | Deployment mode | n/a | ✅ validated selfhost/hosted policy, backend-owned setup gate; hosted features remain deferred | `core/config.py`, `core/deployment_policy.py`, issue #18 |
 | Browser first-run setup | n/a | ✅ selfhost-only, one-time installer token, 24-hour expiry, atomic first organization/admin; real-stack acceptance pending | `api/setup.py`, `pages/SetupPage.tsx`, `scripts/self-host.sh`, issue #8 |
+| One-command release installation | n/a | 🟡 installer and signed release-bundle workflow prepared; first release assets and fresh-VM setup/login/restart pending | `install.sh`, `.github/workflows/release-image.yaml`, [guide](../DEPLOY.md#install-in-one-command), issue #12 |
 | Request IDs and opt-in error tracking | n/a | ✅ response/log correlation always enabled; API error events scrubbed before sending, tracking off by default | `core/request_id.py`, `core/logging.py`, `core/error_tracking.py`, `core/scrub.py`, `DEPLOY.md`, issue #16 |
 | Login/logout | yes | ✅ | `api/auth.py`, `pages/LoginPage.tsx` |
 | Create users | yes | ✅ admin-only form and user management | `api/users.py`, `pages/UsersPage.tsx`, T06, T57, [usage](operations/users-and-access.md) |

@@ -32,6 +32,9 @@ jobs:
     name: Publish and sign amd64 + arm64
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Validate release tag
         id: release
@@ -101,7 +104,7 @@ jobs:
       # BuildKit attaches provenance and SBOMs; sign their enclosing image index.
       # A second provenance producer is unnecessary for this release path.
       - name: Install cosign
-        uses: sigstore/cosign-installer@v4
+        uses: sigstore/cosign-installer@v4.1.2
 
       - name: Sign image digest with GitHub OIDC
         env:
@@ -119,3 +122,55 @@ jobs:
             printf 'Platforms: `linux/amd64`, `linux/arm64`.\n\n'
             printf 'BuildKit provenance (`mode=max`), SBOMs and a cosign keyless signature are attached.\n'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  installer:
+    name: Sign and publish installer bundle
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ needs.release.outputs.tag }}
+          persist-credentials: false
+
+      - name: Assemble release assets and checksums
+        id: bundle
+        env:
+          DIGEST: ${{ needs.release.outputs.digest }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          mkdir release-assets
+          cp install.sh scripts/self-host.sh infra/docker-compose.yml infra/Caddyfile infra/db/prod-init.sh release-assets/
+          cp .env.example release-assets/env.example
+          printf '%s\n' "$DIGEST" > release-assets/IMAGE_DIGEST
+          cd release-assets
+          sha256sum install.sh self-host.sh docker-compose.yml Caddyfile prod-init.sh env.example IMAGE_DIGEST > SHA256SUMS
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Sign checksums with GitHub OIDC
+        run: cosign sign-blob --yes --bundle release-assets/SHA256SUMS.sigstore.json release-assets/SHA256SUMS
+
+      - name: Publish GitHub Release and installer assets
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.release.outputs.tag }}
+          name: Verwalino ${{ needs.release.outputs.tag }}
+          draft: false
+          prerelease: false
+          make_latest: legacy
+          fail_on_unmatched_files: true
+          files: release-assets/*
+          body: |
+            Image (multi-platform index, linux/amd64 and linux/arm64):
+            `${{ env.IMAGE }}@${{ needs.release.outputs.digest }}`
+
+            The installer assets are covered by SHA256SUMS, signed keylessly in
+            SHA256SUMS.sigstore.json by this tag's release-image.yaml workflow.
+            See DEPLOY.md at this tag for installation and manual verification.
