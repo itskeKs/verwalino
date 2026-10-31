@@ -18,3 +18,19 @@ def reset_token(mail):
     assert '1 Stunde' in body
     link = re.search(r'https://signup.example.test/passwort-zuruecksetzen\?token=\S+', body)[0]
     return parse_qs(urlsplit(link).query)['token'][0]
+
+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def reset_store():
+    """Inspect privileged reset state as the migrator, never the runtime role."""
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from tests.conftest import MIGRATOR_URL
+    engine = create_async_engine(MIGRATOR_URL)
+    try:
+        async with async_sessionmaker(engine)() as session, session.begin():
+            yield session
+    finally:
+        await engine.dispose()

@@ -52,11 +52,11 @@ export function PasswordResetPage() {
       <p role="status">Ihr Passwort wurde geändert. Alle bisherigen Sitzungen wurden beendet.</p>
       <p><a className="link" href="/login">Zur Anmeldung</a></p>
     </> : <>
-      <form className="space-y-4" onSubmit={submit} aria-busy={busy} aria-describedby={error ? "reset-error" : undefined}>
+      <form className="space-y-4" onSubmit={submit} noValidate aria-busy={busy} aria-describedby={error ? "reset-error" : undefined}>
         {error && <p id="reset-error" role="alert" className="break-words text-sm text-destructive">{error}</p>}
         <fieldset disabled={busy} className="min-w-0 space-y-4">
-          <div className="space-y-2"><Label htmlFor="reset-password">Neues Passwort</Label><Input id="reset-password" type="password" className="h-11" value={password} onChange={(e) => setPassword(e.target.value)} minLength={12} maxLength={128} autoComplete="new-password" aria-describedby="reset-password-help" required /><p id="reset-password-help" className="text-sm text-muted-foreground">Verwenden Sie 12 bis 128 Zeichen.</p></div>
-          <div className="space-y-2"><Label htmlFor="reset-repeat">Passwort wiederholen</Label><Input id="reset-repeat" type="password" className="h-11" value={repeat} onChange={(e) => setRepeat(e.target.value)} minLength={12} maxLength={128} autoComplete="new-password" required /></div>
+          <div className="space-y-2"><Label htmlFor="reset-password">Neues Passwort</Label><Input id="reset-password" type="password" className="h-11" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" aria-describedby="reset-password-help" required /><p id="reset-password-help" className="text-sm text-muted-foreground">Verwenden Sie 12 bis 128 Zeichen.</p></div>
+          <div className="space-y-2"><Label htmlFor="reset-repeat">Passwort wiederholen</Label><Input id="reset-repeat" type="password" className="h-11" value={repeat} onChange={(e) => setRepeat(e.target.value)} autoComplete="new-password" required /></div>
           <Button type="submit" size="lg" className="w-full">{busy ? "Passwort wird gespeichert …" : "Passwort speichern"}</Button>
         </fieldset>
       </form>
