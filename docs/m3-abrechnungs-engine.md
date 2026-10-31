@@ -42,9 +42,19 @@ but does not widen visibility. Follow-up #95 must add a database constraint to e
 the rule across accounting scopes; this change adds neither a migration nor a
 privileged helper. This limitation also applies to economic plans and WEG runs.
 
+**Property access limitation:** a user without property read access must enter
+the period; the period offer needs property access. Financial creation checks
+pause mode, parents and accounting scope before resolving or validating the
+period. A scope-only clerk can create drafts with explicit dates without reading
+the property's start month. Missing plan dates return 422 with
+"Abrechnungszeitraum angeben: Beginn und Ende". Users who can read the property
+retain its default period. The organization-bound month getter is deferred to
+#95's migration; no migration is added here.
+
 **Other period rules and limitation:** economic plans honour explicit dates within
-the property period or exactly closing the gap from the last finalized plan to the
-next property period; omitted dates default to the property period. Year-only
+the readable property period or exactly closing the gap from the last finalized
+plan to the next property period; scope-only clerks supply their own dates,
+subject to the same twelve-month and straddling checks. Year-only
 Hausgeld payments belong to the period starting in the assigned year. See the
 [WEG period rules](m4-weg-abrechnung.md#property-settlement-periods-68). The economic
 plan deadline in `fristen_service.py` is still calendar-based for non-January

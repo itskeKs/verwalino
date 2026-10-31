@@ -314,35 +314,43 @@ class EconomicPlanService:
         accounting_scope_id: uuid.UUID | None = None,
     ) -> EconomicPlan:
         scope = FinancialScopeService(self._session, self._org_id, self._user_id)
-        await scope.lock_inputs()
-        prop = await PropertyRepository(self._session, self._org_id).get_by_id(property_id)
-        if prop is None:
-            raise HTTPException(404, "Property not found")
-        if not 1 <= plan_year <= 9998:
-            raise HTTPException(422, "Plan year must be between 1 and 9998")
-        property_start, property_end = period_starting_in(prop.fiscal_year_start_month, plan_year)
-        period_start = period_start if period_start is not None else property_start
-        period_end = period_end if period_end is not None else property_end
-        try:
-            validate_settlement_period(period_start, period_end)
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
+        explicit_period = period_start is not None and period_end is not None
         plan = EconomicPlan(
             organization_id=self._org_id,
             property_id=property_id,
             management_mandate_id=management_mandate_id,
             plan_year=plan_year,
-            period_start=period_start,
-            period_end=period_end,
+            period_start=period_start if explicit_period else None,
+            period_end=period_end if explicit_period else None,
             monthly_due_day=monthly_due_day,
             reserve_contribution_total=reserve_contribution_total or Decimal("0.00"),
             status="draft",
             engine_version=ENGINE_VERSION,
         )
+        # Admit pause mode, parents and scope before resolving optional dates.
         await scope.prepare_new(plan, accounting_scope_id)
+        plan_year = period_start.year if explicit_period else plan_year
+        if not 1 <= plan_year <= 9998:
+            raise HTTPException(422, "Plan year must be between 1 and 9998")
+        prop = await PropertyRepository(self._session, self._org_id).get_by_id(property_id)
+        if prop is None and not explicit_period:
+            raise HTTPException(422, "Abrechnungszeitraum angeben: Beginn und Ende")
+        if prop is not None:
+            property_start, property_end = period_starting_in(prop.fiscal_year_start_month, plan_year)
+            period_start = period_start if period_start is not None else property_start
+            period_end = period_end if period_end is not None else property_end
+        try:
+            validate_settlement_period(period_start, period_end)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        plan.plan_year = period_start.year
+        plan.period_start, plan.period_end = period_start, period_end
+        if not explicit_period:
+            # Defaults must also fit the admitted accounting scope.
+            await scope.prepare_new(plan, accounting_scope_id)
         if await self._plans.has_conflicting_period(plan):
             raise HTTPException(409, "Der Zeitraum überschneidet einen finalisierten Wirtschaftsplan dieses Objekts.")
-        if not (property_start <= period_start <= period_end <= property_end):
+        if prop is not None and not (property_start <= period_start <= period_end <= property_end):
             previous = await self._plans.last_finalized_before(property_id, period_start)
             if (previous is None or period_start != previous.period_end + timedelta(days=1)
                     or period_end != property_start - timedelta(days=1)):
@@ -354,7 +362,7 @@ class EconomicPlanService:
                 entity_type="economic_plan",
                 entity_id=plan.id,
                 action="economic_plan.created",
-                payload_diff={"plan_year": plan_year, "period": f"{period_start} - {period_end}"},
+                payload_diff={"plan_year": plan.plan_year, "period": f"{period_start} - {period_end}"},
             )
         )
         return plan

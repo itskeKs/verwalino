@@ -14,6 +14,13 @@ async def april(client_a_admin):
     return await period_property(client_a_admin)
 
 
+async def test_admin_without_plan_dates_keeps_property_period(client_a_admin, april):
+    plan = await create(client_a_admin, "/api/economic-plans", {
+        "property_id": april["property"]["id"], "plan_year": 2025,
+    })
+    assert (plan["plan_year"], plan["period_start"], plan["period_end"]) == (2025, "2025-04-01", "2026-03-31")
+
+
 async def test_plan_transition_closes_gap_after_start_month_change(client_a_admin):
     api = client_a_admin
     data = await period_property(api, month=1)

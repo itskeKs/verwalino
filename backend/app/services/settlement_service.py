@@ -310,12 +310,7 @@ class SettlementService:
         accounting_scope_id: uuid.UUID | None = None,
     ) -> tuple[list[SettlementRun], list[SettlementRun]]:
         """Create missing lease drafts in the ambient, serialized transaction."""
-        from app.repositories.property_repo import PropertyRepository
-
         scope = FinancialScopeService(self._session, self._org_id, self._user_id)
-        await scope.lock_inputs()
-        if await PropertyRepository(self._session, self._org_id).get_by_id(property_id) is None:
-            raise HTTPException(404, "Property not found")
         # Validate even an empty property/period before returning an empty batch.
         context = SettlementRun(
             property_id=property_id, run_type="BK_MIETER",

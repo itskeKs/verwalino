@@ -22,7 +22,14 @@ runs from 1 April 2025 through 31 March 2026. Explicit `period_start` and
 Omitted dates default to the property period. The plan form prefills dates from
 the property's period offers.
 
-Explicit dates must fit within that property period, or bridge exactly the gap
+**Property access limitation:** a user without property read access must enter
+the period; the period offer needs property access. Missing plan dates return
+422 with "Abrechnungszeitraum angeben: Beginn und Ende", after pause, parent and
+accounting-scope checks. Explicit dates need no access to the property's start
+month; twelve-month and straddling validation still applies. The organization-bound
+month getter is deferred to #95's migration. No migration is added here.
+
+When the property is readable, explicit dates must fit within its period, or bridge exactly the gap
 between the last finalized, non-superseded plan and the next property period.
 For example, after finalizing 1 January–31 December 2025 and changing the start
 month from January to April, a transition plan for 1 January–31 March 2026 closes
