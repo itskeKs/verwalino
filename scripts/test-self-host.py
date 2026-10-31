@@ -6,10 +6,13 @@ import hashlib
 import io
 import json
 import os
+import shlex
 import shutil
 import re
+import runpy
 import stat
 import subprocess
+import sys
 import tempfile
 import tarfile
 import unittest
@@ -18,6 +21,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+RELEASE_TARGET = runpy.run_path(str(ROOT / "backend/app/deployment.py"))["TARGET"]
 SECRETS = ("MIGRATOR_PASSWORD", "APP_RW_PASSWORD", "APP_WORKER_PASSWORD", "APP_REVIEW_PASSWORD", "SESSION_SECRET")
 
 
@@ -43,6 +47,29 @@ with open(os.environ["FAKE_DOCKER_LOG"], "a") as log:
 failure = os.environ.get("FAKE_DOCKER_FAIL")
 if failure and (failure in sys.argv or (failure == "app-ready" and "up" in sys.argv and sys.argv[-1] == "app")):
     sys.exit(17)
+if sys.argv[1] == "info":
+    if "-f" in sys.argv:
+        print(os.environ.get("FAKE_DOCKER_ROOT", "/docker-data") if "DockerRootDir" in sys.argv[-1]
+              else os.environ.get("FAKE_DOCKER_VERSION", "27.1.0"))
+    sys.exit(0)
+if sys.argv[1:3] == ["compose", "version"]:
+    print(os.environ.get("FAKE_COMPOSE_VERSION", "2.24.0"))
+    sys.exit(0)
+if sys.argv[1] == "inspect":
+    print(os.environ.get("FAKE_OWNER", os.environ["FAKE_CHECKOUT"] + "/infra/docker-compose.yml"))
+    sys.exit(0)
+if "ps" in sys.argv and "--format" in sys.argv:
+    service = sys.argv[-1]
+    print(os.environ.get("FAKE_CONTAINER_" + service.upper(),
+                         "running|" + ("" if service == "caddy" else "healthy") + "|" + service + "-id"))
+    sys.exit(0)
+if "port" in sys.argv:
+    port = os.environ.get("VERWALINO_PORT", "18080") if sys.argv[-2] == "app" else sys.argv[-1]
+    print(os.environ.get("FAKE_PUBLISHED", "127.0.0.1:" + port))
+    sys.exit(0)
+if "find" in sys.argv and "caddy" in sys.argv:
+    print(os.environ.get("FAKE_CERTIFICATE", "/data/caddy/certificates/acme/verwaltung.example.org/verwaltung.example.org.crt"))
+    sys.exit(0)
 if "ps" in sys.argv and "--quiet" in sys.argv:
     state = os.environ.get("FAKE_STATE", "running")
     statuses = [sys.argv[i + 1] for i, arg in enumerate(sys.argv) if arg == "--status"]
@@ -77,6 +104,10 @@ if "psql" in sys.argv:
     elif statement.startswith("SELECT name"):
         for name in ("hausverwaltung", "hausverwaltung_restore", "hausverwaltung_previous"):
             print(name + "=" + ("present" if name in databases else "absent"))
+    elif "to_regclass" in statement:
+        print(os.environ.get("FAKE_SCHEMA_TABLE", "alembic_version"))
+    elif "count(*) FROM organization" in statement:
+        print(os.environ.get("FAKE_ORGANIZATIONS", "1"))
     elif "pg_database" in statement:
         name = statement.split("datname='")[1].split("'")[0]
         if name in databases:
@@ -106,8 +137,9 @@ if "-c" in sys.argv:
             os.environ["BACKUP_OWNER"] = argument.split("=", 1)[1]
     position = sys.argv.index("-c")
     args = sys.argv[position + 2:]
-    mount = sys.argv[sys.argv.index("--volume") + 1].rsplit(":", 1)[0]
-    args = [arg.replace("/backup", mount).replace("/data/documents", os.environ["FAKE_DOCUMENTS"]) for arg in args]
+    if "--volume" in sys.argv:
+        mount = sys.argv[sys.argv.index("--volume") + 1].rsplit(":", 1)[0]
+        args = [arg.replace("/backup", mount).replace("/data/documents", os.environ["FAKE_DOCUMENTS"]) for arg in args]
     # Emulate root's container-only ownership operations without chown on the host.
     wrapper = """import os, sys
 from app import deployment
@@ -153,6 +185,7 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
         self.db_state.write_text(json.dumps({"hausverwaltung": "old data"}))
         self.env = dict(os.environ, PYTHONPATH=str(ROOT / "backend"), FAKE_DOCUMENTS=str(self.documents), PATH=f"{binary}:{os.environ['PATH']}",
                         FAKE_DB_STATE=str(self.db_state),
+                        FAKE_CHECKOUT=str(self.root),
                         FAKE_DOCUMENT_MOVES=str(self.base / "document-moves.jsonl"),
                         FAKE_DROP_DOCUMENTS=str(self.base / "drop-documents.json"),
                         VERWALINO_CONFIG=str(self.config), FAKE_DOCKER_LOG=str(self.log),
@@ -174,6 +207,318 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
 
     def calls(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
+
+    def doctor_tools(self, omit=()):
+        # Isolate PATH so missing-tool tests never discover host tools or Docker.
+        binary = self.base / "doctor-bin"
+        binary.mkdir(exist_ok=True)
+        for name in ("bash", "dirname", "stat", "awk", "sed", "sort", "mktemp", "rm", "cat", "id", "sleep"):
+            path = binary / name
+            if not path.exists():
+                path.symlink_to(shutil.which(name))
+        python = binary / "python3"
+        python.write_text('#!/bin/bash\nexec ' + shlex.quote(sys.executable) + ' "$@"\n')
+        python.chmod(0o755)
+        tools = '''import os, sys
+name = os.path.basename(sys.argv[0])
+port = sys.argv[-1].split(":")[-1]
+if name == "lsof": port = next(arg.split(":", 1)[1] for arg in sys.argv if arg.startswith("-iTCP:"))
+if name == "df":
+    key = "FAKE_DISK_CHECKOUT" if sys.argv[-1] == os.environ["FAKE_CHECKOUT"] else "FAKE_DISK_DOCKER"
+    value = os.environ.get(key, "20971520")
+    if value == "error": sys.exit(1)
+    print("Filesystem 1024-blocks Used Available Capacity Mounted on")
+    print("disk 30000000 1 " + value + " 1% /")
+elif name in ("ss", "lsof"):
+    if os.environ.get("FAKE_PORT_TOOL_FAIL"): sys.exit(2)
+    if os.environ.get("FAKE_PORT_BUSY") == port or os.environ.get("FAKE_PORT_BUSY") == "all":
+        print("LISTEN 0 128 0.0.0.0:" + port)
+    elif name == "lsof": sys.exit(1)
+elif name == "nc":
+    if os.environ.get("FAKE_LOCAL_CLOSED") == port: sys.exit(1)
+    sys.exit(0 if port in ("80", "443") or os.environ.get("FAKE_PORT_BUSY") == port else 1)
+elif name in ("getent", "dig", "host"):
+    value = os.environ.get("FAKE_DNS", "93.184.216.34")
+    if not value: sys.exit(2)
+    for address in value.split():
+        if name == "getent": print(address + " verwaltung.example.org")
+        elif name == "host": print("verwaltung.example.org has " + ("IPv6 " if ":" in address else "") + "address " + address)
+        else: print(address)
+elif name in ("ip", "ifconfig"):
+    for address in os.environ.get("FAKE_PUBLIC_IP", "93.184.216.34").split():
+        print(("2: eth0 " if name == "ip" else "") + ("inet6 " if ":" in address else "inet ") + address + "/24 scope global")
+elif name == "openssl":
+    if "s_client" in sys.argv:
+        if os.environ.get("FAKE_TLS_FAIL"): sys.exit(1)
+        print("synthetic certificate")
+    else:
+        sys.stdin.read()
+        if os.environ.get("FAKE_CERT_INVALID"): sys.exit(1)
+        if "-checkend" in sys.argv and os.environ.get("FAKE_CERT_EXPIRING"): sys.exit(1)
+'''
+        for name in ("ss", "lsof", "nc", "getent", "dig", "host", "df", "ip", "ifconfig", "openssl"):
+            path = binary / name
+            if name in omit:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_text(f"#!{sys.executable}\n" + tools)
+                path.chmod(0o755)
+        docker = binary / "docker"
+        if "docker" not in omit and not docker.exists():
+            docker.symlink_to(self.base / "bin/docker")
+        if "docker" in omit:
+            docker.unlink(missing_ok=True)
+        self.env["PATH"] = str(binary)
+
+    def assert_doctor(self, severity, check, code=0):
+        self.env.setdefault("FAKE_SCHEMA", RELEASE_TARGET)
+        result = self.run_script("doctor")
+        self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, rf"(?m)^{severity} {check}: .+")
+        lines = result.stdout.splitlines()
+        counts = {level: sum(line.startswith(level + " ") for line in lines) for level in ("OK", "WARN", "FEHLER")}
+        self.assertEqual(lines[-1], f"Zusammenfassung: {counts['OK']} OK, {counts['WARN']} WARN, {counts['FEHLER']} FEHLER.")
+        self.assertEqual(code, int(counts["FEHLER"] > 0))
+        self.assertEqual(result.stderr, "")
+        return result
+
+    def test_doctor_all_green_is_isolated_and_keeps_data_unchanged(self):
+        config = self.init("--https", "verwaltung.example.org")
+        before = self.config.read_bytes(), self.db_state.read_bytes()
+        self.doctor_tools()
+        result = self.assert_doctor("OK", "Zertifikatslaufzeit")
+        self.assertNotIn("WARN ", result.stdout)
+        self.assertNotIn("FEHLER ", result.stdout)
+        for key in SECRETS:
+            self.assertNotIn(config[key], result.stdout + result.stderr)
+        args = [call["args"] for call in self.calls()]
+        self.assert_isolated(args)
+        self.assertFalse(any(any(word in a for word in ("up", "stop", "build", "pull", "migrate", "bootstrap", "pack", "verify")) for a in args))
+        self.assertTrue(any("from app.deployment import TARGET; print(TARGET)" in a for a in args))
+        self.assertEqual(before, (self.config.read_bytes(), self.db_state.read_bytes()))
+        self.assertFalse(Path(str(self.config) + ".lock").exists())
+
+    def test_doctor_local_mode_omits_https_checks(self):
+        self.init("--port", "19080")
+        self.doctor_tools()
+        result = self.assert_doctor("OK", "Port 19080")
+        self.assertNotIn("DNS", result.stdout)
+        self.assertNotIn("Zertifikat", result.stdout)
+
+    def test_doctor_rejects_arguments_in_german(self):
+        result = self.run_script("doctor", "unexpected")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr, "Dieser Befehl akzeptiert keine zusätzlichen Argumente.\n")
+        self.assertFalse(self.calls())
+
+    def test_doctor_reports_every_check_after_missing_docker_or_daemon(self):
+        self.init("--https", "verwaltung.example.org")
+        for missing in ("docker", "daemon"):
+            with self.subTest(missing=missing):
+                self.doctor_tools(omit=("docker",) if missing == "docker" else ())
+                self.env["FAKE_DOCKER_FAIL"] = "info" if missing == "daemon" else ""
+                result = self.assert_doctor("FEHLER", "Docker" if missing == "docker" else "Docker-Daemon", 1)
+                for check in ("Einstellungen", "Speicher Checkout", "Container db", "Migration", "Organisation", "DNS", "Zertifikatslaufzeit"):
+                    self.assertIn(check + ":", result.stdout)
+
+    def test_doctor_enforces_docker_and_compose_minimum_versions(self):
+        self.init()
+        self.doctor_tools()
+        for variable, value, check in (("FAKE_DOCKER_VERSION", "23.0.6", "Docker-Version"),
+                                       ("FAKE_COMPOSE_VERSION", "2.23.3", "Compose"),
+                                       ("FAKE_COMPOSE_VERSION", "1.29.2", "Compose"),
+                                       ("FAKE_COMPOSE_VERSION", "unknown", "Compose"),
+                                       ("FAKE_DOCKER_FAIL", "version", "Compose")):
+            with self.subTest(variable=variable, value=value):
+                self.env[variable] = value
+                self.assert_doctor("FEHLER", check, 1)
+                del self.env[variable]
+
+    def test_doctor_accepts_current_compose_releases(self):
+        self.init()
+        self.doctor_tools()
+        self.env["FAKE_COMPOSE_VERSION"] = "5.6.0"
+        self.assert_doctor("OK", "Compose")
+
+    def test_doctor_checks_config_existence_permissions_and_completeness(self):
+        self.init()
+        self.doctor_tools()
+        before = self.config.read_text()
+        self.config.unlink()
+        self.assert_doctor("FEHLER", "Konfiguration", 1)
+        self.config.write_text(before)
+        for mode in (0o644, 0o640, 0o700):
+            with self.subTest(mode=mode):
+                self.config.chmod(mode)
+                self.assert_doctor("FEHLER", "Dateirechte", 1)
+        self.config.chmod(0o400)
+        self.assert_doctor("OK", "Dateirechte")
+        self.config.chmod(0o600)
+        self.config.write_text(before.replace("SESSION_SECRET=", "UNKNOWN="))
+        self.assert_doctor("FEHLER", "Einstellungen", 1)
+        self.config.write_text(before.replace("VERWALINO_PORT=18080", "VERWALINO_PORT=1"))
+        self.assert_doctor("FEHLER", "Einstellungen", 1)
+        self.config.write_text(before + "EVIL=$(touch marker)\n")
+        self.assert_doctor("FEHLER", "Einstellungen", 1)
+        self.assertFalse((self.base / "marker").exists())
+
+    def test_doctor_rejects_symlink_config_and_reports_remaining_checks(self):
+        self.init()
+        self.doctor_tools()
+        target = self.base / "saved"
+        self.config.rename(target)
+        self.config.symlink_to(target)
+        self.assert_doctor("FEHLER", "Konfiguration", 1)
+
+    def test_doctor_detects_foreign_port_and_accepts_owned_port(self):
+        self.init()
+        self.doctor_tools()
+        self.env["FAKE_PORT_BUSY"] = "18080"
+        self.assert_doctor("OK", "Port 18080")
+        self.env["FAKE_OWNER"] = "/other/infra/docker-compose.yml"
+        self.assert_doctor("FEHLER", "Port 18080", 1)
+
+    def test_doctor_port_tools_fall_back_and_warn_when_unavailable(self):
+        self.init()
+        self.env.update(FAKE_PUBLISHED="", FAKE_PORT_BUSY="18080")
+        for omit in (("ss",), ("ss", "lsof")):
+            with self.subTest(omit=omit):
+                self.doctor_tools(omit=omit)
+                self.assert_doctor("FEHLER", "Port 18080", 1)
+        self.doctor_tools(omit=("ss", "lsof", "nc"))
+        self.assert_doctor("WARN", "Port 18080")
+
+    def test_doctor_disk_thresholds_apply_independently_to_both_locations(self):
+        self.init()
+        self.doctor_tools()
+        for variable, check in (("FAKE_DISK_DOCKER", "Speicher Docker"), ("FAKE_DISK_CHECKOUT", "Speicher Checkout")):
+            for value, severity, code in (("2097151", "FEHLER", 1), ("2097152", "WARN", 0),
+                                           ("10485759", "WARN", 0), ("10485760", "OK", 0), ("error", "WARN", 0)):
+                with self.subTest(variable=variable, value=value):
+                    self.env[variable] = value
+                    self.assert_doctor(severity, check, code)
+            del self.env[variable]
+
+    def test_doctor_container_states_have_start_or_log_hints(self):
+        self.init("--https", "verwaltung.example.org")
+        self.doctor_tools()
+        for service in ("db", "app", "caddy"):
+            for state, severity, code in (("restarting||id", "FEHLER", 1), ("running|unhealthy|id", "FEHLER", 1),
+                                           ("exited||id", "WARN", 0), ("", "WARN", 0), ("running|starting|id", "WARN", 0)):
+                with self.subTest(service=service, state=state):
+                    self.env["FAKE_CONTAINER_" + service.upper()] = state
+                    result = self.assert_doctor(severity, "Container " + service, code)
+                    self.assertIn("self-host.sh start", result.stdout)
+                    self.assertIn("logs", result.stdout)
+            del self.env["FAKE_CONTAINER_" + service.upper()]
+
+    def test_doctor_container_query_failure_is_a_warning(self):
+        self.init()
+        self.doctor_tools()
+        self.env["FAKE_DOCKER_FAIL"] = "ps"
+        self.assert_doctor("WARN", "Container db")
+
+    def test_doctor_compares_schema_to_image_target_and_handles_uninitialised_db(self):
+        self.init()
+        self.doctor_tools()
+        for variable, value, severity, code in (("FAKE_SCHEMA", "0122", "WARN", 0),
+                                               ("FAKE_SCHEMA", f"{int(RELEASE_TARGET) + 1:04d}", "FEHLER", 1),
+                                               ("FAKE_SCHEMA", "", "WARN", 0),
+                                               ("FAKE_SCHEMA_TABLE", "", "WARN", 0),
+                                               ("FAKE_SCHEMA", "0138\n0139", "WARN", 0),
+                                               ("FAKE_IMAGE_TARGET", "missing", "WARN", 0),
+                                               ("FAKE_DOCKER_FAIL", "run", "WARN", 0),
+                                               ("FAKE_DOCKER_FAIL", "psql", "WARN", 0),
+                                               ("FAKE_IMAGE_TARGET", "0122", "FEHLER", 1)):
+            with self.subTest(variable=variable, value=value):
+                self.env[variable] = value
+                self.assert_doctor(severity, "Migration", code)
+                del self.env[variable]
+
+    def test_doctor_warns_when_first_organization_is_missing_or_unreadable(self):
+        self.init()
+        self.doctor_tools()
+        for count in ("0", "invalid"):
+            self.env["FAKE_ORGANIZATIONS"] = count
+            result = self.assert_doctor("WARN", "Organisation")
+            self.assertIn("admin --org NAME --email EMAIL", result.stdout)
+
+    def test_doctor_image_target_probe_is_unprivileged_and_has_no_volumes(self):
+        self.init()
+        self.doctor_tools()
+        self.assert_doctor("OK", "Migration")
+        probes = [call["args"] for call in self.calls() if "run" in call["args"]]
+        self.assertEqual(len(probes), 1)
+        probe = probes[0]
+        self.assertTrue(all(flag not in probe for flag in ("--volume", "-v", "--mount", "--cap-add")),
+                        "The image target probe must not mount data or add capabilities.")
+        self.assertEqual(probe[probe.index("--user") + 1], "10001:10001")
+        self.assertIn("--read-only", probe)
+        self.assertEqual(probe[probe.index("--entrypoint") + 1], "python")
+        self.assertEqual(probe[probe.index("-c") + 1], "from app.deployment import TARGET; print(TARGET)")
+
+    def test_doctor_does_not_invoke_target_probe_when_image_is_absent(self):
+        self.init()
+        self.doctor_tools()
+        self.env["FAKE_DOCKER_FAIL"] = "image"
+        self.assert_doctor("WARN", "Migration")
+        self.assertFalse(any("run" in c["args"] for c in self.calls()))
+
+    def test_doctor_validates_domain_without_stopping_other_checks(self):
+        self.init("--https", "verwaltung.example.org")
+        self.config.write_text(self.config.read_text().replace("verwaltung.example.org", "https://invalid"))
+        self.doctor_tools()
+        result = self.assert_doctor("FEHLER", "Domain", 1)
+        self.assertIn("Zertifikatslaufzeit:", result.stdout)
+
+    def test_doctor_dns_fallbacks_and_failures(self):
+        self.init("--https", "verwaltung.example.org")
+        for omit in ((), ("getent",), ("getent", "dig")):
+            with self.subTest(omit=omit):
+                self.doctor_tools(omit=omit)
+                self.env["FAKE_DNS"] = "93.184.216.34"
+                self.assert_doctor("OK", "DNS")
+                self.env["FAKE_DNS"] = ""
+                self.assert_doctor("FEHLER", "DNS", 1)
+        self.doctor_tools(omit=("getent", "dig", "host"))
+        self.assert_doctor("WARN", "DNS")
+
+    def test_doctor_dns_address_mismatch_and_unknown_public_address(self):
+        self.init("--https", "verwaltung.example.org")
+        self.doctor_tools()
+        self.env["FAKE_PUBLIC_IP"] = "93.184.216.35"
+        self.assert_doctor("WARN", "DNS-Ziel")
+        for address in ("", "192.168.1.2", "10.0.0.1", "172.16.0.1", "127.0.0.1", "fe80::1", "fd00::1"):
+            self.env["FAKE_PUBLIC_IP"] = address
+            self.assert_doctor("WARN", "DNS-Ziel")
+        self.env.update(FAKE_DNS="2606:4700:4700::1111", FAKE_PUBLIC_IP="2606:4700:4700::1111")
+        self.assert_doctor("OK", "DNS-Ziel")
+
+    def test_doctor_https_ports_are_checked_independently_for_occupancy_and_reachability(self):
+        self.init("--https", "verwaltung.example.org")
+        self.doctor_tools()
+        for port in ("80", "443"):
+            with self.subTest(port=port):
+                self.env.update(FAKE_PORT_BUSY=port, FAKE_OWNER="/other/compose.yml")
+                self.assert_doctor("FEHLER", "Port " + port, 1)
+                del self.env["FAKE_PORT_BUSY"], self.env["FAKE_OWNER"]
+                self.env["FAKE_LOCAL_CLOSED"] = port
+                self.assert_doctor("WARN", "Erreichbarkeit " + port)
+                del self.env["FAKE_LOCAL_CLOSED"]
+
+    def test_doctor_certificate_presence_and_expiry_failures_are_warnings(self):
+        self.init("--https", "verwaltung.example.org")
+        self.doctor_tools()
+        for variable, value, check in (("FAKE_CONTAINER_CADDY", "exited||id", "Zertifikat"),
+                                       ("FAKE_CERTIFICATE", "", "Zertifikat"),
+                                       ("FAKE_DOCKER_FAIL", "find", "Zertifikat"),
+                                       ("FAKE_TLS_FAIL", "1", "Zertifikatslaufzeit"),
+                                       ("FAKE_CERT_INVALID", "1", "Zertifikatslaufzeit"),
+                                       ("FAKE_CERT_EXPIRING", "1", "Zertifikatslaufzeit")):
+            with self.subTest(variable=variable):
+                self.env[variable] = value
+                self.assert_doctor("WARN", check)
+                del self.env[variable]
 
     def fingerprint(self, config):
         keys = ("VERWALINO_MODE", "VERWALINO_DOMAIN", "VERWALINO_PORT", "VERWALINO_IMAGE", "VERWALINO_PROXY_SUBNET")
@@ -806,7 +1151,7 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
 
     def assert_isolated(self, calls):
         for args in calls:
-            if args[0] == "compose" and args[1:] != ["version"]:
+            if args[0] == "compose" and args[1:2] != ["version"]:
                 self.assertIn("--project-name", args)
                 self.assertEqual(args[args.index("--project-name") + 1], "verwalino")
                 self.assertEqual(args[args.index("--env-file") + 1], str(self.config))

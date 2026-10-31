@@ -68,7 +68,7 @@ Usage notes and operational limits are linked in the documentation table below.
 
 ### Self-hosting
 
-Prerequisites: Linux or macOS, Bash, OpenSSL, Docker, and Compose v2 2.24 or later.
+Prerequisites: Linux or macOS, Bash, OpenSSL, Docker Engine 24 or later, and Compose 2.24 or later.
 From a checkout on a new host, run:
 
 ```bash
@@ -87,6 +87,8 @@ before the first start; DNS and public TCP ports 80/443 must be ready for Caddy.
 Back up with `bash scripts/self-host.sh backup [--out DIR]` and recover with `stop`, then
 `restore FILE [--yes]`; keep `.env.selfhost` separately
 ([backup and restore](DEPLOY.md#portable-backup-and-restore)).
+If setup or startup fails, run `bash scripts/self-host.sh doctor` first; it prints German next steps and
+exits 1 on blockers ([diagnostics](DEPLOY.md#portable-troubleshooting-start-with-doctor)).
 
 The portable stack ships without AI import and AI Q&A, SMTP and automatic invoice
 OCR; manual voucher processing works. Database and documents live in named volumes:
