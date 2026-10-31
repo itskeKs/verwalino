@@ -154,6 +154,7 @@ See the [roadmap](docs/roadmap.md), [feature status](docs/feature-status.md), an
 | Process invoices and declarations | [Invoice extraction](docs/operations/invoice-extraction.md), [declaration imports](docs/operations/declaration-imports.md) |
 | Change Verwalino | [Contributing](CONTRIBUTING.md), [repository rules](AGENTS.md), [design contract](DESIGN.md), [executable scenarios](features/README.md) |
 | Track work | [Roadmap](docs/roadmap.md), [feature status](docs/feature-status.md) |
+| Work on the public website | [Website guide](website/README.md) |
 
 The whole map is [docs/README.md](docs/README.md).
 
