@@ -139,3 +139,4 @@ from tests.bdd.steps.browser_setup import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_bank import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_rent import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_dunning import *  # noqa: E402,F401,F403
+from tests.bdd.steps.source_access import *  # noqa: E402,F401,F403
