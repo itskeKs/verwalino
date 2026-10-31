@@ -110,7 +110,7 @@ def test_external_features_use_api_and_skip_isolation_and_fresh_setup(pytester, 
     assert report["run"]["target_url"] == url
     rows = report["scenarios"]
     isolation = [row for row in rows if row["feature"] == "Organization isolation"]
-    assert len(isolation) == 9
+    assert len(isolation) == 10
     assert all("two organizations" in row["error"]["message"] for row in isolation)
     setup = [row for row in rows if row["feature"] == "First run setup"]
     assert len(setup) == 3
