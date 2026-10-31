@@ -1,4 +1,4 @@
-"""Cost-distribution and year-only advance rounding rules (ADR-0005).
+"""Cost-distribution and calendar-assigned advance rounding rules (ADR-0005).
 
 `distribute_amount(total, weights)` distributes a cent-exact total over n
 addressees with non-negative exact weights, rounding each share to cent such
@@ -9,8 +9,9 @@ correctness guarantee of M3: "Sum of shares == total cost, no cent lost"
 Cost distributions route through this function. Year-only advances use the
 separate calendar-month rule below: floor monthly shares to cents, assign the
 annual remainder to December, and prorate boundary months by calendar days.
-Floored cumulative day-share differences make adjacent periods reconcile
-exactly, independently of draft or finalization order. Both rules live here.
+Month-assigned advances and windows cutting balanced cost cells reuse the
+same floored cumulative day-share differences. Adjacent periods reconcile
+exactly, independently of draft or finalization order. These rules live here.
 
 Algorithm (ADR-0005, Entscheidung; Hamilton / Hare / Largest-Remainder):
 
@@ -61,6 +62,33 @@ def _floor_to_cent(value: Decimal) -> Decimal:
     return value.quantize(CENT, rounding=ROUND_FLOOR)
 
 
+def day_share_for_period(
+    total: Decimal, source_start: date, source_end: date,
+    period_start: date, period_end: date,
+) -> Decimal:
+    """Inclusive day share with stable cumulative cents; adjacent shares telescope.
+
+    Used for boundary months of advances and for a window inside an already
+    balanced source-cost cell. The last day receives the remaining cents.
+    """
+    start, end = max(source_start, period_start), min(source_end, period_end)
+    if start > end:
+        return Decimal("0.00")
+    days = (source_end - source_start).days + 1
+    before, through = (start - source_start).days, (end - source_start).days + 1
+    return (_floor_to_cent(total * through / days)
+            - _floor_to_cent(total * before / days))
+
+
+def monthly_advance_share_for_period(
+    total: Decimal, year: int, month: int, period_start: date, period_end: date,
+) -> Decimal:
+    """Credit an assigned month only for covered days, retaining every cent."""
+    return day_share_for_period(total, date(year, month, 1),
+                                date(year, month, monthrange(year, month)[1]),
+                                period_start, period_end)
+
+
 def annual_advance_share_for_period(
     total: Decimal, year: int, period_start: date, period_end: date,
 ) -> Decimal:
@@ -79,10 +107,7 @@ def annual_advance_share_for_period(
     result = Decimal("0.00")
     for month in range(first, last + 1):
         share = total - monthly * 11 if month == 12 else monthly
-        days = monthrange(year, month)[1]
-        before = period_start.day - 1 if (year, month) == (period_start.year, period_start.month) else 0
-        through = period_end.day if (year, month) == (period_end.year, period_end.month) else days
-        result += _floor_to_cent(share * through / days) - _floor_to_cent(share * before / days)
+        result += monthly_advance_share_for_period(share, year, month, period_start, period_end)
     return result
 
 

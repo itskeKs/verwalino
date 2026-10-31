@@ -140,7 +140,8 @@ class PaymentRepository(TenantRepository[Payment]):
     ) -> Sequence[Payment]:
         """Booked NK by assigned months, plus year-only rows in either year.
 
-        The pure engine allocates year-only amounts to the covered months.
+        Select touching months in full; the shared pure engine prorates their
+        boundary days as well as the month shares of year-only amounts.
         """
         await self.require_computation_context(lease_id=lease_agreement_id)
         stmt = (

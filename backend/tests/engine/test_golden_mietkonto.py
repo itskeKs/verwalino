@@ -74,6 +74,24 @@ def _pay(
     )
 
 
+@pytest.mark.parametrize("ptype,addressee", [("NK_VORAUSZAHLUNG", "lease"), ("HAUSGELD_VORSCHUSS", "owner")])
+@pytest.mark.parametrize("cut,expected", [(14, "245.16"), (31, "300.00")])
+def test_month_assigned_advances_reconcile_adjacent_periods(ptype, addressee, cut, expected):
+    from datetime import timedelta
+
+    payments = [_pay(m, ptype, "100.00", month=m, **{addressee: _U(50)}) for m in range(1, 13)]
+    # Drafts, reversed payments, other types and addressees cannot enter either share.
+    payments += [_pay(20, ptype, "999.99", month=3, is_booked=False, **{addressee: _U(50)}),
+                 _pay(21, ptype, "999.99", month=3, is_reversed=True, **{addressee: _U(50)})]
+    filt = AdvanceFilter(types=frozenset({ptype}), year=2025,
+                         **{("lease_agreement_id" if addressee == "lease" else "owner_profile_id"): _U(50)})
+    boundary = date(2025, 3, cut)
+    first = mietkonto.derive_advance_total_for_period(payments, filt, date(2025, 1, 1), boundary)
+    second = mietkonto.derive_advance_total_for_period(payments, filt, boundary + timedelta(days=1), date(2025, 12, 31))
+    assert first == Decimal(expected)
+    assert first + second == Decimal("1200.00")
+
+
 # ===========================================================================
 # Golden 1: Soll-Ist je Mietvertrag, voll bezahlt (m6 section 7.1 #1)
 #   Kaltmiete 700 + NK 150 = 850/Monat, 12 Monate, 12 Zahlungen a 850.

@@ -614,7 +614,7 @@ class PaymentService:
     async def derive_nk_advance_total_for_period(
         self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date
     ) -> Decimal:
-        """DERIVED NK by assigned months, prorating year-only amounts."""
+        """DERIVED NK with day-prorated boundary months and year-only month shares."""
         rows = await self._repo.derived_for_nk_for_period(
             lease_agreement_id, period_start, period_end
         )
@@ -643,7 +643,7 @@ class PaymentService:
     async def derive_hausgeld_total_for_period(
         self, owner_profile_id: uuid.UUID, period_start: date, period_end: date
     ) -> Decimal:
-        """Paid Hausgeld with the same year-only month split as NK advances."""
+        """Paid Hausgeld with the same month/day proration as NK advances."""
         rows = []
         for year in range(period_start.year, period_end.year + 1):
             rows.extend(await self._repo.derived_for_hausgeld(owner_profile_id, year))
