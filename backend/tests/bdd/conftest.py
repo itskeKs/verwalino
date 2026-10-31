@@ -171,6 +171,7 @@ def pytest_collection_modifyitems(config, items):
                 reason = {
                     "organization_isolation.feature": "External isolation requires two organizations; only the bootstrap organization is configured",
                     "first_run_setup.feature": "Setup requires a fresh installation; the external target already has a bootstrap organization",
+                    "inbox_review_chain.feature": "needs the in-process invoice worker and direct database fixtures",
                 }.get(Path(template.feature.filename).name)
                 if reason:
                     item.add_marker(pytest.mark.skip(reason=reason))
