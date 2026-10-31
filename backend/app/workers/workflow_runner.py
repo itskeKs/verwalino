@@ -115,6 +115,8 @@ async def check_readiness(stages):
 
 
 async def main(argv=None):
+    from app.core.logging import configure_logging
+    configure_logging()
     parser=argparse.ArgumentParser(description=__doc__)
     organizations=parser.add_mutually_exclusive_group()
     organizations.add_argument('--organization',action='append',type=uuid.UUID)

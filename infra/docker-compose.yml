@@ -71,6 +71,7 @@ services:
       HV_SESSION_COOKIE_SECURE: ${VERWALINO_COOKIE_SECURE:?use self-host.sh}
       HV_ALLOWED_HOSTS: ${VERWALINO_ALLOWED_HOSTS:?use self-host.sh}
       HV_ENABLE_API_DOCS: "false"
+      HV_RELEASE_ID: ${HV_RELEASE_ID:-}
       HV_DOCUMENT_STORAGE_ROOT: /data/documents
       HV_DECLARATION_IMPORT_ENABLED: "false"
       HV_DECLARATION_QA_ENABLED: "false"

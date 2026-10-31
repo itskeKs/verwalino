@@ -2,7 +2,6 @@
 
 Status: **Proposed** (confirmation by the human pending — no code/commit yet)
 Date: 2026-06-02 · Context: M6 (resolves the item explicitly deferred to M6 in M0) · Reference: [0001-organization-isolation-rls.md](0001-organization-isolation-rls.md) (§Delimitation: "DB hardening of the segregation of funds at the earliest with M6") · [../architecture.md](../architecture.md) §2.6, assumption A-4, §9 item 4 · [../m6-zahlungen-mietkonto.md](../m6-zahlungen-mietkonto.md) §4 · [../sdd-property-management-mvp.md](../sdd-property-management-mvp.md) §4 (segregation of funds), §6.3
-Author: `engine-correctness` (Opus 4.8)
 
 > M0 (architecture.md A-4, ADR-0001 §Delimitation) explicitly recorded: segregation of funds is, in M0, **only prepared in the model**; the question of **DB hardening** is "to be decided at the earliest with M6, when accounts/payments are real." M6 makes accounts/payments real — this ADR decides it. **[DECISION]** for the human.
 

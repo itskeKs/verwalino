@@ -29,6 +29,9 @@ Usage: bash scripts/self-host.sh COMMAND
   status                        Show this installation's containers
   stop                          Stop containers without deleting data
 Default: local HTTP on 127.0.0.1:18080; no AI, SMTP or extraction worker.
+Request IDs are always enabled; optional error tracking stays off.
+HV_ERROR_TRACKING_* keys are not installer settings; see DEPLOY.md.
+Export HV_RELEASE_ID to label tracker releases (otherwise app version 0.1.0).
 Optional inbox-worker (profile inbox, ClamAV signatures): see DEPLOY.md.
 Start and stop also stop an existing inbox-worker; restart it after app readiness.
 VERWALINO_CONFIG selects the private config file (default: .env.selfhost).
