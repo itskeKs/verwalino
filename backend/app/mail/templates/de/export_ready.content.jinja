@@ -6,5 +6,5 @@
 {% set facts = [('Archivgröße', mail.size_bytes|size), ('Verfügbar bis', mail.available_until|berlin_datetime ~ ' Uhr')] %}
 {% set action_label = 'Datenexport öffnen' %}
 {% set action_link = mail.export_link %}
-{% set notes = ['Das Archiv steht 24 Stunden bereit. Laden Sie es vor dem angegebenen Zeitpunkt herunter.'] %}
+{% set notes = ['Das Archiv steht bis ' ~ mail.available_until|berlin_datetime ~ ' Uhr bereit. Laden Sie es vor dem angegebenen Zeitpunkt herunter.'] %}
 {% set why = 'Sie erhalten diese E-Mail, weil Sie einen Datenexport für die Organisation „' ~ mail.organization_name ~ '“ angefordert haben.' %}

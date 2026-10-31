@@ -30,7 +30,7 @@ SAMPLES = {context.kind: context for context in (
     PasswordReset(reset_link=f"{ORIGIN}/passwort-zuruecksetzen?token={TOKEN}", valid_minutes=60),
     PasswordChanged(changed_at=NOW, sessions_revoked=True, reset_request_link=f"{ORIGIN}/passwort-vergessen"),
     QuotaStorageWarning(organization_name=ORGANIZATION, used_bytes=1717986918,
-                        limit_bytes=2 * 1024**3, percent=80, settings_link=f"{ORIGIN}/einstellungen"),
+                        limit_bytes=2 * 1024**3, settings_link=f"{ORIGIN}/einstellungen"),
     QuotaStorageFull(organization_name=ORGANIZATION, used_bytes=2 * 1024**3,
                      limit_bytes=2 * 1024**3, settings_link=f"{ORIGIN}/einstellungen"),
     AiBudgetExhausted(organization_name=ORGANIZATION, resets_on=date(2026, 11, 1),

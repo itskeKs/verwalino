@@ -742,7 +742,10 @@ immutable subject, plain text and HTML, and `apply_to(EmailMessage)` attaches
 the alternatives without changing sender, recipient, date or message ID.
 Fifteen frozen Pydantic contexts provide one kind-to-class inventory; bounded
 strings reject controls, links require HTTPS (HTTP only on loopback), and times
-must be timezone-aware. Jinja2 uses HTML autoescape and `StrictUndefined` with
+must be timezone-aware. Names reject MIME encoded words during context validation;
+rendering checks the final subject as well. Storage warning percentages are
+derived from byte counts, rounded to the nearest integer (halves up); export
+copy uses the supplied deadline in German date/time format. Jinja2 uses HTML autoescape and `StrictUndefined` with
 packaged, developer-only German templates and a shared website-brand layout.
 Unlike T48's user-editable placeholder text, these templates are executable
 developer code and are never loaded from user input or user paths. No generic

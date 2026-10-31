@@ -13,7 +13,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import settings
-from app.mail import RenderedMail, render_mail
+from app.mail import ENVIRONMENT, RenderedMail, render_mail
 from app.mail.contexts import (
     CONTEXT_TYPES, MailLink, OperatorNotice, PasswordReset, SignupWelcome,
 )
@@ -163,11 +163,61 @@ def test_dates_sizes_masking_validity_and_optional_copy():
         type(SAMPLES["quota_storage_warning"])(**{**SAMPLES["quota_storage_warning"].model_dump(), "percent": 101})
 
 
+@pytest.mark.parametrize("kind,field", [
+    ("user_invitation", "organization_name"),
+    ("operator_notice", "title"),
+    ("operator_alert", "check"),
+    ("operator_alert", "environment"),
+])
+@pytest.mark.parametrize("value", ["Wer=?Wie", "=?utf-8?b?DQpCY2M6IHZpY3RpbUBleGFtcGxlLmRlDQo=?="])
+def test_subject_fields_refuse_encoded_words_at_context_validation(kind, field, value):
+    context = SAMPLES[kind]
+    with pytest.raises(ValidationError, match="encoded words"):
+        type(context)(**{**context.model_dump(), field: value})
+
+
+@pytest.mark.parametrize("kind", CONTEXT_TYPES)
+def test_subject_templates_never_contain_encoded_words(kind):
+    subject = ENVIRONMENT.get_template(f"{kind}.subject.txt").render(mail=SAMPLES[kind], hosted=True)
+    assert "=?" not in subject
+
+
+def test_export_copy_uses_the_actual_deadline_in_german_format():
+    context = SAMPLES["export_ready"]
+    deadline = datetime(2027, 7, 3, 9, 42, tzinfo=timezone.utc)
+    rendered = render_mail(type(context)(**{**context.model_dump(), "available_until": deadline}))
+    for part in (rendered.text, rendered.html):
+        assert "Das Archiv steht bis 03.07.2027, 11:42 Uhr bereit." in part
+        assert "24 Stunden" not in part
+
+
+@pytest.mark.parametrize("used,limit,percent", [
+    (0, 1, 0), (1, 3, 33), (2, 3, 67), (1, 8, 13),
+    (1717986918, 2 * 1024**3, 80), (100, 100, 100), (101, 100, 101),
+])
+def test_quota_percentage_is_derived_from_byte_counts(used, limit, percent):
+    sample = SAMPLES["quota_storage_warning"]
+    context = type(sample)(**{
+        **sample.model_dump(exclude={"percent"}), "used_bytes": used, "limit_bytes": limit,
+    })
+    assert context.percent == percent
+    rendered = render_mail(context)
+    assert f"{percent} %" in rendered.subject
+    assert f"{percent} %" in rendered.text
+    assert f"{percent} %" in rendered.html
+
+
+def test_quota_context_refuses_an_independent_percentage():
+    context = SAMPLES["quota_storage_warning"]
+    with pytest.raises(ValidationError):
+        type(context)(**{**context.model_dump(), "used_bytes": 0, "limit_bytes": 1, "percent": 100})
+
+
 def test_encoded_words_cannot_reach_the_subject():
     invitation = SAMPLES["user_invitation"]
     smuggled = "Muster =?utf-8?b?DQpCY2M6IHZpY3RpbUBleGFtcGxlLmRlDQo=?="
     with pytest.raises(ValueError, match="encoded words"):
-        render_mail(type(invitation)(**{**invitation.model_dump(), "organization_name": smuggled}))
+        render_mail(invitation.model_copy(update={"organization_name": smuggled}))
 
 
 def test_operator_text_is_escaped_and_optional_action_is_rendered():

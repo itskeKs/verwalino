@@ -17,8 +17,8 @@ Verfügbar bis: 01.11.2026, 14:05 Uhr
 Datenexport öffnen:
 https://verwaltung.example.de/einstellungen/datenexport
 
-Das Archiv steht 24 Stunden bereit. Laden Sie es vor dem angegebenen
-Zeitpunkt herunter.
+Das Archiv steht bis 01.11.2026, 14:05 Uhr bereit. Laden Sie es vor dem
+angegebenen Zeitpunkt herunter.
 
 -- 
 Sie erhalten diese E-Mail, weil Sie einen Datenexport für die

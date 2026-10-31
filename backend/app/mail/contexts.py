@@ -34,7 +34,13 @@ def _link(value: str) -> str:
     return value
 
 
-Name = Annotated[str, StringConstraints(strict=True, min_length=1, max_length=200), BeforeValidator(_clean)]
+def _subject_safe(value: str) -> str:
+    if "=?" in value:
+        raise ValueError("Names must not contain encoded words")
+    return value
+
+
+Name = Annotated[str, StringConstraints(strict=True, min_length=1, max_length=200), BeforeValidator(_clean), AfterValidator(_subject_safe)]
 Paragraph = Annotated[str, StringConstraints(strict=True, min_length=1, max_length=2000), BeforeValidator(_clean)]
 MailLink = Annotated[str, StringConstraints(strict=True, min_length=1, max_length=2048), BeforeValidator(_clean), AfterValidator(_link)]
 PositiveInt = Annotated[int, Field(strict=True, gt=0)]
@@ -110,8 +116,12 @@ class QuotaStorageWarning(MailContext):
     organization_name: Name
     used_bytes: Bytes
     limit_bytes: PositiveInt
-    percent: Annotated[int, Field(strict=True, ge=0, le=100)]
     settings_link: MailLink
+
+    @property
+    def percent(self) -> int:
+        # Round to the nearest whole percent, with halves rounded up.
+        return (100 * self.used_bytes + self.limit_bytes // 2) // self.limit_bytes
 
 
 class QuotaStorageFull(MailContext):
