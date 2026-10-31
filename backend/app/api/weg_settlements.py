@@ -373,10 +373,8 @@ async def derive_paid_advances_route(
     if run is None or run.run_type != "WEG_JAHRESABRECHNUNG":
         raise HTTPException(status_code=404, detail="WEG-Jahresabrechnung not found")
     
-    # Extract period_year from the run's period_start
-    period_year = run.period_start.year
-    
-    result = await svc.derive_paid_advances(run.economic_plan_id, period_year)
+    result = await svc.derive_paid_advances(
+        run.economic_plan_id, run.period_start.year, run.period_start, run.period_end)
     return [
         PaidAdvancesResult(
             owner_profile_id=str(r.owner_profile_id),

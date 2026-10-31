@@ -3,6 +3,7 @@
  * Units can be created/edited inline.
  */
 
+import { settlementPeriodPattern } from "../lib/settlementPeriod";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { getProperty, getPropertyKnowledge, listUnits, createUnit, updateUnit, confirmMeaScale, deleteProperty } from "../api/endpoints";
@@ -211,7 +212,7 @@ export function PropertyDetailPage() {
             <tr><td>PLZ / Stadt</td><td>{[property.zip_code, property.city].filter(Boolean).join(" ") || "-"}</td></tr>
             <tr><td>Baujahr</td><td>{property.construction_year ?? "—"}</td></tr>
             <tr><td>Gesamtfläche (m²)</td><td>{property.total_area ?? "—"}</td></tr>
-            <tr><td>GJ-Startmonat</td><td>{property.fiscal_year_start_month}</td></tr>
+            <tr><td>Beginn des Abrechnungszeitraums</td><td>{settlementPeriodPattern(property.fiscal_year_start_month)}</td></tr>
           </tbody>
         </table>
       </div>

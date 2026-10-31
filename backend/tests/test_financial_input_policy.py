@@ -176,7 +176,7 @@ async def test_reversal_invalidates_derived_total_and_requires_rederivation(clie
 @pytest.mark.asyncio
 async def test_derived_subperiod_accepts_matching_year_and_blocks_wrong_year_but_manual_evidence_works(client_a_admin, m6_seed):
     created = await client_a_admin.post("/api/settlements", json={
-        "property_id": str(m6_seed["prop_b"]), "lease_agreement_id": str(m6_seed["lease_d"]),
+        "property_id": str(m6_seed["prop_a"]), "lease_agreement_id": str(m6_seed["lease"]),
         "period_start": "2025-01-01", "period_end": "2025-06-30"})
     run_id = created.json()["id"]
     for year in (2024, 2026):

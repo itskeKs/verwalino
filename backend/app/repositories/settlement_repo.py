@@ -152,6 +152,27 @@ class SettlementRunRepository(TenantRepository[SettlementRun]):
         result = await self._session.execute(stmt)
         return result.scalars().all()
 
+    async def has_conflicting_period(self, run: SettlementRun, scope_id: uuid.UUID | None = None) -> bool:
+        """A visible finalized period overlaps this run with different bounds."""
+        stmt = (self._base_query()
+            .where(SettlementRun.property_id == run.property_id,
+                SettlementRun.lease_agreement_id == run.lease_agreement_id,
+                SettlementRun.run_type == run.run_type,
+                SettlementRun.status == "finalized",
+                SettlementRun.superseded_by_id.is_(None),
+                SettlementRun.period_start <= run.period_end,
+                SettlementRun.period_end >= run.period_start,
+                or_(SettlementRun.period_start != run.period_start,
+                    SettlementRun.period_end != run.period_end)))
+        if run.run_type == "WEG_JAHRESABRECHNUNG":
+            binding = select(AccountingScopeBinding.id).where(
+                AccountingScopeBinding.organization_id == self._org_id,
+                AccountingScopeBinding.settlement_run_id == SettlementRun.id,
+            )
+            stmt = stmt.where(~binding.exists() if scope_id is None else
+                binding.where(AccountingScopeBinding.scope_id == scope_id).exists())
+        return (await self._session.execute(stmt.limit(1))).scalar_one_or_none() is not None
+
     async def ownership_for_property(
         self, property_id: uuid.UUID
     ) -> Sequence[OwnershipHistory]:

@@ -56,3 +56,12 @@ it("explicitly labels the management select without including its option text", 
   fireEvent.change(select, { target: { value: "WEG" } });
   expect(select).toHaveValue("WEG");
 });
+
+it("names the settlement start and shows the inclusive month pattern", async () => {
+  vi.spyOn(api, "get").mockResolvedValue({ items: [], next_cursor: null });
+  render(<MemoryRouter><PropertiesPage /></MemoryRouter>);
+  fireEvent.click(screen.getByRole("button", { name: "+ Neues Objekt" }));
+  const month = screen.getByRole("combobox", { name: "Beginn des Abrechnungszeitraums" });
+  fireEvent.change(month, { target: { value: "4" } });
+  expect(screen.getByText("01.04. bis 31.03.")).toBeVisible();
+});

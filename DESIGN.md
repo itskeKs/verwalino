@@ -214,6 +214,32 @@ New screens follow these page structures and use a German noun as their `h1`.
   open as a card above the list; small edits of master data open `MasterDataEditor` as a dialog.
   Selects, checkboxes and file inputs are the native elements.
 
+### Property settlement periods
+
+Property forms and details call the existing start-month setting "Beginn des
+Abrechnungszeitraums". The adjacent recurring bounds use `01.04. bis 31.03.`;
+concrete dates remain in labelled date controls. Statement and batch forms offer
+backend period labels (`2025`, `2025/2026`) and prefill both dates while retaining
+free date entry. Statement and batch defaults use the backend's most recent
+completed property period; offers never include a period that has not ended.
+Automatic prefill requires both date fields to be empty, so a
+delayed offer never replaces user-entered dates. Explicitly choosing an offer sets
+both dates. Changing the property resets the period selection. Plan forms
+use a start year and the same offers; their prefilled date controls remain editable
+for mid-year accounting scopes and gap-closing transition plans.
+Batch results show per-lease straddling errors with unit and tenant labels alongside
+the created and already-existing counts.
+The WEG statement form adopts the selected plan's persisted dates. The previous-
+actuals dialog accepts the property's prior period and does not predict calendar-
+year dates. Forms constrain long selects to their grid cells at 360 px.
+
+Before/after property, statement and plan form captures, plus batch and WEG captures,
+are in [docs/assets/settlement-period/](docs/assets/settlement-period/), taken on
+the disposable database with synthetic records in "Test Hausverwaltung".
+The `*-before-review-*` files preserve the prior statement and plan captures;
+their refreshed `*-after-*` files show completed November periods and editable
+plan dates. Batch captures show per-lease errors beside the actual result counts.
+
 ### Permissions area
 
 `/berechtigungen` has one admin sidebar entry, a kit card overview and wrapping section

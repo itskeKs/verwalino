@@ -228,9 +228,16 @@ class SettlementBatchSkipped(BaseModel):
     settlement_run_id: str
 
 
+class SettlementBatchError(BaseModel):
+    lease_agreement_id: str
+    code: str
+    error: str
+
+
 class SettlementBatchOut(BaseModel):
     created: list[SettlementRunOut]
     skipped: list[SettlementBatchSkipped]
+    errors: list[SettlementBatchError] = Field(default_factory=list, exclude_if=lambda errors: not errors)
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +348,7 @@ async def create_settlement_batch(
     db: AsyncSession = Depends(get_db),
 ):
     service = SettlementService(db, auth.organization_id, auth.user_id)
-    created, skipped = await service.create_batch(
+    created, skipped, errors = await service.create_batch(
         body.property_id, body.period_start, body.period_end, body.accounting_scope_id,
     )
     return SettlementBatchOut(
@@ -349,6 +356,8 @@ async def create_settlement_batch(
         skipped=[SettlementBatchSkipped(
             lease_agreement_id=str(run.lease_agreement_id), settlement_run_id=str(run.id),
         ) for run in skipped],
+        errors=[SettlementBatchError(lease_agreement_id=str(lease_id), code=error["code"], error=error["message"])
+                for lease_id, error in errors],
     )
 
 

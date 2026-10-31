@@ -17,10 +17,46 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
+from calendar import monthrange
 from decimal import Decimal
 
 from app.engine.types import LeasePeriodInput, OwnerPeriodInput, PeriodOverlapError
+
+
+def period_starting_in(start_month: int, year: int) -> tuple[date, date]:
+    """Twelve calendar months, starting on day one; both bounds are inclusive."""
+    start = date(year, start_month, 1)
+    end_year, end_month = (year, 12) if start_month == 1 else (year + 1, start_month - 1)
+    return start, date(end_year, end_month, monthrange(end_year, end_month)[1])
+
+
+def period_for_date(start_month: int, day: date) -> tuple[date, date]:
+    """The property's period containing day, without consulting a clock."""
+    return period_starting_in(start_month, day.year if day.month >= start_month else day.year - 1)
+
+
+def period_label(start: date, end_inclusive: date) -> str:
+    """Calendar-year label, or both years for a period crossing January."""
+    return str(start.year) if start.year == end_inclusive.year else f"{start.year}/{end_inclusive.year}"
+
+
+def validate_settlement_period(start: date, end_inclusive: date) -> None:
+    """Accept inclusive periods up to twelve calendar months, including short ones.
+
+    The last day precedes the next anniversary. If that day does not exist in
+    the next year (29 February), the period ends on that month's last day.
+    """
+    if end_inclusive < start:
+        raise ValueError("Der Abrechnungszeitraum darf nicht vor seinem Beginn enden.")
+    if start.year == 9999:
+        return
+    last_day_of_month = monthrange(start.year + 1, start.month)[1]
+    last_day = date(start.year + 1, start.month, min(start.day, last_day_of_month))
+    if start.day <= last_day_of_month:
+        last_day -= timedelta(days=1)
+    if end_inclusive > last_day:
+        raise ValueError("Der Abrechnungszeitraum darf höchstens zwölf Monate umfassen.")
 
 
 # Period kinds in the unit-internal time cover.

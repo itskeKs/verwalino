@@ -7,10 +7,12 @@ import { AuthCtx } from "../auth/useAuth";
 import { AccountingScopeSelector } from "./AccountingScopeSelector";
 
 interface PropertyChoice { id: string; name: string; management_type: string }
-function calendarYear(year: number): string { return String(year).padStart(4, "0"); }
 function checkProposal(data: PreviousPlanPreview, year: number) {
   if (data.plan_year !== year || data.source_year !== year - 1
-    || data.period_start !== `${calendarYear(year - 1)}-01-01` || data.period_end !== `${calendarYear(year - 1)}-12-31`
+    || typeof data.period_start !== "string" || typeof data.period_end !== "string"
+    || !data.period_start.startsWith(`${String(year - 1).padStart(4, "0")}-`)
+    || !/^\d{4}-\d{2}-\d{2}$/.test(data.period_start) || !/^\d{4}-\d{2}-\d{2}$/.test(data.period_end)
+    || data.period_end < data.period_start
     || typeof data.source_digest !== "string" || !data.source_digest || typeof data.footnote !== "string" || !Array.isArray(data.planned_costs)
     || typeof data.reserve_contribution_total !== "string" || normalizePlanAmount(data.reserve_contribution_total) === null) {
     throw new Error("Unvollständiger Vorjahresvorschlag. Bitte erneut prüfen.");
@@ -144,7 +146,7 @@ export function PreviousPlan({ properties }: { properties: PropertyChoice[] }) {
       <fieldset disabled={creating || uncertain} style={{ border: 0, padding: 0 }}>
         <label>Objekt für Vorjahresplan<select value={propertyId} onChange={e => { invalidate(); setPropertyId(e.target.value); setSourceScope(null); setTargetScope(null); setSourceValid(true); setTargetValid(true); }}><option value="">Bitte wählen</option>{choices.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
         <label>Zieljahr<input inputMode="numeric" value={year} placeholder="z. B. 2027" onChange={e => { invalidate(); setYear(e.target.value); }} /></label>
-        <p>Neuer Plan: {validYear ? `${calendarYear(planYear)}-01-01 bis ${calendarYear(planYear)}-12-31` : "Zieljahr als ganze Zahl von 2 bis 9998 angeben."}</p>
+        <p>{validYear ? "Der neue Plan beginnt im Zieljahr. Der Abrechnungszeitraum richtet sich nach dem Objekt." : "Bitte geben Sie das Zieljahr als ganze Zahl von 2 bis 9998 an."}</p>
         {propertyId && <>
           <fieldset><legend>Vorjahres-Ist (Lesekreis)</legend><AccountingScopeSelector key={`read-${propertyId}-${sessionKey}`} propertyId={propertyId} kind="WEG" capability="read" value={sourceScope} onChange={id => { invalidate(); setSourceScope(id); }} onValidityChange={setSourceValid} /></fieldset>
           <fieldset><legend>Neuer Plan (Vorbereitungskreis)</legend><AccountingScopeSelector key={`prepare-${propertyId}-${sessionKey}`} propertyId={propertyId} kind="WEG" capability="prepare" value={targetScope} onChange={id => { invalidate(); setTargetScope(id); }} onValidityChange={setTargetValid} /></fieldset>

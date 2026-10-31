@@ -93,6 +93,7 @@ pending; registration stays closed and legal review remains with #26. See the
 
 | Feature | Status | Location |
 | --- | --- | --- |
+| Property settlement period | 🟡 month-based offers, statement/batch validation, plan dates and prior actuals, advances across years; all nonidentical overlaps with finalized periods rejected within the acting user's visibility; identical repeats allowed; automatic lease-bounded dates, short-window cost proration and cross-scope database constraint pending | `engine/periods.py`, `api/properties.py` (`/settlement-periods`), `pages/SettlementsPage.tsx`, issue #68 |
 | Operating cost statement per lease: compute, finalize, PDF, correction | ✅ | `api/settlements.py`, `services/settlement_service.py`, `services/settlement_pdf.py` |
 | Keys area/MEA/units, pro rata, vacancy | ✅ | `engine/distribution.py` |
 | Keys consumption/persons/external/manual | ✅ inputs shown and sent with the database key names | `pages/SettlementDetailPage.tsx`, `lib/costVocabulary.ts`, T03 |
@@ -146,7 +147,7 @@ pending; registration stays closed and legal review remains with #26. See the
 - VAT-liable letting (People and tenancies): no VAT on rent, advances and statements for units with the VAT option (#71); no input VAT apportionment (#72).
 - Bank retrieval PSD2/FinTS (Tenant ledger, bank and payments): no automatic bank statement retrieval; import is by CSV/CAMT file only (#40).
 - Inbox (Posteingang) with review chain (Vouchers and costs): worker service and upload-to-cost scenario are present; real-stack acceptance with ClamAV signatures remains pending ([#35](https://github.com/itskeKs/verwalino/issues/35), [runbook](operations/inbox-review-chain.md)).
-- Settlement period (Operating and heating cost statements): the property's period start month is stored but statements and economic plans do not use it; periods are not validated for length or overlap (#68).
+- Settlement period (Operating and heating cost statements): overlaps with runs or plans outside the acting user's visible accounting scopes are not detected; a follow-up database constraint is still needed. Identical periods remain allowed (#68).
 - Maintenance reserve (Erhaltungsrücklage) (WEG): opening balance and withdrawals are manual inputs; no reserve ledger or bank-account tracking (#36).
 - Dunning fees and default interest (Dunning, deadlines, tasks): fees are fixed constants and interest needs a base rate typed per notice; neither is configurable per organization (#69).
 - Tenant portal (Documents, communication, reports): not built; planned right after the hosted launch (#41).

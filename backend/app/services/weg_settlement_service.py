@@ -25,6 +25,8 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
+
+from app.engine.periods import validate_settlement_period
 from app.core.rbac import ScopeCapability
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -244,7 +246,16 @@ class WegSettlementService:
             status="draft",
             engine_version=ENGINE_VERSION,
         )
-        await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(run, accounting_scope_id)
+        sphere = await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(run, accounting_scope_id)
+        try:
+            validate_settlement_period(period_start, period_end)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if await self._runs.has_conflicting_period(run, sphere.id if sphere is not None else None):
+            raise HTTPException(409, {
+                "code": "settlement_period_conflict",
+                "message": "Abrechnungszeitraum überschneidet eine finalisierte WEG-Abrechnung dieses Objekts.",
+            })
         run = await self._runs.create(run)
         await self._audit.create(
             AuditEvent(
@@ -289,7 +300,13 @@ class WegSettlementService:
         self, run_id: uuid.UUID, extras: WegComputeExtras | None = None
     ) -> SettlementRun:
         run = await self._get_weg_draft_or_404(run_id)
+        scope_id = await FinancialScopeService(self._session, self._org_id, self._user_id).enter(run)
         computation_basis = await begin_computation(self._session, self._org_id, run, 'finalize')
+        if await self._runs.has_conflicting_period(run, scope_id):
+            raise HTTPException(409, {
+                "code": "settlement_period_conflict",
+                "message": "Abrechnungszeitraum überschneidet eine finalisierte WEG-Abrechnung dieses Objekts.",
+            })
         extras = extras or WegComputeExtras()
         coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", extras)
         inp, result = await self._compute_weg_engine(run, extras)
@@ -502,7 +519,8 @@ class WegSettlementService:
         ]
 
     async def derive_paid_advances(
-        self, economic_plan_id: uuid.UUID, period_year: int
+        self, economic_plan_id: uuid.UUID, period_year: int,
+        period_start: date | None = None, period_end: date | None = None,
     ) -> list["ManualOwnerAdvance"]:
         """Derive the (nachrichtliche) paid_advances per owner from payments (§6.3).
 
@@ -523,11 +541,15 @@ class WegSettlementService:
         if plan is None:
             raise HTTPException(404, "Economic plan not found")
         await FinancialScopeService(self._session, self._org_id, self._user_id).enter(plan, computation=True)
+        start = period_start if period_start is not None else plan.period_start
+        end = period_end if period_end is not None else plan.period_end
+        if not start.year <= period_year <= end.year:
+            raise HTTPException(422, "Reference year must belong to the settlement period")
         pay_svc = PaymentService(self._session, self._org_id, self._user_id)
         plan_advances = await self._plan_advances_per_owner(economic_plan_id)
         result: list[ManualOwnerAdvance] = []
         for adv in plan_advances:
-            total = await pay_svc.derive_hausgeld_total(adv.owner_profile_id, period_year)
+            total = await pay_svc.derive_hausgeld_total_for_period(adv.owner_profile_id, start, end)
             result.append(
                 ManualOwnerAdvance(owner_profile_id=adv.owner_profile_id, paid_total=total)
             )
