@@ -1,8 +1,10 @@
 # M6 design: payments, tenant ledger (Mietkonto) & open items
 
+Browser acceptance journeys for bank import/assignment, rent changes, deposits and dunning now live in the `@browser` features; see [the feature runner](../features/README.md#browser-features).
+
 As of: 2026-06-02 · Version 0.1 (design, before implementation)
 Reference: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2 §3 (non-goal: bank import), §5.4 (incoming payments — *note: the SDD numbers them §6.3/§6.7*), §6.3 (bank accounts), §6.7 (rent/payment management), §11 (PDF), §13 (`Payment`/`OpenItem`), §14 (chronology), §16, §17, §18 · [archived roadmap](archive/roadmap.md) M6 · [architecture.md](architecture.md) §2.6 (segregation of funds (Vermögenstrennung)), §5.1 (conventions), §5.3 (`bank_account` anchor), assumption A-4 · [m3-abrechnungs-engine.md](m3-abrechnungs-engine.md) §7 (`advance_payments_source` MANUAL→DERIVED) · [m4-weg-abrechnung.md](m4-weg-abrechnung.md) §2.4 (paid_advances, settlement balance (Abrechnungsspitze)) · ADRs: [0003](adr/0003-gobd-immutability-mechanism.md) (reused), [0005](adr/0005-rounding-largest-remainder.md) (reused), [0006](adr/0006-valid-to-convention.md) (reused), [0007](adr/0007-weg-settlement-balance-and-economic-plan.md) (monthly basis, balance) · **[0009-expected-actual-and-payment-receipt.md](adr/0009-expected-actual-and-payment-receipt.md) (new)** · **[0010-segregation-of-funds-payments.md](adr/0010-segregation-of-funds-payments.md) (new)**
-Author: `engine-correctness` (Opus 4.8) · Status: **Draft for confirmation by the human — no application code, no migration, no commit**
+Status: **Draft for confirmation by the human — no application code, no migration, no commit**
 
 > This document specifies **M6** (payments, tenant ledger, open items) down to the arithmetic. M6 is the point where the **flow of money** becomes real and the bridge `advance_payments_source: MANUAL → DERIVED` prepared in M3/M4 is closed: settlements are to be able to **derive the advance payment total from recorded payments** instead of maintaining it manually. **Manual remains as a fallback.**
 >
@@ -290,7 +292,7 @@ Payments are **booking vouchers** (GoBD, SDD §6.6/§17, 8-year retention). M6 a
 
 ## 6. Settlement integration (core) — which payment → which settlement quantity
 
-This is the most correctness-critical place in M6 and the reason why `engine-correctness` designs it. The bridge `advance_payments_source: MANUAL → DERIVED` is prepared in M3/M4; M6 defines **precisely** which payments flow into which settlement quantity — **without double counting, clearly delimited, manual as a fallback**.
+This is the most correctness-critical place in M6 and the reason why it is designed as a correctness-critical design step. The bridge `advance_payments_source: MANUAL → DERIVED` is prepared in M3/M4; M6 defines **precisely** which payments flow into which settlement quantity — **without double counting, clearly delimited, manual as a fallback**.
 
 ### 6.1 Basic principle: a pure derivation function, no matching
 
@@ -439,9 +441,13 @@ cover the absolute bank amount cent-exactly; German decimal input is validated w
 floating-point arithmetic. Errors keep the inputs, 409 becomes visible, reload
 follows only on success. READ_ONLY gets no mutation actions. "Alle" ("All") also keeps
 processed rows; account filter and pagination remain server-side.
-The local browser acceptance run creates all master data via the UI and demonstrates 850=700+150
-in January fully paid, 600=500+100 in February with 250 remainder, and 25
-ignored without a payment; annual expected amount 10,200, actual 1,450, balance 8,750 EUR.
+The browser scenarios in `features/bank_assignment.feature` set up master data and
+import receipts through the API, then accept suggestions, split and ignore receipts
+through the UI. They assert January's 850=700+150 is fully paid and its receipt appears
+under "Zugeordnet"; February's 600=500+100 leaves 250 EUR open. After processing all
+receipts, the reloaded filters separate assigned and ignored receipts, retain all
+three under "Alle", and show none under "Neu"; ignoring the 25 EUR receipt creates
+no rent payment.
 
 ### 6.12 Property annual overview (Phase 2, T38)
 
@@ -583,9 +589,9 @@ Golden test 5 + invariant I6-E together are the objective proof of the M6 exit: 
 
 ---
 
-## 8. Implementation checklist for `bulk-impl` (roadmap M6 → Opus 4.6)
+## 8. Implementation checklist
 
-> According to the roadmap model assignment, M6 goes to **`bulk-impl` (Opus 4.6)** — recording the flow of money is predominantly bulk engineering. **But:** the **settlement integration (§6) is correctness-critical** and is to be built as a **pure, tested derivation function**; in case of ambiguity in the DERIVED logic, the segregation-of-funds coherence or the GoBD mechanics, **escalate to `engine-correctness`** (per the `bulk-impl.md` escalation rule). Order as in M3/M4: **engine first (pure functions + tests), then persistence/trigger, then service, then API, finally PDF/display.** **Prerequisite:** the human has confirmed the [DECISION] items (§10) and ADR-0009/0010. No commit before that. **All 291 existing tests stay green** (additive).
+> Recording the flow of money in M6 is predominantly bulk engineering. **But:** the **settlement integration (§6) is correctness-critical** and is to be built as a **pure, tested derivation function**; in case of ambiguity in the DERIVED logic, the segregation-of-funds coherence or the GoBD mechanics, **escalate for a correctness review**. Order as in M3/M4: **engine first (pure functions + tests), then persistence/trigger, then service, then API, finally PDF/display.** **Prerequisite:** the human has confirmed the [DECISION] items (§10) and ADR-0009/0010. No commit before that. **All 291 existing tests stay green** (additive).
 
 ### 8.1 Engine as pure functions (first, highest test density)
 - [ ] `app/engine/mietkonto.py` (new, **deliberately separated** from `services`/`api`/`models` — SDD §16): no DB/HTTP/ORM imports; `Decimal`/`date`/dataclasses in/out.

@@ -2,7 +2,6 @@
 
 Status: **Proposed** (confirmation by the human pending — no code/commit yet)
 Date: 2026-06-01 · Context: M3 · Reference: [../m3-abrechnungs-engine.md](../m3-abrechnungs-engine.md) §4 · [../architecture.md](../architecture.md) §5.1 (I4) · SDD §6.9, §10, §18
-Author: `engine-correctness` (Opus 4.8)
 
 > This ADR decides the point explicitly left open in SDD §18, "Which rounding rules apply per settlement", for the **distribution engine** (M3/M4). It is a **[DECISION]** for the human. The ADR fixes the *technical* rounding mechanics that guarantee the core invariant "sum of the shares = total costs, no cent is lost". The *domain* question whether a different rule is prescribed for a particular type of settlement remains to be signed off on the domain side.
 

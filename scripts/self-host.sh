@@ -62,6 +62,9 @@ Usage: bash scripts/self-host.sh COMMAND
   backup [--out DIR]            Archive the running database and documents
   restore FILE [--yes]          Replace data in a stopped installation
 Default: local HTTP on 127.0.0.1:18080; no AI, SMTP or extraction worker.
+Request IDs are always enabled; optional error tracking stays off.
+HV_ERROR_TRACKING_* keys are not installer settings; see DEPLOY.md.
+Export HV_RELEASE_ID to label tracker releases (otherwise app version 0.1.0).
 VERWALINO_CONFIG selects the private config file (default: .env.selfhost).
 No automatic update, downgrade or volume deletion is provided.
 Backups exclude private config/secrets and certificates; keep config separately.

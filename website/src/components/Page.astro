@@ -1,0 +1,22 @@
+---
+import Site from '../layouts/Site.astro';
+import Landing from './Landing.astro';
+import SelfHost from './SelfHost.astro';
+import SignUp from './SignUp.astro';
+import Imprint from './Imprint.astro';
+import LegalDraft from './LegalDraft.astro';
+import NotFound from './NotFound.astro';
+import { t, type Locale } from '../i18n';
+import { type Page } from '../content/routes';
+interface Props { locale: Locale; page: Page }
+const { locale, page } = Astro.props;
+const text = t(locale);
+---
+<Site locale={locale} page={page} title={text(`page.${page}.title`)} description={text(`page.${page}.description`)}>
+  {page === 'landing' && <Landing locale={locale} />}
+  {page === 'selfhost' && <SelfHost locale={locale} />}
+  {page === 'signup' && <SignUp locale={locale} />}
+  {page === 'imprint' && <Imprint locale={locale} />}
+  {(page === 'privacy' || page === 'terms' || page === 'dpa') && <LegalDraft locale={locale} document={page} />}
+  {page === 'notfound' && <NotFound locale={locale} />}
+</Site>
