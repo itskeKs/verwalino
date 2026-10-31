@@ -33,16 +33,13 @@ def upgrade():
     CREATE POLICY deletion_read ON public.organization_deletion FOR SELECT USING (
       organization_id=NULLIF(current_setting('app.current_org_id',true),'')::uuid
       AND public.scope_actor_role(organization_id) IS NOT NULL);
-    CREATE POLICY deletion_insert ON public.organization_deletion FOR INSERT WITH CHECK (
-      organization_id=NULLIF(current_setting('app.current_org_id',true),'')::uuid
-      AND public.scope_actor_role(organization_id)='OWNER_ADMIN');
     CREATE POLICY deletion_update ON public.organization_deletion FOR UPDATE USING (
       organization_id=NULLIF(current_setting('app.current_org_id',true),'')::uuid
-      AND public.scope_actor_role(organization_id)='OWNER_ADMIN') WITH CHECK (
+      AND status='cooling_off' AND public.scope_actor_role(organization_id)='OWNER_ADMIN') WITH CHECK (
       organization_id=NULLIF(current_setting('app.current_org_id',true),'')::uuid
-      AND public.scope_actor_role(organization_id)='OWNER_ADMIN');
+      AND status='cancelled' AND public.scope_actor_role(organization_id)='OWNER_ADMIN');
     REVOKE ALL ON public.organization_deletion FROM PUBLIC,app_rw;
-    GRANT SELECT,INSERT,UPDATE ON public.organization_deletion TO app_rw;
+    GRANT SELECT,UPDATE ON public.organization_deletion TO app_rw;
 
     -- The only cross-visibility import data is admission metadata: an empty
     -- tenant flag and collisions of UUIDs supplied by this administrator.
@@ -87,6 +84,7 @@ def upgrade():
     _registration_adapter(True)
     _erasure_authorization(True)
     _lifecycle()
+    _deletion_transitions()
     _erasure_payloads(True)
     _auth_filter(True)
 
@@ -107,6 +105,10 @@ def downgrade():
       END LOOP;
     END $$;
     DROP FUNCTION public.organization_lifecycle_guard();
+    DROP FUNCTION IF EXISTS public.organization_request_deletion(uuid);
+    DROP FUNCTION IF EXISTS public.organization_confirm_deletion(uuid,text);
+    DROP TRIGGER IF EXISTS b_organization_deletion_transition ON public.organization_deletion;
+    DROP FUNCTION IF EXISTS public.guard_organization_deletion_transition();
     DROP FUNCTION public.organization_deletion_preview(uuid);
     DROP FUNCTION public.organization_retention_plan(uuid);
     DROP FUNCTION IF EXISTS public.organization_retention_catalog();
@@ -299,7 +301,11 @@ def _lifecycle():
     DECLARE org uuid;
     BEGIN
       org:=COALESCE(to_jsonb(NEW),to_jsonb(OLD))->>CASE WHEN TG_TABLE_NAME='organization' THEN 'id' ELSE 'organization_id' END;
-      IF session_user<>'app_migrator' THEN
+      -- These lifecycle/authentication records must remain writable for audit
+      -- insertion, cancellation and reset-token cleanup. State updates have
+      -- their own stricter transition guard below.
+      IF session_user<>'app_migrator' AND TG_TABLE_NAME NOT IN
+        ('organization_deletion','audit_event','password_reset_request') THEN
         -- Plain statement-visible lookup. Never wait on another connection's
         -- ACL/lifecycle lock; review attestations use a second connection.
         IF EXISTS(SELECT 1 FROM public.organization_deletion d WHERE d.organization_id=org
@@ -312,12 +318,78 @@ def _lifecycle():
     DO $$ DECLARE tab record; BEGIN
       FOR tab IN SELECT c.relname FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnamespace
         WHERE ns.nspname='public' AND c.relkind='r' AND (c.relname='organization' OR EXISTS(
-          SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='organization_id'))
-        AND c.relname NOT IN ('organization_deletion','audit_event','password_reset_request') LOOP
+          SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='organization_id'
+            AND NOT a.attisdropped)) LOOP
         EXECUTE format('CREATE TRIGGER a_organization_lifecycle BEFORE INSERT OR UPDATE OR DELETE ON public.%I
           FOR EACH ROW EXECUTE FUNCTION public.organization_lifecycle_guard()',tab.relname);
       END LOOP;
     END $$;
+    ''')
+
+
+def _deletion_transitions():
+    op.execute('''
+    CREATE FUNCTION public.guard_organization_deletion_transition() RETURNS trigger
+      LANGUAGE plpgsql SET search_path=pg_catalog,pg_temp AS $$
+    BEGIN
+      IF current_user<>'app_migrator' AND (
+        OLD.status<>'cooling_off' OR NEW.status<>'cancelled'
+        OR (to_jsonb(NEW)-'status') IS DISTINCT FROM (to_jsonb(OLD)-'status')) THEN
+        RAISE EXCEPTION 'Only cancellation may update a runtime deletion decision' USING ERRCODE='42501';
+      END IF;
+      RETURN NEW;
+    END $$;
+    REVOKE ALL ON FUNCTION public.guard_organization_deletion_transition() FROM PUBLIC,app_rw,app_worker,app_review;
+    CREATE TRIGGER b_organization_deletion_transition BEFORE UPDATE ON public.organization_deletion
+      FOR EACH ROW EXECUTE FUNCTION public.guard_organization_deletion_transition();
+
+    -- Narrow native entry points prepare/confirm a decision. Runtime SQL cannot
+    -- supply timestamps, a deadline, a retention snapshot or a completed status.
+    CREATE FUNCTION public.organization_request_deletion(org uuid) RETURNS jsonb
+      LANGUAGE plpgsql VOLATILE SECURITY DEFINER
+      SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+    DECLARE state text; preview jsonb;
+    BEGIN
+      IF session_user<>'app_rw' OR public.scope_actor_role(org) IS DISTINCT FROM 'OWNER_ADMIN' THEN
+        RAISE EXCEPTION 'Current administrator required' USING ERRCODE='42501'; END IF;
+      PERFORM pg_advisory_xact_lock(hashtextextended('scope-acl:'||org::text,0));
+      PERFORM pg_advisory_xact_lock(hashtextextended('organization-lifecycle:'||org::text,0));
+      IF public.scope_actor_role(org) IS DISTINCT FROM 'OWNER_ADMIN' THEN
+        RAISE EXCEPTION 'Current administrator required' USING ERRCODE='42501'; END IF;
+      SELECT status INTO state FROM public.organization_deletion WHERE organization_id=org FOR UPDATE;
+      IF state IN ('cooling_off','deleted_pending_retention') THEN
+        RAISE EXCEPTION 'Deletion already confirmed' USING ERRCODE='42501'; END IF;
+      preview:=public.organization_deletion_preview(org);
+      INSERT INTO public.organization_deletion(organization_id,status,retention)
+        VALUES (org,'requested',preview) ON CONFLICT(organization_id) DO UPDATE
+        SET status='requested',requested_at=clock_timestamp(),confirmed_at=NULL,execute_after=NULL,
+          completed_at=NULL,retention=EXCLUDED.retention;
+      RETURN preview;
+    END $$;
+    CREATE FUNCTION public.organization_confirm_deletion(org uuid, confirmed_name text) RETURNS jsonb
+      LANGUAGE plpgsql VOLATILE SECURITY DEFINER
+      SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+    DECLARE state text; confirmed timestamptz; preview jsonb;
+    BEGIN
+      IF session_user<>'app_rw' OR public.scope_actor_role(org) IS DISTINCT FROM 'OWNER_ADMIN' THEN
+        RAISE EXCEPTION 'Current administrator required' USING ERRCODE='42501'; END IF;
+      PERFORM pg_advisory_xact_lock(hashtextextended('scope-acl:'||org::text,0));
+      PERFORM pg_advisory_xact_lock(hashtextextended('organization-lifecycle:'||org::text,0));
+      IF public.scope_actor_role(org) IS DISTINCT FROM 'OWNER_ADMIN' THEN
+        RAISE EXCEPTION 'Current administrator required' USING ERRCODE='42501'; END IF;
+      SELECT status INTO state FROM public.organization_deletion WHERE organization_id=org FOR UPDATE;
+      IF state IS DISTINCT FROM 'requested' OR confirmed_name IS DISTINCT FROM
+        (SELECT name FROM public.organization WHERE id=org) THEN
+        RAISE EXCEPTION 'Requested deletion and exact organization name required' USING ERRCODE='42501'; END IF;
+      preview:=public.organization_deletion_preview(org);
+      confirmed:=clock_timestamp();
+      UPDATE public.organization_deletion SET status='cooling_off',confirmed_at=confirmed,
+        execute_after=confirmed+interval '7 days',retention=preview WHERE organization_id=org;
+      RETURN jsonb_build_object('status','cooling_off','execute_after',confirmed+interval '7 days');
+    END $$;
+    REVOKE ALL ON FUNCTION public.organization_request_deletion(uuid),public.organization_confirm_deletion(uuid,text)
+      FROM PUBLIC,app_rw,app_worker,app_review;
+    GRANT EXECUTE ON FUNCTION public.organization_request_deletion(uuid),public.organization_confirm_deletion(uuid,text) TO app_rw;
     ''')
 
 

@@ -281,6 +281,9 @@ services, LLM calls, routing mocks, or clock-dependent business dates are needed
 Scenarios use stable names derived from the scenario name, a 1440 × 1000 viewport,
 and an explicit 390 × 844 viewport for the existing phone cancellation journey.
 German control names are quoted where the step identifies a UI action.
+The organization-lifecycle journey signs up its own synthetic organization through
+the hosted API with the existing captured-SMTP fixture. It needs no Mailpit service
+and removes only its own lifecycle decision on teardown, even after a UI failure.
 
 **Runner decision:** pytest-playwright keeps pytest-bdd, the API World and one Python
 step library instead of adding playwright-bdd and a second Node test runner.

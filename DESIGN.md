@@ -164,6 +164,10 @@ sees “Löschung widerrufen”. Cancellation remains possible until actual exec
 including when a due operator run has failed.
 Import and new deletion actions are hidden during cooling-off. The export and
 banner cancellation remain available. Dialog/button text wraps at 360 px.
+The deletion dialog stays within 90dvh with internal scrolling and a 16 px
+horizontal gutter on phones. It disables CSS transitions so viewport changes
+apply the height/width bounds immediately; resizing cannot temporarily move
+the fresh-export control outside the viewport.
 
 ![Organization data controls on a narrow screen](docs/assets/design/organization-export-360.png)
 

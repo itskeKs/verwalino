@@ -73,25 +73,115 @@ async def test_draft_dunning_dependencies_erase_person_text(rent_world, rent_db,
         await rent_db.rollback()
 
 
+async def test_registered_resolution_scrubs_retained_meeting_and_agenda_text(rent_world, rent_db, export_store):
+    from app.services.organization_deletion_service import run_deletion
+    w = rent_world
+    private = 'Hans-Jürgen Müller-Lüdenscheidt / DE89 3704 0044 0532 0130 00'
+    async with api_client(w) as api:
+        prop = await api.post('/api/properties', json={'name': 'Meeting erasure', 'management_type': 'WEG'})
+        assert prop.status_code == 201, prop.text
+        meeting = await api.post('/api/meetings', json={'property_id': prop.json()['id'],
+            'meeting_date': '2026-03-15', 'meeting_type': 'ORDENTLICH', 'location': 'Synthetic hall', 'invitation_text': private})
+        assert meeting.status_code == 201, meeting.text
+        mid = meeting.json()['id']
+        assert (await api.put(f'/api/meetings/{mid}', json={'protocol_text': private})).status_code == 200
+        agenda = await api.post(f'/api/meetings/{mid}/agenda', json={'meeting_id': mid, 'title': private, 'description': private})
+        assert agenda.status_code == 201, agenda.text
+        resolution = await api.post('/api/meetings/resolutions', json={'meeting_id': mid,
+            'agenda_item_id': agenda.json()['id'], 'wording': 'Retained legal wording',
+            'votes_yes': 5, 'votes_no': 0, 'votes_abstain': 0, 'result': 'ANGENOMMEN'})
+        assert resolution.status_code == 201, resolution.text
+        entry = await api.post(f"/api/meetings/resolutions/{resolution.json()['id']}/register")
+        assert entry.status_code == 201, entry.text
+        assert (await api.post('/api/organizations/deletion')).status_code == 200
+        assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
+    async with rent_db.begin():
+        assert await run_deletion(rent_db, w['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
+    meeting_text = (await rent_db.execute(text('SELECT protocol_text,invitation_text FROM owners_meeting WHERE id=:id'), {'id': mid})).one()
+    agenda_text = (await rent_db.execute(text('SELECT title,description FROM agenda_item WHERE id=:id'), {'id': agenda.json()['id']})).one()
+    wording = await rent_db.scalar(text('SELECT wording FROM resolution_register_entry WHERE id=:id'), {'id': entry.json()['id']})
+    await rent_db.rollback()
+    assert meeting_text == ('Gelöscht', 'Gelöscht')
+    assert agenda_text == ('Gelöscht', 'Gelöscht')
+    assert wording == 'Retained legal wording'
+
+
 async def test_retained_text_inventory(rent_db):
+    from pathlib import Path
+    import re
     from app.services.organization_deletion_service import ERASURE_SCRUB_COLUMNS
-    rows = (await rent_db.execute(text('''WITH retained AS MATERIALIZED
-      (SELECT * FROM organization_retention_catalog() WHERE disposition='retain'
-       OR entity IN ('tenant_profile','lease_agreement','vendor','owner_profile')) SELECT r.entity,a.attname,
-      (SELECT string_agg(DISTINCT p.proname,', ' ORDER BY p.proname) FROM pg_trigger t
-       JOIN pg_proc p ON p.oid=t.tgfoid WHERE t.tgrelid=c.oid AND NOT t.tgisinternal
-       AND (t.tgtype & 16)>0 AND t.tgenabled<>'D') AS guards
+    # Include every possible FK-retained parent, not just immutable roots.
+    # All textual/JSON columns participate, including titles, text and reasons.
+    rows = (await rent_db.execute(text('''WITH RECURSIVE retained(entity) AS (
+      SELECT entity COLLATE "C" FROM organization_retention_catalog() WHERE disposition IN ('retain','conditional','anonymize')
+      UNION SELECT parent.relname::text FROM retained r
+        JOIN pg_constraint fk ON fk.conrelid=to_regclass('public.'||r.entity) AND fk.contype='f'
+        JOIN pg_class parent ON parent.oid=fk.confrelid
+        WHERE parent.relnamespace='public'::regnamespace AND EXISTS(SELECT 1 FROM pg_attribute a
+          WHERE a.attrelid=parent.oid AND a.attname='organization_id' AND NOT a.attisdropped)
+      ) SELECT r.entity,a.attname
       FROM retained r JOIN pg_class c ON c.oid=to_regclass('public.'||r.entity)
       JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
       JOIN pg_type typ ON typ.oid=a.atttypid
       WHERE typ.typname IN ('text','varchar','json','jsonb')
-      AND a.attname ~ '(notes|note|comment|description|remark|tax_id|vat_id|reference)'
       ORDER BY r.entity,a.attname'''))).all()
-    # Both are insert-only scope evidence; their guards reject content updates.
-    guarded = {('allocation_proposal_line', 'description'), ('context_decision', 'comparison_note')}
-    mutable = {(table, column) for table, column, _ in rows} - guarded
     scrubbed = {(table, column) for table, columns in ERASURE_SCRUB_COLUMNS.items() for column in columns}
-    assert mutable <= scrubbed, mutable - scrubbed
+    scrubbed |= set((await rent_db.execute(text('''SELECT r.entity,unnest(organization_erasure_payload_columns(r.entity))
+      FROM organization_retention_catalog() r'''))).all())
+    inventory = (Path(__file__).resolve().parents[2] / 'docs/operations/organization-export.md').read_text()
+    inventory = inventory.split('### Catalog survivor contract\n', 1)[-1].split('\n### ', 1)[0]
+    survivors = set()
+    for line in inventory.splitlines():
+        if line.startswith('| `'):
+            cells = line.split('|')
+            tables, columns = re.findall(r'`([^`]+)`', cells[1]), re.findall(r'`([^`]+)`', cells[2])
+            survivors.update((table, column) for table in tables for column in columns)
+    missing = sorted(set(rows) - scrubbed - survivors)
+    assert not missing, '\n'.join(f'{table}.{column}' for table, column in missing)
+
+
+async def test_every_organization_table_has_lifecycle_trigger(rent_db):
+    missing = (await rent_db.execute(text('''SELECT c.relname FROM pg_class c
+      WHERE c.relnamespace='public'::regnamespace AND c.relkind='r'
+      AND (c.relname='organization' OR EXISTS(SELECT 1 FROM pg_attribute a
+        WHERE a.attrelid=c.oid AND a.attname='organization_id' AND NOT a.attisdropped))
+      AND NOT EXISTS(SELECT 1 FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid
+        WHERE t.tgrelid=c.oid AND t.tgname='a_organization_lifecycle'
+          AND p.proname='organization_lifecycle_guard' AND t.tgenabled='O' AND t.tgtype=31)
+      ORDER BY c.relname'''))).scalars().all()
+    assert missing == []
+
+
+@pytest.mark.parametrize('change', ["execute_after=now()-interval '1 day'", "status='deleted_pending_retention'"])
+async def test_runtime_cannot_accelerate_or_complete_deletion(rent_world, rent_db, export_store, change):
+    from sqlalchemy.exc import DBAPIError
+    w = rent_world
+    async with api_client(w) as api:
+        assert (await api.post('/api/organizations/deletion')).status_code == 200
+        assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
+    await rent_db.execute(text('SET LOCAL SESSION AUTHORIZATION app_rw'))
+    await rent_db.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+                          {'org': str(w['org']), 'actor': str(w['admin'])})
+    try:
+        with pytest.raises(DBAPIError):
+            async with rent_db.begin_nested():
+                result = await rent_db.execute(text(f'UPDATE organization_deletion SET {change} WHERE organization_id=:org'), w)
+                assert result.rowcount == 1
+    finally:
+        await rent_db.rollback()
+
+
+async def test_owner_cancel_preserves_confirmation_and_deadline(rent_world, rent_db, export_store):
+    w = rent_world
+    async with api_client(w) as api:
+        assert (await api.post('/api/organizations/deletion')).status_code == 200
+        assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
+        before = (await rent_db.execute(text('SELECT to_jsonb(d)-\'status\' FROM organization_deletion d WHERE organization_id=:org'), w)).scalar_one()
+        await rent_db.rollback()
+        assert (await api.post('/api/organizations/deletion/cancel')).status_code == 200
+        after = (await rent_db.execute(text('SELECT to_jsonb(d)-\'status\' FROM organization_deletion d WHERE organization_id=:org'), w)).scalar_one()
+        await rent_db.rollback()
+        assert after == before
 
 
 async def test_retained_event_payload_inventory(rent_db):

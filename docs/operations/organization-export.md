@@ -192,13 +192,23 @@ logout and owner-admin cancellation remain available. `POST
 /api/organizations/deletion/cancel` restores normal operation during this state,
 including after the deadline if an operator run has failed or has not happened.
 Cancellation and actual erasure serialize on the lifecycle lock; cancellation
-cannot restore an organization whose erasure has already committed.
+cannot restore an organization whose erasure has already committed. Cancellation
+changes only the status; the confirmation timestamp, original deadline and
+retention snapshot remain as evidence. Direct runtime UPDATE permits only
+`cooling_off` → `cancelled`. Guarded database entry points handle request and
+exact-name confirmation, compute the retention snapshot and set the deadline
+from the database clock plus seven days. Runtime SQL cannot supply a deadline or
+mark an organization erased; execution belongs to the operator.
 
 The database write guard takes **no advisory lock**. It reads
 `organization_deletion.status` with a plain SELECT on each statement's visible
 state, without a transaction-local cache. Under READ COMMITTED, a write that
 commits before the state change is visible is allowed; once cooling-off commits,
-every later statement is refused. Already-running statements are not drained.
+every later domain write is refused. Already-running statements are not drained.
+Every organization table carries the lifecycle trigger. Audit insertion,
+reset-token cleanup and lifecycle decisions are explicit exceptions inside the
+trigger; lifecycle UPDATE additionally uses the cancellation-only transition
+guard. The schema contract fails if a new organization table lacks the trigger.
 This allows runtime operations that hold an exclusive ACL lock on one connection
 and attest through a second connection to complete. `/api/organizations/me` reads
 organization/lifecycle state only. Its `import_available` flag describes an
@@ -293,6 +303,8 @@ row instead.
 | --- | --- |
 | `tenant_profile`, `lease_agreement`, `owner_profile` | `notes` |
 | `vendor` | `notes`, `tax_id`, `vat_id` |
+| `owners_meeting` | `protocol_text`, `invitation_text` |
+| `agenda_item` | `title`, `description` |
 | `letter_template` | `name`, `subject`, `body` |
 | `property_document` | `deed_reference` (mutable metadata; the original file is unchanged) |
 | `property_assignment` | `stable_key`, `designation`, `location`, `description`, `details_json` |
@@ -305,8 +317,10 @@ row instead.
 Editable profile, lease, vendor and owner fields are scrubbed even when their rows
 must survive as dependencies of immutable evidence or expired vouchers. Their
 free text and identifiers are not themselves frozen voucher content. The catalog
-inventory also checks retained text/varchar/JSON columns whose names contain
-`notes`, `note`, `comment`, `description`, `remark`, `tax_id`, `vat_id` or `reference`.
+inventory below checks every retained text/varchar/JSON column, including parents
+kept only by the recursive FK closure. Meeting invitation/protocol text and agenda
+titles/descriptions are mutable source content and are scrubbed even when a
+registered resolution requires those rows to survive.
 `allocation_proposal_line.description` and `context_decision.comparison_note`
 are guarded insert-only evidence and remain unchanged.
 
@@ -330,85 +344,140 @@ Expiry does not automatically purge immutable evidence: that remains a separate
 operator/legal decision under [ADR-0012](../adr/0012-gdpr-erasure-vs-gobd-retention.md).
 Its provisional retention durations still require the documented domain sign-off.
 
-### Owner decision: personal content remaining in immutable evidence
+### Catalog survivor contract
 
-In addition to voucher/original content and the audit payloads below, these exact
-table/column pairs can retain personal text or JSON in guarded evidence. Their
-immutable columns cannot be scrubbed. The resolution register's mutable legal
-annotation is distinguished below. IDs, hashes, fixed enums and numeric/date fields are omitted
-from this content inventory. A table entry lists each surviving column of that
-table explicitly; it does not authorize rewriting any of them.
+The catalog test covers **every** text/varchar/JSON column of retained roots,
+conditional vouchers, identity rows and their recursive FK parents. There is no
+column-name filter. Each column must be scrubbed (including the personal-payload
+contract below) or appear in this explicit survivor inventory. New tables and
+columns therefore require a classification. These are field-level outcomes;
+this inventory does not authorize additional retention or rewriting evidence.
 
-| Table | Guarded personal-content columns remaining verbatim |
-| --- | --- |
-| `person_data_domain` | `label`, `reason_code` |
-| `person_data_grant` | `reason_code` |
-| `property_data_domain`, `property_data_grant` | `reason` (`property_data_domain.label` also remains) |
-| `accounting_scope` | `label` |
-| `accounting_scope_binding`, `scope_grant`, `scope_control_event` | `reason` |
-| `dunning_scope_context`, `dunning_quarantine_disposition` | `reason` |
-| `invoice_review_revision` | `seller_name`, `document_number`, `reason` |
-| `property_rule` | `stable_key`, `topic`, `title`, `summary`, `scope_json`, `effect_json` |
-| `approved_fact_source` | `field_key`, `approved_value_json`, `printed_page`, `section`, `quote` |
-| `access_coverage_snapshot` | `manifest` |
-| `access_disposition_acceptance` | `assessment`, `reason` |
-| `access_grant_proposal`, `access_grant_acceptance` | `changes` (proposal), `results` (acceptance) |
-| `source_security_transition` | `reason` |
-| `scope_migration_exception` | `evidence` |
-| `scope_payment_reconciliation` | `reason` |
-| `runtime_budget_review` | `reason`, `policy` |
-| `runtime_budget_attestation` | `policy` |
-| `property_source_admission_review`, `property_source_classification` | `reason` |
-| `coverage_declaration` | `values`, `source_document_ids`, `reason` |
-| `financial_computation_attestation`, `financial_computation_receipt` | `state` |
-| `allocation_correction` | `impact_snapshot`, `reason` |
-| `allocation_correction_completion` | `basis`, `reason` |
-| `allocation_correction_context`, `allocation_correction_impact` | `context` (context), `snapshot` (impact) |
-| `allocation_proposal` | `reason` |
-| `allocation_proposal_line` | `description`, `category_code`, `category_label` |
-| `allocation_set` | `duplicate_snapshot`, `reason` |
-| `allocation_treatment_line` | `documentary_basis`, `markers` |
-| `allocation_treatment_review` | `snapshot`, `reason` |
-| `assignment_proposal` | `blockers`, `reason` |
-| `context_decision` | `snapshot`, `quotation`, `xml_path`, `comparison_note` |
-| `duplicate_comparison` | `evidence`, `reason` |
-| `duplicate_exception_dependency` | `cause`, `evidence` |
-| `exception_case`, `exception_dependency` | `cause` |
-| `exception_case_event` | `reason` |
-| `exception_completion` | `basis`, `dispositions`, `comparisons`, `reason` |
-| `extraction_revision` | `payload` |
-| `field_evidence` | `field_name`, `value`, `bbox`, `quotation`, `xml_path` |
-| `intake_batch` | `manifest` |
-| `intake_item` | `client_item_key`, `filename` |
-| `intake_extraction_attempt` | `result` |
-| `intake_extraction_retry`, `intake_retry_receipt` | `reason` |
-| `declaration_import_pass` | `safe_metadata` |
-| `declaration_review_context`, `declaration_review_receipt` | `prior_resolutions` (context), `response` (receipt) |
-| `dunning_batch`, `master_import_batch`, `job_attempt`, `outbox_delivery_attempt` | `result` |
-| `logical_document`, `mapping_version`, `source_partition_revision` | `reason` (`mapping_version.identifier_value` and `source_basis` also remain) |
-| `visual_disclosure_event`, `visual_extract_artifact` | `reason` (`visual_extract_artifact.renderer_profile` also remains) |
-| `visual_extract_attestation` | `payload` |
-| `resolution_register_entry` | `location`, `wording` |
+The table includes technical enums, keys, digests and storage identities as well
+as personal content. Voucher/original and guarded review content remains under
+the existing retention decision. Mutable structural source fields that survive
+are described explicitly. `person` remains verbatim only while a voucher binding
+is unexpired; `user` values are always replaced as described below. The legal
+register's `challenge_annotation` remains editable legal evidence under ADR-0011,
+not an immutable field; a separate minimization policy remains an owner decision.
 
-`resolution_register_entry.challenge_annotation` also remains as part of the
-retained legal register (ADR-0011). Its guard **does allow** setting, updating and
-clearing this legal challenge/repeal annotation; it is not an immutable column.
-Erasure preserves this legal evidence category, including annotations, rather
-than treating it as ordinary configuration. Whether its personal content needs
-a separate minimization policy remains an owner/domain decision alongside the
-immutable payloads listed here.
-
-Original-document titles, filenames, archive/scope reasons,
-invoice extraction payloads and issued-letter recipient/subject/body also remain
-as part of their retained originals. Their exact pairs are
-`attachment.title`, `attachment.original_filename`, `attachment.archive_reason`,
-`invoice_document.original_filename`, `invoice_document.extraction_payload`,
-`mandate_document.title`, `mandate_document.original_filename`,
-`mandate_document.scope_reason`, `mandate_document.archive_reason`,
-`property_document.title`,
-`property_document.original_filename`, `letter_document.recipient_name`,
-`letter_document.subject`, `letter_document.body`. Retained structural UUIDs
-continue to link this evidence to anonymized person rows.
+| Table | Surviving text/JSON columns | Reason or transformation |
+| --- | --- | --- |
+| `access_coverage_review` | `manifest_digest` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `access_coverage_snapshot` | `manifest`, `manifest_digest`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `access_disposition_acceptance` | `assessment`, `assessment_digest`, `manifest_digest`, `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `access_grant_acceptance` | `proposal_digest`, `results` | Retained source, scope or review evidence and its technical provenance. |
+| `access_grant_proposal` | `changes`, `manifest_digest`, `proposal_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `accounting_scope` | `label`, `origin`, `scope_type` | Retained source, scope or review evidence and its technical provenance. |
+| `accounting_scope_binding` | `origin`, `reason` | Retained source, scope or review evidence and its technical provenance. |
+| `allocation_correction` | `impact_snapshot`, `preview_digest`, `reason`, `request_digest`, `source_variant`, `transition_kind` | Retained source, scope or review evidence and its technical provenance. |
+| `allocation_correction_completion` | `basis`, `basis_digest`, `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `allocation_correction_context` | `context`, `parent_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `allocation_correction_impact` | `snapshot` | Retained source, scope or review evidence and its technical provenance. |
+| `allocation_integrity_attestation` | `content_sha256`, `request_digest`, `verification_method` | Retained source, scope or review evidence and its technical provenance. |
+| `allocation_proposal` | `allocation_kind`, `financial_state`, `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `allocation_proposal_line` | `category_code`, `category_label`, `description` | Retained source, scope or review evidence and its technical provenance. |
+| `allocation_set` | `content_sha256`, `duplicate_snapshot`, `financial_state`, `kind`, `reason`, `request_digest`, `source_variant`, `transition_kind` | Retained source, scope or review evidence and its technical provenance. |
+| `allocation_source_claim` | `source_sha256` | Retained source, scope or review evidence and its technical provenance. |
+| `allocation_treatment_line` | `documentary_basis`, `expense_intent`, `markers`, `owner_distribution_key`, `tax_intent`, `tenant_distribution_key`, `tenant_treatment` | Retained source, scope or review evidence and its technical provenance. |
+| `allocation_treatment_review` | `financial_state`, `marker_policy`, `reason`, `request_digest`, `snapshot`, `snapshot_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `approved_fact_source` | `approved_value_json`, `field_key`, `printed_page`, `quote`, `section`, `status`, `subject_kind`, `value_fingerprint` | Retained source, scope or review evidence and its technical provenance. |
+| `assignment_proposal` | `method`, `reason`, `request_digest`, `state` | Retained source, scope or review evidence and its technical provenance. |
+| `attachment` | `archive_reason`, `content_sha256`, `mime_type`, `original_filename`, `storage_backend`, `storage_uri`, `title` | Retained original content, metadata and storage identity. |
+| `audit_event` | `action`, `entity_type`, `prev_event_hash` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `bank_account` | `account_type`, `bank_name`, `bic`, `iban`, `label` | Required account identity of retained financial records. |
+| `bank_transaction` | `counterparty_iban`, `counterparty_name`, `import_hash`, `purpose`, `status` | Retained bank evidence and reconciliation context. |
+| `context_decision` | `comparison_note`, `method`, `quotation`, `request_digest`, `snapshot`, `snapshot_digest`, `xml_path` | Retained source, scope or review evidence and its technical provenance. |
+| `cost_entry` | `document_number`, `owner_distribution_key`, `source`, `status`, `tenant_apportionable`, `tenant_distribution_key` | Frozen voucher content, accounting classifications and computation provenance. |
+| `coverage_declaration` | `component`, `reason`, `source_document_ids`, `source_revision`, `state`, `values` | Retained source, scope or review evidence and its technical provenance. |
+| `declaration_extraction_run` | `error_code`, `harness_version`, `model_name`, `prompt_version`, `provider`, `schema_version`, `status` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `declaration_import` | `approval_idempotency_key`, `approval_request_digest`, `approval_result_json`, `current_stage`, `error_code`, `error_message`, `lease_owner`, `mode`, `status` | Retained source, scope or review evidence and its technical provenance. |
+| `declaration_import_document` | `document_role` | Retained source, scope or review evidence and its technical provenance. |
+| `declaration_import_pass` | `safe_metadata` | Retained source, scope or review evidence and its technical provenance. |
+| `declaration_queue_request` | `operation` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `declaration_review_context` | `prior_resolutions` | Retained source, scope or review evidence and its technical provenance. |
+| `declaration_review_receipt` | `operation`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `document_cost_link` | `link_role` | Retained source, scope or review evidence and its technical provenance. |
+| `document_ref` | `content_sha256`, `mime_type`, `source_kind` | Retained source, scope or review evidence and its technical provenance. |
+| `dunning_batch` | `request_digest` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `dunning_notice` | `frozen_display_names`, `included_items`, `interest_snapshot`, `note`, `status` | Frozen voucher content, accounting classifications and computation provenance. |
+| `dunning_quarantine_disposition` | `reason`, `snapshot_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `dunning_scope_context` | `origin`, `reason` | Retained source, scope or review evidence and its technical provenance. |
+| `duplicate_comparison` | `evidence`, `financial_state`, `reason`, `request_digest`, `verdict` | Retained source, scope or review evidence and its technical provenance. |
+| `duplicate_exception_dependency` | `cause`, `evidence` | Retained source, scope or review evidence and its technical provenance. |
+| `economic_plan` | `engine_version`, `snapshot_payload`, `snapshot_sha256`, `status` | Frozen voucher content, accounting classifications and computation provenance. |
+| `economic_plan_line` | `cost_category_code`, `cost_group`, `distribution_key`, `label`, `line_type`, `note` | Frozen voucher content, accounting classifications and computation provenance. |
+| `exception_case` | `cause` | Retained source, scope or review evidence and its technical provenance. |
+| `exception_case_event` | `action`, `request_digest`, `resolution_state`, `workflow_state` | Retained source, scope or review evidence and its technical provenance. |
+| `exception_completion` | `basis`, `basis_digest`, `comparisons`, `dispositions`, `policy`, `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `exception_completion_member` | `disposition` | Retained source, scope or review evidence and its technical provenance. |
+| `exception_dependency` | `cause` | Retained source, scope or review evidence and its technical provenance. |
+| `extraction_revision` | `content_sha256`, `error_code`, `payload`, `processor_version`, `schema_version`, `status`, `validation_status` | Retained source, scope or review evidence and its technical provenance. |
+| `field_evidence` | `bbox`, `field_name`, `locator_status`, `method`, `quotation`, `validation_status`, `value`, `value_type`, `xml_path` | Retained source, scope or review evidence and its technical provenance. |
+| `financial_computation_attestation` | `operation`, `state`, `subject_kind` | Retained source, scope or review evidence and its technical provenance. |
+| `financial_computation_receipt` | `operation` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `intake_batch` | `request_digest` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `intake_extraction_job` | `error_code`, `status` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `intake_extraction_retry` | `reason` | Retained source, scope or review evidence and its technical provenance. |
+| `intake_item` | `client_item_key`, `content_sha256`, `filename`, `mime_type` | Retained source, scope or review evidence and its technical provenance. |
+| `intake_original` | `content_sha256`, `mime_type`, `storage_backend`, `storage_uri`, `storage_version` | Retained original content, metadata and storage identity. |
+| `intake_upload_admission` | `payload_digest` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `invoice_document` | `content_sha256`, `extraction_payload`, `mime_type`, `original_filename`, `processing_error_code`, `processing_status`, `status`, `storage_backend`, `storage_uri`, `storage_version` | Retained original content, metadata and storage identity. |
+| `invoice_processing_attempt` | `error_code`, `processor_version`, `status` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `invoice_review_revision` | `content_sha256`, `currency`, `document_kind`, `document_number`, `reason`, `request_digest`, `review_scope`, `seller_name` | Retained source, scope or review evidence and its technical provenance. |
+| `invoice_upload_admission` | `payload_digest` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `letter_document` | `body`, `content_sha256`, `recipient_name`, `storage_uri`, `subject` | Retained original content, metadata and storage identity. |
+| `logical_document` | `content_sha256`, `origin`, `reason`, `request_digest`, `review_state` | Retained source, scope or review evidence and its technical provenance. |
+| `management_mandate` | `label`, `mandate_type` | Required mandate identity and type. |
+| `mandate_document` | `archive_reason`, `content_sha256`, `doc_type`, `mime_type`, `original_filename`, `scope_reason`, `storage_backend`, `storage_uri`, `title` | Retained original content, metadata and storage identity. |
+| `mandate_legacy_observation` | `snapshot_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `mandate_quarantine_disposition` | `reason`, `snapshot_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `mapping_version` | `identifier_kind`, `identifier_value`, `policy`, `reason`, `request_digest`, `source_basis`, `state` | Retained source, scope or review evidence and its technical provenance. |
+| `master_import_batch` | `request_digest` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `membership` | `role` | Historical role classification; account access is disabled. |
+| `operation_receipt` | `key`, `operation`, `request_digest` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `outbox_delivery` | `consumer`, `error_code`, `status` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `outbox_event` | `effect_key`, `event_type` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `owners_meeting` | `location`, `meeting_type`, `status` | Meeting location and lifecycle classifications; invitation/protocol text is scrubbed. |
+| `payment` | `direction`, `note`, `payment_type`, `status` | Frozen voucher content, accounting classifications and computation provenance. |
+| `person` | `bank_name`, `bic`, `city`, `company_name`, `email`, `first_name`, `iban`, `last_name`, `phone`, `street`, `zip_code` | Identity fields survive only with an unexpired voucher binding; otherwise anonymized. |
+| `person_data_domain` | `label`, `reason_code` | Retained source, scope or review evidence and its technical provenance. |
+| `person_data_grant` | `reason_code` | Retained source, scope or review evidence and its technical provenance. |
+| `property` | `city`, `management_type`, `mea_scale_status`, `name`, `street`, `zip_code` | Required property identity/address and structural classifications. |
+| `property_assignment` | `assignment_type`, `status` | Structural type/status; editable identifiers and text are scrubbed. |
+| `property_creation_receipt` | `request_digest` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `property_data_domain` | `label`, `reason` | Retained source, scope or review evidence and its technical provenance. |
+| `property_data_grant` | `reason` | Retained source, scope or review evidence and its technical provenance. |
+| `property_document` | `content_sha256`, `doc_type`, `mime_type`, `original_filename`, `storage_backend`, `storage_uri`, `title` | Retained original content, metadata and storage identity. |
+| `property_document_relation` | `relation_type`, `status` | Retained source, scope or review evidence and its technical provenance. |
+| `property_knowledge_query_run` | `error_code`, `model`, `outcome`, `provider`, `status` | Provider/model/status and structured error metadata; no question/answer text is stored here. |
+| `property_legal_reference` | `status` | Structural status; editable reference text is scrubbed. |
+| `property_rule` | `effect_json`, `scope_json`, `stable_key`, `status`, `summary`, `title`, `topic` | Retained source, scope or review evidence and its technical provenance. |
+| `property_rule_relation` | `relation_type` | Retained source, scope or review evidence and its technical provenance. |
+| `property_source_admission_review` | `content_sha256`, `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `property_source_classification` | `content_sha256`, `decision`, `reason`, `request_digest`, `source_context_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `property_source_security` | `mode` | Security-mode enum; mutable reason is scrubbed. |
+| `resolution` | `majority_type`, `result`, `wording` | Registered resolution wording and voting classifications. |
+| `resolution_register_entry` | `challenge_annotation`, `location`, `wording` | Legal register wording/location and mutable challenge annotation (ADR-0011). |
+| `runtime_budget_attestation` | `policy`, `policy_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `runtime_budget_review` | `policy`, `policy_digest`, `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `scope_control_event` | `mode` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `scope_grant` | `reason` | Retained source, scope or review evidence and its technical provenance. |
+| `scope_migration_exception` | `code`, `evidence` | Retained source, scope or review evidence and its technical provenance. |
+| `scope_payment_reconciliation` | `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `scope_payment_reconciliation_item` | `source_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `settlement_line` | `cost_category_code`, `distribution_key`, `label`, `line_type`, `note` | Frozen voucher content, accounting classifications and computation provenance. |
+| `settlement_run` | `advance_payments_source`, `engine_version`, `run_type`, `snapshot_payload`, `snapshot_sha256`, `status` | Frozen voucher content, accounting classifications and computation provenance. |
+| `source_partition_revision` | `content_sha256`, `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `source_security_authorization` | `previous_mode`, `target_mode` | Retained source, scope or review evidence and its technical provenance. |
+| `source_security_transition` | `assessment_digest`, `manifest_digest`, `previous_mode`, `reason`, `request_digest`, `target_mode` | Retained source, scope or review evidence and its technical provenance. |
+| `unit` | `building_part`, `location`, `number`, `usage_type` | Required unit identity/location and usage classification. |
+| `user` | `display_name`, `email`, `password_hash` | Replaced by pseudonymous email/display name and unusable password sentinel; no original contact or credential survives. |
+| `visual_disclosure_attestation` | `content_sha256`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `visual_disclosure_event` | `kind`, `request_digest` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `visual_extract_artifact` | `content_sha256`, `reason`, `renderer_profile`, `request_digest`, `source_sha256`, `storage_backend`, `storage_uri`, `storage_version` | Retained source, scope or review evidence and its technical provenance. |
+| `visual_extract_attestation` | `payload`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
+| `workflow_job` | `error_code`, `kind`, `status` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
 
 ### Decided: personal event and receipt payloads are scrubbed
 
@@ -423,8 +492,8 @@ users' email addresses. Nested objects/lists and personal values embedded in fre
 text are included. Voucher-bound person entries remain unchanged.
 
 The catalog inventory of retained event/receipt/batch/attempt JSON and text
-columns identifies these personal-content columns. They supersede the matching
-entries in the immutable-evidence inventory above:
+columns identifies these personal-content columns. These are scrubbed separately
+from the survivor columns above:
 
 | Table | Payload columns eligible for personal-data scrubbing |
 | --- | --- |

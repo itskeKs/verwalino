@@ -1,7 +1,7 @@
 """Durable seven-day cooling-off and operator-only retention reconciliation."""
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 import hashlib
 import json
 import re
@@ -14,7 +14,6 @@ from app.core.storage import LocalFsDocumentStore, get_store
 from app.services.organization_archive import json_bytes
 from app.services.organization_export_service import export_store
 
-COOLING_OFF = timedelta(days=7)
 NOTICE = ('Nach der Löschung ist keine Anmeldung mehr möglich; aufbewahrungspflichtige '
           'Unterlagen bleiben für mindestens acht Jahre ab dem maßgeblichen Jahresende '
           'beim Betreiber und sind ausschließlich für den Betreiber zugänglich. '
@@ -28,6 +27,8 @@ ERASURE_SCRUB_COLUMNS = {
     'lease_agreement': ('notes',),
     'vendor': ('notes', 'tax_id', 'vat_id'),
     'owner_profile': ('notes',),
+    'owners_meeting': ('protocol_text', 'invitation_text'),
+    'agenda_item': ('title', 'description'),
     'letter_template': ('name', 'subject', 'body'),
     'property_document': ('deed_reference',),
     'property_assignment': ('stable_key', 'designation', 'location', 'description', 'details_json'),
@@ -182,18 +183,14 @@ async def request_deletion(db, auth):
     state = await deletion_status(db, auth.organization_id)
     if state and state['status'] in {'cooling_off', 'deleted_pending_retention'}:
         raise HTTPException(409, 'Die Löschung wurde bereits bestätigt.')
-    preview = await db.scalar(text('SELECT organization_deletion_preview(:org)'), {'org': auth.organization_id})
-    await db.execute(text('''INSERT INTO organization_deletion(organization_id,status,retention)
-      VALUES (:org,'requested',CAST(:retention AS jsonb)) ON CONFLICT(organization_id) DO UPDATE
-      SET status='requested',requested_at=clock_timestamp(),confirmed_at=NULL,execute_after=NULL,
-          completed_at=NULL,retention=EXCLUDED.retention'''), {'org': auth.organization_id, 'retention': json.dumps(preview)})
+    preview = await db.scalar(text('SELECT organization_request_deletion(:org)'), {'org': auth.organization_id})
     await audit(db, auth.organization_id, auth.user_id, 'organization.deletion.requested')
     name = await db.scalar(text('SELECT name FROM organization WHERE id=:org'), {'org': auth.organization_id})
     return {'status': 'requested', 'organization_name': name, 'retention': preview,
             'export_url': '/api/organizations/export', 'notice': NOTICE}
 
 
-async def confirm_deletion(db, auth, organization_name, *, now=None):
+async def confirm_deletion(db, auth, organization_name):
     await lifecycle_lock(db, auth.organization_id)
     state = await deletion_status(db, auth.organization_id)
     if not state or state['status'] != 'requested':
@@ -201,15 +198,12 @@ async def confirm_deletion(db, auth, organization_name, *, now=None):
     name = await db.scalar(text('SELECT name FROM organization WHERE id=:org'), {'org': auth.organization_id})
     if organization_name != name:
         raise HTTPException(422, 'Bitte geben Sie den Organisationsnamen exakt ein.')
-    now = now or datetime.now(timezone.utc)
     # Recompute after the final export and confirmation; never trust a stale
     # client preview or a client-supplied retention selection.
-    preview = await db.scalar(text('SELECT organization_deletion_preview(:org)'), {'org': auth.organization_id})
-    await db.execute(text('''UPDATE organization_deletion SET status='cooling_off',confirmed_at=:now,
-      execute_after=:due,retention=CAST(:retention AS jsonb) WHERE organization_id=:org'''),
-      {'org': auth.organization_id, 'now': now, 'due': now + COOLING_OFF, 'retention': json.dumps(preview)})
+    confirmed = await db.scalar(text('SELECT organization_confirm_deletion(:org,:name)'),
+                                {'org': auth.organization_id, 'name': organization_name})
     await audit(db, auth.organization_id, auth.user_id, 'organization.deletion.confirmed')
-    return {'status': 'cooling_off', 'execute_after': now + COOLING_OFF}
+    return confirmed
 
 
 async def cancel_deletion(db, auth, *, now=None):
@@ -219,7 +213,7 @@ async def cancel_deletion(db, auth, *, now=None):
     # This lock serializes cancellation with the operator's actual erasure.
     if not state or state['status'] != 'cooling_off':
         raise HTTPException(409, 'Es gibt keine widerrufbare Löschung.')
-    await db.execute(text("UPDATE organization_deletion SET status='cancelled',execute_after=NULL WHERE organization_id=:org"),
+    await db.execute(text("UPDATE organization_deletion SET status='cancelled' WHERE organization_id=:org"),
                      {'org': auth.organization_id})
     await audit(db, auth.organization_id, auth.user_id, 'organization.deletion.cancelled')
     return {'status': 'cancelled'}

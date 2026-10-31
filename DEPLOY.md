@@ -201,9 +201,11 @@ Run `python -m app.organization_export cleanup` regularly in the configured app
 environment to remove expired bytes even during periods without export requests.
 No database or original is changed by that command. Hosted operators must keep
 archive storage private and include transient archives in their deletion and
-backup-expiry procedures. Organization import/deletion and their operator worker
-are still pending #23; see [organization export](docs/operations/organization-export.md)
-for the current API, visibility limits and unresolved fresh-install acceptance.
+backup-expiry procedures. Organization import and the seven-day deletion workflow
+are available. Operators execute due erasure explicitly with
+`python -m app.organization_deletion organization-deletion-run`; no deletion worker is started by Compose.
+See [organization export](docs/operations/organization-export.md) for the API,
+visibility limits, operator procedure and unresolved fresh-install acceptance.
 
 Revision **0146** adds the guarded aggregate function because ordinary source RLS
 can hide rows and undercount usage, plus nullable, nonnegative `letter_document.size_bytes`

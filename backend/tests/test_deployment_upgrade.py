@@ -145,12 +145,36 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                     if starting_schema == '0146' and revision.revision == '0147':
                         assert connection.scalar(text('''SELECT count(*) FROM pg_trigger
                           WHERE tgrelid='public.audit_event'::regclass AND NOT tgisinternal
-                          AND (tgtype & 16)>0''')) == 1
+                          AND tgname='audit_event_immutable' AND (tgtype & 16)>0''')) == 1
                         with connection.begin_nested() as rehearsal:
                             revision.module.downgrade()
                             assert trigger_definitions() == original_triggers
                             assert connection.scalar(text("SELECT to_regprocedure('public.guard_audit_event_payload()')")) is None
                             rehearsal.rollback()
+                if starting_schema == '0146':
+                    # The upgrade must preserve every byte outside the narrow
+                    # operator exemption, as well as owner and execute grants.
+                    exemptions = {
+                        'authorize_bound_financial_write': "TG_OP='DELETE'",
+                        'authorize_dunning_write': "TG_OP='DELETE'",
+                        'guard_financial_source_input': "TG_OP='DELETE'",
+                        'guard_strict_financial_resource': "TG_OP='DELETE'",
+                        'guard_knowledge_budget_policy': "TG_OP='UPDATE' AND (to_jsonb(NEW)-'reason')=(to_jsonb(OLD)-'reason')",
+                        'guard_property_source_security': "TG_OP='UPDATE' AND (to_jsonb(NEW)-'reason')=(to_jsonb(OLD)-'reason')",
+                    }
+                    expected = {}
+                    for name, definition, grants, owner in original_triggers:
+                        if name in exemptions:
+                            clause = ("      IF current_user='app_migrator' AND session_user='app_migrator'\n"
+                                      "        AND current_setting('app.organization_erasure',true)='on'\n"
+                                      f"        AND {exemptions[name]} THEN\n"
+                                      "        IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;\n"
+                                      "      END IF;\n")
+                            assert definition.count('    BEGIN\n') == 1, name
+                            expected[name] = (definition.replace('    BEGIN\n', '    BEGIN\n' + clause, 1), grants, owner)
+                    actual = {name: (definition, grants, owner) for name, definition, grants, owner in trigger_definitions() if name in exemptions}
+                    assert set(expected) == set(exemptions)
+                    assert actual == expected
                 if starting_schema == '0142':
                     nullable = text("SELECT is_nullable FROM information_schema.columns "
                                     "WHERE table_name='letter_document' AND column_name='template_id'")

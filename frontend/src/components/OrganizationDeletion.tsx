@@ -50,7 +50,7 @@ export function OrganizationDeletion({ changed, download, exporting }: { changed
     <Button type="button" variant="destructive" size="lg" disabled={busy} onClick={() => void request()}>Organisation löschen</Button>
     {error && !preview && <p role="alert" className="text-sm text-destructive">{error}</p>}
     <Dialog open={preview !== null} onOpenChange={open => { if (!open && !busy) setPreview(null); }}>
-      <DialogContent className="max-h-[90dvh] max-w-[calc(100vw-2rem)] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[90dvh] !max-w-[calc(100vw-2rem)] overflow-y-auto transition-none sm:!max-w-lg">
         <DialogHeader><DialogTitle>Organisation löschen</DialogTitle><DialogDescription>Prüfen Sie die Aufbewahrung und sichern Sie Ihre Daten vor der Bestätigung.</DialogDescription></DialogHeader>
         {preview && <>
           <p className="text-sm">{preview.notice}</p>

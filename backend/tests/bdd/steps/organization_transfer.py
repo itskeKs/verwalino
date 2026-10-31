@@ -10,6 +10,7 @@ from pytest_bdd import given, when, then
 from tests.bdd.browser import browser_world  # noqa: F401
 from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
 from tests.test_organization_export import export_store  # noqa: F401
+from tests.signup_support import signup_mail  # noqa: F401
 
 
 @pytest.fixture
@@ -282,24 +283,65 @@ def source_unchanged(world):
     world.run(source())
 
 
+@pytest.fixture
+def browser_deletion_organization(world, signup_mail, monkeypatch):
+    import uuid
+    import psycopg2
+    from app.core.config import settings
+    from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.signup_support import BODY, confirmation_token
+
+    monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
+    body = BODY | {'email': f'deletion-{uuid.uuid4().hex}@example.test',
+                   'organization_name': 'Hausverwaltung mit langem Namen GmbH'}
+    assert world.send(world.anonymous, 'POST', '/api/signup', json=body).status_code == 202
+    answer = world.send(world.anonymous, 'POST', '/api/signup/confirm',
+                        json={'token': confirmation_token(signup_mail), 'password': body['password']})
+    assert answer.status_code == 201, answer.text
+    try:
+        yield body
+    finally:
+        # Only this scenario's decision is removed, including after a UI failure.
+        # Immutable audit evidence remains in its separate synthetic organization.
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+            cursor.execute('DELETE FROM organization_deletion WHERE organization_id=%s',
+                           (answer.json()['organization_id'],))
+
+
 @when('the administrator reviews and cancels deletion in the browser')
-def browser_lifecycle(browser_world):
+def browser_lifecycle(browser_world, browser_deletion_organization):
+    from tests.bdd.browser import ROOT
     from playwright.async_api import expect
     async def operate():
         page = browser_world.page
+        credentials = browser_deletion_organization
+        login = await page.request.post('/api/auth/login', data={
+            'email': credentials['email'], 'password': credentials['password']})
+        assert login.status == 200, await login.text()
+        prop = await page.request.post('/api/properties', data={
+            'name': 'Wohnhaus mit langem synthetischem Namen', 'management_type': 'MIET'})
+        assert prop.status == 201, await prop.text()
+        original = await page.request.post('/api/attachments', multipart={
+            'property_id': (await prop.json())['id'],
+            'file': {'name': 'Synthetischer Nachweis.pdf', 'mimeType': 'application/pdf',
+                     'buffer': b'%PDF-1.4\n% Synthetic lifecycle original\n%%EOF\n'},
+        })
+        assert original.status == 201, await original.text()
         await browser_world.visit('/users')
         await expect(page.get_by_role('button', name='Organisation löschen', exact=True)).to_be_visible()
         await page.set_viewport_size({'width': 1280, 'height': 1000})
-        await page.screenshot(path='/tmp/issue23-organization-desktop.png', full_page=True)
+        await page.screenshot(path=ROOT / 'docs/assets/design/organization-data-desktop.png', full_page=True)
         await page.get_by_role('button', name='Organisation löschen', exact=True).click()
         dialog = page.get_by_role('dialog', name='Organisation löschen', exact=True)
         await expect(dialog.get_by_role('button', name='Jetzt frischen Export erstellen', exact=True)).to_be_visible()
-        await page.screenshot(path='/tmp/issue23-deletion-desktop.png', full_page=True)
+        await page.screenshot(path=ROOT / 'docs/assets/design/organization-deletion-desktop.png', full_page=True)
         await page.set_viewport_size({'width': 360, 'height': 844})
         await page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
         box = await dialog.bounding_box()
-        assert box and box['y'] >= 0 and box['y'] + box['height'] <= 844
-        await page.screenshot(path='/tmp/issue23-deletion-360.png', full_page=True)
+        await page.screenshot(path=ROOT / 'docs/assets/design/organization-deletion-360.png', full_page=True)
+        assert box and box['y'] >= 0 and box['y'] + box['height'] <= 844, box
+        export_box = await dialog.get_by_role('button', name='Jetzt frischen Export erstellen', exact=True).bounding_box()
+        assert export_box and export_box['y'] >= 0 and export_box['y'] + export_box['height'] <= 844, export_box
         assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
         organization = await page.request.get('/api/organizations/me')
         name = (await organization.json())['name']
@@ -308,10 +350,10 @@ def browser_lifecycle(browser_world):
         await expect(dialog).not_to_be_visible()
         banner = page.get_by_role('status').filter(has_text='schreibgeschützt')
         await expect(banner).to_be_visible()
-        await page.screenshot(path='/tmp/issue23-cooling-off-360.png', full_page=True)
+        await page.screenshot(path=ROOT / 'docs/assets/design/organization-cooling-off-360.png', full_page=True)
         await page.get_by_role('button', name='Löschung widerrufen', exact=True).click()
         await expect(banner).not_to_be_visible()
-        await page.screenshot(path='/tmp/issue23-organization-360.png', full_page=True)
+        await page.screenshot(path=ROOT / 'docs/assets/design/organization-export-360.png', full_page=True)
     browser_world.run(operate())
 
 

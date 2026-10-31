@@ -263,5 +263,5 @@ function UserAdministration({ actorId }: { actorId: string }) {
 export function UsersPage() {
   const { session } = useAuth();
   return <div className="paged-list"><h1>Benutzer</h1>{session?.role === "OWNER_ADMIN"
-    ? <><OrganizationDataCard key={`${session.organization_id}:${session.user_id}:${session.role}`} /><p><Link to="/berechtigungen">Berechtigungen verwalten</Link></p><UserAdministration key={`${session.organization_id}:${session.user_id}:${session.role}`} actorId={session.user_id} /></> : <p className="error-text">Zugriff nur für Inhaber/Admin.</p>}</div>;
+    ? <React.Fragment key={`${session.organization_id}:${session.user_id}:${session.role}`}><OrganizationDataCard /><p><Link to="/berechtigungen">Berechtigungen verwalten</Link></p><UserAdministration actorId={session.user_id} /></React.Fragment> : <p className="error-text">Zugriff nur für Inhaber/Admin.</p>}</div>;
 }
