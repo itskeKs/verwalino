@@ -49,7 +49,7 @@ function MappingDetail({ versionId }: { versionId: string }) {
       <p>Version {view.current.revision_number}{view.receipt.id !== view.current.id ? ` · geöffneter Nachweis: Version ${view.receipt.revision_number}` : ''}</p>
       <p className="break-words">{view.current.identifier_kind === 'property_id' ? 'Objekt-ID' : 'Zählernummer'}: {view.current.identifier_value}</p>
       <p>Leistungszeitraum: {view.current.valid_from} bis {view.current.valid_to}</p>
-      <p><a className="underline" href={`/objekte/${view.current.property_id}`}>Objekt öffnen</a> · <a className="underline" href={`/berechtigungen/teamrechte/${view.current.scope_id}`}>Abrechnungskreis öffnen</a></p>
+      <p><a className="underline" href={`/objekte/${view.current.property_id}`}>Objekt öffnen</a> · <a className="underline" href={`/berechtigungen/${view.current.scope_id}`}>Abrechnungskreis öffnen</a></p>
       {view.current.state === 'active' && !view.master_current && <p>Die aktuellen Stammdaten unterstützen die Wiederverwendung nicht mehr.</p>}
       {view.can_prepare && (view.current.state === 'active' || submitted) && <>
         <fieldset className="space-y-3" disabled={blocked || submitted}>

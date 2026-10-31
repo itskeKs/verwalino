@@ -1,14 +1,35 @@
 # Reviewed accounting scope setup
 
-This remains a B1 preparation increment; scoped team rollout is not activated.
-Migrations 0034–0035 restrict explicitly bound financial resources and their
-invoice jobs. Unclassified resources retain compatibility behavior. The UI
-continues to state that full rollout is unavailable. Aggregate integration,
-proven legacy migration, quarantine and complete document/job coverage remain
-required before activation.
+Administrators open **Berechtigungen** (`/berechtigungen`) from the admin menu or
+user list. The overview explains the confirmed source access state, its effect on
+staff, the next step and open inventory counts. A failed read shows unavailable
+state, never an assumed active protection or zero gaps. Inventory categories can
+overlap and do not certify readiness.
 
-Administrators use `/berechtigungen`, linked from the user list, to create an
-immutable scope and explicitly grant/revoke team capabilities. Scope creation
+- **Teamrechte** (`/berechtigungen/teamrechte`): accounting scopes, explicit grants,
+  revocations and the separate pause for classified financial actions.
+- **Bestand prüfen** (`/berechtigungen/bestand`): inventory, configured runtime
+  budget, versioned coverage, retention/team decision and guarded activation or pause.
+- **Offene Prüfungen** (`/berechtigungen/pruefungen`): source admissions, dunning
+  quarantine and mandate quarantine, each as a bounded list with its loaded count.
+  Reviewed quarantine observations remain visible; a count is not an approval.
+
+**Kontaktdaten-Rechte** and **Gebäudedaten-Rechte** are linked from the area. These
+permissions are independent of accounting grants. **Altquellen** and **Seitenauszüge**
+keep their existing locations. Old preparation, source-review and quarantine URLs,
+and `/berechtigungen/:scopeId`, redirect into the area without losing detail IDs.
+Existing staff source-review access is retained; administrative inventories stay admin-only.
+
+The state **Vorbereitung** means the organization has not activated general source
+protection; already classified financial resources still require their exact grants.
+**Zugriffsregeln aktiv** limits staff to explicitly authorized property sources,
+master data and financial scopes, including administrators. **Aktionen pausiert**
+stops protected effects while keeping restricted reads. Activation is irreversible:
+there is no return to broad preparation access. Migration 0091 supplies the guarded
+transition; this change does not activate any production organization.
+
+In **Teamrechte**, administrators create an immutable scope and explicitly grant or
+revoke team capabilities. Scope creation
 selects a property, optional mandate, inclusive accounting dates and either the
 whole property or a reviewed unit set. SEV requires owners for every unit. The
 ownership history must cover the complete selected period, including any seamless
@@ -89,8 +110,8 @@ attempt cannot overwrite a newer result. Existing attempts without a proven
 initiator are canceled and require an explicit new retry.
 
 This boundary does not certify all computations, exports or retention workflows.
-Exact contexts for statements/derived totals, correction inheritance, source
-registries, privacy retention and staged enforcement remain activation blockers.
+Later source-boundary migrations enforce exact contexts and reviewed source coverage;
+use the current guided activation checks below to determine readiness.
 Never roll back to organization-wide visibility for already classified resources.
 
 
@@ -116,8 +137,8 @@ replay receipts. Financial UI selectors are described below.
 Financial creation forms now expose the exact scope selector. The page endpoint
 accepts `capability`, `scope_type` and `financial_creation`; these filter choices,
 not authorization of effects. Every save independently validates live access.
-Property and bank-type changes reset selection. General creation idempotency and
-full staged rollout remain outstanding; UI scope selection does not activate them.
+Property and bank-type changes reset selection. General creation idempotency remains outside this workflow; UI scope selection
+does not activate source protection.
 
 ### Read-only statements and open items
 
@@ -199,9 +220,9 @@ pause or resume. The control does not itself grant financial access. READ and
 EXPORT retain their existing exact-scope requirements; grants, bindings, money
 and released results are preserved. Grant administration remains available.
 
-This is **not an organization-wide financial freeze**: unclassified legacy writes
-and invoice jobs retain their compatibility behavior. Full enforced team rollout
-is still unavailable. Do not describe this control as stopping every financial
+This control only pauses classified financial scopes. In preparation, unclassified
+legacy writes and invoice jobs retain compatibility behavior. For the source-security
+emergency pause, use **Bestand prüfen → Zugriffsmodus → Aktionen pausieren**. Do not describe this control as stopping every financial
 workflow, source import or background job. Scoped invoice attempts recheck their
 persisted principal before claim and before storing results; a pause at either
 check cancels the attempt without applying extraction results. An attempt already
@@ -249,10 +270,132 @@ mandate file. The array endpoint signals `X-Document-Visibility: accessible-only
 `include_archived=true` includes its retained archives. Failed UI refreshes hide
 stale rows and report unavailable state instead of a successful empty result.
 
-Unclassified legacy documents keep their current organization-level compatibility
-access and deletion behavior. They are not classified automatically or through a
+In preparation, unclassified legacy documents keep organization-level compatibility
+access and deletion behavior. After activation, unproven originals remain inaccessible. They are not classified automatically or through a
 raw context update. A later legacy review must verify original bytes and provenance;
 archived and unclassified sources remain part of the outstanding historical-coverage
 work before enforced rollout. This increment does not cover declaration extraction
 jobs or property legal-source access. Populated 0042 downgrade refuses to erase the
 classified boundary; preserve originals and repair forward.
+
+
+## Owner activation runbook
+
+Production activation is a separate, irreversible operator decision. The owner
+performs these steps on the intended instance; the rehearsal and screenshots use
+only the locked disposable test stack. Never point backend tests at real data.
+Do not edit a mode row, replace readiness functions, disable a guard or downgrade
+populated migrations to obtain readiness.
+
+### Prerequisites
+
+Use a current installation with the existing lifecycle migration (0091 or later),
+a current administrator session and a verified recoverable backup under the owner's
+normal backup procedure. Schedule a quiet window: finish/cancel relevant work through
+its normal controls, and avoid source, grant and configuration changes during review.
+Have a second staff session for access checks and explicit intended team assignments.
+Review the deployed knowledge-query budget and provider configuration; no provider
+call is required to review or activate protection.
+
+### Guided steps
+
+1. Open **Berechtigungen**. Confirm the organization and current state. In
+   **Teamrechte**, inspect scopes, property/period/unit assignments and capabilities.
+   Review independent **Gebäudedaten-Rechte** and **Kontaktdaten-Rechte**, including
+   the administrator's own grants. A role alone is not a data grant.
+2. Open **Offene Prüfungen**. Inspect source originals and their exact targets;
+   explicitly approve only proven admissions. Use **Altquellen** for classified
+   legacy originals. Review unresolved dunning and mandate observations. A quarantine
+   review records continued quarantine; it does not make a source available.
+3. Open **Bestand prüfen**, then **Bestand aktualisieren**. Inspect every category.
+   Zero gaps alone cannot activate protection. Preserve unprovable originals as
+   blocked retained records; do not infer custody or rewrite historical facts.
+4. Under **Budget für Wissensauskünfte**, load and inspect the running policy,
+   enter a reason, confirm it and save **Budgetregel bestätigen**.
+   Review is required even when knowledge queries are configured off.
+5. **Neuen Prüfstand erfassen**; load all pages and inspect source relations,
+   effective audiences and findings. Follow each remediation link. Check the full
+   stand and save its review. If it is stale, capture a new stand after completing
+   the changes. Proposed grants require separate explicit acceptance.
+6. In **Entscheidung über Altbestände und Teamzuordnung**, choose
+   **Entscheidungsgrundlage erneut laden** after the stand review and load every entry.
+   Resolve blocking findings and running work through their normal workflows.
+   Inspect intended team grants and the records that will remain blocked. Enter a
+   reason, confirm both acknowledgements and **Altbestandsentscheidung speichern**.
+   This decision grants no permissions. Select **Als Grundlage für die Umstellung auswählen**.
+7. In **Zugriffsmodus**, confirm the selected current stand. Enter the activation
+   reason, acknowledge permanent enforcement and **Zugriffsregeln aktivieren**.
+   The server rechecks mode, predecessor, current runtime budget, review, manifest,
+   assessment and absence of blocking/active work under the existing lock. A conflict
+   requires reloading and reviewing fresh evidence, never weakening a gate.
+8. Confirm the current display is **Zugriffsregeln aktiv** after its separate status
+   read. Return to **Übersicht** and refresh. In the staff session, verify that an
+   ungranted property's sources and financial account are not found; with explicit
+   matching grants verify the intended data and original bytes. Check representative
+   normal work, exports and background jobs for the intended team capabilities.
+
+### Pause and recovery
+
+For an incident, open **Bestand prüfen → Zugriffsmodus**, reload current status,
+enter a reason, confirm restricted reads remain in effect and choose **Aktionen
+pausieren**. This emergency action requires no snapshot or budget evidence. Confirm
+**Aktionen pausiert** through the fresh status read. Authorized reads remain strict;
+protected effects are denied and queued work follows its existing cancellation fence.
+Do not use the separate classified-finance pause as a substitute.
+
+Before **Aktionen wieder aufnehmen**, remedy the cause and repeat budget/coverage
+review and retention/team acceptance with a new snapshot captured after the last
+pause. Select that new decision and explicitly confirm resumption. Old evidence
+cannot resume protection. Revoked permissions are not restored.
+
+### Fresh organizations
+
+First-run browser setup and CLI bootstrap create the organization, administrator and
+membership without a source-security row. The mode reader therefore starts them in
+preparation. There is currently no self-service organization signup endpoint; hosted
+signup is pending, so no different signup initialization is claimed here.
+
+An empty organization has no legacy sources to classify. It can immediately complete
+the existing budget, snapshot, team/retention review and guarded activation before
+creating its first property. Subsequent property creation requires an explicit data
+audience; financial creation requires its exact scope and grants. Starting directly
+in enforced mode automatically would require changing bootstrap and initial-audience
+behavior, not just a safe default value. No initialization behavior changes here.
+
+
+## Disposable rehearsal for issue 73
+
+On 31 October 2026, `scripts/dev-local.sh` ran against only `infra-postgres-1` at
+127.0.0.1:55432 under `/tmp/verwalino-testdb.lock`. Synthetic data included four
+properties with long names, seven contacts, one exact rental scope and account,
+one original awaiting current admission, and a staff account.
+
+The guided UI reviewed the actual original and target, confirmed the running budget,
+captured/reviewed coverage, accepted team/retention decisions and activated protection.
+Without grants the staff session received not-found results for the property,
+original PDF and account; after explicit property READ/EXPORT and scope READ grants,
+all three were visible and the PDF bytes matched. Emergency pause worked with no
+selected snapshot: granted reads survived and a property update was denied. A new
+post-pause reviewed snapshot and acceptance resumed the organization. The rehearsal
+ended in enforced mode; this is a disposable result, not production activation.
+The stack was stopped before releasing the lock for backend tests.
+
+No activation gate needed changing. The UI blockers corrected here were scattered
+controls, stale inactive-state claims and incomplete overview counts. Reviewing a
+coverage stand requires reloading the disposition panel before its acceptance;
+the runbook names that existing action explicitly. Fresh-organization behavior is
+also covered by the existing lifecycle test, without changing bootstrap defaults.
+
+Real Chromium opened the changed permissions screens, source receipt and scope detail
+at 1280 and 360 pixels, with no sideways overflow in the area. Before images use the
+base frontend against the same synthetic test data. The permission-area screenshots
+are ready to include in the PR; no production records appear in them.
+
+| View | Desktop | Phone (360 px) |
+| --- | --- | --- |
+| Previous team page | [Before](../assets/permissions/before-team-desktop.png) | [Before](../assets/permissions/before-team-360.png) |
+| Active overview | [After](../assets/permissions/after-overview-desktop.png) | [After](../assets/permissions/after-overview-360.png) |
+| Team rights | [After](../assets/permissions/after-team-desktop.png) | [After](../assets/permissions/after-team-360.png) |
+| Preparation | [After](../assets/permissions/after-inventory-desktop.png) | [After](../assets/permissions/after-inventory-360.png) |
+| Review lists | [After](../assets/permissions/after-reviews-desktop.png) | [After](../assets/permissions/after-reviews-360.png) |
+| Emergency pause | [Paused](../assets/permissions/paused-overview-desktop.png) | [Paused](../assets/permissions/paused-overview-360.png) |

@@ -20,7 +20,7 @@ history). Update this page in the same PR whenever a feature's status changes.
 | Roles admin/clerk/read-only | yes | ✅ admin can change role and deactivate; write buttons hidden for read-only | `core/rbac.py` (`OWNER_ADMIN`, `CLERK`, `READ_ONLY`), T57 |
 | Change password | yes | ✅ own change and admin reset, sessions revoked | `api/auth.py` (`POST /api/auth/password`), `api/users.py` (`/reset-password`), `components/Topbar.tsx`, T14, T57 |
 | Management mandates with documents | no | ✅ edit/end, bound definition protected | `api/mandates.py`, `pages/MandateDetailPage.tsx`, T55 |
-| Source governance (scopes, approvals, quarantines) | no | ✅ non-blocking in the default mode `PREPARATION`; menu entries grouped under the admin-only "Erweitert" group | `services/financial_scope_service.py`, `components/Sidebar.tsx`, T11 |
+| Source governance (scopes, approvals, quarantines) | no | ✅ one admin permissions area with state, next step, team rights, preparation and review lists; guarded activation and emergency pause; new organizations start in preparation; test-stack rehearsal described in the operations runbook | `pages/PermissionsPage.tsx`, `components/SourceSecurityPanel.tsx`, [runbook](operations/accounting-scope-setup.md#owner-activation-runbook), #73 |
 | Dashboard | yes | ✅ deadlines, due tasks, monthly rent and vacancy KPIs | `pages/DashboardPage.tsx`, `components/DashboardKpis.tsx`, `api/reports.py` (`/dashboard-kpis`), `services/dashboard_kpi_service.py`, T42, T52 |
 
 ## Properties and units
