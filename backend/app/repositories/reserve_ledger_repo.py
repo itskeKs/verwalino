@@ -1,5 +1,5 @@
 """Explicit property/scope source queries for reserve development."""
-from sqlalchemy import select, text
+from sqlalchemy import select, text, and_, or_
 
 from app.models.payment import Payment
 from app.models.cost_entry import CostEntry
@@ -8,6 +8,8 @@ from app.models.reserve_ledger_entry import ReserveLedgerEntry
 from app.models.economic_plan import EconomicPlan
 from app.models.settlement_run import SettlementRun
 from app.models.accounting_scope import AccountingScope, AccountingScopeBinding
+from app.models.ownership_history import OwnershipHistory
+from app.models.unit import Unit
 from app.repositories.base import TenantRepository
 
 
@@ -20,15 +22,20 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
             {'org': self._org_id, 'property': run.property_id})
 
     async def entries(self, run):
-        return list((await self._session.scalars(self._base_query().where(
-            ReserveLedgerEntry.property_id == run.property_id)
+        return list((await self._session.scalars(self._base_query().join(SettlementRun,
+            (SettlementRun.organization_id == ReserveLedgerEntry.organization_id)
+            & (SettlementRun.id == ReserveLedgerEntry.settlement_run_id)).where(
+            ReserveLedgerEntry.property_id == run.property_id,
+            or_(ReserveLedgerEntry.component == 'FUNDING', and_(
+                SettlementRun.period_start == run.period_start, SettlementRun.period_end == run.period_end)))
             .order_by(ReserveLedgerEntry.entry_date, ReserveLedgerEntry.id))).all())
 
-    async def payments(self, run):
+    async def payments(self, run, start=None):
         return list((await self._session.scalars(select(Payment).where(
             Payment.organization_id == self._org_id, Payment.property_id == run.property_id,
             Payment.status == 'booked', Payment.cancelled_at.is_(None),
-            Payment.value_date.between(run.period_start, run.period_end))
+            Payment.payment_type.in_(('HAUSGELD_VORSCHUSS', 'RUECKLAGENANTEIL', 'RUECKLAGENENTNAHME')),
+            Payment.value_date.between(start or run.period_start, run.period_end))
             .order_by(Payment.value_date, Payment.id))).all())
 
     async def plans(self, run):
@@ -37,6 +44,31 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
             EconomicPlan.status == 'finalized', EconomicPlan.superseded_by_id.is_(None),
             EconomicPlan.period_start == run.period_start, EconomicPlan.period_end == run.period_end)
             .order_by(EconomicPlan.id))).all())
+
+    async def payment_plans(self, payment):
+        return list((await self._session.scalars(select(EconomicPlan).where(
+            EconomicPlan.organization_id == self._org_id, EconomicPlan.property_id == payment.property_id,
+            EconomicPlan.status == 'finalized',
+            EconomicPlan.period_start <= payment.value_date, EconomicPlan.period_end >= payment.value_date)
+            .order_by(EconomicPlan.superseded_by_id.is_not(None), EconomicPlan.created_at.desc(), EconomicPlan.id))).all())
+
+    async def cash_plans(self, run, start):
+        return list((await self._session.scalars(select(EconomicPlan).where(
+            EconomicPlan.organization_id == self._org_id, EconomicPlan.property_id == run.property_id,
+            EconomicPlan.status == 'finalized',
+            EconomicPlan.period_start <= run.period_end, EconomicPlan.period_end >= start)
+            .order_by(EconomicPlan.superseded_by_id.is_not(None), EconomicPlan.period_start.desc(), EconomicPlan.id))).all())
+
+    async def owner_units(self, subject):
+        # Historical owners remain attributable when they pay arrears after a sale.
+        rows = await self._session.execute(select(OwnershipHistory.owner_profile_id, OwnershipHistory.unit_id)
+            .join(Unit, (Unit.organization_id == OwnershipHistory.organization_id)
+                  & (Unit.id == OwnershipHistory.unit_id)).where(
+                OwnershipHistory.organization_id == self._org_id, Unit.property_id == subject.property_id))
+        result = {}
+        for owner, unit in rows:
+            result.setdefault(str(owner), set()).add(str(unit))
+        return result
 
     async def finalized(self, run):
         # Prior-year scopes need their own live read grant, independently of the

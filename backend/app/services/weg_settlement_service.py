@@ -661,6 +661,7 @@ class WegSettlementService:
                 withdrawals_total=Decimal(ledger['withdrawals_total']),
                 contributions_total=Decimal(ledger['contributions_total']),
                 overrides_total=Decimal(ledger['overrides_total']),
+                late_cash_total=Decimal(ledger.get('late_cash_total', '0.00')),
             ),
             paid_advances=paid,
             reserve_ledger=ledger,
@@ -717,6 +718,9 @@ class WegSettlementService:
 
         # Object-wide reserve development lines (addressee NULL).
         dev = result.reserve
+        if dev.late_cash_total:
+            self._session.add(self._line(run, None, 'SUBTOTAL', 'Nachträgliche Buchungen zum abgeschlossenen Jahr',
+                                         dev.late_cash_total, sort, note='Rücklagenbuch · ursprüngliche Wertstellung')); sort += 1
         if dev.overrides_total:
             self._session.add(self._line(run, None, 'SUBTOTAL', 'Begründete Rücklagenkorrekturen',
                                          dev.overrides_total, sort, note='Rücklagenbuch')); sort += 1
@@ -782,6 +786,7 @@ class WegSettlementService:
                 opening_balance=Decimal(ledger['opening_balance']),
                 withdrawals_total=Decimal(ledger['withdrawals_total']),
                 overrides_total=Decimal(ledger['overrides_total']),
+                late_cash_total=Decimal(ledger.get('late_cash_total', '0.00')),
             ),
             reserve_contributions_total=Decimal(ledger["contributions_total"]),
             reserve_ledger=ledger,

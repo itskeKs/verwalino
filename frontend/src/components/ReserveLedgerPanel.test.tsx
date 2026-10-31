@@ -3,6 +3,15 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { ReserveLedgerPanel } from './ReserveLedgerPanel';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+it('shows late closed-year cash separately with its original value date', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => json({ ...ledger, late_cash_total: '999.00', closing_balance: '21999.00',
+    entries: [{ kind: 'LATE_CASH', component: 'CONTRIBUTION', date: '2025-12-31', amount: '999.00', payment_id: 'late-payment' }] })));
+  render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={() => {}} />);
+  await screen.findByText('31.12.2025');
+  expect(screen.getAllByText(/Nachträgliche Buchungen zum abgeschlossenen Jahr/)).toHaveLength(2);
+  expect(screen.getByText(/21\.999,00/)).toBeInTheDocument();
+});
 const ledger = { opening_balance: '20000.00', contributions_total: '1000.00', withdrawals_total: '0.00',
   overrides_total: '0.00', closing_balance: '21000.00', planned_contributions_total: '6000.00',
   overdrawn: false, frozen: false, booking_basis: 'CASH', entries: [

@@ -342,6 +342,17 @@ class PaymentService:
                 detail=f"Cannot book from status '{payment.status}'",
             )
 
+        if payment.payment_type == 'HAUSGELD_VORSCHUSS':
+            from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
+            await FinancialScopeService(self._session, self._org_id, self._user_id).enter(payment)
+            reserves = ReserveLedgerRepository(self._session, self._org_id)
+            for plan in (await reserves.payment_plans(payment))[:1]:
+                units = (await reserves.owner_units(payment)).get(str(payment.owner_profile_id), set())
+                units |= {o['unit_id'] for o in plan.snapshot_payload['inputs']['owner_periods']
+                          if o['owner_profile_id'] == str(payment.owner_profile_id)}
+                if not units.intersection(o['unit_id'] for o in plan.snapshot_payload['result']['owners']):
+                    raise HTTPException(422, 'Dem Zahlenden ist keine Einheit im Wirtschaftsplan zugeordnet.')
+
         now = datetime.now(timezone.utc)
         payment.status = "booked"
         payment.booked_at = now

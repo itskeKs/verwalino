@@ -91,3 +91,14 @@ Adjacent periods therefore reconcile exactly, even when they split a month,
 regardless of draft or finalization order. Both rules live in
 `backend/app/engine/rounding.py`: `distribute_amount` for costs and
 `annual_advance_share_for_period` for year-only advances.
+
+## Amendment — 2026-10-31: reserve cash within combined Hausgeld
+
+A deliberate exception applies to the reserve component of each booked Hausgeld
+payment: multiply the signed cash amount by the unit's frozen annual reserve
+share divided by its total annual Hausgeld, then round that single component
+commercially to cents (`ROUND_HALF_UP`). This is not a distribution of a fixed
+reserve total across receipts: cash arrives independently and a reversal must
+cancel its original component exactly. Do not redistribute fractions across
+payments with `distribute_amount`. Planning still uses largest remainder for
+owner/unit shares and monthly rates. See [M4](../m4-weg-abrechnung.md#maintenance-reserve-ledger-36).

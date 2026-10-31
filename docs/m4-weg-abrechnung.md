@@ -623,11 +623,15 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   The ledger shows these as `PLANNED` entries and a separate planned total.
 - Booked `RUECKLAGENANTEIL` payments contribute their signed cash amount.
   `HAUSGELD_VORSCHUSS` represents combined Hausgeld: its reserve component is
-  the payment multiplied by that owner's frozen annual reserve share divided
-  by the owner's annual plan advance, rounded commercially once per movement.
+  the payment multiplied by the UNIT's frozen annual reserve share divided
+  by its total annual Hausgeld (all co-owner plan lines combined), rounded
+  `ROUND_HALF_UP` once per movement, a deliberate ADR-0005 exception. Historical
+  ownership maps the payer to the unit, including buyers and former owners
+  paying arrears. For several units, their plan volumes are combined.
   A separately booked reserve payment must represent additional cash, not a
-  second classification of the same combined receipt. Missing Hausgeld plan
-  shares block derivation. The property/account and selected financial scope
+  second classification of the same combined receipt. An owner without any unit
+  in an available cash-year plan receives a clear 422 at payment booking, never
+  during attestation or computation; unmatched historical bookings allocate zero. The property/account and selected financial scope
   filter the source payments.
 - `RUECKLAGENENTNAHME` is a counterparty-neutral payout type; it cannot be
   assigned to a tenant, owner or lease. Every booked payout reduces cash.
@@ -641,8 +645,17 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   later. The existing Storno operation keeps the original value date; a real
   later refund is a new outgoing booking. Reversing a funded payout permits its
   corrected replacement to be linked. Combined receipts use the cash period's
-  plan ratio; assigned arrears months do not select a different plan. A late
-  correction to a frozen period requires a reasoned adjustment in an open period.
+  UNIT plan ratio; assigned arrears months do not select a different plan. Cash
+  booked after a value year was frozen, including Storno with its original value
+  date, enters the next open period as `LATE_CASH`, labelled “Nachträgliche
+  Buchungen zum abgeschlossenen Jahr”. Each row retains its original value date.
+  Its signed net amount is separate from current contributions, withdrawals and
+  manual adjustments. Frozen payment IDs prevent repeated carry-over; legacy
+  snapshots use their finalization cutoff. Late Hausgeld uses the original value
+  period’s frozen plan reference, including a superseded plan, not the next year’s
+  ratio. A Storno of frozen Hausgeld negates the recorded original contribution
+  exactly, even after later acquisitions or plan corrections. Late payouts still require funding
+  evidence before computation.
 - Opening comes from the immediately preceding finalized reserve snapshot;
   a gap blocks automatic carry-over. Same-period report/settlement reuse requires
   the exact accounting scope. Prior-year scopes must be readable and either the
@@ -650,30 +663,36 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   opening starts at zero; an imported balance is an explicit reasoned opening
   adjustment. If no plan exists, an asset report shows planning as unknown,
   while dedicated reserve receipts and reasoned opening/other adjustments remain
-  available; Hausgeld allocation still requires its plan.
+  available; Hausgeld uses any finalized plan covering its cash date.
 - `reserve_ledger_entry` retains append-only signed adjustments and funding
   evidence. `OPENING`, `CONTRIBUTION` and `WITHDRAWAL` adjustments change those
   components; `ADJUSTMENT` adds a signed amount directly. A reason is mandatory.
+  Corrections apply only to the exact start/end period they were posted for; a
+  July–December opening does not enter a January–December ledger. Funding links
+  remain payment-specific across periods so later reversals retain their evidence.
   Existing typed reserve total fields are optional target-total overrides: input
   attestation appends only their difference from the derived total, with
   `reserve_override_reason`, and audits it. Repeating the same attestation adds
   no second adjustment. A subsequent source/ledger change invalidates coverage.
 
-`closing = opening + actual contributions − withdrawals + other adjustments`.
+`closing = opening + actual contributions − withdrawals + other adjustments + late cash`.
 An overdrawn balance is retained and explicitly flagged, never clipped to zero.
 Staff must review financing; this ledger does not authorize an overdraft.
 
 `GET /api/weg-settlements/{run_id}/reserve-ledger` reads the live draft or the
 frozen ledger. `POST .../reserve-ledger/overrides` appends a reasoned adjustment
 or `FUNDING` link. Organization roles, complete source access, the existing
-financial-scope capabilities and tenant-bound foreign keys apply. New ledger
+financial-scope capabilities and tenant-bound foreign keys apply. Hidden reserve
+history returns the same generic 404 as a missing ledger; the database helper
+refuses hidden and nonexistent properties with the same permission error. New ledger
 writes cannot modify an already finalized reserve period. Corrections are
 additional entries in an open period, not edits of historical evidence.
 
 Finalization stores the complete ordered ledger, plan hash, source references,
 carry-over run and all totals in the existing canonical settlement snapshot.
 Later bookings, reversals, plan corrections and overrides do not change an
-issued year's ledger or the opening carried from it. Historical snapshots
+issued year's ledger or the opening carried from it. Late cash changes the next
+open closing balance through its separate component. Historical snapshots
 without a ledger are displayed from their existing frozen reserve development,
 marked as legacy, without rewriting them.
 

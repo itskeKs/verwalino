@@ -359,6 +359,7 @@ def build_weg_snapshot_payload(
                 "withdrawals_total": _m(inp.reserve.withdrawals_total),
                 "contributions_total": _m(inp.reserve.contributions_total),
                 "overrides_total": _m(inp.reserve.overrides_total),
+                "late_cash_total": _m(inp.reserve.late_cash_total),
             },
         },
         "computation": [
@@ -426,6 +427,7 @@ def build_weg_snapshot_payload(
                 "withdrawals_total": _m(result.reserve.withdrawals_total),
                 "closing_balance": _m(result.reserve.closing_balance),
                 "overrides_total": _m(result.reserve.overrides_total),
+                "late_cash_total": _m(result.reserve.late_cash_total),
             },
             "cost_total": _m(result.cost_total),
             "reserve_contributions_total": _m(result.reserve_contributions_total),
@@ -527,6 +529,7 @@ def build_asset_report_payload(
                 "opening_balance": _m(inp.reserve.opening_balance),
                 "withdrawals_total": _m(inp.reserve.withdrawals_total),
                 "overrides_total": _m(inp.reserve.overrides_total),
+                "late_cash_total": _m(inp.reserve.late_cash_total),
             },
             "reserve_contributions_total": _m(inp.reserve_contributions_total),
             "bank_balances": [
@@ -554,6 +557,7 @@ def build_asset_report_payload(
                 "withdrawals_total": _m(result.reserve.withdrawals_total),
                 "closing_balance": _m(result.reserve.closing_balance),
                 "overrides_total": _m(result.reserve.overrides_total),
+                "late_cash_total": _m(result.reserve.late_cash_total),
             },
             "lines": [
                 {

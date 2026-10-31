@@ -330,6 +330,7 @@ class ReserveInput:
     withdrawals_total: Decimal = Decimal("0.00")
     contributions_total: Decimal | None = None
     overrides_total: Decimal = Decimal("0.00")
+    late_cash_total: Decimal = Decimal("0.00")
 
 
 @dataclass(frozen=True)
@@ -501,7 +502,7 @@ class OwnerResult:
 class ReserveDevelopment:
     """The Erhaltungsruecklage development block (m4 section 3.3).
 
-    Invariant (checked fail-loud): closing == opening + contributions - withdrawals.
+    Closing includes contributions minus withdrawals, signed overrides and late cash.
     """
 
     opening_balance: Decimal
@@ -509,6 +510,7 @@ class ReserveDevelopment:
     withdrawals_total: Decimal
     closing_balance: Decimal
     overrides_total: Decimal = Decimal("0.00")
+    late_cash_total: Decimal = Decimal("0.00")
 
 
 @dataclass(frozen=True)

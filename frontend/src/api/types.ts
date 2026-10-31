@@ -1338,6 +1338,7 @@ export interface ReserveLedger {
   contributions_total: string;
   withdrawals_total: string;
   overrides_total: string;
+  late_cash_total?: string;
   closing_balance: string;
   planned_contributions_total: string | null;
   overdrawn: boolean;

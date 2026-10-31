@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy.exc import DBAPIError
 
 from app.core.rbac import ScopeCapability
-from app.engine.reserve_ledger import money, planned_reserve_entries, reserve_totals
+from app.engine.reserve_ledger import money, plan_reserve_entries, hausgeld_reserve_share, reserve_totals
 from app.models.audit_event import AuditEvent
 from app.models.reserve_ledger_entry import ReserveLedgerEntry
 from app.repositories.audit_repo import AuditRepository
@@ -52,7 +52,7 @@ class ReserveLedgerService:
             finalized = await self.repo.finalized(run)
         except DBAPIError as exc:
             if getattr(exc.orig, 'sqlstate', None) == '42501':
-                raise HTTPException(404, 'Vollständige Rücklagenhistorie nicht zugänglich.') from None
+                raise HTTPException(404, 'Rücklagenabrechnung nicht gefunden.') from None
             raise
         current_scope = await self.repo.current_scope(run)
         current_id = current_scope.id if current_scope else None
@@ -75,38 +75,29 @@ class ReserveLedgerService:
         if len(plans) > 1 or run.economic_plan_id and not plans:
             raise HTTPException(422, 'Genau ein aktueller, finalisierter Wirtschaftsplan für diesen Zeitraum ist erforderlich.')
         plan = plans[0] if plans else None
-        rows, reserve_by_owner, advance_by_owner = [], {}, {}
-        if plan is not None:
-            payload = plan.snapshot_payload
-            units = {u['id']: Decimal(u['mea'] or '0') for u in payload['inputs']['units']}
-            ownership = payload['inputs']['owner_periods']
-            cells = []
-            for unit, mea in sorted(units.items()):
-                owners = [o for o in ownership if o['unit_id'] == unit and o['from'] <= str(plan.period_start)
-                          and (o['to'] is None or o['to'] >= str(plan.period_start))]
-                if not owners or mea <= 0:
-                    continue
-                denominator = sum((Decimal(o['mea_share'] or '0') for o in owners), ZERO)
-                for owner in owners:
-                    weight = mea if len(owners) == 1 else mea * Decimal(owner['mea_share']) / denominator
-                    cells.append((unit, owner['owner_profile_id'], weight))
-            rows = planned_reserve_entries(plan.reserve_contribution_total, cells, plan.period_start)
-            unit_numbers = {u['id']: u['number'] for u in payload['inputs']['units']}
-            for row in rows:
-                row['unit_number'] = unit_numbers[row['unit_id']]
-            reserve_by_owner, advance_by_owner = {}, {}
-            for row in rows:
-                owner = row['owner_profile_id']
-                reserve_by_owner[owner] = reserve_by_owner.get(owner, ZERO) + Decimal(row['amount'])
-            for owner in payload['result']['owners']:
-                key = owner['owner_profile_id']
-                advance_by_owner[key] = advance_by_owner.get(key, ZERO) + Decimal(owner['annual_advance'])
+        rows = plan_reserve_entries(plan.snapshot_payload, plan.reserve_contribution_total, plan.period_start) if plan else []
+        owner_units = await self.repo.owner_units(run)
+        # Frozen ledgers identify consumed bookings, including earlier late cash.
+        history = [r for r, _ in compatible if r.period_end < run.period_start]
+        frozen_cash = {row['payment_id']: row for r in history
+                       for row in (r.snapshot_payload or {}).get('reserve_ledger', {}).get('entries', [])
+                       if row.get('payment_id')}
+        consumed = set(frozen_cash)
+        start = min((r.period_start for r in history), default=run.period_start)
         entries = await self.repo.entries(run)
         funding = {entry.payment_id: entry for entry in entries if entry.component == 'FUNDING'}
-        contributions, withdrawals, overrides = ZERO, ZERO, ZERO
+        contributions, withdrawals, overrides, late_cash = ZERO, ZERO, ZERO, ZERO
         unlinked = []
-        payments = await self.repo.payments(run)
+        payments = await self.repo.payments(run, start)
+        payments = [p for p in payments if p.value_date >= run.period_start or (
+            str(p.id) not in consumed and any(r.period_start <= p.value_date <= r.period_end
+                and ('reserve_ledger' in (r.snapshot_payload or {}) or p.booked_at > r.finalized_at)
+                for r in history))]
         payment_ids = {p.id for p in payments}
+        cash_plans = await self.repo.cash_plans(run, start) if any(
+            p.payment_type == 'HAUSGELD_VORSCHUSS' and (plan is None or p.value_date < run.period_start)
+            for p in payments) else []
+        plan_rows = {plan.id: tuple(rows)} if plan else {}
         for payment in payments:
             signed = payment.amount if payment.direction == 'IN' else -payment.amount
             owner = str(payment.owner_profile_id)
@@ -114,20 +105,45 @@ class ReserveLedgerService:
             if payment.payment_type == 'RUECKLAGENANTEIL':
                 actual = signed
             elif payment.payment_type == 'HAUSGELD_VORSCHUSS':
-                advance = advance_by_owner.get(owner, ZERO)
-                if advance <= 0:
-                    raise HTTPException(422, 'Für gebuchtes Hausgeld fehlt der Reserveanteil im Wirtschaftsplan.')
-                actual = money(signed * reserve_by_owner.get(owner, ZERO) / advance)
+                original = frozen_cash.get(str(payment.reverses_id))
+                if original and (original['kind'] == 'CONTRIBUTION' or original.get('component') == 'CONTRIBUTION'):
+                    # Later sales and corrected plans cannot change frozen cash.
+                    actual = -Decimal(original['amount'])
+                else:
+                    cash_plan = plan
+                    if cash_plan is None or payment.value_date < run.period_start:
+                        source_id = next(((r.snapshot_payload or {}).get('reserve_ledger', {}).get('economic_plan_id')
+                            for r in history if r.period_start <= payment.value_date <= r.period_end
+                            and (r.snapshot_payload or {}).get('reserve_ledger', {}).get('economic_plan_id')), None)
+                        cash_plan = next((p for p in cash_plans if str(p.id) == source_id), None) if source_id else next(
+                            (p for p in cash_plans if p.period_start <= payment.value_date <= p.period_end), None)
+                        if source_id and cash_plan is None:
+                            raise HTTPException(404, 'Rücklagenabrechnung nicht gefunden.')
+                    if cash_plan and cash_plan.id not in plan_rows:
+                        plan_rows[cash_plan.id] = plan_reserve_entries(
+                            cash_plan.snapshot_payload, cash_plan.reserve_contribution_total, cash_plan.period_start)
+                    planned = plan_rows[cash_plan.id] if cash_plan else []
+                    payload = cash_plan.snapshot_payload if cash_plan else {'inputs': {'owner_periods': []}, 'result': {'owners': []}}
+                    units = owner_units.get(owner, set()) | {o['unit_id'] for o in payload['inputs']['owner_periods']
+                                                           if o['owner_profile_id'] == owner}
+                    actual = hausgeld_reserve_share(signed, units, [r for r in planned if r['kind'] == 'PLANNED'], payload['result']['owners'])
+            late = payment.value_date < run.period_start
             if actual is not None:
-                contributions += actual
-                rows.append({'kind': 'CONTRIBUTION', 'date': str(payment.value_date), 'amount': format(actual, '.2f'),
+                if late:
+                    late_cash += actual
+                else:
+                    contributions += actual
+                rows.append({'kind': 'LATE_CASH' if late else 'CONTRIBUTION', **({'component': 'CONTRIBUTION'} if late else {}), 'date': str(payment.value_date), 'amount': format(actual, '.2f'),
                              'payment_id': str(payment.id), 'bank_account_id': str(payment.bank_account_id),
                              'owner_profile_id': owner})
             link = funding.get(payment.reverses_id or payment.id)
             if payment.payment_type == 'RUECKLAGENENTNAHME':
                 amount = -signed
-                withdrawals += amount
-                rows.append({'kind': 'WITHDRAWAL', 'date': str(payment.value_date), 'amount': format(amount, '.2f'),
+                if late:
+                    late_cash -= amount
+                else:
+                    withdrawals += amount
+                rows.append({'kind': 'LATE_CASH' if late else 'WITHDRAWAL', **({'component': 'WITHDRAWAL'} if late else {}), 'date': str(payment.value_date), 'amount': format(-amount if late else amount, '.2f'),
                              'payment_id': str(payment.id), 'cost_entry_id': str(link.cost_entry_id) if link else None,
                              'register_entry_id': str(link.register_entry_id) if link else None,
                              'reason': link.reason if link else 'Kostenbeleg und Beschluss noch nicht verknüpft'})
@@ -146,7 +162,7 @@ class ReserveLedgerService:
                 overrides += entry.amount
             rows.append({'kind': 'OVERRIDE', 'component': entry.component, 'date': str(entry.entry_date),
                          'amount': format(entry.amount, '.2f'), 'reason': entry.reason, 'id': str(entry.id)})
-        return {**reserve_totals(opening, contributions, withdrawals, overrides),
+        return {**reserve_totals(opening, contributions, withdrawals, overrides, late_cash),
                 'planned_contributions_total': format(money(plan.reserve_contribution_total), '.2f') if plan else None,
                 'economic_plan_id': str(plan.id) if plan else None, 'economic_plan_sha256': plan.snapshot_sha256 if plan else None,
                 'booking_basis': 'CASH', 'frozen': False,
@@ -172,7 +188,7 @@ class ReserveLedgerService:
             if (payment.status != 'booked' or payment.direction != 'OUT' or payment.payment_type != 'RUECKLAGENENTNAHME'
                     or payment.reverses_id
                     or cost.status != 'confirmed' or cost.superseded_by_id or cost.gross_amount < payment.amount
-                    or not run.period_start <= payment.value_date <= run.period_end):
+                    or not any(row.get('payment_id') == str(payment.id) for row in ledger['entries'])):
                 raise HTTPException(422, 'Bitte wählen Sie eine aktive Auszahlung und einen bestätigten Kostenbeleg.')
             if any(e.payment_id == payment_id for e in await self.repo.entries(run)):
                 raise HTTPException(409, 'Diese Auszahlung ist bereits der Rücklage zugeordnet.')

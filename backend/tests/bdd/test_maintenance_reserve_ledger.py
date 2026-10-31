@@ -38,7 +38,8 @@ def reserve_scenario(world, seed_data):
     assert response.status_code == 200, response.text
     run = create(world, '/api/weg-settlements', {'property_id': home['id'], 'accounting_scope_id': scope['id'],
         'economic_plan_id': plan['id'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
-    w = {'run': run['id'], 'owner_a': owner['id'], 'bank_giro': account['id']}
+    w = {'run': run['id'], 'owner_a': owner['id'], 'bank_giro': account['id'],
+         'property': home['id'], 'scope': scope['id']}
     response = world.send(client_a_admin, 'POST', '/api/payments', json={
         'bank_account_id': w['bank_giro'], 'direction': 'IN', 'amount': '6000.00',
         'value_date': '2025-02-01', 'payment_type': 'RUECKLAGENANTEIL',
@@ -93,3 +94,57 @@ def frozen(world, reserve_scenario):
         'component': 'ADJUSTMENT', 'amount': '1.00', 'reason': 'Must not change a frozen year'})
     assert response.status_code == 409, response.text
     assert world.look(client_a_admin, path).json() == w['frozen']
+
+
+@when('I prepare the next WEG year and asset report')
+def next_year(world, reserve_scenario):
+    w = reserve_scenario
+    common = {'property_id': w['property'], 'accounting_scope_id': w['scope'],
+              'period_start': '2026-01-01', 'period_end': '2026-12-31'}
+    plan = create(world, '/api/economic-plans', {**common, 'plan_year': 2026})
+    values = {'planned_costs': [], 'reserve_contribution_total': '6000.00'}
+    world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], values))
+    response = world.act('POST', f"/api/economic-plans/{plan['id']}/finalize", json=values)
+    assert response.status_code == 200, response.text
+    w['next_run'] = create(world, '/api/weg-settlements', {**common, 'economic_plan_id': plan['id']})['id']
+    w['next_report'] = create(world, '/api/weg-settlements/asset-reports', common)['id']
+
+
+@then('a late receipt is shown separately with its original date on both reserve pages')
+def visible_late_cash(world, reserve_scenario, browser_world, request):
+    from playwright.async_api import expect
+    from tests.bdd.report import artifact_directory, attach_artifact
+    w = reserve_scenario
+    directory = artifact_directory(request.node)
+
+    async def inspect(stage):
+        page = browser_world.page
+        for width in (1280, 360):
+            await page.set_viewport_size({'width': width, 'height': 1000})
+            for prefix, path in [('weg', f"/weg-abrechnungen/{w['next_run']}"),
+                                 ('asset', f"/vermoegensberichte/{w['next_report']}")]:
+                await browser_world.visit(path)
+                panel = page.get_by_role('region', name='Rücklagenbuch', exact=True)
+                await expect(panel.get_by_text('Anfangsbestand', exact=True)).to_be_visible()
+                label = panel.get_by_text('Nachträgliche Buchungen zum abgeschlossenen Jahr', exact=True)
+                if stage == 'after':
+                    await expect(label).to_be_visible()
+                    await expect(panel.get_by_text('31.12.2025', exact=True)).to_be_visible()
+                    await expect(panel.get_by_text('26.999,00', exact=False)).to_be_visible()
+                else:
+                    await expect(label).to_have_count(0)
+                assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+                if directory:
+                    # Capture the shared panel with all dated rows at each width.
+                    await panel.scroll_into_view_if_needed()
+                    filename = directory / f'{prefix}-{stage}-{width}.png'
+                    await page.screenshot(path=str(filename), full_page=True)
+                    attach_artifact(request.node, filename)
+
+    browser_world.run(inspect('before'))
+    cash = create(world, '/api/payments', {'bank_account_id': w['bank_giro'], 'direction': 'IN',
+        'amount': '999.00', 'value_date': '2025-12-31', 'payment_type': 'RUECKLAGENANTEIL',
+        'owner_profile_id': w['owner_a'], 'period_year': 2025, 'period_month': 12})
+    response = world.act('POST', f"/api/payments/{cash['id']}/book")
+    assert response.status_code == 200, response.text
+    browser_world.run(inspect('after'))

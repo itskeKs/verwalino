@@ -6,7 +6,8 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dial
 const euro = (amount: string) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(Number(amount));
 const day = (value: string) => value.split('-').reverse().join('.');
 const labels: Record<string, string> = { PLANNED: 'Geplant (Soll)', CONTRIBUTION: 'Gebuchte Zuführung', WITHDRAWAL: 'Finanzierte Entnahme',
-  OVERRIDE: 'Begründete Korrektur', OPENING: 'Anfangsbestand', ADJUSTMENT: 'Sonstige Korrektur', FUNDING: 'Finanzierte Entnahme verknüpfen' };
+  OVERRIDE: 'Begründete Korrektur', OPENING: 'Anfangsbestand', ADJUSTMENT: 'Sonstige Korrektur', FUNDING: 'Finanzierte Entnahme verknüpfen',
+  LATE_CASH: 'Nachträgliche Buchungen zum abgeschlossenen Jahr' };
 
 export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, disabled = false, refreshKey = 0 }: {
   runId: string; propertyId: string; status: string; onChanged: () => void; disabled?: boolean; refreshKey?: number;
@@ -72,7 +73,9 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, disab
       <dl className="form-grid">
         {([['Anfangsbestand', ledger.opening_balance], ['Geplante Zuführung (Soll)', ledger.planned_contributions_total],
           ['Tatsächliche Zuführung (Ist)', ledger.contributions_total], ['Entnahmen', ledger.withdrawals_total],
-          ['Sonstige Korrekturen', ledger.overrides_total], ['Endbestand', ledger.closing_balance]] as const).map(([label, value]) =>
+          ['Sonstige Korrekturen', ledger.overrides_total],
+          ...(ledger.late_cash_total && ledger.late_cash_total !== '0.00' ? [[labels.LATE_CASH, ledger.late_cash_total]] : []),
+          ['Endbestand', ledger.closing_balance]] as const).map(([label, value]) =>
           <div key={label}><dt>{label}</dt><dd style={{ margin: 0, fontFamily: 'var(--mono)' }}>{value === null ? 'Historisch nicht erfasst' : euro(value)}</dd></div>)}
       </dl>
       <div className="table-scroll" style={{ overflowX: 'auto' }}>

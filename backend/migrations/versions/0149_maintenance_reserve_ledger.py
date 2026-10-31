@@ -103,7 +103,12 @@ def upgrade():
         IF cash.property_id IS DISTINCT FROM parent.property_id OR cost.property_id IS DISTINCT FROM parent.property_id
           OR cash.status<>'booked' OR cash.direction<>'OUT' OR cash.payment_type<>'RUECKLAGENENTNAHME'
           OR cash.reverses_id IS NOT NULL
-          OR cash.value_date NOT BETWEEN parent.period_start AND parent.period_end
+          OR NOT (cash.value_date BETWEEN parent.period_start AND parent.period_end OR EXISTS(
+            SELECT 1 FROM public.settlement_run r WHERE r.organization_id=parent.organization_id
+              AND r.property_id=parent.property_id AND r.status='finalized' AND r.superseded_by_id IS NULL
+              AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT')
+              AND cash.value_date BETWEEN r.period_start AND r.period_end
+              AND r.period_end<parent.period_start AND cash.booked_at>r.finalized_at))
           OR cost.status<>'confirmed' OR cost.superseded_by_id IS NOT NULL
           OR NOT public.financial_scope_access(NEW.organization_id,'payment',cash.id,'read')
           OR NOT public.financial_scope_access(NEW.organization_id,'cost_entry',cost.id,'read')
@@ -123,7 +128,10 @@ def upgrade():
     LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
     BEGIN
       IF org IS DISTINCT FROM NULLIF(current_setting('app.current_org_id',true),'')::uuid
-        OR public.scope_actor_role(org) IS NULL OR EXISTS(SELECT 1 FROM public.settlement_run r
+        OR public.scope_actor_role(org) IS NULL
+        OR NOT EXISTS(SELECT 1 FROM public.property p WHERE p.organization_id=org AND p.id=property)
+        OR NOT public.property_financial_disclosure_access(org,property,'read')
+        OR EXISTS(SELECT 1 FROM public.settlement_run r
         WHERE r.organization_id=org AND r.property_id=property AND r.status='finalized'
           AND r.superseded_by_id IS NULL AND r.period_end<=reserve_history_access.period_end
           AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT')

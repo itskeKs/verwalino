@@ -42,16 +42,20 @@ def build_vermoegensbericht(inp: VermoegensberichtInput) -> AssetReportResult:
     opening = _money(inp.reserve.opening_balance)
     withdrawals = _money(inp.reserve.withdrawals_total)
     contributions = _money(inp.reserve_contributions_total)
-    closing = _money(opening + contributions - withdrawals + inp.reserve.overrides_total)
+    closing = _money(opening + contributions - withdrawals + inp.reserve.overrides_total + inp.reserve.late_cash_total)
     reserve_dev = ReserveDevelopment(
         opening_balance=opening,
         contributions_total=contributions,
         withdrawals_total=withdrawals,
         closing_balance=closing,
         overrides_total=inp.reserve.overrides_total,
+        late_cash_total=inp.reserve.late_cash_total,
     )
 
     lines: list[AssetReportLine] = []
+    if inp.reserve.late_cash_total:
+        lines.append(AssetReportLine(line_type='SUBTOTAL', label='Nachträgliche Buchungen zum abgeschlossenen Jahr',
+            amount=inp.reserve.late_cash_total, sort_order=-2, is_manual=False, note='Rücklagenbuch · ursprüngliche Wertstellung'))
     if inp.reserve.overrides_total:
         lines.append(AssetReportLine(line_type='SUBTOTAL', label='Begründete Rücklagenkorrekturen',
             amount=inp.reserve.overrides_total, sort_order=-1, is_manual=True, note='Rücklagenbuch'))

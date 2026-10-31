@@ -512,13 +512,14 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
     opening = _money(inp.reserve.opening_balance)
     withdrawals = _money(inp.reserve.withdrawals_total)
     contributions = _money(inp.reserve.contributions_total if inp.reserve.contributions_total is not None else reserve_contrib_total)
-    closing = _money(opening + contributions - withdrawals + inp.reserve.overrides_total)
+    closing = _money(opening + contributions - withdrawals + inp.reserve.overrides_total + inp.reserve.late_cash_total)
     reserve_dev = ReserveDevelopment(
         opening_balance=opening,
         contributions_total=contributions,
         withdrawals_total=withdrawals,
         closing_balance=closing,
         overrides_total=inp.reserve.overrides_total,
+        late_cash_total=inp.reserve.late_cash_total,
     )
 
     return WegResult(

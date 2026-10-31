@@ -694,7 +694,9 @@ Synthetic, database-free captures from `make mail-previews`, at 1× pixel densit
 
 WEG annual settlement and asset-report details share `ReserveLedgerPanel`, a
 card with distinct planned (Soll) and cash (Ist) totals, opening, withdrawals,
-signed adjustments and closing. Rows show dates, movement types and funding
+signed adjustments and closing. Late closed-year cash has its own signed total
+and “Nachträgliche Buchungen zum abgeschlossenen Jahr” rows with the original
+value dates. Rows show dates, movement types and funding
 references. The table scrolls within its card at 360 px; long reasons wrap.
 Money uses German grouping/comma decimals with `€`, dates `DD.MM.YYYY`.
 
@@ -712,7 +714,17 @@ and explains its neutral counterparty and subsequent ledger linkage. The payment
 detail and bank-assignment vocabulary use the same German name. This type does
 not create a tenant or owner receivable.
 
-Desktop and 360 px before/after captures, including the narrow correction dialog
-and payout detail, are in [the reserve ledger gallery](docs/assets/reserve-ledger/).
-All records and account/owner names there are synthetic and were created only on
-the disposable development database.
+Each retained screenshot is linked below. WEG and asset-report before/after
+captures show the next open period before and after a late 999.00 € receipt.
+All records and account/owner names are synthetic and were created only on the
+disposable test database.
+
+| Screen / state | Desktop (1280 px) | Mobile (360 px) |
+| --- | --- | --- |
+| WEG before late cash | [before](docs/assets/reserve-ledger/weg-before-1280.png) | [before](docs/assets/reserve-ledger/weg-before-360.png) |
+| WEG with late cash | [after](docs/assets/reserve-ledger/ledger-rows-after-1280.png) | [after](docs/assets/reserve-ledger/ledger-rows-after-360.png) |
+| Asset report before late cash | [before](docs/assets/reserve-ledger/asset-before-1280.png) | [before](docs/assets/reserve-ledger/asset-before-360.png) |
+| Asset report with late cash | [after](docs/assets/reserve-ledger/asset-after-1280.png) | [after](docs/assets/reserve-ledger/asset-after-360.png) |
+| Reasoned correction | — | [dialog](docs/assets/reserve-ledger/override-dialog-360.png) |
+| Payout funding | — | [dialog](docs/assets/reserve-ledger/funding-dialog-360.png) |
+| Payout detail | [detail](docs/assets/reserve-ledger/payment-detail-after-1280.png) | [detail](docs/assets/reserve-ledger/payment-detail-after-360.png) |
