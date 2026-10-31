@@ -143,6 +143,62 @@ def missing_dependency_refusal(world):
     assert world.run(properties()).json() == []
 
 
+@when('the administrator inspects the import refusal in the browser')
+def browser_import_refusal(world, browser_world, empty_import_organization):
+    import uuid
+    from playwright.async_api import expect
+    from tests.test_organization_import import repack
+    email = f"import-browser-{uuid.uuid4()}@example.invalid"
+    password = 'Synthetic-Import-Browser-123'
+    async def prepare_user():
+        async with api_client(empty_import_organization) as api:
+            answer = await api.post('/api/users', json={'email': email, 'password': password,
+                'display_name': 'Synthetische Importprüfung', 'role': 'OWNER_ADMIN'})
+            assert answer.status_code == 201, answer.text
+    world.run(prepare_user())
+    files = dict(world.data['export_files'])
+    files['entities/person.jsonl'] = b''
+    manifest = json.loads(files['manifest.json'])
+    manifest['row_counts']['person'] = 0
+    files['manifest.json'] = json.dumps(manifest).encode()
+    archive = repack(files)
+
+    async def operate():
+        page = browser_world.page
+        await browser_world.visit('/users')
+        await page.get_by_role('button', name='Abmelden', exact=True).click()
+        await page.get_by_label('E-Mail', exact=True).fill(email)
+        await page.get_by_label('Passwort', exact=True).fill(password)
+        await page.get_by_role('button', name='Anmelden', exact=True).click()
+        await expect(page.get_by_role('link', name='Objekte', exact=True)).to_be_visible()
+        await browser_world.visit('/users')
+        await page.get_by_label('Exportarchiv', exact=True).set_input_files({
+            'name': 'synthetic-organization.tar.gz', 'mimeType': 'application/gzip', 'buffer': archive})
+        await page.get_by_role('button', name='Daten importieren', exact=True).click()
+        alert = page.get_by_role('alert')
+        await expect(alert).to_contain_text('Fehlende Abhängigkeiten')
+        await expect(alert).not_to_contain_text('tenant_profile')
+        disclosure = page.locator('details').filter(has=page.get_by_text('Technische Details', exact=True))
+        await expect(disclosure).not_to_have_attribute('open', '')
+        await disclosure.get_by_text('Technische Details', exact=True).click()
+        await expect(disclosure).to_contain_text('person')
+        await expect(disclosure).to_contain_text(str(world.data['export_source']['person']))
+        for width, height, label in ((1280, 1000, 'desktop'), (360, 844, '360')):
+            await page.set_viewport_size({'width': width, 'height': height})
+            if width == 360:
+                await expect(page.locator('aside').filter(has=page.locator('nav'))).not_to_be_in_viewport()
+            assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+            await page.screenshot(path=f'/tmp/issue23-import-error-{label}.png', full_page=True)
+        assert await page.get_by_label('Exportarchiv').input_value()
+        assert not browser_world.errors
+    browser_world.run(operate())
+
+
+@then('the import explanation and technical details fit desktop and phone width')
+def browser_import_geometry(browser_world):
+    assert not browser_world.errors
+
+
 @when('its administrator requests the retention preview')
 def deletion_preview(world):
     answer = world.act('POST', '/api/organizations/deletion')

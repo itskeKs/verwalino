@@ -15,6 +15,8 @@ it("shows the real cooling-off deadline and cancels without claiming early succe
   expect(await screen.findByRole("alert")).toHaveTextContent("Widerruf fehlgeschlagen.");
   expect(screen.getByRole("status")).toHaveTextContent("schreibgeschützt");
   expect(screen.getByRole("status")).toHaveTextContent("07.11.2026");
+  expect(screen.getByRole("status")).toHaveTextContent("frühestens ab");
+  expect(screen.getByRole("status")).toHaveTextContent("Bis zur Durchführung können Sie die Löschung widerrufen.");
   vi.mocked(api.post).mockResolvedValue({ status: "cancelled" });
   vi.mocked(api.get).mockResolvedValue({ deletion: { status: "cancelled", execute_after: null } });
   fireEvent.click(screen.getByRole("button", { name: "Löschung widerrufen" }));

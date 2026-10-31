@@ -10,8 +10,11 @@ Owner-administrators can export, import into an empty organization, and request
 organization erasure. **What the admin may see is what is exported.** Export
 uses administrator RLS and column privileges; there is no full-transfer definer.
 Missing private provenance can therefore make an archive non-importable. The
-importer refuses missing dependencies with their entity, source IDs and count;
+importer refuses missing dependencies with a German explanation and a collapsed
+technical detail block containing entity, source IDs and count;
 it never silently drops them or borrows another organization's rows.
+Every hashed `entities/` file must appear in `entity_order`; an unlisted entity
+file is refused with 422 before restoration, rather than silently skipped.
 
 The same-database round trip uses synthetic organizations A and B. The maintainer
 must still rehearse a real export into a fresh self-host installation; the local
@@ -179,7 +182,22 @@ before confirmation the UI strongly recommends a fresh export. Confirmation at
 exactly and recomputes retention. It begins a **seven-day cooling-off period**.
 The organization is read-only, with a banner on every signed-in page; export,
 logout and owner-admin cancellation remain available. `POST
-/api/organizations/deletion/cancel` restores normal operation during this state.
+/api/organizations/deletion/cancel` restores normal operation during this state,
+including after the deadline if an operator run has failed or has not happened.
+Cancellation and actual erasure serialize on the lifecycle lock; cancellation
+cannot restore an organization whose erasure has already committed.
+
+The database write guard takes **no advisory lock**. It reads
+`organization_deletion.status` with a plain SELECT on each statement's visible
+state, without a transaction-local cache. Under READ COMMITTED, a write that
+commits before the state change is visible is allowed; once cooling-off commits,
+every later statement is refused. Already-running statements are not drained.
+This allows runtime operations that hold an exclusive ACL lock on one connection
+and attest through a second connection to complete. `/api/organizations/me` reads
+organization/lifecycle state only. Its `import_available` flag describes an
+administrator's ability to attempt an import; it does not certify emptiness.
+The exclusive ACL lock and domain-table admission scan run only in the import
+request, which refuses a nonempty destination atomically.
 
 The operator runs `organization-deletion-run` after the deadline; see
 [DEPLOY.md](../../DEPLOY.md#organization-erasure-and-retained-record-access).
@@ -199,14 +217,73 @@ former-owner access path; only the operator can retrieve them during retention.
 | Other unretained mutable rows, drafts, notes | Delete in dependency order; any database guard failure rolls back the transaction |
 | Unreferenced document files and transient exports | Remove only after successful database commit; never remove retained URIs |
 
+`organization_retention_catalog()` derives coverage from every public table
+carrying `organization_id`, its primary key, runtime DELETE privileges, DELETE
+policies and enabled DELETE triggers. Missing keys are unclassified and stop the
+plan. Reviewed authorization/locking triggers do not imply immutable content;
+unknown DELETE triggers conservatively retain their table. Conditional financial
+guards keep confirmed/booked/finalized/issued rows (and adopted costs or quarantined
+dunning history). Other delete-protected tables are retained verbatim, then the
+planner closes over required foreign-key ancestors. The schema contract checks
+every organization table, including newly created tables and newly attached guards.
+Live `sepa_creditor`/`sepa_mandate` configuration is a deliberate mutable-consent
+category: absence of a runtime DELETE action alone does not turn unused consent
+into a retention binding. Their DELETE triggers only acquire input locks, so
+unused rows are deleted; a required retained dependency still keeps them.
+
+These formerly omitted tables are all **retained verbatim**, including existing
+reason text, labels, identities, capabilities and source/context references:
+
+| Tables | Delete protection |
+| --- | --- |
+| `person_data_domain`, `person_data_grant` | `protect_person_data_setup`: domain content is immutable; grants permit only one-way revocation |
+| `property_data_domain`, `property_data_grant` | `protect_property_data_setup`: domain content is immutable; grants permit only one-way revocation |
+| `dunning_scope_context` | `protect_dunning_context`: insert only |
+| `property_source_admission` | `protect_property_source_admission`: insert only |
+| `special_levy`, `special_levy_allocation` | `guard_special_levy`: append only; allocation basis frozen at creation |
+
+None permits erasure-time rewriting of personal content. Anonymization changes
+only the ADR-0012 person contact/address/bank category where no current retention
+dependency requires it, and account contacts/credentials. Structural identifiers
+remain. No immutable domain, grant, source receipt or levy is rewritten to simulate
+anonymization.
+
 Retention keys, legal bases, deadlines and content hashes are persisted in the
 deletion record. Active-bound person processing flags may change; expired-bound personal fields are
 anonymized under ADR-0012 §5. Their structural keys remain for immutable references.
 Retained voucher and
 source contents do not. The CLI retries post-commit file cleanup for completed
 organizations on every invocation, so an interrupted cleanup is recoverable.
+Each organization has its own session/transaction. A failure logs its organization
+ID, rolls back its database work and continues with the next organization. A failed
+database erasure stays due in `cooling_off`; rerun `organization-deletion-run` to
+retry it, or cancel through the existing owner-admin action before erasure commits.
 Database failure never deletes files. Storage errors before commit refuse the
 run; a post-commit filesystem error needs a CLI retry while login stays blocked.
 Expiry does not automatically purge immutable evidence: that remains a separate
 operator/legal decision under [ADR-0012](../adr/0012-gdpr-erasure-vs-gobd-retention.md).
 Its provisional retention durations still require the documented domain sign-off.
+
+### Personal data remaining in immutable audit payloads
+
+Organization erasure retains `audit_event` unchanged, including `payload_diff`.
+In particular, `mail_prepared` stores the recipient's **email address** and
+**`person_id`**, plus request/message identifiers, preparation/completion timestamps,
+delivery state and the generated PDF's hash, storage URI and byte size. The retained
+PDF may itself contain the recipient's name/address and personalized document
+content. Related `mail_completed` receipts retain the request ID, delivery status
+and completion timestamp, allowing them to be joined to `mail_prepared`.
+These payloads are not scrubbed even when the referenced
+unbound person's master-data fields become `Anonymisiert`/NULL; JSON references do
+not create a person foreign-key retention binding. Thus anonymizing a person does
+**not** erase the recipient mailbox or the link to that person from historical
+mail receipts. Other immutable audit payloads can retain historical labels,
+reasons, free text and source identifiers as originally recorded.
+
+This preserves immutable delivery/audit evidence under ADR-0003 and the current
+ADR-0012 §4 boundary; it is not a decision that every audit field must legally be
+retained for that duration. Whether these recipient fields/originals need a
+different retention category or a separately reviewed minimization mechanism
+remains an **owner/domain decision**. This change leaves audit immutability intact
+and documents the surviving personal data for that decision. Former accounts
+cannot access these retained receipts; access remains operator-only.

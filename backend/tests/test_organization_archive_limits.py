@@ -39,6 +39,13 @@ def test_plain_export_headers_remain_importable():
         assert entities['organization'][0]['name'] == 'Synthetic'
 
 
+def test_hashed_entity_omitted_from_entity_order_is_refused():
+    with pytest.raises(HTTPException) as error:
+        with service.read_archive(archive_bytes(extra={'entities/person.jsonl': b'{"last_name":"Must not disappear"}\n'})):
+            pytest.fail('Unlisted entity was silently skipped')
+    assert error.value.status_code == 422
+
+
 def test_member_limit_refuses_before_extended_spooling(monkeypatch):
     monkeypatch.setattr(service, 'MAX_MEMBERS', 2)
     with pytest.raises(HTTPException) as error:

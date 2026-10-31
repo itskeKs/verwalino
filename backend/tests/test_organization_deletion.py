@@ -1,11 +1,172 @@
 """Organization erasure preserves immutable records and ends all access."""
 from datetime import datetime, timedelta, timezone
 import json
+import asyncio
+import uuid
+
+import pytest
+import pytest_asyncio
 
 from sqlalchemy import text
 
 from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
 from tests.test_organization_export import export_store  # noqa: F401
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def isolate_erasure_decisions(rent_db):
+    # Other migration rehearsals must still refuse genuine retained decisions.
+    # Remove only this module's new synthetic lifecycle rows at teardown.
+    baseline = (await rent_db.execute(text('SELECT organization_id FROM organization_deletion'))).scalars().all()
+    await rent_db.rollback()
+    try:
+        yield
+    finally:
+        await rent_db.rollback()
+        async with rent_db.begin():
+            await rent_db.execute(text('DELETE FROM organization_deletion WHERE NOT(organization_id=ANY(CAST(:baseline AS uuid[])))'),
+                                 {'baseline': baseline})
+
+
+async def test_runtime_budget_review_completes_with_lifecycle_guard(rent_world, rent_db, export_store):
+    from sqlalchemy import event
+    from app.core.db import get_review_session_factory
+    # Bound the reproduced self-wait at the second connection, not at 15 minutes.
+    engine = get_review_session_factory().kw['bind']
+    def bounded_wait(connection, *_):
+        connection.cursor().execute("SET lock_timeout='1s'")
+    event.listen(engine.sync_engine, 'connect', bounded_wait)
+    try:
+        assert await rent_db.scalar(text("SELECT count(*) FROM pg_trigger WHERE tgname='a_organization_lifecycle'")) > 0
+        await rent_db.rollback()
+        async with api_client(rent_world) as api:
+            state = (await api.get('/api/access-preparation/runtime-budget')).json()
+            reviewed = await asyncio.wait_for(api.post('/api/access-preparation/runtime-budget/review',
+                json={'expected_review_id': None, 'policy_digest': state['policy_digest'],
+                      'reason': 'Synthetic configured budget review', 'acknowledged': True},
+                headers={'Idempotency-Key': str(uuid.uuid4())}), timeout=5)
+            assert reviewed.status_code == 201, reviewed.text
+    finally:
+        event.remove(engine.sync_engine, 'connect', bounded_wait)
+
+
+async def test_me_reads_lifecycle_without_import_admission(rent_world, rent_db, export_store):
+    # An independent ACL writer must not stall a banner read.
+    await rent_db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
+                          {'key': f"scope-acl:{rent_world['org']}"})
+    try:
+        async with api_client(rent_world) as api:
+            answer = await asyncio.wait_for(api.get('/api/organizations/me'), timeout=2)
+            assert answer.status_code == 200, answer.text
+    finally:
+        await rent_db.rollback()
+
+
+async def test_retention_catalog_classifies_every_organization_table(rent_db):
+    guards = (await rent_db.execute(text('''SELECT DISTINCT p.proname FROM pg_trigger t
+      JOIN pg_proc p ON p.oid=t.tgfoid WHERE NOT t.tgisinternal AND (t.tgtype & 8)>0
+      ORDER BY p.proname'''))).scalars().all()
+    assert await rent_db.scalar(text("SELECT to_regprocedure('organization_retention_catalog()')")), guards
+    tables = set((await rent_db.execute(text('''SELECT c.relname FROM pg_class c
+      JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r'
+      AND EXISTS(SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid
+        AND a.attname='organization_id' AND NOT a.attisdropped)'''))).scalars())
+    classified = (await rent_db.execute(text('SELECT * FROM organization_retention_catalog()'))).mappings().all()
+    assert {row['entity'] for row in classified} == tables
+    assert all(row['disposition'] in {'retain', 'conditional', 'delete', 'lifecycle', 'anonymize'} for row in classified)
+    by_name = {row['entity']: row['disposition'] for row in classified}
+    for name in ('person_data_domain', 'person_data_grant', 'property_data_domain', 'property_data_grant',
+                 'dunning_scope_context', 'property_source_admission', 'special_levy', 'special_levy_allocation'):
+        assert by_name[name] == 'retain', name
+    assert by_name['sepa_mandate'] == 'delete'
+    await rent_db.execute(text('CREATE TRIGGER immutable_probe BEFORE DELETE ON sepa_mandate FOR EACH ROW EXECUTE FUNCTION protect_scope_evidence()'))
+    assert await rent_db.scalar(text("SELECT disposition FROM organization_retention_catalog() WHERE entity='sepa_mandate'")) == 'retain'
+    # A new table is discovered without updating a hand-maintained table list.
+    # A missing identity cannot silently drop its rows from the retention plan.
+    await rent_db.execute(text('CREATE TABLE public.retention_contract_probe(organization_id uuid, id uuid PRIMARY KEY)'))
+    await rent_db.execute(text('GRANT SELECT,DELETE ON public.retention_contract_probe TO app_rw'))
+    assert await rent_db.scalar(text("SELECT disposition FROM organization_retention_catalog() WHERE entity='retention_contract_probe'")) == 'delete'
+    await rent_db.execute(text('CREATE TRIGGER immutable_probe BEFORE DELETE ON public.retention_contract_probe FOR EACH ROW EXECUTE FUNCTION protect_scope_evidence()'))
+    assert await rent_db.scalar(text("SELECT disposition FROM organization_retention_catalog() WHERE entity='retention_contract_probe'")) == 'retain'
+    await rent_db.execute(text('ALTER TABLE public.retention_contract_probe DROP CONSTRAINT retention_contract_probe_pkey'))
+    assert await rent_db.scalar(text("SELECT disposition FROM organization_retention_catalog() WHERE entity='retention_contract_probe'")) == 'unclassified'
+    from sqlalchemy.exc import DBAPIError
+    with pytest.raises(DBAPIError, match='Unclassified organization retention table'):
+        await rent_db.execute(text('SELECT * FROM organization_retention_plan(:org)'), {'org': uuid.uuid4()})
+    await rent_db.rollback()
+
+
+async def test_api_domains_survive_due_erasure_unchanged(rent_world, rent_db, export_store):
+    from tests.test_person_data_domains import domain_fixture as person_domain
+    from tests.test_property_data_domains import domain_fixture as property_domain
+    from app.services.organization_deletion_service import run_deletion
+    from app.services.organization_archive import json_bytes
+    import hashlib
+    w = rent_world
+    async with api_client(w) as api:
+        _, _, domain = await person_domain(api)
+        granted = await api.post(f"/api/person-data-domains/{domain['id']}/grants",
+            json={'user_id': str(w['clerk']), 'capabilities': ['read', 'prepare'], 'reason_code': 'TEAM_ACCESS'},
+            headers={'Idempotency-Key': str(uuid.uuid4())})
+        assert granted.status_code == 201, granted.text
+        _, property_id = await property_domain(api)
+        granted = await api.post(f'/api/property-data-domains/{property_id}/grants',
+            json={'user_id': str(w['clerk']), 'capabilities': ['read', 'prepare'], 'reason': 'Synthetic reviewed audience'},
+            headers={'Idempotency-Key': str(uuid.uuid4())})
+        assert granted.status_code == 201, granted.text
+        kinds = ('person_data_domain', 'person_data_grant', 'property_data_domain', 'property_data_grant')
+        async def hashes():
+            return {kind: hashlib.sha256(json_bytes((await rent_db.execute(text(
+                f'SELECT to_jsonb(t) FROM {kind} t WHERE organization_id=:org ORDER BY id'), w)).scalars().all())).hexdigest() for kind in kinds}
+        before = await hashes()
+        await rent_db.rollback()
+        assert (await api.post('/api/organizations/deletion')).status_code == 200
+        assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
+    async with rent_db.begin():
+        assert await run_deletion(rent_db, w['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
+    assert await hashes() == before
+    async with api_client(w) as api:
+        assert (await api.get('/api/auth/session')).status_code == 401
+    await rent_db.rollback()
+
+
+async def test_cli_continues_after_one_due_organization_fails(rent_world, rent_db, export_store, monkeypatch, caplog):
+    from app import organization_deletion as cli
+    w = rent_world
+    for foreign in (False, True):
+        async with api_client(w, foreign=foreign) as api:
+            assert (await api.post('/api/organizations/deletion')).status_code == 200
+            assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
+    await rent_db.execute(text("UPDATE organization_deletion SET execute_after=now()-interval '1 day' WHERE organization_id IN (:org,:foreign_org)"), w)
+    await rent_db.commit()
+    first, second = sorted((w['org'], w['foreign_org']))
+    original = cli.run_deletion
+    async def fail_first(db, org):
+        if org == first:
+            await db.execute(text("UPDATE organization SET name='Must roll back' WHERE id=:org"), {'org': org})
+            raise RuntimeError('Synthetic organization erasure failure')
+        return await original(db, org)
+    monkeypatch.setattr(cli, 'run_deletion', fail_first)
+    assert await cli.run() == 1
+    states = dict((await rent_db.execute(text('SELECT organization_id,status FROM organization_deletion WHERE organization_id IN (:org,:foreign_org)'), w)).all())
+    assert states == {first: 'cooling_off', second: 'deleted_pending_retention'}
+    assert await rent_db.scalar(text('SELECT name FROM organization WHERE id=:org'), {'org': first}) == 'T23 synthetic'
+    assert str(first) in caplog.text
+    await rent_db.rollback()
+    monkeypatch.setattr(cli, 'run_deletion', original)
+    assert await cli.run() == 1
+    assert await rent_db.scalar(text('SELECT status FROM organization_deletion WHERE organization_id=:org'), {'org': first}) == 'deleted_pending_retention'
+    await rent_db.rollback()
+
+
+async def test_overdue_failed_deletion_can_still_be_cancelled(rent_world, rent_db, export_store):
+    async with api_client(rent_world) as api:
+        assert (await api.post('/api/organizations/deletion')).status_code == 200
+        assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
+        await rent_db.execute(text("UPDATE organization_deletion SET execute_after=now()-interval '1 day' WHERE organization_id=:org"), rent_world)
+        await rent_db.commit()
+        answer = await api.post('/api/organizations/deletion/cancel')
+        assert answer.status_code == 200, answer.text
 
 
 async def test_preview_confirmation_readonly_and_cancel(rent_world, rent_db, export_store):

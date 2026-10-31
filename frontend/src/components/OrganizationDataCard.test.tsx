@@ -60,6 +60,20 @@ it("offers import only for an empty organization and keeps the selected file on 
   expect((input as HTMLInputElement).files?.[0]).toBe(file);
 });
 
+it("puts import entity names and source IDs in a technical disclosure", async () => {
+  vi.mocked(api.get).mockResolvedValue({ id: "org", name: "Verwaltung", import_available: true, deletion: null });
+  vi.mocked(uploadFormData).mockRejectedValue(Object.assign(new ApiError(422, "Im Archiv fehlen benötigte Abhängigkeiten."), {
+    technicalDetails: "person_data_domain: 1 (synthetic-source-id)",
+  }));
+  render(<OrganizationDataCard />);
+  fireEvent.change(await screen.findByLabelText("Exportarchiv"), { target: { files: [new File(["archive"], "organisation.tar.gz")] } });
+  fireEvent.click(screen.getByRole("button", { name: "Daten importieren" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Im Archiv fehlen benötigte Abhängigkeiten.");
+  const technical = screen.getByText(/person_data_domain/).closest("details");
+  expect(technical).not.toHaveAttribute("open");
+  expect(screen.getByText("Technische Details")).toBeVisible();
+});
+
 it("shows retention, strongly suggests a fresh export and requires the exact organization name", async () => {
   vi.mocked(api.get).mockResolvedValue({ id: "org", name: "Lange Verwaltung GmbH", import_available: false, deletion: null });
   vi.mocked(api.post).mockResolvedValue({ status: "requested", organization_name: "Lange Verwaltung GmbH", notice: "Nach der Löschung ist keine Anmeldung mehr möglich; aufbewahrungspflichtige Unterlagen bleiben für acht Jahre beim Betreiber.", retention: { retained: { audit_event: { count: 4, until: "2034-12-31" } }, erased: { person: 2 }, erased_fields: ["Ungebundene Personendaten"] } });

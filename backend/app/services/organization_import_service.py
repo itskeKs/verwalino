@@ -121,6 +121,9 @@ def read_archive(source):
                 refuse('Der Export stammt aus einem neueren oder unbekannten Datenbankschema.')
             if set(manifest['sha256']) != set(members) - {'manifest.json'}:
                 refuse('Das Inhaltsverzeichnis des Archivs ist unvollständig.')
+            entity_files = {name for name in members if name.startswith('entities/')}
+            if entity_files != {f'entities/{name}.jsonl' for name in manifest['entity_order']}:
+                refuse('Die Entitätenliste des Archivs ist unvollständig oder ungültig.')
             for name, digest in manifest['sha256'].items():
                 if digest != members[name][1]:
                     refuse('Die Prüfsumme einer Archivdatei stimmt nicht.')

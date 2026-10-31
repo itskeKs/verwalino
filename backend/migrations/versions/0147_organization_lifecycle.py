@@ -1,4 +1,10 @@
-"""Durable organization erasure requests and guarded import admission metadata."""
+"""Durable erasure and import admission; lifecycle guards never acquire locks.
+
+At READ COMMITTED, a write before cooling-off becomes visible is allowed.
+Once cooling-off commits, every later statement is refused. In-flight writes
+are not drained: the lookup uses statement visibility, without advisory locks
+or transaction-local caching that could hide a newly committed state.
+"""
 from alembic import op
 from sqlalchemy import text
 
@@ -94,6 +100,7 @@ def downgrade():
     DROP FUNCTION public.organization_lifecycle_guard();
     DROP FUNCTION public.organization_deletion_preview(uuid);
     DROP FUNCTION public.organization_retention_plan(uuid);
+    DROP FUNCTION IF EXISTS public.organization_retention_catalog();
     DROP FUNCTION public.organization_import_admission(uuid,jsonb);
     DROP TABLE public.organization_deletion;
     ''')
@@ -101,6 +108,70 @@ def downgrade():
 
 def _lifecycle():
     op.execute(r'''
+    -- Derive table coverage, keys and delete protection from the live schema.
+    -- Unknown DELETE triggers are conservatively retained, never bypassed.
+    -- The exceptions below are reviewed locks/access checks, not immutable
+    -- evidence guards. Row-conditional GoBD guards keep their exact predicates.
+    CREATE FUNCTION public.organization_retention_catalog()
+      RETURNS TABLE(entity text,pk text[],disposition text,retain_when text)
+      LANGUAGE sql STABLE SECURITY DEFINER
+      SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+      WITH catalog AS (
+        SELECT c.relname::text entity, keys.pk,
+          -- Live SEPA consent/configuration has no runtime DELETE action,
+          -- but that alone is not a voucher binding (ADR-0012). Any actual
+          -- immutable DELETE trigger/policy still protects it below.
+          (c.relname NOT IN ('sepa_creditor','sepa_mandate') AND (
+          NOT has_table_privilege('app_rw',c.oid,'DELETE')
+          OR (c.relrowsecurity AND NOT EXISTS(SELECT 1 FROM pg_policy p WHERE p.polrelid=c.oid
+            AND p.polcmd IN ('d','*') AND p.polpermissive AND pg_get_expr(p.polqual,p.polrelid)<>'false'))))
+          OR EXISTS(SELECT 1 FROM pg_policy p WHERE p.polrelid=c.oid AND p.polcmd IN ('d','*')
+            AND NOT p.polpermissive AND pg_get_expr(p.polqual,p.polrelid)='false')
+          OR EXISTS(SELECT 1 FROM pg_trigger t JOIN pg_proc f ON f.oid=t.tgfoid
+            WHERE t.tgrelid=c.oid AND NOT t.tgisinternal AND t.tgenabled<>'D' AND (t.tgtype & 8)>0
+            AND f.proname NOT IN (
+              'organization_lifecycle_guard','lock_scope_principal_change','lock_scope_unit_history',
+              'lock_financial_input_sources','lock_strict_property_source_binding',
+              'lock_property_source_security_change','lock_knowledge_budget_policy',
+              'lock_invoice_sources','lock_mapping_meter','task_acl_lock','sepa_input_lock','t55_input_lock',
+              'recheck_transaction_computations','guard_declaration_worker_effect','guard_declaration_issue_review',
+              'authorize_bound_financial_write','authorize_bound_payment_write','authorize_dunning_write',
+              'guard_financial_source_input','guard_strict_financial_resource',
+              'guard_property_source_security','guard_knowledge_budget_policy',
+              'trg_cost_entry_immutability','protect_adopted_cost','trg_payment_immutability',
+              'trg_settlement_run_immutability','trg_settlement_line_immutability',
+              'trg_economic_plan_immutability','trg_economic_plan_line_immutability',
+              'trg_dunning_notice_immutability','protect_dunning_quarantine')) protected
+        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        LEFT JOIN LATERAL (SELECT array_agg(a.attname::text ORDER BY k.pos) pk
+          FROM pg_constraint p CROSS JOIN LATERAL unnest(p.conkey) WITH ORDINALITY k(num,pos)
+          JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=k.num
+          WHERE p.conrelid=c.oid AND p.contype='p') keys ON true
+        WHERE n.nspname='public' AND c.relkind='r' AND EXISTS(SELECT 1 FROM pg_attribute a
+          WHERE a.attrelid=c.oid AND a.attname='organization_id' AND NOT a.attisdropped)
+      ), classified AS (
+        SELECT *, CASE
+          WHEN pk IS NULL THEN 'unclassified'
+          WHEN entity='organization_deletion' THEN 'lifecycle'
+          WHEN entity IN ('user','membership','person') THEN 'anonymize'
+          WHEN entity='password_reset_request' THEN 'delete'
+          WHEN protected THEN 'retain'
+          WHEN entity IN ('cost_entry','payment','settlement_run','settlement_line',
+            'economic_plan','economic_plan_line','dunning_notice') THEN 'conditional'
+          ELSE 'delete' END disposition FROM catalog
+      ) SELECT entity,pk,disposition,CASE
+        WHEN disposition='retain' THEN 'true'
+        WHEN disposition<>'conditional' THEN 'false'
+        WHEN entity='cost_entry' THEN $sql$t.status='confirmed' OR EXISTS(SELECT 1 FROM public.document_cost_link l JOIN public.allocation_set s ON s.id=l.allocation_set_id AND s.organization_id=l.organization_id WHERE l.organization_id=t.organization_id AND l.cost_entry_id=t.id AND s.kind='intake_reviewed')$sql$
+        WHEN entity='payment' THEN $sql$t.status='booked'$sql$
+        WHEN entity IN ('settlement_run','economic_plan') THEN $sql$t.status='finalized'$sql$
+        WHEN entity='dunning_notice' THEN $sql$t.status='issued' OR EXISTS(SELECT 1 FROM public.dunning_quarantine_disposition q WHERE q.organization_id=t.organization_id AND q.notice_id=t.id)$sql$
+        WHEN entity='settlement_line' THEN $sql$EXISTS(SELECT 1 FROM public.settlement_run r WHERE r.organization_id=t.organization_id AND r.id=t.settlement_run_id AND r.status='finalized')$sql$
+        WHEN entity='economic_plan_line' THEN $sql$EXISTS(SELECT 1 FROM public.economic_plan r WHERE r.organization_id=t.organization_id AND r.id=t.economic_plan_id AND r.status='finalized')$sql$
+        END FROM classified ORDER BY entity;
+    $$;
+    REVOKE ALL ON FUNCTION public.organization_retention_catalog() FROM PUBLIC,app_rw,app_worker,app_review;
+
     -- Returns only keys/deadlines to maintenance. Runtime receives aggregates
     -- through the member-checked preview wrapper, never hidden source values.
     CREATE FUNCTION public.organization_retention_plan(org uuid)
@@ -109,37 +180,18 @@ def _lifecycle():
       SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
     #variable_conflict use_column
     DECLARE tab record; fk record; key_sql text; parent_key text; join_sql text;
-      predicate text; deadline text; altered integer; changes integer;
+      deadline text; altered integer; changes integer;
     BEGIN
+      IF EXISTS(SELECT 1 FROM public.organization_retention_catalog() WHERE disposition='unclassified') THEN
+        RAISE EXCEPTION 'Unclassified organization retention table' USING ERRCODE='23514'; END IF;
       DROP TABLE IF EXISTS pg_temp.organization_retention_work;
       CREATE TEMP TABLE organization_retention_work(
         entity text NOT NULL,identity jsonb NOT NULL,retention_until date NOT NULL,legal_basis text NOT NULL,
         PRIMARY KEY(entity,identity)) ON COMMIT DROP;
-      FOR tab IN SELECT c.oid,c.relname,array_agg(a.attname ORDER BY k.pos) pk FROM pg_class c
-        JOIN pg_namespace ns ON ns.oid=c.relnamespace
-        JOIN pg_constraint p ON p.conrelid=c.oid AND p.contype='p'
-        CROSS JOIN LATERAL unnest(p.conkey) WITH ORDINALITY k(num,pos)
-        JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=k.num
-        WHERE ns.nspname='public' AND c.relkind='r' AND EXISTS(SELECT 1 FROM pg_attribute a
-          WHERE a.attrelid=c.oid AND a.attname='organization_id')
-        AND c.relname NOT IN ('user','membership','organization_deletion','password_reset_request') GROUP BY c.oid LOOP
+      FOR tab IN SELECT entity relname,pk,retain_when FROM public.organization_retention_catalog()
+        WHERE disposition IN ('retain','conditional') LOOP
         SELECT string_agg(format('%L,t.%I',col,col),',') INTO key_sql FROM unnest(tab.pk) col;
         key_sql:='jsonb_build_object('||key_sql||')';
-        predicate:=CASE
-          WHEN tab.relname IN ('invoice_document','property_document','mandate_document','intake_original',
-            'attachment','letter_document','audit_event','document_ref','resolution_register_entry',
-            'accounting_scope','accounting_scope_unit','accounting_scope_binding','scope_migration_exception','scope_grant')
-            OR EXISTS(SELECT 1 FROM pg_trigger trigger JOIN pg_proc fn ON fn.oid=trigger.tgfoid
-              WHERE trigger.tgrelid=tab.oid AND NOT trigger.tgisinternal AND (trigger.tgtype & 8)>0
-              AND fn.proname IN ('protect_scope_evidence','protect_property_creation_receipt',
-                'protect_master_import_batch','protect_dunning_batch','protect_lease_rent_change')) THEN 'true'
-          WHEN tab.relname='cost_entry' THEN $sql$t.status='confirmed'$sql$
-          WHEN tab.relname='payment' THEN $sql$t.status='booked'$sql$
-          WHEN tab.relname IN ('settlement_run','economic_plan') THEN $sql$t.status='finalized'$sql$
-          WHEN tab.relname='dunning_notice' THEN $sql$t.status='issued'$sql$
-          WHEN tab.relname='settlement_line' THEN $sql$EXISTS(SELECT 1 FROM public.settlement_run r WHERE r.organization_id=t.organization_id AND r.id=t.settlement_run_id AND r.status='finalized')$sql$
-          WHEN tab.relname='economic_plan_line' THEN $sql$EXISTS(SELECT 1 FROM public.economic_plan r WHERE r.organization_id=t.organization_id AND r.id=t.economic_plan_id AND r.status='finalized')$sql$
-          ELSE 'false' END;
         deadline:=$sql$COALESCE(NULLIF(to_jsonb(t)->>'retention_until','')::date,
           make_date(extract(year FROM COALESCE(NULLIF(to_jsonb(t)->>'period_end','')::date,
             GREATEST(NULLIF(to_jsonb(t)->>'invoice_date','')::date,NULLIF(to_jsonb(t)->>'service_period_to','')::date),NULLIF(to_jsonb(t)->>'issue_date','')::date,
@@ -147,7 +199,7 @@ def _lifecycle():
             NULLIF(to_jsonb(t)->>'registered_at','')::timestamptz::date,CURRENT_DATE))::integer+8,12,31))$sql$;
         EXECUTE format('INSERT INTO pg_temp.organization_retention_work SELECT %L,%s,%s,%L
           FROM public.%I t WHERE t.organization_id=$1 AND (%s)',tab.relname,key_sql,deadline,
-          'GoBD / ADR-0003 / ADR-0012: voucher, original or immutable audit evidence',tab.relname,predicate) USING org;
+          'GoBD / ADR-0003 / ADR-0012: voucher, original or delete-protected evidence',tab.relname,tab.retain_when) USING org;
       END LOOP;
       -- Legacy WEG/plan rendering resolves every historical owner of the
       -- property through ownership_history, a semantic edge without a run FK.
@@ -229,8 +281,8 @@ def _lifecycle():
     BEGIN
       org:=COALESCE(to_jsonb(NEW),to_jsonb(OLD))->>CASE WHEN TG_TABLE_NAME='organization' THEN 'id' ELSE 'organization_id' END;
       IF session_user<>'app_migrator' THEN
-        PERFORM pg_advisory_xact_lock_shared(hashtextextended('scope-acl:'||org::text,0));
-        PERFORM pg_advisory_xact_lock_shared(hashtextextended('organization-lifecycle:'||org::text,0));
+        -- Plain statement-visible lookup. Never wait on another connection's
+        -- ACL/lifecycle lock; review attestations use a second connection.
         IF EXISTS(SELECT 1 FROM public.organization_deletion d WHERE d.organization_id=org
           AND d.status IN ('cooling_off','deleted_pending_retention')) THEN
           RAISE EXCEPTION 'Organization is read-only during erasure' USING ERRCODE='P0023'; END IF;

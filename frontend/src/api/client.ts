@@ -6,12 +6,19 @@
 
 export class ApiError extends Error {
   status: number;
+  technicalDetails?: string;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, technicalDetails?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.technicalDetails = technicalDetails;
   }
+}
+
+function importDetails(detail: { missing_dependencies?: { entity: string; source_ids: string[]; count: number }[]; entity?: string; source_ids?: string[]; count?: number }): string | undefined {
+  const items = Array.isArray(detail.missing_dependencies) ? detail.missing_dependencies : detail.entity ? [detail] : [];
+  return items.map(item => `Entität: ${item.entity}\nDatensätze: ${item.count ?? "–"}\nQuellkennungen: ${item.source_ids?.join(", ") ?? "–"}`).join("\n\n") || undefined;
 }
 
 function financialInputMessage(detail: { blockers?: { code: string }[] }): string {
@@ -55,15 +62,14 @@ async function request<T>(
 
   if (!res.ok) {
     let detail = res.statusText;
+    let technicalDetails: string | undefined;
     try {
       const body = await res.json();
       if (body.detail) {
         if (typeof body.detail === "string") detail = body.detail;
         else if (typeof body.detail.message === "string") {
           detail = body.detail.message;
-          if (Array.isArray(body.detail.missing_dependencies)) {
-            detail += " " + body.detail.missing_dependencies.map((item: { entity: string; source_ids: string[]; count: number }) => `${item.entity}: ${item.count} (${item.source_ids.join(", ")})`).join("; ");
-          }
+          technicalDetails = importDetails(body.detail);
         } else if (body.detail.code === "financial_inputs_incomplete") {
           detail = financialInputMessage(body.detail);
         } else detail = "Eingaben unvollständig oder ungültig. Bitte die angegebenen Felder prüfen.";
@@ -71,7 +77,7 @@ async function request<T>(
     } catch {
       // ignore JSON parse errors on error responses
     }
-    throw new ApiError(res.status, withRequestId(res, detail));
+    throw new ApiError(res.status, withRequestId(res, detail), technicalDetails);
   }
 
   if (url === "/api/auth/login" || url === "/api/auth/logout") lastErrorRequestId = null;
@@ -130,15 +136,14 @@ export async function uploadFormData<T>(
 
   if (!res.ok) {
     let detail = res.statusText;
+    let technicalDetails: string | undefined;
     try {
       const body = await res.json();
       if (body.detail) {
         if (typeof body.detail === "string") detail = body.detail;
         else if (typeof body.detail.message === "string") {
           detail = body.detail.message;
-          if (Array.isArray(body.detail.missing_dependencies)) {
-            detail += " " + body.detail.missing_dependencies.map((item: { entity: string; source_ids: string[]; count: number }) => `${item.entity}: ${item.count} (${item.source_ids.join(", ")})`).join("; ");
-          }
+          technicalDetails = importDetails(body.detail);
         } else if (body.detail.code === "financial_inputs_incomplete") {
           detail = financialInputMessage(body.detail);
         } else detail = "Eingaben unvollständig oder ungültig. Bitte die angegebenen Felder prüfen.";
@@ -146,7 +151,7 @@ export async function uploadFormData<T>(
     } catch {
       // ignore
     }
-    throw new ApiError(res.status, withRequestId(res, detail));
+    throw new ApiError(res.status, withRequestId(res, detail), technicalDetails);
   }
 
   return res.json() as Promise<T>;

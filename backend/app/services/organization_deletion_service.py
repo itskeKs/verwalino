@@ -80,7 +80,9 @@ async def confirm_deletion(db, auth, organization_name, *, now=None):
 async def cancel_deletion(db, auth, *, now=None):
     await lifecycle_lock(db, auth.organization_id)
     state = await deletion_status(db, auth.organization_id)
-    if not state or state['status'] != 'cooling_off' or state['execute_after'] <= (now or datetime.now(timezone.utc)):
+    # The deadline makes erasure due; it does not strand a failed erasure.
+    # This lock serializes cancellation with the operator's actual erasure.
+    if not state or state['status'] != 'cooling_off':
         raise HTTPException(409, 'Es gibt keine widerrufbare Löschung.')
     await db.execute(text("UPDATE organization_deletion SET status='cancelled',execute_after=NULL WHERE organization_id=:org"),
                      {'org': auth.organization_id})

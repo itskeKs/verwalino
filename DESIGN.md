@@ -140,15 +140,21 @@ in a German `role="alert"`; failure keeps the button available for retry and
 starts no download. Changing the organization, account or role cancels an active
 request. Successful responses download `verwalino-organisation.tar.gz`; there is
 no success claim about where the browser saved it. Text wraps at 360 px.
-The card loads the organization status to offer “Daten importieren” only for an
-empty organization, with labelled archive input and German refusal details;
-a refusal preserves the file. Import reports the processed archive row count.
+The card loads the lightweight organization/lifecycle status to offer
+“Daten importieren” to owner-administrators outside cooling-off. Its copy explains
+that only an empty destination is accepted; the import request checks admission.
+The labelled archive input preserves the file on refusal. German error copy stays
+in the alert; raw entity names, source IDs and counts appear only in a collapsed
+“Technische Details” disclosure with wrapping text. Import reports the processed
+archive row count.
 “Organisation löschen” opens a scrollable kit dialog with retained entity
 counts/deadlines, erasure categories, the German no-login/operator-retention
 notice and a prominent fresh-export recommendation/button immediately before
 confirmation. Exact typed organization name enables the destructive confirmation.
 During the seven-day cooling-off every signed-in page shows a wrapping status
-banner with the deadline; only the owner-admin sees “Löschung widerrufen”.
+banner with the earliest execution time (“frühestens ab”); only the owner-admin
+sees “Löschung widerrufen”. Cancellation remains possible until actual execution,
+including when a due operator run has failed.
 Import and new deletion actions are hidden during cooling-off. The export and
 banner cancellation remain available. Dialog/button text wraps at 360 px.
 
@@ -161,6 +167,10 @@ banner cancellation remain available. Dialog/button text wraps at 360 px.
 ![Deletion preview on a narrow screen](docs/assets/design/organization-deletion-360.png)
 
 ![Cooling-off banner on a narrow screen](docs/assets/design/organization-cooling-off-360.png)
+
+![Import refusal with technical details on desktop](docs/assets/design/organization-import-error-desktop.png)
+
+![Import refusal with technical details on a narrow screen](docs/assets/design/organization-import-error-360.png)
 
 ### App shell
 

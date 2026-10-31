@@ -124,9 +124,11 @@ async def get_my_org(
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
     from app.services.organization_deletion_service import deletion_status
-    from app.services.organization_import_service import admission
-    empty = (await admission(db, auth.organization_id))["empty"] if auth.role == "OWNER_ADMIN" else False
-    return OrgOut(id=str(org.id), name=org.name, import_available=empty, deletion=await deletion_status(db, auth.organization_id))
+    # Availability describes the action, not admission. Only an actual import
+    # acquires the ACL lock and checks whether domain tables are empty.
+    state = await deletion_status(db, auth.organization_id)
+    available = auth.role == 'OWNER_ADMIN' and (not state or state['status'] not in {'cooling_off', 'deleted_pending_retention'})
+    return OrgOut(id=str(org.id), name=org.name, import_available=available, deletion=state)
 
 
 async def get_import_db(auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db, scope="function")):

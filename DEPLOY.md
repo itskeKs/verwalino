@@ -1808,6 +1808,11 @@ records retained keys/bases/deadlines/hashes, deactivates every account and clea
 unretained files/exports after commit. Re-running also retries file cleanup for
 completed organizations. A filesystem failure after commit requires that retry;
 accounts remain blocked. Do not run it against a different document root.
+One organization's failure is logged and does not stop later organizations. A
+failed database transaction leaves that organization due in `cooling_off`; run
+the same command again after resolving the cause. Until erasure actually commits,
+its owner-admin can also cancel through the existing product action, including
+after the seven-day deadline. The deadline is the earliest execution time.
 
 After deletion the former owner has **no** login or read-only access. Retained
 records are available only through operator maintenance with the migrator
