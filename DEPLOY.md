@@ -679,6 +679,50 @@ There is deliberately no destroy or automatic update command. An older image
 is not a schema rollback. Version upgrades require a reviewed migration and
 recovery plan.
 
+### Ausgehende Mail
+
+Outbound mail is optional. After `init`, add these keys to the existing private
+`.env.selfhost` (placeholder values only; never commit credentials):
+
+```dotenv
+HV_SMTP_HOST=smtp.example.invalid
+HV_SMTP_PORT=587
+HV_SMTP_FROM=verwaltung@example.invalid
+HV_SMTP_SECURITY=starttls
+HV_SMTP_USERNAME=replace-with-smtp-user
+HV_SMTP_PASSWORD=replace-with-smtp-password
+HV_SMTP_TIMEOUT_SECONDS=15
+```
+
+Set `HV_SMTP_HOST` and `HV_SMTP_FROM` together, or leave both absent/empty to
+disable mail. Leading and trailing whitespace is trimmed from host and sender;
+whitespace-only values are refused. Authentication is optional; set `HV_SMTP_USERNAME` and
+`HV_SMTP_PASSWORD` together or leave both absent/empty. Only `starttls` and `tls`
+are allowed; the installer refuses `plain`. Port must be an integer from 1 to
+65535, timeout from 1 to 60 seconds. Absent/empty port, security and timeout use
+the portable Compose defaults: 587, `starttls`, 15 seconds. Values are literal,
+unquoted single-line text; the installer does not evaluate shell expressions.
+No `HV_SMTP_*` value may contain `$` because Compose interpolates the env file;
+the installer refuses such values without printing them.
+Caller-exported SMTP values are ignored; edit the private file instead.
+
+Keep the file at mode 0600 or 0400 and retain the original generated secrets.
+Run `bash scripts/self-host.sh start` to apply changes; no re-init is needed.
+Invalid mail settings are refused before any service is stopped or started;
+`stop` and `status` also refuse invalid mail settings until they are corrected.
+`doctor` prints `Mail: aus` or `Mail: konfiguriert (host:port, security)` for valid
+settings, without contacting SMTP or showing credentials. This reports
+configuration, not delivery. The installer does not print expanded Compose
+configuration or include the SMTP password in its fingerprint or diagnostics.
+Back up the private config separately from portable backup archives.
+
+For the hosted follow-up, place real SMTP values in the server's `.env.selfhost`
+and use `noreply@verwalino.de` as the sender.
+
+Configure SPF, DKIM and DMARC for the sender domain with your mail provider;
+SMTP acceptance does not prove delivery. See [document SMTP](#optional-document-smtp-t47-no-deployment-authorization)
+for the application's mail behavior and local synthetic testing limits.
+
 ### Portable troubleshooting: start with doctor
 
 Run `bash scripts/self-host.sh doctor` first when installation or startup fails.

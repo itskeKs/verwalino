@@ -49,6 +49,16 @@ describe("api client", () => {
     await expect(api.delete("/api/example")).resolves.toBeUndefined();
   });
 
+  it.each([
+    ["settlement_period_conflict", "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags."],
+    ["settlement_period_conflict", "Abrechnungszeitraum überschneidet eine finalisierte WEG-Abrechnung dieses Objekts."],
+    ["plan_period_conflict", "Der Zeitraum überschneidet einen finalisierten Wirtschaftsplan dieses Objekts."],
+  ])("keeps the German message of a coded period refusal (%s)", async (code, message) => {
+    vi.mocked(fetch).mockResolvedValue(response({ detail: { code, message } }, 409));
+
+    await expect(api.post("/api/settlements", {})).rejects.toMatchObject({ status: 409, message });
+  });
+
   it.each([false, true])("shows the server request ID in existing error messages (upload=%s)", async (upload) => {
     const result = response({ detail: "Internal Server Error", request_id: "failure-1234" }, 500);
     result.headers.set("X-Request-ID", "failure-1234");

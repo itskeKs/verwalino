@@ -136,6 +136,7 @@ IMPORT_APPLY = {**import_body(), "expected_digest": "", "request_id": str(uuid.u
 
 
 PROBES: dict[str, Probe] = {
+    "GET /api/properties/{property_id}/settlement-periods": Probe(row("property", property_id="id"), query={"year": 2025}),
     "GET /api/admin/diagnostics": Probe(),
     # app/api/attachments.py
     "GET /api/attachments": Probe(row("property", property_id="id")),

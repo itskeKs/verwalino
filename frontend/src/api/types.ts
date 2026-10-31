@@ -824,6 +824,7 @@ export interface SettlementBatchCreate {
 export interface SettlementBatchResult {
   created: SettlementRun[];
   skipped: { lease_agreement_id: string; settlement_run_id: string }[];
+  errors?: { lease_agreement_id: string; code: string; error: string }[];
 }
 
 export interface AdvancePaymentsUpdate {
@@ -1743,3 +1744,10 @@ export interface TaskFilters {
   limit?: number;
 }
 export interface TaskPage { items: Task[]; next_offset: number | null }
+
+export interface SettlementPeriod {
+  year: number;
+  label: string;
+  period_start: string;
+  period_end: string;
+}

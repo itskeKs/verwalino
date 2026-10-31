@@ -100,6 +100,12 @@ def record_unchanged(world, organization, kind):
     )
 
 
+@when(parsers.parse('the user opens the settlement period offers of "{organization}"'))
+def user_opens_periods(world, organization):
+    record = record_of(world, organization, kind_named("property"))
+    world.act("GET", f"/api/properties/{record.id}/settlement-periods", params={"year": 2025})
+
+
 @when("the administrator signs in again")
 def administrator_signs_in_again(world):
     session = world.act("GET", "/api/auth/session")

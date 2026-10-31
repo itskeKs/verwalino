@@ -144,3 +144,10 @@ it("guards duplicate create clicks while the response is pending", async () => {
   fireEvent.click(button); fireEvent.click(button); expect(post).toHaveBeenCalledTimes(2);
   await act(async () => resolve({ id: "new" })); await screen.findByText("Neuer Detailplan");
 });
+
+it("accepts prior actuals for an April property period", async () => {
+  post.mockResolvedValueOnce({ ...proposal, period_start: "2026-04-01", period_end: "2027-03-31" });
+  render(app()); await preview();
+  expect(screen.getByDisplayValue("7000.00")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Plan aus Vorjahr anlegen" })).toBeEnabled();
+});

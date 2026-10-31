@@ -45,6 +45,10 @@ Feature: Organization isolation
       | person       |
       | bank account |
 
+  Scenario: Another organization's settlement period offers are not disclosed
+    When the user opens the settlement period offers of "Verwaltung Beta"
+    Then the property is reported as not found
+
   Scenario: Signing in again keeps the session in the same organization
     When the administrator signs in again
     Then the signed-in session belongs to "Verwaltung Alpha"

@@ -77,18 +77,21 @@ export function WegSettlementsPage() {
           {wegProps.length > 0 && plansForProperty.length === 0 && form.property_id && (
             <p className="empty-hint">Für dieses Objekt gibt es noch keinen Wirtschaftsplan. Bitte zuerst einen Wirtschaftsplan anlegen (Soll-Quelle für die Abrechnungsspitze).</p>
           )}
-          <form onSubmit={handleSubmit} className="form-grid">
+          <form onSubmit={handleSubmit} className="form-grid [&>*]:min-w-0 [&_select]:w-full">
             <p>Der Abrechnungskreis wird aus dem gewählten Wirtschaftsplan übernommen.</p>
             <label>
               WEG-Objekt *
-              <select aria-label="WEG-Objekt *" required value={form.property_id} onChange={(e) => setForm({ ...form, property_id: e.target.value, economic_plan_id: "" })}>
+              <select aria-label="WEG-Objekt *" required value={form.property_id} onChange={(e) => setForm({ ...form, property_id: e.target.value, economic_plan_id: "", period_start: "", period_end: "" })}>
                 <option value="">-- Objekt waehlen --</option>
                 {wegProps.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.management_type})</option>)}
               </select>
             </label>
             <label>
               Wirtschaftsplan (Soll) *
-              <select aria-label="Wirtschaftsplan (Soll) *" required value={form.economic_plan_id} onChange={(e) => setForm({ ...form, economic_plan_id: e.target.value })}>
+              <select aria-label="Wirtschaftsplan (Soll) *" required value={form.economic_plan_id} onChange={(e) => {
+                const plan = plansForProperty.find(p => p.id === e.target.value);
+                setForm({ ...form, economic_plan_id: e.target.value, period_start: plan?.period_start ?? "", period_end: plan?.period_end ?? "" });
+              }}>
                 <option value="">-- Wirtschaftsplan waehlen --</option>
                 {(form.property_id ? plansForProperty : []).map((p) => <option key={p.id} value={p.id}>{planLabel(p)}</option>)}
               </select>
@@ -114,7 +117,7 @@ export function WegSettlementsPage() {
       ) : runs.length === 0 ? (
         <p className="empty-hint">Keine WEG-Abrechnungen vorhanden.</p>
       ) : (
-        <div className="card">
+        <div className="card overflow-x-auto">
           <table className="data-table">
             <thead><tr><th>Zeitraum</th><th>Objekt</th><th style={{ textAlign: "right" }}>Σ Abrechnungsspitze</th><th>Status</th><th></th></tr></thead>
             <tbody>

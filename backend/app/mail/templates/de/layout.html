@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="de" style="color-scheme:light dark;">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
+  <title>{{ copy.subject }}</title>
+  <style>
+    @media (prefers-color-scheme: dark) {
+      .outer { background-color:{{ brand.DARK.outer }} !important; }
+      .card { background-color:{{ brand.DARK.card }} !important; border-color:{{ brand.DARK.border }} !important; }
+      .text { color:{{ brand.DARK.text }} !important; }
+      .secondary { color:{{ brand.DARK.secondary }} !important; }
+      .band { background-color:{{ brand.DARK.band }} !important; border-color:{{ brand.DARK.accent }} !important; }
+      .band-text { color:{{ brand.DARK.band_text }} !important; }
+      .accent { color:{{ brand.DARK.accent }} !important; }
+      .accent-fill { background-color:{{ brand.DARK.accent }} !important; }
+      .button { background-color:{{ brand.DARK.accent }} !important; color:{{ brand.DARK.button_text }} !important; }
+      .separator { border-color:{{ brand.DARK.border }} !important; }
+      .note { background-color:{{ brand.DARK.note }} !important; border-color:{{ brand.DARK.note_border }} !important; }
+    }
+    @media screen and (max-width:480px) {
+      .outer-padding { padding:12px 8px !important; }
+      .inner-padding { padding:24px 20px !important; }
+      .button-table { width:100% !important; }
+      .button { display:block !important; text-align:center !important; }
+    }
+  </style>
+</head>
+<body class="outer text" style="margin:0;padding:0;background-color:{{ brand.LIGHT.outer }};color:{{ brand.LIGHT.text }};font-family:{{ brand.BODY_FONT }};-webkit-text-size-adjust:100%;">
+  <div style="display:none;font-size:1px;line-height:1px;color:{{ brand.LIGHT.outer }};max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">{{ copy.preheader }}</div>
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" class="outer" style="width:100%;background-color:{{ brand.LIGHT.outer }};border-collapse:collapse;">
+    <tr style="vertical-align:top;">
+      <td align="center" class="outer-padding" style="padding:32px 16px;">
+        <!--[if mso]><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" align="center" style="width:600px;"><tr><td style="padding:0;"><![endif]-->
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;max-width:600px;table-layout:fixed;border-collapse:collapse;">
+          <tr style="vertical-align:top;">
+            <td class="band inner-padding" style="padding:24px 32px;background-color:{{ brand.LIGHT.band }};border-bottom:3px solid {{ brand.LIGHT.accent }};">
+              <span class="band-text" style="font-family:{{ brand.BODY_FONT }};font-size:26px;line-height:1.2;font-weight:700;letter-spacing:-0.02em;color:{{ brand.LIGHT.band_text }};">verwalino</span>
+            </td>
+          </tr>
+          <tr style="vertical-align:top;">
+            <td class="card inner-padding" style="padding:32px;background-color:{{ brand.LIGHT.card }};border:1px solid {{ brand.LIGHT.border }};border-radius:0;overflow-wrap:anywhere;">
+              <p class="accent" style="margin:0;padding:0 0 12px;font-family:{{ brand.MONO_FONT }};font-size:12px;line-height:1.5;letter-spacing:0.065em;text-transform:uppercase;color:{{ brand.LIGHT.accent }};">{{ copy.eyebrow }}</p>
+              <h1 class="text" style="margin:0;padding:0 0 24px;font-size:24px;line-height:1.25;font-weight:700;color:{{ brand.LIGHT.text }};">{{ copy.heading }}</h1>
+              <p class="text" style="margin:0;padding:0 0 16px;font-size:16px;line-height:1.6;color:{{ brand.LIGHT.text }};">{{ copy.salutation|default('Guten Tag,') }}</p>
+{% for paragraph in copy.paragraphs %}
+              <p class="text" style="margin:0;padding:0 0 16px;font-size:16px;line-height:1.6;color:{{ brand.LIGHT.text }};">{{ paragraph }}</p>
+{% endfor %}
+{% if copy.steps|default([]) %}
+              <ul class="text" style="margin:0;padding:0 0 16px 24px;font-size:16px;line-height:1.6;color:{{ brand.LIGHT.text }};">
+{% for step in copy.steps %}
+                <li style="padding:0 0 6px;">{{ step }}</li>
+{% endfor %}
+              </ul>
+{% endif %}
+{% if copy.facts|default([]) %}
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;table-layout:fixed;border-collapse:collapse;">
+{% for label, value in copy.facts %}
+                <tr style="vertical-align:top;">
+                  <td width="32%" class="secondary separator" style="width:32%;padding:12px 12px 12px 0;border-top:1px solid {{ brand.LIGHT.border }};font-size:14px;line-height:1.6;color:{{ brand.LIGHT.secondary }};">{{ label }}</td>
+                  <td class="text separator" style="padding:12px 0;border-top:1px solid {{ brand.LIGHT.border }};font-size:14px;line-height:1.6;font-variant-numeric:tabular-nums;color:{{ brand.LIGHT.text }};word-break:break-word;">{{ value }}</td>
+                </tr>
+{% endfor %}
+              </table>
+{% endif %}
+{% if copy.action_link|default(none) %}
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="button-table" style="border-collapse:collapse;">
+                <tr style="vertical-align:top;"><td style="padding:16px 0;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;border-collapse:collapse;">
+                    <tr style="vertical-align:top;"><td class="accent-fill" align="center" style="background-color:{{ brand.LIGHT.accent }};border-radius:0;mso-padding-alt:14px 24px;">
+                      <a href="{{ copy.action_link }}" class="button" style="display:inline-block;padding:14px 24px;background-color:{{ brand.LIGHT.accent }};border:0;border-radius:0;font-size:16px;line-height:1.5;font-weight:600;text-decoration:none;color:{{ brand.LIGHT.button_text }};">{{ copy.action_label }}</a>
+                    </td></tr>
+                  </table>
+                </td></tr>
+              </table>
+              <p class="secondary" style="margin:0;padding:0 0 8px;font-size:14px;line-height:1.6;color:{{ brand.LIGHT.secondary }};">Falls die Schaltfläche nicht funktioniert, öffnen Sie diesen Link:</p>
+              <p style="margin:0;padding:0 0 24px;font-size:14px;line-height:1.6;word-break:break-all;overflow-wrap:anywhere;">
+                <a href="{{ copy.action_link }}" class="accent" style="color:{{ brand.LIGHT.accent }};text-decoration:underline;word-break:break-all;overflow-wrap:anywhere;">{{ copy.action_link }}</a>
+              </p>
+{% endif %}
+{% for label, link in copy.links|default([]) %}
+              <p style="margin:0;padding:0 0 16px;font-size:14px;line-height:1.6;word-break:break-all;">
+                <a href="{{ link }}" class="accent" style="color:{{ brand.LIGHT.accent }};text-decoration:underline;">{{ label }}: {{ link }}</a>
+              </p>
+{% endfor %}
+{% if copy.notes|default([]) %}
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="width:100%;border-collapse:collapse;">
+                <tr style="vertical-align:top;"><td class="note" style="padding:16px;background-color:{{ brand.LIGHT.note }};border-left:3px solid {{ brand.LIGHT.note_border }};">
+{% for note in copy.notes %}
+                  <p class="text" style="margin:0;padding:{{ '12px' if not loop.first else '0' }} 0 0;font-size:14px;line-height:1.6;color:{{ brand.LIGHT.text }};">{{ note }}</p>
+{% endfor %}
+                </td></tr>
+              </table>
+{% endif %}
+            </td>
+          </tr>
+          <tr style="vertical-align:top;">
+            <td class="secondary inner-padding" style="padding:24px 32px;font-size:13px;line-height:1.5;color:{{ brand.LIGHT.secondary }};overflow-wrap:anywhere;">
+              <p style="margin:0;padding:0 0 12px;">{{ copy.why }}</p>
+{% if hosted %}
+              <p style="margin:0;padding:0 0 12px;">Verwalino wird betrieben von {{ brand.OPERATOR }}, {{ brand.ADDRESS }}.</p>
+              <p style="margin:0;padding:0;">
+                <a href="mailto:{{ brand.CONTACT }}" class="secondary" style="color:{{ brand.LIGHT.secondary }};text-decoration:underline;">{{ brand.CONTACT }}</a> ·
+                <a href="{{ brand.IMPRINT_URL }}" class="secondary" style="color:{{ brand.LIGHT.secondary }};text-decoration:underline;">Impressum</a> ·
+                <a href="{{ brand.PRIVACY_URL }}" class="secondary" style="color:{{ brand.LIGHT.secondary }};text-decoration:underline;">Datenschutz</a>
+              </p>
+{% else %}
+              <p style="margin:0;padding:0;">Diese E-Mail wurde von einer selbst betriebenen Verwalino-Installation versendet. Bei Fragen wenden Sie sich an die Verwaltung, die Ihnen den Zugang eingerichtet hat.</p>
+{% endif %}
+            </td>
+          </tr>
+        </table>
+        <!--[if mso]></td></tr></table><![endif]-->
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

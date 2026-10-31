@@ -2,6 +2,7 @@
  * Properties list -- shows all Objekte (properties) with inline creation.
  */
 
+import { settlementPeriodPattern } from "../lib/settlementPeriod";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { createProperty, updateProperty } from "../api/endpoints";
@@ -198,8 +199,9 @@ export function PropertiesPage() {
               />
             </label>
             <label>
-              GJ-Startmonat
+              Beginn des Abrechnungszeitraums
               <select
+                aria-label="Beginn des Abrechnungszeitraums"
                 value={form.fiscal_year_start_month ?? 1}
                 onChange={(e) => setForm({ ...form, fiscal_year_start_month: Number(e.target.value) })}
               >
@@ -208,6 +210,7 @@ export function PropertiesPage() {
                 ))}
               </select>
             </label>
+            <p className="text-sm text-muted-foreground">{settlementPeriodPattern(form.fiscal_year_start_month ?? 1)}</p>
             <label>Baujahr
               <input type="number" min="1" max="9999" step="1" value={form.construction_year ?? ""} onChange={event => setForm({ ...form, construction_year: event.target.value === "" ? null : Number(event.target.value) })} />
             </label>
@@ -250,7 +253,7 @@ export function PropertiesPage() {
                 <th>Name</th>
                 <th>Typ</th>
                 <th>Adresse</th>
-                <th>GJ</th>
+                <th>Abrechnungszeitraum</th>
                 <th></th>
               </tr>
             </thead>
@@ -268,7 +271,7 @@ export function PropertiesPage() {
                     </span>
                   </td>
                   <td>{[p.street, p.zip_code, p.city].filter(Boolean).join(", ") || "-"}</td>
-                  <td>{p.fiscal_year_start_month}</td>
+                  <td>{settlementPeriodPattern(p.fiscal_year_start_month)}</td>
                   <td>{isWrite && <button className="btn btn--small" onClick={() => openEdit(p)}>Bearbeiten</button>}</td>
                 </tr>
               ))}
