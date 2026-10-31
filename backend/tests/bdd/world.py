@@ -12,9 +12,25 @@ through the real FastAPI app, RLS and sessions.
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 
 import httpx
+
+
+def target_url() -> str | None:
+    """An explicitly selected disposable installation, otherwise the local app."""
+    return os.environ.get("VERWALINO_TARGET_URL", "").rstrip("/") or None
+
+
+def admin_credentials() -> tuple[str, str]:
+    if not target_url():
+        return "admin@alpha.de", "testpass1234"
+    email = os.environ.get("VERWALINO_TARGET_ADMIN_EMAIL")
+    password = os.environ.get("VERWALINO_TARGET_ADMIN_PASSWORD")
+    if not email or not password:
+        raise ValueError("External scenarios require VERWALINO_TARGET_ADMIN_EMAIL and VERWALINO_TARGET_ADMIN_PASSWORD")
+    return email, password
 
 
 class World:
@@ -25,10 +41,13 @@ class World:
         loop: asyncio.AbstractEventLoop,
         admin_clients: list[httpx.AsyncClient],
         anonymous: httpx.AsyncClient,
+        *,
+        primary_organization_alias: str | None = None,
     ) -> None:
         self._loop = loop
         self._admin_clients = admin_clients
         self._organizations: dict[str, httpx.AsyncClient] | None = None
+        self._primary_organization_alias = primary_organization_alias
         # An unauthenticated client; used to try a sign-in.
         self.anonymous = anonymous
         # The signed-in user the next When step acts as.
@@ -71,6 +90,8 @@ class World:
                 answer = self.run(client.get("/api/organizations/me"))
                 assert answer.status_code == 200, f"GET /api/organizations/me answered {answer.status_code}"
                 resolved[answer.json()["name"]] = client
+            if self._primary_organization_alias:
+                resolved[self._primary_organization_alias] = self._admin_clients[0]
             self._organizations = resolved
         return self._organizations
 
