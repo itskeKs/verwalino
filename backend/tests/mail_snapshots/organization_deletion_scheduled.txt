@@ -1,0 +1,35 @@
+VERWALINO
+
+Die Löschung Ihrer Organisation ist vorgemerkt
+
+Guten Tag,
+
+Ihre Organisation „Hausverwaltung Muster GmbH“ wird am 14.11.2026
+gelöscht.
+
+Erstellen Sie vorher einen aktuellen Datenexport und speichern Sie ihn
+sicher.
+
+Mit der Löschung endet der Zugang für alle Benutzer Ihrer Organisation.
+Unterlagen mit gesetzlicher Aufbewahrungspflicht, etwa Buchungsbelege,
+bleiben für die gesetzliche Frist gesperrt gespeichert und werden danach
+gelöscht.
+
+Sie können die Löschung bis zum 13.11.2026 in Verwalino zurücknehmen.
+
+Löschung am: 14.11.2026
+
+Daten exportieren:
+https://verwaltung.example.de/einstellungen/datenexport
+
+-- 
+Sie erhalten diese E-Mail, weil Sie die zur Löschung vorgemerkte
+Organisation „Hausverwaltung Muster GmbH“ in Verwalino verwalten.
+
+Verwalino wird betrieben von fogu UG (haftungsbeschränkt), Im
+Großenbruch 34, 66583 Spiesen-Elversberg.
+hallo@verwalino.de
+Impressum:
+https://verwalino.de/impressum/
+Datenschutz:
+https://verwalino.de/datenschutz/

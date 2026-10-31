@@ -1,0 +1,2 @@
+{% extends "layout.txt" %}
+{% import "organization_deletion_scheduled.content.jinja" as copy with context %}

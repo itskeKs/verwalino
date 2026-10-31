@@ -1,0 +1,2 @@
+{% extends "layout.txt" %}
+{% import "operator_alert.content.jinja" as copy with context %}

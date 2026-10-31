@@ -1,0 +1,28 @@
+VERWALINO
+
+Ihre E-Mail-Adresse wurde geändert
+
+Guten Tag,
+
+Die E-Mail-Adresse für Ihre Anmeldung bei Verwalino wurde geändert.
+
+Wenn Sie diese Änderung nicht selbst vorgenommen haben, fordern Sie
+sofort ein neues Passwort an und wenden Sie sich an Ihre Verwaltung.
+
+Neue Adresse: m•••@example.de
+Geändert am: 31.10.2026, 14:05 Uhr
+
+Neues Passwort anfordern:
+https://verwaltung.example.de/passwort-vergessen
+
+-- 
+Sie erhalten diese E-Mail an Ihre bisherige Adresse, weil Ihre
+Anmeldeadresse bei Verwalino geändert wurde.
+
+Verwalino wird betrieben von fogu UG (haftungsbeschränkt), Im
+Großenbruch 34, 66583 Spiesen-Elversberg.
+hallo@verwalino.de
+Impressum:
+https://verwalino.de/impressum/
+Datenschutz:
+https://verwalino.de/datenschutz/
