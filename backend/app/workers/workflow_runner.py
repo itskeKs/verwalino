@@ -86,6 +86,8 @@ def build_adapters(stages,*,session_factory=None,declaration_worker=None):
 
 
 async def main(argv=None):
+    from app.core.logging import configure_logging
+    configure_logging()
     parser=argparse.ArgumentParser(description=__doc__)
     organizations=parser.add_mutually_exclusive_group(required=True)
     organizations.add_argument('--organization',action='append',type=uuid.UUID)
