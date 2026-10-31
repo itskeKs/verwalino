@@ -217,7 +217,7 @@ function decimal(value, expected) {
     decimal(ownership.mea_share, '1');
     fixtures.push({ unit, unitName, unitUrl, person, owner, name, ownership, mea, amount });
   }
-  await page.goto(base + '/berechtigungen');
+  await page.goto(base + '/berechtigungen/teamrechte');
   const group = page.getByRole('group', { name: 'Objekt', exact: true });
   await field(group, 'Objekte durchsuchen').fill(propertyName);
   await selectLabel(page, 'Objekt', propertyName);

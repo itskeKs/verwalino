@@ -7,7 +7,7 @@
  * - If authenticated, shows the AppShell with routed content.
  */
 
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthContext";
 import { useAuth } from "./auth/useAuth";
 import { AppShell } from "./components/AppShell";
@@ -70,6 +70,13 @@ import { MandateDetailPage } from "./pages/MandateDetailPage";
 import { DeclarationImportPage } from "./pages/DeclarationImportPage";
 import { DeclarationReviewPage } from "./pages/DeclarationReviewPage";
 import { PropertyKnowledgePage } from "./pages/PropertyKnowledgePage";
+
+import { PermissionsLayout, PermissionsOverview, PermissionsReviews } from "./pages/PermissionsPage";
+
+function PermissionRedirect({ to, parameter }: { to: string; parameter: "scopeId" | "reviewId" }) {
+  const params = useParams();
+  return <Navigate to={`${to}/${encodeURIComponent(params[parameter] ?? "")}`} replace />;
+}
 
 export function AppRoutes() {
   const { loading, session } = useAuth();
@@ -151,20 +158,30 @@ export function AppRoutes() {
         <Route path="/beschluss-sammlung" element={<ResolutionRegisterPage />} />
         <Route path="/fristen" element={<FristenmonitorPage />} />
         <Route path="/users" element={<UsersPage />} />
-        <Route path="/mahnquarantaene" element={<DunningQuarantinePage />} />
-        <Route path="/mandatsquarantaene" element={<MandateQuarantinePage />} />
-        <Route path="/freigaben-vorbereiten" element={<AccessPreparationPage />} />
+        <Route path="/mahnquarantaene" element={<Navigate to="/berechtigungen/pruefungen/mahnungen" replace />} />
+        <Route path="/mandatsquarantaene" element={<Navigate to="/berechtigungen/pruefungen/mandate" replace />} />
+        <Route path="/freigaben-vorbereiten" element={<Navigate to="/berechtigungen/bestand" replace />} />
         <Route path="/altquellen" element={<SourceClassificationsPage />} />
         <Route path="/altquellen/:reviewId" element={<SourceClassificationsPage />} />
-        <Route path="/quellenfreigaben" element={<SourceAdmissionReviewsPage />} />
-        <Route path="/quellenfreigaben/:reviewId" element={<SourceAdmissionReviewsPage />} />
+        <Route path="/quellenfreigaben" element={<Navigate to="/berechtigungen/pruefungen/quellen" replace />} />
+        <Route path="/quellenfreigaben/:reviewId" element={<PermissionRedirect to="/berechtigungen/pruefungen/quellen" parameter="reviewId" />} />
         <Route path="/kontaktdaten-rechte" element={<PersonDataDomainsPage />} />
         <Route path="/kontaktdaten-rechte/:domainId" element={<PersonDataDomainsPage />} />
         <Route path="/gebaeudedaten-rechte" element={<PropertyDataDomainsPage />} />
         <Route path="/gebaeudedaten-rechte/:domainId" element={<PropertyDataDomainsPage />} />
-        <Route path="/berechtigungen" element={<AccountingScopesPage />} />
+        <Route path="/berechtigungen" element={<PermissionsLayout />}>
+          <Route index element={<PermissionsOverview />} />
+          <Route path="teamrechte" element={<AccountingScopesPage />} />
+          <Route path="teamrechte/:scopeId" element={<AccountingScopesPage />} />
+          <Route path="bestand" element={<AccessPreparationPage />} />
+          <Route path="pruefungen" element={<PermissionsReviews />} />
+          <Route path="pruefungen/quellen" element={<SourceAdmissionReviewsPage />} />
+          <Route path="pruefungen/quellen/:reviewId" element={<SourceAdmissionReviewsPage />} />
+          <Route path="pruefungen/mahnungen" element={<DunningQuarantinePage />} />
+          <Route path="pruefungen/mandate" element={<MandateQuarantinePage />} />
+        </Route>
         <Route path="/seitenauszuege" element={<VisualDisclosuresPage />} />
-        <Route path="/berechtigungen/:scopeId" element={<AccountingScopesPage />} />
+        <Route path="/berechtigungen/:scopeId" element={<PermissionRedirect to="/berechtigungen/teamrechte" parameter="scopeId" />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppShell>

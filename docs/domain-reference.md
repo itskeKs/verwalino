@@ -13,6 +13,16 @@ implementation acceptance.
 
 ## Scope and evidence rules
 
+Verwalino's property year overview now provides an Anlage V mapping aid (#34),
+documented with its default category table in
+[M6 §6.12](m6-zahlungen-mietkonto.md#anlage-v-mapping-aid-34). It preserves the
+overview's date basis and organization/source permissions, lists exclusions and
+unknown categories explicitly, reconciles every cent to the overview and offers a
+separate CSV. The detailed expense labels require review against the official
+form-year groups; no tax deduction, owner allocation, cash-outflow date, complete
+return or ELSTER submission is inferred. This implementation does not change the
+reference-software evidence levels below.
+
 The user authorized navigation and synthetic test records. All main navigation
 areas were inspected. Representative creation journeys were exercised to a
 verified saved result, a draft, a missing-data boundary or an explicit external
@@ -70,6 +80,13 @@ for capabilities that this account or review could not exercise.
 | RF31 Object reports | Object overview, rent overview, simple rent roll, Anlage V, EÜR, financial Excel; year selection | Test object overview generated through UI, dialog closed, but no download event/file received. Report contents/export integrity unverified | P5.5, A27 |
 
 ## Saved synthetic inventory and side effects
+
+Verwalino now implements the lease-document part of RF07/RF29 through issue #37:
+unit detail creates a legally unreviewed contract starting point and retained move-in/out
+handover PDFs, recording readings in the existing meter history. Signature names do not
+constitute e-signature. See [lease documents](operations/tasks-and-documents.md#lease-contracts-and-handovers-37)
+for the implemented inputs, storage, permissions and limits; the external observations above
+remain reference evidence, not proof of those external workflows.
 
 These records remain for reproducibility; deleting them was not part of the test.
 They can affect dashboard counts and forecast totals. None represents a real debt.

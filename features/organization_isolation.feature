@@ -29,6 +29,11 @@ Feature: Organization isolation
       | person       |
       | bank account |
 
+  Scenario: Another organization's lease documents cannot be opened or created
+    Given a lease with a landlord, a tenant and a unit meter
+    When another organization's administrator requests its lease documents
+    Then the lease documents are reported as not found
+
   Scenario Outline: A <record> of another organization cannot be changed
     When the user tries to rename the <record> of "Verwaltung Beta" to "Taken over by Alpha"
     Then the change is refused
@@ -43,6 +48,22 @@ Feature: Organization isolation
   Scenario: Another organization's settlement period offers are not disclosed
     When the user opens the settlement period offers of "Verwaltung Beta"
     Then the property is reported as not found
+
+  Scenario: Signing in again keeps the session in the same organization
+    When the administrator signs in again
+    Then the signed-in session belongs to "Verwaltung Alpha"
+    When the user lists the properties
+    Then the list shows the properties of "Verwaltung Alpha"
+    And the list does not show the properties of "Verwaltung Beta"
+
+  Scenario Outline: Another organization's Anlage V <view> is not accessible
+    When the user opens the Anlage V <view> for the property of "Verwaltung Beta"
+    Then the report is reported as not found
+
+    Examples:
+      | view     |
+      | summary  |
+      | download |
 
   Scenario: Administrators share technical diagnostics without organization records
     When the administrator downloads a diagnostics bundle

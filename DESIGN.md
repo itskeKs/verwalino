@@ -148,11 +148,11 @@ Detail pages (`/objekte/:id`, `/mandate/:id`, ...) have no nav entry; the parent
 | Versammlungen | Versammlungen, Beschluss-Sammlung | all |
 | Zahlungen | Bankkonten, Zahlungen, Mietkonto, Kautionen, Offene Posten, Mahnungen | all |
 | Verwaltung | Benutzer | `OWNER_ADMIN` |
-| Erweitert | Quellenfreigaben, Altquellen, Berechtigungen, Freigaben vorbereiten, Mahnquarantäne, Mandatsquarantäne, Seitenauszüge, Kontaktdaten-Rechte, Gebäudedaten-Rechte | `OWNER_ADMIN` |
+| Erweitert | Altquellen, Berechtigungen, Seitenauszüge | `OWNER_ADMIN` |
 
 Navigation entries are `NavItem`s in `GROUPS` (label = German noun, one lucide icon); their routes are in
 `App.tsx`. Add a new top-level screen's nav entry to `GROUPS`; detail pages keep their parent's entry.
-Several icons repeat (`FileText` x7, `KeyRound` x6).
+`FileText` is reused for document entries; the permissions area uses `KeyRound`.
 
 ### Page patterns
 
@@ -203,6 +203,33 @@ the disposable database with synthetic records in "Test Hausverwaltung".
 The `*-before-review-*` files preserve the prior statement and plan captures;
 their refreshed `*-after-*` files show completed November periods and editable
 plan dates. Batch captures show per-lease errors beside the actual result counts.
+
+### Permissions area
+
+`/berechtigungen` has one admin sidebar entry, a kit card overview and wrapping section
+navigation: **Übersicht**, **Teamrechte**, **Bestand prüfen**, **Offene Prüfungen**.
+Contact and building-data permissions are text links from the area. Altquellen and
+Seitenauszüge retain their existing navigation.
+
+The overview reads the confirmed source-security status separately from the inventory.
+One shared label map supplies **Vorbereitung**, **Zugriffsregeln aktiv**, **Aktionen pausiert**;
+raw state codes are never visible. Each state explains staff access and the next action.
+Unavailable status hides the advice; unavailable inventory hides its counts. Reload clears
+previous results. Counts use German grouping, may overlap and never certify readiness.
+
+Teamrechte contains the existing accounting scopes and grants. Bestand prüfen retains the
+inventory, runtime budget, versioned coverage, retention decision and guarded activation/pause
+control. Offene Prüfungen groups the existing source-review and two quarantine lists; each
+labels its page count as **N geladen** and, while a continuation exists,
+**weitere verfügbar**. Quarantine lists explicitly include already-reviewed observations;
+loaded counts are not open-review totals. Existing grant forms and immutable receipts
+keep their own confirmation/retry rules.
+The legacy-source page and declaration publication dialog read the same live admin
+status and shared state descriptions as the overview, with loading and unavailable states.
+Clerks see no admin review link; the combined reviews list omits its self-link.
+Section navigation wraps at 360 px; tables scroll inside their cards, identifiers wrap.
+Old source-review, preparation, quarantine and scope-detail routes redirect with their detail
+references preserved. See [the operations guide](docs/operations/accounting-scope-setup.md).
 
 ### Manual problem reports
 
@@ -259,8 +286,9 @@ classes or inline `style={{}}`; the existing inline styles (about 470) are known
 | `label.tsx` | `Label` (forwardRef) | none; `text-sm font-medium` | `Label htmlFor` + `Input id` in a `grid gap-2`. |
 | `stat-card.tsx` | `StatCard` | props `label`, `value`, `icon`, `tone` (`default`, `primary`, `success`, `warning`, `destructive`), `hint`, `to` | One headline number with an icon tile; with `to` the whole tile is a link. Value `…` while loading, `—` when unavailable (with hint "Nicht verfügbar"). |
 
-Kit adoption today, counted as files that import the part: `Badge` 7, `Dialog` 9, `Card` 5, `Button` 3
-(12 call sites), `Input` 2, `Label` 1, `StatCard` 1. The remaining UI uses the global classes below.
+Kit adoption today, counted as non-test files with runtime imports (excluding type-only
+imports): `Badge` 8, `Dialog` 9, `Card` 7, `Button` 6, `Input` 3, `Label` 2, `StatCard` 1.
+The remaining UI uses the global classes below.
 
 Deviation: the archive form's "Abbrechen" in `MandateDetailPage.tsx` uses the default `primary` variant.
 The create form's "Abbrechen" in `MandatePage.tsx` explicitly uses `outline`.
@@ -283,6 +311,22 @@ Referenced in components but defined nowhere, so they do nothing: `muted` (5 fil
 typo of `btn--primary`), `badge--warning`, `form-hint`, `table-responsive`.
 
 ### Recurring composites
+
+- **Lease documents.** Each lease in unit detail offers “Mietvertrag erstellen” and a retained
+  document history. The kit dialog displays “Vorlage; rechtliche Prüfung erforderlich”, an issue
+  date, handover date and a clearly labelled free-text agreement block before saving. The PDF link
+  appears only after issuance succeeds. Inputs remain available after failure; readers see history
+  without creation actions. Labels and long names wrap inside the available width.
+  The “Übergabeprotokoll” kit dialog captures move-in/out, date, present parties, latest unit-meter
+  readings, repeatable key type/count rows, defects/notes and signature names. It explains that names
+  are not an electronic signature. Decimal inputs share the meter panel parser, including German
+  grouping (`1.234,5`). Prefills follow the selected handover date; explicit edits survive date changes.
+  Unchanged prefilled values reuse existing readings without adding duplicates.
+  Meter-load errors block saving with an explicit retry; a failed
+  save keeps inputs, and success reveals the retained PDF and refreshes the unit meter history.
+  Network and access failures use German feedback and preserve the draft.
+  “Briefe” lists the additional landlord/unit/lease placeholders and explains the single selected
+  original lease used for a recipient with multiple leases.
 
 - **Tables.** Legacy: `<div class="card paged-table"><table class="data-table">`. Kit:
   `Card > CardContent p-0 > div.overflow-x-auto > table.data-table` (`MandatePage.tsx`). First column is
@@ -331,6 +375,19 @@ typo of `btn--primary`), `badge--warning`, `form-hint`, `table-responsive`.
   `api/allocationProposals.ts`). The API carries money as decimal strings: no floats.
 
 ## States
+
+The property year overview at `/berichte` appends an "Anlage V" section using
+`Card`, `CardHeader`, `CardTitle`, `CardDescription` and `CardContent`. Its two
+section tables show German mapping labels, judgement notes and money as
+`1.234,56 €` from decimal strings. Tables scroll within their panel on narrow
+screens; notes wrap. "Nicht zugeordnet" lists source labels, codes, amounts and
+reasons, including explicit exclusions. The reconciliation table shows assigned,
+unassigned, original overview totals and differences without client arithmetic.
+The panel always states "Zuordnungshilfe, keine Steuerberatung"; zero mapped rows
+do not assert tax completeness. A real CSV link uses the same displayed selection
+and reports export errors inline. Loading and retry belong to the panel, leaving
+the overview visible; changing property, year or scope removes the old panel and
+suppresses late responses/downloads. The existing year-overview CSV stays separate.
 
 Every async region provides loading, empty, error and success copy using the patterns below.
 Failed requests preserve the user's input.
@@ -398,10 +455,18 @@ or inline expressions, with the variants below. The inconsistencies are tracked 
 Taken from the running dev stack of `scripts/dev-local.sh` (backend `:18000`, Vite `127.0.0.1:13000`) against the
 disposable test database with synthetic data (organisation "Muster Hausverwaltung", fictitious addresses, persons and
 amounts). Desktop is 1280 px wide at 1x; the 360 px images are 2x. File names are fixed so the table
-stays valid when they are retaken.
+stays valid when they are retaken. The review-list screenshots were refreshed with
+synthetic browser-intercepted API responses, without starting a backend or accessing a database.
 
 | Screen | Page | Desktop | 360 px |
 |---|---|---|---|
+| Permissions | `/berechtigungen` | [`after-overview-desktop.png`](docs/assets/permissions/after-overview-desktop.png) | [`after-overview-360.png`](docs/assets/permissions/after-overview-360.png) |
+| Team rights | `/berechtigungen/teamrechte` | [Desktop](docs/assets/permissions/after-team-desktop.png) | [Phone](docs/assets/permissions/after-team-360.png) |
+| Preparation | `/berechtigungen/bestand` | [Desktop](docs/assets/permissions/after-inventory-desktop.png) | [Phone](docs/assets/permissions/after-inventory-360.png) |
+| Review lists | `/berechtigungen/pruefungen` | [Desktop](docs/assets/permissions/after-reviews-desktop.png) | [Phone](docs/assets/permissions/after-reviews-360.png) |
+| Legacy source status | `/altquellen` | [Desktop](docs/assets/permissions/after-legacy-desktop.png) | [Phone](docs/assets/permissions/after-legacy-360.png) |
+| Declaration publication | `/teilungserklaerung/import/:id/review`, "Übernahme vorbereiten" | [Desktop](docs/assets/permissions/after-publication-desktop.png) | [Phone](docs/assets/permissions/after-publication-360.png) |
+| Emergency pause | `/berechtigungen` (paused) | [Desktop](docs/assets/permissions/paused-overview-desktop.png) | [Phone](docs/assets/permissions/paused-overview-360.png) |
 | Dashboard | `/` | [`dashboard-desktop.png`](docs/assets/design/dashboard-desktop.png) | [`dashboard-360.png`](docs/assets/design/dashboard-360.png) |
 | List | `/objekte` | [`list-objekte-desktop.png`](docs/assets/design/list-objekte-desktop.png) | [`list-objekte-360.png`](docs/assets/design/list-objekte-360.png) |
 | Detail | `/objekte/:id` | [`detail-objekt-desktop.png`](docs/assets/design/detail-objekt-desktop.png) | [`detail-objekt-360.png`](docs/assets/design/detail-objekt-360.png) |
@@ -413,3 +478,19 @@ stays valid when they are retaken.
 
 The screenshots show the app as it is, including the deviations named above (legacy table, native file
 button, unstyled buttons on the dashboard task list, ASCII "Strasse").
+
+### Property year mapping aid
+
+The report comparison uses the same synthetic property, 1,234.56 EUR rent, 150 EUR
+advances, 100.03 EUR water costs and 9,876.54 EUR unassigned metering costs on the
+disposable test database. These report captures use 1280 and 360 CSS px at 1x.
+The after images focus the new panel; the supplemental images show unassigned
+amounts, reconciliation and download. The reconciliation table scrolls horizontally
+within the card on narrow screens.
+
+| View | Before | After |
+| --- | --- | --- |
+| Desktop | [Year overview](docs/assets/design/reports-before-desktop.png) | [Anlage V](docs/assets/design/reports-after-desktop.png) |
+| 360 px | [Year overview](docs/assets/design/reports-before-360.png) | [Anlage V](docs/assets/design/reports-after-360.png) |
+| Desktop reconciliation | — | [Unassigned amounts and reconciliation](docs/assets/design/reports-after-desktop-reconciliation.png) |
+| 360 px reconciliation | — | [Unassigned amounts and reconciliation](docs/assets/design/reports-after-360-reconciliation.png) |

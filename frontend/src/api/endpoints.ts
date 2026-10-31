@@ -3,7 +3,7 @@
  */
 
 import { api, uploadFormData } from "./client";
-import type { Task, TaskInput, TaskFilters, TaskPage, User, UserRole, PropertyYearReport, PropertyYearReportQuery } from "./types";
+import type { Task, TaskInput, TaskFilters, TaskPage, User, UserRole, PropertyYearReport, PropertyYearReportQuery, AnlageVSummary } from "./types";
 
 import type { Attachment, AttachmentFilters, AttachmentPage, AttachmentUpload } from "./types";
 import type { SpecialLevy, SpecialLevyCreate } from "./types";
@@ -126,6 +126,18 @@ export function getPropertyYearReport(query: PropertyYearReportQuery): Promise<P
 
 export function getPropertyYearReportCsv(query: PropertyYearReportQuery): Promise<Blob> {
   return api.getBlob(`/api/reports/property-year.csv?${propertyYearReportQuery(query)}`);
+}
+
+export function getAnlageVSummary(query: PropertyYearReportQuery): Promise<AnlageVSummary> {
+  return api.get<AnlageVSummary>(`/api/reports/property-year/anlage-v?${propertyYearReportQuery(query)}`);
+}
+
+export function anlageVCsvUrl(query: PropertyYearReportQuery): string {
+  return `/api/reports/property-year/anlage-v.csv?${propertyYearReportQuery(query)}`;
+}
+
+export function getAnlageVSummaryCsv(query: PropertyYearReportQuery): Promise<Blob> {
+  return api.getBlob(anlageVCsvUrl(query));
 }
 
 export function login(body: LoginRequest): Promise<LoginResponse> {

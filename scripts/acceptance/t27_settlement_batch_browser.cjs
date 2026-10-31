@@ -196,7 +196,7 @@ async function selectLabel(scope, label, optionLabel) {
   }
   assert.equal(new Set(leases.map(lease => lease.id)).size, 3);
 
-  await page.goto(base + '/berechtigungen');
+  await page.goto(base + '/berechtigungen/teamrechte');
   await propertySelector('Objekt');
   await field(page, 'Bezeichnung').fill(scopeName);
   const scopeTypes = await field(page, 'Verwaltungsart').getByRole('option').evaluateAll(options =>

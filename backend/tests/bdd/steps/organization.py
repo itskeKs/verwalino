@@ -104,3 +104,22 @@ def record_unchanged(world, organization, kind):
 def user_opens_periods(world, organization):
     record = record_of(world, organization, kind_named("property"))
     world.act("GET", f"/api/properties/{record.id}/settlement-periods", params={"year": 2025})
+
+
+@when("the administrator signs in again")
+def administrator_signs_in_again(world):
+    session = world.act("GET", "/api/auth/session")
+    assert session.status_code == 200, world.describe_response()
+    users = world.act("GET", "/api/users")
+    assert users.status_code == 200, world.describe_response()
+    email = next(user["email"] for user in users.json() if user["id"] == session.json()["user_id"])
+    answer = world.send(world.anonymous, "POST", "/api/auth/login", json={"email": email, "password": "testpass1234"})
+    assert answer.status_code == 200, world.describe_response()
+    world.actor = world.anonymous
+
+
+@then(parsers.parse('the signed-in session belongs to "{organization}"'))
+def signed_in_session_belongs_to(world, organization):
+    answer = world.act("GET", "/api/organizations/me")
+    assert answer.status_code == 200, world.describe_response()
+    assert answer.json()["name"] == organization

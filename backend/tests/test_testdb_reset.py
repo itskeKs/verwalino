@@ -99,19 +99,12 @@ def test_reset_guard_accepts_only_the_validated_test_url_without_connecting(guar
     assert testdb.require_disposable_database_reset_url(settings.database_url_sync) == settings.database_url_sync
 
 
-def test_reset_refuses_a_validated_ci_database_without_connecting(guarded_environment, monkeypatch):
-    monkeypatch.setenv("HV_DECLARATION_TEST_DATABASE_PROFILE", "gitlab-ci")
+@pytest.mark.parametrize("profile", ["ci", "unknown"])
+def test_reset_refuses_a_non_local_profile_without_connecting(guarded_environment, monkeypatch, profile):
+    monkeypatch.setenv("HV_DECLARATION_TEST_DATABASE_PROFILE", profile)
     monkeypatch.setenv("CI", "true")
-    for name, attribute in (
-        ("HV_DATABASE_URL", "database_url"),
-        ("HV_DATABASE_URL_MIGRATOR", "database_url_migrator"),
-        ("HV_DATABASE_URL_SYNC", "database_url_sync"),
-    ):
-        url = getattr(settings, attribute).replace("127.0.0.1:55432", "postgres:5432")
-        monkeypatch.setenv(name, url)
-        monkeypatch.setattr(settings, attribute, url)
-    with pytest.raises(RuntimeError, match="localhost:55432/hausverwaltung"):
-        testdb.reset_foreign_test_database(settings.database_url_sync)
+    with pytest.raises(RuntimeError, match="HV_DECLARATION_TEST_DATABASE_PROFILE must be 'local'"):
+        testdb.reset_foreign_test_database(guarded_environment)
 
 
 @pytest.mark.parametrize("resolution", ["raises", "none"])

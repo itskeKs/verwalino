@@ -27,17 +27,20 @@ The dedicated healthcheck verifies local OCR, storage and DB role without queue 
 or a provider call. SIGTERM lets a running bounded extraction run out, without
 adopting results after an abort; the existing lease recovery applies.
 The local launcher manages API, UI and worker with a shared, isolated
-`/tmp` document storage and exclusively the test DB `:55432`. The approved,
-not yet activated production service uses only the internal network and a readable
-original volume; no provider, web, review or migrator credentials.
-Operating details and the unchanged production release limit: [DEPLOY.md](../DEPLOY.md).
+`/tmp` document storage and exclusively the test DB `:55432`. The owner's local
+production Compose service uses only the internal network and a readable original
+volume; no provider, web, review or migrator credentials. The portable and hosted
+stack does not start this worker and disables automatic extraction.
+Operating details and release boundaries: [DEPLOY.md](../DEPLOY.md).
 No schema/RLS change.
 
 ## Portable Operation (2026-10-23)
 
-`scripts/self-host.sh` and the repurposed `infra/docker-compose.yml` form, alongside
-the unchanged alpha, a separate first-installation path (project
-`verwalino`). Web app, private PostgreSQL DB and one-off migration/admin jobs
+`scripts/self-host.sh` and `infra/docker-compose.yml` provide the portable
+first-installation path (project `verwalino`). The hosted instance on the Contabo
+server uses the same installer in HTTPS mode; `scripts/deploy-server.sh` and
+`.github/workflows/deploy.yaml` deploy published release images with a backup
+before migration. Web app, private PostgreSQL DB and one-off migration/admin jobs
 use the existing image; only Ops receives migrator rights. The default is
 loopback HTTP; optionally Caddy takes over HTTPS on a separate proxy network.
 Secrets are generated locally and not loaded as shell code. AI, SMTP and
@@ -59,9 +62,21 @@ The complete table below is checked against the dataclass by
 | --- | --- | --- |
 | `deployment_mode` | `selfhost` | `hosted` |
 | `first_run_setup_enabled` | `true` | `false` |
+| `rate_limit_profile` | `relaxed` | `strict` |
+| `rate_limit_rules.ip_failures` | `20` | `10` |
+| `rate_limit_rules.email_failures` | `10` | `5` |
+| `rate_limit_rules.window_minutes` | `15` | `15` |
+| `rate_limit_rules.lockout_minutes` | `15` | `30` |
+| `rate_limit_rules.lockout_multiplier` | `1` | `2` |
+| `rate_limit_rules.max_lockout_minutes` | `15` | `1440` |
+| `rate_limit_rules.lockout_decay_minutes` | `15` | `1440` |
+| `rate_limit_rules.cleanup_every` | `100` | `100` |
+| `rate_limit_rules.cleanup_batch_size` | `1000` | `1000` |
 
 Current readers are scenario tag selection, reports and browser app processes
-(`deployment_mode`), and setup's `setup_required()` (`first_run_setup_enabled`).
+(`deployment_mode`), setup's `setup_required()` (`first_run_setup_enabled`) and
+login (`rate_limit_profile` and its frozen `RateLimitRules`, included in the drift
+check above).
 `GET /api/setup` returns `{"required": false}` in hosted mode even with no
 organizations, without opening a database connection. Every non-GET setup method
 returns the same 404 as a closed installation, before parsing its body. The admin
@@ -436,7 +451,7 @@ Role enforcement takes place in the authorization layer (policy check per endpoi
 - **MFA:** not mandatory for M0; note as a hardening option for M9 (back office with personal + financially relevant data).
 - **Audit:** login, logout, failed logins, role changes → `audit_event`.
 
-**First-run bootstrap (revision 0141):** in self-hosted mode, `GET /api/setup` reports
+**First-run bootstrap (accepted source revision 0141):** in self-hosted mode, `GET /api/setup` reports
 whether there are no organizations. In hosted mode it always reports no setup;
 see [Deployment modes](#deployment-modes). `POST /api/setup` is unauthenticated but requires
 the one-time installer token in its JSON body. A `SECURITY DEFINER`
@@ -464,9 +479,76 @@ The router sends an unclaimed installation to the German setup form, then reload
 from the cookie; a closed setup URL redirects to login. A failed initial setup
 status request is logged to the console and leaves login and signed-in routes
 available; a later successful app load still detects an unclaimed installation.
-No signup/rate limiter is included. Rollback-only tests provision an empty synthetic database without
+Signup remains deferred to #19; login uses the application limiter below. Rollback-only tests provision an empty synthetic database without
 changing the shared fixtures permanently; real portable-stack acceptance remains
 pending.
+
+**Login hardening (revision 0142):** `POST /api/auth/login` checks the IP and
+normalized email before looking up the password. Both failure thresholds use a
+fixed 15-minute window starting with the first failure. Selfhost locks after 20
+IP or 10 email failures for 15 minutes. Hosted locks after 10 IP or 5 email
+failures for 30 minutes; each repeated lockout doubles to a maximum of 24 hours.
+Expiry starts a fresh failure window. Success deletes only the email counter
+and its escalation history; IP failures survive successful logins. Attempts
+during an active lockout count as failures without extending it. The Nth failure
+starts the lock; the following request is refused even with a correct password.
+
+This deliberately trades resistance to guessing for targeted denial of service:
+an attacker who knows an email can lock it, repeatedly and with escalating hosted
+waits. The victim cannot clear an active lockout by logging in, even with the
+correct password. They must wait or ask an operator to use the migrator CLI
+`python -m app.admin_cli unlock --email ADDRESS` (or `--ip ADDRESS` for an
+independently locked IP); see [operator guidance](../DEPLOY.md#login-lockout-and-proxy-trust).
+Escalation decays on failures based on `last_lockout_at`, independently of traffic
+and cleanup: the count resets when the last lockout is strictly older than
+24 hours in hosted mode or the 15-minute window in selfhost mode. Exactly at the
+boundary history is retained. Each new lockout records its start time.
+
+Unknown email, wrong password and lockout all return the identical
+`401 {"detail":"Invalid credentials"}` body and headers, without `Retry-After`
+or a session cookie. The German login UI is unchanged. Every attempt runs one
+Argon2 verification outside database transactions. Unknown and locked identities
+use the dummy hash; an active lockout still skips the principal lookup. A WARNING
+records only scope, key kind, HMAC key hash and a server-generated request id
+(or the request-state id if available), never raw emails or IPs.
+
+`auth_throttle` is global because authentication precedes tenant selection. It
+stores key kind, HMAC-SHA256 of `scope:normalized_key`, window start, failure
+count, lockout expiry, repeated-lockout count, last lockout start and update time.
+The pepper is HMAC-SHA256 of `verwalino-auth-throttle`, keyed by the existing
+`HV_SESSION_SECRET`; no new setting is required. Rotating that secret clears
+effective throttling state by changing every key; old rows age out through cleanup.
+Email normalization reuses `normalize_email`. IPv4 uses its canonical address;
+IPv4-mapped IPv6 maps to IPv4. Native IPv6 is grouped by canonical /64 network
+address, preventing interface-address rotation from bypassing the IP limit.
+Unparsable client addresses share the constant `invalid` key and receive the
+normal authentication response. Only this table receives new runtime DML grants
+(`app_rw`; existing worker membership inherits them). There is no new SECURITY
+DEFINER function, organization grant or tenant bypass. Downgrade refuses to discard
+retained throttle state, then removes the empty table and its indexes.
+
+`core/rate_limit.py::check_and_record(session, scope, keys, rules)` atomically
+reserves both counters with row-locked upserts in consistent key order. Admission
+refuses an active lock or a reserved count above its limit, so concurrent bursts
+cannot perform more real password checks than the limit. The login handler commits
+reservations and the principal lookup before hashing. A second short transaction
+finalizes a failure's lockout or refunds a successful reservation: the email key
+and its history are cleared, and the IP reservation is decremented while previous
+IP failures remain. Refusals from a locked IP also count against the email key.
+The handler commits outcomes before raising an HTTP refusal.
+`Depends(throttled("login"))` supplies request metadata and deployment rules.
+
+Every 100th login per worker runs best-effort cleanup in a separate transaction
+**after** the outcome commits. A single delete selects at most 1000 rows whose
+`updated_at` is over one day old, using `ctid`, `LIMIT` and `FOR UPDATE SKIP LOCKED`.
+Local lock and statement timeouts bound database waiting; a cleanup failure cannot
+undo the login outcome. Cadence and batch size are constants in `RateLimitRules`.
+Only cadence is local to the worker; security state is in PostgreSQL. The injectable
+clock makes expiry and cleanup tests deterministic.
+The IP comes exclusively from `request.client`: the direct peer or Uvicorn's
+resolved address when `FORWARDED_ALLOW_IPS` trusts that peer. The application never
+reparses `X-Forwarded-For`. The container entrypoint enables this middleware;
+the portable Caddy stack supplies its private proxy subnet.
 
 **Implemented T57 path:** Signed cookies carry user/organization and,
 for a positive generation, `sv`. The runtime checks active membership and the current
@@ -654,6 +736,16 @@ original sources and content-addressed storage reference are preserved;
 download checks current original-source/contact rights and the hash, without recalculation.
 Changing a template does not change any letters. Populated tables prevent lossy
 downgrade; dispatch is not part of circular letter issuance.
+
+Issue #37 reuses these tables for lease contracts and handover protocols, without a migration.
+`letter_document.body` stores a JSON text snapshot of inputs and rendered content, including
+original landlord source IDs for contracts and meter/reading IDs and exact values for handovers.
+Landlord export/processing access is rechecked on original retrieval. The existing checksum and
+immutable storage path preserve the issued PDF. Lease document routes under `/api/leases/{id}`
+authorize the specific lease independently of its active dates or finalized statements.
+The shared meter reading service writes protocol readings into `meter_reading`, using `period`
+for their source note, and refuses a value below the preceding reading day (including same-day
+values). Readings and the letter original commit together or roll back together.
 
 T49 adds the read-only `/api/reports/datev/{sources|preview}` path and
 `POST /api/reports/datev.csv`. `ReportService.property_period` shares the existing
