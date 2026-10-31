@@ -958,11 +958,12 @@ EOF2
 rm ci_key.pub
 ```
 
-The workflow sends only the tag as the SSH command (`ssh chris@host v1.2.3`). The user's shell expands
-`$SSH_ORIGINAL_COMMAND` into arguments of the script, which accepts exactly one argument shaped like a release
-tag (`vX.Y.Z`, no suffix or leading zeroes) and exits 2 on anything else. `restrict` switches off forwarding, PTYs and
+The workflows send only a command string over SSH: `v1.2.3` for the app or `site <sha>` for the website.
+The user's shell expands `$SSH_ORIGINAL_COMMAND` into arguments of the script, which accepts exactly one release
+tag (`vX.Y.Z`, no suffix or leading zeroes), or exactly `site` and one 40-character lowercase hexadecimal commit
+SHA. Every other shape exits 2 before logging, locking or Docker work. `restrict` switches off forwarding, PTYs and
 agent. The user has sudo and Docker, so this key is as sensitive as the admin key: the forced command and the tag
-check are its only limits. Fill `DEPLOY_KNOWN_HOSTS` with the output of `ssh-keyscan -t ed25519 "$DEPLOY_HOST"`,
+grammar check are its only limits. Fill `DEPLOY_KNOWN_HOSTS` with the output of `ssh-keyscan -t ed25519 "$DEPLOY_HOST"`,
 where `DEPLOY_HOST` is exactly the host name or IP stored in that secret, after comparing the key with
 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server. `StrictHostKeyChecking=yes` matches that name;
 an IP-only entry does not match a host name in `DEPLOY_HOST`.
@@ -986,6 +987,41 @@ an IP-only entry does not match a host name in `DEPLOY_HOST`.
 
 Secrets of the workflow (repository secrets, names only): `DEPLOY_HOST`, `DEPLOY_USER` (the admin user),
 `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`. The token is read-only (`contents: read`) and the job uses no other secret.
+
+### Website container
+
+The public website is an independent static image, `ghcr.io/itskeks/verwalino-site:<git-sha>`.
+The hosted operator opts in with [infra/docker-compose.site.yml](infra/docker-compose.site.yml) in addition to
+the portable compose file and an operator-owned `config/Caddyfile.hosted` containing the existing app block
+plus `import /etc/caddy/Caddyfile.site`. The default compose file, Caddyfile and installer stay unchanged.
+The [website hosting runbook](docs/operations/website-hosting.md) gives the exact one-time setup and commands;
+the server needs a reviewed app release containing these deployment files before the first site deployment.
+
+Only Caddy publishes ports. It serves `app.verwalino.de` through the existing app network,
+`verwalino.de` through `site:8080` on the separate internal `site` network, and redirects
+`www.verwalino.de` to the apex with HTTP 308. The site has a read-only root, uid/gid 10001,
+all capabilities dropped, no privilege escalation, no credentials or host mounts, and only a 1 MiB
+`/data` tmpfs for Caddy housekeeping. Neither app nor db joins its network.
+
+On pushes to `main` affecting `website/` or its workflow, [Website](.github/workflows/website.yml) first
+checks i18n, lint, the build and links; then publishes amd64/arm64 images tagged only with the full SHA,
+attaches BuildKit provenance/SBOMs, signs the index with keyless cosign, and sends only `site <sha>`
+through the existing deploy key. PRs only run checks. Site deploys use their own concurrency group,
+`deploy-hosted-site`, separate from the app's `deploy-hosted-server`, so queued jobs never replace
+each other across the two groups; an active deployment is never cancelled. The shared server lock
+immediately refuses a concurrent deploy, which must be re-run after the active deploy finishes.
+
+`scripts/deploy-server.sh site <sha>` refuses a disabled extension, pulls the SHA tag, requires a matching
+registry SHA-256 RepoDigest, recreates **only** `site` using `tag@digest`, and requires HTTP 200 on `/`
+from the running Caddy container over the site network. It performs no checkout, backup, migration or
+private configuration write. As with app deployment, Docker verifies pulled content and the resolved digest
+pins recreation; the server does not independently verify cosign signatures. CI signing is separate.
+
+The log prints `previous site sha: <sha>` and `rollback: site <sha>` before recreation. Roll back by
+sending `site <previous-sha>` through the same key, or running that command on the server's script.
+There is no automatic rollback. The compose extension requires `VERWALINO_SITE_IMAGE`; set a SHA tag
+plus digest pin from the outset. Keep the previous image in GHCR. App releases preserve an already-enabled Caddy extension;
+manual portable-installer operations require reapplying the hosted Caddy override as described in the runbook.
 
 ### Backups
 

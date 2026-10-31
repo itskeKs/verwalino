@@ -11,6 +11,11 @@ The hosted instance is being set up on the hosted server (#6) through `scripts/s
 and the [hosted deploy workflow](../DEPLOY.md#hosted-server). It shares the portable
 stack's limits: declaration import/Q&A, SMTP and automatic invoice OCR are disabled.
 
+The bilingual public website has a separate image and main-push publish/sign/deploy workflow (#24),
+with an optional closed container behind Caddy. Operator enablement and the first live rollout are
+pending; registration stays closed and legal review remains with #26. See the
+[website hosting runbook](operations/website-hosting.md).
+
 ## Access and organization
 
 | Feature | Status | Location |

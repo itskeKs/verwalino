@@ -15,9 +15,9 @@ name: Deploy hosted server
 #       command="/srv/verwalino/app/scripts/deploy-server.sh $SSH_ORIGINAL_COMMAND",restrict ssh-ed25519 ...
 #     so the key can do nothing but start that script.
 #   - The only thing sent is the tag, as the SSH command: "ssh admin@host vX.Y.Z". The server
-#     passes it to the script as its single argument; the script accepts exactly one release tag
-#     and exits 2 on anything else, then checks the tag out, pulls its image, backs up, migrates,
-#     restarts and polls the health endpoint. Its exit status is this job's status.
+#     passes it to the script as its single argument; this workflow uses the release-tag grammar
+#     (website.yml uses "site <sha>"). Other shapes exit 2. It checks the tag out, pulls its image,
+#     backs up, migrates, restarts and polls the health endpoint. Its exit status is this job's status.
 #   - There is no automatic rollback (#9, #76); a red run means the server needs a look.
 
 on:

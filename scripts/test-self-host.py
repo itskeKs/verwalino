@@ -1588,6 +1588,44 @@ class StackContractTests(unittest.TestCase):
         self.assertIn("**/.env.*", (ROOT / ".dockerignore").read_text().splitlines())
 
 
+class SiteExtensionTests(unittest.TestCase):
+    def setUp(self):
+        self.base = yaml.safe_load((ROOT / "infra/docker-compose.yml").read_text())
+        self.extension = yaml.safe_load((ROOT / "infra/docker-compose.site.yml").read_text())
+
+    def test_site_has_no_host_or_application_authority(self):
+        site = self.extension["services"]["site"]
+        self.assertTrue(site["read_only"])
+        self.assertEqual(site["user"], "10001:10001")
+        self.assertEqual(site["cap_drop"], ["ALL"])
+        self.assertEqual(site["security_opt"], ["no-new-privileges:true"])
+        self.assertEqual(site["networks"], ["site"])
+        for key in ("ports", "volumes", "secrets", "environment", "env_file", "privileged", "build"):
+            self.assertNotIn(key, site)
+        self.assertTrue(self.extension["networks"]["site"]["internal"])
+        self.assertEqual(set(self.extension["services"]), {"site", "caddy"})
+        self.assertNotIn("site", self.base["services"])
+        self.assertEqual(self.base["services"]["caddy"]["networks"], ["proxy"])
+        self.assertEqual(self.extension["services"]["caddy"]["networks"], ["proxy", "site"])
+
+    def test_caddy_import_is_opt_in_and_headers_protect_both_site_hosts(self):
+        content = (ROOT / "infra/Caddyfile.site").read_text()
+        self.assertIn("verwalino.de {", content)
+        self.assertIn("www.verwalino.de {", content)
+        self.assertIn("reverse_proxy site:8080", content)
+        self.assertIn("redir https://verwalino.de{uri} 308", content)
+        self.assertIn("script-src 'self'", content)
+        self.assertNotIn("script-src 'self' 'unsafe-inline'", content)
+        self.assertIn("font-src 'self'", content)
+        self.assertEqual(content.count("import site_headers"), 2)
+        for header in ("Strict-Transport-Security", "X-Content-Type-Options", "X-Frame-Options",
+                       "Referrer-Policy", "Content-Security-Policy", "-Server"):
+            self.assertIn(header, content)
+        self.assertNotIn("import", (ROOT / "infra/Caddyfile").read_text())
+        mounts = self.extension["services"]["caddy"]["volumes"]
+        self.assertTrue(all(mount["read_only"] and not mount["bind"]["create_host_path"] for mount in mounts))
+
+
 class ReleaseBundleTests(unittest.TestCase):
     def test_release_assembly_covers_payloads_and_compose_bind_mounts(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/release-image.yaml").read_text())
