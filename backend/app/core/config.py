@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     allowed_hosts: str = "localhost,127.0.0.1,test"
     enable_api_docs: bool = True
 
+    # --- Optional errors-only tracker (empty DSN leaves reporting disabled) ---
+    error_tracking_dsn: SecretStr = SecretStr("")
+    error_tracking_environment: str = "selfhost"
+
     # Operator-supplied percentage, not an assumed official market rate.
     # None retains legacy zero-interest behavior.
     dunning_base_interest_rate: Decimal | None = Field(None, allow_inf_nan=False)

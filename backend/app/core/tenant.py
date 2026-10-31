@@ -73,6 +73,7 @@ async def get_current_user(request: Request) -> AuthContext:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
+    request.state.organization_id = organization_id
     return AuthContext(user_id=user_id, organization_id=organization_id, role=role, session_version=session_version)
 
 

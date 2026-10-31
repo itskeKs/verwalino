@@ -8,7 +8,7 @@ Quelle: gespeicherter Coddy-Plan `crossreview-remediation-qwen36-49k`, mit
 `plan_read` vollständig verfügbar. Repositoryexport:
 [Originalplan](../crossreview-remediation-qwen36-49k.plan.md).
 HEAD `aeee229b1bbb7415b35c5c05985a866d25a75210`; Worktree
-`/Users/keks/Developer/hausverwaltung`. Vorbestehende Dirty-/Untrackedpfade und
+`~/Developer/hausverwaltung`. Vorbestehende Dirty-/Untrackedpfade und
 54 geschützte Dateihashes: [Baseline](../evidence/01-baseline.json).
 Baseline wurde nach Planexport und vor Einstiegskorrektur aufgenommen, nicht
 rückwirkend als damaliger 04a-Teststand. `docs/research/`/Secrets nicht gelesen.

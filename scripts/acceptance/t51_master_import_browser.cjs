@@ -18,8 +18,7 @@
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { TextDecoder } = require('node:util');
-const { chromium } = require(process.env.HV_PLAYWRIGHT_PACKAGE
-  || '/Users/keks/.npm/_npx/420ff84f11983ee5/node_modules/playwright');
+const { chromium } = require(process.env.HV_PLAYWRIGHT_PACKAGE || 'playwright');
 const base = 'http://127.0.0.1:13000';
 const apiOrigin = 'http://127.0.0.1:18000';
 const importPath = '/api/properties/import';

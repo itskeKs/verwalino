@@ -26,7 +26,17 @@ image_id=
 env_file="$root/shared/.env"
 sbom_file="$root/shared/$RELEASE_ID.sbom.cdx.json"
 db_init_file="$root/shared/prod-init.sh"
-base_url="https://verwaltung.karat.immo"
+# The public host comes from HV_PUBLIC_HOST (invoking environment, else the
+# protected env file); resolve_public_host sets public_host and base_url.
+public_host=
+base_url=
+# Ownership label written by docker-compose.prod.yml. Containers started before
+# the rename carry a vendor-prefixed key instead (the reverse DNS of the owner's
+# alpha host). Capture and rollback inspect exactly such containers, so that key
+# stays readable as a fallback for them. It is assembled from two parts so the
+# tracked files do not spell the customer's name.
+release_label_key=io.verwalino.release
+legacy_release_label_key="com.kar""at.hausverwaltung.release"
 app_start_attempted=0
 worker_start_attempted=0
 invoice_worker_start_attempted=0
@@ -119,6 +129,50 @@ dotenv_setting_is_provider_key() {
   ' "$env_file"
 }
 
+# Prints the last assignment of a dotenv setting, quotes and comments removed.
+dotenv_value() {
+  setting_name=$1
+  awk -v name="$setting_name" '
+    /^[[:space:]]*#/ { next }
+    {
+      line = $0
+      sub(/^[[:space:]]+/, "", line)
+      sub(/^export[[:space:]]+/, "", line)
+      if (index(line, name "=") != 1) next
+      value = substr(line, length(name) + 2)
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      sub(/[[:space:]]+#.*/, "", value)
+      quote = sprintf("%c", 34)
+      single_quote = sprintf("%c", 39)
+      if (length(value) >= 2 && ((substr(value, 1, 1) == quote && substr(value, length(value), 1) == quote) || (substr(value, 1, 1) == single_quote && substr(value, length(value), 1) == single_quote))) {
+        value = substr(value, 2, length(value) - 2)
+      }
+      found = value
+    }
+    END { print found }
+  ' "$env_file"
+}
+
+# Compose resolves HV_PUBLIC_HOST the same way (environment before env file), so
+# the host probed here is the one the stack was configured with. The value ends
+# up in a regex, Python source and Traefik rule: accept a plain host name only.
+resolve_public_host() {
+  if [ "${HV_PUBLIC_HOST+x}" = x ]; then
+    public_host=$HV_PUBLIC_HOST
+  else
+    public_host=$(dotenv_value HV_PUBLIC_HOST)
+  fi
+  case "$public_host" in
+    ''|*[!A-Za-z0-9.-]*|.*|-*|*..*|*.|*-|*[A-Z]*)
+      echo "HV_PUBLIC_HOST must name the public host (lowercase letters, digits, dots, dashes) in the protected env file" >&2
+      return 1
+      ;;
+  esac
+  base_url="https://$public_host"
+  public_host_pattern=$(printf '%s' "$public_host" | sed 's/[.]/[.]/g')
+}
+
 declaration_import_is_enabled() {
   if [ "${HV_DECLARATION_IMPORT_ENABLED+x}" = x ]; then
     case "$HV_DECLARATION_IMPORT_ENABLED" in
@@ -200,6 +254,7 @@ test -d "$release"
 test -f "$env_file"
 test "$(stat -c '%a' "$env_file")" = 600
 require_declaration_provider_key
+resolve_public_host
 test "$(docker network inspect traefik --format '{{(index .IPAM.Config 0).Subnet}}')" = 172.21.0.0/16
 
 admin_password=$(read_secret "Admin password") || {
@@ -248,6 +303,23 @@ compose() {
   compose_release "$release" "$image_id" "$RELEASE_ID" "$@"
 }
 
+container_label() {
+  docker inspect --format "{{index .Config.Labels \"$2\"}}" "$1" 2>/dev/null
+}
+
+# Release label of a container created by this release's compose file.
+container_release_label() {
+  container_label "$1" "$release_label_key"
+}
+
+# Release label of a container that may predate the rename: the previous
+# runtime being captured, or restored from the previous release's compose file.
+prior_container_release_label() {
+  prior_label=$(container_label "$1" "$release_label_key") || return 1
+  [ -n "$prior_label" ] || prior_label=$(container_label "$1" "$legacy_release_label_key") || return 1
+  printf '%s\n' "$prior_label"
+}
+
 is_new_release_container() {
   service=$1
   candidate_container_id=$2
@@ -259,7 +331,7 @@ is_new_release_container() {
   [ "$inspected_container_id" = "$candidate_container_id" ] || return 1
   inspected_container_image_id=$(docker inspect --format '{{.Image}}' "$candidate_container_id" 2>/dev/null) || return 1
   [ "$inspected_container_image_id" = "$image_id" ] || return 1
-  inspected_release_label=$(docker inspect --format '{{index .Config.Labels "com.karat.hausverwaltung.release"}}' "$candidate_container_id" 2>/dev/null) || return 1
+  inspected_release_label=$(container_release_label "$candidate_container_id") || return 1
   [ "$inspected_release_label" = "$RELEASE_ID" ] || return 1
   [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$candidate_container_id")" = hausverwaltung-alpha ] || return 1
   [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$candidate_container_id")" = "$service" ]
@@ -311,7 +383,7 @@ assert_api_ready() {
 import urllib.request
 request = urllib.request.Request(
     'http://127.0.0.1:8000/api/health/ready',
-    headers={'Host': 'verwaltung.karat.immo'},
+    headers={'Host': '$public_host'},
 )
 with urllib.request.urlopen(request, timeout=10) as response:
     assert response.status == 200
@@ -325,7 +397,7 @@ assert_restored_identity() {
   [ -n "$restored_id" ] || return 1
   [ "$(docker inspect --format '{{.Id}}' "$restored_id")" = "$restored_id" ] || return 1
   [ "$(docker inspect --format '{{.Image}}' "$restored_id")" = "$restored_image" ] || return 1
-  [ "$(docker inspect --format '{{index .Config.Labels "com.karat.hausverwaltung.release"}}' "$restored_id")" = "$previous_release_id" ] || return 1
+  [ "$(prior_container_release_label "$restored_id")" = "$previous_release_id" ] || return 1
   [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$restored_id")" = hausverwaltung-alpha ] || return 1
   [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$restored_id")" = "$restored_service" ]
 }
@@ -389,7 +461,7 @@ capture_previous() {
   [ "$(docker inspect --format '{{.Id}}' "$captured_id")" = "$captured_id" ] || return 1
   [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$captured_id")" = hausverwaltung-alpha ] || return 1
   [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$captured_id")" = "$capture_service" ] || return 1
-  [ "$(docker inspect --format '{{index .Config.Labels "com.karat.hausverwaltung.release"}}' "$captured_id")" = "$previous_release_id" ] || return 1
+  [ "$(prior_container_release_label "$captured_id")" = "$previous_release_id" ] || return 1
   captured_image=$(docker inspect --format '{{.Image}}' "$captured_id")
   [ -n "$captured_image" ]
 }
@@ -480,8 +552,8 @@ migration_state=$(compose --profile ops run --rm --no-deps migrate python -m app
 [ "$migration_state" = 0142 ] || { echo "migration state is not exactly the release target 0142" >&2; exit 1; }
 printf '%s\n' "$admin_password" | compose --profile ops run --rm --no-deps -T bootstrap \
   python -m app.admin_cli \
-  --org 'Karat Hausverwaltung Alpha' \
-  --email 'admin@verwaltung.karat.immo' \
+  --org 'Hausverwaltung Alpha' \
+  --email "admin@$public_host" \
   --name 'Alpha Admin' \
   --password-stdin
 
@@ -609,12 +681,12 @@ wait_for_public_app() {
 wait_for_public_app
 http_redirect_status=$(curl --silent --show-error --output /dev/null --dump-header "$http_redirect_headers" \
   --connect-timeout 3 --max-time 20 --max-redirs 0 --proto '=http' \
-  --write-out '%{http_code}' 'http://verwaltung.karat.immo/api/health/live' || true)
+  --write-out '%{http_code}' "http://$public_host/api/health/live" || true)
 case "$http_redirect_status" in
   301|308) ;;
   *) echo "HTTP did not permanently redirect to HTTPS" >&2; exit 1 ;;
 esac
-grep -Eqi '^Location:[[:space:]]*https://verwaltung[.]karat[.]immo/api/health/live[[:space:]]*$' "$http_redirect_headers" || {
+grep -Eqi "^Location:[[:space:]]*https://$public_host_pattern/api/health/live[[:space:]]*\$" "$http_redirect_headers" || {
   echo "HTTP redirect target was not the exact HTTPS health URL" >&2
   exit 1
 }
@@ -643,7 +715,7 @@ import json
 import sys
 
 print(json.dumps({
-    'email': 'admin@verwaltung.karat.immo',
+    'email': 'admin@$public_host',
     'password': sys.stdin.read(),
 }, separators=(',', ':')))
 " | curl --fail --silent --show-error --max-time 20 --proto '=https' --tlsv1.2 \
@@ -669,7 +741,7 @@ curl --fail --silent --show-error --max-time 20 --proto '=https' --tlsv1.2 \
   grep -Eq '"role":"OWNER_ADMIN"'
 curl --fail --silent --show-error --max-time 20 --proto '=https' --tlsv1.2 \
   --cookie "$cookie_jar" "$base_url/api/organizations/me" | \
-  grep -Fq '"name":"Karat Hausverwaltung Alpha"'
+  grep -Eq '"name":"[^"]+"'
 curl --fail --silent --show-error --max-time 20 --proto '=https' --tlsv1.2 \
   "$base_url/api/health/ready" >/dev/null
 

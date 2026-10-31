@@ -2,7 +2,7 @@
 
 As of: 2026-06-01 · Version 0.1 (design, before implementation)
 Reference: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2 · [archived roadmap](archive/roadmap.md)
-Author: `engine-correctness` (Opus 4.8) · Status: **Draft for confirmation by the human — no code yet, no commit**
+Status: **Draft for confirmation by the human — no code yet, no commit**
 
 > **Historical note:** The following sections document the
 > M0 design state of 2026-06-01. They are not the status of today's
@@ -59,14 +59,7 @@ The complete table below is checked against the dataclass by
 | --- | --- | --- |
 | `deployment_mode` | `selfhost` | `hosted` |
 | `first_run_setup_enabled` | `true` | `false` |
-| `self_service_signup_enabled` | `false` | `false` |
-| `error_tracking_default_environment` | `selfhost` | `hosted` |
-| `admin_cli_bootstrap_allowed` | `true` | `true` |
-| `multi_organization_expected` | `false` | `true` |
 | `rate_limit_profile` | `relaxed` | `strict` |
-| `quota_enforcement` | `false` | `true` |
-| `support_url_default` | `https://github.com/itskeKs/verwalino/issues` | `https://github.com/itskeKs/verwalino/issues` |
-| `show_hosted_legal_links` | `false` | `true` |
 | `rate_limit_rules.ip_failures` | `20` | `10` |
 | `rate_limit_rules.email_failures` | `10` | `5` |
 | `rate_limit_rules.window_minutes` | `15` | `15` |
@@ -77,32 +70,25 @@ The complete table below is checked against the dataclass by
 | `rate_limit_rules.cleanup_every` | `100` | `100` |
 | `rate_limit_rules.cleanup_batch_size` | `1000` | `1000` |
 
-Current readers are `/api/meta` (`deployment_mode`), setup's `setup_required()`
-(`first_run_setup_enabled`), the admin CLI (`admin_cli_bootstrap_allowed`) and login
-(`rate_limit_profile` and its frozen `RateLimitRules`, included in the drift check above).
+Current readers are scenario tag selection, reports and browser app processes
+(`deployment_mode`), setup's `setup_required()` (`first_run_setup_enabled`) and
+login (`rate_limit_profile` and its frozen `RateLimitRules`, included in the drift
+check above).
 `GET /api/setup` returns `{"required": false}` in hosted mode even with no
 organizations, without opening a database connection. Every non-GET setup method
-returns the same 404 as a closed installation, before parsing its body. Hosted
-organization creation through signup is deferred to #19; the admin CLI remains
-available in both modes.
+returns the same 404 as a closed installation, before parsing its body. The admin
+CLI remains available in both modes; hosted signup and other hosted features are
+deferred. Policy fields are added when their consumers are implemented.
 
-Other fields reserve decisions for their named consumers, not implemented features:
-signup #19, error tracking #16, the doctor's organization-count warning #11,
-quotas #22, support links #17 and hosted legal links #24/#26.
-The error-tracking environment setting and doctor are absent at this revision.
-`multi_organization_expected` describes an operational expectation, never an
-organization limit or an isolation bypass: the same RLS, scoped API queries and
+The frontend relies on `GET /api/setup`'s `required` alone to open setup; the
+backend owns the deployment decision. While setup status loads, the existing
+"Lade..." state applies. If the setup check fails, login and signed-in pages
+remain available; a later successful app load can detect required setup.
+The same RLS, scoped API queries and
 [route sweep](#74a-route-sweep-backendteststest_route_isolation_sweeppy) apply in both modes.
-
-Unauthenticated `GET /api/meta` returns only `deployment_mode` and the FastAPI
-application `version`, with `Cache-Control: no-store`. It reads no tenant data or
-secrets, so the route sweep explicitly exempts it. The frontend's
-`useDeploymentMode()` reads it once per app load (including StrictMode replay);
-the setup route opens only with a confirmed self-hosted mode and a positive setup
-status. If metadata is unavailable, login and signed-in pages remain available;
-reload after recovery to detect setup. No branding or other hosted UI is added.
-The self-host installer and token issuance remain unchanged: the portable manifest
-uses the default self-hosted policy and does not forward an arbitrary caller's environment.
+No branding or other hosted UI is added. The self-host installer and token
+issuance remain unchanged: the portable manifest uses the default self-hosted
+policy and does not forward an arbitrary caller's environment.
 
 ## Current Declaration-of-Division Workflow (2026-08-29)
 
@@ -167,7 +153,7 @@ and [RouterEval](https://aclanthology.org/2025.findings-emnlp.208.pdf) supports
 the decision to measure and compare variants; it does not replace
 representative domain labels.
 
-> This document covers M0 (and the preparatory data model for M1). It makes the load-bearing architecture decisions that can hardly be retrofitted later (organization isolation, GoBD immutability). It contains **no** application code and **no** migration implementation — only design, rationale, and an actionable scaffolding plan for `bulk-impl`.
+> This document covers M0 (and the preparatory data model for M1). It makes the load-bearing architecture decisions that can hardly be retrofitted later (organization isolation, GoBD immutability). It contains **no** application code and **no** migration implementation — only design, rationale, and an actionable scaffolding plan for the implementer.
 >
 > **Binding status:** The SDD (v0.2) and the roadmap are the source of domain truth and remain untouched. Where this document goes beyond the SDD, this is marked as an *assumption* or *open item*. Points the human must decide are marked **[DECISION]**. The associated Architecture Decision Records are in [adr/](adr/).
 
@@ -195,6 +181,8 @@ A fifth axis, distinct in domain terms, is the **segregation of funds** (SDD §4
 ## 1. Architecture overview
 
 ### 1.1 System boundaries (M0)
+
+`website/` contains the independent static Astro public website, with German and English routes and no application backend dependency.
 
 ```
             ┌──────────────────────────────────────────────────────────┐
@@ -231,7 +219,7 @@ A fifth axis, distinct in domain terms, is the **segregation of funds** (SDD §4
         └──────────────────────────┘      └──────────────────────────────┘
 ```
 
-In M0 only the left core is relevant (auth, tenant context, org/user/mandates, RLS foundation). The PDF rendering pipeline and object storage are set up as an **infrastructure skeleton** (roadmap M0), but filled with domain content only from M2/M3. This document describes the voucher storage and snapshot concept (Section 3) completely in advance, because it is an invariant and shapes the data model — the actual voucher implementation is M2 (`engine-correctness` delivers the in-depth GoBD voucher storage design there, roadmap model assignment).
+In M0 only the left core is relevant (auth, tenant context, org/user/mandates, RLS foundation). The PDF rendering pipeline and object storage are set up as an **infrastructure skeleton** (roadmap M0), but filled with domain content only from M2/M3. This document describes the voucher storage and snapshot concept (Section 3) completely in advance, because it is an invariant and shapes the data model — the actual voucher implementation is M2 (the in-depth GoBD voucher storage design is delivered there as a correctness-critical design step).
 
 ### 1.2 Architecture principles (from SDD §16, made concrete here)
 
@@ -240,6 +228,33 @@ In M0 only the left core is relevant (auth, tenant context, org/user/mandates, R
 - **Settlement logic separated** from UI and PDF layout (only takes effect from M3, but the layer model sets it up from M0).
 - **Immutable snapshots** for finalized settlements and approved vouchers (Section 3).
 - **Cost categories as versioned system data** (relevant from M2; model preparation in Section 5.4).
+
+### 1.3 Request correlation and error tracking
+
+The outermost application middleware validates `X-Request-ID` against
+`[A-Za-z0-9._-]{8,128}` or generates a UUID, stores it in request state and a
+resettable `ContextVar`, and echoes it on all HTTP responses, including perimeter
+errors and SPA/API fallback responses. Service, database and Uvicorn logs use
+the same `request_id` field; worker processing uses its durable job/import ID.
+Generic exceptions produce a safe JSON `detail` plus `request_id`; HTTP 5xx
+exceptions retain their detail and headers and add the ID. HTTP 4xx bodies stay
+unchanged. The existing API-client error message includes the header ID for 5xx.
+Starlette's server-error handler restores the request context and adds the ID
+header after the request middleware unwinds. Unhandled exceptions still propagate
+to the server or test transport after Starlette produces the error response.
+
+An empty tracker DSN leaves reporting disabled. When enabled, the Sentry-compatible
+FastAPI/Starlette integration sends error events with the request ID and the
+database-validated organization ID, never organization names. Error sampling is
+independent of tracing, which remains disabled. The release is `HV_RELEASE_ID`
+when supplied, otherwise the application version. Before sending, the pure
+scrubber removes bodies, user identities, frame locals and source snippets,
+and masks recognizable personal data, credentials and query values in messages
+and breadcrumbs. The same text filter protects formatted logs; SQLAlchemy hides
+bound parameters. No person directory is loaded: names are matched heuristically,
+so this is not a guarantee for arbitrary names or unrecognized free text.
+Transport tests stay offline. Configuration, hosted GlitchTip and log lookup are
+documented in [DEPLOY.md](../DEPLOY.md#request-ids-and-optional-error-tracking).
 
 ---
 
@@ -278,7 +293,7 @@ The invariant must not be bypassable by accident. It is enforced at three comple
 - A `USING` policy for reading and a `WITH CHECK` policy for writing bind each row to the active organization, which is set as a session variable (GUC):
 
   ```sql
-  -- Concept (implementation in M0 by bulk-impl, only the form here):
+  -- Concept (implementation in M0, only the form here):
   CREATE POLICY org_isolation ON <table>
     USING      (organization_id = current_setting('app.current_org_id')::uuid)
     WITH CHECK (organization_id = current_setting('app.current_org_id')::uuid);
@@ -328,7 +343,7 @@ Segregation of funds is **not** implemented in M0 as a second RLS axis (that wou
 
 ## 3. GoBD immutability (I2) and interlocking with the GDPR (DSGVO) erasure obligation
 
-> Note on depth: M0 anchors the concept in the data model. The *in-depth* GoBD voucher storage specification is planned as a separate step in M2 (`engine-correctness`, roadmap model assignment). This section establishes the load-bearing structure so that M1/M2 can build on it.
+> Note on depth: M0 anchors the concept in the data model. The *in-depth* GoBD voucher storage specification is planned as a separate, correctness-critical design step in M2. This section establishes the load-bearing structure so that M1/M2 can build on it.
 
 ### 3.1 What must be immutable (SDD §6.6, §14, §16)
 
@@ -748,7 +763,7 @@ Only the fields that anchor the immutability/snapshot concept in the model are l
 - **`settlement_line`**: per addressee/category; belongs to the snapshot of the `settlement_run`; all amounts `NUMERIC(14,2)`.
 - Audit trail (`audit_event`) — already in M0 (Section 5.2), used intensively from M2.
 
-> This preview is **not** part of the M0 implementation. It is here so that the M0 structural decisions (UUID PKs, `organization_id`, `NUMERIC`, status/version fields, RLS table list) are consistent with the later model family and `bulk-impl` does not have to rebuild anything in M2.
+> This preview is **not** part of the M0 implementation. It is here so that the M0 structural decisions (UUID PKs, `organization_id`, `NUMERIC`, status/version fields, RLS table list) are consistent with the later model family and nothing has to be rebuilt in M2.
 
 ---
 
@@ -790,17 +805,17 @@ The SDD (§16) leaves the backend open: **Python/FastAPI** vs. **Node.js/NestJS*
 
 **Short rationale:** The value-determining and riskiest part of this product is the **correct, audit-proof settlement with exact decimal arithmetic** (M3 is the largest, riskiest chunk according to the roadmap). Python offers the least “friction” here: `Decimal` is first class (no permanent float-avoidance regime necessary), Alembic versions **RLS policies and triggers as clean, reviewable migration steps** (central for enforcing I1/I2), and the XRechnung/EN-16931 ecosystem (M5) is more mature. The main disadvantage — two languages in the stack instead of one — weighs less for a correctness-critical financial/legal product than consistent money/decimal safety and the RLS/migration handling.
 
-> **[DECISION]:** Backend Python/FastAPI (recommended) vs. Node/NestJS. Secondary, if FastAPI is chosen: ORM/migrations combination **SQLAlchemy + Alembic** (recommended because of fine RLS/DDL control) vs. a higher-level alternative. **Please confirm before `bulk-impl` scaffolds — nothing is committed yet.**
+> **[DECISION]:** Backend Python/FastAPI (recommended) vs. Node/NestJS. Secondary, if FastAPI is chosen: ORM/migrations combination **SQLAlchemy + Alembic** (recommended because of fine RLS/DDL control) vs. a higher-level alternative. **Please confirm before scaffolding starts — nothing is committed yet.**
 
 > **Important (independent of the backend):** Whatever is chosen, these points are non-negotiable: (1) money as a decimal type, never float; (2) RLS + `FORCE` + app role without `BYPASSRLS`; (3) transaction-local setting of the tenant context (`SET LOCAL`/`set_config(... is_local => true)`); (4) migrations with explicitly versioned RLS policies/triggers.
 
 ---
 
-## 7. Scaffolding plan for `bulk-impl` (M0 implementation)
+## 7. Scaffolding plan (M0 implementation)
 
 Goal: meet the M0 exit — “Two organizations can be created and are guaranteed not to see any of each other's data; roles take effect.” Actionable checklist. **Prerequisite: stack confirmation by the human (Section 6). No commit before then.**
 
-> This checklist is written for `bulk-impl` (Opus 4.6, bulk engineering). Architecture/data model decisions have already been made in this document; `bulk-impl` implements them and escalates only if an open specification question (SDD §18) or an organization isolation/GoBD design question arises (per the `bulk-impl.md` escalation rule).
+> This checklist is written for the implementer. Architecture/data model decisions have already been made in this document; the implementer implements them and escalates for a correctness review only if an open specification question (SDD §18) or an organization isolation/GoBD design question arises.
 
 ### 7.1 Project structure (proposal, FastAPI variant)
 
@@ -881,7 +896,7 @@ Minimum assertions:
 
 ### 7.4a Route sweep (`backend/tests/test_route_isolation_sweep.py`)
 
-Tests 1–6 cover selected resources; the sweep covers every API route. It enumerates the routes FastAPI registers (`fastapi.routing.iter_route_contexts`, so routes of included routers count) and fails, naming the route, for any route that is neither swept nor exempt. A swept route has a probe in the table of its area module in `backend/tests/route_isolation/` (`core`, `finance`, `documents`, `access`): SQL that picks a record of another organization, plus body, query or headers where the generated request would not reach the route. Exempt routes are listed with their reason in `EXEMPT` of the test (health, public mode/version metadata, login, logout, password change, plus the organization-free setup exemptions from `route_isolation/core.py`). Signed in as an administrator of organization B, the sweep sends each probe with the other organization's ids and once more with ids that exist nowhere:
+Tests 1–6 cover selected resources; the sweep covers every API route. It enumerates the routes FastAPI registers (`fastapi.routing.iter_route_contexts`, so routes of included routers count) and fails, naming the route, for any route that is neither swept nor exempt. A swept route has a probe in the table of its area module in `backend/tests/route_isolation/` (`core`, `finance`, `documents`, `access`): SQL that picks a record of another organization, plus body, query or headers where the generated request would not reach the route. Exempt routes are listed with their reason in `EXEMPT` of the test (health, login, logout, password change, plus the organization-free setup exemptions from `route_isolation/core.py`). Signed in as an administrator of organization B, the sweep sends each probe with the other organization's ids and once more with ids that exist nowhere:
 
 - a request carrying another organization's ids answers 404 (another status only with the reason written in the probe) and exactly what the unknown ids answer, so the answer cannot reveal that the record exists; a write carrying them is never accepted;
 - no answer contains an id of another organization's record that the request did not send;
@@ -1034,7 +1049,7 @@ compares all old data/security objects and byte-identical issued PDFs.
 
 ## 10. What this document deliberately does NOT decide
 
-- Concrete settlement/distribution logic (M3/M4) — a separate `engine-correctness` step.
+- Concrete settlement/distribution logic (M3/M4) — a separate correctness-critical design step.
 - In-depth GoBD voucher storage design (M2) — only the load-bearing structure here.
 - PDF layouts (SDD §18, open).
 - Final choice of the immutability enforcement mechanism (trigger vs. grants vs. frozen table) — detail in M2.

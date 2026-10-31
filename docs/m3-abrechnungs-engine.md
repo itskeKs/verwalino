@@ -3,7 +3,7 @@
 As of: 2026-06-01 · Version 0.1 (design, before implementation)
 Reference: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2 §6.9, §7, §8, §11, §12, §14, §15, §17, §18 · [archived roadmap](archive/roadmap.md) M3 · [architecture.md](architecture.md) §3 (immutability), §5.1 (conventions), §5.4 (I2 entities) · [m2-gobd-belegfluss.md](m2-gobd-belegfluss.md) (`cost_entry`, service period, separate distribution keys, `apportionable_tenant_amount`)
 ADRs for this document: [adr/0003-…](adr/0003-gobd-immutability-mechanism.md) (reused) · [adr/0004-pro-rata-daily-allocation.md](adr/0004-pro-rata-daily-allocation.md) (new) · [adr/0005-rounding-largest-remainder.md](adr/0005-rounding-largest-remainder.md) (new)
-Author: `engine-correctness` (Opus 4.8) · Status: **Draft for confirmation by the human — no application code, no migration, no commit**
+Status: **Draft for confirmation by the human — no application code, no migration, no commit**
 
 > This document specifies the **distribution/settlement engine** (M3) down to the calculation mathematics. According to the roadmap, M3 is the largest, riskiest, and most correctness-critical building block. The scope of M3 is the **operating cost statement (Betriebskostenabrechnung) for tenants** (SDD §6.9, §8, §11); however, the engine is designed so that **M4** (annual settlement of the homeowners' association (WEG) with settlement balance (Abrechnungsspitze), economic plan (Wirtschaftsplan), asset report (Vermögensbericht)) **reuses** it rather than reinventing it.
 >
@@ -589,9 +589,9 @@ These invariants are the **objective, model-independent** yardstick: they hold f
 
 ---
 
-## 10. Implementation checklist for `engine-correctness` (M3 is built by `engine-correctness` because of correctness, not `bulk-impl`)
+## 10. Implementation checklist
 
-> According to the roadmap's model assignment, M3 belongs to **`engine-correctness` (Opus 4.8)** — the distribution engine is correctness-critical. The order is **engine first (pure functions + tests), then persistence/snapshot, then API, PDF last** (roadmap: "engine first here, then the PDF"). **Prerequisite:** the human has confirmed the [DECISION] decisions (closing section) and ADRs 0004/0005. No commit before that.
+> M3 is built as a correctness-critical step, because the distribution engine is correctness-critical. The order is **engine first (pure functions + tests), then persistence/snapshot, then API, PDF last** (roadmap: "engine first here, then the PDF"). **Prerequisite:** the human has confirmed the [DECISION] decisions (closing section) and ADRs 0004/0005. No commit before that.
 
 ### 10.1 Engine as pure functions (first, highest test density)
 

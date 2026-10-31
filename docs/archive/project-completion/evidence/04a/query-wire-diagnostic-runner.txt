@@ -4,7 +4,7 @@ import json
 import os
 import sys
 
-os.chdir('/Users/keks/Developer/hausverwaltung/backend')
+os.chdir('~/Developer/hausverwaltung/backend')
 sys.path.insert(0, os.getcwd())
 os.environ.pop('USER', None)
 os.environ.pop('HV_OPENAI_API_KEY', None)

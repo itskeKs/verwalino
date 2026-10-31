@@ -6,6 +6,17 @@ set -eu
 : "${HV_VERIFY_COMPOSE_FILE:?set HV_VERIFY_COMPOSE_FILE to a Compose file}"
 : "${APP_IMAGE:?set APP_IMAGE to the immutable image digest under test}"
 
+# The Compose file under test takes its public host from HV_PUBLIC_HOST, which
+# Compose inherits from this environment. The value is inlined into Python
+# below, so accept a plain host name only.
+: "${HV_PUBLIC_HOST:?set HV_PUBLIC_HOST to the public host name under test}"
+case "$HV_PUBLIC_HOST" in
+  *[!A-Za-z0-9.-]*|*[A-Z]*)
+    echo "HV_PUBLIC_HOST must be a plain host name (lowercase letters, digits, dots, dashes)" >&2
+    exit 2
+    ;;
+esac
+
 case "$APP_IMAGE" in
   *@sha256:*) ;;
   *)
@@ -180,7 +191,7 @@ for runtime_service in app worker invoice-worker; do
     echo "runtime $runtime_service was not started from the immutable image under test" >&2
     exit 1
   }
-  runtime_release_label=$(docker inspect --format '{{index .Config.Labels "com.karat.hausverwaltung.release"}}' "$runtime_id")
+  runtime_release_label=$(docker inspect --format '{{index .Config.Labels "io.verwalino.release"}}' "$runtime_id")
   [ "$runtime_release_label" = "$HV_VERIFY_RELEASE_ID" ] || {
     echo "runtime $runtime_service does not carry the expected verification release label" >&2
     exit 1
@@ -313,7 +324,7 @@ import urllib.request
 for endpoint in ('/api/health/live', '/api/health/ready'):
     request = urllib.request.Request(
         'http://127.0.0.1:8000' + endpoint,
-        headers={'Host': 'verwaltung.karat.immo'},
+        headers={'Host': '$HV_PUBLIC_HOST'},
     )
     with urllib.request.urlopen(request, timeout=5) as response:
         if response.status != 200:

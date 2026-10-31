@@ -125,11 +125,12 @@ Below `md` (768 px) the sidebar is off-canvas (`fixed`, slides in via the hambur
 overlay, closes on link click or overlay click); from `md` it is static. `AppShell.css`, `Sidebar.css`
 and `Topbar.css` exist but are imported nowhere; the shell is styled with utilities only.
 
-First-run setup is available only after public deployment metadata confirms `selfhost`
-and setup status confirms an unclaimed installation. In `hosted` mode `/setup`
-redirects to login. While metadata loads, the existing "Lade..." state applies;
-if it fails, login and signed-in pages stay available and setup requires a later
-successful app load. This changes route availability without adding visual elements.
+First-run setup opens when `GET /api/setup` reports `required: true`; the backend
+owns the deployment decision. In `hosted` mode it reports `required: false` and
+`/setup` redirects to login. While setup status loads, the existing "Lade..." state
+applies; if that check fails, login and signed-in pages stay available and setup
+requires a later successful app load. This changes route availability without
+adding visual elements.
 
 ### Sidebar groups
 

@@ -66,7 +66,7 @@ write_compose() {
     '    image: ${APP_IMAGE:?set APP_IMAGE to an immutable image reference}' \
     '    command: ["sh", "-c", "sleep 300"]' \
     '    labels:' \
-    '      com.karat.hausverwaltung.release: ${HV_RELEASE_ID:?set the release identifier}' \
+    '      io.verwalino.release: ${HV_RELEASE_ID:?set the release identifier}' \
     > "$target"
 }
 
@@ -120,7 +120,7 @@ new_db_id=$(compose_release "$new_compose" "$new_app_image" new ps -q db)
 compose_release "$new_compose" "$new_app_image" new up -d --no-deps app
 new_app_id=$(compose_release "$new_compose" "$new_app_image" new ps -q app)
 [ "$new_app_id" != "$old_app_id" ]
-new_label=$(docker inspect --format '{{index .Config.Labels "com.karat.hausverwaltung.release"}}' "$new_app_id")
+new_label=$(docker inspect --format '{{index .Config.Labels "io.verwalino.release"}}' "$new_app_id")
 [ "$new_label" = new ]
 new_app_image_id=$(docker inspect --format '{{.Image}}' "$new_app_id")
 [ -n "$new_app_image_id" ]
@@ -131,7 +131,7 @@ restored_app_id=$(compose_release "$old_compose" "$old_app_image_id" old ps -q a
 [ -n "$restored_app_id" ]
 [ "$(docker inspect --format '{{.Image}}' "$restored_app_id")" = "$old_app_image_id" ]
 [ "$(docker inspect --format '{{.Config.Image}}' "$restored_app_id")" = "$old_app_image_id" ]
-[ "$(docker inspect --format '{{index .Config.Labels "com.karat.hausverwaltung.release"}}' "$restored_app_id")" = old ]
+[ "$(docker inspect --format '{{index .Config.Labels "io.verwalino.release"}}' "$restored_app_id")" = old ]
 [ "$(compose_release "$old_compose" "$old_app_image_id" old ps -q db)" = "$old_db_id" ]
 
 printf '%s\n' 'real Compose release-restore regression passed'

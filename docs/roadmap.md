@@ -19,7 +19,9 @@ What exists today: [feature-status.md](feature-status.md).
 - Read one issue with `gh issue view N -R itskeKs/verwalino`; list a milestone with
   `gh issue list -R itskeKs/verwalino --milestone "<title>"`.
 - Failing scenarios, evals and install checks are filed as issues with the label `scenario`
-  ([template](../.github/ISSUE_TEMPLATE/scenario-failure.md)).
+  ([template](../.github/ISSUE_TEMPLATE/scenario-failure.md)). Nightly scenario reports
+  deduplicate by fingerprint and reopen closed failures as `regression`; `@known-flaky`
+  scenarios are excluded ([filing rules](../features/README.md#failure-issues)).
 
 ## Milestones
 

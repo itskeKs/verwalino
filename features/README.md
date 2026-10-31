@@ -41,8 +41,9 @@ Browser scenarios are skipped unless `--run-browser` is supplied; use the target
 
 `HV_DEPLOYMENT_MODE` selects the same validated backend policy for scenarios as for
 the application. It defaults to `selfhost`; invalid values fail before collection.
-Run the API suite in both modes with `make test-bdd` and `make test-bdd-hosted`
-(equivalent to `HV_DEPLOYMENT_MODE=hosted make test-bdd`). Both targets own the
+Run the selfhost API suite with `make test-bdd`. Run `@hosted` scenarios locally
+with `make test-bdd-hosted` (equivalent to `HV_DEPLOYMENT_MODE=hosted make test-bdd`);
+the application under test runs with `HV_DEPLOYMENT_MODE=hosted`. Both targets own the
 shared database lock; do not wrap them in another lock acquisition.
 
 An untagged scenario holds in both modes. Tag a feature or scenario `@selfhost` or
@@ -53,15 +54,11 @@ checks that an empty hosted installation never offers setup. Organization
 isolation scenarios run in both modes. Browser app processes inherit the selected
 mode too; `@browser` remains a separate opt-in tag.
 
-**CI integration:** the PR backend job currently runs the scenario suite with the
-default selfhost policy as part of `make test-backend`. A separate hosted matrix
-job would also repeat dependency and database setup; add it to PRs only after the
-complete incremental run is demonstrated below three minutes. The intended entry
-for #14's reserved nightly matrix slot `hosted` sets `HV_DEPLOYMENT_MODE=hosted`
-and runs `make test-bdd-hosted`, alongside the default selfhost slot. That nightly
-workflow is developed on `feat/nightly-scenarios` and is absent from this base;
-its hosted entry remains to be wired there. This change leaves the PR workflow
-unchanged and supplies both local commands and the mode tags it needs.
+**CI integration:** PR CI and the nightly run the selfhost mode. The nightly uses
+the self-host installer, which starts a selfhost server; changing the pytest
+process's mode only selects tags and cannot change that server's policy. A
+CI/nightly run in both modes, including a server started with
+`HV_DEPLOYMENT_MODE=hosted`, is tracked in #103.
 
 ## How the step library is organised
 
@@ -93,9 +90,155 @@ E   Scenario: A property of another organization cannot be opened by its id
 E   Step: Then the property is reported as not found  (features/organization_isolation.feature:24)
 ```
 
-A failing scenario in CI or the nightly run is reported as an issue titled with the scenario
-name. Fix the behaviour or, if the behaviour was changed on purpose, change the sentence in
-the feature file in the same commit.
+Fix the behaviour or, if the behaviour was changed on purpose, change the sentence in
+the feature file in the same commit. Nightly failures become deduplicated issues as
+described below.
+
+## Scenario reports and nightly runs
+
+`make test-scenarios-report` runs **all API and browser features** against the local
+stack and writes `report/scenarios.json` and `report/summary.md`. It owns the shared
+DB lock and stops its API/Vite processes, like `make test-browser`. Install the
+browser prerequisites below first. `report/` is ignored by Git. For API-only runs,
+hold the lock as shown above and add `--scenario-report /tmp/scenario-report` to
+pytest; browser scenarios appear as skipped unless `--run-browser` is supplied.
+
+Compared with pytest-bdd's built-in `--cucumberjson`, this reporter adds a portable
+artifact index and run metadata. It also records skip reasons and setup errors
+and writes `summary.md` for readable job summaries.
+
+The plugin `backend/tests/bdd/report.py` is loaded by the backend conftest (or
+explicitly with `-p tests.bdd.report` in a standalone pytest suite). Its JSON shape is:
+
+```text
+run: {started, finished, git_sha, mode, target_url?, runner}
+scenarios: [{feature, scenario, tags, outcome, duration_s, error,
+             steps: [{keyword, name, outcome, duration_s, error}], artifacts}]
+```
+
+`target_url` records the external or local browser origin; API-only local runs
+omit it. Times are UTC ISO 8601; durations are seconds. Outcomes are `passed`,
+`failed`, or `skipped`. Scenarios are ordered by feature file, source line and example id;
+outline names and steps contain the rendered example values. Tags and artifact
+paths are sorted. Each scenario occupies one Markdown table row in `summary.md`.
+`error` is null or `{type, message}`; scenario errors also record setup/teardown
+failures and skip reasons. Step errors provide the stable error kind for the
+`feature::scenario::step::error kind` fingerprint. Unexecuted steps are skipped.
+Artifacts use paths **relative to the report directory**, so a downloaded artifact
+remains portable. Failing API scenarios include `last-response.json` with the last
+remembered response body (no request bodies, headers or cookies). Browser failures
+also include a screenshot, `trace.zip` and available local backend/Vite logs.
+Traces are discarded on success. There is no synthetic Vite log for a built self-host image.
+
+### Failure issues
+
+After uploading the report, the nightly workflow runs
+[`scripts/scenario_issues.py`](../scripts/scenario_issues.py). It groups failed steps by
+`feature::scenario::step::error kind`, hashes that string with SHA-256 to a stable
+16-character token, and stores both the readable fingerprint and the exact
+`<!-- scenario-fingerprint: <token> -->` marker in the issue body. The error kind is
+the structured exception class; if absent, it is the first error line with ids,
+numbers, paths, timestamps and request ids normalized. Setup/teardown failures use
+the scenario error and a `setup/teardown` step. Browser/API variants with the same
+fingerprint share one lookup and one issue per run; artifact names are combined.
+
+The reporter searches both open and closed issues with label `scenario` and the
+token in the body, then checks the complete marker line for an exact match. A new
+fingerprint creates an issue from the [failure template](../.github/ISSUE_TEMPLATE/scenario-failure.md),
+including the first run, errors, artifact names and a scenario-specific
+`make test-scenarios-report` command (an outline selects all examples of its source
+template). The labels are `scenario` plus feature-level `@area:<name>` tags, if
+present; missing required labels are created, and no milestone is assigned. An open issue receives
+one comment with the run URL, date and mode; the step error is included only
+when it changed since the previous report. A closed issue is reopened, labelled
+`regression`, and receives the run comment. Passing and skipped scenarios do
+nothing; issues are never automatically closed. Lookups finish before the write
+batch, and searches and writes are sequential with at least two seconds between requests.
+Error text in issue bodies and comments retains at most 20,000 original characters,
+split between the head and tail with a marker counting omitted characters and pointing to the full run artifact.
+Each run creates at most 10 new failure issues plus one summary issue listing any
+remaining scenario names and fingerprints; comments and reopenings are not capped.
+
+To silence a known flaky scenario, add `@known-flaky` above its `Scenario:` (or
+above `Feature:` to silence the whole feature). It still runs and appears in the
+report, but its failures are excluded from issue filing. Remove the tag after
+fixing the flakiness. Manual `workflow_dispatch` runs file nothing unless the
+boolean input **`file_issues`** is enabled. The job has `issues: write`, uses
+`GITHUB_TOKEN` through `gh api`, and serializes runs to avoid concurrent filing.
+If scenario execution produces no JSON report, it logs that fact and files nothing.
+
+Preview the plan with read-only GitHub access:
+
+```sh
+python3 scripts/scenario_issues.py --report report/scenarios.json \
+  --repo itskeKs/verwalino --run-url https://github.com/itskeKs/verwalino/actions/runs/123 \
+  --mode selfhost --dry-run
+make test-scenario-issues  # stdlib tests with fake GitHub, no network or database
+```
+
+The first real filing is unverified until the first nightly run with a failure.
+
+### External disposable targets
+
+Set `VERWALINO_TARGET_URL` to the installation's origin, for example
+`http://127.0.0.1:<disposable-port>`, plus `VERWALINO_TARGET_ADMIN_EMAIL` and
+`VERWALINO_TARGET_ADMIN_PASSWORD`. Then run:
+
+```sh
+cd backend
+uv run --locked --extra dev --extra ops --extra ocr pytest tests/bdd \
+  --run-browser --scenario-report ../report -q
+```
+
+This path starts **no uvicorn/Vite**, runs no migrations or local DB fixtures, and
+uses the target URL for both API clients and the browser. Database environment
+variables and the local test DB lock are unnecessary for this path. Browser
+requests are limited to the selected origin. The feature name `Verwaltung Alpha`
+aliases the signed-in admin's organization, regardless of its actual name.
+Password scenarios create disposable users through `/api/users`; they never change
+the bootstrap admin's password. Use only a dedicated disposable installation:
+scenarios create synthetic records and leave them there, and traces/responses can
+contain their data and session cookies. Keep credentials out of shell tracing.
+Before any scenario runs, the session signs in as the admin and requires
+`GET /api/properties` to return an empty list for that organization. A populated
+target aborts with "target is not a fresh installation; refusing to write scenario
+data"; failed authentication or an unverifiable list also aborts. Start with a
+new disposable installation for each run, including reruns after a partial failure.
+
+**Isolation decision:** all nine examples of `organization_isolation.feature` are
+skipped on external targets because only one bootstrap organization is configured.
+The three `first_run_setup.feature` scenarios are also skipped: they require a
+fresh installation, while the external target already has its bootstrap organization.
+Each skipped scenario records its reason in the report. Local runs continue to
+exercise both organizations, all isolation scenarios and first-run setup.
+`make test-bdd`, `make test-browser` and `make test-scenarios-report` explicitly
+select the local stack even if target variables are inherited; use direct pytest
+for external targets.
+
+### Nightly history
+
+[Nightly scenarios](../.github/workflows/nightly-scenarios.yaml) runs at **03:00 UTC**
+and through `workflow_dispatch`, with one run per workflow/ref at a time. It
+initializes the installer's own `verwalino` Compose project on port 18080, builds
+the checkout on the GitHub runner, starts/migrates it,
+redacts the one-time browser setup token from installer logs, bootstraps an admin
+through the reviewed CLI alternative `self-host.sh admin --password-stdin`, waits for readiness,
+and runs all features against that instance. The job collects installer logs and
+the last 2 MiB of backend logs into `report/logs/` after execution, propagates pytest
+failures, always attempts normal stop, publishes the Markdown job summary, and
+uploads `report/` as `scenarios-selfhost-<UTC date>`.
+Download it from the workflow run's **Artifacts** area; retention is **90 days**.
+Artifacts are the history store; there is no dashboard or separate history database.
+The job does not back up the disposable installation; it only stops it, and the
+GitHub runner's lifecycle removes its storage.
+
+Only `mode: [selfhost]` is implemented. Report metadata uses the same validated
+`HV_DEPLOYMENT_MODE` policy as scenario tag selection and defaults to `selfhost`;
+the workflow sets it from its matrix. Running both modes in CI/nightly is tracked
+in #103 and requires a hosted server in addition to the selfhost installation.
+**The self-host startup and full nightly integration are unverified until the first
+GitHub runner run.** Local checks parse the workflow and test the local runners;
+they do not start the self-host stack.
 
 ## Browser features
 
@@ -113,7 +256,7 @@ Playwright uses a separate session event loop through `browser.py`, so synchrono
 BDD steps can drive browser actions without interfering with the API World's
 per-scenario async fixtures. It logs in through the real UI once per session, keeps
 authentication in memory and opens a fresh authenticated context for each scenario.
-Only the local Vite origin is allowed; pages are not mocked.
+Only the selected application origin is allowed; pages are not mocked.
 
 One-time setup (repeat the browser install when the locked Playwright version changes):
 
