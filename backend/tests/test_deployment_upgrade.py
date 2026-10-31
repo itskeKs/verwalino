@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.core.declaration_test_database import require_disposable_database_settings
 
 
-@pytest.mark.parametrize('heads', [(), ('0028', '0122'), ('0122', '0139', '0140', '0141', '0142'), ('0138',), ('garbage',)])
+@pytest.mark.parametrize('heads', [(), ('0028', '0122'), ('0122', '0139', '0140', '0141', '0142', '0143'), ('0138',), ('garbage',)])
 def test_reject_unknown_or_ambiguous_database_version(heads):
     with pytest.raises(ValueError, match='schema'):
         deployment.supported_schema(heads)
@@ -137,7 +137,7 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                     revision.module.upgrade()
             assert old_rows() == before
             after_security = connection.execute(text("SELECT c.relname,c.relrowsecurity,c.relforcerowsecurity,c.relacl::text FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relname=ANY(:tables) ORDER BY c.relname"), {'tables': tables}).all()
-            if starting_schema in ('0122', '0139', '0140', '0141', '0142'):
+            if starting_schema in ('0122', '0139', '0140', '0141', '0142', '0143'):
                 assert after_security == expected_security
             else:
                 before_by_name = {row.relname: row for row in security}
@@ -208,6 +208,17 @@ def test_archive_refuses_symlinks(tmp_path):
     (tmp_path / 'link').symlink_to('/etc/passwd')
     with pytest.raises(ValueError, match='document'):
         deployment.archive_documents(tmp_path, io.BytesIO())
+
+
+@pytest.mark.parametrize('names', [('a/b', 'a//b'), ('a', './a'), ('x', 'x/y'), ('x/y', 'x')])
+def test_verification_rejects_normalized_duplicates_and_file_directory_conflicts(names):
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode='w:gz') as tar:
+        for name in names:
+            tar.addfile(tarfile.TarInfo(name), io.BytesIO())
+    archive.seek(0)
+    with pytest.raises(ValueError, match='unsafe document archive'):
+        deployment.verify_documents(archive)
 
 
 def test_database_dump_restore_synthetic_schema_in_allowed_container(tmp_path):

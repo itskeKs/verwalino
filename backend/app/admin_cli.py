@@ -22,7 +22,6 @@ import sys
 import psycopg2
 
 from app.core.config import settings
-from app.core.deployment_policy import get_deployment_policy
 from app.core.rate_limit import key_hash
 from app.core.security import hash_password, normalize_email, validate_new_password
 
@@ -41,9 +40,6 @@ def main() -> None:
     )
     ap.add_argument("--name", default="Administrator", help="Admin display name")
     args = ap.parse_args()
-    policy = get_deployment_policy()
-    if not policy.admin_cli_bootstrap_allowed:
-        ap.error("Admin CLI bootstrap is disabled by deployment policy")
     password = args.password
     if args.password_stdin:
         password = sys.stdin.readline()

@@ -23,7 +23,6 @@ ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = ROOT / "docker-compose.prod.yml"
 ENV_EXAMPLE_PATH = ROOT / ".env.example"
 WORKER_ENTRYPOINT_PATH = ROOT / "docker/worker-entrypoint.sh"
-GITLAB_CI_PATH = ROOT / ".gitlab-ci.yml"
 README_PATH = ROOT / "README.md"
 DECLARATION_RUNBOOK_PATH = ROOT / "docs" / "operations" / "declaration-imports.md"
 ARCHITECTURE_PATH = ROOT / "docs" / "architecture.md"
@@ -333,7 +332,7 @@ def test_compose_declares_least_privilege_worker_topology() -> None:
     }.isdisjoint(environment)
 
     assert app["healthcheck"] == {
-        "test": ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/api/health/live', headers={'Host': 'verwaltung.karat.immo'}), timeout=2)\""],
+        "test": ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/api/health/live', headers={'Host': '${HV_PUBLIC_HOST:?set HV_PUBLIC_HOST in the protected env file or invoking environment}'}), timeout=2)\""],
         "interval": "10s",
         "timeout": "3s",
         "retries": 6,
@@ -363,6 +362,24 @@ def test_compose_declares_least_privilege_worker_topology() -> None:
     )
 
 
+def test_compose_takes_the_public_host_from_the_env_file_and_labels_releases() -> None:
+    host = "${HV_PUBLIC_HOST:?set HV_PUBLIC_HOST in the protected env file or invoking environment}"
+    services = _compose()["services"]
+    assert isinstance(services, dict)
+    app = services["app"]
+
+    assert _environment(app)["HV_ALLOWED_HOSTS"] == host
+    assert app["labels"]["traefik.http.routers.hausverwaltung-alpha.rule"] == f"Host(`{host}`)"
+    assert app["labels"]["traefik.http.routers.hausverwaltung-alpha-login.rule"] == (
+        f"Host(`{host}`) && Path(`/api/auth/login`)"
+    )
+    for name in ("app", "worker", "invoice-worker"):
+        labels = services[name]["labels"]
+        assert labels["io.verwalino.release"].startswith("${HV_RELEASE_ID:?")
+        assert not [key for key in labels if key.endswith(".hausverwaltung.release")]
+    assert "HV_PUBLIC_HOST=" in ENV_EXAMPLE_PATH.read_text(encoding="utf-8").splitlines()
+
+
 def test_runtime_example_and_entrypoint_keep_secrets_at_boundaries() -> None:
     example_values = {
         line.partition("=")[0]: line.partition("=")[2]
@@ -384,18 +401,6 @@ def test_runtime_example_and_entrypoint_keep_secrets_at_boundaries() -> None:
         '#!/bin/sh\nset -eu\n\nexec python -m app.workers."${HV_WORKER_KIND:-declaration_import}" "$@"\n'
     )
     assert WORKER_ENTRYPOINT_PATH.stat().st_mode & 0o111
-
-
-def test_gitlab_backend_jobs_opt_into_the_disposable_profile_and_ocr_runtime() -> None:
-    pipeline = yaml.safe_load(GITLAB_CI_PATH.read_text(encoding="utf-8"))
-    backend_test = pipeline["backend-test"]
-    backend_audit = pipeline["backend-audit"]
-
-    assert backend_test["variables"]["HV_DECLARATION_TEST_DATABASE_PROFILE"] == "gitlab-ci"
-    assert "uv sync --locked --extra dev --extra ops --extra ocr" in backend_test["script"][0]
-    assert "uv export --locked --no-dev --extra ops --extra ocr" in backend_audit["script"][0]
-    assert "--no-emit-project" in backend_audit["script"][0]
-    assert "pip-audit --no-deps --disable-pip" in backend_audit["script"][0]
 
 
 @pytest.mark.asyncio

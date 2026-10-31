@@ -100,8 +100,8 @@ async def login(body: LoginRequest, response: Response, throttle: ThrottleReques
     if rate_limit.cleanup_due():
         await rate_limit.cleanup_stale(attempt.rules)
 
-    # Raise only after committing failure state; an exception inside begin()
-    # would roll back every increment and make the limiter ineffective.
+    # Raise only after committing lockout state; an HTTP refusal must not roll
+    # back failure finalization. Reservations already committed before hashing.
     if not authenticated:
         raise _invalid_credentials()
 

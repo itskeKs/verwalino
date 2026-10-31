@@ -16,6 +16,7 @@ def upgrade():
       failures integer NOT NULL DEFAULT 0 CHECK (failures>=0),
       locked_until timestamptz,
       lockouts integer NOT NULL DEFAULT 0 CHECK (lockouts>=0),
+      last_lockout_at timestamptz,
       updated_at timestamptz NOT NULL,
       PRIMARY KEY (key_kind,key_hash)
     );

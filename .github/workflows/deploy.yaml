@@ -1,0 +1,101 @@
+name: Deploy hosted server
+
+# Deploys a published release to the hosted server (DEPLOY.md, "Hosted server").
+#
+# Trigger: workflow_run of "Release image", not "release: published". A GitHub release is not part of
+# the release checklist (a pushed vX.Y.Z tag is), and it would fire before the image exists. This
+# runs only after the image workflow finished successfully, so the tag's image is pushed and signed.
+# GitHub reads a workflow_run workflow from the default branch: it takes effect once it is on main.
+# Only successful tag pushes deploy automatically; a manual re-run of the image workflow does not.
+# To deploy (or redeploy) a tag by hand, run this workflow with the "tag" input.
+#
+# Contract with the server:
+#   - DEPLOY_SSH_KEY logs in as DEPLOY_USER (the server's admin user). Its line in that user's
+#     authorized_keys is
+#       command="/srv/verwalino/app/scripts/deploy-server.sh $SSH_ORIGINAL_COMMAND",restrict ssh-ed25519 ...
+#     so the key can do nothing but start that script.
+#   - The only thing sent is the tag, as the SSH command: "ssh admin@host vX.Y.Z". The server
+#     passes it to the script as its single argument; the script accepts exactly one release tag
+#     and exits 2 on anything else, then checks the tag out, pulls its image, backs up, migrates,
+#     restarts and polls the health endpoint. Its exit status is this job's status.
+#   - There is no automatic rollback (#9, #76); a red run means the server needs a look.
+
+on:
+  workflow_run:
+    workflows: ["Release image"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing vX.Y.Z release tag whose image is already published"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Two deploys never overlap. GitHub keeps one pending run and replaces older pending ones with the
+# newest, which is right here: only the latest release matters. A running deploy is never cancelled.
+concurrency:
+  group: deploy-hosted-server
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    name: Deploy to the hosted server
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Validate release tag
+        id: release
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          # For a tag push, head_branch of the finished run is the tag name.
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          tag="${INPUT_TAG:-$RUN_TAG}"
+          # The same stable-tag shape the release workflow publishes; the server script checks again.
+          if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo '::error::Use a stable release tag vX.Y.Z (no leading zeroes).'
+            exit 1
+          fi
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy over SSH
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::The secret $name is not set."
+              exit 1
+            fi
+          done
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '### Deploying %s\n' "$TAG" >> "$GITHUB_STEP_SUMMARY"
+          ssh -T -i "$HOME/.ssh/deploy_key" -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o ConnectTimeout=20 -o ServerAliveInterval=30 \
+            "$DEPLOY_USER@$DEPLOY_HOST" "$TAG"
+
+      - name: Remove the key
+        if: always()
+        run: rm -f "$HOME/.ssh/deploy_key" "$HOME/.ssh/known_hosts"

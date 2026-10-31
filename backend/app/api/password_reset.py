@@ -154,7 +154,7 @@ async def request_reset(body: ResetRequest, background: BackgroundTasks,
     # in the app. SMTP runs only after the committed issuance and HTTP response.
     message = mail_service.build_password_reset(
         settings, recipient=body.email,
-        link=f"{(settings.public_url or '').rstrip('/')}/passwort-zuruecksetzen?token={token or '0' * 64}")
+        link=f"{mail_service.public_origin(settings) if available else ''}/passwort-zuruecksetzen?token={token or '0' * 64}")
     if token is not None:
         background.add_task(submit_mail, message)
     if rate_limit.cleanup_due():

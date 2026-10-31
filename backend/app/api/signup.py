@@ -1,13 +1,10 @@
 """Hosted registration; no tenant exists until the mailbox is confirmed."""
 from __future__ import annotations
 
-import hashlib
 import itertools
 import logging
-import secrets
 import smtplib
 from collections.abc import Callable
-from datetime import timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -34,13 +31,9 @@ from app.services import mail_service
 logger = logging.getLogger(__name__)
 MESSAGE = {"message": "Wenn die Adresse frei ist, haben wir eine E-Mail geschickt"}
 REFUSED = "Bestätigung nicht möglich. Bitte fordern Sie einen neuen Link an."
-# Every newly issued token expires after 24 hours; sends share a ten-minute gap.
-TOKEN_LIFETIME = timedelta(hours=24)
-RESEND_INTERVAL = timedelta(minutes=10)
+PASSWORD_REFUSED = "Passwort nicht korrekt. Bitte versuchen Sie es erneut."
 # Best-effort cadence per worker; retained state and cleanup locks live in SQL.
 SIGNUP_CLEANUP_EVERY = 100
-SIGNUP_CLEANUP_BATCH = 100
-EXPIRED_RETENTION = timedelta(days=7)
 _signup_attempts = itertools.count(1)
 
 
@@ -53,9 +46,13 @@ def validate_signup_configuration() -> None:
     """Fail startup before offering signup with unusable confirmation links."""
     if not get_deployment_policy().self_service_signup_enabled:
         return
-    if not mail_service.valid_public_origin(settings.public_url):
-        raise ValueError("Hosted signup requires HV_PUBLIC_URL (HTTPS origin; HTTP only on loopback)")
+    confirmation_origin()
     mail_service.validate_configuration(settings)
+
+
+def confirmation_origin() -> str:
+    """Use the operator's routing hostname, never request headers or a second URL."""
+    return mail_service.public_origin(settings)
 
 
 class ConfirmationLinkPrivacyMiddleware:
@@ -129,7 +126,7 @@ class ConfirmRequest(BaseModel):
 async def send_confirmation(email: str, token: str) -> None:
     try:
         await run_in_threadpool(mail_service.send_signup_confirmation, settings, recipient=email,
-                                link=f"{settings.public_url.rstrip('/')}/signup/confirm?token={token}")
+                                link=f"{confirmation_origin()}/signup/confirm?token={token}")
     except (mail_service.MailConfigurationError, smtplib.SMTPException, OSError):
         # Keep existing/unknown/failed-submission responses identical. Never log
         # SMTP diagnostics: they can include recipient addresses or message data.
@@ -140,11 +137,9 @@ async def cleanup_expired_requests() -> None:
     """Bounded privacy cleanup after the request transaction has committed."""
     try:
         async with get_session_factory()() as session, session.begin():
-            await session.execute(text("""DELETE FROM public.signup_request WHERE id IN (
-                SELECT id FROM public.signup_request
-                WHERE expires_at < clock_timestamp()-CAST(:retention AS interval)
-                ORDER BY expires_at,id LIMIT :batch FOR UPDATE SKIP LOCKED)"""),
-                {"retention": EXPIRED_RETENTION, "batch": SIGNUP_CLEANUP_BATCH})
+            await session.execute(text("SET LOCAL lock_timeout='100ms'"))
+            await session.execute(text("SET LOCAL statement_timeout='1s'"))
+            await session.execute(text('SELECT public.cleanup_signup_requests()'))
     except DBAPIError:
         logger.warning("Signup request cleanup failed")
 
@@ -157,53 +152,19 @@ async def accept_request(body: EmailRequest, throttle: ThrottleRequest, backgrou
                 # Submission/resend admission counts only the scoped IP flood bucket.
                 attempt = await check_and_record(session, throttle.scope, {"ip": throttle.ip},
                     get_deployment_policy().rate_limit_rules, request_id=throttle.request_id)
-                checked_hash = await session.scalar(text("SELECT password_hash FROM public.signup_request WHERE email_normalized=:email"),
-                                                   {"email": body.email}) if attempt.allowed and new is not None else None
-            # Existing and free emails perform equivalent work outside transactions.
+            # Hash for both existing and free addresses outside transactions.
             password_hash = hash_password(new.password.get_secret_value()) if attempt.allowed and new is not None else None
-            same_password = verify_password(new.password.get_secret_value(), checked_hash or _DUMMY_PASSWORD_HASH) if password_hash else False
             async with session.begin():
                 # Count accepted submissions too: success must not permit mail floods.
                 await attempt.record_failure()
-                if attempt.allowed and not await session.scalar(
-                    text("SELECT public.signup_email_registered(:email)"), {"email": body.email}
-                ):
-                    # The upsert and row lock serialize pending double submits.
-                    candidate = secrets.token_hex(32)
-                    digest = hashlib.sha256(candidate.encode()).digest()
+                if attempt.allowed:
                     if new is not None:
-                        token = await session.scalar(text("""INSERT INTO public.signup_request
-                            (email_normalized,organization_name,admin_name,password_hash,token_hash,created_at,expires_at)
-                            VALUES (:email,:org,:name,:password,:digest,statement_timestamp(),statement_timestamp()+:lifetime)
-                            ON CONFLICT (email_normalized) DO NOTHING RETURNING id"""), {
-                                "email": body.email, "org": new.organization_name, "name": new.admin_name,
-                                "password": password_hash, "digest": digest,
-                                "lifetime": TOKEN_LIFETIME,
-                            })
-                    if token is None:
-                        pending = (await session.execute(text("SELECT * FROM public.signup_request WHERE email_normalized=:email FOR UPDATE"),
-                                                         {"email": body.email})).mappings().one_or_none()
-                        now = await session.scalar(text("SELECT clock_timestamp()"))
-                        if pending and pending['confirmed_at'] is None:
-                            changed = new is not None and (
-                                new.organization_name != pending['organization_name'] or new.admin_name != pending['admin_name']
-                                or not same_password or pending['password_hash'] != checked_hash
-                            )
-                            can_send = (pending['resent_at'] or pending['created_at']) + RESEND_INTERVAL <= now
-                            if changed:
-                                # The delivered link stays usable during cooldown;
-                                # confirmation must prove this updated password.
-                                await session.execute(text("""UPDATE public.signup_request SET organization_name=:org,
-                                    admin_name=:name,password_hash=:password
-                                    WHERE id=:id"""), {"org": new.organization_name, "name": new.admin_name,
-                                        "password": password_hash,
-                                        "id": pending['id']})
-                            if can_send:
-                                await session.execute(text("""UPDATE public.signup_request SET token_hash=:digest,
-                                    resent_at=:now,expires_at=:expires WHERE id=:id"""),
-                                    {"digest": digest, "now": now, "expires": now + TOKEN_LIFETIME, "id": pending['id']})
-                                token = pending['id']
-                    token = candidate if token is not None else None
+                        token = await session.scalar(text("SELECT public.request_signup(:email,:org,:name,:password)"), {
+                            "email": body.email, "org": new.organization_name,
+                            "name": new.admin_name, "password": password_hash,
+                        })
+                    else:
+                        token = await session.scalar(text("SELECT public.resend_signup(:email)"), {"email": body.email})
     except DBAPIError as error:
         error.hide_parameters = True
         raise HTTPException(503, "Registrierung derzeit nicht verfügbar.") from None
@@ -239,44 +200,45 @@ async def resend(body: EmailRequest, background: BackgroundTasks, throttle: Thro
 @router.post("/confirm", status_code=201, response_model=LoginResponse)
 async def confirm(body: ConfirmRequest, response: Response, throttle: ThrottleRequest = Depends(throttled("signup_confirm"))) -> LoginResponse:
     token = body.token.get_secret_value()
-    digest = hashlib.sha256(token.encode()).digest()
     principal = None
+    password_refused = False
     try:
         async with get_session_factory()() as session:
             async with session.begin():
-                checked = (await session.execute(text("SELECT email_normalized,password_hash FROM public.signup_request WHERE token_hash=:digest"),
-                                                 {"digest": digest})).mappings().one_or_none()
+                checked = (await session.execute(text("SELECT * FROM public.signup_confirmation(:token)"),
+                                                 {"token": token})).mappings().one_or_none()
                 email = checked['email_normalized'] if checked else None
                 attempt = await throttle.check(session, email or "invalid-token@signup.invalid")
             checked_hash = checked['password_hash'] if checked and attempt.allowed else None
             password_matches = verify_password(body.password.get_secret_value(), checked_hash or _DUMMY_PASSWORD_HASH)
             async with session.begin():
+                password_refused = attempt.allowed and checked_hash is not None and not password_matches
                 if attempt.allowed and checked_hash and password_matches:
-                    # Same order as provisioning/bootstrap. Revalidate the exact
-                    # password proof under the pending row lock before provisioning.
-                    await session.execute(text("LOCK TABLE public.organization IN SHARE ROW EXCLUSIVE MODE"))
-                    pending = (await session.execute(text("SELECT email_normalized,password_hash FROM public.signup_request WHERE token_hash=:digest FOR UPDATE"),
-                                                     {"digest": digest})).mappings().one_or_none()
-                    if pending and pending['password_hash'] == checked_hash and pending['email_normalized'] == email:
-                        # Savepoint retains counters when provisioning is refused.
-                        try:
-                            async with session.begin_nested():
-                                org = await session.scalar(text("SELECT public.provision_organization(:token)"), {"token": token})
-                                principal = await lookup_login_principal(session, email)
-                                if principal is None or principal.organization_id != org:
-                                    raise HTTPException(403, REFUSED)
-                        except DBAPIError as error:
-                            error.hide_parameters = True
-                            if getattr(error.orig, "sqlstate", None) != "P0001":
-                                raise
+                    # The definer revalidates this exact snapshot under its row lock.
+                    # Savepoint retains counters when provisioning is refused.
+                    try:
+                        async with session.begin_nested():
+                            org = await session.scalar(text("SELECT public.provision_organization(:token,:password_hash)"),
+                                                       {"token": token, "password_hash": checked_hash})
+                            principal = await lookup_login_principal(session, email)
+                            if principal is None or principal.organization_id != org:
+                                raise HTTPException(403, REFUSED)
+                    except DBAPIError as error:
+                        error.hide_parameters = True
+                        if getattr(error.orig, "sqlstate", None) != "P0001":
+                            raise
                 if principal is None:
                     await attempt.record_failure()
+                else:
+                    await attempt.reset()
     except DBAPIError as error:
         error.hide_parameters = True
         raise HTTPException(503, "Registrierung derzeit nicht verfügbar.") from None
     if rate_limit.cleanup_due():
         await rate_limit.cleanup_stale(attempt.rules)
     if principal is None:
+        if password_refused:
+            raise HTTPException(422, PASSWORD_REFUSED)
         raise HTTPException(403, REFUSED)
     _set_session_cookie(response, create_session_token(principal.user_id, principal.organization_id, principal.session_version))
     return LoginResponse(user_id=str(principal.user_id), organization_id=str(principal.organization_id), role=principal.role)

@@ -13,17 +13,21 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); role = "OWNER_ADMIN"; });
 function show(path = "/altquellen") {
   render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/altquellen" element={<SourceClassificationsPage />} /><Route path="/altquellen/:reviewId" element={<SourceClassificationsPage />} /></Routes></MemoryRouter>);
 }
+function mockSources(items: (Omit<typeof source, "source_uploaded_by"> & { source_uploaded_by: string | null })[] = [source]) {
+  return vi.spyOn(api, "get").mockImplementation(async (path) => path === "/api/access-preparation/source-security"
+    ? { mode: "PREPARATION", changed_at: null } : { items, next_cursor: null });
+}
 function confirm() {
   fireEvent.change(screen.getByLabelText("Begründung der Einstufung"), { target: { value: "Original und Ziel geprüft" } });
   fireEvent.click(screen.getByRole("checkbox"));
 }
 
 it("retains exact classification, digest and key after an unconfirmed response", async () => {
-  vi.spyOn(api, "get").mockResolvedValue({ items: [source], next_cursor: null });
+  mockSources();
   const post = vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Lost reply")).mockResolvedValue({ ...source, id: "receipt", decision: "ADMITTED", reason: "Original und Ziel geprüft", created_at: "2026-10-02T12:00:00Z" });
   show();
   expect(await screen.findByRole("button", { name: "Einstufung speichern" })).toBeDisabled();
-  expect(screen.getByText(/schränkt den bisherigen Zugriff noch nicht ein/)).toBeVisible();
+  expect(screen.getByText(/objektbezogene Quellschutz ist noch aus/)).toBeVisible();
   confirm(); fireEvent.click(screen.getByRole("button", { name: "Einstufung speichern" }));
   await screen.findByText(/Keine bestätigte Antwort erhalten/);
   expect(screen.getByRole("combobox")).toBeDisabled();
@@ -36,7 +40,7 @@ it("retains exact classification, digest and key after an unconfirmed response",
 });
 
 it("offers only quarantine and no original link for unknown custody", async () => {
-  vi.spyOn(api, "get").mockResolvedValue({ items: [{ ...source, can_admit: false, can_preview: false, source_uploaded_by: null }], next_cursor: null });
+  mockSources([{ ...source, can_admit: false, can_preview: false, source_uploaded_by: null }]);
   show(); await screen.findByRole("combobox");
   expect(screen.getByRole("combobox")).toHaveValue("QUARANTINED");
   expect(screen.getByRole("option", { name: "Quelle freigeben" })).toBeDisabled();
@@ -45,7 +49,7 @@ it("offers only quarantine and no original link for unknown custody", async () =
 });
 
 it("requires renewed confirmation after changing the decision", async () => {
-  vi.spyOn(api, "get").mockResolvedValue({ items: [source], next_cursor: null });
+  mockSources();
   show(); await screen.findByRole("checkbox"); confirm();
   expect(screen.getByRole("button", { name: "Einstufung speichern" })).toBeEnabled();
   fireEvent.change(screen.getByRole("combobox"), { target: { value: "QUARANTINED" } });
@@ -54,7 +58,7 @@ it("requires renewed confirmation after changing the decision", async () => {
 });
 
 it("requires refreshed context and new confirmation after conflict", async () => {
-  const get = vi.spyOn(api, "get").mockResolvedValue({ items: [source], next_cursor: null });
+  const get = mockSources();
   const post = vi.spyOn(api, "post").mockRejectedValue(new ApiError(409, "Stale context"));
   show(); await screen.findByRole("checkbox"); confirm();
   fireEvent.click(screen.getByRole("button", { name: "Einstufung speichern" }));
@@ -79,4 +83,27 @@ it("does not expose a receipt after current access is denied", async () => {
   vi.spyOn(api, "get").mockRejectedValue(new ApiError(404, "Denied"));
   show("/altquellen/receipt"); await screen.findByText(/Prüfnachweis mit Ihren aktuellen Rechten nicht verfügbar/);
   expect(screen.queryByRole("region", { name: "Prüfnachweis" })).not.toBeInTheDocument();
+});
+
+it.each([
+  ["PREPARATION", "Der objektbezogene Quellschutz ist noch aus."],
+  ["ENFORCED", "Mitarbeitende sehen nur ausdrücklich freigegebene Objektdaten"],
+  ["PAUSED", "Quellen- und Finanzaktionen sind angehalten."],
+])("shows the live %s protection state on legacy source classification", async (mode, message) => {
+  const get = vi.spyOn(api, "get").mockImplementation(async (path) => path === "/api/access-preparation/source-security"
+    ? { mode, changed_at: null } : { items: [source], next_cursor: null });
+  show();
+  expect(await screen.findByText((text) => text.includes(message))).toBeVisible();
+  expect(get).toHaveBeenCalledWith("/api/access-preparation/source-security", expect.anything());
+  expect(screen.queryByText(/Sie ist noch nicht aktiviert/)).not.toBeInTheDocument();
+});
+
+it("reports unavailable protection instead of claiming preparation when status fails", async () => {
+  vi.spyOn(api, "get").mockImplementation(async (path) => {
+    if (path === "/api/access-preparation/source-security") throw new Error("Unavailable");
+    return { items: [source], next_cursor: null };
+  });
+  show();
+  expect(await screen.findByText(/Der aktuelle Quellschutz ist nicht verfügbar/)).toBeVisible();
+  expect(screen.queryByText(/noch nicht aktiviert|Quellschutz ist noch aus/)).not.toBeInTheDocument();
 });

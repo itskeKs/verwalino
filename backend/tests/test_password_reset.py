@@ -305,7 +305,7 @@ async def test_smtp_failure_keeps_generic_receipt_and_cannot_undo_success(passwo
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('field,value', [('smtp_from', 'invalid\r\nInjected: value'), ('smtp_security', 'invalid'), ('public_url', None)])
+@pytest.mark.parametrize('field,value', [('smtp_from', 'invalid\r\nInjected: value'), ('smtp_security', 'invalid'), ('public_host', None)])
 async def test_unusable_mail_configuration_is_always_generic(password_identity, client_unauth, signup_mail, monkeypatch, field, value):
     from app.core.config import settings
     _, email = password_identity
