@@ -96,14 +96,14 @@ pending; registration stays closed and legal review remains with #26. See the
 
 | Feature | Status | Location |
 | --- | --- | --- |
-| Property settlement period | 🟡 month-based offers, lease-clipped single/batch statements and offers, short-window service-day cost shares, plan dates and prior actuals, advances across years with day-prorated boundary months; all nonidentical overlaps with finalized periods rejected within the acting user's visibility; identical repeats allowed; cross-scope database constraint pending | `engine/periods.py`, `engine/distribution.py`, `engine/rounding.py`, `api/properties.py` (`/settlement-periods`), `pages/SettlementsPage.tsx`, issues #68, #122, #136 |
+| Property settlement period | 🟡 month-based offers, lease-clipped single/batch statements and offers, short-window service-day cost shares, plan dates and prior actuals, advances across years with day-prorated boundary months; single nonidentical overlaps with finalized periods rejected within the acting user's visibility; batch skips finalized coverage of the clipped span; identical repeats allowed; cross-scope database constraint pending | `engine/periods.py`, `engine/distribution.py`, `engine/rounding.py`, `api/properties.py` (`/settlement-periods`), `pages/SettlementsPage.tsx`, issues #68, #122, #136 |
 | Operating cost statement per lease: compute, finalize, PDF, correction | ✅ | `api/settlements.py`, `services/settlement_service.py`, `services/settlement_pdf.py` |
 | Keys area/MEA/units, pro rata, vacancy | ✅ | `engine/distribution.py` |
 | Keys consumption/persons/external/manual | ✅ inputs shown and sent with the database key names | `pages/SettlementDetailPage.tsx`, `lib/costVocabulary.ts`, T03 |
 | Advance payments from payments | ✅ any period, including across the year boundary | `services/settlement_service.py` (`set_advance_payments_derived`), `services/payment_service.py` (`derive_nk_advance_total_for_period`), `api/settlements.py` (`/advance-payments-derived`), T08 |
 | Batch run per property | ✅ drafts for all leases, existing ones skipped | `api/settlements.py` (`POST /batch`), `pages/SettlementsPage.tsx`, T27, [usage](operations/statements.md) |
 | Suggestion for a new advance payment | ✅ accepting appends a rent change | `api/settlements.py` (`/advance-proposal`), `pages/SettlementDetailPage.tsx` ("Vorauszahlungsvorschlag"), T28, [usage](operations/statements.md) |
-| Heating costs per HeizkostenV | ✅ internal basic/consumption split or external billing | `engine/heizkosten.py`, `engine/heating_settlement.py`, `services/heating_input_service.py`, `components/HeatingInputs.tsx`, T45, T46, [usage](operations/statements.md) |
+| Heating costs per HeizkostenV | ✅ full-period basic/consumption split, interim/day split within unit, or external billing | `engine/heizkosten.py`, `engine/heating_settlement.py`, `services/heating_input_service.py`, `components/HeatingInputs.tsx`, T45, T46, [usage](operations/statements.md) |
 | Consumption from meters | ✅ prefilled from readings, manual entry otherwise | `engine/meter_consumption.py`, `api/settlements.py` (`/consumption-suggestions`, `/heating-consumption`), T31, [usage](operations/meters.md) |
 
 ## WEG (homeowners' association)

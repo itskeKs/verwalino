@@ -46,7 +46,9 @@ code in `errors[].code`.
 **Lease-bounded statements (#122):** a complete readable property-period request
 is intersected with the target lease's active span at creation. Batch creation
 intersects its selected period separately for each overlapping lease; repeats
-match the resulting clipped dates. Stored lease bounds are half-open
+match the resulting clipped dates. A finalized legacy run that already covers
+that clipped span is skipped with a German reason; partial overlaps remain batch
+errors and single creation retains the overlap 409. Stored lease bounds are half-open
 `[valid_from, valid_to)`, so the inclusive statement ends on `valid_to - 1 day`.
 Free dates must be entirely inside the lease, including for scope-only clerks
 without property read access. A free period outside the lease, or a property
@@ -66,10 +68,49 @@ intersection with each balanced cell. When a run cuts a cell, the rounding modul
 uses the difference of floored cumulative day shares; the cell's last day retains
 its remaining cents. Adjacent windows therefore recover the complete source
 allocation, including vacancy attributed to the owner, independently of creation
-order. Full-service-period allocation is unchanged. A 3,650-euro annual source in
+order. Full-year statements without a tenant change retain their in-period
+allocation. A 3,650-euro annual source in
 2025 carries 900 euros in January–March; January–September and October–December
 carry 2,730 and 920 euros. External metering-service amounts remain explicit
-occupancy amounts; measured heating consumption is not estimated by days.
+occupancy amounts (the undated-input rule is stated in §5.2).
+
+### Sources crossing the property-period boundary (#122)
+
+Cross-boundary service periods are now apportioned to the selected property period.
+Previously, the whole source could be charged in both years. For building insurance
+of 3,650 euros covering 1 July 2024–30 June 2025, calendar-year statements now
+charge 1,840 euros in 2024 and 1,810 euros in 2025, totaling 3,650 euros once.
+An April–March property period follows the same rule (for example, an annual
+calendar-year property-tax source spans two such periods). This is an intentional
+change: recomputed drafts and corrections of these older runs can shift. Existing
+finalized snapshots remain frozen.
+
+### Full-property allocation and within-unit splitting (#122)
+
+Every building allocation uses the full configured property settlement period,
+its cost pool and its unit quantities, independently of the lease's statement window.
+A short statement selects the unit's balanced tenant/vacancy cells afterward.
+Area, heated area, units, MEA, persons and fixed manual amounts split by days through
+the central rounding module. Consumption quantities are measured over the property
+period. Exact interim readings at that unit's occupant changes split its consumption;
+missing interim readings split the known unit consumption by days, by analogy to
+§9b HeizkostenV. Other units need only their own period readings. Manual period
+consumption without interim readings uses the same day fallback. Missing or
+ambiguous period quantities still require manual input.
+
+For two units using 1,000 units each and a 1,000-euro water pool, A (January–September),
+B (October–December), and C (all year) receive 373.97 / 126.03 / 500.00 euros with
+the day fallback, totaling 1,000.00 euros. Interim quantities of 600 / 400 in the
+changed unit instead yield 300.00 / 200.00 / 500.00 euros. The other unit's
+interim pattern never changes these building shares. Heating keeps its separate
+base/consumption pools as described in §5.1. Cumulative cent selection means all
+successive leases plus vacancy reproduce each unit's full-period share exactly,
+regardless of statement creation order. No second run-window factor is applied to
+already selected consumption/heating shares. Free dates crossing a configured
+property-year boundary select from each full property-year allocation separately;
+advance payments are deducted once. The frozen `inputs.property_periods` retain
+the separate quantities, cost pools and selected results. External provider amounts
+still apply once to the selected statement.
 
 **Current overlap limitation:** the check runs under the acting user's normal
 row-level security. Overlaps with runs in other accounting scopes that the user
@@ -517,10 +558,15 @@ PDF explicitly label internally computed lines as "HeizkostenV intern".
 All visible units and gapless tenant/vacancy periods participate. The base-cost basis is
 area/heated area or explicit volume × days; under
 [§9b HeizkostenV](https://www.gesetze-im-internet.de/heizkostenv/__9b.html) consumption
-costs are not estimated from the duration of the tenancy but obtained from exact boundary
-and interim readings. The final reading of the previous user is the opening meter reading
-of the subsequent user. Individual missing or ambiguous readings require transparent
-manual values, not zero values or an automatic §9a/§9b(3) substitute distribution. Vacancy
+costs use the building's full-period consumption denominator. Exact interim readings
+split the changed unit's consumption-dependent share. The final reading of the previous
+user is the opening reading of the subsequent user. Without an interim reading, known
+unit-period consumption is split by degree-days if available, otherwise by days; the
+current engine has no degree-day inputs, so it uses days. Basic costs always split by
+days. This does not estimate missing unit-period consumption under §9a: missing or
+ambiguous period readings still require transparent manual values. A 10,000-euro pool
+with 70% consumption and the 600/400/1,000 quantities from §3 gives A/B/C
+3,221.92 / 1,778.08 / 5,000.00 euros, totaling exactly 10,000.00 euros. Vacancy
 retains the gross owner share; only for tenants, in the explicitly chosen
 non-consumption-based mode, is the §12 deduction reported.
 
@@ -535,6 +581,12 @@ change to existing metering-service/CO2 snapshots.
 ### 5.2 External heating/water settlement (`EXTERNE_ABRECHNUNG`)
 
 The engine **does not distribute**, but adopts the **per-unit tenant share** directly as an item of the unit concerned (§2.5). For a tenant change: separate external values per usage period (interim reading). In the BK line, `note = "extern abgerechnet (Messdienst)"` (settled externally (metering service)) and `distribution_key = EXTERNE_ABRECHNUNG` are reported (BGH: notice of external values, SDD §11).
+
+Undated external amounts explicitly describe the selected run, and are charged in
+full to its single matching tenant slice. Entering the same undated amount again in
+another free subwindow charges it again; the engine does not infer a shared annual
+provider amount. For successive occupancy periods supply separate dated provider
+amounts. This rule is unchanged by #122.
 
 > **[OPEN/§18] Input path for external values.** SDD §18 explicitly lists as open: "How external heating/water settlements are entered exactly: amount per unit, PDF attachment, total sum and plausibility check; adoption of the CO2 split value." M3 **does not decide this unilaterally**. The engine accepts external values as **structured input** (pure function); *how* they are captured/stored (a dedicated small table `external_heating_statement` per `cost_entry`/unit/usage period vs. JSONB on the `cost_entry`) is a [DECISION]/§18 question.
 > **Provisional assumption for M3 test cases (clearly marked):** External values are available as a per-(unit, usage period) tenant share (`external_amounts` in the payload, §1.7); the engine sums them per unit/addressee and checks plausibility against the item total amount. This assumption is **not** legally certified; the concrete input path and HeizkostenV compliance must be signed off professionally (metering service/tax advisor).
@@ -779,7 +831,7 @@ Implemented BK behavior: `POST /api/settlements/{id}/finalize` ends the DB trans
 | **M3-A5** | **No** automatic commercial advance deduction in M3; commercial use participates by key; advance deduction manual if needed. | Automatic advance deduction is its own building block. | Tax advisor/attorney specializing in the field (§6.3) |
 | **M3-A6** | Advance payment total **manual** on the run (`advance_payments_source='MANUAL'`); M6 replaces it with `DERIVED`. | M6 connection prepared via the `source` discriminator. | (Roadmap M6) |
 | **M3-A7** | Number of persons (`PERSONENZAHL` key) as a per-lease value, constant over the lease period (M1 does not model this time-dependently). | A time-dependent number of persons would need a model extension. | Product (§2.3) |
-| **M3-A8** | External values/consumption must be available **complete & plausible**; missing → escalation, **no** silent estimation. | Substitute/estimation procedure (HeizkostenV) is its own professional building block. | Tax advisor/metering service (§2.4/§5) |
+| **M3-A8** | External values and unit-period consumption must be **complete & plausible**; missing → escalation. Missing interim readings split known consumption by days (§3). | Substitute/estimation procedure (HeizkostenV) is its own professional building block. | Tax advisor/metering service (§2.4/§5) |
 
 ---
 

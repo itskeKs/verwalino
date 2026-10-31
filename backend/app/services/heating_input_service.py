@@ -1,8 +1,8 @@
 """Resolve explicit BK heating intent within an already-authorized financial run.
 
 No money calculation here. Exact boundary readings avoid using the same annual
-quantity for successive tenants. Missing/intermediate readings require explicit
-manual consumption; this is not a §9a/§9b(3) estimate.
+quantity for successive tenants. Missing interim readings split known period consumption by days within the unit;
+missing period consumption still requires explicit manual input.
 """
 from __future__ import annotations
 
@@ -10,14 +10,27 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 from fastapi import HTTPException
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
-from app.engine.meter_consumption import MeterConsumptionError, MeterReadingInput, derive_consumption
-from app.engine.periods import build_unit_cover
+from app.engine.meter_consumption import MeterConsumptionError, MeterReadingInput, derive_consumption, split_consumption
+from app.engine.periods import build_unit_cover, period_for_date, property_period_windows
 from app.engine.types import HeatingPositionInput, HeatingSliceInput, LeasePeriodInput, OwnerPeriodInput
 from app.repositories.meter_repo import MeterRepository, MeterReadingRepository
+
+
+async def property_period_run(session, org_id, run):
+    """The allocation context is the configured property year, never a lease window."""
+    from app.repositories.property_repo import PropertyRepository
+
+    prop = await PropertyRepository(session, org_id).get_by_id(run.property_id)
+    if prop is None:
+        raise HTTPException(404, "Property not found")
+    start = period_for_date(prop.fiscal_year_start_month, run.period_start)[0]
+    end = period_for_date(prop.fiscal_year_start_month, run.period_end)[1]
+    return SimpleNamespace(property_id=run.property_id, period_start=start, period_end=end)
 
 
 @dataclass
@@ -48,19 +61,41 @@ class HeatingInputService:
     async def candidates(self, run, entry, units, meter_type, base_key):
         if base_key not in {'AREA','HEATED_AREA','VOLUME'} or not meter_type.strip():
             raise HTTPException(422, 'Heizkosten: Grundbasis und explizite Messart erforderlich')
+        context = await property_period_run(self.session, self.org_id, run)
+        windows = property_period_windows(run.period_start, run.period_end, context.period_start.month)
+        if len(windows) > 1:
+            rows = []
+            for start, end in windows:
+                year_start, year_end = period_for_date(context.period_start.month, start)
+                if entry.service_period_from > year_end or entry.service_period_to < year_start:
+                    continue
+                part = SimpleNamespace(property_id=run.property_id, period_start=start, period_end=end)
+                rows.extend(await self.candidates(part, entry, units, meter_type, base_key))
+            return rows
         leases = [LeasePeriodInput(l.id,l.unit_id,l.tenant_profile_id,l.valid_from,
                     db_exclusive_to_engine_inclusive(l.valid_to))
                   for l in await self.runs.leases_for_property(run.property_id)]
         owners = [OwnerPeriodInput(o.unit_id,o.owner_profile_id,o.valid_from,
                     db_exclusive_to_engine_inclusive(o.valid_to),o.mea_share)
                   for o in await self.runs.ownership_for_property(run.property_id)]
-        start, end = max(entry.service_period_from,run.period_start), min(entry.service_period_to,run.period_end)
+        start, end = context.period_start, context.period_end
         meters = await MeterRepository(self.session,self.org_id).list_by_property(run.property_id)
         repository = MeterReadingRepository(self.session,self.org_id)
         rows = []
         for unit in sorted(units,key=lambda u:str(u.id)):
             matches = [m for m in meters if m.unit_id==unit.id and m.meter_type.strip().upper()==meter_type.strip().upper()]
-            for cover in build_unit_cover(unit.id,start,end,leases,owners):
+            covers = build_unit_cover(unit.id,start,end,leases,owners)
+            period_readings = await repository.list_boundary_readings(
+                [matches[0].id], start, end, include_interim=True) if len(matches)==1 else []
+            period_readings = [MeterReadingInput(r.id,r.reading_date,r.value) for r in period_readings]
+            try:
+                quantities = split_consumption(period_readings, start, end, covers)
+            except MeterConsumptionError:
+                quantities = ()
+            def reading(r):
+                return {'id':str(r.id),'reading_date':r.reading_date.isoformat(),'value':f'{r.value:.4f}'}
+
+            for index, cover in enumerate(covers):
                 # An interim reading at the end of the outgoing tenant's last
                 # day is also the incoming tenant's opening counter value.
                 opening = cover.start if cover.start==start else cover.start-timedelta(days=1)
@@ -83,10 +118,15 @@ class HeatingInputService:
                             raise MeterConsumptionError('Handeingabe erforderlich: exakte Grenz-/Zwischenablesung fehlt.')
                         measured = derive_consumption(selected,opening,cover.end)
                     except MeterConsumptionError as exc:
-                        item['reason']=str(exc)
+                        if quantities:
+                            annual = derive_consumption(period_readings, start, end)
+                            item.update(consumption=str(quantities[index][2]),
+                                meter_id=str(matches[0].id), start_reading=reading(annual.start_reading),
+                                end_reading=reading(annual.end_reading),
+                                reason='Zwischenablesung fehlt: Aufteilung des Einheitsverbrauchs nach Tagen.')
+                        else:
+                            item['reason']=str(exc)
                     else:
-                        def reading(r):
-                            return {'id':str(r.id),'reading_date':r.reading_date.isoformat(),'value':f'{r.value:.4f}'}
                         item.update(consumption=f'{measured.consumption:.4f}',meter_id=str(matches[0].id),
                             start_reading=reading(measured.start_reading),end_reading=reading(measured.end_reading))
                 rows.append(item)

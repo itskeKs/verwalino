@@ -110,8 +110,11 @@ async def test_nonidentical_overlaps_with_finalized_statements_are_rejected(clie
         if batch:
             body.pop("lease_agreement_id")
         answer = await api.post(path, json=body)
-        assert answer.status_code == (200 if batch and status == 201 else status), answer.text
-        if status == 409:
+        covered = batch and "2025-07-01" <= start <= end <= "2025-09-30"
+        assert answer.status_code == (200 if batch and (status == 201 or covered) else status), answer.text
+        if covered:
+            assert answer.json()["skipped"][0]["settlement_run_id"] == run["id"]
+        if status == 409 and not covered:
             assert answer.json()["detail"] == {
                 "code": "settlement_period_conflict",
                 "message": "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags.",
@@ -314,3 +317,23 @@ async def test_batch_reports_straddling_lease_and_creates_others(client_a_admin,
     assert repeated.json()["created"] == []
     assert {item["settlement_run_id"] for item in repeated.json()["skipped"]} == {existing["id"], result["created"][0]["id"]}
     assert repeated.json()["errors"] == result["errors"]
+
+
+async def test_batch_skips_finalized_legacy_run_covering_later_clipped_lease(client_a_admin, april):
+    api = client_a_admin
+    run = await create(api, "/api/settlements", {**statement(april), "advance_payments_total": "0.00"})
+    await attest_fixture(api, "settlement", run["id"], {"advance_payments_total": "0.00", "advance_payments_source": "MANUAL"})
+    final = await api.post(f"/api/settlements/{run['id']}/finalize", json={})
+    assert final.status_code == 200, final.text
+    changed = await api.patch(f"/api/leases/{april['lease']['id']}", json={"valid_to": "2025-09-30"})
+    assert changed.status_code == 200, changed.text
+    single = await api.post("/api/settlements", json=statement(april))
+    assert single.status_code == 409, single.text
+    body = statement(april)
+    body.pop("lease_agreement_id")
+    batch = await api.post("/api/settlements/batch", json=body)
+    assert batch.status_code == 200, batch.text
+    assert batch.json()["created"] == []
+    skipped, = batch.json()["skipped"]
+    assert skipped["settlement_run_id"] == run["id"]
+    assert skipped["reason"] == "Eine finalisierte Abrechnung deckt den gekürzten Mietzeitraum bereits ab."

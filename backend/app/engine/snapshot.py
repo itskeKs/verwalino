@@ -70,6 +70,8 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
             "id": str(inp.property.id),
             "name": inp.property.name,
             "management_type": inp.property.management_type,
+            **({"fiscal_year_start_month": inp.property.fiscal_year_start_month}
+               if inp.property.fiscal_year_start_month != 1 else {}),
         },
         "addressee": {
             "lease_agreement_id": str(target.lease_agreement_id),
@@ -90,6 +92,9 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
                     "mea": _q(u.mea),
                     "person_count": u.person_count,
                     "consumption": _q(u.consumption),
+                    **({"consumption_periods": [
+                        {"from": a.isoformat(), "to": b.isoformat(), "consumption": str(q)}
+                        for a, b, q in u.consumption_periods]} if u.consumption_periods else {}),
                 }
                 for u in units
             ],
@@ -203,6 +208,9 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
             "balance": _m(result.balance),
         },
     }
+    if result.period_inputs:
+        payload['inputs']['property_periods'] = [build_snapshot_payload(part, part_result)
+            for part, part_result in zip(result.period_inputs, result.period_results, strict=True)]
     if result.heating_costs:
         payload['heating_costs'] = [_heating_payload(h) for h in result.heating_costs]
     return payload
@@ -212,10 +220,18 @@ def _heating_payload(allocation):
     pool = allocation.pool
     slices = {s.id:s for s in allocation.slices}
     rows = []
+    selected = {identity: (a, b, amount) for identity, a, b, amount in allocation.statement_amounts}
     for row in pool.rows:
         s = slices[row.unit_id]
         tenant = s.lease_agreement_id is not None
+        statement = selected.get(s.id)
+        selection = ({'statement_from':statement[0].isoformat(), 'statement_to':statement[1].isoformat(),
+                      'statement_amount':_m(statement[2])} if statement is not None and
+                     (statement[0], statement[1]) != (s.period_from, s.period_to) else {})
+        if allocation.statement_amounts and statement is None:
+            selection = {'statement_amount':'0.00', 'statement_from':None, 'statement_to':None}
         rows.append({
+            **selection,
             'slice_id':str(s.id),'unit_id':str(s.unit_id),
             'lease_agreement_id':str(s.lease_agreement_id) if tenant else None,
             'owner_profile_id':str(s.owner_profile_id) if s.owner_profile_id else None,

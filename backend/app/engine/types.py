@@ -69,6 +69,8 @@ class UnitInput:
     # Self-measured consumption for the VERBRAUCH key (already a difference of
     # meter readings; section 2.4). Engine takes the resulting quantity.
     consumption: Decimal | None = None
+    # Full-period occupant quantities; empty means day-based split within unit.
+    consumption_periods: tuple[tuple[date, date, Decimal], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -157,6 +159,7 @@ class PropertyInput:
     id: uuid.UUID
     name: str
     management_type: str
+    fiscal_year_start_month: int = 1
 
 
 @dataclass(frozen=True)
@@ -181,6 +184,7 @@ class SettlementInput:
     advance_payments_total: Decimal
     advance_payments_source: str = "MANUAL"
     engine_version: str = "m3.1.0"
+    allocation_inputs: tuple[SettlementInput, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +240,8 @@ class EngineResult:
     # demonstrable; section 3.3). Maps cost_entry_id -> list of (owner, amount).
     vacancy_attribution: tuple["VacancyShare", ...] = ()
     heating_costs: tuple[HeatingAllocationResult, ...] = ()
+    period_results: tuple[EngineResult, ...] = ()
+    period_inputs: tuple[SettlementInput, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -672,3 +678,4 @@ class HeatingAllocationResult:
     cost_entry_id: uuid.UUID
     pool: HeatingPoolResult
     slices: tuple[HeatingSliceInput, ...]
+    statement_amounts: tuple[tuple[uuid.UUID, date, date, Decimal], ...] = ()

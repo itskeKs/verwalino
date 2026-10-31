@@ -65,3 +65,42 @@ def derive_consumption(
         context.prec = 32
         quantity = last.value - first.value
     return MeterConsumption(quantity, first, last)
+
+
+def split_consumption(readings, start, end, covers):
+    """Split a known unit-period quantity at available exact interim readings.
+
+    Between measured boundaries, missing occupant readings fall back to days.
+    Only this unit's boundaries participate; another unit needs no interim reading.
+    Each segment's last occupant receives the exact quantity remainder.
+    """
+    measured = derive_consumption(readings, start, end)
+    by_day = {}
+    for row in readings:
+        by_day.setdefault(row.reading_date, []).append(row)
+    cuts = [(start, measured.start_reading)]
+    from datetime import timedelta
+
+    for cover in covers[:-1]:
+        rows = by_day.get(cover.end, [])
+        if len(rows) == 1:
+            cuts.append((cover.end + timedelta(days=1), rows[0]))
+    cuts.append((end + timedelta(days=1), measured.end_reading))
+    amounts = [Decimal(0) for _ in covers]
+    with localcontext() as context:
+        context.prec = 50
+        for (a, first), (b, last) in zip(cuts, cuts[1:]):
+            _validate_value(first.value)
+            _validate_value(last.value)
+            quantity = last.value - first.value
+            if quantity < 0:
+                raise MeterConsumptionError("Handeingabe erforderlich: Zwischenablesung ist rückläufig.")
+            participants = [(i, max(0, (min(c.end + timedelta(days=1), b) - max(c.start, a)).days))
+                            for i, c in enumerate(covers)]
+            participants = [(i, days) for i, days in participants if days]
+            left = quantity
+            for j, (i, days) in enumerate(participants):
+                part = left if j == len(participants) - 1 else quantity * days / (b-a).days
+                amounts[i] += part
+                left -= part
+    return tuple((c.start, c.end, amount) for c, amount in zip(covers, amounts))

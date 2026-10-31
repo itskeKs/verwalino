@@ -12,14 +12,11 @@ Distribution universe (section 3.2 "Reihenfolge der Verteilungs-Universen"):
   2. time split of that unit-share across the unit's tenant/vacancy slices,
      exact: x time_factor(slice vs service period).
   -> cell exact factor f_{i,s} = (w_i / sum(w)) * time_factor_{i,s}.
-The position's effective total is distributed over all cells; for a position
-whose service period lies within the settlement period (the normal, correct
-case) sum(f) == 1, so sum(rounded cells) == effective total exactly and the
-section-9 invariant "sum over tenant+vacancy+other == G" holds by construction.
-
-The cover spans the complete source service period. A short run selects only
-its part of each balanced cell, using cumulative day shares from rounding.py.
-Adjacent windows retain the full source allocation, including vacancy cents.
+The complete source cover is balanced independently of the selected statement.
+Sources may cross settlement-period boundaries: each run selects only its share.
+Consumption weights always describe the full property period; interim readings
+split only that unit's share, with days used between missing interim boundaries.
+Adjacent windows select cumulative cents, preserving tenant/vacancy reconciliation.
 """
 
 from __future__ import annotations
@@ -144,6 +141,7 @@ def distribute_position(
     *,
     period_start: date | None = None,
     period_end: date | None = None,
+    allocation_period: tuple[date, date] | None = None,
 ) -> list[Cell]:
     """Distribute one position over all (unit, slice) cells, rounded once.
 
@@ -161,9 +159,15 @@ def distribute_position(
             f"tenant_distribution_key; cannot distribute."
         )
 
+    units_by_id = {unit.id: unit for unit in units}
     total = effective_total(position)
     sp_from = position.service_period_from
     sp_to = position.service_period_to
+    if key == "VERBRAUCH" and allocation_period is not None:
+        # Delimit the source once to the property year, then use annual unit
+        # quantities and the complete property-year occupant cover.
+        total = day_share_for_period(total, sp_from, sp_to, *allocation_period)
+        sp_from, sp_to = allocation_period
 
     # Build (cover, exact-weight, base_share, base_total) per cell.
     cell_specs: list[tuple[uuid.UUID, CoverPeriod, Decimal, Decimal | None, Decimal | None]] = []
@@ -224,12 +228,20 @@ def distribute_position(
         for unit in participating:
             w = weights[unit.id]
             key_share = w / weight_sum
-            for cover in covers_by_unit.get(unit.id, []):
+            unit_covers = covers_by_unit.get(unit.id, [])
+            quantities = [sum((quantity * time_factor(a, b, c.start, c.end)
+                              for a, b, quantity in unit.consumption_periods), Decimal(0))
+                          for c in unit_covers] if key == "VERBRAUCH" else []
+            quantity_total = sum(quantities, Decimal(0))
+            for index, cover in enumerate(unit_covers):
                 f = time_factor(sp_from, sp_to, cover.start, cover.end)
                 if f == 0:
                     continue
+                if key == "VERBRAUCH" and unit.consumption_periods and quantity_total:
+                    f = quantities[index] / quantity_total
                 weight = key_share * f  # exact factor of this cell
-                cell_specs.append((unit.id, cover, weight, w, weight_sum))
+                base_share = w * f if key == "VERBRAUCH" and unit.consumption_periods else w
+                cell_specs.append((unit.id, cover, weight, base_share, weight_sum))
     else:
         raise DistributionError(f"Unsupported distribution key: {key}")
 
@@ -254,7 +266,11 @@ def distribute_position(
         if key != "EXTERNE_ABRECHNUNG":
             source_start, source_end = max(source_cover.start, sp_from), min(source_cover.end, sp_to)
             amount = day_share_for_period(amount, source_start, source_end, start, end)
-            exact_weight *= time_factor(source_start, source_end, start, end)
+            selection_factor = time_factor(source_start, source_end, start, end)
+            exact_weight *= selection_factor
+            unit = units_by_id[unit_id]
+            if key == "VERBRAUCH" and unit.consumption_periods:
+                base_share *= selection_factor
         # time_days is the days of the SERVICE PERIOD this slice covered (the
         # numerator of the time factor), NOT the full slice length -- so the
         # rechenweg reads "<billed days>/<service-period days>" (BGH; matters
