@@ -590,7 +590,10 @@ The global `password_reset_request` table holds user/organization ids, a unique
 precedes tenant selection. Runtime roles (including the inheriting worker) have
 no direct SELECT/DML privileges; a composite foreign key binds each request to
 the user's organization. `issue_password_reset(text) RETURNS text` finds exactly
-one active user by normalized email and generates the plaintext token inside
+one addressable account through `app_auth_lookup`: an active user with a matching
+organization/user membership and a login-supported role (`OWNER_ADMIN`, `CLERK`,
+`READ_ONLY`), unique by normalized email. Login, issuance and confirmation all use
+this lookup. Issuance generates the plaintext token inside
 PostgreSQL: 256 bits from pgcrypto's `gen_random_bytes(32)` when installed,
 otherwise two concatenated UUIDs with 244 random bits (selected at migration time). It consumes earlier pending
 links and stores only the digest. The plaintext is returned for mail construction.
@@ -606,7 +609,9 @@ advances `session_version`; an associated definer AFTER trigger consumes pending
 links on every password change or deactivation, including self-service and admin
 changes. The original T57 invoker function remains unchanged. Confirmation restores
 the empty tenant setting, returns the confirmed email solely for the notification,
-and converts failures to one generic SQL exception.
+and raises a generic SQL refusal only for expected invalid-token/account conditions.
+Unexpected database failures propagate as 500 responses, preserving the token for retry.
+Downgrade restores the preceding login lookup body verbatim.
 Downgrade refuses any retained reset state; an empty downgrade removes all new
 objects exactly (operator procedure in [DEPLOY.md](../DEPLOY.md)).
 
@@ -631,6 +636,8 @@ notification after commit; mail failure cannot roll back the password.
 Every 100th accepted reset request per process schedules a separate background
 transaction. A fixed-path, runtime-only cleanup definer deletes at most 100 rows
 with expiry or use time older than seven days using `SKIP LOCKED`.
+Revision 0145 materializes the selected batch once before deleting it: a nested-loop
+semi-join can rescan an `IN` subquery and otherwise exceed its inner limit.
 The cadence is best effort; retained security state remains in PostgreSQL.
 
 The recovery page reads `/passwort-zuruecksetzen?token=…`, saves the token in

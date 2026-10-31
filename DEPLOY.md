@@ -68,7 +68,8 @@ too. Request throttling uses `password_reset` (all IP requests); confirmation us
 of the token); `password_reset_recipient` counts issued mails only. The latter
 keeps partial counts until a full hour without an issued mail and locks for one
 hour after the third, without extending that lock on refusals.
-Tests use captured SMTP only.
+Unit tests capture SMTP; the password-reset scenario sends through the test
+Mailpit SMTP service and checks both messages through its API.
 
 Runtime roles cannot read or write `password_reset_request` directly. Issuance
 and confirmation use fixed-path SECURITY DEFINER functions that refuse any
@@ -76,7 +77,9 @@ non-empty organization context. Tokens are generated in PostgreSQL: 32 random
 bytes (256 bits) when pgcrypto is installed at migration time, otherwise two concatenated random
 UUIDs (244 random bits). Only the SHA-256 digest is stored. Every 100th accepted
 request per process schedules a separate background transaction deleting at
-most 100 rows whose expiry or use time is older than seven days.
+most 100 rows whose expiry or use time is older than seven days. A materialized
+CTE selects and locks that batch once with `FOR UPDATE SKIP LOCKED`, so deletion
+cannot rescan the limited selection.
 
 Revision 0145 downgrade refuses while **any** reset rows remain, including used
 rows. For an intentional rollback, stop reset traffic/workers, connect using the
@@ -1104,7 +1107,7 @@ run `docker compose down -v` or delete the volumes.
 | 0142 | Adds global authentication throttle rows containing only scoped key hashes, failure windows, lockout expiry, last lockout start and escalation history, with narrow runtime DML. No existing rows or grants change. A populated table blocks downgrade to avoid losing lockouts. |
 | Lease documents (accepted source 0143) | Allows retained built-in letter documents without a template row; the exact migration is preserved from #114. Downgrade refuses a null template reference. |
 | 0144 (accepted source) | Adds private pending signup requests and token-bound SECURITY DEFINER functions; runtime roles have no direct request-table access. Successful confirmation atomically creates a separate tenant and deletes its request. Retained requests block downgrade. |
-| 0145 | Adds global password reset requests with 32-byte token digests, context-free definer issuance/confirmation and bounded cleanup; runtime table access is revoked. The T57 trigger path revokes sessions and consumes links on password changes/deactivation. Tokens expire after one hour; successful reset marks all outstanding links for that user used. A populated downgrade refuses to discard retained reset state; an empty downgrade exactly removes the new table, index, trigger and functions. |
+| 0145 | Adds global password reset requests with 32-byte token digests, context-free definer issuance/confirmation and bounded cleanup; runtime table access is revoked. The T57 trigger path revokes sessions and consumes links on password changes/deactivation. Tokens expire after one hour; successful reset marks all outstanding links for that user used. Login, issuance and confirmation share the active-user/live-membership lookup. A populated downgrade refuses to discard retained reset state; an empty downgrade exactly removes the new table, index, trigger and functions and restores the previous login lookup verbatim. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function

@@ -48,6 +48,18 @@ it.each([403, 503])("handles a refusal or retryable failure (%s)", async (status
   expect(sessionStorage.getItem(tokenKey)).toBe(status === 403 ? null : "private-token");
   expect(screen.getByRole("link", { name: "Neuen Link anfordern" })).toHaveAttribute("href", "/passwort-vergessen");
 });
+it.each([500, 502, 503])("keeps the token usable after a server failure (%s) and reload", async (status) => {
+  vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Zurücksetzen derzeit nicht verfügbar. Bitte versuchen Sie es erneut." }), { status }));
+  const first = open(); fill();
+  await userEvent.click(screen.getByRole("button", { name: "Passwort speichern" }));
+  expect(await screen.findByRole("alert")).toBeVisible();
+  expect(sessionStorage.getItem(tokenKey)).toBe("private-token");
+  first.unmount(); open("/passwort-zuruecksetzen"); fill();
+  await userEvent.click(screen.getByRole("button", { name: "Passwort speichern" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Ihr Passwort wurde geändert");
+  expect(fetch).toHaveBeenLastCalledWith("/api/auth/password-reset/confirm", expect.objectContaining({ body: JSON.stringify({ token: "private-token", password }) }));
+  expect(sessionStorage.getItem(tokenKey)).toBeNull();
+});
 it("shows backend policy errors and retains the token for a corrected Unicode password", async () => {
   const detail = "Das Passwort muss zwischen 12 und 128 Zeichen lang sein.";
   vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ detail }), { status: 422 }));
