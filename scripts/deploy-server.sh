@@ -77,7 +77,7 @@ main() {
     git_app() { git -c "safe.directory=$APP" -C "$APP" "$@"; }
     config_value() { sed -n "s/^$1=//p" "$CONFIG"; }
     # Runs through "trap on_exit EXIT" below; shellcheck does not follow that for a nested function.
-    # shellcheck disable=SC2317
+    # shellcheck disable=SC2317,SC2329
     on_exit() {
         local rc=$?
         if [[ "$rc" != 0 && "$checked_out" = 1 && "$pinned" = 0 ]]; then
@@ -173,8 +173,9 @@ main() {
     }
     deploy_site() {
         [[ -f "$CONFIG" && ! -L "$CONFIG" && -r "$CONFIG" ]] || die 'the installer config must be a readable regular file.'
-        [[ -f "$ROOT/config/Caddyfile.hosted" && "$(config_value VERWALINO_MODE)" = https ]] \
-            && site_caddy || die 'site extension is not enabled; see docs/operations/website-hosting.md.'
+        if ! { [[ -f "$ROOT/config/Caddyfile.hosted" && "$(config_value VERWALINO_MODE)" = https ]] && site_caddy; }; then
+            die 'site extension is not enabled; see docs/operations/website-hosting.md.'
+        fi
         previous_site
         printf 'previous site sha: %s\n' "$prev_site_sha"
         if [[ "$prev_site_sha" != unknown ]]; then printf 'rollback: site %s\n' "$prev_site_sha"; fi

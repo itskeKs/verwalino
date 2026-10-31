@@ -852,7 +852,7 @@ class WebsiteWorkflowTests(unittest.TestCase):
     def test_deploy_uses_existing_secrets_forced_command_and_shared_lock(self):
         job = self.doc["jobs"]["deploy"]
         self.assertEqual(self.doc["permissions"], {"contents": "read"})
-        self.assertEqual(job["concurrency"], {"group": "deploy-hosted-server", "cancel-in-progress": False})
+        self.assertEqual(job["concurrency"], {"group": "deploy-hosted-site", "cancel-in-progress": False})
         self.assertEqual(self.doc["concurrency"]["cancel-in-progress"], "${{ github.event_name == 'pull_request' }}")
         self.assertNotIn("environment", job)
         self.assertNotIn("permissions", job)
