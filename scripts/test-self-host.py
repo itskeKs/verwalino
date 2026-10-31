@@ -3,6 +3,7 @@
 Run in backend/ with uv run python ../scripts/test-self-host.py.
 """
 import hashlib
+import errno
 import io
 import json
 import os
@@ -10,6 +11,7 @@ import shlex
 import shutil
 import re
 import runpy
+import socket
 import stat
 import subprocess
 import sys
@@ -23,6 +25,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_TARGET = runpy.run_path(str(ROOT / "backend/app/deployment.py"))["TARGET"]
 SECRETS = ("MIGRATOR_PASSWORD", "APP_RW_PASSWORD", "APP_WORKER_PASSWORD", "APP_REVIEW_PASSWORD", "SESSION_SECRET")
+with socket.socket() as port_probe:
+    port_probe.bind(("127.0.0.1", 0))
+    TEST_PORT = str(port_probe.getsockname()[1])
 
 
 class SelfHostTests(unittest.TestCase):
@@ -195,6 +200,8 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
                         FAKE_TOKEN_SQL=str(self.base / "token.sql"))
 
     def run_script(self, *args, input=None, stderr_closed=False, stderr=subprocess.PIPE):
+        if args[:1] == ("init",) and not self.config.exists() and "--port" not in args:
+            args = (*args, "--port", TEST_PORT)
         command = ["bash", str(self.root / "scripts/self-host.sh"), *args]
         if stderr_closed:
             command = ["bash", "-c", 'exec 2>&-; exec "$@"', "closed-stderr", *command]
@@ -358,7 +365,7 @@ elif name == "openssl":
         self.config.chmod(0o600)
         self.config.write_text(before.replace("SESSION_SECRET=", "UNKNOWN="))
         self.assert_doctor("FEHLER", "Einstellungen", 1)
-        self.config.write_text(before.replace("VERWALINO_PORT=18080", "VERWALINO_PORT=1"))
+        self.config.write_text(before.replace(f"VERWALINO_PORT={TEST_PORT}", "VERWALINO_PORT=1"))
         self.assert_doctor("FEHLER", "Einstellungen", 1)
         self.config.write_text(before + "EVIL=$(touch marker)\n")
         self.assert_doctor("FEHLER", "Einstellungen", 1)
@@ -375,20 +382,20 @@ elif name == "openssl":
     def test_doctor_detects_foreign_port_and_accepts_owned_port(self):
         self.init()
         self.doctor_tools()
-        self.env["FAKE_PORT_BUSY"] = "18080"
-        self.assert_doctor("OK", "Port 18080")
+        self.env["FAKE_PORT_BUSY"] = TEST_PORT
+        self.assert_doctor("OK", f"Port {TEST_PORT}")
         self.env["FAKE_OWNER"] = "/other/infra/docker-compose.yml"
-        self.assert_doctor("FEHLER", "Port 18080", 1)
+        self.assert_doctor("FEHLER", f"Port {TEST_PORT}", 1)
 
     def test_doctor_port_tools_fall_back_and_warn_when_unavailable(self):
         self.init()
-        self.env.update(FAKE_PUBLISHED="", FAKE_PORT_BUSY="18080")
+        self.env.update(FAKE_PUBLISHED="", FAKE_PORT_BUSY=TEST_PORT)
         for omit in (("ss",), ("ss", "lsof")):
             with self.subTest(omit=omit):
                 self.doctor_tools(omit=omit)
-                self.assert_doctor("FEHLER", "Port 18080", 1)
+                self.assert_doctor("FEHLER", f"Port {TEST_PORT}", 1)
         self.doctor_tools(omit=("ss", "lsof", "nc"))
-        self.assert_doctor("WARN", "Port 18080")
+        self.assert_doctor("WARN", f"Port {TEST_PORT}")
 
     def test_doctor_disk_thresholds_apply_independently_to_both_locations(self):
         self.init()
@@ -1009,7 +1016,7 @@ elif name == "openssl":
         config = self.init()
         self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o600)
         self.assertEqual(config["VERWALINO_MODE"], "local")
-        self.assertEqual(config["VERWALINO_PORT"], "18080")
+        self.assertEqual(config["VERWALINO_PORT"], TEST_PORT)
         self.assertEqual(config["VERWALINO_IMAGE"], "verwalino:local")
         values = [config[key] for key in SECRETS]
         self.assertEqual(len(set(values)), len(SECRETS))
@@ -1027,6 +1034,39 @@ elif name == "openssl":
             self.assertNotIn(config[key], result.stdout + result.stderr)
         self.assertNotEqual(self.run_script("init", "--port", "19000").returncode, 0)
         self.assertEqual(self.config.read_bytes(), before)
+
+    def test_busy_port_refuses_init_and_start_before_mutating_docker(self):
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            port = listener.getsockname()[1]
+            result = self.run_script("init", "--port", str(port))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(f"Port {port} is already in use", result.stderr)
+            self.assertFalse(self.config.exists())
+            self.assertEqual(self.calls(), [])
+        self.init("--port", str(port))
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", port))
+            listener.listen()
+            result = self.run_script("start")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(f"Port {port} is already in use", result.stderr)
+            self.assertTrue(all("ps" in call["args"] for call in self.calls()))
+
+    def test_init_and_start_succeed_when_default_port_is_occupied(self):
+        with socket.socket() as listener:
+            try:
+                listener.bind(("127.0.0.1", 18080))
+            except OSError as error:
+                if error.errno != errno.EADDRINUSE:
+                    raise
+            else:
+                listener.listen()
+            self.init()
+            result = self.run_script("start")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("App ready:", result.stdout)
 
     def test_separate_installations_get_fresh_secrets(self):
         first = self.init()
@@ -1097,7 +1137,7 @@ elif name == "openssl":
             self.assertNotIn("https", call["args"])
             self.assertIsNone(call["profiles"])
             self.assertFalse(call["caller_secret_used"])
-        self.assertIn("http://127.0.0.1:18080", result.stdout)
+        self.assertIn(f"http://127.0.0.1:{TEST_PORT}", result.stdout)
         self.assert_isolated(args)
 
     def test_fresh_start_prints_one_token_and_url_but_persists_only_its_hash(self):
@@ -1110,7 +1150,7 @@ elif name == "openssl":
         self.assertIsNotNone(match, result.stdout)
         token = match.group(1)
         self.assertEqual(result.stdout.count(token), 1)
-        self.assertIn("http://127.0.0.1:18080/setup", result.stdout)
+        self.assertIn(f"http://127.0.0.1:{TEST_PORT}/setup", result.stdout)
         sql = (self.base / "token.sql").read_text()
         self.assertIn(hashlib.sha256(token.encode()).hexdigest(), sql)
         self.assertIn("ON CONFLICT", sql)
@@ -1167,7 +1207,7 @@ elif name == "openssl":
         result = self.run_script("start")
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any("up" in c["args"] and "app" in c["args"] for c in self.calls()))
-        self.assertNotIn("http://127.0.0.1:18080", result.stdout)
+        self.assertNotIn(f"http://127.0.0.1:{TEST_PORT}", result.stdout)
 
     def test_https_uses_caddy_secure_cookies_and_explicit_host(self):
         self.init("--https", "verwaltung.example.org")
@@ -1315,6 +1355,42 @@ elif name == "openssl":
         self.assertEqual(config["VERWALINO_PROXY_SUBNET"], "192.168.240.0/28")
 
 
+class InstallMatrixWorkflowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = yaml.safe_load((ROOT / ".github/workflows/install-matrix.yaml").read_text())
+
+    def test_prerequisites_fail_with_the_name_of_each_missing_tool(self):
+        step = next(step for step in self.workflow["jobs"]["install"]["steps"] if step.get("id") == "report")
+        check = step["run"].split("export DOCKER_CONFIG=", 1)[0]
+        # The runner's Bash 5 guard is separate from tool availability.
+        check = check.partition("\n")[2]
+        tools = ("docker", "python3", "openssl", "curl", "nc")
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary)
+            for missing in tools:
+                with self.subTest(missing=missing):
+                    for tool in tools:
+                        if tool != missing:
+                            (binary / tool).symlink_to(shutil.which("true"))
+                    result = subprocess.run([shutil.which("bash"), "-e", "-c", check],
+                                            env=dict(os.environ, PATH=str(binary)), capture_output=True,
+                                            text=True, check=False, timeout=5)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn(f"Missing required tool: {missing}", result.stderr)
+                for tool in binary.iterdir():
+                    tool.unlink()
+
+    def test_runs_queue_by_ref_without_cancelling_active_runs(self):
+        self.assertEqual(self.workflow.get("concurrency"), {
+            "group": "install-matrix-${{ github.ref }}", "cancel-in-progress": False})
+
+    def test_reports_use_verified_artifact_version(self):
+        uploads = [step["uses"] for step in self.workflow["jobs"]["install"]["steps"]
+                   if step.get("uses", "").startswith("actions/upload-artifact@")]
+        self.assertEqual(uploads, ["actions/upload-artifact@v7"])
+
+
 class StackContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -1405,7 +1481,7 @@ class ReleaseBundleTests(unittest.TestCase):
         step = next(step for step in bundle["steps"] if step.get("id") == "bundle")
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            for path in ("install.sh", "scripts/self-host.sh", "infra/docker-compose.yml",
+            for path in ("install.sh", "scripts/self-host.sh", "scripts/build-release-bundle.sh", "infra/docker-compose.yml",
                          "infra/Caddyfile", "infra/db/prod-init.sh", ".env.example"):
                 target = root / path
                 target.parent.mkdir(parents=True, exist_ok=True)

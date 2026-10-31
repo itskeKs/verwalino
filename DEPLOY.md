@@ -154,6 +154,92 @@ not provide fully air-gapped image provisioning. The first
 release publication, anonymous downloads/pulls, fresh-VM setup/login/restart,
 and real domain/TLS run remain maintainer acceptance steps.
 
+## Install matrix
+
+[Install matrix](.github/workflows/install-matrix.yaml) runs at **04:00 UTC**
+(after the scenario nightly), through `workflow_dispatch`, and after a pushed
+`v*` tag. Tag runs build that tag's checkout independently; they do not wait for
+the release workflow or test published release assets. There is no PR trigger.
+Only `contents: read` is granted; no images, tags, releases or issues are published.
+
+The default matrix uses native **Ubuntu 22.04 and 24.04 amd64** runners.
+Set the repository variable `INSTALL_MATRIX_ARM64=true` to include native
+`ubuntu-24.04-arm`; leaving it unset avoids allocating that runner. Public
+repository standard runners are free; private repository usage may be billed
+under [GitHub's runner pricing](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+Debian 12 is a commented slot: a nested Docker daemon requires privileged mode,
+and sharing the Ubuntu host daemon would exercise its networking and bind mounts
+rather than a Debian Docker host. This matrix uses no privileged containers.
+
+Each job builds this checkout's image natively. Because `install.sh` pins the
+GHCR repository name and `start` pulls it, the disposable runner temporarily
+serves **its own TLS registry** as `ghcr.io` through `/etc/hosts` and a private
+Docker trust certificate. The build happens before that override (uv's base
+image comes from real GHCR). No credentials or real GHCR push are involved.
+The local manifest digest goes into `IMAGE_DIGEST`;
+`scripts/build-release-bundle.sh` supplies the same seven payloads and checksum
+manifest as the release job. Checkout bundles are deliberately unsigned and
+scenario children omit cosign from PATH; release signature verification remains
+covered by the existing installer contracts. This does not verify release signing,
+anonymous downloads, multi-platform publication or public TLS.
+
+`scripts/install-scenarios.sh` runs these four dependent scenarios in order:
+
+| Scenario | Pass criteria |
+| --- | --- |
+| Fresh install reaches setup | One `install.sh --version v0.0.0 --offline-bundle … --dir … --port …` command succeeds; `/api/health/ready` succeeds; `/api/setup` says `required: true`; `/setup` serves HTML; setup URL and token were printed. |
+| Second run is harmless | The same command refuses with the `--force` hint; retry with `--force` and no port option succeeds, every installed file is unchanged, readiness still succeeds. |
+| Busy port is refused | Stop the instance and occupy its app port with a dummy listener; new init and existing start both refuse with `Port … is already in use; choose a free --port or stop its listener.`; no installation containers run. |
+| Restart keeps data | Start, create an admin through the CLI with stdin password, log in, stop, remove containers without deleting named volumes, start again, then log in with the same credentials and user/organization identity and check the named documents volume. |
+
+The restart scenario proves that administrator and organization data survive
+container recreation and that the named documents volume still exists.
+
+An existing `verwalino` container or volume blocks the run before any installation
+operation. A failed scenario fails the job and skips dependent scenarios.
+Cleanup always terminates the dummy listener, calls the installed helper's
+`stop`, and removes the temporary installation directory. Data volumes and
+stopped containers survive until the disposable VM is discarded.
+Setup tokens, generated admin passwords and sessions are not put in the report.
+
+The Actions run contains **`install-<os>-<UTC date>`** artifacts retained for
+**90 days**, with `summary.md` also shown in the job summary. `scenarios.json`
+matches the nightly BDD reporter's shape: `{run, scenarios}`; run metadata has
+`started`, `finished`, `git_sha`, `mode` and `runner`. Every scenario has
+`feature: "install"`, `scenario`, `tags`, `steps`, `outcome`, `duration_s`,
+`error` and `artifacts`. Steps have `keyword`, `name`, `outcome`, `duration_s`
+and `error`; errors are null or `{type, message}`. Failed scenarios attach
+relative paths to helper `status` output and bounded, non-colored Compose logs.
+An unsuccessful artifact capture is recorded in the corresponding file.
+
+TODO matrix entries: **update N-1 → N** after #9 / PR #76 and **backup/restore
+round trip** after #10 / PR #57. They are not executed or counted as passing.
+The #15 reporter (`scripts/scenario_issues.py`, PR #89) is absent on this branch.
+Once available, the intended reporting step consumes this JSON and its uploaded
+artifacts with run URL/OS provenance in a separately authorized issue-writing
+context. No issue-filing step is active yet.
+
+To reproduce locally, use a **new disposable Linux VM**, with Bash 5, Python 3,
+OpenSSL, curl, netcat-openbsd, Docker and Compose v2 >= 2.24. Never use the
+production host or this project's test database. In the VM console, check out
+the revision to test and execute the workflow's native image build and
+runner-local TLS registry steps (substitute a private temporary directory for
+`RUNNER_TEMP`). Those steps export the checkout image's `DIGEST`. Then run:
+
+```bash
+DIGEST="$DIGEST" bash scripts/build-release-bundle.sh ./checkout-bundle
+printf '{}\n' > ./checkout-bundle/SHA256SUMS.sigstore.json
+bash scripts/install-scenarios.sh --version v0.0.0 \
+  --bundle ./checkout-bundle --report ./report
+```
+
+The command runs the four scenarios together against that VM's Docker daemon.
+Inspect `report/summary.md` and failure artifacts, then discard the VM. Do not
+reuse retained volumes as a fresh-install test. On the development machine,
+run only `python3 -B scripts/test-install-scenarios.py` or `make test-installer`:
+they use fake Docker/curl and need no database. The first real matrix run is
+still pending; local contracts do not establish real installation success.
+
 ## Portable Docker first installation
 
 This path is independent of the existing alpha. `infra/docker-compose.yml`
@@ -218,6 +304,9 @@ PostgreSQL has no published port and runs on an internal backend network.
 
 Default local mode publishes only **127.0.0.1:18080**, without secure-cookie
 requirements over HTTP. `init --port 19080` selects another loopback port.
+Init and start refuse an occupied app port with `Port … is already in use;
+choose a free --port or stop its listener.` before creating configuration or
+starting services. Start permits the app's own listener on a running instance.
 Do not expose this HTTP listener publicly or tunnel it as a production endpoint.
 For a new Internet-facing installation choose HTTPS at init instead:
 

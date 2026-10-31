@@ -71,9 +71,10 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   Markdown and failure artifacts in `report/`. See [reports and external targets](features/README.md#scenario-reports-and-nightly-runs).
 - **`make test-agent-rules`** — paired bodies/activation, the `CLAUDE.md` symlink and Codex hook
   contracts; Python stdlib, no database or backend dependencies. Run after changing rules or the adapter.
-- **`make test-installer`** — release-download and portable self-host contracts; fake
-  curl/wget, Docker and cosign, no network downloads or database. The
-  `python3 -B scripts/test-install.py` suite also runs standalone with stdlib only.
+- **`make test-installer`** — release-download, install-scenario reporting and portable
+  self-host contracts; fake curl/wget, Docker and cosign, no network downloads or database.
+  `python3 -B scripts/test-install.py` and `python3 -B scripts/test-install-scenarios.py`
+  also run standalone with stdlib only.
 - **`make test-scenario-issues`** — scenario failure fingerprints, deduplication and regression
   filing; Python stdlib, fake GitHub, no network or database.
 - **`make docs-check`** — relative links and images in every Markdown file outside `docs/archive/`.
@@ -145,8 +146,11 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 | `.github/workflows/nightly-scenarios.yaml` | nightly self-host scenarios, 90-day report artifacts and deduplicated failure issues; hosted mode pending #18 |
 | `frontend/src/` | `pages/`, `components/`, `api/`, `lib/` |
 | `install.sh` | one-command release installer; checksum/signature checks and digest-pinned portable init/start |
-| `scripts/test-install.py`, `scripts/test-self-host.py` | release installer and portable stack contracts; fake downloads/Docker, no database |
+| `scripts/build-release-bundle.sh` | shared flat release payload/checksum assembly for releases and the install matrix |
+| `scripts/install-scenarios.sh` | four install journeys on disposable VMs; JSON/Markdown reports and failure artifacts |
+| `scripts/test-install.py`, `scripts/test-self-host.py`, `scripts/test-install-scenarios.py` | installer, portable stack and scenario-report contracts; fake downloads/Docker, no database |
 | `.github/workflows/release-image.yaml` | publishes/signs both image platforms, then signs checksums and attaches installer assets to a GitHub Release |
+| `.github/workflows/install-matrix.yaml` | nightly, manual and tag-triggered native install checks; reports retained for 90 days |
 | `scripts/` | dev, self-host, deploy, checks; `acceptance/` holds legacy browser scripts (being migrated, #54) |
 | `scripts/scenario_issues.py`, `scripts/test-scenario-issues.py` | stdlib report consumer and fake-GitHub filing contracts; `@known-flaky` failures are excluded |
 | `DESIGN.md` | frontend design contract: tokens, layout, components, states, copy and formats; screenshots in `docs/assets/design/` |

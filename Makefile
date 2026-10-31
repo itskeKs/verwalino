@@ -47,6 +47,7 @@ test-backend: check-testdb ## Backend pytest against the test DB (PYTEST_ARGS="-
 
 test-installer: ## Self-host installer and hosted-server script contract tests (no DB; Docker is faked)
 	python3 -B scripts/test-install.py
+	python3 -B scripts/test-install-scenarios.py
 	cd backend && $(UV_LINT) python ../scripts/test-self-host.py
 	cd backend && $(UV_LINT) python ../scripts/test-server-deploy.py
 

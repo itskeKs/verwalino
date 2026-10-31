@@ -1,10 +1,12 @@
 """Release installer contracts: stdlib only, fake downloads/Docker, no network."""
 
 import hashlib
+import errno
 import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -15,6 +17,9 @@ SCRIPT = ROOT / "install.sh"
 TAG = "v1.2.3"
 DIGEST = "sha256:" + "a" * 64
 IMAGE = "ghcr.io/itskeks/verwalino@" + DIGEST
+with socket.socket() as port_probe:
+    port_probe.bind(("127.0.0.1", 0))
+    TEST_PORT = str(port_probe.getsockname()[1])
 ASSETS = {
     "install.sh": "install.sh",
     "self-host.sh": "scripts/self-host.sh",
@@ -80,7 +85,7 @@ elif name == "self-host.sh":
             config.chmod(0o600)
         sys.exit(int(os.environ.get("INIT_FAIL", "0")))
     elif args == ["start"]:
-        print("Browser setup: http://127.0.0.1:18080/setup\nSetup token: test-terminal-token")
+        print(f"Browser setup: http://127.0.0.1:{os.environ['INSTALL_TEST_PORT']}/setup\nSetup token: test-terminal-token")
         sys.exit(int(os.environ.get("START_FAIL", "0")))
     else:
         sys.exit("Unexpected self-host arguments")
@@ -123,7 +128,7 @@ class InstallTests(unittest.TestCase):
                     if not key.startswith(("VERWALINO_", "INSTALL_TEST_"))}
         self.env.update(PATH=str(self.binary), INSTALL_TEST_BUNDLE=str(self.bundle),
                         INSTALL_TEST_LOG=str(self.log), INSTALL_TEST_PYTHON=sys.executable,
-                        INSTALL_TEST_HELPER=str(self.helper))
+                        INSTALL_TEST_HELPER=str(self.helper), INSTALL_TEST_PORT=TEST_PORT)
 
     def checksums(self):
         (self.bundle / "SHA256SUMS").write_text("".join(
@@ -136,6 +141,8 @@ class InstallTests(unittest.TestCase):
             options += ["--version", version]
         if offline:
             options += ["--offline-bundle", str(self.bundle)]
+        if not (self.dest / ".env.selfhost").exists() and "--port" not in args:
+            options += ["--port", TEST_PORT]
         command = ["/bin/bash", "-s", "--"] if piped else ["/bin/bash", str(SCRIPT)]
         return subprocess.run(command + options + list(args), env=self.env, cwd=self.base,
                               input=SCRIPT.read_text() if piped and SCRIPT.exists() else None,
@@ -152,11 +159,11 @@ class InstallTests(unittest.TestCase):
 
     def test_offline_install_passes_exact_init_and_start_arguments_without_network(self):
         self.env["NO_NETWORK"] = "1"
-        result = self.run_install("--port", "19080")
+        result = self.run_install("--port", TEST_PORT)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.calls("curl") + self.calls("wget"), [])
         self.assertEqual(self.calls("self-host.sh"), [
-            ["init", "--image", IMAGE, "--port", "19080"], ["help"], ["start"]])
+            ["init", "--image", IMAGE, "--port", TEST_PORT], ["help"], ["start"]])
         self.assertEqual(self.calls("docker"), [["compose", "version", "--short"], ["info"]])
         self.assertIn("/setup", result.stdout)
         self.assertIn("test-terminal-token", result.stdout)
@@ -260,7 +267,7 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(helper.read_bytes(), (self.bundle / "self-host.sh").read_bytes())
         self.assertEqual(self.calls("self-host.sh"), [
-            ["init", "--image", IMAGE], ["help"], ["start"]])
+            ["init", "--image", IMAGE, "--port", TEST_PORT], ["help"], ["start"]])
 
     def test_force_retries_the_same_image_without_overwriting_configuration(self):
         self.dest.mkdir()
@@ -281,9 +288,9 @@ class InstallTests(unittest.TestCase):
         self.assert_aborted(self.run_install("--force", "--https", "example.org"), "reconfigur")
 
     def test_https_and_port_are_passed_as_separate_arguments(self):
-        result = self.run_install("--https", "verwaltung.example.org", "--port", "19080")
+        result = self.run_install("--https", "verwaltung.example.org", "--port", TEST_PORT)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(["init", "--image", IMAGE, "--https", "verwaltung.example.org", "--port", "19080"],
+        self.assertIn(["init", "--image", IMAGE, "--https", "verwaltung.example.org", "--port", TEST_PORT],
                       self.calls("self-host.sh"))
 
     def test_doctor_runs_after_init_creates_configuration_and_before_start(self):
@@ -291,7 +298,7 @@ class InstallTests(unittest.TestCase):
         result = self.run_install()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.calls("self-host.sh"), [
-            ["init", "--image", IMAGE], ["help"], ["doctor"], ["start"]])
+            ["init", "--image", IMAGE, "--port", TEST_PORT], ["help"], ["doctor"], ["start"]])
 
     def test_doctor_failure_stops_start(self):
         self.env.update(HAS_DOCTOR="1", DOCTOR_FAIL="1")
@@ -299,7 +306,7 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("doctor check failed", result.stderr)
         self.assertEqual(self.calls("self-host.sh"), [
-            ["init", "--image", IMAGE], ["help"], ["doctor"]])
+            ["init", "--image", IMAGE, "--port", TEST_PORT], ["help"], ["doctor"]])
 
     def test_doctor_failure_still_stops_start_when_help_exits_nonzero(self):
         self.env.update(HAS_DOCTOR="1", HELP_FAIL="1", DOCTOR_FAIL="1")
@@ -307,7 +314,7 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("doctor check failed", result.stderr)
         self.assertEqual(self.calls("self-host.sh"), [
-            ["init", "--image", IMAGE], ["help"], ["doctor"]])
+            ["init", "--image", IMAGE, "--port", TEST_PORT], ["help"], ["doctor"]])
 
     def test_piped_install_reaches_start_when_doctor_and_init_read_stdin(self):
         self.env["HAS_DOCTOR"] = "1"
@@ -318,7 +325,7 @@ class InstallTests(unittest.TestCase):
         result = self.run_install(piped=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.calls("self-host.sh"), [
-            ["init", "--image", IMAGE], ["help"], ["doctor"], ["start"]])
+            ["init", "--image", IMAGE, "--port", TEST_PORT], ["help"], ["doctor"], ["start"]])
 
     def test_truncated_piped_script_does_not_create_installation_files(self):
         script = SCRIPT.read_text().split('stage=$(mktemp', 1)[0]
@@ -391,7 +398,7 @@ class InstallTests(unittest.TestCase):
         self.checksums()
         result = self.run_install()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Browser setup: http://127.0.0.1:18080/setup", result.stdout)
+        self.assertIn(f"Browser setup: http://127.0.0.1:{TEST_PORT}/setup", result.stdout)
         token = result.stdout.split("Setup token: ")[1].splitlines()[0]
         self.assertEqual(len(token), 64)
         for path in self.dest.rglob("*"):
@@ -408,6 +415,21 @@ class InstallTests(unittest.TestCase):
         compose = (self.dest / "infra/docker-compose.yml").read_text()
         self.assertIn("./db/prod-init.sh:", compose)
         self.assertIn(["pull", "app"], [args[-2:] for args in calls])
+
+    def test_real_helper_initializes_and_starts_when_default_port_is_occupied(self):
+        (self.bundle / "self-host.sh").write_bytes((ROOT / "scripts/self-host.sh").read_bytes())
+        self.checksums()
+        with socket.socket() as listener:
+            try:
+                listener.bind(("127.0.0.1", 18080))
+            except OSError as error:
+                if error.errno != errno.EADDRINUSE:
+                    raise
+            else:
+                listener.listen()
+            result = self.run_install()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Browser setup:", result.stdout)
 
 
 if __name__ == "__main__":
