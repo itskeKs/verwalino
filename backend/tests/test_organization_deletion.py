@@ -94,6 +94,49 @@ async def test_retained_text_inventory(rent_db):
     assert mutable <= scrubbed, mutable - scrubbed
 
 
+async def test_retained_event_payload_inventory(rent_db):
+    rows = (await rent_db.execute(text('''SELECT r.entity,a.attname,typ.typname,
+      (SELECT string_agg(DISTINCT p.proname,',' ORDER BY p.proname) FROM pg_trigger t
+        JOIN pg_proc p ON p.oid=t.tgfoid WHERE t.tgrelid=c.oid AND NOT t.tgisinternal
+        AND (t.tgtype & 16)>0) FROM organization_retention_catalog() r
+      JOIN pg_class c ON c.oid=to_regclass('public.'||r.entity)
+      JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
+      JOIN pg_type typ ON typ.oid=a.atttypid
+      WHERE r.disposition='retain' AND r.entity ~ '(event|receipt|batch|attempt)$'
+      AND typ.typname IN ('json','jsonb','text','varchar')
+      ORDER BY r.entity,a.attname'''))).all()
+    technical = {'action', 'entity_type', 'prev_event_hash', 'operation', 'request_digest',
+                 'resolution_state', 'workflow_state', 'error_code', 'processor_version',
+                 'status', 'key', 'effect_key', 'event_type', 'mode', 'kind'}
+    content = {(table, column) for table, column, *_ in rows if column not in technical}
+    covered = set((await rent_db.execute(text('''SELECT r.entity,unnest(organization_erasure_payload_columns(r.entity))
+      FROM organization_retention_catalog() r'''))).all())
+    assert content == covered
+
+
+@pytest.mark.parametrize('case', ['historical_import_key', 'bound_import_key', 'mail_metadata'])
+async def test_payload_scrub_preserves_typed_person_bindings_and_mail_metadata(case):
+    from app.services.organization_deletion_service import payload_scrubber
+    erased, bound = str(uuid.uuid4()), str(uuid.uuid4())
+    now = datetime(2026, 10, 31, tzinfo=timezone.utc)
+    scrub = payload_scrubber([{'id': erased, 'first_name': 'prepared', 'last_name': 'a' * 64}], [bound], [], now)
+    if case == 'historical_import_key':
+        payload = {'kind': 'person', 'id': erased, 'key': 'historical-private@example.invalid'}
+        result = scrub(payload)
+        assert result['id'] == result['key'] == 'Gelöscht'
+    elif case == 'bound_import_key':
+        payload = {'kind': 'person', 'id': bound, 'key': 'prepared'}
+        assert scrub(payload) == payload
+    else:
+        payload = {'person_id': erased, 'first_name': 'prepared', 'status': 'prepared',
+                   'content_sha256': 'a' * 64, 'id': str(uuid.uuid4()), 'bytes': 42,
+                   'storage_uri': 'prepared/' + 'a' * 64, 'created_at': now.isoformat()}
+        result = scrub(payload)
+        assert result['person_id'] == result['first_name'] == 'Gelöscht'
+        assert {key: result[key] for key in payload if key not in {'person_id', 'first_name'}} == {
+            key: value for key, value in payload.items() if key not in {'person_id', 'first_name'}}
+
+
 async def test_runtime_budget_review_completes_with_lifecycle_guard(rent_world, rent_db, export_store):
     from sqlalchemy import event
     from app.core.db import get_review_session_factory
@@ -550,6 +593,10 @@ async def test_due_run_erases_all_unbound_text_preserves_retention_and_blocks_ow
     await rent_db.execute(text('''UPDATE person SET first_name=:marker,email='PrivateErasureMarker@example.invalid',
         street=:marker,iban='DE89370400440532013000' WHERE organization_id=:org'''), {'org': w['org'], 'marker': marker})
     await rent_db.execute(text("UPDATE lease_agreement SET notes=:marker WHERE organization_id=:org"), {'org': w['org'], 'marker': marker})
+    await rent_db.execute(text('''INSERT INTO audit_event(organization_id,actor_user_id,entity_type,entity_id,action,payload_diff)
+      VALUES (:org,:admin,'person',:person,'mail_prepared',jsonb_build_object(
+        'person_id',CAST(CAST(:person AS uuid) AS text),'email','PrivateErasureMarker@example.invalid',
+        'nested',jsonb_build_array(jsonb_build_object('name',CAST(:marker AS text)))))'''), {**w, 'marker': marker})
     await rent_db.commit()
     orphan = export_store.put(f"{w['org']}/orphan.bin", marker.encode(), content_type='text/plain')
     retained = (await rent_db.execute(text("SELECT id,row_to_json(a)::text FROM audit_event a WHERE organization_id=:org"), w)).all()
@@ -565,7 +612,8 @@ async def test_due_run_erases_all_unbound_text_preserves_retention_and_blocks_ow
         assert (await former_owner.get('/api/auth/session')).status_code == 401
     assert not export_store.exists(orphan.uri)
     stored = dict((await rent_db.execute(text("SELECT id,row_to_json(a)::text FROM audit_event a WHERE organization_id=:org"), w)).all())
-    assert all(stored[identity] == data for identity, data in retained)
+    assert all({k: v for k, v in json.loads(stored[identity]).items() if k != 'payload_diff'} ==
+               {k: v for k, v in json.loads(data).items() if k != 'payload_diff'} for identity, data in retained)
     # Scan every text-like column, JSON included, of every organization-owned row.
     state = await rent_db.scalar(text('SELECT retention FROM organization_deletion WHERE organization_id=:org'), w)
     assert state['retained']
@@ -580,6 +628,7 @@ async def test_due_run_erases_all_unbound_text_preserves_retention_and_blocks_ow
             if str(row.get('id')) not in retained_ids:
                 assert marker not in data, (name, row)
     assert all(marker.encode() not in path.read_bytes() for path in export_store._root.rglob('*.bin'))
+    await assert_no_person_marker(rent_db, w['org'], marker)
     await rent_db.rollback()
 
 
@@ -814,3 +863,117 @@ async def test_expired_personal_binding_is_anonymized_without_changing_voucher(r
         await assert_no_person_marker(rent_db, w['org'], marker)
     finally:
         await rent_db.rollback()
+
+
+async def test_erasure_scrubs_expired_person_and_former_user_payloads_only(rent_world, rent_db, export_store):
+    from app.services.organization_deletion_service import retained_hash, run_deletion
+    w = rent_world
+    private = {'person_id': str(w['person']), 'email': 'ExpiredPrivate@example.invalid',
+               'first_name': 'ExpiredPrivateName', 'last_name': 'ExpiredPrivateSurname',
+               'street': 'ExpiredPrivateStreet', 'phone': '+493012345678',
+               'iban': 'DE89370400440532013000', 'zip_code': '12345', 'city': 'ExpiredPrivateCity'}
+    await rent_db.execute(text('''UPDATE person SET first_name=:first_name,last_name=:last_name,email=:email,
+      street=:street,phone=:phone,iban=:iban,zip_code=:zip_code,city=:city WHERE id=:person'''), {**w, **private})
+    former_email = 'FormerPrivate@example.invalid'
+    await rent_db.execute(text('UPDATE "user" SET email=:email WHERE id=:admin'), {**w, 'email': former_email})
+    category = await rent_db.scalar(text('SELECT id FROM cost_category WHERE plan_version=1 ORDER BY code LIMIT 1'))
+    for person, year in ((w['person'], 2000), (w['hidden_person'], 2026)):
+        vendor = await rent_db.scalar(text('INSERT INTO vendor(organization_id,person_id) VALUES (:org,:person) RETURNING id'),
+                                     {**w, 'person': person})
+        await rent_db.execute(text('''INSERT INTO cost_entry(organization_id,property_id,cost_category_id,cost_category_plan_version,
+          vendor_id,invoice_date,service_period_from,service_period_to,gross_amount,tenant_apportionable,status,source)
+          VALUES (:org,:property,:category,1,:vendor,:start,:start,:end,99,'UMLAGEFAEHIG','confirmed','MANUAL')'''),
+          {**w, 'category': category, 'vendor': vendor, 'start': datetime(year, 1, 1).date(), 'end': datetime(year, 12, 31).date()})
+    bound = {'person_id': str(w['hidden_person']), 'email': 'BoundPrivate@example.invalid', 'name': 'BoundPrivateName'}
+    operational = {'id': str(uuid.uuid4()), 'status': 'prepared', 'created_at': '2026-01-01T00:00:00Z',
+                   'content_sha256': 'a' * 64, 'bytes': 123}
+    identities = []
+    for payload in ({**private, **operational}, {**bound, **operational},
+                    {'email': former_email, 'recipients': [private, bound], 'reason': 'Sent to ' + private['email']}):
+        identities.append(await rent_db.scalar(text('''INSERT INTO audit_event(organization_id,actor_user_id,
+          entity_type,entity_id,action,payload_diff,prev_event_hash) VALUES (:org,:admin,'person',:person,
+          'mail_prepared',CAST(:payload AS jsonb),repeat('b',64)) RETURNING id'''), {**w, 'payload': json.dumps(payload)}))
+    request = uuid.uuid4()
+    await rent_db.execute(text('''INSERT INTO master_import_batch(organization_id,actor_user_id,request_key,request_digest,result)
+      VALUES (:org,:admin,:request,repeat('c',64),CAST(:payload AS jsonb))'''),
+      {**w, 'request': request, 'payload': json.dumps({'rows': [{'kind': 'person', 'id': private['person_id'], 'key': private['email']}], 'count': 1})})
+    foreign = await rent_db.scalar(text('''INSERT INTO audit_event(organization_id,actor_user_id,entity_type,entity_id,
+      action,payload_diff) VALUES (:foreign_org,:foreign_admin,'person',:foreign_person,'mail_prepared',CAST(:payload AS jsonb))
+      RETURNING id'''), {**w, 'payload': json.dumps(private)})
+    await rent_db.commit()
+    async with api_client(w) as api:
+        assert (await api.post('/api/organizations/deletion')).status_code == 200
+        assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
+    before = dict((await rent_db.execute(text('SELECT id,to_jsonb(t) FROM audit_event t WHERE organization_id=:org'), w)).all())
+    await rent_db.rollback()
+    future = datetime.now(timezone.utc) + timedelta(days=8)
+    async with rent_db.begin():
+        assert await run_deletion(rent_db, w['org'], now=future)
+    after = dict((await rent_db.execute(text('SELECT id,to_jsonb(t) FROM audit_event t WHERE organization_id=:org'), w)).all())
+    assert len(after) == len(before) + 1  # Only the erasure completion event is appended.
+    for identity, original in before.items():
+        assert {k: v for k, v in after[identity].items() if k != 'payload_diff'} == {
+            k: v for k, v in original.items() if k != 'payload_diff'}
+    scrubbed = after[identities[0]]['payload_diff']
+    for value in private.values():
+        assert value not in json.dumps(scrubbed)
+    assert scrubbed['person_id'] == 'Gelöscht'
+    assert all(scrubbed[key] == value for key, value in operational.items())
+    assert scrubbed['_organization_erasure']['scrubbed_at'] == future.isoformat()
+    assert after[identities[1]] == before[identities[1]]
+    mixed = after[identities[2]]['payload_diff']
+    assert former_email not in json.dumps(mixed)
+    assert mixed['recipients'][1] == bound
+    assert mixed['recipients'][0]['person_id'] == 'Gelöscht'
+    receipt = await rent_db.scalar(text('SELECT result FROM master_import_batch WHERE organization_id=:org AND request_key=:request'),
+                                   {**w, 'request': request})
+    assert private['person_id'] not in json.dumps(receipt)
+    assert private['email'] not in json.dumps(receipt)
+    assert receipt['count'] == 1
+    assert await rent_db.scalar(text('SELECT payload_diff FROM audit_event WHERE id=:id'), {'id': foreign}) == private
+    state = await rent_db.scalar(text('SELECT retention FROM organization_deletion WHERE organization_id=:org'), w)
+    for identity in identities:
+        key = 'audit_event:' + json.dumps({'id': str(identity)}, separators=(',', ':'))
+        assert state['record_hashes'][key] == retained_hash('audit_event', after[identity])
+    await assert_no_person_marker(rent_db, w['org'], 'ExpiredPrivate')
+    await assert_no_person_marker(rent_db, w['org'], former_email)
+    await rent_db.rollback()
+
+
+@pytest.mark.parametrize('role', ['app_rw', 'app_review', 'app_worker'])
+async def test_runtime_cannot_update_audit_payload_even_with_erasure_flag(rent_world, rent_db, role):
+    from sqlalchemy.exc import DBAPIError
+    w = rent_world
+    await rent_db.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.organization_erasure','on',true)"),
+                          {'org': str(w['org'])})
+    await rent_db.execute(text(f'SET LOCAL SESSION AUTHORIZATION {role}'))
+    try:
+        with pytest.raises(DBAPIError) as refused:
+            async with rent_db.begin_nested():
+                await rent_db.execute(text("UPDATE audit_event SET payload_diff='{}' WHERE organization_id=:org"), w)
+        assert refused.value.orig.sqlstate == '42501'
+    finally:
+        await rent_db.execute(text('SET LOCAL SESSION AUTHORIZATION DEFAULT'))
+        await rent_db.rollback()
+
+
+@pytest.mark.parametrize('mutation', ["payload_diff='{}'", "action='changed'", 'actor_user_id=NULL',
+                                    "occurred_at=now()+interval '1 day'", 'entity_id=NULL', 'prev_event_hash=NULL', 'DELETE'])
+async def test_audit_guard_refuses_non_erasure_or_structural_changes(rent_world, rent_db, mutation):
+    from sqlalchemy.exc import DBAPIError
+    w = rent_world
+    identity = await rent_db.scalar(text('''INSERT INTO audit_event(organization_id,actor_user_id,entity_type,
+      entity_id,action,payload_diff,prev_event_hash) VALUES (:org,:admin,'person',:person,'mail_prepared',
+      '{"email":"private@example.invalid"}',repeat('a',64)) RETURNING id'''), w)
+    # Even the operator cannot mutate ordinary live history. The flagged path
+    # permits payload-only changes during the actual erasure transaction.
+    if mutation != "payload_diff='{}'":
+        await rent_db.execute(text('''INSERT INTO organization_deletion(organization_id,status,execute_after)
+          VALUES (:org,'cooling_off',now()-interval '1 day')'''), w)
+        await rent_db.execute(text("SELECT set_config('app.current_org_id',:org,true)"), {'org': str(w['org'])})
+        await rent_db.execute(text("SET LOCAL app.organization_erasure='on'"))
+    statement = 'DELETE FROM audit_event' if mutation == 'DELETE' else 'UPDATE audit_event SET ' + mutation
+    with pytest.raises(DBAPIError):
+        async with rent_db.begin_nested():
+            await rent_db.execute(text(statement + ' WHERE id=:id'), {'id': identity})
+    await rent_db.rollback()

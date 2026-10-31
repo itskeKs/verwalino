@@ -87,10 +87,12 @@ def upgrade():
     _registration_adapter(True)
     _erasure_authorization(True)
     _lifecycle()
+    _erasure_payloads(True)
     _auth_filter(True)
 
 
 def downgrade():
+    _erasure_payloads(False)
     _erasure_authorization(False)
     _registration_adapter(False)
     _auth_filter(False)
@@ -367,6 +369,69 @@ def _erasure_authorization(install):
         source, target = (before, after) if install else (after, before)
         assert definition.count(source) == 1, function
         op.execute(definition.replace(source, target, 1))
+
+
+def _erasure_payloads(install):
+    # One payload-column contract for the operator engine and all guards.
+    # audit_event previously had only revoked runtime grants, no trigger body.
+    if install:
+        op.execute('''
+        CREATE FUNCTION public.organization_erasure_payload_columns(tab text) RETURNS text[]
+          LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,pg_temp AS $$
+          SELECT columns FROM (VALUES
+            ('audit_event',ARRAY['payload_diff']),
+            ('declaration_review_receipt',ARRAY['response']),
+            ('dunning_batch',ARRAY['result']),
+            ('exception_case_event',ARRAY['reason']),
+            ('financial_computation_receipt',ARRAY['state']),
+            ('intake_batch',ARRAY['manifest']),
+            ('intake_extraction_attempt',ARRAY['result']),
+            ('intake_retry_receipt',ARRAY['reason']),
+            ('job_attempt',ARRAY['result']),
+            ('master_import_batch',ARRAY['result']),
+            ('outbox_delivery_attempt',ARRAY['result']),
+            ('scope_control_event',ARRAY['reason']),
+            ('visual_disclosure_event',ARRAY['reason'])
+          ) allowed(entity,columns) WHERE entity=tab;
+        $$;
+        REVOKE ALL ON FUNCTION public.organization_erasure_payload_columns(text)
+          FROM PUBLIC,app_rw,app_worker,app_review;
+        CREATE OR REPLACE FUNCTION public.guard_audit_event_payload() RETURNS trigger
+          LANGUAGE plpgsql SET search_path=pg_catalog,pg_temp AS $$
+    BEGIN
+      RAISE EXCEPTION 'Audit events are immutable' USING ERRCODE='23514';
+    END $$;
+        REVOKE ALL ON FUNCTION public.guard_audit_event_payload() FROM PUBLIC,app_rw,app_worker,app_review;
+        CREATE TRIGGER audit_event_immutable BEFORE UPDATE OR DELETE ON public.audit_event
+          FOR EACH ROW EXECUTE FUNCTION public.guard_audit_event_payload();
+        ''')
+    exemption = """      IF current_user='app_migrator' AND session_user='app_migrator'
+        AND current_setting('app.organization_erasure',true)='on'
+        AND TG_TABLE_SCHEMA='public' AND TG_OP='UPDATE' THEN
+        IF public.organization_erasure_payload_columns(TG_TABLE_NAME) IS NOT NULL
+          AND (to_jsonb(NEW)-public.organization_erasure_payload_columns(TG_TABLE_NAME))
+            =(to_jsonb(OLD)-public.organization_erasure_payload_columns(TG_TABLE_NAME))
+          AND OLD.organization_id=NULLIF(current_setting('app.current_org_id',true),'')::uuid
+          AND EXISTS(SELECT 1 FROM public.organization_deletion d
+            WHERE d.organization_id=OLD.organization_id AND d.status='cooling_off') THEN
+          RETURN NEW;
+        END IF;
+      END IF;
+"""
+    for function in ('guard_audit_event_payload', 'protect_scope_evidence',
+                     'protect_master_import_batch', 'protect_dunning_batch'):
+        definition = op.get_bind().scalar(text('SELECT pg_get_functiondef(to_regprocedure(:name))'),
+                                          {'name': f'public.{function}()'})
+        if not install and (definition is None or exemption not in definition):
+            continue  # Also admit this branch's pre-amendment 0147 in test resets.
+        before, after = '    BEGIN\n', '    BEGIN\n' + exemption
+        source, target = (before, after) if install else (after, before)
+        assert definition.count(source) == 1, function
+        op.execute(definition.replace(source, target, 1))
+    if not install:
+        op.execute('''DROP TRIGGER IF EXISTS audit_event_immutable ON public.audit_event;
+          DROP FUNCTION IF EXISTS public.guard_audit_event_payload();
+          DROP FUNCTION IF EXISTS public.organization_erasure_payload_columns(text);''')
 
 
 def _auth_filter(install):

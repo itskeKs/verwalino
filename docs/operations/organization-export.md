@@ -285,7 +285,9 @@ No trigger is disabled. The setting expires with the transaction.
 
 The following mutable retained fields are scrubbed. Hash verification excludes
 these intended changes and their derived search vectors; other retained content
-still has to match its pre-erasure hash.
+still has to match its pre-erasure hash, except for the personal event/receipt
+payload changes described below, which are checked against the expected scrubbed
+row instead.
 
 | Table | Scrubbed columns |
 | --- | --- |
@@ -408,24 +410,48 @@ as part of their retained originals. Their exact pairs are
 `letter_document.subject`, `letter_document.body`. Retained structural UUIDs
 continue to link this evidence to anonymized person rows.
 
-Organization erasure retains `audit_event` unchanged, including `payload_diff`.
-In particular, `mail_prepared` stores the recipient's **email address** and
-**`person_id`**, plus request/message identifiers, preparation/completion timestamps,
-delivery state and the generated PDF's hash, storage URI and byte size. The retained
-PDF may itself contain the recipient's name/address and personalized document
-content. Related `mail_completed` receipts retain the request ID, delivery status
-and completion timestamp, allowing them to be joined to `mail_prepared`.
-These payloads are not scrubbed even when the referenced
-unbound person's master-data fields become `Anonymisiert`/NULL; JSON references do
-not create a person foreign-key retention binding. Thus anonymizing a person does
-**not** erase the recipient mailbox or the link to that person from historical
-mail receipts. Other immutable audit payloads can retain historical labels,
-reasons, free text and source identifiers as originally recorded.
+### Decided: personal event and receipt payloads are scrubbed
 
-This preserves immutable delivery/audit evidence under ADR-0003 and the current
-ADR-0012 §4 boundary; it is not a decision that every audit field must legally be
-retained for that duration. Whether these recipient fields/originals need a
-different retention category or a separately reviewed minimization mechanism
-remains an **owner/domain decision**. This change leaves audit immutability intact
-and documents the surviving personal data for that decision. Former accounts
-cannot access these retained receipts; access remains operator-only.
+The owner decision of 2026-10-31 is implemented by the
+[ADR-0003 amendment](../adr/0003-gobd-immutability-mechanism.md#amendment--2026-10-31-personal-audit-payloads-during-organization-erasure)
+and [ADR-0012 §4](../adr/0012-gdpr-erasure-vs-gobd-retention.md#4-anonymization-anonymize).
+After person anonymization, the operator run replaces personal payload references
+with `Gelöscht`, including `mail_prepared.email` and `mail_prepared.person_id`
+inside `audit_event.payload_diff`. It covers names, addresses, phone and bank
+details for persons without a binding or with all bindings expired, plus former
+users' email addresses. Nested objects/lists and personal values embedded in free
+text are included. Voucher-bound person entries remain unchanged.
+
+The catalog inventory of retained event/receipt/batch/attempt JSON and text
+columns identifies these personal-content columns. They supersede the matching
+entries in the immutable-evidence inventory above:
+
+| Table | Payload columns eligible for personal-data scrubbing |
+| --- | --- |
+| `audit_event` | `payload_diff` (including `mail_prepared` and `mail_completed`) |
+| `declaration_review_receipt` | `response` |
+| `dunning_batch`, `master_import_batch` | `result` |
+| `exception_case_event`, `intake_retry_receipt`, `scope_control_event`, `visual_disclosure_event` | `reason` |
+| `financial_computation_receipt` | `state` |
+| `intake_batch` | `manifest` |
+| `intake_extraction_attempt`, `job_attempt`, `outbox_delivery_attempt` | `result` |
+
+The same inventory excludes technical enums, operations, request keys/digests,
+hashes, versions and status fields. `invoice_processing_attempt`,
+`operation_receipt`, `outbox_event` and `property_creation_receipt` contain only
+such technical/structural fields. `mail_prepared` is an audit action, not a
+separate table. Its request/message identifiers, delivery state, preparation and
+completion times, PDF hash, storage URI and byte size stay. Original PDFs remain
+retained originals; this decision changes payload minimization, not voucher
+retention or original bytes.
+
+Only the actual `app_migrator` login with the transaction-local erasure flag can
+use the payload-only guard exception during the locked erasure. Rows, event
+types, IDs, actor structure and timestamps remain; DELETE is forbidden. Runtime
+roles retain no UPDATE/DELETE grants even with the flag. Changed JSON objects
+record `_organization_erasure.scrubbed_at`; text fields use the neutral marker
+and the run's completion time. The integrity snapshot verifies the expected
+scrubbed row and records its post-scrub hash, preserving all non-payload fields.
+Historical `prev_event_hash` values stay; the marker records a deliberate payload
+discontinuity and does not certify an old hash against changed bytes. Retained
+receipts remain operator-only.

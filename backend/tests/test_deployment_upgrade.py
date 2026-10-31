@@ -143,9 +143,13 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                         original_triggers = trigger_definitions()
                     revision.module.upgrade()
                     if starting_schema == '0146' and revision.revision == '0147':
+                        assert connection.scalar(text('''SELECT count(*) FROM pg_trigger
+                          WHERE tgrelid='public.audit_event'::regclass AND NOT tgisinternal
+                          AND (tgtype & 16)>0''')) == 1
                         with connection.begin_nested() as rehearsal:
                             revision.module.downgrade()
                             assert trigger_definitions() == original_triggers
+                            assert connection.scalar(text("SELECT to_regprocedure('public.guard_audit_event_payload()')")) is None
                             rehearsal.rollback()
                 if starting_schema == '0142':
                     nullable = text("SELECT is_nullable FROM information_schema.columns "
