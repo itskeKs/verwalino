@@ -98,6 +98,9 @@ before the first start; DNS and public TCP ports 80/443 must be ready for Caddy.
 Back up with `bash scripts/self-host.sh backup [--out DIR]` and recover with `stop`, then
 `restore FILE [--yes]`; keep `.env.selfhost` separately
 ([backup and restore](DEPLOY.md#portable-backup-and-restore)).
+Use `bash scripts/self-host.sh update [--image REGISTRY/IMAGE@sha256:DIGEST] [--yes]`
+for a reviewed upgrade with a retained backup and recovery on failure
+([update and recovery](DEPLOY.md#portable-update-and-recovery)).
 If setup or startup fails, run `bash scripts/self-host.sh doctor` first; it prints German next steps and
 exits 1 on blockers ([diagnostics](DEPLOY.md#portable-troubleshooting-start-with-doctor)).
 
