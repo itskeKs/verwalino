@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 /* T26: UI-only sale on 2026-06-30 and actual WEG annual allocation.
- * Referenzsoftware RF02/RF04 (ownership), RF09/RF10 (receipt), RF14–RF16
  * (actual costs/completeness). RF does not establish an exercised sale workflow.
  * Root starts scripts/dev-local.sh separately: UI 13000, API 18000, test DB
  * infra-postgres-1:55432 ONLY. No servers/DBs started by this script.

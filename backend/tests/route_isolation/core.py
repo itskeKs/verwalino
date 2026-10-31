@@ -17,6 +17,10 @@ from tests.test_meters_api import new_meter
 from tests.test_rent_changes import rent_db, rent_world  # noqa: F401
 
 EXEMPT = {
+    "GET /api/meta": "organization-free public deployment mode and version only; covered by test_deployment_policy.py",
+    **{f"{method} /api/signup{suffix}": "organization-free hosted signup; pending identity and atomic new-tenant creation covered by self_service_signup.feature and test_signup.py"
+       for suffix in ("", "/confirm", "/resend")
+       for method in ("POST", "GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT")},
     "POST /api/admin/diagnostics": "binary download: no client-supplied IDs; decoded bundle, current-org counts, process log isolation and roles covered in test_admin_diagnostics.py and organization_isolation.feature",
     "GET /api/setup": "organization-free boolean only; fresh/closed states covered by first_run_setup.feature and test_setup.py",
     "POST /api/setup": "exists only before any organization; token-gated creation covered by first_run_setup.feature and test_setup.py",
@@ -171,6 +175,12 @@ PROBES: dict[str, Probe] = {
     "DELETE /api/leases/{lease_id}": Probe(row("lease_agreement", lease_id="id")),
     "GET /api/leases": Probe(row("unit", unit_id="id"), status=200, because=EMPTY_FILTER),
     "GET /api/leases/{lease_id}/rent-changes": Probe(row("lease_agreement", lease_id="id")),
+    "GET /api/leases/{lease_id}/documents": Probe(row("lease_agreement", lease_id="id")),
+    "POST /api/leases/{lease_id}/contract": Probe(row("lease_agreement", lease_id="id"), body={
+        'request_id': str(uuid.uuid4()), 'as_of': '2026-01-01', 'handover_date': '2026-01-02', 'agreements': ''}),
+    "POST /api/leases/{lease_id}/handover": Probe(row("lease_agreement", lease_id="id"), body={
+        'request_id': str(uuid.uuid4()), 'date': '2026-01-02', 'type': 'Einzug', 'parties': 'Synthetic parties',
+        'signatures': 'Synthetic names', 'readings': [], 'keys': [], 'notes': ''}),
     "PATCH /api/leases/{lease_id}": Probe(row("lease_agreement", lease_id="id")),
     "POST /api/leases": Probe(UNIT_AND_TENANT, body={
         "unit_id": "{unit_id}", "tenant_profile_id": "{tenant_profile_id}", "valid_from": "2026-01-01",

@@ -12,7 +12,9 @@ import { AuthProvider } from "./auth/AuthContext";
 import { useAuth } from "./auth/useAuth";
 import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
+import { SignupPage, SignupConfirmPage } from "./pages/SignupPage";
 import { SetupPage } from "./pages/SetupPage";
+import { useDeploymentMode } from "./auth/useDeploymentMode";
 import { useSetupStatus } from "./auth/useSetupStatus";
 import { TasksPage } from "./pages/TasksPage";
 import { LettersPage } from "./pages/LettersPage";
@@ -78,6 +80,20 @@ function PermissionRedirect({ to, parameter }: { to: string; parameter: "scopeId
   return <Navigate to={`${to}/${encodeURIComponent(params[parameter] ?? "")}`} replace />;
 }
 
+function PublicAuthRoutes() {
+  const deployment = useDeploymentMode();
+  const location = useLocation();
+
+  if (deployment.mode === null && !deployment.error) return <main className="p-6" role="status">Lade...</main>;
+
+  if (location.pathname === "/signup" || location.pathname === "/signup/confirm") {
+    if (deployment.mode !== "hosted") return <Navigate to="/login" replace />;
+    return location.pathname === "/signup/confirm" ? <SignupConfirmPage /> : <SignupPage />;
+  }
+
+  return <LoginPage signupEnabled={deployment.mode === "hosted"} />;
+}
+
 export function AppRoutes() {
   const { loading, session } = useAuth();
   const setup = useSetupStatus();
@@ -100,8 +116,8 @@ export function AppRoutes() {
 
   if (location.pathname === "/setup") return <Navigate to="/login" replace />;
 
-  if (!session) {
-    return <LoginPage />;
+  if (!session || location.pathname === "/signup" || location.pathname === "/signup/confirm") {
+    return <PublicAuthRoutes />;
   }
 
   const canWriteDeclarations = session.role === "OWNER_ADMIN" || session.role === "CLERK";

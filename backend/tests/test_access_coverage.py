@@ -156,7 +156,13 @@ async def test_capture_waits_for_live_admin_and_migration_retains_snapshots(migr
                     with db.begin_nested():
                         migration.downgrade()
                 point = db.begin_nested()
+                letters_before = db.execute(text('SELECT to_jsonb(d) FROM letter_document d ORDER BY id')).scalars().all()
+                templates_before = db.execute(text('SELECT to_jsonb(t) FROM letter_template t ORDER BY id')).scalars().all()
                 try:
+                    # Earlier scenarios may have issued immutable originals. This guarded
+                    # synthetic cleanup is confined to the rollback-only rehearsal.
+                    from tests.conftest import clear_disposable_source_context
+                    clear_disposable_source_context(db.connection.cursor())
                     db.execute(text('TRUNCATE access_coverage_review,access_coverage_snapshot CASCADE'))
                     db.execute(text('TRUNCATE source_security_transition,source_security_authorization,property_source_security'))
                     proposal_migration = importlib.import_module('migrations.versions.0084_access_grant_proposals')
@@ -175,6 +181,8 @@ async def test_capture_waits_for_live_admin_and_migration_retains_snapshots(migr
                     assert not db.scalar(text('SELECT property_source_activation_ready(:org)'),ids)
                 finally:
                     point.rollback()
+                assert db.execute(text('SELECT to_jsonb(d) FROM letter_document d ORDER BY id')).scalars().all() == letters_before
+                assert db.execute(text('SELECT to_jsonb(t) FROM letter_template t ORDER BY id')).scalars().all() == templates_before
         finally:
             engine.dispose()
         # A stale authentication result never replaces the current DB role.

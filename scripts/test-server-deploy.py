@@ -98,6 +98,9 @@ if tool == "git":
 
 # docker
 if args[0] == "compose":
+    if any(arg.endswith("/docker-compose.site.yml") for arg in args) and not env.get("VERWALINO_SITE_IMAGE"):
+        out("set VERWALINO_SITE_IMAGE to ghcr.io/itskeks/verwalino-site:<sha>@sha256:<digest>\n")
+        sys.exit(17)
     if "migrate" in args and env.get("FAKE_PAUSE_MIGRATE"):
         state = env["FAKE_STATE"]
         open(state + "/migrating", "w").close()
@@ -468,7 +471,18 @@ class DeployTests(ServerCase):
         restored = [a for a in compose if str(ROOT / "infra/docker-compose.site.yml") in a]
         self.assertEqual(len(restored), 1)
         self.assertEqual(restored[0][-4:], ["up", "-d", "--no-deps", "caddy"])
+        restored_call = next(c for c in self.calls("docker") if c["args"] == restored[0])
+        self.assertEqual(restored_call["site_image"], f"{SITE_REPO}:{PREVIOUS_SITE_SHA}@sha256:" + "c" * 64)
         self.assertLess(compose.index(next(a for a in compose if "migrate" in a)), compose.index(restored[0]))
+
+    def test_enabled_extension_without_a_site_image_refuses_app_release_before_changes(self):
+        (self.srv / "config/Caddyfile.hosted").write_text("import /etc/caddy/Caddyfile.site\n")
+        result = self.deploy(FAKE_SITE_ENABLED="1", FAKE_PREVIOUS_SITE="")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("cannot recover the existing site image", result.stdout)
+        self.assertFalse(any(c["args"][0] in ("pull", "compose") for c in self.calls("docker")))
+        self.assertFalse(any("checkout" in c["args"] for c in self.calls("git")))
+        self.assert_untouched()
 
     def disconnected_deploy(self, *, hangup=False, **env):
         state = self.base / "state"
@@ -836,7 +850,7 @@ class WebsiteWorkflowTests(unittest.TestCase):
         self.assertEqual([s["run"] for s in jobs["build"]["steps"] if "run" in s],
                          ["npm ci", "npm run check:i18n", "npm run lint", "npm run build", "npm run check:links"])
 
-    def test_images_have_only_sha_and_main_tags_attestations_and_keyless_signing(self):
+    def test_images_have_only_sha_tags_attestations_and_keyless_signing(self):
         job = self.doc["jobs"]["build-push"]
         self.assertEqual(job["permissions"], {"contents": "read", "packages": "write", "id-token": "write"})
         steps = job["steps"]
@@ -844,12 +858,12 @@ class WebsiteWorkflowTests(unittest.TestCase):
         self.assertEqual(build["context"], "website")
         self.assertEqual(build["platforms"], "linux/amd64,linux/arm64")
         self.assertTrue(build["push"])
-        self.assertEqual(build["tags"].splitlines(), ["${{ env.IMAGE }}:${{ github.sha }}", "${{ env.IMAGE }}:main"])
+        self.assertEqual(build["tags"].splitlines(), ["${{ env.IMAGE }}:${{ github.sha }}"])
         self.assertEqual(build["provenance"], "mode=max")
         self.assertTrue(build["sbom"])
         self.assertIn('cosign sign --yes "$IMAGE@$DIGEST"', self.text)
 
-    def test_deploy_uses_existing_secrets_forced_command_and_shared_lock(self):
+    def test_deploy_uses_existing_secrets_forced_command_and_own_concurrency_group(self):
         job = self.doc["jobs"]["deploy"]
         self.assertEqual(self.doc["permissions"], {"contents": "read"})
         self.assertEqual(job["concurrency"], {"group": "deploy-hosted-site", "cancel-in-progress": False})
