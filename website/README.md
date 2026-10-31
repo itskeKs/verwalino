@@ -125,10 +125,12 @@ is driven by `src/content/drafts.ts` and translated in the dictionaries.
 
 Before publication of the hosted service, the operator must supply the hosting provider and
 location, all sub-processors (including email and backup), retention and erasure periods,
-technical and organisational measures, the contact for data-protection requests, a decision about
-a data-protection officer, and legal review. No provider, retention period or availability promise
-is invented here. The current browser setup exists in the checkout; its public release acceptance
-is still pending, as shown in the self-hosting release list.
+technical and organisational measures, a decision about a data-protection officer, and legal
+review, including the configured contact for data-protection requests. The draft pages use
+`datenschutz@verwalino.de`; the public contact in the legal notice is `hallo@verwalino.de`.
+No provider, retention period or availability promise is invented here. The current browser setup
+exists in the checkout; its public release acceptance is still pending, as shown in the self-hosting
+release list.
 
 The repository `itskeKs/verwalino` is public on GitHub under AGPL-3.0. The landing page,
 self-hosting page and footer link to it using the shared URL in `src/content/repository.ts`.
