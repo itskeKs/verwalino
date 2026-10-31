@@ -21,13 +21,18 @@ async def test_reset_definer_has_fixed_metadata_and_only_runtime_execute(app_rw_
 
 
 def test_reset_migration_roundtrip_is_exact_and_refuses_retained_state(run_migrations):
+    from unittest.mock import patch
     from alembic.operations import Operations
     from alembic.migration import MigrationContext
     from alembic.script import ScriptDirectory
     from sqlalchemy import create_engine
     from tests.conftest import MIGRATOR_SYNC_URL
     from tests.test_session_review_access import _chain_snapshot
-    migration = ScriptDirectory('migrations').get_revision('0145').module  # accepted source
+    scripts = ScriptDirectory('migrations')
+    migration = scripts.get_revision('0145').module
+    with patch('alembic.op.execute') as execute:
+        scripts.get_revision('0027').module.upgrade()
+    previous_lookup_body = execute.call_args_list[0].args[0].split('AS $$')[1].split('$$;')[0]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.connect() as connection, connection.begin() as transaction:
@@ -35,6 +40,7 @@ def test_reset_migration_roundtrip_is_exact_and_refuses_retained_state(run_migra
             with Operations.context(MigrationContext.configure(connection)):
                 migration.downgrade()
                 assert connection.scalar(text("SELECT to_regclass('public.password_reset_request')")) is None
+                assert connection.scalar(text("SELECT prosrc FROM pg_proc WHERE oid='public.app_auth_lookup(text)'::regprocedure")) == previous_lookup_body
                 migration.upgrade()
                 assert _chain_snapshot(connection) == before
                 connection.execute(text("INSERT INTO organization(name) VALUES ('Reset roundtrip') RETURNING id"))
@@ -374,6 +380,83 @@ async def test_issuer_requires_exactly_one_active_normalized_identity(app_rw_ses
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('other', [{'is_active': False}, {'membership': False}])
+async def test_login_and_reset_choose_the_same_addressable_account(client_unauth, signup_mail, other):
+    from tests.test_auth_hardening import temporary_auth_rows
+    email = 'shared-reset-address@example.test'
+    with temporary_auth_rows([{'email': email}, {'email': email, **other}]) as rows:
+        login = await client_unauth.post('/api/auth/login', json={'email': email, 'password': 'testpass1234'})
+        assert login.status_code == 200, login.text
+        assert login.json()['user_id'] == str(rows[0]['user_id'])
+        reply = await client_unauth.post('/api/auth/password-reset', json={'email': '  ' + email.upper() + '  '})
+        assert (reply.status_code, reply.json()) == (202, MESSAGE)
+        token = reset_token(signup_mail)
+        async with reset_store() as session:
+            assert (await session.execute(text('''SELECT user_id FROM password_reset_request
+                WHERE user_id IN (:first,:second)'''),
+                {'first': rows[0]['user_id'], 'second': rows[1]['user_id']})).scalars().all() == [rows[0]['user_id']]
+        assert (await client_unauth.post('/api/auth/password-reset/confirm', json={'token': token, 'password': NEW_PASSWORD})).status_code == 204
+        login = await client_unauth.post('/api/auth/login', json={'email': email, 'password': NEW_PASSWORD})
+        assert login.status_code == 200, login.text
+        assert login.json()['user_id'] == str(rows[0]['user_id'])
+        async with reset_store() as session:
+            assert await session.scalar(text('SELECT session_version FROM "user" WHERE id=:id'), {'id': rows[1]['user_id']}) == 0
+
+
+@pytest.mark.asyncio
+async def test_memberless_account_gets_generic_receipt_without_mail_or_reset_row(client_unauth, signup_mail):
+    from tests.test_auth_hardening import temporary_auth_rows
+    email = 'memberless-reset@example.test'
+    with temporary_auth_rows([{'email': email, 'membership': False}]) as rows:
+        reply = await client_unauth.post('/api/auth/password-reset', json={'email': email})
+        assert (reply.status_code, reply.json()) == (202, MESSAGE)
+        assert not signup_mail.messages
+        async with reset_store() as session:
+            assert await session.scalar(text('SELECT count(*) FROM password_reset_request WHERE user_id=:id'), {'id': rows[0]['user_id']}) == 0
+        assert (await client_unauth.post('/api/auth/login', json={'email': email, 'password': 'testpass1234'})).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_confirmation_refuses_an_account_that_login_now_finds_ambiguous(password_identity, client_unauth, signup_mail):
+    from tests.test_auth_hardening import temporary_auth_rows
+    _, email = password_identity
+    await client_unauth.post('/api/auth/password-reset', json={'email': email})
+    token = reset_token(signup_mail)
+    with temporary_auth_rows([{'email': email}]):
+        assert (await client_unauth.post('/api/auth/login', json={'email': email, 'password': 'testpass1234'})).status_code == 401
+        assert (await client_unauth.post('/api/auth/password-reset/confirm', json={'token': token, 'password': NEW_PASSWORD})).status_code == 403
+    assert (await client_unauth.post('/api/auth/password-reset/confirm', json={'token': token, 'password': NEW_PASSWORD})).status_code == 204
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('sqlstate', ['40001', '40P01'])
+async def test_unexpected_database_failure_returns_500_and_keeps_token_usable(password_identity, client_unauth, signup_mail, sqlstate):
+    from httpx import AsyncClient, ASGITransport
+    from app.main import app
+    _, email = password_identity
+    await client_unauth.post('/api/auth/password-reset', json={'email': email})
+    token = reset_token(signup_mail)
+    async with reset_store() as session:
+        await session.execute(text(f'''CREATE FUNCTION public.test_reset_transaction_failure() RETURNS trigger
+            LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'simulated transaction failure' USING ERRCODE='{sqlstate}'; END $$'''))
+        await session.execute(text('''CREATE TRIGGER test_reset_transaction_failure BEFORE UPDATE OF password_hash ON public."user"
+            FOR EACH ROW EXECUTE FUNCTION public.test_reset_transaction_failure()'''))
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app, raise_app_exceptions=False), base_url='http://test') as client:
+            response = await client.post('/api/auth/password-reset/confirm', json={'token': token, 'password': NEW_PASSWORD})
+        assert response.status_code == 500, response.text
+        async with reset_store() as session:
+            assert await session.scalar(text('''SELECT used_at IS NULL FROM password_reset_request
+                WHERE token_hash=sha256(convert_to(:token,'UTF8'))'''), {'token': token})
+        assert len(signup_mail.messages) == 1
+    finally:
+        async with reset_store() as session:
+            await session.execute(text('DROP TRIGGER test_reset_transaction_failure ON public."user"'))
+            await session.execute(text('DROP FUNCTION public.test_reset_transaction_failure()'))
+    assert (await client_unauth.post('/api/auth/password-reset/confirm', json={'token': token, 'password': NEW_PASSWORD})).status_code == 204
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('change', ['self', 'admin', 'deactivate'])
 async def test_account_changes_invalidate_outstanding_links(password_identity, client_unauth, signup_mail, change):
     actor, email = password_identity
@@ -483,13 +566,17 @@ async def test_recipient_cap_cannot_burst_across_a_partial_hour_window(password_
 
 
 @pytest.mark.asyncio
-async def test_reset_cleanup_is_bounded_and_runs_after_the_request_transaction(password_identity, client_unauth, signup_mail, monkeypatch):
+@pytest.mark.parametrize('analyze_empty', [False, True])
+async def test_reset_cleanup_is_bounded_and_runs_after_the_request_transaction(password_identity, client_unauth, signup_mail, monkeypatch, analyze_empty):
     import itertools
     from app.api import password_reset
     from app.core import rate_limit
     from sqlalchemy.ext.asyncio import AsyncSession
     _, email = password_identity
     async with reset_store() as session:
+        if analyze_empty:
+            # Exercise the plan selected after an empty table was analyzed.
+            await session.execute(text('ANALYZE public.password_reset_request'))
         await session.execute(text('''INSERT INTO password_reset_request(user_id,organization_id,token_hash,expires_at,used_at)
             SELECT u.id,u.organization_id,sha256(n::text::bytea),
               CASE WHEN n<=105 THEN clock_timestamp()-interval '8 days' ELSE clock_timestamp()+interval '1 hour' END,
@@ -497,29 +584,31 @@ async def test_reset_cleanup_is_bounded_and_runs_after_the_request_transaction(p
             FROM "user" u CROSS JOIN generate_series(1,110) n WHERE u.email=:email'''), {'email': email})
         await session.execute(text('''INSERT INTO password_reset_request(user_id,organization_id,token_hash,expires_at)
             SELECT id,organization_id,sha256('recent'::bytea),clock_timestamp()-interval '6 days' FROM "user" WHERE email=:email'''), {'email': email})
-    transactions, cleanup_rows = [], []
+    transactions = []
     original = AsyncSession.begin
-    original_execute = AsyncSession.execute
     def track(session):
         assert all(not previous.in_transaction() for previous in transactions)
         transactions.append(session)
         return original(session)
-    async def track_cleanup(session, statement, *args, **kwargs):
-        result = await original_execute(session, statement, *args, **kwargs)
-        if str(statement) == 'SELECT public.cleanup_password_reset_requests()':
-            cleanup_rows.append(result.scalar_one())
-        return result
     monkeypatch.setattr(rate_limit, 'cleanup_due', lambda: False)
     monkeypatch.setattr(password_reset, '_reset_attempts', itertools.count(99), raising=False)
+    cleanup_counts = []
+    original_execute = AsyncSession.execute
+    async def count_cleanup(session, statement, *args, **kwargs):
+        result = await original_execute(session, statement, *args, **kwargs)
+        if str(statement) == 'SELECT public.cleanup_password_reset_requests()':
+            cleanup_counts.append(result.scalar_one())
+        return result
     with monkeypatch.context() as scoped:
         scoped.setattr(AsyncSession, 'begin', track)
-        scoped.setattr(AsyncSession, 'execute', track_cleanup)
+        scoped.setattr(AsyncSession, 'execute', count_cleanup)
         for _ in range(2):
             assert (await client_unauth.post('/api/auth/password-reset', json={'email': email})).status_code == 202
-    assert cleanup_rows == [100]
+    assert cleanup_counts == [100]
     async with reset_store() as session:
-        assert await session.scalar(text('SELECT count(*) FROM password_reset_request')) == 13
-        assert await session.scalar(text("SELECT count(*) FROM password_reset_request WHERE token_hash=sha256('recent'::bytea)")) == 1
+        assert await session.scalar(text('''SELECT count(*) FROM password_reset_request r
+            JOIN "user" u ON u.id=r.user_id WHERE u.email=:email'''), {'email': email}) == 13
+        assert await session.scalar(text('''SELECT count(*) FROM password_reset_request r JOIN "user" u ON u.id=r.user_id WHERE u.email=:email AND token_hash=sha256('recent'::bytea)'''), {'email': email}) == 1
     assert transactions[-1] is not transactions[-2]
 
 

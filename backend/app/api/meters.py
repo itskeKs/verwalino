@@ -6,8 +6,6 @@ T29: GET/POST/PATCH /api/meters, GET/POST /api/meters/{id}/readings.
 from __future__ import annotations
 
 import uuid
-from datetime import date
-from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -18,8 +16,9 @@ from app.core.live_principal import (
     require_live_principal,
 )
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
-from app.models.meter import Meter, MeterReading
+from app.models.meter import Meter
 from app.repositories.meter_repo import MeterReadingRepository, MeterRepository
+from app.services.meter_service import ReadingCreate, MeterReadingService
 from app.repositories.property_repo import PropertyRepository
 from app.repositories.unit_repo import UnitRepository
 from app.services.financial_scope_service import FinancialScopeService
@@ -122,58 +121,6 @@ class MeterPatch(BaseModel):
             raise ValueError("location exceeds 255 characters")
         if len(v) > 255:
             raise ValueError("location exceeds 255 characters")
-        return v
-
-
-class ReadingCreate(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-
-    reading_date: date
-    value: str  # decimal string
-    period: str | None = None
-
-    @field_validator("value")
-    @classmethod
-    def _check_value(cls, v: str) -> str:
-        try:
-            dec = Decimal(v)
-        except (InvalidOperation, ValueError):
-            raise ValueError("value must be a valid decimal string")
-
-        if not dec.is_finite():
-            raise ValueError("value must be finite")
-        if dec < 0:
-            raise ValueError("value must be non-negative")
-
-        # Max 14 total digits, 4 decimal places => max 10 integer digits
-        sign, digits, exponent = dec.as_tuple()
-        if exponent < 0:
-            decimal_places = abs(exponent)
-        else:
-            decimal_places = 0
-
-        if decimal_places > 4:
-            raise ValueError("value exceeds 4 decimal places")
-
-        if exponent >= 0:
-            int_digits = len(digits) + exponent
-        else:
-            int_digits = len(digits) + exponent  # exponent is negative
-
-        if int_digits > 10:
-            raise ValueError("value exceeds 10 integer digits (max 14 total, 4 decimal)")
-        return v
-
-    @field_validator("reading_date")
-    @classmethod
-    def _check_date(cls, v: date) -> date:
-        return v
-
-    @field_validator("period")
-    @classmethod
-    def _check_period(cls, v: str | None) -> str | None:
-        if v is not None and len(v) > 50:
-            raise ValueError("period exceeds 50 characters")
         return v
 
 
@@ -375,33 +322,4 @@ async def create_reading(
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(meter_writer_db),
 ):
-    # Check meter exists and is accessible
-    meter_repo = MeterRepository(db, auth.organization_id)
-    meter = await meter_repo.get_by_id_for_update(meter_id)
-    if not meter:
-        raise HTTPException(404, "Meter not found")
-
-    await require_property_master(
-        db, auth.organization_id, meter.property_id, capability="prepare"
-    )
-
-    reading_value = Decimal(body.value)  # validated by pydantic
-    reading = MeterReading(
-        organization_id=auth.organization_id,
-        meter_id=meter_id,
-        reading_date=body.reading_date,
-        value=reading_value,
-        period=body.period,
-    )
-
-    reading_repo = MeterReadingRepository(db, auth.organization_id)
-    reading = await reading_repo.create(reading)
-    await db.flush()
-
-    return {
-        "id": str(reading.id),
-        "meter_id": str(reading.meter_id),
-        "reading_date": reading.reading_date.isoformat(),
-        "value": f'{reading.value:.4f}',
-        "period": reading.period,
-    }
+    return await MeterReadingService(db, auth).record(meter_id, body)

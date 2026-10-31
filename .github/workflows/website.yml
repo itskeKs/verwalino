@@ -13,10 +13,13 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
+
+env:
+  IMAGE: ghcr.io/itskeks/verwalino-site
 
 jobs:
   build:
@@ -38,3 +41,96 @@ jobs:
       - run: npm run lint
       - run: npm run build
       - run: npm run check:links
+
+  build-push:
+    name: Publish and sign site (amd64 + arm64)
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push both platforms
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: website
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v4.1.2
+      - name: Sign image digest with GitHub OIDC
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "$IMAGE@$DIGEST"
+      - name: Summarize published image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          SHA: ${{ github.sha }}
+        run: |
+          {
+            printf '### Published site %s\n\n' "$SHA"
+            printf '`%s@%s`\n\n' "$IMAGE" "$DIGEST"
+            printf 'amd64 + arm64; BuildKit provenance (mode=max), SBOMs, cosign keyless signature.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy site to the hosted server
+    needs: build-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Own group: GitHub keeps one pending entry per group, so sharing the app
+    # release group would let a site push cancel a queued release (or vice
+    # versa). The server-side lock immediately refuses a concurrent deploy;
+    # the refused deploy must be re-run after the active deploy finishes.
+    concurrency:
+      group: deploy-hosted-site
+      cancel-in-progress: false
+    steps:
+      - name: Deploy over SSH
+        env:
+          SHA: ${{ github.sha }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$SHA" =~ ^[a-f0-9]{40}$ ]]
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::The secret $name is not set."
+              exit 1
+            fi
+          done
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '### Deploying site %s\n' "$SHA" >> "$GITHUB_STEP_SUMMARY"
+          ssh -T -i "$HOME/.ssh/deploy_key" -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o ConnectTimeout=20 -o ServerAliveInterval=30 \
+            "$DEPLOY_USER@$DEPLOY_HOST" "site $SHA"
+      - name: Remove the key
+        if: always()
+        run: rm -f "$HOME/.ssh/deploy_key" "$HOME/.ssh/known_hosts"

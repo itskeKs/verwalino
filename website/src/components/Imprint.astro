@@ -15,7 +15,7 @@ const text = t(locale);
   </section>
   <section aria-labelledby="contact">
     <h2 id="contact">{text('imprint.contact')}</h2>
-    <p>{text('imprint.email')}: <a class="text-link" href={`mailto:${operator.email}`}>{operator.email}</a><br />{text('imprint.phone')}: <a class="text-link" href={`tel:${operator.phone.replaceAll(' ', '')}`}>{operator.phone}</a></p>
+    <p>{text('imprint.email')}: <a class="text-link" href={`mailto:${operator.email}`}>{operator.email}</a></p>
   </section>
   <section aria-labelledby="register"><h2 id="register">{text('imprint.register')}</h2><p>{text('imprint.court')}<br />{operator.register}</p></section>
   <section aria-labelledby="vat"><h2 id="vat">{text('imprint.vat')}</h2><p>{text('imprint.vat.label')}: {operator.vat}</p></section>

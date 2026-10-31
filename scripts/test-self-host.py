@@ -156,7 +156,8 @@ if "psql" in sys.argv:
         if name in databases:
             print("1")
     elif statement == "SELECT version_num FROM public.alembic_version":
-        print("0141")
+        from app.deployment import TARGET
+        print(TARGET)
     elif statement == "SELECT version_num FROM alembic_version":
         print(os.environ.get("FAKE_RESTORED_SCHEMA" if "hausverwaltung_restore" in sys.argv else "FAKE_SCHEMA", "0139"))
     elif statement == "SELECT count(*) FROM public.organization":
@@ -1310,7 +1311,7 @@ elif name == "openssl":
                 self.assertNotIn(config[key], content)
         self.assertIn("installer-failure-123", members["errors.log"])
         self.assertIn("RuntimeError", members["errors.log"])
-        self.assertEqual(json.loads(members["database.json"])["migration_head"], "0141")
+        self.assertEqual(json.loads(members["database.json"])["migration_head"], RELEASE_TARGET)
         args = [call["args"] for call in self.calls()]
         self.assertEqual(len(args), 4)
         self.assertEqual(args[0][-4:], ["ps", "--all", "--format", "json"])
@@ -1318,7 +1319,7 @@ elif name == "openssl":
         build = next(call for call in args if "app.diagnostics" in call)
         schema = next(call for call in args if "psql" in call)
         self.assertEqual(schema[-8:], ["-U", "app_migrator", "-d", "hausverwaltung", "--set", "ON_ERROR_STOP=1", "-Atc", "SELECT version_num FROM public.alembic_version"])
-        self.assertEqual(build[build.index("--schema-head") + 1], "0141")
+        self.assertEqual(build[build.index("--schema-head") + 1], RELEASE_TARGET)
         start = build.index("run")
         self.assertEqual(build[start:start + 10], ["run", "--rm", "--no-deps", "-T", "--entrypoint", "python", "app", "-m", "app.diagnostics", "--containers-json"])
         self.assert_isolated(args)
@@ -1585,6 +1586,44 @@ class StackContractTests(unittest.TestCase):
 
     def test_nested_config_secrets_are_excluded_from_image_context(self):
         self.assertIn("**/.env.*", (ROOT / ".dockerignore").read_text().splitlines())
+
+
+class SiteExtensionTests(unittest.TestCase):
+    def setUp(self):
+        self.base = yaml.safe_load((ROOT / "infra/docker-compose.yml").read_text())
+        self.extension = yaml.safe_load((ROOT / "infra/docker-compose.site.yml").read_text())
+
+    def test_site_has_no_host_or_application_authority(self):
+        site = self.extension["services"]["site"]
+        self.assertTrue(site["read_only"])
+        self.assertEqual(site["user"], "10001:10001")
+        self.assertEqual(site["cap_drop"], ["ALL"])
+        self.assertEqual(site["security_opt"], ["no-new-privileges:true"])
+        self.assertEqual(site["networks"], ["site"])
+        for key in ("ports", "volumes", "secrets", "environment", "env_file", "privileged", "build"):
+            self.assertNotIn(key, site)
+        self.assertTrue(self.extension["networks"]["site"]["internal"])
+        self.assertEqual(set(self.extension["services"]), {"site", "caddy"})
+        self.assertNotIn("site", self.base["services"])
+        self.assertEqual(self.base["services"]["caddy"]["networks"], ["proxy"])
+        self.assertEqual(self.extension["services"]["caddy"]["networks"], ["proxy", "site"])
+
+    def test_caddy_import_is_opt_in_and_headers_protect_both_site_hosts(self):
+        content = (ROOT / "infra/Caddyfile.site").read_text()
+        self.assertIn("verwalino.de {", content)
+        self.assertIn("www.verwalino.de {", content)
+        self.assertIn("reverse_proxy site:8080", content)
+        self.assertIn("redir https://verwalino.de{uri} 308", content)
+        self.assertIn("script-src 'self'", content)
+        self.assertNotIn("script-src 'self' 'unsafe-inline'", content)
+        self.assertIn("font-src 'self'", content)
+        self.assertEqual(content.count("import site_headers"), 2)
+        for header in ("Strict-Transport-Security", "X-Content-Type-Options", "X-Frame-Options",
+                       "Referrer-Policy", "Content-Security-Policy", "-Server"):
+            self.assertIn(header, content)
+        self.assertNotIn("import", (ROOT / "infra/Caddyfile").read_text())
+        mounts = self.extension["services"]["caddy"]["volumes"]
+        self.assertTrue(all(mount["read_only"] and not mount["bind"]["create_host_path"] for mount in mounts))
 
 
 class ReleaseBundleTests(unittest.TestCase):

@@ -607,7 +607,7 @@ the token inside PostgreSQL and returns it once for mail submission. pgcrypto is
 absent; two `gen_random_uuid()` values supply **244 random bits** (122 each),
 encoded as 64 hexadecimal characters. Callers cannot choose a token digest.
 `resend_signup(email) RETURNS text` enforces the shared ten-minute send cooldown
-and rotates the token with a fresh 24-hour expiry. A live pending request keeps
+and rotates the token without extending the original 24-hour request expiry. A live pending request keeps
 its first password hash and names even when a third party resubmits it; only an
 expired request can be replaced. Signup always creates a separate organization,
 including when its display name matches an existing tenant.
@@ -684,7 +684,10 @@ The global `password_reset_request` table holds user/organization ids, a unique
 precedes tenant selection. Runtime roles (including the inheriting worker) have
 no direct SELECT/DML privileges; a composite foreign key binds each request to
 the user's organization. `issue_password_reset(text) RETURNS text` finds exactly
-one active user by normalized email and generates the plaintext token inside
+one addressable account through `app_auth_lookup`: an active user with a matching
+organization/user membership and a login-supported role (`OWNER_ADMIN`, `CLERK`,
+`READ_ONLY`), unique by normalized email. Login, issuance and confirmation all use
+this lookup. Issuance generates the plaintext token inside
 PostgreSQL: 256 bits from pgcrypto's `gen_random_bytes(32)` when installed,
 otherwise two concatenated UUIDs with 244 random bits (selected at migration time). It consumes earlier pending
 links and stores only the digest. The plaintext is returned for mail construction.
@@ -700,7 +703,9 @@ advances `session_version`; an associated definer AFTER trigger consumes pending
 links on every password change or deactivation, including self-service and admin
 changes. The original T57 invoker function remains unchanged. Confirmation restores
 the empty tenant setting, returns the confirmed email solely for the notification,
-and converts failures to one generic SQL exception.
+and raises a generic SQL refusal only for expected invalid-token/account conditions.
+Unexpected database failures propagate as 500 responses, preserving the token for retry.
+Downgrade restores the preceding login lookup body verbatim.
 Downgrade refuses any retained reset state; an empty downgrade removes all new
 objects exactly (operator procedure in [DEPLOY.md](../DEPLOY.md)).
 
@@ -725,6 +730,8 @@ notification after commit; mail failure cannot roll back the password.
 Every 100th accepted reset request per process schedules a separate background
 transaction. A fixed-path, runtime-only cleanup definer deletes at most 100 rows
 with expiry or use time older than seven days using `SKIP LOCKED`.
+Revision 0145 materializes the selected batch once before deleting it: a nested-loop
+semi-join can rescan an `IN` subquery and otherwise exceed its inner limit.
 The cadence is best effort; retained security state remains in PostgreSQL.
 
 The recovery page reads `/passwort-zuruecksetzen?token=…`, saves the token in
@@ -997,6 +1004,16 @@ original sources and content-addressed storage reference are preserved;
 download checks current original-source/contact rights and the hash, without recalculation.
 Changing a template does not change any letters. Populated tables prevent lossy
 downgrade; dispatch is not part of circular letter issuance.
+
+Issue #37 reuses these tables for lease contracts and handover protocols, without a migration.
+`letter_document.body` stores a JSON text snapshot of inputs and rendered content, including
+original landlord source IDs for contracts and meter/reading IDs and exact values for handovers.
+Landlord export/processing access is rechecked on original retrieval. The existing checksum and
+immutable storage path preserve the issued PDF. Lease document routes under `/api/leases/{id}`
+authorize the specific lease independently of its active dates or finalized statements.
+The shared meter reading service writes protocol readings into `meter_reading`, using `period`
+for their source note, and refuses a value below the preceding reading day (including same-day
+values). Readings and the letter original commit together or roll back together.
 
 T49 adds the read-only `/api/reports/datev/{sources|preview}` path and
 `POST /api/reports/datev.csv`. `ReportService.property_period` shares the existing
