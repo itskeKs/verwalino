@@ -141,6 +141,9 @@ IMPORT_APPLY = {**import_body(), "expected_digest": "", "request_id": str(uuid.u
 PROBES: dict[str, Probe] = {
     "POST /api/organizations/export": Probe(),
     "POST /api/organizations/import": Probe(),
+    "POST /api/organizations/deletion": Probe(),
+    "POST /api/organizations/deletion/confirm": Probe(body={"organization_name": "Wrong organization"}),
+    "POST /api/organizations/deletion/cancel": Probe(),
     "GET /api/organizations/export/{export_id}": Probe(
         "SELECT id AS export_id FROM audit_event WHERE organization_id IS DISTINCT FROM :b "
         "AND action='organization.export.created' ORDER BY id LIMIT 1"),

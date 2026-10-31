@@ -157,9 +157,9 @@ async def test_import_keeps_collision_free_entity_ids(rent_world, import_target,
 
 
 @pytest.mark.parametrize('actor', ['reader', 'clerk'])
-async def test_import_requires_owner_administrator(rent_world, actor, export_store):
+async def test_import_and_deletion_require_owner_administrator(rent_world, actor, export_store):
     async with api_client(rent_world, actor) as api:
-        for path in ('/api/organizations/import',):
+        for path in ('/api/organizations/import', '/api/organizations/deletion', '/api/organizations/deletion/cancel'):
             assert (await api.post(path, files={'file': ('invalid.tar.gz', b'invalid')})).status_code == 403
 
 

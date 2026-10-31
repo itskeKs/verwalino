@@ -107,6 +107,8 @@ async def get_organization_quota(
 class OrgOut(BaseModel):
     id: str
     name: str
+    import_available: bool = False
+    deletion: dict | None = None
 
     model_config = {"from_attributes": True}
 
@@ -121,7 +123,10 @@ async def get_my_org(
     org = await repo.get_by_id(auth.organization_id)
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
-    return OrgOut(id=str(org.id), name=org.name)
+    from app.services.organization_deletion_service import deletion_status
+    from app.services.organization_import_service import admission
+    empty = (await admission(db, auth.organization_id))["empty"] if auth.role == "OWNER_ADMIN" else False
+    return OrgOut(id=str(org.id), name=org.name, import_available=empty, deletion=await deletion_status(db, auth.organization_id))
 
 
 async def get_import_db(auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db, scope="function")):
@@ -134,3 +139,28 @@ async def import_archive(file: UploadFile = File(...), auth: AuthContext = Depen
                          db: AsyncSession = Depends(get_import_db)):
     from app.services.organization_import_service import import_organization
     return await import_organization(db, auth, file.file)
+
+
+class DeletionConfirmation(BaseModel):
+    organization_name: str
+
+
+@router.post("/deletion")
+async def request_organization_deletion(auth: AuthContext = Depends(require_admin_dep),
+                                      db: AsyncSession = Depends(get_import_db)):
+    from app.services.organization_deletion_service import request_deletion
+    return await request_deletion(db, auth)
+
+
+@router.post("/deletion/confirm")
+async def confirm_organization_deletion(body: DeletionConfirmation, auth: AuthContext = Depends(require_admin_dep),
+                                      db: AsyncSession = Depends(get_import_db)):
+    from app.services.organization_deletion_service import confirm_deletion
+    return await confirm_deletion(db, auth, body.organization_name)
+
+
+@router.post("/deletion/cancel")
+async def cancel_organization_deletion(auth: AuthContext = Depends(require_admin_dep),
+                                     db: AsyncSession = Depends(get_import_db)):
+    from app.services.organization_deletion_service import cancel_deletion
+    return await cancel_deletion(db, auth)

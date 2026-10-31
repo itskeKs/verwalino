@@ -140,3 +140,86 @@ def missing_dependency_refusal(world):
         async with api_client(world.data['import_target']) as target:
             return await target.get('/api/properties')
     assert world.run(properties()).json() == []
+
+
+@when('its administrator requests the retention preview')
+def deletion_preview(world):
+    answer = world.act('POST', '/api/organizations/deletion')
+    assert answer.status_code == 200, world.describe_response()
+    world.data['deletion_preview'] = answer.json()
+
+
+@then('the preview offers a fresh export and explains operator-only retention')
+def deletion_notice(world):
+    preview = world.data['deletion_preview']
+    assert preview['export_url'] == '/api/organizations/export'
+    assert 'Nach der Löschung ist keine Anmeldung mehr möglich' in preview['notice']
+    assert 'beim Betreiber' in preview['notice']
+    assert preview['retention']['retained']['attachment']['count'] == 1
+
+
+@when('the administrator confirms the exact organization name')
+def confirm_deletion(world):
+    answer = world.act('POST', '/api/organizations/deletion/confirm', json={'organization_name': world.data['deletion_preview']['organization_name']})
+    assert answer.status_code == 200, world.describe_response()
+
+
+@then('the organization is read-only during cooling-off')
+def readonly_deletion(world):
+    answer = world.act('POST', '/api/persons', json={'last_name': 'Blocked'})
+    assert answer.status_code == 409, world.describe_response()
+
+
+@when('the administrator revokes the deletion')
+def revoke_deletion(world):
+    answer = world.act('POST', '/api/organizations/deletion/cancel')
+    assert answer.status_code == 200, world.describe_response()
+
+
+@then('the organization accepts new personal records again')
+def writable_deletion(world):
+    answer = world.act('POST', '/api/persons', json={'last_name': 'Allowed'})
+    assert answer.status_code == 201, world.describe_response()
+
+
+@when('the operator executes deletion after seven days')
+def execute_deletion(world, rent_db):
+    from app.services.organization_deletion_service import run_deletion
+    from datetime import datetime, timedelta, timezone
+    async def execute():
+        async with rent_db.begin():
+            return await run_deletion(rent_db, world.data['export_source']['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
+    assert world.run(execute())
+
+
+@then('the original remains unchanged and the former owner cannot sign in')
+def erased_organization(world, export_store):
+    source = world.data['export_source']
+    assert (answer := world.act('GET', '/api/auth/session')).status_code == 401, answer.text
+    files = list((export_store._root / str(source['org'])).rglob('*.bin'))
+    assert len(files) == 1 and files[0].read_bytes() == world.data['export_original']
+
+
+@when('the destination administrator confirms and revokes deletion')
+def destination_deletion(world):
+    async def lifecycle():
+        async with api_client(world.data['import_target']) as target:
+            preview = await target.post('/api/organizations/deletion')
+            assert preview.status_code == 200, preview.text
+            confirmed = await target.post('/api/organizations/deletion/confirm', json={'organization_name': preview.json()['organization_name']})
+            assert confirmed.status_code == 200, confirmed.text
+            cancelled = await target.post('/api/organizations/deletion/cancel')
+            assert cancelled.status_code == 200, cancelled.text
+    world.run(lifecycle())
+
+
+@then('the source organization still has its original records and session')
+def source_unchanged(world):
+    async def source():
+        async with api_client(world.data['export_source']) as client:
+            assert (await client.get('/api/auth/session')).status_code == 200
+            people = await client.get('/api/persons')
+            assert people.status_code == 200 and len(people.json()) == 2
+            properties = await client.get('/api/properties')
+            assert properties.status_code == 200 and len(properties.json()) == 2
+    world.run(source())
