@@ -280,7 +280,7 @@ def caddy_allowed(argv, cwd):
     if not argv or argv[:2] != ["docker", "run"] or not docker_environment_safe():
         return False
     args, options = argv[2:], {}
-    aliases = {"--network": "network", "--cap-drop": "cap-drop", "--security-opt": "security-opt",
+    aliases = {"--network": "network", "--cap-drop": "cap-drop", "--cap-add": "cap-add", "--security-opt": "security-opt",
                "--mount": "mount", "-v": "volume", "--volume": "volume", "-e": "env", "--env": "env"}
     while args and args[0].startswith("-"):
         option, equal, value = args[0].partition("=")
@@ -299,10 +299,10 @@ def caddy_allowed(argv, cwd):
         if key in options:
             return False
         options[key] = value
-    expected = {"rm", "read-only", "network", "cap-drop", "security-opt", "env"}
+    expected = {"rm", "read-only", "network", "cap-drop", "cap-add", "security-opt", "env"}
     if set(options) not in (expected | {"mount"}, expected | {"volume"}):
         return False
-    if (options["network"] != "none" or options["cap-drop"] != "ALL" or
+    if (options["network"] != "none" or options["cap-drop"] != "ALL" or options["cap-add"] != "NET_BIND_SERVICE" or
             options["security-opt"] not in ("no-new-privileges", "no-new-privileges:true") or
             options["env"] != "VERWALINO_DOMAIN=validation.invalid"):
         return False

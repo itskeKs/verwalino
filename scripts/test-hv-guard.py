@@ -105,7 +105,7 @@ class GuardTests(unittest.TestCase):
 
     def caddy(self, root=None):
         root = root or self.repo
-        return ("docker run --rm --network none --read-only --cap-drop ALL "
+        return ("docker run --rm --network none --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE "
                 "--security-opt no-new-privileges:true --env VERWALINO_DOMAIN=validation.invalid "
                 f"--mount type=bind,src={root}/infra/Caddyfile,dst=/etc/caddy/Caddyfile,readonly "
                 "caddy:2.10.2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile")
@@ -236,7 +236,8 @@ class GuardTests(unittest.TestCase):
 
     def test_caddy_rejects_missing_constraints_mounts_and_commands(self):
         good = self.caddy()
-        for fragment in ("--network none ", "--read-only ", "--cap-drop ALL ", "--security-opt no-new-privileges:true "):
+        for fragment in ("--network none ", "--read-only ", "--cap-drop ALL ", "--cap-add NET_BIND_SERVICE ",
+                         "--security-opt no-new-privileges:true "):
             self.block(good.replace(fragment, ""))
         for extra in ("--privileged", "--cap-add SYS_ADMIN", "-p 18080:80", "-v /:/host:ro",
                       "-v /var/run/docker.sock:/var/run/docker.sock:ro", "--network host",
@@ -244,6 +245,7 @@ class GuardTests(unittest.TestCase):
             with self.subTest(extra=extra):
                 self.block(good.replace("caddy:2.10.2-alpine", extra + " caddy:2.10.2-alpine"))
         for a, b in ((",readonly", ""), ("infra/Caddyfile", "docker-compose.prod.yml"),
+                     ("--cap-add NET_BIND_SERVICE", "--cap-add SYS_ADMIN"),
                      ("caddy validate", "sh -c id"), ("caddy:2.10.2-alpine", "arbitrary:latest"),
                      ("--network none", "--network none --network host")):
             self.block(good.replace(a, b))

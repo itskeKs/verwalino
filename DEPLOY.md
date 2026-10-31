@@ -1177,12 +1177,13 @@ EOF2
 rm ci_key.pub
 ```
 
-The workflows send only a command string over SSH: `v1.2.3` for the app or `site <sha>` for the website.
-The user's shell expands `$SSH_ORIGINAL_COMMAND` into arguments of the script, which accepts exactly one release
-tag (`vX.Y.Z`, no suffix or leading zeroes), or exactly `site` and one 40-character lowercase hexadecimal commit
-SHA. Every other shape exits 2 before logging, locking or Docker work. `restrict` switches off forwarding, PTYs and
-agent. The user has sudo and Docker, so this key is as sensitive as the admin key: the forced command and the tag
-grammar check are its only limits. Fill `DEPLOY_KNOWN_HOSTS` with the output of `ssh-keyscan -t ed25519 "$DEPLOY_HOST"`,
+The workflows send only a command string over SSH: `v1.2.3` for production, `site <sha>` for the website,
+or `staging <sha|vX.Y.Z>` for staging. The user's shell expands `$SSH_ORIGINAL_COMMAND` into arguments
+of the script. It accepts exactly one stable release tag (`vX.Y.Z`, no suffix or leading zeroes),
+`site <40-lowercase-hex-sha>`, or `staging <40-lowercase-hex-sha|vX.Y.Z>`. Every other shape exits 2
+before logging, locking or Docker work. `restrict` switches off forwarding, PTYs and agent. The user has
+sudo and Docker, so this key is as sensitive as the admin key: the forced command and strict grammar
+are its only limits. Fill `DEPLOY_KNOWN_HOSTS` with the output of `ssh-keyscan -t ed25519 "$DEPLOY_HOST"`,
 where `DEPLOY_HOST` is exactly the host name or IP stored in that secret, after comparing the key with
 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server. `StrictHostKeyChecking=yes` matches that name;
 an IP-only entry does not match a host name in `DEPLOY_HOST`.
@@ -1193,8 +1194,15 @@ an IP-only entry does not match a host name in `DEPLOY_HOST`.
 2. When that run succeeds, [Deploy hosted server](.github/workflows/deploy.yaml) (`workflow_run`) calls
    `ssh chris@host vX.Y.Z`. **Actions → Deploy hosted server → Run workflow** with a `tag` redeploys any
    published tag; on the server, `/srv/verwalino/app/scripts/deploy-server.sh vX.Y.Z` does the same.
-3. [`scripts/deploy-server.sh`](scripts/deploy-server.sh) fetches tags and checks the tag out (it must exist and be
-   on `main`), pulls `ghcr.io/itskeks/verwalino:vX.Y.Z` and resolves its digest, runs
+3. [`scripts/deploy-server.sh`](scripts/deploy-server.sh) first checks that the external network
+   `verwalino-staging_proxy` exists if the operator's `config/Caddyfile.hosted` exists; a missing network
+   exits 2 with its creation command before checkout, backup, pinning or service operations. It then
+   recovers the existing site image reference, refusing before checkout if it cannot. It fetches tags
+   and checks the tag out (it must exist and be on `main`). It validates that wrapper immediately
+   after checkout, before pulling the image, backup, image pinning or the installer. Validation uses
+   read-only mounts/root, no network, `--cap-drop ALL --cap-add NET_BIND_SERVICE` (required by the stock
+   binary's file capability) and `no-new-privileges`. Failure preserves the running Caddy configuration.
+   It then pulls `ghcr.io/itskeks/verwalino:vX.Y.Z`, resolves its digest and runs
    [`scripts/server-backup.sh`](scripts/server-backup.sh) as `pre-vX.Y.Z`, writes the digest to `VERWALINO_IMAGE`
    in the config, runs `scripts/self-host.sh start` (pull by digest, stop the app, migrate, start, wait for
    healthy) and polls `/api/health/ready` for up to 120 s. The run is logged to
@@ -1207,12 +1215,66 @@ an IP-only entry does not match a host name in `DEPLOY_HOST`.
 Secrets of the workflow (repository secrets, names only): `DEPLOY_HOST`, `DEPLOY_USER` (the admin user),
 `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`. The token is read-only (`contents: read`) and the job uses no other secret.
 
+### Staging and hosted canary
+
+The hosted-only [staging and canary runbook](docs/operations/staging-and-canary.md)
+covers first enablement, independent credentials, synthetic fixtures, alerts and rollback.
+The maintainer sets DNS `staging.verwalino.de`, the private `.env.staging` file and repository secrets;
+the first real deployment and alert-delivery checks remain operator work (#25).
+
+Staging is Compose project `verwalino-staging`, using
+[`infra/docker-compose.staging.yml`](infra/docker-compose.staging.yml) alone, its own database/backend network
+and volumes `pgdata_staging`/`documents_staging`. Its app and hosted Caddy share the dedicated external
+`verwalino-staging_proxy` network; production's app remains on `verwalino_proxy`.
+It runs hosted mode and restricts every SMTP submission (including document mail and signup confirmations)
+to the single required `CANARY_EMAIL` via `HV_MAIL_ALLOWLIST`, checked at the shared submission boundary
+before any SMTP connection. Empty/malformed allow-lists block all submissions; refusals log no address.
+[`infra/Caddyfile.staging`](infra/Caddyfile.staging) routes `staging.verwalino.de` to `staging-app:8000`,
+adds `noindex, nofollow` and disallows all crawlers in `/robots.txt`. Enable the
+[`Caddyfile.hosted`](infra/Caddyfile.hosted) wrapper and
+[proxy overlay](infra/docker-compose.hosted-proxy.yml) as described in the runbook so production releases
+preserve staging and website routing together. The wrapper imports production, staging and site;
+production deploys apply both hosted overlays in one Caddy recreation. The generic installer is unchanged.
+The staging import is unconditional: enable website/staging routes only once `staging.verwalino.de`
+resolves to this server. Use a separate SMTP account for staging. Before any Docker call, staging
+refuses with exit 2 if its session secret or any database password reuses a production secret from
+`VERWALINO_CONFIG` (normally `/srv/verwalino/config/.env.selfhost`).
+
+[Build main image](.github/workflows/build-main-image.yaml) runs on relevant main pushes, excluding website-only
+and docs-only changes. It publishes only `:sha-<sha>` with provenance, SBOMs and a keyless cosign signature.
+[Deploy staging](.github/workflows/deploy-staging.yaml) runs after that workflow succeeds for a main push
+in this repository and sends its completed SHA as `staging <sha>` with the existing key.
+[Release image](.github/workflows/release-image.yaml) remains for stable tags and installer bundles only.
+The target verifies main ancestry, exports its own runtime files and validates the hosted wrapper with
+that revision's snippets before image pulls or service operations. It then resolves a registry digest without moving the
+production checkout, migrates and recreates only staging, checks readiness and prints the previous successful
+SHA. To roll back staging, send `staging <previous-sha>` with the same key; an older image must be compatible
+with the migrated schema. There is no automatic schema downgrade or rollback.
+
+[Hosted canary](.github/workflows/canary.yaml) runs every 15 minutes against `https://app.verwalino.de`:
+login → check leftover count → create an unused property → read the fixed synthetic tenant ledger with an explicit scope → delete
+its new property, including on ledger failure. Create its dedicated organization/user once with the admin
+CLI and prepare the fixture described in the runbook. A first failure files a `canary` issue via the existing
+scenario reporter, deduplicated under fingerprint `canary` while an issue is open. Later failing runs comment
+on that issue even if steps/errors change. German e-mail through the pinned mail action runs only after
+successful creation of a new canary issue.
+More than 10 `Canary Prüfung…` properties in its organization refuses the journey and alerts through
+that same path. Manually inspect/delete only unused synthetic leftovers as described in the runbook;
+preserve the fixed ledger fixture and retention rules.
+
+Additional secrets: `CANARY_EMAIL`, `CANARY_PASSWORD`, `ALERT_EMAIL` (`alarm@verwalino.de`), `ALERT_SMTP_URL` (TLS-required SMTP
+connection URL) and `ALERT_SMTP_FROM`. The five-minute job timeout gives a nominal **15 + 5 = 20 minute**
+alert budget; GitHub scheduling delays and SMTP delivery remain external limits, not a hard SLA.
+At 96 runs/day, plan about 2,900 runner minutes/month at the one-minute job billing minimum;
+the public repository is currently free, while private Actions would consume allowance/billable minutes.
+
 ### Website container
 
 The public website is an independent static image, `ghcr.io/itskeks/verwalino-site:<git-sha>`.
-The hosted operator opts in with [infra/docker-compose.site.yml](infra/docker-compose.site.yml) in addition to
-the portable compose file and an operator-owned `config/Caddyfile.hosted` containing the existing app block
-plus `import /etc/caddy/Caddyfile.site`. The default compose file, Caddyfile and installer stay unchanged.
+The hosted operator opts in with [infra/docker-compose.hosted-proxy.yml](infra/docker-compose.hosted-proxy.yml)
+and [infra/docker-compose.site.yml](infra/docker-compose.site.yml) in addition to the portable compose file.
+The operator-owned `config/Caddyfile.hosted` is copied from [the hosted wrapper](infra/Caddyfile.hosted),
+importing the production, staging and site snippets together. The default compose file, Caddyfile and installer stay unchanged.
 The [website hosting runbook](docs/operations/website-hosting.md) gives the exact one-time setup and commands;
 the server needs a reviewed app release containing these deployment files before the first site deployment.
 
@@ -1225,10 +1287,9 @@ all capabilities dropped, no privilege escalation, no credentials or host mounts
 On pushes to `main` affecting `website/` or its workflow, [Website](.github/workflows/website.yml) first
 checks i18n, lint, the build and links; then publishes amd64/arm64 images tagged only with the full SHA,
 attaches BuildKit provenance/SBOMs, signs the index with keyless cosign, and sends only `site <sha>`
-through the existing deploy key. PRs only run checks. Site deploys use their own concurrency group,
-`deploy-hosted-site`, separate from the app's `deploy-hosted-server`, so queued jobs never replace
-each other across the two groups; an active deployment is never cancelled. The shared server lock
-immediately refuses a concurrent deploy, which must be re-run after the active deploy finishes.
+through the existing deploy key. PRs only run checks. Production, staging and site use separate groups
+(`deploy-hosted-server`, `deploy-hosted-staging`, `deploy-hosted-site`), so queued runs cannot replace each other.
+The shared server lock immediately refuses a concurrent deployment; retry after the active run finishes. An active deployment is never cancelled.
 
 `scripts/deploy-server.sh site <sha>` refuses a disabled extension, pulls the SHA tag, requires a matching
 registry SHA-256 RepoDigest, recreates **only** `site` using `tag@digest`, and requires HTTP 200 on `/`

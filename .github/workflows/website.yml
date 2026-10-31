@@ -85,6 +85,8 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
           SHA: ${{ github.sha }}
         run: |
+          # Markdown backticks in the format strings are literal.
+          # shellcheck disable=SC2016
           {
             printf '### Published site %s\n\n' "$SHA"
             printf '`%s@%s`\n\n' "$IMAGE" "$DIGEST"
