@@ -542,10 +542,12 @@ requires SMTP and a valid `HV_PUBLIC_HOST`; confirmation links always use HTTPS
 and never derive their origin from request headers. The public routing hostname
 also configures deployment routing; no second public URL setting is introduced.
 Failed mail submission retains pending state and the generic response. The
-`self_service_signup.feature` journey uses the existing **FakeSMTP** capture double;
-Mailpit is not introduced. It verifies registration → email → confirmation → login
-without a real network mailbox. This is transport capture coverage, not a live
-SMTP delivery test.
+`self_service_signup.feature` journey submits over real SMTP to the digest-pinned
+Mailpit service in the test compose and CI backend job. A shared BDD fixture clears
+the inbox, reads messages over Mailpit's HTTP API, and checks recipient, sender,
+subject and the confirmation link's token before confirming with that emailed token.
+An unavailable Mailpit API fails acceptance; FakeSMTP remains in unit tests.
+See [test setup](../features/README.md#running).
 
 Every 100th signup per worker schedules one separate transaction after the response
 to delete at most 100 requests expired for more than seven days, using

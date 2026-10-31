@@ -4,9 +4,9 @@ Feature: Self service signup
   before the administrator can sign in.
 
   Scenario: A new administrator confirms the email and signs in
-    Given a hosted signup form with captured confirmation mail
+    Given a hosted signup form with a test mailbox
     When the administrator registers a new organization
-    Then a confirmation email is sent
+    Then the test mailbox receives a confirmation email with the correct recipient, sender, subject and token link
     And the unconfirmed administrator cannot sign in
     When the administrator confirms the emailed link with the chosen password
     Then the new organization administrator is signed in
