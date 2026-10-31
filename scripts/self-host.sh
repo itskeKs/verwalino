@@ -15,6 +15,7 @@ RESTORE_DOCUMENTS_STARTED=0
 RESTORE_LIVE_EXISTED=0
 RESTORE_SWAP_FINISHED=0
 UPDATE_DIR=""
+UPDATE_LOG=""
 UPDATE_ACTIVE=0
 UPDATE_PHASE=""
 UPDATE_PREVIOUS_IMAGE=""
@@ -31,7 +32,7 @@ cleanup() {
     if [[ "$status" != 0 && "$UPDATE_ACTIVE" = 1 ]]; then
         UPDATE_ACTIVE=0
         # Recovery must complete before releasing the installation lock.
-        update_rollback
+        update_rollback >> "$UPDATE_LOG" 2>&1
     fi
     if [[ -n "$UPDATE_PHASE" ]]; then
         if [[ "$status" = 129 || "$status" = 130 || "$status" = 143 ]]; then
@@ -50,6 +51,7 @@ cleanup() {
     if [[ "$LOCKED" = 1 ]]; then
         rmdir "$CONFIG.lock" || printf 'Could not release installation lock %s; verify no installer is active before removing it.\n' "$CONFIG.lock" >&2 || true
     fi
+    if [[ -n "$UPDATE_LOG" ]]; then cat "$UPDATE_LOG" >&3 2>/dev/null || true; fi
     return "$status"
 }
 
@@ -74,9 +76,9 @@ restore_cleanup() {
     return "$status"
 }
 trap cleanup EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'trap "" HUP INT TERM; exit 129' HUP
+trap 'trap "" HUP INT TERM; exit 130' INT
+trap 'trap "" HUP INT TERM; exit 143' TERM
 
 config_filename_valid() { [[ "${CONFIG##*/}" =~ ^\.env\.[a-zA-Z0-9._-]+$ ]]; }
 
@@ -109,6 +111,8 @@ No unattended update, migration downgrade or volume deletion is provided.
 Update keeps its backup; rollback discards writes made after that snapshot.
 Update downtime includes backup; app writers stop first. Pause external writers.
 Successful local updates remove temporary update tags and older rollback tags.
+Update logs the switch and recovery in <config-directory>/logs/update-*.log.
+tmux/screen is optional; a closed output pipe does not interrupt recovery.
 Init/start refuse an occupied app port: choose a free --port or stop its listener.
 Backups exclude private config/secrets and certificates; keep config separately.
 Backup output defaults to the private checkout backups/ directory; the checkout root is refused.
@@ -249,6 +253,12 @@ archive_tool() {
         "$@" /backup /data/documents < /dev/null
 }
 
+image_target() {
+    docker run --rm --pull never --network none --read-only --user 10001:10001 \
+        --cap-drop ALL --security-opt no-new-privileges --entrypoint python "$VERWALINO_IMAGE" \
+        -c 'from app.deployment import TARGET; print(TARGET)' < /dev/null 2>/dev/null
+}
+
 doctor_report() {
     case "$1" in
         OK) doctor_ok=$((doctor_ok + 1)) ;;
@@ -369,9 +379,7 @@ doctor_database() {
     elif ! docker image inspect "$VERWALINO_IMAGE" >/dev/null 2>&1; then
         # Diagnostics must not build or pull missing images.
         doctor_report WARN Migration 'Konfiguriertes Image fehlt; nach Backup mit bash scripts/self-host.sh start bereitstellen und doctor wiederholen.'
-    elif ! target=$(docker run --rm --pull never --network none --read-only --user 10001:10001 \
-        --cap-drop ALL --security-opt no-new-privileges --entrypoint python "$VERWALINO_IMAGE" \
-        -c 'from app.deployment import TARGET; print(TARGET)' < /dev/null 2>/dev/null) ||
+    elif ! target=$(image_target) ||
         [[ ! "$target" =~ ^[0-9]{4}$ ]]; then
         doctor_report WARN Migration 'Imageziel nicht lesbar; das konfigurierte Image bereitstellen und doctor wiederholen.'
     elif (( 10#$schema > 10#$target )); then
@@ -774,7 +782,7 @@ restore_data() {
 
 update_doctor() (
     # Doctor owns its temporary directory, but not the parent's config lock.
-    TMP_DIR=''; UPDATE_DIR=''; LOCKED=0
+    TMP_DIR=''; UPDATE_DIR=''; UPDATE_LOG=''; LOCKED=0
     trap cleanup EXIT
     doctor
 )
@@ -870,8 +878,30 @@ update_image_cleanup() {
     done <<< "$tags"
 }
 
+update_apply() {
+    local image="$1" candidate="$2" target="$3" rollback_tag="$4" schema
+    # Docker writes to the log, never a terminal pipe that can disappear.
+    # Every failure or interruption until acceptance restores the pair.
+    UPDATE_ACTIVE=1 UPDATE_PHASE=''
+    if [[ "$image" = verwalino:local ]]; then docker image tag "$candidate" "$image"; fi
+    image_config "$image" "$CONFIG"
+    export VERWALINO_IMAGE="$image"
+    compose run --rm --no-deps -T migrate
+    compose up -d --no-deps --wait --wait-timeout 120 app
+    app_health
+    schema=$(doctor_sql 'SELECT version_num FROM alembic_version')
+    [[ "$schema" = "$target" ]] || fail 'Migrated database does not match the new image release target.'
+    UPDATE_ACTIVE=0
+    if [[ "$VERWALINO_MODE" = https ]]; then compose up -d --no-deps caddy; fi
+    printf 'updated %s → %s, migrations %s → %s, backup kept at %s\n' "$UPDATE_PREVIOUS_IMAGE" "$image" "$BACKUP_SCHEMA" "$schema" "$BACKUP_ARCHIVE"
+    if [[ -n "$rollback_tag" || "$image" = verwalino:local ]]; then
+        update_image_cleanup "$rollback_tag" || printf 'WARN Update completed, but local image tag cleanup failed; inspect verwalino:update-* and rollback-* tags.\n' >&2
+    fi
+    update_doctor || fail 'Update completed, but doctor reported blockers; inspect the findings before resuming use.'
+}
+
 update() {
-    local image='' yes=0 confirmation candidate target schema state rollback_tag=''
+    local image='' yes=0 confirmation candidate target schema state database rollback_tag=''
     while [[ "$#" -gt 0 ]]; do
         case "$1" in
             --image)
@@ -929,9 +959,7 @@ update() {
     else
         update_candidate "$candidate" compose pull app
     fi
-    TMP_DIR="$UPDATE_DIR/target"
-    mkdir "$TMP_DIR"
-    target=$(update_candidate "$candidate" archive_tool target)
+    target=$(update_candidate "$candidate" image_target)
     [[ "$target" =~ ^[0-9]{4}$ ]] || fail 'Cannot read the new image release target.'
     state=$(container_state db)
     if [[ "$state" != running\|* ]]; then
@@ -940,30 +968,29 @@ update() {
     schema=$(doctor_sql 'SELECT version_num FROM alembic_version') || fail 'Database not running or query failed; run start/doctor before updating.'
     [[ "$schema" =~ ^[0-9]{4}$ ]] || fail 'Missing or ambiguous database schema head.'
     (( 10#$target >= 10#$schema )) || fail 'Update refused: migration downgrades are not supported.'
-    restore_database_ready
+    state=$(database_state)
+    for database in hausverwaltung_previous hausverwaltung_restore; do
+        [[ "$state" != *"$database=present"* ]] || fail "$database ist noch vorhanden; Datenbestand und .restore-*-Verzeichnisse prüfen und die Datenbank nach Klärung manuell umbenennen oder entfernen; Update danach erneut starten."
+    done
+    TMP_DIR="$UPDATE_DIR/preflight"
+    mkdir "$TMP_DIR"
     archive_tool check-documents
     UPDATE_PHASE=stopping
     stop_writers || fail 'Could not stop writers; config and data unchanged. Inspect status before restarting.'
     writers_stopped || fail 'Writers remain active; update refused before backup. Inspect status.'
     UPDATE_PHASE=stopped
     backup
-    # Every failure or interruption from here until acceptance restores the pair.
-    UPDATE_ACTIVE=1 UPDATE_PHASE=''
-    if [[ "$image" = verwalino:local ]]; then docker image tag "$candidate" "$image"; fi
-    image_config "$image" "$CONFIG"
-    export VERWALINO_IMAGE="$image"
-    compose run --rm --no-deps -T migrate
-    compose up -d --no-deps --wait --wait-timeout 120 app
-    app_health
-    schema=$(doctor_sql 'SELECT version_num FROM alembic_version')
-    [[ "$schema" = "$target" ]] || fail 'Migrated database does not match the new image release target.'
-    UPDATE_ACTIVE=0
-    if [[ "$VERWALINO_MODE" = https ]]; then compose up -d --no-deps caddy; fi
-    printf 'updated %s → %s, migrations %s → %s, backup kept at %s\n' "$UPDATE_PREVIOUS_IMAGE" "$image" "$BACKUP_SCHEMA" "$schema" "$BACKUP_ARCHIVE"
-    if [[ -n "$rollback_tag" || "$image" = verwalino:local ]]; then
-        update_image_cleanup "$rollback_tag" || fail 'Update completed, but local image tag cleanup failed; inspect verwalino:update-* and rollback-* tags.'
-    fi
-    update_doctor || fail 'Update completed, but doctor reported blockers; inspect the findings before resuming use.'
+    mkdir -p -m 700 "$(dirname "$CONFIG")/logs"
+    chmod 700 "$(dirname "$CONFIG")/logs"
+    UPDATE_LOG=$(mktemp "$(dirname "$CONFIG")/logs/update-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX.log")
+    trap '' PIPE
+    printf 'Update log: %s\n' "$UPDATE_LOG" 2>/dev/null || true
+    exec 3>&2
+    update_apply "$image" "$candidate" "$target" "$rollback_tag" >> "$UPDATE_LOG" 2>&1
+    # A closed terminal must not replace the update/rollback status with EPIPE.
+    cat "$UPDATE_LOG" 2>/dev/null || true
+    UPDATE_LOG=''
+    exec 3>&-
 }
 
 init_config() {

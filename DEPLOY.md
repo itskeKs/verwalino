@@ -653,8 +653,9 @@ configuration untouched. Local builds use a temporary `verwalino:update-*` image
 tag, retaining the previous local image under a printed image ID and a
 `verwalino:rollback-*` tag. After successful image/schema acceptance, temporary
 update tags are removed. When replacing a local image, older rollback tags are
-also removed, keeping exactly the current rollback tag. Failed updates retain
-tags for recovery; no image prune is run.
+also removed, keeping the current rollback tag. A tag still used by a stopped
+container can remain: cleanup failure warns and continues to the final `doctor`.
+Failed updates retain tags for recovery; no image prune is run.
 A digest installation requires an explicit `--image`; selecting its current
 digest probes health if app is running and reports a no-op; with app stopped it
 skips the current image's health probe and tells you to run `start`.
@@ -664,9 +665,10 @@ Update can start from a stopped stack: it starts db before reading its schema
 and backing up, and starts Caddy again in HTTPS mode after app is ready.
 The new image's release target must not be older than the database revision.
 
-Before stopping app, update refuses any `hausverwaltung_previous` database or
-`.restore-*` document directory left by an earlier restore. Verify the retained
-data and follow the restore recovery instructions before retrying.
+Before stopping app, update refuses any `hausverwaltung_previous` or
+`hausverwaltung_restore` database or `.restore-*` document directory left by an
+earlier restore. Verify the retained data and follow the restore recovery
+instructions before retrying.
 Next it stops app, migration/bootstrap jobs and any existing inbox worker, verifies
 all writers are stopped, then runs
 `backup` into `<checkout>/backups/`, printing and retaining the archive.
@@ -680,6 +682,14 @@ It also probes `/api/health/live` and `/api/health/ready` inside app, with an
 eight-second outer bound, and checks the measured schema against the image
 target. Success prints old/new images, measured migration revisions and the
 retained archive path, then runs `doctor` again. Caddy is left running.
+
+From the switch onward, Docker output and the final update or recovery outcome
+are appended to a private `<config-directory>/logs/update-<timestamp>.<id>.log`
+(directory mode 0700, file mode 0600). The command prints its log path before the
+switch and relays the recorded output after completion. A closed output pipe
+(for example, a disconnected SSH session running `update ... 2>&1 | tee log`)
+cannot terminate Docker steps during recovery; the outcome remains in the log.
+You may run `update` under `tmux` or `screen`, but neither is required.
 
 Any failure or handled interruption (including HUP on a terminal/SSH disconnect)
 from config switching through migration,

@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import tarfile
+import time
 import unittest
 from pathlib import Path
 
@@ -83,6 +84,10 @@ archive_digest = None
 if "verify" in sys.argv and "--volume" in sys.argv:
     with open(sys.argv[sys.argv.index("--volume") + 1].rsplit(":", 1)[0] + "/archive.tar", "rb") as archive:
         archive_digest = hashlib.sha256(archive.read()).hexdigest()
+if "--volume" in sys.argv:
+    mount = sys.argv[sys.argv.index("--volume") + 1].rsplit(":", 1)[0]
+    if not os.path.isabs(mount) or not os.path.isdir(mount):
+        sys.exit("Invalid fake Docker bind source: " + repr(mount))
 with open(os.environ["FAKE_DOCKER_LOG"], "a") as log:
     log.write(json.dumps({"args": sys.argv[1:], "image": os.environ.get("VERWALINO_IMAGE"), "secure": os.environ.get("VERWALINO_COOKIE_SECURE"), "hosts": os.environ.get("VERWALINO_ALLOWED_HOSTS"), "profiles": os.environ.get("COMPOSE_PROFILES"), "caller_secret_used": os.environ.get("MIGRATOR_PASSWORD") == "attacker", "config_image": config_image(os.environ["VERWALINO_CONFIG"]), "env_image": config_image(env_file), "env_mode": stat.S_IMODE(os.stat(env_file).st_mode) if os.path.exists(env_file) else None, "locked": os.path.isdir(os.environ["VERWALINO_CONFIG"] + ".lock"), "archive_digest": archive_digest}) + "\\n")
 signal_stage = os.environ.get("FAKE_INTERRUPT_STAGE")
@@ -115,7 +120,9 @@ with open(tags_path) as state:
     tags = json.load(state)
 if sys.argv[1:3] == ["image", "tag"]: tags.append(sys.argv[-1])
 if "build" in sys.argv: tags.append(os.environ["VERWALINO_IMAGE"])
-if sys.argv[1:3] == ["image", "rm"]: tags = [tag for tag in tags if tag not in sys.argv[3:]]
+if sys.argv[1:3] == ["image", "rm"]:
+    if os.environ.get("FAKE_IMAGE_IN_USE") in sys.argv[3:]: sys.exit(17)
+    tags = [tag for tag in tags if tag not in sys.argv[3:]]
 if sys.argv[1:3] in (["image", "tag"], ["image", "rm"]) or "build" in sys.argv:
     with open(tags_path, "w") as state:
         json.dump(tags, state)
@@ -777,10 +784,71 @@ elif name == "openssl":
             self.assertTrue(any("stop" in a and service in a[a.index("stop") + 1:] for a in args[:dump]))
         self.assertFalse(any("up" in a and "inbox-worker" in a for a in args))
 
+    def test_update_reads_both_image_targets_without_privileges_or_volumes(self):
+        self.update_setup()
+        result = self.run_script("update", "--image", self.new_image, "--yes")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        probes = [c for c in self.calls() if "run" in c["args"] and "-c" in c["args"] and
+                  ("target" in c["args"] or "from app.deployment import TARGET; print(TARGET)" in c["args"])]
+        self.assertEqual(len(probes), 3)
+        for call, image in zip(probes, (self.old_image, self.new_image, self.new_image), strict=True):
+            self.assertEqual(call["args"], [
+                "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+                "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+                "--entrypoint", "python", image, "-c", "from app.deployment import TARGET; print(TARGET)",
+            ])
+
     def test_update_migration_failure_restores_the_backup_and_previous_image(self):
         self.update_setup()
         self.env.update(FAKE_DOCKER_FAIL="migrate", FAKE_DIRTY_SCHEMA="0139")
         self.assert_update_rollback(self.run_script("update", "--image", self.new_image, "--yes", input=""))
+
+    def test_update_broken_output_pipe_during_rollback_restores_and_logs_outcome(self):
+        self.update_setup()
+        self.env.update(FAKE_DOCKER_FAIL="migrate", FAKE_DIRTY_SCHEMA="0139")
+        switched = self.base / "switched"
+        closed = self.base / "output-closed"
+        docker = self.base / "doctor-bin/docker"
+        docker.unlink()
+        docker.write_text(f'''#!{sys.executable}
+import os, sys, time
+from pathlib import Path
+switched = Path({str(switched)!r})
+if "run" in sys.argv and sys.argv[-1] == "migrate":
+    switched.touch()
+    deadline = time.monotonic() + 15
+    while not Path({str(closed)!r}).exists():
+        if time.monotonic() > deadline: sys.exit(99)
+        time.sleep(0.01)
+if switched.exists():
+    # Like Docker, fail when a progress write reaches a disconnected terminal.
+    sys.stderr.write("Container verwalino-app progress\\n")
+    sys.stderr.flush()
+os.execv({str(self.base / "bin/docker")!r}, ["docker", *sys.argv[1:]])
+''')
+        docker.chmod(0o755)
+        command = [self.bash, str(self.root / "scripts/self-host.sh"), "update", "--image", self.new_image, "--yes"]
+        with subprocess.Popen(command, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              cwd=self.base, start_new_session=True) as process:
+            self.addCleanup(lambda: process.kill() if process.poll() is None else None)
+            os.set_blocking(process.stdout.fileno(), False)
+            deadline = time.monotonic() + 30
+            while not switched.exists():
+                self.assertIsNone(process.poll(), "Update exited before the switch")
+                self.assertLess(time.monotonic(), deadline, "Update never reached the switch")
+                try:
+                    os.read(process.stdout.fileno(), 65536)
+                except BlockingIOError:
+                    time.sleep(0.01)
+            process.stdout.close()
+            closed.touch()
+            process.wait(timeout=60)
+        self.assertEqual(process.returncode, 17)
+        log, = (self.base / "logs").glob("update-*.log")
+        self.assertEqual(stat.S_IMODE(log.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(log.parent.stat().st_mode), 0o700)
+        self.assertIn("Container verwalino-app progress", log.read_text())
+        self.assert_update_rollback(subprocess.CompletedProcess(command, process.returncode, "", log.read_text()))
 
     def test_update_preserves_read_only_config_mode_on_success(self):
         self.update_setup()
@@ -854,6 +922,30 @@ os.execv("/bin/mv", ["mv", *sys.argv[1:]])
         self.assertEqual(json.loads(self.db_state.read_text()), {"hausverwaltung": "restored data"})
         self.assertTrue(all(c["locked"] for c in self.calls()))
 
+    def test_update_second_signal_at_cleanup_entry_does_not_skip_rollback(self):
+        self.update_setup()
+        script = self.root / "scripts/self-host.sh"
+        sent = self.base / "second-signal"
+        # Inject a second signal after cleanup captures the original status,
+        # before its first trap command. Only the disposable script is changed.
+        script.write_text(script.read_text().replace("    trap '' PIPE\n", '''    if [[ "$UPDATE_ACTIVE" = 1 ]]; then
+        printf '%s\\n' "$SECOND_SIGNAL" > "$FAKE_SECOND_SIGNAL_SENT"
+        kill -s "$SECOND_SIGNAL" "$$"
+    fi
+    trap '' PIPE
+''', 1))
+        self.env["FAKE_SECOND_SIGNAL_SENT"] = str(sent)
+        for signum, code in (("SIGHUP", 129), ("SIGINT", 130), ("SIGTERM", 143)):
+            with self.subTest(signal=signum):
+                self.env.update(FAKE_MIGRATE_SIGNAL=signum, SECOND_SIGNAL=signum.removeprefix("SIG"))
+                self.log.unlink(missing_ok=True)
+                for archive in self.update_archives():
+                    archive.unlink()
+                result = self.run_script("update", "--image", self.new_image, "--yes")
+                self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+                self.assertEqual(sent.read_text().strip(), signum.removeprefix("SIG"))
+                self.assert_update_rollback(result)
+
     def test_update_hangup_before_switch_reports_unchanged_data_and_stopped_app(self):
         self.update_setup()
         before = self.config.read_bytes()
@@ -870,10 +962,10 @@ os.execv("/bin/mv", ["mv", *sys.argv[1:]])
     def test_update_refuses_restore_leftovers_before_stopping_writers(self):
         self.update_setup()
         before = self.config.read_bytes()
-        for leftover in ("hausverwaltung_previous", ".restore-retained"):
+        for leftover in ("hausverwaltung_previous", "hausverwaltung_restore", ".restore-retained"):
             with self.subTest(leftover=leftover):
                 self.db_state.write_text(json.dumps({"hausverwaltung": "old data"}))
-                if leftover == "hausverwaltung_previous":
+                if leftover.startswith("hausverwaltung_"):
                     self.db_state.write_text(json.dumps({"hausverwaltung": "old data", leftover: "retained data"}))
                 else:
                     (self.documents / leftover / "previous").mkdir(parents=True)
@@ -881,6 +973,8 @@ os.execv("/bin/mv", ["mv", *sys.argv[1:]])
                 result = self.run_script("update", "--image", self.new_image, "--yes")
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn(leftover, result.stdout + result.stderr)
+                if leftover.startswith("hausverwaltung_"):
+                    self.assertRegex(result.stderr, rf"(?m)^.*{leftover}.*prüfen.*manuell.*$")
                 self.assertFalse(any(set(c["args"]) & {"stop", "pack", "migrate"} for c in self.calls()))
                 self.assertEqual(self.config.read_bytes(), before)
                 self.assertEqual(self.schema_state.read_text(), "0138")
@@ -1207,6 +1301,20 @@ os.execv("/bin/mv", ["mv", *sys.argv[1:]])
         removed = [i for i, a in enumerate(args) if a[:2] == ["image", "rm"]]
         self.assertTrue(removed)
         self.assertTrue(all(i > health for i in removed))
+
+    def test_update_image_tag_in_use_warns_and_still_runs_final_doctor(self):
+        self.update_setup(local=True)
+        self.env.update(FAKE_IMAGE_TARGETS=json.dumps({self.old_image: RELEASE_TARGET}),
+                        FAKE_MIGRATED_SCHEMA=RELEASE_TARGET, FAKE_IMAGE_IN_USE="verwalino:rollback-older")
+        self.image_tags.write_text(json.dumps(["verwalino:rollback-older"]))
+        result = self.run_script("update", "--yes")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("WARN Update completed, but local image tag cleanup failed", result.stdout + result.stderr)
+        self.assertIn("verwalino:rollback-older", json.loads(self.image_tags.read_text()))
+        self.assertEqual(result.stdout.count("Zusammenfassung:"), 2)
+        self.assertEqual(self.schema_state.read_text(), RELEASE_TARGET)
+        self.assertFalse(any("pg_restore" in c["args"] for c in self.calls()))
+        self.assertFalse(Path(str(self.config) + ".lock").exists())
 
     def test_update_requires_an_image_for_remote_config_and_confirmation(self):
         self.update_setup()
