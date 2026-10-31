@@ -1992,6 +1992,15 @@ os.execv("/bin/mv", ["mv", *sys.argv[1:]])
             self.assertFalse((self.base / "marker").exists())
             self.assertEqual(self.calls(), [])
 
+    def test_deployment_mode_remains_an_unknown_installer_key(self):
+        self.init()
+        with self.config.open("a") as config:
+            config.write("HV_DEPLOYMENT_MODE=hosted\n")
+        result = self.run_script("start")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Unknown configuration key", result.stderr)
+        self.assertEqual(self.calls(), [])
+
     def test_local_start_builds_migrates_then_starts_app_without_https(self):
         self.init()
         # Caller environment must not replace protected configuration or enable profiles.

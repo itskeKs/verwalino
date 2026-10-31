@@ -68,6 +68,42 @@ else
     echo 'Usage: deploy-server.sh vX.Y.Z | site <40-lowercase-hex-sha> | staging <40-lowercase-hex-sha|vX.Y.Z>' >&2
     exit 2
 fi
+
+# Production app opt-in is separate from the portable installer's private config.
+# Validate before log creation/chmod, locks, checkout, backup or service operations.
+APP_CONFIG=$ROOT/config/.env.hosted-app
+app_overlay=0 app_mode=selfhost app_public_host='' app_allowed_hosts=''
+invalid_app_config() { printf 'deploy: %s\n' "$*" >&2; exit 2; }
+if [[ "$target" = release && ( -e "$APP_CONFIG" || -L "$APP_CONFIG" ) ]]; then
+    [[ -f "$APP_CONFIG" && ! -L "$APP_CONFIG" && -r "$APP_CONFIG" ]] || \
+        invalid_app_config 'the hosted app config must be a readable regular file, not a symlink.'
+    permissions=$(stat -c '%a' "$APP_CONFIG" 2>/dev/null || stat -f '%Lp' "$APP_CONFIG")
+    [[ "$permissions" = 600 ]] || invalid_app_config 'the hosted app config must have permissions 0600.'
+    seen='|'
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in ''|\#*) continue ;; esac
+        [[ "$line" = *=* ]] || invalid_app_config 'Invalid hosted app configuration line.'
+        key=${line%%=*} value=${line#*=}
+        [[ "$seen" != *"|$key|"* ]] || invalid_app_config 'Duplicate hosted app configuration key.'
+        seen="$seen$key|"
+        case "$key" in
+            HV_DEPLOYMENT_MODE) app_mode=$value ;;
+            HV_PUBLIC_HOST) app_public_host=$value ;;
+            HV_ALLOWED_HOSTS) app_allowed_hosts=$value ;;
+            *) invalid_app_config 'Unknown hosted app configuration key.' ;;
+        esac
+    done < "$APP_CONFIG"
+    [[ "$app_mode" = selfhost || "$app_mode" = hosted ]] || \
+        invalid_app_config 'HV_DEPLOYMENT_MODE must be selfhost or hosted.'
+    dns_label='[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?'
+    [[ ${#app_public_host} -le 253 && "$app_public_host" =~ ^$dns_label(\.$dns_label)+$ && "${app_public_host##*.}" =~ [a-z] ]] || \
+        invalid_app_config 'HV_PUBLIC_HOST must be a lowercase DNS hostname, without scheme or port.'
+    [[ "$app_allowed_hosts" =~ ^[a-z0-9.,-]+$ && ",$app_allowed_hosts," = *",$app_public_host,"* ]] || \
+        invalid_app_config 'HV_ALLOWED_HOSTS must be a comma-separated list without spaces including HV_PUBLIC_HOST exactly.'
+    [[ ",$app_allowed_hosts," = *',127.0.0.1,'* ]] || \
+        invalid_app_config 'HV_ALLOWED_HOSTS must include 127.0.0.1 for the app health checks.'
+    app_overlay=1
+fi
 [[ -d "$LOGS" && -w "$LOGS" ]] || { echo "deploy: $LOGS is missing or not writable." >&2; exit 1; }
 chmod 750 "$LOGS"
 log_prefix=deploy
@@ -220,6 +256,63 @@ main() {
         VERWALINO_SITE_IMAGE=$prev_site_image hosted_compose up -d --no-deps caddy
     }
 
+    hosted_app_compose() {
+        local files=(-f "$APP/infra/docker-compose.yml" -f "$APP/infra/docker-compose.hosted-app.yml")
+        local profiles=(--profile ops)
+        local secure=false cookie=hv_session
+        if [[ "$(config_value VERWALINO_MODE)" = https ]]; then
+            profiles+=(--profile https)
+            secure=true cookie=__Host-hv_session
+        fi
+        if [[ -f "$ROOT/config/Caddyfile.hosted" ]]; then
+            files+=(-f "$APP/infra/docker-compose.hosted-proxy.yml" -f "$APP/infra/docker-compose.site.yml")
+        fi
+        HV_DEPLOYMENT_MODE=$app_mode HV_PUBLIC_HOST=$app_public_host HV_ALLOWED_HOSTS=$app_allowed_hosts \
+        VERWALINO_COOKIE_SECURE=$secure VERWALINO_COOKIE_NAME=$cookie \
+        VERWALINO_ALLOWED_HOSTS=$app_allowed_hosts VERWALINO_SITE_IMAGE=$prev_site_image \
+        docker compose --project-name verwalino --env-file "$CONFIG" \
+            "${files[@]}" "${profiles[@]}" "$@"
+    }
+
+    start_hosted_app() {
+        # Managed server start: never briefly boot a hosted app with selfhost policy.
+        # The portable installer validates its own config via status before checkout.
+        local key line value inbox_container
+        mkdir "$CONFIG.lock" 2>/dev/null || die "another installer operation is running (or a stale $CONFIG.lock needs operator review)."
+        # Keep cleanup in a subshell so every failure releases the installer lock.
+        (
+            trap 'rmdir "$CONFIG.lock"' EXIT
+            # Match the installer's private-file precedence, including optional mail.
+            for key in HV_SMTP_HOST HV_SMTP_PORT HV_SMTP_FROM HV_SMTP_SECURITY HV_SMTP_USERNAME HV_SMTP_PASSWORD HV_SMTP_TIMEOUT_SECONDS; do
+                export "$key="
+            done
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                case "$line" in ''|\#*) continue ;; esac
+                key=${line%%=*}
+                export "$key=${line#*=}"
+            done < "$CONFIG"
+            for key in HV_SMTP_HOST HV_SMTP_FROM; do
+                value=${!key}
+                value="${value#"${value%%[![:space:]]*}"}"
+                value="${value%"${value##*[![:space:]]}"}"
+                export "$key=$value"
+            done
+            hosted_app_compose config -q
+            hosted_app_compose pull app
+            hosted_app_compose up -d --wait --wait-timeout 120 db
+            inbox_container=$(hosted_app_compose ps --all --quiet inbox-worker)
+            if [[ -n "$inbox_container" ]]; then
+                hosted_app_compose stop inbox-worker
+            fi
+            hosted_app_compose stop app
+            hosted_app_compose run --rm --no-deps -T migrate
+            hosted_app_compose up -d --no-deps --wait --wait-timeout 120 app
+            if [[ "$(config_value VERWALINO_MODE)" = https ]]; then
+                hosted_app_compose up -d --no-deps caddy
+            fi
+        )
+    }
+
     validate_hosted_proxy() {
         local runtime=${1:-$APP/infra}
         # The stock binary's file capability must remain in the bounding set to exec.
@@ -324,6 +417,9 @@ main() {
     [[ -f "$CONFIG" && ! -L "$CONFIG" && -r "$CONFIG" && -w "$CONFIG" && -w "$(dirname "$CONFIG")" ]] \
         || die "the installer config $CONFIG must be a regular file this user can read and write, in a directory it can write to."
     if [[ "$target" = staging ]]; then deploy_staging; fi
+    if [[ "$app_overlay" = 1 ]]; then
+        "$APP/scripts/self-host.sh" status >/dev/null
+    fi
     if [[ -f "$ROOT/config/Caddyfile.hosted" ]]; then
         if ! docker network inspect verwalino-staging_proxy >/dev/null 2>&1; then
             printf 'deploy: external network verwalino-staging_proxy is required; create it with docker network create --subnet <dedicated-staging-proxy-subnet> verwalino-staging_proxy (use the unused subnet from .env.staging).\n' >&2
@@ -365,9 +461,13 @@ main() {
 
     step='install (pull, migrate, restart)'
     # An empty database makes the installer print a one-time setup token; it must not reach logs.
-    "$APP/scripts/self-host.sh" start 2>&1 | sed -E 's/^(Setup token: )[a-f0-9]{64}$/\1[hidden by deploy-server.sh]/'
+    if [[ "$app_overlay" = 1 ]]; then
+        start_hosted_app
+    else
+        "$APP/scripts/self-host.sh" start 2>&1 | sed -E 's/^(Setup token: )[a-f0-9]{64}$/\1[hidden by deploy-server.sh]/'
+    fi
 
-    if [[ -f "$ROOT/config/Caddyfile.hosted" ]]; then
+    if [[ "$app_overlay" = 0 && -f "$ROOT/config/Caddyfile.hosted" ]]; then
         step='restore hosted proxy extension'
         hosted_proxy
     fi

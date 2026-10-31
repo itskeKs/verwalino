@@ -53,6 +53,9 @@ with open(env["FAKE_LOG"], "a") as log:
     entry = {"tool": tool, "args": args, "site_image": env.get("VERWALINO_SITE_IMAGE")}
     if tool == "docker" and args[:1] == ["compose"]:
         entry.update(image=env.get("VERWALINO_IMAGE"), release_id=env.get("HV_RELEASE_ID"))
+        entry.update(mode=env.get("HV_DEPLOYMENT_MODE"), public_host=env.get("HV_PUBLIC_HOST"),
+                     allowed_hosts=env.get("HV_ALLOWED_HOSTS"), smtp_host=env.get("HV_SMTP_HOST"),
+                     smtp_from=env.get("HV_SMTP_FROM"))
     log.write(json.dumps(entry) + "\n")
 fail = env.get("FAKE_FAIL", "").split(",")
 
@@ -114,6 +117,8 @@ if tool == "git":
 if args[:2] == ["network", "inspect"]:
     sys.exit(17 if env.get("FAKE_MISSING_STAGING_NETWORK") else 0)
 if args[0] == "compose":
+    if env.get("FAKE_FAIL_INBOX_LOOKUP") and args[-4:] == ["ps", "--all", "--quiet", "inbox-worker"]:
+        sys.exit(17)
     if any(arg.endswith("/docker-compose.site.yml") for arg in args) and not env.get("VERWALINO_SITE_IMAGE"):
         out("set VERWALINO_SITE_IMAGE to ghcr.io/itskeks/verwalino-site:<sha>@sha256:<digest>\n")
         sys.exit(17)
@@ -458,6 +463,151 @@ class DeployTests(ServerCase):
         self.assertEqual(self.config.read_bytes(), self.before)
         self.assertEqual(list((self.srv / "backups").iterdir()), [])
         self.assertEqual((self.base / "state/HEAD").read_text(), OLD_COMMIT)
+
+    def hosted_app_config(self, mode="selfhost"):
+        path = self.srv / "config/.env.hosted-app"
+        path.write_text((f"HV_DEPLOYMENT_MODE={mode}\n" if mode is not None else "") +
+                        "HV_PUBLIC_HOST=verwaltung.example.org\n"
+                        "HV_ALLOWED_HOSTS=verwaltung.example.org,localhost,127.0.0.1\n")
+        path.chmod(0o600)
+        return path
+
+    def test_release_without_app_opt_in_keeps_every_compose_vector(self):
+        result = self.deploy(HV_DEPLOYMENT_MODE="hosted", HV_PUBLIC_HOST="attacker.example")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        prefix = ["compose", "--project-name", "verwalino", "--env-file", str(self.config),
+                  "-f", str(ROOT / "infra/docker-compose.yml"), "--profile", "ops", "--profile", "https"]
+        vectors = [c["args"] for c in self.calls("docker") if c["args"][0] == "compose"]
+        self.assertEqual(vectors, [prefix + tail for tail in [
+            ["ps", "--status", "running", "--quiet", "app"], ["pull", "app"],
+            ["up", "-d", "--wait", "--wait-timeout", "120", "db"],
+            ["ps", "--all", "--quiet", "inbox-worker"], ["stop", "app"],
+            ["run", "--rm", "--no-deps", "-T", "migrate"],
+            ["exec", "-T", "db", "psql", "--no-psqlrc", "-U", "app_migrator", "-d", "hausverwaltung",
+             "--set", "ON_ERROR_STOP=1", "-Atc", "SELECT count(*) FROM public.organization"],
+            ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "120", "app"],
+            ["up", "-d", "--no-deps", "caddy"],
+        ]])
+
+    def test_app_opt_in_applies_private_settings_to_every_app_start(self):
+        for mode in ("selfhost", "hosted", None):
+            with self.subTest(mode=mode):
+                self.log.unlink(missing_ok=True)
+                path = self.hosted_app_config(mode)
+                before = path.read_bytes()
+                result = self.deploy(HV_DEPLOYMENT_MODE="attacker", HV_PUBLIC_HOST="attacker.example",
+                                     HV_ALLOWED_HOSTS="*", VERWALINO_IMAGE="attacker:latest")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                calls = [c for c in self.calls("docker") if c["args"][0] == "compose"]
+                starts = [c for c in calls if "up" in c["args"] and c["args"][-1] == "app"]
+                self.assertEqual(len(starts), 1)
+                for call in starts:
+                    self.assertIn(str(ROOT / "infra/docker-compose.hosted-app.yml"), call["args"])
+                    self.assertEqual(call["mode"], mode or "selfhost")
+                    self.assertEqual(call["image"], NEW_DIGEST)
+                    self.assertEqual(call["public_host"], "verwaltung.example.org")
+                    self.assertEqual(call["allowed_hosts"], "verwaltung.example.org,localhost,127.0.0.1")
+                migration = next(c for c in calls if "migrate" in c["args"])
+                self.assertIn(str(ROOT / "infra/docker-compose.hosted-app.yml"), migration["args"])
+                self.assertLess(calls.index(migration), calls.index(starts[0]))
+                self.assertEqual(path.read_bytes(), before)
+                self.assertNotIn("HV_DEPLOYMENT_MODE", self.config.read_text())
+
+    def test_app_start_failure_releases_config_lock_without_falling_back(self):
+        self.hosted_app_config("hosted")
+        result = self.deploy(FAKE_FAIL_COMPOSE="migrate")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.config.parent / (self.config.name + ".lock")).exists())
+        self.assertFalse(any("up" in c["args"] and c["args"][-1] == "app" for c in self.calls("docker")))
+
+    def test_app_opt_in_trims_private_smtp_settings_like_the_installer(self):
+        self.hosted_app_config()
+        with self.config.open("a") as config:
+            config.write("HV_SMTP_HOST=  smtp.example.org  \nHV_SMTP_FROM=  mail@example.org  \n")
+        result = self.deploy(HV_SMTP_HOST="attacker.example.org", HV_SMTP_FROM="attacker@example.org")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        start = next(c for c in self.calls("docker") if "up" in c["args"] and c["args"][-1] == "app")
+        self.assertEqual(start["smtp_host"], "smtp.example.org")
+        self.assertEqual(start["smtp_from"], "mail@example.org")
+
+    def test_app_opt_in_requires_the_loopback_healthcheck_host_before_side_effects(self):
+        path = self.hosted_app_config()
+        path.write_text(path.read_text().replace(",localhost,127.0.0.1", ""))
+        result = self.deploy()
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("127.0.0.1", result.stderr)
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.log_files(), [])
+        self.assert_untouched()
+
+    def test_failed_inbox_discovery_stops_before_migration_and_releases_the_lock(self):
+        self.hosted_app_config()
+        result = self.deploy(FAKE_FAIL_INBOX_LOOKUP="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any("migrate" in c["args"] for c in self.calls("docker")))
+        self.assertFalse((self.config.parent / (self.config.name + ".lock")).exists())
+
+    def test_app_overlay_config_is_checked_before_managed_service_operations(self):
+        self.hosted_app_config()
+        result = self.deploy(FAKE_FAIL_COMPOSE="config")
+        self.assertNotEqual(result.returncode, 0)
+        calls = [c["args"] for c in self.calls("docker") if c["args"][0] == "compose"]
+        check = next(a for a in calls if a[-2:] == ["config", "-q"])
+        self.assertIn(str(ROOT / "infra/docker-compose.hosted-app.yml"), check)
+        self.assertFalse(any("up" in a or "stop" in a or "migrate" in a for a in calls))
+        self.assertFalse((self.config.parent / (self.config.name + ".lock")).exists())
+
+    def test_app_opt_in_keeps_proxy_and_site_in_the_start_chain(self):
+        self.hosted_app_config("hosted")
+        (self.srv / "config/Caddyfile.hosted").write_text((ROOT / "infra/Caddyfile.hosted").read_text())
+        result = self.deploy(FAKE_SITE_ENABLED="1")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        starts = [c for c in self.calls("docker") if c["args"][0] == "compose" and "up" in c["args"]]
+        for call in starts:
+            for name in ("hosted-app", "hosted-proxy", "site"):
+                self.assertIn(str(ROOT / f"infra/docker-compose.{name}.yml"), call["args"])
+        self.assertEqual(len([c for c in starts if c["args"][-1] == "caddy"]), 1)
+
+    def test_invalid_app_settings_refuse_before_any_side_effect(self):
+        valid = self.hosted_app_config().read_text()
+        cases = [
+            (valid.replace("selfhost", mode), "HV_DEPLOYMENT_MODE")
+            for mode in ("", "HOSTED", "production", " hosted ", "$(touch marker)")
+        ] + [
+            (valid.replace("HV_PUBLIC_HOST=verwaltung.example.org", f"HV_PUBLIC_HOST={host}"), "HV_PUBLIC_HOST")
+            for host in ("", "App.example.org", "https://app.example.org", "app.example.org:443",
+                         "user@app.example.org", "-app.example.org", "app..example.org", "app.example.org.",
+                         "a" * 64 + ".example.org", "127.0.0.1", "localhost", "$(touch marker)")
+        ] + [
+            (valid.replace("HV_ALLOWED_HOSTS=verwaltung.example.org,localhost,127.0.0.1", hosts), "HV_ALLOWED_HOSTS")
+            for hosts in ("", "HV_ALLOWED_HOSTS=", "HV_ALLOWED_HOSTS=other.example.org",
+                          "HV_ALLOWED_HOSTS=evilverwaltung.example.org", "HV_ALLOWED_HOSTS=*")
+        ] + [(valid + "HV_DEPLOYMENT_MODE=hosted\n", "Duplicate"),
+             (valid + "UNEXPECTED=value\n", "Unknown"), (valid + "invalid\n", "Invalid")]
+        for contents, message in cases:
+            with self.subTest(contents=contents):
+                self.hosted_app_config().write_text(contents)
+                result = self.deploy()
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(self.calls(), [])
+                self.assertEqual(self.log_files(), [])
+                self.assertEqual(stat.S_IMODE((self.srv / "logs").stat().st_mode), 0o755)
+                self.assertFalse((self.base / "marker").exists())
+                self.assert_untouched()
+
+    def test_app_config_must_be_private_and_not_a_symlink(self):
+        path = self.hosted_app_config()
+        path.chmod(0o644)
+        result = self.deploy()
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("0600", result.stderr)
+        path.rename(path.with_suffix(".saved"))
+        path.symlink_to(path.with_suffix(".saved"))
+        result = self.deploy()
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("regular file", result.stderr)
+        self.assertEqual(self.calls(), [])
 
     def test_exactly_one_strict_release_tag_is_accepted(self):
         for args in [(), ("",), (self.TAG, "extra"), ("v1; id",), ("v1.2.3;id",), ("v1.2.3 v1.2.4",), ("v1.2",),
@@ -997,6 +1147,20 @@ class SiteDeployTests(ServerCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("previous site sha: unknown", result.stdout)
         self.assertNotIn("rollback: site main", result.stdout)
+
+
+@unittest.skipIf(yaml is None, "PyYAML is not installed")
+class HostedAppLayoutTests(unittest.TestCase):
+    def test_overlay_only_forwards_the_three_private_app_settings(self):
+        overlay = yaml.safe_load((ROOT / "infra/docker-compose.hosted-app.yml").read_text())
+        self.assertEqual(overlay, {"services": {"app": {"environment": {
+            "HV_DEPLOYMENT_MODE": "${HV_DEPLOYMENT_MODE:-selfhost}",
+            "HV_PUBLIC_HOST": "${HV_PUBLIC_HOST:?set the public hostname in the private hosted app config}",
+            "HV_ALLOWED_HOSTS": "${HV_ALLOWED_HOSTS:?include the public hostname in the private hosted app config}",
+        }}}})
+        base = yaml.safe_load((ROOT / "infra/docker-compose.yml").read_text())
+        for key in ("HV_DEPLOYMENT_MODE", "HV_PUBLIC_HOST"):
+            self.assertNotIn(key, base["services"]["app"]["environment"])
 
 
 @unittest.skipIf(yaml is None, "PyYAML is not installed")
