@@ -14,7 +14,6 @@ import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
 import { SetupPage } from "./pages/SetupPage";
 import { useSetupStatus } from "./auth/useSetupStatus";
-import { useDeploymentMode } from "./auth/useDeploymentMode";
 import { TasksPage } from "./pages/TasksPage";
 import { LettersPage } from "./pages/LettersPage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -75,12 +74,11 @@ import { PropertyKnowledgePage } from "./pages/PropertyKnowledgePage";
 export function AppRoutes() {
   const { loading, session } = useAuth();
   const setup = useSetupStatus();
-  const deployment = useDeploymentMode();
   const location = useLocation();
 
-  const setupRequired = deployment.mode === "selfhost" && !setup.error ? setup.required : false;
+  const setupRequired = !setup.error ? setup.required : false;
 
-  if (loading || (!deployment.error && deployment.mode === null) || setupRequired === null) {
+  if (loading || setupRequired === null) {
     return (
       <div style={{ padding: "2rem", textAlign: "center" }}>Lade...</div>
     );

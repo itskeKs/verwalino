@@ -58,7 +58,7 @@ mode too; `@browser` remains a separate opt-in tag.
 the self-host installer, which starts a selfhost server; changing the pytest
 process's mode only selects tags and cannot change that server's policy. A
 CI/nightly run in both modes, including a server started with
-`HV_DEPLOYMENT_MODE=hosted`, is tracked in #TBD.
+`HV_DEPLOYMENT_MODE=hosted`, is tracked in #103.
 
 ## How the step library is organised
 
@@ -187,7 +187,7 @@ installation and the GitHub runner's lifecycle removes its storage.
 Only `mode: [selfhost]` is implemented. Report metadata uses the same validated
 `HV_DEPLOYMENT_MODE` policy as scenario tag selection and defaults to `selfhost`;
 the workflow sets it from its matrix. Running both modes in CI/nightly is tracked
-in #TBD and requires a hosted server in addition to the selfhost installation.
+in #103 and requires a hosted server in addition to the selfhost installation.
 **The self-host startup and full nightly integration are unverified until the first
 GitHub runner run.** Local checks parse the workflow and test the local runners;
 they do not start the self-host stack.

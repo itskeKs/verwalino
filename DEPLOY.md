@@ -5,17 +5,16 @@
 `HV_DEPLOYMENT_MODE` accepts exactly `selfhost` (default) or `hosted`. Invalid values
 stop the process at configuration initialization with the allowed values in the error.
 Set it in the backend process environment; a custom container deployment must pass it
-explicitly to the container. Changing it requires restarting the backend. The public
-`GET /api/meta` reports the active mode and application version, without secrets.
+explicitly to the container. Changing it requires restarting the backend.
 
 Both modes use the same image, authentication and organization isolation. `selfhost`
 offers token-gated first-run setup on an empty database. `hosted` suppresses setup:
 `GET /api/setup` reports `required: false`, every non-GET request returns the closed
-setup 404, and `/setup` redirects to login. Until signup (#19) exists, operators use
+setup 404, and `/setup` redirects to login. Until hosted signup exists, operators use
 the existing admin CLI to bootstrap hosted organizations. Selecting hosted mode does
 not implement signup, rate limiting, quotas, password reset or legal pages. The
-[policy table](docs/architecture.md#deployment-modes) records current readers and
-future consumers; error tracking's environment default is reserved for #16.
+[policy table](docs/architecture.md#deployment-modes) records only decisions with
+implemented readers. Opt-in error tracking is configured separately below.
 
 The portable installer below is selfhost-only and unchanged, including `start`'s
 setup-token flow. Its manifest relies on the `selfhost` default; it does not forward

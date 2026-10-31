@@ -13,26 +13,10 @@ from app.core.config import Settings
     ("selfhost", {
         "deployment_mode": "selfhost",
         "first_run_setup_enabled": True,
-        "self_service_signup_enabled": False,
-        "error_tracking_default_environment": "selfhost",
-        "admin_cli_bootstrap_allowed": True,
-        "multi_organization_expected": False,
-        "rate_limit_profile": "relaxed",
-        "quota_enforcement": False,
-        "support_url_default": "https://github.com/itskeKs/verwalino/issues",
-        "show_hosted_legal_links": False,
     }),
     ("hosted", {
         "deployment_mode": "hosted",
         "first_run_setup_enabled": False,
-        "self_service_signup_enabled": False,
-        "error_tracking_default_environment": "hosted",
-        "admin_cli_bootstrap_allowed": True,
-        "multi_organization_expected": True,
-        "rate_limit_profile": "strict",
-        "quota_enforcement": True,
-        "support_url_default": "https://github.com/itskeKs/verwalino/issues",
-        "show_hosted_legal_links": True,
     }),
 ])
 def test_policy_table_matches_the_mode_snapshot(mode, expected):

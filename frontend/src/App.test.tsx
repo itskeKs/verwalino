@@ -19,9 +19,6 @@ function renderRoutes(path: string, role?: string, setupStatus: { required: bool
   }
   vi.spyOn(endpoints, "getMyOrganization").mockResolvedValue({ id: "org-1", name: "Test" });
   vi.spyOn(api, "get").mockImplementation((url) => {
-    if (url === "/api/meta") {
-      return Promise.resolve({ deployment_mode: "selfhost", version: "0.1.0" });
-    }
     if (url === "/api/setup") {
       return setupStatus instanceof Error ? Promise.reject(setupStatus) : Promise.resolve(setupStatus);
     }
