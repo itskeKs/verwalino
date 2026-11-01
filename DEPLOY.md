@@ -1385,7 +1385,7 @@ This is an owner-controlled server configuration, independent of the optional
 deploy script, create `/srv/verwalino/config/.env.hosted-app` as a regular file with mode **0600**:
 
 ```dotenv
-HV_DEPLOYMENT_MODE=selfhost
+HV_DEPLOYMENT_MODE=hosted
 HV_PUBLIC_HOST=app.verwalino.de
 HV_ALLOWED_HOSTS=app.verwalino.de,localhost,127.0.0.1
 ```
@@ -1393,12 +1393,13 @@ HV_ALLOWED_HOSTS=app.verwalino.de,localhost,127.0.0.1
 The file's presence opts release deploys into the app overlay. The public hostname comes
 from this private file; the overlay hard-codes no domain or hosted default. Omitting
 `HV_DEPLOYMENT_MODE` defaults to `selfhost`; an explicitly empty or invalid value is refused.
-The mode remains the owner's decision. Changing only that line to `hosted` and redeploying
-enables public signup/email confirmation, disables first-run setup, enforces hosted free-plan
-quotas, and selects the strict login rate limits (10 failed attempts/IP or 5/email in
-15 minutes; 30-minute lockout, repeated lockouts doubling up to 24 hours).
-Keeping `selfhost` enables password recovery with SMTP/public host while retaining
-the selfhost policy and relaxed login limits.
+The mode remains the owner's decision; app.verwalino.de runs in `hosted` mode from the first
+overlay deploy (owner decision, #150). `hosted` enables public signup/email confirmation,
+disables first-run setup, enforces hosted free-plan quotas, and selects the strict login rate
+limits (10 failed attempts/IP or 5/email in 15 minutes; 30-minute lockout, repeated lockouts
+doubling up to 24 hours). `selfhost` with a public host is the variant for an installation
+that wants password recovery with SMTP but no public signup; it keeps the selfhost policy and
+relaxed login limits.
 
 Only these three unquoted `KEY=value` keys are accepted, once each; blank lines and
 full-line comments are allowed. The file is read as data, never sourced. Mode must be
@@ -1414,7 +1415,9 @@ Invalid settings, duplicate/unknown keys, symlinks or non-0600 permissions exit 
 before log creation, locks, checkout, backup, pinning or service operations.
 
 Keep the existing SMTP settings and generated secrets in `.env.selfhost`; never add these
-three app keys there. The existing HTTPS config should have
+three app keys there. Hosted mode requires a nonempty `HV_SMTP_HOST` in that private config;
+a missing, empty or whitespace-only host exits 2 before any side effects, even if the caller
+exports a host. The existing HTTPS config should have
 `VERWALINO_DOMAIN=app.verwalino.de`, matching the public routing hostname. In `https` mode,
 `HV_PUBLIC_HOST` must equal `VERWALINO_DOMAIN`; a mismatch exits 2 before any side effects.
 Local mode skips this equality rule because no public hostname is routed; the public host is then used only for mail links.
@@ -1446,25 +1449,30 @@ There is no automatic rollback; keep the existing schema compatibility/restore p
 
 Owner acceptance on the server (these are live checks, not proven by fake-Docker contracts):
 
-1. Keep `.env.hosted-app` at `selfhost`, verify the existing SMTP values in `.env.selfhost`,
-   then run `/srv/verwalino/app/scripts/deploy-server.sh vX.Y.Z` with the reviewed release tag.
-2. Fetch `https://app.verwalino.de/api/meta`: require `deployment_mode: selfhost` and
-   `mail_available: true`. This checks configuration only, not SMTP delivery.
-3. Use **Passwort vergessen?** for a known test account against the configured SMTP.
-   Receive the HTTPS link on `app.verwalino.de`, reset the password, log in with the new
-   password, and confirm the link cannot be reused.
-4. Before enabling hosted mode on an existing document store, apply **0146** and run
+1. Before the first hosted deploy on an existing document store, apply **0146** and run
    `python -m app.admin_cli quota-recount --org <organization-uuid>` for every existing
    organization, using the migrator connection, document storage root and explicit
    `HV_DEPLOYMENT_MODE=hosted` environment described in the quota reconciliation instructions
    above. The installer's `bootstrap` service runs as selfhost and skips hosted quota locks.
-   Only when the owner chooses to open hosted signup, set `HV_DEPLOYMENT_MODE=hosted`
-   in the private app file and redeploy the reviewed tag. Require successful app readiness
-   and no hosted ASGI startup configuration refusal (both valid SMTP and the public host
-   are required). Require `/api/meta` to report `deployment_mode: hosted` and `mail_available: true`.
-5. Complete public signup at `https://app.verwalino.de/signup` with a fresh test email:
+2. The first deploy of the release containing this change still runs the **old script**
+   already on the server: checking out the release does not reload the running script.
+   The new script is active from the **following deploy**. After that first deployment has
+   installed the reviewed files, create `.env.hosted-app` as shown (`hosted`, `app.verwalino.de`),
+   verify the SMTP values in `.env.selfhost`, then redeploy with
+   `/srv/verwalino/app/scripts/deploy-server.sh vX.Y.Z` using the reviewed release tag.
+   Require successful app readiness and no hosted ASGI startup configuration refusal
+   (both valid SMTP and the public host are required).
+3. Fetch `https://app.verwalino.de/api/meta`: require `deployment_mode: hosted` and
+   `mail_available: true`. This checks configuration only, not SMTP delivery.
+4. Complete public signup at `https://app.verwalino.de/signup` with a fresh test email:
    receive the confirmation, confirm with the chosen password and log in to the new organization.
    Review that test organization under the existing retention/deletion procedure.
+5. Use **Passwort vergessen?** for that account against the configured SMTP. Receive the HTTPS
+   link on `app.verwalino.de`, reset the password, log in with the new password, and confirm
+   the link cannot be reused.
+6. Negative checks: a mistyped file (invalid mode, a public host that differs from
+   `VERWALINO_DOMAIN`, a missing host in the list) and a redeploy of a tag that predates the
+   overlay must both stop before any pull, backup or restart; the running app stays untouched.
 
 The [website runbook](docs/operations/website-hosting.md) covers the independent proxy/site opt-in.
 

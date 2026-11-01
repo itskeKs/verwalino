@@ -18,7 +18,8 @@
 # Steps: fetch tags and check out the tag -> validate optional hosted proxy/app overlays ->
 # pull ghcr.io/itskeks/verwalino:TAG and resolve its digest -> backup (server-backup.sh) -> pin
 # the digest in the installer config ->
-# "self-host.sh start" (pull, stop app, migrate, start, wait for healthy) -> poll
+# "self-host.sh start", or managed start with base + hosted-app + optional hosted-proxy/site
+# overlays (pull, stop app, migrate, start, wait for healthy) -> poll
 # /api/health/ready for up to 120 s. The whole run is logged to
 # /srv/verwalino/logs/deploy-<timestamp>.log.
 #
@@ -95,6 +96,10 @@ if [[ "$target" = release && ( -e "$APP_CONFIG" || -L "$APP_CONFIG" ) ]]; then
     done < "$APP_CONFIG"
     [[ "$app_mode" = selfhost || "$app_mode" = hosted ]] || \
         invalid_app_config 'HV_DEPLOYMENT_MODE must be selfhost or hosted.'
+    if [[ "$app_mode" = hosted ]]; then
+        [[ -f "$CONFIG" && "$(sed -n 's/^HV_SMTP_HOST=//p' "$CONFIG")" =~ [^[:space:]] ]] || \
+            invalid_app_config 'hosted mode requires HV_SMTP_HOST in the private config (.env.selfhost).'
+    fi
     dns_label='[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?'
     [[ ${#app_public_host} -le 253 && "$app_public_host" =~ ^$dns_label(\.$dns_label)+$ && "${app_public_host##*.}" =~ [a-z] ]] || \
         invalid_app_config 'HV_PUBLIC_HOST must be a lowercase DNS hostname, without scheme or port.'

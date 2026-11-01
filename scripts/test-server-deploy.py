@@ -494,6 +494,8 @@ class DeployTests(ServerCase):
     def setUp(self):
         super().setUp()
         self.install_config()
+        with self.config.open("a") as config:
+            config.write("HV_SMTP_HOST=smtp.example.org\nHV_SMTP_FROM=mail@example.org\n")
         self.before = self.config.read_bytes()
 
     def deploy(self, *args, **env):
@@ -585,14 +587,33 @@ class DeployTests(ServerCase):
         self.assertFalse(any("up" in c["args"] and c["args"][-1] == "app" for c in self.calls("docker")))
 
     def test_app_opt_in_trims_private_smtp_settings_like_the_installer(self):
-        self.hosted_app_config()
-        with self.config.open("a") as config:
-            config.write("HV_SMTP_HOST=  smtp.example.org  \nHV_SMTP_FROM=  mail@example.org  \n")
+        self.hosted_app_config("hosted")
+        self.config.write_text(self.config.read_text().replace("=smtp.example.org", "=  smtp.example.org  ")
+                               .replace("=mail@example.org", "=  mail@example.org  "))
         result = self.deploy(HV_SMTP_HOST="attacker.example.org", HV_SMTP_FROM="attacker@example.org")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         start = next(c for c in self.calls("docker") if "up" in c["args"] and c["args"][-1] == "app")
         self.assertEqual(start["smtp_host"], "smtp.example.org")
         self.assertEqual(start["smtp_from"], "mail@example.org")
+
+    def test_hosted_mode_requires_a_private_smtp_host_before_any_side_effect(self):
+        self.hosted_app_config("hosted")
+        (self.srv / "logs").chmod(0o755)
+        configured = self.before.decode()
+        for host in (None, "", " \t "):
+            with self.subTest(host=host):
+                self.config.write_text("\n".join(
+                    line for line in configured.splitlines() if not line.startswith("HV_SMTP_")
+                ) + "\n" + (f"HV_SMTP_HOST={host}\n" if host is not None else ""))
+                self.before = self.config.read_bytes()
+                result = self.deploy(HV_SMTP_HOST="caller.example.org")
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("hosted mode requires HV_SMTP_HOST in the private config", result.stderr)
+                self.assertEqual(self.calls(), [])
+                self.assertEqual(self.log_files(), [])
+                self.assertEqual(stat.S_IMODE((self.srv / "logs").stat().st_mode), 0o755)
+                self.assertFalse(Path(str(self.config) + ".lock").exists())
+                self.assert_untouched()
 
     def test_app_opt_in_requires_the_loopback_healthcheck_host_before_side_effects(self):
         path = self.hosted_app_config()
@@ -1092,6 +1113,22 @@ class StagingDeployTests(ServerCase):
 
     def deploy(self, ref=None, **env):
         return self.run_script(DEPLOY, "staging", ref or self.SHA, **env)
+
+    def test_staging_ignores_invalid_production_app_settings(self):
+        app_config = self.srv / "config/.env.hosted-app"
+        app_config.write_text("HV_DEPLOYMENT_MODE=invalid\nUNKNOWN=value\n")
+        app_config.chmod(0o644)
+        before = app_config.read_bytes()
+        result = self.deploy()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(app_config.read_bytes(), before)
+        self.assertEqual(self.config.read_bytes(), self.production)
+        compose = [c["args"] for c in self.calls("docker") if c["args"][0] == "compose"]
+        self.assertTrue(compose)
+        for args in compose:
+            self.assertEqual(args[1:5], ["--project-name", "verwalino-staging", "--env-file", str(self.staging)])
+            self.assertNotIn(str(ROOT / "infra/docker-compose.hosted-app.yml"), args)
+        self.assertIn(f"staging {self.SHA} OK", result.stdout)
 
     def test_real_staging_export_is_readable_and_traversable_by_postgres_under_umask_027(self):
         result = self.deploy(FAKE_REAL_ARCHIVE="1", REAL_GIT=shutil.which("git"))
