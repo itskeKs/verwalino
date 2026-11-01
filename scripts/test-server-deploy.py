@@ -1,4 +1,4 @@
-"""Hosted-server contracts; service operations, git fetch, curl and sleep are faked.
+"""Hosted-server contracts; service operations, git fetch, curl, sleep and date are faked.
 
 Real git archive only reads local inputs; Docker is always faked.
 
@@ -43,12 +43,19 @@ PREVIOUS_SITE_SHA = "2" * 40
 SITE_REPO = "ghcr.io/itskeks/verwalino-site"
 SITE_DIGEST = SITE_REPO + "@sha256:" + "d" * 64
 
-# One script serves as docker, git, curl and sleep; it logs every call and fails on demand.
+# One script serves as docker, git, curl, sleep and date; service calls are logged and fail on demand.
 FAKE_TOOL = r'''#!/usr/bin/env python3
-import io, json, os, sys, tarfile, time
+import datetime, io, json, os, sys, tarfile, time
 tool = os.path.basename(sys.argv[0])
 args = sys.argv[1:]
 env = os.environ
+if tool == "date":
+    assert len(args) == 2 and args[0] == "-u" and args[1] in (
+        "+%Y%m%dT%H%M%SZ", "+%Y-%m-%dT%H:%M:%SZ"), args
+    instant = datetime.datetime.fromtimestamp(int(env["FAKE_DATE_EPOCH"]), datetime.timezone.utc)
+    print(instant.strftime(args[1][1:]))
+    sys.exit(0)
+
 with open(env["FAKE_LOG"], "a") as log:
     entry = {"tool": tool, "args": args, "site_image": env.get("VERWALINO_SITE_IMAGE")}
     if tool == "docker" and args[:1] == ["compose"]:
@@ -204,7 +211,7 @@ sys.exit(0)
 
 
 class ServerCase(unittest.TestCase):
-    """A fake server root with config, backups and logs, and fake docker/git/curl/sleep on PATH."""
+    """A fake server root and tools on PATH, with a controllable UTC clock."""
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -219,13 +226,14 @@ class ServerCase(unittest.TestCase):
         (self.base / "state/HEAD").write_text(OLD_COMMIT)
         binary = self.base / "bin"
         binary.mkdir()
-        for tool in ("docker", "git", "curl", "sleep"):
+        for tool in ("docker", "git", "curl", "sleep", "date"):
             (binary / tool).write_text(FAKE_TOOL)
             (binary / tool).chmod(0o755)
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("VERWALINO_", "FAKE_", "COMPOSE_", "SSH_"))}
         self.env.update(PATH=f"{binary}:{os.environ['PATH']}", VERWALINO_SERVER_ROOT=str(self.srv),
                         VERWALINO_CONFIG=str(self.config), FAKE_LOG=str(self.log),
-                        FAKE_STATE=str(self.base / "state"), FAKE_ROOT=str(ROOT))
+                        FAKE_STATE=str(self.base / "state"), FAKE_ROOT=str(ROOT),
+                        FAKE_DATE_EPOCH="1793553343")  # 2026-11-01T17:15:43Z; override per call to advance
 
     def install_config(self, image=OLD_DIGEST):
         """Create the installer config the way a maintainer does."""
@@ -389,6 +397,41 @@ class BackupTests(ServerCase):
                 self.assertEqual(result.returncode, 2)
         self.assertEqual(self.backup_dirs(), [name])
 
+    def test_same_second_backups_survive_retention_with_and_without_labels(self):
+        original = self.config.read_bytes()
+        for label in ("", "pre-v1.2.3"):
+            with self.subTest(label=label):
+                backups = self.srv / "backups"
+                shutil.rmtree(backups)
+                backups.mkdir()
+                for number in range(12):
+                    self.config.write_bytes(original + f"# backup {number}\n".encode())
+                    result = self.run_script(BACKUP, label)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    suffix = f".{number:06d}" if number else ""
+                    name = f"20261101T171543Z{suffix}" + (f"-{label}" if label else "")
+                    self.assertIn(name, self.backup_dirs(), "the newest backup must survive pruning")
+                    self.assertEqual((backups / name / "config.env").read_bytes(), self.config.read_bytes())
+                expected = ([f"20261101T171543Z.{number:06d}-{label}" for number in range(2, 12)]
+                            if label else ["20261101T171543Z.000011"])
+                self.assertEqual(self.backup_dirs(), expected)
+
+    def test_backup_collision_preserves_existing_directories_files_and_symlinks(self):
+        backups = self.srv / "backups"
+        base = backups / "20261101T171543Z-pre-v1.2.3"
+        base.mkdir()
+        (base / "keep").write_bytes(b"existing backup")
+        link = backups / "20261101T171543Z.000001-pre-v1.2.3"
+        link.symlink_to(backups / "missing")
+        file = backups / "20261101T171543Z.000002-pre-v1.2.3"
+        file.write_bytes(b"existing file")
+        result = self.run_script(BACKUP, "pre-v1.2.3")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((base / "keep").read_bytes(), b"existing backup")
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(file.read_bytes(), b"existing file")
+        self.assertTrue((backups / "20261101T171543Z.000003-pre-v1.2.3/db.dump").is_file())
+
     def test_failures_leave_no_partial_backup_and_release_the_lock(self):
         for env, message in [({"FAKE_NO_DB": "1"}, "exactly one running container 'db'"),
                              ({"FAKE_FAIL": "pg_dump"}, ""),
@@ -517,6 +560,22 @@ class DeployTests(ServerCase):
                 self.assertLess(calls.index(migration), calls.index(starts[0]))
                 self.assertEqual(path.read_bytes(), before)
                 self.assertNotIn("HV_DEPLOYMENT_MODE", self.config.read_text())
+
+    def test_same_tag_redeploy_in_the_same_second_preserves_each_backup(self):
+        self.hosted_app_config("hosted")
+        backups = self.srv / "backups"
+        snapshots = {}
+        # The overridden clock stays fixed across every date call and deploy.
+        for suffix in ("", ".000001", ".000002"):
+            result = self.deploy(FAKE_DATE_EPOCH="1793553344")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            name = f"20261101T171544Z{suffix}-pre-{self.TAG}"
+            self.assertTrue((backups / name).is_dir())
+            snapshots[name] = {p.name: p.read_bytes() for p in (backups / name).iterdir()}
+            self.assertEqual(sorted(p.name for p in backups.iterdir()), sorted(snapshots))
+            for previous, files in snapshots.items():
+                self.assertEqual({p.name: p.read_bytes() for p in (backups / previous).iterdir()}, files)
+        self.assertEqual(snapshots[f"20261101T171544Z-pre-{self.TAG}"]["config.env"], self.before)
 
     def test_app_start_failure_releases_config_lock_without_falling_back(self):
         self.hosted_app_config("hosted")

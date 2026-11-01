@@ -1292,7 +1292,7 @@ Everything belongs to the admin user, who is also a member of `docker`; nothing 
 |---|---|---|
 | `/srv/verwalino/app` | 755 | checkout of this repository; the deploy script moves it to the release tag |
 | `/srv/verwalino/config` | **700** | `.env.selfhost` (**0600**, the installer insists), `deploy_key` (read-only GitHub deploy key for `git fetch`) and the installer's lock directory |
-| `/srv/verwalino/backups` | 700 | `<timestamp>[-label]/` backups (directories 0700, files 0600) |
+| `/srv/verwalino/backups` | 700 | `<timestamp>[.NNNNNN][-label]/` backups (directories 0700, files 0600) |
 | `/srv/verwalino/logs` | 750 | `deploy-<timestamp>.log` (0640), `backup.log` |
 | `/srv/verwalino/data` | 755 | reserved and empty: the stack keeps its data in the Docker volumes `verwalino_pgdata` and `verwalino_documents`, under Docker's data root |
 
@@ -1558,10 +1558,13 @@ manual portable-installer operations require reapplying the hosted Caddy overrid
 
 ### Backups
 
-[`scripts/server-backup.sh`](scripts/server-backup.sh) writes `/srv/verwalino/backups/<UTC timestamp>[-label]/`:
+[`scripts/server-backup.sh`](scripts/server-backup.sh) writes `/srv/verwalino/backups/<UTC timestamp>[.NNNNNN][-label]/`:
 `db.dump` (`pg_dump` custom format), `documents.tar`, `config.env` (a copy of the config, secrets in clear:
 keep the directory private and encrypt before it leaves the server), `MANIFEST` and `SHA256SUMS`. It keeps the
 newest unlabelled backup of each of the last 14 days and 8 weeks and the 10 newest backups with any label.
+The UTC timestamp is `YYYYMMDDTHHMMSSZ`. Repeating a backup with the same timestamp and label adds
+`.000001`, `.000002`, and so on before the label, continuing after the highest retained counter.
+Existing backups are never overwritten; the padded counters preserve retention order, including for unlabelled backups.
 `scripts/server-backup.sh manual` competes with `pre-<tag>` backups for those 10 places. Schedule it daily:
 
 ```bash
@@ -1588,7 +1591,8 @@ docker image prune -af --filter until=720h                              # old re
 ```
 
 The scripts and the workflow are covered by `make test-installer` (`scripts/test-server-deploy.py`; Docker, git,
-curl and sleep are faked, nothing touches a real host). After a cancelled or broken CI deploy, check for and
+curl, sleep and date are faked; `FAKE_DATE_EPOCH` controls the fixed UTC clock, and nothing touches a real host).
+After a cancelled or broken CI deploy, check for and
 remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/srv/verwalino/backups/.lock`
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
