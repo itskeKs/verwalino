@@ -1992,14 +1992,17 @@ os.execv("/bin/mv", ["mv", *sys.argv[1:]])
             self.assertFalse((self.base / "marker").exists())
             self.assertEqual(self.calls(), [])
 
-    def test_deployment_mode_remains_an_unknown_installer_key(self):
+    def test_hosted_app_settings_remain_unknown_installer_keys(self):
         self.init()
-        with self.config.open("a") as config:
-            config.write("HV_DEPLOYMENT_MODE=hosted\n")
-        result = self.run_script("start")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Unknown configuration key", result.stderr)
-        self.assertEqual(self.calls(), [])
+        before = self.config.read_text()
+        for setting in ("HV_DEPLOYMENT_MODE=hosted", "HV_PUBLIC_HOST=app.example.org",
+                        "HV_ALLOWED_HOSTS=app.example.org,127.0.0.1"):
+            with self.subTest(setting=setting):
+                self.config.write_text(before + setting + "\n")
+                result = self.run_script("start")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Unknown configuration key", result.stderr)
+                self.assertEqual(self.calls(), [])
 
     def test_local_start_builds_migrates_then_starts_app_without_https(self):
         self.init()

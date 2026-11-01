@@ -15,7 +15,7 @@
 # from Caddy over the internal site network. No checkout, backup, migration or config write.
 # The previous site's SHA is printed for an explicit "site <previous-sha>" rollback.
 #
-# Steps: fetch tags and check out the tag -> validate optional hosted proxy ->
+# Steps: fetch tags and check out the tag -> validate optional hosted proxy/app overlays ->
 # pull ghcr.io/itskeks/verwalino:TAG and resolve its digest -> backup (server-backup.sh) -> pin
 # the digest in the installer config ->
 # "self-host.sh start" (pull, stop app, migrate, start, wait for healthy) -> poll
@@ -98,10 +98,14 @@ if [[ "$target" = release && ( -e "$APP_CONFIG" || -L "$APP_CONFIG" ) ]]; then
     dns_label='[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?'
     [[ ${#app_public_host} -le 253 && "$app_public_host" =~ ^$dns_label(\.$dns_label)+$ && "${app_public_host##*.}" =~ [a-z] ]] || \
         invalid_app_config 'HV_PUBLIC_HOST must be a lowercase DNS hostname, without scheme or port.'
-    [[ "$app_allowed_hosts" =~ ^[a-z0-9.,-]+$ && ",$app_allowed_hosts," = *",$app_public_host,"* ]] || \
-        invalid_app_config 'HV_ALLOWED_HOSTS must be a comma-separated list without spaces including HV_PUBLIC_HOST exactly.'
+    [[ "$app_allowed_hosts" =~ ^[a-z0-9.-]+(,[a-z0-9.-]+)*$ && ",$app_allowed_hosts," = *",$app_public_host,"* ]] || \
+        invalid_app_config 'HV_ALLOWED_HOSTS must be a comma-separated list without spaces or empty entries including HV_PUBLIC_HOST exactly.'
     [[ ",$app_allowed_hosts," = *',127.0.0.1,'* ]] || \
         invalid_app_config 'HV_ALLOWED_HOSTS must include 127.0.0.1 for the app health checks.'
+    if [[ -f "$CONFIG" && "$(sed -n 's/^VERWALINO_MODE=//p' "$CONFIG")" = https ]]; then
+        [[ "$app_public_host" = "$(sed -n 's/^VERWALINO_DOMAIN=//p' "$CONFIG")" ]] || \
+            invalid_app_config 'HV_PUBLIC_HOST must match VERWALINO_DOMAIN in https mode.'
+    fi
     app_overlay=1
 fi
 [[ -d "$LOGS" && -w "$LOGS" ]] || { echo "deploy: $LOGS is missing or not writable." >&2; exit 1; }
@@ -260,44 +264,55 @@ main() {
         local files=(-f "$APP/infra/docker-compose.yml" -f "$APP/infra/docker-compose.hosted-app.yml")
         local profiles=(--profile ops)
         local secure=false cookie=hv_session
+        local allowed_hosts=localhost,127.0.0.1 host
+        local private_hosts=()
         if [[ "$(config_value VERWALINO_MODE)" = https ]]; then
             profiles+=(--profile https)
             secure=true cookie=__Host-hv_session
+            allowed_hosts="$(config_value VERWALINO_DOMAIN),$allowed_hosts"
         fi
+        IFS=, read -r -a private_hosts <<< "$app_allowed_hosts"
+        for host in "${private_hosts[@]}"; do
+            if [[ ",$allowed_hosts," != *",$host,"* ]]; then allowed_hosts="$allowed_hosts,$host"; fi
+        done
         if [[ -f "$ROOT/config/Caddyfile.hosted" ]]; then
             files+=(-f "$APP/infra/docker-compose.hosted-proxy.yml" -f "$APP/infra/docker-compose.site.yml")
         fi
-        HV_DEPLOYMENT_MODE=$app_mode HV_PUBLIC_HOST=$app_public_host HV_ALLOWED_HOSTS=$app_allowed_hosts \
+        HV_DEPLOYMENT_MODE=$app_mode HV_PUBLIC_HOST=$app_public_host HV_ALLOWED_HOSTS=$allowed_hosts \
         VERWALINO_COOKIE_SECURE=$secure VERWALINO_COOKIE_NAME=$cookie \
-        VERWALINO_ALLOWED_HOSTS=$app_allowed_hosts VERWALINO_SITE_IMAGE=$prev_site_image \
+        VERWALINO_ALLOWED_HOSTS=$allowed_hosts VERWALINO_SITE_IMAGE=$prev_site_image \
         docker compose --project-name verwalino --env-file "$CONFIG" \
             "${files[@]}" "${profiles[@]}" "$@"
+    }
+
+    hosted_app_environment() {
+        # Match the installer's private-file precedence for validation and start.
+        local key line value
+        for key in HV_SMTP_HOST HV_SMTP_PORT HV_SMTP_FROM HV_SMTP_SECURITY HV_SMTP_USERNAME HV_SMTP_PASSWORD HV_SMTP_TIMEOUT_SECONDS; do
+            export "$key="
+        done
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            case "$line" in ''|\#*) continue ;; esac
+            key=${line%%=*}
+            export "$key=${line#*=}"
+        done < "$CONFIG"
+        for key in HV_SMTP_HOST HV_SMTP_FROM; do
+            value=${!key}
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            export "$key=$value"
+        done
     }
 
     start_hosted_app() {
         # Managed server start: never briefly boot a hosted app with selfhost policy.
         # The portable installer validates its own config via status before checkout.
-        local key line value inbox_container
+        local inbox_container
         mkdir "$CONFIG.lock" 2>/dev/null || die "another installer operation is running (or a stale $CONFIG.lock needs operator review)."
         # Keep cleanup in a subshell so every failure releases the installer lock.
         (
             trap 'rmdir "$CONFIG.lock"' EXIT
-            # Match the installer's private-file precedence, including optional mail.
-            for key in HV_SMTP_HOST HV_SMTP_PORT HV_SMTP_FROM HV_SMTP_SECURITY HV_SMTP_USERNAME HV_SMTP_PASSWORD HV_SMTP_TIMEOUT_SECONDS; do
-                export "$key="
-            done
-            while IFS= read -r line || [[ -n "$line" ]]; do
-                case "$line" in ''|\#*) continue ;; esac
-                key=${line%%=*}
-                export "$key=${line#*=}"
-            done < "$CONFIG"
-            for key in HV_SMTP_HOST HV_SMTP_FROM; do
-                value=${!key}
-                value="${value#"${value%%[![:space:]]*}"}"
-                value="${value%"${value##*[![:space:]]}"}"
-                export "$key=$value"
-            done
-            hosted_app_compose config -q
+            hosted_app_environment
             hosted_app_compose pull app
             hosted_app_compose up -d --wait --wait-timeout 120 db
             inbox_container=$(hosted_app_compose ps --all --quiet inbox-worker)
@@ -444,6 +459,14 @@ main() {
     if [[ -f "$ROOT/config/Caddyfile.hosted" ]]; then
         step='validate hosted proxy extension'
         validate_hosted_proxy
+    fi
+    if [[ "$app_overlay" = 1 ]]; then
+        step='validate hosted app overlay'
+        [[ -f "$APP/infra/docker-compose.hosted-app.yml" ]] || \
+            invalid_app_config "the selected tag is missing infra/docker-compose.hosted-app.yml."
+        if ! (hosted_app_environment; hosted_app_compose config -q); then
+            invalid_app_config 'invalid hosted app Compose configuration for the selected tag.'
+        fi
     fi
 
     step='pull the image'

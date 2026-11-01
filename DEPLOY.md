@@ -1359,6 +1359,9 @@ an IP-only entry does not match a host name in `DEPLOY_HOST`.
    after checkout, before pulling the image, backup, image pinning or the installer. Validation uses
    read-only mounts/root, no network, `--cap-drop ALL --cap-add NET_BIND_SERVICE` (required by the stock
    binary's file capability) and `no-new-privileges`. Failure preserves the running Caddy configuration.
+   With the app opt-in, the checked-out tag must contain `infra/docker-compose.hosted-app.yml`,
+   and its Compose chain must pass `config -q` here. Either failure exits 2 and restores the previous
+   checkout before any image pull, backup or pinning; no running service is changed.
    It then pulls `ghcr.io/itskeks/verwalino:vX.Y.Z`, resolves its digest and runs
    [`scripts/server-backup.sh`](scripts/server-backup.sh) as `pre-vX.Y.Z`, writes the digest to `VERWALINO_IMAGE`
    in the config, runs `scripts/self-host.sh start` (pull by digest, stop the app, migrate, start, wait for
@@ -1401,16 +1404,22 @@ Only these three unquoted `KEY=value` keys are accepted, once each; blank lines 
 full-line comments are allowed. The file is read as data, never sourced. Mode must be
 `selfhost` or `hosted`; the public host must be a lowercase DNS hostname, at most
 253 characters with labels at most 63, without scheme, credentials, path or port.
-`HV_ALLOWED_HOSTS` is required: a comma-separated list without spaces or wildcards that
+`HV_ALLOWED_HOSTS` is required: a comma-separated list without spaces, wildcards or empty entries that
 includes the exact public host and `127.0.0.1` for health checks, as shown above.
+Leading/trailing commas and consecutive commas are refused. The deploy script merges this
+list with the installer's allowed hosts, removing duplicates: `localhost` and `127.0.0.1`
+are always present, as is `VERWALINO_DOMAIN` in HTTPS mode.
 Invalid settings, duplicate/unknown keys, symlinks or non-0600 permissions exit **2**
 before log creation, locks, checkout, backup, pinning or service operations.
 
 Keep the existing SMTP settings and generated secrets in `.env.selfhost`; never add these
 three app keys there. The existing HTTPS config should have
-`VERWALINO_DOMAIN=app.verwalino.de`, matching the public routing hostname. The installer
-validates its own file via `status` before checkout. The managed server start then takes
-the installer lock, validates Compose quietly, pulls the pinned app, waits for the database,
+`VERWALINO_DOMAIN=app.verwalino.de`, matching the public routing hostname. In `https` mode,
+`HV_PUBLIC_HOST` must equal `VERWALINO_DOMAIN`; a mismatch exits 2 before any side effects.
+The installer validates its own file via `status` before checkout. Immediately after checkout,
+the deploy script checks that the app overlay exists and validates Compose quietly, before
+image pull, backup or pinning. The managed server start then takes
+the installer lock, pulls the pinned app, waits for the database,
 stops an existing inbox worker and the app, migrates and starts the app with the overlay,
 waiting for health before starting Caddy. It never briefly starts the app in another mode.
 If the hosted proxy wrapper is present, the app/proxy/site overlays form one chain for
@@ -1418,6 +1427,13 @@ these operations, preserving Caddy's imports, site image and networks. A managed
 does not issue portable first-run setup tokens; use this opt-in for the existing server,
 or hosted public signup on an empty database. Keep both private configs in the operator's
 separate secure config backup; the server backup's `config.env` contains only `.env.selfhost`.
+
+The overlay forwards the three private settings to `app` only. `migrate` and `inbox-worker`
+do not read this deployment policy. The installer's `bootstrap` service also retains the
+default `selfhost` policy: `admin_cli` run through that service skips hosted quota locks,
+including during `quota-recount`. For a recount, use the configured migrator environment
+and document store described above with `HV_DEPLOYMENT_MODE=hosted` explicitly set;
+the installer bootstrap service does not forward that mode or mount the document store.
 
 Without `.env.hosted-app`, the release path and its Compose command vectors remain unchanged.
 Staging, site-only deploys and portable status/restore/update behavior are unchanged.
@@ -1435,7 +1451,12 @@ Owner acceptance on the server (these are live checks, not proven by fake-Docker
 3. Use **Passwort vergessen?** for a known test account against the configured SMTP.
    Receive the HTTPS link on `app.verwalino.de`, reset the password, log in with the new
    password, and confirm the link cannot be reused.
-4. Only when the owner chooses to open hosted signup, set `HV_DEPLOYMENT_MODE=hosted`
+4. Before enabling hosted mode on an existing document store, apply **0146** and run
+   `python -m app.admin_cli quota-recount --org <organization-uuid>` for every existing
+   organization, using the migrator connection, document storage root and explicit
+   `HV_DEPLOYMENT_MODE=hosted` environment described in the quota reconciliation instructions
+   above. The installer's `bootstrap` service runs as selfhost and skips hosted quota locks.
+   Only when the owner chooses to open hosted signup, set `HV_DEPLOYMENT_MODE=hosted`
    in the private app file and redeploy the reviewed tag. Require successful app readiness
    and no hosted ASGI startup configuration refusal (both valid SMTP and the public host
    are required). Require `/api/meta` to report `deployment_mode: hosted` and `mail_available: true`.
