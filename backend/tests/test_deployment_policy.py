@@ -127,4 +127,16 @@ async def test_meta_reports_only_usable_mail_configuration(client_unauth, signup
     assert set(response.json()) == {'deployment_mode', 'version', 'mail_available', 'max_upload_bytes'}
 
 
+async def test_selfhost_smtp_and_public_host_enable_mail_and_public_metadata(client_unauth, signup_mail, monkeypatch):
+    from app.core.config import DeploymentMode, settings
+    from app.services.mail_service import password_reset_available
+
+    monkeypatch.setattr(settings, 'deployment_mode', DeploymentMode.SELFHOST)
+    assert password_reset_available(settings) is True
+    response = await client_unauth.get('/api/meta')
+    assert response.status_code == 200
+    assert response.json()['deployment_mode'] == 'selfhost'
+    assert response.json()['mail_available'] is True
+
+
 from tests.signup_support import signup_mail  # noqa: E402,F401
