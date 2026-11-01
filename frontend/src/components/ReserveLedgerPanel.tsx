@@ -10,10 +10,11 @@ const day = (value: string) => value.split('-').reverse().join('.');
 const labels: Record<string, string> = { PLANNED: 'Geplant (Soll)', CONTRIBUTION: 'Gebuchte Zuführung', WITHDRAWAL: 'Finanzierte Entnahme',
   OVERRIDE: 'Begründete Korrektur', OPENING: 'Anfangsbestand', ADJUSTMENT: 'Sonstige Korrektur', FUNDING: 'Finanzierte Entnahme verknüpfen',
   LATE_CASH: 'Nachträgliche Buchungen zum abgeschlossenen Jahr', UNASSIGNED: 'Ohne Planbezug' };
-const componentLabels: Record<string, string> = { ...labels, WITHDRAWAL: 'Entnahmekorrektur' };
+const componentLabels: Record<string, string> = { ...labels, WITHDRAWAL: 'Entnahmekorrektur', OPENING: 'Korrektur Anfangsbestand' };
 
-export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, disabled = false, refreshKey = 0 }: {
+export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpeningLoaded, disabled = false, refreshKey = 0 }: {
   runId: string; propertyId: string; status: string; onChanged: () => void; disabled?: boolean; refreshKey?: number;
+  onOpeningLoaded?: (opening: string | null) => void;
 }) {
   const [ledger, setLedger] = useState<ReserveLedger | null>(null);
   const [error, setError] = useState('');
@@ -31,11 +32,11 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, disab
 
   useEffect(() => {
     let active = true;
-    setLedger(null); setError('');
-    getReserveLedger(runId).then(value => { if (active) setLedger(value); })
+    setLedger(null); setError(''); onOpeningLoaded?.(null);
+    getReserveLedger(runId).then(value => { if (active) { setLedger(value); onOpeningLoaded?.(value.opening_balance); } })
       .catch(err => { if (active) setError(err instanceof Error ? err.message : 'Rücklagenbuch konnte nicht geladen werden.'); });
     return () => { active = false; };
-  }, [runId, status, version, refreshKey]);
+  }, [runId, status, version, refreshKey, onOpeningLoaded]);
 
   useEffect(() => {
     if (!open || component !== 'FUNDING') return;
@@ -124,7 +125,7 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, disab
         </> : <p>Finanzierungsbelege werden geladen…</p> : <label>Betrag *<input required inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} /></label>}
         {(component === 'WITHDRAWAL' || component === 'ADJUSTMENT' || (component === 'CONTRIBUTION' && !payment)) &&
           <ReserveEvidenceFields propertyId={propertyId} cost={cost} register={register} onChange={(cost, register) => { setCost(cost); setRegister(register); }} />}
-        {component === 'OPENING' && <p>Ein Import des Anfangsbestands ist nur im ersten Rücklagenjahr zulässig. Bitte begründen Sie den übernommenen Bestand.</p>}
+        {component === 'OPENING' && <p>Ein Import des Anfangsbestands ist nur im ersten Rücklagenjahr vor der Finalisierung zulässig. Aktueller Anfangsbestand: {ledger && euro(ledger.opening_balance)}. Geben Sie hier die begründete Differenz ein.</p>}
         <label>Begründung *<textarea required maxLength={2000} value={reason} onChange={e => setReason(e.target.value)} /></label>
         {formError && <p role="alert" className="error-text">{formError}</p>}
         <div className="form-actions"><button className="btn btn--primary" disabled={component === 'FUNDING' && !sources} type="submit">{saving ? 'Speichern…' : 'Speichern'}</button>

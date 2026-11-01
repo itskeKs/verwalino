@@ -88,8 +88,6 @@ def upgrade():
          OR (component IN ('WITHDRAWAL','ADJUSTMENT','CONTRIBUTION') AND payment_id IS NULL AND cost_entry_id IS NOT NULL AND register_entry_id IS NOT NULL)),
       UNIQUE(organization_id,payment_id));
     CREATE INDEX ix_reserve_property_date ON reserve_ledger_entry(organization_id,property_id,entry_date);
-    CREATE UNIQUE INDEX uq_reserve_opening_import ON reserve_ledger_entry(organization_id,settlement_run_id)
-      WHERE component='OPENING';
     ALTER TABLE reserve_ledger_entry ENABLE ROW LEVEL SECURITY;
     ALTER TABLE reserve_ledger_entry FORCE ROW LEVEL SECURITY;
     CREATE POLICY reserve_read ON reserve_ledger_entry FOR SELECT USING (
@@ -186,6 +184,8 @@ def upgrade():
             public.financial_scope_id(r.organization_id,'settlement_run',r.id),sphere,
             r.management_mandate_id,parent.management_mandate_id)) THEN
         RAISE EXCEPTION 'Reserve opening import is limited to first ledger year' USING ERRCODE='23514',CONSTRAINT='reserve_opening_import_only'; END IF;
+      IF NEW.component='OPENING' AND NEW.amount=0 THEN
+        RAISE EXCEPTION 'Reserve opening has no change' USING ERRCODE='23514',CONSTRAINT='reserve_amount_invalid'; END IF;
       IF NEW.cost_entry_id IS NOT NULL OR NEW.component IN ('WITHDRAWAL','ADJUSTMENT') THEN
         SELECT * INTO cost FROM public.cost_entry WHERE organization_id=NEW.organization_id AND id=NEW.cost_entry_id FOR UPDATE;
         IF cost.id IS NULL OR cost.property_id IS DISTINCT FROM parent.property_id OR cost.status<>'confirmed' OR cost.superseded_by_id IS NOT NULL
@@ -252,11 +252,25 @@ def upgrade():
     LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
     DECLARE cost public.cost_entry;
     BEGIN
-      IF TG_OP='DELETE' THEN
-        IF OLD.bank_transaction_id IS NOT NULL AND OLD.status='draft' THEN
-          RAISE EXCEPTION 'Retain imported payment draft' USING ERRCODE='23514',CONSTRAINT='reserve_imported_draft_bound'; END IF;
-        RETURN OLD;
+      IF TG_OP IN ('DELETE','UPDATE') AND OLD.bank_transaction_id IS NOT NULL THEN
+        IF TG_OP='DELETE' OR NEW.cancelled_at IS DISTINCT FROM OLD.cancelled_at THEN
+          IF OLD.payment_type<>'RUECKLAGENENTNAHME' OR OLD.status<>'draft' OR OLD.cancelled_at IS NOT NULL
+            OR OLD.booked_at IS NOT NULL OR OLD.booked_by IS NOT NULL
+            OR (OLD.reserve_cost_entry_id IS NOT NULL AND OLD.reserve_register_entry_id IS NOT NULL)
+            OR EXISTS(SELECT 1 FROM public.reserve_ledger_entry e WHERE e.organization_id=OLD.organization_id AND e.payment_id=OLD.id)
+            OR EXISTS(SELECT 1 FROM public.payment p WHERE p.organization_id=OLD.organization_id
+              AND p.bank_transaction_id=OLD.bank_transaction_id AND p.id<>OLD.id AND p.cancelled_at IS NULL)
+            OR NOT EXISTS(SELECT 1 FROM public.bank_transaction b WHERE b.organization_id=OLD.organization_id
+              AND b.id=OLD.bank_transaction_id AND b.status='NEU') THEN
+            RAISE EXCEPTION 'Retain bound imported payment' USING ERRCODE='23514',CONSTRAINT='reserve_imported_draft_bound'; END IF;
+          IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+          IF NEW.cancelled_at IS NULL OR (to_jsonb(NEW)-'cancelled_at'-'updated_at') IS DISTINCT FROM
+              (to_jsonb(OLD)-'cancelled_at'-'updated_at') THEN
+            RAISE EXCEPTION 'Release only cancels the unchanged draft' USING ERRCODE='23514',CONSTRAINT='reserve_imported_draft_bound'; END IF;
+          RETURN NEW;
+        END IF;
       END IF;
+      IF TG_OP='DELETE' THEN RETURN OLD; END IF;
       IF TG_OP='UPDATE' AND OLD.bank_transaction_id IS NOT NULL AND OLD.status='draft'
         AND (NEW.amount IS DISTINCT FROM OLD.amount OR NEW.direction IS DISTINCT FROM OLD.direction
           OR NEW.value_date IS DISTINCT FROM OLD.value_date OR NEW.bank_account_id IS DISTINCT FROM OLD.bank_account_id

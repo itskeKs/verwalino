@@ -59,6 +59,7 @@ from app.repositories.cost_entry_repo import CostEntryRepository
 from app.repositories.register_entry_repo import RegisterEntryRepository
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.bank_account_repo import BankAccountRepository
+from app.repositories.bank_transaction_repo import BankTransactionRepository
 from app.repositories.economic_plan_repo import (
     EconomicPlanLineRepository,
     EconomicPlanRepository,
@@ -332,6 +333,20 @@ class PaymentService:
         payment = await self._repo.get_by_id(payment_id)
         if payment is None:
             raise HTTPException(status_code=404, detail="Payment not found")
+        if payment.bank_transaction_id:
+            if (payment.payment_type != 'RUECKLAGENENTNAHME' or payment.status != 'draft'
+                    or payment.cancelled_at is not None or payment.booked_at is not None or payment.booked_by is not None
+                    or (payment.reserve_cost_entry_id and payment.reserve_register_entry_id)
+                    or await self._repo.has_reserve_entry(payment.id)
+                    or await self._repo.has_other_bank_payments(payment)):
+                raise HTTPException(409, {'code': 'RESERVE_IMPORTED_DRAFT_BOUND',
+                    'message': 'Diese Zuordnung bleibt wegen Buchung, vollständiger Belege oder weiterer verknüpfter Einträge gebunden.'})
+            transactions = BankTransactionRepository(self._session, self._org_id)
+            transaction = await transactions.get_by_id_for_update(payment.bank_transaction_id)
+            if transaction is None:
+                raise HTTPException(404, 'Bank transaction not found')
+            transaction.status = 'NEU'
+            await transactions.update(transaction)
         if payment.status == "booked":
             raise HTTPException(
                 status_code=409,
@@ -339,9 +354,6 @@ class PaymentService:
             )
         if payment.cancelled_at is not None:
             return
-        if payment.bank_transaction_id:
-            raise HTTPException(409, {'code': 'RESERVE_IMPORTED_DRAFT_BOUND',
-                'message': 'Ein importierter Zahlungsentwurf kann nicht verworfen werden. Bitte ergänzen Sie die Belege und buchen Sie die Zahlung.'})
         bound = await self._repo.is_scope_bound(payment.id)
         if bound:
             payment.cancelled_at = datetime.now(timezone.utc)

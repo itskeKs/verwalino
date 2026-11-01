@@ -40,6 +40,7 @@ export function WegSettlementDetailPage() {
   const [paidOwners, setPaidOwners] = useState<string[]>([]);
   const [paidValues, setPaidValues] = useState<Record<string, string>>({});
   const [opening, setOpening] = useState("");
+  const [currentOpening, setCurrentOpening] = useState<string | null>(null);
   const [withdrawals, setWithdrawals] = useState("");
   const [reserveReason, setReserveReason] = useState("");
   const [ledgerVersion, setLedgerVersion] = useState(0);
@@ -180,7 +181,7 @@ export function WegSettlementDetailPage() {
         </tbody></table>
       </div>
 
-      <ReserveLedgerPanel key={run.id} runId={run.id} propertyId={run.property_id} status={run.status} disabled={busy || planBusy} refreshKey={ledgerRefresh}
+      <ReserveLedgerPanel key={run.id} runId={run.id} propertyId={run.property_id} status={run.status} disabled={busy || planBusy} refreshKey={ledgerRefresh} onOpeningLoaded={setCurrentOpening}
         onChanged={() => { setLedgerVersion(v => v + 1); setRun({ ...run, lines: [], total_cost: null, balance: null }); }} />
       {isDraft && (
         <fieldset disabled={busy || planBusy} className="card" style={{ marginBottom: "1rem" }}>
@@ -194,6 +195,7 @@ export function WegSettlementDetailPage() {
               Aus Zahlenstand übernehmen
             </button>
           </div>
+          <p>Aktueller Anfangsbestand: {currentOpening === null ? 'Wird geladen…' : new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(Number(currentOpening))}. Geben Sie bei einer Berichtigung den korrigierten Gesamtbestand und eine Begründung ein.</p>
           <div className="form-grid">
             <label>Rücklagen-Anfangsbestand
               <input type="text" inputMode="decimal" placeholder="0.00" value={opening} onChange={(e) => setOpening(e.target.value)} />

@@ -15,7 +15,7 @@ from app.repositories.settlement_repo import SettlementRunRepository
 from app.services.financial_scope_service import FinancialScopeService
 
 ZERO = Decimal('0.00')
-OPENING_IMPORT_ONLY = {'code': 'RESERVE_OPENING_IMPORT_ONLY', 'message': 'Ein Import des Anfangsbestands ist nur einmal im ersten Rücklagenjahr zulässig.'}
+OPENING_IMPORT_ONLY = {'code': 'RESERVE_OPENING_IMPORT_ONLY', 'message': 'Ein Import des Anfangsbestands ist nur im ersten Rücklagenjahr vor der Finalisierung zulässig.'}
 OPENING_IMPORT_EXISTS = {'code': 'RESERVE_OPENING_IMPORT_EXISTS', 'message': 'Vor dem Jahr mit importiertem Anfangsbestand kann kein früherer Abrechnungszeitraum angelegt werden.'}
 
 
@@ -224,9 +224,9 @@ class ReserveLedgerService:
         except ValueError:
             raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID', 'message': 'Bitte geben Sie einen endlichen Betrag ein.'}) from None
         if component == 'OPENING':
-            if (ledger.get('opening_source_run_id') or await self.repo.has_earlier_ledger(run)
-                    or any(row.get('component') == 'OPENING' for row in ledger['entries'])):
-                raise HTTPException(422, OPENING_IMPORT_ONLY)
+            await self.require_opening_period(run, ledger)
+            if amount == ZERO:
+                raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID', 'message': 'Keine Änderung des Anfangsbestands.'})
         if component == 'FUNDING':
             await self.require_evidence(run.property_id, cost_entry_id, register_entry_id)
             sources = await self.repo.funding_sources(payment_id, cost_entry_id, register_entry_id)
@@ -273,6 +273,10 @@ class ReserveLedgerService:
                 'amount': format(amount, '.2f'), 'reason': reason.strip()}))
         return entry
 
+    async def require_opening_period(self, run, ledger):
+        if ledger.get('opening_source_run_id') or await self.repo.has_earlier_ledger(run):
+            raise HTTPException(422, OPENING_IMPORT_ONLY)
+
     async def apply_typed_overrides(self, run, values):
         ledger = await self.read(run)
         fields = {'reserve_opening_balance': ('OPENING', 'opening_balance'),
@@ -282,10 +286,16 @@ class ReserveLedgerService:
             value = getattr(values, field, None)
             if value is None:
                 continue
+            if ledger['frozen'] and component == 'OPENING':
+                raise HTTPException(409, {'code': 'RESERVE_PERIOD_FINALIZED', 'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'})
             reason = values.reserve_override_reason
             if not reason or not reason.strip():
                 raise HTTPException(422, {'code': 'RESERVE_CORRECTION_REASON_REQUIRED', 'message': 'Manuelle Rücklagenwerte benötigen eine Begründung.'})
             delta = money(value) - Decimal(ledger[total])
+            if component == 'OPENING':
+                await self.require_opening_period(run, ledger)
+                if not delta and any(row.get('component') == 'OPENING' for row in ledger['entries']):
+                    raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID', 'message': 'Keine Änderung des Anfangsbestands.'})
             if delta:
                 await self.add(run, component, delta, reason)
                 ledger = await self.read(run)

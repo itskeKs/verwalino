@@ -60,6 +60,14 @@ function show() {
     <Route path="/weg-abrechnungen/:runId" element={<WegSettlementDetailPage />} />
   </Routes></MemoryRouter>);
 }
+
+it('shows the current opening beside the corrected balance input and reason', async () => {
+  install(); show();
+  expect(await screen.findByText(/Aktueller Anfangsbestand: 0,00/)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Rücklagen-Anfangsbestand'), { target: { value: '5500.00' } });
+  expect(screen.getByLabelText('Rücklagen-Anfangsbestand')).toHaveValue('5500.00');
+  expect(screen.getByLabelText('Begründung der Rücklagenwerte')).toBeInTheDocument();
+});
 const paymentLabel = (name: string) => `Tatsächlich gezahltes Hausgeld · ${name}`;
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 

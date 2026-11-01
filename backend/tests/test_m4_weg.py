@@ -135,6 +135,13 @@ def m4_seed(seed_data):
     return _seed_weg(seed_data)
 
 
+@pytest.fixture
+def m4_withdrawal_seed(m4_seed):
+    # A reserve-classified receipt covers 8,000 without changing owner costs.
+    receipt = previous_cost({**m4_seed, 'ce_garten': m4_seed['ce_ruecklage']}, '8000.00')
+    return {**m4_seed, 'ce_garten': str(receipt)}
+
+
 async def _create_and_finalize_plan(client, m4_seed, reserve="6000.00"):
     """Create + finalize a Wirtschaftsplan with the two owners' MEA shares."""
     resp = await client.post("/api/economic-plans", json={
@@ -762,17 +769,17 @@ class TestM4WirtschaftsplanE2E:
 # ===========================================================================
 class TestM4WegSettlementE2E:
     @pytest.mark.asyncio
-    async def test_full_weg_settlement(self, client_a_admin, m4_seed):
-        plan_id = await _create_and_finalize_plan(client_a_admin, m4_seed)
+    async def test_full_weg_settlement(self, client_a_admin, m4_withdrawal_seed):
+        plan_id = await _create_and_finalize_plan(client_a_admin, m4_withdrawal_seed)
         # Create the WEG run linked to the plan.
         resp = await client_a_admin.post("/api/weg-settlements", json={
-            "property_id": m4_seed["property"], "economic_plan_id": plan_id,
+            "property_id": m4_withdrawal_seed["property"], "economic_plan_id": plan_id,
             "period_start": "2025-01-01", "period_end": "2025-12-31",
         })
         assert resp.status_code == 201, resp.text
         run_id = resp.json()["id"]
         # Compute + finalize with reserve opening 20000, withdrawal 8000.
-        resp = await finalize_weg_fixture(client_a_admin, run_id, m4_seed, "20000.00", "8000.00")
+        resp = await finalize_weg_fixture(client_a_admin, run_id, m4_withdrawal_seed, "20000.00", "8000.00")
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["status"] == "finalized"
@@ -785,22 +792,22 @@ class TestM4WegSettlementE2E:
         # Per-owner OWNER_COST_TOTAL: A 7000*600/1000 = 4200 ; B = 2800.
         cost_totals = {ln["addressee_owner_profile_id"]: ln["amount"]
                        for ln in lines if ln["line_type"] == "OWNER_COST_TOTAL"}
-        assert cost_totals[m4_seed["owner_a"]] == "4200.00"
-        assert cost_totals[m4_seed["owner_b"]] == "2800.00"
+        assert cost_totals[m4_withdrawal_seed["owner_a"]] == "4200.00"
+        assert cost_totals[m4_withdrawal_seed["owner_b"]] == "2800.00"
 
         # Plan Soll: the plan advance per owner is cost+reserve share:
         #   A 13000*600/1000 = 7800 ; B = 5200.
         plan_adv = {ln["addressee_owner_profile_id"]: ln["amount"]
                     for ln in lines if ln["line_type"] == "PLAN_ADVANCE"}
-        assert plan_adv[m4_seed["owner_a"]] == "7800.00"
-        assert plan_adv[m4_seed["owner_b"]] == "5200.00"
+        assert plan_adv[m4_withdrawal_seed["owner_a"]] == "7800.00"
+        assert plan_adv[m4_withdrawal_seed["owner_b"]] == "5200.00"
 
         # Abrechnungsspitze = Ist - Soll (NOT incl. reserve in the Ist):
         #   A 4200 - 7800 = -3600.00 (Guthaben) ; B 2800 - 5200 = -2400.00.
         spitze = {ln["addressee_owner_profile_id"]: ln["amount"]
                   for ln in lines if ln["line_type"] == "ABRECHNUNGSSPITZE"}
-        assert spitze[m4_seed["owner_a"]] == "-3600.00"
-        assert spitze[m4_seed["owner_b"]] == "-2400.00"
+        assert spitze[m4_withdrawal_seed["owner_a"]] == "-3600.00"
+        assert spitze[m4_withdrawal_seed["owner_b"]] == "-2400.00"
 
         # A reserve cost position is not cash: no owner has paid a contribution.
         res_owner = {ln["addressee_owner_profile_id"]: ln["amount"]
@@ -963,9 +970,9 @@ class TestM4VermoegensberichtE2E:
         assert await migrator_session.scalar(text("SELECT count(*) FROM settlement_line WHERE settlement_run_id=:id"), {"id": run_id}) == 0
 
     @pytest.mark.asyncio
-    async def test_full_asset_report(self, client_a_admin, m4_seed):
+    async def test_full_asset_report(self, client_a_admin, m4_withdrawal_seed):
         resp = await client_a_admin.post("/api/weg-settlements/asset-reports", json={
-            "property_id": m4_seed["property"],
+            "property_id": m4_withdrawal_seed["property"],
             "period_start": "2025-01-01", "period_end": "2025-12-31",
         })
         assert resp.status_code == 201, resp.text
@@ -975,13 +982,13 @@ class TestM4VermoegensberichtE2E:
             "reserve_withdrawals_total": "8000.00",
             "reserve_contributions_total": "6000.00",
             "bank_balances": [
-                {"bank_account_id": m4_seed["bank_giro"], "label": "Girokonto", "account_type": "LAUFEND", "balance": "15000.00"},
-                {"bank_account_id": m4_seed["bank_ruecklage"], "label": "Ruecklagenkonto", "account_type": "RUECKLAGE", "balance": "18000.00"},
+                {"bank_account_id": m4_withdrawal_seed["bank_giro"], "label": "Girokonto", "account_type": "LAUFEND", "balance": "15000.00"},
+                {"bank_account_id": m4_withdrawal_seed["bank_ruecklage"], "label": "Ruecklagenkonto", "account_type": "RUECKLAGE", "balance": "18000.00"},
             ],
             "receivables": [{"label": "Hausgeldrueckstand", "amount": "500.00"}],
             "payables": [{"label": "offene Rechnung", "amount": "1200.00"}],
         }
-        evidence = {key.removeprefix('reserve_'): value for key, value in (await reserve_evidence(client_a_admin, m4_seed)).items()}
+        evidence = {key.removeprefix('reserve_'): value for key, value in (await reserve_evidence(client_a_admin, m4_withdrawal_seed)).items()}
         for component, amount in [('WITHDRAWAL', '8000.00'), ('CONTRIBUTION', '6000.00')]:
             correction = await client_a_admin.post(f"/api/weg-settlements/{run_id}/reserve-ledger/overrides", json={
                 'component': component, 'amount': amount, 'reason': 'Documented synthetic correction', **evidence})
@@ -1027,17 +1034,25 @@ class TestM4VermoegensberichtE2E:
 # ===========================================================================
 class TestM4Determinism:
     @pytest.mark.asyncio
-    async def test_weg_results_stable_with_distinct_attestations(self, client_a_admin, m4_seed):
+    async def test_weg_results_stable_with_distinct_attestations(self, client_a_admin, m4_withdrawal_seed):
         # Identical arithmetic retains separate evidence for each attestation.
-        plan_id = await _create_and_finalize_plan(client_a_admin, m4_seed)
+        plan_id = await _create_and_finalize_plan(client_a_admin, m4_withdrawal_seed)
 
         async def finalize_once():
             resp = await client_a_admin.post("/api/weg-settlements", json={
-                "property_id": m4_seed["property"], "economic_plan_id": plan_id,
+                "property_id": m4_withdrawal_seed["property"], "economic_plan_id": plan_id,
                 "period_start": "2025-01-01", "period_end": "2025-12-31",
             })
             run_id = resp.json()["id"]
-            resp = await finalize_weg_fixture(client_a_admin, run_id, m4_seed, "20000.00", "8000.00")
+            ledger = (await client_a_admin.get(f"/api/weg-settlements/{run_id}/reserve-ledger")).json()
+            if ledger['frozen']:
+                # Reuse the issued same-period opening; do not attest another import.
+                values = {'paid_advances': weg_values(m4_withdrawal_seed)['paid_advances']}
+                await attest_fixture(client_a_admin, 'settlement', run_id, values)
+                resp = await client_a_admin.post(f"/api/weg-settlements/{run_id}/finalize", json=values)
+                assert resp.status_code == 200, resp.text
+            else:
+                resp = await finalize_weg_fixture(client_a_admin, run_id, m4_withdrawal_seed, "20000.00", "8000.00")
             return resp.json()
 
         first = await finalize_once()

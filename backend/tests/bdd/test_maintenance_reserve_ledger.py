@@ -10,6 +10,133 @@ from tests.financial_coverage_helpers import attest_fixture
 scenarios(str(Path(__file__).resolve().parents[3] / 'features/maintenance_reserve_ledger.feature'))
 
 
+def imported_payout(world, w):
+    statement = ('Buchungstag;Wertstellung;Betrag;Name;IBAN;Verwendungszweck;Währung\n'
+        '02.02.2025;03.02.2025;-1200,00;Gartenservice;;Reparatur;EUR\n').encode()
+    response = world.act('POST', f"/api/bank-accounts/{w['bank_giro']}/imports", params={'dry_run': 'false'},
+        files={'file': ('reserve.csv', statement, 'text/csv')})
+    assert response.status_code == 200, response.text
+    transactions = world.act('GET', '/api/bank-transactions', params={'bank_account_id': w['bank_giro'], 'status': 'NEU'}).json()['items']
+    transaction = next(row for row in transactions if row['amount'] == '-1200.00')
+    response = world.act('POST', f"/api/bank-transactions/{transaction['id']}/assign", json={'lines': [{
+        'payment_type': 'RUECKLAGENENTNAHME', 'amount': '1200.00', 'period_year': 2025, 'period_month': 2}]})
+    assert response.status_code == 200, response.text
+    return transaction['id'], response.json()['payments'][0]['id']
+
+
+@when('I attest opening balances of 5000, 5500 and 5200 with reasons')
+def reattest_opening(world, reserve_scenario):
+    w = reserve_scenario
+    for opening in ('5000.00', '5500.00', '5200.00'):
+        values = {'paid_advances': [{'owner_profile_id': w['owner_a'], 'paid_total': '0.00'}],
+            'reserve_opening_balance': opening, 'reserve_override_reason': 'Bank records reconciled'}
+        world.run(attest_fixture(world.actor, 'settlement', w['run'], values))
+
+
+@then('the opening is 5200 and retains entries of 5000, 500 and minus 300')
+def corrected_opening(world, reserve_scenario):
+    from decimal import Decimal
+    ledger = world.look(world.actor, f"/api/weg-settlements/{reserve_scenario['run']}/reserve-ledger").json()
+    assert ledger['opening_balance'] == '5200.00'
+    assert sorted(Decimal(row['amount']) for row in ledger['entries'] if row.get('component') == 'OPENING') == list(map(Decimal, ['-300', '500', '5000']))
+
+
+@when('I release an imported reserve payout draft without evidence')
+def release_payout(world, reserve_scenario):
+    w = reserve_scenario
+    w['transaction'], w['payout'] = imported_payout(world, w)
+    response = world.act('DELETE', f"/api/payments/{w['payout']}")
+    assert response.status_code == 204, response.text
+    retained = world.look(world.actor, f"/api/payments/{w['payout']}")
+    assert retained.status_code == 200, retained.text
+    assert retained.json()['status'] == 'cancelled'
+    assert retained.json()['bank_transaction_id'] == w['transaction']
+    assert world.act('DELETE', f"/api/payments/{w['payout']}").status_code == 409
+
+
+@then('its bank line is new and can be assigned again')
+def retype_payout(world, reserve_scenario):
+    w = reserve_scenario
+    rows = world.act('GET', '/api/bank-transactions', params={'bank_account_id': w['bank_giro'], 'status': 'NEU'}).json()['items']
+    assert next(row for row in rows if row['id'] == w['transaction'])['status'] == 'NEU'
+    response = world.act('POST', f"/api/bank-transactions/{w['transaction']}/assign", json={'lines': [{
+        'payment_type': 'RUECKLAGENANTEIL', 'owner_profile_id': w['owner_a'], 'amount': '1200.00', 'period_year': 2025, 'period_month': 2}]})
+    assert response.status_code == 200, response.text
+    assert response.json()['payments'][0]['status'] == 'booked'
+    assert response.json()['payments'][0]['id'] != w['payout']
+
+
+@then('the opening review and payout release work on desktop and mobile')
+def opening_and_release_forms(world, reserve_scenario, browser_world, request):
+    from playwright.async_api import expect
+    from tests.bdd.report import artifact_directory, attach_artifact
+    w = reserve_scenario
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    response = world.act('POST', path + '/overrides', json={'component': 'OPENING', 'amount': '5000.00', 'reason': 'Bank-confirmed opening'})
+    assert response.status_code == 201, response.text
+    report = create(world, '/api/weg-settlements/asset-reports', {'property_id': w['property'], 'accounting_scope_id': w['scope'],
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    directory = artifact_directory(request.node)
+
+    async def inspect(width, payout):
+        page = browser_world.page
+        await page.set_viewport_size({'width': width, 'height': 1000})
+        for prefix, route, label, balance in [
+            ('weg', f"/weg-abrechnungen/{w['run']}", 'Rücklagen-Anfangsbestand', '5500.00' if width == 1280 else '5200.00'),
+            ('asset', f"/vermoegensberichte/{report['id']}", 'Rücklage Anfangsbestand', '5000.00' if width == 1280 else '5500.00')]:
+            await browser_world.visit(route)
+            assert page.url.endswith(route)
+            assert await page.title()
+            current = page.get_by_text('Aktueller Anfangsbestand:', exact=False)
+            await expect(current).not_to_contain_text('Wird geladen')
+            if prefix == 'weg':
+                await page.get_by_label('Tatsächlich gezahltes Hausgeld · Mustereigentümer mit langem Nachnamen', exact=True).fill('6000.00')
+            else:
+                await page.get_by_label('Kontostand · WEG Girokonto', exact=True).fill('11000.00')
+            await page.get_by_label(label, exact=True).fill(balance)
+            await page.get_by_label('Begründung der Rücklagenwerte', exact=True).fill('Anfangsbestand anhand vollständiger Bankunterlagen berichtigt')
+            await page.get_by_label('Grundlage der Prüfung', exact=True).fill('Vollständige synthetische Jahresunterlagen geprüft')
+            await page.get_by_role('checkbox').check()
+            await page.get_by_role('button', name='Datengrundlage speichern', exact=True).click()
+            await expect(page.get_by_role('status')).to_contain_text('Prüfung gespeichert')
+            await expect(current).to_contain_text('5.200,00' if balance == '5200.00' else '5.500,00' if balance == '5500.00' else '5.000,00')
+            await page.get_by_label(label, exact=True).scroll_into_view_if_needed()
+            await capture(f'round10-{prefix}-opening-after-{width}.png')
+            panel = page.get_by_role('region', name='Rücklagenbuch', exact=True)
+            opening_entry = panel.get_by_text('Korrektur Anfangsbestand', exact=False).first
+            await expect(opening_entry).to_be_visible()
+            await expect(panel.get_by_text('Anfangsbestand anhand vollständiger Bankunterlagen berichtigt', exact=True).first).to_be_visible()
+            await opening_entry.scroll_into_view_if_needed()
+            await expect(opening_entry).to_be_in_viewport()
+            await capture(f'round10-{prefix}-ledger-after-{width}.png')
+        await browser_world.visit(f'/zahlungen/{payout}')
+        release = page.get_by_role('button', name='Zuordnung lösen', exact=True)
+        await expect(release).to_be_visible()
+        await release.scroll_into_view_if_needed()
+        await capture(f'round10-release-after-{width}.png')
+        page.once('dialog', lambda dialog: dialog.accept())
+        await release.click()
+        await expect(page).to_have_url(f"{browser_world.session.base_url}/bankkonten/{w['bank_giro']}/umsaetze")
+        new_status = page.get_by_role('cell', name='Neu', exact=True)
+        await expect(new_status).to_be_visible()
+        await new_status.scroll_into_view_if_needed()
+        await expect(new_status).to_be_in_viewport()
+        await capture(f'round10-released-bank-line-{width}.png')
+
+    async def capture(filename):
+        page = browser_world.page
+        assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+        assert await page.locator('vite-error-overlay').count() == 0
+        if directory:
+            destination = directory / filename
+            await page.screenshot(path=str(destination), full_page=False)
+            attach_artifact(request.node, destination)
+
+    for width in (1280, 360):
+        _, payout = imported_payout(world, w)
+        browser_world.run(inspect(width, payout))
+
+
 @given('a WEG with a finalized reserve plan and a booked reserve contribution', target_fixture='reserve_scenario')
 def reserve_scenario(world, seed_data):
     world.actor = world.administrator_of('Verwaltung Alpha')

@@ -25,6 +25,21 @@ Feature: Maintenance reserve ledger
     When I try to book a reserve payout without its cost receipt and resolution
     Then booking is refused and the payout remains an editable draft
 
+  Scenario: The earliest draft opening can be re-attested with an audited difference
+    Given a WEG with a finalized reserve plan and a booked reserve contribution
+    When I attest opening balances of 5000, 5500 and 5200 with reasons
+    Then the opening is 5200 and retains entries of 5000, 500 and minus 300
+
+  Scenario: An imported reserve payout without evidence can be released and retyped
+    Given a WEG with a finalized reserve plan and a booked reserve contribution
+    When I release an imported reserve payout draft without evidence
+    Then its bank line is new and can be assigned again
+
+  @browser
+  Scenario: Correct the draft opening and release an imported payout on desktop and mobile
+    Given a WEG with a finalized reserve plan and a booked reserve contribution
+    Then the opening review and payout release work on desktop and mobile
+
   @browser
   Scenario: Reserve evidence is required in payment and correction forms
     Given a WEG with a finalized reserve plan and a booked reserve contribution

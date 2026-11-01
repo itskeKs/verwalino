@@ -39,6 +39,7 @@ export function AssetReportDetailPage() {
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [balances, setBalances] = useState<Record<string, string>>({});
   const [opening, setOpening] = useState("");
+  const [currentOpening, setCurrentOpening] = useState<string | null>(null);
   const [contributions, setContributions] = useState("");
   const [withdrawals, setWithdrawals] = useState("");
   const [reserveReason, setReserveReason] = useState("");
@@ -162,7 +163,7 @@ export function AssetReportDetailPage() {
         </tbody></table>
       </div>
 
-      <ReserveLedgerPanel key={`ledger-${run.id}`} runId={run.id} propertyId={run.property_id} status={run.status} disabled={busy} refreshKey={ledgerRefresh}
+      <ReserveLedgerPanel key={`ledger-${run.id}`} runId={run.id} propertyId={run.property_id} status={run.status} disabled={busy} refreshKey={ledgerRefresh} onOpeningLoaded={setCurrentOpening}
         onChanged={() => { setLedgerVersion(v => v + 1); setRun({ ...run, lines: [] }); }} />
       {isDraft && (
         <div className="card" style={{ marginBottom: "1rem" }}>
@@ -171,6 +172,7 @@ export function AssetReportDetailPage() {
             Die Erhaltungsrücklage stammt aus dem Rücklagenbuch. Leere Rücklagenfelder übernehmen dessen Werte. Manuelle Gesamtwerte benötigen eine Begründung. Bitte alle Kontostände zum Stichtag prüfen.
             Forderungen/Verbindlichkeiten sind manuelle Verwalter-Angaben (kein Buchungssaldo).
           </p>
+          <p>Aktueller Anfangsbestand: {currentOpening === null ? 'Wird geladen…' : new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(Number(currentOpening))}. Geben Sie bei einer Berichtigung den korrigierten Gesamtbestand und eine Begründung ein.</p>
           <div className="form-grid">
             <label>Rücklage Anfangsbestand
               <input type="text" inputMode="decimal" placeholder="0.00" value={opening} onChange={(e) => setOpening(e.target.value)} />

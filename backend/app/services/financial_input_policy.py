@@ -106,6 +106,8 @@ class FinancialInputPolicy:
         await FinancialScopeService(self.session, self.org_id, self.user_id).enter(
             subject, capability=ScopeCapability.CONFIRM, computation=True)
         if subject.status != "draft":
+            if kind == 'settlement' and subject.run_type in ('WEG_JAHRESABRECHNUNG', 'VERMOEGENSBERICHT'):
+                raise HTTPException(409, {'code': 'RESERVE_PERIOD_FINALIZED', 'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'})
             raise HTTPException(409, "Only draft inputs can be attested")
         values = self.validate_values(subject, values, kind)
         if not reason.strip():

@@ -620,7 +620,10 @@ async def test_typed_reserve_totals_require_reason_and_persist_an_audited_delta(
     assert response.status_code == 422, response.text
     values['reserve_override_reason'] = 'Imported bank-confirmed opening'
     await attest_fixture(api, 'settlement', w['run'], values)
-    await attest_fixture(api, 'settlement', w['run'], values)
+    unchanged = await api.post('/api/financial-input-coverage', json={'subject_kind': 'settlement',
+        'subject_id': w['run'], 'values': values, 'confirmed_complete': True, 'reason': 'Reviewed records'})
+    assert unchanged.status_code == 422, unchanged.text
+    assert unchanged.json()['detail']['code'] == 'RESERVE_AMOUNT_INVALID'
     response = await api.post(f"/api/weg-settlements/{w['run']}/compute", json=values)
     assert response.status_code == 200, response.text
     count = await migrator_session.scalar(text('SELECT count(*) FROM reserve_ledger_entry WHERE settlement_run_id=CAST(:id AS uuid)'), {'id': w['run']})
@@ -985,17 +988,171 @@ async def test_earlier_draft_blocks_opening_import_and_carry_equals_frozen_closi
 
 
 @pytest.mark.asyncio
-async def test_opening_import_cannot_be_repeated(client_a_admin, seed_data):
+async def test_first_draft_opening_accepts_audited_positive_and_negative_deltas(client_a_admin, seed_data):
     api = client_a_admin
     w = await reserve_world(api, seed_data)
     path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
-    for amount, status in [('5000.00', 201), ('7.00', 422)]:
+    for amount in ('5000.00', '500.00', '-300.00'):
         response = await api.post(path + '/overrides', json={'component': 'OPENING', 'amount': amount,
             'reason': 'Audited opening import'})
-        assert response.status_code == status, response.text
-        if status == 422:
-            assert response.json()['detail']['code'] == 'RESERVE_OPENING_IMPORT_ONLY'
-    assert (await api.get(path)).json()['opening_balance'] == '5000.00'
+        assert response.status_code == 201, response.text
+    ledger = (await api.get(path)).json()
+    assert ledger['opening_balance'] == '5200.00'
+    assert sorted(Decimal(row['amount']) for row in ledger['entries'] if row.get('component') == 'OPENING') == [Decimal('-300'), Decimal('500'), Decimal('5000')]
+    response = await api.post(path + '/overrides', json={'component': 'OPENING', 'amount': '0.00', 'reason': 'No change'})
+    assert response.status_code == 422, response.text
+    assert response.json()['detail']['code'] == 'RESERVE_AMOUNT_INVALID'
+
+
+async def imported_reserve_draft(api, w, *, split=False):
+    statement = ('Buchungstag;Wertstellung;Betrag;Name;IBAN;Verwendungszweck;Währung\n'
+        '02.02.2025;03.02.2025;-1200,00;Gartenservice;;Reparatur;EUR\n').encode()
+    response = await api.post(f"/api/bank-accounts/{w['bank_giro']}/imports", params={'dry_run': 'false'},
+        files={'file': ('reserve.csv', statement, 'text/csv')})
+    assert response.status_code == 200, response.text
+    page = await api.get('/api/bank-transactions', params={'bank_account_id': w['bank_giro']})
+    transaction = next(row for row in page.json()['items'] if row['amount'] == '-1200.00')
+    line = {'payment_type': 'RUECKLAGENENTNAHME', 'amount': '600.00' if split else '1200.00', 'period_year': 2025, 'period_month': 2}
+    assigned = await api.post(f"/api/bank-transactions/{transaction['id']}/assign", json={'lines': [line, line] if split else [line]})
+    assert assigned.status_code == 200, assigned.text
+    return transaction['id'], assigned.json()['payments'][0]['id']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('evidence_part', ['none', 'cost', 'register'])
+async def test_legacy_import_release_deletes_draft_and_allows_retyping(client_a_admin, client_b_admin, seed_data, evidence_part):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    transaction, draft = await imported_reserve_draft(api, w)
+    path = f'/api/payments/{draft}'
+    if evidence_part != 'none':
+        evidence = await reserve_evidence(api, w)
+        response = await api.patch(path, json={key: value for key, value in evidence.items() if evidence_part in key})
+        assert response.status_code == 200, response.text
+    assert (await client_b_admin.delete(path)).status_code == 404
+    response = await api.delete(path)
+    assert response.status_code == 204, response.text
+    retained = await api.get(path)
+    assert retained.status_code == 404, retained.text
+    assert (await api.delete(path)).status_code == 404
+    page = await api.get('/api/bank-transactions', params={'bank_account_id': w['bank_giro'], 'status': 'NEU'})
+    assert next(row for row in page.json()['items'] if row['id'] == transaction)['status'] == 'NEU'
+    response = await api.post(f'/api/bank-transactions/{transaction}/assign', json={'lines': [{
+        'payment_type': 'RUECKLAGENANTEIL', 'owner_profile_id': w['owner_a'], 'amount': '1200.00', 'period_year': 2025, 'period_month': 2}]})
+    assert response.status_code == 200, response.text
+    assert response.json()['payments'][0]['status'] == 'booked'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('state', ['booked', 'evidenced', 'ledger', 'booking_stamp', 'split'])
+async def test_imported_payout_release_refuses_bound_states(client_a_admin, seed_data, monkeypatch, state):
+    from unittest.mock import AsyncMock
+    from app.repositories.payment_repo import PaymentRepository
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    transaction, draft = await imported_reserve_draft(api, w, split=state == 'split')
+    if state in ('booked', 'evidenced'):
+        evidence = await reserve_evidence(api, w)
+        response = await api.patch(f'/api/payments/{draft}', json=evidence)
+        assert response.status_code == 200, response.text
+        if state == 'booked':
+            response = await api.post(f'/api/payments/{draft}/book')
+            assert response.status_code == 200, response.text
+    elif state == 'ledger':
+        monkeypatch.setattr(PaymentRepository, 'has_reserve_entry', AsyncMock(return_value=True), raising=False)
+    elif state == 'booking_stamp':
+        original = PaymentRepository.get_by_id
+        async def legacy_stamp(repo, payment_id):
+            payment = await original(repo, payment_id)
+            if payment is not None:
+                from datetime import datetime, timezone
+                payment.booked_at = datetime.now(timezone.utc)
+            return payment
+        monkeypatch.setattr(PaymentRepository, 'get_by_id', legacy_stamp)
+    response = await api.delete(f'/api/payments/{draft}')
+    assert response.status_code == 409, response.text
+    assert response.json()['detail']['code'] == 'RESERVE_IMPORTED_DRAFT_BOUND'
+    page = await api.get('/api/bank-transactions', params={'bank_account_id': w['bank_giro'], 'status': 'ZUGEORDNET'})
+    assert next(row for row in page.json()['items'] if row['id'] == transaction)['status'] == 'ZUGEORDNET'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('case', ['release', 'without_reset', 'movement', 'ledger', 'booking_stamp', 'evidenced', 'booked', 'split'])
+async def test_database_only_releases_unbooked_unbacked_import_without_ledger(client_a_admin, seed_data, migrator_session, case):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    transaction, draft = await imported_reserve_draft(api, w, split=case == 'split')
+    if case in ('evidenced', 'booked'):
+        evidence = await reserve_evidence(api, w)
+        assert (await api.patch(f'/api/payments/{draft}', json=evidence)).status_code == 200
+        if case == 'booked':
+            assert (await api.post(f'/api/payments/{draft}/book')).status_code == 200
+    await migrator_session.execute(text("SELECT set_config('app.current_user_id',:actor,true),set_config('app.current_org_id',:org,true)"),
+        {'actor': str(seed_data['user_a_admin_id']), 'org': str(seed_data['org_a_id'])})
+    if case == 'ledger':
+        # Reproduce a historical draft-linked row; normal inserts already forbid it.
+        await migrator_session.execute(text('ALTER TABLE reserve_ledger_entry DISABLE TRIGGER guard_reserve_ledger'))
+        await migrator_session.execute(text("""INSERT INTO reserve_ledger_entry
+            (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,payment_id,created_by)
+            VALUES (:org,:property,:run,'2025-02-03','CONTRIBUTION',0,'Historical retained reference',:payment,:actor)"""),
+            {'org': seed_data['org_a_id'], 'property': w['property'], 'run': w['run'], 'payment': draft, 'actor': seed_data['user_a_admin_id']})
+        await migrator_session.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
+        await migrator_session.execute(text('ALTER TABLE reserve_ledger_entry ENABLE TRIGGER guard_reserve_ledger'))
+    if case == 'booking_stamp':
+        await migrator_session.execute(text("UPDATE payment SET booked_at=now() WHERE id=CAST(:id AS uuid)"), {'id': draft})
+    if case != 'without_reset':
+        await migrator_session.execute(text("UPDATE bank_transaction SET status='NEU' WHERE id=CAST(:id AS uuid)"), {'id': transaction})
+    statement = text("UPDATE payment SET cancelled_at=now()" + (",amount=1" if case == 'movement' else '') + " WHERE id=CAST(:id AS uuid)")
+    if case == 'release':
+        await migrator_session.execute(statement, {'id': draft})
+        assert await migrator_session.scalar(text("SELECT cancelled_at IS NOT NULL FROM payment WHERE id=CAST(:id AS uuid)"), {'id': draft})
+    else:
+        with pytest.raises(DBAPIError):
+            async with migrator_session.begin_nested():
+                await migrator_session.execute(statement, {'id': draft})
+
+
+@pytest.mark.asyncio
+async def test_opening_reattestation_records_only_the_difference_and_stays_first_year_only(client_a_admin, seed_data, migrator_session):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    async def attest(run, balance, reason='Opening reconciled against bank records'):
+        return await api.post('/api/financial-input-coverage', json={'subject_kind': 'settlement',
+            'subject_id': run, 'values': {**paid(w), 'reserve_opening_balance': balance, 'reserve_override_reason': reason},
+            'confirmed_complete': True, 'reason': 'Complete synthetic records'})
+    for balance, expected in [('5000.00', ['5000.00']), ('5500.00', ['5000.00', '500.00']),
+                              ('5200.00', ['5000.00', '500.00', '-300.00'])]:
+        response = await attest(w['run'], balance)
+        assert response.status_code == 201, response.text
+        ledger = (await api.get(path)).json()
+        assert ledger['opening_balance'] == balance
+        rows = [row for row in ledger['entries'] if row.get('component') == 'OPENING']
+        assert sorted(Decimal(row['amount']) for row in rows) == sorted(map(Decimal, expected))
+        assert all(row['reason'] == 'Opening reconciled against bank records' for row in rows)
+    rows = (await migrator_session.execute(text("SELECT amount,created_by FROM reserve_ledger_entry WHERE settlement_run_id=CAST(:id AS uuid) ORDER BY created_at,id"), {'id': w['run']})).all()
+    assert all(row.created_by == seed_data['user_a_admin_id'] for row in rows)
+    assert await migrator_session.scalar(text("SELECT count(*) FROM audit_event WHERE entity_id=CAST(:id AS uuid) AND action='reserve.override_added'"), {'id': w['run']}) == 3
+    refused = await attest(w['run'], '5300.00', '')
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_CORRECTION_REASON_REQUIRED'
+    unchanged = await attest(w['run'], '5200.00')
+    assert unchanged.status_code == 422, unchanged.text
+    assert unchanged.json()['detail']['code'] == 'RESERVE_AMOUNT_INVALID'
+    later_plan = await ownership_plan(api, w, 2026)
+    later = await api.post('/api/weg-settlements', json={'property_id': w['property'], 'economic_plan_id': later_plan,
+        'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    assert later.status_code == 201, later.text
+    refused = await attest(later.json()['id'], '6000.00')
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_OPENING_IMPORT_ONLY'
+    await finalize(api, w)
+    refused = await attest(w['run'], '6000.00')
+    assert refused.status_code == 409, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_PERIOD_FINALIZED'
+    refused = await api.post(path + '/overrides', json={'component': 'OPENING', 'amount': '1.00', 'reason': 'Frozen'})
+    assert refused.status_code == 409, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_PERIOD_FINALIZED'
 
 
 @pytest.mark.asyncio
@@ -1055,7 +1212,6 @@ async def test_earliest_import_carries_exact_frozen_closing_through_later_years(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('constraint,sqlstate,status,code', [
-    ('uq_reserve_opening_import', '23505', 422, 'RESERVE_OPENING_IMPORT_ONLY'),
     ('reserve_opening_import_only', '23514', 422, 'RESERVE_OPENING_IMPORT_ONLY'),
     ('reserve_ledger_entry_organization_id_payment_id_key', '23505', 409, 'RESERVE_PAYMENT_ALREADY_ASSIGNED'),
 ])
@@ -1219,7 +1375,8 @@ async def test_booking_includes_typed_corrections_in_cost_cap(client_a_admin, se
 @pytest.mark.asyncio
 @pytest.mark.parametrize('case,component,amount,constraint', [
     ('earlier_draft', 'OPENING', '5000.00', 'reserve_opening_import_only'),
-    ('duplicate', 'OPENING', '7.00', 'uq_reserve_opening_import'),
+    ('duplicate', 'OPENING', '-7.00', None),
+    ('sign', 'OPENING', '0.00', 'reserve_amount_invalid'),
     ('sign', 'WITHDRAWAL', '-1.00', 'reserve_amount_invalid'),
     ('sign', 'CONTRIBUTION', '0.00', 'reserve_amount_invalid'),
     ('cap', 'ADJUSTMENT', '-50000.00', 'reserve_payout_evidence_required'),

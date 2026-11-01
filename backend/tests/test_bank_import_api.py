@@ -292,10 +292,17 @@ async def test_imported_reserve_payout_stays_draft_until_both_references_exist(c
     refused = await api.post(f"/api/payments/{draft['id']}/book")
     assert refused.status_code == 422, refused.text
     assert refused.json()['detail']['code'] == 'RESERVE_PAYOUT_EVIDENCE_REQUIRED'
-    discarded = await api.delete(f"/api/payments/{draft['id']}")
-    assert discarded.status_code == 409, discarded.text
-    assert discarded.json()['detail']['code'] == 'RESERVE_IMPORTED_DRAFT_BOUND'
     for changes in ({'amount': '1.00'}, {'direction': 'IN'}, {'value_date': '2026-01-08'}):
         changed = await api.patch(f"/api/payments/{draft['id']}", json=changes)
         assert changed.status_code == 409, changed.text
         assert changed.json()['detail']['code'] == 'RESERVE_IMPORTED_DRAFT_BOUND'
+    discarded = await api.delete(f"/api/payments/{draft['id']}")
+    assert discarded.status_code == 204, discarded.text
+    assert (await api.get(f"/api/payments/{draft['id']}")).status_code == 404
+    assert (await api.delete(f"/api/payments/{draft['id']}")).status_code == 404
+    page = await api.get('/api/bank-transactions', params={'bank_account_id': account})
+    assert next(row for row in page.json()['items'] if row['id'] == outgoing['id'])['status'] == 'NEU'
+    retyped = await api.post(f"/api/bank-transactions/{outgoing['id']}/assign", json={'lines': [{
+        'payment_type': 'RUECKLAGENENTNAHME', 'amount': '200.01', 'period_year': 2026, 'period_month': 1}]})
+    assert retyped.status_code == 200, retyped.text
+    assert retyped.json()['payments'][0]['id'] != draft['id']

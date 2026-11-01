@@ -165,6 +165,8 @@ export function PaymentDetailPage() {
   const isBooked = payment?.status === "booked";
   const isReversed = !!payment?.reversed_by_id;
   const isStorno = !!payment?.reverses_id;
+  const canReleaseImport = isDraft && payment?.bank_transaction_id && payment.payment_type === 'RUECKLAGENENTNAHME'
+    && !payment.booked_at && !payment.booked_by && !(payment.reserve_cost_entry_id && payment.reserve_register_entry_id);
 
   // --- Actions ---
 
@@ -210,14 +212,16 @@ export function PaymentDetailPage() {
   async function handleDelete() {
     if (!paymentId) return;
     const confirmed = window.confirm(
-      "Entwurf verwerfen? Die Zahlung kann danach nicht mehr gebucht werden.",
+      canReleaseImport
+        ? 'Möchten Sie die Zuordnung lösen? Der Zahlungsentwurf wird verworfen und der Bankumsatz erhält den Status „Neu“. Sie können ihn anschließend neu zuordnen oder ignorieren.'
+        : "Entwurf verwerfen? Die Zahlung kann danach nicht mehr gebucht werden.",
     );
     if (!confirmed) return;
     setActionLoading(true);
     setActionError(null);
     try {
       await deletePayment(paymentId);
-      navigate("/zahlungen");
+      navigate(canReleaseImport ? `/bankkonten/${payment!.bank_account_id}/umsaetze` : "/zahlungen");
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -576,6 +580,9 @@ export function PaymentDetailPage() {
                   style={{ color: "#b71c1c" }}
                 >
                   Entwurf verwerfen
+                </button>}
+                {canReleaseImport && <button className="btn" onClick={handleDelete} disabled={actionLoading}>
+                  Zuordnung lösen
                 </button>}
               </>
             )}

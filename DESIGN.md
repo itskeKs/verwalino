@@ -787,6 +787,10 @@ component adjustment or a funded payout, supply its mandatory reason, and save.
 Typed withdrawal adjustments are labelled “Entnahmekorrektur”; booked payouts
 remain “Finanzierte Entnahme”. The reason for target reserve values sits inside
 the two-column form grid at full width on both detail pages.
+Both target-total forms show “Aktueller Anfangsbestand” above the opening input
+and ask for the corrected total plus a reason. The earliest draft can be
+re-attested; each signed difference remains a “Korrektur Anfangsbestand” row
+with its reason. The correction dialog continues to accept a signed difference.
 Funded payouts select the existing booking, confirmed cost and registered
 resolution. Evidence groups constrain long document/resolution options to their
 form width; payout capture and bank split fields stack at 360 px.
@@ -812,8 +816,13 @@ resolutions, while keeping an already-linked invalid entry visible as the curren
 Both selectors are available when editing an imported payment draft. Bank
 assignment offers “Als Entwurf übernehmen” when either reference is missing,
 then explains in German how to complete the evidence on the payment. Imported
-drafts offer evidence editing and retain their assigned bank line; they have no
-“Entwurf verwerfen” action. It keeps
+drafts offer evidence editing. An unbooked reserve payout with incomplete evidence
+offers “Zuordnung lösen” using the existing button and native confirmation pattern.
+Confirmation explains that the draft is discarded and the bank line returns to
+“Neu”; success navigates to that account's bank transactions. Bound refusals retain
+the draft and show the server's German message. Complete evidence or booking hides
+the release button; ledger references and other bank-split payments are checked
+by the server. Imported drafts have no “Entwurf verwerfen” action. It keeps
 reserve payouts neutral with no tenant or owner target. The payment
 detail and bank-assignment vocabulary use the same German name. This type does
 not create a tenant or owner receivable.
@@ -849,3 +858,9 @@ field bounds and console health.
 | Payment draft capture | [form](docs/assets/reserve-ledger/payment-capture-1280.png) | [form](docs/assets/reserve-ledger/payment-capture-360.png) |
 | Imported draft evidence editing | [form](docs/assets/reserve-ledger/imported-payment-edit-1280.png) | [form](docs/assets/reserve-ledger/imported-payment-edit-360.png) |
 | Bank payout kept as draft | [dialog](docs/assets/reserve-ledger/bank-payout-draft-1280.png) | [dialog](docs/assets/reserve-ledger/bank-payout-draft-360.png) |
+| WEG opening review before / after | [before](docs/assets/reserve-ledger/round10-weg-opening-before-1280.png) · [after](docs/assets/reserve-ledger/round10-weg-opening-after-1280.png) | [before](docs/assets/reserve-ledger/round10-weg-opening-before-360.png) · [after](docs/assets/reserve-ledger/round10-weg-opening-after-360.png) |
+| Asset-report opening review before / after | [before](docs/assets/reserve-ledger/round10-asset-opening-before-1280.png) · [after](docs/assets/reserve-ledger/round10-asset-opening-after-1280.png) | [before](docs/assets/reserve-ledger/round10-asset-opening-before-360.png) · [after](docs/assets/reserve-ledger/round10-asset-opening-after-360.png) |
+| Payout release before / after | [before](docs/assets/reserve-ledger/round10-release-before-1280.png) · [after](docs/assets/reserve-ledger/round10-release-after-1280.png) | [before](docs/assets/reserve-ledger/round10-release-before-360.png) · [after](docs/assets/reserve-ledger/round10-release-after-360.png) |
+| Released bank line | [new](docs/assets/reserve-ledger/round10-released-bank-line-1280.png) | [new](docs/assets/reserve-ledger/round10-released-bank-line-360.png) |
+| WEG audited opening entries | [ledger](docs/assets/reserve-ledger/round10-weg-ledger-after-1280.png) | [ledger](docs/assets/reserve-ledger/round10-weg-ledger-after-360.png) |
+| Asset-report audited opening entries | [ledger](docs/assets/reserve-ledger/round10-asset-ledger-after-1280.png) | [ledger](docs/assets/reserve-ledger/round10-asset-ledger-after-360.png) |

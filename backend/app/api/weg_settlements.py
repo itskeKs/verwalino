@@ -270,7 +270,7 @@ async def reserve_ledger(run_id: uuid.UUID, auth: AuthContext = Depends(get_curr
 def _raise_reserve_opening_error(exc: DBAPIError):
     code = getattr(exc.orig, 'sqlstate', None)
     constraint = getattr(getattr(exc.orig, '__cause__', None), 'constraint_name', None)
-    if (code, constraint) in {('23505', 'uq_reserve_opening_import'), ('23514', 'reserve_opening_import_only')}:
+    if (code, constraint) == ('23514', 'reserve_opening_import_only'):
         raise HTTPException(422, OPENING_IMPORT_ONLY) from None
     if (code, constraint) == ('23514', 'reserve_opening_import_exists'):
         raise HTTPException(422, OPENING_IMPORT_EXISTS) from None
