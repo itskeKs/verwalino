@@ -15,8 +15,10 @@ paths:
 # Self-host and containers
 
 - Follow AGENTS.md's Databases and containers rules, including its narrow
-  separately authorized exceptions. Never delete production `pgdata` or
-  `documents` volumes, run `docker compose down -v`, or test on production.
+  separately authorized exceptions and Session cleanup rule. Never delete production
+  `pgdata` or `documents` volumes or test on production; never `docker compose down -v`.
+  Remove only your own disposable acceptance resources as allowed by that exception;
+  follow `docs/operations/acceptance-cleanup.md`.
 - The test database is only `infra-postgres-1` at `127.0.0.1:55432`, configured by
   `source scripts/test-env.sh`. Never start a replacement or another test database.
 - Use `docker compose` only with `-f infra/docker-compose.declaration-test.yml`
