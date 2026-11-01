@@ -137,12 +137,15 @@ def upgrade():
       IF EXISTS(SELECT 1 FROM public.settlement_run r JOIN public.reserve_ledger_entry e
         ON e.organization_id=r.organization_id AND e.settlement_run_id=r.id
         WHERE r.organization_id=NEW.organization_id AND r.property_id=NEW.property_id
-          AND r.period_start>NEW.period_start AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT')
+          AND (r.period_start>NEW.period_start OR (
+            r.period_start<=NEW.period_end AND r.period_end>=NEW.period_start
+            AND (r.period_start<>NEW.period_start OR r.period_end<>NEW.period_end)))
+          AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT')
           AND e.component='OPENING' AND public.reserve_ledger_scope_matches(NEW.organization_id,
             public.financial_scope_id(r.organization_id,'settlement_run',r.id),
             public.financial_scope_id(NEW.organization_id,'settlement_run',NEW.id),
             r.management_mandate_id,NEW.management_mandate_id)) THEN
-        RAISE EXCEPTION 'Cannot create an earlier period before an imported reserve opening'
+        RAISE EXCEPTION 'Cannot create an earlier or overlapping period around an imported reserve opening'
           USING ERRCODE='23514',CONSTRAINT='reserve_opening_import_exists';
       END IF;
       RETURN NEW;
@@ -174,7 +177,9 @@ def upgrade():
         WHERE r.organization_id=NEW.organization_id AND r.property_id=parent.property_id
           AND r.status='finalized' AND r.period_start=parent.period_start AND r.period_end=parent.period_end
           AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT')
-          AND public.financial_scope_id(r.organization_id,'settlement_run',r.id) IS NOT DISTINCT FROM sphere) THEN
+          AND public.reserve_ledger_scope_matches(NEW.organization_id,
+            public.financial_scope_id(r.organization_id,'settlement_run',r.id),sphere,
+            r.management_mandate_id,parent.management_mandate_id)) THEN
         RAISE EXCEPTION 'GoBD: reserve opening period was finalized'
           USING ERRCODE='23514',CONSTRAINT='reserve_period_finalized'; END IF;
       IF EXISTS(SELECT 1 FROM public.settlement_run r WHERE r.organization_id=NEW.organization_id

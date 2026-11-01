@@ -16,7 +16,7 @@ from app.services.financial_scope_service import FinancialScopeService
 
 ZERO = Decimal('0.00')
 OPENING_IMPORT_ONLY = {'code': 'RESERVE_OPENING_IMPORT_ONLY', 'message': 'Ein Import des Anfangsbestands ist nur im ersten Rücklagenjahr vor der Finalisierung zulässig und nur, wenn kein anderer, abweichender Rücklagenzeitraum besteht.'}
-OPENING_IMPORT_EXISTS = {'code': 'RESERVE_OPENING_IMPORT_EXISTS', 'message': 'Vor dem Jahr mit importiertem Anfangsbestand kann kein früherer Abrechnungszeitraum angelegt werden.'}
+OPENING_IMPORT_EXISTS = {'code': 'RESERVE_OPENING_IMPORT_EXISTS', 'message': 'Nach dem Import eines Anfangsbestands können Sie keinen früheren oder abweichenden, überlappenden Abrechnungszeitraum anlegen.'}
 
 
 def _raise_reserve_opening_error(exc: DBAPIError):

@@ -179,7 +179,10 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
         return await self._opening_period_exists(run, scope_id,
             """SELECT EXISTS(SELECT 1 FROM settlement_run r
             JOIN reserve_ledger_entry e ON e.organization_id=r.organization_id AND e.settlement_run_id=r.id
-            WHERE r.organization_id=:org AND r.property_id=:property AND r.period_start>:start
+            WHERE r.organization_id=:org AND r.property_id=:property
+              AND (r.period_start>:start OR (
+                r.period_start<=:end AND r.period_end>=:start
+                AND (r.period_start<>:start OR r.period_end<>:end)))
               AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT') AND e.component='OPENING'
               AND reserve_ledger_scope_matches(:org,
                 (SELECT b.scope_id FROM accounting_scope_binding b WHERE b.organization_id=r.organization_id AND b.settlement_run_id=r.id),
@@ -192,9 +195,9 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
             WHERE r.organization_id=:org AND r.property_id=:property AND r.status='finalized'
               AND r.period_start=:start AND r.period_end=:end
               AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT')
-              AND (SELECT b.scope_id FROM accounting_scope_binding b
-                WHERE b.organization_id=r.organization_id AND b.settlement_run_id=r.id)
-                IS NOT DISTINCT FROM CAST(:scope AS uuid))""")
+              AND reserve_ledger_scope_matches(:org,
+                (SELECT b.scope_id FROM accounting_scope_binding b WHERE b.organization_id=r.organization_id AND b.settlement_run_id=r.id),
+                CAST(:scope AS uuid),r.management_mandate_id,CAST(:mandate AS uuid)))""")
 
     async def has_overlapping_ledger(self, run):
         scope = await self.current_scope(run)

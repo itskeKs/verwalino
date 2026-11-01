@@ -735,7 +735,8 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   difference, never another target total. The attestation forms show the current
   opening beside the corrected-total input and reason. Finalization freezes this
   import history (`RESERVE_PERIOD_FINALIZED`); later years cannot import another
-  opening. Once any run of the exact property/scope/period has been finalized,
+  opening. Once any run of the same property and exact period in a compatible scope
+  (the same scope or whole-property WEG scopes with the same mandate) has been finalized,
   including a superseded run, correction drafts refuse further opening imports
   while evidence-backed withdrawal and adjustment corrections remain available.
   The earliest period is
@@ -744,8 +745,9 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   WEG scopes with the same mandate. Drafts count too. An overlapping, non-identical
   non-superseded reserve period in a matching scope also blocks opening imports
   (`RESERVE_OPENING_IMPORT_ONLY`). Once an opening is imported,
-  creating an earlier period in that scope is refused
-  (`RESERVE_OPENING_IMPORT_EXISTS`). If no plan exists, an asset report shows planning as unknown,
+  creating an earlier period or an overlapping, non-identical period in a compatible
+  scope is refused (`RESERVE_OPENING_IMPORT_EXISTS`). Identical periods remain allowed
+  for correction runs and the sibling run type. If no plan exists, an asset report shows planning as unknown,
   while dedicated reserve receipts and reasoned opening/other adjustments remain
   available; Hausgeld uses any finalized plan covering its cash date.
 - `reserve_ledger_entry` retains append-only signed adjustments and funding
@@ -762,7 +764,8 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   Booked evidence references stay frozen: a later cost correction or resolution
   challenge does not alter the ledger.
   Corrections apply only to the exact start/end period they were posted for; a
-  July–December opening does not enter a January–December ledger. Funding links
+  half-year opening prevents creation of an overlapping full-year ledger and vice versa.
+  Funding links
   remain payment-specific across periods so later reversals retain their evidence.
   Existing typed reserve total fields are optional target-total overrides: input
   attestation appends only their difference from the derived total, with
