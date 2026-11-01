@@ -319,6 +319,20 @@ New screens follow these page structures and use a German noun as their `h1`.
 
 ### Property settlement periods
 
+Statement summaries display non-financial notice lines across both columns,
+without a second amount. Booked NK payments wholly outside the lease show
+“Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: X €”, with German
+money formatting. Drafts and finalized statements use their persisted lines;
+the PDF carries the same notice. Before-start payments appear on the statement
+containing the lease start; after-end payments appear on the statement containing
+the lease end, once each. Long notices wrap at 360 px.
+Captures show the open-tenancy draft before entering the lease end and a newly
+created lease-clipped statement afterwards at
+[1280 px before](docs/assets/settlement-period/statement-notice-before-1280.png),
+[1280 px after](docs/assets/settlement-period/statement-notice-after-1280.png),
+[360 px before](docs/assets/settlement-period/statement-notice-before-360.png) and
+[360 px after](docs/assets/settlement-period/statement-notice-after-360.png).
+
 Property forms and details call the existing start-month setting "Beginn des
 Abrechnungszeitraums". The adjacent recurring bounds use `01.04. bis 31.03.`;
 concrete dates remain in labelled date controls. Statement and batch forms offer
@@ -327,7 +341,12 @@ free date entry. Statement and batch defaults use the backend's most recent
 completed property period; offers never include a period that has not ended.
 Automatic prefill requires both date fields to be empty, so a
 delayed offer never replaces user-entered dates. Explicitly choosing an offer sets
-both dates. Changing the property resets the period selection. Plan forms
+both dates. Single-statement offers intersect the property's dates with the
+selected lease's inclusive dates, omit empty intersections and show the actual
+span beside the label (e.g. `2025 · 01.01.2025 – 30.09.2025`). Changing the lease
+resets both date fields and loads its clipped offers. Batch offers retain the
+property dates; creation clips each lease separately. Changing the property
+resets the period selection. Plan forms
 use a start year and the same offers; their prefilled date controls remain editable
 for mid-year accounting scopes and gap-closing transition plans.
 Batch results show per-lease straddling errors with unit and tenant labels alongside
@@ -338,10 +357,14 @@ year dates. Forms constrain long selects to their grid cells at 360 px.
 
 Before/after property, statement and plan form captures, plus batch and WEG captures,
 are in [docs/assets/settlement-period/](docs/assets/settlement-period/), taken on
-the disposable database with synthetic records in "Test Hausverwaltung".
+the disposable database with synthetic records in "Test Hausverwaltung" and
+"Verwaltung Alpha" (lease-clipped statements).
 The `*-before-review-*` files preserve the prior statement and plan captures;
 their refreshed `*-after-*` files show completed November periods and editable
 plan dates. Batch captures show per-lease errors beside the actual result counts.
+The `statement-before-clipping-*` captures preserve the checked-in November-period
+baseline; refreshed `statement-after-*` captures show the selected lease's clipped
+span at 1280 px and 360 px.
 
 ### Permissions area
 
@@ -661,6 +684,11 @@ Representative captures are listed below, including the
 [self-hosted footer](docs/assets/design/mail/signup_confirmation-selfhost-600-light.png).
 
 ## Screenshots
+
+Settlement structured inputs state that manual consumption and person counts refer
+to the entire property settlement year, including for clipped lease statements.
+Consumption suggestions display a day-fallback reason beside the actual reading
+basis when an interim measurement is missing.
 
 Taken from the running dev stack of `scripts/dev-local.sh` (backend `:18000`, Vite `127.0.0.1:13000`) against the
 disposable test database with synthetic data (organisation "Muster Hausverwaltung", fictitious addresses, persons and

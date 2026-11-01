@@ -393,3 +393,20 @@ async def test_year_only_hausgeld_is_not_credited_twice_across_adjacent_periods(
         assert total == Decimal("600.00")
         totals.append(total)
     assert sum(totals) == Decimal("1200.00")
+
+
+async def test_month_assigned_hausgeld_reconciles_adjacent_march_cut(client_a_admin):
+    api = client_a_admin
+    data = await period_property(api, month=1)
+    for month in range(1, 13):
+        await booked(api, data, 2025, month, hausgeld=True)
+    totals = []
+    for start, end, expected in (("2025-01-01", "2025-03-14", "245.16"), ("2025-03-15", "2025-12-31", "954.84")):
+        plan = await finalized_plan(api, data, start, end)
+        run = await create(api, "/api/weg-settlements", {"property_id": data["property"]["id"],
+            "economic_plan_id": plan["id"], "period_start": start, "period_end": end})
+        answer = await api.post(f"/api/weg-settlements/{run['id']}/paid-advances-derived")
+        assert answer.status_code == 200, answer.text
+        totals.append(Decimal(answer.json()[0]["paid_total"]))
+        assert totals[-1] == Decimal(expected)
+    assert sum(totals) == Decimal("1200.00")

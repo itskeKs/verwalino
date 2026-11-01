@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.engine.mietkonto import (
     AdvanceFilter,
+    AdvanceCredit,
     LeaseChargeInput,
     RentChangeInput,
     MietkontoResult,
@@ -43,6 +44,8 @@ from app.engine.mietkonto import (
     account_statement,
     derive_advance_total,
     derive_advance_total_for_period,
+    derive_advance_credits_for_period,
+    uncredited_advance_total,
     deposit_statement,
     owner_expected_charges,
     special_levy_expected_charges,
@@ -635,6 +638,27 @@ class PaymentService:
     # the M3/M4 services. Loads the right rows via the repo, sums via the pure
     # engine, so the value is bit-identical to the MANUAL path (I6-E).
     # ------------------------------------------------------------------
+    @staticmethod
+    def _nk_credit_buckets_change(lease, inputs, start, end, old_end, new_end):
+        def buckets(lease_end):
+            return tuple(credit
+                for year in range(start.year, end.year + 1)
+                for credit in derive_advance_credits_for_period(inputs, AdvanceFilter(
+                    frozenset({"NK_VORAUSZAHLUNG"}), year, lease.id), start, end,
+                    lease_start=lease.valid_from, lease_end=lease_end))
+
+        return buckets(old_end) != buckets(new_end)
+
+    async def lease_end_conflicts_finalized_credit(self, lease_id: uuid.UUID, last_day: date) -> bool:
+        """Protect derived buckets changed by an end before the statement's last day."""
+        runs = await self._leases.finalized_derived_statements_ending_after(lease_id, last_day)
+        if not runs:
+            return False
+        lease, inputs = await self._nk_advance_inputs(lease_id)
+        old_end = db_exclusive_to_engine_inclusive(lease.valid_to)
+        return any(self._nk_credit_buckets_change(lease, inputs, run.period_start, run.period_end,
+            old_end, last_day) for run in runs)
+
     async def derive_nk_advance_total(
         self, lease_agreement_id: uuid.UUID, period_year: int
     ) -> Decimal:
@@ -650,19 +674,74 @@ class PaymentService:
     async def derive_nk_advance_total_for_period(
         self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date
     ) -> Decimal:
-        """DERIVED NK by assigned months, prorating year-only amounts."""
-        rows = await self._repo.derived_for_nk_for_period(
-            lease_agreement_id, period_start, period_end
-        )
-        inputs = [_to_payment_input(p) for p in rows]
-        return sum((
-            derive_advance_total_for_period(inputs, AdvanceFilter(
+        """DERIVED NK total with earlier snapshot credits retained after edits."""
+        credits, _excluded = await self.nk_advance_credits_for_period(lease_agreement_id, period_start, period_end)
+        return sum((credit.amount for credit in credits), Decimal("0.00"))
+
+    async def nk_advance_credits_for_period(
+        self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date,
+    ) -> tuple[tuple[AdvanceCredit, ...], Decimal]:
+        """Return auditable year/month buckets plus wholly outside-lease bookings."""
+        from app.repositories.settlement_repo import SettlementRunRepository
+
+        lease, inputs = await self._nk_advance_inputs(lease_agreement_id)
+        lease_end = db_exclusive_to_engine_inclusive(lease.valid_to)
+        finalized = await SettlementRunRepository(self._session, self._org_id).finalized_bk_for_advance_years(
+            lease_agreement_id, period_start, period_end)
+        frozen, seen = [], set()
+        for run in finalized:
+            payload = run.snapshot_payload or {}
+            period = payload.get("period", {})
+            bounds = (period.get("start"), period.get("end"))
+            if bounds in seen:
+                continue
+            seen.add(bounds)
+            data = payload.get("inputs", {})
+            if data.get("advance_payments_source") != "DERIVED":
+                continue
+            buckets = data.get("advance_payment_credits")
+            if buckets is None:
+                old_lease = next((row for row in data.get("lease_periods", [])
+                    if row["lease_agreement_id"] == str(lease_agreement_id)), {})
+                old_end = date.fromisoformat(old_lease["to"]) if old_lease.get("to") else None
+                if (old_end != lease_end and Decimal(payload["result"]["advance_payments_total"])
+                        and self._nk_credit_buckets_change(lease, inputs,
+                            date.fromisoformat(bounds[0]), date.fromisoformat(bounds[1]), old_end, lease_end)):
+                    raise HTTPException(409, {"code": "advance_credit_history_missing",
+                        "message": "Der eingefrorene Vorauszahlungsnachweis fehlt. Bitte die frühere Abrechnung korrigieren."})
+                continue
+            frozen.extend(AdvanceCredit(row["year"], row["month"], date.fromisoformat(bounds[0]),
+                date.fromisoformat(bounds[1]), Decimal(row["amount"])) for row in buckets)
+        credits = tuple(credit
+            for year in range(period_start.year, period_end.year + 1)
+            for credit in derive_advance_credits_for_period(inputs, AdvanceFilter(
                 types=frozenset({"NK_VORAUSZAHLUNG"}),
                 year=year,
                 lease_agreement_id=lease_agreement_id,
-            ), period_start, period_end)
-            for year in range(period_start.year, period_end.year + 1)
-        ), Decimal("0.00"))
+            ), period_start, period_end, lease_start=lease.valid_from,
+                lease_end=lease_end, finalized_credits=tuple(frozen)))
+        return credits, self._uncredited_nk_total(lease, inputs, period_start, period_end)
+
+    async def _nk_advance_inputs(self, lease_agreement_id):
+        lease = await self._leases.get_by_id(lease_agreement_id)
+        if lease is None:
+            raise HTTPException(404, "Lease agreement not found")
+        rows = await self._repo.derived_for_nk_for_lease(lease_agreement_id)
+        return lease, [_to_payment_input(p) for p in rows]
+
+    @staticmethod
+    def _uncredited_nk_total(lease, inputs, period_start, period_end):
+        return sum((uncredited_advance_total(inputs, AdvanceFilter(
+            frozenset({"NK_VORAUSZAHLUNG"}), year, lease.id), lease.valid_from,
+            db_exclusive_to_engine_inclusive(lease.valid_to), period_start=period_start, period_end=period_end)
+            for year in sorted({p.period_year for p in inputs if p.period_year is not None})), Decimal("0.00"))
+
+    async def uncredited_nk_advance_total(
+        self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date,
+    ) -> Decimal:
+        """Notice-only derivation; manual statement totals need no frozen history."""
+        lease, inputs = await self._nk_advance_inputs(lease_agreement_id)
+        return self._uncredited_nk_total(lease, inputs, period_start, period_end)
 
     async def derive_hausgeld_total(
         self, owner_profile_id: uuid.UUID, period_year: int
@@ -679,7 +758,7 @@ class PaymentService:
     async def derive_hausgeld_total_for_period(
         self, owner_profile_id: uuid.UUID, period_start: date, period_end: date
     ) -> Decimal:
-        """Paid Hausgeld with the same year-only month split as NK advances."""
+        """Paid Hausgeld with the same month/day proration as NK advances."""
         rows = []
         for year in range(period_start.year, period_end.year + 1):
             rows.extend(await self._repo.derived_for_hausgeld(owner_profile_id, year))

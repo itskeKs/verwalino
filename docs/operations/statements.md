@@ -39,9 +39,19 @@ metering-service statement remains unchanged. Consumption share, §7 special cas
 meter type are entered explicitly; automatic and manual quantities remain
 separate from cold water/other consumption keys. All participating units,
 tenant changes, and vacancy periods are visible. Base costs are distributed by
-area/volume × days; consumption costs use exact boundary/interim readings
-([§9b](https://www.gesetze-im-internet.de/heizkostenv/__9b.html)) or declared
-manual values (at most six decimal places), never a silent daily estimate.
+area/volume × days. Allocation always uses the full property-period pool and
+building consumption, before selecting a lease's clipped statement. Exact interim
+readings ([§9b](https://www.gesetze-im-internet.de/heizkostenv/__9b.html)) split only
+the changed unit's consumption-dependent share; other units need no reading at that
+change date. Declared manual quantities remain supported (at most six decimal places).
+Missing interim readings split known unit-period consumption by degree-days if
+available, otherwise by days. The engine currently has no degree-day model, so the
+fallback is days; basic costs always split by days. Missing period consumption still
+returns 422 and is never replaced with zero or estimated building consumption.
+For a 10,000-euro pool, 70% consumption, two equally sized units each using 1,000,
+and A/B using 600/400 in the first unit, the statements are 3,221.92 / 1,778.08 /
+5,000.00 euros. Successive leases plus vacancy retain the unit/property totals to the
+cent. Adjacent free windows select cumulative cents from the balanced occupant cells.
 The period share of a cost source spanning multiple periods is allocated to the cent in advance;
 for partial allocation, the confirmed tenant amount remains authoritative. Vacancy bears the
 gross owner share without tenant reduction. Missing/ambiguous values return 422.
@@ -103,7 +113,11 @@ scope selection.
 `POST /api/settlements/batch` takes `property_id`, `period_start`, `period_end`,
 and optionally `accounting_scope_id`; the response contains `created` and `skipped`
 (with lease/run ID). Existing active BK runs for the same lease, period,
-and scope are skipped unchanged, even if already finalized.
+and scope are skipped unchanged, even if already finalized. A finalized legacy
+run covering the lease's clipped span is also skipped, with a German `reason` in
+the skipped item. A wider legacy draft covering that clipped span causes an overlap
+error; only finalized covering runs receive this skip. Partial overlaps retain the structured conflict; single creation
+keeps its overlap 409.
 The shared financial lock prevents duplicate parallel batch runs; errors
 roll back all new drafts and audit rows. Org, source, and
 scope permissions also apply for an empty result; partial scopes restrict the units.

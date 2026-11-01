@@ -87,7 +87,8 @@ def _heating_html(run: SettlementRun) -> str:
     """Render only retained calculations and reading provenance, never live data."""
     blocks = []
     for pool in (run.snapshot_payload or {}).get('heating_costs',[]):
-        own = [r for r in pool['rows'] if r['lease_agreement_id']==str(run.lease_agreement_id)]
+        own = [r for r in pool['rows'] if r['lease_agreement_id']==str(run.lease_agreement_id)
+               and ('statement_amount' not in r or r.get('statement_from') is not None)]
         if not own:
             continue
         kind = 'Heizung' if pool['kind']=='HEATING' else 'Warmwasser'
@@ -103,14 +104,18 @@ def _heating_html(run: SettlementRun) -> str:
             provenance = ('Handeingabe' if source.get('source')=='MANUAL' else
                           'Keine Verbrauchserfassung' if source.get('source')=='NON_CONSUMPTION' else
                           'Zähler: ' + ' → '.join(f"{source[k]['reading_date']}: {source[k]['value']}"
-                                                 for k in ('start_reading','end_reading') if k in source))
+                                                 for k in ('start_reading','end_reading') if source.get(k)))
+            if source.get('reason'):
+                provenance += '; ' + source['reason']
+            statement_period = (f"<br/>Davon {_esc(r['statement_from'])} – {_esc(r['statement_to'])}: "
+                                if r.get('statement_from') else '')
             rows.append(f"""<tr><td>{_esc(r['period_from'])} – {_esc(r['period_to'])}</td>
                 <td>{_esc(r['weighted_base_quantity'])} / {_esc(pool['base_total_quantity'])}<br/>
                 Grundanteil: {_eur(Decimal(r['base_amount']))}</td>
                 <td>{_esc(consumption_basis)}<br/>Verbrauchsanteil: {_eur(Decimal(r['consumption_amount']))}<br/>{_esc(provenance)}</td>
                 <td>Vor Kürzung: {_eur(Decimal(r['gross_amount']))}<br/>
                 Kürzung: {_eur(Decimal(r['reduction_amount']))}<br/>
-                Ihr Betrag: {_eur(Decimal(r['amount_due']))}</td></tr>""")
+                {statement_period}Ihr Betrag: {_eur(Decimal(r.get('statement_amount', r['amount_due'])))}</td></tr>""")
         blocks.append(f"""<section><h2>{kind} – HeizkostenV intern</h2>
             <p>{_esc(method)}. Grundbasis: {_esc(pool['base_key'])} × Tage (§9b, zeitanteilig).
             Gesamtkosten: {_eur(Decimal(pool['total_amount']))};
@@ -182,6 +187,9 @@ def build_settlement_html(
             f"<td colspan='5'>{_esc(balance.label)}</td>"
             f"<td class='num'>{_eur(balance.amount)}</td></tr>"
         )
+
+    for notice in (line for line in ordered if line.line_type == "SUBTOTAL"):
+        summary_rows.append(f"<tr><td colspan='6'>{_esc(notice.label)}</td></tr>")
 
     integrity = ""
     if run.snapshot_sha256:

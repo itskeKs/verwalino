@@ -429,6 +429,19 @@ async function showConsumption() {
   return screen.findByLabelText(/^Verbrauch \(1/);
 }
 describe("T31 meter consumption prefill", () => {
+  it("shows excluded payments as a notice without a second financial amount", async () => {
+    const notice = "Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: 1.234,56 €";
+    vi.mocked(api.getSettlement).mockResolvedValueOnce({ ...consumptionDraft, lines: [{
+      id: "notice", cost_entry_id: null, line_type: "SUBTOTAL", label: notice, amount: "0.00", sort_order: 0,
+      cost_category_code: null, distribution_key: null, total_amount: null,
+      distribution_base_total: null, distribution_base_share: null,
+      time_share_days: null, time_share_total_days: null, note: null,
+    }] });
+    await showConsumption();
+    const row = (await screen.findByText(notice)).closest("tr")!;
+    expect(row).toHaveTextContent(notice);
+    expect(row).not.toHaveTextContent("0.00 EUR");
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(api.getSettlement).mockReset().mockResolvedValue(structuredClone(consumptionDraft));
@@ -454,6 +467,23 @@ describe("T31 meter consumption prefill", () => {
     expect(screen.getByLabelText(/^Verbrauch \(2/)).toHaveValue("70.0000");
     expect(screen.getAllByText(/Zählerbasis:/)).toHaveLength(2);
     expect(api.getConsumptionSuggestions).toHaveBeenCalledWith("run-1");
+  });
+  it("explains the property-year basis for manual consumption and persons in a clipped run", async () => {
+    vi.mocked(api.getSettlement).mockResolvedValue({ ...consumptionDraft, period_end: "2025-09-30" });
+    vi.mocked(api.listCostEntries).mockResolvedValue([
+      createCostEntry({ tenant_distribution_key: "VERBRAUCH" }),
+      createCostEntry({ id: "persons", tenant_distribution_key: "PERSONENZAHL" }),
+    ]);
+    await showConsumption();
+    expect(screen.getByText("Verbrauch der Einheit im gesamten Objekt-Abrechnungsjahr eingeben, auch bei gekürztem Mietzeitraum." )).toBeVisible();
+    expect(screen.getByText("Personenzahlen je Einheit für das gesamte Objekt-Abrechnungsjahr in allen zugehörigen Abrechnungen gleich eingeben." )).toBeVisible();
+  });
+  it("shows a day fallback reason alongside the actual meter basis", async () => {
+    vi.mocked(api.getConsumptionSuggestions).mockResolvedValue(consumptionRows.map(row => ({
+      ...row, reason: "Zwischenablesung fehlt: Aufteilung des Einheitsverbrauchs nach Tagen.",
+    })));
+    await showConsumption();
+    expect(await screen.findAllByText(/Zwischenablesung fehlt:/)).toHaveLength(2);
   });
   it("does not echo automatic prefill as manual input", async () => {
     const first = await showConsumption();
