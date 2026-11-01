@@ -12,11 +12,20 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.resolution_register_entry import ResolutionRegisterEntry
+from app.models.resolution import Resolution
 from app.repositories.base import TenantRepository
 
 
 class RegisterEntryRepository(TenantRepository[ResolutionRegisterEntry]):
     model = ResolutionRegisterEntry
+
+    async def resolution_results(self, entries):
+        identifiers = {entry.resolution_id for entry in entries}
+        if not identifiers:
+            return {}
+        rows = await self._session.execute(select(Resolution.id, Resolution.result).where(
+            Resolution.organization_id == self._org_id, Resolution.id.in_(identifiers)))
+        return dict(rows.all())
 
     async def list_for_property(
         self, property_id: uuid.UUID

@@ -14,7 +14,7 @@ it('links both references on an imported payout draft before booking', async () 
     if (init?.method === 'PATCH') { payment = { ...payment, ...JSON.parse(init.body as string) }; return json(payment); }
     if (url.endsWith('/book')) { payment = { ...payment, status: 'booked' }; return json(payment); }
     if (url === '/api/payments/payout') return json(payment);
-    if (url.startsWith('/api/cost-entries')) return json([{ id: 'cost', document_number: 'RE-Ä-123', gross_amount: '1200.00' }]);
+    if (url.startsWith('/api/cost-entries')) return json([{ id: 'cost', document_number: 'RE-Ä-123', gross_amount: '1200.00', status: 'confirmed', superseded_by_id: null }]);
     if (url.startsWith('/api/meetings/register/')) return json([{ id: 'resolution', sequence_number: 42, wording: 'Dachreparatur', result: 'ANGENOMMEN' }]);
     return json([]);
   });

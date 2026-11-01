@@ -1,6 +1,8 @@
 Feature: Maintenance reserve ledger
   Reserve planning and cash movements are separate. Final statements retain the
   ledger reviewed at finalization and the next period carries its closing balance.
+  Booked evidence references stay frozen: later cost corrections or resolution
+  challenges do not alter the ledger.
 
   Scenario: Booked reserve contributions fund the annual reserve development
     Given a WEG with a finalized reserve plan and a booked reserve contribution

@@ -149,19 +149,15 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
             Resolution.organization_id == self._org_id, Resolution.id == register.resolution_id)) if register else None
         return cost, register, result
 
-    async def funded_amount(self, cost_id, exclude_payment_id):
-        # Coalesce retains historical FUNDING rows without counting a new payment twice.
-        return await self._session.scalar(text("""SELECT COALESCE(sum(p.amount),0) FROM payment p
-            LEFT JOIN reserve_ledger_entry e ON e.organization_id=p.organization_id AND e.payment_id=p.id AND e.component='FUNDING'
-            WHERE p.organization_id=:org AND COALESCE(p.reserve_cost_entry_id,e.cost_entry_id)=:cost
-              AND p.status='booked' AND p.reverses_id IS NULL AND p.reversed_by_id IS NULL
-              AND p.id<>:payment"""), {'org': self._org_id, 'cost': cost_id, 'payment': exclude_payment_id})
+    async def funded_amount(self, cost_id, exclude_payment_id=None):
+        return await self._session.scalar(text('SELECT reserve_funded_amount(:org,:cost,:payment)'),
+            {'org': self._org_id, 'cost': cost_id, 'payment': exclude_payment_id})
 
     async def has_earlier_ledger(self, run):
         return await self._session.scalar(text("""SELECT EXISTS(SELECT 1 FROM settlement_run r
             WHERE r.organization_id=:org AND r.property_id=:property AND r.period_start<:start
               AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT')
-              AND (r.status='finalized' AND r.superseded_by_id IS NULL OR EXISTS(
+              AND (r.superseded_by_id IS NULL OR EXISTS(
                 SELECT 1 FROM reserve_ledger_entry e WHERE e.organization_id=r.organization_id AND e.settlement_run_id=r.id))
               AND (SELECT b.scope_id FROM accounting_scope_binding b WHERE b.organization_id=r.organization_id AND b.settlement_run_id=r.id) IS NOT DISTINCT FROM :scope)"""),
             {'org': self._org_id, 'property': run.property_id, 'start': run.period_start,

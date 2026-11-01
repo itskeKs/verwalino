@@ -1451,6 +1451,7 @@ export interface RegisterEntry {
   location: string;
   wording: string;
   resolution_id: string;
+  result: string | null;
   challenge_annotation: string | null;
 }
 

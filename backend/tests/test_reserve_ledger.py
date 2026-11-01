@@ -1,5 +1,6 @@
 """Reserve API and frozen annual statements, on synthetic WEG records."""
 import pytest
+from datetime import date
 from decimal import Decimal
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
@@ -454,7 +455,7 @@ async def test_cash_ratio_excludes_units_owned_only_before_or_after_value_date(c
 @pytest.mark.asyncio
 async def test_half_year_opening_adjustment_does_not_enter_full_year(client_a_admin, seed_data):
     api = client_a_admin
-    w = await reserve_world(api, seed_data)
+    w = _seed_weg(seed_data)
     response = await api.post('/api/weg-settlements/asset-reports', json={
         'property_id': w['property'], 'period_start': '2025-07-01', 'period_end': '2025-12-31'})
     assert response.status_code == 201, response.text
@@ -463,6 +464,7 @@ async def test_half_year_opening_adjustment_does_not_enter_full_year(client_a_ad
         'component': 'OPENING', 'amount': '1000.00', 'reason': 'Synthetic half-year opening'})
     assert response.status_code == 201, response.text
     assert (await api.get(f'/api/weg-settlements/{report}/reserve-ledger')).json()['opening_balance'] == '1000.00'
+    w = await reserve_world(api, seed_data)
     assert (await api.get(f"/api/weg-settlements/{w['run']}/reserve-ledger")).json()['opening_balance'] == '0.00'
 
 
@@ -922,7 +924,8 @@ async def test_typed_withdrawal_correction_requires_both_references(client_a_adm
     w = await reserve_world(api, seed_data)
     evidence = {k.removeprefix('reserve_'): v for k, v in (await reserve_evidence(api, w)).items()}
     path = f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides"
-    body = {'component': component, 'amount': '-1200.00', 'reason': 'Correct documented reserve movement'}
+    body = {'component': component, 'amount': '-1200.00' if component == 'ADJUSTMENT' else '1200.00',
+            'reason': 'Correct documented reserve movement'}
     partial = {} if missing == 'both' else {k: v for k, v in evidence.items() if ('cost' in k) != (missing == 'cost')}
     refused = await api.post(path, json={**body, **partial})
     assert refused.status_code == 422, refused.text
@@ -945,6 +948,172 @@ async def test_opening_import_is_only_allowed_in_first_ledger_year(client_a_admi
     refused = await api.post(f"/api/weg-settlements/{run.json()['id']}/reserve-ledger/overrides", json=body)
     assert refused.status_code == 422, refused.text
     assert refused.json()['detail']['code'] == 'RESERVE_OPENING_IMPORT_ONLY'
+
+
+@pytest.mark.asyncio
+async def test_earlier_draft_blocks_opening_import_and_carry_equals_frozen_closing(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    run = await api.post('/api/weg-settlements/asset-reports', json={'property_id': w['property'],
+        'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    assert run.status_code == 201, run.text
+    path = f"/api/weg-settlements/{run.json()['id']}/reserve-ledger"
+    for amount in ('5000.00', '7.00'):
+        refused = await api.post(path + '/overrides', json={'component': 'OPENING', 'amount': amount,
+            'reason': 'Must not import above an earlier draft'})
+        assert refused.status_code == 422, refused.text
+        assert refused.json()['detail']['code'] == 'RESERVE_OPENING_IMPORT_ONLY'
+    await payment(api, w, '123.45')
+    await finalize(api, w)
+    frozen = (await api.get(f"/api/weg-settlements/{w['run']}/reserve-ledger")).json()
+    carried = (await api.get(path)).json()
+    assert carried['opening_balance'] == frozen['closing_balance'] == '123.45'
+    assert carried['opening_source_run_id'] == w['run']
+
+
+@pytest.mark.asyncio
+async def test_opening_import_cannot_be_repeated(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    for amount, status in [('5000.00', 201), ('7.00', 422)]:
+        response = await api.post(path + '/overrides', json={'component': 'OPENING', 'amount': amount,
+            'reason': 'Audited opening import'})
+        assert response.status_code == status, response.text
+        if status == 422:
+            assert response.json()['detail']['code'] == 'RESERVE_OPENING_IMPORT_ONLY'
+    assert (await api.get(path)).json()['opening_balance'] == '5000.00'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('component,amount', [('WITHDRAWAL', '1000000.00'), ('ADJUSTMENT', '50000.00'),
+                                            ('ADJUSTMENT', '-50000.00')])
+async def test_typed_correction_cannot_exceed_confirmed_cost(client_a_admin, seed_data, component, amount):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    evidence = {k.removeprefix('reserve_'): v for k, v in (await reserve_evidence(api, w)).items()}
+    response = await api.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+        'component': component, 'amount': amount, 'reason': 'Over cost amount', **evidence})
+    assert response.status_code == 422, response.text
+    assert response.json()['detail']['code'] == 'RESERVE_PAYOUT_EVIDENCE_REQUIRED'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('component', ['WITHDRAWAL', 'CONTRIBUTION'])
+@pytest.mark.parametrize('amount', ['-999999.00', '0.00'])
+async def test_typed_cash_correction_requires_positive_amount(client_a_admin, seed_data, component, amount):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    evidence = {k.removeprefix('reserve_'): v for k, v in (await reserve_evidence(api, w)).items()}
+    response = await api.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+        'component': component, 'amount': amount, 'reason': 'Invalid sign', **evidence})
+    assert response.status_code == 422, response.text
+    assert response.json()['detail']['code'] == 'RESERVE_AMOUNT_INVALID'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('first', ['WITHDRAWAL', 'ADJUSTMENT', 'PAYOUT'])
+async def test_corrections_share_the_remaining_cost_with_booked_payouts(client_a_admin, seed_data, first):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    payment_evidence = await reserve_evidence(api, w)
+    evidence = {k.removeprefix('reserve_'): v for k, v in payment_evidence.items()}
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides"
+    if first == 'PAYOUT':
+        await payment(api, w, '3000.00', kind='RUECKLAGENENTNAHME', direction='OUT', evidence=payment_evidence)
+    else:
+        response = await api.post(path, json={'component': first, 'amount': '-3000.00' if first == 'ADJUSTMENT' else '3000.00',
+            'reason': 'Documented correction', **evidence})
+        assert response.status_code == 201, response.text
+    for amount, status in [('1200.00', 422), ('1000.00', 201), ('0.01', 422)]:
+        response = await api.post(path, json={'component': 'WITHDRAWAL', 'amount': amount,
+            'reason': 'Use remaining confirmed cost', **evidence})
+        assert response.status_code == status, response.text
+        if status == 422:
+            assert response.json()['detail']['code'] == 'RESERVE_PAYOUT_EVIDENCE_REQUIRED'
+
+
+@pytest.mark.asyncio
+async def test_booking_includes_typed_corrections_in_cost_cap(client_a_admin, seed_data, migrator_session):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    evidence = await reserve_evidence(api, w)
+    response = await api.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+        'component': 'ADJUSTMENT', 'amount': '3000.00', 'reason': 'Documented correction',
+        **{k.removeprefix('reserve_'): v for k, v in evidence.items()}})
+    assert response.status_code == 201, response.text
+    draft = await api.post('/api/payments', json={'bank_account_id': w['bank_giro'], 'direction': 'OUT',
+        'amount': '1200.00', 'value_date': '2025-02-01', 'payment_type': 'RUECKLAGENENTNAHME', **evidence})
+    assert draft.status_code == 201, draft.text
+    response = await api.post(f"/api/payments/{draft.json()['id']}/book")
+    assert response.status_code == 422, response.text
+    assert response.json()['detail']['code'] == 'RESERVE_PAYOUT_EVIDENCE_REQUIRED'
+    with pytest.raises(DBAPIError) as refusal:
+        async with migrator_session.begin_nested():
+            await migrator_session.execute(text("UPDATE payment SET status='booked',booked_at=now(),booked_by=:actor,retention_until='2034-12-31' WHERE id=CAST(:id AS uuid)"),
+                {'actor': seed_data['user_a_admin_id'], 'id': draft.json()['id']})
+    assert refusal.value.orig.__cause__.constraint_name == 'reserve_payout_evidence_required'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('case,component,amount,constraint', [
+    ('earlier_draft', 'OPENING', '5000.00', 'reserve_opening_import_only'),
+    ('duplicate', 'OPENING', '7.00', 'uq_reserve_opening_import'),
+    ('sign', 'WITHDRAWAL', '-1.00', 'reserve_amount_invalid'),
+    ('sign', 'CONTRIBUTION', '0.00', 'reserve_amount_invalid'),
+    ('cap', 'ADJUSTMENT', '-50000.00', 'reserve_payout_evidence_required'),
+    ('payout', 'WITHDRAWAL', '1200.00', 'reserve_payout_evidence_required'),
+    ('correction', 'ADJUSTMENT', '1200.00', 'reserve_payout_evidence_required'),
+    ('valid', 'WITHDRAWAL', '1000.00', None),
+])
+async def test_database_mirrors_opening_and_correction_limits(client_a_admin, seed_data, migrator_session,
+                                                           case, component, amount, constraint):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    evidence = {} if component == 'OPENING' else await reserve_evidence(api, w)
+    run, entry_date = w['run'], '2025-01-01'
+    if case == 'earlier_draft':
+        response = await api.post('/api/weg-settlements/asset-reports', json={'property_id': w['property'],
+            'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+        assert response.status_code == 201, response.text
+        run, entry_date = response.json()['id'], '2026-01-01'
+    elif case in ('duplicate', 'correction'):
+        response = await api.post(f"/api/weg-settlements/{run}/reserve-ledger/overrides", json={
+            'component': 'OPENING' if case == 'duplicate' else 'WITHDRAWAL', 'amount': '3000.00',
+            'reason': 'Retained first entry', **{k.removeprefix('reserve_'): v for k, v in evidence.items()}})
+        assert response.status_code == 201, response.text
+    elif case == 'payout':
+        await payment(api, w, '3000.00', kind='RUECKLAGENENTNAHME', direction='OUT', evidence=evidence)
+    await migrator_session.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),
+        {'actor': str(seed_data['user_a_admin_id'])})
+    await migrator_session.execute(text("SELECT set_config('app.current_org_id',:org,true)"),
+        {'org': str(seed_data['org_a_id'])})
+    async def insert():
+        await migrator_session.execute(text("""INSERT INTO reserve_ledger_entry
+                (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,cost_entry_id,register_entry_id,created_by)
+                VALUES (:org,:property,:run,CAST(:date AS date),:component,:amount,'Database boundary',:cost,:register,:actor)"""),
+                {'org': seed_data['org_a_id'], 'property': w['property'], 'run': run, 'date': date.fromisoformat(entry_date),
+                 'component': component, 'amount': Decimal(amount), 'actor': seed_data['user_a_admin_id'],
+                 'cost': evidence.get('reserve_cost_entry_id'), 'register': evidence.get('reserve_register_entry_id')})
+    if constraint is None:
+        await insert()
+        return
+    message = 'Active reserve withdrawals exceed confirmed cost amount' if case in ('cap', 'payout', 'correction') else None
+    with pytest.raises(DBAPIError, match=message) as refusal:
+        async with migrator_session.begin_nested():
+            await insert()
+    assert refusal.value.orig.__cause__.constraint_name == constraint
+
+
+@pytest.mark.asyncio
+async def test_evidence_picker_register_exposes_resolution_results(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    evidence = await reserve_evidence(api, w)
+    response = await api.get(f"/api/meetings/register/{w['property']}")
+    assert response.status_code == 200, response.text
+    row = next(row for row in response.json() if row['id'] == evidence['reserve_register_entry_id'])
+    assert row['result'] == 'ANGENOMMEN'
 
 
 @pytest.mark.asyncio

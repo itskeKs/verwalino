@@ -39,7 +39,7 @@ const ledger = { opening_balance: '20000.00', contributions_total: '1000.00', wi
   overdrawn: false, frozen: false, booking_basis: 'CASH', entries: [
     { kind: 'CONTRIBUTION', date: '2025-01-15', amount: '1000.00', payment_id: 'payment-1' },
   ] };
-const sourceJson = (url: string, fallback: unknown) => json(url.includes('cost-entries') ? [{ id: 'cost-1', document_number: 'RE-1', gross_amount: '1200.00' }]
+const sourceJson = (url: string, fallback: unknown) => json(url.includes('cost-entries') ? [{ id: 'cost-1', document_number: 'RE-1', gross_amount: '1200.00', status: 'confirmed', superseded_by_id: null }]
   : url.includes('/meetings/register/') ? [{ id: 'register-1', sequence_number: 1, wording: 'Reparatur', result: 'ANGENOMMEN' }] : fallback);
 async function chooseEvidence() {
   const cost = await screen.findByLabelText('Bestätigter Kostenbeleg *');

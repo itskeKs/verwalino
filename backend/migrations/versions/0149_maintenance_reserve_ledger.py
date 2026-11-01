@@ -88,6 +88,8 @@ def upgrade():
          OR (component IN ('WITHDRAWAL','ADJUSTMENT','CONTRIBUTION') AND payment_id IS NULL AND cost_entry_id IS NOT NULL AND register_entry_id IS NOT NULL)),
       UNIQUE(organization_id,payment_id));
     CREATE INDEX ix_reserve_property_date ON reserve_ledger_entry(organization_id,property_id,entry_date);
+    CREATE UNIQUE INDEX uq_reserve_opening_import ON reserve_ledger_entry(organization_id,settlement_run_id)
+      WHERE component='OPENING';
     ALTER TABLE reserve_ledger_entry ENABLE ROW LEVEL SECURITY;
     ALTER TABLE reserve_ledger_entry FORCE ROW LEVEL SECURITY;
     CREATE POLICY reserve_read ON reserve_ledger_entry FOR SELECT USING (
@@ -101,6 +103,21 @@ def upgrade():
       AND property_financial_disclosure_access(organization_id,property_id,'read'));
     REVOKE ALL ON reserve_ledger_entry FROM PUBLIC,app_rw,app_worker,app_review;
     GRANT SELECT,INSERT ON reserve_ledger_entry TO app_rw;
+    -- Invoker rights preserve RLS for service reads; guards already run as definer.
+    -- VOLATILE sees writes serialized by financial-inputs, including this statement.
+    CREATE FUNCTION reserve_funded_amount(org uuid,cost uuid,excluded_payment uuid) RETURNS numeric
+    LANGUAGE sql VOLATILE SET search_path=pg_catalog,pg_temp AS $$
+      SELECT COALESCE((SELECT sum(p.amount) FROM public.payment p
+        LEFT JOIN public.reserve_ledger_entry e ON e.organization_id=p.organization_id AND e.payment_id=p.id AND e.component='FUNDING'
+        WHERE p.organization_id=org AND COALESCE(p.reserve_cost_entry_id,e.cost_entry_id)=cost
+          AND p.status='booked' AND p.reverses_id IS NULL AND p.reversed_by_id IS NULL
+          AND p.id IS DISTINCT FROM excluded_payment),0)
+        + COALESCE((SELECT sum(CASE WHEN e.component='ADJUSTMENT' THEN abs(e.amount) ELSE e.amount END)
+          FROM public.reserve_ledger_entry e WHERE e.organization_id=org AND e.cost_entry_id=cost
+            AND e.payment_id IS NULL AND e.component IN ('WITHDRAWAL','ADJUSTMENT')),0)
+    $$;
+    REVOKE ALL ON FUNCTION reserve_funded_amount(uuid,uuid,uuid) FROM PUBLIC;
+    GRANT EXECUTE ON FUNCTION reserve_funded_amount(uuid,uuid,uuid) TO app_rw;
     CREATE TRIGGER a_organization_lifecycle BEFORE INSERT OR UPDATE OR DELETE ON reserve_ledger_entry
       FOR EACH ROW EXECUTE FUNCTION public.organization_lifecycle_guard();
     CREATE TRIGGER a_lock_reserve_sources BEFORE INSERT OR UPDATE OR DELETE ON reserve_ledger_entry
@@ -129,7 +146,7 @@ def upgrade():
       IF NEW.component='OPENING' AND EXISTS(SELECT 1 FROM public.settlement_run r
         WHERE r.organization_id=NEW.organization_id AND r.property_id=NEW.property_id AND r.period_start<parent.period_start
           AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT')
-          AND (r.status='finalized' AND r.superseded_by_id IS NULL OR EXISTS(
+          AND (r.superseded_by_id IS NULL OR EXISTS(
             SELECT 1 FROM public.reserve_ledger_entry e WHERE e.organization_id=r.organization_id AND e.settlement_run_id=r.id))
           AND (public.financial_scope_id(r.organization_id,'settlement_run',r.id) IS NOT DISTINCT FROM sphere
             OR EXISTS(SELECT 1 FROM public.accounting_scope prior_scope, public.accounting_scope next_scope
@@ -147,6 +164,15 @@ def upgrade():
             AND e.id=NEW.register_entry_id AND e.property_id=parent.property_id AND r.result='ANGENOMMEN') THEN
           RAISE EXCEPTION 'Reserve correction requires confirmed cost AND accepted registered resolution'
             USING ERRCODE='23514',CONSTRAINT='reserve_payout_evidence_required'; END IF;
+        IF NEW.payment_id IS NULL THEN
+          IF NEW.component IN ('WITHDRAWAL','CONTRIBUTION') AND NEW.amount<=0 THEN
+            RAISE EXCEPTION 'Reserve cash correction must be positive'
+              USING ERRCODE='23514',CONSTRAINT='reserve_amount_invalid'; END IF;
+          IF NEW.component IN ('WITHDRAWAL','ADJUSTMENT')
+            AND abs(NEW.amount)+public.reserve_funded_amount(NEW.organization_id,cost.id,NULL)>cost.gross_amount THEN
+            RAISE EXCEPTION 'Active reserve withdrawals exceed confirmed cost amount'
+              USING ERRCODE='23514',CONSTRAINT='reserve_payout_evidence_required'; END IF;
+        END IF;
       END IF;
       IF NEW.component='FUNDING' THEN
         SELECT * INTO cash FROM public.payment WHERE organization_id=NEW.organization_id AND id=NEW.payment_id;
@@ -165,10 +191,7 @@ def upgrade():
           OR cost.status<>'confirmed' OR cost.superseded_by_id IS NOT NULL
           OR NOT public.financial_scope_access(NEW.organization_id,'payment',cash.id,'read')
           OR NOT public.financial_scope_access(NEW.organization_id,'cost_entry',cost.id,'read')
-          OR cash.amount+COALESCE((SELECT sum(p.amount) FROM public.payment p
-            LEFT JOIN public.reserve_ledger_entry e ON e.organization_id=p.organization_id AND e.payment_id=p.id AND e.component='FUNDING'
-            WHERE p.organization_id=NEW.organization_id AND COALESCE(p.reserve_cost_entry_id,e.cost_entry_id)=cost.id
-              AND p.status='booked' AND p.reverses_id IS NULL AND p.reversed_by_id IS NULL AND p.id<>cash.id),0)>cost.gross_amount
+          OR cash.amount+public.reserve_funded_amount(NEW.organization_id,cost.id,cash.id)>cost.gross_amount
           OR NOT EXISTS(SELECT 1 FROM public.resolution_register_entry e JOIN public.resolution r
             ON r.organization_id=e.organization_id AND r.id=e.resolution_id WHERE e.organization_id=NEW.organization_id
             AND e.id=NEW.register_entry_id AND e.property_id=parent.property_id AND r.result='ANGENOMMEN') THEN
@@ -222,10 +245,7 @@ def upgrade():
           OR NOT EXISTS(SELECT 1 FROM public.resolution_register_entry e JOIN public.resolution r
             ON r.organization_id=e.organization_id AND r.id=e.resolution_id WHERE e.organization_id=NEW.organization_id
               AND e.id=NEW.reserve_register_entry_id AND e.property_id=NEW.property_id AND r.result='ANGENOMMEN')
-          OR NEW.amount+COALESCE((SELECT sum(p.amount) FROM public.payment p
-            LEFT JOIN public.reserve_ledger_entry e ON e.organization_id=p.organization_id AND e.payment_id=p.id AND e.component='FUNDING'
-            WHERE p.organization_id=NEW.organization_id AND COALESCE(p.reserve_cost_entry_id,e.cost_entry_id)=cost.id
-              AND p.status='booked' AND p.reverses_id IS NULL AND p.reversed_by_id IS NULL AND p.id<>NEW.id),0)>cost.gross_amount THEN
+          OR NEW.amount+public.reserve_funded_amount(NEW.organization_id,cost.id,NEW.id)>cost.gross_amount THEN
           RAISE EXCEPTION 'Reserve booking requires confirmed cost AND accepted registered resolution within cost amount'
             USING ERRCODE='23514',CONSTRAINT='reserve_payout_evidence_required'; END IF;
       END IF;
@@ -271,6 +291,7 @@ def downgrade():
       DROP FUNCTION reserve_history_access(uuid,uuid,date);
       DROP TRIGGER guard_reserve_payment_evidence ON payment;
       DROP FUNCTION guard_reserve_payment_evidence();
+      DROP FUNCTION reserve_funded_amount(uuid,uuid,uuid);
       ALTER TABLE payment DROP CONSTRAINT ck_reserve_payment_evidence;
       ALTER TABLE payment DROP COLUMN reserve_cost_entry_id;
       ALTER TABLE payment DROP COLUMN reserve_register_entry_id;

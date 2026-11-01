@@ -711,17 +711,25 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   same scope or whole-property WEG scopes with the same mandate. First-period
   opening starts at zero; an imported balance is an explicit reasoned opening
   adjustment only in the first ledger year (`RESERVE_OPENING_IMPORT_ONLY`
-  otherwise). If no plan exists, an asset report shows planning as unknown,
+  otherwise), with at most one opening import per ledger. An earlier WEG annual
+  settlement or asset-report run for the same property and scope blocks the import
+  even while still a draft; superseded runs count when they retain ledger entries,
+  and their current replacement counts independently. If no plan exists, an asset report shows planning as unknown,
   while dedicated reserve receipts and reasoned opening/other adjustments remain
   available; Hausgeld uses any finalized plan covering its cash date.
 - `reserve_ledger_entry` retains append-only signed adjustments and funding
   evidence. `OPENING`, `CONTRIBUTION` and `WITHDRAWAL` adjustments change those
   components; `ADJUSTMENT` adds a signed amount directly. A reason is mandatory.
-  Typed withdrawal corrections (including negative amounts) and other manual
+  Typed withdrawal corrections and other manual
   adjustments require BOTH a confirmed cost receipt and an accepted registered
   resolution; a reason alone cannot override missing evidence. The only
   evidence-free manual entry is the audited import of the first year's opening
   balance. Payment-specific Hausgeld assignments retain their booked cash proof.
+  Typed withdrawal and contribution corrections must be positive; withdrawals and
+  the absolute amounts of signed adjustments share the confirmed cost's gross-amount
+  cap with active booked payouts referencing that receipt.
+  Booked evidence references stay frozen: a later cost correction or resolution
+  challenge does not alter the ledger.
   Corrections apply only to the exact start/end period they were posted for; a
   July–December opening does not enter a January–December ledger. Funding links
   remain payment-specific across periods so later reversals retain their evidence.

@@ -807,6 +807,8 @@ refusals display their German message while retaining the amount and reason.
 
 Payment capture offers “Rücklagenentnahme”, defaults its direction to “Ausgang”,
 and requires a confirmed cost receipt AND an accepted resolution before booking.
+Evidence selectors offer only confirmed, non-superseded costs and accepted
+resolutions, while keeping an already-linked invalid entry visible as the current value.
 Both selectors are available when editing an imported payment draft. Bank
 assignment offers “Als Entwurf übernehmen” when either reference is missing,
 then explains in German how to complete the evidence on the payment. Imported

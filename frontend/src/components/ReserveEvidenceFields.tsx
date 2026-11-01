@@ -11,7 +11,7 @@ export function ReserveEvidenceFields({ propertyId, cost, register, onChange, re
   useEffect(() => {
     let active = true;
     setSources(null); setError('');
-    if (propertyId) Promise.all([listCostEntries({ property_id: propertyId, status: 'confirmed' }), listRegisterEntries(propertyId)])
+    if (propertyId) Promise.all([listCostEntries({ property_id: propertyId }), listRegisterEntries(propertyId)])
       .then(([costs, register]) => { if (active) setSources({ costs, register }); })
       .catch(() => { if (active) setError('Belege konnten nicht geladen werden. Bitte öffnen Sie das Formular erneut.'); });
     return () => { active = false; };
@@ -20,10 +20,10 @@ export function ReserveEvidenceFields({ propertyId, cost, register, onChange, re
     <p className="form-full-width">Bitte verknüpfen Sie vor dem Buchen einen bestätigten Kostenbeleg und einen angenommenen Beschluss aus der Beschluss-Sammlung.</p>
     {error && <p role="alert" className="error-text form-full-width">{error}</p>}
     <label>Bestätigter Kostenbeleg{required ? ' *' : ''}<select aria-label={`Bestätigter Kostenbeleg${required ? ' *' : ''}`} required={required} disabled={!sources} value={cost} onChange={e => onChange(e.target.value, register)}>
-      <option value="">Bitte wählen</option>{sources?.costs.map(row => <option key={row.id} value={row.id}>{row.document_number || row.invoice_date.split('-').reverse().join('.')} · {new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(Number(row.gross_amount))}</option>)}
+      <option value="">Bitte wählen</option>{sources?.costs.filter(row => row.id === cost || (row.status === 'confirmed' && !row.superseded_by_id)).map(row => <option key={row.id} value={row.id}>{row.document_number || row.invoice_date.split('-').reverse().join('.')} · {new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(Number(row.gross_amount))}</option>)}
     </select></label>
     <label>Beschluss-Sammlung{required ? ' *' : ''}<select aria-label={`Beschluss-Sammlung${required ? ' *' : ''}`} required={required} disabled={!sources} value={register} onChange={e => onChange(cost, e.target.value)}>
-      <option value="">Bitte wählen</option>{sources?.register.map(row => <option key={row.id} value={row.id}>Nr. {row.sequence_number} · {row.wording.slice(0, 120)}</option>)}
+      <option value="">Bitte wählen</option>{sources?.register.filter(row => row.id === register || row.result === 'ANGENOMMEN').map(row => <option key={row.id} value={row.id}>Nr. {row.sequence_number} · {row.wording.slice(0, 120)}</option>)}
     </select></label>
   </div>;
 }
