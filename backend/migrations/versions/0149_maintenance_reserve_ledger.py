@@ -175,13 +175,21 @@ def upgrade():
     -- VOLATILE sees writes serialized by financial-inputs, including this statement.
     CREATE FUNCTION reserve_funded_amount(org uuid,cost uuid,excluded_payment uuid) RETURNS numeric
     LANGUAGE sql VOLATILE SET search_path=pg_catalog,pg_temp AS $$
+      WITH RECURSIVE cost_chain AS (
+        SELECT c.id,c.superseded_by_id FROM public.cost_entry c
+        WHERE c.organization_id=org AND c.id=cost
+        UNION
+        SELECT c.id,c.superseded_by_id FROM public.cost_entry c
+        JOIN cost_chain prior ON c.id=prior.superseded_by_id OR c.superseded_by_id=prior.id
+        WHERE c.organization_id=org
+      )
       SELECT COALESCE((SELECT sum(p.amount) FROM public.payment p
         LEFT JOIN public.reserve_ledger_entry e ON e.organization_id=p.organization_id AND e.payment_id=p.id AND e.component='FUNDING'
-        WHERE p.organization_id=org AND COALESCE(p.reserve_cost_entry_id,e.cost_entry_id)=cost
+        WHERE p.organization_id=org AND COALESCE(p.reserve_cost_entry_id,e.cost_entry_id) IN (SELECT id FROM cost_chain)
           AND p.status='booked' AND p.reverses_id IS NULL AND p.reversed_by_id IS NULL
           AND p.id IS DISTINCT FROM excluded_payment),0)
         + COALESCE((SELECT sum(CASE WHEN e.component='ADJUSTMENT' THEN abs(e.amount) ELSE e.amount END)
-          FROM public.reserve_ledger_entry e WHERE e.organization_id=org AND e.cost_entry_id=cost
+          FROM public.reserve_ledger_entry e WHERE e.organization_id=org AND e.cost_entry_id IN (SELECT id FROM cost_chain)
             AND e.payment_id IS NULL AND e.component IN ('WITHDRAWAL','ADJUSTMENT')),0)
     $$;
     REVOKE ALL ON FUNCTION reserve_funded_amount(uuid,uuid,uuid) FROM PUBLIC;

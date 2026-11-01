@@ -486,14 +486,14 @@ async def test_imported_opening_blocks_overlapping_half_and_full_year_creation(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('evidence', ['ledger', 'payout'])
+@pytest.mark.parametrize('evidence', ['ledger', 'payout', 'statement'])
 async def test_populated_reserve_downgrade_refuses_without_losing_state(client_a_admin, seed_data, evidence):
     import importlib.util
     from pathlib import Path
     from sqlalchemy import create_engine
     from alembic.operations import Operations
     from alembic.runtime.migration import MigrationContext
-    from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.conftest import MIGRATOR_SYNC_URL, clear_disposable_source_context
     from tests.test_session_review_access import _chain_snapshot
 
     w = await reserve_world(client_a_admin, seed_data)
@@ -501,8 +501,16 @@ async def test_populated_reserve_downgrade_refuses_without_losing_state(client_a
         response = await client_a_admin.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
             'component': 'OPENING', 'amount': '1.00', 'reason': 'Retained synthetic opening'})
         assert response.status_code == 201, response.text
-    else:
+    elif evidence == 'payout':
         await payment(client_a_admin, w, '1.00', kind='RUECKLAGENENTNAHME', direction='OUT')
+    else:
+        sources = await reserve_evidence(client_a_admin, w)
+        response = await client_a_admin.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+            'component': 'ADJUSTMENT', 'amount': '-1.00', 'reason': 'Retained statement evidence',
+            **{key.removeprefix('reserve_'): value for key, value in sources.items()}})
+        assert response.status_code == 201, response.text
+        result = await finalize(client_a_admin, w)
+        assert any(line['line_type'] == 'RESERVE_ADJUSTMENT' for line in result['lines'])
     path = Path(__file__).parents[1] / 'migrations/versions/0149_maintenance_reserve_ledger.py'
     spec = importlib.util.spec_from_file_location('reserve_migration', path)
     migration = importlib.util.module_from_spec(spec)
@@ -511,13 +519,26 @@ async def test_populated_reserve_downgrade_refuses_without_losing_state(client_a
     try:
         with engine.connect() as connection, connection.begin() as outer:
             # Isolate each refusal from evidence retained by earlier tests.
-            if evidence == 'payout':
+            if evidence in ('payout', 'statement'):
                 connection.execute(text('TRUNCATE public.reserve_ledger_entry'))
+            if evidence == 'statement':
+                connection.execute(text('TRUNCATE public.payment CASCADE'))
+                assert connection.scalar(text("""SELECT EXISTS(SELECT 1 FROM settlement_line l
+                    JOIN settlement_run r ON r.id=l.settlement_run_id
+                    WHERE r.id=CAST(:run AS uuid) AND r.status='finalized'
+                      AND l.line_type='RESERVE_ADJUSTMENT')"""), {'run': w['run']})
             before = _chain_snapshot(connection)
-            with pytest.raises(DBAPIError, match='Retain reserve'):
+            message = {'ledger': 'Retain reserve ledger evidence', 'payout': 'Retain reserve payout bookings',
+                       'statement': 'Retain reserve statement evidence'}[evidence]
+            with pytest.raises(DBAPIError, match=message):
                 with connection.begin_nested(), Operations.context(MigrationContext.configure(connection)):
                     migration.downgrade()
             assert _chain_snapshot(connection) == before
+            with connection.connection.cursor() as cursor:
+                clear_disposable_source_context(cursor)
+            with Operations.context(MigrationContext.configure(connection)):
+                migration.downgrade()
+            assert connection.scalar(text("SELECT to_regclass('public.reserve_ledger_entry')")) is None
             outer.rollback()
     finally:
         engine.dispose()
@@ -1705,3 +1726,97 @@ async def test_booking_limits_total_active_payouts_to_confirmed_cost(client_a_ad
     assert (await api.post(f'/api/payments/{original}/reverse')).status_code == 201
     accepted = await api.post(path + '/book')
     assert accepted.status_code == 200, accepted.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('corrected_gross,amount,status', [
+    (None, '4000.00', 422), ('9000.00', '4000.00', 200), ('3000.00', '0.01', 422),
+])
+async def test_cost_correction_chain_keeps_payout_cap_and_frozen_references(
+        client_a_admin, seed_data, corrected_gross, amount, status):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    evidence = await reserve_evidence(api, w)
+    original = await payment(api, w, '4000.00', kind='RUECKLAGENENTNAHME', direction='OUT', evidence=evidence)
+    before = (await api.get(f'/api/payments/{original}')).json()
+    changes = {'document_number': 'RE-2025-corrected'}
+    if corrected_gross:
+        changes['gross_amount'] = corrected_gross
+    response = await api.post(f"/api/cost-entries/{w['ce_garten']}/correction", json=changes)
+    assert response.status_code == 201, response.text
+    current = response.json()['id']
+    assert (await api.post(f'/api/cost-entries/{current}/confirm')).status_code == 200
+    assert (await api.get(f"/api/cost-entries/{w['ce_garten']}")).json()['superseded_by_id'] == current
+    assert (await api.get(f'/api/payments/{original}')).json() == before
+    assert before['status'] == 'booked'
+    assert before['reserve_cost_entry_id'] == w['ce_garten']
+    draft = await api.post('/api/payments', json={'bank_account_id': w['bank_giro'], 'direction': 'OUT',
+        'amount': amount, 'value_date': '2025-02-01', 'payment_type': 'RUECKLAGENENTNAHME',
+        **evidence, 'reserve_cost_entry_id': current})
+    assert draft.status_code == 201, draft.text
+    response = await api.post(f"/api/payments/{draft.json()['id']}/book")
+    assert response.status_code == status, response.text
+    if status == 422:
+        assert response.json()['detail']['code'] == 'RESERVE_PAYOUT_EVIDENCE_REQUIRED'
+
+
+@pytest.mark.asyncio
+async def test_funded_amount_follows_predecessors_and_successors_in_cost_chain(client_a_admin, seed_data, app_rw_session):
+    from uuid import UUID
+    from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
+
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    evidence = await reserve_evidence(api, w)
+    original = await payment(api, w, '3000.00', kind='RUECKLAGENENTNAHME', direction='OUT', evidence=evidence)
+    ids = [w['ce_garten']]
+    for gross in ('5000.00', '9000.00'):
+        response = await api.post(f'/api/cost-entries/{ids[-1]}/correction', json={'gross_amount': gross})
+        assert response.status_code == 201, response.text
+        ids.append(response.json()['id'])
+        assert (await api.post(f'/api/cost-entries/{ids[-1]}/confirm')).status_code == 200
+        if gross == '5000.00':
+            response = await api.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+                'component': 'ADJUSTMENT', 'amount': '-1000.00', 'reason': 'Documented additional funding',
+                'cost_entry_id': ids[-1], 'register_entry_id': evidence['reserve_register_entry_id']})
+            assert response.status_code == 201, response.text
+    await app_rw_session.execute(text("SELECT set_config('app.current_user_id',:actor,true), set_config('app.current_org_id',:org,true)"),
+        {'actor': str(seed_data['user_a_admin_id']), 'org': str(seed_data['org_a_id'])})
+    repo = ReserveLedgerRepository(app_rw_session, seed_data['org_a_id'])
+    for cost in ids:
+        assert await repo.funded_amount(UUID(cost)) == Decimal('4000.00')
+        assert await repo.funded_amount(UUID(cost), UUID(original)) == Decimal('1000.00')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('boundary', ['payout', 'ledger'])
+async def test_database_guards_keep_cost_chain_cap(client_a_admin, seed_data, migrator_session, boundary):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    evidence = await reserve_evidence(api, w)
+    await payment(api, w, '4000.00', kind='RUECKLAGENENTNAHME', direction='OUT', evidence=evidence)
+    response = await api.post(f"/api/cost-entries/{w['ce_garten']}/correction", json={'document_number': 'RE-corrected'})
+    assert response.status_code == 201, response.text
+    current = response.json()['id']
+    assert (await api.post(f'/api/cost-entries/{current}/confirm')).status_code == 200
+    values = {'org': seed_data['org_a_id'], 'actor': seed_data['user_a_admin_id'],
+              'property': w['property'], 'run': w['run'], 'cost': current,
+              'register': evidence['reserve_register_entry_id']}
+    if boundary == 'payout':
+        draft = await api.post('/api/payments', json={'bank_account_id': w['bank_giro'], 'direction': 'OUT',
+            'amount': '4000.00', 'value_date': '2025-02-01', 'payment_type': 'RUECKLAGENENTNAHME',
+            **evidence, 'reserve_cost_entry_id': current})
+        assert draft.status_code == 201, draft.text
+        values['payment'] = draft.json()['id']
+    await migrator_session.execute(text("SELECT set_config('app.current_user_id',:actor,true), set_config('app.current_org_id',:org,true)"),
+        {'actor': str(values['actor']), 'org': str(values['org'])})
+    with pytest.raises(DBAPIError) as refusal:
+        async with migrator_session.begin_nested():
+            if boundary == 'payout':
+                await migrator_session.execute(text("""UPDATE payment SET status='booked',booked_at=now(),
+                    booked_by=:actor,retention_until='2034-12-31' WHERE id=CAST(:payment AS uuid)"""), values)
+            else:
+                await migrator_session.execute(text("""INSERT INTO reserve_ledger_entry
+                    (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,cost_entry_id,register_entry_id,created_by)
+                    VALUES (:org,:property,:run,'2025-02-01','WITHDRAWAL',4000,'Cost correction chain',:cost,:register,:actor)"""), values)
+    assert refusal.value.orig.__cause__.constraint_name == 'reserve_payout_evidence_required'

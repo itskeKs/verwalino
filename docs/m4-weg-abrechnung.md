@@ -686,7 +686,11 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   Both references freeze with the booking; Storno retains them. Computing and
   finalizing retain the evidence guard as a second line for historical payouts. The link records
   the complete payout, never a resolution's authorized budget. Several active
-  linked payouts cannot exceed the cost amount. Unlinked payouts remain visible
+  linked payouts and evidenced withdrawal/adjustment corrections share one cap
+  across every predecessor and successor of a corrected cost receipt. The cap
+  uses the current, non-superseded receipt's gross amount. A lower corrected
+  amount retains existing bookings and their frozen references but prevents
+  further funding beyond that amount. Unlinked payouts remain visible
   and block computation. No wording parsing or inferred payment date is used. Excluding funded costs
   from owner cost distribution remains follow-up #191; this change does not
   alter that distribution.
