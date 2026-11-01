@@ -87,39 +87,13 @@ jobs:
       - name: Start test database
         run: docker compose -f infra/docker-compose.declaration-test.yml up -d --wait postgres
 
-      - name: Lint (ruff)
-        if: matrix.shard == 1
-        run: make lint-backend
-
-      - name: Installer contract tests
-        if: matrix.shard == 1
-        run: make test-installer
-
-      - name: Validate hosted Caddy wrapper including site and staging
-        if: matrix.shard == 1
-        run: |
-          docker run --rm --network none --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE --security-opt no-new-privileges \
-            --env VERWALINO_DOMAIN=validation.invalid \
-            --mount "type=bind,src=$PWD/infra/Caddyfile.hosted,dst=/etc/caddy/Caddyfile,readonly" \
-            --mount "type=bind,src=$PWD/infra/Caddyfile,dst=/etc/caddy/Caddyfile.production,readonly" \
-            --mount "type=bind,src=$PWD/infra/Caddyfile.staging,dst=/etc/caddy/Caddyfile.staging,readonly" \
-            --mount "type=bind,src=$PWD/infra/Caddyfile.site,dst=/etc/caddy/Caddyfile.site,readonly" \
-            caddy:2.10.2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-
-      - name: Verify every backend test belongs to exactly one shard
-        if: matrix.shard == 1
-        run: |
-          python3 -B scripts/test-backend-shards.py
-          source scripts/test-env.sh
-          cd backend
-          uv run --locked --extra dev --extra ops --extra ocr python ../scripts/backend_test_shards.py check 4
-
       - name: Backend tests (pytest shard)
         run: |
           cp backend/.test_durations backend/test-durations-${{ matrix.shard }}.json
           make test-backend PYTEST_ARGS="-q -p no:randomly --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --durations-path test-durations-${{ matrix.shard }}.json --store-durations --clean-durations"
 
       - name: Upload shard duration measurements
+        if: always() && hashFiles(format('backend/test-durations-{0}.json', matrix.shard)) != ''
         uses: actions/upload-artifact@v4
         with:
           name: backend-test-durations-${{ matrix.shard }}
@@ -131,12 +105,65 @@ jobs:
           HV_DEPLOYMENT_MODE: hosted
         run: make test-bdd-hosted PYTEST_ARGS="-q -p no:randomly --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration"
 
+  # Installer contracts take about ten minutes. Run them beside pytest, not
+  # before one shard. Collection loads configuration but executes no DB fixtures.
+  backend-checks:
+    name: Backend checks (ruff, installer, collection)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      UV_LOCKED: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install system libraries
+        run: >-
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 libcairo2
+          libgdk-pixbuf-2.0-0 libffi8 fonts-dejavu-core shared-mime-info
+          poppler-utils qpdf tesseract-ocr tesseract-ocr-deu
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync --locked --extra dev --extra ops --extra ocr
+
+      - name: Lint (ruff)
+        run: make lint-backend
+
+      - name: Verify every backend test belongs to exactly one shard
+        run: |
+          python3 -B scripts/test-backend-shards.py
+          source scripts/test-env.sh
+          cd backend
+          uv run --locked --extra dev --extra ops --extra ocr python ../scripts/backend_test_shards.py check 4
+
+      - name: Installer contract tests
+        run: make test-installer
+
+      - name: Validate hosted Caddy wrapper including site and staging
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE --security-opt no-new-privileges \
+            --env VERWALINO_DOMAIN=validation.invalid \
+            --mount "type=bind,src=$PWD/infra/Caddyfile.hosted,dst=/etc/caddy/Caddyfile,readonly" \
+            --mount "type=bind,src=$PWD/infra/Caddyfile,dst=/etc/caddy/Caddyfile.production,readonly" \
+            --mount "type=bind,src=$PWD/infra/Caddyfile.staging,dst=/etc/caddy/Caddyfile.staging,readonly" \
+            --mount "type=bind,src=$PWD/infra/Caddyfile.site,dst=/etc/caddy/Caddyfile.site,readonly" \
+            caddy:2.10.2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
   # Keep the branch-protection context stable and fail closed on failed,
-  # skipped or cancelled shards. Ruff and the existing backend checks run in
-  # shard 1; its success alone can never satisfy this required check.
+  # skipped or cancelled dependencies, covering ruff and every test shard.
   backend:
     name: Backend (ruff, pytest)
-    needs: [backend-shards]
+    needs: [backend-shards, backend-checks]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -144,7 +171,8 @@ jobs:
       - name: Require all backend shards
         env:
           SHARD_RESULT: ${{ needs.backend-shards.result }}
-        run: test "$SHARD_RESULT" = success
+          CHECK_RESULT: ${{ needs.backend-checks.result }}
+        run: test "$SHARD_RESULT" = success && test "$CHECK_RESULT" = success
 
       - name: Checkout repository
         uses: actions/checkout@v6

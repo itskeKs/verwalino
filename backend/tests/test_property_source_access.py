@@ -219,7 +219,7 @@ async def test_out_of_order_historical_downgrade_preserves_domain_grants(client_
     from sqlalchemy import create_engine
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
-    from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.conftest import MIGRATOR_SYNC_URL,clear_disposable_source_context
     _,rows=await graph(seed_data)
     domain,_=await grant(client_a_admin,seed_data,rows['property'])
     engine=create_engine(MIGRATOR_SYNC_URL)
@@ -227,11 +227,18 @@ async def test_out_of_order_historical_downgrade_preserves_domain_grants(client_
         with engine.begin() as connection:
             connection.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
                 {'org':str(seed_data['org_a_id']),'actor':str(seed_data['user_a_admin_id'])})
-            # 0063 and later policies retain publication context. An isolated
-            # historical downgrade must refuse rather than drop those policies.
-            with pytest.raises(DBAPIError,match='other objects depend'):
-                with connection.begin_nested(),Operations.context(MigrationContext.configure(connection)):
-                    importlib.import_module('migrations.versions.0051_declaration_publication_audience').downgrade()
+            # Remove retained evidence only inside a rollback-only savepoint so
+            # the test reaches the newer policies' dependency protection in any shard.
+            cleanup=connection.begin_nested()
+            try:
+                with connection.connection.cursor() as cursor:
+                    clear_disposable_source_context(cursor)
+                with pytest.raises(DBAPIError) as caught:
+                    with connection.begin_nested(),Operations.context(MigrationContext.configure(connection)):
+                        importlib.import_module('migrations.versions.0051_declaration_publication_audience').downgrade()
+                assert caught.value.orig.pgcode=='2BP01'
+            finally:
+                cleanup.rollback()
             assert connection.scalar(text("SELECT has_property_data_capability(:org,:domain,'read')"),
                 {'org':seed_data['org_a_id'],'domain':uuid.UUID(domain)})
             assert connection.scalar(text("SELECT property_source_access(:org,'property',:property,'read')"),

@@ -190,8 +190,9 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 
 | Job | What it proves |
 |---|---|
-| `backend-shards` | four disjoint pytest selections, plus hosted BDD selections, each against its own Postgres 16 and Mailpit; shard 1 also runs ruff, installer/Caddy checks and the collection contract |
-| `backend` (`Backend (ruff, pytest)`) | required summary: fails unless every shard and its checks succeeded, including cancellation or skipped shards |
+| `backend-shards` | four disjoint pytest selections, plus hosted BDD selections, each against its own Postgres 16 and Mailpit |
+| `backend-checks` | ruff, installer/Caddy checks and the collection contract, alongside the shards without a database |
+| `backend` (`Backend (ruff, pytest)`) | required summary: fails unless every shard and `backend-checks` succeeded, including cancellation or skipped jobs |
 | `frontend` | eslint, TypeScript, vitest |
 | `browser` | locked Chromium, real UI journeys (`make test-browser`) |
 | `docs` | no broken relative links; paired rule parity and Codex hook contracts |
@@ -205,7 +206,7 @@ explicit: each shard preserves the relative order of its selected tests, but has
 predecessors. The single full-suite ordered window used to investigate #180 no longer
 describes CI; reproduce a shard with its selection and the same committed timings.
 
-Before executing tests, shard 1 collects the full suite once and each shard once with
+The parallel `backend-checks` job collects the full suite once and each shard once with
 `pytest --collect-only -q`. `scripts/backend_test_shards.py check 4` compares node-ID
 multisets: the union must equal the full collection and no node may occur twice. Collection
 loads conftest configuration but does not execute the session migration fixture or connect
