@@ -1345,6 +1345,7 @@ export interface ReserveLedger {
   frozen: boolean;
   booking_basis: string;
   entries: { kind: string; component?: ReserveComponent; date: string; amount: string; reason?: string;
+    payment_note?: string | null; cost_document_number?: string | null; register_sequence_number?: number | null; owner_name?: string | null;
     id?: string; payment_id?: string; cost_entry_id?: string; register_entry_id?: string; unit_id?: string; unit_number?: string; owner_profile_id?: string }[];
 }
 

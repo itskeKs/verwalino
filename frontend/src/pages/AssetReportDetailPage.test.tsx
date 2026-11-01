@@ -19,6 +19,7 @@ it("keeps missing reserve/account values blank and sends an explicitly reviewed 
   }));
   render(<MemoryRouter initialEntries={["/report/run-1"]}><Routes><Route path="/report/:runId" element={<AssetReportDetailPage />} /></Routes></MemoryRouter>);
   const opening = await screen.findByLabelText("Rücklage Anfangsbestand");
+  expect(screen.getByLabelText('Begründung der Rücklagenwerte').closest('.form-grid')).not.toBeNull();
   const bank = screen.getByLabelText("Kontostand · Giro");
   expect(opening).toHaveValue(""); expect(bank).toHaveValue("");
   fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));

@@ -4,6 +4,28 @@ import { ReserveLedgerPanel } from './ReserveLedgerPanel';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+it('distinguishes withdrawal corrections from funded cash and links readable evidence', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => json({ ...ledger, entries: [
+    { kind: 'CONTRIBUTION', date: '2025-01-15', amount: '1000.00', payment_id: 'payment-1',
+      payment_note: 'Hausgeld Januar', owner_name: 'Änne Groß mit langem Familiennamen' },
+    { kind: 'WITHDRAWAL', date: '2025-02-01', amount: '1200.00', payment_id: 'payout-1',
+      payment_note: 'Gartenrechnung', cost_entry_id: 'cost-1', cost_document_number: 'RE-2025-123456789',
+      register_entry_id: 'register-1', register_sequence_number: 42 },
+    { kind: 'OVERRIDE', component: 'WITHDRAWAL', date: '2025-02-02', amount: '-1.00', reason: 'Entnahme berichtigt' },
+    { kind: 'LATE_CASH', component: 'WITHDRAWAL', date: '2024-12-31', amount: '-100.00', payment_id: 'late-payout' },
+  ] })));
+  render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={() => {}} />);
+  expect(await screen.findByText('Eigentümer: Änne Groß mit langem Familiennamen')).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Zahlung: Hausgeld Januar' })).toHaveAttribute('href', '/zahlungen/payment-1');
+  expect(screen.getByRole('link', { name: 'Kostenbeleg: RE-2025-123456789' })).toHaveAttribute('href', '/kosten/cost-1');
+  expect(screen.getByRole('link', { name: 'Beschluss Nr. 42' })).toHaveAttribute('href', '/beschluss-sammlung?property_id=property-1#beschluss-register-1');
+  expect(screen.getByText('Finanzierte Entnahme')).toBeInTheDocument();
+  expect(screen.getByText('Begründete Korrektur · Entnahmekorrektur')).toBeInTheDocument();
+  expect(screen.getByText('Nachträgliche Buchungen zum abgeschlossenen Jahr · Finanzierte Entnahme')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Korrektur erfassen' }));
+  expect(screen.getByRole('option', { name: 'Entnahmekorrektur' })).toHaveValue('WITHDRAWAL');
+});
+
 it('shows late closed-year cash separately with its original value date', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => json({ ...ledger, late_cash_total: '999.00', closing_balance: '21999.00',
     entries: [{ kind: 'LATE_CASH', component: 'CONTRIBUTION', date: '2025-12-31', amount: '999.00', payment_id: 'late-payment' }] })));
@@ -30,7 +52,7 @@ it('shows unassigned Hausgeld at its full amount and saves an audited payment as
   render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={() => {}} />);
   await screen.findByText('Ohne Planbezug');
   expect(screen.getByRole('alert')).toHaveTextContent('Planbezug');
-  expect(screen.getByText(/1\.300,00/)).toBeInTheDocument();
+  expect(screen.getByText(/1\.300,00/, { selector: 'td' })).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Korrektur erfassen' }));
   fireEvent.change(screen.getByLabelText('Art'), { target: { value: 'CONTRIBUTION' } });
   fireEvent.change(screen.getByLabelText('Zahlung ohne Planbezug'), { target: { value: 'unknown-cash' } });

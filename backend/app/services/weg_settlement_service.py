@@ -711,7 +711,7 @@ class WegSettlementService:
                 self._session.add(self._line(run, owner.owner_profile_id, "RESERVE_CONTRIBUTION",
                                              "Zufuehrung Erhaltungsruecklage (Ihr Anteil)",
                                              owner.subtotal_reserve, sort,
-                                             note=owner.reserve_notice or "Vermoegensbildung (keine Kostenumlage)")); sort += 1
+                                             note=owner.reserve_notice or "Vermögensbildung (keine Kostenumlage)")); sort += 1
             if owner.paid_advances is not None:
                 self._session.add(self._line(run, owner.owner_profile_id, "ADVANCE_PAYMENT",
                                              "(nachrichtlich) geleistete Vorschuesse",

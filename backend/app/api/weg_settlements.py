@@ -264,7 +264,7 @@ async def reserve_ledger(run_id: uuid.UUID, auth: AuthContext = Depends(get_curr
                          db: AsyncSession = Depends(get_db)):
     service = ReserveLedgerService(db, auth.organization_id, auth.user_id)
     run = await service.subject(run_id)
-    return await service.read(run)
+    return await service.read_display(run)
 
 
 @router.post('/{run_id}/reserve-ledger/overrides', status_code=201)

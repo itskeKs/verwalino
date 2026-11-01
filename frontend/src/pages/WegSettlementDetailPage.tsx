@@ -201,10 +201,10 @@ export function WegSettlementDetailPage() {
             <label>Rücklagen-Entnahmen (Jahr)
               <input type="text" inputMode="decimal" placeholder="0.00" value={withdrawals} onChange={(e) => setWithdrawals(e.target.value)} />
             </label>
+            <label className="form-full-width">Begründung der Rücklagenwerte
+              <textarea rows={3} value={reserveReason} maxLength={2000} onChange={e => setReserveReason(e.target.value)} />
+            </label>
           </div>
-          <label>Begründung der Rücklagenwerte
-            <textarea value={reserveReason} maxLength={2000} onChange={e => setReserveReason(e.target.value)} />
-          </label>
       {run.status === "draft" && <FinancialCoverageReview key={ledgerVersion} kind="settlement" subjectId={run.id} values={req()} onSaved={() => setLedgerRefresh(v => v + 1)} />}
           <div className="form-actions" style={{ marginTop: "1rem" }}>
             <button className="btn btn--primary" disabled={busy} onClick={() => runId && run_(() => computeWegRun(runId, req()))}>

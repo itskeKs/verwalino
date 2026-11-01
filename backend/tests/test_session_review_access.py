@@ -267,7 +267,7 @@ def _chain_0131_projection(head):
     return projected
 
 
-async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf(rent_world):
+async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf(rent_world, client_a_admin, seed_data):
     """Rollback-only whole-chain rehearsal, not a production downgrade strategy."""
     import os
     from pathlib import Path
@@ -281,6 +281,14 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
 
     from tests.conftest import MIGRATOR_SYNC_URL
     from tests.test_letters import contract_body, create_template, issue_body
+    from tests.test_reserve_ledger import reserve_world, finalize
+
+    # Include 0149-only statement rows even when this rehearsal runs alone.
+    reserve = await reserve_world(client_a_admin, seed_data)
+    adjustment = await client_a_admin.post(f"/api/weg-settlements/{reserve['run']}/reserve-ledger/overrides", json={
+        'component': 'ADJUSTMENT', 'amount': '1.00', 'reason': 'Synthetic retained statement evidence'})
+    assert adjustment.status_code == 201, adjustment.text
+    await finalize(client_a_admin, reserve)
 
     expected = ('127.0.0.1', 55432, 'hausverwaltung', 'app_migrator')
     for raw in (MIGRATOR_SYNC_URL, os.environ['HV_DATABASE_URL_SYNC']):
@@ -412,12 +420,14 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
 
                 assert version() == ('0149',)
                 retained = _chain_snapshot(connection)
+                reserve_line_types = ('RESERVE_LATE_CASH', 'RESERVE_ADJUSTMENT')
+                assert any(row['line_type'] == 'RESERVE_ADJUSTMENT' for row in retained['data']['settlement_line'])
                 generation = connection.scalar(text('SELECT session_version FROM public."user" WHERE id=:id'), {'id': w['reader']})
                 # Neutralize only 0149 evidence and its direct dependents in this
                 # rollback-only migrator TX. Keep all legacy payment/binding rows
                 # throughout the chain; FK checks remain enabled during cleanup.
                 cleanup_tables = ('reserve_ledger_entry', 'scope_payment_reconciliation_item',
-                                  'accounting_scope_binding', 'payment')
+                                  'accounting_scope_binding', 'payment', 'settlement_line')
                 for table in cleanup_tables:
                     connection.execute(text(f'ALTER TABLE public.{table} DISABLE TRIGGER USER'))
                 connection.execute(text('DELETE FROM public.reserve_ledger_entry'))
@@ -428,9 +438,13 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
                 connection.execute(text("""DELETE FROM public.accounting_scope_binding
                     WHERE payment_id IN (SELECT id FROM public.payment WHERE payment_type='RUECKLAGENENTNAHME')"""))
                 connection.execute(text("DELETE FROM public.payment WHERE payment_type='RUECKLAGENENTNAHME'"))
+                connection.execute(text("""DELETE FROM public.settlement_line
+                    WHERE line_type IN ('RESERVE_LATE_CASH','RESERVE_ADJUSTMENT')"""))
                 for table in cleanup_tables:
                     connection.execute(text(f'ALTER TABLE public.{table} ENABLE TRIGGER USER'))
                 without_reserves = _chain_snapshot(connection)
+                assert without_reserves['data']['settlement_line'] == [
+                    row for row in retained['data']['settlement_line'] if row['line_type'] not in reserve_line_types]
                 corpus = {
                     table: [row for row in retained['data'][table] if row['organization_id'] == str(w['org'])]
                     for table in ('payment', 'accounting_scope_binding')
@@ -442,7 +456,7 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
                 with pytest.raises(DBAPIError) as refusal:
                     with connection.begin_nested():
                         migrate('0142', downgrade=True)
-                assert refusal.value.orig.pgcode == '23502'
+                assert refusal.value.orig.pgcode == '23502', str(refusal.value.orig)
                 assert _chain_snapshot(connection) == without_reserves
                 # Only this rollback-only rehearsal excludes template-less originals
                 # after proving 0143 refuses them; every retained row is restored below.

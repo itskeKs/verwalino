@@ -180,6 +180,10 @@ class ReserveLedgerService:
                 'opening_source_run_id': str(prior.id) if prior else None,
                 'entries': sorted(rows, key=lambda row: (row['date'], row['kind'], row.get('id', ''), row.get('payment_id', ''), row.get('unit_id', ''), row.get('owner_profile_id', '')))}
 
+    async def read_display(self, run):
+        ledger = await self.read(run)
+        return {**ledger, 'entries': await self.repo.display_entries(ledger['entries'])}
+
     async def add(self, run, component, amount, reason, payment_id=None, cost_entry_id=None, register_entry_id=None):
         ledger = await self.read(run)
         if ledger['frozen']:

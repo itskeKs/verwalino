@@ -8,6 +8,7 @@ const day = (value: string) => value.split('-').reverse().join('.');
 const labels: Record<string, string> = { PLANNED: 'Geplant (Soll)', CONTRIBUTION: 'Gebuchte Zuführung', WITHDRAWAL: 'Finanzierte Entnahme',
   OVERRIDE: 'Begründete Korrektur', OPENING: 'Anfangsbestand', ADJUSTMENT: 'Sonstige Korrektur', FUNDING: 'Finanzierte Entnahme verknüpfen',
   LATE_CASH: 'Nachträgliche Buchungen zum abgeschlossenen Jahr', UNASSIGNED: 'Ohne Planbezug' };
+const componentLabels: Record<string, string> = { ...labels, WITHDRAWAL: 'Entnahmekorrektur' };
 
 export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, disabled = false, refreshKey = 0 }: {
   runId: string; propertyId: string; status: string; onChanged: () => void; disabled?: boolean; refreshKey?: number;
@@ -84,12 +85,13 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, disab
         <table className="data-table reserve-ledger-table"><thead><tr><th>Datum</th><th>Art / Beleg</th><th>Betrag</th></tr></thead>
           <tbody>{ledger.entries.map((entry, index) => <tr key={entry.id ?? `${entry.kind}-${entry.date}-${index}`}>
             <td style={{ whiteSpace: 'nowrap' }}>{day(entry.date)}</td>
-            <td>{labels[entry.kind] ?? entry.kind}{entry.component && ` · ${labels[entry.component] ?? entry.component}`}
+            <td style={{ overflowWrap: 'anywhere' }}>{labels[entry.kind] ?? entry.kind}{entry.component && ` · ${(entry.kind === 'OVERRIDE' ? componentLabels : labels)[entry.component] ?? entry.component}`}
               {entry.reason && <div style={{ overflowWrap: 'anywhere' }}>{entry.reason}</div>}
-              {entry.payment_id && <div>Zahlung: {entry.payment_id.slice(0, 8)}</div>}
-              {entry.unit_id && <div style={{ overflowWrap: 'anywhere' }}>Einheit: {entry.unit_number ?? entry.unit_id.slice(0, 8)}</div>}
-              {entry.cost_entry_id && <div>Kostenbeleg: {entry.cost_entry_id.slice(0, 8)}</div>}
-              {entry.register_entry_id && <div>Beschluss: {entry.register_entry_id.slice(0, 8)}</div>}
+              {entry.owner_name && <div>Eigentümer: {entry.owner_name}</div>}
+              {entry.payment_id && <div><a className="link" href={`/zahlungen/${entry.payment_id}`}>Zahlung: {entry.payment_note || `${day(entry.date)} · ${euro(entry.amount)}`}</a></div>}
+              {entry.unit_id && <div>Einheit: {entry.unit_number ?? 'Nicht verfügbar'}</div>}
+              {entry.cost_entry_id && <div><a className="link" href={`/kosten/${entry.cost_entry_id}`}>Kostenbeleg: {entry.cost_document_number || 'Beleg öffnen'}</a></div>}
+              {entry.register_entry_id && <div><a className="link" href={`/beschluss-sammlung?property_id=${propertyId}#beschluss-${entry.register_entry_id}`}>Beschluss{entry.register_sequence_number ? ` Nr. ${entry.register_sequence_number}` : ' öffnen'}</a></div>}
             </td><td style={{ whiteSpace: 'nowrap', fontFamily: 'var(--mono)' }}>{euro(entry.amount)}</td>
           </tr>)}</tbody></table>
       </div>
@@ -101,17 +103,17 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, disab
       <DialogDescription>Erfassen Sie eine begründete Differenz. Positive Entnahmen vermindern den Bestand; sonstige Korrekturen werden mit Vorzeichen addiert.</DialogDescription>
       <form onSubmit={save}><fieldset disabled={saving || disabled} className="form-grid" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
         <label>Art<select aria-label="Art" value={component} onChange={e => { setComponent(e.target.value as ReserveComponent); setPayment(''); }}>
-          {(['ADJUSTMENT', 'OPENING', 'CONTRIBUTION', 'WITHDRAWAL', 'FUNDING'] as const).map(kind => <option key={kind} value={kind}>{labels[kind]}</option>)}
+          {(['ADJUSTMENT', 'OPENING', 'CONTRIBUTION', 'WITHDRAWAL', 'FUNDING'] as const).map(kind => <option key={kind} value={kind}>{componentLabels[kind]}</option>)}
         </select></label>
         {component === 'CONTRIBUTION' && ledger?.entries.some(entry => entry.kind === 'UNASSIGNED') &&
           <label>Zahlung ohne Planbezug<select value={payment} onChange={e => setPayment(e.target.value)}>
             <option value="">Allgemeine Zuführungskorrektur</option>
             {ledger.entries.filter(entry => entry.kind === 'UNASSIGNED').map(entry =>
-              <option key={entry.payment_id} value={entry.payment_id}>{day(entry.date)} · {euro(entry.amount)} · {entry.payment_id?.slice(0, 8)}</option>)}
+              <option key={entry.payment_id} value={entry.payment_id}>{day(entry.date)} · {euro(entry.amount)} · {entry.owner_name || entry.payment_note || 'Ohne Eigentümerzuordnung'}</option>)}
           </select></label>}
         {component === 'FUNDING' ? sources ? <>
-          <label>Gebuchte Auszahlung *<select aria-label="Gebuchte Auszahlung *" required value={payment} onChange={e => setPayment(e.target.value)}><option value="">Bitte wählen</option>{sources.payments.map(p => <option key={p.id} value={p.id}>{day(p.value_date)} · {euro(p.amount)} · {p.note ?? p.id.slice(0, 8)}</option>)}</select></label>
-          <label>Bestätigter Kostenbeleg *<select aria-label="Bestätigter Kostenbeleg *" required value={cost} onChange={e => setCost(e.target.value)}><option value="">Bitte wählen</option>{sources.costs.map(c => <option key={c.id} value={c.id}>{c.document_number ?? c.id.slice(0, 8)} · {euro(c.gross_amount)}</option>)}</select></label>
+          <label>Gebuchte Auszahlung *<select aria-label="Gebuchte Auszahlung *" required value={payment} onChange={e => setPayment(e.target.value)}><option value="">Bitte wählen</option>{sources.payments.map(p => <option key={p.id} value={p.id}>{day(p.value_date)} · {euro(p.amount)}{p.note ? ` · ${p.note}` : ''}</option>)}</select></label>
+          <label>Bestätigter Kostenbeleg *<select aria-label="Bestätigter Kostenbeleg *" required value={cost} onChange={e => setCost(e.target.value)}><option value="">Bitte wählen</option>{sources.costs.map(c => <option key={c.id} value={c.id}>{c.document_number || day(c.invoice_date)} · {euro(c.gross_amount)}</option>)}</select></label>
           <label>Beschluss-Sammlung *<select aria-label="Beschluss-Sammlung *" required value={register} onChange={e => setRegister(e.target.value)}><option value="">Bitte wählen</option>{sources.register.map(r => <option key={r.id} value={r.id}>Nr. {r.sequence_number} · {r.wording.slice(0, 120)}</option>)}</select></label>
         </> : <p>Finanzierungsbelege werden geladen…</p> : <label>Betrag *<input required inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} /></label>}
         <label>Begründung *<textarea required maxLength={2000} value={reason} onChange={e => setReason(e.target.value)} /></label>

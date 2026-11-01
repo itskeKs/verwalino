@@ -774,8 +774,9 @@ WEG annual settlement and asset-report details share `ReserveLedgerPanel`, a
 card with distinct planned (Soll) and cash (Ist) totals, opening, withdrawals,
 signed adjustments and closing. Late closed-year cash has its own signed total
 and “Nachträgliche Buchungen zum abgeschlossenen Jahr” rows with the original
-value dates. Rows show dates, movement types and funding
-references. At 360 px the table fits its card without sideways scrolling;
+value dates. Rows show dates, movement types, owner names and linked payment
+notes, cost document numbers and resolution register numbers. Register links
+open the property's collection at the referenced entry. At 360 px the table fits its card without sideways scrolling;
 date and amount columns stay compact, while movement labels and reasons wrap.
 Computed WEG and asset-report lines place late cash after the opening balance
 and wrap long labels within their cells.
@@ -783,6 +784,9 @@ Money uses German grouping/comma decimals with `€`, dates `DD.MM.YYYY`.
 
 “Korrektur erfassen” opens the existing accessible dialog. Staff choose a signed
 component adjustment or a funded payout, supply its mandatory reason, and save.
+Typed withdrawal adjustments are labelled “Entnahmekorrektur”; booked payouts
+remain “Finanzierte Entnahme”. The reason for target reserve values sits inside
+the two-column form grid at full width on both detail pages.
 Funded payouts select the existing booking, confirmed cost and registered
 resolution. The dialog preserves useful inputs after refusal. A successful
 change refreshes the ledger and invalidates the displayed coverage review;
@@ -812,6 +816,8 @@ disposable test database.
 | WEG with late cash | [after](docs/assets/reserve-ledger/ledger-rows-after-1280.png) | [after](docs/assets/reserve-ledger/ledger-rows-after-360.png) |
 | Asset report before late cash | [before](docs/assets/reserve-ledger/asset-before-1280.png) | [before](docs/assets/reserve-ledger/asset-before-360.png) |
 | Asset report with late cash | [after](docs/assets/reserve-ledger/asset-after-1280.png) | [after](docs/assets/reserve-ledger/asset-after-360.png) |
+| WEG reserve reason form | [form](docs/assets/reserve-ledger/weg-form-1280.png) | [form](docs/assets/reserve-ledger/weg-form-360.png) |
+| Asset report reserve reason form | [form](docs/assets/reserve-ledger/asset-form-1280.png) | [form](docs/assets/reserve-ledger/asset-form-360.png) |
 | Reasoned correction | — | [dialog](docs/assets/reserve-ledger/override-dialog-360.png) |
 | Payout funding | — | [dialog](docs/assets/reserve-ledger/funding-dialog-360.png) |
 | Payout detail | [detail](docs/assets/reserve-ledger/payment-detail-after-1280.png) | [detail](docs/assets/reserve-ledger/payment-detail-after-360.png) |

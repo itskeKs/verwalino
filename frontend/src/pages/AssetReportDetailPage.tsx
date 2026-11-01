@@ -181,10 +181,10 @@ export function AssetReportDetailPage() {
             <label>Rücklage Entnahmen
               <input type="text" inputMode="decimal" placeholder="0.00" value={withdrawals} onChange={(e) => setWithdrawals(e.target.value)} />
             </label>
+            <label className="form-full-width">Begründung der Rücklagenwerte
+              <textarea rows={3} value={reserveReason} maxLength={2000} onChange={e => setReserveReason(e.target.value)} />
+            </label>
           </div>
-          <label>Begründung der Rücklagenwerte
-            <textarea value={reserveReason} maxLength={2000} onChange={e => setReserveReason(e.target.value)} />
-          </label>
           {accounts.map((account) => <label key={account.id}>Kontostand · {account.label}
             <input inputMode="decimal" placeholder="Unbekannt" value={balances[account.id] ?? ""} onChange={(e) => setBalances({ ...balances, [account.id]: e.target.value })} />
           </label>)}

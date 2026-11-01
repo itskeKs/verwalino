@@ -32,6 +32,7 @@ async def test_ledger_separates_planned_from_cash_and_requires_override_reason(c
     assert response.status_code == 200, response.text
     assert response.json()['planned_contributions_total'] == '6000.00'
     assert response.json()['contributions_total'] == '0.00'
+    assert {row['owner_name'] for row in response.json()['entries']} == {'Anton Eigentuemer', 'Berta Eigentuemer'}
     override = path + '/overrides'
     for reason in ('', ' '):
         refused = await api.post(override, json={'component': 'OPENING', 'amount': '20000.00', 'reason': reason})
@@ -40,6 +41,28 @@ async def test_ledger_separates_planned_from_cash_and_requires_override_reason(c
     response = await api.post(override, json={'component': 'OPENING', 'amount': '20000.00', 'reason': 'Imported bank-confirmed balance'})
     assert response.status_code == 201, response.text
     assert (await api.get(path)).json()['closing_balance'] == '20000.00'
+
+
+@pytest.mark.asyncio
+async def test_ledger_keeps_readable_payment_references_on_draft_and_frozen_reads(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    response = await api.post('/api/payments', json={
+        'bank_account_id': w['bank_giro'], 'direction': 'IN', 'amount': '1000.00',
+        'value_date': '2025-02-01', 'payment_type': 'RUECKLAGENANTEIL',
+        'owner_profile_id': w['owner_a'], 'note': 'Zuführung für Änne Groß'})
+    assert response.status_code == 201, response.text
+    cash = response.json()['id']
+    assert (await api.post(f'/api/payments/{cash}/book')).status_code == 200
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    for frozen in (False, True):
+        if frozen:
+            await finalize(api, w)
+        ledger = (await api.get(path)).json()
+        row = next(row for row in ledger['entries'] if row.get('payment_id') == cash)
+        assert row['payment_note'] == 'Zuführung für Änne Groß'
+        assert row['owner_name'] == 'Anton Eigentuemer'
+        assert ledger['frozen'] is frozen
 
 
 @pytest.mark.asyncio
@@ -211,6 +234,8 @@ async def test_finalized_year_freezes_cash_and_carries_closing_into_next_period(
         'kind': 'LATE_CASH', 'component': 'CONTRIBUTION', 'date': '2025-12-31',
         'amount': '999.00', 'payment_id': late, 'bank_account_id': w['bank_giro'],
         'owner_profile_id': w['owner_a'],
+        'owner_name': 'Anton Eigentuemer', 'payment_note': None,
+        'cost_document_number': None, 'register_sequence_number': None,
     }
     next_world = {**w, 'run': next_run}
     next_result = await finalize(api, next_world)
@@ -617,6 +642,15 @@ async def test_withdrawal_requires_cash_cost_and_registered_resolution(client_a_
     assert response.status_code == 201, response.text
     register = response.json()['id']
     cash = await payment(api, w, '1000.00', kind='RUECKLAGENENTNAHME', direction='OUT')
+    cost = (await api.get(f"/api/cost-entries/{w['ce_garten']}")).json()
+    response = await api.post('/api/cost-entries', json={
+        **{key: cost[key] for key in ('property_id', 'cost_category_id', 'invoice_date',
+            'service_period_from', 'service_period_to', 'gross_amount', 'owner_distribution_key',
+            'tenant_distribution_key', 'tenant_apportionable')}, 'document_number': 'RE-2025-Ä-42'})
+    assert response.status_code == 201, response.text
+    w['ce_garten'] = response.json()['id']
+    response = await api.post(f"/api/cost-entries/{w['ce_garten']}/confirm")
+    assert response.status_code == 200, response.text
     path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
     assert (await api.get(path)).json()['withdrawals_total'] == '1000.00'
     assert (await api.get(path)).json()['unlinked_payment_ids'] == [cash]
@@ -632,6 +666,9 @@ async def test_withdrawal_requires_cash_cost_and_registered_resolution(client_a_
     ledger = (await api.get(path)).json()
     assert ledger['withdrawals_total'] == '1000.00'
     assert any(row.get('register_entry_id') == register for row in ledger['entries'])
+    row = next(row for row in ledger['entries'] if row.get('register_entry_id') == register)
+    assert row['cost_document_number'] == 'RE-2025-Ä-42'
+    assert row['register_sequence_number'] == 1
 
     # Storno frees the funding limit for the corrected booking.
     response = await api.post(f'/api/payments/{cash}/reverse', json={'note': 'Corrected payout'})
@@ -799,6 +836,9 @@ async def test_negative_reserve_is_explicitly_flagged_in_pdf(client_a_admin, see
     content = pdf_text(document.content)
     assert 'Die Rücklage ist überzogen.' in content
     assert '-1.000,00 EUR' in content
+    if family == 'asset':
+        assert 'Zuführungen' in content
+        assert 'Erhaltungsrücklage' in content
 
 
 @pytest.mark.asyncio

@@ -748,6 +748,10 @@ marked as legacy, without rewriting them.
 The WEG and asset-report detail pages show planned/actual totals, dated ledger
 rows, overdrawn/missing-link feedback and a reasoned correction dialog. Manual
 bank key-date balances, receivables and payables remain administrator inputs.
+Ledger reads add current, access-controlled owner names, payment notes, cost
+document numbers and resolution register numbers for links to the source records;
+the retained snapshot and its amounts remain unchanged. Typed withdrawal
+adjustments appear as “Entnahmekorrektur”, distinct from funded cash withdrawals.
 Migration **0149**, based on **0148**, supplies the append-only ledger, RLS,
 source locks, computation-source checks and payout constraints after the
 organization-deletion and retention migrations.

@@ -104,7 +104,7 @@ def build_vermoegensbericht(inp: VermoegensberichtInput) -> AssetReportResult:
             amount=closing,
             sort_order=sort_order,
             is_manual=False,
-            note="Endbestand = Anfangsbestand + Zufuehrungen - Entnahmen + Korrekturen + Nachträgliche Buchungen",
+            note="Endbestand = Anfangsbestand + Zuführungen - Entnahmen + Korrekturen + Nachträgliche Buchungen",
         )
     )
     sort_order += 1

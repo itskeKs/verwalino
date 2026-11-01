@@ -10,11 +10,38 @@ from app.models.settlement_run import SettlementRun
 from app.models.accounting_scope import AccountingScope, AccountingScopeBinding
 from app.models.ownership_history import OwnershipHistory
 from app.models.unit import Unit
+from app.models.owner_profile import OwnerProfile
+from app.models.person import Person
 from app.repositories.base import TenantRepository
 
 
 class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
     model = ReserveLedgerEntry
+
+    async def display_entries(self, entries):
+        """Enrich this read without changing retained ledger snapshots or amounts.
+
+        Each source query remains subject to its own RLS and organization filter.
+        Resolve each source type once rather than once per monthly plan row.
+        """
+        fields = {}
+        for model, reference, display, column in (
+            (Payment, 'payment_id', 'payment_note', Payment.note),
+            (CostEntry, 'cost_entry_id', 'cost_document_number', CostEntry.document_number),
+            (ResolutionRegisterEntry, 'register_entry_id', 'register_sequence_number', ResolutionRegisterEntry.sequence_number),
+        ):
+            identifiers = {row[reference] for row in entries if row.get(reference)}
+            values = await self._session.execute(select(model.id, column).where(
+                model.organization_id == self._org_id, model.id.in_(identifiers))) if identifiers else []
+            fields[reference] = (display, {str(identifier): value for identifier, value in values})
+        owners = {row['owner_profile_id'] for row in entries if row.get('owner_profile_id') not in (None, 'None')}
+        people = await self._session.execute(select(OwnerProfile.id, Person.first_name, Person.last_name, Person.company_name)
+            .join(Person, (Person.organization_id == OwnerProfile.organization_id) & (Person.id == OwnerProfile.person_id))
+            .where(OwnerProfile.organization_id == self._org_id, OwnerProfile.id.in_(owners))) if owners else []
+        names = {str(identifier): company or f'{first} {last}'.strip() for identifier, first, last, company in people}
+        return [{**row, 'owner_name': names.get(row.get('owner_profile_id')),
+                 **{display: values.get(row.get(reference)) for reference, (display, values) in fields.items()}}
+                for row in entries]
 
     async def require_sources(self, run):
         return await self._session.scalar(text(

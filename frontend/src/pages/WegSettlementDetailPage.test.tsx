@@ -74,6 +74,7 @@ it("uses both coverage owners despite seller-only plan lines and sends two expli
   const fetchMock = install(); show();
   const sellerInput = await screen.findByRole("textbox", { name: paymentLabel("Anna Alt") });
   const buyerInput = await screen.findByRole("textbox", { name: paymentLabel("Berta Neu") });
+  expect(screen.getByLabelText('Begründung der Rücklagenwerte').closest('.form-grid')).not.toBeNull();
   expect(plan.lines.map(line => line.owner_profile_id)).toEqual([seller]);
   expect(sellerInput).toHaveValue(""); expect(buyerInput).toHaveValue("");
   expect(screen.queryByRole("textbox", { name: paymentLabel("Clara Fremd") })).not.toBeInTheDocument();
