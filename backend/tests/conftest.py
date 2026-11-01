@@ -32,6 +32,7 @@ from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import async_session
+from sqlalchemy.util.concurrency import greenlet_spawn
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -180,8 +181,10 @@ def pytest_configure(config):
         # Cover every raw fixture, including export_store's teardown TRUNCATE,
         # while preserving custom connection/cursor factories. Asyncpg test
         # statements currently all go through SQLAlchemy's handle_error below.
-        return _diagnostic_connect(dsn, _diagnostic_connection_factory(
+        connection = _diagnostic_connect(dsn, _diagnostic_connection_factory(
             connection_factory or psycopg2.extensions.connection), *args, **kwargs)
+        _open_raw_connections.add(connection)
+        return connection
 
     config._lock_diagnostic_patch = pytest.MonkeyPatch()
     config._lock_diagnostic_patch.setattr(psycopg2, 'connect', connect)
@@ -226,12 +229,18 @@ def pytest_runtest_protocol(item):
 
 
 # ---------------------------------------------------------------------------
-# Transactions a failed test body leaves open are rolled back before any fixture
+# Transactions a FAILED test body leaves open are rolled back before any fixture
 # finalizer runs. Otherwise a teardown TRUNCATE or a migration rehearsal's
 # LOCK TABLE ... NOWAIT waits on, or fails against, the leaked transaction
-# (#180: the CI hang and the #190 rerun's 55P03 on `person`).
+# (#180: the CI hang; the #190 rerun's 55P03 on `person`). Covered: ORM sessions,
+# SQLAlchemy connections (async and sync) and raw psycopg2 connections opened
+# through the instrumented connect above. Fixtures of a PASSING test keep owning
+# their transactions: several (app_rw_session, migrator_session) commit at
+# teardown, so a passing test is left alone.
 # ---------------------------------------------------------------------------
 _open_test_sessions = weakref.WeakSet()
+_open_test_connections = weakref.WeakSet()
+_open_raw_connections = weakref.WeakSet()
 
 
 @event.listens_for(Session, 'after_begin')
@@ -239,8 +248,24 @@ def _track_open_test_session(session, transaction, connection):
     _open_test_sessions.add(session)
 
 
+@event.listens_for(Engine, 'begin')
+def _track_open_test_connection(connection):
+    _open_test_connections.add(connection)
+
+
+@event.listens_for(Engine, 'commit')
+@event.listens_for(Engine, 'rollback')
+def _forget_ended_test_connection(connection):
+    _open_test_connections.discard(connection)
+
+
+def _raw_in_transaction(connection):
+    return not connection.closed and connection.status in (
+        psycopg2.extensions.STATUS_BEGIN, psycopg2.extensions.STATUS_IN_TRANSACTION)
+
+
 async def _end_open_test_transactions():
-    ended = 0
+    ended = []
     for session in list(_open_test_sessions):
         _open_test_sessions.discard(session)
         if not session.in_transaction():
@@ -251,18 +276,36 @@ async def _end_open_test_transactions():
                 await proxy.rollback()
             else:
                 session.rollback()
-            ended += 1
+            ended.append('session')
         except Exception as error:
-            # Best effort: the test already reported its own failure.
-            print(f'Could not end an open test transaction: {type(error).__name__}: {error}',
-                  file=_diagnostic_stream())
+            ended.append(f'session (rollback failed: {type(error).__name__})')
+    for connection in list(_open_test_connections):
+        _open_test_connections.discard(connection)
+        if connection.closed or not connection.in_transaction():
+            continue
+        try:
+            if connection.dialect.is_async:
+                await greenlet_spawn(connection.rollback)
+            else:
+                connection.rollback()
+            ended.append('connection')
+        except Exception as error:
+            ended.append(f'connection (rollback failed: {type(error).__name__})')
+    for raw in list(_open_raw_connections):
+        if not _raw_in_transaction(raw):
+            continue
+        try:
+            raw.rollback()
+            ended.append('psycopg2')
+        except Exception as error:
+            ended.append(f'psycopg2 (rollback failed: {type(error).__name__})')
     return ended
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_call(item):
-    yield
-    if target_url() or os.environ.get('HV_TEST_KEEP_OPEN_TRANSACTIONS') or not _open_test_sessions:
+    outcome = yield
+    if outcome.excinfo is None or target_url() or os.environ.get('HV_TEST_KEEP_OPEN_TRANSACTIONS'):
         return
     try:
         loop = asyncio.get_event_loop_policy().get_event_loop()
@@ -272,8 +315,9 @@ def pytest_runtest_call(item):
         return
     ended = loop.run_until_complete(_end_open_test_transactions())
     if ended:
-        print(f'{item.nodeid}: rolled back {ended} open test transaction(s) before teardown',
-              file=_diagnostic_stream())
+        # Part of the failure report; nothing is printed outside pytest's capture.
+        item.add_report_section('call', 'open transactions',
+            f'rolled back {len(ended)} open test transaction(s) before teardown: {", ".join(ended)}')
 
 
 @pytest.hookimpl(tryfirst=True)

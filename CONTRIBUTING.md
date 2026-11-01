@@ -125,6 +125,11 @@ already left `pg_locks`, so all open transactions are included to retain potenti
 A pytest report hook retains a fallback and identifies diagnostics already emitted at the error.
 On any local pytest timeout, the same independent connection dumps all test-database backends
 and their locks with the test ID before the usual Python stacks.
+When a test body fails, the session rolls back every database transaction it left open (ORM
+sessions, SQLAlchemy connections and raw psycopg2 connections) before fixture finalizers run and
+lists them in the failure report under `open transactions`; `HV_TEST_KEEP_OPEN_TRANSACTIONS=1`
+disables this to reproduce the raw symptom. Fixtures of a passing test keep owning their
+transactions (several commit at teardown).
 Pytest includes these stderr diagnostics with the named failure; synthetic contention tests
 verify the dump, but do not identify the holder from the historical CI hangs.
 Keep targeted runs short (`timeout 1500 make test-backend PYTEST_ARGS="…"`); a legitimately

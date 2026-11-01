@@ -103,8 +103,48 @@ def test_blocked_transaction():
     assert any(row['pid'] == holder_pid for row in locks)
 
 
-@pytest.mark.parametrize('guard', ['on', 'off'])
-def test_open_transactions_end_before_fixture_teardown(pytester, monkeypatch, guard):
+LEAKY_FIXTURES = {
+    'session': '''
+@pytest_asyncio.fixture
+async def leaky(engine_url):
+    engine = create_async_engine(engine_url)
+    try:
+        async with AsyncSession(engine) as db:
+            yield db
+    finally:
+        await engine.dispose()
+''',
+    'connection': '''
+@pytest_asyncio.fixture
+async def leaky(engine_url):
+    engine = create_async_engine(engine_url)
+    try:
+        async with engine.connect() as connection:
+            yield connection
+    finally:
+        await engine.dispose()
+''',
+    'psycopg2': '''
+class _Raw:
+    def __init__(self, connection):
+        self.connection = connection
+    async def execute(self, statement):
+        with self.connection.cursor() as cursor:
+            cursor.execute(str(statement))
+
+@pytest.fixture
+def leaky():
+    connection = psycopg2.connect(MIGRATOR_SYNC_URL)
+    try:
+        yield _Raw(connection)
+    finally:
+        connection.close()
+''',
+}
+
+
+@pytest.mark.parametrize('guard, leak', [('on', 'session'), ('on', 'connection'), ('on', 'psycopg2'), ('off', 'session')])
+def test_open_transactions_end_before_fixture_teardown(pytester, monkeypatch, guard, leak):
     # The child alone accesses the DB; it never migrates/truncates the parent's data.
     monkeypatch.setenv('PYTHONPATH', str(Path(__file__).resolve().parents[1]))
     if guard == 'off':
@@ -128,14 +168,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from tests.conftest import MIGRATOR_SYNC_URL, MIGRATOR_URL
 
-@pytest_asyncio.fixture
-async def leaky_db():
-    engine = create_async_engine(MIGRATOR_URL)
-    try:
-        async with AsyncSession(engine) as db:
-            yield db
-    finally:
-        await engine.dispose()
+@pytest.fixture
+def engine_url():
+    return MIGRATOR_URL
+''' + LEAKY_FIXTURES[leak] + '''
 
 @pytest.fixture
 def rehearsal():
@@ -146,8 +182,8 @@ def rehearsal():
         connection.rollback()
 
 @pytest.mark.asyncio
-async def test_body_fails_with_an_open_transaction(leaky_db, rehearsal):
-    await leaky_db.execute(text('SELECT count(*) FROM person'))
+async def test_body_fails_with_an_open_transaction(leaky, rehearsal):
+    await leaky.execute(text('SELECT count(*) FROM person'))
     assert False, 'the test body fails while its transaction is open'
 ''')
     result = pytester.runpytest_subprocess('-p', 'tests.conftest', '-p', 'no:cacheprovider',
@@ -159,5 +195,4 @@ async def test_body_fails_with_an_open_transaction(leaky_db, rehearsal):
         assert '1 failed, 1 error' in summary and 'LockNotAvailable' in summary
     else:
         assert '1 failed' in summary and ' error' not in summary and 'LockNotAvailable' not in summary
-        # fd capture puts the diagnostic into the failure report (captured stderr).
-        assert 'rolled back 1 open test transaction(s) before teardown' in summary
+        assert f'rolled back 1 open test transaction(s) before teardown: {leak}' in summary
