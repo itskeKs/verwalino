@@ -499,6 +499,10 @@ GHCR repository name and `start` pulls it, the disposable runner temporarily
 serves **its own TLS registry** as `ghcr.io` through `/etc/hosts` and a private
 Docker trust certificate. The build happens before that override (uv's base
 image comes from real GHCR). No credentials or real GHCR push are involved.
+The checkout image is pushed through `localhost:443` because a push to the
+`ghcr.io` name was observed reaching real GHCR despite the hosts override; the
+installer pulls the same manifest through `ghcr.io`, and its digest is read from
+the local registry API.
 The local manifest digest goes into `IMAGE_DIGEST`;
 `scripts/build-release-bundle.sh` supplies the same seven payloads and checksum
 manifest as the release job. Checkout bundles are deliberately unsigned and
