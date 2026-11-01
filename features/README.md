@@ -251,10 +251,14 @@ The three `first_run_setup.feature` scenarios are also skipped: they require a
 fresh installation, while the external target already has its bootstrap organization.
 The `inbox_review_chain.feature` scenario is in-process-only: it needs the
 in-process invoice worker and direct database fixtures, so the external nightly
-run skips it too.
+run skips it too. The same applies to `organization_deletion.feature` (direct
+database fixtures and the in-process deletion CLI), `organization_export_import.feature`
+(direct database fixtures and in-process archive storage) and `password_reset.feature`
+(the Mailpit test mailbox).
 Each skipped scenario records its reason in the report. Local runs continue to
-exercise both organizations, all isolation scenarios, first-run setup and the inbox
-review chain; PR CI retains this coverage through `make test-backend`.
+exercise both organizations, all isolation scenarios, first-run setup, the inbox
+review chain, deletion, export/import and password reset; PR CI retains this
+coverage through `make test-backend`.
 `make test-bdd`, `make test-browser` and `make test-scenarios-report` explicitly
 select the local stack even if target variables are inherited; use direct pytest
 for external targets.
