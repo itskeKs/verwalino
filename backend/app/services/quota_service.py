@@ -5,6 +5,7 @@ from decimal import Decimal
 from fastapi import HTTPException
 from sqlalchemy import text
 
+from app.core.locking import bound_lock_waits
 from app.core.quotas import check_quota, get_quota_plan
 from app.repositories.mandate_document_repo import MandateDocumentRepository
 
@@ -14,6 +15,7 @@ async def lock_quota(db, org_id, *, budget=False):
         return False
     # Source authorization always takes the ACL first. All quota writers then
     # share one organization lock, retained until commit or rollback.
+    await bound_lock_waits(db)
     await db.execute(text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
                      {"key": f"scope-acl:{org_id}"})
     await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),

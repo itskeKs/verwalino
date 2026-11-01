@@ -15,6 +15,7 @@ from app.core.request_id import correlation_context
 from sqlalchemy import select
 
 from app.core.config import settings
+from app.core.locking import retry_worker_completion
 from app.core.db import get_worker_session_factory, get_worker_unscoped_session, set_tenant_context
 from app.models.invoice_processing_attempt import InvoiceProcessingAttempt
 from app.models.organization import Organization
@@ -41,9 +42,12 @@ async def process_once(factory, org_id, *, processor=run_isolated_extraction):
                 result = await run_bounded_processor(processor, data, claim["mime_type"])
         except Exception:
             result = outcome("failed", "processor_failed")
-        async with factory() as session, session.begin():
-            await set_tenant_context(session, org_id)
-            await InvoiceProcessingService(session, org_id).finish(claim, result)
+        async def finish():
+            async with factory() as session, session.begin():
+                await set_tenant_context(session, org_id)
+                return await InvoiceProcessingService(session, org_id).finish(claim, result)
+        # On exhaustion, main/WorkflowRunner catches the error; claim() retries the expired lease, then fails at its cap.
+        await retry_worker_completion(finish)
         logger.info("Invoice worker job completed")
         return True
 

@@ -79,6 +79,41 @@ async def test_shared_invoice_adapter_preserves_live_lease_then_reconciles_expir
     assert len((await api.get('/api/document-refs/'+ref['id']+'/extractions')).json()['items'])==1
 
 
+async def test_invoice_completion_exhaustion_reports_failure_then_recovers_its_durable_lease(worker_tenant, store, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from sqlalchemy import text
+    from app.core import locking
+    from app.core.db import get_worker_session_factory, set_tenant_context
+    from app.services.invoice_processing_service import InvoiceProcessingService
+    from app.workers.workflow_runner import WorkflowRunner, build_adapters
+
+    api, ids = worker_tenant
+    org = ids['org_a_id']
+    document = (await api.post('/api/invoice-documents/upload',
+        files={'file': ('invoice.pdf', pdf_bytes(), 'application/pdf')})).json()
+    original = InvoiceProcessingService.finish
+    blocked = AsyncMock(side_effect=locking.LockTimeoutError('completion remains locked'))
+    monkeypatch.setattr(InvoiceProcessingService, 'finish', blocked)
+    monkeypatch.setattr(locking, 'asyncio', SimpleNamespace(sleep=AsyncMock()))
+    async def organizations():
+        return (org,)
+    factory = get_worker_session_factory()
+    runner = WorkflowRunner(organizations, build_adapters(['invoice_extraction'], session_factory=factory))
+    assert (await runner.run_once()).code == 'STAGE_ERROR'
+    assert blocked.await_count == 10
+    assert (await runner.run_once()).code == 'IDLE'
+    monkeypatch.setattr(InvoiceProcessingService, 'finish', original)
+    async with factory() as db, db.begin():
+        await set_tenant_context(db, org)
+        await db.execute(text('UPDATE invoice_processing_attempt SET lease_until=:past WHERE document_id=:id'),
+                         {'past': datetime.now(timezone.utc) - timedelta(seconds=1), 'id': document['id']})
+    assert (await runner.run_once()).code == 'PROCESSED'
+    attempts = (await api.get(f"/api/invoice-documents/{document['id']}/processing-attempts")).json()
+    assert [item['status'] for item in attempts] == ['succeeded', 'timeout']
+
+
 async def test_declaration_adapter_claims_only_the_dispatched_tenant(worker_tenant,seed_data,monkeypatch):
     from app.core.config import settings
     from app.workers.declaration_import import DeclarationImportWorker

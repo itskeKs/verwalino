@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from starlette.concurrency import run_in_threadpool
 
+from app.core.locking import StorageLockTimeout
 from app.core.storage import compute_sha256, get_store, make_storage_key, put_document
 from app.core.uploads import MAX_UPLOAD_BYTES, require_upload_size
 from app.models.attachment import Attachment
@@ -115,6 +116,8 @@ class AttachmentService:
         key = make_storage_key(str(self.org_id), digest)
         try:
             ref = await put_document(self.db, self.org_id, file_bytes, content_type=mime, store=get_store())
+        except StorageLockTimeout:
+            raise
         except (OSError, ValueError) as exc:
             raise HTTPException(503, "Document storage unavailable") from exc
         if ref.uri != key or ref.sha256 != digest or ref.byte_size != len(file_bytes):

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
+import pytest_asyncio
 import psycopg2
 
 from app.core.storage import LocalFsDocumentStore, get_store, set_store
@@ -18,8 +19,8 @@ from tests.conftest import MIGRATOR_SYNC_URL, clear_disposable_source_context
 from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
 
 
-@pytest.fixture
-def export_store(tmp_path, rent_world):
+@pytest_asyncio.fixture
+async def export_store(tmp_path, rent_world, rent_db):
     previous = get_store()
     store = LocalFsDocumentStore(tmp_path / "documents")
     set_store(store)
@@ -27,6 +28,9 @@ def export_store(tmp_path, rent_world):
         yield store
     finally:
         set_store(previous)
+        # A failed test body may leave rent_db's transaction open; end it before
+        # the synchronous TRUNCATE below, which would otherwise wait on it.
+        await rent_db.rollback()
         # Export fixtures retain originals and import receipts. Remove synthetic
         # state through the disposable-DB guard, leaving downgrade guards intact.
         with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection, connection.cursor() as cursor:

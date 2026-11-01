@@ -27,6 +27,7 @@ from hashlib import sha256
 from app.core.pdf import render_pdf
 from app.core.storage import LocalFsDocumentStore, make_storage_key
 from app.services import attachment_service
+from tests.test_error_tracking import offline_tracker  # noqa: F401
 from tests.test_meters_api import meter_world as _meter_world
 
 attachment_world = _meter_world
@@ -343,6 +344,36 @@ async def test_attachment_storage_failure_is_explicit_without_metadata(client_a_
     assert response.status_code == 503
     assert 'sensitive' not in response.text
     assert (await client_a_admin.get('/api/attachments', params={'property_id': attachment_world['property']})).json()['items'] == []
+
+
+async def test_hosted_attachment_directory_timeout_is_retryable_without_metadata_or_tracker_event(
+        client_a_admin, attachment_world, attachment_store, attachment_pdf, monkeypatch,
+        seed_data, offline_tracker):
+    import os
+    from app.core import storage
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
+    monkeypatch.setattr(storage, 'LOCK_WAIT_SECONDS', 0.1)
+    holder = storage.open_storage_lock(attachment_store, seed_data['org_a_id'])
+    storage.fcntl.flock(holder, storage.fcntl.LOCK_EX | storage.fcntl.LOCK_NB)
+    try:
+        response = await upload(client_a_admin, attachment_world, attachment_pdf)
+    finally:
+        os.close(holder)
+    events, tracker = offline_tracker
+    tracker.flush()
+    assert response.status_code == 409, response.text
+    assert response.json()['detail'] == {
+        'code': 'LOCK_TIMEOUT',
+        'message': 'Der Vorgang ist gerade durch eine andere Aktion gesperrt. Bitte versuchen Sie es in Kürze erneut.',
+    }
+    assert events == []
+    assert (await client_a_admin.get('/api/attachments', params={
+        'property_id': attachment_world['property']})).json()['items'] == []
+    assert not attachment_store.exists(make_storage_key(str(seed_data['org_a_id']), sha256(attachment_pdf).hexdigest()))
+    # The timed-out request must release its quota transaction as well.
+    assert (await upload(client_a_admin, attachment_world, attachment_pdf)).status_code == 201
 
 
 async def test_attachment_parallel_archive_is_one_transition(client_a_admin, attachment_world,

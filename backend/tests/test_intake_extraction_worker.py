@@ -129,6 +129,38 @@ async def test_shared_runner_claim_competition_and_attempt_limit(migrator_sessio
         assert (await runner.run_once()).code=='IDLE'
 
 
+async def test_intake_completion_exhaustion_reports_failure_then_recovers_its_durable_lease(migrator_session, scope_seed, store, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from app.core import locking
+    from app.workers.workflow_runner import WorkflowRunner, build_adapters
+
+    ids = await fixture(migrator_session, scope_seed)
+    async with client(ids) as api:
+        await source(api, ids)
+    original = AsyncSession.scalar
+    completions = []
+    async def blocked(db, statement, *args, **kwargs):
+        if str(statement).startswith('SELECT complete_intake_extraction('):
+            completions.append(statement)
+            raise locking.LockTimeoutError('completion remains locked')
+        return await original(db, statement, *args, **kwargs)
+    monkeypatch.setattr(AsyncSession, 'scalar', blocked)
+    monkeypatch.setattr(locking, 'asyncio', SimpleNamespace(sleep=AsyncMock()))
+    async def organizations():
+        return (ids['org'],)
+    runner = WorkflowRunner(organizations, build_adapters(['intake_extraction']))
+    assert (await runner.run_once()).code == 'STAGE_ERROR'
+    assert len(completions) == 10
+    assert (await runner.run_once()).code == 'IDLE'
+    monkeypatch.setattr(AsyncSession, 'scalar', original)
+    await mutate(text("UPDATE intake_extraction_job SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE organization_id=:org"), ids)
+    assert (await runner.run_once()).code == 'PROCESSED'
+    assert await read_value('SELECT status FROM intake_extraction_job WHERE organization_id=:org', ids) == 'succeeded'
+    assert await read_value('SELECT count(*) FROM intake_extraction_attempt WHERE organization_id=:org AND finished_at IS NOT NULL', ids) == 2
+
+
 async def test_actual_worker_boundary_and_private_tables(migrator_session,scope_seed,store):
     from sqlalchemy.exc import DBAPIError
     ids=await fixture(migrator_session,scope_seed)
@@ -340,3 +372,30 @@ async def test_database_completion_rejects_invalid_identity_pages_and_fields(mig
                 job=uuid.UUID(claim['job_id']),fence=uuid.UUID(claim['fence']),result=json.dumps(forged))
     assert await read_value('SELECT count(*) FROM extraction_revision WHERE organization_id=:org',ids)==0
     assert await read_value('SELECT status FROM intake_extraction_job WHERE organization_id=:org',ids)=='running'
+
+
+async def test_worker_retries_completed_extraction_without_running_processor_again(migrator_session,scope_seed,store,monkeypatch):
+    from sqlalchemy.exc import DBAPIError
+    from sqlalchemy.ext.asyncio import AsyncSession
+    ids=await fixture(migrator_session,scope_seed)
+    original=AsyncSession.scalar
+    finishes=[];extractions=[];sessions=[]
+    async def contended(self,statement,*args,**kwargs):
+        if str(statement).startswith('SELECT complete_intake_extraction('):
+            finishes.append(args[0]['result']);sessions.append(self)
+            if len(finishes)==1:
+                error=Exception('synthetic lock contention');error.sqlstate='55P03'
+                raise DBAPIError(str(statement),{},error)
+        return await original(self,statement,*args,**kwargs)
+    def processor(*args):
+        extractions.append(True)
+        return extract_logical(*args)
+    monkeypatch.setattr(AsyncSession,'scalar',contended)
+    async with client(ids) as api:
+        ref,child=await source(api,ids)
+        assert await process_once(get_worker_session_factory(),ids['org'],processor=processor)
+        assert (await api.get('/api/logical-documents/'+child['id']+'/processing')).json()['status']=='succeeded'
+    assert len(extractions)==1
+    assert len(finishes)==2 and finishes[0]==finishes[1]
+    assert sessions[0] is not sessions[1]
+    assert await read_value('SELECT count(*) FROM extraction_revision WHERE organization_id=:org',ids)==1
