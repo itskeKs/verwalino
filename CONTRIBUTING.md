@@ -3,6 +3,11 @@
 The software is German; everything about it — docs, issues, code comments, commits — is English.
 Rules for coding agents, which apply to people too, are in [AGENTS.md](AGENTS.md).
 
+Every session removes its own leftovers when the task ends and checks for them before the next
+task. Follow [Session cleanup](AGENTS.md#session-cleanup) for worktrees, disposable stacks,
+temporary files and background processes; leave other sessions, shared services and production
+untouched. Report cleanup in one line, never in a repository file.
+
 ## Development environment
 
 - Python with [uv](https://docs.astral.sh/uv/), Node 22, Docker (for the test database only).
