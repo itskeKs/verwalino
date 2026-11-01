@@ -2,10 +2,11 @@
 # Local backup of the hosted server: database dump, documents volume and private config.
 #
 # Usage: server-backup.sh [LABEL]
-#   Writes /srv/verwalino/backups/<UTC timestamp>[-LABEL]/ with db.dump (pg_dump custom format),
+#   Writes /srv/verwalino/backups/<UTC timestamp>[.NNNNNN][-LABEL]/ with db.dump (pg_dump custom format),
 #   documents.tar, config.env (copy of the private installer config, secrets included),
 #   MANIFEST and SHA256SUMS. deploy-server.sh calls it with LABEL "pre-<tag>"; the daily cron
 #   job (DEPLOY.md, "Hosted server") calls it without a label.
+#   Same-second backups of the same label add an increasing, zero-padded counter.
 #   Afterwards old backups are pruned: the newest backup of each of the last 14 days and of
 #   each of the last 8 weeks (Monday to Sunday, UTC) stay, plus the 10 newest labelled ones.
 #   Anything else in the directory is left alone.
@@ -78,7 +79,7 @@ prune() {
     local dir name day week names='' kept_days=' ' kept_weeks=' ' days=0 weeks=0 labelled=0 keep
     for dir in "$BACKUPS"/*; do
         name=${dir##*/}
-        if [[ -d "$dir" && ! -L "$dir" && "$name" =~ ^[0-9]{8}T[0-9]{6}Z(-.+)?$ ]]; then
+        if [[ -d "$dir" && ! -L "$dir" && "$name" =~ ^[0-9]{8}T[0-9]{6}Z(\.[0-9]{6})?(-.+)?$ ]]; then
             names+="$name"$'\n'
         fi
     done
@@ -86,7 +87,7 @@ prune() {
     # Newest first; the first backup seen for a day or week is the newest of it.
     while IFS= read -r name; do
         keep=0
-        if [[ "$name" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
+        if [[ "$name" =~ ^[0-9]{8}T[0-9]{6}Z(\.[0-9]{6})?$ ]]; then
             day=${name:0:8}
             week=$(( ($(days_from_civil "${day:0:4}" "${day:4:2}" "${day:6:2}") + 3) / 7 ))
             if [[ "$kept_days" != *" $day "* && "$days" -lt "$KEEP_DAILY" ]]; then
@@ -115,7 +116,21 @@ LOCKED=1
 
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 name=$stamp${LABEL:+-$LABEL}
-[[ ! -e "$BACKUPS/$name" ]] || fail "$BACKUPS/$name already exists."
+# The backup lock serializes allocation. Continue after the highest counter, rather than
+# reusing a pruned name: retention sorts these names to identify the newest backup.
+counter=0
+for existing in "$BACKUPS/$stamp"*; do
+    stem=${existing##*/}
+    stem=${stem%"${LABEL:+-$LABEL}"}
+    if [[ "$stem" =~ ^$stamp(\.([0-9]{6}))?$ ]]; then
+        next=$((10#${BASH_REMATCH[2]:-000000} + 1))
+        if (( next > counter )); then counter=$next; fi
+    fi
+done
+if (( counter > 0 )); then
+    printf -v name '%s.%06d%s' "$stamp" "$counter" "${LABEL:+-$LABEL}"
+fi
+[[ ! -e "$BACKUPS/$name" && ! -L "$BACKUPS/$name" ]] || fail "$BACKUPS/$name already exists."
 WORK=$BACKUPS/.partial-$name
 mkdir "$WORK"
 

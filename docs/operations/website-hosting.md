@@ -5,6 +5,13 @@ This runbook describes operator setup after merge; it does not authorize a rollo
 with #26. Registration stays closed. See [DEPLOY.md](../../DEPLOY.md#website-container) for the workflow
 and accepted SSH command grammar, and [website/README.md](../../website/README.md) for the static build.
 
+The independent [production app mode and mail opt-in](../../DEPLOY.md#production-app-mode-and-mail-opt-in)
+uses private `config/.env.hosted-app` and `infra/docker-compose.hosted-app.yml` on release deploys.
+It forwards the owner's mode, public hostname and allowed hosts, preserving this proxy/site
+overlay chain. It does not change the website or open signup unless the owner selects `hosted`.
+After that opt-in, use the managed release deploy path for app restarts; the portable installer
+alone starts the stock selfhost app. Follow the linked owner acceptance steps for mail and signup.
+
 ## Image and isolation
 
 `website/Dockerfile` runs `npm ci`, i18n, lint, build and link checks under digest-pinned Node 22.

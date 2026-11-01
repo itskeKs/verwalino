@@ -1,0 +1,8 @@
+# Managed production app only. Opt in through config/.env.hosted-app; see DEPLOY.md.
+# The portable installer never applies this overlay or accepts deployment-mode keys.
+services:
+  app:
+    environment:
+      HV_DEPLOYMENT_MODE: ${HV_DEPLOYMENT_MODE:-selfhost}
+      HV_PUBLIC_HOST: ${HV_PUBLIC_HOST:?set the public hostname in the private hosted app config}
+      HV_ALLOWED_HOSTS: ${HV_ALLOWED_HOSTS:?include the public hostname in the private hosted app config}

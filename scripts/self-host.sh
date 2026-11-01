@@ -133,6 +133,8 @@ Another start replaces an unused token. The token is never stored in this file.
 The admin command is the alternative to browser setup.
 Public signup requires a separate hosted deployment with HV_PUBLIC_HOST and SMTP;
 the portable selfhost installer does not enable it.
+Managed server app opt-in: config/.env.hosted-app (deploy-server.sh only; see DEPLOY.md).
+Never add HV_DEPLOYMENT_MODE, HV_PUBLIC_HOST or HV_ALLOWED_HOSTS to this installer's config.
 Login lockouts use the relaxed selfhost policy. Caddy's private proxy subnet
 supplies FORWARDED_ALLOW_IPS for client IP throttling; see DEPLOY.md for the
 admin_cli unlock command.
