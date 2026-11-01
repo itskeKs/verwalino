@@ -20,7 +20,7 @@ const session = { user_id: "user", organization_id: "org", role: "CLERK" };
 const property = { id: "property", name: "Testhaus", management_type: "MIET", fiscal_year_start_month: 1 };
 const unit = { id: "unit", property_id: "property", number: "42" };
 const person = { id: "person", first_name: "Ada", last_name: "Test", can_prepare: true };
-const lease = { id: "lease", unit_id: "unit", tenant_profile_id: "tenant", valid_from: "2025-01-01", valid_to: "2025-12-31", base_rent: "700", advance_payment: "150", deposit: null, notes: "Historie" };
+const lease = { id: "lease", unit_id: "unit", tenant_profile_id: "tenant", valid_from: "2025-01-01", valid_to: "2025-12-31", base_rent: "700", advance_payment: "150", heating_advance_payment: "0.00", deposit: null, notes: "Historie" };
 let fetchMock: ReturnType<typeof vi.fn>;
 let leases: typeof lease[];
 function content(path = "/objekte/property/einheiten/unit", role = "CLERK", user = "user") {

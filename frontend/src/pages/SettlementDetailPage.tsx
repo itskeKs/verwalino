@@ -96,7 +96,7 @@ function formatProposalMoney(value: string): string {
   const match = /^(-?)(\d+)(?:\.(\d{1,2}))?$/.exec(value);
   if (!match) return "Nicht verfügbar";
   const integer = match[2].replace(/^0+(?=\d)/, "").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  return `${match[1]}${integer},${(match[3] ?? "").padEnd(2, "0")} EUR`;
+  return `${match[1]}${integer},${(match[3] ?? "").padEnd(2, "0")} €`;
 }
 
 function isProposalDate(value: string): boolean {
@@ -177,20 +177,22 @@ function AdvanceProposalSection({ runId }: { runId: string }) {
         <button className="btn" onClick={() => setRetry((value) => value + 1)} disabled={loading}>Erneut versuchen</button>
       </>}
       {proposal && <>
-        <p>Neue Vorauszahlung: <strong>{formatProposalMoney(proposal.monthly_amount)}</strong> monatlich</p>
-        <p>Grundlage: {formatProposalMoney(proposal.tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate
+        <p>Betriebskosten-Vorauszahlung: <strong>{formatProposalMoney(proposal.monthly_amount)}</strong> monatlich</p>
+        <p>Heizkosten-Vorauszahlung: <strong>{formatProposalMoney(proposal.heating_monthly_amount)}</strong> monatlich</p>
+        <p>Grundlage Betriebskosten: {formatProposalMoney(proposal.tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate
           {" "}({proposal.period_start} bis {proposal.period_end}).</p>
-        <p>Nur die Vorauszahlung wird geändert. Die Kaltmiete bleibt die am gewählten Tag gültige Rate.
+        <p>Grundlage Heizkosten: {formatProposalMoney(proposal.heating_tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate.</p>
+        <p>Beide Vorauszahlungen werden geändert. Die Kaltmiete bleibt die am gewählten Tag gültige Rate.
           Der ursprüngliche Mietvertrag und die finalisierte Abrechnung bleiben unverändert.</p>
         {applyError && <p role="alert">{applyError}</p>}
         {result && <p role="status">Miethistorie ergänzt: ab {result.valid_from}, Kaltmiete {formatProposalMoney(result.base_rent)},
-          {" "}Vorauszahlung {formatProposalMoney(result.advance_payment)} monatlich.</p>}
+          {" "}Betriebskosten-Vorauszahlung {formatProposalMoney(result.advance_payment)}, Heizkosten-Vorauszahlung {formatProposalMoney(result.heating_advance_payment)} monatlich.</p>}
         {canApply && !result && <form onSubmit={handleApply} noValidate>
           <label>Übernehmen ab
             <input type="date" value={validFrom} onChange={(event) => setValidFrom(event.target.value)} disabled={saving} required />
           </label>
           <button className="btn btn--primary" type="submit" disabled={saving || loading || !!loadError}>
-            Vorauszahlung übernehmen
+            Vorauszahlungen übernehmen
           </button>
         </form>}
       </>}
@@ -220,6 +222,7 @@ export function SettlementDetailPage() {
   // Advance payments edit
   const [editingAdvance, setEditingAdvance] = useState(false);
   const [advanceValue, setAdvanceValue] = useState("");
+  const [heatingAdvanceValue, setHeatingAdvanceValue] = useState("");
 
   // Structured inputs for compute
   const [externalAmounts, setExternalAmounts] = useState<ExternalAmountIn[]>([]);
@@ -347,6 +350,7 @@ export function SettlementDetailPage() {
         setPersons(per);
         setCategories(c);
         setAdvanceValue(r.advance_payments_total ?? "");
+        setHeatingAdvanceValue(r.heating_advance_payments_total ?? "");
         // Load cost entries for the property
         if (r.property_id) {
           const entries = await listCostEntries({ property_id: r.property_id, status: "confirmed" });
@@ -431,12 +435,16 @@ export function SettlementDetailPage() {
   // --- Actions ---
 
   async function handleSaveAdvance() {
-    if (!runId) return;
+    if (!runId || (advanceValue === (run?.advance_payments_total ?? "") && heatingAdvanceValue === (run?.heating_advance_payments_total ?? ""))) {
+      setEditingAdvance(false);
+      return;
+    }
     setActionLoading(true);
     setActionError(null);
     try {
       const updated = await setAdvancePayments(runId, {
-        advance_payments_total: advanceValue,
+        ...(advanceValue !== (run?.advance_payments_total ?? "") ? { advance_payments_total: advanceValue.replace(",", ".") } : {}),
+        ...(heatingAdvanceValue !== (run?.heating_advance_payments_total ?? "") ? { heating_advance_payments_total: heatingAdvanceValue.replace(",", ".") } : {}),
       });
       setRun(updated);
       setEditingAdvance(false);
@@ -452,7 +460,7 @@ export function SettlementDetailPage() {
     const year = run.period_start ? parseInt(run.period_start.slice(0, 4), 10) : null;
     if (!year) return;
     const confirmed = window.confirm(
-      `Vorauszahlungssumme aus erfassten NK-Zahlungen fuer ${year} ableiten?`,
+      `Betriebskosten- und Heizkosten-Vorauszahlungen aus erfassten Zahlungen für ${year} ableiten?`,
     );
     if (!confirmed) return;
     setActionLoading(true);
@@ -461,6 +469,7 @@ export function SettlementDetailPage() {
       const updated = await setAdvancePaymentsDerived(runId, year);
       setRun(updated);
       setAdvanceValue(updated.advance_payments_total ?? "");
+      setHeatingAdvanceValue(updated.heating_advance_payments_total ?? "");
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -648,7 +657,7 @@ export function SettlementDetailPage() {
                         fontWeight: 600,
                       }}
                     >
-                      {ln.amount} EUR
+                      {formatProposalMoney(ln.amount)}
                     </td>
                   </tr>
                 ))}
@@ -671,14 +680,14 @@ export function SettlementDetailPage() {
                         ln.line_type === "BALANCE" ? "1.05rem" : undefined,
                     }}
                   >
-                    <td colSpan={ln.line_type === "SUBTOTAL" ? 2 : 1}>{ln.label}</td>
-                    {ln.line_type !== "SUBTOTAL" && <td
+                    <td colSpan={ln.line_type === "SUBTOTAL" && !ln.note ? 2 : 1}>{ln.label}</td>
+                    {(ln.line_type !== "SUBTOTAL" || ln.note) && <td
                       style={{
                         fontFamily: "var(--mono)",
                         textAlign: "right",
                       }}
                     >
-                      {ln.amount} EUR
+                      {formatProposalMoney(ln.amount)}
                     </td>}
                   </tr>
                 ))}
@@ -1006,10 +1015,10 @@ export function SettlementDetailPage() {
               <td>{run.run_type}</td>
             </tr>
             <tr>
-              <td>Vorauszahlungen</td>
+              <td>Betriebskosten-Vorauszahlungen</td>
               <td>
                 <span style={{ fontFamily: "var(--mono)" }}>
-                  {run.advance_payments_total ?? "-"} EUR
+                  {formatProposalMoney(run.advance_payments_total ?? "")}
                 </span>
                 <span
                   style={{
@@ -1034,7 +1043,7 @@ export function SettlementDetailPage() {
                       style={{ marginLeft: "0.25rem" }}
                       onClick={handleDeriveAdvance}
                       disabled={actionLoading}
-                      title="Vorauszahlungssumme aus erfassten NK-Zahlungen ableiten"
+                      title="Beide Vorauszahlungssummen aus erfassten NK- und HK-Zahlungen ableiten"
                     >
                       Aus Zahlungen ableiten
                     </button>
@@ -1042,11 +1051,15 @@ export function SettlementDetailPage() {
                 )}
               </td>
             </tr>
+            <tr><td>Heizkosten-Vorauszahlungen</td><td>
+              <span style={{ fontFamily: "var(--mono)" }}>{formatProposalMoney(run.heating_advance_payments_total ?? "")}</span>
+              <span style={{ marginLeft: "0.5rem" }}>({run.heating_advance_payments_source})</span>
+            </td></tr>
             {run.total_cost != null && (
               <tr>
                 <td>Gesamtkosten</td>
                 <td style={{ fontFamily: "var(--mono)" }}>
-                  {run.total_cost} EUR
+                  {formatProposalMoney(run.total_cost)}
                 </td>
               </tr>
             )}
@@ -1071,7 +1084,7 @@ export function SettlementDetailPage() {
                           : undefined,
                   }}
                 >
-                  {run.balance} EUR
+                  {formatProposalMoney(run.balance)}
                 </td>
               </tr>
             )}
@@ -1098,10 +1111,10 @@ export function SettlementDetailPage() {
       {/* Advance payment edit */}
       {editingAdvance && isDraft && (
         <div className="card" style={{ marginBottom: "1rem" }}>
-          <h2>Vorauszahlungssumme aendern</h2>
+          <h2>Vorauszahlungssummen ändern</h2>
           <div className="form-grid">
             <label>
-              Vorauszahlungssumme (manuell)
+              Betriebskosten-Vorauszahlung (EUR)
               <input
                 type="text"
                 inputMode="decimal"
@@ -1109,6 +1122,10 @@ export function SettlementDetailPage() {
                 value={advanceValue}
                 onChange={(e) => setAdvanceValue(e.target.value)}
               />
+            </label>
+            <label>Heizkosten-Vorauszahlung (EUR)
+              <input type="text" inputMode="decimal" value={heatingAdvanceValue}
+                onChange={(e) => setHeatingAdvanceValue(e.target.value)} />
             </label>
             <div className="form-actions">
               <button
@@ -1150,7 +1167,7 @@ export function SettlementDetailPage() {
         </>
       )}
 
-        {run.status === "draft" && <FinancialCoverageReview kind="settlement" subjectId={run.id} values={{ advance_payments_total: run.advance_payments_total, advance_payments_source: run.advance_payments_source }} />}
+        {run.status === "draft" && <FinancialCoverageReview kind="settlement" subjectId={run.id} values={{ advance_payments_total: run.advance_payments_total, advance_payments_source: run.advance_payments_source, heating_advance_payments_total: run.heating_advance_payments_total, heating_advance_payments_source: run.heating_advance_payments_source }} />}
       {/* Action buttons */}
       <div
         style={{

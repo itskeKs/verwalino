@@ -609,6 +609,7 @@ export interface IndexmietePreview {
   previous_base_rent: string;
   base_rent: string;
   advance_payment: string;
+  heating_advance_payment: string;
 }
 
 export interface IndexmieteCreate extends IndexmieteInput {

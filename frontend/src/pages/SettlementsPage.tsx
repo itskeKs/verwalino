@@ -56,6 +56,7 @@ function makeEmptyForm(): SettlementRunCreate {
     period_start: "",
     period_end: "",
     advance_payments_total: null,
+    heating_advance_payments_total: "0.00",
     management_mandate_id: null,
   };
 }
@@ -238,7 +239,10 @@ export function SettlementsPage() {
     setSaving(true);
     setError(null);
     try {
-      const created = await createSettlement(form);
+      const created = await createSettlement({ ...form,
+        advance_payments_total: form.advance_payments_total?.replace(",", ".") ?? null,
+        heating_advance_payments_total: form.heating_advance_payments_total?.replace(",", ".") ?? null,
+      });
       setShowForm(false);
       navigate(`/abrechnungen/${created.id}`);
     } catch (err) {
@@ -416,7 +420,7 @@ export function SettlementsPage() {
               />
             </label>
             <label>
-              Vorauszahlungssumme
+              Betriebskosten-Vorauszahlung (EUR)
               <input
                 type="text"
                 inputMode="decimal"
@@ -429,6 +433,10 @@ export function SettlementsPage() {
                   })
                 }
               />
+            </label>
+            <label>Heizkosten-Vorauszahlung (EUR)
+              <input type="text" inputMode="decimal" value={form.heating_advance_payments_total ?? ""}
+                onChange={(e) => setForm({ ...form, heating_advance_payments_total: e.target.value || null })} />
             </label>
             <label>
               Abrechnungstyp

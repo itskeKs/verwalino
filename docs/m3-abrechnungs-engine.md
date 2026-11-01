@@ -333,9 +333,11 @@ SDD §16: "All final settlement results … are stored as **immutable snapshots*
 | `tenant_profile_id` | `UUID NULL` FK→`tenant_profile` (`RESTRICT`) | denormalized addressee (audit/display). |
 | **Expected/actual (Soll/Ist) (§7):** | | |
 | `advance_payments_total` | `NUMERIC(14,2) NULL` | Sum of the operating cost advance payments made by the tenant in the period — **manually capturable in M3** (M6 replaces this with the real `Payment` sum). |
+| `heating_advance_payments_total` | `NUMERIC(14,2) NULL DEFAULT 0` | Heating advances; independent of operating-cost advances. Explicit unknown blocks computation. |
+| `heating_advance_payments_source` | `String(12) NOT NULL DEFAULT 'MANUAL'` | Independent MANUAL/DERIVED heating source. |
 | `advance_payments_source` | `String(12) NOT NULL DEFAULT 'MANUAL'` | `MANUAL` (M3) \| `DERIVED` (M6, from payments). CHECK. Makes the origin audit-proof. |
 | `total_cost` | `NUMERIC(14,2) NULL` | Sum of the apportioned expected shares (redundant header value; must be == Σ `settlement_line.amount` of the expected lines). |
-| `balance` | `NUMERIC(14,2) NULL` | `total_cost − advance_payments_total`; > 0 = additional payment due, < 0 = credit (§7). |
+| `balance` | `NUMERIC(14,2) NULL` | `total_cost − advance_payments_total − heating_advance_payments_total`; > 0 = additional payment due, < 0 = credit (§7). |
 | **Snapshot/immutability (ADR-0003):** | | |
 | `status` | `String(12) NOT NULL DEFAULT 'draft'` | `draft` \| `finalized`. CHECK. Freeze condition: `finalized`. |
 | `snapshot_payload` | `JSONB NULL` | **Canonical, complete** calculation basis + result (§1.7). NULL in a fresh `draft` before the first calculation; set from the first calculation; frozen from `finalized`. |
@@ -959,3 +961,25 @@ Implemented BK behavior: `POST /api/settlements/{id}/finalize` ends the DB trans
 - **Exact PDF layout / objection-deadline texts:** SDD §18 (§8.1).
 - **§ 35a EStG disclosure** in owner settlements: M4/SDD §18.
 - **Final legal sign-off:** tax advisor/attorney specializing in the field — not replaceable by this document.
+
+## Separate operating and heating advances (#67)
+
+`HEATING_CATEGORY_CODES` in `engine/types.py` is the single documented set:
+`HEIZUNG_ZENTRAL`, `WARMWASSER_ZENTRAL`, `MESSDIENST`, `CO2_KOSTEN`.
+A position in this set, or carrying a heating configuration, belongs to heating;
+all other billable positions belong to operating costs. Classification does not
+change the HeizkostenV allocation. Both component results use the existing
+cent-exact allocated tenant shares. The overall balance is total cost minus
+both advance totals; heating advance zero preserves the former overall result.
+
+New snapshots freeze both advance totals/sources, the heating tenant-cost share
+and the component result lines. Old finalized payloads remain unchanged: readers
+use the stored lines and canonical bytes without adding missing heating keys,
+so their SHA-256 and PDF remain valid. New computations use the bumped engine
+version. Corrections copy both totals and sources into the new draft.
+
+The advance proposal divides the frozen operating and heating tenant-cost
+shares separately by the same exact calendar-month weight. Accepting creates
+one full rent-change row, preserving the effective base rent. Old snapshots
+without a heating subtotal derive the split from frozen cost lines and heating
+pools; an incomplete frozen basis refuses the proposal.

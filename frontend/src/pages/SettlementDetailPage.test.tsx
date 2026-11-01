@@ -83,7 +83,7 @@ describe("SettlementDetailPage with database distribution keys", () => {
       id: "run-1", organization_id: "org-1", property_id: "property-1", unit_id: "unit-1",
       management_mandate_id: null, lease_agreement_id: "lease-1", tenant_profile_id: "tenant-1",
       run_type: "BK_MIETER", period_start: "2025-01-01", period_end: "2025-12-31",
-      status: "draft", advance_payments_total: "0.00", advance_payments_source: "MANUAL",
+      status: "draft", advance_payments_total: "0.00", advance_payments_source: "MANUAL", heating_advance_payments_total: "0.00", heating_advance_payments_source: "MANUAL",
       total_cost: null, balance: null, snapshot_sha256: null, engine_version: "m3.1.0",
       finalized_at: null, finalized_by: null, superseded_by_id: null, lines: [],
     };
@@ -187,22 +187,22 @@ const finalized: SettlementRun = {
   id: "run-1", organization_id: "org", property_id: "property-1", unit_id: "unit-1",
   management_mandate_id: null, lease_agreement_id: "lease-1", tenant_profile_id: "tenant-1",
   run_type: "BK_MIETER", period_start: "2026-01-01", period_end: "2026-12-31",
-  status: "finalized", advance_payments_total: "1800.00", advance_payments_source: "MANUAL",
+  status: "finalized", advance_payments_total: "1800.00", advance_payments_source: "MANUAL", heating_advance_payments_total: "0.00", heating_advance_payments_source: "MANUAL",
   total_cost: "1200.00", balance: "-600.00", snapshot_sha256: "original-snapshot",
   engine_version: "m3.1.0", finalized_at: "2027-01-01", finalized_by: "user",
   superseded_by_id: null, lines: [],
 };
 const proposal = {
   lease_agreement_id: "lease-1", tenant_cost: "1200.00", months: "12",
-  monthly_amount: "100.00", period_start: "2026-01-01", period_end: "2026-12-31",
+  monthly_amount: "100.00", heating_monthly_amount: "0.00", heating_tenant_cost: "0.00", period_start: "2026-01-01", period_end: "2026-12-31",
 };
 const originalLease = {
   id: "lease-1", unit_id: "unit-1", tenant_profile_id: "tenant-1", valid_from: "2025-01-01",
-  valid_to: null, base_rent: "700.00", advance_payment: "150.00", deposit: null, notes: "Original",
+  valid_to: null, base_rent: "700.00", advance_payment: "150.00", heating_advance_payment: "0.00", deposit: null, notes: "Original",
 };
 const applied = {
   id: "change-1", lease_agreement_id: "lease-1", valid_from: "2027-01-01",
-  base_rent: "725.00", advance_payment: "100.00", created_at: "2026-10-20T12:00:00Z",
+  base_rent: "725.00", advance_payment: "100.00", heating_advance_payment: "0.00", created_at: "2026-10-20T12:00:00Z",
 };
 function auth(role: string) {
   return { loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() };
@@ -222,7 +222,7 @@ function deferred<T>() {
 let fetchProposal: ReturnType<typeof vi.fn>;
 function posts() { return fetchProposal.mock.calls.filter(([, options]) => options?.method === "POST"); }
 function date(value: string) { fireEvent.change(screen.getByLabelText("Übernehmen ab", { exact: true }), { target: { value } }); }
-function accept() { fireEvent.click(screen.getByRole("button", { name: "Vorauszahlung übernehmen" })); }
+function accept() { fireEvent.click(screen.getByRole("button", { name: "Vorauszahlungen übernehmen" })); }
 
 describe("T28 monthly advance proposal", () => {
   beforeEach(() => {
@@ -238,7 +238,7 @@ describe("T28 monthly advance proposal", () => {
 
   it("provides helpers with exact URL and date-only payload", async () => {
     expect(await api.getAdvanceProposal("run-1")).toEqual(proposal);
-    const dateOnly = { valid_from: "2027-01-01", base_rent: "1.00", advance_payment: "999.00" };
+    const dateOnly = { valid_from: "2027-01-01", base_rent: "1.00", advance_payment: "999.00", heating_advance_payment: "0.00" };
     expect(await api.applyAdvanceProposal("run-1", dateOnly)).toEqual(applied);
     expect(fetchProposal.mock.calls.map(([url]) => url)).toEqual([
       "/api/settlements/run-1/advance-proposal", "/api/settlements/run-1/advance-proposal",
@@ -250,21 +250,21 @@ describe("T28 monthly advance proposal", () => {
     const leaseBefore = structuredClone(originalLease);
     showProposal(role);
     const region = await screen.findByRole("region", { name: "Vorauszahlungsvorschlag" });
-    expect(await within(region).findByText("100,00 EUR")).toBeVisible();
-    expect(region).toHaveTextContent("Neue Vorauszahlung");
-    expect(region).toHaveTextContent("1.200,00 EUR");
+    expect(await within(region).findByText("100,00 €")).toBeVisible();
+    expect(region).toHaveTextContent("Betriebskosten-Vorauszahlung");
+    expect(region).toHaveTextContent("1.200,00 €");
     expect(region).toHaveTextContent("12 Monate");
     expect(region).toHaveTextContent(/Kaltmiete.*gewählten Tag/);
     expect(screen.getByLabelText("Übernehmen ab", { exact: true })).toHaveValue("2027-01-01");
     accept();
     expect(await screen.findByText(/Miethistorie ergänzt/)).toBeVisible();
-    expect(region).toHaveTextContent("725,00 EUR");
+    expect(region).toHaveTextContent("725,00 €");
     expect(region).toHaveTextContent("2027-01-01");
     expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2027-01-01" });
     expect(screen.getByRole("button", { name: "PDF herunterladen" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Korrekturabrechnung erstellen" })).toBeEnabled();
     expect(screen.getByText("original-snapshot")).toBeVisible();
-    expect(screen.getByText("1800.00 EUR")).toBeVisible();
+    expect(screen.getByText("1.800,00 €")).toBeVisible();
     expect(api.getSettlement).toHaveBeenCalledTimes(1);
     expect(api.computeSettlement).not.toHaveBeenCalled();
     expect(api.finalizeSettlement).not.toHaveBeenCalled();
@@ -272,9 +272,9 @@ describe("T28 monthly advance proposal", () => {
   });
 
   it.each(["READ_ONLY", "UNKNOWN"])("shows proposal without acceptance controls for %s", async (role) => {
-    showProposal(role); expect(await screen.findByText("100,00 EUR")).toBeVisible();
+    showProposal(role); expect(await screen.findByText("100,00 €")).toBeVisible();
     expect(screen.queryByLabelText("Übernehmen ab", { exact: true })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Vorauszahlung übernehmen" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Vorauszahlungen übernehmen" })).toBeNull();
     expect(posts()).toHaveLength(0);
   });
 
@@ -291,26 +291,26 @@ describe("T28 monthly advance proposal", () => {
     expect(region).toHaveTextContent(/Lade.*Vorauszahlung/);
     await act(async () => pending.resolve(new Response(JSON.stringify({ detail: "Vorschlag nicht verfügbar" }), { status: 409 })));
     expect(await within(region).findByRole("alert")).toHaveTextContent("Vorschlag nicht verfügbar");
-    expect(region).not.toHaveTextContent("0,00 EUR");
+    expect(region).not.toHaveTextContent("0,00 €");
     fireEvent.click(within(region).getByRole("button", { name: "Erneut versuchen" }));
-    expect(await within(region).findByText("100,00 EUR")).toBeVisible();
+    expect(await within(region).findByText("100,00 €")).toBeVisible();
   });
 
   it.each([403, 404, 409, 422, "network"])("retains proposal/date after POST %s and allows retry", async (failure) => {
-    showProposal(); await screen.findByText("100,00 EUR"); date("2026-03-15");
+    showProposal(); await screen.findByText("100,00 €"); date("2026-03-15");
     if (failure === "network") fetchProposal.mockRejectedValueOnce(new TypeError("Netzwerk nicht erreichbar"));
     else fetchProposal.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Serverprüfung fehlgeschlagen" }), { status: Number(failure) }));
     accept();
     expect(await screen.findByRole("alert")).toHaveTextContent(failure === "network" ? "Netzwerk nicht erreichbar" : "Serverprüfung fehlgeschlagen");
     expect(screen.getByLabelText("Übernehmen ab", { exact: true })).toHaveValue("2026-03-15");
-    expect(screen.getByText("100,00 EUR")).toBeVisible();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Vorauszahlung übernehmen" })).toBeEnabled());
+    expect(screen.getByText("100,00 €")).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Vorauszahlungen übernehmen" })).toBeEnabled());
     accept(); await screen.findByText(/Miethistorie ergänzt/);
     expect(JSON.parse(posts()[1][1].body)).toEqual({ valid_from: "2026-03-15" });
   });
 
   it("rejects empty dates locally but permits historical dates", async () => {
-    showProposal(); await screen.findByText("100,00 EUR"); date(""); accept();
+    showProposal(); await screen.findByText("100,00 €"); date(""); accept();
     expect(await screen.findByRole("alert")).toHaveTextContent(/gültiges Datum/);
     expect(posts()).toHaveLength(0);
     date("2025-02-28"); accept(); await screen.findByText(/Miethistorie ergänzt/);
@@ -318,7 +318,7 @@ describe("T28 monthly advance proposal", () => {
   });
 
   it.each(["2026-02-30", "0000-01-01", "10000-01-01"])("rejects an invalid or unrepresentable acceptance date %s", async (value) => {
-    showProposal(); await screen.findByText("100,00 EUR"); date(value); accept();
+    showProposal(); await screen.findByText("100,00 €"); date(value); accept();
     expect(await screen.findByRole("alert")).toHaveTextContent(/gültiges Datum/);
     expect(posts()).toHaveLength(0);
   });
@@ -328,24 +328,24 @@ describe("T28 monthly advance proposal", () => {
     showProposal();
     const region = await screen.findByRole("region", { name: "Vorauszahlungsvorschlag" });
     expect(await within(region).findByRole("alert")).toHaveTextContent("Verbindung unterbrochen");
-    expect(region).not.toHaveTextContent("0,00 EUR");
+    expect(region).not.toHaveTextContent("0,00 €");
     expect(screen.queryByLabelText("Übernehmen ab")).toBeNull();
     fireEvent.click(within(region).getByRole("button", { name: "Erneut versuchen" }));
-    expect(await within(region).findByText("100,00 EUR")).toBeVisible();
+    expect(await within(region).findByText("100,00 €")).toBeVisible();
   });
 
   it("does not turn an unknown financial amount into zero", async () => {
-    fetchProposal.mockResolvedValueOnce(new Response(JSON.stringify({ ...proposal, monthly_amount: "", tenant_cost: "" })));
+    fetchProposal.mockResolvedValueOnce(new Response(JSON.stringify({ ...proposal, monthly_amount: "", tenant_cost: "", heating_monthly_amount: "", heating_tenant_cost: "" })));
     showProposal();
     const region = await screen.findByRole("region", { name: "Vorauszahlungsvorschlag" });
-    expect(await within(region).findByText("Nicht verfügbar")).toBeVisible();
-    expect(region).not.toHaveTextContent("0,00 EUR");
+    expect(await within(region).findAllByText("Nicht verfügbar")).toHaveLength(2);
+    expect(region).not.toHaveTextContent("0,00 €");
   });
 
   it("disables date/submit and synchronously prevents double submissions", async () => {
     const pending = deferred<Response>();
-    showProposal(); await screen.findByText("100,00 EUR"); fetchProposal.mockReturnValueOnce(pending.promise);
-    const button = screen.getByRole("button", { name: "Vorauszahlung übernehmen" });
+    showProposal(); await screen.findByText("100,00 €"); fetchProposal.mockReturnValueOnce(pending.promise);
+    const button = screen.getByRole("button", { name: "Vorauszahlungen übernehmen" });
     const form = button.closest("form")!;
     act(() => { fireEvent.submit(form); fireEvent.submit(form); });
     expect(posts()).toHaveLength(1); expect(button).toBeDisabled();
@@ -356,12 +356,12 @@ describe("T28 monthly advance proposal", () => {
 
   it("formats large decimal strings without losing cents", async () => {
     fetchProposal.mockResolvedValueOnce(new Response(JSON.stringify({ ...proposal, monthly_amount: "9007199254740993.01" })));
-    showProposal(); expect(await screen.findByText("9.007.199.254.740.993,01 EUR")).toBeVisible();
+    showProposal(); expect(await screen.findByText("9.007.199.254.740.993,01 €")).toBeVisible();
   });
 
   it.each([["2026-02-28", "2026-03-01"], ["2024-02-28", "2024-02-29"], ["9999-12-31", ""]])("defaults next day after %s when representable", async (end, expected) => {
     fetchProposal.mockResolvedValueOnce(new Response(JSON.stringify({ ...proposal, period_end: end })));
-    showProposal(); await screen.findByText("100,00 EUR");
+    showProposal(); await screen.findByText("100,00 €");
     expect(screen.getByLabelText("Übernehmen ab", { exact: true })).toHaveValue(expected);
   });
 
@@ -378,10 +378,10 @@ describe("T28 monthly advance proposal", () => {
   it("ignores late POST on another finalized run", async () => {
     const pending = deferred<Response>();
     vi.mocked(api.getSettlement).mockResolvedValueOnce(finalized).mockResolvedValueOnce({ ...finalized, id: "run-2" });
-    showProposal(); await screen.findByText("100,00 EUR"); fetchProposal.mockReturnValueOnce(pending.promise); accept();
+    showProposal(); await screen.findByText("100,00 €"); fetchProposal.mockReturnValueOnce(pending.promise); accept();
     fireEvent.click(screen.getByRole("link", { name: "Andere Abrechnung" }));
     await waitFor(() => expect(fetchProposal).toHaveBeenCalledWith("/api/settlements/run-2/advance-proposal", expect.anything()));
-    await screen.findByText("100,00 EUR");
+    await screen.findByText("100,00 €");
     await act(async () => pending.resolve(new Response(JSON.stringify(applied), { status: 201 })));
     expect(screen.queryByText(/Miethistorie ergänzt/)).toBeNull();
     expect(screen.getByLabelText("Übernehmen ab", { exact: true })).toBeEnabled();
@@ -406,7 +406,7 @@ describe("T28 monthly advance proposal", () => {
   });
 
   it("ignores completion after unmount", async () => {
-    const pending = deferred<Response>(); showProposal(); await screen.findByText("100,00 EUR");
+    const pending = deferred<Response>(); showProposal(); await screen.findByText("100,00 €");
     fetchProposal.mockReturnValueOnce(pending.promise); accept(); cleanup();
     await act(async () => pending.reject(new TypeError("Late network failure")));
     expect(screen.queryByRole("alert")).toBeNull();
@@ -429,6 +429,47 @@ async function showConsumption() {
   return screen.findByLabelText(/^Verbrauch \(1/);
 }
 describe("T31 meter consumption prefill", () => {
+  it('renders both component results and the overall balance with exact German amounts', async () => {
+    const labels = ['Betriebskosten abzüglich Vorauszahlungen', 'Heizkosten abzüglich Vorauszahlungen'];
+    vi.mocked(api.getSettlement).mockResolvedValueOnce({ ...consumptionDraft, total_cost: '2900.00', balance: '20.00',
+      advance_payments_total: '1800.00', heating_advance_payments_total: '1080.00',
+      lines: labels.map((label, index) => ({ id: `partial-${index}`, cost_entry_id: null, line_type: 'SUBTOTAL',
+        label, amount: index ? '-80.00' : '100.00', sort_order: index, cost_category_code: null,
+        distribution_key: null, total_amount: null, distribution_base_total: null, distribution_base_share: null,
+        time_share_days: null, time_share_total_days: null, note: 'Quelle: DERIVED' })) });
+    showProposal();
+    expect((await screen.findByText(labels[0])).closest('tr')).toHaveTextContent('100,00 €');
+    expect(screen.getByText(labels[1]).closest('tr')).toHaveTextContent('-80,00 €');
+    expect(screen.getByText('1.080,00 €')).toBeVisible();
+    expect(screen.getByText('20,00 €')).toBeVisible();
+  });
+
+  it('changes only the heating total and preserves the operating derived source', async () => {
+    const run = { ...consumptionDraft, advance_payments_total: '1800.00', advance_payments_source: 'DERIVED',
+      heating_advance_payments_total: '1080.00', heating_advance_payments_source: 'DERIVED' };
+    vi.mocked(api.getSettlement).mockResolvedValueOnce(run);
+    const save = vi.spyOn(api, 'setAdvancePayments').mockResolvedValue({ ...run,
+      heating_advance_payments_total: '1000.00', heating_advance_payments_source: 'MANUAL' });
+    showProposal();
+    fireEvent.click(await screen.findByRole('button', { name: 'Aendern' }));
+    fireEvent.change(screen.getByLabelText('Heizkosten-Vorauszahlung (EUR)'), { target: { value: '1000,00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
+    await waitFor(() => expect(save).toHaveBeenCalledExactlyOnceWith('run-1', { heating_advance_payments_total: '1000.00' }));
+    expect(screen.getByText('Betriebskosten-Vorauszahlungen').closest('tr')).toHaveTextContent('(DERIVED)');
+    expect(screen.getByText('Heizkosten-Vorauszahlungen').closest('tr')).toHaveTextContent('(MANUAL)');
+  });
+
+  it('keeps an unchanged unknown operating total when entering heating advances', async () => {
+    const run = { ...consumptionDraft, advance_payments_total: null };
+    vi.mocked(api.getSettlement).mockResolvedValueOnce(run);
+    const save = vi.spyOn(api, 'setAdvancePayments').mockResolvedValue({ ...run, heating_advance_payments_total: '90.00' });
+    showProposal();
+    fireEvent.click(await screen.findByRole('button', { name: 'Aendern' }));
+    fireEvent.change(screen.getByLabelText('Heizkosten-Vorauszahlung (EUR)'), { target: { value: '90.00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
+    await waitFor(() => expect(save).toHaveBeenCalledExactlyOnceWith('run-1', { heating_advance_payments_total: '90.00' }));
+  });
+
   it("shows excluded payments as a notice without a second financial amount", async () => {
     const notice = "Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: 1.234,56 €";
     vi.mocked(api.getSettlement).mockResolvedValueOnce({ ...consumptionDraft, lines: [{
@@ -440,7 +481,7 @@ describe("T31 meter consumption prefill", () => {
     await showConsumption();
     const row = (await screen.findByText(notice)).closest("tr")!;
     expect(row).toHaveTextContent(notice);
-    expect(row).not.toHaveTextContent("0.00 EUR");
+    expect(row).not.toHaveTextContent("0.00 €");
   });
   beforeEach(() => {
     vi.clearAllMocks();
