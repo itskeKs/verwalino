@@ -213,6 +213,33 @@ it.each(["Objekt *", "Mietvertrag *"])("explicitly labels the single-create sele
   expect(within(form).getByLabelText(label, { exact: true })).toBe(select);
 });
 
+it("offers and prefills the selected lease's clipped span and reclips on a lease change", async () => {
+  const original = vi.mocked(api.get).getMockImplementation()!;
+  vi.mocked(api.get).mockImplementation(async (url, options) => {
+    if (url.includes("/settlement-periods")) return [
+      { year: 2025, label: "2025/2026", period_start: "2025-04-01", period_end: "2026-03-31" },
+      { year: 2024, label: "2024/2025", period_start: "2024-04-01", period_end: "2025-03-31" },
+    ] as never;
+    if (url === "/api/leases") return [
+      { id: "lease-1", unit_id: "unit-1", tenant_profile_id: "tenant-1", valid_from: "2025-06-15", valid_to: "2025-09-30" },
+      { id: "lease-2", unit_id: "unit-1", tenant_profile_id: "tenant-1", valid_from: "2025-10-01", valid_to: null },
+    ] as never;
+    return original(url, options);
+  });
+  show(); await screen.findByRole("option", { name: "Sonnenhof" });
+  fireEvent.click(screen.getByRole("button", { name: "+ Neue Abrechnung" }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Objekt *" }), { target: { value: "property-1" } });
+  await screen.findByRole("option", { name: "2025/2026" });
+  fireEvent.change(screen.getByRole("combobox", { name: "Mietvertrag *" }), { target: { value: "lease-1" } });
+  await waitFor(() => expect(screen.getByLabelText("Abrechnungszeitraum von *")).toHaveValue("2025-06-15"));
+  expect(screen.getByLabelText("Abrechnungszeitraum bis *")).toHaveValue("2025-09-30");
+  expect(screen.getByRole("option", { name: /15.06.2025.*30.09.2025/ })).toBeVisible();
+  expect(screen.queryByRole("option", { name: /^2024\/2025/ })).toBeNull();
+  fireEvent.change(screen.getByRole("combobox", { name: "Mietvertrag *" }), { target: { value: "lease-2" } });
+  await waitFor(() => expect(screen.getByLabelText("Abrechnungszeitraum von *")).toHaveValue("2025-10-01"));
+  expect(screen.getByLabelText("Abrechnungszeitraum bis *")).toHaveValue("2026-03-31");
+});
+
 it.each(["BK-Sammellauf", "+ Neue Abrechnung"])("offers the property's April period in %s and keeps free dates", async action => {
   const original = vi.mocked(api.get).getMockImplementation()!;
   vi.mocked(api.get).mockImplementation(async (url, options) => url.includes("/settlement-periods") ? [

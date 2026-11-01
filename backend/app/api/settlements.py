@@ -226,6 +226,7 @@ class SettlementRunOut(BaseModel):
 class SettlementBatchSkipped(BaseModel):
     lease_agreement_id: str
     settlement_run_id: str
+    reason: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class SettlementBatchError(BaseModel):
@@ -354,8 +355,8 @@ async def create_settlement_batch(
     return SettlementBatchOut(
         created=[_run_out(run, []) for run in created],
         skipped=[SettlementBatchSkipped(
-            lease_agreement_id=str(run.lease_agreement_id), settlement_run_id=str(run.id),
-        ) for run in skipped],
+            lease_agreement_id=str(run.lease_agreement_id), settlement_run_id=str(run.id), reason=reason,
+        ) for run, reason in skipped],
         errors=[SettlementBatchError(lease_agreement_id=str(lease_id), code=error["code"], error=error["message"])
                 for lease_id, error in errors],
     )

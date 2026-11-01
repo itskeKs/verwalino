@@ -33,7 +33,8 @@ period bounds are identical (repeat/correction runs). For finalized bounds
 shared starts or ends and overlap on a boundary day all conflict. Mixed batches
 report conflicting leases as per-lease errors, create the other drafts, and
 continue skipping identical existing runs. An entirely conflicting batch retains
-409. Drafts never block creation. Short transition
+409. Drafts do not block single-statement creation. Batches skip identical drafts
+and reject any other overlapping draft of the same lease. Short transition
 periods remain possible after a property's start month changes. An
 inclusive period from 29 February 2024 through 28 February 2025 is twelve months
 and is accepted.
@@ -43,16 +44,109 @@ Period-conflict responses use `detail` objects with
 Mixed-batch errors retain their German `errors[].error` text and carry the same
 code in `errors[].code`.
 
-**Lease-change limitation:** the engine clips occupancy slices to the supplied
-statement window and apportions calendar-year costs between successive leases by
-actual occupancy days; vacancy is attributed to the owner. The persisted statement
-period is still the supplied period: creation and batch creation do not clip it
-to the target lease's active span. Also, when a cost's service period extends beyond
-a manually shortened statement window, distribution reassigns the full source
-amount to the in-window slices rather than prorating the source amount first.
-Automatic lease-bounded statement dates with correct short-window cost proration
-remain follow-up work. The scenarios separately prove explicit short-period overlap
-protection and lease-change apportionment within a full calendar-year calculation.
+**Lease-bounded statements (#122):** a complete readable property-period request
+is intersected with the target lease's active span at creation. Batch creation
+intersects its selected period separately for each overlapping lease; repeats
+match the resulting clipped dates. A finalized legacy run that already covers
+that clipped span is skipped with a German reason; partial overlaps remain batch
+errors and single creation retains the overlap 409. Any nonidentical **draft** overlap,
+whether covering, contained or partial, causes a batch overlap error; only finalized
+covering runs receive this skip. Identical existing drafts are still skipped, and a
+batch never creates another overlapping draft for that lease. Stored lease bounds are half-open
+`[valid_from, valid_to)`, so the inclusive statement ends on `valid_to - 1 day`.
+Free dates must be entirely inside the lease, including for scope-only clerks
+without property read access. A free period outside the lease, or a property
+period with no lease overlap, returns 422 with
+`code: "settlement_period_outside_lease"` and
+`message: "Der Abrechnungszeitraum muss innerhalb der Mietdauer liegen."`.
+The single-statement picker intersects offers with the selected lease, hides
+empty intersections and displays the clipped dates beside the period label.
+Changing the lease resets the dates; free dates and delayed-response protection
+remain available.
+
+**Short-window sources (#122):** time-based cost positions use actual service
+days (ADR-0004); there is no separate monthly cost-period type. The engine builds
+the complete service-period tenancy/vacancy cover and balances exact key × time
+weights once through `distribute_amount` (ADR-0005). A run selects only its
+intersection with each balanced cell. When a run cuts a cell, the rounding module
+uses the difference of floored cumulative day shares; the cell's last day retains
+its remaining cents. Adjacent windows therefore recover the complete source
+allocation, including vacancy attributed to the owner, independently of creation
+order. Full-year statements without a tenant change retain their in-period
+allocation. A 3,650-euro annual source in
+2025 carries 900 euros in January–March; January–September and October–December
+carry 2,730 and 920 euros. External metering-service amounts remain explicit
+occupancy amounts (the undated-input rule is stated in §5.2).
+
+### Sources crossing the property-period boundary (#122)
+
+Cross-boundary service periods are now apportioned to the selected property period.
+Previously, the whole source could be charged in both years. For building insurance
+of 3,650 euros covering 1 July 2024–30 June 2025, calendar-year statements now
+charge 1,840 euros in 2024 and 1,810 euros in 2025 for a single allocation cell
+(one unit without an occupant change), totaling 3,650 euros once. With multiple
+units or occupant cells, each cell selects its own cumulative cents: period sums
+can instead be, for example, 1,839.99 and 1,810.01 euros. The complete source
+still totals exactly 3,650 euros across the adjacent periods.
+An April–March property period follows the same rule (for example, an annual
+calendar-year property-tax source spans two such periods). This is an intentional
+change: recomputed drafts and corrections of these older runs can shift. Existing
+finalized snapshots remain frozen.
+
+### Full-property allocation and within-unit splitting (#122)
+
+Building-wide consumption weights use unit quantities from the full configured
+property settlement period, independently of the lease's statement window. Each
+source's cost pool retains its invoice service period, intersected with the property
+period when it crosses that boundary. A source outside the lease's statement window
+contributes zero. The unit's tenant/vacancy split is restricted to that source period;
+a short statement selects its balanced cells afterward.
+Area, heated area, units, MEA, persons and fixed manual amounts split by days through
+the central rounding module. Consumption quantities are measured over the property
+period. An interim reading on the outgoing tenant's last occupied day **or** the
+incoming tenant's first day denotes the same half-open boundary. Consistent duplicate
+readings across these dates or on the same day count as one counter value, selected
+in stable date/ID order. Conflicting values require manual entry with a clear
+reason. Property-period opening/closing readings never compete as interim readings.
+Exact interim readings split its consumption;
+missing interim readings split the known unit consumption by days, by analogy to
+§9b HeizkostenV. Other units need only their own period readings. Manual period
+consumption without interim readings uses the same day fallback, with a reason
+shown in suggestions and frozen in the automatic source snapshot. Interim readings
+at a direct change between two leases are excluded from the nearest property-period
+start/end selection: a 14 December
+tenant-change reading cannot replace a missing year-end reading and manufacture a
+zero for the successor. Readings at a lease/vacancy boundary remain ordinary period
+reading candidates within the existing ±31-day tolerance. Missing or ambiguous period quantities require manual input
+with a reason; they are not estimated. Manual unit consumption always denotes the
+**whole property-year quantity**, including for clipped statements. Person counts
+are per-unit property-year weights and must be entered consistently in every run
+belonging to that property year.
+
+For two units using 1,000 units each and a 1,000-euro water pool, A (January–September),
+B (October–December), and C (all year) receive 373.97 / 126.03 / 500.00 euros with
+the day fallback, totaling 1,000.00 euros. Interim quantities of 600 / 400 in the
+changed unit instead yield 300.00 / 200.00 / 500.00 euros. The other unit's
+interim pattern never changes these building shares. Heating keeps its separate
+base/consumption pools as described in §5.1, delimited by the invoice service period.
+Annual slice quantities set each unit's consumption weight; their source-period
+intersections set occupant proportions within that unit (day fallback if those
+quantities sum to zero). A December-only heating invoice cannot charge a departed
+September tenant. Day-split consumption quantities remain unrounded Decimal strings
+in snapshots (up to the engine's 50-digit precision); these are calculation evidence,
+not money or display precision. Only monetary allocation is rounded to cents.
+Cumulative cent selection means all
+successive leases plus vacancy reproduce each unit's full-period share exactly,
+regardless of statement creation order. No second run-window factor is applied to
+already selected consumption/heating shares. Free dates crossing a configured
+property-year boundary select from each full property-year allocation separately;
+advance payments are deducted once. The frozen `inputs.property_periods` retain
+the separate quantities, cost pools and selected results. External provider amounts
+still apply once to the selected statement.
+
+For a December-only water invoice of 100 euros with the same annual unit weights,
+A receives 0.00 euros and B/C receive 50.00 euros each. Two half-year invoices of
+600/400 euros yield A/B/C 400.00 / 100.00 / 500.00 euros with the day fallback.
 
 **Current overlap limitation:** the check runs under the acting user's normal
 row-level security. Overlaps with runs in other accounting scopes that the user
@@ -74,24 +168,83 @@ retain its default period. The organization-bound month getter is deferred to
 the readable property period or exactly closing the gap from the last finalized
 plan to the next property period; scope-only clerks supply their own dates,
 subject to the same twelve-month and overlap checks. Offered plan dates remain
-editable for mid-year scopes and gap-closing transitions. Year-only NK and
-Hausgeld advances are split across the twelve months of their assigned calendar
-year. A statement credits only the months it covers in that year, including
+editable for mid-year scopes and gap-closing transitions. Year-only NK advances
+are split across the calendar months the lease actually covers in the assigned
+year; Hausgeld uses all twelve months. A statement credits its covered months, including
 months in the second calendar year of a non-calendar period. The rounding module
-floors each monthly share to cents and assigns the remainder to December, so
-the last period covering that year receives the remaining cents. For 1,200 euros,
-January–June and July–December credit 600 euros each; April–December credits
+floors each monthly share to cents and assigns the remainder to the last covered month, so
+the last period covering that year receives the remaining cents. For a lease
+covering the whole calendar year with 1,200 euros paid, January–June and
+July–December credit 600 euros each; April–December credits
 900 euros. For 1,000 euros, January–November credit 83.33 euros each and December
 83.37 euros. A full calendar year still credits the full amount. Month shares
-do not depend on other drafts or finalization order; later statements cannot
-change earlier finalized shares. If a statement boundary splits a month, that
+do not depend on other drafts or finalization order while lease dates and booked payments are fixed;
+later statements cannot change earlier finalized shares. After a later lease-end
+edit, each year/month bucket uses already finalized snapshot credits in place
+of those windows' current shares, never reducing a new credit below zero. The last
+open statement takes the remainder: 300 euros already finalized from
+a 1,200-euro annual payment leaves 900 euros after entering a September end;
+245.16 euros already finalized from three 100-euro payments through 14 March
+leaves 54.84 euros after entering an end on 20 March. Frozen credits are read from
+the snapshot, never recomputed. This includes later calendar windows finalized
+first, preventing duplicate adjustments during reordering or corrections.
+Identical finalized periods count once and
+superseded runs do not count twice. `PATCH /api/leases/{id}` returns German,
+structured HTTP 409 (`lease_end_conflicts_finalized_statement`) if the proposed
+last occupied day falls before an active finalized DERIVED statement's last day
+and changes one of its advance-credit buckets. MANUAL statements do not block date edits;
+an end equal to the statement's last day is allowed. If a statement boundary splits a month, that
 month's share is prorated by its days using cumulative cent boundaries, so
 adjacent partial-month statements cannot credit that share twice. The NK finalization freshness check uses the
-same derivation. Explicit month assignments and ledger filtering are unchanged. See the
+same derivation. **Month-assigned advances (#136)** use the same cumulative day
+rule on their assigned calendar month: group the active booked payments by
+addressee, type and month, then credit only the days covered by the statement.
+The denominator is the lease's occupied days of that month: a lease starting
+15 March with ten booked 100-euro payments credits the full 1,000 euros, and a
+July-start lease with a year-only payment of 600 euros credits all 600 euros in
+its only July–December statement. The same rule applies at a mid-month lease end
+and never prorates an already prorated payment again. For a full-year lease with
+twelve 100-euro payments, January–14 March credits 245.16 euros and
+15 March–December credits 954.84 euros, exactly 1,200 euros together. Whole
+months and periods starting on the first remain unchanged. NK and paid Hausgeld
+share this engine rule; ledger filtering is unchanged. See the
 [WEG period rules](m4-weg-abrechnung.md#property-settlement-periods-68). The economic
 plan deadline in `fristen_service.py` is still calendar-based for non-January
 properties and remains a follow-up; it is not changed by #68.
 The per-property year overview and Anlage V stay on the calendar year.
+
+Booked NK advances assigned entirely outside the lease's months or years remain
+uncredited. Their total is shown in a non-financial `SUBTOTAL` notice line in the
+draft, frozen snapshot, API response and PDF: “Nicht angerechnet: Zahlungen
+außerhalb des Mietverhältnisses: X €”. This includes manually assigned payments
+and payments left outside the tenancy by a later shortening. The notice does not
+change costs, credited advances or the balance. Before-start months and wholly
+before-start years appear on the statement containing the lease start; after-end
+months and wholly after-end years appear on the statement containing the lease end.
+Each side appears once, even across calendar years or statement cuts within a month;
+other statements do not repeat it. A single statement containing both lease boundaries
+shows their combined total. This also works for a newly created lease-clipped statement.
+The structured amount is frozen in the snapshot;
+the API exposes it in the notice label.
+
+Legacy DERIVED snapshots without year/month credit buckets can still use fixed
+lease dates. After a date edit, `advance_credit_history_missing` (HTTP 409) only
+blocks derivation if a credit bucket in the legacy statement's covered span changes.
+Month-assigned advances from January–March remain usable when an end in June is
+entered later; a year-only payment whose covered-month denominator changes still
+requires correction or a confirmed MANUAL total. Create a correction with
+`POST /api/settlements/{id}/correction`, re-derive its advances, verify the inputs
+and finalize it. If another affected legacy statement blocks re-derivation,
+set the independently verified total through
+`PATCH /api/settlements/{correction_id}/advance-payments`, verify the inputs and
+finalize; never edit frozen snapshots. Notice calculation remains available for
+MANUAL statements and never invents a historical credit breakdown.
+
+After a date edit, several open drafts may each include the same outstanding
+difference. Finalizing one freezes its credit; another stale draft must be
+re-derived before finalization (`derived_total_stale`, HTTP 422). Late bookings
+assigned to an already finalized month likewise enter a later statement through
+the frozen-credit difference; the earlier snapshot stays unchanged.
 
 Automatic form prefill only applies while both date fields are empty. A delayed
 period-offer response preserves dates the user has already entered; choosing an
@@ -330,7 +483,11 @@ The distribution mathematics is identical to 2.2 (weight = number of persons in 
 
 ### 2.4 `VERBRAUCH` (consumption-based)
 
-Weight = measured consumption of the unit in the settlement period, determined from `meter`/`meter_reading` (M1: date, reading, period) as the **difference** (end reading − start reading) of the relevant period. Mathematics as in 2.2 (weight = consumption quantity). Special cases:
+Weight = measured consumption of the unit in the configured property settlement period,
+including for a clipped lease statement, determined from `meter`/`meter_reading` (M1:
+date, reading, period) as the **difference** (end reading − start reading). Each invoice
+retains its service-period cost pool (§3). Mathematics as in 2.2 (weight = consumption
+quantity). Special cases:
 
 - **Meter replacement / missing reading** in the period: **[OPEN/§18]** — estimation/substitute procedure is a professional matter (HeizkostenV/metering-service logic) and **not** automatic in M3. Provisionally: for `VERBRAUCH`, the engine requires complete, plausible start/end readings for each participating unit; if anything is missing → escalation, no silent estimation.
 - **Heating/hot water** do **not** run through the `VERBRAUCH` key in phase 1, but through `EXTERNE_ABRECHNUNG` (prepared externally in compliance with HeizkostenV, SDD §6.9/§7.1, §5 of this document). `VERBRAUCH` is intended for own meters (e.g., cold water) that the system maintains itself (SDD §6.2.1).
@@ -402,7 +559,7 @@ exact_addressee = G * (wᵢ / Σw)            // key share of unit i
                     * factor_period        // time share of the addressee period on the item
 ```
 
-Both factors are chained **exactly** (unrounded); the **largest-remainder rounding applies once at the end** across all final addressee amounts of the item (ADR-0005, order discipline). Never round in between.
+Both factors are chained **exactly** (unrounded); the **largest-remainder rounding applies once at the end** across all final addressee amounts of the item's complete service-period cover (ADR-0005, order discipline). Never round in between. A short run then selects the balanced cells' covered days using the cumulative cent boundaries described above; it never normalizes the entire source amount onto a shorter cover.
 
 **Important — order of the distribution universes:** A cost item is usually distributed **across the whole property** (all units by key), not only across the settled unit. For a **single** tenant BK (`BK_MIETER`, one lease), only the part that falls to **this** unit and **this** tenant period is of interest. The engine therefore conceptually computes:
 
@@ -494,10 +651,18 @@ PDF explicitly label internally computed lines as "HeizkostenV intern".
 All visible units and gapless tenant/vacancy periods participate. The base-cost basis is
 area/heated area or explicit volume × days; under
 [§9b HeizkostenV](https://www.gesetze-im-internet.de/heizkostenv/__9b.html) consumption
-costs are not estimated from the duration of the tenancy but obtained from exact boundary
-and interim readings. The final reading of the previous user is the opening meter reading
-of the subsequent user. Individual missing or ambiguous readings require transparent
-manual values, not zero values or an automatic §9a/§9b(3) substitute distribution. Vacancy
+costs use the building's full-period consumption denominator. Exact interim readings
+split the changed unit's consumption-dependent share. The final reading of the previous
+user is the opening reading of the subsequent user. Without an interim reading, known
+unit-period consumption is split by degree-days if available, otherwise by days; the
+current engine has no degree-day inputs, so it uses days. Basic costs always split by
+days. This does not estimate missing unit-period consumption under §9a: missing or
+ambiguous period readings still require transparent manual values. Heating suggestions
+retain independently measured slices when another slice cannot be resolved. A day-based
+slice shows the enclosing readings as its period or segment basis and explicitly states
+its day share; those readings are not presented as a direct slice measurement. A 10,000-euro pool
+with 70% consumption and the 600/400/1,000 quantities from §3 gives A/B/C
+3,221.92 / 1,778.08 / 5,000.00 euros, totaling exactly 10,000.00 euros. Vacancy
 retains the gross owner share; only for tenants, in the explicitly chosen
 non-consumption-based mode, is the §12 deduction reported.
 
@@ -512,6 +677,12 @@ change to existing metering-service/CO2 snapshots.
 ### 5.2 External heating/water settlement (`EXTERNE_ABRECHNUNG`)
 
 The engine **does not distribute**, but adopts the **per-unit tenant share** directly as an item of the unit concerned (§2.5). For a tenant change: separate external values per usage period (interim reading). In the BK line, `note = "extern abgerechnet (Messdienst)"` (settled externally (metering service)) and `distribution_key = EXTERNE_ABRECHNUNG` are reported (BGH: notice of external values, SDD §11).
+
+Undated external amounts explicitly describe the selected run, and are charged in
+full to its single matching tenant slice. Entering the same undated amount again in
+another free subwindow charges it again; the engine does not infer a shared annual
+provider amount. For successive occupancy periods supply separate dated provider
+amounts. This rule is unchanged by #122.
 
 > **[OPEN/§18] Input path for external values.** SDD §18 explicitly lists as open: "How external heating/water settlements are entered exactly: amount per unit, PDF attachment, total sum and plausibility check; adoption of the CO2 split value." M3 **does not decide this unilaterally**. The engine accepts external values as **structured input** (pure function); *how* they are captured/stored (a dedicated small table `external_heating_statement` per `cost_entry`/unit/usage period vs. JSONB on the `cost_entry`) is a [DECISION]/§18 question.
 > **Provisional assumption for M3 test cases (clearly marked):** External values are available as a per-(unit, usage period) tenant share (`external_amounts` in the payload, §1.7); the engine sums them per unit/addressee and checks plausibility against the item total amount. This assumption is **not** legally certified; the concrete input path and HeizkostenV compliance must be signed off professionally (metering service/tax advisor).
@@ -756,7 +927,7 @@ Implemented BK behavior: `POST /api/settlements/{id}/finalize` ends the DB trans
 | **M3-A5** | **No** automatic commercial advance deduction in M3; commercial use participates by key; advance deduction manual if needed. | Automatic advance deduction is its own building block. | Tax advisor/attorney specializing in the field (§6.3) |
 | **M3-A6** | Advance payment total **manual** on the run (`advance_payments_source='MANUAL'`); M6 replaces it with `DERIVED`. | M6 connection prepared via the `source` discriminator. | (Roadmap M6) |
 | **M3-A7** | Number of persons (`PERSONENZAHL` key) as a per-lease value, constant over the lease period (M1 does not model this time-dependently). | A time-dependent number of persons would need a model extension. | Product (§2.3) |
-| **M3-A8** | External values/consumption must be available **complete & plausible**; missing → escalation, **no** silent estimation. | Substitute/estimation procedure (HeizkostenV) is its own professional building block. | Tax advisor/metering service (§2.4/§5) |
+| **M3-A8** | External values and unit-period consumption must be **complete & plausible**; missing → escalation. Missing interim readings split known consumption by days (§3). | Substitute/estimation procedure (HeizkostenV) is its own professional building block. | Tax advisor/metering service (§2.4/§5) |
 
 ---
 

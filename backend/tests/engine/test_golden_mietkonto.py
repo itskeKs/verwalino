@@ -41,6 +41,36 @@ YEAR_START = date(2025, 1, 1)
 YEAR_END = date(2025, 12, 31)
 
 
+@pytest.mark.parametrize("month,amount,first_end,lease_end,frozen,expected", [
+    (None, "1200.00", date(2025, 3, 31), date(2025, 9, 30), "300.00", "900.00"),
+    (3, "100.00", date(2025, 3, 14), date(2025, 3, 20), "45.16", "54.84"),
+])
+def test_late_lease_end_credits_the_frozen_remainder(month, amount, first_end, lease_end, frozen, expected):
+    payment = PaymentInput(uuid.UUID(int=1), PT_NK_VORAUSZAHLUNG, "IN", Decimal(amount),
+        2025, month, lease_agreement_id=uuid.UUID(int=2))
+    filt = AdvanceFilter(frozenset({PT_NK_VORAUSZAHLUNG}), 2025, payment.lease_agreement_id)
+    from datetime import timedelta
+
+    assert mietkonto.derive_advance_total_for_period([payment], filt, first_end + timedelta(days=1),
+        lease_end, lease_start=YEAR_START, lease_end=lease_end,
+        finalized_credits=(mietkonto.AdvanceCredit(2025, month, YEAR_START, first_end, Decimal(frozen)),),
+    ) == Decimal(expected)
+
+
+@pytest.mark.parametrize("start,end,credits,expected", [
+    (date(2025, 4, 1), date(2025, 6, 30), [(YEAR_START, date(2025, 3, 31), "300.00"),
+        (date(2025, 7, 1), date(2025, 9, 30), "500.01")], "399.99"),
+    (YEAR_START, date(2025, 3, 31), [(date(2025, 4, 1), date(2025, 9, 30), "900.00")], "300.00"),
+])
+def test_later_frozen_statements_preserve_the_remainder_during_reordering_and_correction(start, end, credits, expected):
+    payment = PaymentInput(uuid.UUID(int=1), PT_NK_VORAUSZAHLUNG, "IN", Decimal("1200.00"),
+        2025, None, lease_agreement_id=uuid.UUID(int=2))
+    filt = AdvanceFilter(frozenset({PT_NK_VORAUSZAHLUNG}), 2025, payment.lease_agreement_id)
+    frozen = tuple(mietkonto.AdvanceCredit(2025, None, a, b, Decimal(amount)) for a, b, amount in credits)
+    assert mietkonto.derive_advance_total_for_period([payment], filt, start, end,
+        lease_start=YEAR_START, lease_end=date(2025, 9, 30), finalized_credits=frozen) == Decimal(expected)
+
+
 def _U(n: int) -> uuid.UUID:
     return uuid.UUID(int=n)
 
@@ -72,6 +102,65 @@ def _pay(
         is_reversed=is_reversed,
         is_reversal=is_reversal,
     )
+
+
+def test_outside_lease_notice_belongs_only_to_the_statement_containing_lease_start():
+    payments = [_pay(1, PT_NK_VORAUSZAHLUNG, "1200.00", year=2024, lease=_U(50)),
+        _pay(2, PT_NK_VORAUSZAHLUNG, "20.00", year=2024, month=6, lease=_U(50)),
+        _pay(3, PT_NK_VORAUSZAHLUNG, "30.00", year=2024, month=12, lease=_U(50)),
+        _pay(4, PT_NK_VORAUSZAHLUNG, "99.00", year=2023, month=12, lease=_U(50))]
+    filt = AdvanceFilter(frozenset({PT_NK_VORAUSZAHLUNG}), 2024, _U(50))
+    totals = [mietkonto.uncredited_advance_total(payments, filt, YEAR_START, None,
+        period_start=start, period_end=end) for start, end in (
+            (date(2024, 1, 1), date(2024, 12, 31)),
+            (YEAR_START, date(2025, 1, 1)), (date(2025, 1, 2), YEAR_END))]
+    assert totals == [Decimal("0.00"), Decimal("1250.00"), Decimal("0.00")]
+    assert sum(totals) == Decimal("1250.00")
+
+
+def test_outside_lease_notice_belongs_only_to_the_statement_containing_lease_end():
+    payments = [_pay(m, PT_NK_VORAUSZAHLUNG, "100.00", month=m, lease=_U(50)) for m in (2, 3, 7, 8)]
+    filt = AdvanceFilter(frozenset({PT_NK_VORAUSZAHLUNG}), 2025, _U(50))
+    totals = [mietkonto.uncredited_advance_total(payments, filt, date(2025, 3, 15), date(2025, 6, 30),
+        period_start=start, period_end=end) for start, end in (
+            (date(2025, 3, 15), date(2025, 3, 31)), (date(2025, 4, 1), date(2025, 6, 29)),
+            (date(2025, 6, 30), date(2025, 6, 30)), (date(2025, 7, 1), YEAR_END))]
+    assert totals == [Decimal("100.00"), Decimal("0.00"), Decimal("200.00"), Decimal("0.00")]
+
+
+@pytest.mark.parametrize("ptype,addressee", [("NK_VORAUSZAHLUNG", "lease"), ("HAUSGELD_VORSCHUSS", "owner")])
+@pytest.mark.parametrize("cut,expected", [(14, "245.16"), (31, "300.00")])
+def test_month_assigned_advances_reconcile_adjacent_periods(ptype, addressee, cut, expected):
+    from datetime import timedelta
+
+    payments = [_pay(m, ptype, "100.00", month=m, **{addressee: _U(50)}) for m in range(1, 13)]
+    # Drafts, reversed payments, other types and addressees cannot enter either share.
+    payments += [_pay(20, ptype, "999.99", month=3, is_booked=False, **{addressee: _U(50)}),
+                 _pay(21, ptype, "999.99", month=3, is_reversed=True, **{addressee: _U(50)})]
+    filt = AdvanceFilter(types=frozenset({ptype}), year=2025,
+                         **{("lease_agreement_id" if addressee == "lease" else "owner_profile_id"): _U(50)})
+    boundary = date(2025, 3, cut)
+    first = mietkonto.derive_advance_total_for_period(payments, filt, date(2025, 1, 1), boundary)
+    second = mietkonto.derive_advance_total_for_period(payments, filt, boundary + timedelta(days=1), date(2025, 12, 31))
+    assert first == Decimal(expected)
+    assert first + second == Decimal("1200.00")
+
+
+@pytest.mark.parametrize("ptype,addressee", [("NK_VORAUSZAHLUNG", "lease"), ("HAUSGELD_VORSCHUSS", "owner")])
+@pytest.mark.parametrize("start,end,months,amount,expected", [
+    (date(2025, 3, 15), None, list(range(3, 13)), "100.00", "1000.00"),
+    (date(2025, 7, 1), None, [None], "600.00", "600.00"),
+    (date(2020, 1, 1), date(2025, 3, 14), [1, 2, 3], "100.00", "300.00"),
+    (date(2025, 3, 15), None, [3], "54.84", "54.84"),
+])
+def test_advance_lease_boundaries_preserve_the_booked_amount(ptype, addressee, start, end, months, amount, expected):
+    payments = [_pay(i, ptype, amount, month=m, **{addressee: _U(50)}) for i, m in enumerate(months)]
+    filt = AdvanceFilter(types=frozenset({ptype}), year=2025,
+                         **{("lease_agreement_id" if addressee == "lease" else "owner_profile_id"): _U(50)})
+    assert mietkonto.derive_advance_total_for_period(
+        payments, filt, max(start, YEAR_START), min(end or YEAR_END, YEAR_END),
+        lease_start=start, lease_end=end,
+    ) == Decimal(expected)
 
 
 # ===========================================================================

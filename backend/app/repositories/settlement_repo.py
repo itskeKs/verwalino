@@ -55,6 +55,20 @@ class SettlementRunRepository(TenantRepository[SettlementRun]):
         await self._session.flush()
         return entity
 
+    async def finalized_bk_for_advance_years(
+        self, lease_id: uuid.UUID, period_start: date, period_end: date,
+    ) -> Sequence[SettlementRun]:
+        """Other active frozen windows sharing an assigned year with this run."""
+        stmt = (self._base_query().where(
+            SettlementRun.lease_agreement_id == lease_id,
+            SettlementRun.run_type == "BK_MIETER", SettlementRun.status == "finalized",
+            SettlementRun.superseded_by_id.is_(None),
+            or_(SettlementRun.period_end < period_start, SettlementRun.period_start > period_end),
+            SettlementRun.period_end >= date(period_start.year, 1, 1),
+            SettlementRun.period_start <= date(period_end.year, 12, 31),
+        ).order_by(SettlementRun.period_start, SettlementRun.period_end, SettlementRun.created_at.desc()))
+        return (await self._session.execute(stmt)).scalars().all()
+
     async def delete(self, entity: SettlementRun) -> None:
         """Delete a draft run. Trigger blocks finalized runs."""
         await self._session.delete(entity)
@@ -136,6 +150,7 @@ class SettlementRunRepository(TenantRepository[SettlementRun]):
         self, property_id: uuid.UUID, period_start: date, period_end: date,
         scope_id: uuid.UUID | None,
     ) -> Sequence[SettlementRun]:
+        """Active intersecting runs; the caller matches each lease's clipped dates."""
         binding = select(AccountingScopeBinding.id).where(
             AccountingScopeBinding.organization_id == self._org_id,
             AccountingScopeBinding.settlement_run_id == SettlementRun.id,
@@ -145,7 +160,7 @@ class SettlementRunRepository(TenantRepository[SettlementRun]):
         stmt = (
             self._base_query()
             .where(SettlementRun.property_id == property_id, SettlementRun.run_type == "BK_MIETER")
-            .where(SettlementRun.period_start == period_start, SettlementRun.period_end == period_end)
+            .where(SettlementRun.period_start <= period_end, SettlementRun.period_end >= period_start)
             .where(SettlementRun.superseded_by_id.is_(None), context)
             .order_by(SettlementRun.created_at, SettlementRun.id)
         )

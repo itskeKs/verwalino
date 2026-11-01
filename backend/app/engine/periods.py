@@ -434,3 +434,16 @@ def _assert_full_cover(
                 f"Gap or overlap in cover for unit {unit_id}: "
                 f"[..{prev.end}] then [{nxt.start}..]"
             )
+
+
+def property_period_windows(start: date, end: date, start_month: int) -> list[tuple[date, date]]:
+    """Partition inclusive free dates at configured property-year boundaries."""
+    windows = []
+    while start <= end:
+        year_end = period_for_date(start_month, start)[1]
+        stop = min(end, year_end)
+        windows.append((start, stop))
+        if stop == end:
+            break
+        start = stop + timedelta(days=1)
+    return windows

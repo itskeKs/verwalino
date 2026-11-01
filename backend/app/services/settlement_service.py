@@ -25,10 +25,11 @@ from __future__ import annotations
 import uuid
 import json
 from calendar import monthrange
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 from fractions import Fraction
+from types import SimpleNamespace
 
 from fastapi import HTTPException
 from app.core.rbac import ScopeCapability
@@ -37,14 +38,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.engine.canonical import canonical_json, sha256_hex
-from app.engine.periods import validate_settlement_period
+from app.engine.periods import validate_settlement_period, period_for_date, build_unit_cover, property_period_windows
 from app.engine.rounding import DistributionError
 from app.engine.mietkonto import _money
 from app.services.lease_rent_change_service import LeaseRentChangeService
-from app.services.heating_input_service import HeatingConfig, HeatingSliceOverride, HeatingInputService
+from app.services.heating_input_service import HeatingConfig, HeatingSliceOverride, HeatingInputService, property_period_run
 from app.engine.settlement import EngineValidationError, compute_bk_settlement
 from app.engine.snapshot import build_snapshot_payload
-from app.engine.meter_consumption import MeterReadingInput, MeterConsumptionError, derive_consumption
+from app.engine.meter_consumption import MeterReadingInput, MeterConsumptionError, split_consumption
 from app.repositories.meter_repo import MeterRepository, MeterReadingRepository
 from app.services.render_names import (
     DISPLAY_NAMES_KEY,
@@ -80,10 +81,10 @@ ENGINE_VERSION = "m3.1.0"
 
 
 class SettlementPeriodConflict(HTTPException):
-    def __init__(self):
+    def __init__(self, message="Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags."):
         super().__init__(409, {
             "code": "settlement_period_conflict",
-            "message": "Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags.",
+            "message": message,
         })
 
 
@@ -253,6 +254,22 @@ class SettlementService:
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
+    @staticmethod
+    def _lease_period(lease, start: date, end: date) -> tuple[date, date]:
+        """Intersect inclusive run dates with the stored half-open lease span."""
+        last = db_exclusive_to_engine_inclusive(lease.valid_to)
+        clipped = max(start, lease.valid_from), min(end, last) if last is not None else end
+        if clipped[0] > clipped[1]:
+            raise SettlementService._outside_lease()
+        return clipped
+
+    @staticmethod
+    def _outside_lease() -> HTTPException:
+        return HTTPException(422, {
+            "code": "settlement_period_outside_lease",
+            "message": "Der Abrechnungszeitraum muss innerhalb der Mietdauer liegen.",
+        })
+
     async def create_draft(
         self,
         property_id: uuid.UUID,
@@ -291,6 +308,14 @@ class SettlementService:
         await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(run, accounting_scope_id)
         # prepare_new holds the existing organization financial-input lock.
         self._validate_period(period_start, period_end)
+        clipped = self._lease_period(lease, period_start, period_end)
+        if clipped != (period_start, period_end):
+            from app.repositories.property_repo import PropertyRepository
+
+            prop = await PropertyRepository(self._session, self._org_id).get_by_id(property_id)
+            if prop is None or (period_start, period_end) != period_for_date(prop.fiscal_year_start_month, period_start):
+                raise self._outside_lease()
+        run.period_start, run.period_end = period_start, period_end = clipped
         if await self._runs.has_conflicting_period(run):
             raise SettlementPeriodConflict()
         run = await self._runs.create(run)
@@ -316,7 +341,7 @@ class SettlementService:
         period_start: date,
         period_end: date,
         accounting_scope_id: uuid.UUID | None = None,
-    ) -> tuple[list[SettlementRun], list[SettlementRun], list[tuple[uuid.UUID, dict[str, str]]]]:
+    ) -> tuple[list[SettlementRun], list[tuple[SettlementRun, str | None]], list[tuple[uuid.UUID, dict[str, str]]]]:
         """Create missing lease drafts in the ambient, serialized transaction."""
         scope = FinancialScopeService(self._session, self._org_id, self._user_id)
         # Validate even an empty property/period before returning an empty batch.
@@ -335,21 +360,39 @@ class SettlementService:
         existing = await self._runs.active_bk_for_period(
             property_id, period_start, period_end, scope_id,
         )
-        by_lease = {run.lease_agreement_id: run for run in existing}
+        by_period = {(run.lease_agreement_id, run.period_start, run.period_end): run for run in existing}
         created, skipped, errors = [], [], []
         for lease in leases:
-            if lease.id in by_lease:
-                skipped.append(by_lease[lease.id])
+            start, end = self._lease_period(lease, period_start, period_end)
+            existing_run = by_period.get((lease.id, start, end))
+            reason = None
+            if existing_run is None:
+                existing_run = next((run for run in existing
+                    if run.lease_agreement_id == lease.id and run.status == "finalized"
+                    and run.period_start <= start and run.period_end >= end), None)
+                if existing_run is not None:
+                    reason = "Eine finalisierte Abrechnung deckt den gekürzten Mietzeitraum bereits ab."
+            if existing_run is not None:
+                skipped.append((existing_run, reason))
             else:
+                overlapping = next((run for run in existing
+                    if run.lease_agreement_id == lease.id
+                    and run.period_start <= end and run.period_end >= start), None)
+                if overlapping is not None:
+                    conflict = SettlementPeriodConflict(
+                        "Abrechnungszeitraum überschneidet einen bestehenden Entwurf dieses Mietvertrags."
+                    ) if overlapping.status == "draft" else SettlementPeriodConflict()
+                    errors.append((lease.id, conflict.detail))
+                    continue
                 try:
                     created.append(await self.create_draft(
-                        property_id, lease.id, period_start, period_end,
+                        property_id, lease.id, start, end,
                         accounting_scope_id=scope_id,
                     ))
                 except SettlementPeriodConflict as exc:
                     errors.append((lease.id, exc.detail))
         if errors and not created and not skipped:
-            raise SettlementPeriodConflict()
+            raise HTTPException(409, errors[0][1])
         return created, skipped, errors
 
     async def set_advance_payments(
@@ -636,11 +679,15 @@ class SettlementService:
         if run.status != "draft":
             raise HTTPException(409, "Zähler-Vorbelegung ist nur für Entwürfe verfügbar; finalisierte Eingaben bleiben eingefroren.")
         units = await self._runs.units_for_property(run.property_id)
-        entries = await self._runs.active_cost_entries_for_period(run.property_id, run.period_start, run.period_end)
+        allocation_run = await property_period_run(self._session, self._org_id, run)
+        entries = await self._runs.active_cost_entries_for_period(run.property_id, allocation_run.period_start, allocation_run.period_end)
         return await self._consumption_candidates(run, units, entries)
 
     def _snapshot_with_meter_sources(self, inp, result):
         payload = build_snapshot_payload(inp, result)
+        if inp.advance_payments_source == "DERIVED":
+            payload["inputs"]["advance_payment_credits"] = [
+                {"year": c.year, "month": c.month, "amount": str(c.amount)} for c in self._advance_credits]
         if self._meter_sources:
             payload["inputs"]["meter_consumption_sources"] = self._meter_sources
         payload['extra_inputs'] = self._extra_payload
@@ -659,7 +706,8 @@ class SettlementService:
         await scope.enter(run,capability=ScopeCapability.READ,computation=True)
         if run.status != 'draft':
             raise HTTPException(409,'Heizkosten-Vorbelegung nur für Entwürfe')
-        entries = await self._runs.active_cost_entries_for_period(run.property_id,run.period_start,run.period_end)
+        allocation_run = await property_period_run(self._session, self._org_id, run)
+        entries = await self._runs.active_cost_entries_for_period(run.property_id,allocation_run.period_start,allocation_run.period_end)
         found = next(((entry,category) for entry,category in entries if entry.id==cost_entry_id),None)
         if found is None or found[1] is None or found[1].code not in {'HEIZUNG_ZENTRAL','WARMWASSER_ZENTRAL'}:
             raise HTTPException(404,'Heating cost source not found')
@@ -672,6 +720,7 @@ class SettlementService:
                  and entry.tenant_apportionable != "NICHT_UMLAGEFAEHIG" and category is not None}
         if not kinds:
             return []
+        run = await property_period_run(self._session, self._org_id, run)
         meters = await MeterRepository(self._session, self._org_id).list_by_property(run.property_id)
         kind = next(iter(kinds)) if len(kinds) == 1 else None
         by_unit = {unit.id: [meter for meter in meters
@@ -679,7 +728,7 @@ class SettlementService:
                    for unit in units}
         meter_ids = [rows[0].id for rows in by_unit.values() if len(rows) == 1]
         readings = await MeterReadingRepository(self._session, self._org_id).list_boundary_readings(
-            meter_ids, run.period_start, run.period_end)
+            meter_ids, run.period_start, run.period_end, include_interim=True)
         by_meter = {}
         for row in readings:
             by_meter.setdefault(row.meter_id, []).append(MeterReadingInput(row.id, row.reading_date, row.value))
@@ -687,7 +736,11 @@ class SettlementService:
         def boundary(row):
             return {"id": str(row.id), "reading_date": row.reading_date.isoformat(), "value": f"{row.value:.4f}"}
 
+        leases = [LeasePeriodInput(l.id, l.unit_id, l.tenant_profile_id, l.valid_from,
+                  db_exclusive_to_engine_inclusive(l.valid_to))
+                  for l in await self._runs.leases_for_property(run.property_id)]
         candidates = []
+        self._consumption_periods = {}
         for unit in units:
             item = {"unit_id": str(unit.id), "unit_label": unit.number,
                     "consumption": None, "meter_id": None, "start_reading": None,
@@ -700,12 +753,21 @@ class SettlementService:
             else:
                 meter = matches[0]
                 try:
-                    measured = derive_consumption(by_meter.get(meter.id, ()), run.period_start, run.period_end)
+                    covers = build_unit_cover(unit.id, run.period_start, run.period_end, leases, [])
+                    split = split_consumption(by_meter.get(meter.id, ()), run.period_start, run.period_end, covers)
+                    measured, periods = split.measured, split.periods
                 except MeterConsumptionError as exc:
                     item["reason"] = str(exc)
                 else:
+                    if len(covers) > 1:
+                        self._consumption_periods[unit.id] = periods
+                        item["occupant_consumption"] = [
+                            {"from": a.isoformat(), "to": b.isoformat(), "consumption": str(q)} for a,b,q in periods]
+                        item["interim_readings"] = [boundary(r) for r in by_meter[meter.id]
+                                                   if run.period_start < r.reading_date < run.period_end]
                     item.update(consumption=f"{measured.consumption:.4f}", meter_id=str(meter.id),
-                                start_reading=boundary(measured.start_reading), end_reading=boundary(measured.end_reading))
+                                start_reading=boundary(measured.start_reading), end_reading=boundary(measured.end_reading),
+                                reason=split.reason)
             candidates.append(item)
         return candidates
 
@@ -718,6 +780,17 @@ class SettlementService:
         self._extra_payload = json.loads(json.dumps(asdict(extras),default=str))
         self._heating_sources = {}
         inp = await self._load_engine_input(run, extras)
+        from app.services.payment_service import PaymentService
+
+        payments = PaymentService(self._session, self._org_id, self._user_id)
+        self._advance_credits = ()
+        if run.advance_payments_source == "DERIVED":
+            self._advance_credits, excluded = await payments.nk_advance_credits_for_period(
+                run.lease_agreement_id, run.period_start, run.period_end)
+        else:
+            excluded = await payments.uncredited_nk_advance_total(
+                run.lease_agreement_id, run.period_start, run.period_end)
+        inp = replace(inp, uncredited_advance_payments_total=excluded)
         try:
             result = compute_bk_settlement(inp)
         except (EngineValidationError, DistributionError, PeriodOverlapError) as exc:
@@ -742,16 +815,44 @@ class SettlementService:
         if prop is None:
             raise HTTPException(status_code=404, detail="Property not found")
 
+        windows = property_period_windows(run.period_start, run.period_end, prop.fiscal_year_start_month)
+        if len(windows) > 1:
+            parts, sources = [], []
+            first_start = period_for_date(prop.fiscal_year_start_month, run.period_start)[0]
+            last_end = period_for_date(prop.fiscal_year_start_month, run.period_end)[1]
+            entries = await self._runs.active_cost_entries_for_period(run.property_id, first_start, last_end)
+            if not {c.cost_entry_id for c in extras.heating_inputs} <= {e.id for e,_ in entries}:
+                raise HTTPException(422, 'Heizkosten: unbekannte aktive Kostenquelle')
+            for start, end in windows:
+                year_start, year_end = period_for_date(prop.fiscal_year_start_month, start)
+                ids = {e.id for e,_ in entries if e.service_period_from <= year_end and e.service_period_to >= year_start}
+                heating = [replace(c, slices=[s for s in c.slices
+                    if s.period_from >= year_start and s.period_to <= year_end])
+                    for c in extras.heating_inputs if c.cost_entry_id in ids]
+                context = SimpleNamespace(property_id=run.property_id, lease_agreement_id=run.lease_agreement_id,
+                    period_start=start, period_end=end, advance_payments_total=Decimal(0),
+                    advance_payments_source=run.advance_payments_source)
+                parts.append(await self._load_engine_input(context, replace(extras, heating_inputs=heating)))
+                sources.extend(self._meter_sources)
+            self._meter_sources = sources
+            return replace(parts[0], period_start=run.period_start, period_end=run.period_end,
+                advance_payments_total=run.advance_payments_total, allocation_inputs=tuple(parts))
+
         units = await self._runs.units_for_property(run.property_id)
         leases = await self._runs.leases_for_property(run.property_id)
         ownership = await self._runs.ownership_for_property(run.property_id)
+        allocation_run = await property_period_run(self._session, self._org_id, run)
         entries = await self._runs.active_cost_entries_for_period(
-            run.property_id, run.period_start, run.period_end
+            run.property_id, min(allocation_run.period_start, run.period_start),
+            max(allocation_run.period_end, run.period_end)
         )
-
+        # Annual consumption weights do not widen invoice service periods.
+        # Sources outside this statement need no manual quantities or extras.
         heating_configs = {c.cost_entry_id:c for c in extras.heating_inputs}
         if len(heating_configs)!=len(extras.heating_inputs) or not set(heating_configs)<= {e.id for e,_ in entries}:
             raise HTTPException(422,'Heizkosten: doppelte oder unbekannte aktive Kostenquelle')
+        entries = [(e,c) for e,c in entries
+                   if e.service_period_from <= run.period_end and e.service_period_to >= run.period_start]
         generic_entries = [(e,c) for e,c in entries if e.id not in heating_configs]
 
         # Per-unit metric overrides (consumption / person count).
@@ -761,6 +862,7 @@ class SettlementService:
                                 and entry.tenant_apportionable != "NICHT_UMLAGEFAEHIG"
                                 for entry, _category in generic_entries)
         consumptions = {}
+        self._consumption_periods = {}
         if needs_consumption:
             missing = [unit for unit in units if metric_by_unit.get(unit.id) is None
                        or metric_by_unit[unit.id].consumption is None]
@@ -769,6 +871,8 @@ class SettlementService:
             for unit in units:
                 metric = metric_by_unit.get(unit.id)
                 if metric is not None and metric.consumption is not None:
+                    # Manual unit quantities describe the property year,
+                    # including when this lease's statement is clipped.
                     value = metric.consumption
                     if not value.is_finite() or value < 0:
                         raise HTTPException(422, f"Handeingabe VERBRAUCH für Einheit {unit.number} muss endlich und nichtnegativ sein.")
@@ -792,6 +896,7 @@ class SettlementService:
                 mea=u.mea,
                 person_count=m.person_count if m else None,
                 consumption=consumptions.get(u.id, m.consumption if m else None),
+                consumption_periods=self._consumption_periods.get(u.id, ()),
             )
 
         unit_inputs = tuple(unit_input(u) for u in units)
@@ -877,7 +982,8 @@ class SettlementService:
             period_start=run.period_start,
             period_end=run.period_end,
             property=PropertyInput(
-                id=prop.id, name=prop.name, management_type=prop.management_type
+                id=prop.id, name=prop.name, management_type=prop.management_type,
+                fiscal_year_start_month=prop.fiscal_year_start_month
             ),
             target_lease_agreement_id=run.lease_agreement_id,
             units=unit_inputs,
