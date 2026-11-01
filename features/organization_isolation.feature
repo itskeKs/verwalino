@@ -8,6 +8,11 @@ Feature: Organization isolation
     And each organization has a property, a person and a bank account of its own
     And an administrator of "Verwaltung Alpha" is signed in
 
+  Scenario: Another organization cannot read or change separate lease advances
+    Given a lease with 750 euros rent, 150 euros operating and 90 euros heating advance
+    When another organization requests the lease's advance history and statement actions
+    Then all separate advance requests are reported as not found
+
   Scenario Outline: A user sees only the <records> of their own organization
     When the user lists the <records>
     Then the list shows the <records> of "Verwaltung Alpha"
