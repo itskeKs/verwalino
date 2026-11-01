@@ -20,6 +20,7 @@ from datetime import date
 from functools import cache, wraps
 import signal
 import threading
+import weakref
 from typing import AsyncGenerator
 from unittest.mock import patch
 
@@ -29,6 +30,8 @@ import httpx
 import psycopg2
 from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import async_session
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -81,6 +84,13 @@ def bound_test_database_waits(connection):
         connection.exec_driver_sql("SET LOCAL statement_timeout='120s'")
 
 
+def _diagnostic_stream():
+    """Test diagnostics bypass pytest's sys-level capture (capsys), so tests that
+    assert a CLI's exact stderr stay unaffected; fd capture still shows the dump
+    in the failure report and in CI logs."""
+    return sys.__stderr__
+
+
 # Retain an unwrapped connector so a diagnostic failure cannot recursively dump.
 _diagnostic_connect = psycopg2.connect
 _current_test_item = None
@@ -109,11 +119,11 @@ def dump_test_database_activity(*, pid=None, include_idle=False):
                     transactionid,classid,objid,objsubid FROM pg_locks
                     WHERE pid=ANY(%s) ORDER BY pid,granted,locktype""",
                     ([row['pid'] for row in activity],))
-                print('pg_stat_activity=' + json.dumps(activity, default=str), file=sys.stderr)
-                print('pg_locks=' + json.dumps(cursor.fetchall(), default=str), file=sys.stderr)
+                print('pg_stat_activity=' + json.dumps(activity, default=str), file=_diagnostic_stream())
+                print('pg_locks=' + json.dumps(cursor.fetchall(), default=str), file=_diagnostic_stream())
     except Exception as diagnostic_error:
         # A diagnostic must never replace the original named test failure.
-        print(f'Lock diagnostic unavailable: {type(diagnostic_error).__name__}', file=sys.stderr)
+        print(f'Lock diagnostic unavailable: {type(diagnostic_error).__name__}', file=_diagnostic_stream())
 
 
 def dump_test_lock_timeout(error, *, statement=None, pid=None):
@@ -121,7 +131,7 @@ def dump_test_lock_timeout(error, *, statement=None, pid=None):
         return
     if _current_test_item is not None:
         _current_test_item._lock_dump_emitted = True
-    print(f'PostgreSQL lock timeout: pid={pid} waiting_statement={statement!r}', file=sys.stderr)
+    print(f'PostgreSQL lock timeout: pid={pid} waiting_statement={statement!r}', file=_diagnostic_stream())
     dump_test_database_activity(pid=pid)
 
 
@@ -198,7 +208,7 @@ def pytest_runtest_makereport(item, call):
         error = call.excinfo.value
         if is_lock_timeout(error):
             if getattr(item, '_lock_dump_emitted', False):
-                print(f'{item.nodeid}: lock timeout dump already emitted', file=sys.stderr)
+                print(f'{item.nodeid}: lock timeout dump already emitted', file=_diagnostic_stream())
             else:
                 dump_test_lock_timeout(error)
     yield
@@ -215,6 +225,57 @@ def pytest_runtest_protocol(item):
         _current_test_item = previous
 
 
+# ---------------------------------------------------------------------------
+# Transactions a failed test body leaves open are rolled back before any fixture
+# finalizer runs. Otherwise a teardown TRUNCATE or a migration rehearsal's
+# LOCK TABLE ... NOWAIT waits on, or fails against, the leaked transaction
+# (#180: the CI hang and the #190 rerun's 55P03 on `person`).
+# ---------------------------------------------------------------------------
+_open_test_sessions = weakref.WeakSet()
+
+
+@event.listens_for(Session, 'after_begin')
+def _track_open_test_session(session, transaction, connection):
+    _open_test_sessions.add(session)
+
+
+async def _end_open_test_transactions():
+    ended = 0
+    for session in list(_open_test_sessions):
+        _open_test_sessions.discard(session)
+        if not session.in_transaction():
+            continue
+        try:
+            proxy = async_session(session)
+            if proxy is not None:
+                await proxy.rollback()
+            else:
+                session.rollback()
+            ended += 1
+        except Exception as error:
+            # Best effort: the test already reported its own failure.
+            print(f'Could not end an open test transaction: {type(error).__name__}: {error}',
+                  file=_diagnostic_stream())
+    return ended
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item):
+    yield
+    if target_url() or os.environ.get('HV_TEST_KEEP_OPEN_TRANSACTIONS') or not _open_test_sessions:
+        return
+    try:
+        loop = asyncio.get_event_loop_policy().get_event_loop()
+    except RuntimeError:
+        return
+    if loop.is_closed() or loop.is_running():
+        return
+    ended = loop.run_until_complete(_end_open_test_transactions())
+    if ended:
+        print(f'{item.nodeid}: rolled back {ended} open test transaction(s) before teardown',
+              file=_diagnostic_stream())
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_timeout_set_timer(item, settings):
     """Add database evidence before pytest-timeout's normal stacks/termination."""
@@ -228,7 +289,7 @@ def pytest_timeout_set_timer(item, settings):
         capture = item.config.pluginmanager.getplugin('capturemanager')
         from contextlib import nullcontext
         with capture.global_and_fixture_disabled() if capture else nullcontext():
-            print(f'Pytest timeout: test id={item.nodeid}', file=sys.stderr, flush=True)
+            print(f'Pytest timeout: test id={item.nodeid}', file=_diagnostic_stream(), flush=True)
             dump_test_database_activity(include_idle=True)
         timeout_func(item, settings)
 

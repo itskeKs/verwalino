@@ -26,7 +26,7 @@ def inject_test_engine():
     """Only explicitly opened disposable connections are used."""
 
 
-def test_raw_lock_timeout_dumps_before_the_holder_transaction_is_closed(capsys):
+def test_raw_lock_timeout_dumps_before_the_holder_transaction_is_closed(capfd):
     statement = f"SELECT pg_advisory_xact_lock(hashtextextended('raw-diagnostic:{uuid.uuid4()}',0))"
     with closing(psycopg2.connect(harness.MIGRATOR_SYNC_URL)) as holder:
         with holder.cursor() as cursor:
@@ -37,7 +37,7 @@ def test_raw_lock_timeout_dumps_before_the_holder_transaction_is_closed(capsys):
                 with pytest.raises(psycopg2.errors.LockNotAvailable) as failure:
                     cursor.execute(statement)
             assert failure.value.pgcode == '55P03'
-            diagnostic = capsys.readouterr().err
+            diagnostic = capfd.readouterr().err
             assert f'pid={waiter.get_backend_pid()} waiting_statement={statement!r}' in diagnostic
             activity = json.loads(diagnostic.split('pg_stat_activity=', 1)[1].splitlines()[0])
             assert any(row['pid'] == holder.get_backend_pid() and row['xact_age'] and row['query'] == statement
@@ -46,7 +46,7 @@ def test_raw_lock_timeout_dumps_before_the_holder_transaction_is_closed(capsys):
             assert any(row['pid'] == holder.get_backend_pid() and row['locktype'] == 'advisory' for row in locks)
 
 
-def test_report_does_not_replace_an_immediate_dump_with_an_empty_one(capsys, monkeypatch):
+def test_report_does_not_replace_an_immediate_dump_with_an_empty_one(capfd, monkeypatch):
     from app.core.locking import LockTimeoutError
 
     def late_dump(*args, **kwargs):
@@ -55,7 +55,7 @@ def test_report_does_not_replace_an_immediate_dump_with_an_empty_one(capsys, mon
     item = SimpleNamespace(nodeid='synthetic::teardown', _lock_dump_emitted=True)
     call = SimpleNamespace(excinfo=SimpleNamespace(value=LockTimeoutError()))
     list(harness.pytest_runtest_makereport(item, call))
-    assert 'synthetic::teardown: lock timeout dump already emitted' in capsys.readouterr().err
+    assert 'synthetic::teardown: lock timeout dump already emitted' in capfd.readouterr().err
 
 
 def test_pytest_timeout_dumps_database_activity_with_the_test_id(pytester, monkeypatch):
@@ -101,3 +101,63 @@ def test_blocked_transaction():
                for row in activity)
     locks = json.loads(diagnostic.split('pg_locks=', 1)[1].splitlines()[0])
     assert any(row['pid'] == holder_pid for row in locks)
+
+
+@pytest.mark.parametrize('guard', ['on', 'off'])
+def test_open_transactions_end_before_fixture_teardown(pytester, monkeypatch, guard):
+    # The child alone accesses the DB; it never migrates/truncates the parent's data.
+    monkeypatch.setenv('PYTHONPATH', str(Path(__file__).resolve().parents[1]))
+    if guard == 'off':
+        monkeypatch.setenv('HV_TEST_KEEP_OPEN_TRANSACTIONS', '1')
+    else:
+        monkeypatch.delenv('HV_TEST_KEEP_OPEN_TRANSACTIONS', raising=False)
+    pytester.makeconftest('''
+import pytest
+@pytest.fixture(scope='session')
+def run_migrations():
+    pass
+@pytest.fixture
+def inject_test_engine():
+    pass
+''')
+    probe = pytester.makepyfile(test_leak_probe='''
+import psycopg2
+import pytest
+import pytest_asyncio
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from tests.conftest import MIGRATOR_SYNC_URL, MIGRATOR_URL
+
+@pytest_asyncio.fixture
+async def leaky_db():
+    engine = create_async_engine(MIGRATOR_URL)
+    try:
+        async with AsyncSession(engine) as db:
+            yield db
+    finally:
+        await engine.dispose()
+
+@pytest.fixture
+def rehearsal():
+    yield
+    # Like a migration rehearsal or a TRUNCATE teardown: needs the table exclusively.
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute('LOCK TABLE person IN ACCESS EXCLUSIVE MODE NOWAIT')
+        connection.rollback()
+
+@pytest.mark.asyncio
+async def test_body_fails_with_an_open_transaction(leaky_db, rehearsal):
+    await leaky_db.execute(text('SELECT count(*) FROM person'))
+    assert False, 'the test body fails while its transaction is open'
+''')
+    result = pytester.runpytest_subprocess('-p', 'tests.conftest', '-p', 'no:cacheprovider',
+                                         f'{probe}::test_body_fails_with_an_open_transaction', '-q', timeout=60)
+    assert result.ret == 1
+    summary = result.stdout.str()
+    assert 'the test body fails while its transaction is open' in summary
+    if guard == 'off':
+        assert '1 failed, 1 error' in summary and 'LockNotAvailable' in summary
+    else:
+        assert '1 failed' in summary and ' error' not in summary and 'LockNotAvailable' not in summary
+        # fd capture puts the diagnostic into the failure report (captured stderr).
+        assert 'rolled back 1 open test transaction(s) before teardown' in summary

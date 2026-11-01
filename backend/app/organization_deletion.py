@@ -41,18 +41,13 @@ async def run(*, organization_ids=None):
             try:
                 # A fresh session also isolates a failed after-commit file
                 # cleanup; neither failure can poison the next organization.
+                # db.begin() rolls the whole organization back on any error,
+                # including open savepoints, and the session closes before
+                # the next organization: its locks never outlive the failure.
                 async with AsyncSession(engine) as db:
                     async with db.begin():
-                        finished = False
-                        try:
-                            await db.execute(text("SELECT set_config('app.current_org_id',:org,true)"), {'org': str(org)})
-                            erased = await run_deletion(db, org, nowait=True)
-                            finished = True
-                        finally:
-                            if not finished:
-                                # Roll back the whole organization, including
-                                # open savepoints, before closing its session.
-                                await db.rollback()
+                        await db.execute(text("SELECT set_config('app.current_org_id',:org,true)"), {'org': str(org)})
+                        erased = await run_deletion(db, org, nowait=True)
             except ErasureFileCleanupError:
                 result.completed += bool(erased)
                 result.cleanup_pending.append(org)

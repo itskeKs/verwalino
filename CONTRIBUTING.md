@@ -109,6 +109,8 @@ HTTP database lock timeouts (SQLSTATE `55P03`) and directory timeouts return 409
 intake workers retry the saved completion output in a fresh transaction, retaining lease fencing,
 for at most ten attempts with exponential delays from one second up to 30 seconds; on exhaustion,
 the worker loop reports failure and the durable lease can be reclaimed within the job's attempt cap.
+The declaration pipeline treats a database lock timeout like an interrupted worker: the run is
+marked `RETRY_WAIT` with its charged usage kept and re-runs after five minutes; no output is replayed.
 In hosted mode, the operator's `quota-recount` caps database lock waits likewise and refuses an already
 held directory lock immediately; either contention exits with code 1 and the same retry message.
 Deletion CLI admission uses try-advisory locks and `FOR UPDATE NOWAIT` per organization;
@@ -122,8 +124,7 @@ queries and transaction ages) and `pg_locks` for open transactions. The timed-ou
 already left `pg_locks`, so all open transactions are included to retain potential holders.
 A pytest report hook retains a fallback and identifies diagnostics already emitted at the error.
 On any local pytest timeout, the same independent connection dumps all test-database backends
-and their locks with the test ID before the usual Python stacks; the subprocess regression in
-`test_locking_diagnostics.py` is excluded from the ordered predecessor window because it takes over five seconds.
+and their locks with the test ID before the usual Python stacks.
 Pytest includes these stderr diagnostics with the named failure; synthetic contention tests
 verify the dump, but do not identify the holder from the historical CI hangs.
 Keep targeted runs short (`timeout 1500 make test-backend PYTEST_ARGS="…"`); a legitimately

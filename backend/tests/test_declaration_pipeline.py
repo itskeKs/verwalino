@@ -1691,7 +1691,8 @@ async def test_database_lock_timeout_retries_pipeline_without_losing_usage(seed_
     assert item.status == 'RETRY_WAIT'
     assert item.current_stage == 'retry_wait'
     assert item.error_code == 'WORKER_INTERRUPTED'
-    assert before + timedelta(minutes=5) <= item.next_attempt_at <= after + timedelta(minutes=5)
+    # The stored timestamp may lose sub-second precision against the host clock.
+    assert before.replace(microsecond=0) + timedelta(minutes=5) <= item.next_attempt_at <= after + timedelta(minutes=5)
     assert item.lease_token is None and item.lease_owner is None
     if failure_point in {'load', 'transition', 'quota'}:
         assert provider.calls == [] and run is None

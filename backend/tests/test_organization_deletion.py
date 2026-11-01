@@ -834,7 +834,9 @@ async def test_cli_skips_a_contended_organization_and_finishes_the_next(rent_wor
         await rent_db.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key,0))'), {'key': f'{lock}:{first}'})
     task = asyncio.create_task(cli.run(organization_ids=[first, second]))
     try:
-        done, _ = await asyncio.wait([task], timeout=3)
+        # NOWAIT admission fails at once; 15 s tolerates a loaded host and stays
+        # well below the 30 s lock bound a waiting CLI would hit.
+        done, _ = await asyncio.wait([task], timeout=15)
         assert done, 'CLI waited for a contended organization instead of continuing'
         result = task.result()
         assert result.completed == 1

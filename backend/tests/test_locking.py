@@ -22,7 +22,7 @@ async def test_only_admitted_lifecycle_and_hosted_quota_writes_cap_waits_at_thir
     await rent_db.rollback()
 
 
-async def test_lock_timeout_dump_identifies_waiter_holder_and_transaction_age(rent_db, capsys):
+async def test_lock_timeout_dump_identifies_waiter_holder_and_transaction_age(rent_db, capfd):
     key = f'diagnostic-test:{uuid.uuid4()}'
     holder = await rent_db.scalar(text('SELECT pg_backend_pid()'))
     await rent_db.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key,0))'), {'key': key})
@@ -34,7 +34,7 @@ async def test_lock_timeout_dump_identifies_waiter_holder_and_transaction_age(re
                 await waiter.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key,0))'), {'key': key})
             assert error.value.orig.sqlstate == '55P03'
             await waiter.rollback()
-        diagnostic = capsys.readouterr().err
+        diagnostic = capfd.readouterr().err
         assert f'pid={pid} waiting_statement=' in diagnostic
         assert 'pg_stat_activity=' in diagnostic and 'pg_locks=' in diagnostic
         assert f'"pid": {holder}' in diagnostic
